@@ -134,9 +134,6 @@ Each workout gets a 1-10 score combining TSS (60%), protocol variety (distinct p
 ### Adaptive re-draw
 `/api/plan/re-draw` re-rolls a day's workout when you want a swap — excludes what you did earlier in the week, keeps variety. Drag-drop moves persist through ISO-week boundaries (bug introduced by Sat-Fri vs Mon-Sun merge is fixed).
 
-### 284-Product Nutrition Planner
-Plan your ride fuel before you start: how many gels, which drink mix, how many scoops. Carb/hour target computed from ride duration and intensity.
-
 ### 622 virtual routes
 Watopia, Yorkshire, Innsbruckring, Alpe d'Huez, Mont Ventoux, Stelvio + 160 real-world courses. Export as CRS (RGT format) or GPX for route-based riding in Golden Cheetah / Wahoo / Garmin.
 

@@ -1,10 +1,21 @@
-# Domestique
+<p align="center">
+  <img src="assets/icon.png" alt="Domestique" width="180" height="180">
+</p>
 
-**An adaptive cycling training planner that closes the loop between what you planned and what you actually did.**
+<h1 align="center">Domestique</h1>
+
+<p align="center"><b>An adaptive cycling training planner that closes the loop between what you planned and what you actually did.</b></p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.9+-blue" alt="Python">
+  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
+  <img src="https://img.shields.io/badge/Workouts-3054-orange" alt="Workouts">
+  <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
+  <img src="https://img.shields.io/badge/Version-v1.0.0-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Tests-783%20passing-success" alt="Tests">
+</p>
 
 Domestique builds you a periodised training plan, ships **3,054 structured ZWO workouts**, imports your post-ride FITs, and feeds *every* signal — TSS overshoot, polarisation breach, soreness, DFA α1, decoupling, monotony, eFTP drift — back into the next day's plan. Most "smart" planners stop at the dashboard. Domestique mutates the prescription.
-
-![Python](https://img.shields.io/badge/Python-3.9+-blue) ![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green) ![Workouts](https://img.shields.io/badge/Workouts-3054-orange) ![Routes](https://img.shields.io/badge/Routes-622-purple) ![Version](https://img.shields.io/badge/Version-v1.0.0-brightgreen) ![Tests](https://img.shields.io/badge/Tests-783%20passing-success)
 
 ## Why this exists
 

@@ -36,7 +36,7 @@ from route_archetypes import (
 )
 
 
-ROUTE_FILE = Path(__file__).resolve().parent / "route_archetypes.py"
+ROUTE_FILE = Path(__file__).resolve().parent.parent / "route_archetypes.py"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -24,7 +24,7 @@ from training_planner import (
 )
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 APP_PY = ROOT / "app.py"
 PLANNER_PY = ROOT / "training_planner.py"
 

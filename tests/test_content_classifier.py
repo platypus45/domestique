@@ -18,7 +18,8 @@ from pathlib import Path
 
 # Add scripts/ for the classifier module
 HERE = Path(__file__).parent
-sys.path.insert(0, str(HERE / "scripts"))
+REPO_ROOT = HERE.parent
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import classify_library_content as clc
 

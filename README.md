@@ -33,6 +33,50 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 - **Hardware-agnostic** — generate ZWO, ride in MyWhoosh / Tacx / Zwift / Hammerhead Karoo / outdoors, import the FIT back.
 - **Single-user, localhost-only** — all data in `~/.domestique/profiles/<id>/`, ICU API key chmod 0600, no telemetry, no cloud.
 
+## Architecture
+
+Pure Python, flat module layout — every `.py` at repo root is `import`ed
+by another root module. PyInstaller bundles them as-is (no `domestique/`
+package wrapper) so the spec, the DMG, and the EXE all stay simple.
+
+```
+domestique/
+├── app.py                    — FastAPI app + ~70 endpoints (the "everything" entry)
+├── launcher.py               — PyInstaller entry; opens pywebview window, boots uvicorn
+├── training_planner.py       — Periodised plan generator + injury guardrails (G1–G7)
+├── training.py               — Daily metrics, readiness, adapt-today-session
+├── training_live.py          — Live ride session engine
+├── ride_storage.py           — FIT archive + per-ride summarisation
+├── fit_activity.py           — FIT parser wrapper (fitparse)
+├── fitness_estimation.py     — eFTP drift, mean-max curve, capability projection
+├── analytics.py              — NP / IF / TSS / decoupling / polarisation / DFA α1
+├── readiness.py              — HRV / TSB / Hooper / sleep / RHR composite
+├── profile_manager.py        — Multi-user profiles + ICU credentials
+├── migrate_profiles.py       — One-shot profile migrations (called from app.py)
+├── ride_report_png.py        — Pillow-rendered post-ride summary
+├── programme_summary_png.py  — Pillow-rendered finished-programme recap
+├── route_archetypes.py       — Procedural route shape primitives
+├── geodesy.py                — GPX distance / elevation math
+├── gpx_to_gc.py              — GPX → Golden Cheetah CRS converter
+├── zones.py                  — Power / HR zone math
+├── sleep.py, sleep_inhibit.py — Sleep parsing + macOS caffeinate hook
+├── db.py, config.py, log_config.py — SQLite + config + logging plumbing
+├── domestique.spec           — PyInstaller build spec
+├── build_dmg.sh / build_win.bat — macOS DMG + Windows ZIP packagers
+├── routes.json, profiles_indexed.json, surface_types.json,
+│   route_profiles.json       — Heavy data shipped via PyInstaller `datas=`
+├── tests/                    — pytest suite (~60 files; run `pytest -q`)
+├── docs/                     — Architecture, science deep-dives, build guides
+├── scripts/                  — One-off generators + scrapers (NOT imported by app.py)
+├── workouts/                 — 3,054 ZWO interval workouts
+├── courses/                  — Real-world climb library (CRS files, per-region subdirs)
+├── static/, templates/       — FastAPI assets + Jinja2 templates
+├── assets/                   — App icons (icon.icns / icon.ico / icon.png)
+├── gpx_sources/              — Source GPX feeding `gpx_to_gc.py`
+├── plans/, profiles/         — Per-user runtime state (gitignored after first use)
+└── .github/workflows/        — `release.yml` builds + uploads DMG and EXE on tag
+```
+
 ## Read more
 
 - **[How the planner thinks (logic + science)](#how-the-planner-thinks-logic--science)** — every threshold cited, every formula explained.
@@ -463,10 +507,11 @@ Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before
 
 See also:
 - [COURSES_LICENSE.md](COURSES_LICENSE.md) — route and elevation data provenance
-- [NUTRITION_LICENSE.md](NUTRITION_LICENSE.md) — nutrition database (ODbL 1.0)
 - [TRADEMARKS.md](TRADEMARKS.md) — trademark policy
 - [docs/cycling_apps.md](docs/cycling_apps.md) — comparison of free cycling apps accepting ZWO/FIT
 - [docs/workout_sources.md](docs/workout_sources.md) — workout library provenance + legal stance
+- [docs/windows_build.md](docs/windows_build.md) — path to a signed-style Windows `.exe` build
+- [NOTICE](NOTICE) — Open Food Facts ODbL 1.0 attribution for the nutrition database (the missing-file `NUTRITION_LICENSE.md` link removed; ODbL terms remain inline in NOTICE)
 
 ---
 

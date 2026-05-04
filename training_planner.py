@@ -916,23 +916,32 @@ class PlannedSession:
 # cyclist with ~10h/wk capacity. Ranges synthesised from Seiler 2010, Mujika
 # 2010, Rønnestad 2014, Coggan/Allen (TR&P 3rd ed.).
 PHASE_TARGETS: dict[str, dict[str, float]] = {
-    "base":    {"z1z2_hrs": 9.5, "z3z4_min": 45,  "z5plus_min": 5,   "tss_per_week": 425},
-    "build1":  {"z1z2_hrs": 7.5, "z3z4_min": 120, "z5plus_min": 45,  "tss_per_week": 600},
-    "build2":  {"z1z2_hrs": 7.5, "z3z4_min": 120, "z5plus_min": 45,  "tss_per_week": 600},
-    "peak":    {"z1z2_hrs": 6.0, "z3z4_min": 90,  "z5plus_min": 80,  "tss_per_week": 650},
-    "taper":   {"z1z2_hrs": 4.0, "z3z4_min": 30,  "z5plus_min": 22,  "tss_per_week": 275},
-    "history": {"z1z2_hrs": 8.0, "z3z4_min": 45,  "z5plus_min": 10,  "tss_per_week": 400},
+    "base":          {"z1z2_hrs": 9.5, "z3z4_min": 45,  "z5plus_min": 5,   "tss_per_week": 425},
+    "build1":        {"z1z2_hrs": 7.5, "z3z4_min": 120, "z5plus_min": 45,  "tss_per_week": 600},
+    "build2":        {"z1z2_hrs": 7.5, "z3z4_min": 120, "z5plus_min": 45,  "tss_per_week": 600},
+    "peak":          {"z1z2_hrs": 6.0, "z3z4_min": 90,  "z5plus_min": 80,  "tss_per_week": 650},
+    "taper":         {"z1z2_hrs": 4.0, "z3z4_min": 30,  "z5plus_min": 22,  "tss_per_week": 275},
+    # v1.0.0: consolidation = mini-taper at the END of non-event goals
+    # (FTP / VO2max / hybrid / general). 1 week, ~50% of peak TSS, Z2-only.
+    # Mujika 2010 *Sports Med* — 7-14 day reduced-load period after a build
+    # block lets fatigue drop and supercompensation peak. Without this the
+    # plan ends abruptly at peak with elevated fatigue, the athlete tries
+    # to FTP-test on residual fatigue and gets a false-low result.
+    "consolidation": {"z1z2_hrs": 5.5, "z3z4_min": 20, "z5plus_min": 0,    "tss_per_week": 240},
+    "history":       {"z1z2_hrs": 8.0, "z3z4_min": 45,  "z5plus_min": 10,  "tss_per_week": 400},
 }
 
 # Intensity-distribution targets per phase (Seiler 2006/Stöggl 2014 polarised
 # model). Adherence "broken" if Z1+Z2 falls below ~75% or Z4+ above ~25%.
 PHASE_POLARIZED_TARGETS: dict[str, dict[str, int]] = {
-    "base":    {"z1z2_pct": 88, "z3_pct": 8, "z4plus_pct": 4},
-    "build1":  {"z1z2_pct": 78, "z3_pct": 6, "z4plus_pct": 16},
-    "build2":  {"z1z2_pct": 75, "z3_pct": 5, "z4plus_pct": 20},
-    "peak":    {"z1z2_pct": 72, "z3_pct": 4, "z4plus_pct": 24},
-    "taper":   {"z1z2_pct": 80, "z3_pct": 5, "z4plus_pct": 15},
-    "history": {"z1z2_pct": 80, "z3_pct": 5, "z4plus_pct": 15},
+    "base":          {"z1z2_pct": 88, "z3_pct": 8, "z4plus_pct": 4},
+    "build1":        {"z1z2_pct": 78, "z3_pct": 6, "z4plus_pct": 16},
+    "build2":        {"z1z2_pct": 75, "z3_pct": 5, "z4plus_pct": 20},
+    "peak":          {"z1z2_pct": 72, "z3_pct": 4, "z4plus_pct": 24},
+    "taper":         {"z1z2_pct": 80, "z3_pct": 5, "z4plus_pct": 15},
+    # v1.0.0: consolidation = recovery-week shape, 90% Z1+Z2 (Mujika 2010).
+    "consolidation": {"z1z2_pct": 92, "z3_pct": 6, "z4plus_pct": 2},
+    "history":       {"z1z2_pct": 80, "z3_pct": 5, "z4plus_pct": 15},
 }
 
 
@@ -970,6 +979,12 @@ BUDGETS: dict[str, "IntensityBudget"] = {
         z4_minutes_per_week=20, z5plus_minutes_per_week=22,
         tss_per_week=275, hit_count_min=1, hit_count_max=1, rest_days_per_week=3,
         polarized_target=PHASE_POLARIZED_TARGETS["taper"],
+    ),
+    "consolidation": IntensityBudget(
+        z1z2_minutes_per_week=330, z3_minutes_per_week=20,
+        z4_minutes_per_week=0, z5plus_minutes_per_week=0,
+        tss_per_week=240, hit_count_min=0, hit_count_max=0, rest_days_per_week=3,
+        polarized_target=PHASE_POLARIZED_TARGETS["consolidation"],
     ),
     "history": IntensityBudget(
         z1z2_minutes_per_week=480, z3_minutes_per_week=45,
@@ -1146,7 +1161,16 @@ def generate_phases(goal: Goal, current_ctl: float) -> list[Phase]:
         ))
         cursor = taper_start
 
-    remaining_weeks = max(0, total_weeks - taper_weeks)
+    # v1.0.0: reserve 1 week for the consolidation phase appended at the end
+    # of non-event goals. Subtracting from remaining_weeks here means peak/
+    # build2/build1 absorb the 1-week reduction (instead of the plan ending
+    # 1 week later than the user requested). Event/ctl goals get taper instead
+    # so consolidation = 0 for them.
+    consolidation_weeks = (
+        1 if goal.goal_type in ("ftp", "vo2max", "ftp_vo2max", "hybrid",
+                                "general", "endurance", "weight") else 0
+    )
+    remaining_weeks = max(0, total_weeks - taper_weeks - consolidation_weeks)
 
     # Distribute remaining weeks across phases
     if remaining_weeks >= 14:
@@ -1292,6 +1316,24 @@ def generate_phases(goal: Goal, current_ctl: float) -> list[Phase]:
             phase_defs.append(("peak", peak_weeks, peak_tss,
                 "Race-specific. Climbing repeats, threshold sustain.",
                 70, 2, ["z2", "threshold", "vo2max", "overunder", "sprint"]))
+
+    # v1.0.0: append a 1-week CONSOLIDATION phase after peak for non-event
+    # goals (FTP / VO2max / hybrid / general / endurance / weight). Mujika 2010
+    # Sports Med review: 7-14 day reduced-load period after a build block lets
+    # fatigue dissipate and supercompensation peak. Without this the plan ends
+    # abruptly at peak with elevated fatigue — the athlete attempts an FTP
+    # test on residual fatigue and gets a false-low result that under-sets
+    # the next cycle. Consolidation is Z2-only (~50% of peak TSS), no HIT,
+    # explicit prompt at end-of-week to FTP-test before generating the next
+    # cycle. event/ctl goals already have a true taper and skip this.
+    if goal_type in ("ftp", "vo2max", "ftp_vo2max", "hybrid", "general",
+                     "endurance", "weight") and phase_defs:
+        phase_defs.append(("consolidation", 1, 240,
+            "Consolidation week: ~50% peak TSS, Z2 only, no HIT. Lets fatigue "
+            "drop and supercompensation crystallise (Mujika 2010 Sports Med). "
+            "FTP test recommended at end of this week before starting your "
+            "next training cycle.",
+            92, 0, ["z2", "long_z2", "recovery"]))
 
     # Build phases forward (respect override for post-recovery start)
     cursor_fwd = getattr(goal, "_phase_start_override", None) or date.today()
@@ -3891,6 +3933,18 @@ def generate_plan(
             week_num += 1
             week_in_phase += 1
 
+    # v1.0.0: inject mid-cycle FTP-test sessions to prevent stale-FTP overload.
+    # Allen-Coggan TR&P 3rd ed. recommends re-testing every 4-6 weeks during
+    # builds. If FTP rose 8% during build1 but the planner is still using the
+    # old value, all subsequent TSS targets and zone boundaries are computed
+    # against an FTP that's 8% too low — the rider trains harder than the
+    # model thinks and accidentally overloads. v4.1.0 eFTP-drift auto-apply
+    # is REACTIVE (waits for ICU to detect 7+ days of drift); a scheduled
+    # mid-cycle test is PROACTIVE. Runs BEFORE the build2/peak floor passes
+    # so the floors place anaerobic/neuromuscular/vo2_short into the *other*
+    # slots of the same week, not the ftp_test slot.
+    _inject_mid_cycle_ftp_tests(weeks, phases)
+
     # v4.6.1 PLANNER-VARIETY+RONNESTAD: hard floor for build2 and peak phases
     # — each must include ≥1 anaerobic AND ≥1 neuromuscular AND ≥2 vo2_short
     # workouts across the phase. Post-sampling check + swap if floor not met.
@@ -3915,6 +3969,69 @@ def generate_plan(
         )
 
     return phases, weeks
+
+
+def _inject_mid_cycle_ftp_tests(weeks: list, phases: list) -> None:
+    """v1.0.0 — schedule FTP test sessions at phase boundaries to recalibrate
+    FTP mid-cycle, preventing systematic overload from stale FTP.
+
+    Allen & Coggan *Training and Racing with a Power Meter* 3rd ed. recommends
+    re-testing FTP every 4-6 weeks during build phases. If FTP rises 8% during
+    build1 but the planner is still using the old value, all subsequent TSS
+    targets and zone boundaries are computed against an FTP that's 8% too low.
+    The rider trains harder than the model thinks and accidentally overloads.
+
+    The v4.1.0 ``auto_apply_eftp`` path is REACTIVE — it waits for ICU's eFTP
+    to drift >3% for 7+ consecutive days before bumping FTP. A scheduled test
+    is PROACTIVE: a fresh Coggan-20 or Ramp test on day 1 of build2 captures
+    the actual current FTP for the next 4-6 weeks of programming.
+
+    Inject points:
+      * **Start of build2** — always (covers cycles ≥ 8 weeks).
+      * **Start of peak** — only when the cycle is ≥ 16 weeks total
+        (long-cycle athletes accumulate enough adaptation to warrant
+        a second mid-cycle calibration).
+
+    The first non-rest, non-Z2/recovery slot of the target week is converted
+    to ``session_type = "ftp_test"``. ``match_zwo`` finds a Coggan-20 or Ramp
+    ZWO from the library on the next pass; the FIT-import detection at
+    `app.py` then auto-suggests an FTP update via the existing modal.
+    """
+    if not weeks or not phases:
+        return
+    cycle_total_weeks = sum(getattr(p, "weeks", 0) for p in phases)
+    test_phase_starts = []
+    for ph in phases:
+        if getattr(ph, "name", "") == "build2":
+            test_phase_starts.append(ph.start)
+        elif getattr(ph, "name", "") == "peak" and cycle_total_weeks >= 16:
+            test_phase_starts.append(ph.start)
+    if not test_phase_starts:
+        return
+    skip_types = {"rest", "z2", "long_z2", "recovery"}
+    for week in weeks:
+        if getattr(week, "is_stepback", False):
+            continue
+        if getattr(week, "start", None) not in test_phase_starts:
+            continue
+        for s in week.sessions:
+            if s.session_type in skip_types:
+                continue
+            old_type = s.session_type
+            s.session_type = "ftp_test"
+            s.zwo_file = ""           # let match_zwo find a Coggan-20 / Ramp file
+            s.zwo_name = ""
+            s.matched = False
+            s.duration_min = 60
+            s.tss_estimate = 70.0
+            s.description = (
+                f"FTP TEST — Coggan-20 or Ramp protocol. "
+                f"Mid-cycle recalibration (Allen-Coggan TR&P 3rd ed., "
+                f"4-6 week re-test cadence) prevents stale-FTP overload. "
+                f"Originally scheduled as {old_type}; the FTP-test detector "
+                f"on the FIT-import path will suggest an FTP update."
+            )
+            break
 
 
 def _enforce_build2_peak_hard_floor(

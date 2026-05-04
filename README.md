@@ -1,18 +1,44 @@
 # Domestique
 
-**Cycling training planner + workout library + post-ride viewer.**
+**An adaptive cycling training planner that closes the loop between what you planned and what you actually did.**
 
-Domestique generates adaptive weekly plans, ships a library of **3,054 ZWO workouts**, imports and analyzes Garmin FIT files, and tracks your training load. It is hardware-agnostic — ride on any platform (Golden Cheetah, MyWhoosh, Tacx Training, Zwift), then import the FIT back for analysis and let the data drive your next week's plan.
+Domestique builds you a periodised training plan, ships **3,054 structured ZWO workouts**, imports your post-ride FITs, and feeds *every* signal — TSS overshoot, polarisation breach, soreness, DFA α1, decoupling, monotony, eFTP drift — back into the next day's plan. Most "smart" planners stop at the dashboard. Domestique mutates the prescription.
 
-![Python](https://img.shields.io/badge/Python-3.9+-blue) ![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green) ![Workouts](https://img.shields.io/badge/Workouts-3054-orange) ![Routes](https://img.shields.io/badge/Routes-622-purple) ![Version](https://img.shields.io/badge/Version-v1.0.0-brightgreen)
+![Python](https://img.shields.io/badge/Python-3.9+-blue) ![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green) ![Workouts](https://img.shields.io/badge/Workouts-3054-orange) ![Routes](https://img.shields.io/badge/Routes-622-purple) ![Version](https://img.shields.io/badge/Version-v1.0.0-brightgreen) ![Tests](https://img.shields.io/badge/Tests-783%20passing-success)
 
-> **v1.0.0 — first open-source release.** Adaptive periodised training plan, 3,054-workout library, post-ride viewer. Hardware-agnostic — ride in any app, import the FIT back. Closed feedback loops (DFA α1, aerobic decoupling, Foster monotony, eFTP drift, local CTL EWMA) actually drive next-day planning, not display-only. Seven science-grounded injury-prevention guardrails (G1–G7) close the actual-vs-planned loop so a rider who burns themselves on an unplanned hard ride doesn't get vo2max intervals the next morning. Capability projection (Allen-Coggan IF + Pinot-Grappe RPP) predicts your event finish; finished-programme summary delivers a 12-metric end-of-plan recap exportable as PNG or PDF.
->
-> Two deep-dive sections in this README cover the math:
-> - **[How the planner thinks (logic + science)](#how-the-planner-thinks-logic--science)** — every threshold, every citation, every guardrail.
-> - **[Auto-matching your rides to planned sessions](#auto-matching-your-rides-to-planned-sessions)** — what "done" / "ambiguous" / "no-match" mean and how the rematch fires.
->
-> See [CHANGELOG.md](CHANGELOG.md) for the full pre-1.0 development log. Latest macOS DMG attached to the [GitHub release](https://github.com/platypus45/domestique/releases/latest). Windows .exe is the next deliverable — see [docs/windows_build.md](docs/windows_build.md).
+## Why this exists
+
+Most training apps fall into one of two modes:
+
+- **Display-only**: HRV widgets, Banister fitness curves, polarisation rings — beautiful charts, zero behavioural feedback.
+- **Calendar-based**: a fixed 12-week plan that doesn't care what you actually did yesterday.
+
+Domestique is neither. Every signal that touches the dashboard also has a code-path that mutates a future session. Examples:
+
+- **Soreness ≥ 6/7** on the morning Hooper form → today's vo2max is forced to recovery, period (Hooper & Mackinnon 1995, Cheung et al. 2003 — peripheral fatigue is independent of HRV).
+- **Last week's actual TSS > 1.5 × planned** → next week's TSS budget auto-cuts 15% (Gabbett 2016 ACWR).
+- **Rolling 48 h Z5+ ≥ 25 min** (cycling included) → today is forced to Z2 even with positive TSB (Hulin 2014).
+- **Mid-cycle FTP recalibration** at build1→build2 boundary auto-tests your FTP so the next 4 weeks of TSS targets aren't computed against a stale baseline (Allen & Coggan TR&P 3rd ed.).
+
+Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus a 1-week consolidation phase at the end of every non-event cycle so people don't ride straight from a peak into a fresh build with elevated fatigue (Mujika 2010).
+
+## What's in the box
+
+- **Adaptive training plan** — Base / Build1 / Build2 / Peak / Taper or Consolidation, sized from your CTL and target. Daily-adapt + reforecast + regenerate, all wired to live data.
+- **3,054 ZWO workouts** — content-classified into 11 classes; a 24-week plan picks **150 distinct files** (every session is a different workout).
+- **622 virtual routes** — Watopia, Yorkshire, Innsbruckring, Alpe d'Huez, Stelvio + 160 real-world courses; CRS + GPX export.
+- **FIT import + post-ride viewer** — power/HR/cadence curves, zone distribution, decoupling, DFA α1, polarisation classification (Treff 2019).
+- **Capability projection** — Allen-Coggan IF-by-duration + Pinot & Grappe 2011 RPP climb gate predicts your event finish, surfaces endurance / power / climb gaps in a 12-week build-up bar chart.
+- **Finished-programme summary** — 12-metric recap (FTP/eFTP/VO2max Δ, polarisation, monotony, mean-max curve, Hooper trend, totals, decoupling) exportable as PNG (Pillow) or PDF (browser print).
+- **Hardware-agnostic** — generate ZWO, ride in MyWhoosh / Tacx / Zwift / Hammerhead Karoo / outdoors, import the FIT back.
+- **Single-user, localhost-only** — all data in `~/.domestique/profiles/<id>/`, ICU API key chmod 0600, no telemetry, no cloud.
+
+## Read more
+
+- **[How the planner thinks (logic + science)](#how-the-planner-thinks-logic--science)** — every threshold cited, every formula explained.
+- **[Auto-matching your rides to planned sessions](#auto-matching-your-rides-to-planned-sessions)** — how `done` / `ambiguous` / `no_match` are decided.
+- **[CHANGELOG.md](CHANGELOG.md)** — the full pre-1.0 development log.
+- **[Releases](https://github.com/platypus45/domestique/releases/latest)** — macOS DMG + Windows EXE attached to every release; both built and signed-style packaged in CI.
 
 ---
 
@@ -57,7 +83,7 @@ Each workout gets a 1-10 score combining TSS (60%), protocol variety (distinct p
 Plan your ride fuel before you start: how many gels, which drink mix, how many scoops. Carb/hour target computed from ride duration and intensity.
 
 ### 622 virtual routes
-Tadts Innsbruckring, Alpe d'Huez, Ventoux, Stelvio + 160+ real-world courses. Export as CRS (RGT format) or GPX for route-based riding in GC / Wahoo / Garmin.
+Watopia, Yorkshire, Innsbruckring, Alpe d'Huez, Mont Ventoux, Stelvio + 160 real-world courses. Export as CRS (RGT format) or GPX for route-based riding in Golden Cheetah / Wahoo / Garmin.
 
 ---
 
@@ -191,16 +217,21 @@ Domestique uses the canonical Coggan / Allen / Banister fitness-fatigue framewor
 
 ### 1. Periodisation engine
 
-**Phases.** Standard Base → Build1 → Build2 → Peak → Taper, sized from `target_ctl` and `target_date` (Coggan & Allen, *Training and Racing with a Power Meter* 3rd ed.).
+**Phases.** Standard Base → Build1 → Build2 → Peak → Taper for event-prep goals, or Base → Build1 → Build2 → Peak → **Consolidation** for non-event goals (FTP / VO2max / hybrid / general / endurance). Sized from `target_ctl` and `target_date` (Coggan & Allen, *Training and Racing with a Power Meter* 3rd ed.).
+
+**Why consolidation, not taper, for FTP/VO2max cycles.** A taper is event-specific — you peak fresh on race day. If you don't have a race, you don't taper into a hole; you do a 1-week reduced-load Z2-only block to let fatigue dissipate and supercompensation peak (**Mujika 2010** *Sports Med* review: 7–14 day reduced-load period after a build block). Consolidation is `~50% of peak TSS` and ships an explicit prompt at end-of-week to FTP-test before generating the next cycle — this is the moment to cleanly capture your new fitness ceiling without residual fatigue depressing the result.
+
+**Mid-cycle FTP recalibration (proactive overload prevention).** At the build1→build2 phase boundary the planner replaces one HIT slot with a Coggan-20 or Ramp `ftp_test` session. For cycles ≥ 16 weeks, a second test is also placed at the build2→peak boundary. This is a direct overload prevention: if your FTP rose 8% during build1 but the planner is still using the old value, all subsequent TSS targets and zone boundaries are computed against a baseline that's 8% too low — you train *systematically* harder than the model thinks. **Allen & Coggan TR&P 3rd ed.** recommends 4–6 week re-test cadence during build phases. The v4.1.0 eFTP-drift auto-apply path is *reactive* (waits for ICU to detect 7+ days of drift); the scheduled mid-cycle test is *proactive*.
 
 **Weekly TSS budget** per phase (`training_planner.py PHASE_TARGETS`):
 
-| Phase | Z1+Z2 hours | Z3+Z4 min | Z5+ min | Weekly TSS |
-|---|---|---|---|---|
-| Base | 9.5 | 45 | 5 | 425 |
-| Build1 / Build2 | 7.5 | 120 | 45 | 600 |
-| Peak | 6.0 | 90 | 80 | 650 |
-| Taper | 4.0 | 30 | 22 | 275 |
+| Phase | Z1+Z2 hours | Z3+Z4 min | Z5+ min | Weekly TSS | Goal types |
+|---|---|---|---|---|---|
+| Base | 9.5 | 45 | 5 | 425 | all |
+| Build1 / Build2 | 7.5 | 120 | 45 | 600 | all |
+| Peak | 6.0 | 90 | 80 | 650 | all |
+| Taper | 4.0 | 30 | 22 | 275 | event / ctl |
+| **Consolidation** | 5.5 | 20 | 0 | 240 | FTP / VO2max / hybrid / general |
 
 Synthesised from Seiler 2010, Mujika 2010, Rønnestad 2014, and Coggan/Allen for a trained age-grouper at ~10h/week. The intensity-distribution targets (`PHASE_POLARIZED_TARGETS`) come from the Seiler 2006 / Stöggl 2014 polarised model.
 

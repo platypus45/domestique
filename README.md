@@ -486,11 +486,4 @@ Tacx, Wahoo, Garmin, Polar, MyWhoosh, Zwift, Golden Cheetah, Rouvy, and Interval
 
 ---
 
-## History
-
-- **v4.1.0 — Planner grill pass (2026-04-24).** 31 bugs closed over 5 waves of agent research + implementation + QA + fix-forward. Feedback loops that previously computed-but-ignored signals are now closed; FTP test flow works end-to-end; eFTP has source provenance; planner unified; 4 new FTP tests from whatsonzwift.
-- **v4.0.0-alpha — Trainer subsystem removed (2026-04-24).** ~16,000 LOC of BLE / FTMS / ERG / Tacx FE-C / Polar HR code retired. Library grew from 1,797 → 3,050 workouts via scrape + GitHub + procgen.
-- **v3.x — Live-ride era.** Trainer integration with BLE pairing, ERG power hold, SIM gradient, first-pedal gate, DFA α1 live. Sunset with v4 for pure-planner role.
-- **v2.0.0 — Rebrand.** Previously known as **ChickenCycling**. User-data directory preserved at `~/.chickencycling/` on systems that predate the rename.
-
 Copyright © 2026 Domestique contributors.

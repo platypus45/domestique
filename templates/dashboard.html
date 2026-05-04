@@ -7210,16 +7210,29 @@ function renderCalendar(data) {
 
   rows.innerHTML = html;
 
-  // Auto-scroll to current week on first render only.
-  // v4.6.7 F3 — call calJumpToToday() (the v4.6.1 path that targets
-  // [data-date=today] via scrollIntoView) instead of the inline offsetTop
-  // math, which was reading offsetTop=0 before #cal-body had finished
-  // layout — so the calendar opened on the oldest history week (Feb).
-  // The user can still scroll back manually after the auto-jump.
+  // Auto-scroll to current week on first render only — but ONLY when the
+  // cell is actually visible. v4.6.7 F3 wired calJumpToToday() in but it
+  // fired on the home-page pre-load (`(async () => { await loadCalendar() })`
+  // at ~line 3445) which renders BEFORE the user clicks the Plan tab. That
+  // pre-render set _calDidAutoScroll=true on a hidden DOM, so when the user
+  // actually opened the calendar the auto-scroll was suppressed and they
+  // landed on the oldest history week (Feb).
+  // v1.0.0 fix: probe `cell.offsetParent !== null` (the standard "is laid
+  // out" test). On the hidden home-page pre-render offsetParent is null,
+  // we don't mark done, and the user's first Plan-tab visit gets the auto-
+  // scroll. Subsequent re-renders within the same Plan-tab session see
+  // _calDidAutoScroll=true and skip (so manual scrollback isn't reset).
   if (!window._calDidAutoScroll && curIdx >= 0) {
-    window._calDidAutoScroll = true;
     requestAnimationFrame(() => {
-      try { calJumpToToday(); } catch(_) {}
+      try {
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const cell = document.querySelector(`#cal-rows [data-date="${todayStr}"]`);
+        if (cell && cell.offsetParent !== null) {
+          window._calDidAutoScroll = true;
+          calJumpToToday();
+        }
+        // else: pre-rendered while hidden; let the next render try again
+      } catch(_) {}
     });
   }
 }

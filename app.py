@@ -5283,6 +5283,41 @@ def api_event_projection():
     projection["ftp"] = athlete["ftp"]
     projection["weight_kg"] = athlete["weight_kg"]
     projection["current_ctl"] = round(current_ctl, 1)
+
+    # v1.0.0: weekly_history for the chart — past 12 weeks of longest-ride-h.
+    # Replaces the v4.6.7 flat-line "weeks-to-event" rendering which was
+    # uninformative when the event was 0-1 weeks out.
+    try:
+        from collections import defaultdict
+        buckets: dict[tuple, float] = defaultdict(float)
+        cutoff_iso = (date.today() - timedelta(days=12 * 7)).isoformat()
+        for r in rides or []:
+            s = (r.get("started_at") or "")[:10]
+            if not s or s < cutoff_iso:
+                continue
+            try:
+                d = date.fromisoformat(s)
+            except ValueError:
+                continue
+            iso = d.isocalendar()
+            key = (iso[0], iso[1])  # (year, week)
+            dur_h = float(r.get("duration_s") or 0) / 3600.0
+            if dur_h > buckets[key]:
+                buckets[key] = dur_h
+        weekly_history = []
+        for wk_back in range(12, -1, -1):
+            target = date.today() - timedelta(weeks=wk_back)
+            iso = target.isocalendar()
+            weekly_history.append({
+                "week_offset": -wk_back,
+                "iso_year": iso[0],
+                "iso_week": iso[1],
+                "longest_ride_h": round(buckets.get((iso[0], iso[1]), 0.0), 2),
+            })
+        projection["weekly_history"] = weekly_history
+    except Exception as _e:  # noqa: BLE001
+        _log.debug(f"projection weekly_history skipped: {_e}")
+        projection["weekly_history"] = []
     return projection
 
 

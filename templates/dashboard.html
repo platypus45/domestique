@@ -1195,17 +1195,8 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
   <!-- Event Countdown + eFTP Drift -->
   <div id="event-countdown-card" class="card" style="margin-bottom:12px;display:none;"></div>
 
-  <!-- v4.6.7 IMPL-CAP: capability widget BEGIN -->
-  <div id="cap-projection" class="card" style="margin-bottom:12px;display:none;">
-    <h3 style="margin-bottom:6px;">Event capability projection</h3>
-    <div style="font-size:10px;color:var(--text3);margin-bottom:8px;">
-      Allen-Coggan IF-by-duration table + Pinot &amp; Grappe (2011) RPP climb gate
-    </div>
-    <div id="cap-kpi-tiles" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px;"></div>
-    <div id="cap-chart" style="min-height:240px;"></div>
-    <div id="cap-meta" style="font-size:10px;color:var(--text3);margin-top:6px;"></div>
-  </div>
-  <!-- v4.6.7 IMPL-CAP: capability widget END -->
+  <!-- v4.6.7 IMPL-CAP capability widget MOVED to Plan tab in v1.0.0 — see #plan-content insertion in renderPlanWidgets() and the empty placeholder below for the home page (rendered hidden, kept for any code that still queries #cap-projection by id). -->
+  <div id="cap-projection" style="display:none;"></div>
 
   <!-- Morning Check-In -->
   <div class="card" style="margin-bottom:12px;" id="morning-log-card">
@@ -1910,6 +1901,18 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
       </span>
     </div>
     <div id="plan-calendar"></div>
+
+    <!-- v1.0.0: capability projection lives inside the Plan tab (was on home
+         page in v4.6.7; moved here so it sits next to the actual training
+         plan it describes). Hidden until a goal_type=event_preparation plan
+         is loaded. -->
+    <div id="cap-projection-plan" class="card" style="margin-top:12px;display:none;">
+      <div id="cap-event-block" style="margin-bottom:12px;"></div>
+      <div id="cap-kpi-tiles" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;"></div>
+      <div id="cap-chart" style="min-height:200px;"></div>
+      <div id="cap-meta" style="font-size:10px;color:var(--text3);margin-top:8px;border-top:1px solid var(--border);padding-top:8px;"></div>
+    </div>
+
     <div id="plan-content" style="margin-top:12px;"></div>
   </div>
 </div>
@@ -2314,7 +2317,7 @@ document.querySelectorAll('.tab[data-tab]').forEach(t => {
                        if (typeof loadWorldCards === 'function') loadWorldCards();
                      },
                      picker:()=>{ if (typeof loadRoutePickerRegionChips === 'function') loadRoutePickerRegionChips(); },
-                     plan:()=>{triggerPlanAutoRecalc();loadPlan();loadPlanMetrics();checkPlanGaps();initAvailCalendar();loadCalendar();}, settings:()=>{loadSettings();loadIcuCredentials();}, library:loadWorkouts};
+                     plan:()=>{triggerPlanAutoRecalc();loadPlan();loadPlanMetrics();checkPlanGaps();initAvailCalendar();loadCalendar();loadCapabilityProjection();}, settings:()=>{loadSettings();loadIcuCredentials();}, library:loadWorkouts};
     if (loaders[tab]) loaders[tab]();
   });
 });
@@ -3205,7 +3208,10 @@ async function loadFitnessChart(days=90) {
 
 // ═══ v4.6.7 IMPL-CAP: capability projection widget ═══════════════════════
 async function loadCapabilityProjection() {
-  const card = $('cap-projection');
+  // v1.0.0: target #cap-projection-plan inside the Plan tab. Legacy
+  // #cap-projection hidden div on home page kept for backwards-compat
+  // (any code that still queries it will get an empty hidden node).
+  const card = $('cap-projection-plan') || $('cap-projection');
   if (!card) return;
   try {
     const res = await fetch('/api/event/projection');
@@ -3221,7 +3227,56 @@ async function loadCapabilityProjection() {
 }
 
 function renderCapabilityWidget(p) {
-  // 3 KPI tiles
+  // v1.0.0 redesign: prominent event block + 12-week endurance build-up
+  // history bars + KPI tiles + meta line. Replaces the v4.6.7 dual-axis
+  // weeks-to-event projection (which rendered as flat horizontal lines
+  // when weeks_to_event was 0-1, providing no visible information).
+
+  // ── 1. EVENT INFO BLOCK (the user's "more info on the actual event")
+  const evBlock = $('cap-event-block');
+  if (evBlock) {
+    const eventName = p.event_name && p.event_name.trim() ? esc(p.event_name) : 'Goal event';
+    let eventDateStr = '';
+    let countdownStr = '';
+    if (p.event_date) {
+      try {
+        const d = new Date(p.event_date + 'T12:00:00');
+        eventDateStr = d.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short', year:'numeric'});
+        const today = new Date(); today.setHours(0,0,0,0);
+        const days = Math.round((d - today) / 86400000);
+        countdownStr = days > 1 ? `${days} days to go` : days === 1 ? 'tomorrow' : days === 0 ? 'today' : `${-days} days ago`;
+      } catch(_) {}
+    }
+    const finishStr = (p.predicted_finish_h || 0).toFixed(1) + 'h';
+    const climbReadCol = (p.climb_readiness_pct >= 90) ? 'var(--green)' : (p.climb_readiness_pct >= 70) ? 'var(--yellow)' : 'var(--red)';
+    evBlock.innerHTML = `
+      <div style="display:flex;flex-wrap:wrap;align-items:flex-start;gap:14px;justify-content:space-between;">
+        <div style="flex:1;min-width:260px;">
+          <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:2px;">Goal event</div>
+          <div style="font-size:20px;font-weight:700;color:var(--text);line-height:1.2;">${eventName}</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:4px;">
+            ${eventDateStr ? eventDateStr : 'date not set'}
+            ${countdownStr ? ` · <span style="color:${climbReadCol};font-weight:600;">${countdownStr}</span>` : ''}
+          </div>
+          <div style="font-size:13px;color:var(--text);margin-top:8px;">
+            <span style="font-weight:600;">${p.event_km}</span> km
+            · <span style="font-weight:600;">${p.event_climb_m}</span> m climbing
+            · <span style="font-weight:600;">${(p.event_climb_m / Math.max(p.event_km,1)).toFixed(0)}</span> m/km
+          </div>
+        </div>
+        <div style="background:var(--surface2);border-radius:6px;padding:10px 14px;min-width:200px;">
+          <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Predicted by Allen-Coggan IF model</div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;">
+            <div><div style="font-size:9px;color:var(--text3);">Finish</div><div style="font-size:16px;font-weight:700;">${finishStr}</div></div>
+            <div><div style="font-size:9px;color:var(--text3);">NP</div><div style="font-size:16px;font-weight:700;">${p.predicted_np}W</div></div>
+            <div><div style="font-size:9px;color:var(--text3);">TSS</div><div style="font-size:16px;font-weight:700;">${(p.predicted_tss || 0).toFixed(0)}</div></div>
+          </div>
+          <div style="font-size:10px;color:var(--text3);margin-top:6px;">FTP <b>${p.ftp || '—'}W</b> · ${(p.weight_kg || 0).toFixed(1)}kg · CTL ${(p.current_ctl || 0).toFixed(0)}</div>
+        </div>
+      </div>`;
+  }
+
+  // ── 2. KPI TILES (kept; smaller; same colour logic)
   const enduranceGap = p.gap_endurance_h;
   const enduranceCol = enduranceGap <= 0.5 ? 'var(--green)' : enduranceGap <= 2.0 ? 'var(--yellow)' : 'var(--red)';
   const powerGap = p.gap_power_w_per_kg;
@@ -3232,83 +3287,97 @@ function renderCapabilityWidget(p) {
   const tiles = $('cap-kpi-tiles');
   if (tiles) {
     tiles.innerHTML = `
-      <div style="background:var(--surface2);border-radius:6px;padding:10px;text-align:center;">
+      <div style="background:var(--surface2);border-radius:6px;padding:8px;text-align:center;">
         <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;">Endurance gap</div>
-        <div style="font-size:22px;font-weight:700;color:${enduranceCol};margin-top:3px;">${enduranceGap.toFixed(1)}h</div>
-        <div style="font-size:9px;color:var(--text3);margin-top:3px;">need ${p.longest_required_h.toFixed(1)}h, longest ${p.longest_completed_ride_h !== null ? p.longest_completed_ride_h.toFixed(1)+'h' : '—'}</div>
+        <div style="font-size:18px;font-weight:700;color:${enduranceCol};margin-top:2px;">${enduranceGap.toFixed(1)}h</div>
+        <div style="font-size:9px;color:var(--text3);margin-top:2px;">need ${p.longest_required_h.toFixed(1)}h · longest ${p.longest_completed_ride_h !== null ? p.longest_completed_ride_h.toFixed(1)+'h' : '—'}</div>
       </div>
-      <div style="background:var(--surface2);border-radius:6px;padding:10px;text-align:center;">
-        <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;">Power gap</div>
-        <div style="font-size:22px;font-weight:700;color:${powerCol};margin-top:3px;">${powerGap !== null ? powerGap.toFixed(2) + ' W/kg' : '—'}</div>
-        <div style="font-size:9px;color:var(--text3);margin-top:3px;">need ${p.climb_w_per_kg_required !== null ? p.climb_w_per_kg_required.toFixed(2) : '—'}, you ${p.climb_w_per_kg_current !== null ? p.climb_w_per_kg_current.toFixed(2) : '—'}</div>
+      <div style="background:var(--surface2);border-radius:6px;padding:8px;text-align:center;">
+        <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;">Power gap (climb)</div>
+        <div style="font-size:18px;font-weight:700;color:${powerCol};margin-top:2px;">${powerGap !== null ? powerGap.toFixed(2) + ' W/kg' : '—'}</div>
+        <div style="font-size:9px;color:var(--text3);margin-top:2px;">need ${p.climb_w_per_kg_required !== null ? p.climb_w_per_kg_required.toFixed(2) : '—'} · you ${p.climb_w_per_kg_current !== null ? p.climb_w_per_kg_current.toFixed(2) : '—'}</div>
       </div>
-      <div style="background:var(--surface2);border-radius:6px;padding:10px;text-align:center;">
+      <div style="background:var(--surface2);border-radius:6px;padding:8px;text-align:center;">
         <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;">Climb readiness</div>
-        <div style="font-size:22px;font-weight:700;color:${climbCol};margin-top:3px;">${climbPct}%</div>
-        <div style="font-size:9px;color:var(--text3);margin-top:3px;">${p.weeks_to_event} weeks to go</div>
+        <div style="font-size:18px;font-weight:700;color:${climbCol};margin-top:2px;">${climbPct}%</div>
+        <div style="font-size:9px;color:var(--text3);margin-top:2px;">${p.weeks_to_event} weeks to go</div>
       </div>`;
   }
 
-  // Dual-axis SVG chart: weeks-to-event on X, hours/W-per-kg on Y-left/right.
+  // ── 3. 12-WEEK ENDURANCE BUILD-UP HISTORY (bar chart)
+  // Vertical bars per week showing the longest ride that week, with a
+  // horizontal target line at `longest_required_h`. Empty weeks (no ride
+  // / no FIT imported) draw as muted ghost bars at zero so the gap is
+  // visible. This replaces the v4.6.7 flat-line projection chart.
   const chartEl = $('cap-chart');
   if (!chartEl) return;
-  const weeks = Math.max(1, p.weeks_to_event || 1);
-  const W = 700, H = 240, PAD_L = 40, PAD_R = 50, PAD_T = 16, PAD_B = 32;
-  const cw = W - PAD_L - PAD_R, ch = H - PAD_T - PAD_B;
-  const longestH = p.longest_completed_ride_h || 0;
-  const reqH = p.longest_required_h || 1;
-  const yhMax = Math.max(reqH + 1, longestH + 1, 4);
-  const reqW = p.climb_w_per_kg_required || 0;
-  const curW = p.climb_w_per_kg_current || 0;
-  const ywMax = Math.max(reqW + 0.5, curW + 0.5, 5);
-  const yhPos = v => PAD_T + ch - (v / yhMax) * ch;
-  const ywPos = v => PAD_T + ch - (v / ywMax) * ch;
-  const xPos = wk => PAD_L + (wk / weeks) * cw;
+  const hist = (p.weekly_history || []);
+  if (!hist.length) {
+    chartEl.innerHTML = `<div style="font-size:11px;color:var(--text3);padding:30px;text-align:center;">No ride history available yet — import FIT files or sync intervals.icu to populate the endurance build-up chart.</div>`;
+  } else {
+    const W = 700, H = 200, PAD_L = 40, PAD_R = 16, PAD_T = 28, PAD_B = 36;
+    const cw = W - PAD_L - PAD_R, ch = H - PAD_T - PAD_B;
+    const reqH = p.longest_required_h || 1;
+    const yMax = Math.max(reqH * 1.15, ...hist.map(w => w.longest_ride_h), 1) + 0.5;
+    const yPos = v => PAD_T + ch - (v / yMax) * ch;
+    const barWidth = cw / hist.length * 0.78;
+    const xStep = cw / hist.length;
+    let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;font-family:inherit;">`;
+    // Title strip
+    svg += `<text x="${PAD_L}" y="14" font-size="11" font-weight="600" fill="var(--text)">Longest ride per week (last 12 weeks → today)</text>`;
+    svg += `<text x="${PAD_L+cw}" y="14" text-anchor="end" font-size="10" fill="var(--text3)">target: ${reqH.toFixed(1)}h ${reqH <= 1 ? '(short event)' : ''}</text>`;
+    // Y axis
+    svg += `<line x1="${PAD_L}" y1="${PAD_T}" x2="${PAD_L}" y2="${PAD_T+ch}" stroke="var(--text3)" stroke-width="0.5"/>`;
+    svg += `<line x1="${PAD_L}" y1="${PAD_T+ch}" x2="${PAD_L+cw}" y2="${PAD_T+ch}" stroke="var(--text3)" stroke-width="0.5"/>`;
+    for (let i = 0; i <= 4; i++) {
+      const v = (yMax / 4) * i;
+      const y = yPos(v);
+      svg += `<text x="${PAD_L-4}" y="${y+3}" text-anchor="end" font-size="9" fill="var(--text3)">${v.toFixed(1)}h</text>`;
+      svg += `<line x1="${PAD_L}" y1="${y}" x2="${PAD_L+cw}" y2="${y}" stroke="var(--text3)" stroke-width="0.3" stroke-dasharray="2,2" opacity="0.25"/>`;
+    }
+    // Target dashed line at longest_required_h
+    const yReq = yPos(reqH);
+    svg += `<line x1="${PAD_L}" y1="${yReq}" x2="${PAD_L+cw}" y2="${yReq}" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="5,3"/>`;
+    svg += `<text x="${PAD_L+cw-4}" y="${yReq-4}" text-anchor="end" font-size="9" fill="#dc2626" font-weight="600">required ${reqH.toFixed(1)}h</text>`;
+    // Bars
+    hist.forEach((w, i) => {
+      const x = PAD_L + i * xStep + (xStep - barWidth) / 2;
+      const h = w.longest_ride_h || 0;
+      const y = yPos(h);
+      const barH = (PAD_T + ch) - y;
+      const isToday = w.week_offset === 0;
+      const fill = h <= 0 ? 'var(--surface2)' : (h >= reqH ? '#22c55e' : '#3b82f6');
+      const opacity = h <= 0 ? 0.4 : (isToday ? 1.0 : 0.85);
+      const minBarH = h <= 0 ? 4 : Math.max(barH, 2);
+      const yDraw = h <= 0 ? (PAD_T + ch - 4) : y;
+      svg += `<rect x="${x}" y="${yDraw}" width="${barWidth}" height="${minBarH}" fill="${fill}" opacity="${opacity}" rx="1.5"><title>${w.week_offset === 0 ? 'this week' : (-w.week_offset) + 'w ago'}: ${h.toFixed(1)}h</title></rect>`;
+      // Value label above the bar (only for non-zero)
+      if (h > 0) {
+        svg += `<text x="${x + barWidth/2}" y="${y - 4}" text-anchor="middle" font-size="9" fill="var(--text2)">${h.toFixed(1)}</text>`;
+      }
+    });
+    // X axis labels (every 2 weeks)
+    hist.forEach((w, i) => {
+      if (i % 2 !== 0 && w.week_offset !== 0) return;
+      const x = PAD_L + i * xStep + xStep / 2;
+      const lbl = w.week_offset === 0 ? 'now' : `${w.week_offset}w`;
+      svg += `<text x="${x}" y="${PAD_T+ch+14}" text-anchor="middle" font-size="9" fill="${w.week_offset === 0 ? 'var(--text)' : 'var(--text3)'}" font-weight="${w.week_offset === 0 ? 600 : 400}">${lbl}</text>`;
+    });
+    // Legend
+    svg += `<g font-size="9" fill="var(--text2)" transform="translate(${PAD_L},${PAD_T+ch+28})">`;
+    svg += `<rect x="0" y="0" width="10" height="8" fill="#3b82f6" opacity="0.85"/><text x="14" y="7">below target</text>`;
+    svg += `<rect x="100" y="0" width="10" height="8" fill="#22c55e"/><text x="114" y="7">at/above target</text>`;
+    svg += `<rect x="220" y="0" width="10" height="8" fill="var(--surface2)" opacity="0.4"/><text x="234" y="7">no ride that week</text>`;
+    svg += `<line x1="360" y1="4" x2="380" y2="4" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="5,3"/><text x="384" y="7">target</text>`;
+    svg += `</g>`;
+    svg += `</svg>`;
+    chartEl.innerHTML = svg;
+  }
 
-  const yLongest = yhPos(longestH);
-  const yReq = yhPos(reqH);
-  const yCurW = ywPos(curW);
-  const yReqW = ywPos(reqW);
-
-  let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;font-family:inherit;">`;
-  svg += `<line x1="${PAD_L}" y1="${PAD_T}" x2="${PAD_L}" y2="${PAD_T+ch}" stroke="var(--text3)" stroke-width="0.5"/>`;
-  svg += `<line x1="${PAD_L}" y1="${PAD_T+ch}" x2="${PAD_L+cw}" y2="${PAD_T+ch}" stroke="var(--text3)" stroke-width="0.5"/>`;
-  svg += `<line x1="${PAD_L+cw}" y1="${PAD_T}" x2="${PAD_L+cw}" y2="${PAD_T+ch}" stroke="var(--text3)" stroke-width="0.5"/>`;
-  for (let i = 0; i <= 4; i++) {
-    const v = (yhMax / 4) * i;
-    const y = yhPos(v);
-    svg += `<text x="${PAD_L-4}" y="${y+3}" text-anchor="end" font-size="9" fill="var(--text3)">${v.toFixed(1)}h</text>`;
-    svg += `<line x1="${PAD_L}" y1="${y}" x2="${PAD_L+cw}" y2="${y}" stroke="var(--text3)" stroke-width="0.3" stroke-dasharray="2,2" opacity="0.3"/>`;
-  }
-  for (let i = 0; i <= 4; i++) {
-    const v = (ywMax / 4) * i;
-    const y = ywPos(v);
-    svg += `<text x="${PAD_L+cw+4}" y="${y+3}" text-anchor="start" font-size="9" fill="var(--text3)">${v.toFixed(1)}</text>`;
-  }
-  const xStep = Math.max(1, Math.ceil(weeks / 6));
-  for (let wk = 0; wk <= weeks; wk += xStep) {
-    const x = xPos(wk);
-    svg += `<text x="${x}" y="${PAD_T+ch+14}" text-anchor="middle" font-size="9" fill="var(--text3)">${wk}w</text>`;
-  }
-  svg += `<line x1="${PAD_L}" y1="${yLongest}" x2="${PAD_L+cw}" y2="${yLongest}" stroke="#3b82f6" stroke-width="2"/>`;
-  svg += `<line x1="${PAD_L}" y1="${yReq}" x2="${PAD_L+cw}" y2="${yReq}" stroke="#dc2626" stroke-width="2" stroke-dasharray="5,3"/>`;
-  svg += `<line x1="${PAD_L}" y1="${yCurW}" x2="${PAD_L+cw}" y2="${yCurW}" stroke="#f97316" stroke-width="2"/>`;
-  if (reqW > 0) {
-    svg += `<line x1="${PAD_L}" y1="${yReqW}" x2="${PAD_L+cw}" y2="${yReqW}" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="5,3" opacity="0.5"/>`;
-  }
-  svg += `<g font-size="9" fill="var(--text2)">`;
-  svg += `<rect x="${PAD_L+8}" y="${PAD_T+4}" width="10" height="2" fill="#3b82f6"/><text x="${PAD_L+22}" y="${PAD_T+8}">longest ride (h)</text>`;
-  svg += `<rect x="${PAD_L+130}" y="${PAD_T+4}" width="10" height="2" fill="#dc2626"/><text x="${PAD_L+144}" y="${PAD_T+8}">required (h, dashed)</text>`;
-  svg += `<rect x="${PAD_L+285}" y="${PAD_T+4}" width="10" height="2" fill="#f97316"/><text x="${PAD_L+299}" y="${PAD_T+8}">current (W/kg)</text>`;
-  svg += `</g>`;
-  svg += `<text x="${PAD_L-30}" y="${PAD_T+8}" text-anchor="start" font-size="9" fill="var(--text3)">h</text>`;
-  svg += `<text x="${PAD_L+cw+30}" y="${PAD_T+8}" text-anchor="start" font-size="9" fill="var(--text3)">W/kg</text>`;
-  svg += `</svg>`;
-  chartEl.innerHTML = svg;
-
+  // ── 4. META FOOTER (citations only — event details now in the block above)
   const meta = $('cap-meta');
   if (meta) {
-    meta.innerHTML = `Predicted finish: <b>${p.predicted_finish_h.toFixed(1)}h</b> · NP <b>${p.predicted_np}W</b> · TSS <b>${p.predicted_tss.toFixed(0)}</b> · ${p.event_km}km / ${p.event_climb_m}m climb · sources: ${(p.model_citations || []).join(', ')}`;
+    meta.innerHTML = `Model: ${(p.model_citations || []).join(' · ')}. Bars show your weekly longest ride; green when you've reached the event-distance target. Endurance gap closes naturally as your long-ride trend climbs.`;
   }
 }
 

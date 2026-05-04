@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Tempo 3x2min (60min)</name>
+    <name>Sweet Spot 3x2min (60min)</name>
     <description>Warmup: 10min from 25% to 75% FTP | Intervals: 3 x (2min @ 94% / 3min @ 86%)</description>
     <sportType>bike</sportType>
     <workout>

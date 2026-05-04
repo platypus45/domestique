@@ -36331,5 +36331,183 @@
         "new": "anaerobic"
       }
     ]
+  },
+  "v1_0_library_name_audit": {
+    "timestamp": "2026-05-04T12:36:37.635168",
+    "rule": "classify by computed dominant zone vs current <name>; rewrite name+description when name is fully wrong or misleading or content_class disagrees by >=2 classes",
+    "totals": {
+      "scanned": 3054,
+      "A": 17,
+      "B": 0,
+      "C": 1,
+      "D": 3031,
+      "applied": 18,
+      "overflow": 0,
+      "errors": 0
+    },
+    "files": [
+      {
+        "file": "intervals_2x1min_75pct_54min.zwo",
+        "old_name": "Tempo 4x30s (54min)",
+        "new_name": "Sweet Spot 4x30s (54min)",
+        "old_class": "tempo",
+        "new_class": "tempo",
+        "category": "A",
+        "reason": "microcycles=11"
+      },
+      {
+        "file": "sweet_spot_mixed_150min.zwo",
+        "old_name": "Sweet Spot (150min)",
+        "new_name": "Endurance + 30min sweet spot finisher (150min)",
+        "old_class": "sweet_spot",
+        "new_class": "sweet_spot",
+        "category": "C",
+        "reason": "z2=80.0% + ss=20.0%"
+      },
+      {
+        "file": "tempo_10x1min_58min.zwo",
+        "old_name": "Tempo 10x2min (58min)",
+        "new_name": "Sweet Spot 10x2min (58min)",
+        "old_class": "tempo",
+        "new_class": "tempo",
+        "category": "A",
+        "reason": "ss=25.9%"
+      },
+      {
+        "file": "tempo_10x1min_58min_v2.zwo",
+        "old_name": "Tempo 10x1min (58min)",
+        "new_name": "Sweet Spot 10x1min (58min)",
+        "old_class": "tempo",
+        "new_class": "tempo",
+        "category": "A",
+        "reason": "z3=34.5%"
+      },
+      {
+        "file": "tempo_2x12min_63min.zwo",
+        "old_name": "Tempo 2x12min (63min)",
+        "new_name": "Sweet Spot 2x12min (63min)",
+        "old_class": "tempo",
+        "new_class": "tempo",
+        "category": "A",
+        "reason": "ss=38.1%"
+      },
+      {
+        "file": "tempo_2x3min_65min.zwo",
+        "old_name": "Tempo 8x3min (65min)",
+        "new_name": "Sweet Spot 8x3min (65min)",
+        "old_class": "tempo",
+        "new_class": "tempo",
+        "category": "A",
+        "reason": "ss=36.9%"
+      },
+      {
+        "file": "tempo_2x5min_55min_v2.zwo",
+        "old_name": "Tempo 2x5min (55min)",
+        "new_name": "Sweet Spot 2x5min (55min)",
+        "old_class": "tempo",
+        "new_class": "tempo",
+        "category": "A",
+        "reason": "ss=38.4%"
+      },
+      {
+        "file": "tempo_2x8min_60min.zwo",
+        "old_name": "Tempo 2x8min (60min)",
+        "new_name": "Sweet Spot 2x8min (60min)",
+        "old_class": "tempo",
+        "new_class": "tempo",
+        "category": "A",
+        "reason": "ss=33.3%"
+      },
+      {
+        "file": "tempo_3x4min_67min.zwo",
+        "old_name": "Tempo 3x4min (67min)",
+        "new_name": "Sweet Spot 3x4min (67min)",
+        "old_class": "tempo",
+        "new_class": "tempo",
+        "category": "A",
+        "reason": "ss=24.4%"
+      },
+      {
+        "file": "tempo_4x5min_60min.zwo",
+        "old_name": "Tempo 4x5min (60min)",
+        "new_name": "Sweet Spot 4x5min (60min)",
+        "old_class": "tempo",
+        "new_class": "tempo",
+        "category": "A",
+        "reason": "ss=33.3%"
+      },
+      {
+        "file": "tempo_5x1min_58min.zwo",
+        "old_name": "Tempo 5x1min (58min)",
+        "new_name": "Sweet Spot 5x1min (58min)",
+        "old_class": "tempo",
+        "new_class": "tempo",
+        "category": "A",
+        "reason": "ss=39.7%"
+      },
+      {
+        "file": "tempo_progression_2x1min_56min.zwo",
+        "old_name": "Tempo 2x1min (56min)",
+        "new_name": "Sweet Spot 2x1min (56min)",
+        "old_class": "tempo",
+        "new_class": "tempo",
+        "category": "A",
+        "reason": "z3=57.1%"
+      },
+      {
+        "file": "tempo_progression_2x1min_58min.zwo",
+        "old_name": "Tempo 2x1min (58min)",
+        "new_name": "Sweet Spot 2x1min (58min)",
+        "old_class": "tempo",
+        "new_class": "tempo",
+        "category": "A",
+        "reason": "z3=58.6%"
+      },
+      {
+        "file": "tempo_progression_2x1min_58min_renamed_v46_1.zwo",
+        "old_name": "Tempo 2x1min (58min)",
+        "new_name": "Sweet Spot 2x1min (58min)",
+        "old_class": "tempo",
+        "new_class": "tempo",
+        "category": "A",
+        "reason": "z3=55.2%"
+      },
+      {
+        "file": "tempo_progression_2x1min_60min.zwo",
+        "old_name": "Tempo 2x1min (60min)",
+        "new_name": "Sweet Spot 2x1min (60min)",
+        "old_class": "tempo",
+        "new_class": "tempo",
+        "category": "A",
+        "reason": "z3=56.7%"
+      },
+      {
+        "file": "tempo_progression_2x1min_62min.zwo",
+        "old_name": "Tempo 2x1min (62min)",
+        "new_name": "Sweet Spot 2x1min (62min)",
+        "old_class": "tempo",
+        "new_class": "tempo",
+        "category": "A",
+        "reason": "ss=17.5%"
+      },
+      {
+        "file": "tempo_progression_3x2min_60min.zwo",
+        "old_name": "Tempo 3x2min (60min)",
+        "new_name": "Sweet Spot 3x2min (60min)",
+        "old_class": "tempo",
+        "new_class": "tempo",
+        "category": "A",
+        "reason": "ss=29.3%"
+      },
+      {
+        "file": "tempo_progression_3x4min_67min.zwo",
+        "old_name": "Tempo 3x4min (67min)",
+        "new_name": "Sweet Spot 3x4min (67min)",
+        "old_class": "tempo",
+        "new_class": "tempo",
+        "category": "A",
+        "reason": "ss=21.4%"
+      }
+    ]
   }
 }

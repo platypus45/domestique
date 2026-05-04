@@ -6,23 +6,13 @@ Domestique generates adaptive weekly plans, ships a library of **3,054 ZWO worko
 
 ![Python](https://img.shields.io/badge/Python-3.9+-blue) ![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green) ![Workouts](https://img.shields.io/badge/Workouts-3054-orange) ![Routes](https://img.shields.io/badge/Routes-622-purple) ![Version](https://img.shields.io/badge/Version-v1.0.0-brightgreen)
 
-> **v4.6.7 — Capability projection + finished-programme summary.** New `GET /api/event/projection` predicts your finish time + identifies endurance / power / climb-readiness gaps (Allen-Coggan IF-by-duration, Pinot & Grappe 2011 RPP). New `GET /api/programme/summary` end-of-plan recap with 12 literature-grounded metrics (FTP/eFTP/VO2max Δ per Stöggl 2014, polarization per Treff 2019, monotony per Foster 1998, etc.) — exportable as PNG (Pillow) or PDF (client-side window.print, zero new deps). Plus 4 surgical UX fixes (cooldown ramp now correctly downslopes, yellow-arrow sessions clickable, calendar auto-scrolls to today, event-day green border marker).
+> **v1.0.0 — first open-source release.** Adaptive periodised training plan, 3,054-workout library, post-ride viewer. Hardware-agnostic — ride in any app, import the FIT back. Closed feedback loops (DFA α1, aerobic decoupling, Foster monotony, eFTP drift, local CTL EWMA) actually drive next-day planning, not display-only. Seven science-grounded injury-prevention guardrails (G1–G7) close the actual-vs-planned loop so a rider who burns themselves on an unplanned hard ride doesn't get vo2max intervals the next morning. Capability projection (Allen-Coggan IF + Pinot-Grappe RPP) predicts your event finish; finished-programme summary delivers a 12-metric end-of-plan recap exportable as PNG or PDF.
 >
-> **v4.6.6 — Injury-prevention feedback loops.** Pre-v4.6.6 the planner *detected* TSS / intensity / soreness signals but none of them mutated the persisted plan — a rider could destroy themselves with unplanned hard work and the app would prescribe vo2max intervals the next morning anyway. v4.6.6 wires **seven science-grounded guardrails** that close the actual-vs-planned loop. Each cites a specific paper.
+> Two deep-dive sections in this README cover the math:
+> - **[How the planner thinks (logic + science)](#how-the-planner-thinks-logic--science)** — every threshold, every citation, every guardrail.
+> - **[Auto-matching your rides to planned sessions](#auto-matching-your-rides-to-planned-sessions)** — what "done" / "ambiguous" / "no-match" mean and how the rematch fires.
 >
-> | # | Gate | Trigger | Action | Citation |
-> |---|------|---------|--------|----------|
-> | G1 | Yesterday-was-hard floor | yesterday actual / planned > 1.5 | force today → Z2 | Foster 1998 |
-> | G2 | 48h Z5+ ceiling | rolling 48h Z5+ ≥ 25 min | force today → Z2 (cycling now included) | Hulin 2014 |
-> | G3 | Polarization breach | week z4plus > target+8 OR z1z2 < target-10 | drop next 1–2 hard sessions one tier | Seiler/Stöggl/Treff |
-> | G4 | ACWR weekly scaling | last week actual/planned > 1.5 | next week tss_target ×= 0.85, hit−=1 | Gabbett 2016 |
-> | G5 | Soreness peripheral cap | daily_log.soreness ≥ 6 | force today → recovery (bypasses HRV) | Hooper 1995 + Cheung 2003 |
-> | G6 | Hooper composite gate | sum(sleep+fatigue+stress+soreness) ≥ 18 | force today → Z2 | Hooper & Mackinnon 1995 |
-> | G7 | 3-day mean RPE drops HIT | mean ride.feel/perceived_exertion ≥ 7 | drop today one tier | Foster 1998 |
->
-> **Earlier highlights still apply:** v4.6.5 widget redesign (planned vs actual side-by-side), v4.6.4 chart shows actual ZWO segments, v4.6.3 Rønnestad detection (17 microinterval files now land in build/peak), v4.6.2 100% slot uniqueness in 24w plan, v4.1.0 closed feedback loops (DFA α1, aerobic decoupling, Foster monotony, eFTP drift). FTP test detection on FIT import works end-to-end. Built on v4.0.0-alpha which removed the trainer hardware subsystem — ride in your chosen app, import FIT after.
->
-> See [CHANGELOG.md](CHANGELOG.md) for the full release history. Latest macOS DMG attached to the [GitHub release](https://github.com/platypus45/domestique/releases/latest).
+> See [CHANGELOG.md](CHANGELOG.md) for the full pre-1.0 development log. Latest macOS DMG attached to the [GitHub release](https://github.com/platypus45/domestique/releases/latest). Windows .exe is the next deliverable — see [docs/windows_build.md](docs/windows_build.md).
 
 ---
 
@@ -170,9 +160,174 @@ Connect in Settings > Intervals.icu with your Athlete ID and API key from [inter
 
 ---
 
-## Training Science
+## How the planner thinks (logic + science)
 
-Every algorithm is grounded in peer-reviewed research:
+Every threshold below is in the code with an inline citation. This section explains *why* each value, not just *that* it exists.
+
+### 0. The training-load model — TSS / IF / NP / CTL / ATL / TSB
+
+Domestique uses the canonical Coggan / Allen / Banister fitness-fatigue framework end-to-end. Every number on the dashboard rolls up from these primitives:
+
+**Per-ride scalars** (computed on FIT import OR pulled from intervals.icu):
+- **NP** (Normalised Power) — 30-second rolling average of power, raised to the 4th, averaged, 4th-root taken. Penalises variable efforts vs steady ones (Coggan 2003). Code: `analytics.py compute_normalised_power()`.
+- **IF** (Intensity Factor) = `NP / FTP`. A 1.0 IF ride = sustained at threshold; recovery rides ~0.5–0.6; race day ~0.85+. Allen & Coggan TR&P.
+- **TSS** (Training Stress Score) = `(duration_seconds × NP × IF) / (FTP × 3600) × 100`. A 1-hour all-out at FTP = 100 TSS by definition. Foster's session-RPE × duration analogue. Allen & Coggan TR&P 3rd ed.
+- **kJ work** = avg_power × duration. Used for nutrition planning (carb/h target).
+
+**Multi-day fitness/fatigue** (Banister 1975 impulse-response, Coggan refinement):
+- **CTL** (Chronic Training Load, "Fitness") = exponentially-weighted moving average of daily TSS with τ=42 days. `fitness_t = fitness_{t−1} + (TSS_t − fitness_{t−1}) / τ`.
+- **ATL** (Acute Training Load, "Fatigue") = same EWMA with τ=7 days.
+- **TSB** (Training Stress Balance, "Form") = CTL − ATL. Positive = freshening up; deeply negative = overreached.
+
+**Where each comes from:**
+- ICU-synced rider: `training.get_today_metrics()` pulls all three from intervals.icu's wellness API.
+- ICU-unreachable: `ride_storage.compute_local_ctl()` rebuilds CTL from your local FIT archive (42-day EWMA over `summary.tss`). Same algorithm, different source.
+- Per-ride zone-time, polarisation, and decoupling come from `analytics.py compute_polarization_block()` and the FIT zone-counting in `ride_storage._summarise_ride()`.
+
+**TSB-driven daily caps:**
+- **TSB < −10**: dashboard shows "Recover" badge.
+- **TSB < −25**: `reforecast()` drops the next hard session one tier (`vo2max → threshold → tempo`).
+- **TSB < −30**: deeply overreached. `daily_adapt_plan()` rescales remaining-week TSS to 0.6× as a forced de-load. Coggan/Allen overload threshold.
+
+### 1. Periodisation engine
+
+**Phases.** Standard Base → Build1 → Build2 → Peak → Taper, sized from `target_ctl` and `target_date` (Coggan & Allen, *Training and Racing with a Power Meter* 3rd ed.).
+
+**Weekly TSS budget** per phase (`training_planner.py PHASE_TARGETS`):
+
+| Phase | Z1+Z2 hours | Z3+Z4 min | Z5+ min | Weekly TSS |
+|---|---|---|---|---|
+| Base | 9.5 | 45 | 5 | 425 |
+| Build1 / Build2 | 7.5 | 120 | 45 | 600 |
+| Peak | 6.0 | 90 | 80 | 650 |
+| Taper | 4.0 | 30 | 22 | 275 |
+
+Synthesised from Seiler 2010, Mujika 2010, Rønnestad 2014, and Coggan/Allen for a trained age-grouper at ~10h/week. The intensity-distribution targets (`PHASE_POLARIZED_TARGETS`) come from the Seiler 2006 / Stöggl 2014 polarised model.
+
+**CTL ramp safety**. The planner refuses to ramp CTL faster than `ramp_rate(current_ctl)` (steeper at low CTL, plateaus at high CTL). Override gate: TSB < −30 deep into a build phase pulls back the next week's `tss_target × 0.85` (Coggan/Allen overload threshold).
+
+### 2. The seven injury-prevention guardrails (G1–G7)
+
+Pre-v4.6.6 the planner detected fatigue / overload / soreness signals but never mutated the persisted plan. v4.6.6 wired the missing causation:
+
+| # | Gate | Trigger condition | Action | Citation |
+|---|------|---------|--------|----------|
+| **G1** | Yesterday-was-hard floor | `yesterday_actual_tss / max(yesterday_planned, phase_daily_avg) > 1.5` | force today → Z2 | **Foster 1998** *Med Sci Sports Exerc* 30:1164 — session-load spike |
+| **G2** | 48h Z5+ ceiling | rolling 48h `Σ z5–z7 ≥ 25 min` (cycling included) | force today → Z2 | **Hulin 2014** *Br J Sports Med* 48:708 — cumulative HI exposure |
+| **G3** | Polarisation breach | current week `actual.z4plus_pct > target+8` OR `actual.z1z2_pct < target−10` | drop next 1–2 hard sessions one tier (vo2max → threshold → tempo) | **Seiler 2010 / Stöggl 2014 / Treff 2019** |
+| **G4** | ACWR weekly scaling | last completed week `actual_tss / planned_tss > 1.5` | `next_week.tss_target ×= 0.85`, `hit_per_week −= 1` | **Gabbett 2016** *Br J Sports Med* 50:273 — sweet spot 0.8–1.3, >1.5 doubles injury risk |
+| **G5** | Soreness peripheral cap | `daily_log.soreness ≥ 6` (1–7 scale) | force today → recovery, *regardless of HRV/TSB composite* | **Hooper & Mackinnon 1995** + **Cheung et al. 2003** — peripheral fatigue is independent of central HRV |
+| **G6** | Hooper composite gate | `sleep + fatigue + stress + soreness ≥ 18` | force today → Z2 cap | **Hooper & Mackinnon 1995** — composite ≥18 = significant accumulated fatigue |
+| **G7** | 3-day mean RPE drops HIT | `mean(ride.feel ∪ ride.perceived_exertion, last 3d) ≥ 7` AND today is HIT | drop today one tier | **Foster 1998** session-RPE |
+
+**Priority chain** inside `adjust_today_session()`: `G5 > G6 > G2 > readiness composite > G1 > G7`. Earlier-firing gates short-circuit later ones. Each fired gate sets `s.adapted = True` and writes the citation into `s.description`.
+
+### 3. The morning leg-check (Hooper composite)
+
+The "Morning leg-check" prompt on the home page asks four 5-button questions:
+
+1. **Sleep quality** — 😀 Great → 😫 Terrible
+2. **Energy / fatigue** — 😀 Energised → 😫 Drained
+3. **Stress** — 😀 Calm → 😫 Maxed
+4. **Soreness** — 😀 Fresh → 😫 Very sore
+
+**Why all four?** Hooper & Mackinnon 1995 (*J Sci Med Sport*) showed the *composite* predicts overtraining better than any single component. A rider can have crushed legs but score "fine" on subjective fatigue; a sleep-deprived rider can have fresh legs. The 4-field sum (range 4–28; threshold ≥18) catches what no single axis sees. **Saw et al. 2016** (*Br J Sports Med*) is the modern reinforcement: subjective wellness questionnaires correlate **better** with training response than any wearable HRV / RHR / sleep-score metric — self-report is the gold standard, not the fallback.
+
+**How it wires back:**
+- **20% weight** in `readiness_score` (combined with HRV 40%, TSB 20%, sleep 10%, RHR 10%).
+- **G5 hard gate** — `soreness ≥ 6` forces recovery, bypassing the composite. Peripheral fatigue is real even when central HRV looks fine.
+- **G6 hard gate** — `sleep + fatigue + stress + soreness ≥ 18` (Hooper threshold) forces Z2.
+
+**Friction:** the form pre-defaults each field to "3 — Normal" so a user who only taps soreness still posts a sane composite. ~6 seconds of total tap time per morning. The 4 fields aren't optional — they're the science.
+
+### 4. Closed feedback loops (the v4.1.0 originals)
+
+Most "smart" planners compute these signals and then do nothing with them. Domestique actually mutates the next-day plan:
+
+| Signal | Threshold | Action | Citation |
+|---|---|---|---|
+| **DFA α1** (autonomic balance) | mean over last 3 rides < 0.5 | tomorrow's threshold → Z2 (revert button) | Rogers et al. 2021 (PMID 33519504); Peng 1995 (DFA algorithm) |
+| **Aerobic decoupling** (HR drift vs power) | > 5% over the last ride | next-day "Z2 recommended" advisory banner | Coyle & Gonzalez-Alonso 2001 (cardiac drift mechanism); TrainingPeaks canonical EF formula |
+| **Foster monotony** (weekly load SD-vs-mean) | > 2.0 over 14 days | next week `tss_target × 0.85` and `hit_per_week − 1` | Foster 1998 *Med Sci Sports Exerc* (PMID 9662690) |
+| **eFTP drift** (Intervals.icu) | > 3% above set FTP for 7+ consecutive days | FTP auto-applied with 48h revert toast | Allen & Coggan eFTP definition |
+| **Local CTL fallback** | ICU unreachable | 42-day EWMA over your own imported FIT rides (no hardcoded baseline) | Coggan/Allen τ=42 |
+
+### 5. FTP detection from a regular FIT
+
+Ride a Coggan 20-min test or a Ramp test in any app, import the FIT:
+- Detection by power-profile shape (no manual marking).
+- Suggested FTP: `0.95 × avg 20-min power` (Coggan, Allen & Coggan 2019) or `0.75 × best 1-min` (Ramp, Ric Stern / British Cycling).
+- Modal: Update / Keep / Custom. Every change logged to `ftp_test_history` with provenance (`tested_coggan_20min` / `tested_ramp` / `eftp_auto` / `manual`) plus a sparkline chart in Settings.
+- Ramp auto-halt detection: cadence < 50 + power < 85% target for 3s.
+
+### 6. Capability projection (event preparation)
+
+When you set up a `goal_type=event_preparation` plan with `event_km` and `event_climb_m`, Domestique answers "if I follow this plan can I do it?" via a 4-step model:
+
+1. **Flat-equivalent km** = `event_km + (event_climb_m / 100 × 1.5)` — climbing-distance equivalence heuristic.
+2. **Projected average speed** via Pinot & Grappe 2011 (*Int J Sports Med* 32:839-844) RPP table by athlete W/kg + duration tier.
+3. **Allen-Coggan IF lookup by duration**: 60min→0.95, 120→0.85, 180→0.80, 300→0.75, 480→0.70, 720→0.62 (linear interp).
+4. `predicted_np = IF × FTP`, `predicted_tss = duration_h × IF² × 100`. Climb-power gate: required W/kg for the steepest 30-min climb vs your current sustained 30-min.
+
+The dashboard renders three KPI tiles (Endurance Gap / Power Gap / Climb Readiness) plus a dual-axis chart of weeks-to-event vs your longest completed ride and your current sustained 30-min W/kg. `Goal.longest_ride_h_90d` auto-populates from your last 90 days of rides.
+
+### 7. End-to-end planner pipeline
+
+What actually happens when you set a goal and click "Generate plan":
+
+```
+Goal(goal_type, target_date, target_ctl, hours_per_week,
+     event_km, event_climb_m, longest_ride_h_90d, last_ftp_test_date,
+     available_days, daily_max_hours)
+   │
+   ▼
+generate_phases(goal, current_ctl)
+   │  applies CTL ramp safety (max +5/week from base CTL)
+   │  splits into BASE → BUILD1 → BUILD2 → PEAK → TAPER per goal type
+   │  each Phase carries weekly_tss_target, hit_count_min/max,
+   │     polarisation target, rest_days_per_week
+   ▼
+for each PlannedWeek in plan:
+  ├── pick WORKOUT_MIX_PREFERENCE row for (phase, week_in_phase)
+  │      e.g. base W3+ → {endurance: 0.20, tempo: 0.15, sweet_spot: 0.25,
+  │                       threshold: 0.20, vo2max: 0.10, vo2_short: 0.05,
+  │                       recovery: 0.05}
+  │
+  ├── allocate session slots across available_days
+  │      respecting max_weekday_hours / max_weekend_hours,
+  │      placing the long ride on weekend, hard work on Tue/Thu
+  │
+  ├── sample_week_workouts() → for each slot, draw a ZWO file from the
+  │      content-class pool with weight =
+  │         mix_pref × variety_score × novelty_boost
+  │      where variety_score rewards segment count + zone entropy +
+  │      Rønnestad/microinterval/over-under/sprint patterns,
+  │      and novelty_boost is 5× for never-picked, 0.05× for picked-once,
+  │      effectively forcing 1 pick per file across the plan.
+  │
+  ├── _enforce_build2_peak_hard_floor() → guarantee ≥1 anaerobic +
+  │      ≥1 neuromuscular + ≥3 vo2_short per build2/peak phase
+  │      (post-pass swap if the random sampler missed one)
+  │
+  ├── _enforce_ronnestad_floor() → guarantee ≥1 Rønnestad-tagged file
+  │      per build1/build2/peak (Rønnestad et al. 2015)
+  │
+  └── _check_eftp_drift() / _check_dfa_alpha1_low() / _check_decoupling()
+         (these annotate the week with auto-adjustment hints; consumed
+          on first /api/today-session call of the day)
+```
+
+**Daily adaptation** runs every time the dashboard loads:
+1. `compute_today_metrics()` — pulls CTL/ATL/TSB + last-3-day decoupling + last-3-day DFA α1 + today's daily_log Hooper composite.
+2. `compute_readiness()` — produces a 0-100 score weighted HRV 40% / TSB 20% / Hooper 20% / sleep 10% / RHR 10%.
+3. `adjust_today_session(planned, readiness, recent_rides)` — runs the G1–G7 priority chain. First gate that fires sets the description, marks `s.adapted=True`, and returns. If no gate fires, the planned session ships unchanged.
+
+**Re-forecast and regen:**
+- `reforecast()` — runs on demand from the UI button. TSB-based hard-session intensity downshift + ACWR weekly TSS scaling + polarisation breach drop.
+- `regenerate_from_today()` — full rebuild starting from today's CTL. Triggers when `detect_plan_gaps()` flags ≥2 consecutive missed weeks OR `expected_ctl − current_ctl > 15`.
+- `auto_apply_eftp()` — fires when ICU eFTP > set FTP by ≥3% for 7+ consecutive days; bumps FTP with a 48h revert toast.
+
+### 8. The pre-1.0 science table (carried forward)
 
 | Feature | Method | Reference |
 |---------|--------|-----------|
@@ -182,12 +337,57 @@ Every algorithm is grounded in peer-reviewed research:
 | CTL / ATL / TSB | 42-day / 7-day exponentially-weighted TSS | Coggan & Allen |
 | Local CTL fallback | 42-day EWMA over imported FIT rides | n/a — standard impedance-matching |
 | Daily Adaptation | TSS pacer with cross-sport load, DFA α1 cap | Kiviniemi 2007, Javaloyes 2019 |
-| Periodization | Base / Build / Peak / Taper phases | Coggan & Allen, Friel |
+| Periodisation | Base / Build / Peak / Taper phases | Coggan & Allen, Friel |
 | FTP — Coggan 20-min | 0.95 × avg 20-min power | Allen & Coggan 2019 |
 | FTP — Ramp | 0.75 × best 1-min power | Ric Stern (British Cycling) |
 | W'bal | Skiba 2015 differential + GoldenCheetah tau | Skiba et al. 2015 |
 | Cardiac Drift | HR-driven SV decline mechanism | Coyle & Gonzalez-Alonso 2001 |
 | Nutrition | Duration-gated carb targets | Jeukendrup 2014, ACSM 2016 |
+| Polarisation Index (Treff PI) | log10((Z1+Z2)/Z3 × Z5+/Z3) | Treff et al. 2019 *Front Physiol* |
+| Rønnestad microintervals | 30/15 + 40/20 detection by cycle period | Rønnestad et al. 2015 *Scand J Med Sci Sports* 25:143 |
+| ACWR (acute:chronic workload ratio) | 7d:28d sweet spot 0.8–1.3 | Gabbett 2016 *Br J Sports Med* 50:273 |
+| 48h cumulative Z5+ guard | Z5+Z6+Z7 ≥ 25min | Hulin et al. 2014 *Br J Sports Med* 48:708 |
+| Hooper composite | Σ(sleep, fatigue, stress, soreness) ≥ 18 | Hooper & Mackinnon 1995 *J Sci Med Sport* |
+| Subjective wellness > wearables | self-report responsiveness | Saw et al. 2016 *Br J Sports Med* |
+| DOMS protective downshift | peripheral fatigue 24–72h post-eccentric | Cheung et al. 2003 *Sports Med* 33:145 |
+
+---
+
+## Auto-matching your rides to planned sessions
+
+When you finish a workout — outside, indoors, in any app — Domestique automatically links the activity to its planned session. You don't have to mark anything done.
+
+### How the auto-match fires
+
+1. **You ride.** App-of-your-choice pushes the FIT to Intervals.icu (or you import the FIT directly into Domestique).
+2. **Domestique syncs**: `_maybe_lazy_icu_sync()` runs on first `/api/calendar` load after boot, and on every `/api/rides/sync` call. Throttled to 1h normally, **forced** if today's date isn't represented in the local cache and last sync was >30min ago.
+3. **`classify_rematch(session, activity)`** scores the pair on three axes:
+
+| Axis | Match if | Source |
+|---|---|---|
+| **TSS** | actual within tolerance of planned | activity.tss vs session.tss_estimate |
+| **Duration** | actual within tolerance | activity.duration_min vs session.duration_min |
+| **IF band** | planned session_type's expected IF zone matches actual ride's IF band | `_activity_if_band(activity)` vs `SESSION_TYPE_TO_BAND[session.session_type]` |
+
+4. **Outcomes**:
+   - **3/3 axes** → `status: done` (auto-marked complete, green tick on the calendar cell)
+   - **2/3 axes** → `status: ambiguous` (auto-classifier saw it but is uncertain — surfaces in the rematch panel)
+   - **<2 axes with a same-day activity** → `status: no_match` (logged as separate ride; planned session stays `pending`)
+   - **No same-day activity AND past date** → `status: missed`
+
+5. The planner `reforecast()` and the daily-adapt path read `completion_matches` to know whether the prescription was actually delivered. If it wasn't (status missed) the next week's TSS gets restored from rolling deficit.
+
+### Manual override
+
+Two buttons in every workout-detail modal:
+- **Rematch workout** — forces a re-evaluation with current tolerances.
+- **Dismiss this session** — marks `status: dismissed` (stays visible greyed out, doesn't count toward missed).
+
+The week-level Plan settings panel has a "Rematch all this week" action that runs `rematch_week(week, activities, today)` and shows a preview before applying.
+
+### Cross-sport load
+
+If you ICU-sync running, lifting, or anything else, those activities count toward `cross_sport_load` and feed into `compute_today_metrics()` so the cycling plan respects the full training stress, not just bike work.
 
 ---
 

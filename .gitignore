@@ -8,6 +8,17 @@ dist/
 __pycache__/
 *.spec.bak
 
+# Release binaries — ship via GitHub Releases only, never in the repo.
+# A 54MB DMG / 70MB EXE committed once is permanent in .git history forever
+# (can't be removed without rewriting history) and bloats every clone for
+# every contributor. Always upload via `gh release upload`.
+*.dmg
+*.exe
+*.msi
+*.zip
+*.tar.gz
+*.7z
+
 # User data (created at runtime)
 .setup_complete
 user_paths.json

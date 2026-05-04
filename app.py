@@ -6477,11 +6477,19 @@ def _classify_card_state(session: dict, has_actual: bool, library_lookup: dict |
             cc = (meta.get("content_class") or "").lower()
             if cc:
                 # Reuse training_planner's session_type → category mapping.
+                # v1.0.0: accept-sets aligned with what WORKOUT_MIX_PREFERENCE
+                # actually emits. Pre-fix, z2/long_z2/recovery were strict on
+                # {endurance, recovery} but the planner intentionally mixes
+                # tempo (Z2 + tempo finisher) and mixed (Z2-dominant with
+                # small Z3 cap) into those slots — so legit picks were being
+                # flagged as missing_workout, showing the yellow ↻ icon.
+                # User saw "regenerate fixes it" because the per-cell redraw
+                # resamples until match_zwo lucks into the strict set.
                 accepted_by_type = {
-                    "z2":         {"endurance", "recovery"},
-                    "long_z2":    {"endurance", "recovery"},
-                    "recovery":   {"recovery", "endurance"},
-                    "tempo":      {"tempo", "sweet_spot", "mixed"},
+                    "z2":         {"endurance", "recovery", "mixed", "tempo"},
+                    "long_z2":    {"endurance", "recovery", "mixed", "tempo", "sweet_spot"},
+                    "recovery":   {"recovery", "endurance", "mixed"},
+                    "tempo":      {"tempo", "sweet_spot", "mixed", "endurance"},
                     "sweetspot":  {"sweet_spot", "tempo", "threshold", "mixed"},
                     "threshold":  {"threshold", "sweet_spot", "over_under", "mixed"},
                     "vo2max":     {"vo2max", "vo2_short", "anaerobic", "mixed"},

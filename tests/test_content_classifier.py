@@ -437,7 +437,7 @@ class TestProtocolMapping(unittest.TestCase):
 
 
 def _load_golden_set():
-    p = HERE / "workouts" / ".golden_set.json"
+    p = REPO_ROOT / "workouts" / ".golden_set.json"
     if not p.exists():
         return []
     with p.open(encoding="utf-8") as f:
@@ -445,7 +445,7 @@ def _load_golden_set():
 
 
 def _load_classifications():
-    p = HERE / "workouts" / ".content_classification.json"
+    p = REPO_ROOT / "workouts" / ".content_classification.json"
     if not p.exists():
         return {}
     with p.open(encoding="utf-8") as f:

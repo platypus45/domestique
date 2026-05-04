@@ -15,36 +15,34 @@
   <img src="https://img.shields.io/badge/Tests-783%20passing-success" alt="Tests">
 </p>
 
-Domestique builds you a periodised training plan, ships **3,054 structured <abbr title="Zwift Workout file format — XML describing structured intervals">ZWO</abbr> workouts**, imports your post-ride <abbr title="Flexible and Interoperable Data Transfer — Garmin's binary activity-recording format">FIT</abbr>s, and feeds *every* signal — <abbr title="Training Stress Score (Coggan): duration × normalised power × intensity factor / (FTP × 3600) × 100">TSS</abbr> overshoot, polarisation breach, soreness, <abbr title="Detrended Fluctuation Analysis α1 (Peng 1995, Rogers 2021): autonomic-balance scaling exponent computed from RR-intervals">DFA α1</abbr>, aerobic decoupling, training monotony, <abbr title="estimated Functional Threshold Power — intervals.icu's auto-derived FTP from recent best efforts">eFTP</abbr> drift — back into the next day's plan. Most "smart" planners stop at the dashboard. Domestique mutates the prescription.
-
-> *Hover any abbreviation in this README for its expansion. A full glossary is at the bottom under [Abbreviations & terms](#abbreviations--terms).*
+Domestique builds you a periodised training plan, ships **3,054 structured ZWO workouts**, imports your post-ride FITs, and feeds *every* signal — TSS overshoot, polarisation breach, soreness, DFA α1, aerobic decoupling, training monotony, eFTP drift — back into the next day's plan. Most "smart" planners stop at the dashboard. Domestique mutates the prescription.
 
 ## Why this exists
 
 Most training apps fall into one of two modes:
 
-- **Display-only**: <abbr title="Heart Rate Variability — beat-to-beat variation in cardiac interval; proxy for autonomic recovery">HRV</abbr> widgets, Banister fitness curves, polarisation rings — beautiful charts, zero behavioural feedback.
+- **Display-only**: HRV widgets, Banister fitness curves, polarisation rings — beautiful charts, zero behavioural feedback.
 - **Calendar-based**: a fixed 12-week plan that doesn't care what you actually did yesterday.
 
 Domestique is neither. Every signal that touches the dashboard also has a code-path that mutates a future session. Examples:
 
-- **Soreness ≥ 6/7** on the morning Hooper composite form → today's <abbr title="Maximal Oxygen Uptake — peak rate of O₂ consumption during incremental exercise (mL O₂ · kg⁻¹ · min⁻¹)">VO₂max</abbr> session is forced to recovery, period (Hooper & Mackinnon 1995, Cheung et al. 2003 — peripheral fatigue is independent of central HRV).
-- **Last week's actual TSS > 1.5 × planned** → next week's TSS budget auto-cuts 15% (Gabbett 2016, <abbr title="Acute:Chronic Workload Ratio — last 7d load ÷ trailing 28d EWMA load; sweet spot 0.8–1.3, >1.5 doubles injury risk">ACWR</abbr> sweet spot 0.8–1.3).
-- **Rolling 48 h Z5+ ≥ 25 min** (cycling included) → today is forced to Z2 even with positive <abbr title="Training Stress Balance — CTL minus ATL; positive = freshening up, deeply negative = overreached">TSB</abbr> (Hulin et al. 2014).
-- **Mid-cycle <abbr title="Functional Threshold Power — highest sustainable 1-hour power output (Coggan)">FTP</abbr> recalibration** at the build1→build2 phase boundary auto-tests your FTP so the next 4 weeks of TSS targets aren't computed against a stale baseline (Allen & Coggan, *Training and Racing with a Power Meter* 3rd ed.).
+- **Soreness ≥ 6/7** on the morning Hooper composite form → today's VO₂max session is forced to recovery, period (Hooper & Mackinnon 1995, Cheung et al. 2003 — peripheral fatigue is independent of central HRV).
+- **Last week's actual TSS > 1.5 × planned** → next week's TSS budget auto-cuts 15% (Gabbett 2016, ACWR sweet spot 0.8–1.3).
+- **Rolling 48 h Z5+ ≥ 25 min** (cycling included) → today is forced to Z2 even with positive TSB (Hulin et al. 2014).
+- **Mid-cycle FTP recalibration** at the build1→build2 phase boundary auto-tests your FTP so the next 4 weeks of TSS targets aren't computed against a stale baseline (Allen & Coggan, *Training and Racing with a Power Meter* 3rd ed.).
 
 Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus a 1-week consolidation phase at the end of every non-event cycle so people don't ride straight from a peak into a fresh build with elevated fatigue (Mujika 2010).
 
 ## What's in the box
 
-- **Adaptive training plan** — Base / Build1 / Build2 / Peak / Taper or Consolidation, sized from your <abbr title="Chronic Training Load — 42-day exponentially-weighted moving average of daily TSS; 'fitness'">CTL</abbr> and target. Daily-adapt + reforecast + regenerate, all wired to live data.
+- **Adaptive training plan** — Base / Build1 / Build2 / Peak / Taper or Consolidation, sized from your CTL and target. Daily-adapt + reforecast + regenerate, all wired to live data.
 - **3,054 ZWO workouts** — content-classified into 11 classes; a 24-week plan picks **150 distinct files** (every session is a different workout).
-- **622 virtual routes** — Watopia, Yorkshire, Innsbruckring, Alpe d'Huez, Stelvio + 160 real-world courses; export as <abbr title="Course Slope file — Golden Cheetah's gradient-profile format for trainer simulation">CRS</abbr> or <abbr title="GPS Exchange Format — open XML schema for GPS routes/tracks">GPX</abbr>.
-- **FIT import + post-ride viewer** — power / <abbr title="Heart Rate">HR</abbr> / cadence curves, zone distribution, aerobic decoupling, DFA α1, polarisation classification (Treff et al. 2019).
-- **Capability projection** for events — Allen-Coggan <abbr title="Intensity Factor — normalised power / FTP; ≈0.95 for 1h all-out, ≈0.62 for 12h ultra (Allen & Coggan)">IF</abbr>-by-duration + Pinot & Grappe 2011 <abbr title="Record Power Profile — sustainable W/kg by duration tier per athlete category (Pinot & Grappe 2011)">RPP</abbr> climb gate predict your finish, surface endurance / power / climb gaps in a 12-week build-up bar chart.
-- **Finished-programme summary** — 12-metric recap (FTP / eFTP / VO₂max Δ, polarisation, monotony, mean-max power curve, Hooper trend, totals, decoupling) exportable as <abbr title="Portable Network Graphics — lossless raster image format">PNG</abbr> (Pillow) or <abbr title="Portable Document Format — Adobe document standard, generated here via browser window.print()">PDF</abbr> (browser print).
+- **622 virtual routes** — Watopia, Yorkshire, Innsbruckring, Alpe d'Huez, Stelvio + 160 real-world courses; export as CRS or GPX.
+- **FIT import + post-ride viewer** — power / HR / cadence curves, zone distribution, aerobic decoupling, DFA α1, polarisation classification (Treff et al. 2019).
+- **Capability projection** for events — Allen-Coggan IF-by-duration + Pinot & Grappe 2011 RPP climb gate predict your finish, surface endurance / power / climb gaps in a 12-week build-up bar chart.
+- **Finished-programme summary** — 12-metric recap (FTP / eFTP / VO₂max Δ, polarisation, monotony, mean-max power curve, Hooper trend, totals, decoupling) exportable as PNG (Pillow) or PDF (browser print).
 - **Hardware-agnostic** — generate ZWO, ride in MyWhoosh / Tacx / Zwift / Hammerhead Karoo / outdoors, import the FIT back.
-- **Single-user, localhost-only** — all data in `~/.domestique/profiles/<id>/`, [intervals.icu](https://intervals.icu) <abbr title="Application Programming Interface">API</abbr> key with `chmod 0600`, no telemetry, no cloud.
+- **Single-user, localhost-only** — all data in `~/.domestique/profiles/<id>/`, [intervals.icu](https://intervals.icu) API key with `chmod 0600`, no telemetry, no cloud.
 
 ## Architecture
 
@@ -532,38 +530,38 @@ Hover any abbreviation in the body for an inline tooltip. The full glossary live
 **Training-load model**
 | Abbr. | Expansion | Meaning |
 |---|---|---|
-| <abbr title="Training Stress Score">TSS</abbr> | Training Stress Score | `(duration_s × NP × IF) / (FTP × 3600) × 100`. 1h all-out at FTP = 100 TSS by definition (Coggan/Allen). |
-| <abbr title="Normalised Power">NP</abbr> | Normalised Power | 30-second rolling average of power, raised to the 4th, averaged, 4th-root taken. Penalises variable efforts vs steady (Coggan 2003). |
-| <abbr title="Intensity Factor">IF</abbr> | Intensity Factor | `NP / FTP`. ≈1.0 = sustained at threshold; recovery ride ≈0.5–0.6; race day ≈0.85+ (Allen & Coggan). |
-| <abbr title="Functional Threshold Power">FTP</abbr> | Functional Threshold Power | Highest sustainable 1-hour power output (Coggan). |
-| <abbr title="estimated FTP">eFTP</abbr> | estimated FTP | Auto-derived FTP from recent best efforts (intervals.icu). |
-| <abbr title="Chronic Training Load">CTL</abbr> | Chronic Training Load | 42-day exponentially-weighted moving average of daily TSS — "fitness" (Banister/Coggan). |
-| <abbr title="Acute Training Load">ATL</abbr> | Acute Training Load | 7-day EWMA of daily TSS — "fatigue" (Banister/Coggan). |
-| <abbr title="Training Stress Balance">TSB</abbr> | Training Stress Balance | CTL − ATL; positive = freshening up, deeply negative = overreached. |
-| <abbr title="Acute:Chronic Workload Ratio">ACWR</abbr> | Acute:Chronic Workload Ratio | last-7d load ÷ trailing-28d EWMA load. Sweet spot 0.8–1.3, >1.5 doubles injury risk (Gabbett 2016). |
-| <abbr title="Exponentially-Weighted Moving Average">EWMA</abbr> | Exponentially-Weighted Moving Average | The smoothing kernel used for CTL/ATL. |
+| TSS | Training Stress Score | `(duration_s × NP × IF) / (FTP × 3600) × 100`. 1h all-out at FTP = 100 TSS by definition (Coggan/Allen). |
+| NP | Normalised Power | 30-second rolling average of power, raised to the 4th, averaged, 4th-root taken. Penalises variable efforts vs steady (Coggan 2003). |
+| IF | Intensity Factor | `NP / FTP`. ≈1.0 = sustained at threshold; recovery ride ≈0.5–0.6; race day ≈0.85+ (Allen & Coggan). |
+| FTP | Functional Threshold Power | Highest sustainable 1-hour power output (Coggan). |
+| eFTP | estimated FTP | Auto-derived FTP from recent best efforts (intervals.icu). |
+| CTL | Chronic Training Load | 42-day exponentially-weighted moving average of daily TSS — "fitness" (Banister/Coggan). |
+| ATL | Acute Training Load | 7-day EWMA of daily TSS — "fatigue" (Banister/Coggan). |
+| TSB | Training Stress Balance | CTL − ATL; positive = freshening up, deeply negative = overreached. |
+| ACWR | Acute:Chronic Workload Ratio | last-7d load ÷ trailing-28d EWMA load. Sweet spot 0.8–1.3, >1.5 doubles injury risk (Gabbett 2016). |
+| EWMA | Exponentially-Weighted Moving Average | The smoothing kernel used for CTL/ATL. |
 
 **Physiology / monitoring**
 | Abbr. | Expansion | Meaning |
 |---|---|---|
-| <abbr title="Maximal Oxygen Uptake">VO₂max</abbr> | Maximal Oxygen Uptake | Peak rate of O₂ consumption during incremental exercise (mL O₂ · kg⁻¹ · min⁻¹). |
-| <abbr title="Heart Rate">HR</abbr> / <abbr title="Heart Rate Variability">HRV</abbr> / <abbr title="Resting Heart Rate">RHR</abbr> / <abbr title="Lactate Threshold Heart Rate">LTHR</abbr> | Heart-rate metrics | HR, beat-to-beat HR variability, resting HR, lactate-threshold HR. |
-| <abbr title="Detrended Fluctuation Analysis α1">DFA α1</abbr> | Detrended Fluctuation Analysis α1 | Autonomic-balance scaling exponent computed from RR-intervals (Peng 1995). <0.5 = sympathetic dominance / fatigue (Rogers 2021). |
-| <abbr title="Rating of Perceived Exertion">RPE</abbr> | Rating of Perceived Exertion | Subjective effort 1–10 (Borg CR-10) or 1–5 (intervals.icu `feel`). |
-| <abbr title="Delayed-Onset Muscle Soreness">DOMS</abbr> | Delayed-Onset Muscle Soreness | Peripheral fatigue 24–72h post-eccentric (Cheung 2003). |
-| <abbr title="Polarization Index">PI</abbr> | Polarization Index | `log10((Z1+Z2)/Z3 × Z5+/Z3)` — >2.0 classifies as polarised (Treff 2019). |
-| <abbr title="Record Power Profile">RPP</abbr> | Record Power Profile | Sustainable W/kg by duration tier per athlete category (Pinot & Grappe 2011). |
+| VO₂max | Maximal Oxygen Uptake | Peak rate of O₂ consumption during incremental exercise (mL O₂ · kg⁻¹ · min⁻¹). |
+| HR / HRV / RHR / LTHR | Heart-rate metrics | HR, beat-to-beat HR variability, resting HR, lactate-threshold HR. |
+| DFA α1 | Detrended Fluctuation Analysis α1 | Autonomic-balance scaling exponent computed from RR-intervals (Peng 1995). <0.5 = sympathetic dominance / fatigue (Rogers 2021). |
+| RPE | Rating of Perceived Exertion | Subjective effort 1–10 (Borg CR-10) or 1–5 (intervals.icu `feel`). |
+| DOMS | Delayed-Onset Muscle Soreness | Peripheral fatigue 24–72h post-eccentric (Cheung 2003). |
+| PI | Polarization Index | `log10((Z1+Z2)/Z3 × Z5+/Z3)` — >2.0 classifies as polarised (Treff 2019). |
+| RPP | Record Power Profile | Sustainable W/kg by duration tier per athlete category (Pinot & Grappe 2011). |
 
 **File formats / hardware**
 | Abbr. | Expansion | Meaning |
 |---|---|---|
-| <abbr title="Zwift Workout file">ZWO</abbr> | Zwift Workout file | XML describing structured intervals; portable across MyWhoosh / Tacx / Zwift / Karoo. |
-| <abbr title="Flexible and Interoperable Data Transfer">FIT</abbr> | Flexible and Interoperable Data Transfer | Garmin's binary activity-recording format — power, HR, GPS, RR, etc. |
-| <abbr title="Course Slope file">CRS</abbr> | Course Slope file | Golden Cheetah's gradient-profile format for trainer simulation. |
-| <abbr title="GPS Exchange Format">GPX</abbr> | GPS Exchange Format | Open XML schema for GPS routes/tracks. |
-| <abbr title="Application Programming Interface">API</abbr> | Application Programming Interface | The intervals.icu REST endpoints Domestique calls. |
-| <abbr title="Disk Image">DMG</abbr> / <abbr title="Executable">EXE</abbr> | Disk Image / Executable | macOS / Windows distribution formats; built by `build_dmg.sh` / `build_win.bat` and published on the GitHub Release. |
-| <abbr title="Continuous Integration">CI</abbr> | Continuous Integration | The GitHub Actions workflow at `.github/workflows/release.yml`. |
+| ZWO | Zwift Workout file | XML describing structured intervals; portable across MyWhoosh / Tacx / Zwift / Karoo. |
+| FIT | Flexible and Interoperable Data Transfer | Garmin's binary activity-recording format — power, HR, GPS, RR, etc. |
+| CRS | Course Slope file | Golden Cheetah's gradient-profile format for trainer simulation. |
+| GPX | GPS Exchange Format | Open XML schema for GPS routes/tracks. |
+| API | Application Programming Interface | The intervals.icu REST endpoints Domestique calls. |
+| DMG / EXE | Disk Image / Executable | macOS / Windows distribution formats; built by `build_dmg.sh` / `build_win.bat` and published on the GitHub Release. |
+| CI | Continuous Integration | The GitHub Actions workflow at `.github/workflows/release.yml`. |
 
 **Phases**: BASE / BUILD1 / BUILD2 / PEAK / TAPER (event prep) or CONSOLIDATION (FTP / VO₂max / hybrid / general goals — replaces TAPER for non-event cycles per Mujika 2010).
 

@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Domestique — Setup</title>
+<link rel="icon" type="image/png" href="/static/favicon.png?v=3">
+<style>
+:root {
+  --bg: #f5f7fa; --surface: #ffffff; --surface2: #eef1f6;
+  --text: #1a1a2e; --text2: #6b7280; --text3: #9ca3af;
+  --accent: #4f6cf7; --accent-hover: #3b5ae5;
+  --green: #22c55e; --red: #ef4444; --yellow: #eab308;
+  --border: #e5e7eb; --radius: 12px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg); color: var(--text); min-height: 100vh;
+  display: flex; align-items: center; justify-content: center; }
+.wizard { background: var(--surface); border-radius: 16px; box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+  max-width: 560px; width: 100%; padding: 40px; }
+h1 { font-size: 24px; margin-bottom: 4px; }
+.subtitle { color: var(--text2); font-size: 14px; margin-bottom: 32px; }
+.steps { display: flex; gap: 8px; margin-bottom: 32px; }
+.step-dot { width: 40px; height: 4px; border-radius: 2px; background: var(--surface2); transition: background 0.3s; }
+.step-dot.active { background: var(--accent); }
+.step-dot.done { background: var(--green); }
+.step-panel { display: none; }
+.step-panel.active { display: block; }
+h2 { font-size: 18px; margin-bottom: 16px; }
+p.info { color: var(--text2); font-size: 13px; margin-bottom: 16px; line-height: 1.6; }
+.form-row { margin-bottom: 16px; }
+label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text2); }
+input[type="text"], input[type="number"], input[type="password"] {
+  width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+  font-size: 14px; background: var(--surface); color: var(--text); outline: none; }
+input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,108,247,0.15); }
+.form-row-pair { display: flex; gap: 12px; }
+.form-row-pair .form-row { flex: 1; }
+.btn { padding: 10px 20px; border-radius: 8px; border: none; font-size: 14px; font-weight: 600;
+  cursor: pointer; transition: all 0.2s; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-secondary { background: var(--surface2); color: var(--text); }
+.btn-secondary:hover { background: var(--border); }
+.btn-success { background: var(--green); color: #fff; }
+.actions { display: flex; justify-content: space-between; margin-top: 28px; }
+.status { padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-top: 12px; display: none; }
+.status.ok { display: block; background: #dcfce7; color: #166534; }
+.status.err { display: block; background: #fee2e2; color: #991b1b; }
+.status.info { display: block; background: #dbeafe; color: #1e40af; }
+.help-link { font-size: 12px; color: var(--accent); text-decoration: none; }
+.help-link:hover { text-decoration: underline; }
+.day-grid { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.day-btn { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); cursor: pointer; font-size: 13px; transition: all 0.2s; user-select: none; }
+.day-btn.selected { background: var(--accent); color: #fff; border-color: var(--accent); }
+.day-btn.rest { background: var(--surface2); color: var(--text3); border-color: var(--surface2); }
+.skip-link { font-size: 12px; color: var(--text3); cursor: pointer; }
+.skip-link:hover { color: var(--text2); }
+.summary-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+.summary-table td { padding: 8px 0; font-size: 14px; border-bottom: 1px solid var(--surface2); }
+.summary-table td:first-child { color: var(--text2); width: 40%; }
+.summary-table td:last-child { font-weight: 600; }
+.check { color: var(--green); margin-right: 6px; }
+</style>
+</head>
+<body>
+<div class="wizard">
+  <h1><img src="/static/icon.png" alt="" style="height:32px;vertical-align:middle;margin-right:8px;border-radius:8px;">Domestique</h1>
+  <div class="subtitle">Let's get you set up in 5 quick steps.</div>
+
+  <div class="steps" id="step-dots">
+    <div class="step-dot active"></div>
+    <div class="step-dot"></div>
+    <div class="step-dot"></div>
+    <div class="step-dot"></div>
+    <div class="step-dot"></div>
+  </div>
+
+  <!-- STEP 1: Intervals.icu -->
+  <div class="step-panel active" id="step-1">
+    <h2>Connect Intervals.icu</h2>
+    <p class="info">
+      Intervals.icu syncs your training data (CTL, ATL, TSB, HRV, activities).
+      <br>Find your credentials at
+      <a href="https://intervals.icu/settings" target="_blank" class="help-link">intervals.icu/settings</a>
+      → "Developer Settings".
+    </p>
+    <div class="form-row">
+      <label>Athlete ID</label>
+      <input type="text" id="icu-id" placeholder="e.g. i12345" autocomplete="off">
+    </div>
+    <div class="form-row">
+      <label>API Key</label>
+      <input type="password" id="icu-key" placeholder="Your API key" autocomplete="off">
+    </div>
+    <button type="button" class="btn btn-secondary" onclick="testIcu()" id="test-btn">Test Connection</button>
+    <div class="status" id="icu-status"></div>
+    <div class="actions">
+      <span></span>
+      <button type="button" class="btn btn-primary" onclick="nextStep(2)">Next</button>
+    </div>
+  </div>
+
+  <!-- STEP 2: Garmin Connect sync -->
+  <div class="step-panel" id="step-2">
+    <h2>Activity Sync</h2>
+    <p class="info">
+      Intervals.icu gets new activities automatically from <b>Garmin Connect</b> (via its API).
+      Connect Garmin now so rides appear in your plan automatically.
+    </p>
+    <div style="background:var(--surface2);border-radius:10px;padding:16px;margin-bottom:16px;">
+      <div style="font-weight:600;margin-bottom:8px;">Garmin Connect sync (required):</div>
+      <ol style="font-size:13px;color:var(--text2);line-height:2;padding-left:20px;">
+        <li>In Intervals.icu → <a href="https://intervals.icu/settings" target="_blank" class="help-link">Settings</a> → <b>Connections</b></li>
+        <li>Enable <b>Garmin Connect</b> as your activity source</li>
+      </ol>
+    </div>
+    <p class="info" style="font-size:12px;">This ensures Intervals.icu gets new data automatically via Garmin's API.</p>
+    <div class="actions">
+      <button type="button" class="btn btn-secondary" onclick="nextStep(1)">Back</button>
+      <button type="button" class="btn btn-primary" onclick="nextStep(3)">Next</button>
+    </div>
+  </div>
+
+  <!-- STEP 3: Athlete Profile -->
+  <div class="step-panel" id="step-3">
+    <h2>Your Profile</h2>
+    <p class="info">These values power your training zones. If you connected Intervals.icu, we'll try to auto-fill from your data.</p>
+
+    <div class="form-row">
+      <label>Weight (kg)</label>
+      <input type="number" id="s-weight" value="72" min="20" max="300" step="0.1">
+      <div style="font-size:11px;color:var(--text3);margin-top:3px;">Used for W/kg and climb power estimates</div>
+    </div>
+
+    <div class="form-row">
+      <label>FTP — Functional Threshold Power (watts)
+        <span style="font-weight:400;color:var(--text3);"> — the max power you can sustain for ~1 hour</span></label>
+      <div style="display:flex;gap:8px;margin-bottom:6px;">
+        <button type="button" class="btn btn-secondary toggle-btn active" onclick="setSource('ftp','manual',this)" style="font-size:12px;padding:5px 12px;">I know my FTP</button>
+        <button type="button" class="btn btn-secondary toggle-btn" onclick="setSource('ftp','icu',this)" style="font-size:12px;padding:5px 12px;">Use eFTP from Intervals.icu</button>
+      </div>
+      <div id="ftp-manual"><input type="number" id="s-ftp" value="250" min="50" max="500" step="1"></div>
+      <div id="ftp-icu" style="display:none;padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:13px;color:var(--text2);">Will be auto-filled from your Intervals.icu data</div>
+    </div>
+
+    <div class="form-row">
+      <label>LTHR — Lactate Threshold Heart Rate (bpm)
+        <span style="font-weight:400;color:var(--text3);"> — HR at the point where lactate accumulates rapidly (~FTP effort)</span></label>
+      <div style="display:flex;gap:8px;margin-bottom:6px;">
+        <button type="button" class="btn btn-secondary toggle-btn active" onclick="setSource('lthr','manual',this)" style="font-size:12px;padding:5px 12px;">I know my LTHR</button>
+        <button type="button" class="btn btn-secondary toggle-btn" onclick="setSource('lthr','icu',this)" style="font-size:12px;padding:5px 12px;">Get from Intervals.icu</button>
+      </div>
+      <div id="lthr-manual"><input type="number" id="s-lthr" value="175" min="100" max="220" step="1">
+        <div style="font-size:11px;color:var(--text3);margin-top:3px;">Tip: your average HR during a 30min all-out effort is a good estimate</div></div>
+      <div id="lthr-icu" style="display:none;padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:13px;color:var(--text2);">Will be estimated from your high-intensity activities</div>
+    </div>
+
+    <div class="form-row">
+      <label>Max Heart Rate (bpm)
+        <span style="font-weight:400;color:var(--text3);"> — the highest HR you've ever recorded during a max effort</span></label>
+      <div style="display:flex;gap:8px;margin-bottom:6px;">
+        <button type="button" class="btn btn-secondary toggle-btn active" onclick="setSource('maxhr','manual',this)" style="font-size:12px;padding:5px 12px;">I know my Max HR</button>
+        <button type="button" class="btn btn-secondary toggle-btn" onclick="setSource('maxhr','icu',this)" style="font-size:12px;padding:5px 12px;">Get from Intervals.icu</button>
+      </div>
+      <div id="maxhr-manual"><input type="number" id="s-maxhr" value="196" min="120" max="230" step="1">
+        <div style="font-size:11px;color:var(--text3);margin-top:3px;">Formula estimates (220-age) are unreliable. Use your actual recorded max if known.</div></div>
+      <div id="maxhr-icu" style="display:none;padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:13px;color:var(--text2);">Will be pulled from your highest recorded HR</div>
+    </div>
+
+    <div class="form-row">
+      <label>
+        Age (years)
+        <input type="number" id="s-age" min="10" max="100" step="1" placeholder="35">
+      </label>
+    </div>
+    <div class="form-row">
+      <label>
+        Sex
+        <select id="s-sex">
+          <option value="">Prefer not to say</option>
+          <option value="M">Male</option>
+          <option value="F">Female</option>
+          <option value="O">Other</option>
+        </select>
+      </label>
+    </div>
+    <div class="form-row">
+      <details>
+        <summary>Advanced (optional)</summary>
+        <label>
+          Critical Power (W) — defaults to FTP × 1.03 if blank
+          <input type="number" id="s-cp" min="100" max="500" step="1" placeholder="auto">
+        </label>
+        <label>
+          W' — anaerobic capacity (J) — defaults to FTP × 80
+          <input type="number" id="s-wprime" min="5000" max="40000" step="100" placeholder="auto">
+        </label>
+      </details>
+    </div>
+
+    <div id="eftp-hint" class="status info" style="display:none;"></div>
+    <div class="actions">
+      <button type="button" class="btn btn-secondary" onclick="nextStep(2)">Back</button>
+      <button type="button" class="btn btn-primary" onclick="nextStep(4)">Next</button>
+    </div>
+  </div>
+
+  <!-- STEP 4: Paths -->
+  <div class="step-panel" id="step-4">
+    <h2>Data Paths</h2>
+    <p class="info">Where your virtual trainer workouts live. Auto-detected where possible.</p>
+    <div class="form-row">
+      <label>Virtual Trainer Workouts Folder</label>
+      <div style="display:flex;gap:8px;">
+        <input type="text" id="s-workout-dir" placeholder="~/Documents/Workouts" style="flex:1;">
+        <button type="button" class="btn btn-secondary" onclick="pickFolder(this, 's-workout-dir')" style="padding:8px 12px;white-space:nowrap;" title="Browse">&#128193; Browse</button>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px;">Folder containing your .zwo workout files (e.g. TrainerRoad)</div>
+    </div>
+    <div class="form-row">
+      <label>GPX Courses Folder <span class="skip-link">(optional)</span></label>
+      <div style="display:flex;gap:8px;">
+        <input type="text" id="s-gpx-dir" placeholder="~/Documents/GPX/cyclinglocations" style="flex:1;">
+        <button type="button" class="btn btn-secondary" onclick="pickFolder(this, 's-gpx-dir')" style="padding:8px 12px;white-space:nowrap;">&#128193; Browse</button>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn btn-secondary" onclick="nextStep(3)">Back</button>
+      <button type="button" class="btn btn-primary" onclick="nextStep(5)">Next</button>
+    </div>
+  </div>
+
+  <!-- STEP 5: Training Preferences + Done -->
+  <div class="step-panel" id="step-5">
+    <h2>Training Preferences</h2>
+    <div class="form-row">
+      <label>Hours per week</label>
+      <input type="number" id="s-hours" value="8" min="3" max="20" step="0.5">
+    </div>
+    <div class="form-row">
+      <label>Training days (click to toggle)</label>
+      <div class="day-grid" id="day-grid">
+        <div class="day-btn selected" data-day="0">Mon</div>
+        <div class="day-btn selected" data-day="1">Tue</div>
+        <div class="day-btn selected" data-day="2">Wed</div>
+        <div class="day-btn selected" data-day="3">Thu</div>
+        <div class="day-btn selected" data-day="4">Fri</div>
+        <div class="day-btn selected" data-day="5">Sat</div>
+        <div class="day-btn selected" data-day="6">Sun</div>
+      </div>
+    </div>
+    <div class="form-row">
+      <label>Rest days (click to mark)</label>
+      <div class="day-grid" id="rest-grid">
+        <div class="day-btn rest" data-day="0">Mon</div>
+        <div class="day-btn" data-day="1">Tue</div>
+        <div class="day-btn" data-day="2">Wed</div>
+        <div class="day-btn" data-day="3">Thu</div>
+        <div class="day-btn" data-day="4">Fri</div>
+        <div class="day-btn" data-day="5">Sat</div>
+        <div class="day-btn" data-day="6">Sun</div>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn btn-secondary" onclick="nextStep(4)">Back</button>
+      <button type="button" class="btn btn-success" onclick="saveAll()" id="save-btn">Complete Setup</button>
+    </div>
+    <div class="status" id="save-status"></div>
+  </div>
+</div>
+
+<script>
+let currentStep = 1;
+const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+function nextStep(n) {
+  document.getElementById('step-' + currentStep).classList.remove('active');
+  document.getElementById('step-' + n).classList.add('active');
+  const dots = document.querySelectorAll('.step-dot');
+  dots.forEach((d, i) => {
+    d.classList.remove('active', 'done');
+    if (i < n - 1) d.classList.add('done');
+    else if (i === n - 1) d.classList.add('active');
+  });
+  currentStep = n;
+}
+
+// Day toggles
+document.querySelectorAll('#day-grid .day-btn').forEach(btn => {
+  btn.addEventListener('click', () => btn.classList.toggle('selected'));
+});
+document.querySelectorAll('#rest-grid .day-btn').forEach(btn => {
+  btn.addEventListener('click', () => btn.classList.toggle('rest'));
+});
+
+// Test ICU connection
+let _testingIcu = false;
+async function testIcu() {
+  if (_testingIcu) return;
+  const id = document.getElementById('icu-id').value.trim();
+  const key = document.getElementById('icu-key').value.trim();
+  const st = document.getElementById('icu-status');
+  const btn = document.getElementById('test-btn');
+  if (!id || !key) { st.className = 'status err'; st.textContent = 'Both fields required.'; return; }
+  _testingIcu = true;
+  btn.disabled = true; btn.textContent = 'Testing...';
+  st.className = 'status info'; st.textContent = 'Connecting...';
+  try {
+    const res = await fetch('/api/setup/test-icu', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({athlete_id: id, api_key: key})
+    });
+    if (!res.ok) {
+      st.className = 'status err';
+      st.textContent = 'Connection failed: HTTP ' + res.status + ' ' + (res.statusText || '');
+      return;
+    }
+    let data;
+    try {
+      data = await res.json();
+    } catch (parseErr) {
+      st.className = 'status err';
+      st.textContent = 'Server returned invalid response.';
+      return;
+    }
+    if (data.ok) {
+      st.className = 'status ok';
+      st.textContent = 'Connected! ' + (data.name || '') + (data.eftp ? ' — eFTP: ' + data.eftp + 'W' : '');
+      // Auto-fill profile from ICU data — ask before overwriting typed values
+      const ftpEl = document.getElementById('s-ftp');
+      const weightEl = document.getElementById('s-weight');
+      const ftpHasCustom = ftpEl && ftpEl.value && String(ftpEl.value) !== '250';
+      const weightHasCustom = weightEl && weightEl.value && String(weightEl.value) !== '72';
+      const anyOverwrite = (data.eftp && ftpHasCustom) || (data.weight && weightHasCustom);
+      let doOverwrite = true;
+      if (anyOverwrite) {
+        doOverwrite = confirm('Overwrite your entered values with Intervals.icu data?');
+      }
+      if (doOverwrite) {
+        if (data.eftp && ftpEl) ftpEl.value = data.eftp;
+        if (data.weight && weightEl) weightEl.value = data.weight;
+      }
+      if (data.eftp) {
+        const hint = document.getElementById('eftp-hint');
+        hint.style.display = 'block';
+        hint.textContent = 'Auto-filled from Intervals.icu: eFTP ' + data.eftp + 'W' + (data.weight ? ', weight ' + data.weight + 'kg' : '');
+      }
+    } else {
+      st.className = 'status err';
+      st.textContent = data.error || 'Connection failed. Check credentials.';
+    }
+  } catch(e) {
+    st.className = 'status err'; st.textContent = 'Request failed: ' + e.message;
+  } finally {
+    _testingIcu = false;
+    btn.disabled = false; btn.textContent = 'Test Connection';
+  }
+}
+
+// Save everything
+let _saving = false;
+async function saveAll() {
+  if (_saving) return;
+  _saving = true;
+  const btn = document.getElementById('save-btn');
+  const st = document.getElementById('save-status');
+  btn.disabled = true; btn.textContent = 'Saving...';
+
+  const availDays = [...document.querySelectorAll('#day-grid .day-btn.selected')].map(b => parseInt(b.dataset.day));
+  const restDays = [...document.querySelectorAll('#rest-grid .day-btn.rest')].map(b => parseInt(b.dataset.day));
+
+  const payload = {
+    icu_athlete_id: document.getElementById('icu-id').value.trim(),
+    icu_api_key: document.getElementById('icu-key').value.trim(),
+    weight: parseFloat(document.getElementById('s-weight').value) || 72,
+    ftp: getFieldValue('ftp', 's-ftp', 250),
+    lthr: getFieldValue('lthr', 's-lthr', 175),
+    max_hr: getFieldValue('maxhr', 's-maxhr', 196),
+    workout_dir: document.getElementById('s-workout-dir').value.trim(),
+    gpx_dir: document.getElementById('s-gpx-dir').value.trim(),
+    hours_per_week: parseFloat(document.getElementById('s-hours').value) || 8,
+    available_days: availDays,
+    rest_days: restDays,
+  };
+
+  // Optional new athlete fields — only include when user entered a value.
+  // For sex, send "" as "unset" (always include).
+  const ageRaw = document.getElementById('s-age').value.trim();
+  if (ageRaw !== '') {
+    const ageVal = parseInt(ageRaw, 10);
+    if (!isNaN(ageVal)) payload.age = ageVal;
+  }
+  const cpRaw = document.getElementById('s-cp').value.trim();
+  if (cpRaw !== '') {
+    const cpVal = parseInt(cpRaw, 10);
+    if (!isNaN(cpVal)) payload.cp = cpVal;
+  }
+  const wprimeRaw = document.getElementById('s-wprime').value.trim();
+  if (wprimeRaw !== '') {
+    const wprimeVal = parseInt(wprimeRaw, 10);
+    if (!isNaN(wprimeVal)) payload.wprime_j = wprimeVal;
+  }
+  payload.sex = document.getElementById('s-sex').value;
+
+  try {
+    const res = await fetch('/api/setup/save', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      st.className = 'status err';
+      st.textContent = 'Save failed: HTTP ' + res.status + ' ' + (res.statusText || '');
+      return;
+    }
+    let data;
+    try {
+      data = await res.json();
+    } catch (parseErr) {
+      st.className = 'status err';
+      st.textContent = 'Server returned invalid response.';
+      return;
+    }
+    if (data.ok) {
+      st.className = 'status ok';
+      st.textContent = 'Setup complete! Redirecting to dashboard...';
+      setTimeout(() => window.location.href = '/', 1500);
+    } else {
+      st.className = 'status err'; st.textContent = data.error || 'Save failed.';
+    }
+  } catch(e) {
+    st.className = 'status err'; st.textContent = 'Error: ' + e.message;
+  } finally {
+    _saving = false;
+    btn.disabled = false; btn.textContent = 'Complete Setup';
+  }
+}
+
+// ICU-fetched values stored here for toggle switching
+let icuValues = { ftp: null, lthr: null, maxhr: null };
+
+function setSource(field, source, btn) {
+  btn.parentElement.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+
+  const manualEl = document.getElementById(field + '-manual');
+  const icuEl = document.getElementById(field + '-icu');
+
+  if (source === 'icu') {
+    if (manualEl) manualEl.style.display = 'none';
+    if (icuEl) icuEl.style.display = 'block';
+    // Try to fetch values if not already fetched
+    if (!icuValues[field]) {
+      const id = document.getElementById('icu-id').value.trim();
+      const key = document.getElementById('icu-key').value.trim();
+      if (!id || !key) {
+        if (icuEl) { icuEl.textContent = 'Connect Intervals.icu first (Step 1)'; icuEl.style.color = 'var(--red)'; }
+        // Send user back to step 1 + focus the ID input so they can enter creds
+        alert('Please fill in your Intervals.icu credentials on Step 1 first.');
+        nextStep(1);
+        const idEl = document.getElementById('icu-id');
+        if (idEl) idEl.focus();
+        return;
+      }
+      if (icuEl) { icuEl.textContent = 'Fetching from Intervals.icu...'; icuEl.style.color = 'var(--text2)'; }
+      fetchIcuProfile(id, key);
+    } else {
+      if (icuEl) {
+        const num = Number(icuValues[field]);
+        const val = Number.isFinite(num) ? num : String(icuValues[field]).replace(/[<&>"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
+        icuEl.innerHTML = '<b style="font-size:16px;color:var(--green);">' + val + '</b> <span>from Intervals.icu</span>';
+      }
+    }
+  } else {
+    if (manualEl) manualEl.style.display = 'block';
+    if (icuEl) icuEl.style.display = 'none';
+  }
+}
+
+// Folder picker via native OS dialog. Accepts `btn` explicitly (pass `this`
+// from onclick) rather than relying on the global `event.target`, which is
+// undefined in Firefox / strict mode.
+async function pickFolder(btn, inputId) {
+  const input = document.getElementById(inputId);
+  btn.textContent = '...';
+  try {
+    const res = await fetch('/api/setup/pick-folder');
+    const data = await res.json();
+    if (data.path) {
+      input.value = data.path;
+      input.style.borderColor = 'var(--green)';
+    }
+  } catch(e) {}
+  btn.innerHTML = '&#128193; Browse';
+}
+
+// HTML-escape for defense-in-depth. icuValues are numeric today, but a
+// regressed shape (e.g. ICU returning a stringified object) would land
+// untrusted bytes straight into innerHTML without this.
+const _escHtml = s => String(s==null?'':s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+
+function _setIcuPlaceholders(errMsg) {
+  for (const field of ['ftp', 'lthr', 'maxhr']) {
+    const icuEl = document.getElementById(field + '-icu');
+    if (!icuEl) continue;
+    if (icuValues[field]) {
+      const unit = field === 'ftp' ? 'W' : 'bpm';
+      // Numeric coercion first (drops non-digits), then HTML-escape what's
+      // left. Belt-and-braces — neither step alone protects both axes.
+      const num = Number(icuValues[field]);
+      const val = Number.isFinite(num) ? num : _escHtml(icuValues[field]);
+      icuEl.innerHTML = '<b style="font-size:16px;color:var(--green);">' + val + ' ' + unit + '</b> <span style="color:var(--text2);">from Intervals.icu</span>';
+    } else if (errMsg) {
+      icuEl.innerHTML = '<span style="color:var(--red);">' + _escHtml(errMsg) + '</span>';
+    } else {
+      icuEl.innerHTML = '<span style="color:var(--yellow);">Not found in your data — switch to manual entry</span>';
+    }
+  }
+}
+
+async function fetchIcuProfile(id, key) {
+  try {
+    const res = await fetch('/api/setup/test-icu', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({athlete_id: id, api_key: key})
+    });
+    if (!res.ok) {
+      if (res.status === 404) {
+        _setIcuPlaceholders('Athlete not found in Intervals.icu (404). Check your Athlete ID.');
+      } else if (res.status === 401 || res.status === 403) {
+        _setIcuPlaceholders('Authentication failed (HTTP ' + res.status + '). Check your API key.');
+      } else {
+        _setIcuPlaceholders('Intervals.icu error: HTTP ' + res.status);
+      }
+      return;
+    }
+    let data;
+    try { data = await res.json(); }
+    catch (parseErr) {
+      _setIcuPlaceholders('Intervals.icu returned an invalid response.');
+      return;
+    }
+    if (!data.ok) {
+      _setIcuPlaceholders(data.error || 'Intervals.icu reported an error.');
+      return;
+    }
+    if (data.eftp) icuValues.ftp = data.eftp;
+    if (data.weight) document.getElementById('s-weight').value = data.weight;
+
+    // Fetch HR data too
+    try {
+      const wRes = await fetch('/api/setup/icu-hr?athlete_id=' + encodeURIComponent(id) + '&api_key=' + encodeURIComponent(key));
+      if (wRes.ok) {
+        const wData = await wRes.json();
+        if (wData.lthr) icuValues.lthr = wData.lthr;
+        if (wData.max_hr) icuValues.maxhr = wData.max_hr;
+      }
+    } catch(e) { /* HR endpoint optional; continue with what we have */ }
+
+    _setIcuPlaceholders();
+  } catch(e) {
+    _setIcuPlaceholders('Network error: ' + (e && e.message ? e.message : 'request failed'));
+  }
+}
+
+// Get the effective value for a field (manual input or ICU value)
+function getFieldValue(field, inputId, fallback) {
+  const icuEl = document.getElementById(field + '-icu');
+  const isIcu = icuEl && icuEl.style.display !== 'none';
+  if (isIcu && icuValues[field]) return icuValues[field];
+  return parseFloat(document.getElementById(inputId).value) || fallback;
+}
+
+// Auto-detect paths on load (with 5s timeout + fallback)
+(async function() {
+  const ctrl = new AbortController();
+  const timeoutId = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const res = await fetch('/api/setup/defaults', {signal: ctrl.signal});
+    clearTimeout(timeoutId);
+    if (!res.ok) return;
+    let d;
+    try { d = await res.json(); } catch (e) { return; }
+    if (d.icu_id) document.getElementById('icu-id').value = d.icu_id;
+    if (d.workout_dir) document.getElementById('s-workout-dir').value = d.workout_dir;
+    if (d.gpx_dir) document.getElementById('s-gpx-dir').value = d.gpx_dir;
+    if (d.weight) document.getElementById('s-weight').value = d.weight;
+    if (d.ftp) document.getElementById('s-ftp').value = d.ftp;
+    if (d.lthr) document.getElementById('s-lthr').value = d.lthr;
+    if (d.max_hr) document.getElementById('s-maxhr').value = d.max_hr;
+  } catch(e) {
+    clearTimeout(timeoutId);
+    // Timeout or network error — fall back to built-in default values already in the inputs
+  }
+})();
+</script>
+</body>
+</html>

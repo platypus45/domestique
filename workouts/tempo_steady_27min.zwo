@@ -1,0 +1,22 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Mixed 4x1min (27min)</name>
+    <description>Warmup: 5min from 40% to 60% FTP | Intervals: 4 x (1min @ 95% / 1min @ 55%) | Cooldown: 3min from 60% to 40% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="300" PowerLow="0.4" PowerHigh="0.6" pace="0" />
+        <SteadyState Duration="180" Power="0.8" pace="0" Cadence="90" />
+        <SteadyState Duration="60" Power="0.95" pace="0" Cadence="90" />
+        <SteadyState Duration="60" Power="0.55" pace="0" Cadence="85" />
+        <SteadyState Duration="180" Power="0.8" pace="0" Cadence="60" />
+        <SteadyState Duration="60" Power="0.95" pace="0" Cadence="60" />
+        <SteadyState Duration="60" Power="0.55" pace="0" Cadence="85" />
+        <SteadyState Duration="180" Power="0.8" pace="0" Cadence="90" />
+        <SteadyState Duration="60" Power="0.95" pace="0" Cadence="90" />
+        <SteadyState Duration="60" Power="0.55" pace="0" Cadence="85" />
+        <SteadyState Duration="180" Power="0.8" pace="0" Cadence="60" />
+        <SteadyState Duration="60" Power="0.95" pace="0" Cadence="60" />
+        <Cooldown Duration="180" PowerLow="0.6" PowerHigh="0.4" pace="0" />
+    </workout>
+</workout_file>

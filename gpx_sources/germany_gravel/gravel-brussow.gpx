@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: Gravel]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/127574">
+			<text><![CDATA[Gravel Route: Gravel]]></text>
+		</link>
+		<time>2022-09-16T06:09:01-04:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: Gravel]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/127574">
+			<text><![CDATA[Gravel Route: Gravel]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="53.42138" lon="14.21944">
+				<ele>20.2</ele>
+			</trkpt>
+			<trkpt lat="53.42152" lon="14.2196">
+				<ele>22.56</ele>
+			</trkpt>
+			<trkpt lat="53.42076" lon="14.22115">
+				<ele>17.11</ele>
+			</trkpt>
+			<trkpt lat="53.41926" lon="14.22331">
+				<ele>8.91</ele>
+			</trkpt>
+			<trkpt lat="53.41835" lon="14.22531">
+				<ele>7</ele>
+			</trkpt>
+			<trkpt lat="53.41698" lon="14.23174">
+				<ele>6.81</ele>
+			</trkpt>
+			<trkpt lat="53.40728" lon="14.23751">
+				<ele>9.02</ele>
+			</trkpt>
+			<trkpt lat="53.40574" lon="14.23756">
+				<ele>9.12</ele>
+			</trkpt>
+			<trkpt lat="53.40574" lon="14.23756">
+				<ele>11.77</ele>
+			</trkpt>
+			<trkpt lat="53.40308" lon="14.23692">
+				<ele>7.54</ele>
+			</trkpt>
+			<trkpt lat="53.39291" lon="14.2356">
+				<ele>9.46</ele>
+			</trkpt>
+			<trkpt lat="53.38833" lon="14.23253">
+				<ele>9</ele>
+			</trkpt>
+			<trkpt lat="53.38763" lon="14.23106">
+				<ele>9</ele>
+			</trkpt>
+			<trkpt lat="53.38503" lon="14.22875">
+				<ele>8.36</ele>
+			</trkpt>
+			<trkpt lat="53.38503" lon="14.22875">
+				<ele>8.88</ele>
+			</trkpt>
+			<trkpt lat="53.38301" lon="14.22702">
+				<ele>11.45</ele>
+			</trkpt>
+			<trkpt lat="53.38142" lon="14.22715">
+				<ele>15.08</ele>
+			</trkpt>
+			<trkpt lat="53.37799" lon="14.23061">
+				<ele>17.28</ele>
+			</trkpt>
+			<trkpt lat="53.36687" lon="14.22457">
+				<ele>10.66</ele>
+			</trkpt>
+			<trkpt lat="53.36687" lon="14.22457">
+				<ele>9.17</ele>
+			</trkpt>
+			<trkpt lat="53.36119" lon="14.22158">
+				<ele>10.18</ele>
+			</trkpt>
+			<trkpt lat="53.36031" lon="14.22014">
+				<ele>9.73</ele>
+			</trkpt>
+			<trkpt lat="53.3598" lon="14.21898">
+				<ele>9.42</ele>
+			</trkpt>
+			<trkpt lat="53.3593" lon="14.21704">
+				<ele>8.17</ele>
+			</trkpt>
+			<trkpt lat="53.35924" lon="14.21608">
+				<ele>9</ele>
+			</trkpt>
+			<trkpt lat="53.3592" lon="14.21607">
+				<ele>10</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

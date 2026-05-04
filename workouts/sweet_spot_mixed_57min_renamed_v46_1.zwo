@@ -1,0 +1,25 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Sweet Spot (57min)</name>
+    <description>Warmup: 6min @ 53% FTP | Steady: 12min @ 93% FTP | Steady: 3min @ 88% FTP | Steady: 3min @ 86% FTP | Steady: 4min @ 53% FTP | Steady: 4min @ 86% FTP | Steady: 4min @ 88% FTP | Steady: 16min @ 91% FTP | Steady: 1min @ 113% FTP | Steady: 4min @ 53% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="360" Power="0.53" pace="0" />
+        <SteadyState Duration="180" Power="0.93" pace="0" Cadence="100" />
+        <SteadyState Duration="180" Power="0.93" pace="0" Cadence="90" />
+        <SteadyState Duration="180" Power="0.93" pace="0" Cadence="80" />
+        <SteadyState Duration="180" Power="0.93" pace="0" Cadence="70" />
+        <SteadyState Duration="180" Power="0.88" pace="0" Cadence="60" />
+        <SteadyState Duration="180" Power="0.86" pace="0" Cadence="50" />
+        <SteadyState Duration="240" Power="0.53" pace="0" />
+        <SteadyState Duration="240" Power="0.86" pace="0" Cadence="60" />
+        <SteadyState Duration="240" Power="0.88" pace="0" Cadence="70" />
+        <SteadyState Duration="240" Power="0.91" pace="0" Cadence="80" />
+        <SteadyState Duration="240" Power="0.91" pace="0" Cadence="90" />
+        <SteadyState Duration="240" Power="0.91" pace="0" Cadence="100" />
+        <SteadyState Duration="240" Power="0.91" pace="0" Cadence="110" />
+        <SteadyState Duration="60" Power="1.13" pace="0" Cadence="120" />
+        <SteadyState Duration="240" Power="0.53" pace="0" />
+    </workout>
+</workout_file>

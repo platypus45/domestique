@@ -1,0 +1,201 @@
+{
+  "slug": "gravelroute-om-assen",
+  "gpx_path": "gpx_sources/netherlands_gravel/gravelroute-om-assen.gpx",
+  "num_points": 439,
+  "distance_km": 73.627,
+  "query_seconds": 6.76,
+  "surface_mix_pct": {
+    "asphalt": 61.4,
+    "gravel": 38.6,
+    "cobble": 0.0,
+    "unknown": 0.0
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 1.047,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 1.047,
+      "end_km": 1.404,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 1.404,
+      "end_km": 2.596,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 2.596,
+      "end_km": 2.631,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 2.631,
+      "end_km": 3.433,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 3.433,
+      "end_km": 4.411,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 4.411,
+      "end_km": 5.549,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 5.549,
+      "end_km": 7.142,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 7.142,
+      "end_km": 17.786,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 17.786,
+      "end_km": 23.245,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 23.245,
+      "end_km": 23.787,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 23.787,
+      "end_km": 30.47,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 30.47,
+      "end_km": 31.397,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 31.397,
+      "end_km": 33.042,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 33.042,
+      "end_km": 34.7,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 34.7,
+      "end_km": 35.506,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 35.506,
+      "end_km": 36.07,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 36.07,
+      "end_km": 36.088,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 36.088,
+      "end_km": 37.318,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 37.318,
+      "end_km": 38.23,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 38.23,
+      "end_km": 38.246,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 38.246,
+      "end_km": 42.17,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 42.17,
+      "end_km": 42.865,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 42.865,
+      "end_km": 43.521,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 43.521,
+      "end_km": 50.612,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 50.612,
+      "end_km": 51.059,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 51.059,
+      "end_km": 51.104,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 51.104,
+      "end_km": 52.373,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 52.373,
+      "end_km": 57.324,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 57.324,
+      "end_km": 57.565,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 57.565,
+      "end_km": 58.594,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 58.594,
+      "end_km": 61.282,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 61.282,
+      "end_km": 62.29,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 62.29,
+      "end_km": 62.307,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 62.307,
+      "end_km": 62.366,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 62.366,
+      "end_km": 63.035,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 63.035,
+      "end_km": 73.627,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 23042
+}

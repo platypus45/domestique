@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: Weinweg]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/142900">
+			<text><![CDATA[Gravel Route: Weinweg]]></text>
+		</link>
+		<time>2024-05-01T14:19:19-04:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: Weinweg]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/142900">
+			<text><![CDATA[Gravel Route: Weinweg]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="50.81736" lon="6.05456">
+				<ele>171.59</ele>
+			</trkpt>
+			<trkpt lat="50.81736" lon="6.05455">
+				<ele>170.34</ele>
+			</trkpt>
+			<trkpt lat="50.81815" lon="6.05381">
+				<ele>170.6</ele>
+			</trkpt>
+			<trkpt lat="50.81958" lon="6.05195">
+				<ele>171.63</ele>
+			</trkpt>
+			<trkpt lat="50.82215" lon="6.04834">
+				<ele>170.99</ele>
+			</trkpt>
+			<trkpt lat="50.82275" lon="6.04703">
+				<ele>173.21</ele>
+			</trkpt>
+			<trkpt lat="50.82404" lon="6.04579">
+				<ele>173.34</ele>
+			</trkpt>
+			<trkpt lat="50.82501" lon="6.04304">
+				<ele>169.9</ele>
+			</trkpt>
+			<trkpt lat="50.82537" lon="6.04146">
+				<ele>171.71</ele>
+			</trkpt>
+			<trkpt lat="50.82626" lon="6.03931">
+				<ele>178.36</ele>
+			</trkpt>
+			<trkpt lat="50.82672" lon="6.03742">
+				<ele>177.6</ele>
+			</trkpt>
+			<trkpt lat="50.82718" lon="6.03625">
+				<ele>175.47</ele>
+			</trkpt>
+			<trkpt lat="50.82784" lon="6.03396">
+				<ele>179.99</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

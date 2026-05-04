@@ -1,0 +1,21 @@
+{
+  "slug": "zwolle-en-omg",
+  "gpx_path": "gpx_sources/netherlands_gravel/zwolle-en-omg.gpx",
+  "num_points": 96,
+  "distance_km": 31.716,
+  "query_seconds": 1.07,
+  "surface_mix_pct": {
+    "asphalt": 100.0,
+    "gravel": 0.0,
+    "cobble": 0.0,
+    "unknown": 0.0
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 31.716,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 2568
+}

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Domestique">
+  <!-- 6 zone-colored steps, ascending bottom-left → top-right (Z1→Z6) -->
+  <rect x="2"  y="50" width="14" height="3" rx="1.5" fill="#64748b"/>
+  <rect x="9"  y="46" width="14" height="3" rx="1.5" fill="#3b82f6"/>
+  <rect x="16" y="42" width="14" height="3" rx="1.5" fill="#22c55e"/>
+  <rect x="23" y="38" width="14" height="3" rx="1.5" fill="#eab308"/>
+  <rect x="30" y="34" width="14" height="3" rx="1.5" fill="#f97316"/>
+  <rect x="37" y="30" width="14" height="3" rx="1.5" fill="#dc2626"/>
+
+  <!-- Cyclist on top of the red step -->
+  <g stroke="#64748b" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Wheels -->
+    <circle cx="42" cy="26" r="3.4" stroke-width="1.4"/>
+    <circle cx="50" cy="26" r="3.4" stroke-width="1.4"/>
+    <!-- Frame triangle (chainstay + seatstay + down/top tube) -->
+    <polygon points="42,26 47,20 50,26" stroke-width="1.4"/>
+    <!-- Seat post -->
+    <line x1="47" y1="20" x2="46" y2="17" stroke-width="1.4"/>
+    <!-- Handlebar stem -->
+    <line x1="50" y1="26" x2="51.2" y2="20" stroke-width="1.4"/>
+  </g>
+  <g fill="#64748b">
+    <!-- Torso: leaning forward from saddle to handlebars -->
+    <path d="M 45.5 17.4 L 51.5 20 L 51.2 21 L 45 18.6 Z"/>
+    <!-- Head -->
+    <circle cx="45.5" cy="14.5" r="2.1"/>
+    <!-- Helmet visor / aero shape -->
+    <ellipse cx="46.2" cy="13.5" rx="2.8" ry="1" transform="rotate(-12 46.2 13.5)"/>
+  </g>
+</svg>

@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: Session Meadows to High Pastures Road]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/109775">
+			<text><![CDATA[Gravel Route: Session Meadows to High Pastures Road]]></text>
+		</link>
+		<time>2021-07-09T11:55:51-04:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: Session Meadows to High Pastures Road]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/109775">
+			<text><![CDATA[Gravel Route: Session Meadows to High Pastures Road]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="43.68528" lon="-72.50041">
+				<ele>437.5</ele>
+			</trkpt>
+			<trkpt lat="43.68525" lon="-72.50046">
+				<ele>454.24</ele>
+			</trkpt>
+			<trkpt lat="43.68226" lon="-72.50025">
+				<ele>462.77</ele>
+			</trkpt>
+			<trkpt lat="43.68233" lon="-72.49772">
+				<ele>466.4</ele>
+			</trkpt>
+			<trkpt lat="43.68201" lon="-72.49718">
+				<ele>484.6</ele>
+			</trkpt>
+			<trkpt lat="43.68068" lon="-72.49658">
+				<ele>480.93</ele>
+			</trkpt>
+			<trkpt lat="43.6801" lon="-72.49722">
+				<ele>449.14</ele>
+			</trkpt>
+			<trkpt lat="43.67872" lon="-72.49734">
+				<ele>438.98</ele>
+			</trkpt>
+			<trkpt lat="43.67746" lon="-72.49675">
+				<ele>410.82</ele>
+			</trkpt>
+			<trkpt lat="43.67712" lon="-72.49625">
+				<ele>394.05</ele>
+			</trkpt>
+			<trkpt lat="43.67777" lon="-72.49527">
+				<ele>388.42</ele>
+			</trkpt>
+			<trkpt lat="43.67784" lon="-72.49469">
+				<ele>366.43</ele>
+			</trkpt>
+			<trkpt lat="43.67597" lon="-72.49395">
+				<ele>383.55</ele>
+			</trkpt>
+			<trkpt lat="43.67497" lon="-72.49239">
+				<ele>374.4</ele>
+			</trkpt>
+			<trkpt lat="43.67135" lon="-72.49052">
+				<ele>365.69</ele>
+			</trkpt>
+			<trkpt lat="43.66855" lon="-72.48836">
+				<ele>337.38</ele>
+			</trkpt>
+			<trkpt lat="43.66573" lon="-72.48361">
+				<ele>330.79</ele>
+			</trkpt>
+			<trkpt lat="43.66467" lon="-72.48264">
+				<ele>331.96</ele>
+			</trkpt>
+			<trkpt lat="43.65928" lon="-72.47596">
+				<ele>319</ele>
+			</trkpt>
+			<trkpt lat="43.65864" lon="-72.47443">
+				<ele>312.44</ele>
+			</trkpt>
+			<trkpt lat="43.65792" lon="-72.47145">
+				<ele>321.96</ele>
+			</trkpt>
+			<trkpt lat="43.65624" lon="-72.47062">
+				<ele>302.84</ele>
+			</trkpt>
+			<trkpt lat="43.65549" lon="-72.47072">
+				<ele>283.35</ele>
+			</trkpt>
+			<trkpt lat="43.65405" lon="-72.47022">
+				<ele>269.82</ele>
+			</trkpt>
+			<trkpt lat="43.64708" lon="-72.46981">
+				<ele>256.31</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

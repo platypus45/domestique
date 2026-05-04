@@ -1,0 +1,41 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>VO2max 4x30s (90min)</name>
+    <description>Warmup: 5min @ 50% FTP | Intervals: 4 x (30s @ 120% / 3min @ 91%) | Cooldown: 10min @ 50% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="300" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="0.81" pace="0" />
+        <SteadyState Duration="120" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="0.89" pace="0" />
+        <SteadyState Duration="120" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.0" pace="0" />
+        <SteadyState Duration="120" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.08" pace="0" />
+        <SteadyState Duration="120" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.16" pace="0" />
+        <SteadyState Duration="120" Power="0.5" pace="0" />
+        <SteadyState Duration="180" Power="0.81" pace="0" />
+        <SteadyState Duration="120" Power="0.91" pace="0" />
+        <SteadyState Duration="30" Power="1.21" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <SteadyState Duration="180" Power="0.94" pace="0" />
+        <SteadyState Duration="120" Power="1.08" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <SteadyState Duration="180" Power="0.94" pace="0" />
+        <SteadyState Duration="120" Power="1.08" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <SteadyState Duration="180" Power="0.94" pace="0" />
+        <SteadyState Duration="120" Power="1.08" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <SteadyState Duration="180" Power="0.94" pace="0" />
+        <SteadyState Duration="120" Power="1.08" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <SteadyState Duration="180" Power="0.94" pace="0" />
+        <SteadyState Duration="120" Power="1.08" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <IntervalsT Repeat="4" OnDuration="30" OffDuration="180" OnPower="1.2" OffPower="0.91" pace="0" />
+        <SteadyState Duration="600" Power="0.5" pace="0" />
+    </workout>
+</workout_file>

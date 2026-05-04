@@ -1,0 +1,81 @@
+{
+  "slug": "zwolle-nw-45k",
+  "gpx_path": "gpx_sources/netherlands_gravel/zwolle-nw-45k.gpx",
+  "num_points": 2562,
+  "distance_km": 44.334,
+  "query_seconds": 15.6,
+  "surface_mix_pct": {
+    "asphalt": 99.6,
+    "gravel": 0.1,
+    "cobble": 0.0,
+    "unknown": 0.3
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 0.525,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 0.525,
+      "end_km": 0.527,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 0.527,
+      "end_km": 1.673,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 1.673,
+      "end_km": 1.679,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 1.679,
+      "end_km": 3.725,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 3.725,
+      "end_km": 3.741,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 3.741,
+      "end_km": 4.856,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 4.856,
+      "end_km": 4.922,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 4.922,
+      "end_km": 31.907,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 31.907,
+      "end_km": 31.972,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 31.972,
+      "end_km": 43.346,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 43.346,
+      "end_km": 43.38,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 43.38,
+      "end_km": 44.334,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 21875
+}

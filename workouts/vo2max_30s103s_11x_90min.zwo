@@ -1,0 +1,24 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>VO2max 30s/2min 11x (90min)</name>
+    <description>Warmup: 10min from 40% to 75% FTP | Microintervals: 11 x (30s @ 105% / 1min 43s @ 95%) | Cooldown: 12min from 65% to 40% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="600" PowerLow="0.4" PowerHigh="0.75" pace="0" />
+        <IntervalsT Repeat="3" OnDuration="30" OffDuration="90" OnPower="1.0" OffPower="0.7" pace="0" />
+        <SteadyState Duration="180" Power="0.55" pace="0" />
+        <SteadyState Duration="120" Power="1.15" pace="0" />
+        <IntervalsT Repeat="6" OnDuration="15" OffDuration="75" OnPower="1.06" OffPower="0.9" pace="0" />
+        <SteadyState Duration="180" Power="0.75" pace="0" />
+        <IntervalsT Repeat="5" OnDuration="30" OffDuration="120" OnPower="1.05" OffPower="0.95" pace="0" />
+        <SteadyState Duration="180" Power="0.73" pace="0" />
+        <IntervalsT Repeat="6" OnDuration="30" OffDuration="90" OnPower="1.05" OffPower="0.95" pace="0" />
+        <SteadyState Duration="180" Power="0.7" pace="0" />
+        <IntervalsT Repeat="6" OnDuration="20" OffDuration="40" OnPower="1.1" OffPower="0.95" pace="0" />
+        <SteadyState Duration="180" Power="0.63" pace="0" />
+        <IntervalsT Repeat="5" OnDuration="30" OffDuration="30" OnPower="1.1" OffPower="1.0" pace="0" />
+        <SteadyState Duration="30" Power="1.5" pace="0" />
+        <Cooldown Duration="720" PowerLow="0.65" PowerHigh="0.4" pace="0" />
+    </workout>
+</workout_file>

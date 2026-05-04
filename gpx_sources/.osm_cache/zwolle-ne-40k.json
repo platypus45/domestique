@@ -1,0 +1,116 @@
+{
+  "slug": "zwolle-ne-40k",
+  "gpx_path": "gpx_sources/netherlands_gravel/zwolle-ne-40k.gpx",
+  "num_points": 1627,
+  "distance_km": 41.329,
+  "query_seconds": 110.81,
+  "surface_mix_pct": {
+    "asphalt": 99.2,
+    "gravel": 0.6,
+    "cobble": 0.0,
+    "unknown": 0.2
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 2.89,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 2.89,
+      "end_km": 2.896,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 2.896,
+      "end_km": 9.679,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 9.679,
+      "end_km": 9.689,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 9.689,
+      "end_km": 16.085,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 16.085,
+      "end_km": 16.092,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 16.092,
+      "end_km": 19.241,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 19.241,
+      "end_km": 19.272,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 19.272,
+      "end_km": 29.419,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 29.419,
+      "end_km": 29.454,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 29.454,
+      "end_km": 31.76,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 31.76,
+      "end_km": 31.803,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 31.803,
+      "end_km": 32.093,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 32.093,
+      "end_km": 32.161,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 32.161,
+      "end_km": 37.986,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 37.986,
+      "end_km": 38.055,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 38.055,
+      "end_km": 38.07,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 38.07,
+      "end_km": 38.504,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 38.504,
+      "end_km": 38.517,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 38.517,
+      "end_km": 41.329,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 17589
+}

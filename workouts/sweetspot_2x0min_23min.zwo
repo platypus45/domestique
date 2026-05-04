@@ -1,0 +1,42 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Over-Under 2x20s (23min)</name>
+    <description>Warmup: 3min from 70% to 88% FTP | Intervals: 2 x (20s @ 100% / 40s @ 70%) | Cooldown: 2min from 78% to 70% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="180" PowerLow="0.7" PowerHigh="0.88" pace="0" />
+        <IntervalsT Repeat="2" OnDuration="20" OffDuration="40" OnPower="1.0" OffPower="0.7" pace="0" />
+        <SteadyState Duration="60" Power="0.65" pace="0" />
+        <SteadyState Duration="45" Power="0.9" pace="0" />
+        <SteadyState Duration="30" Power="1.0" pace="0" />
+        <SteadyState Duration="15" Power="1.15" pace="0" />
+        <SteadyState Duration="30" Power="0.7" pace="0" />
+        <SteadyState Duration="15" Power="1.15" pace="0" />
+        <SteadyState Duration="30" Power="1.0" pace="0" />
+        <SteadyState Duration="45" Power="0.9" pace="0" />
+        <SteadyState Duration="30" Power="0.7" pace="0" />
+        <SteadyState Duration="15" Power="1.15" pace="0" />
+        <SteadyState Duration="30" Power="1.0" pace="0" />
+        <SteadyState Duration="45" Power="0.9" pace="0" />
+        <SteadyState Duration="45" Power="0.9" pace="0" />
+        <SteadyState Duration="30" Power="1.0" pace="0" />
+        <SteadyState Duration="15" Power="1.15" pace="0" />
+        <SteadyState Duration="60" Power="0.65" pace="0" />
+        <SteadyState Duration="45" Power="0.9" pace="0" />
+        <SteadyState Duration="30" Power="1.0" pace="0" />
+        <SteadyState Duration="15" Power="1.15" pace="0" />
+        <SteadyState Duration="30" Power="0.7" pace="0" />
+        <SteadyState Duration="15" Power="1.15" pace="0" />
+        <SteadyState Duration="30" Power="1.0" pace="0" />
+        <SteadyState Duration="45" Power="0.9" pace="0" />
+        <SteadyState Duration="30" Power="0.7" pace="0" />
+        <SteadyState Duration="15" Power="1.15" pace="0" />
+        <SteadyState Duration="30" Power="1.0" pace="0" />
+        <SteadyState Duration="45" Power="0.9" pace="0" />
+        <SteadyState Duration="45" Power="0.9" pace="0" />
+        <SteadyState Duration="30" Power="1.0" pace="0" />
+        <SteadyState Duration="15" Power="1.15" pace="0" />
+        <Cooldown Duration="120" PowerLow="0.78" PowerHigh="0.7" pace="0" />
+    </workout>
+</workout_file>

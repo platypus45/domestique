@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Anaerobic 1min/58s 15x (72min)</name>
+    <description>Warmup: 7min from 44% to 75% FTP | Microintervals: 15 x (1min @ 121% / 58s @ 30%) | Cooldown: 10min from 30% to 50% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="420" PowerLow="0.44" PowerHigh="0.75" pace="0" />
+        <SteadyState Duration="30" Power="1.09" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.09" pace="0" />
+        <SteadyState Duration="300" Power="0.5" pace="0" />
+        <IntervalsT Repeat="5" OnDuration="60" OffDuration="60" OnPower="1.21" OffPower="0.3" pace="0" />
+        <SteadyState Duration="480" Power="0.5" pace="0" />
+        <IntervalsT Repeat="5" OnDuration="60" OffDuration="60" OnPower="1.21" OffPower="0.3" pace="0" />
+        <SteadyState Duration="480" Power="0.5" pace="0" />
+        <IntervalsT Repeat="5" OnDuration="60" OffDuration="55" OnPower="1.21" OffPower="0.3" pace="0" />
+        <SteadyState Duration="600" Power="0.5" pace="0" />
+    </workout>
+</workout_file>

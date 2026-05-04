@@ -1,0 +1,26 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>VO2 Short 45s/15s 7x (24min)</name>
+    <description>Warmup: 3min from 35% to 55% FTP | Microintervals: 7 x (45s @ 120% / 15s @ 55%) | Cooldown: 3min from 55% to 35% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="180" PowerLow="0.35" PowerHigh="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="45" OffDuration="15" OnPower="1.2" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="45" OffDuration="15" OnPower="1.2" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="45" OffDuration="15" OnPower="1.2" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="45" OffDuration="15" OnPower="1.2" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="45" OffDuration="15" OnPower="1.2" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="45" OffDuration="15" OnPower="1.2" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="45" OffDuration="15" OnPower="1.2" OffPower="0.55" pace="0" />
+        <SteadyState Duration="240" Power="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="30" OffDuration="30" OnPower="1.2" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="30" OffDuration="30" OnPower="1.2" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="30" OffDuration="30" OnPower="1.2" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="30" OffDuration="30" OnPower="1.2" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="30" OffDuration="30" OnPower="1.2" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="30" OffDuration="30" OnPower="1.2" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="30" OffDuration="30" OnPower="1.2" OffPower="0.55" pace="0" />
+        <Cooldown Duration="180" PowerLow="0.55" PowerHigh="0.35" pace="0" />
+    </workout>
+</workout_file>

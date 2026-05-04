@@ -1,0 +1,16 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Neuromuscular 4x10s (55min)</name>
+    <description>Intervals: 4 x (10s @ 181% / 50s @ 50%)</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <IntervalsT Repeat="4" OnDuration="10" OffDuration="50" OnPower="1.81" OffPower="0.5" pace="0" />
+        <SteadyState Duration="180" Power="0.7" pace="0" />
+        <SteadyState Duration="120" Power="0.5" pace="0" />
+        <SteadyState Duration="300" Power="0.9" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <FreeRide Duration="2100" FlatRoad="0" />
+    </workout>
+</workout_file>

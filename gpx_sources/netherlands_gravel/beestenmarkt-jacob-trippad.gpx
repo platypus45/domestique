@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: Beestenmarkt to Jacob Trippad]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/152531">
+			<text><![CDATA[Gravel Route: Beestenmarkt to Jacob Trippad]]></text>
+		</link>
+		<time>2026-04-13T11:54:18-04:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: Beestenmarkt to Jacob Trippad]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/152531">
+			<text><![CDATA[Gravel Route: Beestenmarkt to Jacob Trippad]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="52.25725" lon="6.16478">
+				<ele>8</ele>
+			</trkpt>
+			<trkpt lat="52.25727" lon="6.1648">
+				<ele>6</ele>
+			</trkpt>
+			<trkpt lat="52.30936" lon="6.20572">
+				<ele>15.73</ele>
+			</trkpt>
+			<trkpt lat="52.3419" lon="6.21458">
+				<ele>3</ele>
+			</trkpt>
+			<trkpt lat="52.36968" lon="6.27684">
+				<ele>6.84</ele>
+			</trkpt>
+			<trkpt lat="52.38961" lon="6.2805">
+				<ele>7.85</ele>
+			</trkpt>
+			<trkpt lat="52.41444" lon="6.31753">
+				<ele>7.78</ele>
+			</trkpt>
+			<trkpt lat="52.44742" lon="6.3358">
+				<ele>4.89</ele>
+			</trkpt>
+			<trkpt lat="52.44388" lon="6.35964">
+				<ele>6.94</ele>
+			</trkpt>
+			<trkpt lat="52.48792" lon="6.42396">
+				<ele>6.85</ele>
+			</trkpt>
+			<trkpt lat="52.52568" lon="6.42526">
+				<ele>4.21</ele>
+			</trkpt>
+			<trkpt lat="52.55707" lon="6.39683">
+				<ele>5</ele>
+			</trkpt>
+			<trkpt lat="52.60171" lon="6.39131">
+				<ele>6.06</ele>
+			</trkpt>
+			<trkpt lat="52.64523" lon="6.42931">
+				<ele>14.81</ele>
+			</trkpt>
+			<trkpt lat="52.71418" lon="6.43704">
+				<ele>6.34</ele>
+			</trkpt>
+			<trkpt lat="52.73182" lon="6.47633">
+				<ele>11.55</ele>
+			</trkpt>
+			<trkpt lat="52.73841" lon="6.55353">
+				<ele>16.01</ele>
+			</trkpt>
+			<trkpt lat="52.75703" lon="6.56314">
+				<ele>13.86</ele>
+			</trkpt>
+			<trkpt lat="52.7607" lon="6.57821">
+				<ele>15.74</ele>
+			</trkpt>
+			<trkpt lat="52.81787" lon="6.58285">
+				<ele>14.51</ele>
+			</trkpt>
+			<trkpt lat="52.89559" lon="6.65915">
+				<ele>14.06</ele>
+			</trkpt>
+			<trkpt lat="52.90893" lon="6.70999">
+				<ele>21.18</ele>
+			</trkpt>
+			<trkpt lat="52.95726" lon="6.69486">
+				<ele>15</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

@@ -1,0 +1,201 @@
+{
+  "slug": "dwingelderveld-np",
+  "gpx_path": "gpx_sources/netherlands_gravel/dwingelderveld-np.gpx",
+  "num_points": 1185,
+  "distance_km": 76.072,
+  "query_seconds": 2.95,
+  "surface_mix_pct": {
+    "asphalt": 90.4,
+    "gravel": 9.4,
+    "cobble": 0.0,
+    "unknown": 0.2
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 0.211,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 0.211,
+      "end_km": 0.219,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 0.219,
+      "end_km": 2.722,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 2.722,
+      "end_km": 2.769,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 2.769,
+      "end_km": 22.232,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 22.232,
+      "end_km": 22.289,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 22.289,
+      "end_km": 37.387,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 37.387,
+      "end_km": 37.399,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 37.399,
+      "end_km": 37.426,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 37.426,
+      "end_km": 37.435,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 37.435,
+      "end_km": 37.752,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 37.752,
+      "end_km": 40.43,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 40.43,
+      "end_km": 40.433,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 40.433,
+      "end_km": 40.842,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 40.842,
+      "end_km": 40.857,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 40.857,
+      "end_km": 41.589,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 41.589,
+      "end_km": 41.783,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 41.783,
+      "end_km": 44.708,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 44.708,
+      "end_km": 44.813,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 44.813,
+      "end_km": 44.834,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 44.834,
+      "end_km": 46.08,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 46.08,
+      "end_km": 46.088,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 46.088,
+      "end_km": 51.811,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 51.811,
+      "end_km": 51.856,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 51.856,
+      "end_km": 59.026,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 59.026,
+      "end_km": 59.043,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 59.043,
+      "end_km": 62.567,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 62.567,
+      "end_km": 62.647,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 62.647,
+      "end_km": 62.943,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 62.943,
+      "end_km": 62.972,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 62.972,
+      "end_km": 63.01,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 63.01,
+      "end_km": 63.09,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 63.09,
+      "end_km": 65.044,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 65.044,
+      "end_km": 65.161,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 65.161,
+      "end_km": 74.995,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 74.995,
+      "end_km": 75.003,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 75.003,
+      "end_km": 76.072,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 14320
+}

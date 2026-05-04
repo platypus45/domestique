@@ -1,0 +1,21 @@
+{
+  "slug": "beerninkstraat",
+  "gpx_path": "gpx_sources/netherlands_gravel/beerninkstraat.gpx",
+  "num_points": 122,
+  "distance_km": 29.752,
+  "query_seconds": 19.79,
+  "surface_mix_pct": {
+    "asphalt": 100.0,
+    "gravel": 0.0,
+    "cobble": 0.0,
+    "unknown": 0.0
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 29.752,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 12261
+}

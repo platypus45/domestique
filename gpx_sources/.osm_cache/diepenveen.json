@@ -1,0 +1,131 @@
+{
+  "slug": "diepenveen",
+  "gpx_path": "gpx_sources/netherlands_gravel/diepenveen.gpx",
+  "num_points": 371,
+  "distance_km": 66.791,
+  "query_seconds": 134.34,
+  "surface_mix_pct": {
+    "asphalt": 90.1,
+    "gravel": 9.0,
+    "cobble": 0.0,
+    "unknown": 0.9
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 4.147,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 4.147,
+      "end_km": 4.76,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 4.76,
+      "end_km": 8.454,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 8.454,
+      "end_km": 8.529,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 8.529,
+      "end_km": 27.103,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 27.103,
+      "end_km": 27.199,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 27.199,
+      "end_km": 28.794,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 28.794,
+      "end_km": 29.77,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 29.77,
+      "end_km": 29.975,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 29.975,
+      "end_km": 30.714,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 30.714,
+      "end_km": 31.046,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 31.046,
+      "end_km": 31.088,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 31.088,
+      "end_km": 31.452,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 31.452,
+      "end_km": 31.783,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 31.783,
+      "end_km": 31.869,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 31.869,
+      "end_km": 33.625,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 33.625,
+      "end_km": 33.932,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 33.932,
+      "end_km": 34.101,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 34.101,
+      "end_km": 34.317,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 34.317,
+      "end_km": 34.496,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 34.496,
+      "end_km": 45.048,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 45.048,
+      "end_km": 46.665,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 46.665,
+      "end_km": 66.791,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 14213
+}

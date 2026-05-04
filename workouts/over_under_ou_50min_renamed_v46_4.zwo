@@ -1,0 +1,30 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Over-Under 4 cycles (50min)</name>
+    <description>Warmup: 4min from 24% to 75% FTP | Over-Under: 4 cycles (alternating above/below threshold) | Cooldown: 5min from 99% to 25% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="240" PowerLow="0.24" PowerHigh="0.75" pace="0" />
+        <SteadyState Duration="180" Power="0.75" pace="0" />
+        <SteadyState Duration="180" Power="0.85" pace="0" />
+        <SteadyState Duration="30" Power="1.25" pace="0" />
+        <SteadyState Duration="90" Power="0.99" pace="0" />
+        <SteadyState Duration="240" Power="0.49" pace="0" />
+        <SteadyState Duration="180" Power="0.75" pace="0" />
+        <SteadyState Duration="180" Power="0.85" pace="0" />
+        <SteadyState Duration="30" Power="1.25" pace="0" />
+        <SteadyState Duration="90" Power="0.99" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <SteadyState Duration="180" Power="0.75" pace="0" />
+        <SteadyState Duration="180" Power="0.85" pace="0" />
+        <SteadyState Duration="30" Power="1.25" pace="0" />
+        <SteadyState Duration="90" Power="0.99" pace="0" />
+        <SteadyState Duration="120" Power="0.5" pace="0" />
+        <SteadyState Duration="180" Power="0.75" pace="0" />
+        <SteadyState Duration="180" Power="0.85" pace="0" />
+        <SteadyState Duration="30" Power="1.25" pace="0" />
+        <SteadyState Duration="90" Power="0.99" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.99" PowerHigh="0.25" pace="0" />
+    </workout>
+</workout_file>

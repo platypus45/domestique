@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: Via Panoramica to SP. 37 - Via Ganzole]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/95290">
+			<text><![CDATA[Gravel Route: Via Panoramica to SP. 37 - Via Ganzole]]></text>
+		</link>
+		<time>2020-12-08T00:35:02-05:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: Via Panoramica to SP. 37 - Via Ganzole]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/95290">
+			<text><![CDATA[Gravel Route: Via Panoramica to SP. 37 - Via Ganzole]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="44.47665" lon="11.28437">
+				<ele>75.71</ele>
+			</trkpt>
+			<trkpt lat="44.47662" lon="11.28465">
+				<ele>83.73</ele>
+			</trkpt>
+			<trkpt lat="44.46812" lon="11.28619">
+				<ele>87.01</ele>
+			</trkpt>
+			<trkpt lat="44.46493" lon="11.28552">
+				<ele>63.07</ele>
+			</trkpt>
+			<trkpt lat="44.46223" lon="11.28721">
+				<ele>69.17</ele>
+			</trkpt>
+			<trkpt lat="44.46069" lon="11.28466">
+				<ele>65.76</ele>
+			</trkpt>
+			<trkpt lat="44.45691" lon="11.28488">
+				<ele>68.3</ele>
+			</trkpt>
+			<trkpt lat="44.45445" lon="11.28253">
+				<ele>67.37</ele>
+			</trkpt>
+			<trkpt lat="44.43257" lon="11.28254">
+				<ele>67.43</ele>
+			</trkpt>
+			<trkpt lat="44.43232" lon="11.28095">
+				<ele>64.97</ele>
+			</trkpt>
+			<trkpt lat="44.43063" lon="11.27984">
+				<ele>65.4</ele>
+			</trkpt>
+			<trkpt lat="44.43078" lon="11.27745">
+				<ele>68.44</ele>
+			</trkpt>
+			<trkpt lat="44.42308" lon="11.27742">
+				<ele>68.99</ele>
+			</trkpt>
+			<trkpt lat="44.41885" lon="11.27452">
+				<ele>75.18</ele>
+			</trkpt>
+			<trkpt lat="44.41881" lon="11.27298">
+				<ele>75.9</ele>
+			</trkpt>
+			<trkpt lat="44.41677" lon="11.27129">
+				<ele>77.47</ele>
+			</trkpt>
+			<trkpt lat="44.4136" lon="11.27231">
+				<ele>81.81</ele>
+			</trkpt>
+			<trkpt lat="44.41236" lon="11.27404">
+				<ele>89.18</ele>
+			</trkpt>
+			<trkpt lat="44.41" lon="11.27387">
+				<ele>82.38</ele>
+			</trkpt>
+			<trkpt lat="44.40882" lon="11.27573">
+				<ele>100.92</ele>
+			</trkpt>
+			<trkpt lat="44.40564" lon="11.2752">
+				<ele>110.74</ele>
+			</trkpt>
+			<trkpt lat="44.40408" lon="11.27339">
+				<ele>112.19</ele>
+			</trkpt>
+			<trkpt lat="44.39977" lon="11.27787">
+				<ele>109.86</ele>
+			</trkpt>
+			<trkpt lat="44.39543" lon="11.27986">
+				<ele>95.72</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

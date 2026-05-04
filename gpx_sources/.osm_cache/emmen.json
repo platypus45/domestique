@@ -1,0 +1,101 @@
+{
+  "slug": "emmen",
+  "gpx_path": "gpx_sources/netherlands_gravel/emmen.gpx",
+  "num_points": 249,
+  "distance_km": 112.465,
+  "query_seconds": 21.77,
+  "surface_mix_pct": {
+    "asphalt": 97.0,
+    "gravel": 2.7,
+    "cobble": 0.3,
+    "unknown": 0.0
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 1.305,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 1.305,
+      "end_km": 1.58,
+      "surface": "cobble"
+    },
+    {
+      "start_km": 1.58,
+      "end_km": 1.768,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 1.768,
+      "end_km": 1.841,
+      "surface": "cobble"
+    },
+    {
+      "start_km": 1.841,
+      "end_km": 18.131,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 18.131,
+      "end_km": 18.477,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 18.477,
+      "end_km": 34.272,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 34.272,
+      "end_km": 34.318,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 34.318,
+      "end_km": 39.108,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 39.108,
+      "end_km": 39.338,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 39.338,
+      "end_km": 41.272,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 41.272,
+      "end_km": 41.467,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 41.467,
+      "end_km": 53.768,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 53.768,
+      "end_km": 54.445,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 54.445,
+      "end_km": 110.472,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 110.472,
+      "end_km": 112.028,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 112.028,
+      "end_km": 112.465,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 43096
+}

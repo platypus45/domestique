@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: Strada Isonzo to Via Lupi]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/95867">
+			<text><![CDATA[Gravel Route: Strada Isonzo to Via Lupi]]></text>
+		</link>
+		<time>2020-12-16T07:24:36-05:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: Strada Isonzo to Via Lupi]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/95867">
+			<text><![CDATA[Gravel Route: Strada Isonzo to Via Lupi]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="44.81072" lon="10.5862">
+				<ele>25.54</ele>
+			</trkpt>
+			<trkpt lat="44.81072" lon="10.58621">
+				<ele>24.55</ele>
+			</trkpt>
+			<trkpt lat="44.81277" lon="10.58746">
+				<ele>23.54</ele>
+			</trkpt>
+			<trkpt lat="44.81287" lon="10.58763">
+				<ele>23.95</ele>
+			</trkpt>
+			<trkpt lat="44.81253" lon="10.58866">
+				<ele>22.96</ele>
+			</trkpt>
+			<trkpt lat="44.81259" lon="10.58889">
+				<ele>22.65</ele>
+			</trkpt>
+			<trkpt lat="44.81349" lon="10.58959">
+				<ele>22.78</ele>
+			</trkpt>
+			<trkpt lat="44.81357" lon="10.58978">
+				<ele>22.72</ele>
+			</trkpt>
+			<trkpt lat="44.81323" lon="10.59146">
+				<ele>22.45</ele>
+			</trkpt>
+			<trkpt lat="44.81405" lon="10.59196">
+				<ele>22.12</ele>
+			</trkpt>
+			<trkpt lat="44.81405" lon="10.59196">
+				<ele>21.97</ele>
+			</trkpt>
+			<trkpt lat="44.81662" lon="10.59352">
+				<ele>22.49</ele>
+			</trkpt>
+			<trkpt lat="44.81823" lon="10.59435">
+				<ele>22.08</ele>
+			</trkpt>
+			<trkpt lat="44.81841" lon="10.59452">
+				<ele>21.97</ele>
+			</trkpt>
+			<trkpt lat="44.81855" lon="10.5951">
+				<ele>21.98</ele>
+			</trkpt>
+			<trkpt lat="44.81871" lon="10.59522">
+				<ele>22.63</ele>
+			</trkpt>
+			<trkpt lat="44.81997" lon="10.5955">
+				<ele>21.86</ele>
+			</trkpt>
+			<trkpt lat="44.81997" lon="10.5955">
+				<ele>21.32</ele>
+			</trkpt>
+			<trkpt lat="44.82223" lon="10.59599">
+				<ele>21.05</ele>
+			</trkpt>
+			<trkpt lat="44.82372" lon="10.59676">
+				<ele>21.83</ele>
+			</trkpt>
+			<trkpt lat="44.82346" lon="10.59844">
+				<ele>22.8</ele>
+			</trkpt>
+			<trkpt lat="44.82329" lon="10.60001">
+				<ele>22.27</ele>
+			</trkpt>
+			<trkpt lat="44.82333" lon="10.60022">
+				<ele>21.89</ele>
+			</trkpt>
+			<trkpt lat="44.82409" lon="10.60066">
+				<ele>21.38</ele>
+			</trkpt>
+			<trkpt lat="44.8246" lon="10.60135">
+				<ele>21.67</ele>
+			</trkpt>
+			<trkpt lat="44.82559" lon="10.60215">
+				<ele>20.87</ele>
+			</trkpt>
+			<trkpt lat="44.82559" lon="10.60215">
+				<ele>21.51</ele>
+			</trkpt>
+			<trkpt lat="44.82621" lon="10.60254">
+				<ele>21.57</ele>
+			</trkpt>
+			<trkpt lat="44.82654" lon="10.60267">
+				<ele>20.84</ele>
+			</trkpt>
+			<trkpt lat="44.83065" lon="10.60275">
+				<ele>20.51</ele>
+			</trkpt>
+			<trkpt lat="44.83223" lon="10.60259">
+				<ele>21.12</ele>
+			</trkpt>
+			<trkpt lat="44.83277" lon="10.60268">
+				<ele>21.24</ele>
+			</trkpt>
+			<trkpt lat="44.83277" lon="10.60268">
+				<ele>22.13</ele>
+			</trkpt>
+			<trkpt lat="44.83443" lon="10.60304">
+				<ele>21.03</ele>
+			</trkpt>
+			<trkpt lat="44.8363" lon="10.60357">
+				<ele>21.6</ele>
+			</trkpt>
+			<trkpt lat="44.83735" lon="10.60449">
+				<ele>21.59</ele>
+			</trkpt>
+			<trkpt lat="44.8385" lon="10.60524">
+				<ele>21.61</ele>
+			</trkpt>
+			<trkpt lat="44.84164" lon="10.6071">
+				<ele>21.58</ele>
+			</trkpt>
+			<trkpt lat="44.84203" lon="10.60719">
+				<ele>20.53</ele>
+			</trkpt>
+			<trkpt lat="44.84212" lon="10.60734">
+				<ele>21.47</ele>
+			</trkpt>
+			<trkpt lat="44.84214" lon="10.60755">
+				<ele>22.03</ele>
+			</trkpt>
+			<trkpt lat="44.8422" lon="10.60983">
+				<ele>24.58</ele>
+			</trkpt>
+			<trkpt lat="44.8422" lon="10.60983">
+				<ele>21.63</ele>
+			</trkpt>
+			<trkpt lat="44.84222" lon="10.61014">
+				<ele>20.21</ele>
+			</trkpt>
+			<trkpt lat="44.84228" lon="10.61052">
+				<ele>20.55</ele>
+			</trkpt>
+			<trkpt lat="44.84257" lon="10.61139">
+				<ele>21.27</ele>
+			</trkpt>
+			<trkpt lat="44.8426" lon="10.61167">
+				<ele>20.02</ele>
+			</trkpt>
+			<trkpt lat="44.84042" lon="10.61829">
+				<ele>19.88</ele>
+			</trkpt>
+			<trkpt lat="44.84043" lon="10.61849">
+				<ele>21.78</ele>
+			</trkpt>
+			<trkpt lat="44.84298" lon="10.62034">
+				<ele>19.34</ele>
+			</trkpt>
+			<trkpt lat="44.84298" lon="10.62034">
+				<ele>19.05</ele>
+			</trkpt>
+			<trkpt lat="44.84698" lon="10.62325">
+				<ele>19.22</ele>
+			</trkpt>
+			<trkpt lat="44.84949" lon="10.62428">
+				<ele>19.17</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

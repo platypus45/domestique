@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Endurance (39min)</name>
+    <description>Warmup: 7min from 47% to 70% FTP | Steady: 1min @ 78% FTP | Steady: 3min @ 56% FTP | Steady: 4min @ 63% FTP | Steady: 3min @ 64% FTP | Steady: 30s @ 90% FTP | Steady: 3min @ 56% FTP | Steady: 3min @ 63% FTP | Steady: 3min @ 64% FTP | Steady: 45s @ 92% FTP | Steady: 3min @ 56% FTP | Steady: 4min @ 63% FTP | Steady: 3min @ 66% FTP | Steady: 1min @ 94% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="420" PowerLow="0.47" PowerHigh="0.7" pace="0" />
+        <SteadyState Duration="60" Power="0.78" pace="0" />
+        <Ramp Duration="180" PowerLow="0.5" PowerHigh="0.62" pace="0" />
+        <SteadyState Duration="240" Power="0.63" pace="0" />
+        <Ramp Duration="180" PowerLow="0.6" PowerHigh="0.68" pace="0" />
+        <SteadyState Duration="30" Power="0.9" pace="0" />
+        <Ramp Duration="180" PowerLow="0.5" PowerHigh="0.62" pace="0" />
+        <SteadyState Duration="180" Power="0.63" pace="0" />
+        <Ramp Duration="180" PowerLow="0.6" PowerHigh="0.68" pace="0" />
+        <SteadyState Duration="45" Power="0.92" pace="0" />
+        <Ramp Duration="180" PowerLow="0.5" PowerHigh="0.62" pace="0" />
+        <SteadyState Duration="240" Power="0.63" pace="0" />
+        <Ramp Duration="180" PowerLow="0.63" PowerHigh="0.68" pace="0" />
+        <SteadyState Duration="60" Power="0.94" pace="0" />
+    </workout>
+</workout_file>

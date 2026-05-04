@@ -1,0 +1,2481 @@
+{
+  "__meta": {
+    "description": "Surface type database (merged from release + main)",
+    "notes": "Keys are canonical '<region>/<slug>' route ids (no .crs suffix). Values are ordered lists of {start_km, end_km, surface} segments. Surface values are lowercase canonical strings.",
+    "sources": [
+      "clean-release v3.6.0 fix22 (procedural + direct keys)",
+      "clean-main 002f8aa (real-world routes with _meta wrapper)"
+    ],
+    "tacx_surfaces": {
+      "ASPHALT": 0,
+      "BRICK_ROAD": 5,
+      "CATTLE_GRID": 2,
+      "COBBLESTONES_HARD": 3,
+      "COBBLESTONES_SOFT": 4,
+      "CONCRETE_PLATES": 1,
+      "GRAVEL": 7,
+      "ICE": 8,
+      "OFF_ROAD": 6,
+      "WOODEN_BOARDS": 9
+    },
+    "version": "2.0.0"
+  },
+  "blue_ridge/backcountry-tour-52": [
+    {
+      "end_km": 7.753,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 51.64,
+      "start_km": 7.753,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 62.095,
+      "start_km": 51.64,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/birch-path-69": [
+    {
+      "end_km": 17.628,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "blue_ridge/boulder-link-35": [
+    {
+      "end_km": 6.252,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 39.631,
+      "start_km": 6.252,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 55.045,
+      "start_km": 39.631,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/boulder-traverse-27": [
+    {
+      "end_km": 18.933,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "blue_ridge/calm-segment-39": [
+    {
+      "end_km": 1.188,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 3.314,
+      "start_km": 1.188,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 3.856,
+      "start_km": 3.314,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 5.981,
+      "start_km": 3.856,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 7.411,
+      "start_km": 5.981,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 9.537,
+      "start_km": 7.411,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 10.155,
+      "start_km": 9.537,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 12.281,
+      "start_km": 10.155,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 13.136,
+      "start_km": 12.281,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 15.262,
+      "start_km": 13.136,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 16.537,
+      "start_km": 15.262,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 18.663,
+      "start_km": 16.537,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 20.449,
+      "start_km": 18.663,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 23.763,
+      "start_km": 20.449,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/desert-cruise-5": [
+    {
+      "end_km": 1.482,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "blue_ridge/desert-quest-21": [
+    {
+      "end_km": 6.514,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 39.303,
+      "start_km": 6.514,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 41.586,
+      "start_km": 39.303,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/foothill-grove-8": [
+    {
+      "end_km": 3.391,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 9.373,
+      "start_km": 3.391,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 10.465,
+      "start_km": 9.373,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 16.448,
+      "start_km": 10.465,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 16.954,
+      "start_km": 16.448,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 22.937,
+      "start_km": 16.954,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 24.276,
+      "start_km": 22.937,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 30.259,
+      "start_km": 24.276,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 31.148,
+      "start_km": 30.259,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 37.13,
+      "start_km": 31.148,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 38.542,
+      "start_km": 37.13,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 44.525,
+      "start_km": 38.542,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 44.991,
+      "start_km": 44.525,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 50.974,
+      "start_km": 44.991,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 51.887,
+      "start_km": 50.974,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 57.869,
+      "start_km": 51.887,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 58.442,
+      "start_km": 57.869,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 67.816,
+      "start_km": 58.442,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/foothill-stage-86": [
+    {
+      "end_km": 17.497,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "blue_ridge/golden-road-9": [
+    {
+      "end_km": 11.859,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "blue_ridge/heritage-tour-11": [
+    {
+      "end_km": 17.146,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "blue_ridge/hidden-climb-3": [
+    {
+      "end_km": 8.193,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 43.113,
+      "start_km": 8.193,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 48.112,
+      "start_km": 43.113,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/hidden-cruise-47": [
+    {
+      "end_km": 8.06,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "blue_ridge/high-ascent-6": [
+    {
+      "end_km": 22.751,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 27.794,
+      "start_km": 22.751,
+      "surface": "gravel"
+    }
+  ],
+  "blue_ridge/iron-route-33": [
+    {
+      "end_km": 11.107,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "blue_ridge/legacy-grove-17": [
+    {
+      "end_km": 16.916,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "blue_ridge/low-basin-72": [
+    {
+      "end_km": 14.358,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "blue_ridge/low-path-23": [
+    {
+      "end_km": 10.976,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 54.68,
+      "start_km": 10.976,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 68.424,
+      "start_km": 54.68,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/meadow-route-36": [
+    {
+      "end_km": 7.11,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 10.462,
+      "start_km": 7.11,
+      "surface": "cobble"
+    }
+  ],
+  "blue_ridge/meadow-stage-43": [
+    {
+      "end_km": 8.457,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "blue_ridge/oak-hollow-15": [
+    {
+      "end_km": 4.045,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 13.575,
+      "start_km": 4.045,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 14.476,
+      "start_km": 13.575,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 24.005,
+      "start_km": 14.476,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 25.415,
+      "start_km": 24.005,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 34.944,
+      "start_km": 25.415,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 36.261,
+      "start_km": 34.944,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 45.79,
+      "start_km": 36.261,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 46.222,
+      "start_km": 45.79,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 55.752,
+      "start_km": 46.222,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 56.643,
+      "start_km": 55.752,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 66.172,
+      "start_km": 56.643,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 67.324,
+      "start_km": 66.172,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 80.899,
+      "start_km": 67.324,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/open-journey-61": [
+    {
+      "end_km": 2.091,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 5.229,
+      "start_km": 2.091,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 6.191,
+      "start_km": 5.229,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 9.329,
+      "start_km": 6.191,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 9.996,
+      "start_km": 9.329,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 13.134,
+      "start_km": 9.996,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 14.668,
+      "start_km": 13.134,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 17.806,
+      "start_km": 14.668,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 18.774,
+      "start_km": 17.806,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 21.912,
+      "start_km": 18.774,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 23.449,
+      "start_km": 21.912,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 26.587,
+      "start_km": 23.449,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 28.284,
+      "start_km": 26.587,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 31.422,
+      "start_km": 28.284,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 32.872,
+      "start_km": 31.422,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 36.01,
+      "start_km": 32.872,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 36.585,
+      "start_km": 36.01,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 41.813,
+      "start_km": 36.585,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/open-route-12": [
+    {
+      "end_km": 10.626,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "blue_ridge/pioneer-ascent-25": [
+    {
+      "end_km": 4.936,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 30.448,
+      "start_km": 4.936,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 32.368,
+      "start_km": 30.448,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/pioneer-segment-73": [
+    {
+      "end_km": 8.178,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 44.13,
+      "start_km": 8.178,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 48.89,
+      "start_km": 44.13,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/plateau-climb-67": [
+    {
+      "end_km": 15.202,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "blue_ridge/ridge-hollow-80": [
+    {
+      "end_km": 16.98,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "blue_ridge/river-ride-13": [
+    {
+      "end_km": 2.753,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 6.245,
+      "start_km": 2.753,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 7.538,
+      "start_km": 6.245,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 11.03,
+      "start_km": 7.538,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 12.689,
+      "start_km": 11.03,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 16.181,
+      "start_km": 12.689,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 17.168,
+      "start_km": 16.181,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 20.66,
+      "start_km": 17.168,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 21.36,
+      "start_km": 20.66,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 24.851,
+      "start_km": 21.36,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 25.29,
+      "start_km": 24.851,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 28.782,
+      "start_km": 25.29,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 30.137,
+      "start_km": 28.782,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 33.629,
+      "start_km": 30.137,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 34.181,
+      "start_km": 33.629,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 37.673,
+      "start_km": 34.181,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 39.221,
+      "start_km": 37.673,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 42.713,
+      "start_km": 39.221,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 44.424,
+      "start_km": 42.713,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 47.915,
+      "start_km": 44.424,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 48.817,
+      "start_km": 47.915,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 55.062,
+      "start_km": 48.817,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/rolling-glen-46": [
+    {
+      "end_km": 7.54,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 10.85,
+      "start_km": 7.54,
+      "surface": "cobble"
+    }
+  ],
+  "blue_ridge/summit-climb-84": [
+    {
+      "end_km": 6.259,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 36.0,
+      "start_km": 6.259,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 46.41,
+      "start_km": 36.0,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/sunrise-gulch-85": [
+    {
+      "end_km": 13.399,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 16.252,
+      "start_km": 13.399,
+      "surface": "cobble"
+    }
+  ],
+  "blue_ridge/sunrise-loop-19": [
+    {
+      "end_km": 1.841,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "blue_ridge/sunrise-loop-65": [
+    {
+      "end_km": 2.331,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 6.446,
+      "start_km": 2.331,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 7.946,
+      "start_km": 6.446,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 12.061,
+      "start_km": 7.946,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 13.674,
+      "start_km": 12.061,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 17.789,
+      "start_km": 13.674,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 18.554,
+      "start_km": 17.789,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 22.669,
+      "start_km": 18.554,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 23.477,
+      "start_km": 22.669,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 27.592,
+      "start_km": 23.477,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 28.454,
+      "start_km": 27.592,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 32.569,
+      "start_km": 28.454,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 34.265,
+      "start_km": 32.569,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 38.38,
+      "start_km": 34.265,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 40.167,
+      "start_km": 38.38,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 46.613,
+      "start_km": 40.167,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/sunrise-ramble-53": [
+    {
+      "end_km": 4.326,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 29.133,
+      "start_km": 4.326,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 33.649,
+      "start_km": 29.133,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/sunset-basin-16": [
+    {
+      "end_km": 10.435,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 51.407,
+      "start_km": 10.435,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 59.358,
+      "start_km": 51.407,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/sweeping-peak-82": [
+    {
+      "end_km": 3.777,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 8.98,
+      "start_km": 3.777,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 10.416,
+      "start_km": 8.98,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 15.619,
+      "start_km": 10.416,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 16.329,
+      "start_km": 15.619,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 21.531,
+      "start_km": 16.329,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 23.242,
+      "start_km": 21.531,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 28.445,
+      "start_km": 23.242,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 29.327,
+      "start_km": 28.445,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 34.53,
+      "start_km": 29.327,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 35.889,
+      "start_km": 34.53,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 41.092,
+      "start_km": 35.889,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 42.59,
+      "start_km": 41.092,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 47.793,
+      "start_km": 42.59,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 48.462,
+      "start_km": 47.793,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 53.665,
+      "start_km": 48.462,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 54.487,
+      "start_km": 53.665,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 59.69,
+      "start_km": 54.487,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 60.307,
+      "start_km": 59.69,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 65.509,
+      "start_km": 60.307,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 66.558,
+      "start_km": 65.509,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 75.537,
+      "start_km": 66.558,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/thunder-crest-55": [
+    {
+      "end_km": 8.722,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "blue_ridge/thunder-segment-64": [
+    {
+      "end_km": 1.848,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "blue_ridge/wind-link-41": [
+    {
+      "end_km": 6.753,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 31.162,
+      "start_km": 6.753,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 39.723,
+      "start_km": 31.162,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/winding-journey-77": [
+    {
+      "end_km": 1.836,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 4.984,
+      "start_km": 1.836,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 6.135,
+      "start_km": 4.984,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 9.283,
+      "start_km": 6.135,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 11.02,
+      "start_km": 9.283,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 14.168,
+      "start_km": 11.02,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 15.288,
+      "start_km": 14.168,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 18.436,
+      "start_km": 15.288,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 19.017,
+      "start_km": 18.436,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 22.166,
+      "start_km": 19.017,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 22.802,
+      "start_km": 22.166,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 25.95,
+      "start_km": 22.802,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 27.656,
+      "start_km": 25.95,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 30.804,
+      "start_km": 27.656,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 31.734,
+      "start_km": 30.804,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 36.718,
+      "start_km": 31.734,
+      "surface": "asphalt"
+    }
+  ],
+  "blue_ridge/winding-segment-63": [
+    {
+      "end_km": 1.152,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "desert_loop/boulder-journey-4": [
+    {
+      "end_km": 18.058,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "desert_loop/calm-cruise-40": [
+    {
+      "end_km": 4.325,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 12.162,
+      "start_km": 4.325,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 13.582,
+      "start_km": 12.162,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 21.418,
+      "start_km": 13.582,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 22.58,
+      "start_km": 21.418,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 30.417,
+      "start_km": 22.58,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 30.978,
+      "start_km": 30.417,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 38.814,
+      "start_km": 30.978,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 39.152,
+      "start_km": 38.814,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 46.988,
+      "start_km": 39.152,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 48.184,
+      "start_km": 46.988,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 56.021,
+      "start_km": 48.184,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 56.36,
+      "start_km": 56.021,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 64.196,
+      "start_km": 56.36,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 65.353,
+      "start_km": 64.196,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 73.19,
+      "start_km": 65.353,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 74.343,
+      "start_km": 73.19,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 86.505,
+      "start_km": 74.343,
+      "surface": "asphalt"
+    }
+  ],
+  "desert_loop/canyon-tour-24": [
+    {
+      "end_km": 1.923,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "desert_loop/creek-gorge-6": [
+    {
+      "end_km": 16.084,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 19.035,
+      "start_km": 16.084,
+      "surface": "cobble"
+    }
+  ],
+  "desert_loop/desert-climb-2": [
+    {
+      "end_km": 15.123,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 18.168,
+      "start_km": 15.123,
+      "surface": "cobble"
+    }
+  ],
+  "desert_loop/desert-road-44": [
+    {
+      "end_km": 15.339,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 18.266,
+      "start_km": 15.339,
+      "surface": "cobble"
+    }
+  ],
+  "desert_loop/eastern-pass-37": [
+    {
+      "end_km": 18.25,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "desert_loop/flowing-grove-7": [
+    {
+      "end_km": 17.625,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "desert_loop/forest-path-12": [
+    {
+      "end_km": 4.578,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 31.794,
+      "start_km": 4.578,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 39.793,
+      "start_km": 31.794,
+      "surface": "asphalt"
+    }
+  ],
+  "desert_loop/gentle-quest-30": [
+    {
+      "end_km": 12.974,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "desert_loop/golden-ride-11": [
+    {
+      "end_km": 14.897,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "desert_loop/heritage-ridgeline-1": [
+    {
+      "end_km": 1.533,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 3.423,
+      "start_km": 1.533,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 4.3,
+      "start_km": 3.423,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 6.189,
+      "start_km": 4.3,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 7.863,
+      "start_km": 6.189,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 9.752,
+      "start_km": 7.863,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 11.175,
+      "start_km": 9.752,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 13.065,
+      "start_km": 11.175,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 14.256,
+      "start_km": 13.065,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 16.145,
+      "start_km": 14.256,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 17.207,
+      "start_km": 16.145,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 19.096,
+      "start_km": 17.207,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 20.825,
+      "start_km": 19.096,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 22.714,
+      "start_km": 20.825,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 23.558,
+      "start_km": 22.714,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 25.448,
+      "start_km": 23.558,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 27.246,
+      "start_km": 25.448,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 30.669,
+      "start_km": 27.246,
+      "surface": "asphalt"
+    }
+  ],
+  "desert_loop/highland-ascent-38": [
+    {
+      "end_km": 3.368,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 24.757,
+      "start_km": 3.368,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 32.508,
+      "start_km": 24.757,
+      "surface": "asphalt"
+    }
+  ],
+  "desert_loop/iron-climb-20": [
+    {
+      "end_km": 1.411,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 4.361,
+      "start_km": 1.411,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 5.845,
+      "start_km": 4.361,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 8.795,
+      "start_km": 5.845,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 9.351,
+      "start_km": 8.795,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 12.301,
+      "start_km": 9.351,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 12.793,
+      "start_km": 12.301,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 15.743,
+      "start_km": 12.793,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 16.362,
+      "start_km": 15.743,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 19.312,
+      "start_km": 16.362,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 19.811,
+      "start_km": 19.312,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 22.761,
+      "start_km": 19.811,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 23.855,
+      "start_km": 22.761,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 28.216,
+      "start_km": 23.855,
+      "surface": "asphalt"
+    }
+  ],
+  "desert_loop/maple-tour-18": [
+    {
+      "end_km": 10.856,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 52.536,
+      "start_km": 10.856,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 72.374,
+      "start_km": 52.536,
+      "surface": "asphalt"
+    }
+  ],
+  "desert_loop/meadow-sprint-5": [
+    {
+      "end_km": 1.283,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "desert_loop/morning-climb-36": [
+    {
+      "end_km": 12.794,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "desert_loop/mountain-ride-23": [
+    {
+      "end_km": 19.279,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 24.592,
+      "start_km": 19.279,
+      "surface": "gravel"
+    }
+  ],
+  "desert_loop/northern-quest-8": [
+    {
+      "end_km": 2.492,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 5.782,
+      "start_km": 2.492,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 6.428,
+      "start_km": 5.782,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 9.718,
+      "start_km": 6.428,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 10.561,
+      "start_km": 9.718,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 13.851,
+      "start_km": 10.561,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 15.808,
+      "start_km": 13.851,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 19.098,
+      "start_km": 15.808,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 21.064,
+      "start_km": 19.098,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 24.354,
+      "start_km": 21.064,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 25.272,
+      "start_km": 24.354,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 28.562,
+      "start_km": 25.272,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 30.224,
+      "start_km": 28.562,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 33.514,
+      "start_km": 30.224,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 34.355,
+      "start_km": 33.514,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 37.645,
+      "start_km": 34.355,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 39.346,
+      "start_km": 37.645,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 42.636,
+      "start_km": 39.346,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 44.055,
+      "start_km": 42.636,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 49.836,
+      "start_km": 44.055,
+      "surface": "asphalt"
+    }
+  ],
+  "desert_loop/northern-trail-14": [
+    {
+      "end_km": 14.896,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 69.649,
+      "start_km": 14.896,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 99.303,
+      "start_km": 69.649,
+      "surface": "asphalt"
+    }
+  ],
+  "desert_loop/oak-stretch-35": [
+    {
+      "end_km": 17.375,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 90.212,
+      "start_km": 17.375,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 115.836,
+      "start_km": 90.212,
+      "surface": "asphalt"
+    }
+  ],
+  "desert_loop/quiet-link-50": [
+    {
+      "end_km": 24.324,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "desert_loop/rushing-trail-51": [
+    {
+      "end_km": 14.891,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 74.951,
+      "start_km": 14.891,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 99.27,
+      "start_km": 74.951,
+      "surface": "asphalt"
+    }
+  ],
+  "desert_loop/steep-stretch-9": [
+    {
+      "end_km": 17.501,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 83.892,
+      "start_km": 17.501,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 116.676,
+      "start_km": 83.892,
+      "surface": "asphalt"
+    }
+  ],
+  "desert_loop/storm-ride-15": [
+    {
+      "end_km": 10.587,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 13.973,
+      "start_km": 10.587,
+      "surface": "cobble"
+    }
+  ],
+  "desert_loop/summit-path-46": [
+    {
+      "end_km": 15.425,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 75.895,
+      "start_km": 15.425,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 102.831,
+      "start_km": 75.895,
+      "surface": "asphalt"
+    }
+  ],
+  "desert_loop/sunset-trail-48": [
+    {
+      "end_km": 10.542,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 51.767,
+      "start_km": 10.542,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 70.283,
+      "start_km": 51.767,
+      "surface": "asphalt"
+    }
+  ],
+  "desert_loop/thunder-crest-17": [
+    {
+      "end_km": 5.449,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 44.077,
+      "start_km": 5.449,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 54.482,
+      "start_km": 44.077,
+      "surface": "asphalt"
+    }
+  ],
+  "desert_loop/thunder-road-19": [
+    {
+      "end_km": 13.532,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "flanders/we-ride-flanders-2026-133km": [
+    {
+      "end_km": 0.65,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.45,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.8,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.45,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.4,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.75,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.35,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.6,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 132.75,
+      "start_km": 0.6,
+      "surface": "asphalt"
+    }
+  ],
+  "flanders/we-ride-flanders-2026-163km": [
+    {
+      "end_km": 0.65,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.5,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.75,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.4,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.4,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.8,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.35,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.4,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 162.8,
+      "start_km": 0.4,
+      "surface": "asphalt"
+    }
+  ],
+  "flanders/we-ride-flanders-2026-247km": [
+    {
+      "end_km": 0.5,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.5,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.4,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.7,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.3,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.4,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.45,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.95,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 247.5,
+      "start_km": 0.95,
+      "surface": "asphalt"
+    }
+  ],
+  "flanders/we-ride-flanders-2026-79km": [
+    {
+      "end_km": 0.6,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.7,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.65,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.5,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.6,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.7,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.45,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 0.85,
+      "start_km": 0.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 79.1,
+      "start_km": 0.85,
+      "surface": "asphalt"
+    }
+  ],
+  "gravel/cobbled-classic-sectors": [
+    {
+      "end_km": 2.0,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 3.5,
+      "start_km": 2.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 4.0,
+      "start_km": 3.5,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 5.3,
+      "start_km": 4.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 5.8,
+      "start_km": 5.3,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 7.0,
+      "start_km": 5.8,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 7.5,
+      "start_km": 7.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 8.5,
+      "start_km": 7.5,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 10.0,
+      "start_km": 8.5,
+      "surface": "asphalt"
+    }
+  ],
+  "gravel/forest-trail-rollercoaster": [
+    {
+      "end_km": 2.0,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 2.6,
+      "start_km": 2.0,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 3.4,
+      "start_km": 2.6,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 4.2,
+      "start_km": 3.4,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 5.0,
+      "start_km": 4.2,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 6.0,
+      "start_km": 5.0,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 6.5,
+      "start_km": 6.0,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 8.0,
+      "start_km": 6.5,
+      "surface": "asphalt"
+    }
+  ],
+  "gravel/gravel-gran-fondo": [
+    {
+      "end_km": 2.0,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 3.0,
+      "start_km": 2.0,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 5.2,
+      "start_km": 3.0,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 6.5,
+      "start_km": 5.2,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 8.0,
+      "start_km": 6.5,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 10.2,
+      "start_km": 8.0,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 11.5,
+      "start_km": 10.2,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 13.5,
+      "start_km": 11.5,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 15.7,
+      "start_km": 13.5,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 18.0,
+      "start_km": 15.7,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 20.0,
+      "start_km": 18.0,
+      "surface": "asphalt"
+    }
+  ],
+  "gravel/gravel-mountain-king": [
+    {
+      "end_km": 2.0,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 4.0,
+      "start_km": 2.0,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 6.0,
+      "start_km": 4.0,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 7.6,
+      "start_km": 6.0,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 8.8,
+      "start_km": 7.6,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 10.8,
+      "start_km": 8.8,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 11.6,
+      "start_km": 10.8,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 13.8,
+      "start_km": 11.6,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 15.0,
+      "start_km": 13.8,
+      "surface": "asphalt"
+    }
+  ],
+  "gravel/strade-bianche-sterrato": [
+    {
+      "end_km": 2.0,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 4.3,
+      "start_km": 2.0,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 5.2,
+      "start_km": 4.3,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 7.6,
+      "start_km": 5.2,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 8.7,
+      "start_km": 7.6,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 10.5,
+      "start_km": 8.7,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 11.0,
+      "start_km": 10.5,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 12.0,
+      "start_km": 11.0,
+      "surface": "asphalt"
+    }
+  ],
+  "iron_pass/high-stretch-3": [
+    {
+      "end_km": 1.003,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "iron_pass/iron-peak-24": [
+    {
+      "end_km": 1.932,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "iron_pass/iron-segment-32": [
+    {
+      "end_km": 2.107,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "iron_pass/legacy-descent-17": [
+    {
+      "end_km": 1.232,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "iron_pass/low-crossing-11": [
+    {
+      "end_km": 1.21,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "iron_pass/mountain-tour-14": [
+    {
+      "end_km": 1.189,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "iron_pass/oak-cruise-30": [
+    {
+      "end_km": 1.276,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "iron_pass/oak-hollow-1": [
+    {
+      "end_km": 2.199,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "iron_pass/open-basin-20": [
+    {
+      "end_km": 2.014,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "iron_pass/river-journey-31": [
+    {
+      "end_km": 13.235,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 62.26,
+      "start_km": 13.235,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 88.234,
+      "start_km": 62.26,
+      "surface": "asphalt"
+    }
+  ],
+  "iron_pass/river-ridgeline-22": [
+    {
+      "end_km": 15.945,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "iron_pass/silver-quest-41": [
+    {
+      "end_km": 2.38,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "iron_pass/steep-link-52": [
+    {
+      "end_km": 2.261,
+      "start_km": 0.0,
+      "surface": "cobble"
+    }
+  ],
+  "iron_pass/sunrise-challenge-18": [
+    {
+      "end_km": 15.182,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 78.725,
+      "start_km": 15.182,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 101.215,
+      "start_km": 78.725,
+      "surface": "asphalt"
+    }
+  ],
+  "iron_pass/thunder-climb-54": [
+    {
+      "end_km": 10.113,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 52.767,
+      "start_km": 10.113,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 67.42,
+      "start_km": 52.767,
+      "surface": "asphalt"
+    }
+  ],
+  "london/hampstead-heath-gravel": [
+    {
+      "end_km": 0.4,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 2.8,
+      "start_km": 0.4,
+      "surface": "gravel"
+    },
+    {
+      "end_km": 4.0,
+      "start_km": 2.8,
+      "surface": "asphalt"
+    }
+  ],
+  "london/leith-hill-coldharbour": [
+    {
+      "end_km": 3.0,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 3.5,
+      "start_km": 3.0,
+      "surface": "gravel"
+    }
+  ],
+  "other/clasica-san-sebastian": [
+    {
+      "end_km": 227.0,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    }
+  ],
+  "other/granfondo-nove-colli-200": [
+    {
+      "end_km": 200.0,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    }
+  ],
+  "other/la-marmotte-granfondo": [
+    {
+      "end_km": 174.0,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    }
+  ],
+  "other/tour-of-flanders-2018-(1)": [
+    {
+      "end_km": 95.0,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 97.2,
+      "start_km": 95.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 100.0,
+      "start_km": 97.2,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 100.6,
+      "start_km": 100.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 115.0,
+      "start_km": 100.6,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 116.5,
+      "start_km": 115.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 140.0,
+      "start_km": 116.5,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 142.2,
+      "start_km": 140.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 145.0,
+      "start_km": 142.2,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 145.4,
+      "start_km": 145.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 267.0,
+      "start_km": 145.4,
+      "surface": "asphalt"
+    }
+  ],
+  "richmond/23rd-street-wall": [
+    {
+      "end_km": 0.05,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 0.35,
+      "start_km": 0.05,
+      "surface": "cobble"
+    }
+  ],
+  "richmond/belle-isle-dirt-loop": [
+    {
+      "end_km": 5.0,
+      "start_km": 0.0,
+      "surface": "gravel"
+    }
+  ],
+  "richmond/libby-hill": [
+    {
+      "end_km": 0.05,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 0.4,
+      "start_km": 0.05,
+      "surface": "cobble"
+    }
+  ],
+  "richmond/richmond-worlds-2015": [
+    {
+      "end_km": 10.2,
+      "start_km": 0.0,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 10.4,
+      "start_km": 10.2,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 12.0,
+      "start_km": 10.4,
+      "surface": "asphalt"
+    },
+    {
+      "end_km": 12.22,
+      "start_km": 12.0,
+      "surface": "cobble"
+    },
+    {
+      "end_km": 16.2,
+      "start_km": 12.22,
+      "surface": "asphalt"
+    }
+  ]
+}

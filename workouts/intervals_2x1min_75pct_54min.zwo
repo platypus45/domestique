@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Tempo 4x30s (54min)</name>
+    <description>Intervals: 4 x (30s @ 95% / 1min 30s @ 50%) | Cooldown: 6min 30s @ 50% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <IntervalsT Repeat="2" OnDuration="60" OffDuration="60" OnPower="0.75" OffPower="0.5" pace="0" />
+        <IntervalsT Repeat="2" OnDuration="60" OffDuration="60" OnPower="0.9" OffPower="0.5" pace="0" />
+        <SteadyState Duration="180" Power="0.78" pace="0" />
+        <SteadyState Duration="60" Power="0.5" pace="0" />
+        <IntervalsT Repeat="4" OnDuration="30" OffDuration="90" OnPower="0.95" OffPower="0.5" pace="0" Cadence="70" CadenceResting="90" />
+        <SteadyState Duration="300" Power="0.8" pace="0" />
+        <IntervalsT Repeat="4" OnDuration="30" OffDuration="90" OnPower="1.0" OffPower="0.5" pace="0" Cadence="70" CadenceResting="90" />
+        <SteadyState Duration="300" Power="0.8" pace="0" />
+        <IntervalsT Repeat="4" OnDuration="30" OffDuration="90" OnPower="1.04" OffPower="0.5" pace="0" Cadence="70" CadenceResting="90" />
+        <SteadyState Duration="300" Power="0.5" pace="0" />
+    </workout>
+</workout_file>

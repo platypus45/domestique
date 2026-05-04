@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: Via di Monte Albano]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/95291">
+			<text><![CDATA[Gravel Route: Via di Monte Albano]]></text>
+		</link>
+		<time>2020-12-08T00:38:10-05:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: Via di Monte Albano]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/95291">
+			<text><![CDATA[Gravel Route: Via di Monte Albano]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="44.46998" lon="11.29239">
+				<ele>213.9</ele>
+			</trkpt>
+			<trkpt lat="44.46999" lon="11.29243">
+				<ele>208.55</ele>
+			</trkpt>
+			<trkpt lat="44.47006" lon="11.29241">
+				<ele>199.95</ele>
+			</trkpt>
+			<trkpt lat="44.46996" lon="11.29211">
+				<ele>193.55</ele>
+			</trkpt>
+			<trkpt lat="44.46877" lon="11.29119">
+				<ele>188.25</ele>
+			</trkpt>
+			<trkpt lat="44.46832" lon="11.29049">
+				<ele>176.58</ele>
+			</trkpt>
+			<trkpt lat="44.46845" lon="11.29045">
+				<ele>164.97</ele>
+			</trkpt>
+			<trkpt lat="44.46869" lon="11.29063">
+				<ele>153.14</ele>
+			</trkpt>
+			<trkpt lat="44.46912" lon="11.29038">
+				<ele>134.41</ele>
+			</trkpt>
+			<trkpt lat="44.46912" lon="11.29019">
+				<ele>126.16</ele>
+			</trkpt>
+			<trkpt lat="44.46869" lon="11.28862">
+				<ele>122.27</ele>
+			</trkpt>
+			<trkpt lat="44.46871" lon="11.28851">
+				<ele>108.37</ele>
+			</trkpt>
+			<trkpt lat="44.46923" lon="11.28824">
+				<ele>102.46</ele>
+			</trkpt>
+			<trkpt lat="44.46938" lon="11.28807">
+				<ele>98.5</ele>
+			</trkpt>
+			<trkpt lat="44.46963" lon="11.28714">
+				<ele>95.61</ele>
+			</trkpt>
+			<trkpt lat="44.47026" lon="11.2869">
+				<ele>87.98</ele>
+			</trkpt>
+			<trkpt lat="44.4718" lon="11.28588">
+				<ele>87.93</ele>
+			</trkpt>
+			<trkpt lat="44.47252" lon="11.28563">
+				<ele>86.92</ele>
+			</trkpt>
+			<trkpt lat="44.47264" lon="11.28547">
+				<ele>89.32</ele>
+			</trkpt>
+			<trkpt lat="44.47377" lon="11.28562">
+				<ele>91.56</ele>
+			</trkpt>
+			<trkpt lat="44.47452" lon="11.28533">
+				<ele>87.3</ele>
+			</trkpt>
+			<trkpt lat="44.47457" lon="11.28519">
+				<ele>81.73</ele>
+			</trkpt>
+			<trkpt lat="44.47506" lon="11.28497">
+				<ele>79.35</ele>
+			</trkpt>
+			<trkpt lat="44.47577" lon="11.28523">
+				<ele>79.6</ele>
+			</trkpt>
+			<trkpt lat="44.47694" lon="11.28504">
+				<ele>77.04</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

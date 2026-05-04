@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: Chateau]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/63348">
+			<text><![CDATA[Gravel Route: Chateau]]></text>
+		</link>
+		<time>2019-09-23T04:55:10-04:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: Chateau]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/63348">
+			<text><![CDATA[Gravel Route: Chateau]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="44.03829" lon="3.99814">
+				<ele>127.47</ele>
+			</trkpt>
+			<trkpt lat="44.03829" lon="3.99815">
+				<ele>131.61</ele>
+			</trkpt>
+			<trkpt lat="44.03801" lon="3.99797">
+				<ele>134.62</ele>
+			</trkpt>
+			<trkpt lat="44.03768" lon="3.99772">
+				<ele>136.93</ele>
+			</trkpt>
+			<trkpt lat="44.03739" lon="3.99754">
+				<ele>139.34</ele>
+			</trkpt>
+			<trkpt lat="44.03704" lon="3.99735">
+				<ele>141.55</ele>
+			</trkpt>
+			<trkpt lat="44.03682" lon="3.99723">
+				<ele>144.26</ele>
+			</trkpt>
+			<trkpt lat="44.03682" lon="3.99723">
+				<ele>149.28</ele>
+			</trkpt>
+			<trkpt lat="44.03637" lon="3.99704">
+				<ele>153</ele>
+			</trkpt>
+			<trkpt lat="44.03618" lon="3.99693">
+				<ele>156</ele>
+			</trkpt>
+			<trkpt lat="44.03597" lon="3.99679">
+				<ele>158.18</ele>
+			</trkpt>
+			<trkpt lat="44.03572" lon="3.99669">
+				<ele>157.98</ele>
+			</trkpt>
+			<trkpt lat="44.0353" lon="3.99665">
+				<ele>159.36</ele>
+			</trkpt>
+			<trkpt lat="44.03502" lon="3.99664">
+				<ele>160.98</ele>
+			</trkpt>
+			<trkpt lat="44.03479" lon="3.99668">
+				<ele>160.33</ele>
+			</trkpt>
+			<trkpt lat="44.03461" lon="3.99671">
+				<ele>161.62</ele>
+			</trkpt>
+			<trkpt lat="44.03446" lon="3.99684">
+				<ele>166.46</ele>
+			</trkpt>
+			<trkpt lat="44.03444" lon="3.99685">
+				<ele>167.45</ele>
+			</trkpt>
+			<trkpt lat="44.03488" lon="3.99726">
+				<ele>170.27</ele>
+			</trkpt>
+			<trkpt lat="44.03514" lon="3.99745">
+				<ele>171.83</ele>
+			</trkpt>
+			<trkpt lat="44.03524" lon="3.99756">
+				<ele>173.19</ele>
+			</trkpt>
+			<trkpt lat="44.03553" lon="3.99771">
+				<ele>179.75</ele>
+			</trkpt>
+			<trkpt lat="44.03565" lon="3.99774">
+				<ele>182.7</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

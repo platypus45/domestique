@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: Montague Rd]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/14036">
+			<text><![CDATA[Gravel Route: Montague Rd]]></text>
+		</link>
+		<time>2016-09-20T11:03:41-04:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: Montague Rd]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/14036">
+			<text><![CDATA[Gravel Route: Montague Rd]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="44.82822" lon="-85.5538">
+				<ele>216.27</ele>
+			</trkpt>
+			<trkpt lat="44.82822" lon="-85.55379">
+				<ele>217.08</ele>
+			</trkpt>
+			<trkpt lat="44.829" lon="-85.55363">
+				<ele>219.4</ele>
+			</trkpt>
+			<trkpt lat="44.82932" lon="-85.5536">
+				<ele>219.54</ele>
+			</trkpt>
+			<trkpt lat="44.83056" lon="-85.55359">
+				<ele>220.66</ele>
+			</trkpt>
+			<trkpt lat="44.83067" lon="-85.55364">
+				<ele>221.35</ele>
+			</trkpt>
+			<trkpt lat="44.83079" lon="-85.55376">
+				<ele>223.2</ele>
+			</trkpt>
+			<trkpt lat="44.83088" lon="-85.55397">
+				<ele>225.03</ele>
+			</trkpt>
+			<trkpt lat="44.83083" lon="-85.55516">
+				<ele>223.59</ele>
+			</trkpt>
+			<trkpt lat="44.83084" lon="-85.55532">
+				<ele>222.42</ele>
+			</trkpt>
+			<trkpt lat="44.83089" lon="-85.55547">
+				<ele>219.35</ele>
+			</trkpt>
+			<trkpt lat="44.83098" lon="-85.55559">
+				<ele>216.66</ele>
+			</trkpt>
+			<trkpt lat="44.83106" lon="-85.55561">
+				<ele>216.97</ele>
+			</trkpt>
+			<trkpt lat="44.83612" lon="-85.5556">
+				<ele>219.44</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

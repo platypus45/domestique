@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: Chemin forestier]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/129810">
+			<text><![CDATA[Gravel Route: Chemin forestier]]></text>
+		</link>
+		<time>2022-11-08T07:57:54-05:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: Chemin forestier]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/129810">
+			<text><![CDATA[Gravel Route: Chemin forestier]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="44.95929" lon="-1.14341">
+				<ele>15.54</ele>
+			</trkpt>
+			<trkpt lat="44.95937" lon="-1.14336">
+				<ele>18.12</ele>
+			</trkpt>
+			<trkpt lat="44.95964" lon="-1.14509">
+				<ele>18.24</ele>
+			</trkpt>
+			<trkpt lat="44.95902" lon="-1.14747">
+				<ele>14.67</ele>
+			</trkpt>
+			<trkpt lat="44.95936" lon="-1.15448">
+				<ele>15.19</ele>
+			</trkpt>
+			<trkpt lat="44.95977" lon="-1.15923">
+				<ele>15.43</ele>
+			</trkpt>
+			<trkpt lat="44.95938" lon="-1.16114">
+				<ele>16.46</ele>
+			</trkpt>
+			<trkpt lat="44.95894" lon="-1.16191">
+				<ele>21.2</ele>
+			</trkpt>
+			<trkpt lat="44.9583" lon="-1.16397">
+				<ele>17.39</ele>
+			</trkpt>
+			<trkpt lat="44.95792" lon="-1.16446">
+				<ele>15.67</ele>
+			</trkpt>
+			<trkpt lat="44.95694" lon="-1.16475">
+				<ele>15.65</ele>
+			</trkpt>
+			<trkpt lat="44.95679" lon="-1.16499">
+				<ele>15.07</ele>
+			</trkpt>
+			<trkpt lat="44.95679" lon="-1.16608">
+				<ele>15.26</ele>
+			</trkpt>
+			<trkpt lat="44.95625" lon="-1.16732">
+				<ele>15.2</ele>
+			</trkpt>
+			<trkpt lat="44.95595" lon="-1.16843">
+				<ele>21.11</ele>
+			</trkpt>
+			<trkpt lat="44.95627" lon="-1.17023">
+				<ele>20.55</ele>
+			</trkpt>
+			<trkpt lat="44.9558" lon="-1.17225">
+				<ele>20.54</ele>
+			</trkpt>
+			<trkpt lat="44.95668" lon="-1.17438">
+				<ele>14.53</ele>
+			</trkpt>
+			<trkpt lat="44.95713" lon="-1.17498">
+				<ele>15.95</ele>
+			</trkpt>
+			<trkpt lat="44.95702" lon="-1.175">
+				<ele>14.64</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

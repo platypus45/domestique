@@ -1,0 +1,21 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Anaerobic 20s/0s 10x (16min)</name>
+    <description>Microintervals: 10 x (20s @ 150% / 0s @ 55%)</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="480" Power="1" pace="0" />
+        <SteadyState Duration="20" Power="1.5" pace="0" />
+        <SteadyState Duration="20" Power="1.5" pace="0" />
+        <SteadyState Duration="20" Power="1.5" pace="0" />
+        <SteadyState Duration="20" Power="1.5" pace="0" />
+        <SteadyState Duration="20" Power="1.5" pace="0" />
+        <SteadyState Duration="20" Power="1.5" pace="0" />
+        <SteadyState Duration="20" Power="1.5" pace="0" />
+        <SteadyState Duration="20" Power="1.5" pace="0" />
+        <SteadyState Duration="20" Power="1.5" pace="0" />
+        <SteadyState Duration="20" Power="1.5" pace="0" />
+        <SteadyState Duration="300" Power="1.04" pace="0" />
+    </workout>
+</workout_file>

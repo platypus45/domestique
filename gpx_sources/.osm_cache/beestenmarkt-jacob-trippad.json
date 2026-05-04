@@ -1,0 +1,21 @@
+{
+  "slug": "beestenmarkt-jacob-trippad",
+  "gpx_path": "gpx_sources/netherlands_gravel/beestenmarkt-jacob-trippad.gpx",
+  "num_points": 23,
+  "distance_km": 97.112,
+  "query_seconds": 159.07,
+  "surface_mix_pct": {
+    "asphalt": 100.0,
+    "gravel": 0.0,
+    "cobble": 0.0,
+    "unknown": 0.0
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 97.112,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 147902
+}

@@ -1,0 +1,71 @@
+{
+  "slug": "rondje-hasselt",
+  "gpx_path": "gpx_sources/netherlands_gravel/rondje-hasselt.gpx",
+  "num_points": 337,
+  "distance_km": 33.976,
+  "query_seconds": 126.04,
+  "surface_mix_pct": {
+    "asphalt": 96.5,
+    "gravel": 2.7,
+    "cobble": 0.0,
+    "unknown": 0.8
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 0.879,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 0.879,
+      "end_km": 1.161,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 1.161,
+      "end_km": 13.96,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 13.96,
+      "end_km": 13.963,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 13.963,
+      "end_km": 14.495,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 14.495,
+      "end_km": 14.526,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 14.526,
+      "end_km": 14.579,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 14.579,
+      "end_km": 15.353,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 15.353,
+      "end_km": 16.595,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 16.595,
+      "end_km": 16.714,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 16.714,
+      "end_km": 33.976,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 15814
+}

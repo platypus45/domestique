@@ -1,0 +1,671 @@
+{
+  "slug": "dirty-kanzelled",
+  "gpx_path": "gpx_sources/netherlands_gravel/dirty-kanzelled.gpx",
+  "num_points": 1008,
+  "distance_km": 159.995,
+  "query_seconds": 7.6,
+  "surface_mix_pct": {
+    "asphalt": 57.8,
+    "gravel": 38.3,
+    "cobble": 3.7,
+    "unknown": 0.2
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 5.466,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 5.466,
+      "end_km": 6.144,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 6.144,
+      "end_km": 9.129,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 9.129,
+      "end_km": 9.459,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 9.459,
+      "end_km": 9.993,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 9.993,
+      "end_km": 10.785,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 10.785,
+      "end_km": 11.475,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 11.475,
+      "end_km": 11.765,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 11.765,
+      "end_km": 12.14,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 12.14,
+      "end_km": 12.261,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 12.261,
+      "end_km": 13.361,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 13.361,
+      "end_km": 15.09,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 15.09,
+      "end_km": 15.625,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 15.625,
+      "end_km": 15.637,
+      "surface": "cobble"
+    },
+    {
+      "start_km": 15.637,
+      "end_km": 16.199,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 16.199,
+      "end_km": 17.103,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 17.103,
+      "end_km": 17.141,
+      "surface": "cobble"
+    },
+    {
+      "start_km": 17.141,
+      "end_km": 17.911,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 17.911,
+      "end_km": 18.27,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 18.27,
+      "end_km": 18.813,
+      "surface": "cobble"
+    },
+    {
+      "start_km": 18.813,
+      "end_km": 18.853,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 18.853,
+      "end_km": 18.892,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 18.892,
+      "end_km": 20.708,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 20.708,
+      "end_km": 21.634,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 21.634,
+      "end_km": 22.005,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 22.005,
+      "end_km": 22.997,
+      "surface": "cobble"
+    },
+    {
+      "start_km": 22.997,
+      "end_km": 23.061,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 23.061,
+      "end_km": 23.625,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 23.625,
+      "end_km": 25.707,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 25.707,
+      "end_km": 28.396,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 28.396,
+      "end_km": 30.533,
+      "surface": "cobble"
+    },
+    {
+      "start_km": 30.533,
+      "end_km": 30.701,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 30.701,
+      "end_km": 32.902,
+      "surface": "cobble"
+    },
+    {
+      "start_km": 32.902,
+      "end_km": 32.935,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 32.935,
+      "end_km": 35.125,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 35.125,
+      "end_km": 35.394,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 35.394,
+      "end_km": 36.239,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 36.239,
+      "end_km": 36.569,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 36.569,
+      "end_km": 38.126,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 38.126,
+      "end_km": 40.206,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 40.206,
+      "end_km": 40.531,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 40.531,
+      "end_km": 41.859,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 41.859,
+      "end_km": 42.089,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 42.089,
+      "end_km": 44.356,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 44.356,
+      "end_km": 44.381,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 44.381,
+      "end_km": 44.711,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 44.711,
+      "end_km": 45.073,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 45.073,
+      "end_km": 45.528,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 45.528,
+      "end_km": 48.228,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 48.228,
+      "end_km": 48.251,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 48.251,
+      "end_km": 48.285,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 48.285,
+      "end_km": 48.704,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 48.704,
+      "end_km": 49.494,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 49.494,
+      "end_km": 50.548,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 50.548,
+      "end_km": 51.703,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 51.703,
+      "end_km": 56.842,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 56.842,
+      "end_km": 58.581,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 58.581,
+      "end_km": 58.781,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 58.781,
+      "end_km": 61.183,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 61.183,
+      "end_km": 61.822,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 61.822,
+      "end_km": 61.839,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 61.839,
+      "end_km": 61.882,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 61.882,
+      "end_km": 61.898,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 61.898,
+      "end_km": 62.134,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 62.134,
+      "end_km": 62.971,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 62.971,
+      "end_km": 67.375,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 67.375,
+      "end_km": 67.596,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 67.596,
+      "end_km": 67.604,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 67.604,
+      "end_km": 68.579,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 68.579,
+      "end_km": 69.494,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 69.494,
+      "end_km": 69.872,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 69.872,
+      "end_km": 70.347,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 70.347,
+      "end_km": 74.585,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 74.585,
+      "end_km": 75.095,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 75.095,
+      "end_km": 75.662,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 75.662,
+      "end_km": 75.881,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 75.881,
+      "end_km": 76.742,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 76.742,
+      "end_km": 76.75,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 76.75,
+      "end_km": 78.54,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 78.54,
+      "end_km": 78.922,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 78.922,
+      "end_km": 78.998,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 78.998,
+      "end_km": 80.678,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 80.678,
+      "end_km": 83.355,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 83.355,
+      "end_km": 84.462,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 84.462,
+      "end_km": 87.104,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 87.104,
+      "end_km": 87.905,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 87.905,
+      "end_km": 88.219,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 88.219,
+      "end_km": 88.598,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 88.598,
+      "end_km": 90.255,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 90.255,
+      "end_km": 91.994,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 91.994,
+      "end_km": 99.448,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 99.448,
+      "end_km": 99.654,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 99.654,
+      "end_km": 101.433,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 101.433,
+      "end_km": 101.939,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 101.939,
+      "end_km": 101.999,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 101.999,
+      "end_km": 102.028,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 102.028,
+      "end_km": 102.772,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 102.772,
+      "end_km": 103.651,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 103.651,
+      "end_km": 105.276,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 105.276,
+      "end_km": 105.622,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 105.622,
+      "end_km": 106.852,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 106.852,
+      "end_km": 107.092,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 107.092,
+      "end_km": 107.534,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 107.534,
+      "end_km": 107.582,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 107.582,
+      "end_km": 107.63,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 107.63,
+      "end_km": 107.832,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 107.832,
+      "end_km": 108.703,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 108.703,
+      "end_km": 109.398,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 109.398,
+      "end_km": 110.031,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 110.031,
+      "end_km": 110.992,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 110.992,
+      "end_km": 111.608,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 111.608,
+      "end_km": 112.311,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 112.311,
+      "end_km": 114.41,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 114.41,
+      "end_km": 114.526,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 114.526,
+      "end_km": 115.35,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 115.35,
+      "end_km": 116.191,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 116.191,
+      "end_km": 116.409,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 116.409,
+      "end_km": 118.417,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 118.417,
+      "end_km": 119.465,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 119.465,
+      "end_km": 119.866,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 119.866,
+      "end_km": 129.614,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 129.614,
+      "end_km": 135.238,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 135.238,
+      "end_km": 135.831,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 135.831,
+      "end_km": 136.554,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 136.554,
+      "end_km": 137.293,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 137.293,
+      "end_km": 141.411,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 141.411,
+      "end_km": 142.008,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 142.008,
+      "end_km": 143.038,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 143.038,
+      "end_km": 146.877,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 146.877,
+      "end_km": 148.59,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 148.59,
+      "end_km": 159.995,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 44813
+}

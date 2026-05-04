@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Sweet Spot 4x4min (86min)</name>
+    <description>Warmup: 10min from 40% to 73% FTP | Intervals: 4 x (4min @ 88% / 2min @ 53%) | Cooldown: 3min from 53% to 40% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="600" PowerLow="0.4" PowerHigh="0.73" pace="0" Cadence="85" />
+        <IntervalsT Repeat="4" OnDuration="240" OffDuration="120" OnPower="0.88" OffPower="0.53" pace="0" Cadence="90" CadenceResting="85" />
+        <SteadyState Duration="120" Power="0.53" pace="0" Cadence="85" />
+        <SteadyState Duration="180" Power="0.86" pace="0" Cadence="90" />
+        <SteadyState Duration="180" Power="0.89" pace="0" Cadence="100" />
+        <SteadyState Duration="180" Power="0.53" pace="0" Cadence="85" />
+        <SteadyState Duration="180" Power="0.89" pace="0" Cadence="90" />
+        <SteadyState Duration="180" Power="0.86" pace="0" Cadence="100" />
+        <SteadyState Duration="180" Power="0.53" pace="0" Cadence="85" />
+        <SteadyState Duration="180" Power="0.86" pace="0" Cadence="90" />
+        <SteadyState Duration="180" Power="0.89" pace="0" Cadence="100" />
+        <SteadyState Duration="180" Power="0.53" pace="0" Cadence="85" />
+        <IntervalsT Repeat="5" OnDuration="60" OffDuration="180" OnPower="1.0" OffPower="0.53" pace="0" Cadence="100" CadenceResting="85" />
+        <Cooldown Duration="180" PowerLow="0.53" PowerHigh="0.4" pace="0" Cadence="85" />
+    </workout>
+</workout_file>

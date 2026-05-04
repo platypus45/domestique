@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Neuromuscular 30s/3min 6x (26min)</name>
+    <description>Microintervals: 6 x (30s @ 225% / 3min 10s @ 55%)</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="180" Power="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="30" OffDuration="210" OnPower="2.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="30" OffDuration="210" OnPower="2.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="30" OffDuration="210" OnPower="2.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="30" OffDuration="210" OnPower="2.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="30" OffDuration="210" OnPower="2.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="30" OffDuration="90" OnPower="2.25" OffPower="0.55" pace="0" />
+        <SteadyState Duration="60" Power="0.55" pace="0" />
+    </workout>
+</workout_file>

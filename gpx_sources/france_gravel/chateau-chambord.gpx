@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: Tour Château de Chambord]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/115323">
+			<text><![CDATA[Gravel Route: Tour Château de Chambord]]></text>
+		</link>
+		<time>2021-11-02T10:06:25-04:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: Tour Château de Chambord]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/115323">
+			<text><![CDATA[Gravel Route: Tour Château de Chambord]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="47.61419" lon="1.51963">
+				<ele>79.69</ele>
+			</trkpt>
+			<trkpt lat="47.6142" lon="1.51962">
+				<ele>79.51</ele>
+			</trkpt>
+			<trkpt lat="47.61441" lon="1.51989">
+				<ele>77.87</ele>
+			</trkpt>
+			<trkpt lat="47.61464" lon="1.51994">
+				<ele>77.14</ele>
+			</trkpt>
+			<trkpt lat="47.61486" lon="1.51985">
+				<ele>76.49</ele>
+			</trkpt>
+			<trkpt lat="47.61592" lon="1.51848">
+				<ele>76.96</ele>
+			</trkpt>
+			<trkpt lat="47.61635" lon="1.5192">
+				<ele>76.74</ele>
+			</trkpt>
+			<trkpt lat="47.61651" lon="1.51988">
+				<ele>76.79</ele>
+			</trkpt>
+			<trkpt lat="47.61653" lon="1.52008">
+				<ele>76.8</ele>
+			</trkpt>
+			<trkpt lat="47.61653" lon="1.52008">
+				<ele>76.82</ele>
+			</trkpt>
+			<trkpt lat="47.61789" lon="1.53371">
+				<ele>76.94</ele>
+			</trkpt>
+			<trkpt lat="47.618" lon="1.53613">
+				<ele>77.02</ele>
+			</trkpt>
+			<trkpt lat="47.61848" lon="1.53604">
+				<ele>77.02</ele>
+			</trkpt>
+			<trkpt lat="47.61848" lon="1.53604">
+				<ele>76.58</ele>
+			</trkpt>
+			<trkpt lat="47.61892" lon="1.53589">
+				<ele>76.12</ele>
+			</trkpt>
+			<trkpt lat="47.619" lon="1.53572">
+				<ele>76.35</ele>
+			</trkpt>
+			<trkpt lat="47.61842" lon="1.53333">
+				<ele>76.68</ele>
+			</trkpt>
+			<trkpt lat="47.61721" lon="1.52046">
+				<ele>77.52</ele>
+			</trkpt>
+			<trkpt lat="47.61729" lon="1.52022">
+				<ele>76.43</ele>
+			</trkpt>
+			<trkpt lat="47.61911" lon="1.51779">
+				<ele>76.72</ele>
+			</trkpt>
+			<trkpt lat="47.61923" lon="1.51745">
+				<ele>78.88</ele>
+			</trkpt>
+			<trkpt lat="47.61922" lon="1.51726">
+				<ele>78.67</ele>
+			</trkpt>
+			<trkpt lat="47.618" lon="1.51519">
+				<ele>78.5</ele>
+			</trkpt>
+			<trkpt lat="47.618" lon="1.51519">
+				<ele>78.09</ele>
+			</trkpt>
+			<trkpt lat="47.61716" lon="1.5138">
+				<ele>79.5</ele>
+			</trkpt>
+			<trkpt lat="47.61681" lon="1.51425">
+				<ele>78.45</ele>
+			</trkpt>
+			<trkpt lat="47.6165" lon="1.51437">
+				<ele>79.53</ele>
+			</trkpt>
+			<trkpt lat="47.61646" lon="1.51446">
+				<ele>78.37</ele>
+			</trkpt>
+			<trkpt lat="47.61648" lon="1.51458">
+				<ele>77.69</ele>
+			</trkpt>
+			<trkpt lat="47.61658" lon="1.51475">
+				<ele>76.16</ele>
+			</trkpt>
+			<trkpt lat="47.61642" lon="1.5149">
+				<ele>76.78</ele>
+			</trkpt>
+			<trkpt lat="47.6162" lon="1.51534">
+				<ele>77.12</ele>
+			</trkpt>
+			<trkpt lat="47.61581" lon="1.51581">
+				<ele>77.74</ele>
+			</trkpt>
+			<trkpt lat="47.61581" lon="1.51581">
+				<ele>76.55</ele>
+			</trkpt>
+			<trkpt lat="47.61512" lon="1.51679">
+				<ele>76.3</ele>
+			</trkpt>
+			<trkpt lat="47.61509" lon="1.51688">
+				<ele>75.56</ele>
+			</trkpt>
+			<trkpt lat="47.61509" lon="1.51702">
+				<ele>77.97</ele>
+			</trkpt>
+			<trkpt lat="47.61522" lon="1.51728">
+				<ele>77.72</ele>
+			</trkpt>
+			<trkpt lat="47.61414" lon="1.51872">
+				<ele>78.39</ele>
+			</trkpt>
+			<trkpt lat="47.61406" lon="1.51898">
+				<ele>79.33</ele>
+			</trkpt>
+			<trkpt lat="47.61406" lon="1.51913">
+				<ele>78.75</ele>
+			</trkpt>
+			<trkpt lat="47.61409" lon="1.51937">
+				<ele>79.17</ele>
+			</trkpt>
+			<trkpt lat="47.61416" lon="1.51956">
+				<ele>79.75</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

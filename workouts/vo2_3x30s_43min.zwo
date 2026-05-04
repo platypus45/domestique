@@ -1,0 +1,46 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Threshold (43min)</name>
+    <description>Steady: 1min @ 50% FTP | Steady: 1min @ 56% FTP | Steady: 1min @ 63% FTP | Steady: 30s @ 69% FTP | Steady: 30s @ 75% FTP | Steady: 1min @ 55% FTP | Steady: 40s @ 110% FTP | Steady: 1min @ 55% FTP | Steady: 30s @ 60% FTP | Steady: 30s @ 66% FTP | Steady: 30s @ 72% FTP | Steady: 30s @ 78% FTP | Steady: 30s @ 84% FTP | Steady: 30s @ 90% FTP | Steady: 3min @ 100% FTP | Steady: 2min @ 55% FTP | Steady: 1min @ 60% FTP | Steady: 1min @ 65% FTP | Steady: 1min @ 70% FTP | Steady: 1min @ 75% FTP | Steady: 1min @ 80% FTP | Steady: 20s @ 110% FTP | Steady: 1min @ 80% FTP | Steady: 1min @ 75% FTP | Steady: 1min @ 70% FTP | Steady: 1min @ 65% FTP | Steady: 1min @ 60% FTP | Steady: 4min @ 90% FTP | Steady: 1min @ 65% FTP | Steady: 4min @ 90% FTP | Steady: 1min @ 65% FTP | Steady: 1min @ 85% FTP | Steady: 1min @ 50% FTP | Steady: 1min @ 85% FTP | Steady: 1min @ 50% FTP | Steady: 1min @ 75% FTP | Steady: 3min @ 55% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="60" Power="0.5" pace="0" />
+        <SteadyState Duration="60" Power="0.56" pace="0" />
+        <SteadyState Duration="60" Power="0.63" pace="0" />
+        <SteadyState Duration="30" Power="0.69" pace="0" />
+        <SteadyState Duration="30" Power="0.75" pace="0" />
+        <SteadyState Duration="60" Power="0.55" pace="0" />
+        <SteadyState Duration="40" Power="1.1" pace="0" />
+        <SteadyState Duration="60" Power="0.55" pace="0" />
+        <SteadyState Duration="30" Power="0.6" pace="0" />
+        <SteadyState Duration="30" Power="0.66" pace="0" />
+        <SteadyState Duration="30" Power="0.72" pace="0" />
+        <SteadyState Duration="30" Power="0.78" pace="0" />
+        <SteadyState Duration="30" Power="0.84" pace="0" />
+        <SteadyState Duration="30" Power="0.9" pace="0" />
+        <SteadyState Duration="180" Power="1" pace="0" />
+        <SteadyState Duration="120" Power="0.55" pace="0" />
+        <SteadyState Duration="60" Power="0.6" pace="0" />
+        <SteadyState Duration="60" Power="0.65" pace="0" />
+        <SteadyState Duration="60" Power="0.7" pace="0" />
+        <SteadyState Duration="60" Power="0.75" pace="0" />
+        <SteadyState Duration="60" Power="0.8" pace="0" />
+        <SteadyState Duration="20" Power="1.1" pace="0" />
+        <SteadyState Duration="60" Power="0.8" pace="0" />
+        <SteadyState Duration="60" Power="0.75" pace="0" />
+        <SteadyState Duration="60" Power="0.7" pace="0" />
+        <SteadyState Duration="60" Power="0.65" pace="0" />
+        <SteadyState Duration="60" Power="0.6" pace="0" />
+        <SteadyState Duration="240" Power="0.9" pace="0" />
+        <SteadyState Duration="60" Power="0.65" pace="0" />
+        <SteadyState Duration="240" Power="0.9" pace="0" />
+        <SteadyState Duration="60" Power="0.65" pace="0" />
+        <SteadyState Duration="60" Power="0.85" pace="0" />
+        <SteadyState Duration="60" Power="0.5" pace="0" />
+        <SteadyState Duration="60" Power="0.85" pace="0" />
+        <SteadyState Duration="60" Power="0.5" pace="0" />
+        <SteadyState Duration="60" Power="0.75" pace="0" />
+        <SteadyState Duration="180" Power="0.55" pace="0" />
+    </workout>
+</workout_file>

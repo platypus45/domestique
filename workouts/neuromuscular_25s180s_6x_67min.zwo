@@ -1,0 +1,16 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Neuromuscular 25s/3min 6x (67min)</name>
+    <description>Warmup: 10min from 25% to 75% FTP | Microintervals: 6 x (25s @ 250% / 3min @ 50%) | Cooldown: 5min from 75% to 25% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="600" PowerLow="0.25" PowerHigh="0.75" pace="0" />
+        <IntervalsT Repeat="3" OnDuration="60" OffDuration="60" OnPower="0.75" OffPower="0.5" pace="0" />
+        <SteadyState Duration="180" Power="0.81" pace="0" />
+        <IntervalsT Repeat="6" OnDuration="15" OffDuration="180" OnPower="3.0" OffPower="0.75" pace="0" />
+        <SteadyState Duration="180" Power="0.81" pace="0" />
+        <IntervalsT Repeat="6" OnDuration="25" OffDuration="180" OnPower="2.5" OffPower="0.5" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.75" PowerHigh="0.25" pace="0" />
+    </workout>
+</workout_file>

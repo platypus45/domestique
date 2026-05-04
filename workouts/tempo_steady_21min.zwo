@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Tempo (22min)</name>
+    <description>Warmup: 3min 50s from 45% to 85% FTP | Steady: 3min @ 85% FTP | Steady: 1min @ 100% FTP | Steady: 1min 30s @ 75% FTP | Steady: 3min @ 85% FTP | Steady: 1min @ 100% FTP | Steady: 1min 30s @ 75% FTP | Steady: 3min @ 85% FTP | Steady: 1min @ 100% FTP | Cooldown: 3min from 75% to 40% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="230" PowerLow="0.45" PowerHigh="0.85" pace="0" />
+        <SteadyState Duration="180" Power="0.85" pace="0" />
+        <SteadyState Duration="60" Power="1.0" pace="0" />
+        <SteadyState Duration="90" Power="0.75" pace="0" />
+        <SteadyState Duration="180" Power="0.85" pace="0" />
+        <SteadyState Duration="60" Power="1.0" pace="0" />
+        <SteadyState Duration="90" Power="0.75" pace="0" />
+        <SteadyState Duration="180" Power="0.85" pace="0" />
+        <SteadyState Duration="60" Power="1.0" pace="0" />
+        <Cooldown Duration="180" PowerLow="0.75" PowerHigh="0.4" pace="0" />
+    </workout>
+</workout_file>

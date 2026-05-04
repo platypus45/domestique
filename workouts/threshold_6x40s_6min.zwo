@@ -1,0 +1,21 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Mixed 6x40s (6min)</name>
+    <description>Intervals: 6 x (40s @ 95% / 20s @ 50%)</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="40" Power="0.95" pace="0" />
+        <SteadyState Duration="20" Power="0.5" pace="0" />
+        <SteadyState Duration="40" Power="0.95" pace="0" />
+        <SteadyState Duration="20" Power="0.5" pace="0" />
+        <SteadyState Duration="40" Power="0.95" pace="0" />
+        <SteadyState Duration="20" Power="0.5" pace="0" />
+        <SteadyState Duration="40" Power="0.95" pace="0" />
+        <SteadyState Duration="20" Power="0.5" pace="0" />
+        <SteadyState Duration="40" Power="0.95" pace="0" />
+        <SteadyState Duration="20" Power="0.5" pace="0" />
+        <SteadyState Duration="40" Power="0.95" pace="0" />
+        <SteadyState Duration="20" Power="0.5" pace="0" />
+    </workout>
+</workout_file>

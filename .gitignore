@@ -1,0 +1,41 @@
+# Logs (persistent, rotated)
+logs/
+
+# Build artifacts
+build/
+dist/
+*.pyc
+__pycache__/
+*.spec.bak
+
+# User data (created at runtime)
+.setup_complete
+user_paths.json
+user_prefs.json
+trainer_config.json
+known_devices.json
+active_profile.json
+
+# Icon build intermediates
+assets/icon.iconset/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Secrets
+.env
+
+# Database (user-specific)
+*.db
+*.db-shm
+*.db-wal
+sports_nutrition_db.json.bak
+routes.json.bak
+routes.json.surface_bak
+
+# Claude Code agent runtime artefacts
+.claude/scheduled_tasks.lock

@@ -1,0 +1,28 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Anaerobic Ramp (38min)</name>
+    <description>Ramp: 38min from 150% to 600% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="120" Power="1.5" pace="0" />
+        <SteadyState Duration="120" Power="1.75" pace="0" />
+        <SteadyState Duration="120" Power="2" pace="0" />
+        <SteadyState Duration="120" Power="2.25" pace="0" />
+        <SteadyState Duration="120" Power="2.5" pace="0" />
+        <SteadyState Duration="120" Power="2.75" pace="0" />
+        <SteadyState Duration="120" Power="3" pace="0" />
+        <SteadyState Duration="120" Power="3.25" pace="0" />
+        <SteadyState Duration="120" Power="3.5" pace="0" />
+        <SteadyState Duration="120" Power="3.75" pace="0" />
+        <SteadyState Duration="120" Power="4" pace="0" />
+        <SteadyState Duration="120" Power="4.25" pace="0" />
+        <SteadyState Duration="120" Power="4.5" pace="0" />
+        <SteadyState Duration="120" Power="4.75" pace="0" />
+        <SteadyState Duration="120" Power="5" pace="0" />
+        <SteadyState Duration="120" Power="5.25" pace="0" />
+        <SteadyState Duration="120" Power="5.5" pace="0" />
+        <SteadyState Duration="120" Power="5.75" pace="0" />
+        <SteadyState Duration="120" Power="6" pace="0" />
+    </workout>
+</workout_file>

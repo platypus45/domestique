@@ -1,0 +1,28 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Tempo 3x3min (57min)</name>
+    <description>Intervals: 3 x (3min @ 95% / 3min @ 75%) | Cooldown: 10min from 55% to 40% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="120" Power="0.6" pace="0" />
+        <SteadyState Duration="120" Power="0.68" pace="0" />
+        <SteadyState Duration="120" Power="0.75" pace="0" />
+        <SteadyState Duration="120" Power="0.83" pace="0" />
+        <SteadyState Duration="120" Power="0.9" pace="0" />
+        <SteadyState Duration="120" Power="0.55" pace="0" />
+        <SteadyState Duration="180" Power="0.75" pace="0" />
+        <SteadyState Duration="180" Power="0.95" pace="0" />
+        <SteadyState Duration="180" Power="0.75" pace="0" />
+        <SteadyState Duration="240" Power="0.55" pace="0" />
+        <SteadyState Duration="180" Power="0.75" pace="0" />
+        <SteadyState Duration="180" Power="0.95" pace="0" />
+        <SteadyState Duration="180" Power="0.75" pace="0" />
+        <SteadyState Duration="240" Power="0.55" pace="0" />
+        <SteadyState Duration="180" Power="0.75" pace="0" />
+        <SteadyState Duration="180" Power="0.95" pace="0" />
+        <SteadyState Duration="180" Power="0.75" pace="0" />
+        <SteadyState Duration="240" Power="0.55" pace="0" />
+        <SteadyState Duration="360" Power="0.4" pace="0" />
+    </workout>
+</workout_file>

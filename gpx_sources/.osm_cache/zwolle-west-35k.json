@@ -1,0 +1,41 @@
+{
+  "slug": "zwolle-west-35k",
+  "gpx_path": "gpx_sources/netherlands_gravel/zwolle-west-35k.gpx",
+  "num_points": 1366,
+  "distance_km": 35.412,
+  "query_seconds": 2.69,
+  "surface_mix_pct": {
+    "asphalt": 99.9,
+    "gravel": 0.0,
+    "cobble": 0.0,
+    "unknown": 0.1
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 1.236,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 1.236,
+      "end_km": 1.258,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 1.258,
+      "end_km": 19.426,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 19.426,
+      "end_km": 19.429,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 19.429,
+      "end_km": 35.412,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 16070
+}

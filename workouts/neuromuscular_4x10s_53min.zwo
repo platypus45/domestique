@@ -1,0 +1,31 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Neuromuscular 4x10s (53min)</name>
+    <description>Intervals: 4 x (10s @ 150% / 50s @ 50%) | Cooldown: 3min from 70% to 45% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="180" Power="0.5" pace="0" Cadence="85" />
+        <IntervalsT Repeat="4" OnDuration="10" OffDuration="50" OnPower="1.5" OffPower="0.5" pace="0" Cadence="100" CadenceResting="90" />
+        <Ramp Duration="180" PowerLow="0.6" PowerHigh="0.75" pace="0" Cadence="85" />
+        <SteadyState Duration="180" Power="0.5" pace="0" Cadence="85" />
+        <Ramp Duration="30" PowerLow="1.06" PowerHigh="1.2" pace="0" Cadence="100" />
+        <Ramp Duration="210" PowerLow="0.76" PowerHigh="0.9" pace="0" Cadence="90" />
+        <Ramp Duration="30" PowerLow="1.06" PowerHigh="1.2" pace="0" Cadence="100" />
+        <Ramp Duration="210" PowerLow="0.76" PowerHigh="0.9" pace="0" Cadence="90" />
+        <Ramp Duration="30" PowerLow="1.06" PowerHigh="1.2" pace="0" Cadence="100" />
+        <Ramp Duration="210" PowerLow="0.76" PowerHigh="0.9" pace="0" Cadence="90" />
+        <Ramp Duration="30" PowerLow="1.06" PowerHigh="1.2" pace="0" Cadence="100" />
+        <Ramp Duration="210" PowerLow="0.76" PowerHigh="0.9" pace="0" Cadence="90" />
+        <SteadyState Duration="300" Power="0.5" pace="0" Cadence="85" />
+        <Ramp Duration="30" PowerLow="1.06" PowerHigh="1.2" pace="0" Cadence="100" />
+        <Ramp Duration="210" PowerLow="0.76" PowerHigh="0.9" pace="0" Cadence="90" />
+        <Ramp Duration="30" PowerLow="1.06" PowerHigh="1.2" pace="0" Cadence="100" />
+        <Ramp Duration="210" PowerLow="0.76" PowerHigh="0.9" pace="0" Cadence="90" />
+        <Ramp Duration="30" PowerLow="1.06" PowerHigh="1.2" pace="0" Cadence="100" />
+        <Ramp Duration="210" PowerLow="0.76" PowerHigh="0.9" pace="0" Cadence="90" />
+        <Ramp Duration="30" PowerLow="1.06" PowerHigh="1.2" pace="0" Cadence="100" />
+        <Ramp Duration="210" PowerLow="0.76" PowerHigh="0.9" pace="0" Cadence="90" />
+        <Cooldown Duration="180" PowerLow="0.7" PowerHigh="0.45" pace="0" />
+    </workout>
+</workout_file>

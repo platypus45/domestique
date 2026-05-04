@@ -1,0 +1,121 @@
+{
+  "slug": "noorden-in-met-erik",
+  "gpx_path": "gpx_sources/netherlands_gravel/noorden-in-met-erik.gpx",
+  "num_points": 857,
+  "distance_km": 101.509,
+  "query_seconds": 115.09,
+  "surface_mix_pct": {
+    "asphalt": 97.2,
+    "gravel": 2.6,
+    "cobble": 0.0,
+    "unknown": 0.2
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 25.161,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 25.161,
+      "end_km": 25.271,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 25.271,
+      "end_km": 34.37,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 34.37,
+      "end_km": 34.541,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 34.541,
+      "end_km": 42.982,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 42.982,
+      "end_km": 43.087,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 43.087,
+      "end_km": 43.811,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 43.811,
+      "end_km": 43.853,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 43.853,
+      "end_km": 49.409,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 49.409,
+      "end_km": 49.902,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 49.902,
+      "end_km": 54.698,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 54.698,
+      "end_km": 54.747,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 54.747,
+      "end_km": 75.797,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 75.797,
+      "end_km": 75.831,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 75.831,
+      "end_km": 85.12,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 85.12,
+      "end_km": 85.22,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 85.22,
+      "end_km": 94.344,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 94.344,
+      "end_km": 95.173,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 95.173,
+      "end_km": 96.001,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 96.001,
+      "end_km": 96.844,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 96.844,
+      "end_km": 101.509,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 37076
+}

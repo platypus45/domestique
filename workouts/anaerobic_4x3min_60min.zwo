@@ -1,0 +1,16 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Anaerobic 4x3min (60min)</name>
+    <description>Warmup: 3min from 40% to 60% FTP | Intervals: 4 x (3min @ 120% / 3min @ 65%) | Cooldown: 10min from 75% to 39% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="180" PowerLow="0.4" PowerHigh="0.6" pace="0" />
+        <SteadyState Duration="240" Power="0.6" pace="0" />
+        <Ramp Duration="180" PowerLow="0.6" PowerHigh="0.75" pace="0" />
+        <SteadyState Duration="480" Power="0.75" pace="0" Cadence="85" />
+        <IntervalsT Repeat="4" OnDuration="180" OffDuration="180" OnPower="1.2" OffPower="0.65" pace="0" />
+        <SteadyState Duration="480" Power="0.75" pace="0" Cadence="85" />
+        <Cooldown Duration="600" PowerLow="0.75" PowerHigh="0.39" pace="0" />
+    </workout>
+</workout_file>

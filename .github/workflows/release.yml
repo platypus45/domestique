@@ -1,0 +1,133 @@
+name: Build release artifacts
+
+# Builds a macOS DMG and a Windows EXE on every tag push (v*.*.*) and
+# uploads both to the matching GitHub Release. Runs also on manual dispatch.
+# Binaries live in Release assets — never in git — so the repo stays lean.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to attach artifacts to (e.g. v2.0.0). Leave blank to just build."
+        required: false
+        default: ""
+
+permissions:
+  contents: write  # needed to upload to releases
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────
+  # macOS DMG
+  # ───────────────────────────────────────────────────────────────────
+  build-macos:
+    name: Build macOS DMG
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Install create-dmg
+        run: brew install create-dmg || echo "create-dmg already installed"
+
+      # TODO: codesign + notarize. Requires Apple Developer ID secrets:
+      #   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD
+      # Without signing, end users must right-click → Open to bypass Gatekeeper.
+      # Sketch for later:
+      #   codesign --deep --options runtime --sign "$APPLE_DEV_ID" dist/Domestique.app
+      #   xcrun notarytool submit dist_dmg/Domestique.dmg \
+      #     --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+      #     --password "$APPLE_APP_PASSWORD" --wait
+      #   xcrun stapler staple dist_dmg/Domestique.dmg
+
+      - name: Build DMG
+        run: |
+          chmod +x build_dmg.sh
+          # build_dmg.sh writes to ~/Desktop; we redirect via env var.
+          export DESTDIR="$GITHUB_WORKSPACE/dist_dmg"
+          mkdir -p "$DESTDIR"
+          ./build_dmg.sh || { cat /tmp/dmg_build.log 2>/dev/null || true; exit 1; }
+          # Fallback: some build_dmg.sh variants hardcode ~/Desktop
+          if [ ! -f "$DESTDIR/Domestique.dmg" ] && [ -f "$HOME/Desktop/Domestique.dmg" ]; then
+            cp "$HOME/Desktop/Domestique.dmg" "$DESTDIR/Domestique.dmg"
+          fi
+          ls -la "$DESTDIR"
+
+      - name: Upload DMG artifact (build-only)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Domestique-macOS-DMG
+          path: dist_dmg/Domestique.dmg
+          retention-days: 7
+
+      - name: Attach DMG to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist_dmg/Domestique.dmg
+          fail_on_unmatched_files: true
+
+  # ───────────────────────────────────────────────────────────────────
+  # Windows EXE
+  # ───────────────────────────────────────────────────────────────────
+  build-windows:
+    name: Build Windows EXE
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      # TODO: signtool codesign. Requires a Windows Authenticode certificate
+      # (EV or OV). Without signing, SmartScreen shows the "Unknown publisher"
+      # warning — end users must click "More info → Run anyway".
+      #   signtool sign /tr http://timestamp.digicert.com /td sha256 \
+      #     /fd sha256 /a dist\Domestique\Domestique.exe
+
+      - name: Build EXE
+        shell: cmd
+        run: |
+          call build_win.bat
+          dir dist\Domestique
+
+      - name: Package EXE as zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\Domestique\* -DestinationPath Domestique-Windows.zip
+
+      - name: Upload EXE artifact (build-only)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Domestique-Windows-EXE
+          path: Domestique-Windows.zip
+          retention-days: 7
+
+      - name: Attach EXE to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Domestique-Windows.zip
+          fail_on_unmatched_files: true

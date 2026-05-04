@@ -1,0 +1,268 @@
+"""Build a FIT activity file from a saved Domestique ride.
+
+Produces a `.fit` blob for download / third-party upload. The shape
+follows the standard ACTIVITY file layout:
+
+    FileIdMessage  (type=ACTIVITY, manufacturer=DEVELOPMENT, product_name="Domestique")
+    RecordMessage  × N   (per-second power / hr / cadence / speed / distance)
+    SessionMessage       (cycling, sub_sport=virtual_activity, trainer=true)
+    ActivityMessage
+
+Note on attribution
+-------------------
+We use `manufacturer=DEVELOPMENT(255)` and `product=0` — third-party
+uploaders (TrainingPeaks, Intervals.icu, etc.) accept these without
+a registered device ID, so the file is useful for analysis even
+though no platform renders a "via Domestique" source label.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import logging
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+log = logging.getLogger("domestique.fit_activity")
+
+
+def _serial_for_profile(profile_id: str) -> int:
+    """Stable 32-bit serial derived from profile_id (deterministic)."""
+    h = hashlib.sha256(profile_id.encode("utf-8")).digest()
+    # Take the first 4 bytes as an unsigned int. Mask to 31 bits to stay
+    # within int32 range that older FIT tools occasionally clamp to.
+    return int.from_bytes(h[:4], "big") & 0x7FFFFFFF
+
+
+def _ride_start_dt(ride: dict) -> datetime:
+    """Parse the ride's started_at into an aware UTC datetime.
+
+    Falls back to "now - duration" if started_at is missing/malformed."""
+    s = ride.get("started_at")
+    if s:
+        try:
+            dt = datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        except (TypeError, ValueError):
+            pass
+    summary = ride.get("summary", {}) or {}
+    dur = int(summary.get("duration_sec", 0))
+    # Fallback per docstring: "now - duration" so record timestamps don't run
+    # into the future when started_at is missing/malformed.
+    return (datetime.now(timezone.utc) - timedelta(seconds=dur)).replace(microsecond=0)
+
+
+def build_activity_fit(ride: dict, profile_id: str) -> bytes:
+    """Render a saved-ride dict to a FIT activity binary blob.
+
+    `ride` has the schema produced by `ride_storage.save_ride`:
+      {samples: {elapsed, power, hr, cadence, speed, distance}, summary: …}
+    """
+    from fit_tool.fit_file_builder import FitFileBuilder
+    from fit_tool.profile.messages.activity_message import ActivityMessage
+    from fit_tool.profile.messages.file_id_message import FileIdMessage
+    from fit_tool.profile.messages.lap_message import LapMessage
+    from fit_tool.profile.messages.record_message import RecordMessage
+    from fit_tool.profile.messages.session_message import SessionMessage
+    from fit_tool.profile.profile_type import (
+        Event,
+        EventType,
+        FileType,
+        Manufacturer,
+        Sport,
+        SubSport,
+    )
+
+    builder = FitFileBuilder()
+
+    samples = ride.get("samples", {}) or {}
+    summary = ride.get("summary", {}) or {}
+    n = len(samples.get("power", []) or [])
+    if n == 0:
+        raise ValueError("Cannot build FIT activity: ride has no samples")
+
+    start_dt = _ride_start_dt(ride)
+    start_unix_ms = int(start_dt.timestamp() * 1000)
+
+    # ── FileIdMessage ────────────────────────────────────────────────────
+    file_id = FileIdMessage()
+    file_id.type = FileType.ACTIVITY
+    file_id.manufacturer = Manufacturer.DEVELOPMENT.value
+    file_id.product = 0
+    file_id.serial_number = _serial_for_profile(profile_id)
+    try:
+        file_id.time_created = start_unix_ms
+    except Exception as e:
+        # Some fit_tool versions reject the millis; log and move on.
+        log.debug("FIT field write failed (file_id.time_created): %s", e)
+    # Defensive product_name hint — some viewers surface this string
+    # in their activity details even when manufacturer is DEVELOPMENT.
+    try:
+        file_id.product_name = "Domestique"
+    except Exception as e:
+        log.debug("FIT field write failed (file_id.product_name): %s", e)
+    builder.add(file_id)
+
+    # ── RecordMessage per-sample ─────────────────────────────────────────
+    elapsed = samples.get("elapsed") or list(range(n))
+    power = samples.get("power") or [0] * n
+    hr = samples.get("hr") or [0] * n
+    cadence = samples.get("cadence") or [0] * n
+    # Speed in saved rides is km/h; FIT wants m/s.
+    speed_kmh = samples.get("speed") or [0] * n
+    # Distance saved as km; FIT wants metres.
+    dist_km = samples.get("distance") or [0] * n
+
+    last_ts_ms = start_unix_ms
+    for i in range(n):
+        rec = RecordMessage()
+        ts_ms = start_unix_ms + int(elapsed[i]) * 1000
+        try:
+            rec.timestamp = ts_ms
+        except Exception as e:
+            log.debug("FIT field write failed (record.timestamp): %s", e)
+        try:
+            p = int(power[i] or 0)
+            if p >= 0:
+                rec.power = p
+        except (TypeError, ValueError) as e:
+            log.debug("FIT field write failed (record.power): %s", e)
+        try:
+            h = int(hr[i] or 0)
+            if h > 0:
+                rec.heart_rate = h
+        except (TypeError, ValueError) as e:
+            log.debug("FIT field write failed (record.heart_rate): %s", e)
+        try:
+            c = int(cadence[i] or 0)
+            if c >= 0:
+                rec.cadence = c
+        except (TypeError, ValueError) as e:
+            log.debug("FIT field write failed (record.cadence): %s", e)
+        try:
+            sp_kmh = float(speed_kmh[i] or 0)
+            if sp_kmh >= 0:
+                rec.speed = sp_kmh / 3.6  # → m/s
+        except (TypeError, ValueError) as e:
+            log.debug("FIT field write failed (record.speed): %s", e)
+        try:
+            d_km = float(dist_km[i] or 0)
+            if d_km >= 0:
+                rec.distance = d_km * 1000.0  # → m
+        except (TypeError, ValueError) as e:
+            log.debug("FIT field write failed (record.distance): %s", e)
+        builder.add(rec)
+        last_ts_ms = ts_ms
+
+    # ── LapMessage ───────────────────────────────────────────────────────
+    # FIT Activity spec requires Record* -> Lap* -> Session (between records
+    # and session). Without this block, downstream analyzers (TrainingPeaks,
+    # Intervals.icu, etc.) may drop session totals. We emit a single lap
+    # spanning the entire ride.
+    lap = LapMessage()
+    try:
+        lap.start_time = start_unix_ms
+    except Exception as e:
+        log.debug("FIT field write failed (lap.start_time): %s", e)
+    try:
+        lap.timestamp = last_ts_ms
+    except Exception as e:
+        log.debug("FIT field write failed (lap.timestamp): %s", e)
+    dur_sec = float(summary.get("duration_sec", 0) or 0)
+    try:
+        lap.total_elapsed_time = dur_sec
+        lap.total_timer_time = dur_sec
+    except Exception as e:
+        log.debug("FIT field write failed (lap.total_*_time): %s", e)
+    try:
+        lap.total_distance = float(summary.get("distance_km", 0) or 0) * 1000.0
+    except Exception as e:
+        log.debug("FIT field write failed (lap.total_distance): %s", e)
+    try:
+        if summary.get("avg_power") is not None:
+            lap.avg_power = int(summary["avg_power"])
+        if summary.get("max_power") is not None:
+            lap.max_power = int(summary["max_power"])
+        if summary.get("avg_hr") is not None and summary["avg_hr"]:
+            lap.avg_heart_rate = int(summary["avg_hr"])
+        if summary.get("max_hr") is not None and summary["max_hr"]:
+            lap.max_heart_rate = int(summary["max_hr"])
+        if summary.get("avg_cadence") is not None:
+            lap.avg_cadence = int(summary["avg_cadence"])
+    except Exception as e:
+        log.debug("FIT field write failed (lap optional fields): %s", e)
+    try:
+        lap.event = Event.LAP
+        lap.event_type = EventType.STOP
+    except Exception as e:
+        log.debug("FIT field write failed (lap.event): %s", e)
+    builder.add(lap)
+
+    # ── SessionMessage ───────────────────────────────────────────────────
+    session = SessionMessage()
+    try:
+        session.start_time = start_unix_ms
+        session.timestamp = last_ts_ms
+    except Exception as e:
+        # L10: don't silently swallow — log the underlying error and keep
+        # a sane fallback so downstream consumers still see *some* start_time.
+        log.warning("FIT start_time fallback: %s", e)
+        dur = int(summary.get("duration_sec", 0))
+        fallback_dt = datetime.now(timezone.utc) - timedelta(seconds=dur)
+        try:
+            session.start_time = int(fallback_dt.timestamp() * 1000)
+        except Exception:
+            pass
+    try:
+        session.sport = Sport.CYCLING
+        # virtual_activity is the canonical sub_sport for indoor / simulator-style.
+        session.sub_sport = SubSport.VIRTUAL_ACTIVITY
+    except Exception as e:
+        log.debug("FIT field write failed (session.sport/sub_sport): %s", e)
+    # Indoor trainer flag — set HERE plus on the multipart upload form
+    # (master decisions §9 — set in BOTH places).
+    try:
+        session.trainer = True  # type: ignore[attr-defined]
+    except Exception as e:
+        log.debug("FIT field write failed (session.trainer): %s", e)
+    try:
+        session.total_elapsed_time = float(summary.get("duration_sec", 0))
+        session.total_timer_time = float(summary.get("duration_sec", 0))
+    except Exception as e:
+        log.debug("FIT field write failed (session.total_*_time): %s", e)
+    try:
+        session.total_distance = float(summary.get("distance_km", 0)) * 1000.0
+    except Exception as e:
+        log.debug("FIT field write failed (session.total_distance): %s", e)
+    try:
+        if summary.get("avg_power") is not None:
+            session.avg_power = int(summary["avg_power"])
+        if summary.get("max_power") is not None:
+            session.max_power = int(summary["max_power"])
+        if summary.get("normalized_power") is not None:
+            session.normalized_power = int(summary["normalized_power"])
+        if summary.get("avg_hr") is not None and summary["avg_hr"]:
+            session.avg_heart_rate = int(summary["avg_hr"])
+        if summary.get("max_hr") is not None and summary["max_hr"]:
+            session.max_heart_rate = int(summary["max_hr"])
+        if summary.get("avg_cadence") is not None:
+            session.avg_cadence = int(summary["avg_cadence"])
+    except Exception as e:
+        log.debug("FIT field write failed (session optional fields): %s", e)
+    builder.add(session)
+
+    # ── ActivityMessage ──────────────────────────────────────────────────
+    activity = ActivityMessage()
+    try:
+        activity.timestamp = last_ts_ms
+        activity.total_timer_time = float(summary.get("duration_sec", 0))
+        activity.num_sessions = 1
+        activity.event = Event.ACTIVITY
+        activity.event_type = EventType.STOP
+    except Exception as e:
+        log.debug("FIT field write failed (activity fields): %s", e)
+    builder.add(activity)
+
+    return builder.build().to_bytes()

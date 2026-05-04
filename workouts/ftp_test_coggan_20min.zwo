@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>FTP Test 3x1min (70min)</name>
+    <description>Warmup: 14min from 45% to 65% FTP | Intervals: 3 x (1min @ 100% / 1min @ 50%) | Cooldown: 10min from 55% to 35% FTP</description>
+    <sportType>bike</sportType>
+    <tags>
+        <tag name="ftp_test" />
+        <tag name="ftp_test_coggan" />
+    </tags>
+    <workout>
+        <Warmup Duration="840" PowerLow="0.45" PowerHigh="0.65" pace="warmup" />
+        <IntervalsT Repeat="3" OnDuration="60" OffDuration="60" OnPower="1.00" OffPower="0.50" Cadence="100" pace="primer" />
+        <SteadyState Duration="300" Power="0.50" pace="easy" />
+        <SteadyState Duration="300" Power="1.05" pace="blowout" />
+        <SteadyState Duration="600" Power="0.50" pace="easy" />
+        <SteadyState Duration="1200" Power="1.00" pace="test" power_ramp_allowed="1" />
+        <Cooldown Duration="600" PowerLow="0.55" PowerHigh="0.35" pace="cooldown" />
+    </workout>
+</workout_file>

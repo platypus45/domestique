@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>VO2max (17min)</name>
+    <description>Steady: 1min @ 110% FTP | Steady: 7min 40s @ 105% FTP | Steady: 30s @ 110% FTP | Steady: 1min @ 102% FTP | Steady: 1min @ 105% FTP | Steady: 2min @ 90% FTP | Steady: 3min @ 105% FTP | Steady: 30s @ 115% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="60" Power="1.1" pace="0" />
+        <SteadyState Duration="240" Power="1.05" pace="0" />
+        <SteadyState Duration="40" Power="1.05" pace="0" />
+        <SteadyState Duration="180" Power="1.05" pace="0" />
+        <SteadyState Duration="30" Power="1.1" pace="0" />
+        <SteadyState Duration="60" Power="1.02" pace="0" />
+        <SteadyState Duration="60" Power="1.05" pace="0" />
+        <SteadyState Duration="120" Power="0.9" pace="0" />
+        <SteadyState Duration="180" Power="1.05" pace="0" />
+        <SteadyState Duration="30" Power="1.15" pace="0" />
+    </workout>
+</workout_file>

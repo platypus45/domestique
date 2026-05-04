@@ -1,0 +1,37 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>VO2max 8x2min (98min)</name>
+    <description>Intervals: 8 x (2min @ 105% / 3min @ 95%)</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="120" Power="0.6" pace="0" />
+        <SteadyState Duration="20" Power="0.7" pace="0" />
+        <SteadyState Duration="60" Power="0.45" pace="0" />
+        <SteadyState Duration="120" Power="0.6" pace="0" />
+        <SteadyState Duration="20" Power="0.8" pace="0" />
+        <SteadyState Duration="60" Power="0.45" pace="0" />
+        <SteadyState Duration="120" Power="0.6" pace="0" />
+        <SteadyState Duration="20" Power="0.9" pace="0" />
+        <SteadyState Duration="60" Power="0.45" pace="0" />
+        <SteadyState Duration="120" Power="0.6" pace="0" />
+        <SteadyState Duration="20" Power="0.9" pace="0" />
+        <SteadyState Duration="60" Power="0.45" pace="0" />
+        <SteadyState Duration="120" Power="0.6" pace="0" />
+        <SteadyState Duration="20" Power="1.0" pace="0" />
+        <SteadyState Duration="60" Power="0.45" pace="0" />
+        <SteadyState Duration="120" Power="0.6" pace="0" />
+        <SteadyState Duration="20" Power="1.1" pace="0" />
+        <SteadyState Duration="60" Power="0.45" pace="0" />
+        <SteadyState Duration="120" Power="0.6" pace="0" />
+        <SteadyState Duration="20" Power="1.2" pace="0" />
+        <SteadyState Duration="60" Power="0.45" pace="0" />
+        <IntervalsT Repeat="4" OnDuration="120" OffDuration="180" OnPower="1.05" OffPower="0.95" pace="0" />
+        <SteadyState Duration="300" Power="0.55" pace="0" />
+        <IntervalsT Repeat="4" OnDuration="120" OffDuration="180" OnPower="1.05" OffPower="0.95" pace="0" />
+        <SteadyState Duration="447" Power="0.9" pace="0" />
+        <SteadyState Duration="447" Power="0.8" pace="0" />
+        <SteadyState Duration="447" Power="0.7" pace="0" />
+        <SteadyState Duration="447" Power="0.6" pace="0" />
+    </workout>
+</workout_file>

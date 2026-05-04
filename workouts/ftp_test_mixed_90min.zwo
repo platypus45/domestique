@@ -1,0 +1,21 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>FTP Test (90min)</name>
+    <description>Steady: 22min @ 65% FTP | Steady: 1min @ 80% FTP | Steady: 1min @ 65% FTP | Steady: 1min @ 95% FTP | Steady: 5min @ 65% FTP | Steady: 5min @ 110% FTP | Steady: 10min @ 65% FTP | Steady: 20min @ 100% FTP | Steady: 25min @ 65% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <FreeRide Duration="1200" FlatRoad="0" />
+        <SteadyState Duration="60" Power="0.65" />
+        <FreeRide Duration="60" FlatRoad="0" />
+        <SteadyState Duration="60" Power="0.80" />
+        <FreeRide Duration="60" FlatRoad="0" />
+        <SteadyState Duration="60" Power="0.95" />
+        <FreeRide Duration="300" FlatRoad="0" />
+        <SteadyState Duration="300" Power="1.1" />
+        <SteadyState Duration="600" Power="0.65" />
+        <SteadyState Duration="1200" Power="1.0" />
+        <SteadyState Duration="600" Power="0.65" />
+        <FreeRide Duration="900" FlatRoad="0" />
+    </workout>
+</workout_file>

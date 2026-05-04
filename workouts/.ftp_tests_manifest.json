@@ -1,0 +1,38 @@
+[
+  {
+    "source_url": "https://whatsonzwift.com/workouts/ftp-tests/elite-racing-verification-test",
+    "written_filename": "ftp_test_protocol_53min.zwo",
+    "structure_hash": "1f72530ba8203c27c5ccae9140e9afae190b55a1",
+    "formula": "FTP derivation depends on protocol",
+    "title_structure": "Protocol (53-min)",
+    "total_sec": 3210,
+    "segment_count": 11
+  },
+  {
+    "source_url": "https://whatsonzwift.com/workouts/ftp-tests/ftp-ramp-test",
+    "written_filename": "ftp_test_ramp_20w_step.zwo",
+    "structure_hash": "3e6c0ffc0b69f140420602f5e98ddfc1eaf1d61b",
+    "formula": "FTP = 0.75 \u00d7 best 1-min power",
+    "title_structure": "Ramp (28\u00d71-min, +20W/min)",
+    "total_sec": 2580,
+    "segment_count": 30
+  },
+  {
+    "source_url": "https://whatsonzwift.com/workouts/ftp-tests/ftp-ramp-test-lite",
+    "written_filename": "ftp_test_ramp_10w_step.zwo",
+    "structure_hash": "37f8244c43a96f3b46be513b67adeaf7beeb07fa",
+    "formula": "FTP = 0.75 \u00d7 best 1-min power",
+    "title_structure": "Ramp (21\u00d71-min, +10W/min)",
+    "total_sec": 2340,
+    "segment_count": 23
+  },
+  {
+    "source_url": "https://whatsonzwift.com/workouts/ftp-tests/ftp-test-standard",
+    "written_filename": "ftp_test_coggan_20min_v2.zwo",
+    "structure_hash": "7241cc6f097bff49108090918f193998b3ed1649",
+    "formula": "FTP = 0.95 \u00d7 avg 20-min power",
+    "title_structure": "Coggan 20-min",
+    "total_sec": 2700,
+    "segment_count": 10
+  }
+]

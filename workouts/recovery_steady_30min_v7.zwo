@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Recovery Steady (30min)</name>
+    <description>Warmup: 10min from 25% to 75% FTP | Steady: 15min @ 50% FTP | Cooldown: 5min from 25% to 50% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="600" PowerLow="0.25" PowerHigh="0.75" pace="0" />
+        <SteadyState Duration="300" Power="0.5" pace="0" />
+        <SteadyState Duration="300" Power="0.5" pace="0" />
+        <SteadyState Duration="300" Power="0.5" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.25" PowerHigh="0.5" pace="0" />
+    </workout>
+</workout_file>

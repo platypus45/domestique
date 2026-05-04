@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Threshold 3x10min (60min)</name>
+    <description>Warmup: 6min from 75% to 85% FTP | Intervals: 3 x (10min @ 95% / 5min @ 82%) | Cooldown: 6min from 85% to 75% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="360" PowerLow="0.75" PowerHigh="0.85" pace="0" />
+        <IntervalsT Repeat="3" OnDuration="30" OffDuration="30" OnPower="1.04" OffPower="0.75" pace="0" />
+        <IntervalsT Repeat="3" OnDuration="600" OffDuration="300" OnPower="0.95" OffPower="0.82" pace="0" />
+        <Cooldown Duration="360" PowerLow="0.85" PowerHigh="0.75" pace="0" />
+    </workout>
+</workout_file>

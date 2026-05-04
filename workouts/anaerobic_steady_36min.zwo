@@ -1,0 +1,27 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Anaerobic 3 cycles (36min)</name>
+    <description>Warmup: 9min from 45% to 65% FTP | Over-Under: 3 cycles (alternating above/below threshold) | Cooldown: 6min from 45% to 55% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="540" PowerLow="0.45" PowerHigh="0.65" pace="0" />
+        <SteadyState Duration="40" Power="0.9" pace="0" />
+        <SteadyState Duration="40" Power="1.05" pace="0" />
+        <SteadyState Duration="40" Power="1.2" pace="0" />
+        <SteadyState Duration="120" Power="0.55" pace="0" />
+        <SteadyState Duration="40" Power="0.9" pace="0" />
+        <SteadyState Duration="40" Power="1.05" pace="0" />
+        <SteadyState Duration="40" Power="1.2" pace="0" />
+        <SteadyState Duration="120" Power="0.55" pace="0" />
+        <SteadyState Duration="40" Power="0.9" pace="0" />
+        <SteadyState Duration="40" Power="1.05" pace="0" />
+        <SteadyState Duration="40" Power="1.2" pace="0" />
+        <SteadyState Duration="120" Power="0.55" pace="0" />
+        <SteadyState Duration="180" Power="0.55" pace="0" />
+        <SteadyState Duration="120" Power="1.2" pace="0" />
+        <SteadyState Duration="120" Power="0.5" pace="0" />
+        <SteadyState Duration="120" Power="0.5" pace="0" />
+        <Cooldown Duration="360" PowerLow="0.45" PowerHigh="0.55" pace="0" />
+    </workout>
+</workout_file>

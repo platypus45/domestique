@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: Piste du col de l'homme depuis Andébu]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/126460">
+			<text><![CDATA[Gravel Route: Piste du col de l'homme depuis Andébu]]></text>
+		</link>
+		<time>2022-08-22T01:38:40-04:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: Piste du col de l'homme depuis Andébu]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/126460">
+			<text><![CDATA[Gravel Route: Piste du col de l'homme depuis Andébu]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="42.97916" lon="1.45514">
+				<ele>815.15</ele>
+			</trkpt>
+			<trkpt lat="42.97916" lon="1.45516">
+				<ele>817.12</ele>
+			</trkpt>
+			<trkpt lat="42.97869" lon="1.45503">
+				<ele>817.55</ele>
+			</trkpt>
+			<trkpt lat="42.97848" lon="1.4549">
+				<ele>819.3</ele>
+			</trkpt>
+			<trkpt lat="42.97845" lon="1.45465">
+				<ele>824.83</ele>
+			</trkpt>
+			<trkpt lat="42.97831" lon="1.45441">
+				<ele>840.92</ele>
+			</trkpt>
+			<trkpt lat="42.97807" lon="1.45429">
+				<ele>848.94</ele>
+			</trkpt>
+			<trkpt lat="42.97702" lon="1.45436">
+				<ele>855.16</ele>
+			</trkpt>
+			<trkpt lat="42.97622" lon="1.45465">
+				<ele>860.62</ele>
+			</trkpt>
+			<trkpt lat="42.97565" lon="1.45472">
+				<ele>859.09</ele>
+			</trkpt>
+			<trkpt lat="42.97519" lon="1.45425">
+				<ele>864.38</ele>
+			</trkpt>
+			<trkpt lat="42.97491" lon="1.45412">
+				<ele>869.5</ele>
+			</trkpt>
+			<trkpt lat="42.97429" lon="1.45553">
+				<ele>871.35</ele>
+			</trkpt>
+			<trkpt lat="42.97413" lon="1.45615">
+				<ele>872.6</ele>
+			</trkpt>
+			<trkpt lat="42.97409" lon="1.45659">
+				<ele>876.4</ele>
+			</trkpt>
+			<trkpt lat="42.97393" lon="1.45691">
+				<ele>878.87</ele>
+			</trkpt>
+			<trkpt lat="42.97378" lon="1.45765">
+				<ele>881.32</ele>
+			</trkpt>
+			<trkpt lat="42.97353" lon="1.45773">
+				<ele>888.85</ele>
+			</trkpt>
+			<trkpt lat="42.97324" lon="1.45808">
+				<ele>898.39</ele>
+			</trkpt>
+			<trkpt lat="42.97308" lon="1.45852">
+				<ele>903.97</ele>
+			</trkpt>
+			<trkpt lat="42.973" lon="1.45906">
+				<ele>907.79</ele>
+			</trkpt>
+			<trkpt lat="42.97261" lon="1.46028">
+				<ele>907.74</ele>
+			</trkpt>
+			<trkpt lat="42.97238" lon="1.46156">
+				<ele>909.73</ele>
+			</trkpt>
+			<trkpt lat="42.97187" lon="1.46239">
+				<ele>917.63</ele>
+			</trkpt>
+			<trkpt lat="42.97088" lon="1.4635">
+				<ele>923.21</ele>
+			</trkpt>
+			<trkpt lat="42.97048" lon="1.46369">
+				<ele>931.85</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

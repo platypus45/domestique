@@ -1,0 +1,81 @@
+{
+  "slug": "hwijk-2",
+  "gpx_path": "gpx_sources/netherlands_gravel/hwijk-2.gpx",
+  "num_points": 909,
+  "distance_km": 40.888,
+  "query_seconds": 107.99,
+  "surface_mix_pct": {
+    "asphalt": 99.3,
+    "gravel": 0.6,
+    "cobble": 0.0,
+    "unknown": 0.1
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 9.703,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 9.703,
+      "end_km": 9.735,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 9.735,
+      "end_km": 9.887,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 9.887,
+      "end_km": 9.9,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 9.9,
+      "end_km": 12.155,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 12.155,
+      "end_km": 12.213,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 12.213,
+      "end_km": 18.395,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 18.395,
+      "end_km": 18.459,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 18.459,
+      "end_km": 35.03,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 35.03,
+      "end_km": 35.133,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 35.133,
+      "end_km": 40.832,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 40.832,
+      "end_km": 40.839,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 40.839,
+      "end_km": 40.888,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 29167
+}

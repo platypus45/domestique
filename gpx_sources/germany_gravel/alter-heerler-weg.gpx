@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: Alter Heerler Weg]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/142898">
+			<text><![CDATA[Gravel Route: Alter Heerler Weg]]></text>
+		</link>
+		<time>2024-05-01T14:16:29-04:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: Alter Heerler Weg]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/142898">
+			<text><![CDATA[Gravel Route: Alter Heerler Weg]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="50.84412" lon="6.02055">
+				<ele>172.45</ele>
+			</trkpt>
+			<trkpt lat="50.84412" lon="6.02056">
+				<ele>171.78</ele>
+			</trkpt>
+			<trkpt lat="50.83177" lon="6.0305">
+				<ele>175.16</ele>
+			</trkpt>
+			<trkpt lat="50.83028" lon="6.03186">
+				<ele>182.07</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

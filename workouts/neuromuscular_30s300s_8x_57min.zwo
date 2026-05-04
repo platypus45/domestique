@@ -1,0 +1,31 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Neuromuscular 30s/5min 8x (57min)</name>
+    <description>Microintervals: 8 x (30s @ 150% / 5min @ 55%) | Cooldown: 10min @ 40% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="120" Power="0.6" pace="0" />
+        <SteadyState Duration="120" Power="0.68" pace="0" />
+        <SteadyState Duration="120" Power="0.75" pace="0" />
+        <SteadyState Duration="120" Power="0.83" pace="0" />
+        <SteadyState Duration="120" Power="0.9" pace="0" />
+        <SteadyState Duration="120" Power="0.55" pace="0" />
+        <SteadyState Duration="30" Power="1.5" pace="0" />
+        <SteadyState Duration="240" Power="1" pace="0" />
+        <SteadyState Duration="30" Power="1.5" pace="0" />
+        <SteadyState Duration="300" Power="0.55" pace="0" />
+        <SteadyState Duration="30" Power="1.5" pace="0" />
+        <SteadyState Duration="240" Power="1" pace="0" />
+        <SteadyState Duration="30" Power="1.5" pace="0" />
+        <SteadyState Duration="300" Power="0.55" pace="0" />
+        <SteadyState Duration="30" Power="1.5" pace="0" />
+        <SteadyState Duration="240" Power="1" pace="0" />
+        <SteadyState Duration="30" Power="1.5" pace="0" />
+        <SteadyState Duration="300" Power="0.55" pace="0" />
+        <SteadyState Duration="30" Power="1.5" pace="0" />
+        <SteadyState Duration="240" Power="1" pace="0" />
+        <SteadyState Duration="30" Power="1.5" pace="0" />
+        <SteadyState Duration="600" Power="0.4" pace="0" />
+    </workout>
+</workout_file>

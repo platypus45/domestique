@@ -1,0 +1,37 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Neuromuscular (56min)</name>
+    <description>Warmup: 8min from 45% to 65% FTP | Steady: 30s @ 100% FTP | Steady: 30s @ 50% FTP | Steady: 30s @ 110% FTP | Steady: 30s @ 50% FTP | Steady: 30s @ 120% FTP | Steady: 3min @ 50% FTP | Steady: 20s @ 180% FTP | Steady: 3min @ 60% FTP | Steady: 20s @ 190% FTP | Steady: 3min @ 60% FTP | Steady: 20s @ 200% FTP | Steady: 3min @ 60% FTP | Steady: 20s @ 210% FTP | Steady: 3min @ 60% FTP | Steady: 20s @ 220% FTP | Steady: 5min @ 65% FTP | Steady: 20s @ 180% FTP | Steady: 3min @ 60% FTP | Steady: 20s @ 190% FTP | Steady: 3min @ 60% FTP | Steady: 20s @ 200% FTP | Steady: 3min @ 60% FTP | Steady: 20s @ 210% FTP | Steady: 3min @ 60% FTP | Steady: 20s @ 220% FTP | Steady: 5min @ 61% FTP | Cooldown: 5min from 61% to 40% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="480" PowerLow="0.45" PowerHigh="0.65" pace="0" />
+        <SteadyState Duration="30" Power="1.0" pace="0" Cadence="95" />
+        <SteadyState Duration="30" Power="0.5" pace="0" Cadence="85" />
+        <SteadyState Duration="30" Power="1.1" pace="0" Cadence="100" />
+        <SteadyState Duration="30" Power="0.5" pace="0" Cadence="85" />
+        <SteadyState Duration="30" Power="1.2" pace="0" Cadence="105" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <SteadyState Duration="20" Power="1.8" pace="0" />
+        <Ramp Duration="180" PowerLow="0.55" PowerHigh="0.65" pace="0" />
+        <SteadyState Duration="20" Power="1.9" pace="0" />
+        <Ramp Duration="180" PowerLow="0.55" PowerHigh="0.65" pace="0" />
+        <SteadyState Duration="20" Power="2.0" pace="0" />
+        <Ramp Duration="180" PowerLow="0.55" PowerHigh="0.65" pace="0" />
+        <SteadyState Duration="20" Power="2.1" pace="0" />
+        <Ramp Duration="180" PowerLow="0.55" PowerHigh="0.65" pace="0" />
+        <SteadyState Duration="20" Power="2.2" pace="0" />
+        <SteadyState Duration="300" Power="0.65" pace="0" />
+        <SteadyState Duration="20" Power="1.8" pace="0" />
+        <Ramp Duration="180" PowerLow="0.55" PowerHigh="0.65" pace="0" />
+        <SteadyState Duration="20" Power="1.9" pace="0" />
+        <Ramp Duration="180" PowerLow="0.55" PowerHigh="0.65" pace="0" />
+        <SteadyState Duration="20" Power="2.0" pace="0" />
+        <Ramp Duration="180" PowerLow="0.55" PowerHigh="0.65" pace="0" />
+        <SteadyState Duration="20" Power="2.1" pace="0" />
+        <Ramp Duration="180" PowerLow="0.55" PowerHigh="0.65" pace="0" />
+        <SteadyState Duration="20" Power="2.2" pace="0" />
+        <SteadyState Duration="300" Power="0.61" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.61" PowerHigh="0.4" pace="0" />
+    </workout>
+</workout_file>

@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Mixed Steady (45min)</name>
+    <description>Steady: 45min @ 65% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <FreeRide Duration="2700" FlatRoad="0" />
+    </workout>
+</workout_file>

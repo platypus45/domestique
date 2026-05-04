@@ -1,0 +1,96 @@
+{
+  "slug": "heugtepad-2",
+  "gpx_path": "gpx_sources/netherlands_gravel/heugtepad-2.gpx",
+  "num_points": 86,
+  "distance_km": 25.453,
+  "query_seconds": 1.86,
+  "surface_mix_pct": {
+    "asphalt": 89.6,
+    "gravel": 7.9,
+    "cobble": 2.5,
+    "unknown": 0.0
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 6.464,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 6.464,
+      "end_km": 6.727,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 6.727,
+      "end_km": 10.033,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 10.033,
+      "end_km": 10.105,
+      "surface": "cobble"
+    },
+    {
+      "start_km": 10.105,
+      "end_km": 10.424,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 10.424,
+      "end_km": 10.648,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 10.648,
+      "end_km": 10.815,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 10.815,
+      "end_km": 10.908,
+      "surface": "cobble"
+    },
+    {
+      "start_km": 10.908,
+      "end_km": 11.866,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 11.866,
+      "end_km": 12.175,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 12.175,
+      "end_km": 12.647,
+      "surface": "cobble"
+    },
+    {
+      "start_km": 12.647,
+      "end_km": 16.764,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 16.764,
+      "end_km": 17.115,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 17.115,
+      "end_km": 17.244,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 17.244,
+      "end_km": 17.841,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 17.841,
+      "end_km": 25.453,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 6324
+}

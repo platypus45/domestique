@@ -1,0 +1,161 @@
+{
+  "slug": "drents-fries-woud",
+  "gpx_path": "gpx_sources/netherlands_gravel/drents-fries-woud.gpx",
+  "num_points": 247,
+  "distance_km": 59.922,
+  "query_seconds": 22.28,
+  "surface_mix_pct": {
+    "asphalt": 66.2,
+    "gravel": 33.5,
+    "cobble": 0.0,
+    "unknown": 0.3
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 1.039,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 1.039,
+      "end_km": 1.399,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 1.399,
+      "end_km": 2.592,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 2.592,
+      "end_km": 2.626,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 2.626,
+      "end_km": 3.429,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 3.429,
+      "end_km": 4.421,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 4.421,
+      "end_km": 4.45,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 4.45,
+      "end_km": 4.807,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 4.807,
+      "end_km": 11.987,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 11.987,
+      "end_km": 15.118,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 15.118,
+      "end_km": 15.694,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 15.694,
+      "end_km": 16.906,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 16.906,
+      "end_km": 17.284,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 17.284,
+      "end_km": 22.91,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 22.91,
+      "end_km": 28.863,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 28.863,
+      "end_km": 29.431,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 29.431,
+      "end_km": 31.569,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 31.569,
+      "end_km": 32.155,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 32.155,
+      "end_km": 32.752,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 32.752,
+      "end_km": 35.261,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 35.261,
+      "end_km": 36.27,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 36.27,
+      "end_km": 36.4,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 36.4,
+      "end_km": 36.591,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 36.591,
+      "end_km": 39.036,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 39.036,
+      "end_km": 47.807,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 47.807,
+      "end_km": 48.469,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 48.469,
+      "end_km": 54.216,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 54.216,
+      "end_km": 55.687,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 55.687,
+      "end_km": 59.922,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 20148
+}

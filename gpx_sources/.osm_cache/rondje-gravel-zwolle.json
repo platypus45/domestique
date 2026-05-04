@@ -1,0 +1,121 @@
+{
+  "slug": "rondje-gravel-zwolle",
+  "gpx_path": "gpx_sources/netherlands_gravel/rondje-gravel-zwolle.gpx",
+  "num_points": 520,
+  "distance_km": 34.514,
+  "query_seconds": 15.91,
+  "surface_mix_pct": {
+    "asphalt": 76.6,
+    "gravel": 20.3,
+    "cobble": 0.0,
+    "unknown": 3.1
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 0.156,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 0.156,
+      "end_km": 0.441,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 0.441,
+      "end_km": 0.863,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 0.863,
+      "end_km": 1.623,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 1.623,
+      "end_km": 5.796,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 5.796,
+      "end_km": 5.909,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 5.909,
+      "end_km": 6.801,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 6.801,
+      "end_km": 7.4,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 7.4,
+      "end_km": 8.068,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 8.068,
+      "end_km": 8.851,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 8.851,
+      "end_km": 14.951,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 14.951,
+      "end_km": 16.568,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 16.568,
+      "end_km": 21.928,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 21.928,
+      "end_km": 22.891,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 22.891,
+      "end_km": 23.93,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 23.93,
+      "end_km": 23.945,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 23.945,
+      "end_km": 24.887,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 24.887,
+      "end_km": 25.944,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 25.944,
+      "end_km": 26.365,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 26.365,
+      "end_km": 27.588,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 27.588,
+      "end_km": 34.514,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 7256
+}

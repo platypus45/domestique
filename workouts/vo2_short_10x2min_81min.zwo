@@ -1,0 +1,18 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>VO2 Short 10x2min (81min)</name>
+    <description>Warmup: 10min from 35% to 75% FTP | Intervals: 10 x (2min @ 115% / 57s @ 56%) | Cooldown: 10min from 72% to 25% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="600" PowerLow="0.35" PowerHigh="0.75" pace="0" />
+        <IntervalsT Repeat="5" OnDuration="120" OffDuration="60" OnPower="1.15" OffPower="0.56" pace="0" />
+        <FreeRide Duration="300" FlatRoad="0" />
+        <IntervalsT Repeat="5" OnDuration="120" OffDuration="55" OnPower="1.15" OffPower="0.55" pace="0" />
+        <FreeRide Duration="300" FlatRoad="0" />
+        <IntervalsT Repeat="8" OnDuration="40" OffDuration="20" OnPower="1.25" OffPower="0.5" pace="0" />
+        <FreeRide Duration="300" FlatRoad="0" />
+        <IntervalsT Repeat="8" OnDuration="20" OffDuration="40" OnPower="1.26" OffPower="0.5" pace="0" />
+        <Cooldown Duration="600" PowerLow="0.72" PowerHigh="0.25" pace="0" />
+    </workout>
+</workout_file>

@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Tempo Steady (40min)</name>
+    <description>Steady: 40min @ 80% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="1200" Power="0.8" pace="0" />
+        <SteadyState Duration="1200" Power="0.8" pace="0" />
+    </workout>
+</workout_file>

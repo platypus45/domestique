@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "domestique",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["app.py"],
+      "port": 8080
+    }
+  ]
+}

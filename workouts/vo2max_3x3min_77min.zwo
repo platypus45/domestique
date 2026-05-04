@@ -1,0 +1,18 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>VO2max 3x3min (77min)</name>
+    <description>Warmup: 7min from 44% to 75% FTP | Intervals: 3 x (3min @ 115% / 3min @ 30%) | Cooldown: 10min @ 50% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="420" PowerLow="0.44" PowerHigh="0.75" pace="0" />
+        <SteadyState Duration="30" Power="1.09" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.09" pace="0" />
+        <SteadyState Duration="300" Power="0.5" pace="0" />
+        <IntervalsT Repeat="3" OnDuration="180" OffDuration="180" OnPower="1.15" OffPower="0.3" pace="0" Cadence="60" CadenceResting="90" />
+        <SteadyState Duration="900" Power="0.82" pace="0" />
+        <IntervalsT Repeat="3" OnDuration="180" OffDuration="180" OnPower="0.3" OffPower="1.15" pace="0" Cadence="90" CadenceResting="60" />
+        <SteadyState Duration="600" Power="0.5" pace="0" />
+    </workout>
+</workout_file>

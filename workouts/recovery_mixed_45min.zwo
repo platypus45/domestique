@@ -1,0 +1,22 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Recovery (45min)</name>
+    <description>Warmup: 5min @ 52% FTP | Steady: 2min @ 73% FTP | Steady: 5min @ 52% FTP | Steady: 2min @ 73% FTP | Steady: 5min @ 52% FTP | Steady: 2min @ 73% FTP | Steady: 5min @ 52% FTP | Steady: 2min @ 73% FTP | Steady: 5min @ 52% FTP | Steady: 2min @ 73% FTP | Steady: 5min @ 52% FTP | Steady: 2min @ 73% FTP | Steady: 3min @ 52% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="300" Power="0.52" />
+        <SteadyState Duration="120" Power="0.73" />
+        <SteadyState Duration="300" Power="0.52" />
+        <SteadyState Duration="120" Power="0.73" />
+        <SteadyState Duration="300" Power="0.52" />
+        <SteadyState Duration="120" Power="0.73" />
+        <SteadyState Duration="300" Power="0.52" />
+        <SteadyState Duration="120" Power="0.73" />
+        <SteadyState Duration="300" Power="0.52" />
+        <SteadyState Duration="120" Power="0.73" />
+        <SteadyState Duration="300" Power="0.52" />
+        <SteadyState Duration="120" Power="0.73" />
+        <SteadyState Duration="180" Power="0.52" />
+    </workout>
+</workout_file>

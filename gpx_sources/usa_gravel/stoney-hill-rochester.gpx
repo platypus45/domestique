@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: Stoney Hill Road to Gap Road]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/77069">
+			<text><![CDATA[Gravel Route: Stoney Hill Road to Gap Road]]></text>
+		</link>
+		<time>2020-05-01T09:36:39-04:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: Stoney Hill Road to Gap Road]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/77069">
+			<text><![CDATA[Gravel Route: Stoney Hill Road to Gap Road]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="43.74075" lon="-72.98423">
+				<ele>329.19</ele>
+			</trkpt>
+			<trkpt lat="43.74075" lon="-72.98423">
+				<ele>376.18</ele>
+			</trkpt>
+			<trkpt lat="43.74531" lon="-72.98051">
+				<ele>416.58</ele>
+			</trkpt>
+			<trkpt lat="43.75995" lon="-72.97713">
+				<ele>469.13</ele>
+			</trkpt>
+			<trkpt lat="43.77226" lon="-72.98285">
+				<ele>532.87</ele>
+			</trkpt>
+			<trkpt lat="43.7795" lon="-72.98252">
+				<ele>594.35</ele>
+			</trkpt>
+			<trkpt lat="43.78933" lon="-72.99069">
+				<ele>596.83</ele>
+			</trkpt>
+			<trkpt lat="43.79498" lon="-72.99037">
+				<ele>585.47</ele>
+			</trkpt>
+			<trkpt lat="43.80298" lon="-72.99457">
+				<ele>567.02</ele>
+			</trkpt>
+			<trkpt lat="43.81555" lon="-72.99476">
+				<ele>524.08</ele>
+			</trkpt>
+			<trkpt lat="43.81851" lon="-72.99729">
+				<ele>518.93</ele>
+			</trkpt>
+			<trkpt lat="43.82445" lon="-72.99841">
+				<ele>519.87</ele>
+			</trkpt>
+			<trkpt lat="43.83136" lon="-72.99836">
+				<ele>533.14</ele>
+			</trkpt>
+			<trkpt lat="43.84234" lon="-72.99577">
+				<ele>525.09</ele>
+			</trkpt>
+			<trkpt lat="43.84224" lon="-72.99463">
+				<ele>438.03</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

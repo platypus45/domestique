@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Neuromuscular 4 cycles (70min)</name>
+    <description>Warmup: 15min @ 40% FTP | Over-Under: 4 cycles (alternating above/below threshold) | Cooldown: 20min from 55% to 40% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="900" Power="0.4" pace="0" />
+        <SteadyState Duration="290" Power="0.9" pace="0" />
+        <SteadyState Duration="10" Power="3.0" pace="0" />
+        <SteadyState Duration="300" Power="0.55" pace="0" />
+        <SteadyState Duration="290" Power="0.9" pace="0" />
+        <SteadyState Duration="10" Power="3.0" pace="0" />
+        <SteadyState Duration="300" Power="0.55" pace="0" />
+        <SteadyState Duration="290" Power="0.9" pace="0" />
+        <SteadyState Duration="10" Power="3.0" pace="0" />
+        <SteadyState Duration="300" Power="0.55" pace="0" />
+        <SteadyState Duration="290" Power="0.9" pace="0" />
+        <SteadyState Duration="10" Power="3.0" pace="0" />
+        <SteadyState Duration="300" Power="0.55" pace="0" />
+        <SteadyState Duration="900" Power="0.4" pace="0" />
+    </workout>
+</workout_file>

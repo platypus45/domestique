@@ -1,0 +1,24 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Over-Under 6x1min (56min)</name>
+    <description>Warmup: 7min from 44% to 75% FTP | Intervals: 6 x (1min @ 92% / 30s @ 102%) | Cooldown: 5min @ 40% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="420" PowerLow="0.44" PowerHigh="0.75" pace="0" />
+        <SteadyState Duration="30" Power="1.09" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.09" pace="0" />
+        <SteadyState Duration="300" Power="0.5" pace="0" />
+        <Ramp Duration="300" PowerLow="0.6" PowerHigh="0.85" pace="0" Cadence="60" />
+        <Ramp Duration="300" PowerLow="0.85" PowerHigh="1.1" pace="0" />
+        <IntervalsT Repeat="3" OnDuration="60" OffDuration="30" OnPower="0.92" OffPower="1.02" pace="0" />
+        <SteadyState Duration="30" Power="1.15" pace="0" />
+        <SteadyState Duration="300" Power="0.4" pace="0" />
+        <Ramp Duration="300" PowerLow="0.6" PowerHigh="0.85" pace="0" Cadence="60" />
+        <Ramp Duration="300" PowerLow="0.85" PowerHigh="1.1" pace="0" />
+        <IntervalsT Repeat="3" OnDuration="60" OffDuration="30" OnPower="0.92" OffPower="1.02" pace="0" />
+        <SteadyState Duration="30" Power="1.15" pace="0" />
+        <SteadyState Duration="300" Power="0.4" pace="0" />
+    </workout>
+</workout_file>

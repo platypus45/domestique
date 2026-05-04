@@ -1,0 +1,151 @@
+{
+  "slug": "rondje-nieuwleusen",
+  "gpx_path": "gpx_sources/netherlands_gravel/rondje-nieuwleusen.gpx",
+  "num_points": 310,
+  "distance_km": 55.962,
+  "query_seconds": 113.87,
+  "surface_mix_pct": {
+    "asphalt": 86.8,
+    "gravel": 12.8,
+    "cobble": 0.0,
+    "unknown": 0.4
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 1.991,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 1.991,
+      "end_km": 1.998,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 1.998,
+      "end_km": 2.195,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 2.195,
+      "end_km": 2.218,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 2.218,
+      "end_km": 8.983,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 8.983,
+      "end_km": 9.093,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 9.093,
+      "end_km": 13.256,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 13.256,
+      "end_km": 15.019,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 15.019,
+      "end_km": 15.058,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 15.058,
+      "end_km": 16.573,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 16.573,
+      "end_km": 30.569,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 30.569,
+      "end_km": 30.69,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 30.69,
+      "end_km": 33.396,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 33.396,
+      "end_km": 34.825,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 34.825,
+      "end_km": 39.749,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 39.749,
+      "end_km": 39.912,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 39.912,
+      "end_km": 41.331,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 41.331,
+      "end_km": 42.015,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 42.015,
+      "end_km": 42.367,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 42.367,
+      "end_km": 43.78,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 43.78,
+      "end_km": 44.997,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 44.997,
+      "end_km": 45.146,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 45.146,
+      "end_km": 48.676,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 48.676,
+      "end_km": 48.711,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 48.711,
+      "end_km": 55.676,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 55.676,
+      "end_km": 55.679,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 55.679,
+      "end_km": 55.962,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 17954
+}

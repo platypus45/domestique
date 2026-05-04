@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: Via Monterampino]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/90485">
+			<text><![CDATA[Gravel Route: Via Monterampino]]></text>
+		</link>
+		<time>2020-10-02T02:31:46-04:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: Via Monterampino]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/90485">
+			<text><![CDATA[Gravel Route: Via Monterampino]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="44.64179" lon="10.61998">
+				<ele>99.86</ele>
+			</trkpt>
+			<trkpt lat="44.64178" lon="10.61999">
+				<ele>99.72</ele>
+			</trkpt>
+			<trkpt lat="44.6399" lon="10.61879">
+				<ele>101.37</ele>
+			</trkpt>
+			<trkpt lat="44.63978" lon="10.61867">
+				<ele>102.97</ele>
+			</trkpt>
+			<trkpt lat="44.63969" lon="10.61846">
+				<ele>105.05</ele>
+			</trkpt>
+			<trkpt lat="44.63969" lon="10.61846">
+				<ele>106.32</ele>
+			</trkpt>
+			<trkpt lat="44.639" lon="10.61795">
+				<ele>107.28</ele>
+			</trkpt>
+			<trkpt lat="44.63763" lon="10.61716">
+				<ele>107.87</ele>
+			</trkpt>
+			<trkpt lat="44.63723" lon="10.61677">
+				<ele>109.31</ele>
+			</trkpt>
+			<trkpt lat="44.63609" lon="10.61623">
+				<ele>110.86</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

@@ -1,0 +1,52 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>VO2 Short 20s/10s 32x (40min)</name>
+    <description>Microintervals: 32 x (20s @ 125% / 10s @ 55%)</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="120" Power="0.6" pace="0" />
+        <SteadyState Duration="120" Power="0.7" pace="0" />
+        <SteadyState Duration="120" Power="0.8" pace="0" />
+        <SteadyState Duration="120" Power="0.9" pace="0" />
+        <SteadyState Duration="60" Power="0.55" pace="0" />
+        <IntervalsT Repeat="6" OnDuration="10" OffDuration="20" OnPower="1.1" OffPower="0.55" pace="0" />
+        <SteadyState Duration="120" Power="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <SteadyState Duration="120" Power="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <SteadyState Duration="120" Power="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <SteadyState Duration="120" Power="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="20" OffDuration="10" OnPower="1.25" OffPower="0.55" pace="0" />
+        <SteadyState Duration="240" Power="0.55" pace="0" />
+    </workout>
+</workout_file>

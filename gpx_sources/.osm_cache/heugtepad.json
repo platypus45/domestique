@@ -1,0 +1,51 @@
+{
+  "slug": "heugtepad",
+  "gpx_path": "gpx_sources/netherlands_gravel/heugtepad.gpx",
+  "num_points": 67,
+  "distance_km": 23.859,
+  "query_seconds": 107.46,
+  "surface_mix_pct": {
+    "asphalt": 91.8,
+    "gravel": 8.2,
+    "cobble": 0.0,
+    "unknown": 0.0
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 12.358,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 12.358,
+      "end_km": 12.555,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 12.555,
+      "end_km": 15.431,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 15.431,
+      "end_km": 17.15,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 17.15,
+      "end_km": 18.193,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 18.193,
+      "end_km": 18.233,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 18.233,
+      "end_km": 23.859,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 7348
+}

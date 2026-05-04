@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Neuromuscular 15s/25s 30x (90min)</name>
+    <description>Warmup: 15min from 30% to 90% FTP | Microintervals: 30 x (15s @ 240% / 25s @ 60%) | Cooldown: 10min from 46% to 30% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="900" PowerLow="0.3" PowerHigh="0.9" pace="0" />
+        <SteadyState Duration="300" Power="0.35" pace="0" />
+        <SteadyState Duration="300" Power="0.95" pace="0" />
+        <IntervalsT Repeat="10" OnDuration="15" OffDuration="25" OnPower="2.4" OffPower="0.6" pace="0" />
+        <SteadyState Duration="300" Power="0.95" pace="0" />
+        <SteadyState Duration="300" Power="0.38" pace="0" />
+        <SteadyState Duration="300" Power="0.95" pace="0" />
+        <IntervalsT Repeat="10" OnDuration="15" OffDuration="25" OnPower="2.4" OffPower="0.6" pace="0" />
+        <SteadyState Duration="300" Power="0.95" pace="0" />
+        <SteadyState Duration="300" Power="0.38" pace="0" />
+        <SteadyState Duration="300" Power="0.95" pace="0" />
+        <IntervalsT Repeat="10" OnDuration="15" OffDuration="25" OnPower="2.4" OffPower="0.6" pace="0" />
+        <SteadyState Duration="300" Power="0.95" pace="0" />
+        <Cooldown Duration="600" PowerLow="0.46" PowerHigh="0.3" pace="0" />
+    </workout>
+</workout_file>

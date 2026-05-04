@@ -1,0 +1,22 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Neuromuscular 3x2min (60min)</name>
+    <description>Warmup: 5min from 42% to 70% FTP | Intervals: 3 x (1min 30s @ 120% / 6min @ 95%) | Cooldown: 5min @ 50% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="300" PowerLow="0.42" PowerHigh="0.7" pace="0" />
+        <SteadyState Duration="120" Power="0.5" pace="0" />
+        <SteadyState Duration="180" Power="0.7" pace="0" />
+        <IntervalsT Repeat="4" OnDuration="10" OffDuration="50" OnPower="1.75" OffPower="0.5" pace="0" />
+        <SteadyState Duration="120" Power="0.5" pace="0" />
+        <SteadyState Duration="240" Power="0.8" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="90" OffDuration="360" OnPower="1.2" OffPower="0.95" pace="0" />
+        <SteadyState Duration="300" Power="0.5" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="90" OffDuration="360" OnPower="1.2" OffPower="0.95" pace="0" />
+        <SteadyState Duration="300" Power="0.5" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="90" OffDuration="360" OnPower="1.2" OffPower="0.95" pace="0" />
+        <SteadyState Duration="300" Power="0.5" pace="0" />
+    </workout>
+</workout_file>

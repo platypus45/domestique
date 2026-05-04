@@ -1,0 +1,28 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Anaerobic (33min)</name>
+    <description>Warmup: 6min from 45% to 65% FTP | Steady: 30s @ 100% FTP | Steady: 30s @ 50% FTP | Steady: 30s @ 110% FTP | Steady: 30s @ 50% FTP | Steady: 30s @ 120% FTP | Steady: 2min @ 50% FTP | Steady: 45s @ 150% FTP | Steady: 1min @ 50% FTP | Steady: 45s @ 150% FTP | Steady: 1min @ 50% FTP | Steady: 1min @ 130% FTP | Steady: 1min @ 50% FTP | Steady: 1min @ 130% FTP | Steady: 3min @ 50% FTP | Steady: 2min @ 117% FTP | Steady: 3min @ 50% FTP | Steady: 3min @ 105% FTP | Cooldown: 5min from 35% to 55% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="360" PowerLow="0.45" PowerHigh="0.65" pace="0" />
+        <SteadyState Duration="30" Power="1" pace="0" />
+        <SteadyState Duration="30" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.1" pace="0" />
+        <SteadyState Duration="30" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.2" pace="0" />
+        <SteadyState Duration="120" Power="0.5" pace="0" />
+        <SteadyState Duration="45" Power="1.5" pace="0" />
+        <SteadyState Duration="60" Power="0.5" pace="0" />
+        <SteadyState Duration="45" Power="1.5" pace="0" />
+        <SteadyState Duration="60" Power="0.5" pace="0" />
+        <SteadyState Duration="60" Power="1.3" pace="0" />
+        <SteadyState Duration="60" Power="0.5" pace="0" />
+        <SteadyState Duration="60" Power="1.3" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <SteadyState Duration="120" Power="1.17" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <SteadyState Duration="180" Power="1.05" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.35" PowerHigh="0.55" pace="0" />
+    </workout>
+</workout_file>

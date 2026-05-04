@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: Chemin de Pierrascas]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/63349">
+			<text><![CDATA[Gravel Route: Chemin de Pierrascas]]></text>
+		</link>
+		<time>2019-09-23T04:57:53-04:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: Chemin de Pierrascas]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/63349">
+			<text><![CDATA[Gravel Route: Chemin de Pierrascas]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="44.06046" lon="3.97858">
+				<ele>129.58</ele>
+			</trkpt>
+			<trkpt lat="44.06043" lon="3.97857">
+				<ele>130.47</ele>
+			</trkpt>
+			<trkpt lat="44.06061" lon="3.97819">
+				<ele>131.29</ele>
+			</trkpt>
+			<trkpt lat="44.06073" lon="3.97796">
+				<ele>131.68</ele>
+			</trkpt>
+			<trkpt lat="44.06103" lon="3.97739">
+				<ele>131.48</ele>
+			</trkpt>
+			<trkpt lat="44.06103" lon="3.97739">
+				<ele>131.4</ele>
+			</trkpt>
+			<trkpt lat="44.06116" lon="3.9772">
+				<ele>134.75</ele>
+			</trkpt>
+			<trkpt lat="44.06129" lon="3.97704">
+				<ele>136.29</ele>
+			</trkpt>
+			<trkpt lat="44.0616" lon="3.97677">
+				<ele>137.3</ele>
+			</trkpt>
+			<trkpt lat="44.06167" lon="3.97669">
+				<ele>135.8</ele>
+			</trkpt>
+			<trkpt lat="44.06177" lon="3.97652">
+				<ele>131.06</ele>
+			</trkpt>
+			<trkpt lat="44.06187" lon="3.97615">
+				<ele>131.4</ele>
+			</trkpt>
+			<trkpt lat="44.06192" lon="3.97589">
+				<ele>131.3</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

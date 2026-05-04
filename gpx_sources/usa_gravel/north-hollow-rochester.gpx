@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: North Hollow Road]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/85707">
+			<text><![CDATA[Gravel Route: North Hollow Road]]></text>
+		</link>
+		<time>2020-07-27T06:24:30-04:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: North Hollow Road]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/85707">
+			<text><![CDATA[Gravel Route: North Hollow Road]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="44.02891" lon="-72.83355">
+				<ele>417.77</ele>
+			</trkpt>
+			<trkpt lat="44.0289" lon="-72.83357">
+				<ele>485.11</ele>
+			</trkpt>
+			<trkpt lat="44.02444" lon="-72.83182">
+				<ele>492.05</ele>
+			</trkpt>
+			<trkpt lat="44.01531" lon="-72.83181">
+				<ele>497.58</ele>
+			</trkpt>
+			<trkpt lat="44.0123" lon="-72.82916">
+				<ele>475.82</ele>
+			</trkpt>
+			<trkpt lat="43.99844" lon="-72.82596">
+				<ele>490.4</ele>
+			</trkpt>
+			<trkpt lat="43.99431" lon="-72.82301">
+				<ele>500.62</ele>
+			</trkpt>
+			<trkpt lat="43.97574" lon="-72.81878">
+				<ele>520.37</ele>
+			</trkpt>
+			<trkpt lat="43.97131" lon="-72.81437">
+				<ele>495.96</ele>
+			</trkpt>
+			<trkpt lat="43.96653" lon="-72.81289">
+				<ele>461.18</ele>
+			</trkpt>
+			<trkpt lat="43.96407" lon="-72.81338">
+				<ele>461.38</ele>
+			</trkpt>
+			<trkpt lat="43.95625" lon="-72.81941">
+				<ele>477.4</ele>
+			</trkpt>
+			<trkpt lat="43.95388" lon="-72.80753">
+				<ele>493.66</ele>
+			</trkpt>
+			<trkpt lat="43.93077" lon="-72.79699">
+				<ele>512.43</ele>
+			</trkpt>
+			<trkpt lat="43.92151" lon="-72.79696">
+				<ele>480.21</ele>
+			</trkpt>
+			<trkpt lat="43.92202" lon="-72.79085">
+				<ele>459.93</ele>
+			</trkpt>
+			<trkpt lat="43.90279" lon="-72.77968">
+				<ele>452.01</ele>
+			</trkpt>
+			<trkpt lat="43.89939" lon="-72.77969">
+				<ele>488.48</ele>
+			</trkpt>
+			<trkpt lat="43.89199" lon="-72.77316">
+				<ele>554.64</ele>
+			</trkpt>
+			<trkpt lat="43.88676" lon="-72.77142">
+				<ele>563.5</ele>
+			</trkpt>
+			<trkpt lat="43.88389" lon="-72.78117">
+				<ele>513.85</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

@@ -1,0 +1,25 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>VO2 Short 30s/15s 30x (45min)</name>
+    <description>Microintervals: 30 x (30s @ 115% / 15s @ 35%)</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="135" Power="0.55" pace="0" />
+        <SteadyState Duration="135" Power="0.63" pace="0" />
+        <SteadyState Duration="45" Power="1.25" pace="0" />
+        <SteadyState Duration="120" Power="0.6" pace="0" />
+        <SteadyState Duration="120" Power="0.7" pace="0" />
+        <SteadyState Duration="120" Power="0.8" pace="0" />
+        <SteadyState Duration="120" Power="0.9" pace="0" />
+        <SteadyState Duration="90" Power="0.53" pace="0" />
+        <IntervalsT Repeat="5" OnDuration="30" OffDuration="15" OnPower="1.15" OffPower="0.35" pace="0" />
+        <IntervalsT Repeat="5" OnDuration="30" OffDuration="15" OnPower="1.15" OffPower="0.35" pace="0" />
+        <IntervalsT Repeat="5" OnDuration="30" OffDuration="15" OnPower="1.15" OffPower="0.35" pace="0" />
+        <SteadyState Duration="300" Power="0.53" pace="0" />
+        <IntervalsT Repeat="5" OnDuration="30" OffDuration="15" OnPower="1.15" OffPower="0.35" pace="0" />
+        <IntervalsT Repeat="5" OnDuration="30" OffDuration="15" OnPower="1.15" OffPower="0.35" pace="0" />
+        <IntervalsT Repeat="5" OnDuration="30" OffDuration="15" OnPower="1.15" OffPower="0.35" pace="0" />
+        <SteadyState Duration="180" Power="0.53" pace="0" />
+    </workout>
+</workout_file>

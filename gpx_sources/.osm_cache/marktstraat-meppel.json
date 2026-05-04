@@ -1,0 +1,236 @@
+{
+  "slug": "marktstraat-meppel",
+  "gpx_path": "gpx_sources/netherlands_gravel/marktstraat-meppel.gpx",
+  "num_points": 359,
+  "distance_km": 59.38,
+  "query_seconds": 18.82,
+  "surface_mix_pct": {
+    "asphalt": 60.6,
+    "gravel": 34.6,
+    "cobble": 4.4,
+    "unknown": 0.4
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 0.2,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 0.2,
+      "end_km": 0.243,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 0.243,
+      "end_km": 2.93,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 2.93,
+      "end_km": 3.972,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 3.972,
+      "end_km": 5.044,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 5.044,
+      "end_km": 5.944,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 5.944,
+      "end_km": 8.434,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 8.434,
+      "end_km": 8.689,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 8.689,
+      "end_km": 9.61,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 9.61,
+      "end_km": 9.864,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 9.864,
+      "end_km": 12.884,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 12.884,
+      "end_km": 14.57,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 14.57,
+      "end_km": 15.448,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 15.448,
+      "end_km": 15.839,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 15.839,
+      "end_km": 17.829,
+      "surface": "cobble"
+    },
+    {
+      "start_km": 17.829,
+      "end_km": 17.845,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 17.845,
+      "end_km": 18.185,
+      "surface": "cobble"
+    },
+    {
+      "start_km": 18.185,
+      "end_km": 19.033,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 19.033,
+      "end_km": 22.636,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 22.636,
+      "end_km": 22.902,
+      "surface": "cobble"
+    },
+    {
+      "start_km": 22.902,
+      "end_km": 25.506,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 25.506,
+      "end_km": 27.346,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 27.346,
+      "end_km": 27.47,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 27.47,
+      "end_km": 28.037,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 28.037,
+      "end_km": 28.569,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 28.569,
+      "end_km": 29.098,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 29.098,
+      "end_km": 30.251,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 30.251,
+      "end_km": 30.295,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 30.295,
+      "end_km": 30.616,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 30.616,
+      "end_km": 30.65,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 30.65,
+      "end_km": 33.203,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 33.203,
+      "end_km": 33.222,
+      "surface": "cobble"
+    },
+    {
+      "start_km": 33.222,
+      "end_km": 35.432,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 35.432,
+      "end_km": 52.781,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 52.781,
+      "end_km": 53.812,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 53.812,
+      "end_km": 54.412,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 54.412,
+      "end_km": 55.987,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 55.987,
+      "end_km": 56.754,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 56.754,
+      "end_km": 57.05,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 57.05,
+      "end_km": 57.919,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 57.919,
+      "end_km": 58.079,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 58.079,
+      "end_km": 59.186,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 59.186,
+      "end_km": 59.192,
+      "surface": "unknown"
+    },
+    {
+      "start_km": 59.192,
+      "end_km": 59.38,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 6803
+}

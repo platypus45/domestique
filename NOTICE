@@ -1,0 +1,124 @@
+Domestique
+Copyright 2026 Domestique Contributors
+(formerly ChickenCycling)
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+================================================================================
+THIRD-PARTY SOFTWARE
+================================================================================
+
+This product includes software developed by third parties:
+
+- bleak (MIT License)
+  https://github.com/hbldh/bleak
+
+- pycycling (MIT License)
+  https://github.com/zacharyedwardbull/pycycling
+
+- openant (MIT License)
+  https://github.com/Tigge/openant
+
+- FastAPI (MIT License)
+  https://github.com/tiangolo/fastapi
+
+- uvicorn (BSD-3-Clause License)
+  https://www.uvicorn.org
+
+- Jinja2 (BSD-3-Clause License)
+  https://palletsprojects.com/p/jinja
+
+- pywebview (BSD-3-Clause License)
+  https://pywebview.flowrl.com
+
+- pystray (LGPL-3.0 License)
+  https://github.com/moses-palmer/pystray
+  Source available under LGPL-3.0. In PyInstaller bundles this library is
+  distributed as Python bytecode in the COLLECT directory, satisfying the
+  LGPL user-replaceability requirement.
+
+- Pillow (HPND/MIT-CMU License)
+  https://python-pillow.org
+
+- PyInstaller (GPL-2.0 with bootloader exception)
+  https://pyinstaller.org
+  Build tool only; the bootloader exception explicitly permits distributing
+  closed-source or differently-licensed applications built with it.
+
+- html2canvas (MIT License) — Niklas von Hertzen
+  https://html2canvas.hertzen.com/
+  Vendored at static/vendor/html2canvas.min.js for the RIDE REPORT
+  "Save to Desktop" screenshot feature.
+
+- fit-tool (MIT License)
+  https://pypi.org/project/fit-tool/
+  Used to emit .fit activity files for manual upload to Strava / Garmin /
+  Karoo / Wahoo.
+
+- httpx (BSD-3-Clause License)
+  https://www.python-httpx.org/
+
+- pydantic (MIT License)
+  https://docs.pydantic.dev/
+
+- starlette (BSD-3-Clause License)
+  https://www.starlette.io/
+
+- websockets (BSD-3-Clause License)
+  https://websockets.readthedocs.io/
+
+================================================================================
+DATA ATTRIBUTION
+================================================================================
+
+Nutrition Database (sports_nutrition_db.json):
+  Contains 284 product entries from Open Food Facts
+  (https://world.openfoodfacts.org/) licensed under the
+  Open Database License (ODbL) 1.0
+  https://opendatacommons.org/licenses/odbl/1-0/
+
+  Derivative databases must share under the same ODbL 1.0 terms.
+  Brand names (Maurten, SiS, GU, etc.) are trademarks of respective owners,
+  used nominatively for product identification only.
+
+Virtual Routes (courses/virtual/):
+  Procedurally generated using Perlin-style noise with deterministic seeds.
+  No third-party route data used.
+  Licensed under Apache-2.0 as part of this project.
+  Regeneration: python3 generate_procedural_routes.py
+
+Real-World Routes (courses/alps/, pyrenees/, dolomites/, etc.):
+  Route names reference real geographic features, which are public-domain
+  facts. Gradient profiles represent real elevation data; where provenance
+  allows, attribution to source DEM or OpenStreetMap contributors applies
+  under ODbL 1.0.
+
+Workouts (workouts/*.zwo):
+  Interval structures are based on public-domain exercise physiology patterns
+  (Helgerud 2007, Ronnestad 30/15, Billat 30/30, Seiler zones, Coggan power
+  profiles). Names and descriptions are original works generated
+  programmatically from interval structure; licensed under Apache-2.0.
+
+================================================================================
+SCIENTIFIC REFERENCES
+================================================================================
+
+Training algorithms implemented in this project are based on published,
+peer-reviewed research. Implementation is independent; citations are for
+attribution and should not imply endorsement by the cited authors.
+
+- Coggan & Allen (2019). Training and Racing with a Power Meter.
+- Friel, J. (2018). The Cyclist's Training Bible.
+- Skiba et al. (2015). W'bal model. J Appl Physiol 118(12):1379-88.
+- Rogers et al. (2021). DFA alpha1 aerobic threshold. PMID: 33519504.
+- Hunt & Fankhauser (2019). HR control for ergometer exercise. PMID: 31471785.
+- Helgerud et al. (2007). Aerobic high-intensity intervals. PMID: 17414804.
+- Ronnestad & Hansen (2013). 30/15 intervals. J Strength Cond Res 28(9):2594-603.
+- Seiler & Kjerland (2006). Polarized training distribution.
+- Mujika, I. (2003). Tapering for competition.
+- Coyle & Gonzalez-Alonso (2001). Cardiovascular drift. PMID: 11337829.
+- Jeukendrup, A. (2014). Personalized sports nutrition. PMID: 24524781.

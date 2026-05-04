@@ -1,0 +1,76 @@
+{
+  "slug": "beerninkstraat-hortensiastraat",
+  "gpx_path": "gpx_sources/netherlands_gravel/beerninkstraat-hortensiastraat.gpx",
+  "num_points": 204,
+  "distance_km": 61.787,
+  "query_seconds": 91.86,
+  "surface_mix_pct": {
+    "asphalt": 95.1,
+    "gravel": 4.9,
+    "cobble": 0.0,
+    "unknown": 0.0
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 28.323,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 28.323,
+      "end_km": 30.395,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 30.395,
+      "end_km": 31.778,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 31.778,
+      "end_km": 32.226,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 32.226,
+      "end_km": 35.145,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 35.145,
+      "end_km": 35.221,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 35.221,
+      "end_km": 40.796,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 40.796,
+      "end_km": 41.166,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 41.166,
+      "end_km": 42.366,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 42.366,
+      "end_km": 42.416,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 42.416,
+      "end_km": 61.787,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 61.787,
+      "end_km": 61.787,
+      "surface": "unknown"
+    }
+  ],
+  "ways_fetched": 13138
+}

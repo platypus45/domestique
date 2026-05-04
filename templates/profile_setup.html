@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Domestique — New Profile</title>
+<link rel="icon" type="image/png" href="/static/favicon.png?v=3">
+<style>
+:root {
+  --bg: #0a0e14; --surface: #131a24; --surface2: #1a2332; --border: #2d3f52;
+  --text: #e6edf3; --text2: #b8c8d8; --text3: #8a9bb0;
+  --accent: #4f9cf7; --accent2: #6366f1;
+  --green: #22c55e; --red: #ef4444; --radius: 12px;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg); color: var(--text); min-height: 100vh;
+  display: flex; align-items: center; justify-content: center; }
+.wizard { background: var(--surface); border-radius: 16px; box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+  max-width: 480px; width: 100%; padding: 36px; }
+.logo { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.logo img { height: 28px; border-radius: 6px; }
+.logo h1 { font-size: 20px; font-weight: 700;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.subtitle { color: var(--text2); font-size: 13px; margin-bottom: 28px; }
+.steps { display: flex; gap: 8px; margin-bottom: 28px; }
+.step-dot { width: 40px; height: 4px; border-radius: 2px; background: var(--surface2); transition: background 0.3s; }
+.step-dot.active { background: var(--accent); }
+.step-dot.done { background: var(--green); }
+.step-panel { display: none; }
+.step-panel.active { display: block; }
+h2 { font-size: 17px; margin-bottom: 14px; }
+p.info { color: var(--text2); font-size: 13px; margin-bottom: 14px; line-height: 1.6; }
+.form-row { margin-bottom: 14px; }
+label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 5px; color: var(--text2); }
+input[type="text"], input[type="number"], input[type="password"] {
+  width: 100%; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px;
+  font-size: 14px; background: var(--surface2); color: var(--text); outline: none; }
+input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,156,247,0.15); }
+.form-row-pair { display: flex; gap: 12px; }
+.form-row-pair .form-row { flex: 1; }
+.btn { padding: 9px 18px; border-radius: 8px; border: none; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: all 0.2s; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent2); }
+.btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+.btn-secondary:hover { background: var(--border); }
+.actions { display: flex; justify-content: space-between; align-items: center; margin-top: 24px; }
+.skip-link { font-size: 12px; color: var(--text3); cursor: pointer; background: none; border: none; }
+.skip-link:hover { color: var(--text2); }
+.status { padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-top: 10px; display: none; }
+.status.ok { display: block; background: rgba(34,197,94,0.12); color: var(--green); }
+.status.err { display: block; background: rgba(239,68,68,0.12); color: var(--red); }
+.color-grid { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.color-swatch { width: 36px; height: 36px; border-radius: 50%; cursor: pointer; border: 3px solid transparent;
+  transition: all 0.15s; }
+.color-swatch:hover { transform: scale(1.1); }
+.color-swatch.selected { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
+.help-link { font-size: 12px; color: var(--accent); text-decoration: none; }
+.help-link:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="wizard">
+  <div class="logo">
+    <img src="/static/icon.png" alt="">
+    <h1>Domestique</h1>
+  </div>
+  <div class="subtitle">Set up a new rider profile in 3 steps.</div>
+
+  <div class="steps" id="step-dots">
+    <div class="step-dot active"></div>
+    <div class="step-dot"></div>
+    <div class="step-dot"></div>
+  </div>
+
+  <!-- STEP 1: Name + Color -->
+  <div class="step-panel active" id="step-1">
+    <h2>Name &amp; Color</h2>
+    <div class="form-row">
+      <label>Display Name</label>
+      <input type="text" id="profile-name" placeholder="e.g. Anna" autofocus autocomplete="off">
+    </div>
+    <div class="form-row">
+      <label>Profile Color</label>
+      <div class="color-grid" id="color-grid"></div>
+    </div>
+    <div class="status" id="step1-status"></div>
+    <div class="actions">
+      <a href="/" class="skip-link">Cancel</a>
+      <button type="button" class="btn btn-primary" onclick="createProfile()" id="create-btn">Next</button>
+    </div>
+  </div>
+
+  <!-- STEP 2: Intervals.icu -->
+  <div class="step-panel" id="step-2">
+    <h2>Connect Intervals.icu</h2>
+    <p class="info">
+      Optional. Syncs your training data (CTL, ATL, TSB, HRV).
+      <br>Find credentials at
+      <a href="https://intervals.icu/settings" target="_blank" class="help-link">intervals.icu/settings</a>
+      &rarr; Developer Settings.
+    </p>
+    <div class="form-row">
+      <label>Athlete ID</label>
+      <input type="text" id="icu-id" placeholder="e.g. i12345" autocomplete="off">
+    </div>
+    <div class="form-row">
+      <label>API Key</label>
+      <input type="password" id="icu-key" placeholder="Your API key" autocomplete="off">
+    </div>
+    <div class="status" id="step2-status"></div>
+    <div class="actions">
+      <button type="button" class="skip-link" onclick="goStep(3)">Skip for now</button>
+      <button type="button" class="btn btn-primary" onclick="saveIcu()" id="save-icu-btn">Next</button>
+    </div>
+  </div>
+
+  <!-- STEP 3: Athlete Numbers -->
+  <div class="step-panel" id="step-3">
+    <h2>Athlete Numbers</h2>
+    <p class="info">Set your current fitness values. You can update these anytime in Settings.</p>
+    <div class="form-row-pair">
+      <div class="form-row">
+        <label>FTP (watts)</label>
+        <input type="number" id="ftp" value="200" min="50" max="500">
+      </div>
+      <div class="form-row">
+        <label>Weight (kg)</label>
+        <input type="number" id="weight" value="70" min="30" max="200" step="0.1">
+      </div>
+    </div>
+    <div class="form-row-pair">
+      <div class="form-row">
+        <label>LTHR (bpm)</label>
+        <input type="number" id="lthr" value="170" min="100" max="220">
+      </div>
+      <div class="form-row">
+        <label>Max HR (bpm)</label>
+        <input type="number" id="max-hr" value="190" min="120" max="230">
+      </div>
+    </div>
+    <div class="form-row-pair">
+      <div class="form-row">
+        <label>
+          Age (years)
+          <input type="number" id="age" min="10" max="100" step="1" placeholder="35">
+        </label>
+      </div>
+      <div class="form-row">
+        <label>
+          Sex
+          <select id="sex" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:var(--surface2);color:var(--text);outline:none;">
+            <option value="">Prefer not to say</option>
+            <option value="M">Male</option>
+            <option value="F">Female</option>
+            <option value="O">Other</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <div class="form-row">
+      <details>
+        <summary style="cursor:pointer;font-size:12px;color:var(--text2);">Advanced (optional)</summary>
+        <label style="margin-top:10px;">
+          Critical Power (W) — defaults to FTP × 1.03 if blank
+          <input type="number" id="cp" min="100" max="500" step="1" placeholder="auto">
+        </label>
+        <label style="margin-top:10px;">
+          W' — anaerobic capacity (J) — defaults to FTP × 80
+          <input type="number" id="wprime" min="5000" max="40000" step="100" placeholder="auto">
+        </label>
+      </details>
+    </div>
+    <div class="status" id="step3-status"></div>
+    <div class="actions">
+      <span></span>
+      <button type="button" class="btn btn-primary" onclick="saveAthlete()" id="save-athlete-btn">Finish</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const COLORS = ['#3b82f6','#22c55e','#f97316','#a855f7','#ef4444','#eab308','#06b6d4','#ec4899'];
+let selectedColor = COLORS[0];
+let createdId = null;
+let currentStep = 1;
+
+// Render color swatches
+(function() {
+  const grid = document.getElementById('color-grid');
+  COLORS.forEach((c, i) => {
+    const sw = document.createElement('div');
+    sw.className = 'color-swatch' + (i === 0 ? ' selected' : '');
+    sw.style.background = c;
+    sw.onclick = () => {
+      selectedColor = c;
+      grid.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('selected'));
+      sw.classList.add('selected');
+    };
+    grid.appendChild(sw);
+  });
+})();
+
+function goStep(n) {
+  currentStep = n;
+  document.querySelectorAll('.step-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('step-' + n).classList.add('active');
+  document.querySelectorAll('.step-dot').forEach((d, i) => {
+    d.classList.remove('active', 'done');
+    if (i < n - 1) d.classList.add('done');
+    else if (i === n - 1) d.classList.add('active');
+  });
+}
+
+function showStatus(id, msg, ok) {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.className = 'status ' + (ok ? 'ok' : 'err');
+}
+
+let _creatingProfile = false;
+async function createProfile() {
+  if (_creatingProfile) return;
+  const name = document.getElementById('profile-name').value.trim();
+  if (!name) { showStatus('step1-status', 'Please enter a name.', false); return; }
+  const btn = document.getElementById('create-btn');
+  _creatingProfile = true;
+  if (btn) { btn.disabled = true; }
+  try {
+    const res = await fetch('/api/profiles/create', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, color: selectedColor})
+    });
+    let data;
+    try { data = await res.json(); } catch (e) { data = {}; }
+    if (!res.ok) { showStatus('step1-status', data.error || 'Failed to create profile.', false); return; }
+    createdId = data.id;
+    // Switch to the new profile immediately
+    await fetch('/api/profiles/switch', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id: createdId})
+    });
+    goStep(2);
+  } finally {
+    _creatingProfile = false;
+    if (btn) { btn.disabled = false; }
+  }
+}
+
+let _savingIcu = false;
+async function saveIcu() {
+  if (_savingIcu) return;
+  const id = document.getElementById('icu-id').value.trim();
+  const key = document.getElementById('icu-key').value.trim();
+  if (!id || !key) { showStatus('step2-status', 'Both fields are required, or click Skip.', false); return; }
+  const btn = document.getElementById('save-icu-btn');
+  _savingIcu = true;
+  if (btn) { btn.disabled = true; }
+  try {
+    // Test connection first
+    const test = await fetch('/api/setup/test-icu', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({athlete_id: id, api_key: key})
+    });
+    if (!test.ok) {
+      showStatus('step2-status', 'Connection failed: HTTP ' + test.status, false);
+      return;
+    }
+    let testData;
+    try { testData = await test.json(); } catch (e) { testData = {}; }
+    if (!testData.ok) { showStatus('step2-status', testData.error || 'Connection failed.', false); return; }
+    // Save to profile
+    await fetch('/api/setup/save', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({icu_athlete_id: id, icu_api_key: key})
+    });
+    showStatus('step2-status', 'Connected!', true);
+    setTimeout(() => goStep(3), 500);
+  } finally {
+    _savingIcu = false;
+    if (btn) { btn.disabled = false; }
+  }
+}
+
+let _savingAthlete = false;
+async function saveAthlete() {
+  if (_savingAthlete) return;
+  const ftp = parseInt(document.getElementById('ftp').value) || 200;
+  const weight = parseFloat(document.getElementById('weight').value) || 70;
+  const lthr = parseInt(document.getElementById('lthr').value) || 170;
+  const max_hr = parseInt(document.getElementById('max-hr').value) || 190;
+
+  // Optional new athlete fields — only include when user entered a value.
+  // For sex, send "" as "unset" (always include).
+  const extras = {};
+  const ageRaw = document.getElementById('age').value.trim();
+  if (ageRaw !== '') {
+    const ageVal = parseInt(ageRaw, 10);
+    if (!isNaN(ageVal)) extras.age = ageVal;
+  }
+  const cpRaw = document.getElementById('cp').value.trim();
+  if (cpRaw !== '') {
+    const cpVal = parseInt(cpRaw, 10);
+    if (!isNaN(cpVal)) extras.cp = cpVal;
+  }
+  const wprimeRaw = document.getElementById('wprime').value.trim();
+  if (wprimeRaw !== '') {
+    const wprimeVal = parseInt(wprimeRaw, 10);
+    if (!isNaN(wprimeVal)) extras.wprime_j = wprimeVal;
+  }
+  extras.sex = document.getElementById('sex').value;
+
+  const btn = document.getElementById('save-athlete-btn');
+  _savingAthlete = true;
+  if (btn) { btn.disabled = true; }
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ftp, weight, lthr, max_hr, lbm: Math.round(weight * 0.8 * 10) / 10, ...extras})
+    });
+    if (!res.ok) { showStatus('step3-status', 'Failed to save settings.', false); return; }
+    // Mark setup complete for this profile
+    await fetch('/api/setup/save', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ftp, weight, lthr, max_hr, ...extras})
+    });
+    window.location.href = '/';
+  } finally {
+    _savingAthlete = false;
+    if (btn) { btn.disabled = false; }
+  }
+}
+</script>
+</body>
+</html>

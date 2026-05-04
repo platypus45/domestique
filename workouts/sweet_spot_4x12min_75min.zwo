@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Sweet Spot 4x12min (75min)</name>
+    <description>Warmup: 6min from 40% to 60% FTP | Intervals: 4 x (12min @ 88% / 3min @ 55%)</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="360" PowerLow="0.4" PowerHigh="0.6" pace="0" />
+        <SteadyState Duration="240" Power="0.6" pace="0" />
+        <SteadyState Duration="180" Power="0.8" pace="0" />
+        <SteadyState Duration="120" Power="0.55" pace="0" />
+        <IntervalsT Repeat="4" OnDuration="720" OffDuration="180" OnPower="0.88" OffPower="0.55" pace="0" />
+    </workout>
+</workout_file>

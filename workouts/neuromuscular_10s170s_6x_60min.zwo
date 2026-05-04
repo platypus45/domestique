@@ -1,0 +1,38 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Neuromuscular 10s/3min 6x (60min)</name>
+    <description>Warmup: 6min from 50% to 65% FTP | Microintervals: 6 x (10s @ 186% / 2min 50s @ 110%) | Cooldown: 5min from 63% to 54% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="360" PowerLow="0.5" PowerHigh="0.65" pace="0" />
+        <SteadyState Duration="60" Power="0.75" pace="0" />
+        <SteadyState Duration="60" Power="0.83" pace="0" />
+        <SteadyState Duration="60" Power="0.91" pace="0" />
+        <SteadyState Duration="60" Power="1.0" pace="0" />
+        <SteadyState Duration="120" Power="0.6" pace="0" />
+        <SteadyState Duration="60" Power="0.85" pace="0" />
+        <SteadyState Duration="30" Power="1.1" pace="0" />
+        <SteadyState Duration="30" Power="0.5" pace="0" />
+        <SteadyState Duration="60" Power="0.85" pace="0" />
+        <SteadyState Duration="30" Power="1.19" pace="0" />
+        <SteadyState Duration="30" Power="0.5" pace="0" />
+        <SteadyState Duration="60" Power="0.85" pace="0" />
+        <SteadyState Duration="30" Power="1.25" pace="0" />
+        <SteadyState Duration="30" Power="0.49" pace="0" />
+        <SteadyState Duration="60" Power="0.6" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="10" OffDuration="170" OnPower="1.86" OffPower="1.1" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="10" OffDuration="170" OnPower="1.86" OffPower="1.1" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="10" OffDuration="170" OnPower="1.86" OffPower="1.1" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="10" OffDuration="170" OnPower="1.86" OffPower="1.1" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="10" OffDuration="170" OnPower="1.86" OffPower="1.1" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="10" OffDuration="170" OnPower="1.86" OffPower="1.1" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.63" PowerHigh="0.54" pace="0" />
+    </workout>
+</workout_file>

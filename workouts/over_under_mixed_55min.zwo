@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Over-Under (55min)</name>
+    <description>Warmup: 10min from 25% to 75% FTP | Steady: 12min @ 88% FTP | Steady: 3min @ 99% FTP | Steady: 3min @ 50% FTP | Steady: 12min @ 88% FTP | Steady: 3min @ 99% FTP | Steady: 3min @ 50% FTP | Cooldown: 9min from 25% to 110% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="600" PowerLow="0.25" PowerHigh="0.75" pace="0" />
+        <SteadyState Duration="720" Power="0.88" pace="0" />
+        <Ramp Duration="180" PowerLow="0.88" PowerHigh="1.1" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <SteadyState Duration="720" Power="0.88" pace="0" />
+        <Ramp Duration="180" PowerLow="0.88" PowerHigh="1.1" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <Cooldown Duration="540" PowerLow="0.25" PowerHigh="1.1" pace="0" />
+    </workout>
+</workout_file>

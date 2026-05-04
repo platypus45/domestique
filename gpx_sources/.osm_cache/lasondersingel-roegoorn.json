@@ -1,0 +1,61 @@
+{
+  "slug": "lasondersingel-roegoorn",
+  "gpx_path": "gpx_sources/netherlands_gravel/lasondersingel-roegoorn.gpx",
+  "num_points": 113,
+  "distance_km": 100.209,
+  "query_seconds": 16.23,
+  "surface_mix_pct": {
+    "asphalt": 98.5,
+    "gravel": 1.5,
+    "cobble": 0.0,
+    "unknown": 0.0
+  },
+  "surface_segments": [
+    {
+      "start_km": 0.0,
+      "end_km": 31.803,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 31.803,
+      "end_km": 33.187,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 33.187,
+      "end_km": 48.721,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 48.721,
+      "end_km": 48.732,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 48.732,
+      "end_km": 49.3,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 49.3,
+      "end_km": 49.31,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 49.31,
+      "end_km": 93.43,
+      "surface": "asphalt"
+    },
+    {
+      "start_km": 93.43,
+      "end_km": 93.496,
+      "surface": "gravel"
+    },
+    {
+      "start_km": 93.496,
+      "end_km": 100.209,
+      "surface": "asphalt"
+    }
+  ],
+  "ways_fetched": 133648
+}

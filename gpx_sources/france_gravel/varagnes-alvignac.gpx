@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: Route de Varagnes]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/148043">
+			<text><![CDATA[Gravel Route: Route de Varagnes]]></text>
+		</link>
+		<time>2025-06-25T00:44:03-04:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: Route de Varagnes]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/148043">
+			<text><![CDATA[Gravel Route: Route de Varagnes]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="44.81788" lon="1.68171">
+				<ele>312.94</ele>
+			</trkpt>
+			<trkpt lat="44.81788" lon="1.68171">
+				<ele>312.95</ele>
+			</trkpt>
+			<trkpt lat="44.81788" lon="1.68177">
+				<ele>313.09</ele>
+			</trkpt>
+			<trkpt lat="44.81841" lon="1.68165">
+				<ele>317.39</ele>
+			</trkpt>
+			<trkpt lat="44.81889" lon="1.68208">
+				<ele>320.77</ele>
+			</trkpt>
+			<trkpt lat="44.81911" lon="1.68234">
+				<ele>324.3</ele>
+			</trkpt>
+			<trkpt lat="44.81938" lon="1.68244">
+				<ele>327.4</ele>
+			</trkpt>
+			<trkpt lat="44.8197" lon="1.68269">
+				<ele>330.81</ele>
+			</trkpt>
+			<trkpt lat="44.82005" lon="1.68284">
+				<ele>333.56</ele>
+			</trkpt>
+			<trkpt lat="44.82013" lon="1.68307">
+				<ele>335.13</ele>
+			</trkpt>
+			<trkpt lat="44.82056" lon="1.68301">
+				<ele>337.18</ele>
+			</trkpt>
+			<trkpt lat="44.82056" lon="1.68301">
+				<ele>337.56</ele>
+			</trkpt>
+			<trkpt lat="44.82102" lon="1.68293">
+				<ele>338.85</ele>
+			</trkpt>
+			<trkpt lat="44.82108" lon="1.68304">
+				<ele>340.48</ele>
+			</trkpt>
+			<trkpt lat="44.82101" lon="1.68359">
+				<ele>341.97</ele>
+			</trkpt>
+			<trkpt lat="44.82091" lon="1.68544">
+				<ele>340.55</ele>
+			</trkpt>
+			<trkpt lat="44.82073" lon="1.68599">
+				<ele>340.87</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

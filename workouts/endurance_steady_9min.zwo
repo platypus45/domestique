@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Mixed Steady (9min)</name>
+    <description>Warmup: 7min from 33% to 69% FTP | Cooldown: 2min from 33% to 55% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="420" PowerLow="0.33" PowerHigh="0.69" pace="0" />
+        <Cooldown Duration="120" PowerLow="0.33" PowerHigh="0.55" pace="0" />
+    </workout>
+</workout_file>

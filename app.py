@@ -1,0 +1,9649 @@
+"""
+Domestique Dashboard v2 — local web interface.
+
+Run: python3 app.py
+Open: http://localhost:8080
+
+Pure HTML + CSS + vanilla JS. No npm, no frameworks.
+"""
+
+import collections
+import json
+import os
+import re
+import sys
+import threading
+import time
+import xml.etree.ElementTree as ET
+from contextlib import asynccontextmanager
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+
+# Load .env file if present (secrets) — check multiple locations
+_env_candidates = [
+    Path(__file__).parent / ".env",                                    # dev mode
+    Path.home() / ".domestique" / ".env",                              # packaged mode (user home)
+    Path.home() / "Documents" / "health_tracker" / ".env",             # legacy location
+]
+for _env_path in _env_candidates:
+    if _env_path.exists():
+        for line in _env_path.read_text().splitlines():
+            if "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip())
+        break
+
+import asyncio
+import logging
+import log_config
+_log = log_config.get_logger("app")
+log = log_config.get_logger(__name__)
+
+# v4.0.0-alpha: named category loggers for the observability layer that
+# survived the trainer rip. .ride_import + .library are new; the old
+# .ble / .ws / .session named loggers are gone with their runtimes.
+log_library = log_config.get_logger("domestique.library")
+log_ride_import = log_config.get_logger("domestique.ride_import")
+
+from fastapi import FastAPI, File, Form, Request, Query, UploadFile, HTTPException, Body
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+from training import get_today_metrics, fetch_wellness, fetch_activities, TRIMP_TO_TSS_FACTOR
+from sleep import get_sleep_metrics
+from readiness import compute_readiness
+import config
+import db
+import zones as _zones_mod
+import training_planner as tp  # module-level: every plan endpoint uses tp.plan_write_lock()
+
+# User data directory — must be defined before any path that uses it.
+# NOTE: directory creation is deferred until lifespan startup (after
+# profile_manager._maybe_migrate_data_dir has had a chance to rename a
+# legacy ~/.chickencycling/ dir into place). _plan_dir() below mkdirs
+# on demand, so deferring this is safe.
+_user_data_dir = Path.home() / ".domestique"
+
+COURSE_DIR    = Path(__file__).parent / "courses"
+_DEFAULT_PLAN_DIR = _user_data_dir / "plans"
+
+def _plan_dir() -> Path:
+    """Dynamic plan dir: uses profile-specific path after profile switch."""
+    d = getattr(tp, 'PLAN_DIR', _DEFAULT_PLAN_DIR)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+# Legacy alias for any direct references
+PLAN_DIR = _DEFAULT_PLAN_DIR
+WORKOUT_DIR   = Path(__file__).parent / "workouts"  # bundled workout files
+GPX_DIR       = Path(__file__).parent / "gpx"       # bundled GPX files
+
+# Load user path overrides — check user data dir (packaged) then project dir (dev)
+for _upf in [_user_data_dir / "user_paths.json", Path(__file__).parent / "user_paths.json"]:
+    if _upf.exists():
+        try:
+            _up = json.loads(_upf.read_text(encoding="utf-8"))
+            if _up.get("workout_dir"):
+                WORKOUT_DIR = Path(_up["workout_dir"])
+            if _up.get("gpx_dir"):
+                GPX_DIR = Path(_up["gpx_dir"])
+        except Exception:
+            pass
+        break
+CONFIG_PATH   = Path(__file__).parent / "config.py"
+ROUTE_DATA    = Path(__file__).parent / "routes.json"
+ROUTE_PROFILES_INDEX = Path(__file__).parent / "profiles_indexed.json"
+ROUTE_PROFILES_DIR = Path(__file__).parent / "profiles"
+
+# Single source of truth for the app version. VERSION file is the canonical
+# spec (read by the PyInstaller builder and the /api/version route).
+try:
+    _VERSION = (Path(__file__).parent / "VERSION").read_text(encoding="utf-8-sig").strip()
+except OSError:
+    _VERSION = "0.0.0"
+
+# v4.0.0-alpha pivot: the app is a planner + workout library + post-ride
+# viewer. No live trainer connection, no BLE, no WebSocket. All data flows
+# through plain HTTP; the heavy lifting happens in the user's preferred
+# indoor app (Tacx / MyWhoosh / Golden Cheetah), and Domestique imports
+# the resulting FIT afterward via POST /api/ride/import.
+APP_VERSION = "4.0.0-alpha"
+
+
+@asynccontextmanager
+async def lifespan(app):
+    # ── Profile system: migrate + init ──────────────────────────────────
+    # Order matters: ProfileManager.get() runs the v3 data-dir rename
+    # (~/.chickencycling → ~/.domestique). After that runs, the legacy
+    # single-user migration operates against the new dir name.
+    from migrate_profiles import migrate_to_profiles, migrate_to_v4
+    from profile_manager import ProfileManager
+    pm = ProfileManager.get()
+    migrate_to_profiles()
+
+    # v4.0.0-alpha: strip removed profile fields (device-pair list,
+    # trainer-difficulty scaler, bike-weight) from every existing profile.
+    # Silent strip + log only per profile_manager migration contract.
+    try:
+        for _prof in pm.list_profiles():
+            _pid = _prof.get("id") if isinstance(_prof, dict) else None
+            if not _pid:
+                continue
+            try:
+                _prof_dir = pm._profiles_dir / _pid
+                migrate_to_v4(_prof_dir)
+            except Exception as e:
+                _log.warning(
+                    f"v4 profile migration failed for profile '{_pid}': {e}"
+                )
+        # Reload the ACTIVE profile's in-memory caches from disk so any
+        # migration that just stripped legacy keys (paired_devices,
+        # trainer_effect, bike_weight_kg) actually takes effect. Without
+        # this, ProfileManager.get() above has already loaded stale
+        # pre-migration contents into _athlete; a later _set_wprime() at
+        # boot writes _athlete back to disk and re-instates the stripped
+        # keys. FIX-SERVER (Wave 4): reload BOTH _athlete and
+        # _device_prefs — previously only _device_prefs was reloaded
+        # while _athlete kept its paired_devices.
+        if pm.active_dir.exists():
+            pm._load_active_profile()
+    except Exception as e:
+        _log.warning(f"v4 profile migration loop failed: {e}")
+
+    pm.on_switch(clear_cache)
+    # Restart the DB sync thread on every profile switch so it picks up the new
+    # profile's db_path. profile_manager may also call this inline during
+    # switch() — a second call here is intentionally idempotent.
+    if hasattr(db, 'restart_sync'):
+        pm.on_switch(db.restart_sync)
+    # Point DB at active profile's database
+    db.set_db_path(pm.db_path)
+    db.init_db()
+    db.start_background_sync()
+
+    # v4.1.1 FIX-PLANNER A: on boot, walk the stored plan and rewrite any
+    # session whose zwo_file prefix disagrees with its session_type. Before
+    # v4.1.1 the _classify_protocol heuristic was missing 6 prefix families,
+    # so ~30% of existing plans have e.g. type=tempo + zwo=vo2_…zwo. The
+    # fix extends the classifier but DOES NOT automatically rebuild old
+    # plans — users won't regenerate manually. Best-effort: never raise,
+    # log count.
+    try:
+        import training_planner as _tp_boot
+        _plan_json = _plan_dir() / "current_plan.json"
+        _rewritten = _tp_boot.rewrite_stale_plan_classifications(_plan_json)
+        if _rewritten > 0:
+            _log.info(
+                f"v4.1.1 FIX-PLANNER A: rewrote {_rewritten} stale session "
+                f"classifications in {_plan_json}"
+            )
+    except Exception as _e:
+        _log.debug(f"stale-plan rewrite on boot failed: {_e}")
+
+    try:
+        yield
+    finally:
+        # ── Shutdown cleanup: best-effort, don't block teardown ──────────
+        try:
+            if hasattr(db, 'stop_sync'):
+                db.stop_sync()
+        except Exception as e:
+            log.debug(f"db.stop_sync failed: {e}")
+
+app = FastAPI(title="Domestique", version=_VERSION, lifespan=lifespan)
+
+
+# Global exception handler — catches unhandled errors and logs them
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import JSONResponse as StarletteJSONResponse
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: StarletteRequest, exc: Exception):
+    log.exception(f"Unhandled exception in {request.url.path}")
+    return StarletteJSONResponse(
+        status_code=500,
+        content={"error": "Internal server error", "detail": "see server logs"},
+    )
+
+
+# ── Shared JSON body helper ──────────────────────────────────────────────────
+# Returns parsed JSON dict, or raises HTTPException(400) on malformed input.
+async def _get_json_body(request) -> dict:
+    try:
+        return await request.json()
+    except Exception as e:
+        log.debug(f"JSON parse failed on {request.url.path}: {e}")
+        raise HTTPException(status_code=400, detail="invalid JSON body")
+
+
+# Request logging middleware — logs all API errors
+from starlette.middleware.base import BaseHTTPMiddleware
+
+class ErrorLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        try:
+            response = await call_next(request)
+            if response.status_code >= 500:
+                _log.error(f"HTTP {response.status_code}: {request.method} {request.url.path}")
+            return response
+        except Exception as e:
+            _log.error(f"Middleware caught: {request.method} {request.url.path} → {type(e).__name__}: {e}")
+            raise
+
+app.add_middleware(ErrorLoggingMiddleware)
+
+
+# ── Response compression ────────────────────────────────────────────────────
+# Some endpoints (/api/rides/{id}, /api/workouts) can emit large JSON bodies.
+# GZipMiddleware only kicks in above minimum_size so small /api/* payloads
+# pass through uncompressed.
+from starlette.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=10_000)
+
+
+# ── CSRF mitigation: Origin header check for mutating requests ───────────────
+# Security model: app binds to 127.0.0.1 only (offline-by-design pywebview app).
+# An Origin-header check on mutating requests blocks drive-by CSRF from other
+# tabs the user has open. Token-based CSRF was deliberately not added because
+# the maintenance burden (cookie/token rotation, fetch wrapper everywhere)
+# outweighs the marginal benefit for a localhost-only single-user app.
+# Requests with no Origin header (curl, pywebview, server-to-server) are
+# allowed since CSRF requires a browser.
+_ALLOWED_ORIGIN_PREFIXES = (
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+)
+
+
+@app.middleware("http")
+async def origin_check(request, call_next):
+    if request.method in ("POST", "DELETE", "PUT", "PATCH"):
+        origin = request.headers.get("origin", "")
+        if origin and not any(origin.startswith(a) for a in _ALLOWED_ORIGIN_PREFIXES):
+            return StarletteJSONResponse({"error": "origin not allowed"}, status_code=403)
+    return await call_next(request)
+
+
+# ── Security headers (defence-in-depth) ──────────────────────────────────────
+# The app binds to 127.0.0.1 only and is consumed via pywebview, so a CSP is
+# belt-and-braces — but a stray dev browser tab has no in-bundle defence.
+# Using ``setdefault`` so downstream handlers or stricter middleware can
+# override per-response without fighting this layer. Idempotent: re-applying
+# the same defaults is a no-op, so this block is safe to land alongside
+# other in-flight middleware edits.
+@app.middleware("http")
+async def _security_headers(request, call_next):
+    resp = await call_next(request)
+    resp.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; connect-src 'self' ws: wss:; "
+        "script-src 'self' 'unsafe-inline'",
+    )
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    return resp
+
+
+templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+_static_dir = Path(__file__).parent / "static"
+_static_dir.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
+# Check both locations for setup marker (user home takes priority)
+SETUP_MARKER = _user_data_dir / ".setup_complete"
+if not SETUP_MARKER.exists() and (Path(__file__).parent / ".setup_complete").exists():
+    SETUP_MARKER = Path(__file__).parent / ".setup_complete"
+DATA_DIR = _user_data_dir
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SETUP WIZARD
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/setup", response_class=HTMLResponse)
+def setup_page(request: Request):
+    return templates.TemplateResponse(request=request, name="setup.html")
+
+
+@app.get("/api/setup/status")
+def setup_status():
+    return {"complete": SETUP_MARKER.exists()}
+
+
+@app.get("/api/setup/defaults")
+def setup_defaults():
+    """Return current/detected config values to pre-fill the wizard."""
+    workout_dir_default = ""
+
+    return {
+        "icu_id": config.ICU_ATHLETE_ID or "",
+        "workout_dir": str(WORKOUT_DIR) if WORKOUT_DIR.exists() else workout_dir_default,
+        "gpx_dir": str(GPX_DIR) if GPX_DIR.exists() else "",
+        "weight": config.ATHLETE_WEIGHT_KG,
+        "ftp": config.ATHLETE_FTP_W,
+        "lthr": config.ATHLETE_LTHR,
+        "max_hr": config.ATHLETE_MAX_HR,
+    }
+
+
+@app.post("/api/setup/test-icu")
+def setup_test_icu(body: dict):
+    """Test Intervals.icu credentials and return athlete info."""
+    athlete_id = body.get("athlete_id", "").strip()
+    api_key = body.get("api_key", "").strip()
+    if not athlete_id or not api_key:
+        return {"ok": False, "error": "Both Athlete ID and API Key are required."}
+
+    import httpx
+    try:
+        url = f"https://intervals.icu/api/v1/athlete/{athlete_id}"
+        resp = httpx.get(url, auth=("API_KEY", api_key), timeout=10)
+        if resp.status_code == 401:
+            return {"ok": False, "error": "Invalid API key. Check your credentials."}
+        if resp.status_code == 404:
+            return {"ok": False, "error": f"Athlete '{athlete_id}' not found."}
+        if resp.status_code != 200:
+            return {"ok": False, "error": f"API returned status {resp.status_code}"}
+        data = resp.json()
+        # Try to get eFTP from wellness
+        eftp = None
+        weight = data.get("weight")
+        try:
+            w_url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/wellness?oldest=2025-01-01&newest=2026-12-31"
+            w_resp = httpx.get(w_url, auth=("API_KEY", api_key), timeout=10)
+            if w_resp.status_code == 200:
+                for w in reversed(w_resp.json()):
+                    si = w.get("sportInfo", [])
+                    if si and si[0].get("eftp"):
+                        eftp = round(si[0]["eftp"])
+                        break
+                    if not weight and w.get("weight"):
+                        weight = w["weight"]
+        except Exception:
+            pass
+        return {
+            "ok": True,
+            "name": data.get("name", ""),
+            "eftp": eftp,
+            "weight": round(weight, 1) if weight else None,
+        }
+    except httpx.TimeoutException:
+        return {"ok": False, "error": "Connection timed out. Check your internet."}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/setup/pick-folder")
+def setup_pick_folder():
+    """Open a native OS folder picker dialog and return the selected path."""
+    import threading
+
+    result = {"path": ""}
+
+    def _pick():
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            folder = filedialog.askdirectory(title="Select Folder")
+            root.destroy()
+            result["path"] = folder or ""
+        except Exception:
+            result["path"] = ""
+
+    # Run in thread to avoid blocking (tkinter needs main thread on some OS)
+    t = threading.Thread(target=_pick)
+    t.start()
+    t.join(timeout=60)
+    return {"path": result["path"]}
+
+
+@app.get("/api/setup/icu-hr")
+def setup_icu_hr(athlete_id: str = Query(""), api_key: str = Query("")):
+    """Fetch LTHR and Max HR from Intervals.icu activity data."""
+    if not athlete_id or not api_key:
+        return {"lthr": None, "max_hr": None}
+    import httpx
+    try:
+        # Get recent activities to find max HR and threshold HR
+        url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities?oldest=2024-01-01&newest=2026-12-31"
+        resp = httpx.get(url, auth=("API_KEY", api_key), timeout=15)
+        if resp.status_code != 200:
+            return {"lthr": None, "max_hr": None}
+        activities = resp.json()
+        max_hr = 0
+        lthr_candidates = []
+        for a in activities:
+            hr = a.get("max_heartrate") or 0
+            if hr > max_hr:
+                max_hr = hr
+            # Estimate LTHR from activities with high intensity (IF > 0.9)
+            avg_hr = a.get("average_heartrate") or 0
+            icu_if = a.get("icu_intensity") or 0
+            if 0.85 <= icu_if <= 1.05 and avg_hr > 100:
+                lthr_candidates.append(avg_hr)
+        lthr = round(sum(lthr_candidates) / len(lthr_candidates)) if lthr_candidates else None
+        return {"lthr": lthr, "max_hr": max_hr if max_hr > 100 else None}
+    except Exception:
+        return {"lthr": None, "max_hr": None}
+
+
+# Guards against concurrent wizard submissions clobbering each other.
+_setup_lock = threading.Lock()
+
+
+_SETUP_PATH_ALLOWED_BASES = [
+    Path.home(),
+    Path.home() / ".domestique",
+    Path("/tmp"),
+    Path("/private/tmp"),  # macOS symlink target
+]
+
+
+def _setup_path_allowed(p: Path) -> bool:
+    """SEC4: restrict user-supplied setup paths to home / .domestique / /tmp.
+
+    Resolves symlinks before comparison so `/private/var/../Users/...`-style
+    escapes still fall under ``Path.home()``. Allows exact matches and any
+    descendant of the allowed bases.
+    """
+    try:
+        resolved = p.resolve()
+    except (OSError, RuntimeError):
+        return False
+    for base in _SETUP_PATH_ALLOWED_BASES:
+        try:
+            rb = base.resolve()
+        except (OSError, RuntimeError):
+            continue
+        if resolved == rb or rb in resolved.parents:
+            return True
+    return False
+
+
+@app.post("/api/setup/save")
+def setup_save(body: dict):
+    """Save all wizard settings — writes to active profile's athlete.json + .env.
+
+    v4.5.2 FIX-CREDS-HOTRELOAD: when ICU creds change we (1) rely on
+    ``pm.save_env`` to refresh the in-memory ``_env`` cache (config.ICU_*
+    proxies through it via ``__getattr__``, so the running process picks up
+    new creds without restart), (2) reset the rides-sync throttle
+    (``_write_last_sync_at(0)``) so the next /api/rides/sync isn't blocked by
+    a stale 1h marker from before the user re-pasted creds, (3) clear
+    ``db._auth_disabled`` so the background sync loop resumes after a 5-strike
+    auth-disable from the OLD bad key, and (4) probe the new creds with a
+    fast ``athlete/<id>`` GET so the response surfaces ``creds_test`` to the
+    UI. The probe is best-effort — network errors are reported as failure
+    but don't roll back the .env write.
+    """
+    from profile_manager import ProfileManager
+    global WORKOUT_DIR, GPX_DIR
+
+    creds_test: str | None = None
+    athlete_id_detected: str | None = None
+    athlete_name_detected: str | None = None
+    athlete_id_warning: str | None = None
+
+    with _setup_lock:
+        pm = ProfileManager.get()
+
+        # 1. Save ICU credentials to profile's .env
+        icu_id = body.get("icu_athlete_id", "").strip()
+        icu_key = body.get("icu_api_key", "").strip()
+        # v4.5.3 FIX-AUTO-ATHLETE-ID: when user provides an API key but no
+        # athlete ID (or wants to verify the one they typed), call /athlete/0
+        # to discover the authenticated athlete. Eliminates a class of typo-
+        # induced HTTP 403 errors.
+        if icu_key:
+            try:
+                import training as _training
+                discovered = _training.discover_athlete_id(icu_key)
+            except Exception:
+                discovered = None
+            if discovered and discovered.get("id"):
+                discovered_id = discovered.get("id") or ""
+                athlete_name_detected = discovered.get("name") or None
+                if not icu_id:
+                    # User left field blank → use discovered ID.
+                    icu_id = discovered_id
+                    athlete_id_detected = discovered_id
+                elif icu_id != discovered_id:
+                    # User typed something different. Honour the override but warn.
+                    athlete_id_warning = (
+                        f"Submitted athlete_id differs from API key's athlete "
+                        f"({discovered_id}). Using submitted value."
+                    )
+        creds_changed = False
+        if icu_id or icu_key:
+            old_id = pm.icu_athlete_id
+            old_key = pm.icu_api_key
+            try:
+                pm.save_env(icu_id, icu_key)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            creds_changed = (icu_id != old_id) or (icu_key != old_key)
+
+            # 1a-pre. Defensively unshadow any stale module-level
+            # ``config.ICU_ATHLETE_ID`` / ``config.ICU_API_KEY`` attribute that
+            # an earlier override path (e.g. ``training.fetch_recent_activities``
+            # with explicit creds) may have written. Once those exist as real
+            # module attributes, Python's ``getattr`` short-circuits and the
+            # ``__getattr__`` proxy never runs — leaving the running process
+            # blind to the freshly-saved ``pm._env``. Deleting them restores
+            # the proxy so config.ICU_* re-resolve to pm._env immediately.
+            for _attr in ("ICU_ATHLETE_ID", "ICU_API_KEY"):
+                try:
+                    delattr(config, _attr)
+                except AttributeError:
+                    pass
+
+            # 1a. Reset sync throttle + auth-disabled flag so the next sync
+            # actually runs immediately on the fresh creds (the user just
+            # pasted new keys precisely because the old ones broke).
+            if creds_changed:
+                try:
+                    _write_last_sync_at(0)
+                except Exception:
+                    pass
+                try:
+                    p = _icu_wellness_sync_state_path()
+                    if p.exists():
+                        p.unlink()
+                except Exception:
+                    pass
+                try:
+                    import db as _db
+                    _db._auth_disabled = False
+                    _db._consecutive_failures = 0
+                    _db._last_sync_error = None
+                except Exception:
+                    pass
+
+            # 1b. Probe the new creds — quick GET athlete/<id> so the UI can
+            # toast "Saved, but ICU rejected the new credentials" instead of
+            # silently waiting for the next sync to fail.
+            if icu_id and icu_key:
+                try:
+                    import training as _training
+                    _training._get(f"athlete/{icu_id}")
+                    creds_test = "passed"
+                except _training.ICUAuthError as e:
+                    creds_test = f"failed: auth_rejected ({e})"
+                except _training.ICUCredentialsMissing:
+                    creds_test = "failed: credentials_missing"
+                except Exception as e:
+                    creds_test = f"failed: {type(e).__name__}"
+
+        # 2. Update athlete profile via ProfileManager
+        profile = {}
+        for key in ("weight", "ftp", "lthr", "max_hr"):
+            if key in body:
+                profile[key] = body[key]
+        if body.get("weight"):
+            profile["lbm"] = round(float(body["weight"]) * 0.80, 1)
+
+        # Server-side validation: clamp/reject physiologically implausible values
+        validators = {
+            "ftp": (50, 600),
+            "weight": (30, 200),
+            "lthr": (100, 220),
+            "max_hr": (120, 240),
+        }
+        for key, (lo, hi) in validators.items():
+            if key in profile:
+                try:
+                    v = float(profile[key])
+                except (TypeError, ValueError):
+                    raise HTTPException(400, f"invalid {key}")
+                if not (lo <= v <= hi):
+                    raise HTTPException(400, f"{key}={v} out of range [{lo},{hi}]")
+                profile[key] = v
+        if profile:
+            update_settings(profile)
+
+        # 3. Update path overrides. SEC4: reject paths outside the allow-list
+        # (home / ~/.domestique / /tmp) so a malicious setup-save cannot make
+        # the server read/write arbitrary filesystem locations later.
+        for _field in ("workout_dir", "gpx_dir"):
+            _val = body.get(_field)
+            if _val and not _setup_path_allowed(Path(_val)):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{_field} must be under $HOME, ~/.domestique, or /tmp",
+                )
+        if body.get("workout_dir"):
+            WORKOUT_DIR = Path(body["workout_dir"])
+        if body.get("gpx_dir"):
+            GPX_DIR = Path(body["gpx_dir"])
+
+        paths_file = DATA_DIR / "user_paths.json"
+        paths = {}
+        if body.get("workout_dir"):
+            paths["workout_dir"] = body["workout_dir"]
+        if body.get("gpx_dir"):
+            paths["gpx_dir"] = body["gpx_dir"]
+        if paths:
+            paths_file.write_text(json.dumps(paths, indent=2), encoding="utf-8")
+
+        # 4. Save training preferences to profile
+        prefs = {}
+        if body.get("hours_per_week"):
+            prefs["hours_per_week"] = float(body["hours_per_week"])
+        if body.get("available_days") is not None:
+            prefs["available_days"] = [int(d) for d in body["available_days"]]
+        if body.get("rest_days") is not None:
+            prefs["rest_days"] = [int(d) for d in body["rest_days"]]
+        if prefs:
+            pm.save_prefs(prefs)
+
+        # 5. Mark setup complete — single global marker (per-profile marker dropped to avoid drift).
+        SETUP_MARKER.write_text(
+            json.dumps({"completed": datetime.now().isoformat(), "version": "1.0.0"}, indent=2),
+            encoding="utf-8",
+        )
+
+        clear_cache()
+    resp: dict = {"ok": True}
+    if creds_test is not None:
+        resp["creds_test"] = creds_test
+    if athlete_id_detected is not None:
+        resp["athlete_id_detected"] = athlete_id_detected
+    if athlete_name_detected is not None:
+        resp["athlete_name"] = athlete_name_detected
+    if athlete_id_warning is not None:
+        resp["warning"] = athlete_id_warning
+    return resp
+
+
+# ── Cache ─────────────────────────────────────────────────────────────────────
+
+_cache = {}
+_cache_ts = {}
+
+def cached(key, fn, ttl=300):
+    now = time.time()
+    if key in _cache and now - _cache_ts.get(key, 0) < ttl:
+        return _cache[key]
+    try:
+        result = fn()
+    except Exception as e:
+        # If API call fails (no internet, DNS error), return stale cache or empty dict
+        if key in _cache:
+            return _cache[key]
+        import logging
+        logging.getLogger(__name__).warning("cached(%s) failed: %s — returning empty", key, e)
+        return {}
+    _cache[key] = result
+    _cache_ts[key] = now
+    return result
+
+def clear_cache():
+    _cache.clear()
+    _cache_ts.clear()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROFILE APIs
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Safe profile-id shape — defends path traversal / arbitrary file probes.
+_PROFILE_ID_RE = re.compile(r'^[a-z0-9][a-z0-9_-]{0,31}$')
+
+
+def _validate_profile_id(profile_id: str) -> None:
+    """Raise HTTPException(400) if profile_id doesn't match the strict slug regex."""
+    if not profile_id or not _PROFILE_ID_RE.match(profile_id):
+        raise HTTPException(status_code=400, detail="invalid profile id")
+
+
+@app.get("/api/profiles")
+def api_profiles():
+    """List profiles. Each entry is enriched with ftp/weight/color from athlete.json
+    so the UI doesn't have to make N extra requests. Returns 500 on failure.
+    """
+    from profile_manager import ProfileManager
+    try:
+        pm = ProfileManager.get()
+        entries = pm.list_profiles()
+        enriched = []
+        for p in entries:
+            pid = p.get("id", "")
+            entry = dict(p)
+            # Load per-profile athlete.json for ftp + weight
+            try:
+                athlete_path = pm._profiles_dir / pid / "athlete.json" if hasattr(pm, '_profiles_dir') else None
+                if not athlete_path or not athlete_path.exists():
+                    # Fallback to best-known home path if internal attribute missing
+                    athlete_path = Path.home() / ".domestique" / "profiles" / pid / "athlete.json"
+                if athlete_path.exists():
+                    data = json.loads(athlete_path.read_text(encoding="utf-8"))
+                    if "ftp" in data:
+                        entry["ftp"] = data.get("ftp")
+                    if "weight_kg" in data or "weight" in data:
+                        entry["weight_kg"] = data.get("weight_kg") or data.get("weight")
+                    if "color" in data and "color" not in entry:
+                        entry["color"] = data.get("color")
+            except Exception as e:
+                log.debug(f"Failed to enrich profile {pid}: {e}")
+            enriched.append(entry)
+        return {
+            "active": pm.active_id,
+            "active_name": pm.profile_name,
+            "active_color": pm.profile_color,
+            "profiles": enriched,
+        }
+    except Exception as e:
+        log.exception(f"api_profiles failed: {e}")
+        return JSONResponse({"error": "Failed to list profiles"}, 500)
+
+
+@app.post("/api/profiles/create")
+def api_profiles_create(body: dict):
+    from profile_manager import ProfileManager
+    pm = ProfileManager.get()
+    name = body.get("name", "").strip()
+    color = body.get("color", "").strip()
+    if not name:
+        return JSONResponse({"error": "Name is required"}, status_code=400)
+    new_id = pm.create_profile(name, color)
+    return {"ok": True, "id": new_id}
+
+
+@app.post("/api/profiles/switch")
+async def api_profiles_switch(request: Request):
+    from profile_manager import ProfileManager
+    body = await _get_json_body(request)
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="expected object with 'id' key")
+    pm = ProfileManager.get()
+    profile_id = str(body.get("id", "")).strip()
+    _validate_profile_id(profile_id)
+    # v4.0.0-alpha: no live training to guard — the pivot removed the
+    # live session global. Profile switch is always safe.
+    # Optionally update skip_picker preference
+    if "skip_picker" in body:
+        pm._registry["skip_picker"] = bool(body["skip_picker"])
+        pm._save_registry()
+    try:
+        pm.switch(profile_id)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    return {"ok": True, "active": pm.active_id}
+
+
+@app.put("/api/profiles/{profile_id}")
+def api_profiles_update(profile_id: str, body: dict):
+    from profile_manager import ProfileManager
+    _validate_profile_id(profile_id)
+    pm = ProfileManager.get()
+    pm.update_profile(profile_id, name=body.get("name"), color=body.get("color"))
+    return {"ok": True}
+
+
+@app.delete("/api/profiles/{profile_id}")
+def api_profiles_delete(profile_id: str):
+    from profile_manager import ProfileManager
+    _validate_profile_id(profile_id)
+    pm = ProfileManager.get()
+    try:
+        pm.delete_profile(profile_id)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"ok": True}
+
+
+# v3.6.0-fix35e: post-FTP-test FTP adoption endpoint.
+# Body: {"ftp": int, "method": str, "source": str, "applied": bool}.
+# Always appends a history entry; only mutates `ftp` when applied=True.
+@app.get("/api/profile/ftp-history")
+def api_profile_ftp_history():
+    """T4 (v4.1.0) — expose the ftp_test_history ledger for the UI.
+
+    FIX-CONTRACT C7: emits ALL field-name aliases the UI's chart + tooltip
+    might read so U2 never silently drops rows. Canonical field is ``ftp``;
+    ``suggested_ftp`` aliases it for callers that expect the pre-accept
+    semantic. ``applied`` is the boolean the chart filter gates on;
+    ``accepted`` aliases it. ``source`` is the canonical provenance enum,
+    with ``type`` (legacy) + ``method`` (test-kind) both populated.
+
+    Provenance enum values:
+      * ``tested_coggan_20min`` — user ran + accepted a Coggan 20-min test
+      * ``tested_ramp`` — user ran + accepted a ramp test
+      * ``eftp_auto`` — F5 auto-applied after 7d sustained drift
+      * ``eftp_icu`` — user accepted eFTP via the settings panel
+      * ``eftp_local`` — local best-efforts eFTP (suggestion only, rare
+        in history)
+      * ``manual`` — user edited the FTP field directly
+    """
+    from profile_manager import ProfileManager
+    pm = ProfileManager.get()
+    history = []
+    for entry in pm.ftp_test_history:
+        method = entry.get("method") or "manual"
+        src = entry.get("source") or ""
+        # Derive the canonical "type" from source if populated (catches
+        # eftp_auto / eftp_icu / tested_* enums), else fall back to method.
+        if src in ("eftp_auto", "eftp_icu", "eftp_local",
+                   "tested_coggan_20min", "tested_ramp"):
+            row_type = src
+        elif method in ("coggan_20min", "ramp"):
+            row_type = f"tested_{method}"
+        else:
+            row_type = "manual"
+        ftp_val = entry.get("ftp")
+        applied = bool(entry.get("applied", False))
+        history.append({
+            "date": entry.get("date"),
+            # Canonical:
+            "ftp": ftp_val,
+            "type": row_type,
+            "source": src or row_type,
+            "applied": applied,
+            "method": method,
+            # Aliases so UI chart + tooltip never silently drop rows:
+            "suggested_ftp": ftp_val,
+            "accepted": applied,
+        })
+    return {
+        "ftp_current": pm.ftp,
+        "ftp_source": pm._athlete.get("ftp_source", "manual"),
+        "history": history,
+    }
+
+
+@app.post("/api/profile/update-ftp")
+def api_profile_update_ftp(body: dict):
+    from profile_manager import ProfileManager
+    try:
+        new_ftp = int(body.get("ftp"))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "ftp (int) required"}, status_code=400)
+    method = str(body.get("method") or "manual")
+    source = str(body.get("source") or "")
+    applied = bool(body.get("applied", True))
+    # E1 (v4.1.0): map the test method to an ftp_source enum so provenance
+    # lands on the profile. "coggan_20min" → "tested_coggan_20min", etc.
+    source_map = {
+        "coggan_20min": "tested_coggan_20min",
+        "ramp": "tested_ramp",
+        "manual": "manual",
+    }
+    ftp_source_tag = source_map.get(method, "manual")
+    pm = ProfileManager.get()
+    try:
+        pm.record_ftp_test(method=method, ftp=new_ftp, source=source, applied=applied)
+        if applied:
+            pm.update_ftp(new_ftp, source=ftp_source_tag)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"ok": True, "ftp": pm.ftp,
+            "ftp_source": pm.ftp_source,
+            "ftp_test_history": pm.ftp_test_history}
+
+
+@app.get("/profile-picker", response_class=HTMLResponse)
+def profile_picker_page(request: Request):
+    return templates.TemplateResponse(request=request, name="profile_picker.html")
+
+
+@app.get("/profile-setup", response_class=HTMLResponse)
+def profile_setup_page(request: Request):
+    return templates.TemplateResponse(request=request, name="profile_setup.html")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CORE APIs
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _recent_dfa_and_decoupling() -> tuple[list[float], float | None]:
+    """F1/F2 (v4.1.0) — pull last 3 rides' DFA α1 + most recent decoupling %
+    from the local ride archive. Returns ([], None) gracefully when empty.
+
+    Reads ``summary.dfa_alpha1_avg`` + ``summary.decoupling_pct`` written by
+    ride_storage._build_summary_dict. Newest first. Missing/None values
+    skipped; a ride with no HRM/HR stream just doesn't contribute a sample.
+    """
+    try:
+        import ride_storage
+        rides = ride_storage.list_rides()
+    except Exception:
+        return [], None
+    dfa_vals: list[float] = []
+    last_dec: float | None = None
+    for r in rides:
+        summary = r.get("summary") or {}
+        if last_dec is None:
+            dec = summary.get("decoupling_pct")
+            if isinstance(dec, (int, float)):
+                last_dec = float(dec)
+        alpha = summary.get("dfa_alpha1_avg")
+        if isinstance(alpha, (int, float)):
+            dfa_vals.append(float(alpha))
+        if len(dfa_vals) >= 3 and last_dec is not None:
+            break
+    return dfa_vals[:3], last_dec
+
+
+def _readiness_revert_flag_path():
+    """FIX-CONTRACT C6: per-day flag file that suppresses the dfa_cap /
+    decoupling_advisory booleans on /api/readiness once the rider clicks
+    Revert. Keyed by ISO date so it auto-clears at midnight (next day's
+    read finds no file).
+    """
+    return DATA_DIR / "readiness_cap_reverted.json"
+
+
+def _is_readiness_cap_reverted_today() -> bool:
+    try:
+        from datetime import date as _d
+        p = _readiness_revert_flag_path()
+        if not p.exists():
+            return False
+        data = json.loads(p.read_text(encoding="utf-8"))
+        stored = str(data.get("date") or "")
+        return stored == _d.today().isoformat()
+    except Exception:
+        return False
+
+
+def _mark_readiness_cap_reverted_today() -> None:
+    try:
+        from datetime import date as _d
+        p = _readiness_revert_flag_path()
+        p.write_text(
+            json.dumps({"date": _d.today().isoformat(),
+                        "at": datetime.now().isoformat()}),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        _log.warning(f"readiness revert flag write failed: {e}")
+
+
+def _compute_local_atl(days: int = 90, tau: int = 7) -> float | None:
+    """v4.4.2 §B3 — 7-day EWMA over local ride TSS (mirror of
+    ride_storage.compute_local_ctl with τ=7 for ATL).
+
+    Returns None when no usable local TSS is found so callers can decide
+    whether to keep ICU values or surface ``data_status``.
+    """
+    try:
+        import ride_storage as _rs
+    except Exception:
+        return None
+    rides = _rs.list_rides()
+    if not rides:
+        return None
+    cutoff_iso = (date.today() - timedelta(days=days)).isoformat()
+    per_day: dict[str, float] = {}
+    for r in rides:
+        started = (r.get("started_at") or "")[:10]
+        if not started or started < cutoff_iso:
+            continue
+        summary = r.get("summary") or {}
+        tss = summary.get("tss") or 0
+        if not tss:
+            continue
+        try:
+            per_day[started] = per_day.get(started, 0.0) + float(tss)
+        except (TypeError, ValueError):
+            continue
+    if not per_day:
+        return None
+    today = date.today()
+    atl = 0.0
+    d = date.fromisoformat(min(per_day.keys()))
+    while d <= today:
+        tss_today = per_day.get(d.isoformat(), 0.0)
+        atl = atl + (tss_today - atl) / float(tau)
+        d += timedelta(days=1)
+    return round(atl, 1)
+
+
+def _local_training_load() -> dict:
+    """v4.4.2 §B3 — single helper that returns CTL/ATL/TSB derived from the
+    local rides archive.
+
+    Output shape: ``{ctl, atl, tsb, source}`` where ``source`` is always
+    "local" (callers compose with ICU values to produce "icu"/"mixed"/"local").
+    Any of ctl/atl/tsb may be None if local rides have no TSS values at all.
+    """
+    try:
+        import ride_storage as _rs
+        ctl = _rs.compute_local_ctl()
+    except Exception:
+        ctl = None
+    atl = _compute_local_atl()
+    tsb = None
+    if ctl is not None and atl is not None:
+        tsb = round(ctl - atl, 1)
+    return {"ctl": ctl, "atl": atl, "tsb": tsb, "source": "local"}
+
+
+def _merge_training_load(icu_t: dict | None) -> dict:
+    """v4.4.2 §B3 — merge ICU-derived training metrics with local fallback.
+
+    Rule: prefer ICU value when present; fall back to local on a per-field
+    basis. Source label:
+      - "icu" if all ICU fields present
+      - "local" if no ICU fields and local fallback used
+      - "mixed" otherwise
+    """
+    icu = icu_t or {}
+    local = _local_training_load()
+    icu_ctl = icu.get("ctl")
+    icu_atl = icu.get("atl")
+    icu_tsb = icu.get("tsb")
+    out = {
+        "ctl": icu_ctl if icu_ctl is not None else local["ctl"],
+        "atl": icu_atl if icu_atl is not None else local["atl"],
+        "tsb": icu_tsb if icu_tsb is not None else local["tsb"],
+        "acwr": icu.get("acwr"),
+        "ramp_rate": icu.get("ramp_rate"),
+        "monotony": icu.get("monotony"),
+        "strain": icu.get("strain"),
+    }
+    icu_count = sum(1 for v in (icu_ctl, icu_atl, icu_tsb) if v is not None)
+    if icu_count == 3:
+        out["source"] = "icu"
+    elif icu_count == 0:
+        out["source"] = "local" if any(v is not None for v in (out["ctl"], out["atl"], out["tsb"])) else "none"
+    else:
+        out["source"] = "mixed"
+    return out
+
+
+def _readiness_with_data_status(r: dict, has_local_load: bool) -> dict:
+    """v4.4.2 §B6 — unify the readiness default shape across endpoints.
+
+    Adds a top-level ``data_status`` field to the readiness dict
+    ("ok" | "insufficient_data" | "no_data") and replaces the score-None
+    with a numeric neutral default (50) when local rides exist (so the
+    frontpage gauges aren't blank).
+
+    Mutates ``r`` in place AND returns it for chaining.
+    """
+    status = r.get("status") or "OK"
+    if status == "INSUFFICIENT_DATA":
+        r["data_status"] = "insufficient_data"
+        if r.get("score") is None:
+            # If local rides exist (so frontpage has something to base a
+            # neutral default on), fall back to 50. Otherwise leave None
+            # so callers know there's truly no data.
+            r["score"] = 50 if has_local_load else None
+    else:
+        r["data_status"] = "ok"
+    return r
+
+
+def _local_sleep_metrics(days: int = 14) -> dict:
+    """v4.5.0 — derive sleep/HRV/RHR metrics from the local wellness store.
+
+    Used by /api/readiness as a fallback when the ICU live wellness path
+    returns {} (rate-limited, 403'd, or genuinely empty). Defers to
+    sleep.compute_sleep_metrics_from_wellness so the exact same HRV-baseline
+    + RHR-delta logic applies.
+    """
+    try:
+        import ride_storage as _rs
+        records = _rs.load_recent_wellness(days=days)
+    except Exception:
+        return {}
+    if not records:
+        return {}
+    # load_recent_wellness returns newest-first; sleep helper expects oldest-first.
+    from sleep import compute_sleep_metrics_from_wellness
+    return compute_sleep_metrics_from_wellness(list(reversed(records)))
+
+
+@app.get("/api/readiness")
+def api_readiness(subjective: float = Query(None)):
+    training = cached("training", get_today_metrics)
+    sleep = cached("sleep", get_sleep_metrics)
+    # v4.5.0: when ICU live wellness returns {}, fall back to local wellness
+    # store (populated by lazy sync) so HRV/Sleep/RHR component bars aren't
+    # blanks when ~/.domestique/wellness/ has data.
+    data_status_local_wellness = False
+    if not sleep:
+        sleep = _local_sleep_metrics(days=14)
+        if sleep:
+            data_status_local_wellness = True
+    # Auto-feed soreness/Hooper from morning log into subjective score.
+    # v4.6.6 IMPL-B: route through `_get_soreness_subjective()` so we read
+    # all 4 Hooper fields (sleep/fatigue/stress/soreness) once IMPL-C lands
+    # the expanded form. Wrapped because some test fixtures use mocked DBs
+    # that don't have the daily_log table.
+    if subjective is None:
+        try:
+            subjective = _get_soreness_subjective()
+        except Exception:  # noqa: BLE001
+            subjective = None
+    dfa_vals, last_dec = _recent_dfa_and_decoupling()
+    r = compute_readiness(
+        ln_rmssd_7d=sleep.get("ln_rmssd_7d"),
+        swc_lower=sleep.get("swc_lower"), swc_upper=sleep.get("swc_upper"),
+        tsb=training.get("tsb"), sleep_h=sleep.get("sleep_h"),
+        rhr_delta=sleep.get("rhr_delta"), subjective=subjective,
+        recent_dfa_alpha1=dfa_vals, last_decoupling_pct=last_dec,
+    )
+    # FIX-CONTRACT C2: flatten DFA cap + decoupling advisory as top-level
+    # booleans so U6's banner can gate on them without knowing the nested
+    # readiness.dfa_cap.cap_applied path. Dict truthiness ≠ boolean so the
+    # nested form would fire spuriously; exposing a real bool matches the
+    # UI contract. C6: suppress booleans for today if the rider clicked
+    # Revert via /api/readiness/revert-cap (flag auto-clears at midnight).
+    dfa_cap = r.get("dfa_cap") or {}
+    dec_adv = r.get("decoupling_advisory") or {}
+    reverted = _is_readiness_cap_reverted_today()
+    dfa_cap_applied = bool(dfa_cap.get("cap_applied")) and not reverted
+    decoupling_advisory = bool(dec_adv.get("advisory")) and not reverted
+    # v4.4.2 §B3: when ICU wellness path returns no CTL/ATL/TSB, fall back
+    # to local-archive EWMA so the frontpage gauges aren't dashes when
+    # 51 ICU + 12 FIT rides sit on disk.
+    merged_load = _merge_training_load(training)
+    has_local_load = merged_load.get("ctl") is not None or merged_load.get("atl") is not None
+    # v4.4.2 §B6: unify default response shape so /api/today-session and
+    # /api/readiness agree on score/data_status semantics.
+    r = _readiness_with_data_status(r, has_local_load=has_local_load)
+    # v4.5.0: surface "local_wellness" data_status when sleep/HRV came from the
+    # local file store (instead of ICU live) so the UI can show a hint.
+    # We override "ok" AND "insufficient_data" both — the wellness is real
+    # data, just from the local cache; INSUFFICIENT_DATA only signals "not
+    # enough components to compute readiness composite", not "no source".
+    if data_status_local_wellness:
+        r["data_status"] = "local_wellness"
+    return {
+        "readiness": r,
+        "training": merged_load,
+        "sleep": {
+            "sleep_h": sleep.get("sleep_h"), "sleep_score": sleep.get("sleep_score"),
+            "hrv_ms": sleep.get("hrv_ms"), "ln_rmssd_7d": sleep.get("ln_rmssd_7d"),
+            "hrv_status": sleep.get("hrv_status"),
+            "swc_lower": sleep.get("swc_lower"), "swc_upper": sleep.get("swc_upper"),
+            "rhr_today": sleep.get("rhr_today"), "rhr_delta": sleep.get("rhr_delta"),
+            "rhr_status": sleep.get("rhr_status"),
+            "red_hrv_streak": sleep.get("red_hrv_streak", 0),
+        },
+        "ftp": config.ATHLETE_FTP_W,
+        "weight": config.ATHLETE_WEIGHT_KG,
+        # FIX-CONTRACT C2: flattened booleans for U6 banner gating.
+        "dfa_cap_applied": dfa_cap_applied,
+        "decoupling_advisory": decoupling_advisory,
+        # Keep the richer nested dicts available for detail tooltips.
+        "dfa_cap": dfa_cap,
+        "decoupling_advisory_detail": dec_adv,
+        "cap_reverted_today": reverted,
+    }
+
+
+@app.post("/api/readiness/revert-cap")
+async def api_readiness_revert_cap(request: Request):
+    """FIX-CONTRACT C6 — rider-opt-out for today's DFA/decoupling cap.
+
+    Accepts ``{signal: "dfa"|"decoupling", date?: "today"|YYYY-MM-DD}``.
+    Writes a one-day flag to DATA_DIR so the next ``/api/readiness`` call
+    returns ``dfa_cap_applied=False`` + ``decoupling_advisory=False``
+    regardless of the underlying signals. The flag auto-clears at midnight
+    (keyed by today's ISO date).
+
+    The flag is coarse (not per-signal) because the rider's intent when
+    clicking Revert is "I want to do the planned hard session today" — both
+    guards come down together. If either fires again tomorrow, the banner
+    re-shows.
+    """
+    try:
+        body = await _get_json_body(request)
+    except Exception:
+        body = {}
+    # Body is optional; accept empty POST as "revert whatever fired today".
+    _ = str(body.get("signal") or "any")
+    _mark_readiness_cap_reverted_today()
+    clear_cache()  # training metrics cache may have gated on the flag
+    _log.info(f"EVENT=readiness_cap_reverted signal={_} body={body}")
+    return {
+        "ok": True,
+        "reverted": True,
+        "cleared_at_midnight": True,
+        "flag_file": str(_readiness_revert_flag_path()),
+    }
+
+
+
+
+@app.get("/api/activities")
+def api_activities():
+    # v4.4.2 §B1+B2: wire lazy ICU sync here so the frontpage triggers
+    # syncs (loadHome calls /api/activities, not /api/calendar). Also
+    # force-resync if today's date isn't cached locally.
+    try:
+        _maybe_lazy_icu_sync(force_if_today_missing=True)
+    except Exception as _e:
+        _log.debug(f"/api/activities: lazy ICU sync swallowed: {_e}")
+    training = cached("training", get_today_metrics)
+    activities = training.get("recent_activities", [])
+    if activities:
+        return activities
+    # v4.4.2 §B1: when ICU wellness path returns empty, fall back to the
+    # local rides store (FIT + ICU-synced) so today's ride still surfaces
+    # on the frontpage.
+    try:
+        rides = _load_all_rides_safe()
+    except Exception:
+        rides = []
+    if rides:
+        out = []
+        cutoff = (date.today() - timedelta(days=7)).isoformat()
+        for r in rides:
+            d = _ride_started_local_iso_date(r) or ""
+            if not d or d < cutoff:
+                continue
+            summary = r.get("summary") or {}
+            out.append({
+                "date": d,
+                "name": r.get("name") or summary.get("name") or "",
+                "sport": r.get("sport") or "Ride",
+                "duration_min": round((r.get("duration_s") or summary.get("duration_s") or 0) / 60),
+                "tss": r.get("tss") if r.get("tss") is not None else summary.get("tss"),
+                "avg_power": r.get("avg_power_w") if r.get("avg_power_w") is not None else summary.get("avg_power"),
+                "avg_hr": r.get("avg_hr") if r.get("avg_hr") is not None else summary.get("avg_hr"),
+                "id": r.get("ride_id") or r.get("id") or "",
+            })
+        if out:
+            out.sort(key=lambda a: a.get("date") or "", reverse=True)
+            return out
+    # Final fallback to SQLite
+    rows = db.query_activities(days=7)
+    return [
+        {
+            "date": r["date"], "name": r.get("name", ""),
+            "sport": r.get("sport", ""), "duration_min": round((r.get("duration_sec") or 0) / 60),
+            "tss": r.get("tss"), "avg_power": r.get("avg_power"), "avg_hr": r.get("avg_hr"),
+            "id": r.get("id"),
+        }
+        for r in rows
+    ]
+
+
+def _wellness_record_to_api_dict(w: dict) -> dict:
+    """v4.5.0 — common ICU/local wellness record → /api/wellness response shape."""
+    ctl = w.get("ctl")
+    atl = w.get("atl")
+    sport_info = w.get("sportInfo") or []
+    eftp = (sport_info[0].get("eftp") if sport_info and isinstance(sport_info[0], dict) else None)
+    return {
+        "date": w.get("id"),
+        "ctl": ctl,
+        "atl": atl,
+        "tsb": round(ctl - atl, 1) if (ctl is not None and atl is not None) else None,
+        "hrv": w.get("hrv"),
+        "rhr": w.get("restingHR"),
+        "sleep_h": round(w.get("sleepSecs", 0) / 3600, 2) if w.get("sleepSecs") else None,
+        "sleep_score": w.get("sleepScore"),
+        "eftp": eftp,
+    }
+
+
+@app.get("/api/wellness")
+def api_wellness(days: int = Query(28)):
+    # Try live API first, fall back to local file store, then SQLite.
+    data = cached(f"wellness_{days}", lambda: fetch_wellness(days))
+    if data:
+        return [_wellness_record_to_api_dict(w) for w in data]
+    # v4.5.0: local file store fallback. If empty AND ICU creds available,
+    # do a one-shot fetch + persist before returning.
+    try:
+        import ride_storage as _rs
+        local = _rs.load_recent_wellness(days=days)
+    except Exception as e:
+        _log.debug(f"/api/wellness local load failed: {e}")
+        local = []
+    if not local and _icu_credentials_present():
+        try:
+            _sync_icu_wellness(force=True, days=days)
+            local = _rs.load_recent_wellness(days=days)
+        except Exception as e:
+            _log.debug(f"/api/wellness one-shot sync failed: {e}")
+    if local:
+        # local records are newest-first; API contract is unspecified order so
+        # leave as-is.
+        return [_wellness_record_to_api_dict(w) for w in local]
+    # Fallback to SQLite
+    rows = db.query_wellness(days)
+    return [
+        {
+            "date": r["date"], "ctl": r.get("ctl"), "atl": r.get("atl"),
+            # Truthy check would treat ctl=0 / atl=0 as missing (training.py
+            # special-cases ctl==0 for fresh-athlete data). Use `is not None`.
+            "tsb": round(r["ctl"] - r["atl"], 1) if (r.get("ctl") is not None and r.get("atl") is not None) else None,
+            "hrv": r.get("hrv"), "rhr": r.get("rhr"),
+            "sleep_h": round(r["sleep_secs"] / 3600, 2) if r.get("sleep_secs") else None,
+            "sleep_score": r.get("sleep_score"),
+            "eftp": r.get("eftp"),
+        }
+        for r in rows
+    ]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# WORKOUT APIs
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# v4.2.0 IMPL-LIBRARY: helper to scan a single ZWO into the structural
+# metrics the score helper + filters need. Extracted so /api/workouts and
+# /api/workouts/tags can share the parse without duplicating XML walking.
+def _scan_zwo_for_library(zwo_path: Path) -> dict | None:
+    """Parse one ZWO file → metrics dict, or None on parse error / empty.
+
+    Returns a dict with: name, description, total_sec, tss, if_val,
+    z1_sec..z6_sec, distinct_high_targets (set), has_vo2_intensity (bool),
+    zwo_tags (list).  Mirrors the planner's parse so structural metrics
+    are identical between code paths (closes v4.1.1 Bug C PARTIAL).
+    """
+    try:
+        tree = ET.parse(zwo_path)
+    except (ET.ParseError, OSError):
+        return None
+    root = tree.getroot()
+    name = (root.findtext("name") or zwo_path.stem).strip()
+    description = (root.findtext("description") or "").strip()
+    workout_el = root.find("workout")
+    if workout_el is None:
+        return None
+    zwo_tags: list[str] = []
+    tags_el = root.find("tags")
+    if tags_el is not None:
+        for tag_el in tags_el.findall("tag"):
+            nm = tag_el.get("name")
+            if nm:
+                zwo_tags.append(nm.strip())
+
+    total_sec = 0
+    z1_sec = z2_sec = z3_sec = z4_sec = z5_sec = z6_sec = 0
+    tss_accum = 0.0
+    distinct_high_targets: set = set()
+    has_vo2_intensity = False
+
+    def _acc_zone(power_pct: float, dur_s: int):
+        nonlocal z1_sec, z2_sec, z3_sec, z4_sec, z5_sec, z6_sec
+        if power_pct < 56: z1_sec += dur_s
+        elif power_pct < 76: z2_sec += dur_s
+        elif power_pct < 91: z3_sec += dur_s
+        elif power_pct < 106: z4_sec += dur_s
+        elif power_pct < 121: z5_sec += dur_s
+        else: z6_sec += dur_s
+
+    def _acc_structure(power_pct: float):
+        nonlocal has_vo2_intensity
+        if power_pct > 75:
+            distinct_high_targets.add(round(power_pct))
+        if power_pct > 105:
+            has_vo2_intensity = True
+
+    for seg in workout_el:
+        tag = seg.tag
+        if tag in ("Warmup", "Cooldown", "Ramp"):
+            dur = int(float(seg.get("Duration", 0)))
+            plo = float(seg.get("PowerLow", 0.5))
+            phi = float(seg.get("PowerHigh", 0.7))
+            avg_p = (plo + phi) / 2
+            total_sec += dur
+            # Linear-ramp TSS integral (matches planner).
+            tss_accum += (plo * plo + plo * phi + phi * phi) / 3 * (dur / 3600) * 100
+            _acc_zone(avg_p * 100, dur)
+            _acc_structure(phi * 100)
+        elif tag == "SteadyState":
+            dur = int(float(seg.get("Duration", 0)))
+            p = float(seg.get("Power", 0.65))
+            total_sec += dur
+            tss_accum += dur / 3600 * (p ** 2) * 100
+            _acc_zone(p * 100, dur)
+            _acc_structure(p * 100)
+        elif tag == "IntervalsT":
+            reps = int(seg.get("Repeat", 1))
+            on_s = int(float(seg.get("OnDuration", 0)))
+            off_s = int(float(seg.get("OffDuration", 0)))
+            on_p = float(seg.get("OnPower", 1.0))
+            off_p = float(seg.get("OffPower", 0.5))
+            total_sec += reps * (on_s + off_s)
+            tss_accum += reps * on_s / 3600 * (on_p ** 2) * 100
+            tss_accum += reps * off_s / 3600 * (off_p ** 2) * 100
+            _acc_zone(on_p * 100, reps * on_s)
+            _acc_zone(off_p * 100, reps * off_s)
+            _acc_structure(on_p * 100)
+            _acc_structure(off_p * 100)
+        elif tag == "FreeRide":
+            dur = int(float(seg.get("Duration", 0)))
+            total_sec += dur
+            tss_accum += dur / 3600 * (0.65 ** 2) * 100
+            _acc_zone(65, dur)
+
+    if total_sec == 0:
+        return None
+    dur_min = total_sec / 60
+    if_val = (tss_accum / (dur_min / 60)) ** 0.5 / 10 if dur_min > 0 else 0.5
+    return {
+        "name": name, "description": description,
+        "total_sec": total_sec, "tss": tss_accum, "if_val": if_val,
+        "z1_sec": z1_sec, "z2_sec": z2_sec, "z3_sec": z3_sec,
+        "z4_sec": z4_sec, "z5_sec": z5_sec, "z6_sec": z6_sec,
+        "distinct_high_targets": distinct_high_targets,
+        "has_vo2_intensity": has_vo2_intensity,
+        "zwo_tags": zwo_tags,
+    }
+
+
+# v4.2.0 IMPL-LIBRARY: tag cache for /api/workouts/tags. Built lazily on
+# first request and invalidated when the workout-dir mtime drifts. The
+# library has ~3000 files so a 100ms scan is acceptable on cold cache;
+# subsequent requests hit memory.
+_LIBRARY_TAGS_CACHE: tuple[float, list[str]] | None = None
+_LIBRARY_TAGS_LOCK = threading.Lock()
+
+
+def _compute_library_tags() -> list[str]:
+    """Scan all ZWO files for distinct tags. Returns sorted unique list."""
+    if not WORKOUT_DIR.exists():
+        return []
+    seen: set[str] = set()
+    for zwo_path in WORKOUT_DIR.glob("*.zwo"):
+        try:
+            tree = ET.parse(zwo_path)
+        except (ET.ParseError, OSError):
+            continue
+        tags_el = tree.getroot().find("tags")
+        if tags_el is None:
+            continue
+        for tag_el in tags_el.findall("tag"):
+            nm = tag_el.get("name")
+            if nm:
+                seen.add(nm.strip())
+    return sorted(seen)
+
+
+def _get_library_tags_cached() -> list[str]:
+    """Return cached distinct tag list, refreshing on dir mtime drift."""
+    global _LIBRARY_TAGS_CACHE
+    try:
+        mtimes = [p.stat().st_mtime for p in WORKOUT_DIR.glob("*.zwo")]
+    except OSError:
+        mtimes = []
+    sig = max(mtimes) if mtimes else 0.0
+    with _LIBRARY_TAGS_LOCK:
+        if _LIBRARY_TAGS_CACHE and abs(_LIBRARY_TAGS_CACHE[0] - sig) < 0.5:
+            return _LIBRARY_TAGS_CACHE[1]
+        tags_list = _compute_library_tags()
+        _LIBRARY_TAGS_CACHE = (sig, tags_list)
+        return tags_list
+
+
+@app.get("/api/workouts/tags")
+def api_workouts_tags():
+    """Return the sorted distinct list of tags across the library.
+
+    v4.2.0 IMPL-LIBRARY: powers the tag multi-select chip-list in the
+    library browser. Cached in-memory; refreshes when WORKOUT_DIR mtimes
+    drift.
+    """
+    return {"tags": _get_library_tags_cached()}
+
+
+@app.get("/api/workouts")
+def api_workouts(
+    min_score: int = Query(0), session_type: str = Query(None),
+    max_duration: int = Query(300), min_duration: int = Query(0),
+    duration_min: int | None = None,
+    duration_max: int | None = None,
+    limit: int = Query(3000), sort: str = Query("score_desc"),
+    tags: str = Query(None),
+    content_class: str | None = None,
+    has_flag: str | None = None,
+    search: str | None = None,
+):
+    """Scan flat workout library (workouts/*.zwo). Extract metadata from each ZWO.
+
+    T5 (v4.1.0): the ``<tags><tag name="…"/></tags>`` block is now parsed
+    and surfaced on each row. Pass ``?tags=ftp_test`` (or any comma-separated
+    list) to filter the library to just tagged workouts — used by the
+    "FTP Tests" tab in the library UI and by the planner to avoid
+    accidentally scheduling a test on a random Tuesday.
+
+    v4.2.0 IMPL-LIBRARY query params:
+      - ``content_class=vo2max`` — exact-match against the 12-rule cascade
+        primary type (recovery, endurance, tempo, sweet_spot, threshold,
+        over_under, vo2max, vo2_short, anaerobic, neuromuscular, ftp_test,
+        mixed).
+      - ``tags=ftp_test,polarized_consistent`` — OR-match (any tag matches).
+      - ``duration_min=30&duration_max=60`` — minutes; either bound optional.
+      - ``has_flag=pattern_over_under`` — secondary-flag boolean filter.
+      - ``search=ramp`` — substring match (case-insensitive) against
+        ``Name`` or ``File``.
+      - ``sort=score_desc|score_asc|duration_desc|duration_asc|name_asc|name_desc``
+        Default ``score_desc``.
+    """
+    workouts = []
+    if not WORKOUT_DIR.exists():
+        return []
+
+    filter_tags: set[str] = set()
+    if tags:
+        filter_tags = {t.strip().lower() for t in tags.split(",") if t.strip()}
+
+    # v4.1.2 IMPL-CLASSIFIER: load the content-classification cache once per
+    # request. Same source as training_planner so the library browser and
+    # planner agree on protocol categorisation. Empty {} fallback when the
+    # cache is missing — the dominant-zone heuristic kicks back in.
+    _content_classifications = tp._load_content_classifications()
+    _CONTENT_TO_PROTOCOL = tp._CONTENT_TO_PROTOCOL
+
+    # v4.2.0: resolve duration window. The new ``duration_min/max`` params
+    # take precedence over the legacy ``min_duration/max_duration`` aliases
+    # so callers using either spelling get the same behaviour.
+    eff_min_dur = duration_min if duration_min is not None else min_duration
+    eff_max_dur = duration_max if duration_max is not None else max_duration
+
+    search_lower = (search or "").strip().lower()
+    has_flag_key = (has_flag or "").strip()
+    content_class_lower = (content_class or "").strip().lower()
+
+    for zwo_path in sorted(WORKOUT_DIR.glob("*.zwo")):
+        scan = _scan_zwo_for_library(zwo_path)
+        if not scan:
+            continue
+        name = scan["name"]
+        description = scan["description"]
+        total_sec = scan["total_sec"]
+        tss_accum = scan["tss"]
+        if_val = scan["if_val"]
+        z1_sec, z2_sec, z3_sec = scan["z1_sec"], scan["z2_sec"], scan["z3_sec"]
+        z4_sec, z5_sec, z6_sec = scan["z4_sec"], scan["z5_sec"], scan["z6_sec"]
+        zwo_tags = scan["zwo_tags"]
+        dur_min = total_sec / 60
+
+        # Zone percentages.
+        zp = lambda s: round(s / total_sec * 100, 1) if total_sec else 0
+
+        # Session type classification (for Protocol field).
+        # v4.1.2 IMPL-CLASSIFIER: prefer the content-based 12-rule cascade
+        # output (workouts/.content_classification.json) over the
+        # dominant-zone heuristic. Falls back to dominant zone when the
+        # cache is missing or this file isn't classified.
+        content_entry = (_content_classifications or {}).get(zwo_path.name) or {}
+        content_class_val = content_entry.get("primary") or ""
+        content_confidence = content_entry.get("confidence") or 0.0
+        secondary_flags = content_entry.get("secondary_flags") or {}
+        if content_class_val and content_confidence >= 0.6:
+            protocol = _CONTENT_TO_PROTOCOL.get(content_class_val, "Mixed")
+        else:
+            zones_sec = [z1_sec, z2_sec, z3_sec, z4_sec, z5_sec, z6_sec]
+            dom_idx = zones_sec.index(max(zones_sec)) if any(zones_sec) else 1
+            protocol_map = {
+                0: "Recovery", 1: "Endurance", 2: "Tempo",
+                3: "Sweet Spot / Threshold", 4: "VO2max", 5: "Anaerobic/Sprint"
+            }
+            protocol = protocol_map.get(dom_idx, "Mixed")
+
+        # v4.2.0 IMPL-LIBRARY: route through shared training_planner.score_workout
+        # so /api/workouts and the planner produce identical scores per file
+        # (closes v4.1.1 Bug C PARTIAL — distinct_high_targets vs zone-count
+        # drift).
+        score = max(1, min(10, int(round(tp.score_workout({
+            "tss": tss_accum,
+            "total_sec": total_sec,
+            "z1_sec": z1_sec, "z2_sec": z2_sec, "z3_sec": z3_sec,
+            "z4_sec": z4_sec, "z5_sec": z5_sec, "z6_sec": z6_sec,
+            "distinct_high_targets": scan["distinct_high_targets"],
+            "has_vo2_intensity": scan["has_vo2_intensity"],
+        })))))
+
+        # Title validator: strip misleading prefixes when IF contradicts name
+        orig_name = name
+        name_lower = name.lower()
+        if if_val > 0.75 and 'recovery' in name_lower:
+            name = re.sub(r'^recovery\s+', '', name, flags=re.I)
+            logging.getLogger(__name__).warning(f"Stripped 'Recovery' from {orig_name} (IF={if_val:.2f})")
+        if if_val < 0.55 and any(w in name_lower for w in ('vo2', 'threshold', 'supra')):
+            name = f"Easy {name}"
+
+        row = {
+            "Name": name,
+            "Category": "Workout",
+            "File": zwo_path.name,
+            "Duration(min)": round(dur_min, 1),
+            "TSS": round(tss_accum, 1),
+            "IF": round(if_val, 3),
+            "Score": score,
+            "Protocol": protocol,
+            "Notes": description[:200],
+            "Z1%": zp(z1_sec), "Z2%": zp(z2_sec), "Z3%": zp(z3_sec),
+            "Z4%": zp(z4_sec), "Z5%": zp(z5_sec), "Z6%": zp(z6_sec),
+            # T5 (v4.1.0): surface ZWO <tags> so UI + planner can filter.
+            "Tags": zwo_tags,
+            # v4.1.2 IMPL-CLASSIFIER: content-classification fields lifted
+            # from workouts/.content_classification.json. content_class is
+            # the 12-rule cascade primary type; secondary_flags carry the
+            # hybrid markers (has_threshold_work / has_vo2_work / has_sprints
+            # / has_sweet_spot_work / pattern_over_under / pattern_microinterval
+            # / polarized_consistent / pyramidal_consistent).
+            "content_class": content_class_val,
+            "secondary_flags": secondary_flags,
+            "confidence": content_confidence,
+        }
+
+        if score < min_score:
+            continue
+        if not (eff_min_dur <= dur_min <= eff_max_dur):
+            continue
+        if session_type and session_type.lower() not in protocol.lower():
+            continue
+        if filter_tags:
+            row_tags_lower = {t.lower() for t in zwo_tags}
+            if not (filter_tags & row_tags_lower):
+                continue
+        # v4.2.0: content_class exact-match. Empty/missing classification
+        # never matches a non-empty filter, so the user can't accidentally
+        # surface uncategorised files via the dropdown.
+        if content_class_lower:
+            if (content_class_val or "").lower() != content_class_lower:
+                continue
+        # v4.2.0: secondary-flag boolean filter.
+        if has_flag_key:
+            if not bool(secondary_flags.get(has_flag_key)):
+                continue
+        # v4.2.0: search-by-structure substring match against Name + File.
+        if search_lower:
+            hay = f"{name.lower()} {zwo_path.name.lower()}"
+            if search_lower not in hay:
+                continue
+        workouts.append(row)
+
+    # v4.2.0 IMPL-LIBRARY: explicit sort enum. Legacy ``score`` / ``duration``
+    # / ``tss`` aliases stay supported (callers from older clients) so we
+    # don't break the planner's score-ranked iteration.
+    if sort in ("score_desc", "score"):
+        workouts.sort(key=lambda w: (-w["Score"], -w["Duration(min)"]))
+    elif sort == "score_asc":
+        workouts.sort(key=lambda w: (w["Score"], w["Duration(min)"]))
+    elif sort in ("duration_desc",):
+        workouts.sort(key=lambda w: -w["Duration(min)"])
+    elif sort in ("duration_asc", "duration"):
+        workouts.sort(key=lambda w: w["Duration(min)"])
+    elif sort == "name_asc":
+        workouts.sort(key=lambda w: w["Name"].lower())
+    elif sort == "name_desc":
+        workouts.sort(key=lambda w: w["Name"].lower(), reverse=True)
+    elif sort == "tss":
+        workouts.sort(key=lambda w: -w["TSS"])
+
+    return workouts[:limit]
+
+
+@app.get("/api/workout/download/{filename}")
+def download_workout_by_id(filename: str):
+    """Serve a ZWO workout file as a download attachment.
+
+    v4.0.0-alpha: IMPL-B's dashboard calls this URL pattern to let the user
+    grab the raw ZWO for external trainer apps (MyWhoosh, Tacx, Zwift) now
+    that the live-ride runtime is gone.
+
+    FIX-SERVER: path disambiguated from ``/api/workout/{filename}/download``
+    AND registered BEFORE ``/api/workout/{category}/{filename}`` below so
+    FastAPI's declaration-order match resolves ``download`` as the literal
+    path segment, not as ``category=download``. Both guarantees must hold
+    for the route to resolve correctly.
+    """
+    path = _safe_path(WORKOUT_DIR, filename)
+    if not path or not path.exists():
+        return JSONResponse({"error": "not found"}, 404)
+    return FileResponse(
+        path,
+        filename=filename,
+        media_type="application/xml",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/workout/{category}/{filename}")
+def api_workout_detail(category: str, filename: str):
+    """Parse a ZWO file and return segment data for visualization."""
+    # Flat layout first, legacy category/file fallback
+    path = _safe_path(WORKOUT_DIR, filename)
+    if not path or not path.exists():
+        path = _safe_path(WORKOUT_DIR, category, filename)
+    if not path or not path.exists():
+        return JSONResponse({"error": "not found"}, 404)
+    try:
+        tree = ET.parse(path)
+    except ET.ParseError:
+        return JSONResponse({"error": "parse error"}, 400)
+
+    root = tree.getroot()
+    name = (root.findtext("name") or filename).strip()
+    desc = (root.findtext("description") or "").strip()
+    workout_el = root.find("workout")
+    if workout_el is None:
+        return {"name": name, "description": desc, "segments": []}
+
+    segments = []
+    cursor = 0  # seconds
+    ftp = config.ATHLETE_FTP_W
+
+    for el in workout_el:
+        tag = el.tag
+        # ZWO files occasionally store Duration as a float (e.g. "600.5").
+        # `int()` on a numeric float is fine, but `int("600.5")` raises
+        # ValueError and 500s the whole route list. Float-first, then int.
+        dur = int(float(el.get("Duration", 0) or 0))
+        if tag in ("Warmup", "Cooldown", "Ramp"):
+            plo = float(el.get("PowerLow", 0.5))
+            phi = float(el.get("PowerHigh", 0.7))
+            segments.append({
+                "type": tag, "start": cursor, "duration": dur,
+                "power_low": round(plo * ftp), "power_high": round(phi * ftp),
+                "pct_low": round(plo * 100), "pct_high": round(phi * 100),
+            })
+            cursor += dur
+        elif tag == "SteadyState":
+            pw = float(el.get("Power", 0.65))
+            segments.append({
+                "type": tag, "start": cursor, "duration": dur,
+                "power": round(pw * ftp), "pct": round(pw * 100),
+            })
+            cursor += dur
+        elif tag == "IntervalsT":
+            reps = int(el.get("Repeat", 1))
+            on_d = int(el.get("OnDuration", 0))
+            off_d = int(el.get("OffDuration", 0))
+            on_p = float(el.get("OnPower", 0.95))
+            off_p = float(el.get("OffPower", 0.50))
+            segments.append({
+                "type": tag, "start": cursor,
+                "duration": reps * (on_d + off_d),
+                "repeats": reps,
+                "on_duration": on_d, "off_duration": off_d,
+                "on_power": round(on_p * ftp), "off_power": round(off_p * ftp),
+                "on_pct": round(on_p * 100), "off_pct": round(off_p * 100),
+            })
+            cursor += reps * (on_d + off_d)
+        elif tag == "FreeRide":
+            segments.append({
+                "type": tag, "start": cursor, "duration": dur,
+            })
+            cursor += dur
+
+    return {
+        "name": name, "description": desc,
+        "total_seconds": cursor,
+        "segments": segments,
+        "ftp": ftp,
+    }
+
+
+@app.post("/api/workouts/bulk-segments")
+async def api_bulk_segments(request: Request):
+    """Fetch segments for multiple workouts in one request.
+    Body: {"files": ["cat/file.zwo", ...]}
+    Returns: {"results": {"cat/file.zwo": {segments: [...]}, ...}}
+    """
+    body = await _get_json_body(request)
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="expected object with 'files' key")
+    files = body.get("files", [])
+    if not isinstance(files, list):
+        raise HTTPException(status_code=400, detail="'files' must be an array")
+    results = {}
+    ftp = config.ATHLETE_FTP_W
+    # Cap at 200 per request to bound response size. Warn when truncation
+    # happens so a caller that silently relied on an unbounded list gets a
+    # log signal instead of a mystery "missing file" downstream.
+    if len(files) > 200:
+        log.warning(
+            "bulk-segments: truncating %d extra files (received %d, cap 200)",
+            len(files) - 200, len(files),
+        )
+    for f in files[:200]:
+        # Accept both flat ("file.zwo") and legacy ("category/file.zwo") forms
+        if "/" in f:
+            parts = f.split("/", 1)
+            cat, fname = parts
+        else:
+            cat, fname = "", f
+        # Flat lookup first; fall back to legacy category subdir
+        path = _safe_path(WORKOUT_DIR, fname) if fname else None
+        if (not path or not path.exists()) and cat:
+            path = _safe_path(WORKOUT_DIR, cat, fname)
+        if not path or not path.exists():
+            continue
+        try:
+            tree = ET.parse(path)
+            root = tree.getroot()
+            workout_el = root.find("workout")
+            if workout_el is None:
+                continue
+            segs = []
+            cursor = 0
+            for el in workout_el:
+                tag = el.tag
+                # Float-first int conversion — same ZWO "Duration can be
+                # a float string" defensive read as the single-workout path.
+                dur = int(float(el.get("Duration", 0) or 0))
+                if tag in ("Warmup", "Cooldown", "Ramp"):
+                    plo = float(el.get("PowerLow", 0.5))
+                    phi = float(el.get("PowerHigh", 0.7))
+                    segs.append({"type": tag, "start": cursor, "duration": dur,
+                                 "power_low": round(plo * ftp), "power_high": round(phi * ftp)})
+                    cursor += dur
+                elif tag == "SteadyState":
+                    pw = float(el.get("Power", 0.65))
+                    segs.append({"type": tag, "start": cursor, "duration": dur, "power": round(pw * ftp)})
+                    cursor += dur
+                elif tag == "IntervalsT":
+                    reps = int(el.get("Repeat", 1))
+                    on_d = int(el.get("OnDuration", 0))
+                    off_d = int(el.get("OffDuration", 0))
+                    on_p = float(el.get("OnPower", 0.95))
+                    off_p = float(el.get("OffPower", 0.50))
+                    segs.append({"type": tag, "start": cursor, "duration": reps * (on_d + off_d),
+                                 "repeats": reps, "on_duration": on_d, "off_duration": off_d,
+                                 "on_power": round(on_p * ftp), "off_power": round(off_p * ftp)})
+                    cursor += reps * (on_d + off_d)
+                elif tag == "FreeRide":
+                    segs.append({"type": tag, "start": cursor, "duration": dur})
+                    cursor += dur
+            results[f] = {"segments": segs}
+        except Exception:
+            continue
+    return {"results": results, "ftp": ftp}
+
+
+@app.get("/api/picker")
+def api_picker(subjective: float = Query(7), duration: int = Query(75)):
+    """Workout-of-the-day picker.
+
+    v4.1.1 FIX-PICKER-MOVE (Bug D): two fixes land here.
+
+    1. T5 (v4.1.0) added a ``tags: str = Query(None)`` parameter to
+       ``api_workouts``. This endpoint calls ``api_workouts`` as a plain
+       Python function — bypassing FastAPI's dependency injection — so
+       unpassed params keep their ``Query(None)`` *default objects* as
+       values. Inside ``api_workouts`` line 1015 then does
+       ``if tags: tags.split(",")`` — the Query() object is truthy and
+       has no ``.split`` → the entire call raised AttributeError and the
+       endpoint 500'd, surfacing in the UI as "readiness ?/100; no
+       workouts". We now pass ``tags=None`` explicitly.
+
+    2. When the user is on a fresh install with no FIT/HRV data yet,
+       ``compute_readiness`` returns ``score=None``. The old branch then
+       returned an empty workouts list — not useful for a
+       workout-picker UI. We now fall back to a neutral 70/100 baseline
+       ("no HRV data yet") and proceed to surface z2/endurance
+       suggestions so the user sees a sensible default set rather than
+       a blank card on day one.
+    """
+    try:
+        training = cached("training", get_today_metrics)
+    except Exception as _e:
+        _log.debug(f"picker training metrics unavailable: {_e}")
+        training = {}
+    try:
+        sleep = cached("sleep", get_sleep_metrics)
+    except Exception as _e:
+        _log.debug(f"picker sleep metrics unavailable: {_e}")
+        sleep = {}
+
+    try:
+        r = compute_readiness(
+            ln_rmssd_7d=sleep.get("ln_rmssd_7d"),
+            swc_lower=sleep.get("swc_lower"), swc_upper=sleep.get("swc_upper"),
+            tsb=training.get("tsb"), sleep_h=sleep.get("sleep_h"),
+            rhr_delta=sleep.get("rhr_delta"), subjective=subjective,
+        )
+    except Exception:
+        _log.exception("picker readiness compute failed — falling back to baseline")
+        r = {"score": None, "status": "INSUFFICIENT_DATA", "advice": ""}
+
+    score = r.get("score")
+    status = r.get("status", "?")
+    advice = r.get("advice", "")
+
+    # Fix D.2: baseline when no HRV data yet. Don't return an empty card —
+    # surface a neutral z2/endurance starter set instead so the picker is
+    # usable on day one of a fresh install.
+    baseline_used = False
+    if score is None:
+        _log.info("picker: no HRV data yet, using 70/100 baseline")
+        score = 70
+        status = status or "BASELINE"
+        advice = advice or "No HRV data yet — using neutral baseline"
+        baseline_used = True
+
+    # Map readiness to session type + fallback types
+    if score >= 80:
+        types = ["vo2", "helgerud", "rønnestad"]
+    elif score >= 70:
+        types = ["sweet spot", "threshold", "z2", "endurance"]
+    elif score >= 60:
+        types = ["z2", "seiler", "endurance"]
+    elif score >= 40:
+        types = ["z2", "recovery", "endurance"]
+    else:
+        # REST-level readiness: still show 3 light suggestions rather
+        # than an empty card (Bug D.2).
+        types = ["recovery", "z2", "endurance"]
+
+    # Search with multiple type keywords for better matches. Fix D.1:
+    # pass tags=None explicitly — api_workouts' Query() default object
+    # is truthy and crashes .split().
+    #
+    # v4.1.1 FIX-PICKER-MOVE: the previous ``min_score=7`` floor was
+    # pathological: the library's score rubric (tss*0.6 + structure*0.4)
+    # produces only 3 out of 3000 workouts at score≥7 — the picker was
+    # effectively asking for needles in a haystack. We now use 3 as the
+    # primary floor and widen further on misses, so the picker returns
+    # real suggestions instead of silently collapsing to an empty list.
+    workouts: list[dict] = []
+    for stype in types:
+        try:
+            matches = api_workouts(
+                min_score=3, session_type=stype,
+                max_duration=duration + 30,
+                min_duration=max(0, duration - 30),
+                limit=10, sort="score", tags=None,
+            )
+        except Exception as _e:
+            _log.warning(f"picker api_workouts({stype!r}) failed: {_e}")
+            matches = []
+        workouts.extend(matches)
+        if len(workouts) >= 5:
+            break
+
+    # If still empty, try without session type filter
+    if not workouts:
+        try:
+            workouts = api_workouts(
+                min_score=3, max_duration=duration + 30,
+                min_duration=max(0, duration - 30),
+                limit=5, sort="score", tags=None,
+            )
+        except Exception as _e:
+            _log.warning(f"picker api_workouts fallback failed: {_e}")
+            workouts = []
+
+    # Last-resort widening: drop the score floor + widen the duration
+    # window so fresh installs with a smaller library still see ≥3 cards.
+    if len(workouts) < 3:
+        try:
+            extra = api_workouts(
+                min_score=1, max_duration=duration + 60,
+                min_duration=0, limit=10, sort="score", tags=None,
+            )
+            workouts.extend(extra)
+        except Exception as _e:
+            _log.warning(f"picker last-resort widen failed: {_e}")
+
+    # Deduplicate by name, preserve first-seen order
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for w in workouts:
+        nm = w.get("Name") or ""
+        if nm and nm not in seen:
+            seen.add(nm)
+            unique.append(w)
+
+    return {
+        "type": types[0] if types else "z2",
+        "readiness": score, "status": status, "advice": advice,
+        "baseline_used": baseline_used,
+        "workouts": unique[:5],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# COURSE APIs
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/courses")
+def api_courses(region: str = Query(None)):
+    courses = []
+    for crs in sorted(COURSE_DIR.rglob("*.crs")):
+        r = crs.parent.name
+        if region and region != r:
+            continue
+        desc = ""
+        try:
+            with open(crs, encoding="utf-8") as f_:
+                for line in f_:
+                    if line.startswith("DESCRIPTION"):
+                        desc = line.split("=", 1)[1].strip()
+                        break
+        except Exception:
+            pass
+
+        # Always compute km + climb from the CRS data itself — NEVER trust the
+        # DESCRIPTION header text as a source of truth. Loop-extended routes
+        # keep the original "5km" text in their header while the actual
+        # CRS data is 15km long, so reading from desc gives the wrong km
+        # and a wildly inflated avg_grad.
+        km = 0.0
+        climb = 0
+        max_grade = 0.0
+        try:
+            in_data = False
+            cum_elev = 0.0
+            cum_km = 0.0
+            max_g = 0.0
+            with open(crs, encoding="utf-8") as f2:
+                for line2 in f2:
+                    s = line2.strip()
+                    if s == "[COURSE DATA]": in_data = True; continue
+                    if s == "[END COURSE DATA]": break
+                    if in_data and s and not s.startswith("DIST"):
+                        parts = s.split()
+                        if len(parts) >= 2:
+                            try:
+                                delta_km = float(parts[0])
+                                grade = float(parts[1])
+                            except ValueError:
+                                continue
+                            cum_km += delta_km
+                            elev_change = delta_km * 10.0 * grade
+                            if elev_change > 0:
+                                cum_elev += elev_change
+                            if abs(grade) > max_g:
+                                max_g = abs(grade)
+            km = round(cum_km, 1)
+            climb = round(cum_elev)
+            max_grade = round(max_g, 1)
+        except Exception:
+            pass
+
+        # Fallback to description-parse only if CRS had zero data (corrupt file)
+        if km == 0:
+            m = re.search(r'([\d.]+)km', desc)
+            if m:
+                km = float(m.group(1))
+
+        avg_grad = round(climb / (km * 10.0), 1) if (km > 0 and climb > 0) else 0.0
+
+        # Difficulty category
+        if climb >= 1500 or (km >= 15 and avg_grad >= 7):
+            difficulty = "HC"
+        elif climb >= 800 or (km >= 10 and avg_grad >= 6):
+            difficulty = "Cat 1"
+        elif climb >= 400:
+            difficulty = "Cat 2"
+        elif climb >= 200:
+            difficulty = "Cat 3"
+        elif climb >= 100:
+            difficulty = "Cat 4"
+        else:
+            difficulty = "Flat"
+
+        # Check if matching GPX exists
+        gpx_name = crs.stem + ".gpx"
+        has_gpx = (GPX_DIR / r / gpx_name).exists()
+
+        courses.append({
+            "name": crs.stem, "region": r, "description": desc,
+            "km": km, "climb": climb, "avg_grad": avg_grad,
+            "difficulty": difficulty,
+            "filename": crs.name,
+            "has_gpx": has_gpx,
+        })
+    return courses
+
+
+@app.get("/api/surface-types")
+def api_surface_types():
+    """Return surface_types.json content for client-side surface filtering."""
+    path = Path(__file__).parent / "surface_types.json"
+    if not path.exists():
+        return {"routes": {}, "gravel_workouts": []}
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+@app.get("/api/course/{region}/{filename}")
+def api_course_profile(region: str, filename: str):
+    """Return elevation profile data from a CRS file for charting."""
+    path = _safe_path(COURSE_DIR, region, filename)
+    if not path or not path.exists():
+        # Virtual routes live under courses/virtual/<region>/<filename>
+        path = _safe_path(COURSE_DIR, "virtual", region, filename)
+    if not path or not path.exists():
+        return JSONResponse({"error": "not found"}, 404)
+    points = []
+    in_data = False
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line == "[COURSE DATA]":
+                in_data = True; continue
+            if line == "[END COURSE DATA]":
+                break
+            if in_data and line:
+                parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        dist = float(parts[0])
+                        grad = float(parts[1])
+                        points.append({"d": round(dist, 3), "g": round(grad, 1)})
+                    except ValueError:
+                        pass
+    # CRS distances are delta segment lengths — reconstruct cumulative for chart
+    cum_dist = [0.0]
+    elevation = [0.0]
+    for i in range(1, len(points)):
+        seg_km = points[i]["d"]  # delta segment length
+        cum_dist.append(round(cum_dist[-1] + seg_km, 3))
+        ele_change = seg_km * 10 * points[i]["g"]  # gradient% * distance in 100m units
+        elevation.append(round(elevation[-1] + ele_change, 1))
+
+    # Downsample for chart (max 200 points)
+    step = max(1, len(points) // 200)
+    sampled = [{"d": cum_dist[i], "g": points[i]["g"], "e": elevation[i]}
+               for i in range(0, len(points), step)]
+
+    # Compute header stats so the detail modal shows correct numbers.
+    # Previously the endpoint returned only `points` and the JS fell back
+    # to 0 for elevation / avg_grade / max_grade on every route.
+    total_km = round(cum_dist[-1], 2) if cum_dist else 0.0
+    elev_gain = 0.0
+    max_g = 0.0
+    for i in range(1, len(points)):
+        seg_km = points[i]["d"]
+        grade = points[i]["g"]
+        e_change = seg_km * 10.0 * grade
+        if e_change > 0:
+            elev_gain += e_change
+        if abs(grade) > max_g:
+            max_g = abs(grade)
+    elev_gain = round(elev_gain)
+    avg_grade = round(elev_gain / (total_km * 10.0), 2) if total_km > 0 else 0.0
+
+    return {
+        "points": sampled,
+        "total_points": len(points),
+        "stats": {
+            "distance_km": total_km,
+            "elev_gain_m": elev_gain,
+            "climb_m": elev_gain,  # alias for the older client fallback
+            "avg_grade": avg_grade,
+            "max_grade": round(max_g, 1),
+        },
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# VIRTUAL ROUTES API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _slugify_route_name(name: str) -> str:
+    """Slugify a route name using the same rule as generate_route_profiles.py."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def _route_key_for(world_slug: str, crs_filename: str) -> tuple[str, str]:
+    """Derive (slug, route_key) for a route based on its CRS filename.
+
+    Mirrors the logic in generate_route_profiles.py so the key matches what was
+    written to profiles_indexed.json and profiles/<world>__<slug>.json.
+    """
+    stem = crs_filename[:-4] if crs_filename.lower().endswith(".crs") else crs_filename
+    # Virtual-world routes embed "<world>__<slug>" in the filename; real-world
+    # routes slugify the whole filename.
+    slug = stem.split("__", 1)[1] if "__" in stem else _slugify_route_name(stem)
+    return slug, f"{world_slug}/{slug}"
+
+
+# ─── v2 routes.json schema helpers ───────────────────────────────────────────
+# routes.json is now a FLAT LIST of route entries (see route_schema_contract.md).
+# Load once per process with mtime-based invalidation and pre-build inverted
+# indexes for hot filter fields.
+
+REGION_TITLES = {
+    "alps": "Alps", "pyrenees": "Pyrenees", "dolomites": "Dolomites",
+    "mallorca": "Mallorca", "tenerife": "Tenerife",
+    "costa_blanca": "Costa Blanca", "costa_daurada": "Costa Daurada",
+    "basque": "Basque Country", "andorra": "Andorra", "girona": "Girona",
+    "lanzarote": "Lanzarote", "gravel": "Gravel Classics",
+    "other": "Other Climbs",
+    "richmond": "Richmond (UCI 2015)", "austria": "Austria / Tirol",
+    "london": "London", "scotland": "Scotland",
+    "flanders": "Flanders (Ronde)",
+    "netherlands_gravel": "Netherlands Gravel",
+    "italy_gravel": "Italy Gravel", "germany_gravel": "Germany Gravel",
+    "france_gravel": "France Gravel", "usa_gravel": "USA Gravel",
+    "blue_ridge": "Blue Ridge", "iron_pass": "Iron Pass",
+    "desert_loop": "Desert Loop",
+}
+
+WORLD_CHARACTER = {
+    "blue_ridge":  {"emoji": "🏞", "title": "Blue Ridge",
+                    "blurb": "Rolling hills, punchy kickers, classic cobble walls, occasional gravel",
+                    "tags": ["rolling", "cat4", "cobble", "gravel", "lap"]},
+    "iron_pass":   {"emoji": "⛰", "title": "Iron Pass",
+                    "blurb": "Long alpine climbs, HC monsters, gravel summits, Flemish walls",
+                    "tags": ["hc", "cat1", "wall", "gravel_climb"]},
+    "desert_loop": {"emoji": "🌵", "title": "Desert Loop",
+                    "blurb": "Flat TT circuits, Strade-Bianche gravel, pan-flat time-trial laps",
+                    "tags": ["flat_tt", "gravel", "lap_criterium"]},
+    "__real_world__": {"emoji": "🌍", "title": "Real World",
+                    "blurb": "Famous climbs and iconic race routes: Ventoux, Stelvio, Richmond, Innsbruck, Box Hill, Bealach na Bà, Ronde van Vlaanderen",
+                    "tags": ["hc", "classic", "wall", "cobble", "flanders"]},
+}
+
+
+_ROUTES_CACHE: list[dict] = []
+_ROUTES_INDEX: dict = {}
+_ROUTES_MTIME: float = 0.0
+_ROUTES_LOCK = threading.Lock()
+
+# ─── Canonical surface-segment mapping (MASTER_DECISIONS §1) ───────────────
+# surface_types.json is authored in lowercase today, but training_live loads
+# it as UPPERCASE TACX RoadSurface tokens (_SURFACE_NAME_MAP). Anything that
+# crosses a tier (HTTP / WS) MUST downshift to the canonical lowercase enum:
+# asphalt | gravel | cobble | dirt | sand | unknown. Emit "unknown" for any
+# value outside that enum — never drop.
+_SURFACE_CANONICAL_MAP: dict[str, str] = {
+    # Already-lowercase canonical forms (pass through).
+    "asphalt": "asphalt",
+    "gravel": "gravel",
+    "cobble": "cobble",
+    "dirt": "dirt",
+    "sand": "sand",
+    "unknown": "unknown",
+    # UPPERCASE TACX tokens (from training_live._SURFACE_NAME_MAP leak paths).
+    "ASPHALT": "asphalt",
+    "PAVED": "asphalt",
+    "TARMAC": "asphalt",
+    "COBBLESTONES_HARD": "cobble",
+    "COBBLESTONES_SOFT": "cobble",
+    "BRICK_ROAD": "cobble",
+    "CONCRETE_PLATES": "cobble",
+    "GRAVEL": "gravel",
+    "OFF_ROAD": "gravel",
+    "DIRT": "dirt",
+    "TRAIL": "dirt",
+    "SAND": "sand",
+    "WOODEN_BOARDS": "unknown",
+    "CATTLE_GRID": "unknown",
+    "ICE": "unknown",
+}
+
+
+def _canonical_surface(raw) -> str:
+    """Map any surface token (lower/upper) to the canonical lowercase enum.
+    Unknown inputs fall through to "unknown" rather than silently dropping."""
+    if not raw:
+        return "unknown"
+    s = str(raw).strip()
+    return _SURFACE_CANONICAL_MAP.get(s) or _SURFACE_CANONICAL_MAP.get(s.upper()) or _SURFACE_CANONICAL_MAP.get(s.lower(), "unknown")
+
+
+_SURFACE_TYPES_CACHE: dict | None = None
+_SURFACE_TYPES_MTIME: float = 0.0
+_SURFACE_TYPES_LOCK = threading.Lock()
+
+
+def _load_surface_types_db() -> dict:
+    """Return a cached copy of surface_types.json, reloaded on mtime change.
+
+    Shape: `{"<region>/<slug>": [{start_km, end_km, surface}, ...]}`. Returns
+    an empty dict if the file is missing or malformed — callers fall through
+    to a single "unknown" segment so the frontend always has renderable data.
+    """
+    global _SURFACE_TYPES_CACHE, _SURFACE_TYPES_MTIME
+    path = Path(__file__).parent / "surface_types.json"
+    if not path.exists():
+        return {}
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    with _SURFACE_TYPES_LOCK:
+        if _SURFACE_TYPES_CACHE is None or mtime != _SURFACE_TYPES_MTIME:
+            try:
+                _SURFACE_TYPES_CACHE = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as e:
+                _log.error(f"Failed to load surface_types.json: {e}")
+                _SURFACE_TYPES_CACHE = {}
+            _SURFACE_TYPES_MTIME = mtime
+        return _SURFACE_TYPES_CACHE or {}
+
+
+def _route_surface_segments(route_id: str, distance_km: float | None = None,
+                             lap_info: dict | None = None) -> list[dict]:
+    """Canonical `surface_segments` for a given route id.
+
+    Returns a list of `{start_km, end_km, surface}` dicts. Surface values are
+    canonical lowercase (MASTER_DECISIONS §1). When no surface data exists
+    for the route, emits a single "unknown" segment covering 0..distance_km
+    (or empty list when distance is unknown). Never returns None; the
+    frontend always has something to paint.
+
+    v3.6.0-fix29 — when a route carries `lap_route.laps > 1`,
+    `surface_types.json` stores only ONE base-lap's worth of segments while
+    `distance_km` reflects the fully multiplied distance. Tile the base
+    segments `laps` times with `base_km` offsets so lap 2+ does not fall
+    through the frontend's gap-filler as implicit asphalt (bug: Cobbled
+    Classic Sectors × 2, Hidden Cruise 47 × 2, and any `lap_route.laps>1`).
+    """
+    if not route_id:
+        return []
+    db = _load_surface_types_db()
+    raw = db.get(route_id) or []
+    if not raw:
+        if distance_km and distance_km > 0:
+            return [{"start_km": 0.0, "end_km": float(distance_km), "surface": "unknown"}]
+        return []
+    base: list[dict] = []
+    for seg in raw:
+        try:
+            s = float(seg.get("start_km", 0.0) or 0.0)
+            e = float(seg.get("end_km", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if e <= s:
+            continue
+        base.append({
+            "start_km": s,
+            "end_km": e,
+            "surface": _canonical_surface(seg.get("surface")),
+        })
+    # Multi-lap tiling (fix29). Only fires when the caller passes a
+    # `lap_route` dict with `laps > 1`; single-lap routes return base as-is.
+    laps = 1
+    base_km = 0.0
+    if isinstance(lap_info, dict):
+        try:
+            laps = int(lap_info.get("laps", 1) or 1)
+        except (TypeError, ValueError):
+            laps = 1
+        try:
+            base_km = float(lap_info.get("base_km", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            base_km = 0.0
+    if laps <= 1 or base_km <= 0:
+        return base
+    # Tile stride: prefer the base segments' own max end_km over
+    # `lap_route.base_km` — authored data sometimes rounds base_km to 2 dp
+    # (e.g. 11.85) while the segment file carries the unrounded value
+    # (11.859), which would overlap lap 1 into lap 2 if we blindly used
+    # base_km as the offset. The surface data is the canonical base.
+    base_end = max(s["end_km"] for s in base) if base else base_km
+    stride = base_end if base_end > 0 else base_km
+    tiled: list[dict] = []
+    for lap_idx in range(laps):
+        offset = lap_idx * stride
+        for seg in base:
+            tiled.append({
+                "start_km": seg["start_km"] + offset,
+                "end_km": seg["end_km"] + offset,
+                "surface": seg["surface"],
+            })
+    return tiled
+
+
+def _build_routes_index(routes: list[dict]) -> dict:
+    """Build inverted indexes for hot filter fields."""
+    by_id: dict[str, dict] = {}
+    by_region: dict[str, list[int]] = {}
+    by_source: dict[str, list[int]] = {}
+    by_category: dict[str, list[int]] = {}
+    by_primary_surface: dict[str, list[int]] = {}
+    by_terrain: dict[str, list[int]] = {}
+    by_finish: dict[str, list[int]] = {}
+    for i, r in enumerate(routes):
+        rid = r.get("id", "")
+        if rid:
+            by_id[rid] = r
+        by_region.setdefault(r.get("region", ""), []).append(i)
+        by_source.setdefault(r.get("source", ""), []).append(i)
+        by_category.setdefault(r.get("category", ""), []).append(i)
+        by_primary_surface.setdefault(r.get("primary_surface", ""), []).append(i)
+        by_terrain.setdefault(r.get("terrain", ""), []).append(i)
+        by_finish.setdefault(r.get("finish_type", ""), []).append(i)
+    return {
+        "by_id": by_id,
+        "by_region": by_region,
+        "by_source": by_source,
+        "by_category": by_category,
+        "by_primary_surface": by_primary_surface,
+        "by_terrain": by_terrain,
+        "by_finish": by_finish,
+    }
+
+
+def _load_routes_v2(force: bool = False) -> tuple[list[dict], dict]:
+    """Load routes.json v2 with mtime-based invalidation.
+
+    Returns (routes, index). Caches indefinitely; reloads on file mtime change.
+    Thread-safe via _ROUTES_LOCK.
+    """
+    global _ROUTES_CACHE, _ROUTES_INDEX, _ROUTES_MTIME
+    if not ROUTE_DATA.exists():
+        return [], {"by_id": {}, "by_region": {}, "by_source": {}, "by_category": {},
+                    "by_primary_surface": {}, "by_terrain": {}, "by_finish": {}}
+    try:
+        mtime = ROUTE_DATA.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    with _ROUTES_LOCK:
+        if force or not _ROUTES_CACHE or mtime != _ROUTES_MTIME:
+            try:
+                data = json.loads(ROUTE_DATA.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as e:
+                _log.error(f"Failed to load routes.json: {e}")
+                return _ROUTES_CACHE, _ROUTES_INDEX
+            # Accept either flat list (v2) or legacy dict shape — normalize.
+            if isinstance(data, list):
+                _ROUTES_CACHE = data
+            else:
+                # Legacy shape: {"worlds": [...]}; flatten best-effort so the
+                # cache never ends up in a broken intermediate state.
+                flat = []
+                for w in (data.get("worlds") if isinstance(data, dict) else []) or []:
+                    for r in w.get("routes", []):
+                        flat.append(r)
+                _ROUTES_CACHE = flat
+            # Attach canonical surface_segments to every route entry so the
+            # list endpoint (/api/routes) and the detail endpoint (/api/routes/{id})
+            # both return the spatial data the mini-map needs. Single point of
+            # truth — delegates to `_route_surface_segments` so malformed
+            # `surface_types.json` entries cannot 500 the whole /api/routes
+            # response (QA-CODE #2: the inline float() parse was unguarded).
+            for _r in _ROUTES_CACHE:
+                rid = _r.get("id")
+                if not rid:
+                    continue
+                _r["surface_segments"] = _route_surface_segments(
+                    rid, _r.get("distance_km"), _r.get("lap_route")
+                )
+            _ROUTES_INDEX = _build_routes_index(_ROUTES_CACHE)
+            _ROUTES_MTIME = mtime
+        return _ROUTES_CACHE, _ROUTES_INDEX
+
+
+# Shared climb/flat predicates so the empty-state hint counter and the main
+# pipeline agree on what "climb required" / "no climbs" mean. Previously these
+# were inline and drifted by ~60 routes. Changes must land here, not in two
+# places.
+_CLIMB_CATEGORIES = {"cat1", "cat2", "cat3", "cat4", "hc"}
+
+
+def _is_climb_route(r: dict) -> bool:
+    """True if the route has real climbing content (not just a single kicker).
+
+    Canonical predicate used by both the main pipeline and the empty-state
+    "would_match" counter. Categories are compared case-insensitively so
+    upstream generators emitting "HC" vs "hc" both register as climbs.
+    """
+    cat = (r.get("category") or "").lower()
+    if cat in _CLIMB_CATEGORIES:
+        return True
+    if (r.get("climb_count") or 0) >= 1 and (r.get("max_grade") or 0) >= 4.0:
+        return True
+    if r.get("terrain") == "climb":
+        return True
+    return False
+
+
+def _is_flat_route(r: dict) -> bool:
+    """True if the route is flat enough for a "no climbs today" request.
+    Loosened from max_grade<5 to max_grade<8 so that flat gravel/cobble
+    sportives (which carry short kickers ≥5%) can still satisfy a flat query."""
+    if r.get("terrain") == "climb":
+        return False
+    if (r.get("max_grade") or 0) >= 8.0:
+        return False
+    return True
+
+
+def _route_summary(r: dict) -> dict:
+    """Project a route entry to the lightweight list shape (no crs_path)."""
+    # Prefer the stored value when present — the prior version unconditionally
+    # recomputed at 23 km/h (Z2 average), which overrode any hand-tuned
+    # duration baked into routes.json. Only fall back to the flat-speed
+    # estimator when the stored field is missing/invalid.
+    stored = r.get("est_duration_min_z2")
+    km = r.get("distance_km") or 0
+    if isinstance(stored, (int, float)) and stored and stored > 0:
+        est_duration_min_z2 = int(round(stored))
+    elif km and km > 0:
+        est_duration_min_z2 = int(round(km / 23.0 * 60))
+    else:
+        est_duration_min_z2 = stored
+    return {
+        "id": r.get("id"),
+        "name": r.get("name"),
+        "region": r.get("region"),
+        "source": r.get("source"),
+        "distance_km": r.get("distance_km"),
+        "climb_m": r.get("climb_m"),
+        "max_grade": r.get("max_grade"),
+        "avg_grade_signed": r.get("avg_grade_signed"),
+        "difficulty_score": r.get("difficulty_score"),
+        "category": r.get("category"),
+        "terrain": r.get("terrain"),
+        "finish_type": r.get("finish_type"),
+        "primary_surface": r.get("primary_surface"),
+        "has_gravel": r.get("has_gravel"),
+        "has_cobble": r.get("has_cobble"),
+        "loop": r.get("loop"),
+        "lap_route": r.get("lap_route"),
+        "est_duration_min_z2": est_duration_min_z2,
+        "est_tss": r.get("est_tss"),
+        "tags": r.get("tags", []),
+        "preview_profile": r.get("preview_profile", []),
+        "climb_count": r.get("climb_count", 0),
+        "surface_mix_pct": r.get("surface_mix_pct") or {},
+        "surface_segments": r.get("surface_segments") or [],
+        "primary_climb": r.get("primary_climb"),
+    }
+
+
+def _parse_csv_param(val) -> list[str]:
+    """Parse a comma-separated query param into a list of lowercase tokens."""
+    if not val:
+        return []
+    if isinstance(val, list):
+        raw = ",".join(val)
+    else:
+        raw = str(val)
+    return [t.strip().lower() for t in raw.split(",") if t.strip()]
+
+
+def _apply_route_filters(
+    routes: list[dict],
+    *,
+    source: str | None = None,
+    regions: list[str] | None = None,
+    surfaces: list[str] | None = None,
+    terrains: list[str] | None = None,
+    categories: list[str] | None = None,
+    finishes: list[str] | None = None,
+    min_km: float | None = None,
+    max_km: float | None = None,
+    loop_only: bool = False,
+    lap_only: bool = False,
+    max_difficulty: float | None = None,
+    search: str | None = None,
+) -> list[dict]:
+    """Apply all filter flags; returns the filtered list (order preserved)."""
+    # Derive the real-world region set from the loaded routes so new regions
+    # (like Flanders) auto-register without needing a hardcoded list update.
+    real_world_regions = {r.get("region") for r in routes
+                          if r.get("source") == "real_world" and r.get("region")}
+    # Accept BOTH the UI-facing token "__real_world__" (returned by
+    # /api/routes/regions.real_world_meta.region) and the short "real_world"
+    # alias for robustness.
+    _REAL_WORLD_TOKENS = {"real_world", "__real_world__"}
+    region_set: set[str] | None = None
+    if regions:
+        expanded: set[str] = set()
+        for reg in regions:
+            if reg in _REAL_WORLD_TOKENS:
+                expanded |= real_world_regions
+            else:
+                expanded.add(reg)
+        region_set = expanded
+
+    surface_set = set(surfaces) if surfaces else None
+    terrain_set = set(terrains) if terrains else None
+    category_set = set(categories) if categories else None
+    finish_set = set(finishes) if finishes else None
+    search_lc = search.lower() if search else None
+
+    out = []
+    for r in routes:
+        if source and source != "any":
+            if r.get("source") != source:
+                continue
+        if region_set is not None and r.get("region") not in region_set:
+            continue
+        if surface_set is not None:
+            ps = (r.get("primary_surface") or "").lower()
+            has_g = r.get("has_gravel")
+            has_c = r.get("has_cobble")
+            # A route matches if its primary_surface is in the filter set OR
+            # if it has gravel/cobble sectors for those tokens respectively.
+            match = ps in surface_set
+            if not match and "gravel" in surface_set and has_g:
+                match = True
+            if not match and "cobble" in surface_set and has_c:
+                match = True
+            if not match:
+                continue
+        if terrain_set is not None and (r.get("terrain") or "").lower() not in terrain_set:
+            continue
+        if category_set is not None and (r.get("category") or "").lower() not in category_set:
+            continue
+        if finish_set is not None and (r.get("finish_type") or "").lower() not in finish_set:
+            continue
+        if min_km is not None and (r.get("distance_km") or 0) < min_km:
+            continue
+        if max_km is not None and (r.get("distance_km") or 0) > max_km:
+            continue
+        if loop_only and not r.get("loop"):
+            continue
+        if lap_only and not r.get("lap_route"):
+            continue
+        if max_difficulty is not None and (r.get("difficulty_score") or 0) > max_difficulty:
+            continue
+        if search_lc and search_lc not in (r.get("name") or "").lower():
+            continue
+        out.append(r)
+    return out
+
+
+@app.get("/api/routes")
+def api_routes(
+    source: str = Query("any"),
+    region: str | None = Query(None),
+    surface: str | None = Query(None),
+    terrain: str | None = Query(None),
+    category: str | None = Query(None),
+    finish: str | None = Query(None),
+    min_km: float | None = Query(None),
+    max_km: float | None = Query(None),
+    loop_only: bool = Query(False),
+    lap_only: bool = Query(False),
+    max_difficulty: float | None = Query(None),
+    search: str | None = Query(None),
+    limit: int = Query(200),
+    offset: int = Query(0),
+):
+    """Unified route list API (v2 schema). Replaces /api/virtual-routes."""
+    routes, _ = _load_routes_v2()
+    limit = max(1, min(int(limit or 200), 1000))
+    offset = max(0, int(offset or 0))
+
+    filtered = _apply_route_filters(
+        routes,
+        source=(source or "any").lower(),
+        regions=_parse_csv_param(region) or None,
+        surfaces=_parse_csv_param(surface) or None,
+        terrains=_parse_csv_param(terrain) or None,
+        categories=_parse_csv_param(category) or None,
+        finishes=_parse_csv_param(finish) or None,
+        min_km=min_km,
+        max_km=max_km,
+        loop_only=bool(loop_only),
+        lap_only=bool(lap_only),
+        max_difficulty=max_difficulty,
+        search=search,
+    )
+    total = len(filtered)
+    page = filtered[offset:offset + limit]
+    return {
+        "total_matching": total,
+        "returned": len(page),
+        "routes": [_route_summary(r) for r in page],
+    }
+
+
+_CAT_WORDS = {
+    "cat5": "gentle territory",
+    "cat4": "hilly territory",
+    "cat3": "serious climbing",
+    "cat2": "big climb day",
+    "cat1": "brutal territory",
+    "hc": "epic mountain day",
+}
+
+
+def _score_route_for_suggest(
+    r: dict,
+    *,
+    d_mid: float,
+    d_half: float,
+    target_diff_mid: float,
+    diff_max: float | None,
+    surface_filter: set[str] | None,
+    finish_filter: set[str] | None,
+) -> tuple[float, str]:
+    """Compute match score (0..1) and a short conversational rationale.
+
+    Improvements vs the naive v1 (per grill B):
+    - Distance decay is quadratic with a 2.5 km floor on d_half so narrow
+      bands still produce a usable ranking curve instead of a cliff.
+    - Difficulty is rescaled against the user's cap (diff_max) and treated
+      as "no preference" when cap is ≥9 so climbs and flats both surface.
+    - Rationale is conversational ("Great fit …") with climb count + grade
+      hints so cards feel less robotic.
+    """
+    actual_km = r.get("distance_km") or 0
+
+    # --- Distance: quadratic decay, floored AND capped half-width.
+    # Floor (2.5) prevents cliff on narrow bands; cap (30) prevents wide
+    # bands like 10-200 km from scoring everything ≈1.0.
+    d_half_eff = max(d_half, 2.5)
+    d_half_eff = min(d_half_eff, 30.0)
+    delta = abs(actual_km - d_mid)
+    if delta >= d_half_eff * 2.0:
+        distance_fit = 0.0
+    else:
+        # Quadratic: 1 - (delta/half)^2, so falloff is gentler near target,
+        # steeper at edges. Hits 0 at 2*half (well outside the hard filter).
+        t = delta / d_half_eff
+        distance_fit = max(0.0, 1.0 - t * t)
+
+    # --- Difficulty: rescaled against user cap, smooth fade toward 1.0
+    # as diff_max approaches 10 ("no preference"). Avoids the hard cliff
+    # that used to flip the whole ranking at diff_max=9.0.
+    diff_score = r.get("difficulty_score") or 0
+    if diff_max is None:
+        difficulty_fit = 1.0
+    else:
+        band = max(1.0, float(diff_max))
+        raw = max(0.0, min(1.0, 1.0 - abs(diff_score - target_diff_mid) / band))
+        fade = max(0.0, min(1.0, (diff_max - 7.0) / 3.0))  # 7→0, 10→1
+        difficulty_fit = raw + (1.0 - raw) * fade
+
+    ps = (r.get("primary_surface") or "").lower()
+    if surface_filter is None:
+        surface_match = 1.0
+    else:
+        # Match if primary surface is selected, OR the route carries a
+        # has_X flag for a selected surface, OR the surface mix has ≥30%
+        # in any selected surface. (Previously only primary_surface was
+        # checked, so a 70%-gravel asphalt-primary route scored 0.5 even
+        # with surface=["gravel"].)
+        mix = r.get("surface_mix_pct") or {}
+        in_primary = ps in surface_filter
+        in_flag = (
+            ("gravel" in surface_filter and r.get("has_gravel")) or
+            ("cobble" in surface_filter and r.get("has_cobble"))
+        )
+        in_mix = any((mix.get(s) or 0) >= 30 for s in surface_filter)
+        # Pure surface match (primary=X when user picked X) outranks a mixed
+        # match by 0.15 so gravel-primary routes top "has_gravel + asphalt-
+        # primary" mixes on a gravel query. Below that, in_flag/in_mix still
+        # rank above outright non-matches.
+        if in_primary:
+            surface_match = 1.0
+        elif in_flag or in_mix:
+            surface_match = 0.85
+        else:
+            surface_match = 0.4
+
+    ft = (r.get("finish_type") or "").lower()
+    if finish_filter is None:
+        finish_match = 1.0
+    else:
+        finish_match = 1.0 if ft in finish_filter else 0.5
+
+    score = (
+        0.50 * distance_fit
+        + 0.25 * difficulty_fit
+        + 0.10 * surface_match
+        + 0.15 * finish_match
+    )
+
+    # --- Rationale: conversational + differential
+    km_txt = f"{round(actual_km)} km"
+    climb_m = int(r.get("climb_m") or 0)
+    climb_count = int(r.get("climb_count") or 0)
+    max_grade = float(r.get("max_grade") or 0)
+    cat = (r.get("category") or "").lower()
+    pieces = []
+    # Distance framing
+    if delta <= 2.0:
+        pieces.append(f"spot on your {km_txt} target")
+    elif delta <= d_half_eff:
+        pieces.append(f"close to your target ({km_txt})")
+    else:
+        pieces.append(f"{km_txt} ride")
+    # Climb framing
+    if climb_count >= 3 and max_grade >= 8:
+        pieces.append(f"{climb_count} real climbs, max {max_grade:.0f}%")
+    elif climb_m >= 300:
+        pieces.append(f"{climb_m} m of climbing")
+    elif cat in ("flat",) and climb_m < 150:
+        pieces.append("mostly flat")
+    elif cat and cat != "flat":
+        # Map internal category tokens to human words so users don't see
+        # "cat5 territory" on cards.
+        pieces.append(_CAT_WORDS.get(cat, f"{cat} territory"))
+    # Surface framing (only call out when user selected it)
+    if surface_filter and ps in surface_filter:
+        pieces.append(f"{ps} as requested")
+    elif ps in ("gravel", "cobble"):
+        pieces.append(f"{ps} surface")
+    # Combine — keep it under ~14 words
+    sentence = "Good fit: " + ", ".join(pieces[:3]) + "."
+    # Use the SAME recomputed Z2 pace as the summary (23 km/h) so the card
+    # and the rationale agree. Previously the rationale quoted the stored
+    # field, which diverged from the summary's recomputed value for ~60% of
+    # routes and caused "64 min" on the card next to "~81 min at Z2" in the
+    # sentence. We derive here from distance rather than reading the summary
+    # because the scorer predates the projection step.
+    if actual_km > 0:
+        recomputed_min = int(round(actual_km / 23.0 * 60))
+        diff_tail = f" {diff_score:.1f}/10 difficulty · ~{recomputed_min} min at Z2."
+    else:
+        diff_tail = f" {diff_score:.1f}/10 difficulty."
+    return round(score, 3), sentence + diff_tail
+
+
+@app.post("/api/routes/suggest")
+async def api_routes_suggest(request: Request):
+    """Rank + return top N routes matching user picker input."""
+    body = await _get_json_body(request)
+
+    d = body.get("distance_km") or {}
+    d_min = float(d.get("min", 0)) if isinstance(d, dict) else 0.0
+    d_max = float(d.get("max", 0)) if isinstance(d, dict) else 0.0
+    if d_max <= 0:
+        d_max = max(d_min, 200.0)  # default wide upper bound
+    d_mid = (d_min + d_max) / 2.0
+    d_half = max(0.0, (d_max - d_min) / 2.0)
+    # Relax ±1 km for point targets so the hard filter at _apply_route_filters
+    # doesn't kill everything before the graceful distance decay runs.
+    _hard_min = (d_min - 1.0) if (d_min == d_max and d_min > 0) else (d_min if d_min > 0 else None)
+    _hard_max = (d_max + 1.0) if (d_min == d_max and d_max > 0) else (d_max if d_max > 0 else None)
+
+    # Climb-meters range — new in v1.5 (replaces "climbs mode" tri-chip +
+    # "max difficulty" slider with a direct elevation-gain window).
+    cm = body.get("climb_m") or {}
+    climb_min: float | None = None
+    climb_max: float | None = None
+    if isinstance(cm, dict):
+        try:
+            climb_min = float(cm["min"]) if cm.get("min") is not None else None
+        except (TypeError, ValueError):
+            climb_min = None
+        try:
+            climb_max = float(cm["max"]) if cm.get("max") is not None else None
+        except (TypeError, ValueError):
+            climb_max = None
+
+    climbs_mode = (body.get("climbs") or "include_any_climb").lower()
+    difficulty_max = body.get("difficulty_max")
+    try:
+        difficulty_max = float(difficulty_max) if difficulty_max is not None else None
+    except (TypeError, ValueError):
+        difficulty_max = None
+
+    surface_list = body.get("surface")
+    surface_filter: set[str] | None = None
+    if isinstance(surface_list, list) and surface_list:
+        surface_filter = {str(s).lower() for s in surface_list}
+
+    finish_list = body.get("finish")
+    finish_filter: set[str] | None = None
+    if isinstance(finish_list, list) and finish_list:
+        finish_filter = {str(s).lower() for s in finish_list}
+
+    regions_list = body.get("regions")
+    region_filter: list[str] | None = None
+    if isinstance(regions_list, list) and regions_list:
+        region_filter = [str(r).lower() for r in regions_list]
+
+    loop_only = bool(body.get("loop_only", False))
+    max_results = int(body.get("max_results") or 5)
+    max_results = max(1, min(max_results, 50))
+
+    routes, _ = _load_routes_v2()
+
+    # Stage 1: hard filters
+    candidates = _apply_route_filters(
+        routes,
+        regions=region_filter,
+        surfaces=list(surface_filter) if surface_filter else None,
+        finishes=list(finish_filter) if finish_filter else None,
+        min_km=_hard_min,
+        max_km=_hard_max,
+        loop_only=loop_only,
+    )
+
+    # Stage 2: climbs mode — delegated to module-level predicates so the
+    # empty-state `_count(drop)` helper stays in lockstep (grill caught drift).
+    if climbs_mode == "exclude":
+        candidates = [r for r in candidates if _is_flat_route(r)]
+    elif climbs_mode == "climb_required":
+        candidates = [r for r in candidates if _is_climb_route(r)]
+    # else include_any_climb → no extra constraint
+
+    # Stage 2b: climb-meters range (v1.5 primary climb filter)
+    if climb_min is not None:
+        candidates = [r for r in candidates if (r.get("climb_m") or 0) >= climb_min]
+    if climb_max is not None:
+        candidates = [r for r in candidates if (r.get("climb_m") or 0) <= climb_max]
+
+    # Stage 3: difficulty_max (legacy; UI no longer emits this as of v1.5
+    # but the scorer still honours it when sent by older clients or tests)
+    if difficulty_max is not None:
+        candidates = [r for r in candidates
+                      if (r.get("difficulty_score") or 0) <= difficulty_max]
+
+    # Stage 4: rank
+    target_diff_mid = (difficulty_max / 2.0) if difficulty_max else 5.0
+    scored = []
+    for r in candidates:
+        sc, rat = _score_route_for_suggest(
+            r,
+            d_mid=d_mid,
+            d_half=d_half,
+            target_diff_mid=target_diff_mid,
+            diff_max=difficulty_max,
+            surface_filter=surface_filter,
+            finish_filter=finish_filter,
+        )
+        scored.append((sc, rat, r))
+    # Compound sort: primary = score descending, tiebreaker = distance
+    # proximity to user midpoint ascending, final tiebreaker = route id.
+    # Without this, wide-band queries (10-200 km, no other filters) tie
+    # 4-8 routes at 1.0 and ordering collapses to file-insertion order.
+    def _rank_key(triple):
+        sc, _rat, r = triple
+        km = r.get("distance_km") or 0
+        rid = r.get("id") or ""
+        return (-sc, abs(km - d_mid), rid)
+    scored.sort(key=_rank_key)
+
+    # Stage 5: regional diversity pass. If more than `max_per_region` routes
+    # from the same region would sit in the accepted window, demote extras by
+    # -0.08 so top-N doesn't get dominated by whichever region has the most
+    # routes. Re-sort with the SAME compound key so tiebreakers stay stable.
+    max_per_region = 2
+    region_seen: dict[str, int] = {}
+    reranked: list[tuple[float, str, dict]] = []
+    for sc, rat, r in scored:
+        reg = (r.get("region") or "").lower()
+        count = region_seen.get(reg, 0)
+        if count >= max_per_region:
+            sc = max(0.0, round(sc - 0.08, 3))
+        reranked.append((sc, rat, r))
+        region_seen[reg] = count + 1
+    reranked.sort(key=_rank_key)
+    top = reranked[:max_results]
+
+    # Empty-state hint (grill C #6): if we have zero matches, figure out which
+    # single filter, when dropped, would yield the most results. Gives the UI a
+    # "Drop the summit finish to see 14 routes" one-click recovery.
+    empty_hint: dict | None = None
+    if not top:
+        def _count(drop: str) -> int:
+            rr = routes
+            rr = _apply_route_filters(
+                rr,
+                regions=None if drop == "regions" else region_filter,
+                surfaces=None if drop == "surface" else (list(surface_filter) if surface_filter else None),
+                finishes=None if drop == "finish" else (list(finish_filter) if finish_filter else None),
+                min_km=None if drop == "distance" else _hard_min,
+                max_km=None if drop == "distance" else _hard_max,
+                loop_only=False if drop == "loop" else loop_only,
+            )
+            # Re-apply climb stage unless dropping it. Shares the helpers with
+            # the main pipeline so the "would_match" count never drifts.
+            if drop != "climbs":
+                if climbs_mode == "exclude":
+                    rr = [r for r in rr if _is_flat_route(r)]
+                elif climbs_mode == "climb_required":
+                    rr = [r for r in rr if _is_climb_route(r)]
+            # Climb-meters range unless dropping it
+            if drop != "climb":
+                if climb_min is not None:
+                    rr = [r for r in rr if (r.get("climb_m") or 0) >= climb_min]
+                if climb_max is not None:
+                    rr = [r for r in rr if (r.get("climb_m") or 0) <= climb_max]
+            # Difficulty stage unless dropping it
+            if drop != "difficulty" and difficulty_max is not None:
+                rr = [r for r in rr if (r.get("difficulty_score") or 0) <= difficulty_max]
+            return len(rr)
+
+        candidates_to_drop = []
+        if d_min > 0 or d_max > 0:
+            candidates_to_drop.append(("distance", "the distance range"))
+        # Climb range counts as "set" if it's tighter than the widget defaults
+        # (0–4000 m). A full-width request means the user didn't constrain it.
+        climb_set = (climb_min is not None and climb_min > 0) or (climb_max is not None and climb_max < 4000)
+        if climb_set:
+            candidates_to_drop.append(("climb", "the climb-meters range"))
+        if surface_filter and len(surface_filter) < 3:
+            candidates_to_drop.append(("surface", "the surface filter"))
+        if finish_filter and len(finish_filter) < 4:
+            candidates_to_drop.append(("finish", "the finish-type filter"))
+        if climbs_mode != "include_any_climb":
+            candidates_to_drop.append(("climbs", "the climbs filter"))
+        if difficulty_max is not None and difficulty_max < 9:
+            candidates_to_drop.append(("difficulty", "the difficulty cap"))
+        if region_filter:
+            candidates_to_drop.append(("regions", "the region filter"))
+        if loop_only:
+            candidates_to_drop.append(("loop", "the loop-only filter"))
+        if candidates_to_drop:
+            options = [(name, label, _count(name)) for name, label in candidates_to_drop]
+            options.sort(key=lambda x: -x[2])
+            best = options[0]
+            if best[2] > 0:
+                empty_hint = {
+                    "filter": best[0],
+                    "filter_label": best[1],
+                    "would_match": best[2],
+                }
+
+    resp: dict = {
+        "count": len(top),
+        "filters_applied": {
+            "distance_km": {"min": d_min, "max": d_max},
+            "climb_m": {"min": climb_min, "max": climb_max},
+            "climbs": climbs_mode,
+            "difficulty_max": difficulty_max,
+            "surface": sorted(surface_filter) if surface_filter else None,
+            "finish": sorted(finish_filter) if finish_filter else None,
+            "regions": region_filter,
+            "loop_only": loop_only,
+            "max_results": max_results,
+        },
+        "results": [
+            {"route": _route_summary(r), "match_score": sc, "rationale": rat}
+            for sc, rat, r in top
+        ],
+    }
+    if empty_hint:
+        resp["empty_hint"] = empty_hint
+    return resp
+
+
+def _top_archetypes_for_region(routes_in_region: list[dict], n: int = 5) -> list[str]:
+    """Return up to N representative tags for a region (most common first)."""
+    from collections import Counter
+    tag_counts: Counter[str] = Counter()
+    for r in routes_in_region:
+        for t in r.get("tags", []) or []:
+            tag_counts[t] += 1
+    return [t for t, _ in tag_counts.most_common(n)]
+
+
+@app.get("/api/routes/regions")
+def api_routes_regions():
+    """Region cards (virtual worlds) + real_world_meta with per-region counts."""
+    routes, index = _load_routes_v2()
+
+    worlds: list[dict] = []
+    for virt_region in ("blue_ridge", "iron_pass", "desert_loop"):
+        idxs = index["by_region"].get(virt_region, [])
+        virt_routes = [routes[i] for i in idxs]
+        char = WORLD_CHARACTER.get(virt_region, {})
+        worlds.append({
+            "region": virt_region,
+            "source": "virtual",
+            "count": len(virt_routes),
+            "emoji": char.get("emoji", ""),
+            "title": char.get("title", REGION_TITLES.get(virt_region, virt_region)),
+            "blurb": char.get("blurb", ""),
+            # Use curated WORLD_CHARACTER tags (rolling/cobble/gravel/cat4/lap) —
+            # data-derived tags surface "flat"/"none"/"asphalt" which is noisy.
+            "sample_tags": char.get("tags", []) or _top_archetypes_for_region(virt_routes, 5),
+        })
+
+    # Real-world meta
+    rw_routes = [r for r in routes if r.get("source") == "real_world"]
+    rw_region_counts: dict[str, int] = {}
+    for r in rw_routes:
+        reg = r.get("region", "other")
+        rw_region_counts[reg] = rw_region_counts.get(reg, 0) + 1
+
+    rw_char = WORLD_CHARACTER["__real_world__"]
+    rw_regions_list = sorted(
+        [
+            {"region": reg, "count": cnt, "title": REGION_TITLES.get(reg, reg)}
+            for reg, cnt in rw_region_counts.items()
+        ],
+        key=lambda x: -x["count"],
+    )
+
+    real_world_meta = {
+        "region": "__real_world__",
+        "emoji": rw_char["emoji"],
+        "title": rw_char["title"],
+        "blurb": rw_char["blurb"],
+        "sample_tags": rw_char.get("tags", []) or _top_archetypes_for_region(rw_routes, 5),
+        "count": len(rw_routes),
+        "regions": rw_regions_list,
+    }
+
+    return {"worlds": worlds, "real_world_meta": real_world_meta}
+
+
+@app.get("/api/routes/surfaces")
+def api_routes_surfaces():
+    """Return surface filter counts across the full route list."""
+    routes, _ = _load_routes_v2()
+    counts = {"asphalt": 0, "gravel": 0, "cobble": 0, "has_gravel": 0, "has_cobble": 0}
+    for r in routes:
+        ps = r.get("primary_surface") or ""
+        if ps in counts:
+            counts[ps] += 1
+        if r.get("has_gravel"):
+            counts["has_gravel"] += 1
+        if r.get("has_cobble"):
+            counts["has_cobble"] += 1
+    return counts
+
+
+@app.get("/api/routes/{route_id:path}")
+def api_route_detail(route_id: str):
+    """Return the full v2 entry for a route (including crs_path)."""
+    from urllib.parse import unquote
+    rid = unquote(route_id or "")
+    _, index = _load_routes_v2()
+    r = index.get("by_id", {}).get(rid)
+    if not r:
+        raise HTTPException(status_code=404, detail=f"Route not found: {rid}")
+    return r
+
+
+@app.get("/api/virtual-routes")
+def api_virtual_routes(world: str = Query(None)):
+    """Stable alias for the virtual-route slice of /api/routes.
+
+    v3.6.0-fix33d-log-hygiene: the previous "deprecated" warning was
+    removed because the frontend still depends on this endpoint's
+    flat-list shape (dashboard.html loadVirtualRoutes / loadAllRoutes)
+    and there is no scheduled cutover date — the warning was pure noise
+    firing on every cold start. The endpoint remains a thin adapter
+    over ``_load_routes_v2`` + the virtual-source filter, so the v2
+    route store stays the single source of truth.
+    """
+    routes, index = _load_routes_v2()
+    virt = [r for r in routes if r.get("source") == "virtual"]
+    if world:
+        w_lower = world.lower()
+        virt = [r for r in virt if (r.get("region") or "").lower() == w_lower
+                or (REGION_TITLES.get(r.get("region", ""), "")).lower() == w_lower]
+
+    world_names = []
+    seen = set()
+    for r in virt:
+        nm = REGION_TITLES.get(r.get("region", ""), r.get("region", ""))
+        if nm and nm not in seen:
+            seen.add(nm)
+            world_names.append(nm)
+
+    shaped = []
+    for r in virt:
+        reg = r.get("region", "")
+        shaped.append({
+            **r,
+            "world": REGION_TITLES.get(reg, reg),
+            "world_slug": reg,
+            "slug": (r.get("id", "").split("/", 1)[1] if "/" in r.get("id", "") else r.get("id", "")),
+            "url": r.get("id", ""),
+            "km": r.get("distance_km", 0),
+            "climb": r.get("climb_m", 0),
+            "avg_grad": r.get("avg_grade_signed", 0),
+            "difficulty": str(r.get("difficulty_score", "")),
+        })
+    return {"worlds": world_names, "routes": shaped, "total": len(shaped)}
+
+
+def _route_profile_points(lat_lon_grade: list) -> list[dict]:
+    """Convert [[lat,lon,grade],...] to [{d, e, g},...] for elevProfile rendering."""
+    from geodesy import haversine
+    if not lat_lon_grade or len(lat_lon_grade) < 2:
+        return []
+
+    points = []
+    cum_dist_km = 0.0
+    cum_ele = 0.0
+    for i, pt in enumerate(lat_lon_grade):
+        if len(pt) < 3:
+            continue
+        lat, lon, grade = pt[0], pt[1], pt[2]
+        grade = max(-45, min(45, grade))  # cap to realistic range
+        if i > 0:
+            prev = lat_lon_grade[i - 1]
+            d_m = haversine((prev[0], prev[1]), (lat, lon))  # metres
+            d_km = d_m / 1000.0
+            cum_dist_km += d_km
+            cum_ele += d_m * grade / 100.0  # elevation change in metres
+        points.append({"d": round(cum_dist_km, 3), "e": round(cum_ele, 1), "g": round(grade, 1)})
+
+    # Downsample to max 200 points
+    if len(points) > 200:
+        step = max(1, len(points) // 200)
+        sampled = [points[i] for i in range(0, len(points), step)]
+        if sampled[-1] != points[-1]:
+            sampled.append(points[-1])
+        return sampled
+    return points
+
+
+def _load_route_index() -> dict:
+    """Load compact pre-indexed virtual route profiles (~1MB, loaded once)."""
+    return cached("route_index", lambda: (
+        json.loads(ROUTE_PROFILES_INDEX.read_text(encoding="utf-8"))
+        if ROUTE_PROFILES_INDEX.exists() else {}
+    ), ttl=3600)
+
+
+def _load_route_detail(url: str) -> dict | None:
+    """Load full route data from individual file (for detail modal).
+
+    Profile files are named ``<world>__<slug>.json`` (see
+    ``generate_route_profiles.py``). The frontend may pass several URL shapes,
+    so we try them all:
+
+    * ``<world>/<slug>``                      (new canonical form)
+    * ``virtual/<world>/<file>.crs``          (CRS path for virtual worlds)
+    * ``<region>/<File Name>.crs``            (CRS path for real-world rides)
+    * ``/climb-portal/<slug>`` or ``/route/<world>/<slug>``  (legacy)
+    * bare ``<slug>``                         (last resort)
+    """
+    if not url:
+        return None
+    # Strip query strings / fragments and sanitise
+    url = url.split("?", 1)[0].split("#", 1)[0].strip()
+    clean = url.replace("..", "").replace("\\", "/").strip("/")
+    parts = [p for p in clean.split("/") if p]
+    if not parts:
+        return None
+
+    last = parts[-1]
+    # Strip file extension, if any
+    last_stem = last.rsplit(".", 1)[0] if "." in last else last
+
+    # Build candidate (world, slug) pairs to try, in priority order.
+    candidates: list[tuple[str, str]] = []
+
+    # Legacy: "climb-portal/<slug>" anywhere in path
+    if "climb-portal" in parts:
+        candidates.append(("climb-portal", last_stem))
+
+    # Virtual routes: "virtual/<world>/<world>__<slug>.crs"
+    if len(parts) >= 3 and parts[0] == "virtual":
+        world = parts[1]
+        slug = last_stem.split("__", 1)[1] if "__" in last_stem else _slugify_route_name(last_stem)
+        candidates.append((world, slug))
+
+    # Legacy "/route/<world>/<slug>"
+    if "route" in parts:
+        try:
+            idx = parts.index("route")
+            if idx + 2 < len(parts):
+                candidates.append((parts[idx + 1], parts[idx + 2]))
+        except ValueError:
+            pass
+
+    # New canonical form: "<world>/<slug>" (exact match to index keys)
+    if len(parts) == 2:
+        candidates.append((parts[0], parts[1]))
+
+    # CRS path for real-world rides: "<region>/<File Name>.crs"
+    if len(parts) >= 2:
+        world = parts[-2]
+        # When the filename embeds "<world>__<slug>" use that slug directly,
+        # otherwise slugify the whole stem (matches generate_route_profiles.py).
+        if "__" in last_stem:
+            slug = last_stem.split("__", 1)[1]
+        else:
+            slug = _slugify_route_name(last_stem)
+        candidates.append((world, slug))
+
+    # Bare slug (no world): fall back to any file whose stem contains the slug.
+    # Handled after the direct lookups below.
+
+    seen: set[tuple[str, str]] = set()
+    for world, slug in candidates:
+        if not world or not slug:
+            continue
+        # Sanitise — files are on disk so block traversal
+        world_safe = re.sub(r"[^A-Za-z0-9_\-]", "", world)
+        slug_safe = re.sub(r"[^A-Za-z0-9_\-]", "", slug)
+        key = (world_safe, slug_safe)
+        if key in seen:
+            continue
+        seen.add(key)
+        path = ROUTE_PROFILES_DIR / f"{world_safe}__{slug_safe}.json"
+        if path.exists():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    # Fallback: scan for any profile whose filename contains the last slug.
+    # This handles ambiguous inputs like a bare slug with no world prefix.
+    if last_stem and ROUTE_PROFILES_DIR.exists():
+        # If the bare stem is itself "<world>__<slug>", split on the first
+        # "__" and try that pair directly.
+        if "__" in last_stem:
+            world_guess, slug_guess = last_stem.split("__", 1)
+            world_safe = re.sub(r"[^A-Za-z0-9_\-]", "", world_guess).replace("-", "_")
+            slug_safe = re.sub(r"[^A-Za-z0-9_\-]", "", slug_guess)
+            path = ROUTE_PROFILES_DIR / f"{world_safe}__{slug_safe}.json"
+            if path.exists():
+                try:
+                    return json.loads(path.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    pass
+        fallback_slug = _slugify_route_name(last_stem)
+        if fallback_slug:
+            needle = f"__{fallback_slug}.json"
+            for candidate in ROUTE_PROFILES_DIR.glob(f"*{needle}"):
+                try:
+                    return json.loads(candidate.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    continue
+    return None
+
+
+@app.get("/api/profiles-bulk")
+def api_profiles_bulk():
+    """Return ALL pre-indexed elevation profiles (~1MB). Frontend caches this once."""
+    return _load_route_index()
+
+
+@app.get("/api/route-profile")
+def api_route_profile(url: str = Query(...)):
+    """Return full route detail (elevation profile + coordinates) from individual file."""
+    route_data = _load_route_detail(url)
+    if not route_data:
+        return JSONResponse({"error": "Route not scraped yet"}, 404)
+
+    # Preferred: profile files written by generate_route_profiles.py carry a
+    # ready-to-render `profile` list of {d, e, g}. Fall back to legacy shapes
+    # (lat_lon_grade / profile_points) for any older scraped data.
+    profile = route_data.get("profile") or []
+    lat_lon_grade = route_data.get("lat_lon_grade", [])
+    lat_lon = route_data.get("lat_lon", [])
+    profile_points = route_data.get("profile_points", [])
+
+    if profile:
+        points = profile
+    elif lat_lon_grade:
+        points = _route_profile_points(lat_lon_grade)
+    elif profile_points:
+        # Climb portal: profile_points have {e, g} — need to add distance
+        # Use the indexed profile which already has distance computed
+        idx = _load_route_index()
+        indexed = idx.get(url)
+        points = indexed.get("points", []) if indexed else []
+    else:
+        points = []
+
+    if not points:
+        return JSONResponse({"error": "No profile data"}, 404)
+
+    total_climb = sum(max(0, points[i]["e"] - points[i-1]["e"]) for i in range(1, len(points)))
+    total_descent = sum(max(0, points[i-1]["e"] - points[i]["e"]) for i in range(1, len(points)))
+    max_grad = max((abs(p["g"]) for p in points), default=0)
+
+    # Include route_shape SVG data if available (climb portals)
+    route_shape = route_data.get("route_shape")
+
+    return {
+        "points": points,
+        "lat_lon": lat_lon,
+        "route_shape": route_shape,
+        "total_km": round(points[-1]["d"], 1) if points else 0,
+        "total_climb": round(total_climb),
+        "total_descent": round(total_descent),
+        "max_gradient": round(max_grad, 1),
+        "min_ele": round(min(p["e"] for p in points), 1),
+        "max_ele": round(max(p["e"] for p in points), 1),
+    }
+
+
+def _gradient_to_power_factor(grade_pct: float) -> float:
+    """Map a terrain gradient (%) to a fraction of FTP for climb-ZWO generation.
+
+    Single source of truth — previously duplicated byte-for-byte between the CRS
+    and virtual-route climb ZWO builders.
+    """
+    if grade_pct >= 10: return 0.95
+    if grade_pct >= 7:  return 0.90
+    if grade_pct >= 5:  return 0.85
+    if grade_pct >= 3:  return 0.75
+    if grade_pct >= 1:  return 0.68
+    if grade_pct >= -2: return 0.60
+    return 0.50
+
+
+def _build_climb_zwo(points: list[dict], course_name: str, warmup_min: int = 10) -> str:
+    """Generate ZWO XML string from profile points. Shared by CRS and virtual routes."""
+    ftp = config.ATHLETE_FTP_W
+    total_dist = points[-1]["d"] if points else 0
+    total_climb = sum(max(0, points[i]["e"] - points[i-1]["e"]) for i in range(1, len(points)))
+
+    segments_xml = ""
+    if warmup_min > 0:
+        segments_xml += f'    <Warmup Duration="{warmup_min * 60}" PowerLow="0.45" PowerHigh="0.65"/>\n'
+
+    num_segs = min(40, max(10, len(points) // 5))
+    seg_step = max(1, len(points) // num_segs)
+
+    for i in range(0, len(points) - seg_step, seg_step):
+        j = min(i + seg_step, len(points) - 1)
+        dist_km = points[j]["d"] - points[i]["d"]
+        if dist_km <= 0:
+            continue
+        avg_grad = sum(points[k]["g"] for k in range(i, j + 1)) / (j - i + 1)
+
+        power_pct = _gradient_to_power_factor(avg_grad)
+
+        if avg_grad >= 5:    speed_kmh = max(8, 20 - avg_grad * 1.2)
+        elif avg_grad >= 0:  speed_kmh = 25
+        else:                speed_kmh = min(45, 25 - avg_grad * 2)
+
+        duration_sec = max(30, int(dist_km / speed_kmh * 3600))
+        segments_xml += f'    <SteadyState Duration="{duration_sec}" Power="{power_pct:.2f}"/>\n'
+
+    segments_xml += '    <Cooldown Duration="300" PowerLow="0.40" PowerHigh="0.60"/>\n'
+
+    from xml.sax.saxutils import escape as xml_escape
+    desc = f"Climb simulation: {course_name}. {total_dist:.1f}km, {total_climb:.0f}m elevation."
+    if warmup_min > 0:
+        desc = f"{warmup_min}min warmup + {desc}"
+
+    return f"""<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+  <author>Domestique</author>
+  <name>{xml_escape(course_name)}</name>
+  <description>{xml_escape(desc)}</description>
+  <sportType>bike</sportType>
+  <workout>
+{segments_xml}  </workout>
+</workout_file>"""
+
+
+@app.get("/api/climb-workout")
+def api_climb_workout(url: str = Query(...), warmup: int = Query(10)):
+    """Generate a ZWO workout from a virtual route profile."""
+    route_data = _load_route_detail(url)
+    if not route_data:
+        return JSONResponse({"error": "Route not scraped yet"}, 404)
+
+    points = _route_profile_points(route_data.get("lat_lon_grade", []))
+    if len(points) < 2:
+        return JSONResponse({"error": "Not enough profile data"}, 400)
+
+    # Extract route name from URL
+    route_name = url.rstrip("/").split("/")[-1].replace("-", " ").title()
+    zwo_xml = _build_climb_zwo(points, route_name, warmup)
+
+    from fastapi.responses import Response
+    safe_name = route_name.replace('"', '_')
+    return Response(
+        content=zwo_xml,
+        media_type="application/xml",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}.zwo"'},
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DOWNLOAD APIs
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _safe_path(base: Path, *parts: str) -> Path | None:
+    """Resolve path and verify it's inside the base directory (prevent traversal + symlink escape)."""
+    try:
+        path = base.joinpath(*parts).resolve()
+        base_resolved = base.resolve()
+        # Use is_relative_to (Python 3.9+) for robust check
+        if hasattr(path, 'is_relative_to'):
+            if not path.is_relative_to(base_resolved):
+                return None
+        else:
+            # Fallback: string prefix with trailing separator
+            if not (str(path) + "/").startswith(str(base_resolved) + "/"):
+                return None
+        return path
+    except (ValueError, OSError):
+        return None
+
+
+@app.get("/api/download/zwo/{category}/{filename}")
+def download_zwo(category: str, filename: str):
+    # Flat layout first, legacy category/file fallback
+    path = _safe_path(WORKOUT_DIR, filename)
+    if not path or not path.exists():
+        path = _safe_path(WORKOUT_DIR, category, filename)
+    if not path or not path.exists():
+        return JSONResponse({"error": "not found"}, 404)
+    return FileResponse(path, filename=filename, media_type="application/xml")
+
+
+@app.get("/api/climb-zwo/{region}/{filename}")
+def api_climb_zwo(region: str, filename: str, warmup: int = Query(10)):
+    """Generate a ZWO workout from a climb profile, optionally with warmup."""
+    # Get course profile
+    profile = api_course_profile(region, filename)
+    if isinstance(profile, dict) and profile.get("error"):
+        return JSONResponse({"error": profile["error"]}, 404)
+    points = profile.get("points", [])
+    if len(points) < 2:
+        return JSONResponse({"error": "Not enough profile data"}, 400)
+
+    ftp = config.ATHLETE_FTP_W
+    course_name = filename.rsplit(".", 1)[0]
+    total_dist = points[-1]["d"]
+    total_climb = sum(
+        max(0, points[i]["e"] - points[i - 1]["e"])
+        for i in range(1, len(points))
+    )
+
+    # Build ZWO segments from gradient profile
+    # Group into ~500m segments and map gradient to power
+    segments_xml = ""
+    if warmup > 0:
+        warmup_sec = warmup * 60
+        segments_xml += f'    <Warmup Duration="{warmup_sec}" PowerLow="0.45" PowerHigh="0.65"/>\n'
+
+    # Sample profile into ~20-40 segments for the ZWO
+    num_segs = min(40, max(10, len(points) // 5))
+    seg_step = max(1, len(points) // num_segs)
+
+    for i in range(0, len(points) - seg_step, seg_step):
+        j = min(i + seg_step, len(points) - 1)
+        dist_km = points[j]["d"] - points[i]["d"]
+        if dist_km <= 0:
+            continue
+        avg_grad = sum(points[k]["g"] for k in range(i, j + 1)) / (j - i + 1)
+
+        # Map gradient to power (% FTP)
+        power_pct = _gradient_to_power_factor(avg_grad)
+
+        # Estimate duration: assume ~15km/h uphill, ~30km/h flat, ~40km/h downhill
+        if avg_grad >= 5:
+            speed_kmh = max(8, 20 - avg_grad * 1.2)
+        elif avg_grad >= 0:
+            speed_kmh = 25
+        else:
+            speed_kmh = min(45, 25 - avg_grad * 2)
+
+        duration_sec = max(30, int(dist_km / speed_kmh * 3600))
+        segments_xml += f'    <SteadyState Duration="{duration_sec}" Power="{power_pct:.2f}"/>\n'
+
+    # Cooldown
+    segments_xml += '    <Cooldown Duration="300" PowerLow="0.40" PowerHigh="0.60"/>\n'
+
+    from xml.sax.saxutils import escape as xml_escape
+    desc = f"Climb simulation: {course_name}. {total_dist:.1f}km, {total_climb:.0f}m elevation."
+    if warmup > 0:
+        desc = f"{warmup}min warmup + {desc}"
+
+    zwo_xml = f"""<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+  <author>Domestique</author>
+  <name>{xml_escape(course_name)}</name>
+  <description>{xml_escape(desc)}</description>
+  <sportType>bike</sportType>
+  <workout>
+{segments_xml}  </workout>
+</workout_file>"""
+
+    from fastapi.responses import Response
+    return Response(
+        content=zwo_xml,
+        media_type="application/xml",
+        headers={"Content-Disposition": f'attachment; filename="{course_name.replace(chr(34), "_")}.zwo"'},
+    )
+
+
+@app.get("/api/download/crs/{region}/{filename}")
+def download_crs(region: str, filename: str):
+    path = _safe_path(COURSE_DIR, region, filename)
+    if not path or not path.exists():
+        # Virtual routes live under courses/virtual/<region>/<filename>
+        path = _safe_path(COURSE_DIR, "virtual", region, filename)
+    if not path or not path.exists():
+        return JSONResponse({"error": "not found"}, 404)
+    return FileResponse(path, filename=filename, media_type="text/plain")
+
+
+@app.get("/api/course/{region}/{filename}/download")
+def download_course_by_id(region: str, filename: str):
+    """Serve a CRS course file as a download attachment.
+
+    v4.0.0-alpha: IMPL-B's route-picker calls this URL pattern. The earlier
+    /api/download/crs/<region>/<filename> route is kept for backward compat.
+    """
+    path = _safe_path(COURSE_DIR, region, filename)
+    if not path or not path.exists():
+        path = _safe_path(COURSE_DIR, "virtual", region, filename)
+    if not path or not path.exists():
+        return JSONResponse({"error": "not found"}, 404)
+    return FileResponse(
+        path,
+        filename=filename,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/download/gpx/{region}/{filename}")
+def download_gpx(region: str, filename: str):
+    path = _safe_path(GPX_DIR, region, filename)
+    if not path or not path.exists():
+        return JSONResponse({"error": "not found"}, 404)
+    return FileResponse(path, filename=filename, media_type="application/gpx+xml")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SETTINGS & FTP
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _tail_lines(p: Path, n: int = 2000) -> list[str]:
+    """Return the last *n* lines of file *p* without loading it entirely.
+
+    Seeks backwards in 4 KB blocks so a multi-megabyte log doesn't pin its
+    full content in RAM (the previous `read_text().splitlines()[-n:]` on
+    a noisy long-running session could easily exceed 50 MB). The final
+    decode tolerates partial multi-byte sequences via `errors="replace"`.
+    """
+    with p.open("rb") as f:
+        f.seek(0, 2)
+        size = f.tell()
+        if size == 0:
+            return []
+        block = 4096
+        data = b""
+        while f.tell() > 0 and data.count(b"\n") <= n:
+            back = min(block, f.tell())
+            f.seek(-back, 1)
+            data = f.read(back) + data
+            f.seek(-back, 1)
+        return data.decode("utf-8", "replace").splitlines()[-n:]
+
+
+@app.get("/api/logs")
+def api_logs(lines: int = Query(100)):
+    """Return last N lines of the log file for debugging.
+
+    Hard-capped at 2000 lines via seek-from-end tailing so that a bloated
+    log file (many MB) can't OOM the process when the debug viewer opens.
+    """
+    log_path = Path.home() / ".domestique" / "logs" / "domestique.log"
+    if not log_path.exists():
+        return {"lines": [], "path": str(log_path), "exists": False}
+    try:
+        cap = min(max(1, lines), 2000)
+        tail = _tail_lines(log_path, n=cap)
+        return {
+            "lines": tail,
+            "total": len(tail),
+            "path": str(log_path),
+            "size_kb": round(log_path.stat().st_size / 1024, 1),
+            "exists": True,
+        }
+    except Exception as e:
+        log.exception(f"Failed to read log file at {log_path}: {e}")
+        return JSONResponse({"error": "Failed to read log file", "path": str(log_path)}, 500)
+
+
+@app.get("/api/version")
+def api_version():
+    """Return app version and system info for bug reports.
+
+    `platform.platform()` is intentionally omitted: it leaks the kernel
+    build string with no diagnostic value for local-only bug reports.
+    """
+    import platform
+    return {
+        "version": _VERSION,
+        "python": platform.python_version(),
+        "frozen": getattr(sys, "frozen", False),
+        "data_dir": str(Path.home() / ".domestique"),
+    }
+
+
+@app.get("/api/settings")
+def api_settings():
+    from profile_manager import ProfileManager
+    pm = ProfileManager.get()
+
+    # Get eFTP from intervals.icu
+    wellness = cached("wellness_7", lambda: fetch_wellness(7))
+    eftp = None
+    if wellness:
+        for w in reversed(wellness):
+            si = w.get("sportInfo", [])
+            if si and si[0].get("eftp"):
+                eftp = round(si[0]["eftp"])
+                break
+
+    p_zones = _power_zones(pm.ftp)
+    h_zones = _hr_zones(pm.lthr, pm.max_hr)
+
+    return {
+        "weight": config.ATHLETE_WEIGHT_KG,
+        "lbm": config.ATHLETE_LBM_KG,
+        "ftp": config.ATHLETE_FTP_W,
+        "eftp": eftp,
+        "lthr": config.ATHLETE_LTHR,
+        "max_hr": config.ATHLETE_MAX_HR,
+        "power_zones": p_zones,
+        "hr_zones": h_zones,
+        "w_per_kg": round(config.ATHLETE_FTP_W / max(config.ATHLETE_WEIGHT_KG, 1), 2),
+        # FIX-CONTRACT C1: expose ftp_source + ftp_source_date so U3 badge,
+        # U4 manual-edit confirm, and U5 eFTP auto-banner have the provenance
+        # enum they gate on. pre-v4.1 profiles default to "manual" via the
+        # ProfileManager property. ftp_source_date is None when the profile
+        # has never applied an FTP (fresh migration) — UI treats as
+        # "unknown" and falls back to last-modified mtime.
+        "ftp_source": pm.get_ftp_source() or "manual",
+        "ftp_source_date": pm.get_ftp_source_date(),
+    }
+
+
+@app.post("/api/settings")
+def update_settings(request_body: dict):
+    """Update athlete settings — writes to active profile's athlete.json.
+
+    E2 (v4.1.0): when the FTP change originates from an eFTP accept
+    (distinguished by the current eFTP matching the new value within 2W),
+    append an ``ftp_test_history`` row with ``source="eftp_icu"`` so the
+    ledger captures the change instead of silently overwriting the tested
+    FTP. Also stamp ``ftp_source`` on the profile for E1 provenance.
+    """
+    from profile_manager import ProfileManager
+    pm = ProfileManager.get()
+    updates = {}
+    # Map API field names to athlete.json keys and config attribute names
+    field_map = {
+        "weight": ("weight_kg", "ATHLETE_WEIGHT_KG", float),
+        "lbm": ("lbm_kg", "ATHLETE_LBM_KG", float),
+        "ftp": ("ftp", "ATHLETE_FTP_W", int),
+        "lthr": ("lthr", "ATHLETE_LTHR", int),
+        "max_hr": ("max_hr", "ATHLETE_MAX_HR", int),
+    }
+    athlete_updates = {}
+    old_ftp = pm.ftp
+    new_ftp = None
+    for key, (athlete_key, config_key, cast) in field_map.items():
+        if key in request_body:
+            try:
+                val = cast(request_body[key])
+            except (ValueError, TypeError):
+                continue
+            athlete_updates[athlete_key] = val
+            if key == "ftp":
+                new_ftp = val
+            # v3.6.0-fix28 M-3: allow athlete-only keys (no config mirror).
+            if config_key is not None:
+                updates[config_key] = val
+
+    # E2 detect: did the FTP change to exactly-match the currently-cached
+    # eFTP? If so this is almost certainly an "Accept eFTP" action.
+    ftp_source_for_history = None
+    if new_ftp is not None and new_ftp != old_ftp:
+        try:
+            wellness = cached("wellness_7", lambda: fetch_wellness(7))
+            for w in reversed(wellness or []):
+                si = w.get("sportInfo", []) or []
+                e = si[0].get("eftp") if si else None
+                if e and abs(round(e) - new_ftp) <= 2:
+                    ftp_source_for_history = "eftp_icu"
+                    break
+        except Exception:
+            pass
+        if ftp_source_for_history is None:
+            ftp_source_for_history = "manual"
+
+    if athlete_updates:
+        pm.save_athlete(athlete_updates)
+        # E1 stamp provenance on profile when an FTP write happened.
+        if new_ftp is not None and new_ftp != old_ftp:
+            try:
+                pm._athlete["ftp_source"] = ftp_source_for_history or "manual"
+                pm._write_json(pm.active_dir / "athlete.json", pm._athlete)
+            except Exception:
+                pass
+            # E2 ledger row so acceptEftp doesn't silently overwrite.
+            try:
+                pm.record_ftp_test(
+                    method="manual",
+                    ftp=new_ftp,
+                    source=ftp_source_for_history or "manual",
+                    applied=True,
+                )
+            except Exception:
+                pass
+        clear_cache()
+        # Auto-log metrics to history
+        db.log_metrics_from_settings(updates)
+
+    return {"ok": True, "updated": updates, "settings": api_settings()}
+
+
+def _power_zones(ftp):
+    # Delegates to zones.power_zones (Coggan/Allen 7-zone model).
+    # Adapts Zone(low, high, name) → dict shape required by clients
+    # (dashboard.html / training.html expect zone, name, low, high).
+    return [
+        {"zone": f"Z{i + 1}", "name": z.name, "low": z.low, "high": z.high}
+        for i, z in enumerate(_zones_mod.power_zones(ftp))
+    ]
+
+def _hr_zones(lthr, max_hr):
+    # Delegates to zones.hr_zones (LTHR-anchored hybrid model).
+    # Adapts Zone(low, high, name) → dict shape required by clients.
+    return [
+        {"zone": f"Z{i + 1}", "name": z.name, "low": z.low, "high": z.high}
+        for i, z in enumerate(_zones_mod.hr_zones(lthr, max_hr))
+    ]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SYNC APIs
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/sync")
+def api_sync():
+    """Manually trigger a sync from Intervals.icu."""
+    result = db.run_sync(days=90)
+    return result
+
+
+@app.get("/api/sync/status")
+def api_sync_status():
+    return db.get_sync_status()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ATHLETE METRICS APIs
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/metrics/history")
+def api_metrics_history(metric: str = Query(...), days: int = Query(365)):
+    """Return historical values for a metric (weight, ftp, lbm, vo2max, body_fat, etc.)."""
+    if metric == "w_per_kg":
+        return db.query_wkg_history(days)
+    return db.query_metric_history(metric, days)
+
+
+@app.get("/api/metrics/latest")
+def api_metrics_latest():
+    """Return the most recent value for each tracked metric."""
+    return db.query_metrics_latest()
+
+
+@app.post("/api/metrics/log")
+async def api_metrics_log(request: Request):
+    """Manually log a metric value (VO2max, body_fat, etc.)."""
+    body = await _get_json_body(request)
+    dt = body.get("date", date.today().isoformat())
+    metric = body.get("metric")
+    value = body.get("value")
+    if not metric or value is None:
+        return JSONResponse({"error": "metric and value required"}, 400)
+    try:
+        db.log_metric(dt, metric, float(value), body.get("source", "manual"), body.get("notes"))
+    except (ValueError, TypeError) as e:
+        return JSONResponse({"error": str(e)}, 400)
+    return {"ok": True, "date": dt, "metric": metric, "value": float(value)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DAILY LOG (Morning Questionnaire) APIs
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/daily-log")
+def api_daily_log(days: int = Query(14)):
+    """Return today's log entry + recent history."""
+    today = db.get_daily_log_today()
+    history = db.query_daily_log(days)
+    return {"today": today, "history": history}
+
+
+@app.post("/api/daily-log")
+async def api_daily_log_post(request: Request):
+    """Submit or update today's morning questionnaire.
+
+    v4.6.6 IMPL-C: validates each Hooper field (sleep_quality, fatigue,
+    stress, soreness, mood) is an int 1..7 and rejects with 400 otherwise.
+    Returns the full row with computed `hooper_index` (sum of 4 Hooper
+    fields excluding mood, range 4..28). Per Hooper & Mackinnon 1995,
+    hooper_index ≥ 18 = significant accumulated fatigue (IMPL-B G6 gate).
+    """
+    body = await _get_json_body(request)
+    dt = body.get("date", date.today().isoformat())
+    try:
+        entry = db.upsert_daily_log(
+            dt=dt,
+            sleep_quality=int(body.get("sleep_quality", 4)),
+            fatigue=int(body.get("fatigue", 4)),
+            soreness=int(body.get("soreness", 4)),
+            stress=int(body.get("stress", 4)),
+            mood=int(body.get("mood", 4)),
+            notes=body.get("notes"),
+        )
+    except (ValueError, TypeError) as e:
+        return JSONResponse({"error": str(e)}, 400)
+    return {"ok": True, "entry": entry}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BLOOD MARKERS API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+BLOOD_MARKER_RANGES = {
+    "ferritin": {"unit": "ng/mL", "optimal_low": 50, "optimal_high": 150, "flag_low": 30, "flag_high": 300},
+    "vitamin_d": {"unit": "ng/mL", "optimal_low": 40, "optimal_high": 60, "flag_low": 30, "flag_high": 100},
+    "testosterone": {"unit": "ng/dL", "optimal_low": 500, "optimal_high": 900, "flag_low": 300, "flag_high": 1100},
+    "cortisol_am": {"unit": "mcg/dL", "optimal_low": 10, "optimal_high": 20, "flag_low": 5, "flag_high": 25},
+    "crp": {"unit": "mg/L", "optimal_low": 0, "optimal_high": 1.0, "flag_low": 0, "flag_high": 3.0},
+    "hemoglobin": {"unit": "g/dL", "optimal_low": 14.5, "optimal_high": 17.0, "flag_low": 13.5, "flag_high": 18.0},
+    "hematocrit": {"unit": "%", "optimal_low": 42, "optimal_high": 50, "flag_low": 40, "flag_high": 52},
+}
+
+
+@app.get("/api/blood-markers")
+def api_blood_markers():
+    """Return all blood marker entries with reference ranges."""
+    markers = db.query_blood_markers()
+    # Add status flags
+    for m in markers:
+        ref = BLOOD_MARKER_RANGES.get(m["marker"], {})
+        if ref:
+            m["ref"] = ref
+            v = m["value"]
+            if ref.get("optimal_low") and ref.get("optimal_high"):
+                if ref["optimal_low"] <= v <= ref["optimal_high"]:
+                    m["status"] = "optimal"
+                elif ref.get("flag_low") and v < ref["flag_low"]:
+                    m["status"] = "low"
+                elif ref.get("flag_high") and v > ref["flag_high"]:
+                    m["status"] = "high"
+                else:
+                    m["status"] = "ok"
+    return {"markers": markers, "ranges": BLOOD_MARKER_RANGES}
+
+
+@app.post("/api/blood-markers")
+async def api_blood_markers_post(request: Request):
+    """Add a blood test result."""
+    body = await _get_json_body(request)
+    dt = body.get("date", date.today().isoformat())
+    marker = body.get("marker")
+    value = body.get("value")
+    if not marker or value is None:
+        return JSONResponse({"error": "marker and value required"}, 400)
+    ref = BLOOD_MARKER_RANGES.get(marker, {})
+    unit = ref.get("unit") or body.get("unit")
+    db.upsert_blood_marker(dt, marker, float(value), unit, body.get("notes"))
+    return {"ok": True}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# POWER CURVE API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/power-curve")
+def api_power_curve(days: int = Query(90), compare_days: int = Query(365)):
+    """Return power duration curve from activity data."""
+    durations = ["5s", "1m", "5m", "20m", "60m"]
+    icu_fields = {
+        "5s": "icu_w5s", "1m": "icu_w1m", "5m": "icu_w5m",
+        "20m": "icu_w20m", "60m": "icu_w60m",
+    }
+
+    activities = db.query_activities(days=max(days, compare_days))
+    today = date.today()
+    cutoff_current = (today - timedelta(days=days)).isoformat()
+    cutoff_compare = (today - timedelta(days=compare_days)).isoformat()
+
+    current = {d: {"watts": 0, "date": ""} for d in durations}
+    historical = {d: {"watts": 0, "date": ""} for d in durations}
+
+    for a in activities:
+        raw = a.get("raw_json")
+        if not raw:
+            continue
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        for dur_label, field in icu_fields.items():
+            val = data.get(field)
+            if val and val > 0:
+                act_date = a.get("date", "")
+                # Historical best
+                if act_date >= cutoff_compare and val > historical[dur_label]["watts"]:
+                    historical[dur_label] = {"watts": round(val), "date": act_date}
+                # Current period best
+                if act_date >= cutoff_current and val > current[dur_label]["watts"]:
+                    current[dur_label] = {"watts": round(val), "date": act_date}
+
+    weight = config.ATHLETE_WEIGHT_KG or 72
+    result_current = []
+    result_historical = []
+    for d in durations:
+        c = current[d]
+        h = historical[d]
+        result_current.append({"duration": d, "watts": c["watts"], "wkg": round(c["watts"] / weight, 2), "date": c["date"]})
+        result_historical.append({"duration": d, "watts": h["watts"], "wkg": round(h["watts"] / weight, 2), "date": h["date"]})
+
+    return {"current": result_current, "historical": result_historical, "durations": durations, "ftp": config.ATHLETE_FTP_W}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GPX API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/gpx/{region}/{filename}")
+def api_gpx_data(region: str, filename: str):
+    """Parse GPX file and return trackpoints for map + elevation profile."""
+    # Try matching GPX file - the filename may have .crs extension, swap to .gpx
+    # Validate region doesn't contain path traversal
+    if ".." in region or "/" in region or ".." in filename or "/" in filename:
+        return JSONResponse({"error": "invalid path"}, 400)
+    gpx_name = filename.rsplit(".", 1)[0] + ".gpx" if "." in filename else filename + ".gpx"
+    path = _safe_path(GPX_DIR, region, gpx_name)
+    if not path or not path.exists():
+        path = _safe_path(GPX_DIR, region, filename)
+    if (not path or not path.exists()) and (GPX_DIR / region).is_dir():
+        # Try fuzzy match — find GPX with same stem prefix
+        stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+        for gpx_file in (GPX_DIR / region).glob("*.gpx"):
+            if gpx_file.stem.lower().startswith(stem[:20].lower()):
+                path = gpx_file
+                break
+    if not path or not path.exists():
+        return JSONResponse({"error": "GPX not found", "tried": gpx_name}, 404)
+
+    import math
+    ns = {"gpx": "http://www.topografix.com/GPX/1/1"}
+    try:
+        tree = ET.parse(path)
+    except ET.ParseError:
+        return JSONResponse({"error": "GPX parse error"}, 400)
+
+    root = tree.getroot()
+    points = []
+    for trkpt in root.findall(".//gpx:trkpt", ns):
+        lat = float(trkpt.get("lat", 0))
+        lon = float(trkpt.get("lon", 0))
+        ele_el = trkpt.find("gpx:ele", ns)
+        ele = float(ele_el.text) if ele_el is not None else 0
+        points.append({"lat": lat, "lon": lon, "ele": round(ele, 1)})
+
+    if len(points) < 2:
+        return JSONResponse({"error": "Not enough trackpoints"}, 400)
+
+    # Compute cumulative distance (km) using the canonical haversine.
+    from geodesy import haversine as _hv
+    cum_dist = [0.0]
+    for i in range(1, len(points)):
+        d_km = _hv(
+            (points[i - 1]["lat"], points[i - 1]["lon"]),
+            (points[i]["lat"], points[i]["lon"]),
+        ) / 1000.0
+        cum_dist.append(cum_dist[-1] + d_km)
+
+    # Compute gradient per segment — cap to ±45% (steepest paved road ~35%)
+    for i in range(len(points)):
+        points[i]["d"] = round(cum_dist[i], 3)
+        if i > 0 and cum_dist[i] - cum_dist[i - 1] > 0.005:  # min 5m to avoid GPS noise
+            ele_diff = points[i]["ele"] - points[i - 1]["ele"]
+            dist_m = (cum_dist[i] - cum_dist[i - 1]) * 1000
+            grad = ele_diff / dist_m * 100
+            points[i]["g"] = round(max(-45, min(45, grad)), 1)  # clamp to realistic range
+        else:
+            points[i]["g"] = 0
+
+    # Downsample for transfer (max 500 points)
+    step = max(1, len(points) // 500)
+    sampled = [points[i] for i in range(0, len(points), step)]
+    if sampled[-1] != points[-1]:
+        sampled.append(points[-1])
+
+    total_climb = sum(max(0, points[i]["ele"] - points[i - 1]["ele"]) for i in range(1, len(points)))
+    max_grad = max((p["g"] for p in points), default=0)
+
+    return {
+        "points": sampled,
+        "total_points": len(points),
+        "total_km": round(cum_dist[-1], 1),
+        "total_climb": round(total_climb),
+        "max_gradient": round(max_grad, 1),
+        "name": path.stem,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# WEEKLY MESOCYCLE API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/weekly-plan")
+def api_weekly_plan(week_offset: int = Query(0)):
+    """Generate or retrieve weekly mesocycle plan.
+    week_offset=0 → current week, -1 → last week, 1 → next week.
+    """
+
+    training = cached("training", get_today_metrics)
+    current_ctl = training.get("ctl") or 30
+
+    # Check for active plan to get current phase
+    current_phase = None
+    json_path = _plan_dir() / "current_plan.json"
+    if json_path.exists():
+        try:
+            with open(json_path, encoding="utf-8") as f:
+                plan = json.load(f)
+            today = date.today() + timedelta(weeks=week_offset)
+            today_str = today.isoformat()
+            for p in plan.get("phases", []):
+                if p.get("start", "") <= today_str <= p.get("end", ""):
+                    current_phase = tp.Phase(
+                        name=p["name"], start=date.fromisoformat(p["start"]),
+                        end=date.fromisoformat(p["end"]), weeks=p.get("weeks", 1),
+                        focus=p.get("focus", ""), weekly_tss_target=p.get("weekly_tss", current_ctl * 7),
+                        z2_pct=70, hit_per_week=p.get("hit_per_week", 2),
+                        session_types=p.get("session_types", ["z2", "threshold", "vo2max", "sweetspot", "overunder", "tempo", "sprint"]),
+                    )
+                    break
+        except (json.JSONDecodeError, OSError, KeyError):
+            pass
+
+    # Load goal from current_plan.json if available
+    goal = None
+    try:
+        if json_path.exists():
+            with open(json_path, encoding="utf-8") as f:
+                plan_data = json.load(f)
+            g = plan_data.get("goal", {})
+            # P5 (v4.1.0): restore available_days + daily_max_hours from the
+            # persisted plan if present. Fall back to [0..6]-minus-rest_days
+            # when missing (pre-v4.1 plans) to avoid the Mon-drop bug where
+            # the old default [1..6] silently turned Monday into a rest day
+            # that wasn't in the user's rest_days list.
+            rest_days_val = g.get("rest_days", [0])
+            raw_available = g.get("available_days")
+            if raw_available is not None:
+                available_days_val = list(raw_available)
+            else:
+                available_days_val = [d for d in range(7) if d not in rest_days_val]
+            raw_daily = g.get("daily_max_hours") or {}
+            daily_max_val = {}
+            for k, v in raw_daily.items():
+                try:
+                    daily_max_val[int(k)] = float(v)
+                except (TypeError, ValueError):
+                    continue
+            goal = tp.Goal(
+                goal_type=g.get("type", g.get("goal_type", "general")),  # JSON saves as "type"
+                hours_per_week=g.get("hours_per_week", 8.0),
+                max_weekday_hours=g.get("max_weekday_hours", 2.0),
+                max_weekend_hours=g.get("max_weekend_hours", 3.5),
+                rest_days=rest_days_val,
+                available_days=available_days_val,
+                daily_max_hours=daily_max_val,
+                plan_weeks=g.get("plan_weeks", 0),
+                longest_ride_h_90d=g.get("longest_ride_h_90d"),
+                last_ftp_test_date=g.get("last_ftp_test_date"),
+            )
+        else:
+            goal = tp.Goal(goal_type="general", hours_per_week=8.0)
+    except Exception:
+        goal = tp.Goal(goal_type="general", hours_per_week=8.0)
+    # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
+    if goal.longest_ride_h_90d is None:
+        goal.longest_ride_h_90d = _longest_ride_h_90d()
+
+    # P1 (v4.1.0): feed cross-week used_names from the persisted plan so
+    # /api/weekly-plan picks up the same 6-week sliding-window dedupe that
+    # generate_plan uses. Without this, the simple weekly planner gets a
+    # fresh empty set on every request → the UI weekly card was handing
+    # the user the same threshold workout week after week.
+    cross_week_used_names: set[str] = set()
+    try:
+        if json_path.exists():
+            with open(json_path, encoding="utf-8") as f:
+                _persist = json.load(f)
+            today = date.today() + timedelta(weeks=week_offset)
+            today_str = today.isoformat()
+            # Window: sessions from the last 6 weeks of the stored plan
+            # (mirrors generate_plan's sliding-window ≥6 stale threshold).
+            window_start = (today - timedelta(weeks=6)).isoformat()
+            for w_json in _persist.get("weeks", []):
+                if w_json.get("end", "") < window_start:
+                    continue
+                if w_json.get("start", "") > today_str:
+                    continue
+                for s_json in w_json.get("sessions", []):
+                    nm = s_json.get("zwo_name") or ""
+                    if nm:
+                        cross_week_used_names.add(nm)
+    except Exception as _e:
+        _log.debug(f"weekly-plan used_names rollup failed: {_e}")
+
+    week = tp.generate_weekly_plan(
+        goal=goal, current_phase=current_phase,
+        current_ctl=current_ctl,
+        used_names=cross_week_used_names,
+    )
+
+    # Match ZWO files for every non-rest session
+    try:
+        library = tp.load_workout_library()
+        for i, s in enumerate(week.sessions):
+            if s.session_type == "rest" or getattr(s, "zwo_file", ""):
+                continue
+            try:
+                tp.match_zwo(
+                    s, library,
+                    week_num=week.week_num, day_idx=i,
+                    used_names=cross_week_used_names,
+                )
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # fix26 §6.4/§6.8/§6.12 — merge status fields from stored current_plan.json.
+    # /api/weekly-plan regenerates the week on-the-fly from the goal/phase, but
+    # user-moved slots / done statuses / dismissed flags live in the stored
+    # plan JSON. Without this merge the UI would show the regen'd week without
+    # any of the user's persisted edits and the drag-to-move would appear to
+    # have no effect.
+    stored_by_day: dict[str, dict] = {}
+    try:
+        json_path_sess = _plan_dir() / "current_plan.json"
+        if json_path_sess.exists():
+            with open(json_path_sess, encoding="utf-8") as f:
+                stored_plan = json.load(f)
+            # P4 (v4.1.0) — merge by DATE OVERLAP (not just ISO-week match).
+            # The stored plan's weeks may start on Sat (legacy) or Mon (new
+            # plans). Our weekly-plan reply is always Mon–Sun. Matching on
+            # ISO-week alone silently drops 5 of 7 days of merge coverage
+            # when stored weeks started on Sat — because week 1 Sat is in
+            # ISO week N, but week 2 Mon–Sun is in ISO week N+1. Iterate
+            # EVERY stored session and key by day ISO directly — that guarantees
+            # the user_moved/done/dismissed fields round-trip regardless of
+            # the stored-week boundary convention.
+            week_start_iso = week.start.isoformat()
+            week_end_iso = week.end.isoformat()
+            for w_json in stored_plan.get("weeks", []):
+                for s_json in w_json.get("sessions", []):
+                    day_iso = s_json.get("day", "")
+                    if not day_iso:
+                        continue
+                    if week_start_iso <= day_iso <= week_end_iso:
+                        stored_by_day[day_iso] = s_json
+    except Exception as _e:
+        _log.debug(f"weekly-plan stored merge failed: {_e}")
+
+    # v4.1.1 FIX-PLANNER B: build a ZWO→metadata index once so every session
+    # can surface zone_dist + score without re-parsing the library.
+    _lib_by_file: dict[str, dict] = {}
+    try:
+        for _w in tp.load_workout_library():
+            _fname = _w.get("File")
+            if _fname:
+                _lib_by_file[_fname] = _w
+    except Exception:
+        _lib_by_file = {}
+
+    def _session_out(s):
+        day_iso = s.day.isoformat()
+        stored = stored_by_day.get(day_iso) or {}
+        zwo_file = stored.get("zwo_file") or getattr(s, "zwo_file", "")
+        out = {
+            "day": day_iso,
+            "day_name": s.day_name,
+            "session_type": stored.get("session_type") or s.session_type,
+            "duration_min": stored.get("duration_min", s.duration_min),
+            "tss_estimate": stored.get("tss_estimate", s.tss_estimate),
+            "description": stored.get("description") or s.description,
+            "zwo_file": zwo_file,
+            "zwo_name": stored.get("zwo_name") or getattr(s, "zwo_name", ""),
+            # fix26 §6 — status + move + completion round-trips
+            "status": stored.get("status", "pending"),
+            "user_moved": stored.get("user_moved", False),
+            "moved_from": stored.get("moved_from", ""),
+            "completion_matches": stored.get("completion_matches") or None,
+            "dismissed_at": stored.get("dismissed_at", ""),
+        }
+        # v4.1.1 FIX-PLANNER B: per-session zone_dist from the ACTUAL ZWO.
+        meta = _lib_by_file.get(zwo_file) if zwo_file else None
+        if meta:
+            out["zone_dist"] = {
+                "z1": meta.get("Z1%", 0), "z2": meta.get("Z2%", 0),
+                "z3": meta.get("Z3%", 0), "z4": meta.get("Z4%", 0),
+                "z5": meta.get("Z5%", 0), "z6": meta.get("Z6%", 0),
+            }
+            out["score"] = meta.get("Score")
+            out["protocol"] = meta.get("Protocol")
+        else:
+            out["zone_dist"] = None
+            out["score"] = None
+        return out
+
+    result = {
+        "week_num": week.week_num,
+        "start": week.start.isoformat(),
+        "end": week.end.isoformat(),
+        "phase": week.phase,
+        "tss_target": week.tss_target,
+        "is_stepback": week.is_stepback,
+        "sessions": [_session_out(s) for s in week.sessions],
+    }
+
+    # Add event readiness + eFTP drift if plan exists
+    try:
+        json_path = _plan_dir() / "current_plan.json"
+        if json_path.exists():
+            with open(json_path, encoding="utf-8") as f:
+                plan = json.load(f)
+            g = plan.get("goal", {})
+            if g.get("event_date"):
+                plan_goal = tp.Goal(
+                    goal_type=g.get("type", "general"),
+                    target_date=date.fromisoformat(g["event_date"]),
+                    event_name=g.get("event_name", ""),
+                    event_km=g.get("event_km", 0),
+                    event_climb_m=g.get("event_climb", 0),
+                    event_type=g.get("event_type", "granfondo"),
+                    hours_per_week=g.get("hours_per_week", 8),
+                    longest_ride_h_90d=g.get("longest_ride_h_90d"),
+                    last_ftp_test_date=g.get("last_ftp_test_date"),
+                )
+                # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
+                if plan_goal.longest_ride_h_90d is None:
+                    plan_goal.longest_ride_h_90d = _longest_ride_h_90d()
+                result["event_readiness"] = tp.compute_event_readiness(plan_goal, current_ctl)
+
+        # eFTP drift detection (+ F5 auto-apply after 7+ days)
+        wellness = cached("wellness_7", lambda: fetch_wellness(7))
+        # For the 7-day-streak auto-apply we actually need 14 days so a drift
+        # ending yesterday doesn't fall out of the window; fetch a wider slice.
+        wellness_14 = cached("wellness_14", lambda: fetch_wellness(14))
+        if wellness:
+            for w in reversed(wellness):
+                si = w.get("sportInfo", [])
+                if si and len(si) > 0 and si[0].get("eftp"):
+                    eftp = round(si[0]["eftp"])
+                    drift = tp._check_eftp_drift(eftp)
+                    if drift:
+                        result["eftp_drift"] = drift
+                    break
+        # F5 (v4.1.0): 7+-day sustained >3% up-drift triggers auto-apply.
+        if wellness_14:
+            try:
+                auto = tp.check_and_auto_apply_eftp(wellness_14)
+                if auto:
+                    result["eftp_auto_applied"] = auto
+                    clear_cache()
+            except Exception as _e:
+                _log.debug(f"eftp auto-apply skipped: {_e}")
+    except Exception as _e:
+        import logging
+        logging.getLogger(__name__).warning("event_readiness failed: %s", _e)
+
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# WEEK SUMMARY API (for dashboard week tile)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _classify_exposure(activity: dict, lthr: float) -> str:
+    """Classify an activity's aerobic band from HR/LTHR or TRIMP-per-minute.
+
+    Preferred signal: average HR relative to LTHR.
+    Fallback: TRIMP per minute (rough intensity proxy).
+    If neither is available, defaults to 'low_aerobic' (safest bucket — assumes
+    the activity was gentle rather than silently dropping it from exposure).
+    """
+    avg_hr = activity.get("avg_hr")
+    try:
+        avg_hr_val = float(avg_hr) if avg_hr is not None else None
+    except (TypeError, ValueError):
+        avg_hr_val = None
+
+    try:
+        lthr_val = float(lthr) if lthr is not None else 0.0
+    except (TypeError, ValueError):
+        lthr_val = 0.0
+
+    if avg_hr_val is not None and lthr_val > 0:
+        ratio = avg_hr_val / lthr_val
+        if ratio < 0.75:
+            return "low_aerobic"
+        if ratio < 0.88:
+            return "mid_aerobic"
+        if ratio < 0.96:
+            return "high_aerobic"
+        return "anaerobic"
+
+    # Fallback: TRIMP-per-minute
+    trimp = activity.get("trimp")
+    dur_min = activity.get("duration_min") or 0
+    try:
+        trimp_val = float(trimp) if trimp is not None else None
+    except (TypeError, ValueError):
+        trimp_val = None
+
+    if trimp_val is not None and dur_min and dur_min > 0:
+        tpm = trimp_val / dur_min
+        if tpm < 0.6:
+            return "low_aerobic"
+        if tpm < 1.2:
+            return "mid_aerobic"
+        if tpm < 2.0:
+            return "high_aerobic"
+        return "anaerobic"
+
+    # No usable signal — park in low_aerobic bucket (gotcha: see report).
+    return "low_aerobic"
+
+
+_CYCLING_SPORTS = frozenset({"Ride", "VirtualRide", "EBikeRide"})
+
+
+# Map planned session_type → expected exposure band (used by /api/week-summary
+# to render planned-vs-actual exposure bars). Anything not in this map (e.g.
+# rest) contributes no minutes to any band.
+_SESSION_TYPE_TO_BAND = {
+    "recovery":       "low_aerobic",
+    "z2":             "low_aerobic",
+    "long_z2":        "low_aerobic",
+    "tempo":          "mid_aerobic",
+    "sweetspot":      "high_aerobic",
+    "threshold":      "high_aerobic",
+    "vo2max":         "anaerobic",
+    "overunder":      "anaerobic",
+}
+
+
+def _matches_planned(activities: list, session_type: str) -> bool:
+    """A planned cycling workout is DONE only if a cycling activity was
+    actually performed that day. Cross-sport doesn't count — the user still
+    owes the specific session.
+    """
+    return any((a.get("sport") or "") in _CYCLING_SPORTS for a in activities)
+
+
+def _classify_exposure_with_signal(activity: dict, lthr: float) -> tuple[str, str]:
+    """Like _classify_exposure but also returns the signal source.
+
+    Returns (band, signal) where signal is one of:
+      - "hr"      : classified from avg_hr / lthr
+      - "trimp"   : classified from TRIMP-per-minute fallback
+      - "inferred": neither signal available, defaulted to low_aerobic
+                    (caller should exclude from exposure_minutes totals
+                    to avoid polluting the band math)
+    """
+    avg_hr = activity.get("avg_hr")
+    try:
+        avg_hr_val = float(avg_hr) if avg_hr is not None else None
+    except (TypeError, ValueError):
+        avg_hr_val = None
+    try:
+        lthr_val = float(lthr) if lthr is not None else 0.0
+    except (TypeError, ValueError):
+        lthr_val = 0.0
+
+    if avg_hr_val is not None and lthr_val > 0:
+        band = _classify_exposure(activity, lthr)
+        return (band, "hr")
+
+    trimp = activity.get("trimp")
+    dur_min = activity.get("duration_min") or 0
+    try:
+        trimp_val = float(trimp) if trimp is not None else None
+    except (TypeError, ValueError):
+        trimp_val = None
+    if trimp_val is not None and dur_min and dur_min > 0:
+        band = _classify_exposure(activity, lthr)
+        return (band, "trimp")
+
+    return ("low_aerobic", "inferred")
+
+
+@app.get("/api/week-summary")
+def api_week_summary():
+    """Current ISO week (Mon→Sun) training summary for the dashboard week tile.
+
+    Reuses the existing /api/activities helper + /api/weekly-plan + /api/settings
+    so this stays consistent with the rest of the UI.
+    """
+    # Pin `today` to the athlete's configured timezone so "which week is
+    # this?" doesn't flip around midnight when the server's local clock and
+    # the user's clock disagree. Fall back to the process TZ if settings
+    # don't provide one (the UI setup has no tz field today).
+    try:
+        from zoneinfo import ZoneInfo
+        settings = api_settings()
+        tz_name = settings.get("timezone") if isinstance(settings, dict) else None
+        tz = ZoneInfo(tz_name) if tz_name else datetime.now().astimezone().tzinfo
+    except Exception:
+        tz = datetime.now().astimezone().tzinfo
+    today = datetime.now(tz).date()
+    iso_year, iso_week, iso_weekday = today.isocalendar()
+    # Monday of current ISO week
+    week_start = today - timedelta(days=iso_weekday - 1)
+    week_end = week_start + timedelta(days=6)
+    week_start_str = week_start.isoformat()
+    week_end_str = week_end.isoformat()
+    today_str = today.isoformat()
+
+    # Reuse existing helpers — do NOT re-implement.
+    activities_all = api_activities()
+    plan = api_weekly_plan(week_offset=0)
+    settings = api_settings()
+    lthr = settings.get("lthr") or 175
+
+    # Filter activities to the current ISO week window.
+    week_activities = []
+    for a in activities_all or []:
+        d = (a.get("date") or "")[:10]
+        if week_start_str <= d <= week_end_str:
+            week_activities.append(a)
+
+    # Preserve the None-vs-0 distinction: `tss_target == 0` is a legitimate
+    # rest-week plan, not a missing target. Falsy-check would collapse both.
+    tss_target = plan.get("tss_target")
+    tss_done = round(sum((a.get("tss") or 0) for a in week_activities), 1)
+    if tss_target is not None and tss_target > 0:
+        # WEEK2: cap overshoot at 150% so the rollup bar doesn't stretch
+        # indefinitely and numbers like "312%" don't dominate the UI.
+        tss_adherence_pct = round(min(150.0, tss_done / tss_target * 100))
+    elif tss_target == 0:
+        # WEEK2: rest-week grading. Zero load → perfect 100%. Light load
+        # (≤50 TSS of accidental activity) scales down linearly; anything
+        # beyond 50 TSS of "rest" is a 0% violation. Previously flipped to
+        # 0% at the first joule, making every recovery ride catastrophic.
+        if tss_done <= 0:
+            tss_adherence_pct = 100
+        else:
+            tss_adherence_pct = max(
+                0,
+                round(100.0 - min(100.0, (tss_done / 50.0) * 100.0)),
+            )
+    else:
+        tss_adherence_pct = 0
+
+    duration_min_done = int(round(sum((a.get("duration_min") or 0) for a in week_activities)))
+
+    sessions = plan.get("sessions", [])
+    duration_min_planned = int(round(sum(
+        (s.get("duration_min") or 0) for s in sessions
+    )))
+
+    # Exposure distribution (sport-agnostic). Activities with neither HR nor
+    # TRIMP signal go into a separate unclassified_minutes bucket so they
+    # don't silently inflate low_aerobic (QA-EDGE #2).
+    exposure_minutes = {
+        "low_aerobic": 0, "mid_aerobic": 0, "high_aerobic": 0, "anaerobic": 0,
+    }
+    unclassified_minutes = 0
+    activities_by_day: dict[str, list[dict]] = {}
+    sports_counter: dict[str, int] = {}
+
+    for a in week_activities:
+        band, signal = _classify_exposure_with_signal(a, lthr)
+        dur = int(round(a.get("duration_min") or 0))
+        if signal == "inferred":
+            unclassified_minutes += dur
+        else:
+            exposure_minutes[band] = exposure_minutes.get(band, 0) + dur
+
+        d = (a.get("date") or "")[:10]
+        row = {
+            "sport": a.get("sport") or "",
+            "tss": a.get("tss"),
+            "duration_min": dur,
+            "avg_hr": a.get("avg_hr"),
+            "name": a.get("name") or "",
+            "exposure": band,
+            "exposure_signal": signal,
+        }
+        activities_by_day.setdefault(d, []).append(row)
+        sport_key = a.get("sport") or "Other"
+        sports_counter[sport_key] = sports_counter.get(sport_key, 0) + 1
+
+    total_exposure = sum(exposure_minutes.values())
+    exposure_dominant = "mixed"
+    if total_exposure > 0:
+        for band, mins in exposure_minutes.items():
+            if mins / total_exposure >= 0.60:
+                exposure_dominant = band
+                break
+
+    # Planned-day accounting — ISO week is always 7 days regardless of plan
+    # contents (a sparse plan with only 3 workouts still spans Mon-Sun).
+    # QA-MATH #5: hard-code 7 instead of len(sessions) which was fragile.
+    planned_days_total = 7
+    planned_days_with_session = sum(
+        1 for s in sessions if (s.get("session_type") or "").lower() != "rest"
+    )
+
+    # For each STRICTLY past planned day, bucket into done vs missed.
+    # QA #1 (blocker): was `day_d > today` (inclusive today) — today's session
+    # showed up as "missed" from 00:00 onward even though it might still happen
+    # later in the day. Now strict past only, matching the frontend fallback.
+    planned_days_done = 0
+    planned_days_missed = 0
+    missed_sessions: list[dict] = []
+
+    # Pre-index activities by ISO date for O(1) lookup. We need the full
+    # per-day activity list (not just a set of dates) so we can ask
+    # "was this planned cycling session satisfied by an actual cycling
+    # activity?" — a hike on a planned SS day no longer counts as done.
+    acts_on_day: dict[str, list[dict]] = {}
+    for a in week_activities:
+        d = (a.get("date") or "")[:10]
+        if d:
+            acts_on_day.setdefault(d, []).append(a)
+
+    for s in sessions:
+        day_str = s.get("day")
+        if not day_str:
+            continue
+        try:
+            day_d = date.fromisoformat(day_str)
+        except (ValueError, TypeError):
+            continue
+        # Strict past: today and future days aren't done/missed yet.
+        if day_d >= today:
+            continue
+        session_type = (s.get("session_type") or "").lower()
+        day_acts = acts_on_day.get(day_str, [])
+        if session_type == "rest":
+            # Rest days don't count for done/missed regardless of activity.
+            if day_acts:
+                # User trained on a rest day — not "done" against plan,
+                # not "missed" either; just leave it out of the tally.
+                pass
+            continue
+        # A cycling-planned day needs a bike activity. Cross-sport doesn't satisfy.
+        if _matches_planned(day_acts, session_type):
+            planned_days_done += 1
+        else:
+            planned_days_missed += 1
+            missed_sessions.append({
+                "day": day_str,
+                "day_name": s.get("day_name") or "",
+                "session_type": s.get("session_type") or "",
+                "tss_estimate": s.get("tss_estimate") or 0,
+                "duration_min": s.get("duration_min") or 0,
+                "name": s.get("zwo_name") or s.get("description") or s.get("session_type") or "",
+                # Hint to the UI: the day wasn't empty, the user just did
+                # something other than the bike. Frontend uses this to render
+                # "plan: SS missed" subtitle on top of the actual badge.
+                "did_non_cycling": bool(day_acts),
+            })
+
+    # Planned exposure-minutes: attribute every planned session's duration to
+    # its expected band so the rollup can render a "Planned vs Actual" bar.
+    # Sessions outside _SESSION_TYPE_TO_BAND (e.g. rest) contribute nothing.
+    exposure_minutes_planned = {
+        "low_aerobic": 0, "mid_aerobic": 0, "high_aerobic": 0, "anaerobic": 0,
+    }
+    for s in sessions:
+        st = (s.get("session_type") or "").lower()
+        band = _SESSION_TYPE_TO_BAND.get(st)
+        if not band:
+            continue
+        dur = int(round(s.get("duration_min") or 0))
+        exposure_minutes_planned[band] = exposure_minutes_planned.get(band, 0) + dur
+
+    return {
+        "week_start": week_start_str,
+        "week_end": week_end_str,
+        "today": today_str,
+        "tss_target": tss_target,
+        "tss_done": tss_done,
+        "tss_adherence_pct": tss_adherence_pct,
+        "duration_min_done": duration_min_done,
+        "duration_min_planned": duration_min_planned,
+        "exposure_minutes": exposure_minutes,
+        "exposure_minutes_planned": exposure_minutes_planned,
+        "unclassified_minutes": unclassified_minutes,
+        "exposure_dominant": exposure_dominant,
+        "sports": sports_counter,
+        "missed_sessions": missed_sessions,
+        "planned_days_total": planned_days_total,
+        "planned_days_with_session": planned_days_with_session,
+        "planned_days_done": planned_days_done,
+        "planned_days_missed": planned_days_missed,
+        "activities_by_day": activities_by_day,
+    }
+
+
+@app.post("/api/today-session/persist")
+async def api_today_session_persist(request: Request):
+    """F6 (v4.1.0) — persist today's adapted session back to the plan JSON.
+
+    Caller passes ``{reason, session_type, duration_min, tss_estimate,
+    description}`` — typically the output of /api/today-session's `adjusted`
+    block when the user clicks "Accept". Writes back under plan_write_lock
+    with an explicit ``adapted_reason`` field so it's clear why the
+    prescription was modified (threshold → Z2 because readiness 45, etc.).
+    """
+    body = await _get_json_body(request)
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+
+    try:
+        reason = str(body.get("reason") or "adapted")
+        new_type = str(body.get("session_type") or "").strip()
+        if not new_type:
+            return JSONResponse({"error": "session_type required"}, 400)
+
+        today_iso = date.today().isoformat()
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+
+        found = False
+        for w in plan.get("weeks", []):
+            for s in w.get("sessions", []):
+                if s.get("day") == today_iso:
+                    s["session_type"] = new_type
+                    if body.get("duration_min") is not None:
+                        s["duration_min"] = int(body["duration_min"])
+                    if body.get("tss_estimate") is not None:
+                        s["tss_estimate"] = float(body["tss_estimate"])
+                    if body.get("description"):
+                        s["description"] = str(body["description"])
+                    s["adapted"] = True
+                    s["adapted_reason"] = reason
+                    # Clear ZWO so the UI / next match-pass re-picks for the new type.
+                    s["zwo_file"] = ""
+                    s["zwo_name"] = ""
+                    found = True
+                    break
+            if found:
+                break
+        if not found:
+            return JSONResponse({"error": f"No session at {today_iso}"}, 404)
+
+        with tp.plan_write_lock():
+            tmp_path = json_path.with_suffix('.tmp')
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(plan, f, indent=2, default=str)
+            tmp_path.rename(json_path)
+
+        return {"ok": True, "day": today_iso, "adapted_reason": reason,
+                "session_type": new_type}
+    except Exception:
+        _log.exception("today-session persist failed")
+        return JSONResponse({"detail": "Persist failed"}, 500)
+
+
+@app.get("/api/today-session")
+def api_today_session():
+    """Return today's adjusted session based on readiness + HRV protocol."""
+    # v4.4.2 §B1+B2: lazy ICU sync hook so frontpage triggers it.
+    try:
+        _maybe_lazy_icu_sync(force_if_today_missing=True)
+    except Exception as _e:
+        _log.debug(f"/api/today-session: lazy ICU sync swallowed: {_e}")
+
+    # Get weekly plan
+    week_data = api_weekly_plan(week_offset=0)
+    today_str = date.today().isoformat()
+    planned_data = next(
+        (s for s in week_data["sessions"] if s["day"] == today_str),
+        None,
+    )
+    if not planned_data:
+        return {"planned": None, "adjusted": None, "reason": "No session planned today"}
+
+    planned = tp.PlannedSession(
+        day=date.today(), day_name=planned_data["day_name"],
+        session_type=planned_data["session_type"],
+        duration_min=planned_data["duration_min"],
+        tss_estimate=planned_data["tss_estimate"],
+        description=planned_data["description"],
+    )
+
+    # Get readiness and HRV data
+    sleep = cached("sleep", get_sleep_metrics)
+    training = cached("training", get_today_metrics)
+    dfa_vals, last_dec = _recent_dfa_and_decoupling()
+    r = compute_readiness(
+        ln_rmssd_7d=sleep.get("ln_rmssd_7d"),
+        swc_lower=sleep.get("swc_lower"), swc_upper=sleep.get("swc_upper"),
+        tsb=training.get("tsb"), sleep_h=sleep.get("sleep_h"),
+        rhr_delta=sleep.get("rhr_delta"),
+        subjective=_get_soreness_subjective(),  # auto-feed from morning leg check
+        recent_dfa_alpha1=dfa_vals, last_decoupling_pct=last_dec,
+    )
+
+    # v4.4.2 §B6: unify the score-None default with /api/readiness via the
+    # shared helper. Promotes None→50 only when local rides exist; sets
+    # data_status so the frontend can distinguish "ok" from "insufficient_data".
+    merged_load = _merge_training_load(training)
+    _has_local_load = merged_load.get("ctl") is not None or merged_load.get("atl") is not None
+    r = _readiness_with_data_status(r, has_local_load=_has_local_load)
+    if r.get("score") is None:
+        r["score"] = 50  # final-fallback neutral default if no local data either
+
+    hrv_streak = sleep.get("red_hrv_streak", 0)
+
+    # Check yesterday's actual TSS vs planned (with cross-training weighting)
+    # Sport recovery multipliers: running=1.2x, climbing=0.6x, strength=0.5x, hiking=0.4x
+    SPORT_RECOVERY_WEIGHT = {
+        "Ride": 1.0, "VirtualRide": 1.0, "GravelRide": 1.0,
+        "Run": 1.2, "TrailRun": 1.3,  # higher muscular load
+        "RockClimbing": 0.6,  # grip/upper body, less cardio fatigue
+        "Hike": 0.4,  # low intensity
+        "Workout": 0.5,  # strength, no cardio
+        "IceSkate": 0.7, "Swim": 0.8,
+    }
+    yesterday_tss_ratio = 1.0
+    yesterday_had_intense_cross = False
+    # Defensive: some test fixtures use mocked DBs without the activities
+    # table. activities=[] on failure means G2/G7 simply don't fire — same
+    # safe default the helpers themselves use.
+    try:
+        activities = db.query_activities(days=3)
+    except Exception:  # noqa: BLE001
+        activities = []
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    yesterday_weighted_tss = 0
+    for a in activities:
+        if a.get("date") == yesterday:
+            sport = a.get("sport") or "Ride"
+            tss = a.get("tss") or 0
+            dur_h = (a.get("duration_sec") or 0) / 3600
+            weight = SPORT_RECOVERY_WEIGHT.get(sport, 0.7)
+
+            # For non-cycling: use TRIMP if available (better than TSS for HR-based sports)
+            raw = {}
+            try:
+                raw = json.loads(a.get("raw_json") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                pass
+            trimp = raw.get("trimp") or 0
+            hr_zones = raw.get("icu_hr_zone_times") or []
+
+            if sport not in ("Ride", "VirtualRide", "GravelRide"):
+                # Use TRIMP as load metric for non-cycling (scaled to TSS-equivalent)
+                effective_load = max(tss, trimp * TRIMP_TO_TSS_FACTOR)
+                yesterday_weighted_tss += effective_load * weight
+
+                # Detect intense cross-training via HR zone analysis
+                # Z4+ time (zones 3,4,5,6 in 0-indexed array) > 20% = intense
+                if len(hr_zones) >= 5:
+                    total_time = sum(hr_zones) or 1
+                    z4_plus = sum(hr_zones[3:])
+                    if z4_plus / total_time > 0.20:
+                        yesterday_had_intense_cross = True
+                elif dur_h > 0 and tss / dur_h > 60:
+                    yesterday_had_intense_cross = True
+            else:
+                yesterday_weighted_tss += tss * weight
+
+    yesterday_planned = next(
+        (s["tss_estimate"] for s in week_data["sessions"]
+         if s["day"] == yesterday and s["tss_estimate"] > 0),
+        None,
+    )
+    if yesterday_planned and yesterday_planned > 0:
+        yesterday_tss_ratio = yesterday_weighted_tss / yesterday_planned
+    # Intense cross-training (>20% time in Z4+ HR) → force easier session today
+    if yesterday_had_intense_cross:
+        yesterday_tss_ratio = max(yesterday_tss_ratio, 1.5)  # triggers Z2 downgrade
+
+    # v4.6.6 WAVE-4-FIX CRITICAL-2: pass last-4-day rides + today's daily_log
+    # to the planner so G2 (48h Z5+ ceiling, Hulin 2014) and G7 (3d mean RPE,
+    # Foster 1998) actually have inputs in production. Pre-fix the helpers
+    # received an empty list and the gates silently never fired.
+    # Note: load_all_rides() returns dicts with `started_at` (ISO timestamp);
+    # the planner helpers expect a `date` field (YYYY-MM-DD) — inject it.
+    try:
+        _all_rides = _load_all_rides_safe()
+    except Exception:  # noqa: BLE001
+        _all_rides = []
+    _cutoff_4d = (date.today() - timedelta(days=4)).isoformat()
+    rides_recent: list[dict] = []
+    for rd in _all_rides:
+        d_iso = rd.get("date") or _ride_started_local_iso_date(rd)
+        if not d_iso or d_iso < _cutoff_4d:
+            continue
+        # Annotate so the planner helpers see the canonical YYYY-MM-DD field.
+        if not rd.get("date"):
+            rd = {**rd, "date": d_iso}
+        # Also expose start_date_local for _last_48h_z5plus_min's primary path.
+        if not rd.get("start_date_local") and rd.get("started_at"):
+            rd = {**rd, "start_date_local": rd["started_at"]}
+        rides_recent.append(rd)
+    try:
+        daily_log_today = db.get_daily_log_today() or {}
+    except Exception:  # noqa: BLE001
+        daily_log_today = {}
+    adjusted, reason = tp.adjust_today_session(
+        planned=planned, readiness=r,
+        hrv_streak_below_swc=hrv_streak,
+        yesterday_tss_ratio=yesterday_tss_ratio,
+        rides_recent=rides_recent,
+        daily_log_today=daily_log_today,
+    )
+
+    # v4.6.0 IMPL-HOMEPAGE-CONSISTENCY §3 Pillar D: surface adjustment_reason
+    # explicitly so the homepage chip can render "Adjusted to {type} due to
+    # {reason}" without re-parsing the legacy arrow-string. Empty when no
+    # adjustment ran; otherwise mirrors `reason` (kept for back-compat).
+    adjustment_reason = reason if reason else ""
+    return {
+        "planned": {
+            "session_type": planned.session_type,
+            "duration_min": planned.duration_min,
+            "tss_estimate": planned.tss_estimate,
+            "description": planned.description,
+        },
+        "adjusted": {
+            "session_type": adjusted.session_type,
+            "duration_min": adjusted.duration_min,
+            "tss_estimate": adjusted.tss_estimate,
+            "description": adjusted.description,
+        },
+        "reason": reason,
+        "adjustment_reason": adjustment_reason,
+        "readiness": r.get("score"),
+        "hrv_streak_below_swc": hrv_streak,
+        "was_modified": reason != "",
+        "hr_target": _session_hr_target(adjusted.session_type),
+        "power_target": _session_power_target(adjusted.session_type),
+        # F1/F2 (v4.1.0): expose DFA cap + decoupling advisory so the UI
+        # can surface a "Why Z2?" tooltip on the today card.
+        "dfa_cap": r.get("dfa_cap"),
+        "decoupling_advisory": r.get("decoupling_advisory"),
+    }
+
+
+def _get_soreness_subjective() -> float | None:
+    """Auto-feed daily-log into readiness subjective score (1-10).
+
+    v4.6.6 IMPL-B — pre-v4.6.6 only soreness was consumed (other Hooper
+    fields were stubbed at 4 by the dashboard form). Once IMPL-C lands the
+    expanded 4-question form, this helper takes the MIN (worst) of every
+    present field so high fatigue / poor sleep / high stress also pulls
+    the readiness composite down — not just soreness in isolation.
+
+    Mapping (1=best, 7=worst): score = 10 - (val - 1) * 1.5, clamped 1..10.
+    Returns None when no daily_log row exists OR db is unreachable
+    (defensive — some test fixtures use mocked DBs without the table).
+    """
+    try:
+        today_log = db.get_daily_log_today()
+    except Exception:  # noqa: BLE001
+        return None
+    if not today_log:
+        return None
+    components: list[float] = []
+    for key in ("soreness", "fatigue", "stress", "sleep_quality"):
+        v = today_log.get(key)
+        if v is None:
+            continue
+        try:
+            iv = int(v)
+        except (TypeError, ValueError):
+            continue
+        components.append(max(1.0, min(10.0, 10.0 - (iv - 1) * 1.5)))
+    if not components:
+        return None
+    # Use the MIN (worst) so any single bad component drags the score —
+    # matches Hooper's "any limb weak" intent better than averaging.
+    return min(components)
+
+
+def _session_hr_target(session_type: str) -> dict:
+    """Return HR zone target for a session type."""
+    hr_zones = _hr_zones(config.ATHLETE_LTHR, config.ATHLETE_MAX_HR)
+    zone_map = {
+        "rest": None, "recovery": hr_zones[0],  # Z1
+        "z2": hr_zones[1], "long_z2": hr_zones[1],  # Z2
+        "tempo": hr_zones[2],  # Z3
+        "sweetspot": hr_zones[2],  # Z3 (upper)
+        "threshold": hr_zones[3],  # Z4
+        "overunder": hr_zones[3],  # Z4
+        "vo2max": hr_zones[4],  # Z5
+    }
+    zone = zone_map.get(session_type)
+    if not zone:
+        return {"zone": "—", "low": 0, "high": 0}
+    return {"zone": zone["zone"], "name": zone["name"], "low": zone["low"], "high": zone.get("high") or config.ATHLETE_MAX_HR}
+
+
+def _session_power_target(session_type: str) -> dict:
+    """Return power zone target for a session type."""
+    ftp = config.ATHLETE_FTP_W
+    targets = {
+        "rest": None, "recovery": {"low": 0, "high": round(ftp * 0.55)},
+        "z2": {"low": round(ftp * 0.56), "high": round(ftp * 0.75)},
+        "long_z2": {"low": round(ftp * 0.56), "high": round(ftp * 0.75)},
+        "tempo": {"low": round(ftp * 0.76), "high": round(ftp * 0.90)},
+        "sweetspot": {"low": round(ftp * 0.88), "high": round(ftp * 0.93)},
+        "threshold": {"low": round(ftp * 0.91), "high": round(ftp * 1.05)},
+        "overunder": {"low": round(ftp * 0.90), "high": round(ftp * 1.05)},
+        "vo2max": {"low": round(ftp * 1.06), "high": round(ftp * 1.20)},
+    }
+    t = targets.get(session_type)
+    if not t:
+        return {"zone": "—", "low": 0, "high": 0}
+    return {**t, "ftp": ftp}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PLAN API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/plan")
+def api_plan():
+    # Try structured JSON first
+    json_path = _plan_dir() / "current_plan.json"
+    if json_path.exists():
+        try:
+            with open(json_path, encoding="utf-8") as f:
+                plan_data = json.load(f)
+            # v4.1.1 FIX-PLANNER B: attach per-session `zone_dist` so the
+            # dashboard mini-graph (dashboard.html ~5449 buildPowerBlocks)
+            # can render the ACTUAL ZWO's zone distribution instead of a
+            # stock silhouette keyed on session_type alone. Without this,
+            # Base weeks all render identical SVGs even though each week's
+            # ZWO is different. zone_dist = {z1..z6} as percent of time.
+            # Also surface per-session `score` for filter UX parity with
+            # /api/workouts. Non-fatal if library load fails.
+            try:
+                library = tp.load_workout_library()
+                lib_by_file = {w.get("File"): w for w in library}
+                # v4.3.0 B6 — also need rides indexed by date so card_state
+                # can flag "completed" sessions (matched to an actual ride).
+                # Cheap enough to do once per /api/plan call; uses the same
+                # path /api/calendar uses.
+                rides_by_date_for_state: dict[str, bool] = {}
+                try:
+                    import ride_storage as _rs
+                    for _r in _rs.list_rides():
+                        _d = _ride_started_local_iso_date(_r)
+                        if _d:
+                            rides_by_date_for_state[_d] = True
+                    for _f in sorted(_rides_fit_dir().glob("*.fit")):
+                        try:
+                            _st = _f.stat()
+                            _ddt = datetime.fromtimestamp(
+                                _st.st_mtime, timezone.utc
+                            ).astimezone().date().isoformat()
+                            rides_by_date_for_state[_ddt] = True
+                        except OSError:
+                            pass
+                except Exception:
+                    pass
+
+                for w in plan_data.get("weeks", []):
+                    for s in w.get("sessions", []):
+                        zwo = s.get("zwo_file") or ""
+                        meta = lib_by_file.get(zwo) if zwo else None
+                        if meta:
+                            s["zone_dist"] = {
+                                "z1": meta.get("Z1%", 0),
+                                "z2": meta.get("Z2%", 0),
+                                "z3": meta.get("Z3%", 0),
+                                "z4": meta.get("Z4%", 0),
+                                "z5": meta.get("Z5%", 0),
+                                "z6": meta.get("Z6%", 0),
+                            }
+                            s["score"] = meta.get("Score")
+                            s["protocol"] = meta.get("Protocol")
+                            s["content_class"] = meta.get("content_class") or ""
+                        else:
+                            s.setdefault("zone_dist", None)
+                            s.setdefault("score", None)
+                            s.setdefault("content_class", "")
+                        # v4.3.0 B6 — emit card_state for every session so the
+                        # UI can dispatch click handlers + styling without
+                        # rerunning content-class lookups in the browser.
+                        _has_actual = bool(rides_by_date_for_state.get(s.get("day", "")))
+                        s["card_state"] = _classify_card_state(
+                            s, has_actual=_has_actual, library_lookup=lib_by_file,
+                        )
+            except Exception as _e:
+                _log.debug(f"/api/plan zone_dist annotate failed: {_e}")
+            # Also include markdown if available
+            plans = sorted(_plan_dir().glob("*.md"), reverse=True)
+            md = None
+            if plans:
+                with open(plans[0], encoding="utf-8") as f:
+                    md = f.read()
+            return {"plan_json": plan_data, "plan": md, "file": str(json_path)}
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    plans = sorted(_plan_dir().glob("*.md"), reverse=True)
+    if not plans:
+        return {"plan": None, "plan_json": None}
+    with open(plans[0], encoding="utf-8") as f:
+        return {"plan": f.read(), "plan_json": None, "file": str(plans[0])}
+
+
+@app.get("/api/plan/preview")
+def api_plan_preview(
+    goal: str = Query("general"),
+    plan_weeks: int = Query(0),
+    event_date: str | None = Query(None),
+    hours_per_week: float = Query(8.0),
+):
+    """v4.6.0 IMPL-PLAN-CONFIG-UI: live phase preview for the Plan Configuration
+    right-panel. Mirrors /api/plan/generate's phase split so the right panel
+    matches the generated grid (was previously stale because it read
+    current_plan.json — only updated AFTER Generate was clicked).
+
+    Single source of truth: tp.generate_phases(Goal, current_ctl). For a
+    20-week event-prep plan: BASE 8 + BUILD1 4 + BUILD2 4 + PEAK 2 + TAPER 2.
+    """
+    target_date = None
+    if event_date:
+        try:
+            target_date = date.fromisoformat(event_date)
+        except (ValueError, TypeError):
+            target_date = None
+
+    # For event-prep, plan_weeks is auto-computed from event_date; UI
+    # disables the input but we recompute server-side as defence in depth
+    # so a stale/forced-edit value can't desync the right panel from the
+    # generated grid.
+    if goal in ("event", "event_preparation") and target_date is not None:
+        days_to_event = (target_date - date.today()).days
+        plan_weeks = max(4, -(-days_to_event // 7))  # ceil division
+    else:
+        plan_weeks = max(4, int(plan_weeks or 0))
+
+    # Map UI alias → canonical Goal type used by training_planner.
+    goal_type = "event" if goal == "event_preparation" else goal
+
+    g = tp.Goal(
+        goal_type=goal_type,
+        target_date=target_date,
+        hours_per_week=hours_per_week,
+        plan_weeks=plan_weeks,
+    )
+
+    try:
+        training = cached("training", get_today_metrics)
+        current_ctl = float(training.get("ctl") or 37.0)
+    except Exception:
+        current_ctl = 37.0
+
+    phases = tp.generate_phases(g, current_ctl)
+    return {
+        "ok": True,
+        "plan_weeks": plan_weeks,
+        "goal": goal_type,
+        "event_date": target_date.isoformat() if target_date else None,
+        "phases": [
+            {
+                "name": p.name,
+                "weeks": p.weeks,
+                "start": p.start.isoformat() if hasattr(p.start, "isoformat") else str(p.start),
+                "end": p.end.isoformat() if hasattr(p.end, "isoformat") else str(p.end),
+                "weekly_tss": p.weekly_tss_target,
+                "focus": p.focus,
+            }
+            for p in phases
+        ],
+    }
+
+
+@app.get("/api/event/projection")
+def api_event_projection():
+    """v4.6.7 IMPL-CAP: capability projection for the active event-prep plan.
+
+    Returns the locked-shape dict from /tmp/MASTER_DECISIONS_v467.md §4
+    (predicted_finish_h, predicted_np, predicted_tss, gap_endurance_h, ...).
+    Composes Goal + athlete + fitness_state and calls
+    training_planner._project_event_capability(); when ≥5 rides in the last
+    30 days are persisted the helper also runs the Monod CP/W' fit on the
+    aggregated 90d best efforts (fitness_estimation.compute_cp_wprime).
+
+    Returns 200 with ``{"available": False, "reason": <str>}`` when there
+    is no event-prep plan or no event_km — the dashboard widget hides
+    itself in that case.
+    """
+    plan_path = _plan_dir() / "current_plan.json"
+    if not plan_path.exists():
+        return {"available": False, "reason": "no_plan"}
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        return {"available": False, "reason": f"plan_load_error: {e}"}
+
+    g = plan.get("goal", {})
+    if g.get("type") not in ("event", "event_preparation"):
+        return {"available": False, "reason": "not_event_goal"}
+    if not g.get("event_km"):
+        return {"available": False, "reason": "no_event_km"}
+
+    target_date = None
+    if g.get("event_date"):
+        try:
+            target_date = date.fromisoformat(g["event_date"])
+        except ValueError:
+            target_date = None
+
+    goal = tp.Goal(
+        goal_type=g.get("type", "event"),
+        target_date=target_date,
+        event_name=g.get("event_name", ""),
+        event_km=g.get("event_km", 0),
+        event_climb_m=g.get("event_climb", 0),
+        event_type=g.get("event_type", "granfondo"),
+        hours_per_week=g.get("hours_per_week", 8),
+        longest_ride_h_90d=g.get("longest_ride_h_90d"),
+        last_ftp_test_date=g.get("last_ftp_test_date"),
+    )
+
+    rides = _load_all_rides_safe()
+    if goal.longest_ride_h_90d is None:
+        goal.longest_ride_h_90d = _longest_ride_h_90d(rides)
+
+    # Athlete: ftp + weight from active profile.
+    try:
+        from profile_manager import ProfileManager
+        pm = ProfileManager.get()
+        athlete = {"ftp": pm.ftp, "weight_kg": pm.weight_kg}
+    except Exception:
+        athlete = {"ftp": 200, "weight_kg": 70.0}
+
+    # Current CTL.
+    try:
+        training = cached("training", get_today_metrics)
+        current_ctl = float(training.get("ctl") or 50.0)
+    except Exception:
+        current_ctl = 50.0
+
+    # Best-efforts aggregate for CP/W' Monod fit (only when we have ≥5 rides
+    # in the last 30 days — gate prevents fitting on stale data).
+    best_efforts: dict = {}
+    try:
+        if rides:
+            cutoff_30 = (date.today() - timedelta(days=30)).isoformat()
+            recent_count = sum(1 for r in rides if (r.get("started_at") or "")[:10] >= cutoff_30)
+            if recent_count >= 5:
+                best_efforts = _aggregate_best_efforts_90d(rides)
+    except Exception as _e:
+        _log.debug(f"capability projection: best_efforts skipped ({_e})")
+
+    projection = tp._project_event_capability(
+        goal,
+        athlete,
+        {"current_ctl": current_ctl},
+        best_efforts_90d=best_efforts or None,
+    )
+    projection["available"] = True
+    projection["event_name"] = goal.event_name
+    projection["event_date"] = goal.target_date.isoformat() if goal.target_date else None
+    projection["event_km"] = goal.event_km
+    projection["event_climb_m"] = goal.event_climb_m
+    projection["ftp"] = athlete["ftp"]
+    projection["weight_kg"] = athlete["weight_kg"]
+    projection["current_ctl"] = round(current_ctl, 1)
+    return projection
+
+
+@app.post("/api/plan/generate")
+async def api_plan_generate(request: Request):
+    """Generate a training plan from UI form data."""
+    body = await _get_json_body(request)
+    try:
+
+        # Load saved training prefs as defaults (from setup wizard)
+        _prefs = {}
+        _prefs_file = DATA_DIR / "user_prefs.json"
+        if _prefs_file.exists():
+            try:
+                _prefs = json.loads(_prefs_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        # Parse target_date from string to date object
+        target_date = None
+        event_date_str = body.get("event_date")
+        if event_date_str:
+            target_date = date.fromisoformat(event_date_str)
+
+        rest_days = [int(d) for d in body.get("rest_days", _prefs.get("rest_days", [0]))]
+        all_days = list(range(7))
+        available_days = [d for d in all_days if d not in rest_days]
+        plan_weeks = int(body.get("weeks", body.get("plan_weeks", 0)))
+
+        goal = tp.Goal(
+            goal_type=body.get("goal", "general"),
+            target_date=target_date,
+            event_name=body.get("event_name") or "",
+            event_km=body.get("event_km") or 0,
+            event_climb_m=body.get("event_climb") or 0,
+            event_type=body.get("event_type", "granfondo"),
+            target_ftp=body.get("target_ftp"),
+            target_ctl=body.get("target_ctl"),
+            hours_per_week=body.get("hours_per_week", _prefs.get("hours_per_week", 8.0)),
+            max_weekday_hours=body.get("max_weekday", 2.0),
+            max_weekend_hours=body.get("max_weekend", 3.5),
+            available_days=available_days,
+            rest_days=rest_days,
+            daily_max_hours={int(k): float(v) for k, v in body.get("daily_availability", {}).items()},
+            plan_weeks=plan_weeks,
+            longest_ride_h_90d=body.get("longest_ride_h_90d"),
+            last_ftp_test_date=body.get("last_ftp_test_date"),
+        )
+        # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
+        if goal.longest_ride_h_90d is None:
+            goal.longest_ride_h_90d = _longest_ride_h_90d()
+
+        # v4.5.0 IMPL-PLANNER: mint a fresh seed_salt so the FIRST plan is no
+        # longer deterministic (was missing here — only /api/plan/regenerate
+        # passed seed_salt previously, so the very first generate run always
+        # produced the same library picks). Mirrors the regenerate pattern.
+        seed_salt = time.time_ns()
+        phases, weeks = tp.generate_plan(goal, seed_salt=seed_salt)
+        plan_path = tp.export_plan_md(goal, phases, weeks)
+
+        # Also save structured JSON
+        plan_dict = {
+            "goal": {
+                "type": goal.goal_type,
+                "event_date": goal.target_date.isoformat() if goal.target_date else None,
+                "event_name": goal.event_name,
+                "event_km": goal.event_km,
+                "event_climb": goal.event_climb_m,
+                "event_type": goal.event_type,
+                "hours_per_week": goal.hours_per_week,
+                "max_weekday_hours": goal.max_weekday_hours,
+                "max_weekend_hours": goal.max_weekend_hours,
+                "rest_days": goal.rest_days,
+                # P5 (v4.1.0): persist available_days + daily_max_hours so
+                # /api/weekly-plan reconstruction doesn't silently fall back to
+                # [1..6] (dropping Monday). Without this, a user who picked
+                # rest_days=[2,3] would see a phantom Monday rest because the
+                # Goal reconstructor defaulted available_days to [1..6].
+                "available_days": list(goal.available_days or []),
+                "daily_max_hours": {str(k): float(v) for k, v in (goal.daily_max_hours or {}).items()},
+                "plan_weeks": goal.plan_weeks,
+                # v4.6.7 IMPL-CAP: persist capability-projection inputs.
+                "longest_ride_h_90d": goal.longest_ride_h_90d,
+                "last_ftp_test_date": goal.last_ftp_test_date,
+            },
+            "phases": [
+                {
+                    "name": p.name,
+                    "weeks": p.weeks,
+                    "start": p.start.isoformat() if hasattr(p.start, "isoformat") else str(p.start),
+                    "end": p.end.isoformat() if hasattr(p.end, "isoformat") else str(p.end),
+                    "weekly_tss": p.weekly_tss_target,
+                    "focus": p.focus,
+                }
+                for p in phases
+            ],
+            "weeks": [
+                {
+                    "week_num": w.week_num,
+                    "start": w.start.isoformat() if hasattr(w.start, "isoformat") else str(w.start),
+                    "end": w.end.isoformat() if hasattr(w.end, "isoformat") else str(w.end),
+                    "phase": w.phase,
+                    "tss_target": w.tss_target,
+                    "is_stepback": w.is_stepback,
+                    "sessions": [
+                        {
+                            "day": s.day.isoformat() if hasattr(s.day, "isoformat") else str(s.day),
+                            "day_name": s.day_name,
+                            "session_type": s.session_type,
+                            "duration_min": s.duration_min,
+                            "tss_estimate": s.tss_estimate,
+                            "description": s.description,
+                            "zwo_file": s.zwo_file,
+                            "zwo_name": s.zwo_name,
+                        }
+                        for s in w.sessions
+                    ],
+                }
+                for w in weeks
+            ],
+            "generated": datetime.now().isoformat(),
+        }
+
+        json_path = _plan_dir() / "current_plan.json"
+        with tp.plan_write_lock():
+            tmp_path = json_path.with_suffix('.tmp')
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(plan_dict, f, indent=2, default=str)
+            tmp_path.rename(json_path)
+
+        return {"ok": True, "plan_json": plan_dict, "plan_file": str(plan_path)}
+
+    except Exception:
+        # SEC3: don't leak exception text to the client. Log the full
+        # traceback server-side; return a generic detail for the UI.
+        _log.exception("Plan generate failed")
+        return JSONResponse({"detail": "Plan update failed"}, status_code=500)
+
+
+@app.post("/api/plan/reforecast")
+async def api_plan_reforecast():
+    """Reforecast the plan based on actual training data."""
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+
+        # Get actual training data from SQLite
+        activities = db.query_activities(days=120)
+
+        # Build weekly actual TSS from activities
+        actual_weekly = {}
+        for a in activities:
+            if not a.get("date") or not a.get("tss"):
+                continue
+            # Find which plan week this activity falls in
+            act_date = a["date"]
+            for w in plan.get("weeks", []):
+                if w["start"] <= act_date <= w["end"]:
+                    wk = w["week_num"]
+                    actual_weekly[wk] = actual_weekly.get(wk, 0) + (a["tss"] or 0)
+                    break
+
+        # Annotate weeks with actual data
+        today_str = date.today().isoformat()
+        for w in plan.get("weeks", []):
+            wk = w["week_num"]
+            w["actual_tss"] = round(actual_weekly.get(wk, 0), 1)
+            w["is_past"] = w["end"] < today_str
+            w["is_current"] = w["start"] <= today_str <= w["end"]
+            if w["is_past"] and w["tss_target"]:
+                diff_pct = (w["actual_tss"] - w["tss_target"]) / w["tss_target"] * 100 if w["tss_target"] else 0
+                w["adherence_pct"] = round(diff_pct, 1)
+
+        # P2 (v4.1.0) — actually call tp.reforecast() so TSB-triggered
+        # future-session downshifts land on disk. Previously this endpoint
+        # only annotated actual_tss + surfaced gaps; the "Reforecast" UI
+        # button was a silent no-op for intensity.
+        training = cached("training", get_today_metrics)
+        current_ctl = training.get("ctl") or 30
+        current_tsb = training.get("tsb")
+
+        goal_dict = plan.get("goal", {})
+        try:
+            reforecast_goal = tp.Goal(
+                goal_type=goal_dict.get("type", goal_dict.get("goal_type", "general")),
+                hours_per_week=goal_dict.get("hours_per_week", 8.0),
+                rest_days=goal_dict.get("rest_days", [0]),
+                available_days=goal_dict.get("available_days") or [d for d in range(7) if d not in goal_dict.get("rest_days", [0])],
+            )
+        except Exception:
+            reforecast_goal = tp.Goal(goal_type="general", hours_per_week=8.0)
+
+        # Build PlannedWeek objects from persisted JSON for reforecast().
+        pw_list = []
+        for w in plan.get("weeks", []):
+            try:
+                ws = date.fromisoformat(w["start"])
+                we = date.fromisoformat(w["end"])
+            except (KeyError, ValueError):
+                continue
+            sess_list = []
+            for s_json in w.get("sessions", []):
+                try:
+                    sd = date.fromisoformat(s_json["day"])
+                except (KeyError, ValueError):
+                    continue
+                sess_list.append(tp.PlannedSession(
+                    day=sd, day_name=s_json.get("day_name", sd.strftime("%a")),
+                    session_type=s_json.get("session_type", "z2"),
+                    duration_min=int(s_json.get("duration_min", 0) or 0),
+                    tss_estimate=float(s_json.get("tss_estimate", 0) or 0),
+                    description=s_json.get("description", ""),
+                    zwo_file=s_json.get("zwo_file", "") or "",
+                    zwo_name=s_json.get("zwo_name", "") or "",
+                    status=s_json.get("status", "pending"),
+                ))
+            pw_list.append(tp.PlannedWeek(
+                week_num=w.get("week_num", 0), start=ws, end=we,
+                phase=w.get("phase", ""),
+                tss_target=w.get("tss_target", 0),
+                is_stepback=w.get("is_stepback", False),
+                sessions=sess_list,
+                # v4.6.6 WAVE-4-FIX: read hit_per_week from JSON. Pre-fix it
+                # was missing from the constructor → defaulted to 0 → G4's
+                # `max(1, 0 - 1) = 1` always pinned scaled weeks to 1, so
+                # the decrement-by-1 invariant was lost on plans that had
+                # hit_per_week ≥ 2.
+                hit_per_week=int(w.get("hit_per_week", 0) or 0),
+                auto_acwr_scaled=bool(w.get("auto_acwr_scaled", False)),
+            ))
+
+        # Flat-TSB projection for every future day unless ICU gives us more.
+        tsb_series = None
+        if current_tsb is not None:
+            tsb_series = {pw.start + timedelta(days=i): current_tsb
+                          for pw in pw_list
+                          for i in range(7)}
+
+        # v4.6.6 WAVE-4-FIX CRITICAL-3: pass recent_activities (G4 ACWR,
+        # Gabbett 2016) and current/target polarization (G3 breach,
+        # Seiler/Stöggl/Treff) to reforecast(). Pre-fix the UI Reforecast
+        # button computed acwr_ratio against an empty list → G4 dead; G3
+        # branch never had inputs → polarization breach never fired.
+        try:
+            today_d = date.today()
+            actual_pol_kwarg = _polarized_actual_from_rides(
+                _load_all_rides_safe(), today_d, last_n_days=7,
+            )
+        except Exception:  # noqa: BLE001
+            actual_pol_kwarg = None
+        try:
+            cur_phase = next(
+                (w.phase for w in pw_list
+                 if w.start <= today_d <= w.end),
+                None,
+            )
+            target_pol_kwarg = tp.PHASE_POLARIZED_TARGETS.get(
+                (cur_phase or "").lower(),
+                tp.PHASE_POLARIZED_TARGETS.get("history"),
+            )
+        except Exception:  # noqa: BLE001
+            target_pol_kwarg = None
+
+        _, reforecast_info = tp.reforecast(
+            reforecast_goal, pw_list,
+            tsb_series=tsb_series,
+            recent_activities=activities,
+            actual_polarization=actual_pol_kwarg,
+            target_polarization=target_pol_kwarg,
+        )
+
+        # Propagate the reforecast() mutations back into the persisted plan.
+        # v4.6.6 WAVE-4-FIX CRITICAL-5: G3 drops live in `g3_dropped_days`,
+        # G4-TSB drops live in `touched_days`. Union both so persistence
+        # picks up both classes of session-level mutation.
+        touched = set(reforecast_info.get("touched_days") or [])
+        touched |= set(reforecast_info.get("g3_dropped_days") or [])
+        sessions_changed = 0
+        by_day: dict[str, tp.PlannedSession] = {}
+        for pw in pw_list:
+            for s in pw.sessions:
+                by_day[s.day.isoformat()] = s
+        for w in plan.get("weeks", []):
+            for s_json in w.get("sessions", []):
+                day_iso = s_json.get("day", "")
+                if not day_iso or day_iso not in touched:
+                    continue
+                src = by_day.get(day_iso)
+                if src is None:
+                    continue
+                s_json["session_type"] = src.session_type
+                s_json["tss_estimate"] = src.tss_estimate
+                s_json["description"] = src.description
+                s_json["zwo_file"] = ""
+                s_json["zwo_name"] = ""
+                s_json["adapted"] = True
+                s_json["adapted_reason"] = src.description
+                sessions_changed += 1
+
+        # v4.6.6 WAVE-4-FIX CRITICAL-4: persist PlannedWeek-level G4
+        # mutations (tss_target *= 0.85, hit_per_week -= 1,
+        # auto_acwr_scaled=True) back to JSON. Pre-fix only day-level
+        # session changes were saved → G4 ran in memory then evaporated.
+        pw_by_num = {pw.week_num: pw for pw in pw_list}
+        weeks_changed = 0
+        for w in plan.get("weeks", []):
+            wn = w.get("week_num")
+            src_pw = pw_by_num.get(wn)
+            if src_pw is None:
+                continue
+            changed_this_week = False
+            if w.get("tss_target") != src_pw.tss_target:
+                w["tss_target"] = src_pw.tss_target
+                changed_this_week = True
+            if w.get("hit_per_week") != src_pw.hit_per_week:
+                w["hit_per_week"] = src_pw.hit_per_week
+                changed_this_week = True
+            if src_pw.auto_acwr_scaled and not w.get("auto_acwr_scaled"):
+                w["auto_acwr_scaled"] = True
+                changed_this_week = True
+            if changed_this_week:
+                weeks_changed += 1
+
+        # Save updated plan
+        plan["reforecast_date"] = datetime.now().isoformat()
+        plan["last_reforecast_info"] = reforecast_info
+        with tp.plan_write_lock():
+            tmp_path = json_path.with_suffix('.tmp')
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(plan, f, indent=2, default=str)
+            tmp_path.rename(json_path)
+
+        # Also detect gaps (tiered absence detection)
+        gaps = tp.detect_plan_gaps(pw_list, activities, current_ctl)
+        plan["gaps"] = gaps
+
+        return {
+            "ok": True, "plan_json": plan, "gaps": gaps,
+            "reforecast": reforecast_info,
+            "sessions_changed": sessions_changed,
+        }
+
+    except Exception:
+        # SEC3: don't leak exception text.
+        _log.exception("Plan reforecast failed")
+        return JSONResponse({"detail": "Plan update failed"}, 500)
+
+
+@app.post("/api/plan/mark-unavailable")
+async def api_mark_unavailable(request: Request):
+    """Mark a date range as unavailable (holiday/injury/illness)."""
+    body = await _get_json_body(request)
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+
+        period = {
+            "start": body.get("start"),
+            "end": body.get("end"),
+            "type": body.get("type", "holiday"),  # holiday, injury, illness
+            "daily_tss": body.get("daily_tss", 0),
+            "reason": body.get("reason", ""),
+        }
+
+        if not period["start"] or not period["end"]:
+            return JSONResponse({"error": "start and end dates required"}, 400)
+        try:
+            date.fromisoformat(period["start"])
+            date.fromisoformat(period["end"])
+        except (ValueError, TypeError):
+            return JSONResponse({"error": "Invalid date format (use YYYY-MM-DD)"}, 400)
+
+        unavailable = plan.get("unavailable_periods", [])
+        unavailable.append(period)
+        plan["unavailable_periods"] = unavailable
+
+        with tp.plan_write_lock():
+            tmp_path = json_path.with_suffix('.tmp')
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(plan, f, indent=2, default=str)
+            tmp_path.rename(json_path)
+
+        return {"ok": True, "period": period, "plan_json": plan}
+
+    except Exception:
+        # SEC3: don't leak exception text.
+        _log.exception("Plan mark-unavailable failed")
+        return JSONResponse({"detail": "Plan update failed"}, 500)
+
+
+@app.post("/api/plan/save-availability")
+async def api_save_availability(request: Request):
+    """Save the monthly availability calendar data to the plan JSON."""
+    body = await _get_json_body(request)
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+
+        # body = { "availability": { "2026-04-01": { "hours": 1.5, "type": "available" }, ... } }
+        plan["availability"] = body.get("availability", {})
+
+        with tp.plan_write_lock():
+            tmp_path = json_path.with_suffix('.tmp')
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(plan, f, indent=2, default=str)
+            tmp_path.rename(json_path)
+
+        return {"ok": True}
+
+    except Exception:
+        # SEC3: don't leak exception text.
+        _log.exception("Plan save-availability failed")
+        return JSONResponse({"detail": "Plan update failed"}, 500)
+
+
+@app.post("/api/plan/regenerate")
+async def api_plan_regenerate_dynamic(request: Request):
+    """Regenerate plan from today after missed training/injury/holiday.
+
+    Science: Mujika 2000/2001/2003, Gabbett 2016, Gundersen 2016.
+
+    v4.3.0 B3: now mints a fresh ``seed_salt = time.time_ns()`` on each call
+    and writes it into ``plan["last_regen_at"]``. The salt is forwarded into
+    ``regenerate_from_today`` → ``plan_week`` → ``_pick_session`` and
+    ``match_zwo`` so consecutive regenerations produce visibly different
+    HIT-variant + ZWO-pick distributions.
+    """
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+
+    try:
+
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+
+        body = await _get_json_body(request) if request.headers.get("content-type", "").startswith("application/json") else {}
+
+        # v4.3.0 B3: per-regen entropy salt. time.time_ns() gives us a fresh
+        # 19+ bit-of-entropy nonce per call — guaranteed different across two
+        # back-to-back POSTs on any modern OS clock. We persist it back into
+        # the plan JSON as ``last_regen_at`` so that any reader can verify
+        # the regen actually occurred AND so subsequent regen's seed_salt
+        # is by construction different from the prior one.
+        seed_salt = time.time_ns()
+
+        # Get current CTL
+        training = cached("training", get_today_metrics)
+        current_ctl = training.get("ctl") or 30
+
+        # Reconstruct Goal
+        g = plan.get("goal", {})
+        target_date = date.fromisoformat(g["event_date"]) if g.get("event_date") else date.today() + timedelta(weeks=12)
+        goal = tp.Goal(
+            goal_type=g.get("type", "general"),
+            target_date=target_date,
+            event_name=g.get("event_name", ""),
+            event_km=g.get("event_km", 0),
+            event_climb_m=g.get("event_climb", 0),
+            event_type=g.get("event_type", "granfondo"),
+            hours_per_week=g.get("hours_per_week", 8),
+            max_weekday_hours=g.get("max_weekday_hours", 2.0),
+            max_weekend_hours=g.get("max_weekend_hours", 3.5),
+            rest_days=g.get("rest_days", [0]),
+            longest_ride_h_90d=g.get("longest_ride_h_90d"),
+            last_ftp_test_date=g.get("last_ftp_test_date"),
+        )
+        # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
+        if goal.longest_ride_h_90d is None:
+            goal.longest_ride_h_90d = _longest_ride_h_90d()
+
+        # Reconstruct PlannedWeek list
+        old_weeks = []
+        for w in plan.get("weeks", []):
+            sessions = []
+            for s in w.get("sessions", []):
+                sessions.append(tp.PlannedSession(
+                    day=date.fromisoformat(s["day"]), day_name=s.get("day_name", ""),
+                    session_type=s.get("session_type", "rest"),
+                    duration_min=s.get("duration_min", 0),
+                    tss_estimate=s.get("tss_estimate", 0),
+                    description=s.get("description", ""),
+                    zwo_file=s.get("zwo_file", ""),
+                    zwo_name=s.get("zwo_name", ""),
+                ))
+            old_weeks.append(tp.PlannedWeek(
+                week_num=w["week_num"], start=date.fromisoformat(w["start"]),
+                end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
+                tss_target=w.get("tss_target", 0), is_stepback=w.get("is_stepback", False),
+                sessions=sessions,
+            ))
+
+        # Get activities for gap detection
+        activities = db.query_activities(days=120)
+        unavailable = plan.get("unavailable_periods", [])
+
+        # Regenerate (seed_salt forces shuffle variance per call — B3)
+        new_phases, all_weeks, regen_info = tp.regenerate_from_today(
+            goal=goal, old_plan_weeks=old_weeks,
+            current_ctl=current_ctl,
+            unavailable_periods=unavailable,
+            activities=activities,
+            seed_salt=seed_salt,
+        )
+
+        # Build updated plan JSON
+        plan_dict = {
+            "goal": plan.get("goal", {}),
+            "phases": [
+                {
+                    "name": p.name, "weeks": p.weeks,
+                    "start": p.start.isoformat(), "end": p.end.isoformat(),
+                    "weekly_tss": p.weekly_tss_target, "focus": p.focus,
+                }
+                for p in new_phases
+            ],
+            "weeks": [
+                {
+                    "week_num": w.week_num,
+                    "start": w.start.isoformat(), "end": w.end.isoformat(),
+                    "phase": w.phase, "tss_target": w.tss_target,
+                    "is_stepback": w.is_stepback,
+                    "sessions": [
+                        {
+                            "day": s.day.isoformat(), "day_name": s.day_name,
+                            "session_type": s.session_type, "duration_min": s.duration_min,
+                            "tss_estimate": s.tss_estimate, "description": s.description,
+                            "zwo_file": getattr(s, "zwo_file", ""),
+                            "zwo_name": getattr(s, "zwo_name", ""),
+                        }
+                        for s in w.sessions
+                    ],
+                }
+                for w in all_weeks
+            ],
+            "unavailable_periods": unavailable,
+            "regenerated": datetime.now().isoformat(),
+            "regen_info": regen_info,
+            "generated": plan.get("generated", datetime.now().isoformat()),
+            # v4.3.0 B3: persist the per-regen entropy salt so external readers
+            # (UI, tests) can detect that a fresh regen happened. Two back-to-back
+            # POSTs MUST produce different last_regen_at values (time.time_ns is
+            # monotonic on every modern OS).
+            "last_regen_at": seed_salt,
+        }
+
+        with tp.plan_write_lock():
+            tmp_path = json_path.with_suffix('.tmp')
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(plan_dict, f, indent=2, default=str)
+            tmp_path.rename(json_path)
+
+        return {"ok": True, "plan_json": plan_dict, "regen_info": regen_info}
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, 500)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FIT WORKOUT EXPORT (Garmin/Wahoo) — uses Garmin FIT SDK
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/export/fit-workout")
+def api_export_fit_workout(
+    session_type: str = Query("z2"),
+    duration_min: int = Query(75),
+    name: str = Query("Workout"),
+):
+    """Generate a FIT binary workout file for Garmin Edge / Wahoo ELEMNT."""
+    try:
+        from fit_tool.fit_file_builder import FitFileBuilder  # verify fit_tool is available
+
+        ftp = config.ATHLETE_FTP_W
+
+        # Build power blocks (reuse existing logic)
+        blocks = []
+        warmup = min(10, duration_min // 8)
+        cooldown = min(5, duration_min // 12)
+        main_min = duration_min - warmup - cooldown
+
+        blocks.append({"name": "Warmup", "min": warmup, "pctLow": 45, "pctHigh": 65, "intensity": "warmup"})
+
+        if session_type == "vo2max":
+            reps = min(5, max(3, main_min // 7))
+            for i in range(reps):
+                blocks.append({"name": f"VO2 {i+1}", "min": 4, "pctLow": 106, "pctHigh": 115, "intensity": "active"})
+                if i < reps - 1:
+                    blocks.append({"name": "Rest", "min": 3, "pctLow": 40, "pctHigh": 40, "intensity": "rest"})
+        elif session_type == "threshold":
+            blocks.append({"name": "FTP 1", "min": 20, "pctLow": 95, "pctHigh": 100, "intensity": "active"})
+            blocks.append({"name": "Rest", "min": 5, "pctLow": 50, "pctHigh": 50, "intensity": "rest"})
+            blocks.append({"name": "FTP 2", "min": 20, "pctLow": 95, "pctHigh": 100, "intensity": "active"})
+        elif session_type == "sweetspot":
+            for i in range(3):
+                blocks.append({"name": f"SS {i+1}", "min": 15, "pctLow": 88, "pctHigh": 93, "intensity": "active"})
+                if i < 2:
+                    blocks.append({"name": "Rest", "min": 5, "pctLow": 55, "pctHigh": 55, "intensity": "rest"})
+        elif session_type == "overunder":
+            for i in range(3):
+                for j in range(4):
+                    blocks.append({"name": "Over", "min": 2, "pctLow": 105, "pctHigh": 105, "intensity": "active"})
+                    blocks.append({"name": "Under", "min": 1, "pctLow": 90, "pctHigh": 90, "intensity": "active"})
+                if i < 2:
+                    blocks.append({"name": "Rest", "min": 5, "pctLow": 50, "pctHigh": 50, "intensity": "rest"})
+        else:
+            blocks.append({"name": session_type, "min": main_min, "pctLow": 56, "pctHigh": 75, "intensity": "active"})
+
+        blocks.append({"name": "Cooldown", "min": cooldown, "pctLow": 60, "pctHigh": 40, "intensity": "cooldown"})
+
+        # Build FIT file manually (lightweight binary format)
+        # FIT header + data records + CRC
+        # For compatibility, generate a minimal FIT workout that Garmin can read
+        fit_data = _build_fit_workout(name, blocks, ftp)
+
+        from fastapi.responses import Response
+        # Sanitize aggressively — any char outside [A-Za-z0-9_.-] becomes '_'.
+        # The prior quote-only escape accepted CR/LF, which would let a user
+        # inject extra Content-Disposition headers into the response.
+        safe_name = re.sub(r'[^\w.\-]', '_', name) or "workout"
+        return Response(
+            content=fit_data,
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{safe_name}.fit"'},
+        )
+
+    except ImportError as ie:
+        return JSONResponse({"error": f"fit_tool not installed. Run: pip install fit_tool. Detail: {ie}"}, 500)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, 500)
+
+
+def _build_fit_workout(name: str, blocks: list[dict], ftp: int) -> bytes:
+    """Build a proper FIT binary workout file using fit_tool.
+
+    Produces a valid .fit file readable by Garmin Edge, Wahoo ELEMNT, and other ANT+ devices.
+    Workout steps use absolute power targets in watts (calculated from %FTP).
+    """
+    from fit_tool.fit_file_builder import FitFileBuilder
+    from fit_tool.profile.messages.file_id_message import FileIdMessage
+    from fit_tool.profile.messages.workout_message import WorkoutMessage
+    from fit_tool.profile.messages.workout_step_message import WorkoutStepMessage
+    from fit_tool.profile.profile_type import FileType, Manufacturer, Sport, Intensity, WorkoutStepDuration, WorkoutStepTarget
+
+    builder = FitFileBuilder()
+
+    # File ID
+    file_id = FileIdMessage()
+    file_id.type = FileType.WORKOUT
+    file_id.manufacturer = Manufacturer.DEVELOPMENT.value
+    file_id.product = 0
+    file_id.serial_number = 12345
+    # time_created is optional for workout files — skip to avoid epoch issues
+    builder.add(file_id)
+
+    # Workout header
+    workout = WorkoutMessage()
+    workout.workout_name = name
+    workout.sport = Sport.CYCLING
+    workout.num_valid_steps = len(blocks)
+    builder.add(workout)
+
+    # Workout steps
+    INTENSITY_MAP = {
+        "active": Intensity.ACTIVE,
+        "rest": Intensity.REST,
+        "warmup": Intensity.WARMUP,
+        "cooldown": Intensity.COOLDOWN,
+    }
+
+    for i, b in enumerate(blocks):
+        step = WorkoutStepMessage()
+        step.message_index = i
+        step.duration_type = WorkoutStepDuration.TIME
+        step.duration_value = b["min"] * 60 * 1000  # milliseconds
+        step.target_type = WorkoutStepTarget.POWER
+        step.intensity = INTENSITY_MAP.get(b.get("intensity", "active"), Intensity.ACTIVE)
+
+        # Power targets in watts (FIT uses absolute watts + 1000 offset for custom targets)
+        power_low = round(ftp * b["pctLow"] / 100) + 1000
+        power_high = round(ftp * b["pctHigh"] / 100) + 1000
+        step.custom_target_power_low = power_low
+        step.custom_target_power_high = power_high
+        step.target_value = 0  # 0 = custom target (not a zone)
+
+        builder.add(step)
+
+    # Build and return binary FIT data
+    fit_file = builder.build()
+    return fit_file.to_bytes()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ROLLING PLAN AUTO-RECALCULATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _load_current_week_dto(plan: dict, today: date):
+    """Build a PlannedWeek DTO from plan JSON for the week containing `today`.
+
+    Returns (planned_week, idx) or (None, -1) if no current week found.
+    §6.12 hazard: the DTO MUST round-trip status/user_moved/moved_from/
+    completion_matches/dismissed_at — otherwise regen/projection discards them.
+    """
+    weeks_data = plan.get("weeks", [])
+    for i, w in enumerate(weeks_data):
+        try:
+            w_start = date.fromisoformat(w["start"])
+            w_end = date.fromisoformat(w["end"])
+        except (KeyError, ValueError):
+            continue
+        if w_start <= today <= w_end:
+            sessions = [
+                tp.PlannedSession(
+                    day=date.fromisoformat(s["day"]), day_name=s["day_name"],
+                    session_type=s["session_type"], duration_min=s["duration_min"],
+                    tss_estimate=s["tss_estimate"], description=s.get("description", ""),
+                    zwo_file=s.get("zwo_file", ""),
+                    zwo_name=s.get("zwo_name", ""),
+                    status=s.get("status", "pending"),
+                    user_moved=s.get("user_moved", False),
+                    moved_from=s.get("moved_from", ""),
+                    completion_matches=s.get("completion_matches") or None,
+                    dismissed_at=s.get("dismissed_at", ""),
+                )
+                for s in w.get("sessions", [])
+            ]
+            pw = tp.PlannedWeek(
+                week_num=w["week_num"], start=w_start, end=w_end,
+                phase=w["phase"], tss_target=w["tss_target"],
+                is_stepback=w.get("is_stepback", False),
+                sessions=sessions,
+            )
+            return pw, i
+    return None, -1
+
+
+def _collect_week_activities(current_week, today: date, include_today: bool = False):
+    """Gather actual activities within [week_start, today) (or today+1 if include_today).
+
+    Dedups by (date, rounded TSS / 5). Returns dicts rich enough for the
+    rematch classifier (intensity_factor, duration_min, id passed through).
+    """
+    week_start_iso = current_week.start.isoformat()
+    upper_iso = (today + timedelta(days=1)).isoformat() if include_today else today.isoformat()
+    actual = []
+    seen_keys = set()
+
+    def _add(a: dict):
+        d = (a.get("date") or a.get("start_date_local", "") or "")[:10]
+        if not (week_start_iso <= d < upper_iso):
+            return
+        tss = float(a.get("tss") or a.get("icu_training_load") or 0)
+        if tss <= 0:
+            return
+        key = (d, round(tss / 5) * 5)
+        if key in seen_keys:
+            return
+        seen_keys.add(key)
+        actual.append({
+            "date": d,
+            "tss": tss,
+            "duration_min": float(a.get("duration_min") or (a.get("moving_time", 0) or 0) / 60 or 0),
+            "intensity_factor": a.get("intensity_factor") or a.get("icu_intensity"),
+            "id": a.get("id") or a.get("icu_id"),
+            "sport": a.get("sport", ""),
+        })
+
+    try:
+        from db import query_activities
+        days_since_start = (today - current_week.start).days + 2
+        for a in query_activities(days=max(7, days_since_start)):
+            _add(a)
+    except Exception as e:
+        _log.debug(f"ICU activities fetch failed: {e}")
+    try:
+        from ride_storage import list_rides
+        for r in list_rides():
+            _add(r)
+    except Exception as e:
+        _log.debug(f"Local rides fetch failed: {e}")
+    return actual
+
+
+@app.get("/api/plan/daily-adapt")
+def api_plan_daily_adapt():
+    """Daily-adapt PROJECTION (fix26 §6.1) — read-only preview.
+
+    *** THIS ENDPOINT NEVER WRITES TO current_plan.json. ***
+
+    Returns what a legacy daily-adapt pass *would* have done as
+    `projected_adaptations[]`. The UI branches on
+    `info.projection_only === true` and surfaces a non-intrusive hint.
+
+    Writes now require explicit user action via /api/plan/move-session
+    or /api/plan/rematch?apply=1.
+    """
+
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return {"action": "no_plan", "projection_only": True}
+
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+
+        today = date.today()
+        current_week, _idx = _load_current_week_dto(plan, today)
+        if not current_week:
+            return {"action": "no_current_week", "projection_only": True}
+
+        actual = _collect_week_activities(current_week, today, include_today=False)
+        _unchanged, info = tp.daily_adapt_plan(current_week, actual, today)
+        info["projection_only"] = True  # defensive: re-mark in case caller strips
+        return info
+
+    except Exception:
+        # SEC3: don't leak exception text.
+        _log.exception("Plan daily-adapt projection failed")
+        return {"action": "error", "detail": "Plan projection failed", "projection_only": True}
+
+
+@app.post("/api/plan/move-session")
+async def api_plan_move_session(request: Request):
+    """Move a session from one date to another (fix26 §6.2).
+
+    Body: {"date": "YYYY-MM-DD", "new_date": "YYYY-MM-DD"}
+
+    - Sets `user_moved=True` on the session at its new slot.
+    - Records `moved_from=<original iso date>`.
+    - The vacated slot becomes a rest with `status=moved_from:<new_date>`.
+    - §6.12: regenerate_from_today honors user_moved=True — never re-prescribed.
+    """
+    body = await _get_json_body(request)
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+
+    src_iso = str(body.get("date", "")).strip()
+    dst_iso = str(body.get("new_date", "")).strip()
+    if not src_iso or not dst_iso:
+        return JSONResponse({"error": "date and new_date required"}, 400)
+    try:
+        date.fromisoformat(src_iso)
+        date.fromisoformat(dst_iso)
+    except ValueError:
+        return JSONResponse({"error": "Invalid date format (use YYYY-MM-DD)"}, 400)
+    if src_iso == dst_iso:
+        return JSONResponse({"error": "date and new_date must differ"}, 400)
+
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+
+        # v4.1.1 FIX-PICKER-MOVE (Bug E): week-boundary check now uses ISO
+        # Mon-Sun — NOT the iterate-stored-weeks approach. The old check
+        # required BOTH src and dst to be inside the same stored week,
+        # but stored weeks in current_plan.json may use legacy Fri-Thu
+        # boundaries (or Sat-Fri on older plans), while the dashboard
+        # UI renders the week as Mon-Sun (``tp.generate_weekly_plan``).
+        # That meant Tue 04-21 → Fri 04-24 (same ISO week 17) was
+        # rejected because they sat in adjacent stored Fri-Thu slices.
+        # Root cause: comparison axis mismatch between UI (ISO) and
+        # handler (stored).  We now validate on ISO week and let the
+        # writer below thread each date into whichever stored week
+        # actually contains it.
+        src_d = date.fromisoformat(src_iso)
+        dst_d = date.fromisoformat(dst_iso)
+        src_iso_week = src_d.isocalendar()[:2]  # (iso_year, iso_week)
+        dst_iso_week = dst_d.isocalendar()[:2]
+        if src_iso_week != dst_iso_week:
+            return JSONResponse(
+                {"error": "move must stay within the current ISO week (Mon-Sun)"},
+                400,
+            )
+
+        weeks_data = plan.get("weeks", [])
+
+        def _find_week_idx(target: date) -> int | None:
+            for i, w in enumerate(weeks_data):
+                try:
+                    w_start = date.fromisoformat(w["start"])
+                    w_end = date.fromisoformat(w["end"])
+                except (KeyError, ValueError):
+                    continue
+                if w_start <= target <= w_end:
+                    return i
+            return None
+
+        src_week_idx = _find_week_idx(src_d)
+        dst_week_idx = _find_week_idx(dst_d)
+
+        # v4.3.0 B1 — Lazy-load + 422 fix.
+        # Symptom: user dragged a session within the visible Mon-Sun week and
+        # got a cryptic "no stored week contains source date" toast.
+        # Root cause: ``plan["weeks"]`` may have been written by a stale planner
+        # whose week boundaries don't cover the source date (legacy Sat-Fri vs
+        # the new Mon-Sun grid the UI shows). When that happens we re-read the
+        # plan straight from disk (a sibling process or a recent regen may have
+        # written newer weeks) and retry. If that STILL fails we return 422
+        # with a structured error code so the UI can show a clean toast
+        # ("Couldn't find that session. Try refreshing.") instead of the raw
+        # 404 string.
+        if src_week_idx is None or dst_week_idx is None:
+            try:
+                with open(json_path, encoding="utf-8") as f:
+                    plan_disk = json.load(f)
+                weeks_data = plan_disk.get("weeks", [])
+                src_week_idx = _find_week_idx(src_d)
+                dst_week_idx = _find_week_idx(dst_d)
+                if src_week_idx is not None or dst_week_idx is not None:
+                    # Lazy-load found something — swap the in-memory plan to
+                    # the disk version so all downstream writes see it.
+                    plan = plan_disk
+            except (OSError, json.JSONDecodeError) as _e:
+                _log.debug(f"move-session lazy-reload failed: {_e}")
+
+        if src_week_idx is None:
+            return JSONResponse(
+                {"error": "source_session_not_found", "date": src_iso}, 422
+            )
+        if dst_week_idx is None:
+            return JSONResponse(
+                {"error": "target_week_not_found", "date": dst_iso}, 422
+            )
+
+        src_week = weeks_data[src_week_idx]
+        dst_week = weeks_data[dst_week_idx]
+        src_sessions = src_week.get("sessions", [])
+        dst_sessions = dst_week.get("sessions", [])
+        src_session = next((s for s in src_sessions if s.get("day") == src_iso), None)
+        dst_session = next((s for s in dst_sessions if s.get("day") == dst_iso), None)
+        if not src_session:
+            # v4.3.0 B1 — same 422 contract as the missing-week case so the
+            # frontend toast handler has a single error code to react on.
+            return JSONResponse(
+                {"error": "source_session_not_found", "date": src_iso}, 422
+            )
+
+        moved_payload = {k: v for k, v in src_session.items()}
+        moved_payload["day"] = dst_iso
+        moved_payload["day_name"] = (
+            dst_session["day_name"] if dst_session else dst_d.strftime("%a")
+        )
+        moved_payload["user_moved"] = True
+        moved_payload["moved_from"] = src_iso
+        if moved_payload.get("status", "pending") == "pending":
+            moved_payload["status"] = "pending"
+
+        # Rewrite source week: replace src slot with a rest stub.
+        new_src = []
+        for s in src_sessions:
+            if s.get("day") == src_iso:
+                new_src.append({
+                    "day": src_iso, "day_name": src_session["day_name"],
+                    "session_type": "rest", "duration_min": 0,
+                    "tss_estimate": 0, "description": f"Moved to {dst_iso}",
+                    "zwo_file": "", "zwo_name": "",
+                    "status": f"moved_from:{dst_iso}",
+                    "user_moved": False, "moved_from": "",
+                    "completion_matches": None, "dismissed_at": "",
+                })
+            elif src_week_idx == dst_week_idx and s.get("day") == dst_iso:
+                # Same stored week — dst slot overwritten with moved payload.
+                new_src.append(moved_payload)
+            else:
+                new_src.append(s)
+        if src_week_idx == dst_week_idx:
+            # Dst was in same week; ensure it's actually present.
+            if not any(s.get("day") == dst_iso for s in new_src):
+                new_src.append(moved_payload)
+            src_week["sessions"] = new_src
+        else:
+            src_week["sessions"] = new_src
+            # Rewrite dst week separately.
+            new_dst = []
+            placed = False
+            for s in dst_sessions:
+                if s.get("day") == dst_iso:
+                    new_dst.append(moved_payload)
+                    placed = True
+                else:
+                    new_dst.append(s)
+            if not placed:
+                new_dst.append(moved_payload)
+            dst_week["sessions"] = new_dst
+
+        plan["last_move"] = {"date": src_iso, "new_date": dst_iso, "at": datetime.now().isoformat()}
+
+        with tp.plan_write_lock():
+            tmp_path = json_path.with_suffix('.tmp')
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(plan, f, indent=2, default=str)
+            tmp_path.rename(json_path)
+
+        return {"ok": True, "moved": moved_payload, "vacated": src_iso}
+
+    except Exception:
+        _log.exception("Plan move-session failed")
+        return JSONResponse({"detail": "Move failed"}, 500)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# v4.3.0 — Calendar overlay (B4 + B5 + B6)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Z-zone bucket boundaries (% FTP) for the calendar's
+# z1z2 / z3z4 / z5+ split. Matches Coggan zones from zones.py:
+#   Z1+Z2 = 0..75% FTP   (active recovery + endurance)
+#   Z3+Z4 = 76..105% FTP (tempo + sweetspot + threshold)
+#   Z5+   = 106%+ FTP    (vo2max, anaerobic, neuromuscular)
+_CAL_LOW_PCT  = 0.755   # max for "z1z2" bucket
+_CAL_MID_PCT  = 1.055   # max for "z3z4" bucket; above = z5+
+
+
+def _ride_zone_split_minutes(ride: dict, ftp: int | None) -> tuple[float, float, float]:
+    """Return (z1z2_min, z3z4_min, z5plus_min) for a ride.
+
+    Strategy (in order of preference):
+      1. ``ride["zones"]["power"]`` (ICU/FIT-imported with zone-time present) —
+         maps Coggan Z1..Z2 → z1z2, Z3..Z4 → z3z4, Z5..Z7 → z5plus directly.
+      2. Fall back to ``ride["samples"]["power"]`` against the supplied FTP
+         (per MASTER §3 — "If FIT lacks RR/zone-time, compute z1/.../z5+ from
+         power-time array using FTP from profile").
+      3. If both fail, return (0, 0, 0).
+    """
+    zones_block = (ride.get("zones") or {}).get("power") or {}
+    if zones_block:
+        z1 = float(zones_block.get("Z1") or 0)
+        z2 = float(zones_block.get("Z2") or 0)
+        z3 = float(zones_block.get("Z3") or 0)
+        z4 = float(zones_block.get("Z4") or 0)
+        z5 = float(zones_block.get("Z5") or 0)
+        z6 = float(zones_block.get("Z6") or 0)
+        z7 = float(zones_block.get("Z7") or 0)
+        if (z1 + z2 + z3 + z4 + z5 + z6 + z7) > 0:
+            return (
+                round((z1 + z2) / 60.0, 1),
+                round((z3 + z4) / 60.0, 1),
+                round((z5 + z6 + z7) / 60.0, 1),
+            )
+
+    # Fallback: power-time integration.
+    samples = (ride.get("samples") or {}).get("power") or []
+    if samples and ftp and ftp > 0:
+        low = mid = hi = 0
+        low_thresh = _CAL_LOW_PCT * ftp
+        mid_thresh = _CAL_MID_PCT * ftp
+        for p in samples:
+            try:
+                pw = float(p)
+            except (TypeError, ValueError):
+                continue
+            if pw <= 0:
+                continue
+            if pw <= low_thresh:
+                low += 1
+            elif pw <= mid_thresh:
+                mid += 1
+            else:
+                hi += 1
+        return (
+            round(low / 60.0, 1),
+            round(mid / 60.0, 1),
+            round(hi / 60.0, 1),
+        )
+    return (0.0, 0.0, 0.0)
+
+
+def _planned_zone_split_minutes(session: dict) -> tuple[float, float, float]:
+    """Return (planned_z1z2_min, planned_z3z4_min, planned_z5plus_min) for a
+    planned session. Reads zone_dist when present (set by /api/plan from the
+    library), else falls back to a heuristic from session_type + duration.
+    """
+    dur = float(session.get("duration_min") or 0)
+    if dur <= 0:
+        return (0.0, 0.0, 0.0)
+
+    zd = session.get("zone_dist")
+    if zd and isinstance(zd, dict):
+        # zone_dist values are percentages (0-100). Map: Z1+Z2 → low, Z3+Z4
+        # → mid, Z5+Z6 → hi.
+        low_pct = float(zd.get("z1") or 0) + float(zd.get("z2") or 0)
+        mid_pct = float(zd.get("z3") or 0) + float(zd.get("z4") or 0)
+        hi_pct  = float(zd.get("z5") or 0) + float(zd.get("z6") or 0)
+        total = low_pct + mid_pct + hi_pct
+        if total > 0:
+            return (
+                round(dur * low_pct / 100.0, 1),
+                round(dur * mid_pct / 100.0, 1),
+                round(dur * hi_pct / 100.0, 1),
+            )
+
+    # Heuristic fallback by session_type. Conservative assignments:
+    stype = (session.get("session_type") or "").lower()
+    if stype in ("rest",):
+        return (0.0, 0.0, 0.0)
+    if stype in ("recovery", "z2", "long_z2", "endurance"):
+        return (round(dur, 1), 0.0, 0.0)
+    if stype in ("tempo", "sweetspot"):
+        return (round(dur * 0.55, 1), round(dur * 0.45, 1), 0.0)
+    if stype in ("threshold", "overunder"):
+        return (round(dur * 0.45, 1), round(dur * 0.55, 1), 0.0)
+    if stype in ("vo2max", "sprint", "anaerobic"):
+        # Warmup + recovery in z1z2; intervals in z5+; some z3z4 transition.
+        return (round(dur * 0.55, 1), round(dur * 0.10, 1), round(dur * 0.35, 1))
+    if stype == "ftp_test":
+        return (round(dur * 0.40, 1), round(dur * 0.45, 1), round(dur * 0.15, 1))
+    # Unknown: lump in z3z4 so it's at least visible.
+    return (0.0, round(dur, 1), 0.0)
+
+
+def _classify_card_state(session: dict, has_actual: bool, library_lookup: dict | None) -> str:
+    """v4.3.0 B6 — return the card_state string used by the UI dispatcher.
+
+    Possible values (per MASTER §3 + spec):
+      - ``"completed"``      : a matching ride exists for this date (takes
+                               precedence over rest so an unplanned ride on
+                               a rest day still surfaces) — v4.5.1 §B2
+      - ``"rest"``           : session_type == "rest" (no workout to click)
+      - ``"missing_workout"``: zwo_file is empty/null OR its content_class
+                               doesn't match the planner session_type
+      - ``"planned"``        : zwo_file present + content_class consistent
+    """
+    stype = (session.get("session_type") or "").lower()
+    # v4.5.1 §B2 — has_actual must be checked BEFORE the rest branch so that
+    # an unplanned ride on a planned-rest day classifies as "completed"
+    # (was returning "rest" with the actual silently shadowed).
+    if has_actual:
+        return "completed"
+    if stype == "rest":
+        return "rest"
+    zwo = session.get("zwo_file") or ""
+    if not zwo:
+        return "missing_workout"
+
+    # Cross-check content_class against session_type when we have a library
+    # entry for this zwo. Loose match — any of the planner's accepted
+    # categories for that session_type counts as consistent.
+    if library_lookup is not None:
+        meta = library_lookup.get(zwo)
+        if meta is not None:
+            cc = (meta.get("content_class") or "").lower()
+            if cc:
+                # Reuse training_planner's session_type → category mapping.
+                accepted_by_type = {
+                    "z2":         {"endurance", "recovery"},
+                    "long_z2":    {"endurance", "recovery"},
+                    "recovery":   {"recovery", "endurance"},
+                    "tempo":      {"tempo", "sweet_spot", "mixed"},
+                    "sweetspot":  {"sweet_spot", "tempo", "threshold", "mixed"},
+                    "threshold":  {"threshold", "sweet_spot", "over_under", "mixed"},
+                    "vo2max":     {"vo2max", "vo2_short", "anaerobic", "mixed"},
+                    "overunder":  {"over_under", "threshold", "mixed"},
+                    "sprint":     {"neuromuscular", "anaerobic", "vo2max", "vo2_short"},
+                    "ftp_test":   {"ftp_test"},
+                }
+                accepted = accepted_by_type.get(stype, set())
+                if accepted and cc not in accepted:
+                    return "missing_workout"
+
+    return "planned"
+
+
+def _ride_started_local_iso_date(ride: dict) -> str | None:
+    """Best-effort local-TZ ISO date from ride.started_at.
+
+    JSON rides write ISO timestamps with offset (`+02:00`); FIT rides have
+    ``started_at`` set from fs mtime in UTC. We strip to YYYY-MM-DD per the
+    local timezone, which matches the plan's session.day field (always
+    naive YYYY-MM-DD in local time).
+    """
+    started = ride.get("started_at") or ""
+    if not started:
+        return None
+    try:
+        # Tolerate trailing Z (UTC) and offset-naive.
+        s = started.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            return started[:10]
+        return dt.astimezone().date().isoformat()
+    except (TypeError, ValueError):
+        return started[:10] if len(started) >= 10 else None
+
+
+def _summarize_ride_for_calendar(ride: dict, ftp: int | None) -> dict:
+    """Project a ride dict (FIT, JSON, or ICU-normalized) into the canonical
+    actual-payload shape per MASTER §3. Used by both /api/calendar's primary
+    actual and actual_secondary lists.
+
+    v4.4.0: ICU-normalized records (top-level §3 fields, source='icu') are
+    also accepted — they bypass the legacy summary/parsed_stats lookups.
+    """
+    # v4.4.0 — ICU rides already carry the §3 fields at the top level.
+    if (ride.get("source") == "icu"
+            or (ride.get("ride_id") or "").startswith("icu_")):
+        duration_sec = ride.get("duration_s") or 0
+        duration_min = round(float(duration_sec) / 60.0, 1) if duration_sec else 0.0
+        tiz = ride.get("time_in_zone") or {}
+        z12_sec = (tiz.get("z1") or 0) + (tiz.get("z2") or 0)
+        z34_sec = (tiz.get("z3") or 0) + (tiz.get("z4") or 0)
+        z5p_sec = sum(tiz.get(f"z{i}") or 0 for i in (5, 6, 7))
+        return {
+            "ride_id": ride.get("ride_id") or "",
+            "name": ride.get("name") or "",
+            "source": "icu",
+            "duration_min": duration_min,
+            "tss": ride.get("tss"),
+            "avg_power_w": int(ride.get("avg_power_w") or 0),
+            "z1z2_min": round(z12_sec / 60.0, 1),
+            "z3z4_min": round(z34_sec / 60.0, 1),
+            "z5plus_min": round(z5p_sec / 60.0, 1),
+            "decoupling_pct": ride.get("decoupling_pct"),
+            "started_at": ride.get("started_at") or "",
+        }
+
+    summary = ride.get("summary") or {}
+    parsed = ride.get("parsed_stats") or {}
+
+    duration_sec = (
+        summary.get("duration_sec")
+        or parsed.get("duration_sec")
+        or 0
+    )
+    duration_min = round(float(duration_sec) / 60.0, 1) if duration_sec else 0.0
+    tss = summary.get("tss") or parsed.get("tss")
+    avg_p = summary.get("avg_power") or parsed.get("avg_power") or 0
+    decoupling = summary.get("decoupling_pct")
+
+    z1z2, z3z4, z5plus = _ride_zone_split_minutes(ride, ftp)
+
+    name = (
+        (ride.get("metadata") or {}).get("name")
+        or ride.get("name")
+        or summary.get("workout_name")
+        or ""
+    )
+
+    return {
+        "ride_id": ride.get("ride_id") or ride.get("id") or "",
+        "name": name,
+        "source": ride.get("source") or ("json" if "samples" in ride else "fit"),
+        "duration_min": duration_min,
+        "tss": tss,
+        "avg_power_w": int(avg_p) if avg_p else 0,
+        "z1z2_min": z1z2,
+        "z3z4_min": z3z4,
+        "z5plus_min": z5plus,
+        "decoupling_pct": decoupling,
+        "started_at": ride.get("started_at") or parsed.get("start_time") or "",
+    }
+
+
+def _load_full_ride(ride: dict) -> dict:
+    """Hydrate a ride summary dict with the heavier parsed payload.
+
+    /api/rides returns trimmed entries (no samples for JSON rides, no
+    parsed_stats for FIT). For zone-split fallback we may need the full
+    payload — use this lazily so the merge isn't quadratic for users with
+    large archives.
+    """
+    rid = ride.get("ride_id") or ride.get("id") or ""
+    src = ride.get("source") or ""
+    if not rid:
+        return ride
+    # v4.4.0 — ICU records already carry the §3 fields; nothing to hydrate.
+    if src == "icu" or rid.startswith("icu_"):
+        return ride
+    try:
+        if src == "fit":
+            # v4.4.0: fit ride_ids are now prefixed `fit_<stem>`; legacy callers
+            # may still pass the bare stem.
+            stem = rid[4:] if rid.startswith("fit_") else rid
+            fit_path = _rides_fit_dir() / f"{stem}.fit"
+            if fit_path.exists():
+                stats = _parse_fit_stats(fit_path)
+                return {
+                    **ride,
+                    "parsed_stats": stats,
+                    "started_at": stats.get("start_time") or ride.get("started_at"),
+                }
+        else:
+            import ride_storage as _rs
+            full = _rs.get_ride(rid)
+            if full:
+                return {**full, "ride_id": rid, "source": "json"}
+    except Exception as _e:
+        _log.debug(f"_load_full_ride failed for {rid}: {_e}")
+    return ride
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# v4.4.0 — On-track summary helpers (CONCEPT-SCI §3, §6 + CONCEPT-DATA §3)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _annotate_phase_week_indices(weeks: list[dict]) -> None:
+    """Fill ``phase_week_index`` (1-based) and ``phase_weeks_total`` per
+    contiguous phase block. Mutates ``weeks`` in place.
+    """
+    i = 0
+    n = len(weeks)
+    while i < n:
+        phase = (weeks[i].get("phase") or "")
+        # Skip pure-history shells from contributing to phase counters —
+        # they're conceptually pre-plan, not part of the phase ladder.
+        if phase == "history" or not phase:
+            weeks[i]["phase_week_index"] = 0
+            weeks[i]["phase_weeks_total"] = 0
+            i += 1
+            continue
+        j = i
+        while j < n and (weeks[j].get("phase") or "") == phase:
+            j += 1
+        block_len = j - i
+        for k, idx in enumerate(range(i, j), start=1):
+            weeks[idx]["phase_week_index"] = k
+            weeks[idx]["phase_weeks_total"] = block_len
+        i = j
+
+
+def _annotate_planned_ctl_eow(weeks: list[dict], plan: dict) -> None:
+    """Fill ``planned_ctl_eow`` for each week using forecast_ctl over the
+    daily TSS estimates pulled from the plan. Mutates ``weeks`` in place.
+    """
+    if not plan or not plan.get("weeks"):
+        return
+    # Resolve a starting CTL: prefer ICU wellness, fallback to local archive,
+    # final fallback to 37.0 (matches generate_plan).
+    try:
+        import ride_storage as _rs
+        start_ctl = _rs.compute_local_ctl()
+    except Exception:
+        start_ctl = None
+    if start_ctl is None:
+        start_ctl = float(getattr(config, "CURRENT_CTL", 37.0) or 37.0)
+
+    plan_weeks = plan.get("weeks", [])
+    daily_tss: list[float] = []
+    week_end_index: dict[str, int] = {}  # iso start_date → end-of-week idx
+    cursor = 0
+    for pw in plan_weeks:
+        for s in (pw.get("sessions") or []):
+            try:
+                daily_tss.append(float(s.get("tss_estimate") or 0))
+            except (TypeError, ValueError):
+                daily_tss.append(0.0)
+            cursor += 1
+        # End-of-week CTL is at index cursor (forecast_ctl prepends start).
+        week_end_index[pw.get("start") or ""] = cursor
+
+    if not daily_tss:
+        return
+    series = tp.forecast_ctl(start_ctl, daily_tss)  # length = len(daily_tss)+1
+
+    for w in weeks:
+        sd = w.get("start_date") or ""
+        idx = week_end_index.get(sd)
+        if idx is None or idx >= len(series):
+            continue
+        w["planned_ctl_eow"] = float(series[idx])
+
+
+def _polarized_actual_from_rides(
+    rides: list[dict], today: date, last_n_days: int = 7
+) -> dict:
+    """v4.4.0 — compute actual polarized split (Z1+Z2 / Z3 / Z4+) over the
+    last N days of rides.
+
+    Buckets:
+      - Z1+Z2 = z1+z2 (low aerobic)
+      - Z3    = z3    (tempo / SS)
+      - Z4+   = z4+z5+z6+z7 (threshold + above)
+
+    Returns ``{"z1z2_pct": int, "z3_pct": int, "z4plus_pct": int}``. Empty
+    rides → all zeros.
+    """
+    cutoff = (today - timedelta(days=last_n_days)).isoformat()
+    z12 = z3 = z4p = 0.0
+    for r in rides:
+        d = _ride_started_local_iso_date(r) or ""
+        if not d or d < cutoff:
+            continue
+        # ICU normalized: tiz at top level. JSON: zones.power. FIT: parsed.
+        tiz = r.get("time_in_zone")
+        if not tiz:
+            zp = (r.get("zones") or {}).get("power") or {}
+            if zp:
+                tiz = {f"z{i}": int(zp.get(f"Z{i}") or 0) for i in range(1, 8)}
+        if not tiz:
+            full = _load_full_ride(r)
+            tiz = full.get("time_in_zone") or {}
+        if not tiz:
+            continue
+        z12 += float((tiz.get("z1") or 0) + (tiz.get("z2") or 0))
+        z3  += float(tiz.get("z3") or 0)
+        z4p += float(
+            (tiz.get("z4") or 0) + (tiz.get("z5") or 0)
+            + (tiz.get("z6") or 0) + (tiz.get("z7") or 0)
+        )
+    total = z12 + z3 + z4p
+    if total <= 0:
+        return {"z1z2_pct": 0, "z3_pct": 0, "z4plus_pct": 0}
+    return {
+        "z1z2_pct": int(round(z12 / total * 100)),
+        "z3_pct":   int(round(z3  / total * 100)),
+        "z4plus_pct": int(round(z4p / total * 100)),
+    }
+
+
+def _planned_ctl_today(plan: dict, today: date) -> float | None:
+    """End-of-today planned CTL via forecast_ctl over daily TSS."""
+    if not plan or not plan.get("weeks"):
+        return None
+    try:
+        import ride_storage as _rs
+        start_ctl = _rs.compute_local_ctl()
+    except Exception:
+        start_ctl = None
+    if start_ctl is None:
+        start_ctl = 37.0
+
+    # Walk plan sessions chronologically, picking up daily TSS by day-iso.
+    daily_tss: list[float] = []
+    days: list[str] = []
+    for w in plan.get("weeks", []):
+        for s in (w.get("sessions") or []):
+            day = s.get("day") or ""
+            if not day:
+                continue
+            try:
+                t = float(s.get("tss_estimate") or 0)
+            except (TypeError, ValueError):
+                t = 0.0
+            days.append(day)
+            daily_tss.append(t)
+
+    if not days:
+        return None
+    series = tp.forecast_ctl(start_ctl, daily_tss)
+    today_iso = today.isoformat()
+    # forecast_ctl prepends start_ctl, so series[i+1] = end of days[i].
+    for i, d in enumerate(days):
+        if d == today_iso:
+            return float(series[i + 1])
+        if d > today_iso:
+            return float(series[i])  # prior day's end-of-day CTL
+    return float(series[-1])
+
+
+def _actual_ctl_today(rides: list[dict], today: date) -> float | None:
+    """Best-effort actual CTL: prefer ICU wellness, fall back to local."""
+    try:
+        import training as _training
+        wellness = _training.fetch_wellness(days=7)
+        if wellness:
+            for w in reversed(wellness):
+                if w.get("ctl") is not None:
+                    return float(w["ctl"])
+    except Exception:
+        pass
+    try:
+        import ride_storage as _rs
+        v = _rs.compute_local_ctl()
+        if v is not None:
+            return float(v)
+    except Exception:
+        pass
+    return None
+
+
+def _intensity_dist_match(actual: dict, target: dict) -> float:
+    """Score 0..100 measuring how close ``actual`` polarized split matches
+    ``target``. Lower L1 distance → higher score. Perfect match = 100.
+    """
+    if not actual or not target:
+        return 0.0
+    keys = ("z1z2_pct", "z3_pct", "z4plus_pct")
+    diff = sum(abs(int(actual.get(k) or 0) - int(target.get(k) or 0)) for k in keys)
+    # Max possible L1 difference is 200 (e.g., 100/0/0 vs 0/0/100).
+    return max(0.0, 100.0 - (diff / 2.0))
+
+
+def _ctl_ramp_score(actual: float | None, planned: float | None) -> float | None:
+    """Score 0..100: 100 = exactly on plan; 50 at ±5 TSS off; 0 at ±10+."""
+    if actual is None or planned is None:
+        return None
+    delta = abs(float(actual) - float(planned))
+    if delta <= 5.0:
+        return 100.0 - (delta / 5.0) * 50.0  # 100 at 0, 50 at 5
+    if delta >= 10.0:
+        return 0.0
+    return 50.0 - ((delta - 5.0) / 5.0) * 50.0  # 50 at 5, 0 at 10
+
+
+def _hrv_trend_score() -> float | None:
+    """7-day HRV (rMSSD) trend score per Plews 2013. 100 = stable/up."""
+    try:
+        import training as _training
+        wellness = _training.fetch_wellness(days=14)
+    except Exception:
+        return None
+    rmssds = [float(w.get("hrv") or w.get("rmssd") or 0) for w in (wellness or [])]
+    rmssds = [v for v in rmssds if v > 0]
+    if len(rmssds) < 7:
+        return None
+    last7 = rmssds[-7:]
+    prev7 = rmssds[-14:-7] if len(rmssds) >= 14 else last7
+    avg_last = sum(last7) / len(last7)
+    avg_prev = sum(prev7) / len(prev7)
+    if avg_prev <= 0:
+        return None
+    pct = (avg_last - avg_prev) / avg_prev * 100.0
+    # Plews: drop > 5% over 7d is concerning.
+    if pct >= 0:
+        return 100.0
+    if pct <= -5.0:
+        return 0.0
+    return 100.0 + (pct / 5.0) * 100.0  # linear -5..0% maps to 0..100
+
+
+def _monotony_score(rides: list[dict], today: date) -> float | None:
+    """Foster monotony score per CONCEPT-SCI §1. 100 = monotony in [1.2, 1.8]."""
+    cutoff = (today - timedelta(days=7)).isoformat()
+    daily_tss: list[float] = [0.0] * 7
+    for r in rides:
+        d = _ride_started_local_iso_date(r) or ""
+        if not d or d < cutoff:
+            continue
+        try:
+            day_dt = date.fromisoformat(d)
+        except ValueError:
+            continue
+        delta = (today - day_dt).days
+        if 0 <= delta < 7:
+            tss = (r.get("tss")
+                   or (r.get("summary") or {}).get("tss")
+                   or (r.get("parsed_stats") or {}).get("tss") or 0)
+            try:
+                daily_tss[6 - delta] += float(tss)
+            except (TypeError, ValueError):
+                pass
+    if sum(daily_tss) <= 0:
+        return None
+    mean = sum(daily_tss) / 7.0
+    var = sum((v - mean) ** 2 for v in daily_tss) / 7.0
+    sd = var ** 0.5
+    if sd <= 0:
+        return 0.0  # all-equal = max monotony
+    monotony = mean / sd
+    if 1.2 <= monotony <= 1.8:
+        return 100.0
+    if monotony >= 2.5:
+        return 0.0
+    if monotony < 1.2:
+        return max(0.0, 100.0 - (1.2 - monotony) * 100.0)
+    # 1.8..2.5 maps 100→0
+    return max(0.0, 100.0 - ((monotony - 1.8) / 0.7) * 100.0)
+
+
+def _days_until_next_phase(weeks: list[dict], today: date) -> int:
+    """Days until the next phase change. Returns 0 if no next phase."""
+    cur_phase = None
+    for w in weeks:
+        try:
+            sd = date.fromisoformat(w.get("start_date") or "")
+            ed = date.fromisoformat(w.get("end_date") or "")
+        except ValueError:
+            continue
+        if sd <= today <= ed:
+            cur_phase = w.get("phase") or ""
+            break
+    if cur_phase is None:
+        return 0
+    for w in weeks:
+        try:
+            sd = date.fromisoformat(w.get("start_date") or "")
+        except ValueError:
+            continue
+        if sd > today and (w.get("phase") or "") != cur_phase:
+            return (sd - today).days
+    return 0
+
+
+def _build_summary_block(
+    plan: dict, rides: list[dict], today: date, weeks: list[dict]
+) -> dict:
+    """v4.4.0 — assemble the top-level on-track summary block.
+
+    Per MASTER §3 / CONCEPT-SCI §6: compliance band, CTL trajectory,
+    polarized split, phase countdown, composite on-track score.
+    """
+    # Find current week record.
+    cur = next((w for w in weeks if w.get("is_current")), None)
+
+    cur_phase = (cur.get("phase") if cur else "") or ""
+    phase_idx = (cur.get("phase_week_index") if cur else 0) or 0
+    phase_total = (cur.get("phase_weeks_total") if cur else 0) or 0
+
+    days_to_next = _days_until_next_phase(weeks, today)
+
+    # Days until event (best-effort from plan goal).
+    days_to_event = 0
+    try:
+        goal = (plan or {}).get("goal") or {}
+        td = goal.get("target_date") or goal.get("event_date")
+        if td:
+            ed = date.fromisoformat(td)
+            days_to_event = max(0, (ed - today).days)
+    except (ValueError, TypeError):
+        pass
+
+    # Compliance.
+    comp_ratio = float(cur.get("completion_pct") or 0.0) if cur else 0.0
+    comp_pct_int = int(round(comp_ratio * 100))
+    band = tp.compliance_band(comp_ratio if comp_ratio > 0 else None)
+
+    # CTL.
+    ctl_actual = _actual_ctl_today(rides, today)
+    ctl_planned = _planned_ctl_today(plan, today)
+    ctl_low = (ctl_planned - 5.0) if ctl_planned is not None else None
+    ctl_high = (ctl_planned + 5.0) if ctl_planned is not None else None
+
+    # Polarized.
+    actual_pol = _polarized_actual_from_rides(rides, today, last_n_days=7)
+    target_pol = tp.PHASE_POLARIZED_TARGETS.get(
+        cur_phase.lower() if cur_phase else "",
+        tp.PHASE_POLARIZED_TARGETS["history"],
+    )
+
+    # Sub-scores → composite.
+    tss_comp_score: float | None
+    if comp_ratio <= 0:
+        tss_comp_score = None
+    else:
+        # Map ratio to a 0..100 score: 1.0 = 100, ±0.20 = 75, beyond ±0.50 = 0
+        delta = abs(1.0 - comp_ratio)
+        if delta <= 0.20:
+            tss_comp_score = 100.0 - (delta / 0.20) * 25.0
+        elif delta <= 0.50:
+            tss_comp_score = 75.0 - ((delta - 0.20) / 0.30) * 75.0
+        else:
+            tss_comp_score = 0.0
+
+    intensity_score = _intensity_dist_match(actual_pol, target_pol) if any(
+        actual_pol.values()
+    ) else None
+
+    ctl_score = _ctl_ramp_score(ctl_actual, ctl_planned)
+    hrv_score = _hrv_trend_score()
+    mono_score = _monotony_score(rides, today)
+
+    composite = tp.on_track_score(
+        tss_compliance=tss_comp_score,
+        intensity_dist_match=intensity_score,
+        ctl_ramp_in_band=ctl_score,
+        hrv_trend_ok=hrv_score,
+        monotony_ok=mono_score,
+    )
+
+    return {
+        "current_phase": cur_phase,
+        "phase_week_index": phase_idx,
+        "phase_weeks_total": phase_total,
+        "days_until_next_phase": days_to_next,
+        "days_until_event": days_to_event,
+        "compliance_pct_this_week": comp_pct_int,
+        "compliance_band": band,
+        "ctl_actual": (round(float(ctl_actual), 1) if ctl_actual is not None else None),
+        "ctl_planned_today": (round(float(ctl_planned), 1) if ctl_planned is not None else None),
+        "ctl_band_low": (round(float(ctl_low), 1) if ctl_low is not None else None),
+        "ctl_band_high": (round(float(ctl_high), 1) if ctl_high is not None else None),
+        "polarized_actual": actual_pol,
+        "polarized_target": dict(target_pol),
+        "on_track_score": composite,
+        "on_track_band": tp.on_track_band(composite),
+    }
+
+
+def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
+    """v4.3.0 B4 — build the calendar payload merging plan-sessions with rides.
+
+    Args:
+        plan: ``current_plan.json`` dict (must have ``weeks`` + ``goal``).
+        rides: flat ride list as emitted by ``/api/rides`` (mix of JSON and
+            FIT entries; we hydrate as needed).
+
+    Returns the canonical calendar payload per MASTER §3 — ready to ship as
+    the ``/api/calendar`` JSON body.
+    """
+    today = date.today()
+    today_iso = today.isoformat()
+    iso_year, iso_week, _iso_day = today.isocalendar()
+
+    ftp = getattr(config, "ATHLETE_FTP_W", None)
+
+    # ── Library lookup for card_state cross-check (B6) ──────────────────────
+    try:
+        library = tp.load_workout_library()
+        lib_by_file: dict = {}
+        for w in library:
+            f = w.get("File") or ""
+            if f:
+                lib_by_file[f] = w
+    except Exception as _e:
+        _log.debug(f"calendar: library load failed: {_e}")
+        lib_by_file = {}
+
+    # ── Index rides by local-TZ date for O(N) merge ─────────────────────────
+    rides_by_date: dict[str, list[dict]] = {}
+    for r in rides:
+        d = _ride_started_local_iso_date(r)
+        if not d:
+            continue
+        rides_by_date.setdefault(d, []).append(r)
+
+    # ── Past 12 weeks of history + plan weeks (avoid double-counting) ───────
+    plan_weeks = plan.get("weeks", []) if plan else []
+    plan_dates: set[str] = set()
+    for w in plan_weeks:
+        for s in (w.get("sessions") or []):
+            d = s.get("day")
+            if d:
+                plan_dates.add(d)
+
+    # Build "history" weeks for the past 12 weeks that don't overlap plan.
+    history_weeks: list[dict] = []
+    earliest_plan_start: date | None = None
+    for w in plan_weeks:
+        try:
+            wd = date.fromisoformat(w["start"])
+            earliest_plan_start = wd if earliest_plan_start is None or wd < earliest_plan_start else earliest_plan_start
+        except (KeyError, ValueError):
+            continue
+
+    # 12 ISO weeks back from today's Monday
+    monday_today = today - timedelta(days=today.weekday())
+    # Iterate range covers 12 weeks ago through current week (back=0). Without
+    # `back=0`, a no-plan profile with a recent ride wouldn't surface this
+    # week's ride at all because the planless current-week shell never fires.
+    for back in range(12, -1, -1):
+        wstart = monday_today - timedelta(weeks=back)
+        wend = wstart + timedelta(days=6)
+        # Skip if this entirely overlaps a plan week (the plan week wins).
+        if earliest_plan_start is not None and wend >= earliest_plan_start:
+            # Only emit "history" weeks that fall fully before the plan starts.
+            # If the plan starts mid-window, we emit a partial history shell
+            # so the UI shows actuals — the plan path will own its weeks.
+            pass
+        # Build a synthetic week with no planned sessions so actuals still surface.
+        synthetic_sessions = []
+        for off in range(7):
+            day_d = wstart + timedelta(days=off)
+            if day_d.isoformat() in plan_dates:
+                continue  # plan owns it; skip in history
+            synthetic_sessions.append({
+                "day": day_d.isoformat(),
+                "day_name": day_d.strftime("%a"),
+                "session_type": "rest",
+                "duration_min": 0,
+                "tss_estimate": 0,
+                "description": "",
+                "zwo_file": "",
+                "zwo_name": "",
+                "_synthetic_history": True,
+            })
+        if synthetic_sessions:
+            yr, wk, _ = wstart.isocalendar()
+            history_weeks.append({
+                "week_num": -back,
+                "iso_year": yr,
+                "iso_week": wk,
+                "start": wstart.isoformat(),
+                "end": wend.isoformat(),
+                "phase": "history",
+                "tss_target": 0,
+                "is_stepback": False,
+                "sessions": synthetic_sessions,
+            })
+
+    # Combine and sort chronologically.
+    combined_weeks = list(history_weeks) + list(plan_weeks)
+    combined_weeks.sort(key=lambda w: w.get("start") or "")
+
+    # ── v4.3.1 FIX-SERVER: dedupe by (iso_year, iso_week) ───────────────────
+    # When the user's local-TZ today sits at an ISO-week boundary AND the
+    # stored plan slices weeks differently from history (e.g. plan anchored
+    # Sun-Sat vs history Mon-Sun), two weeks may share the same ISO key.
+    # That caused two `is_current=True` weeks AND two `is_today=True` days
+    # for the boundary date. Prefer the planned-week record (drop the
+    # history-only duplicate) so there's exactly one anchor per ISO week.
+    deduped: list[dict] = []
+    seen_iso: dict[tuple, int] = {}
+    for w in combined_weeks:
+        try:
+            w_start_dt = date.fromisoformat(w["start"])
+        except (KeyError, ValueError):
+            deduped.append(w)
+            continue
+        wy_k, wk_k, _ = w_start_dt.isocalendar()
+        key = (wy_k, wk_k)
+        existing_idx = seen_iso.get(key)
+        if existing_idx is None:
+            seen_iso[key] = len(deduped)
+            deduped.append(w)
+            continue
+        # Duplicate ISO key → prefer the one with planned content.
+        existing = deduped[existing_idx]
+        existing_has_planned = any(
+            (s.get("zwo_file") or "") and not s.get("_synthetic_history")
+            for s in (existing.get("sessions") or [])
+        )
+        cand_has_planned = any(
+            (s.get("zwo_file") or "") and not s.get("_synthetic_history")
+            for s in (w.get("sessions") or [])
+        )
+        if cand_has_planned and not existing_has_planned:
+            deduped[existing_idx] = w
+        # Otherwise keep the first (already in `deduped`).
+    combined_weeks = deduped
+
+    # v4.4.0 §6 — flatten ALL plan sessions across all weeks into a single
+    # day-keyed map so ISO-week Monday anchoring doesn't drop sessions
+    # whose stored plan-week happened to start mid-week (e.g. Sunday).
+    _global_plan_sessions_by_day: dict[str, dict] = {}
+    for _pw in plan_weeks:
+        for _s in (_pw.get("sessions") or []):
+            _d = _s.get("day")
+            if _d:
+                _global_plan_sessions_by_day[_d] = _s
+
+    # ── Project each week into the §3 schema ────────────────────────────────
+    out_weeks: list[dict] = []
+    for w in combined_weeks:
+        try:
+            w_start_raw = date.fromisoformat(w["start"])
+            w_end_raw = date.fromisoformat(w["end"])
+        except (KeyError, ValueError):
+            continue
+
+        # v4.4.0 §6 — ISO-week Monday-anchored boundary EVERYWHERE on server.
+        # Plan-weeks are stored from whatever date generate_plan was run on
+        # (which can be a Sunday). Normalize to the ISO-week Monday so the
+        # /api/calendar payload is always Mon-Sun.
+        w_start = w_start_raw - timedelta(days=w_start_raw.weekday())
+        w_end = w_start + timedelta(days=6)
+
+        wy, wk, _ = w_start.isocalendar()
+        # Canonical is_current — computed against the single iso_year/iso_week
+        # captured once at the top of merge_plan_with_rides. After dedupe
+        # above, exactly one week (if any) can match.
+        is_current = (wy == iso_year and wk == iso_week)
+
+        planned_tss = 0.0
+        actual_tss = 0.0
+        planned_z12 = planned_z34 = planned_z5p = 0.0
+        actual_z12 = actual_z34 = actual_z5p = 0.0
+
+        days_out: list[dict] = []
+        # v4.4.0 §6 — pull sessions from the *global* plan map (across all
+        # plan weeks) so that ISO-week Monday anchoring doesn't drop a Sun
+        # session whose stored plan-week happened to start on Sunday.
+        sessions_by_day = dict(_global_plan_sessions_by_day)
+        for off in range(7):
+            day_d = w_start + timedelta(days=off)
+            day_iso = day_d.isoformat()
+            sess = sessions_by_day.get(day_iso)
+            # If this is a history-only shell (no plan), pull only the
+            # week's own sessions (which include the synthetic rest rows).
+            if (w.get("phase") or "") == "history" or not w.get("sessions"):
+                local_map = {s.get("day"): s for s in (w.get("sessions") or [])}
+                sess = local_map.get(day_iso) or sess
+            day_rides = rides_by_date.get(day_iso, [])
+
+            # Choose primary ride (longest duration); secondary list = rest.
+            primary_ride = None
+            secondary: list[dict] = []
+            if day_rides:
+                hydrated = [_load_full_ride(r) for r in day_rides]
+                # Sort by duration desc — accept ICU (top-level duration_s),
+                # JSON (summary.duration_sec), and FIT (parsed_stats) shapes.
+                def _dur(r):
+                    return float(
+                        r.get("duration_s")
+                        or ((r.get("summary") or {}).get("duration_sec"))
+                        or ((r.get("parsed_stats") or {}).get("duration_sec"))
+                        or 0
+                    )
+                hydrated.sort(key=_dur, reverse=True)
+                primary_ride = hydrated[0]
+                secondary = hydrated[1:]
+
+            actual_payload = None
+            secondary_list: list[dict] = []
+            if primary_ride is not None:
+                actual_payload = _summarize_ride_for_calendar(primary_ride, ftp)
+                actual_tss += float(actual_payload["tss"] or 0)
+                actual_z12  += actual_payload["z1z2_min"]
+                actual_z34  += actual_payload["z3z4_min"]
+                actual_z5p  += actual_payload["z5plus_min"]
+            for r in secondary:
+                secondary_list.append(_summarize_ride_for_calendar(r, ftp))
+
+            planned_payload = None
+            if sess and not sess.get("_synthetic_history"):
+                planned_payload = {
+                    "session_type": sess.get("session_type") or "",
+                    "content_class": (
+                        (lib_by_file.get(sess.get("zwo_file") or "") or {}).get("content_class")
+                        or sess.get("content_class")
+                        or ""
+                    ),
+                    "name": sess.get("zwo_name") or sess.get("description") or "",
+                    "duration_min": sess.get("duration_min") or 0,
+                    "tss": sess.get("tss_estimate") or 0,
+                    "score": sess.get("score"),
+                    "zwo_file": sess.get("zwo_file") or "",
+                }
+                pz12, pz34, pz5p = _planned_zone_split_minutes(sess)
+                planned_z12 += pz12
+                planned_z34 += pz34
+                planned_z5p += pz5p
+                planned_tss += float(planned_payload["tss"] or 0)
+
+            # card_state is emitted on the day-row (not on planned alone) so
+            # the UI dispatcher can read it without nesting.
+            card_state = _classify_card_state(
+                sess if sess else {"session_type": "rest"},
+                has_actual=(actual_payload is not None),
+                library_lookup=lib_by_file,
+            )
+
+            day_out = {
+                "date": day_iso,
+                "dow": day_d.weekday() + 1,  # 1=Mon..7=Sun
+                "is_today": (day_iso == today_iso),
+                "planned": planned_payload,
+                "actual": actual_payload,
+                "card_state": card_state,
+            }
+            if secondary_list:
+                day_out["actual_secondary"] = secondary_list
+            days_out.append(day_out)
+
+        completion_pct = 0.0
+        if planned_tss > 0:
+            completion_pct = round(min(actual_tss / planned_tss, 2.0), 3)
+
+        # v4.4.0 — per-week additions: phase_week_index, target_polarized,
+        # planned_ctl_eow. phase_week_index counts from the start of the
+        # current phase block in the plan (1-based). planned_ctl_eow is
+        # filled in below by the second pass once we have a global series.
+        phase_name = (w.get("phase") or "").lower()
+        target_polarized = tp.PHASE_POLARIZED_TARGETS.get(
+            phase_name, tp.PHASE_POLARIZED_TARGETS["history"]
+        )
+
+        out_weeks.append({
+            "iso_year": wy,
+            "iso_week": wk,
+            "start_date": w_start.isoformat(),
+            "end_date": w_end.isoformat(),
+            "phase": w.get("phase") or "",
+            "is_stepback": bool(w.get("is_stepback")),
+            "is_current": is_current,
+            "planned_tss": round(planned_tss, 1),
+            "actual_tss": round(actual_tss, 1),
+            "planned_z1z2_min": round(planned_z12, 1),
+            "actual_z1z2_min": round(actual_z12, 1),
+            "planned_z3z4_min": round(planned_z34, 1),
+            "actual_z3z4_min": round(actual_z34, 1),
+            "planned_z5plus_min": round(planned_z5p, 1),
+            "actual_z5plus_min": round(actual_z5p, 1),
+            "completion_pct": completion_pct,
+            "phase_week_index": 0,        # second-pass below
+            "phase_weeks_total": 0,        # second-pass below
+            "target_polarized": dict(target_polarized),
+            "planned_ctl_eow": None,       # second-pass below
+            "days": days_out,
+        })
+
+    # ── v4.4.0 second pass: phase_week_index + planned_ctl_eow ──────────────
+    _annotate_phase_week_indices(out_weeks)
+    _annotate_planned_ctl_eow(out_weeks, plan)
+
+    # ── v4.4.0 — top-level on-track summary block (CONCEPT-SCI §6) ──────────
+    summary = _build_summary_block(plan, rides, today, out_weeks)
+
+    # v4.6.7 F4 — goal block for the calendar event-day marker. Keeps the
+    # field names locked in MASTER_DECISIONS_v467 §4. Defaults applied when
+    # plan has no goal block (e.g. legacy plans).
+    _goal = plan.get("goal", {}) or {}
+    _goal_type = _goal.get("type") or _goal.get("goal_type") or "weeks"
+    _event_date = _goal.get("event_date") or _goal.get("target_date")
+    _event_date_emit = _event_date if _goal_type in ("event", "event_preparation") else None
+    _end_date = out_weeks[-1].get("end_date") if out_weeks else None
+
+    return {
+        "today": today_iso,
+        "current_iso_week": {"year": iso_year, "week": iso_week},
+        "weeks": out_weeks,
+        "summary": summary,
+        "goal": {
+            "type": _goal_type,
+            "event_date": _event_date_emit,
+            "end_date": _end_date,
+        },
+    }
+
+
+@app.get("/api/calendar")
+def api_calendar():
+    """v4.3.0 B4+B5+B6 + v4.4.0 — unified calendar overlay (intervals.icu-style).
+
+    Returns the merged plan-vs-actual payload per MASTER_DECISIONS_v44 §3.
+    Past 12 weeks of history (rides only — no plan) PLUS every week in the
+    current plan. Each week aggregates planned/actual TSS + zone-time
+    minutes. Each session carries a ``card_state`` field for UI dispatch.
+
+    v4.4.0: ICU-synced activities surface here too. Lazy-syncs on the first
+    /api/calendar call after boot if creds are present and last sync was
+    > 1 hour ago.
+    """
+    # v4.4.0 — best-effort ICU sync hook (no-op when creds missing or throttled).
+    # v4.4.2 §B2: force-resync if today's date isn't represented locally and
+    # last_sync was > 30 min ago (catches "user just rode, ICU has it but
+    # cache is stale" case).
+    try:
+        _maybe_lazy_icu_sync(force_if_today_missing=True)
+    except Exception as _e:
+        _log.debug(f"/api/calendar: lazy ICU sync swallowed: {_e}")
+
+    plan: dict = {}
+    json_path = _plan_dir() / "current_plan.json"
+    if json_path.exists():
+        try:
+            with open(json_path, encoding="utf-8") as f:
+                plan = json.load(f)
+        except (json.JSONDecodeError, OSError) as _e:
+            _log.warning(f"/api/calendar: plan load failed: {_e}")
+
+    # v4.4.0 — single rides source: ICU + FIT merged via ride_storage; legacy
+    # JSON rides retained for back-compat (pre-v4 archive).
+    rides: list[dict] = []
+    try:
+        rides = list(_load_all_rides_safe())
+    except Exception as _e:
+        _log.warning(f"/api/calendar: load_all_rides failed: {_e}")
+
+    try:
+        import ride_storage
+        legacy = ride_storage.list_rides()
+        for r in legacy:
+            r.setdefault("ride_id", r.get("id", ""))
+            r.setdefault("source", "json")
+        rides.extend(legacy)
+    except Exception as _e:
+        _log.warning(f"/api/calendar: legacy ride_storage scan failed: {_e}")
+
+    return merge_plan_with_rides(plan, rides)
+
+
+@app.post("/api/plan/rematch")
+async def api_plan_rematch(request: Request, apply: int = Query(0)):
+    """Rematch sessions to actual activities (fix26 §6.3, §6.9).
+
+    Query: apply=0 → preview (default, no write). apply=1 → write statuses.
+
+    Classifier (§6.9): 3/3 axes (TSS ±15% AND duration ±20% AND IF-band
+    match) → status=done. 2/3 → ambiguous. <2 → no_match → missed if past,
+    pending if future. §6.11: missed never auto-dismisses.
+
+    When apply=1, writes back session.status + session.completion_matches[].
+    """
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+
+        today = date.today()
+        current_week, week_idx = _load_current_week_dto(plan, today)
+        if not current_week:
+            return {"action": "no_current_week"}
+
+        actual = _collect_week_activities(current_week, today, include_today=True)
+        preview = tp.rematch_week(current_week, actual, today)
+
+        if not apply:
+            return {"ok": True, "apply": False, **preview}
+
+        matches_by_date = {m["session_date"]: m for m in preview["matches"]}
+        weeks_data = plan["weeks"]
+        sessions_out = []
+        for s_json in weeks_data[week_idx]["sessions"]:
+            day = s_json.get("day")
+            m = matches_by_date.get(day)
+            if m:
+                new_status = m["new_status"]
+                s_json["status"] = new_status
+                if m.get("activity_id") and new_status in ("done", "ambiguous", "done_partial"):
+                    existing = s_json.get("completion_matches") or []
+                    if not isinstance(existing, list):
+                        existing = []
+                    existing.append({
+                        "activity_id": m["activity_id"],
+                        "matched_axes": m["matched_axes"],
+                        "score": m["score"],
+                        "axes": m["axes"],
+                        "details": m.get("details"),
+                        "applied_at": datetime.now().isoformat(),
+                    })
+                    s_json["completion_matches"] = existing
+            sessions_out.append(s_json)
+        weeks_data[week_idx]["sessions"] = sessions_out
+        plan["last_rematch"] = datetime.now().isoformat()
+
+        with tp.plan_write_lock():
+            tmp_path = json_path.with_suffix('.tmp')
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(plan, f, indent=2, default=str)
+            tmp_path.rename(json_path)
+
+        return {"ok": True, "apply": True, **preview}
+
+    except Exception:
+        _log.exception("Plan rematch failed")
+        return JSONResponse({"detail": "Rematch failed"}, 500)
+
+
+@app.post("/api/plan/re-draw")
+async def api_plan_re_draw(request: Request):
+    """FIX-CONTRACT C4 — per-day workout re-draw via JSON body.
+
+    UI U8 contract: body ``{date: "YYYY-MM-DD"}`` (or legacy ``{day: int}``
+    as day-of-week index resolved against the current plan start).
+    Thin wrapper around :func:`api_plan_rematch_day` which already does the
+    real work — kept as its own route so the UI primary path ends at ``200
+    {zwo_file, zwo_name, variation}`` instead of 404-ing into the week-level
+    classifier fallback.
+    """
+    try:
+        body = await _get_json_body(request)
+    except Exception:
+        body = {}
+    day_iso = str(body.get("date") or body.get("day") or "").strip()
+    # Allow day-of-week index (0..6) as a convenience; resolve against the
+    # current plan's current week start.
+    # v4.2.0 IMPL-WEEKLY: _load_current_week_dto returns a PlannedWeek
+    # dataclass, not a dict — was previously subscripted as `wk["start"]`
+    # which threw a TypeError swallowed by the bare `except` and caused a
+    # 400 fall-through. Use attribute access; .start is already a date.
+    if day_iso.isdigit():
+        try:
+            idx = int(day_iso)
+            if 0 <= idx < 7:
+                json_path = _plan_dir() / "current_plan.json"
+                if json_path.exists():
+                    with open(json_path, encoding="utf-8") as f:
+                        plan = json.load(f)
+                    today = date.today()
+                    wk, _wi = _load_current_week_dto(plan, today)
+                    if wk:
+                        day_iso = (wk.start + timedelta(days=idx)).isoformat()
+        except Exception:
+            pass
+    if not day_iso:
+        return JSONResponse({"error": "date (YYYY-MM-DD) required"}, 400)
+    try:
+        date.fromisoformat(day_iso)
+    except ValueError:
+        return JSONResponse({"error": "Invalid date format (use YYYY-MM-DD)"}, 400)
+    # Delegate to the existing path-param form — same semantics.
+    return await api_plan_rematch_day(day_iso)
+
+
+@app.post("/api/plan/rematch/{day}")
+async def api_plan_rematch_day(day: str):
+    """P6 (v4.1.0) — re-draw a single day's workout.
+
+    Unlike /api/plan/rematch which is a completion-classifier, this endpoint
+    actually re-rolls the ZWO workout for the given day. Excludes the
+    session's current ZWO and every other ZWO already used this week, picks
+    a new one from the same session_type bucket via match_zwo, persists.
+
+    Keeps the completion-classifier behavior as a fallback if no workouts
+    are available: returns action="no_candidate" so the UI can fall back to
+    the classifier rematch call.
+    """
+    try:
+        date.fromisoformat(day)
+    except ValueError:
+        return JSONResponse({"error": "Invalid date format (use YYYY-MM-DD)"}, 400)
+
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+
+        # Locate the session + containing week
+        target_week = None
+        target_session = None
+        for w in plan.get("weeks", []):
+            for s in w.get("sessions", []):
+                if s.get("day") == day:
+                    target_week = w
+                    target_session = s
+                    break
+            if target_session:
+                break
+        if not target_session:
+            return JSONResponse({"error": f"No session at {day}"}, 404)
+
+        if target_session.get("session_type") == "rest":
+            return {"ok": False, "action": "rest_day", "day": day}
+
+        # Build exclusion set: every other session's zwo_name in this week
+        # PLUS the current session's current pick (so we get a real re-draw).
+        excluded = set()
+        for s in target_week.get("sessions", []):
+            nm = s.get("zwo_name") or ""
+            if nm:
+                excluded.add(nm)
+
+        # Build a PlannedSession for match_zwo
+        planned = tp.PlannedSession(
+            day=date.fromisoformat(day),
+            day_name=target_session.get("day_name", ""),
+            session_type=target_session.get("session_type", "z2"),
+            duration_min=int(target_session.get("duration_min", 0) or 0),
+            tss_estimate=float(target_session.get("tss_estimate", 0) or 0),
+            description=target_session.get("description", ""),
+        )
+
+        library = tp.load_workout_library()
+        week_num = target_week.get("week_num", 0)
+        day_idx = (date.fromisoformat(day) - date.fromisoformat(target_week["start"])).days
+
+        try:
+            # Bump the seed with an incremented variation counter so identical
+            # session-type on same day picks a DIFFERENT workout each call.
+            variation = int(target_session.get("variation", 0)) + 1
+            planned.profile_id = f"{variation}"  # seeds into match_zwo RNG
+            tp.match_zwo(
+                planned, library,
+                week_num=week_num + variation * 100,
+                day_idx=day_idx,
+                used_names=excluded,
+                raise_on_empty=True,
+            )
+        except tp.NoCandidateWorkoutError:
+            return {"ok": False, "action": "no_candidate", "day": day}
+
+        if not planned.zwo_file:
+            return {"ok": False, "action": "no_candidate", "day": day}
+
+        target_session["zwo_file"] = planned.zwo_file
+        target_session["zwo_name"] = planned.zwo_name
+        target_session["variation"] = variation
+        target_session["status"] = "pending"
+        plan["last_rematch_day"] = {"date": day, "at": datetime.now().isoformat(),
+                                    "new_zwo": planned.zwo_file}
+
+        with tp.plan_write_lock():
+            tmp_path = json_path.with_suffix('.tmp')
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(plan, f, indent=2, default=str)
+            tmp_path.rename(json_path)
+
+        return {"ok": True, "action": "redrawn", "day": day,
+                "zwo_file": planned.zwo_file, "zwo_name": planned.zwo_name,
+                "variation": variation}
+    except Exception:
+        _log.exception("Plan rematch-day failed")
+        return JSONResponse({"detail": "Rematch-day failed"}, 500)
+
+
+@app.post("/api/plan/dismiss-session")
+async def api_plan_dismiss_session(request: Request):
+    """Dismiss a session (§6.8 — stays visible greyed; §6.11 never auto).
+
+    Body: {"date": "YYYY-MM-DD", "undo": bool}
+    Sets status=dismissed (or back to pending if undo=true).
+    """
+    body = await _get_json_body(request)
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+
+    d_iso = str(body.get("date", "")).strip()
+    undo = bool(body.get("undo", False))
+    if not d_iso:
+        return JSONResponse({"error": "date required"}, 400)
+    try:
+        date.fromisoformat(d_iso)
+    except ValueError:
+        return JSONResponse({"error": "Invalid date format"}, 400)
+
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+
+        found = False
+        for w in plan.get("weeks", []):
+            for s in w.get("sessions", []):
+                if s.get("day") == d_iso:
+                    if undo:
+                        s["status"] = "pending"
+                        s["dismissed_at"] = ""
+                    else:
+                        s["status"] = "dismissed"
+                        s["dismissed_at"] = datetime.now().isoformat()
+                    found = True
+                    break
+            if found:
+                break
+        if not found:
+            return JSONResponse({"error": f"no session at {d_iso}"}, 404)
+
+        with tp.plan_write_lock():
+            tmp_path = json_path.with_suffix('.tmp')
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(plan, f, indent=2, default=str)
+            tmp_path.rename(json_path)
+
+        return {"ok": True, "dismissed": not undo}
+
+    except Exception:
+        _log.exception("Plan dismiss-session failed")
+        return JSONResponse({"detail": "Dismiss failed"}, 500)
+
+
+@app.get("/api/plan/auto-recalc")
+def api_plan_auto_recalc():
+    """Auto-recalculate plan if >7 days since last recalc. Called on tab load."""
+
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return {"action": "no_plan"}
+
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+
+        # Check if recalc needed (>7 days since last)
+        last_recalc = plan.get("recalc_date") or plan.get("generated", "")
+        if last_recalc:
+            try:
+                last_dt = datetime.fromisoformat(last_recalc)
+                # Normalize so naive/aware mismatch can't raise TypeError.
+                # Saved plans may include a tz offset (saved_at uses
+                # `.astimezone().isoformat()` elsewhere); strip it so the
+                # subtraction with `datetime.now()` is always homogeneous.
+                if last_dt.tzinfo is not None:
+                    last_dt = last_dt.replace(tzinfo=None)
+                days_since = (datetime.now() - last_dt).days
+                if days_since < 7:
+                    # Still fresh — return event readiness only
+                    training = cached("training", get_today_metrics)
+                    current_ctl = training.get("ctl") or 30
+                    g = plan.get("goal", {})
+                    readiness = {}
+                    if g.get("event_date"):
+                        goal = tp.Goal(
+                            goal_type=g.get("type", "general"),
+                            target_date=date.fromisoformat(g["event_date"]),
+                            event_name=g.get("event_name", ""),
+                            event_km=g.get("event_km", 0),
+                            event_climb_m=g.get("event_climb", 0),
+                            event_type=g.get("event_type", "granfondo"),
+                            hours_per_week=g.get("hours_per_week", 8),
+                            longest_ride_h_90d=g.get("longest_ride_h_90d"),
+                            last_ftp_test_date=g.get("last_ftp_test_date"),
+                        )
+                        if goal.longest_ride_h_90d is None:
+                            goal.longest_ride_h_90d = _longest_ride_h_90d()
+                        readiness = tp.compute_event_readiness(goal, current_ctl)
+                    return {"action": "fresh", "days_since_recalc": days_since, "event_readiness": readiness}
+            except (ValueError, TypeError):
+                pass
+
+        # Recalc needed — rebuild plan
+        training = cached("training", get_today_metrics)
+        current_ctl = training.get("ctl") or 30
+
+        g = plan.get("goal", {})
+        target_date = date.fromisoformat(g["event_date"]) if g.get("event_date") else None
+        if not target_date:
+            # Non-event goals (FTP, general): use target_date or default 12 weeks out
+            target_date = date.fromisoformat(g["target_date"]) if g.get("target_date") else (date.today() + timedelta(weeks=12))
+
+        goal = tp.Goal(
+            goal_type=g.get("type", "general"),
+            target_date=target_date,
+            event_name=g.get("event_name", ""),
+            event_km=g.get("event_km", 0),
+            event_climb_m=g.get("event_climb", 0),
+            event_type=g.get("event_type", "granfondo"),
+            hours_per_week=g.get("hours_per_week", 8),
+            max_weekday_hours=g.get("max_weekday_hours", 2.0),
+            max_weekend_hours=g.get("max_weekend_hours", 3.5),
+            rest_days=g.get("rest_days", [0]),
+            longest_ride_h_90d=g.get("longest_ride_h_90d"),
+            last_ftp_test_date=g.get("last_ftp_test_date"),
+        )
+        # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
+        if goal.longest_ride_h_90d is None:
+            goal.longest_ride_h_90d = _longest_ride_h_90d()
+
+        # Reconstruct plan weeks
+        old_weeks = []
+        for w in plan.get("weeks", []):
+            sessions = []
+            for s in w.get("sessions", []):
+                sessions.append(tp.PlannedSession(
+                    day=date.fromisoformat(s["day"]), day_name=s.get("day_name", ""),
+                    session_type=s.get("session_type", "rest"),
+                    duration_min=s.get("duration_min", 0),
+                    tss_estimate=s.get("tss_estimate", 0),
+                    description=s.get("description", ""),
+                ))
+            old_weeks.append(tp.PlannedWeek(
+                week_num=w["week_num"], start=date.fromisoformat(w["start"]),
+                end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
+                tss_target=w.get("tss_target", 0), is_stepback=w.get("is_stepback", False),
+                sessions=sessions,
+            ))
+
+        # Get eFTP for drift detection
+        eftp = None
+        wellness = cached("wellness_7", lambda: fetch_wellness(7))
+        if wellness:
+            for w in reversed(wellness):
+                si = w.get("sportInfo", [])
+                if si and len(si) > 0 and si[0].get("eftp"):
+                    eftp = round(si[0]["eftp"])
+                    break
+
+        new_phases, all_weeks, recalc_info = tp.recalculate_plan(
+            goal=goal, current_plan_weeks=old_weeks,
+            current_ctl=current_ctl, current_eftp=eftp,
+        )
+
+        if recalc_info.get("action") == "no_change":
+            return {"action": "no_change", **recalc_info}
+
+        # Save updated plan
+        plan_dict = {
+            "goal": plan.get("goal", {}),
+            "phases": [
+                {"name": p.name, "weeks": p.weeks,
+                 "start": p.start.isoformat(), "end": p.end.isoformat(),
+                 "weekly_tss": p.weekly_tss_target, "focus": p.focus}
+                for p in new_phases
+            ] if new_phases else plan.get("phases", []),
+            "weeks": [
+                {"week_num": w.week_num, "start": w.start.isoformat(), "end": w.end.isoformat(),
+                 "phase": w.phase, "tss_target": w.tss_target, "is_stepback": w.is_stepback,
+                 "sessions": [
+                     {"day": s.day.isoformat(), "day_name": s.day_name,
+                      "session_type": s.session_type, "duration_min": s.duration_min,
+                      "tss_estimate": s.tss_estimate, "description": s.description,
+                      "zwo_file": getattr(s, "zwo_file", ""), "zwo_name": getattr(s, "zwo_name", "")}
+                     for s in w.sessions
+                 ]}
+                for w in all_weeks
+            ],
+            "generated": plan.get("generated", ""),
+            "recalc_date": datetime.now().isoformat(),
+            "recalc_info": recalc_info,
+            "availability": plan.get("availability", {}),
+            "unavailable_periods": plan.get("unavailable_periods", []),
+        }
+
+        with tp.plan_write_lock():
+            tmp_path = json_path.with_suffix('.tmp')
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(plan_dict, f, indent=2, default=str)
+            tmp_path.rename(json_path)
+
+        return {"action": "recalculated", "plan_json": plan_dict, **recalc_info}
+
+    except Exception:
+        # SEC3: don't leak exception text.
+        _log.exception("Plan auto-recalc failed")
+        return JSONResponse({"action": "error", "detail": "Plan update failed"}, 500)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GoldenCheetah API (optional)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/gc/status")
+def api_gc_status():
+    """Check if GoldenCheetah API is running on localhost:12021."""
+    import urllib.request
+    try:
+        req = urllib.request.Request("http://localhost:12021/")
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            return {"available": True, "status": resp.status}
+    except Exception:
+        return {"available": False}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# RIDE IMPORT + HISTORY (v4.0.0-alpha — post-ride viewer, no live runtime)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# The live ride runtime was removed in the trainer-rip pivot. Rides are now
+# recorded outside Domestique (Tacx / MyWhoosh / Golden Cheetah / any FIT
+# producer) and imported afterwards via POST /api/ride/import.
+#
+# Storage layout:
+#   ~/.domestique/rides/<iso>.fit  -- raw imported FIT file
+# ride_storage.list_rides / get_ride read per-profile JSON rides from the
+# existing archive and are still used by /api/rides* for the post-pivot
+# history list.
+
+
+def _rides_fit_dir() -> Path:
+    """Directory for raw FIT imports. Shared across profiles by design:
+    the imported FIT contains its own athlete/device metadata and the
+    per-profile saved-ride archive lives elsewhere (ride_storage)."""
+    d = _user_data_dir / "rides"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _parse_fit_stats(fit_path: Path) -> dict:
+    """Parse a FIT file and return a shallow stats dict.
+
+    Reads duration, distance, avg/max power, avg/max HR, avg cadence,
+    TSS (if the producing app stored it), sport, and record count.
+    Uses ``fit_tool.FitFile.from_file`` so the same dependency that
+    writes FIT exports also reads them.
+    """
+    try:
+        from fit_tool.fit_file import FitFile
+    except Exception as e:
+        log_ride_import.warning(f"fit_tool import failed: {e}")
+        return {"error": "fit_tool_unavailable"}
+
+    try:
+        ff = FitFile.from_file(str(fit_path))
+    except Exception as e:
+        log_ride_import.warning(f"FIT parse failed ({fit_path.name}): {e}")
+        return {"error": "parse_failed", "detail": str(e)[:160]}
+
+    sample_count = 0
+    power_sum = 0
+    power_n = 0
+    power_max = 0
+    hr_sum = 0
+    hr_n = 0
+    hr_max = 0
+    cad_sum = 0
+    cad_n = 0
+    speed_max = 0.0
+    distance_m = 0.0
+    duration_s = 0
+    total_kj = 0.0
+    start_time = None
+    sport = None
+    tss = None
+    # T1/T3 (v4.1.0): retain the 1Hz power + cadence streams so we can run
+    # FTP-test detection + ramp-halt detection after the scan.
+    power_series: list[int] = []
+    cadence_series: list[int] = []
+
+    try:
+        for rec in ff.records:
+            msg = rec.message
+            mtype = type(msg).__name__
+            if mtype == "RecordMessage":
+                sample_count += 1
+                p_val = 0
+                try:
+                    pw = msg.get_value("power")
+                    if pw is not None:
+                        p = int(pw)
+                        power_sum += p
+                        power_n += 1
+                        p_val = p
+                        if p > power_max:
+                            power_max = p
+                except Exception:
+                    pass
+                power_series.append(p_val)
+                try:
+                    hr = msg.get_value("heart_rate")
+                    if hr is not None:
+                        h = int(hr)
+                        hr_sum += h
+                        hr_n += 1
+                        if h > hr_max:
+                            hr_max = h
+                except Exception:
+                    pass
+                c_val = 0
+                try:
+                    cad = msg.get_value("cadence")
+                    if cad is not None:
+                        cad_sum += int(cad)
+                        cad_n += 1
+                        c_val = int(cad)
+                except Exception:
+                    pass
+                cadence_series.append(c_val)
+                try:
+                    sp = msg.get_value("speed")
+                    if sp is not None and float(sp) > speed_max:
+                        speed_max = float(sp)
+                except Exception:
+                    pass
+                try:
+                    d = msg.get_value("distance")
+                    if d is not None:
+                        distance_m = max(distance_m, float(d))
+                except Exception:
+                    pass
+            elif mtype == "SessionMessage":
+                try:
+                    v = msg.get_value("total_timer_time")
+                    if v is not None:
+                        duration_s = int(round(float(v)))
+                except Exception:
+                    pass
+                try:
+                    v = msg.get_value("total_distance")
+                    if v is not None:
+                        distance_m = max(distance_m, float(v))
+                except Exception:
+                    pass
+                try:
+                    v = msg.get_value("total_work")
+                    if v is not None:
+                        total_kj = float(v) / 1000.0
+                except Exception:
+                    pass
+                try:
+                    v = msg.get_value("training_stress_score")
+                    if v is not None:
+                        tss = float(v)
+                except Exception:
+                    pass
+                try:
+                    sport = str(msg.get_value("sport") or "")
+                except Exception:
+                    sport = None
+                try:
+                    v = msg.get_value("start_time")
+                    if v is not None:
+                        start_time = str(v)
+                except Exception:
+                    pass
+    except Exception as e:
+        log_ride_import.warning(f"FIT record scan aborted: {e}")
+
+    # T1/T2/T3 (v4.1.0): FTP-test detection + formula-driven suggestion +
+    # ramp-halt post-hoc scan. Guarded so a corrupted stream won't break
+    # the whole import — detection failures just omit the extra fields.
+    is_ftp_test = False
+    ftp_test_type = None
+    ftp_test_suggestion = None
+    ftp_test_halted = False
+    ftp_test_halt_at_step = None
+    # E3 (v4.1.0): local eFTP suggestion from best-efforts. Built from the
+    # retained power series with the same scaling table the live-session
+    # planner uses. We only surface a suggestion (don't auto-apply) when
+    # it differs from stored FTP by >3%.
+    local_eftp_suggestion = None
+    try:
+        import fitness_estimation as _fe
+        test_kind = _fe.detect_ftp_test_shape(
+            power_series, filename_hint=fit_path.name,
+        )
+        # FIX-CONTRACT M3: carry prior_ftp / pct_delta / method on the
+        # suggestion payload so U1's banner renders the delta line correctly
+        # ("was 250W · +3.2%") instead of defaulting to 0W/0%.
+        _prior_ftp = int(config.ATHLETE_FTP_W or 0)
+        if test_kind == "coggan_20min":
+            suggest = _fe.coggan_20min_ftp(power_series)
+            if suggest:
+                is_ftp_test = True
+                ftp_test_type = "coggan_20min"
+                _val = int(suggest["value"])
+                _delta = (
+                    round((_val - _prior_ftp) / _prior_ftp * 100.0, 1)
+                    if _prior_ftp > 0 else 0.0
+                )
+                ftp_test_suggestion = {
+                    "type": suggest["type"],
+                    "method": "coggan_20min",
+                    "ftp": _val,
+                    "value": _val,
+                    "prior_ftp": _prior_ftp,
+                    "pct_delta": _delta,
+                    "source": "tested_coggan_20min",
+                    "formula_used": suggest["formula_used"],
+                    "best_20min": suggest.get("best_20min"),
+                }
+        elif test_kind == "ramp":
+            suggest = _fe.ramp_test_ftp(power_series)
+            if suggest:
+                is_ftp_test = True
+                ftp_test_type = "ramp"
+                _val = int(suggest["value"])
+                _delta = (
+                    round((_val - _prior_ftp) / _prior_ftp * 100.0, 1)
+                    if _prior_ftp > 0 else 0.0
+                )
+                ftp_test_suggestion = {
+                    "type": suggest["type"],
+                    "method": "ramp",
+                    "ftp": _val,
+                    "value": _val,
+                    "prior_ftp": _prior_ftp,
+                    "pct_delta": _delta,
+                    "source": "tested_ramp",
+                    "formula_used": suggest["formula_used"],
+                    "best_60s": suggest.get("best_60s"),
+                }
+                halt = _fe.detect_ramp_halt(power_series, cadence_series)
+                if halt and halt.get("halted"):
+                    ftp_test_halted = True
+                    ftp_test_halt_at_step = halt.get("halt_at_step")
+    except Exception as _e:
+        log_ride_import.debug(f"FTP-test detection skipped: {_e}")
+
+    # E3 (v4.1.0): local eFTP estimate from best-efforts for every ride.
+    # Only surfaces a suggestion when stored FTP is known AND the local
+    # estimate differs by >3% — a proposal, not an auto-apply. F5 handles
+    # the 7-day-sustained auto-apply separately.
+    try:
+        if power_series and config.ATHLETE_FTP_W and config.ATHLETE_FTP_W > 0:
+            from fitness_estimation import estimate_ftp, extract_best_efforts
+            from training_live import RideSample
+            samples = [RideSample(power=int(p or 0)) for p in power_series]
+            best_efforts = extract_best_efforts(samples)
+            local_ftp = estimate_ftp(best_efforts)
+            if local_ftp:
+                pct_diff = abs(local_ftp - config.ATHLETE_FTP_W) / config.ATHLETE_FTP_W * 100
+                if pct_diff > 3:
+                    local_eftp_suggestion = {
+                        "suggested_ftp": int(local_ftp),
+                        "current_ftp": int(config.ATHLETE_FTP_W),
+                        "diff_pct": round(pct_diff, 1),
+                        "source": "eftp_local",
+                    }
+    except Exception as _e:
+        log_ride_import.debug(f"local eFTP suggestion skipped: {_e}")
+
+    return {
+        "sport": sport,
+        "start_time": start_time,
+        "sample_count": sample_count,
+        "duration_sec": duration_s,
+        "distance_km": round(distance_m / 1000.0, 3) if distance_m else 0.0,
+        "avg_power": round(power_sum / power_n) if power_n else 0,
+        "max_power": int(power_max),
+        "avg_hr": round(hr_sum / hr_n) if hr_n else 0,
+        "max_hr": int(hr_max),
+        "avg_cadence": round(cad_sum / cad_n) if cad_n else 0,
+        "max_speed_mps": round(float(speed_max), 3),
+        "total_kj": round(total_kj, 1),
+        "tss": tss,
+        # T1/T2/T3 (v4.1.0):
+        "is_ftp_test": is_ftp_test,
+        "ftp_test_type": ftp_test_type,
+        "ftp_test_suggestion": ftp_test_suggestion,
+        "ftp_test_halted": ftp_test_halted,
+        "ftp_test_halt_at_step": ftp_test_halt_at_step,
+        # FIX-CONTRACT M4: UI reads ftp_test_halt_step (shorter); expose both.
+        "ftp_test_halt_step": ftp_test_halt_at_step,
+        # E3 (v4.1.0):
+        "local_eftp_suggestion": local_eftp_suggestion,
+    }
+
+
+@app.post("/api/ride/import")
+async def api_ride_import(
+    fit_file: UploadFile = File(...),
+):
+    """Import a FIT file from the user's recording app.
+
+    Accepts a multipart/form-data body with one file part keyed ``fit_file``.
+    Persists the raw bytes under ``~/.domestique/rides/<iso>.fit`` using the
+    upload time as the id; that keeps ids stable + sortable and gives the
+    caller a cheap name for later GET by id.
+
+    Returns ``{ride_id, parsed_stats}`` where ``parsed_stats`` is the shallow
+    analytics dict from :func:`_parse_fit_stats`. Errors short-circuit with
+    a 4xx so the UI can render a message.
+    """
+    if not fit_file or not fit_file.filename:
+        raise HTTPException(status_code=400, detail="fit_file required")
+
+    # Validate extension (defence; the UI sets accept=".fit" but the API
+    # is also callable from curl/Postman).
+    lower = fit_file.filename.lower()
+    if not (lower.endswith(".fit") or lower.endswith(".gz")):
+        raise HTTPException(status_code=400, detail="file must have .fit extension")
+
+    data = await fit_file.read()
+    # Rough upper bound -- rides longer than ~24h would blow past this;
+    # 50 MB covers every real-world case. Reject anything larger so we
+    # do not silently consume disk on a bad upload.
+    if len(data) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="file too large (>50 MB)")
+    if len(data) < 32:
+        raise HTTPException(status_code=400, detail="file too small to be a FIT")
+
+    # Stable id: upload time in ISO form (filesystem-safe ":" replacement).
+    now = datetime.now(timezone.utc).astimezone()
+    ride_id = now.strftime("%Y-%m-%dT%H-%M-%S")
+    fit_path = _rides_fit_dir() / f"{ride_id}.fit"
+
+    # Collision resilience: append a counter if two uploads land in the
+    # same second. Extremely rare in practice; cheap to cover.
+    _c = 1
+    while fit_path.exists():
+        ride_id_try = f"{ride_id}_{_c}"
+        fit_path = _rides_fit_dir() / f"{ride_id_try}.fit"
+        _c += 1
+        if _c > 50:
+            raise HTTPException(status_code=409, detail="id collision; try again")
+    ride_id = fit_path.stem
+
+    try:
+        fit_path.write_bytes(data)
+    except OSError as e:
+        log_ride_import.exception(f"ride import write failed: {e}")
+        raise HTTPException(status_code=500, detail="failed to persist FIT")
+
+    parsed = _parse_fit_stats(fit_path)
+
+    log_ride_import.info(
+        f"EVENT=ride_imported id={ride_id} bytes={len(data)} "
+        f"samples={parsed.get('sample_count')} "
+        f"duration_s={parsed.get('duration_sec')} "
+        f"distance_km={parsed.get('distance_km')}"
+    )
+
+    # F7 (v4.1.0) — fire-and-forget FIT upload to Intervals.icu.
+    # Only attempts when credentials are present; failure is logged but
+    # never propagates — the local import is the source of truth.
+    icu_upload = {"ok": False, "skipped": True}
+    try:
+        from training import upload_fit_to_icu
+        res = upload_fit_to_icu(fit_path, retry=1)
+        icu_upload = res
+        if res.get("ok"):
+            log_ride_import.info(
+                f"EVENT=icu_fit_upload_relayed id={ride_id} status={res.get('status')}"
+            )
+        else:
+            log_ride_import.warning(
+                f"EVENT=icu_fit_upload_failed id={ride_id} "
+                f"status={res.get('status')} detail={res.get('detail')}"
+            )
+    except Exception as _e:
+        log_ride_import.warning(f"ICU upload skipped: {_e}")
+
+    return {
+        "ride_id": ride_id,
+        "bytes": len(data),
+        "parsed_stats": parsed,
+        "icu_upload": icu_upload,
+    }
+
+
+# ─── Saved-ride archive (pre-existing JSON rides produced by the old
+# live session path). Kept for backward compatibility so historical rides
+# remain browsable in the post-ride viewer. New rides land via
+# POST /api/ride/import above.
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# v4.4.0 — ICU activity sync into local rides store
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Module-level state file for last-sync-at marker. Sits next to the rides dir
+# so a profile reset clears it naturally.
+def _icu_sync_state_path() -> Path:
+    return _user_data_dir / "rides" / "icu" / ".last_sync_at"
+
+
+def _icu_wellness_sync_state_path() -> Path:
+    """v4.5.0 — separate marker for last wellness sync (rides + wellness
+    have different cadence requirements: rides matter ASAP after a ride,
+    wellness is daily)."""
+    return _user_data_dir / "wellness" / ".last_sync_at"
+
+
+def _icu_credentials_present() -> bool:
+    """True iff ICU_ATHLETE_ID + ICU_API_KEY are both set in config."""
+    return bool(
+        getattr(config, "ICU_ATHLETE_ID", None)
+        and getattr(config, "ICU_API_KEY", None)
+    )
+
+
+def _read_last_sync_at() -> float | None:
+    p = _icu_sync_state_path()
+    if not p.exists():
+        return None
+    try:
+        return float(p.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _write_last_sync_at(ts: float) -> None:
+    p = _icu_sync_state_path()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(str(ts), encoding="utf-8")
+    except OSError as e:
+        _log.debug(f"_write_last_sync_at failed: {e}")
+
+
+def _read_last_wellness_sync_at() -> float | None:
+    p = _icu_wellness_sync_state_path()
+    if not p.exists():
+        return None
+    try:
+        return float(p.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _write_last_wellness_sync_at(ts: float) -> None:
+    p = _icu_wellness_sync_state_path()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(str(ts), encoding="utf-8")
+    except OSError as e:
+        _log.debug(f"_write_last_wellness_sync_at failed: {e}")
+
+
+def _sync_icu_wellness(force: bool = False, days: int = 90) -> dict:
+    """v4.5.0 — pull recent ICU wellness records + persist locally.
+
+    Returns ``{added, total}`` counters. Skips with reason when:
+      - ICU credentials missing
+      - last wellness sync < 1h ago and force=False
+    """
+    if not _icu_credentials_present():
+        return {"added": 0, "total": 0, "skipped": "no_credentials"}
+
+    if not force:
+        last = _read_last_wellness_sync_at()
+        if last is not None and (time.time() - last) < 3600:
+            try:
+                import ride_storage as _rs
+                total = len(_rs.load_recent_wellness(days=days))
+            except Exception:
+                total = 0
+            return {"added": 0, "total": total, "skipped": "throttled"}
+
+    import training as _training
+    import ride_storage as _rs
+
+    try:
+        records = _training.fetch_recent_wellness(days=days)
+    except Exception as e:
+        _log.warning(f"_sync_icu_wellness: fetch failed: {e}")
+        try:
+            total = len(_rs.load_recent_wellness(days=days))
+        except Exception:
+            total = 0
+        return {"added": 0, "total": total, "skipped": f"fetch_failed:{type(e).__name__}"}
+
+    added = 0
+    for rec in records or []:
+        if not isinstance(rec, dict):
+            continue
+        path = _rs.persist_wellness(rec)
+        if path is not None:
+            added += 1
+
+    _write_last_wellness_sync_at(time.time())
+    try:
+        total = len(_rs.load_recent_wellness(days=days))
+    except Exception:
+        total = added
+    return {"added": added, "total": total}
+
+
+def _sync_icu_activities(force: bool = False) -> dict:
+    """v4.4.0 — pull recent ICU activities + persist normalized records.
+
+    Returns ``{added, updated, total, status, last_sync_at}`` counters. The
+    ``status`` field is ``"ok"`` on a successful fetch, ``"throttled"`` when
+    the 1h throttle blocked the call, ``"no_credentials"`` when ICU is not
+    configured, or ``"fetch_failed"`` when the network/API call raised
+    (paired with a ``skipped`` reason explaining why). v4.5.1 §B1 added
+    ``status`` + ``last_sync_at`` (epoch float, may be None) so the UI can
+    render a truthful toast instead of always reading "0 new rides".
+
+    ``force=True`` bypasses the throttle (used by ``POST /api/rides/sync``).
+    """
+    if not _icu_credentials_present():
+        return {
+            "added": 0, "updated": 0, "total": 0,
+            "status": "no_credentials",
+            "skipped": "no_credentials",
+            "last_sync_at": _read_last_sync_at(),
+        }
+
+    if not force:
+        last = _read_last_sync_at()
+        if last is not None and (time.time() - last) < 3600:
+            return {
+                "added": 0, "updated": 0,
+                "total": len(_load_all_rides_safe()),
+                "status": "throttled",
+                "skipped": "throttled",
+                "last_sync_at": last,
+            }
+
+    import training as _training
+    import ride_storage as _rs
+
+    try:
+        activities = _training.fetch_recent_activities(days=90)
+    except Exception as e:
+        _log.warning(f"_sync_icu_activities: fetch failed: {e}")
+        return {
+            "added": 0, "updated": 0,
+            "total": len(_load_all_rides_safe()),
+            "status": "fetch_failed",
+            "skipped": f"fetch_failed:{type(e).__name__}",
+            "last_sync_at": _read_last_sync_at(),
+        }
+
+    added = 0
+    updated = 0
+    icu_dir = _rs._icu_rides_dir()
+    for a in activities or []:
+        # Cycling-ish only — same filter the planner uses elsewhere. The
+        # ICU activities feed includes runs/swims that we don't model.
+        sport = (a.get("type") or a.get("sport_type") or "").lower()
+        if sport and "ride" not in sport and "cycling" not in sport and "bike" not in sport and "virtual" not in sport:
+            # We still keep all activities — the user may want to see them in
+            # the calendar. Removing this filter altogether would be safer; we
+            # err on the side of inclusive.
+            pass
+        ext = a.get("id") or a.get("activity_id")
+        if not ext:
+            continue
+        existed = (icu_dir / f"{ext}.json").exists()
+        path = _rs.persist_icu_activity(a)
+        if path is None:
+            continue
+        if existed:
+            updated += 1
+        else:
+            added += 1
+
+    now = time.time()
+    _write_last_sync_at(now)
+    total = len(_load_all_rides_safe())
+    return {
+        "added": added, "updated": updated, "total": total,
+        "status": "ok",
+        "last_sync_at": now,
+    }
+
+
+def _sync_icu_rides_and_wellness(force: bool = False) -> dict:
+    """v4.5.0 — combined helper: rides + wellness in one call.
+
+    Used by ``POST /api/rides/sync?force=1`` and the lazy-sync hook so a
+    single user-triggered "Sync now" pulls both rides and wellness without
+    requiring two round-trips. Returns the rides counters plus
+    ``wellness_added`` and ``wellness_total``.
+    """
+    rides_result = _sync_icu_activities(force=force)
+    wellness_result = _sync_icu_wellness(force=force)
+    return {
+        **rides_result,
+        "wellness_added": wellness_result.get("added", 0),
+        "wellness_total": wellness_result.get("total", 0),
+        "wellness_skipped": wellness_result.get("skipped"),
+    }
+
+
+def _load_all_rides_safe() -> list[dict]:
+    """Defensive wrapper around ride_storage.load_all_rides()."""
+    try:
+        import ride_storage as _rs
+        return _rs.load_all_rides()
+    except Exception as e:
+        _log.warning(f"load_all_rides failed: {e}")
+        return []
+
+
+def _longest_ride_h_90d(rides: list[dict] | None = None) -> float | None:
+    """v4.6.7 IMPL-CAP: longest single-ride duration (hours) in last 90 days.
+
+    Auto-populates ``Goal.longest_ride_h_90d`` so the capability projection
+    has an endurance baseline without forcing the user to enter one. Returns
+    None when no recent rides have a usable duration_s field.
+    """
+    if rides is None:
+        rides = _load_all_rides_safe()
+    if not rides:
+        return None
+    cutoff = (date.today() - timedelta(days=90)).isoformat()
+    longest_s = 0
+    for r in rides:
+        started = (r.get("started_at") or "")[:10]
+        if not started or started < cutoff:
+            continue
+        dur_s = r.get("duration_s") or r.get("moving_s") or 0
+        try:
+            dur_s = int(dur_s)
+        except (TypeError, ValueError):
+            continue
+        if dur_s > longest_s:
+            longest_s = dur_s
+    if longest_s <= 0:
+        return None
+    return round(longest_s / 3600.0, 2)
+
+
+def _aggregate_best_efforts_90d(rides: list[dict] | None = None) -> dict[int, int]:
+    """v4.6.7 IMPL-CAP: aggregate max-mean power across last 90 days of rides.
+
+    Reads ``efforts`` from each ICU-normalised ride record (ride_storage
+    persists icu_efforts as {label, watts, secs}). Returns a dict of the
+    Monod standard durations (180, 300, 600, 1200) → best watts seen.
+    """
+    if rides is None:
+        rides = _load_all_rides_safe()
+    if not rides:
+        return {}
+    cutoff = (date.today() - timedelta(days=90)).isoformat()
+    target_durations = (180, 300, 600, 1200)
+    best: dict[int, int] = {}
+    for r in rides:
+        started = (r.get("started_at") or "")[:10]
+        if not started or started < cutoff:
+            continue
+        for eff in r.get("efforts") or []:
+            if not isinstance(eff, dict):
+                continue
+            secs = eff.get("secs") or eff.get("duration_s")
+            watts = eff.get("watts") or eff.get("avg_watts")
+            try:
+                secs_i = int(secs) if secs is not None else None
+                watts_i = int(watts) if watts is not None else None
+            except (TypeError, ValueError):
+                continue
+            if secs_i is None or watts_i is None or watts_i <= 0:
+                continue
+            if secs_i in target_durations and watts_i > best.get(secs_i, 0):
+                best[secs_i] = watts_i
+    return best
+
+
+def _maybe_lazy_icu_sync(force_if_today_missing: bool = False) -> None:
+    """Best-effort lazy ICU sync hook (v4.4.2 wired into more endpoints).
+
+    Default behavior (1h throttle): fires if creds exist and last sync was
+    > 1h ago. Failure is silent — callers still serve whatever is cached
+    locally.
+
+    v4.4.2 §B2: ``force_if_today_missing=True`` adds a second trigger:
+    when today's date is NOT represented in load_all_rides() AND last
+    sync was > 30 min ago, force a re-sync (bypasses 1h throttle inside
+    `_sync_icu_activities` via ``force=True``). Catches the "user just
+    rode, ICU has it but our local cache is stale" case.
+
+    v4.5.0: also pulls wellness records (HRV/Sleep/RHR/weight) on the same
+    1h cadence so /api/readiness can fall back to the local store when the
+    live ICU wellness path is rate-limited / 403'd.
+    """
+    if not _icu_credentials_present():
+        return
+    last = _read_last_sync_at()
+    fired = False
+    # Standard 1h-throttle path (covers cold-start + idle return).
+    if last is None or (time.time() - last) >= 3600:
+        try:
+            _sync_icu_activities(force=False)
+            fired = True
+        except Exception as e:
+            _log.debug(f"_maybe_lazy_icu_sync(throttled) swallowed: {e}")
+    # v4.4.2 §B2: today-missing fallback. Skip if we already fired above,
+    # or if last sync was very recent (< 30 min).
+    if force_if_today_missing and not fired:
+        if last is not None and (time.time() - last) < 1800:
+            # too recent — but still try wellness below
+            pass
+        else:
+            today_iso = date.today().isoformat()
+            try:
+                rides = _load_all_rides_safe()
+                has_today = any(
+                    _ride_started_local_iso_date(r) == today_iso for r in rides
+                )
+            except Exception as e:
+                _log.debug(f"_maybe_lazy_icu_sync today-check swallowed: {e}")
+                has_today = True  # be conservative — skip force
+            if not has_today:
+                try:
+                    _sync_icu_activities(force=True)
+                except Exception as e:
+                    _log.debug(f"_maybe_lazy_icu_sync(force) swallowed: {e}")
+    # v4.5.0: wellness sync on its own 1h throttle (independent of rides).
+    last_w = _read_last_wellness_sync_at()
+    if last_w is None or (time.time() - last_w) >= 3600:
+        try:
+            _sync_icu_wellness(force=False)
+        except Exception as e:
+            _log.debug(f"_maybe_lazy_icu_sync(wellness) swallowed: {e}")
+
+
+def _detect_plan_load_alert() -> bool:
+    """v4.6.6 IMPL-A G4 — read-only post-sync check (Foster 1998).
+
+    Returns True iff a same-day ride exists whose actual TSS exceeds
+    today's planned ``tss_estimate`` by more than 1.5×. This signals a
+    session-load spike (Foster 1998 Med Sci Sports Exerc 30:1164-1168 —
+    session-RPE × duration spikes are the strongest predictor of
+    short-term overreaching) and the dashboard renders it as a toast so
+    the user knows to consider a recovery day. Mutating the plan is the
+    job of /api/plan/reforecast — this hook is read-only.
+    """
+    try:
+        json_path = _plan_dir() / "current_plan.json"
+        if not json_path.exists():
+            return False
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+        today_iso = date.today().isoformat()
+        # Find today's planned session (skip rest days with tss_estimate == 0).
+        planned_estimate = 0.0
+        for w in plan.get("weeks", []):
+            if w.get("start", "") <= today_iso <= w.get("end", ""):
+                for s in w.get("sessions", []):
+                    if s.get("day") == today_iso:
+                        planned_estimate = float(s.get("tss_estimate") or 0)
+                        break
+                break
+        if planned_estimate <= 0:
+            return False  # no plan or rest day → no spike to flag
+        rides = _load_all_rides_safe()
+        for r in rides or []:
+            rd = (
+                _ride_started_local_iso_date(r)
+                or r.get("date")
+                or (r.get("start_date_local") or "")[:10]
+                or ""
+            )
+            if rd != today_iso:
+                continue
+            actual = float(r.get("tss") or r.get("icu_training_load") or 0)
+            if actual > planned_estimate * 1.5:
+                return True
+        return False
+    except Exception as e:  # noqa: BLE001
+        _log.debug(f"_detect_plan_load_alert swallowed: {e}")
+        return False
+
+
+@app.post("/api/rides/sync")
+def api_rides_sync(force: int = Query(0)):
+    """v4.4.0 — pull last 90 days of ICU activities into the local rides
+    store and return counts.
+
+    v4.5.0: ``?force=1`` bypasses the 1h sync throttle AND runs a wellness
+    pull in the same call. Returns ``wellness_added`` and ``wellness_total``
+    alongside the rides counters when force=1. Without force, the existing
+    1h throttle inside ``_sync_icu_activities`` applies.
+
+    v4.6.6 IMPL-A G4: response now carries ``plan_load_alert: True`` when
+    a same-day ride's TSS exceeds today's planned tss_estimate by >1.5×
+    (Foster 1998 session-load spike). Read-only — does not mutate the plan.
+    """
+    if force:
+        result = _sync_icu_rides_and_wellness(force=True)
+    else:
+        result = _sync_icu_activities(force=False)
+    # Always compute the alert post-sync so the dashboard can toast even
+    # when the throttle returned status="throttled" (a recently-finished
+    # ride still posts via a separate ICU push).
+    result["plan_load_alert"] = _detect_plan_load_alert()
+    return result
+
+
+@app.get("/api/rides")
+def api_rides(limit: int = Query(0)):
+    """List all saved rides as a single flat array sorted newest-first.
+
+    v4.4.0: now also surfaces ICU-synced activities (from the local
+    ``~/.domestique/rides/icu/`` cache) alongside FIT imports + legacy
+    JSON rides. Each entry carries ``source`` ("icu"|"fit"|"json") and a
+    stable ``ride_id`` ("icu_<id>"|"fit_<stem>"|legacy id).
+
+    FIX-CONTRACT C3 (v4.3.x): payload remains a flat array (not a
+    {json, fit} envelope) so existing UI guards keep working.
+    """
+    import ride_storage
+
+    # ICU + FIT merged set from ride_storage (handles dedupe internally).
+    merged = _load_all_rides_safe()
+
+    # Legacy JSON rides (from the pre-v4 live session path) are still
+    # browseable. Append them after the merged ICU/FIT list and re-sort.
+    try:
+        legacy = ride_storage.list_rides()
+    except Exception as e:
+        _log.warning(f"ride_storage.list_rides failed: {e}")
+        legacy = []
+    for r in legacy:
+        r.setdefault("ride_id", r.get("id", ""))
+        r.setdefault("source", "json")
+    merged = list(merged) + list(legacy)
+
+    def _sort_key(r: dict) -> str:
+        return str(r.get("started_at") or r.get("mtime") or "")
+
+    merged.sort(key=_sort_key, reverse=True)
+
+    if isinstance(limit, int) and limit > 0:
+        merged = merged[:limit]
+
+    return merged
+
+
+@app.get("/api/ride/{ride_id}/detail")
+def api_ride_full_detail(ride_id: str, include: str = Query("")):
+    """v4.4.0 — return the full normalized ride record (MASTER §3 schema).
+
+    ``ride_id`` accepts the prefixed forms ``icu_<external_id>`` or
+    ``fit_<stem>``, plus legacy ride ids (assumed JSON archive).
+    Optional ``?include=samples`` adds a decimated 1Hz time-series block.
+    """
+    if not isinstance(ride_id, str) or not ride_id or len(ride_id) > 80:
+        return JSONResponse({"error": "bad ride_id"}, 400)
+    if not re.match(r"^[\w\-]+$", ride_id):
+        return JSONResponse({"error": "bad ride_id"}, 400)
+
+    want_samples = "samples" in (include or "").split(",")
+
+    # ── ICU rides ──────────────────────────────────────────────────────────
+    if ride_id.startswith("icu_"):
+        import ride_storage as _rs
+        rec = _rs.get_icu_ride(ride_id)
+        if rec is None:
+            return JSONResponse({"error": "Ride not found"}, 404)
+        # v4.5.5 IMPL-DETAIL-SERVER: lazy-fetch ICU detail when the cached
+        # record is missing zones / hr-zones / intervals (older sync). One
+        # extra round-trip on first detail-modal click; subsequent requests
+        # come from the persisted normalized record.
+        rec = _maybe_enrich_icu_record(rec)
+        if want_samples:
+            rec["samples"] = _build_icu_samples(rec)
+        return rec
+
+    # ── FIT rides ──────────────────────────────────────────────────────────
+    if ride_id.startswith("fit_"):
+        stem = ride_id[4:]
+        fit_path = _rides_fit_dir() / f"{stem}.fit"
+        if not fit_path.exists():
+            return JSONResponse({"error": "Ride not found"}, 404)
+        rec = _build_fit_normalized(fit_path, ride_id)
+        if want_samples:
+            rec["samples"] = _build_fit_samples(fit_path)
+        return rec
+
+    # ── Legacy JSON rides ──────────────────────────────────────────────────
+    import ride_storage as _rs2
+    legacy = _rs2.get_ride(ride_id)
+    if not legacy:
+        return JSONResponse({"error": "Ride not found"}, 404)
+    rec = _legacy_ride_to_normalized(legacy, ride_id)
+    if want_samples:
+        rec["samples"] = _legacy_ride_samples(legacy)
+    return rec
+
+
+def _maybe_enrich_icu_record(rec: dict) -> dict:
+    """v4.5.5 — lazy-fetch ICU detail when cached record lacks zones/intervals.
+
+    On first detail-modal click for an older ICU ride, the persisted
+    normalized record may have empty time-in-zone (all zeros) and empty
+    intervals (older sync paths didn't fetch the /intervals subpath).
+    We hit ``/api/v1/activity/<id>`` + ``/intervals`` once, re-normalize,
+    and persist back. Subsequent requests hit the cache. Failures degrade
+    to whatever the cached record had — the modal still renders.
+
+    Also adds the polarization block when the cached record was written
+    before v4.5.5 (and therefore lacks ``polarization``).
+    """
+    try:
+        ext = rec.get("external_id") or ""
+        if not ext:
+            return rec
+
+        tiz = rec.get("time_in_zone") or {}
+        tiz_total = sum(int(v or 0) for k, v in tiz.items()
+                        if isinstance(k, str) and k.startswith("z"))
+        intervals = rec.get("intervals") or []
+        hr_tiz = rec.get("hr_time_in_zone")
+        polarization = rec.get("polarization")
+
+        needs_zones = tiz_total == 0
+        needs_intervals = not intervals
+        needs_hr = hr_tiz is None
+        # v4.5.5: also recompute when the cached polarization predates
+        # REFINE-CLASSIFY (i.e. is missing the new "confidence" key).
+        needs_polarization = (
+            polarization is None
+            or (isinstance(polarization, dict) and "confidence" not in polarization)
+        )
+
+        if not (needs_zones or needs_intervals or needs_hr or needs_polarization):
+            return rec
+
+        if needs_zones or needs_intervals or needs_hr:
+            # Fetch fresh from ICU and re-persist.
+            try:
+                import training as _training
+                full = _training.fetch_activity_full(str(ext))
+            except Exception as e:
+                _log.debug(f"_maybe_enrich_icu_record({ext}) fetch failed: {e}")
+                full = None
+            if full:
+                try:
+                    import ride_storage as _rs
+                    new_path = _rs.persist_icu_activity(full)
+                    if new_path is not None:
+                        new_rec = _rs.get_icu_ride(str(ext))
+                        if new_rec:
+                            return new_rec
+                except Exception as e:
+                    _log.debug(f"_maybe_enrich_icu_record({ext}) persist failed: {e}")
+
+        # Fall through: at minimum, attach a polarization block computed
+        # from whatever zones the cached record already had.
+        if needs_polarization:
+            try:
+                from analytics import compute_polarization_block
+                rec["polarization"] = compute_polarization_block(tiz)
+            except Exception:
+                pass
+        return rec
+    except Exception as e:
+        _log.debug(f"_maybe_enrich_icu_record failed: {e}")
+        return rec
+
+
+def _build_icu_samples(rec: dict) -> dict:
+    """Pull streams from ICU + decimate to ≤1800 points.
+
+    Returns the canonical samples dict per §3 (or empty arrays when the
+    fetch fails). We never block the modal on this — failure means the UI
+    shows the stats grid without sparklines.
+    """
+    ext = rec.get("external_id") or ""
+    streams: dict = {}
+    if ext:
+        try:
+            import training as _training
+            streams = _training.fetch_activity_streams(str(ext)) or {}
+        except Exception as e:
+            _log.debug(f"_build_icu_samples({ext}) failed: {e}")
+            streams = {}
+
+    pwr = streams.get("watts") or streams.get("power") or []
+    hr = streams.get("heartrate") or streams.get("hr") or []
+    cad = streams.get("cadence") or []
+    elev = streams.get("altitude") or streams.get("elevation") or []
+    n = max(len(pwr), len(hr), len(cad), len(elev))
+    if n == 0:
+        return {"t_s": [], "power_w": [], "hr_bpm": [], "cadence_rpm": [], "elevation_m": []}
+    return _decimate_samples(
+        list(range(n)),
+        list(pwr) + [None] * (n - len(pwr)),
+        list(hr) + [None] * (n - len(hr)),
+        list(cad) + [None] * (n - len(cad)),
+        list(elev) + [None] * (n - len(elev)),
+    )
+
+
+def _build_fit_normalized(fit_path: Path, ride_id: str) -> dict:
+    """Build the §3 normalized record from a FIT file by parsing it once."""
+    stats = _parse_fit_stats(fit_path)
+    return {
+        "ride_id": ride_id,
+        "source": "fit",
+        "external_id": None,
+        "name": "",
+        "started_at": stats.get("start_time") or "",
+        "duration_s": int(stats.get("duration_sec") or 0),
+        "moving_s": int(stats.get("duration_sec") or 0),
+        "distance_km": float(stats.get("distance_km") or 0),
+        "elevation_m": None,
+        "avg_power_w": int(stats.get("avg_power") or 0) or None,
+        "np_w": None,
+        "if_pct": None,
+        "tss": stats.get("tss"),
+        "kj": stats.get("total_kj"),
+        "kj_above_ftp": None,
+        "kcal": None,
+        "avg_hr": int(stats.get("avg_hr") or 0) or None,
+        "hr_max": int(stats.get("max_hr") or 0) or None,
+        "avg_cadence": int(stats.get("avg_cadence") or 0) or None,
+        "weight_kg": None,
+        "ftp_at_ride": getattr(config, "ATHLETE_FTP_W", None),
+        "eftp_at_ride": getattr(config, "ATHLETE_FTP_W", None),
+        "decoupling_pct": None,
+        "dfa_alpha1": None,
+        "time_in_zone": {f"z{i}": 0 for i in range(1, 8)},
+        "intervals": [],
+        "samples_url": f"/api/ride/{ride_id}/detail?include=samples",
+        # Pass-through any FTP-test fields the parser produced.
+        "is_ftp_test": stats.get("is_ftp_test", False),
+        "ftp_test_suggestion": stats.get("ftp_test_suggestion"),
+    }
+
+
+def _build_fit_samples(fit_path: Path) -> dict:
+    """Re-parse the FIT for raw 1Hz streams + decimate.
+
+    We re-parse rather than caching to keep memory low; the modal call is
+    rare (user-initiated click) so the cost is acceptable.
+    """
+    try:
+        from fit_tool.fit_file import FitFile
+    except Exception:
+        return {"t_s": [], "power_w": [], "hr_bpm": [], "cadence_rpm": [], "elevation_m": []}
+
+    try:
+        ff = FitFile.from_file(str(fit_path))
+    except Exception:
+        return {"t_s": [], "power_w": [], "hr_bpm": [], "cadence_rpm": [], "elevation_m": []}
+
+    pwr: list = []
+    hr: list = []
+    cad: list = []
+    elev: list = []
+    try:
+        for rec in ff.records:
+            msg = rec.message
+            if type(msg).__name__ != "RecordMessage":
+                continue
+            try:
+                pwr.append(int(msg.get_value("power") or 0))
+            except Exception:
+                pwr.append(0)
+            try:
+                hr.append(int(msg.get_value("heart_rate") or 0))
+            except Exception:
+                hr.append(0)
+            try:
+                cad.append(int(msg.get_value("cadence") or 0))
+            except Exception:
+                cad.append(0)
+            try:
+                elev.append(float(msg.get_value("altitude") or 0))
+            except Exception:
+                elev.append(0)
+    except Exception:
+        pass
+
+    n = len(pwr)
+    if n == 0:
+        return {"t_s": [], "power_w": [], "hr_bpm": [], "cadence_rpm": [], "elevation_m": []}
+    return _decimate_samples(list(range(n)), pwr, hr, cad, elev)
+
+
+def _legacy_ride_to_normalized(ride: dict, ride_id: str) -> dict:
+    """Map the legacy JSON-ride shape to the §3 normalized record."""
+    summary = ride.get("summary") or {}
+    zones = (ride.get("zones") or {}).get("power") or {}
+    tiz = {f"z{i}": int(zones.get(f"Z{i}") or 0) for i in range(1, 8)}
+    return {
+        "ride_id": ride_id,
+        "source": "json",
+        "external_id": None,
+        "name": (ride.get("metadata") or {}).get("name") or "",
+        "started_at": ride.get("started_at") or "",
+        "duration_s": int(summary.get("duration_sec") or 0),
+        "moving_s": int(summary.get("duration_sec") or 0),
+        "distance_km": float(summary.get("distance_km") or 0),
+        "elevation_m": int(summary.get("elevation_gain_m") or 0) or None,
+        "avg_power_w": int(summary.get("avg_power") or 0) or None,
+        "np_w": int(summary.get("weighted_power") or summary.get("normalized_power") or 0) or None,
+        "if_pct": (
+            round(float(summary.get("intensity_factor")) * 100.0, 1)
+            if summary.get("intensity_factor") is not None
+            else None
+        ),
+        "tss": summary.get("tss"),
+        "kj": summary.get("kj_mechanical") or summary.get("calories"),
+        "kj_above_ftp": None,
+        "kcal": None,
+        "avg_hr": int(summary.get("avg_hr") or 0) or None,
+        "hr_max": int(summary.get("max_hr") or 0) or None,
+        "avg_cadence": int(summary.get("avg_cadence") or 0) or None,
+        "weight_kg": None,
+        "ftp_at_ride": getattr(config, "ATHLETE_FTP_W", None),
+        "eftp_at_ride": getattr(config, "ATHLETE_FTP_W", None),
+        "decoupling_pct": summary.get("decoupling_pct"),
+        "dfa_alpha1": summary.get("dfa_alpha1_avg"),
+        "time_in_zone": tiz,
+        "intervals": [],
+        "samples_url": f"/api/ride/{ride_id}/detail?include=samples",
+    }
+
+
+def _legacy_ride_samples(ride: dict) -> dict:
+    """Build the §3 samples block from a legacy ride's columnar samples."""
+    samples = ride.get("samples") or {}
+    pwr = samples.get("power") or []
+    hr = samples.get("hr") or samples.get("heart_rate") or []
+    cad = samples.get("cadence") or []
+    elev = samples.get("elevation") or samples.get("altitude") or []
+    n = max(len(pwr), len(hr), len(cad), len(elev))
+    if n == 0:
+        return {"t_s": [], "power_w": [], "hr_bpm": [], "cadence_rpm": [], "elevation_m": []}
+    return _decimate_samples(list(range(n)), pwr, hr, cad, elev)
+
+
+def _decimate_samples(
+    t_s: list, power_w: list, hr_bpm: list, cad_rpm: list, elev_m: list,
+    target_max: int = 1800,
+) -> dict:
+    """Reduce 1Hz streams to ≤target_max points by simple bucketed averaging.
+
+    Cheap and good enough for sparklines — we don't need exact peaks
+    on the modal preview (the stats grid above the chart already shows
+    max_power / max_hr from the parser).
+    """
+    import math
+    n = len(t_s)
+    if n <= target_max:
+        return {
+            "t_s": list(t_s),
+            "power_w": list(power_w),
+            "hr_bpm": list(hr_bpm),
+            "cadence_rpm": list(cad_rpm),
+            "elevation_m": list(elev_m),
+        }
+    # v4.4.1 FIX-SERVER: ceil(n/target_max) so output count is GUARANTEED
+    # ≤ target_max. Floor-stride (n // target) overshoots when n % target != 0
+    # — e.g. n=8000, target=1800 → bucket=4 → output=2000 > 1800. Ceiling
+    # gives bucket=5 → output=1600 ≤ 1800. Correct contract enforcement.
+    bucket = max(1, math.ceil(n / target_max))
+    out_t: list = []
+    out_p: list = []
+    out_h: list = []
+    out_c: list = []
+    out_e: list = []
+    for i in range(0, n, bucket):
+        chunk_t = t_s[i:i + bucket]
+        chunk_p = [v for v in power_w[i:i + bucket] if v is not None]
+        chunk_h = [v for v in hr_bpm[i:i + bucket] if v is not None]
+        chunk_c = [v for v in cad_rpm[i:i + bucket] if v is not None]
+        chunk_e = [v for v in elev_m[i:i + bucket] if v is not None]
+        out_t.append(chunk_t[0] if chunk_t else None)
+        out_p.append(round(sum(chunk_p) / len(chunk_p), 1) if chunk_p else 0)
+        out_h.append(round(sum(chunk_h) / len(chunk_h), 1) if chunk_h else 0)
+        out_c.append(round(sum(chunk_c) / len(chunk_c), 1) if chunk_c else 0)
+        out_e.append(round(sum(chunk_e) / len(chunk_e), 1) if chunk_e else 0)
+    return {
+        "t_s": out_t,
+        "power_w": out_p,
+        "hr_bpm": out_h,
+        "cadence_rpm": out_c,
+        "elevation_m": out_e,
+    }
+
+
+@app.get("/api/rides/legacy-envelope")
+def api_rides_legacy_envelope():
+    """Back-compat shim for any caller still reading the old
+    ``{json: [...], fit: [...]}`` envelope. Kept so that external scripts
+    (e.g. ride-report-png batch) don't break silently; the primary endpoint
+    /api/rides is now a flat array per FIX-CONTRACT C3.
+    """
+    import ride_storage
+    try:
+        rides = ride_storage.list_rides()
+    except Exception:
+        rides = []
+    for r in rides:
+        r["ride_id"] = r.get("id", "")
+        r["source"] = "json"
+    fits: list[dict] = []
+    try:
+        for f in sorted(_rides_fit_dir().glob("*.fit")):
+            try:
+                st = f.stat()
+            except OSError:
+                continue
+            fits.append({
+                "ride_id": f.stem, "source": "fit",
+                "size_bytes": st.st_size,
+                "mtime": datetime.fromtimestamp(
+                    st.st_mtime, timezone.utc
+                ).astimezone().isoformat(),
+            })
+    except Exception:
+        pass
+    return {"json": rides, "fit": fits}
+
+
+@app.get("/api/rides/{ride_id}")
+def api_ride_detail(ride_id: str):
+    """Get full ride detail. Tries the FIT archive first (post-pivot
+    canonical path), then falls back to the legacy JSON archive.
+
+    FIX-CONTRACT C3: FIT rides now also expose a ``summary`` block that
+    mirrors the legacy JSON-ride shape (summary.is_ftp_test,
+    summary.ftp_test_suggestion, summary.ftp_test_halted). U1's modal
+    reads from ``summary.*`` so without this mirror the post-v4.0 FIT
+    import path had no way to trigger the post-test banner.
+    """
+    safe_id = re.sub(r'[^\w.\-]', '_', ride_id)
+    fit_path = _rides_fit_dir() / f"{safe_id}.fit"
+    if fit_path.exists():
+        stats = _parse_fit_stats(fit_path)
+        # Build summary block from parsed_stats so UI can read either path.
+        summary = {
+            "duration_sec": stats.get("duration_sec"),
+            "distance_km": stats.get("distance_km"),
+            "avg_power": stats.get("avg_power"),
+            "max_power": stats.get("max_power"),
+            "avg_hr": stats.get("avg_hr"),
+            "max_hr": stats.get("max_hr"),
+            "avg_cadence": stats.get("avg_cadence"),
+            "tss": stats.get("tss"),
+            "is_ftp_test": stats.get("is_ftp_test", False),
+            "ftp_test_type": stats.get("ftp_test_type"),
+            "ftp_test_suggestion": stats.get("ftp_test_suggestion"),
+            "ftp_test_halted": stats.get("ftp_test_halted", False),
+            "ftp_test_halt_at_step": stats.get("ftp_test_halt_at_step"),
+            "ftp_test_halt_step": stats.get("ftp_test_halt_step"),
+            "local_eftp_suggestion": stats.get("local_eftp_suggestion"),
+        }
+        return {
+            "ride_id": ride_id,
+            "id": ride_id,
+            "source": "fit",
+            "started_at": stats.get("start_time"),
+            "parsed_stats": stats,
+            "summary": summary,
+        }
+
+    import ride_storage
+    ride = ride_storage.get_ride(ride_id)
+    if not ride:
+        return JSONResponse({"error": "Ride not found"}, 404)
+    return ride
+
+
+@app.delete("/api/rides/{ride_id}")
+def api_ride_delete(ride_id: str):
+    """Delete a saved ride (FIT import or legacy JSON)."""
+    safe_id = re.sub(r'[^\w.\-]', '_', ride_id)
+    fit_path = _rides_fit_dir() / f"{safe_id}.fit"
+    if fit_path.exists():
+        try:
+            fit_path.unlink()
+        except OSError as e:
+            _log.warning(f"ride delete failed: {e}")
+            return JSONResponse({"error": "delete failed"}, 500)
+        return {"ok": True}
+    import ride_storage
+    if ride_storage.delete_ride(ride_id):
+        return {"ok": True}
+    return JSONResponse({"error": "Ride not found"}, 404)
+
+
+@app.get("/api/rides/{ride_id}/fit")
+def api_ride_fit(ride_id: str):
+    """Download a saved ride as a FIT activity file.
+
+    FIT imports are served verbatim. Legacy JSON rides are built via
+    fit_activity.build_activity_fit using the saved sample payload.
+    """
+    safe_id = re.sub(r'[^\w.\-]', '_', ride_id)
+    fit_path = _rides_fit_dir() / f"{safe_id}.fit"
+    if fit_path.exists():
+        return FileResponse(
+            str(fit_path),
+            media_type="application/octet-stream",
+            filename=f"{safe_id}.fit",
+        )
+
+    import ride_storage
+    ride = ride_storage.get_ride(ride_id)
+    if not ride:
+        return JSONResponse({"error": "Ride not found"}, 404)
+
+    profile_id = ride.get("profile_id") or "domestique"
+    try:
+        from fit_activity import build_activity_fit
+        fit_bytes = build_activity_fit(ride, profile_id)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, 409)
+    except Exception as e:
+        _log.exception(f"ride-fit: build_activity_fit failed: {e}")
+        raise HTTPException(status_code=500, detail="failed to build FIT")
+
+    slug = (profile_id or "ride").strip() or "ride"
+    filename = f"domestique-{slug}-{safe_id}.fit"
+    return Response(
+        content=fit_bytes,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# v4.6.7 IMPL-SUM PROGRAMME-SUMMARY — end-of-plan recap
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _ride_started_iso_date(ride: dict) -> str | None:
+    """Best-effort 'YYYY-MM-DD' from a list_rides() entry."""
+    s = ride.get("started_at") or ""
+    if isinstance(s, str) and len(s) >= 10:
+        return s[:10]
+    return None
+
+
+def _build_programme_summary(plan: dict) -> dict:
+    """Compose the §4 programme-summary JSON shape.
+
+    Reads:
+      - plan dict (current_plan.json) for window + phases + planned TSS
+      - athlete_metrics ledger for FTP / VO2max snapshots at start/end
+      - ride_storage for actual rides in the window (decoupling, peaks,
+        zone-time, TSS aggregates)
+      - daily_log for Hooper trend
+      - analytics + training for polarization / monotony
+    """
+    weeks = plan.get("weeks") or []
+    if not weeks:
+        return {
+            "plan_id": "current",
+            "start_date": None, "end_date": None, "weeks": 0,
+            "ftp_delta": {}, "eftp_delta": {}, "vo2max_delta": {},
+            "ctl_gain": {}, "intensity_dist": {}, "pol_index": {},
+            "monotony_max": None, "strain_max": None, "compliance": [],
+            "mean_max_curve": {"start": [], "end": []}, "hooper_trend": [],
+            "totals": {}, "decoupling_trend": [],
+            "citations": ["Stöggl 2014", "Foster 1998", "Treff 2019",
+                          "Hooper 1995", "Coggan/Allen TR&P"],
+        }
+    start_date = weeks[0].get("start") or weeks[0].get("day")
+    end_date = weeks[-1].get("end") or weeks[-1].get("day")
+    n_weeks = len(weeks)
+
+    # ── FTP / VO2max ledger lookups ────────────────────────────────────────
+    def _value_at_or_before(metric: str, target_date: str) -> float | None:
+        try:
+            history = db.query_metric_history(metric, days=400)
+        except Exception:
+            return None
+        best = None
+        for r in history:
+            if r["date"] <= target_date:
+                best = r["value"]
+            else:
+                break
+        if best is None and history:
+            return float(history[0]["value"])
+        return float(best) if best is not None else None
+
+    def _value_at_or_after(metric: str, target_date: str) -> float | None:
+        try:
+            history = db.query_metric_history(metric, days=400)
+        except Exception:
+            return None
+        for r in history:
+            if r["date"] >= target_date:
+                return float(r["value"])
+        return float(history[-1]["value"]) if history else None
+
+    ftp_start = _value_at_or_before("ftp", start_date) if start_date else None
+    ftp_end = _value_at_or_after("ftp", end_date) if end_date else None
+    if ftp_end is None:
+        ftp_end = _value_at_or_before("ftp", end_date) if end_date else None
+
+    vo2_start = _value_at_or_before("vo2max", start_date) if start_date else None
+    vo2_end = _value_at_or_after("vo2max", end_date) if end_date else None
+    if vo2_end is None:
+        vo2_end = _value_at_or_before("vo2max", end_date) if end_date else None
+
+    def _delta(a, b) -> dict:
+        if a is None or b is None:
+            return {"start": int(round(a)) if a else None,
+                    "end": int(round(b)) if b else None,
+                    "pct": None}
+        try:
+            pct = round(((b - a) / a) * 100.0, 1) if a else None
+        except (TypeError, ZeroDivisionError):
+            pct = None
+        return {"start": int(round(a)), "end": int(round(b)), "pct": pct}
+
+    def _delta_float(a, b) -> dict:
+        if a is None or b is None:
+            return {"start": a, "end": b, "pct": None}
+        try:
+            pct = round(((b - a) / a) * 100.0, 1) if a else None
+        except (TypeError, ZeroDivisionError):
+            pct = None
+        return {"start": round(a, 1), "end": round(b, 1), "pct": pct}
+
+    # ── Rides in window ────────────────────────────────────────────────────
+    try:
+        import ride_storage as _rs
+        all_rides = _rs.list_rides()
+    except Exception:
+        all_rides = []
+    in_window = []
+    for r in all_rides:
+        d = _ride_started_iso_date(r)
+        if d and start_date and end_date and start_date <= d <= end_date:
+            in_window.append(r)
+
+    # ── eFTP Δ — Coggan 95% rule on best 20-min ────────────────────────────
+    def _best_20min_window(rides_subset: list[dict]) -> int | None:
+        best = 0
+        for r in rides_subset:
+            summary = r.get("summary") or {}
+            for k in ("peak_20min", "best_20min", "p20min"):
+                v = summary.get(k)
+                if v and v > best:
+                    best = float(v)
+            for eff in (r.get("efforts") or []):
+                lab = (eff.get("label") or eff.get("name") or "")
+                secs = eff.get("secs") or eff.get("seconds") or 0
+                w = eff.get("watts") or eff.get("power") or 0
+                if "20" in str(lab) and ("min" in str(lab).lower() or secs == 1200) and w > best:
+                    best = float(w)
+        return int(round(best)) if best > 0 else None
+
+    half = max(1, len(in_window) // 2)
+    early_rides = sorted(in_window, key=lambda r: r.get("started_at") or "")[:half]
+    late_rides = sorted(in_window, key=lambda r: r.get("started_at") or "")[half:]
+
+    eftp_start_w = None
+    eftp_end_w = None
+    p20_start = _best_20min_window(early_rides)
+    p20_end = _best_20min_window(late_rides)
+    if p20_start:
+        eftp_start_w = int(round(p20_start * 0.95))
+    if p20_end:
+        eftp_end_w = int(round(p20_end * 0.95))
+    if eftp_start_w is None:
+        eftp_start_w = int(round(ftp_start)) if ftp_start else None
+    if eftp_end_w is None:
+        eftp_end_w = int(round(ftp_end)) if ftp_end else None
+
+    # ── CTL gain ───────────────────────────────────────────────────────────
+    try:
+        import ride_storage as _rs
+        ctl_end_val = _rs.compute_local_ctl()
+    except Exception:
+        ctl_end_val = None
+    ctl_start_val = None
+    try:
+        import datetime as _dt
+        if start_date:
+            start_d = _dt.date.fromisoformat(start_date)
+            per_day: dict[str, float] = {}
+            for r in all_rides:
+                d = _ride_started_iso_date(r)
+                if not d or d > start_date:
+                    continue
+                tss = (r.get("summary") or {}).get("tss") or 0
+                if not tss:
+                    continue
+                per_day[d] = per_day.get(d, 0.0) + float(tss)
+            if per_day:
+                ctl = 0.0
+                d_iter = _dt.date.fromisoformat(min(per_day.keys()))
+                while d_iter <= start_d:
+                    tss_today = per_day.get(d_iter.isoformat(), 0.0)
+                    ctl = ctl + (tss_today - ctl) / 42.0
+                    d_iter += _dt.timedelta(days=1)
+                ctl_start_val = round(ctl, 1)
+    except Exception:
+        ctl_start_val = None
+
+    ctl_block = {
+        "start": ctl_start_val,
+        "end": ctl_end_val,
+        "delta": (round(ctl_end_val - ctl_start_val, 1)
+                  if (ctl_start_val is not None and ctl_end_val is not None)
+                  else None),
+    }
+
+    # ── Intensity distribution ─────────────────────────────────────────────
+    z1z2_secs = 0
+    z3_secs = 0
+    z4plus_secs = 0
+    for r in in_window:
+        tiz = r.get("zones") or {}
+        if isinstance(tiz, dict):
+            try:
+                z1z2_secs += int(tiz.get("z1") or 0) + int(tiz.get("z2") or 0)
+                z3_secs += int(tiz.get("z3") or 0)
+                z4plus_secs += (int(tiz.get("z4") or 0) + int(tiz.get("z5") or 0)
+                                + int(tiz.get("z6") or 0) + int(tiz.get("z7") or 0))
+            except (TypeError, ValueError):
+                pass
+    intensity_dist = {
+        "z1z2_min": int(round(z1z2_secs / 60.0)),
+        "z3_min": int(round(z3_secs / 60.0)),
+        "z4plus_min": int(round(z4plus_secs / 60.0)),
+    }
+
+    # ── Polarization index ─────────────────────────────────────────────────
+    from analytics import compute_polarization_block, classify_distribution
+    pol_indices = []
+    for r in in_window:
+        block = compute_polarization_block(r.get("zones") or {})
+        if block and block.get("polarization_index") is not None:
+            pol_indices.append(block["polarization_index"])
+    if pol_indices:
+        pol_mean = round(sum(pol_indices) / len(pol_indices), 2)
+        total_s = z1z2_secs + z3_secs + z4plus_secs
+        if total_s > 0:
+            z1z2_pct = 100.0 * z1z2_secs / total_s
+            z3_pct = 100.0 * z3_secs / total_s
+            z4_pct = 100.0 * z4plus_secs / total_s
+            klass = classify_distribution(z1z2_pct, z3_pct, z4_pct, pol_mean)
+        else:
+            klass = "—"
+        pol_block = {"mean": pol_mean, "class": klass}
+    else:
+        pol_block = {"mean": None, "class": "—"}
+
+    # ── Monotony / strain trend per week ───────────────────────────────────
+    import statistics as _stat
+    monotony_max = None
+    strain_max = None
+    if start_date and end_date:
+        try:
+            import datetime as _dt
+            week_start = _dt.date.fromisoformat(start_date)
+            week_end_d = _dt.date.fromisoformat(end_date)
+            cursor = week_start
+            while cursor <= week_end_d:
+                daily = {}
+                for k in range(7):
+                    daily[(cursor + _dt.timedelta(days=k)).isoformat()] = 0.0
+                for r in in_window:
+                    d = _ride_started_iso_date(r)
+                    if d and d in daily:
+                        tss = (r.get("summary") or {}).get("tss") or 0
+                        daily[d] += float(tss)
+                loads = list(daily.values())
+                weekly_load = sum(loads)
+                if weekly_load > 0:
+                    try:
+                        sd = _stat.stdev(loads)
+                    except _stat.StatisticsError:
+                        sd = 0
+                    if sd > 0:
+                        m = _stat.mean(loads) / sd
+                        s = weekly_load * m
+                        if monotony_max is None or m > monotony_max:
+                            monotony_max = round(m, 2)
+                        if strain_max is None or s > strain_max:
+                            strain_max = round(s, 1)
+                cursor += _dt.timedelta(days=7)
+        except Exception:
+            pass
+
+    # ── Compliance per phase ───────────────────────────────────────────────
+    compliance = []
+    phases = plan.get("phases") or []
+    for ph in phases:
+        ph_start = ph.get("start")
+        ph_end = ph.get("end")
+        if not ph_start or not ph_end:
+            continue
+        weekly_tss = float(ph.get("weekly_tss") or 0)
+        phase_weeks = int(ph.get("weeks") or 0) or max(
+            1, sum(1 for w in weeks if w.get("phase") == ph.get("name")))
+        planned = weekly_tss * phase_weeks
+        actual = 0.0
+        for r in in_window:
+            d = _ride_started_iso_date(r)
+            if d and ph_start <= d <= ph_end:
+                actual += float((r.get("summary") or {}).get("tss") or 0)
+        pct = int(round(100.0 * actual / planned)) if planned > 0 else 0
+        compliance.append({
+            "phase": ph.get("name"),
+            "planned_tss": round(planned, 1),
+            "actual_tss": round(actual, 1),
+            "pct": pct,
+        })
+
+    # ── Mean-max power curve (first 4w vs last 4w) ─────────────────────────
+    try:
+        import datetime as _dt
+        sd_d = _dt.date.fromisoformat(start_date) if start_date else None
+        ed_d = _dt.date.fromisoformat(end_date) if end_date else None
+    except (ValueError, TypeError):
+        sd_d = ed_d = None
+    early_4w = []
+    last_4w = []
+    if sd_d and ed_d:
+        early_cut = (sd_d + timedelta(days=28)).isoformat()
+        last_cut = (ed_d - timedelta(days=28)).isoformat()
+        for r in in_window:
+            d = _ride_started_iso_date(r)
+            if not d:
+                continue
+            if d <= early_cut:
+                early_4w.append(r)
+            if d >= last_cut:
+                last_4w.append(r)
+
+    def _peaks(rides_subset: list[dict]) -> list[dict]:
+        targets = [(5, 5), (60, 60), (300, 300), (1200, 1200), (3600, 3600)]
+        out = []
+        for tgt_sec, label_sec in targets:
+            best = 0
+            for r in rides_subset:
+                summary = r.get("summary") or {}
+                for k in (f"peak_{tgt_sec}s", f"best_{tgt_sec}s",
+                          f"peak_{tgt_sec // 60}m", f"best_{tgt_sec // 60}m"):
+                    v = summary.get(k)
+                    if v and float(v) > best:
+                        best = float(v)
+                for eff in (r.get("efforts") or []):
+                    secs = eff.get("secs") or eff.get("seconds") or 0
+                    w = eff.get("watts") or eff.get("power") or 0
+                    if abs(secs - tgt_sec) <= max(2, tgt_sec * 0.05) and w > best:
+                        best = float(w)
+            out.append({"dur": label_sec, "watts": int(round(best)) if best > 0 else None})
+        return out
+
+    mm = {"start": _peaks(early_4w), "end": _peaks(last_4w)}
+
+    # ── Hooper trend per week ──────────────────────────────────────────────
+    hooper_trend: list[dict] = []
+    try:
+        if sd_d and ed_d:
+            total_days = (ed_d - sd_d).days + 1
+            log_rows = db.query_daily_log(days=max(total_days + 7, 14))
+            by_date = {row["date"]: row.get("hooper_index") for row in log_rows}
+            week_idx = 0
+            cur = sd_d
+            while cur <= ed_d:
+                vals = []
+                for k in range(7):
+                    di = (cur + timedelta(days=k)).isoformat()
+                    v = by_date.get(di)
+                    if v is not None:
+                        try:
+                            vals.append(float(v))
+                        except (TypeError, ValueError):
+                            pass
+                if vals:
+                    hooper_trend.append({
+                        "week": week_idx + 1,
+                        "mean": round(sum(vals) / len(vals), 1),
+                    })
+                week_idx += 1
+                cur += timedelta(days=7)
+    except Exception:
+        hooper_trend = []
+
+    # ── Totals ─────────────────────────────────────────────────────────────
+    total_km = 0.0
+    total_sec = 0
+    total_kj = 0.0
+    total_elev = 0.0
+    for r in in_window:
+        s = r.get("summary") or {}
+        total_km += float(s.get("distance_km") or 0)
+        total_sec += int(s.get("duration_sec") or 0)
+        kj = s.get("kj_mechanical") or s.get("calories") or s.get("total_kj") or 0
+        try:
+            total_kj += float(kj)
+        except (TypeError, ValueError):
+            pass
+        total_elev += float(s.get("elevation_gain_m") or 0)
+    totals = {
+        "km": int(round(total_km)),
+        "hours": round(total_sec / 3600.0, 1),
+        "kj": int(round(total_kj)),
+        "elev_m": int(round(total_elev)),
+    }
+
+    # ── Decoupling trend per week ──────────────────────────────────────────
+    decoupling_trend: list[dict] = []
+    if sd_d and ed_d:
+        cur = sd_d
+        wk_idx = 0
+        while cur <= ed_d:
+            vals = []
+            for r in in_window:
+                d = _ride_started_iso_date(r)
+                if not d:
+                    continue
+                d_iter = date.fromisoformat(d)
+                if cur <= d_iter <= cur + timedelta(days=6):
+                    dec = (r.get("summary") or {}).get("decoupling_pct")
+                    if dec is None:
+                        dec = r.get("decoupling_pct")
+                    if dec is not None:
+                        try:
+                            vals.append(float(dec))
+                        except (TypeError, ValueError):
+                            pass
+            if vals:
+                decoupling_trend.append({
+                    "week": wk_idx + 1,
+                    "mean_pct": round(sum(vals) / len(vals), 1),
+                })
+            wk_idx += 1
+            cur += timedelta(days=7)
+
+    return {
+        "plan_id": "current",
+        "start_date": start_date,
+        "end_date": end_date,
+        "weeks": n_weeks,
+        "ftp_delta": _delta(ftp_start, ftp_end),
+        "eftp_delta": _delta(eftp_start_w, eftp_end_w),
+        "vo2max_delta": _delta_float(vo2_start, vo2_end),
+        "ctl_gain": ctl_block,
+        "intensity_dist": intensity_dist,
+        "pol_index": pol_block,
+        "monotony_max": monotony_max,
+        "strain_max": strain_max,
+        "compliance": compliance,
+        "mean_max_curve": mm,
+        "hooper_trend": hooper_trend,
+        "totals": totals,
+        "decoupling_trend": decoupling_trend,
+        "citations": [
+            "Stöggl & Sperlich 2014 (Front Physiol)",
+            "Foster 1998 (MSSE)",
+            "Treff et al. 2019 (Front Physiol)",
+            "Hooper & Mackinnon 1995",
+            "Coggan & Allen TR&P 3rd ed.",
+            "Seiler 2010 (IJSPP)",
+        ],
+    }
+
+
+@app.get("/api/programme/summary")
+def api_programme_summary(plan_id: str = Query("current")):
+    """v4.6.7 IMPL-SUM — end-of-plan recap as structured JSON.
+
+    Composes 12 literature-grounded metrics over the active plan window:
+    FTP/eFTP/VO2max Δ, CTL gain, intensity distribution, polarization
+    index (Treff 2019), monotony/strain (Foster 1998), compliance per
+    phase, mean-max curve (start-4w vs end-4w), Hooper trend (1995),
+    totals, decoupling trend.
+    """
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan"}, 404)
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        return JSONResponse({"error": f"plan read failed: {e}"}, 500)
+    summary = _build_programme_summary(plan)
+    summary["plan_id"] = plan_id
+    return summary
+
+
+@app.get("/api/programme/summary/png")
+def api_programme_summary_png(plan_id: str = Query("current")):
+    """v4.6.7 IMPL-SUM — render the programme summary as PNG (1200×1600).
+
+    No new dependencies — Pillow is already in the runtime stack via
+    ride_report_png.
+    """
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan"}, 404)
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        return JSONResponse({"error": f"plan read failed: {e}"}, 500)
+    summary = _build_programme_summary(plan)
+    summary["plan_id"] = plan_id
+    try:
+        from programme_summary_png import render_programme_summary_png
+        png = render_programme_summary_png(summary)
+    except Exception as e:
+        _log.exception(f"programme summary PNG render failed: {e}")
+        return JSONResponse({"error": "render failed"}, 500)
+    return Response(content=png, media_type="image/png",
+                    headers={"Content-Disposition":
+                             f'inline; filename="programme-summary-{plan_id}.png"'})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HTML
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/", response_class=HTMLResponse)
+def dashboard(request: Request):
+    from fastapi.responses import RedirectResponse
+    from profile_manager import ProfileManager
+    registry_path = Path.home() / ".domestique" / "profiles.json"
+    # 1. No profiles.json at all → first-time setup
+    if not registry_path.exists() and not SETUP_MARKER.exists():
+        return RedirectResponse(url="/setup")
+    # 2. Multiple profiles + skip_picker=false → profile picker
+    try:
+        pm = ProfileManager.get()
+        profiles = pm.list_profiles()
+        skip = pm._registry.get("skip_picker", True)
+        if len(profiles) > 1 and not skip:
+            return RedirectResponse(url="/profile-picker")
+    except Exception:
+        pass
+    # 3. Otherwise → dashboard
+    return templates.TemplateResponse(request=request, name="dashboard.html")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    # Pinned to single-worker mode: this app holds per-process caches
+    # (profile manager, plan files, cache maps) that would diverge
+    # across workers.
+    _UVICORN_WORKERS = 1
+    assert _UVICORN_WORKERS == 1, (
+        "Domestique requires single-worker uvicorn — see launcher.py / README "
+        "for the reason (per-process caches, DB sync thread)."
+    )
+    print("Domestique Dashboard - http://localhost:8080")
+    uvicorn.run(app, host="127.0.0.1", port=8080, log_level="warning",
+                workers=_UVICORN_WORKERS)

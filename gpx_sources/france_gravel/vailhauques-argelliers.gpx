@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1"
+		xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"
+		xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
+		creator="Gravelmap.com"
+		version="1.1">
+
+	<metadata>
+		<name><![CDATA[Gravel Route: Vailhauques-Argelliers]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/92839">
+			<text><![CDATA[Gravel Route: Vailhauques-Argelliers]]></text>
+		</link>
+		<time>2020-11-07T12:46:26-05:00</time>
+	</metadata>
+
+	<trk>
+		<name><![CDATA[Gravel Route: Vailhauques-Argelliers]]></name>
+		<desc><![CDATA[]]></desc>
+		<link href="http://www.gravelmap.com/route/92839">
+			<text><![CDATA[Gravel Route: Vailhauques-Argelliers]]></text>
+		</link>
+		<trkseg>
+			<trkpt lat="43.67737" lon="3.71825">
+				<ele>151.96</ele>
+			</trkpt>
+			<trkpt lat="43.67735" lon="3.71822">
+				<ele>159.26</ele>
+			</trkpt>
+			<trkpt lat="43.67744" lon="3.71815">
+				<ele>165.58</ele>
+			</trkpt>
+			<trkpt lat="43.67751" lon="3.71794">
+				<ele>176.6</ele>
+			</trkpt>
+			<trkpt lat="43.6775" lon="3.71716">
+				<ele>185.76</ele>
+			</trkpt>
+			<trkpt lat="43.67759" lon="3.71656">
+				<ele>194</ele>
+			</trkpt>
+			<trkpt lat="43.67781" lon="3.71638">
+				<ele>202.12</ele>
+			</trkpt>
+			<trkpt lat="43.67821" lon="3.71576">
+				<ele>209.14</ele>
+			</trkpt>
+			<trkpt lat="43.67853" lon="3.71556">
+				<ele>217.57</ele>
+			</trkpt>
+			<trkpt lat="43.67947" lon="3.71388">
+				<ele>225.8</ele>
+			</trkpt>
+			<trkpt lat="43.67953" lon="3.7132">
+				<ele>227.74</ele>
+			</trkpt>
+			<trkpt lat="43.67937" lon="3.71239">
+				<ele>233.27</ele>
+			</trkpt>
+			<trkpt lat="43.67945" lon="3.71238">
+				<ele>242.7</ele>
+			</trkpt>
+			<trkpt lat="43.67973" lon="3.71273">
+				<ele>254.21</ele>
+			</trkpt>
+			<trkpt lat="43.67995" lon="3.71342">
+				<ele>262.4</ele>
+			</trkpt>
+			<trkpt lat="43.68005" lon="3.71355">
+				<ele>267.26</ele>
+			</trkpt>
+			<trkpt lat="43.6807" lon="3.71374">
+				<ele>272.91</ele>
+			</trkpt>
+			<trkpt lat="43.68118" lon="3.71366">
+				<ele>277.79</ele>
+			</trkpt>
+			<trkpt lat="43.6817" lon="3.71345">
+				<ele>279.87</ele>
+			</trkpt>
+			<trkpt lat="43.68249" lon="3.71227">
+				<ele>281.27</ele>
+			</trkpt>
+			<trkpt lat="43.68284" lon="3.71154">
+				<ele>276.92</ele>
+			</trkpt>
+			<trkpt lat="43.68326" lon="3.71038">
+				<ele>272.69</ele>
+			</trkpt>
+			<trkpt lat="43.68368" lon="3.70995">
+				<ele>268.03</ele>
+			</trkpt>
+			<trkpt lat="43.68427" lon="3.70882">
+				<ele>262.81</ele>
+			</trkpt>
+			<trkpt lat="43.68491" lon="3.70803">
+				<ele>254.75</ele>
+			</trkpt>
+			<trkpt lat="43.68491" lon="3.70803">
+				<ele>248.62</ele>
+			</trkpt>
+			<trkpt lat="43.68554" lon="3.70727">
+				<ele>242.43</ele>
+			</trkpt>
+			<trkpt lat="43.68599" lon="3.70555">
+				<ele>237.06</ele>
+			</trkpt>
+			<trkpt lat="43.68601" lon="3.70525">
+				<ele>233.25</ele>
+			</trkpt>
+			<trkpt lat="43.68584" lon="3.70474">
+				<ele>231.09</ele>
+			</trkpt>
+			<trkpt lat="43.68613" lon="3.70384">
+				<ele>226.33</ele>
+			</trkpt>
+			<trkpt lat="43.68621" lon="3.70308">
+				<ele>222.01</ele>
+			</trkpt>
+			<trkpt lat="43.6864" lon="3.70246">
+				<ele>218.26</ele>
+			</trkpt>
+			<trkpt lat="43.68627" lon="3.70123">
+				<ele>212.24</ele>
+			</trkpt>
+			<trkpt lat="43.68632" lon="3.70047">
+				<ele>206.1</ele>
+			</trkpt>
+			<trkpt lat="43.68651" lon="3.7">
+				<ele>198.36</ele>
+			</trkpt>
+			<trkpt lat="43.68751" lon="3.69844">
+				<ele>197.64</ele>
+			</trkpt>
+			<trkpt lat="43.68767" lon="3.69779">
+				<ele>197.28</ele>
+			</trkpt>
+			<trkpt lat="43.68792" lon="3.69715">
+				<ele>193.51</ele>
+			</trkpt>
+			<trkpt lat="43.68793" lon="3.69693">
+				<ele>191.42</ele>
+			</trkpt>
+			<trkpt lat="43.68771" lon="3.69606">
+				<ele>189.02</ele>
+			</trkpt>
+			<trkpt lat="43.68778" lon="3.69495">
+				<ele>190.19</ele>
+			</trkpt>
+			<trkpt lat="43.68874" lon="3.69313">
+				<ele>192.81</ele>
+			</trkpt>
+			<trkpt lat="43.68909" lon="3.69166">
+				<ele>193.55</ele>
+			</trkpt>
+			<trkpt lat="43.6894" lon="3.69121">
+				<ele>194.86</ele>
+			</trkpt>
+			<trkpt lat="43.68974" lon="3.69094">
+				<ele>192.45</ele>
+			</trkpt>
+			<trkpt lat="43.68987" lon="3.69069">
+				<ele>191.8</ele>
+			</trkpt>
+			<trkpt lat="43.68995" lon="3.69006">
+				<ele>188.09</ele>
+			</trkpt>
+			<trkpt lat="43.68973" lon="3.68959">
+				<ele>180.84</ele>
+			</trkpt>
+			<trkpt lat="43.68976" lon="3.68921">
+				<ele>172.98</ele>
+			</trkpt>
+			<trkpt lat="43.68963" lon="3.68886">
+				<ele>167.67</ele>
+			</trkpt>
+		</trkseg>
+	</trk>
+</gpx>

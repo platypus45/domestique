@@ -82,6 +82,20 @@ a = Analysis(
         "pystray",
         "PIL",
         "webview",
+        # v1.0.1: fit_tool is imported lazily inside try/except in app.py (FIT
+        # workout export endpoint + .fit ride parser). PyInstaller's static
+        # analyser misses imports inside try/except blocks, so the module was
+        # absent from the bundled DMG/EXE — every "Download FIT" click hit the
+        # `except ImportError` branch and returned a 500 JSON which the dashboard
+        # silently swallowed. Listing the relevant submodules here forces them
+        # into the frozen archive.
+        "fit_tool",
+        "fit_tool.fit_file",
+        "fit_tool.fit_file_builder",
+        "fit_tool.profile.profile_type",
+        "fit_tool.profile.messages.file_id_message",
+        "fit_tool.profile.messages.workout_message",
+        "fit_tool.profile.messages.workout_step_message",
     ],
     hookspath=[],
     hooksconfig={},

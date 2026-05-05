@@ -9950,7 +9950,7 @@ async function openDayWorkout(sessionIdx) {
     // Generate ZWO on-the-fly only when no matched library file is available.
     html += `<button class="btn btn-primary" onclick="downloadGeneratedZwo('${escJs(type)}', ${session.duration_min}, '${escJs(session.day_name)} ${escJs(typeUpper)}')">Download ZWO (Virtual Trainer)</button>`;
   }
-  html += `<button class="btn" onclick="downloadFIT('${escJs(type)}', ${session.duration_min}, '${escJs(session.day_name)} ${escJs(typeUpper)}')">Download FIT (Garmin/Wahoo)</button>`;
+  html += `<button class="btn" onclick="downloadFIT('${escJs(type)}', ${session.duration_min}, '${escJs(session.day_name)} ${escJs(typeUpper)}')">Download FIT (Garmin / Wahoo / Karoo)</button>`;
   html += '</div>';
   html += '<div style="font-size:10px;color:var(--text3);margin-top:8px;">ZWO = Virtual trainers (MyWhoosh / Tacx / Zwift / Hammerhead Karoo — ERG mode, power targets). FIT = Garmin Edge + Wahoo ELEMNT. Ride in your chosen app, then use Import FIT to analyze.</div>';
 
@@ -10346,12 +10346,34 @@ async function downloadGeneratedZwo(type, durationMin, name) {
 }
 
 async function downloadFIT(type, durationMin, name) {
-  // Download from server (proper TCX with Garmin schema + power targets using actual FTP)
+  // v1.0.1 fix: pre-fix the button used <a download href=...>.click(), which
+  // is fire-and-forget — pywebview's webkit silently swallowed JSON 4xx/5xx
+  // responses (no download dialog, no error). fetch() + Blob lets us inspect
+  // the response and surface failures as a toast instead of silent nothing.
   const url = `/api/export/fit-workout?session_type=${encodeURIComponent(type)}&duration_min=${durationMin}&name=${encodeURIComponent(name)}`;
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name.replace(/[^a-zA-Z0-9]/g, '_') + '.fit';
-  a.click();
+  try {
+    const r = await fetch(url);
+    if (!r.ok) {
+      let detail = String(r.status);
+      try {
+        const err = await r.json();
+        if (err && err.error) detail = err.error;
+      } catch(_) {}
+      try { showToast(`FIT export failed: ${detail}`, 4000); } catch(_) {}
+      return;
+    }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name.replace(/[^a-zA-Z0-9]/g, '_') + '.fit';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      try { URL.revokeObjectURL(a.href); a.remove(); } catch(_) {}
+    }, 1000);
+  } catch (e) {
+    try { showToast(`FIT export error: ${e.message || e}`, 4000); } catch(_) {}
+  }
 }
 
 // ═══ BODY & PERFORMANCE CARD ═════════════════════════════════════════════

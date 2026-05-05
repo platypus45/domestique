@@ -3501,6 +3501,20 @@ def _safe_path(base: Path, *parts: str) -> Path | None:
         return None
 
 
+@app.get("/api/download/zwo/{filename}")
+def download_zwo_flat(filename: str):
+    """Single-segment path used by the dashboard's planner-modal "Download ZWO"
+    button. v1.0.0 fix: pre-fix the dashboard called /api/download/zwo/<file>
+    (one segment) but the only registered route was /api/download/zwo/{category}
+    /{filename} (two segments) — FastAPI returned 404 with body {error: 'not
+    found'} on every click. Added this single-arg variant to match the call site.
+    """
+    path = _safe_path(WORKOUT_DIR, filename)
+    if not path or not path.exists():
+        return JSONResponse({"error": "not found"}, 404)
+    return FileResponse(path, filename=filename, media_type="application/xml")
+
+
 @app.get("/api/download/zwo/{category}/{filename}")
 def download_zwo(category: str, filename: str):
     # Flat layout first, legacy category/file fallback
@@ -5900,11 +5914,22 @@ def api_export_fit_workout(
     duration_min: int = Query(75),
     name: str = Query("Workout"),
 ):
-    """Generate a FIT binary workout file for Garmin Edge / Wahoo ELEMNT."""
+    """Generate a FIT binary workout file for Garmin Edge / Wahoo ELEMNT / Hammerhead Karoo.
+
+    v1.0.1 fix: session_type is normalised before dispatch — both the planner's
+    canonical form ("sweetspot", "overunder") AND the dashboard <select> values
+    ("sweet_spot", "over_under") now route to the same elif branch. Pre-fix,
+    the snake_case forms fell through to the else branch (a generic Z2 block),
+    which silently produced a wrong workout instead of the requested intervals.
+    """
     try:
         from fit_tool.fit_file_builder import FitFileBuilder  # verify fit_tool is available
 
         ftp = config.ATHLETE_FTP_W
+
+        # v1.0.1: normalise to lowercase + strip "_" / "-" so "sweet_spot",
+        # "Sweet-Spot", and "sweetspot" all map to the same key.
+        st_norm = (session_type or "").lower().replace("_", "").replace("-", "")
 
         # Build power blocks (reuse existing logic)
         blocks = []
@@ -5914,22 +5939,22 @@ def api_export_fit_workout(
 
         blocks.append({"name": "Warmup", "min": warmup, "pctLow": 45, "pctHigh": 65, "intensity": "warmup"})
 
-        if session_type == "vo2max":
+        if st_norm == "vo2max":
             reps = min(5, max(3, main_min // 7))
             for i in range(reps):
                 blocks.append({"name": f"VO2 {i+1}", "min": 4, "pctLow": 106, "pctHigh": 115, "intensity": "active"})
                 if i < reps - 1:
                     blocks.append({"name": "Rest", "min": 3, "pctLow": 40, "pctHigh": 40, "intensity": "rest"})
-        elif session_type == "threshold":
+        elif st_norm == "threshold":
             blocks.append({"name": "FTP 1", "min": 20, "pctLow": 95, "pctHigh": 100, "intensity": "active"})
             blocks.append({"name": "Rest", "min": 5, "pctLow": 50, "pctHigh": 50, "intensity": "rest"})
             blocks.append({"name": "FTP 2", "min": 20, "pctLow": 95, "pctHigh": 100, "intensity": "active"})
-        elif session_type == "sweetspot":
+        elif st_norm == "sweetspot":
             for i in range(3):
                 blocks.append({"name": f"SS {i+1}", "min": 15, "pctLow": 88, "pctHigh": 93, "intensity": "active"})
                 if i < 2:
                     blocks.append({"name": "Rest", "min": 5, "pctLow": 55, "pctHigh": 55, "intensity": "rest"})
-        elif session_type == "overunder":
+        elif st_norm == "overunder":
             for i in range(3):
                 for j in range(4):
                     blocks.append({"name": "Over", "min": 2, "pctLow": 105, "pctHigh": 105, "intensity": "active"})

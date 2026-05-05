@@ -130,13 +130,15 @@ class TestRule03_Vo2Short(unittest.TestCase):
     ≥8 min cumulative ≥1.05 FTP."""
 
     def test_billat_30_30_pattern(self):
-        # 15 cycles of 30s @1.20 / 30s @0.60 = 7.5 min on at Z6/Z5
+        # 15 cycles of 30s @1.21 / 30s @0.60 = 7.5 min on at Z6.
+        # Power 1.21 is the bottom of Z6 (post-v1.0.5d boundary fix; 1.20 is
+        # now correctly the top of Z5 per Coggan/ICU half-open semantics).
         power = warmup_block(600)
         for _ in range(15):
-            power += steady(1.20, 30) + steady(0.60, 30)
+            power += steady(1.21, 30) + steady(0.60, 30)
         power += cooldown_block(300)
         primary, conf, flags = classify_for(power)
-        # 15 cycles * 30s = 450s on at 1.20 (Z6), so high_intensity_s = 7.5min
+        # 15 cycles * 30s = 450s on at 1.21 (Z6), so high_intensity_s = 7.5min
         # — close to 8 min dose, but Anaerobic rule may take it first
         # depending on Z6 dose. We expect either vo2_short or anaerobic;
         # microinterval flag must be true regardless.

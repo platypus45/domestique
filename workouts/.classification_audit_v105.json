@@ -1,62 +1,78 @@
 {
-  "schema_version": "v1.0.5c",
-  "note": "v1.0.5c IMPL-C: revert wrong Z3/Z4 boundary (Z3=76-90%, Z4=91-105% per Coggan/Allen + ICU UI standard); add SS dominance rule + literature-grounded peak_band sustained-presence gate. Diff is vs IMPL-V105 4ad6bb6a regen.",
+  "schema_version": "v1.0.5d",
+  "note": "v1.0.5d IMPL-D: half-open boundary off-by-one (BUG-A) + z6 floor 60->180s (BUG-B) + OU under-leg lower bound 0.70->0.85 (BUG-C, with over-leg upper cap at 1.10 to exclude Z6 sprints from OU pattern). Diff is vs IMPL-V105C 32d05083 regen.",
   "summary": {
     "total_files": 3054,
-    "primary_transitioned": 235,
-    "display_name_only_changed": 89,
+    "primary_transitioned": 561,
+    "display_name_only_changed": 54,
     "transition_pairs": {
-      "vo2max->over_under": 36,
-      "threshold->sweet_spot": 36,
-      "vo2max->sweet_spot": 24,
-      "sweet_spot->over_under": 20,
-      "vo2max->threshold": 14,
-      "endurance->sweet_spot": 13,
-      "tempo_intervals->sweet_spot": 12,
-      "threshold->vo2max": 10,
-      "recovery->sweet_spot": 10,
-      "threshold->recovery": 9,
-      "anaerobic->threshold": 7,
-      "threshold->tempo": 6,
-      "tempo->sweet_spot": 6,
-      "over_under->sweet_spot": 4,
-      "anaerobic->sweet_spot": 4,
-      "anaerobic->vo2max": 4,
-      "endurance->tempo": 4,
-      "endurance_intervals->sweet_spot": 3,
-      "over_under->vo2max": 2,
-      "threshold->endurance": 2,
-      "vo2max->anaerobic": 1,
-      "sweet_spot->anaerobic": 1,
-      "tempo->tempo_intervals": 1,
-      "vo2max->tempo": 1,
-      "recovery->tempo": 1,
+      "endurance->recovery": 92,
+      "vo2max->threshold": 61,
+      "anaerobic->vo2max": 54,
+      "over_under->sweet_spot": 29,
+      "over_under->vo2max": 27,
+      "over_under->tempo_intervals": 20,
+      "over_under->anaerobic": 20,
+      "endurance->vo2max": 18,
+      "tempo_intervals->endurance": 16,
+      "endurance->threshold": 15,
+      "neuromuscular->anaerobic": 12,
+      "over_under->endurance": 10,
+      "sweet_spot->ftp_test": 10,
+      "neuromuscular->recovery": 9,
+      "neuromuscular->vo2_short": 9,
+      "neuromuscular->sweet_spot": 9,
+      "anaerobic->recovery": 9,
+      "tempo->endurance": 8,
+      "tempo_intervals->ftp_test": 8,
+      "vo2max->sweet_spot": 7,
+      "over_under->threshold": 7,
+      "neuromuscular->over_under": 6,
+      "anaerobic->endurance": 6,
+      "vo2max->ftp_test": 6,
+      "neuromuscular->vo2max": 5,
+      "over_under->ftp_test": 5,
+      "endurance->neuromuscular": 5,
+      "over_under->tempo": 5,
+      "vo2max->recovery": 5,
+      "vo2_ladder->ftp_test": 4,
+      "vo2max->over_under": 4,
+      "neuromuscular->threshold": 4,
+      "tempo->recovery": 4,
+      "vo2_short->vo2max": 3,
+      "vo2max->anaerobic": 3,
+      "sweet_spot->threshold": 3,
+      "over_under->vo2_short": 3,
+      "threshold_ladder->ftp_test": 3,
+      "vo2_short->anaerobic": 3,
+      "threshold->ftp_test": 2,
+      "tempo_intervals->recovery": 2,
+      "sweet_spot->endurance": 2,
+      "anaerobic->tempo": 2,
+      "anaerobic->neuromuscular": 2,
+      "neuromuscular->endurance": 2,
+      "neuromuscular->tempo_intervals": 2,
+      "tempo->vo2max": 2,
+      "vo2_short->sweet_spot": 1,
+      "anaerobic->sweet_spot": 1,
+      "anaerobic->threshold": 1,
+      "neuromuscular->tempo": 1,
+      "tempo->over_under": 1,
       "vo2max->endurance": 1,
-      "sweet_spot->threshold": 1,
-      "sweet_spot->tempo": 1,
-      "endurance->tempo_intervals": 1
+      "endurance->tempo": 1,
+      "neuromuscular->tempo_ladder": 1,
+      "tempo->threshold": 1,
+      "anaerobic->tempo_intervals": 1,
+      "sweet_spot_ladder->ftp_test": 1,
+      "recovery->endurance": 1,
+      "sweet_spot->over_under": 1,
+      "tempo->neuromuscular": 1,
+      "over_under->endurance_intervals": 1,
+      "neuromuscular->threshold_ladder": 1,
+      "over_under->recovery": 1,
+      "neuromuscular->vo2_ladder": 1
     },
     "old_class_counts": {
-      "over_under": 148,
-      "anaerobic": 196,
-      "vo2max": 414,
-      "sweet_spot": 289,
-      "sweet_spot_ladder": 43,
-      "threshold_ladder": 95,
-      "vo2_ladder": 55,
-      "endurance": 407,
-      "recovery": 223,
-      "neuromuscular": 297,
-      "tempo_ladder": 79,
-      "threshold": 339,
-      "tempo": 108,
-      "endurance_intervals": 3,
-      "null": 95,
-      "ftp_test": 35,
-      "tempo_intervals": 139,
-      "vo2_short": 89
-    },
-    "new_class_counts": {
       "over_under": 198,
       "anaerobic": 183,
       "sweet_spot": 378,
@@ -70,1187 +86,2837 @@
       "neuromuscular": 297,
       "tempo_ladder": 79,
       "tempo": 114,
-      "null": 95,
+      "None": 95,
       "ftp_test": 35,
       "tempo_intervals": 129,
       "vo2_short": 89
+    },
+    "new_class_counts": {
+      "over_under": 82,
+      "anaerobic": 145,
+      "sweet_spot": 409,
+      "vo2max": 375,
+      "endurance": 307,
+      "threshold": 388,
+      "tempo_intervals": 126,
+      "sweet_spot_ladder": 42,
+      "threshold_ladder": 93,
+      "vo2_ladder": 52,
+      "recovery": 342,
+      "neuromuscular": 243,
+      "tempo_ladder": 80,
+      "ftp_test": 74,
+      "tempo": 106,
+      "None": 95,
+      "vo2_short": 94,
+      "endurance_intervals": 1
     }
   },
   "transitions": [
     {
-      "file": "anaerobic_10x2min_48min.zwo",
-      "old_primary": "over_under",
+      "file": "neuromuscular_5x15s_48min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "recovery_spin_47min_v5.zwo",
+      "old_primary": "vo2max",
       "new_primary": "sweet_spot"
     },
     {
-      "file": "anaerobic_10x3min_90min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "anaerobic"
-    },
-    {
-      "file": "anaerobic_15s105s_15x_59min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "anaerobic_15s120s_9x_39min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "anaerobic_1min_6x_84min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "anaerobic_20s0s_10x_53min.zwo",
-      "old_primary": "anaerobic",
+      "file": "over_under_2x10s_64min.zwo",
+      "old_primary": "over_under",
       "new_primary": "threshold"
     },
     {
-      "file": "anaerobic_20s40s_10x_59min.zwo",
-      "old_primary": "over_under",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "anaerobic_2x1min_14min.zwo",
+      "file": "vo2_5x4min_46min.zwo",
       "old_primary": "endurance",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "anaerobic_2x30s_56min.zwo",
-      "old_primary": "over_under",
       "new_primary": "vo2max"
     },
     {
-      "file": "anaerobic_2x3min_40min.zwo",
-      "old_primary": "anaerobic",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "anaerobic_2x5min_48min.zwo",
-      "old_primary": "over_under",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "anaerobic_2x5min_51min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "anaerobic_30s180s_6x_91min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "vo2max"
-    },
-    {
-      "file": "anaerobic_30s30s_10x_41min.zwo",
-      "old_primary": "anaerobic",
-      "new_primary": "vo2max"
-    },
-    {
-      "file": "anaerobic_30s30s_10x_52min.zwo",
-      "old_primary": "anaerobic",
-      "new_primary": "vo2max"
-    },
-    {
-      "file": "anaerobic_3x1min_40min.zwo",
-      "old_primary": "anaerobic",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "anaerobic_3x1min_92min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "vo2max"
-    },
-    {
-      "file": "anaerobic_3x20s_50min.zwo",
-      "old_primary": "anaerobic",
-      "new_primary": "threshold"
-    },
-    {
-      "file": "anaerobic_3x30s_35min.zwo",
-      "old_primary": "anaerobic",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "anaerobic_3x30s_35min_renamed_v46_1.zwo",
-      "old_primary": "anaerobic",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "anaerobic_3x30s_55min_renamed_v46_2.zwo",
-      "old_primary": "anaerobic",
-      "new_primary": "threshold"
-    },
-    {
-      "file": "anaerobic_3x30s_60min.zwo",
-      "old_primary": "sweet_spot",
+      "file": "neuromuscular_4x30s_57min.zwo",
+      "old_primary": "neuromuscular",
       "new_primary": "over_under"
     },
     {
-      "file": "anaerobic_3x5min_64min.zwo",
-      "old_primary": "anaerobic",
-      "new_primary": "threshold"
-    },
-    {
-      "file": "anaerobic_4x6min_88min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "anaerobic"
-    },
-    {
-      "file": "anaerobic_5x1min_62min.zwo",
-      "old_primary": "anaerobic",
-      "new_primary": "vo2max"
-    },
-    {
-      "file": "anaerobic_5x20s_52min.zwo",
-      "old_primary": "anaerobic",
-      "new_primary": "threshold"
-    },
-    {
-      "file": "anaerobic_5x30s_18min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "tempo"
-    },
-    {
-      "file": "anaerobic_5x30s_33min.zwo",
-      "old_primary": "anaerobic",
-      "new_primary": "vo2max"
-    },
-    {
-      "file": "anaerobic_5x30s_56min_renamed_v46_1.zwo",
-      "old_primary": "anaerobic",
-      "new_primary": "threshold"
-    },
-    {
-      "file": "anaerobic_5x30s_60min.zwo",
-      "old_primary": "anaerobic",
-      "new_primary": "threshold"
-    },
-    {
-      "file": "anaerobic_6x1min_48min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "anaerobic_6x1min_48min_v2.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "anaerobic_6x3min_54min.zwo",
-      "old_primary": "over_under",
-      "new_primary": "vo2max"
-    },
-    {
-      "file": "anaerobic_mixed_49min.zwo",
-      "old_primary": "over_under",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "anaerobic_ou_120min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "anaerobic_ou_56min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "anaerobic_steady_54min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "endurance_4x3min_40min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "recovery"
-    },
-    {
-      "file": "endurance_mixed_96min.zwo",
-      "old_primary": "endurance_intervals",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "intervals_1x1min_75pct_40min_v2.zwo",
+      "file": "threshold_2x4min_30min.zwo",
       "old_primary": "tempo",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "vo2_short_30s30s_18x_64min.zwo",
+      "old_primary": "vo2_short",
       "new_primary": "sweet_spot"
     },
     {
-      "file": "intervals_3x4min_75pct_46min.zwo",
-      "old_primary": "tempo",
+      "file": "anaerobic_20s120s_18x_70min_renamed_v46_1.zwo",
+      "old_primary": "over_under",
       "new_primary": "tempo_intervals"
     },
     {
-      "file": "over_under_10s36s_6x_75min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_10x20s_49min.zwo",
+      "file": "vo2max_6x2min_16min.zwo",
       "old_primary": "vo2max",
       "new_primary": "threshold"
     },
     {
-      "file": "over_under_10x20s_52min.zwo",
+      "file": "vo2max_mixed_26min.zwo",
       "old_primary": "vo2max",
       "new_primary": "threshold"
     },
     {
-      "file": "over_under_10x3min_80min.zwo",
+      "file": "recovery_spin_45min_v4.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "recovery_spin_30min_v8.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "anaerobic_5x1min_120min_renamed_v46_1.zwo",
+      "old_primary": "over_under",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "pyramid_ladder_2-3-4-3-2_37min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "neuromuscular_5x10s_40min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "threshold_steady_52min_v3.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "neuromuscular_15s15s_28x_60min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "vo2_short"
+    },
+    {
+      "file": "anaerobic_9x3min_58min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_steady_30min_v5.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "threshold_steady_34min_v2.zwo",
+      "old_primary": "endurance",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "anaerobic_30s60s_14x_30min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "recovery_spin_30min_v9.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "over_under_2x1min_55min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "vo2max_billat_30_30_3x_107min.zwo",
+      "old_primary": "vo2_ladder",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "vo2_2x30s_26min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "threshold_6x1min_47min_v2.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2max_ou_47min_renamed_v46_1.zwo",
       "old_primary": "vo2max",
       "new_primary": "over_under"
     },
     {
-      "file": "over_under_12x3min_75min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
+      "file": "anaerobic_5x2min_65min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
     },
     {
-      "file": "over_under_20s0s_6x_56min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
+      "file": "vo2_short_4x2min_60min.zwo",
+      "old_primary": "vo2_short",
+      "new_primary": "vo2max"
     },
     {
-      "file": "over_under_20x30s_61min.zwo",
+      "file": "anaerobic_4x1min_60min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "neuromuscular_15s15s_6x_58min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "vo2max_ou_53min_renamed_v46_1.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "sweetspot_5x0min_60min_v2.zwo",
+      "old_primary": "endurance",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_2x2min_24min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2max_10x2min_70min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "neuromuscular_3x2min_60min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "vo2max_mixed_45min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "anaerobic_4x20s_61min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "over_under_5x20s_88min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "tempo_mixed_60min_renamed_v46_14.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "neuromuscular_3x2min_60min_renamed_v46_1.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "vo2max_2x0min_55min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "recovery_spin_60min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "recovery_steady_30min_v2.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2_short_15s15s_10x_90min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "sweet_spot_steady_24min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "tempo_mixed_54min_renamed_v46_1.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "vo2max_mixed_45min_renamed_v46_1.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "vo2_steady_58min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "sprints_steady_54min_v2.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "vo2max_6x3min_76min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "tempo_steady_21min_v2.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "recovery_steady_20min_v2.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "threshold_steady_55min_v6.zwo",
+      "old_primary": "endurance",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "sweet_spot_3x1min_40min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2max_10x3min_70min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "pyramid_2x1min_22min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "recovery_steady_23min_v3.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "pyramid_steady_22min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_15s120s_9x_39min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "vo2_2x4min_28min_v2.zwo",
+      "old_primary": "endurance",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "vo2max_30s30s_6x_60min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "sprints_2x30s_56min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "neuromuscular"
+    },
+    {
+      "file": "neuromuscular_15s0s_8x_40min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "over_under_steady_35min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "over_under_4x1min_60min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "neuromuscular_3x5min_120min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "vo2_short"
+    },
+    {
+      "file": "anaerobic_ou_120min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "over_under_2x10s_66min.zwo",
       "old_primary": "sweet_spot",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "over_under_ou_70min_renamed_v46_1.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "vo2max_3x30s_63min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "tempo_3x30s_90min_renamed_v46_1.zwo",
+      "old_primary": "sweet_spot",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "threshold_3x4min_57min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_5x2min_60min_renamed_v46_1.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "tempo_3x30s_64min_renamed_v46_1.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "vo2max_8x1min_43min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "anaerobic_40s20s_10x_52min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "vo2_4x1min_44min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2max_1min_9x_66min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "sweet_spot_2x2min_21min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_4x6min_88min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "vo2max_billat_30_30_2x_31min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "threshold_3x30s_74min.zwo",
+      "old_primary": "threshold",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "threshold_steady_16min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "neuromuscular_4x30s_55min.zwo",
+      "old_primary": "neuromuscular",
       "new_primary": "over_under"
     },
     {
-      "file": "over_under_2x2min_14min.zwo",
+      "file": "vo2_steady_24min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "over_under_4x1min_59min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "neuromuscular_ou_65min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "anaerobic_15s105s_15x_59min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "over_under_steady_51min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo"
+    },
+    {
+      "file": "vo2max_3x0min_42min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "recovery_steady_32min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "over_under_30s180s_7x_94min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2_2x2min_41min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_steady_56min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "vo2max_ou_53min_renamed_v46_2.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2_2x4min_28min_v3.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "sprints_45min_v0.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "over_under_ou_48min_renamed_v46_1.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "pyramid_3x2min_30min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_6x2min_33min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "tempo_steady_21min_v3.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2max_billat_30_30_3x_60min_v10.zwo",
+      "old_primary": "over_under",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "vo2max_ou_70min_renamed_v46_1.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "z2_endurance_35min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "sprints_steady_52min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "neuromuscular_20s68s_10x_47min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2max_3x3min_89min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "tempo_mixed_55min.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "tempo_mixed_55min_renamed_v46_2.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "anaerobic_4x5min_120min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "anaerobic_3x4min_36min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_45s225s_8x_70min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "neuromuscular_4x10s_53min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "over_under"
+    },
+    {
+      "file": "threshold_steady_32min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "neuromuscular_6x2min_60min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "threshold_3x30s_38min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2max_30s103s_11x_90min_renamed_v46_1.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2max_5x3min_82min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "vo2max_short_15s_15s_4x_22min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "supra_threshold_46min_v3.zwo",
+      "old_primary": "endurance",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "vo2max_6x3min_70min_renamed_v46_1.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "anaerobic_2x30s_28min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "sweet_spot_3x30s_65min.zwo",
+      "old_primary": "sweet_spot",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "vo2max_1min_10x_80min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_4x2min_60min_renamed_v46_2.zwo",
+      "old_primary": "over_under",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "sprints_30min_v0.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "anaerobic_2x30s_56min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "endurance_steady_36min.zwo",
+      "old_primary": "tempo",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "vo2_short_2x4min_78min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2_short"
+    },
+    {
+      "file": "anaerobic_5x3min_45min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "anaerobic_5x3min_55min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "anaerobic_40s280s_6x_56min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "anaerobic_20s100s_12x_55min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "recovery_spin_55min_v2.zwo",
+      "old_primary": "endurance",
+      "new_primary": "neuromuscular"
+    },
+    {
+      "file": "anaerobic_1min_10x_60min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "endurance_4x10s_60min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_steady_54min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "endurance_steady_24min_v3.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_5x30s_56min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "vo2max_ou_76min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "recovery_steady_31min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "over_under_3x20s_65min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "anaerobic_4x20s_56min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "tempo_progression_3x20s_60min.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "recovery_spin_27min.zwo",
+      "old_primary": "threshold_ladder",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "over_under_30s180s_8x_111min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "anaerobic_4x2min_80min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "threshold_steady_55min_v9.zwo",
+      "old_primary": "sweet_spot",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "recovery_steady_20min_v4.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_5x4min_54min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "anaerobic_18x2min_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "anaerobic_6x2min_36min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "anaerobic_4x3min_60min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "anaerobic_5x1min_62min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2max_short_60s_60s_3x_47min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "anaerobic_20s300s_6x_120min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "vo2max_6x4min_83min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "recovery_steady_27min_v2.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "threshold_steady_45min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "neuromuscular_4x15s_30min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "anaerobic_5x3min_57min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "anaerobic_steady_43min_v2.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "neuromuscular_5x10s_26min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "tempo"
+    },
+    {
+      "file": "vo2max_short_15s_45s_1x_36min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "over_under_4x1min_57min_renamed_v46_1.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "anaerobic_steady_38min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "tempo"
+    },
+    {
+      "file": "pyramid_3x2min_27min_v2.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_ou_45min_renamed_v46_1.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "vo2max_billat_30_30_2x_30min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "anaerobic_30s30s_7x_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "sweetspot_1x0min_39min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "over_under_steady_56min_v3.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "over_under_4x30s_30min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2max_short_15s_30s_4x_60min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "tempo_3x30s_60min_renamed_v46_1.zwo",
+      "old_primary": "sweet_spot",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "over_under_steady_40min_v2.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "neuromuscular_5x30s_36min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "neuromuscular_15s15s_24x_58min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "vo2_short"
+    },
+    {
+      "file": "anaerobic_12x2min_48min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "vo2max_1min_10x_65min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "vo2max_1min_7x_59min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "neuromuscular_2x1min_62min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_3x30s_70min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "anaerobic_5x4min_56min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "sprints_steady_54min_v3.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "vo2_3x2min_16min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "over_under_1min_6x_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "anaerobic_12x30s_27min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "sweetspot_1x0min_30min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "recovery_spin_48min_v3.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "anaerobic_5x3min_53min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "tempo_3x30s_60min_renamed_v46_3.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "over_under_3x30s_60min_renamed_v46_2.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "over_under_steady_42min_v5.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_4x2min_33min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "anaerobic_5x2min_32min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "vo2_short_30s15s_13x_61min_renamed_v46_2.zwo",
+      "old_primary": "vo2_short",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "vo2_2x30s_17min.zwo",
+      "old_primary": "tempo",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "vo2max_8x0min_106min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "tempo_steady_60min_renamed_v46_3.zwo",
+      "old_primary": "tempo",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "anaerobic_30s60s_9x_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "anaerobic_steady_40min_v2.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2max_30s68s_25x_90min_renamed_v46_1.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "threshold_5x0min_60min.zwo",
+      "old_primary": "sweet_spot",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "threshold_3x2min_32min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "recovery_spin_60min_v18.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "sweet_spot_4x6min_60min.zwo",
+      "old_primary": "sweet_spot",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "over_under_3x20s_50min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "anaerobic_steady_32min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "neuromuscular"
+    },
+    {
+      "file": "tempo_3x30s_70min.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "tempo_steady_73min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "vo2max_8x3min_62min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "anaerobic_30s276s_6x_55min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "vo2max_1min_10x_80min_renamed_v46_1.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2max_ou_53min_renamed_v46_3.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "over_under_16x1min_198min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "anaerobic_steady_34min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "neuromuscular_5x30s_52min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "vo2max_4x10min_92min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "tempo_3x30s_65min_renamed_v46_1.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "over_under_steady_36min_v2.zwo",
+      "old_primary": "vo2_ladder",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "vo2max_2x0min_52min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_3x30s_93min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "neuromuscular_6s14s_12x_47min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "over_under_3x30s_60min_renamed_v46_3.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "anaerobic_5x1min_120min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "recovery_steady_23min_v2.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2max_4x4min_52min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "threshold_steady_30min_v3.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "recovery_spin_45min_v14.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_5x2min_60min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "recovery_spin_30min_v3.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "tempo_10x1min_61min.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "over_under_3x10s_77min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo"
+    },
+    {
+      "file": "threshold_3x1min_32min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2max_1min_7x_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "tempo_progression_9x1min_60min.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "tempo_6x2min_31min.zwo",
+      "old_primary": "tempo",
+      "new_primary": "over_under"
+    },
+    {
+      "file": "tempo_2x2min_19min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2max_20s40s_6x_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "recovery_spin_20min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "over_under_2x1min_59min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "anaerobic_6x5min_80min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_3x30s_90min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "neuromuscular_30s300s_8x_57min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "anaerobic_5x1min_57min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_4x1min_46min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_20s120s_15x_66min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "vo2max_3x4min_57min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "vo2max_5x4min_70min_renamed_v46_1.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2max_2x0min_63min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "sweetspot_5x1min_39min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "recovery_spin_45min_v11.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "recovery_spin_75min_v5.zwo",
+      "old_primary": "endurance",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "anaerobic_3x20s_52min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "neuromuscular"
+    },
+    {
+      "file": "pyramid_3x2min_31min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "recovery_spin_35min_v4.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "tempo_mixed_51min_renamed_v46_1.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "recovery_steady_20min_v3.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_40s20s_10x_60min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "recovery_spin_41min.zwo",
+      "old_primary": "tempo",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "over_under_30s80s_9x_48min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "tempo_mixed_60min_renamed_v46_2.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_3x1min_90min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "sweetspot_3x0min_40min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_2x30s_59min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "neuromuscular"
+    },
+    {
+      "file": "vo2max_30s68s_25x_90min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "tempo_mixed_54min.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "anaerobic_5x3min_47min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "recovery_steady_34min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "over_under_4x1min_57min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "tempo_2x5min_28min.zwo",
       "old_primary": "endurance",
       "new_primary": "tempo"
     },
     {
-      "file": "over_under_2x2min_19min.zwo",
-      "old_primary": "vo2max",
+      "file": "over_under_4x30s_96min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "endurance_2x30s_10min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "recovery_steady_36min_v3.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "threshold_4x1min_37min.zwo",
+      "old_primary": "endurance",
       "new_primary": "threshold"
     },
     {
-      "file": "over_under_2x30s_53min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_2x3_under240s_over60s_50min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_2x3_under300s_over60s_56min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_2x4_under180s_over30s_47min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_2x4_under90s_over30s_35min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "threshold"
-    },
-    {
-      "file": "over_under_2x5_under105s_over45s_44min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_2x5_under120s_over30s_44min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "over_under_2x5_under60s_over30s_33min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "over_under_2x5_under90s_over30s_37min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "over_under_2x5min_51min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "tempo"
-    },
-    {
-      "file": "over_under_30min_v1.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "over_under_30s0s_7x_49min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "threshold"
-    },
-    {
-      "file": "over_under_30s180s_7x_94min.zwo",
-      "old_primary": "threshold",
+      "file": "anaerobic_4x3min_33min.zwo",
+      "old_primary": "anaerobic",
       "new_primary": "vo2max"
     },
     {
-      "file": "over_under_3x15s_32min.zwo",
+      "file": "over_under_10s60s_12x_44min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "pyramid_2x30s_15min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_30s252s_6x_52min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "neuromuscular_4x30s_41min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "neuromuscular_10s240s_9x_62min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "anaerobic_steady_52min_v2.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2max_ou_62min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "vo2max_short_15s_45s_4x_30min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "anaerobic_1min_10x_39min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "vo2_short_30s15s_13x_61min.zwo",
+      "old_primary": "vo2_short",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "pyramid_13x3min_60min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "pyramid_4x1min_14min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "z2_endurance_25min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "tempo_3x30s_90min.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "tempo_5x1min_60min_renamed_v46_1.zwo",
+      "old_primary": "sweet_spot",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "endurance_steady_21min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_steady_72min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "threshold_3x1min_38min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "over_under_10s90s_12x_50min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "neuromuscular_30s30s_8x_55min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "vo2_short"
+    },
+    {
+      "file": "anaerobic_1min_8x_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "anaerobic_5x3min_85min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "vo2max_1min_6x_60min_renamed_v46_1.zwo",
+      "old_primary": "over_under",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "vo2_2x2min_35min_v2.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "threshold_5x1min_30min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2max_mixed_43min_renamed_v46_1.zwo",
       "old_primary": "vo2max",
       "new_primary": "threshold"
     },
     {
-      "file": "over_under_3x15s_40min.zwo",
+      "file": "sweetspot_3x0min_43min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2max_billat_30_30_3x_60min_v8.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "threshold_steady_30min_v2.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "intervals_1x2min_75pct_40min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "recovery_spin_20min_v2.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "recovery_steady_16min_v3.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_20s120s_18x_70min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "anaerobic_30s300s_12x_90min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "vo2_5x40s_57min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "sprints_8x12s_49min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2max_billat_30_30_2x_30min_v3.zwo",
+      "old_primary": "endurance",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_5x30s_26min.zwo",
+      "old_primary": "tempo",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "sprints_steady_21min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2_steady_17min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "tempo_3x3min_57min.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "vo2max_6x3min_54min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "recovery_spin_44min_v3.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "over_under_2x1min_46min.zwo",
       "old_primary": "vo2max",
       "new_primary": "sweet_spot"
     },
     {
-      "file": "over_under_3x1min_29min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
+      "file": "tempo_3x2min_65min.zwo",
+      "old_primary": "vo2_ladder",
+      "new_primary": "ftp_test"
     },
     {
-      "file": "over_under_3x20s_16min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
+      "file": "recovery_spin_40min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "threshold"
     },
     {
-      "file": "over_under_3x20s_26min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
+      "file": "vo2max_4x0min_20min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
     },
     {
-      "file": "over_under_3x20s_50min.zwo",
+      "file": "vo2max_3x0min_67min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_mixed_30min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "tempo_3x30s_65min_renamed_v46_2.zwo",
       "old_primary": "sweet_spot",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "intervals_3x4min_75pct_46min.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "anaerobic_5x2min_64min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "vo2max_billat_30_30_2x_30min_v2.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "sweet_spot_steady_32min.zwo",
+      "old_primary": "tempo",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2max_short_10s_50s_2x_60min_v2.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "tempo_steady_15min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2max_mixed_58min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2_short_1min_18x_60min.zwo",
+      "old_primary": "vo2_short",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "vo2max_4x10min_86min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "anaerobic_mixed_54min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "sprints_8x12s_41min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2max_2min_7x_56min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2max_ou_51min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "over_under"
+    },
+    {
+      "file": "anaerobic_1min_6x_64min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "over_under_5x5min_65min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "vo2max_30s103s_11x_90min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "neuromuscular_5x30s_34min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_6x3min_54min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2max_ou_55min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "neuromuscular_30s60s_8x_47min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "tempo_ladder"
+    },
+    {
+      "file": "vo2max_3x4min_79min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "intervals_1x0min_50pct_39min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "vo2max_ronnestad_30_15_5x_34min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "recovery_spin_42min_v4.zwo",
+      "old_primary": "endurance",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "anaerobic_1min_20x_96min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "vo2max_4x1min_90min_v3.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_ou_53min_renamed_v46_1.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "vo2max_6x2min_33min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "recovery_spin_43min_v4.zwo",
+      "old_primary": "tempo",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2_steady_55min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "vo2max_billat_30_30_3x_60min_v9.zwo",
+      "old_primary": "vo2_ladder",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "anaerobic_steady_28min_v2.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2max_mixed_37min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "recovery_spin_40min_v6.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "threshold_steady_43min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "neuromuscular_4x10s_64min_renamed_v46_1.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "anaerobic_steady_26min.zwo",
+      "old_primary": "threshold_ladder",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "sweetspot_1x0min_38min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "tempo_3x30s_71min.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "anaerobic_5x1min_60min_renamed_v46_1.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "anaerobic_3x10min_75min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "over_under_20s40s_6x_59min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "tempo_9x30s_63min.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "anaerobic_1min_8x_58min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "sweetspot_4x0min_60min_v3.zwo",
+      "old_primary": "sweet_spot_ladder",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "vo2_short_30s30s_10x_85min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2_short"
+    },
+    {
+      "file": "vo2max_mixed_60min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "neuromuscular_20s40s_6x_32min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "tempo_steady_60min_renamed_v46_1.zwo",
+      "old_primary": "tempo",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "sprints_3x30s_44min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_3x20s_65min_renamed_v46_1.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "neuromuscular_30s90s_12x_60min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "pyramid_steady_37min_v2.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "sweet_spot_2x15min_70min.zwo",
+      "old_primary": "sweet_spot",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "over_under_steady_42min_v4.zwo",
+      "old_primary": "threshold_ladder",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "vo2max_ou_39min.zwo",
+      "old_primary": "vo2max",
       "new_primary": "over_under"
     },
     {
       "file": "over_under_3x30s_42min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_3x30s_58min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_3x30s_60min_renamed_v46_3.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_3x30s_90min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_45s225s_8x_70min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_4x10s_52min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_4x1min_56min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_4x20s_60min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_5x10s_42min.zwo",
-      "old_primary": "vo2max",
+      "old_primary": "over_under",
       "new_primary": "sweet_spot"
     },
     {
-      "file": "over_under_5x10s_46min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "over_under_5x20s_46min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "threshold"
-    },
-    {
-      "file": "over_under_5x20s_49min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "threshold"
-    },
-    {
-      "file": "over_under_5x5min_65min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_8x3min_43min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_9x2min_40min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "over_under_mixed_55min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_ou_42min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_ou_45min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_ou_48min_renamed_v46_1.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_ou_50min_renamed_v46_2.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_ou_51min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_ou_65min_renamed_v46_2.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_ou_70min_renamed_v46_2.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_ou_94min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "over_under_steady_51min_v2.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "threshold"
-    },
-    {
-      "file": "over_under_steady_55min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "threshold"
-    },
-    {
-      "file": "over_under_steady_57min_v2.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "over_under_steady_58min_v6.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "pyramid_ladder_1-2-3-4-3-2-1_32min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "ramp_test_33min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "tempo"
-    },
-    {
-      "file": "recovery_2x5min_95min.zwo",
-      "old_primary": "recovery",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "recovery_spin_29min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "recovery_spin_40min_v10.zwo",
+      "file": "vo2max_2x0min_42min.zwo",
       "old_primary": "endurance",
-      "new_primary": "tempo"
-    },
-    {
-      "file": "recovery_spin_40min_v3.zwo",
-      "old_primary": "threshold",
       "new_primary": "recovery"
     },
     {
-      "file": "recovery_spin_41min.zwo",
-      "old_primary": "recovery",
-      "new_primary": "tempo"
-    },
-    {
-      "file": "recovery_spin_45min_v13.zwo",
-      "old_primary": "threshold",
-      "new_primary": "recovery"
-    },
-    {
-      "file": "recovery_spin_46min_v3.zwo",
-      "old_primary": "threshold",
-      "new_primary": "recovery"
-    },
-    {
-      "file": "recovery_spin_49min_v4.zwo",
-      "old_primary": "threshold",
-      "new_primary": "recovery"
-    },
-    {
-      "file": "recovery_spin_60min_v12.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "recovery_spin_61min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "recovery_spin_63min_v6.zwo",
-      "old_primary": "threshold",
-      "new_primary": "recovery"
-    },
-    {
-      "file": "recovery_spin_91min.zwo",
-      "old_primary": "endurance",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "recovery_steady_26min_v3.zwo",
-      "old_primary": "recovery",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "recovery_steady_33min.zwo",
-      "old_primary": "recovery",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "supra_threshold_105min.zwo",
-      "old_primary": "threshold",
+      "file": "anaerobic_1min_8x_56min.zwo",
+      "old_primary": "anaerobic",
       "new_primary": "vo2max"
     },
     {
-      "file": "supra_threshold_20min_v2.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "threshold"
-    },
-    {
-      "file": "supra_threshold_71min_v3.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweet_spot_2x3min_39min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweet_spot_2x3min_40min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweet_spot_2x4min_16min.zwo",
+      "file": "recovery_spin_30min_v5.zwo",
       "old_primary": "tempo",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweet_spot_4x3min_42min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweet_spot_5x3min_42min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweet_spot_7x2min_46min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweet_spot_9x1min_30min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweet_spot_steady_15min_v2.zwo",
-      "old_primary": "recovery",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweet_spot_steady_15min_v4.zwo",
-      "old_primary": "recovery",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweet_spot_steady_17min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweet_spot_steady_18min.zwo",
-      "old_primary": "recovery",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweet_spot_steady_20min_v3.zwo",
-      "old_primary": "endurance",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweet_spot_steady_21min.zwo",
-      "old_primary": "recovery",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweet_spot_steady_22min.zwo",
-      "old_primary": "recovery",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweet_spot_steady_24min_v3.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweet_spot_steady_36min.zwo",
-      "old_primary": "tempo",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweet_spot_steady_43min_v2.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweetspot_10x0min_50min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweetspot_1x1min_45min.zwo",
-      "old_primary": "tempo",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweetspot_2x3min_44min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "endurance"
-    },
-    {
-      "file": "sweetspot_5x0min_60min_v5.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "endurance"
-    },
-    {
-      "file": "sweetspot_6x2min_54min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweetspot_6x2min_60min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "sweetspot_8x3min_70min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_10x1min_58min.zwo",
-      "old_primary": "endurance",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_10x1min_58min_v2.zwo",
-      "old_primary": "endurance",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_10x2min_60min.zwo",
-      "old_primary": "tempo_intervals",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_10x2min_61min.zwo",
-      "old_primary": "tempo_intervals",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_2x1min_60min_v3.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "threshold"
-    },
-    {
-      "file": "tempo_2x3min_56min.zwo",
-      "old_primary": "threshold",
       "new_primary": "recovery"
     },
     {
-      "file": "tempo_2x5min_49min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
+      "file": "neuromuscular_15s15s_60x_60min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "vo2_short"
     },
     {
-      "file": "tempo_3x0min_16min.zwo",
-      "old_primary": "endurance",
-      "new_primary": "sweet_spot"
+      "file": "over_under_12x3min_75min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "ftp_test"
     },
     {
-      "file": "tempo_3x2min_26min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_3x30s_60min_renamed_v46_1.zwo",
-      "old_primary": "tempo_intervals",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_3x30s_65min_renamed_v46_2.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_3x30s_90min_renamed_v46_1.zwo",
-      "old_primary": "tempo_intervals",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_3x4min_67min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_4x0min_19min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_4x3min_58min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_5x1min_60min_renamed_v46_1.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_5x4min_50min.zwo",
-      "old_primary": "tempo_intervals",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_6x1min_66min.zwo",
-      "old_primary": "endurance",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_8x3min_60min.zwo",
-      "old_primary": "tempo_intervals",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_mixed_100min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_mixed_102min.zwo",
-      "old_primary": "tempo_intervals",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_mixed_105min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_mixed_57min.zwo",
-      "old_primary": "tempo_intervals",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_mixed_58min.zwo",
-      "old_primary": "tempo_intervals",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_mixed_58min_renamed_v46_1.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_mixed_60min_renamed_v46_3.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_mixed_60min_renamed_v46_5.zwo",
-      "old_primary": "tempo",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_mixed_60min_renamed_v46_9.zwo",
-      "old_primary": "tempo_intervals",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_progression_2x1min_62min.zwo",
-      "old_primary": "tempo_intervals",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_progression_3x4min_67min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_progression_mixed_59min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "tempo"
-    },
-    {
-      "file": "tempo_steady_18min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "tempo"
-    },
-    {
-      "file": "tempo_steady_36min.zwo",
-      "old_primary": "tempo",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_steady_40min_v2.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_steady_50min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_steady_58min_v3.zwo",
-      "old_primary": "tempo_intervals",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "tempo_steady_60min_v3.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "threshold_10x1min_56min.zwo",
-      "old_primary": "threshold",
+      "file": "sprints_steady_37min.zwo",
+      "old_primary": "neuromuscular",
       "new_primary": "vo2max"
+    },
+    {
+      "file": "pyramid_3x2min_30min_v2.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
     },
     {
       "file": "threshold_10x2min_115min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "vo2max"
-    },
-    {
-      "file": "threshold_15x30s_18min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "tempo"
-    },
-    {
-      "file": "threshold_2x1min_73min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "threshold_30s120s_10x_65min.zwo",
       "old_primary": "vo2max",
       "new_primary": "threshold"
     },
     {
-      "file": "threshold_3x0min_30min_v2.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "threshold_3x0min_35min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "threshold_3x0min_38min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "threshold"
-    },
-    {
-      "file": "threshold_3x10min_92min.zwo",
-      "old_primary": "threshold",
+      "file": "supra_threshold_65min_v2.zwo",
+      "old_primary": "anaerobic",
       "new_primary": "vo2max"
     },
     {
-      "file": "threshold_3x15min_107min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "vo2max"
+      "file": "vo2max_billat_30_30_3x_60min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "ftp_test"
     },
     {
-      "file": "threshold_3x1min_50min.zwo",
+      "file": "threshold_steady_25min_v3.zwo",
       "old_primary": "endurance",
-      "new_primary": "tempo"
+      "new_primary": "recovery"
     },
     {
-      "file": "threshold_3x1min_51min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "tempo"
+      "file": "vo2_2x1min_50min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "vo2max"
     },
     {
-      "file": "threshold_3x2min_37min.zwo",
-      "old_primary": "threshold",
+      "file": "vo2_short_30s15s_13x_59min.zwo",
+      "old_primary": "vo2_short",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "neuromuscular_15s15s_60x_60min_renamed_v46_2.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "vo2_short"
+    },
+    {
+      "file": "pyramid_steady_36min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "over_under_4x20s_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "vo2max_billat_30_30_5x_30min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "endurance_2x3min_16min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "recovery_spin_24min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_steady_14min.zwo",
+      "old_primary": "anaerobic",
       "new_primary": "endurance"
     },
     {
-      "file": "threshold_5x0min_39min.zwo",
+      "file": "intervals_4x4min_75pct_45min.zwo",
+      "old_primary": "recovery",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "pyramid_2x30s_29min.zwo",
+      "old_primary": "tempo",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_6x5min_70min.zwo",
       "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
+      "new_primary": "ftp_test"
     },
     {
-      "file": "threshold_5x0min_60min.zwo",
-      "old_primary": "endurance",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "threshold_5x1min_48min.zwo",
+      "file": "threshold_5x1min_47min.zwo",
       "old_primary": "vo2max",
       "new_primary": "threshold"
     },
     {
-      "file": "threshold_5x2min_35min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
+      "file": "anaerobic_1min_6x_84min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
     },
     {
-      "file": "threshold_6x1min_47min_v2.zwo",
-      "old_primary": "threshold",
+      "file": "sweetspot_2x3min_44min.zwo",
+      "old_primary": "endurance",
       "new_primary": "vo2max"
     },
     {
-      "file": "threshold_mixed_125min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "vo2max"
+      "file": "vo2max_7x3min_58min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
     },
     {
-      "file": "threshold_steady_30min.zwo",
-      "old_primary": "threshold",
+      "file": "vo2max_8x2min_98min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "anaerobic_3x1min_50min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "over_under_4x10s_52min.zwo",
+      "old_primary": "over_under",
       "new_primary": "sweet_spot"
     },
     {
-      "file": "threshold_steady_34min.zwo",
+      "file": "over_under_steady_30min.zwo",
       "old_primary": "endurance",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "threshold_steady_37min.zwo",
-      "old_primary": "threshold",
       "new_primary": "recovery"
     },
     {
-      "file": "threshold_steady_55min_v9.zwo",
-      "old_primary": "endurance",
-      "new_primary": "sweet_spot"
+      "file": "vo2max_4x5min_47min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
     },
     {
-      "file": "vo2_2x2min_35min.zwo",
-      "old_primary": "threshold",
+      "file": "over_under_3x30s_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "recovery_steady_33min_v2.zwo",
+      "old_primary": "endurance",
       "new_primary": "recovery"
     },
     {
-      "file": "vo2_2x30s_17min.zwo",
+      "file": "recovery_spin_56min_v3.zwo",
       "old_primary": "endurance",
-      "new_primary": "tempo"
+      "new_primary": "recovery"
     },
     {
-      "file": "vo2_steady_21min_v2.zwo",
-      "old_primary": "endurance",
+      "file": "vo2_4x1min_46min.zwo",
+      "old_primary": "vo2max",
       "new_primary": "sweet_spot"
     },
     {
-      "file": "vo2_steady_25min_v3.zwo",
-      "old_primary": "recovery",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "vo2_steady_27min.zwo",
-      "old_primary": "recovery",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "vo2_steady_38min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "tempo"
-    },
-    {
-      "file": "vo2max_1min_20x_90min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "vo2max_1min_7x_59min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "vo2max_1min_7x_60min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "vo2max_4x1min_90min_v4.zwo",
+      "file": "vo2max_billat_30_30_2x_40min.zwo",
       "old_primary": "sweet_spot",
       "new_primary": "over_under"
     },
     {
-      "file": "vo2max_4x5min_90min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
+      "file": "anaerobic_steady_40min_v3.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "vo2max"
     },
     {
-      "file": "vo2max_5x2min_120min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
+      "file": "neuromuscular_4x10s_61min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "recovery"
     },
     {
-      "file": "vo2max_billat_30_30_2x_40min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
+      "file": "anaerobic_30s30s_6x_42min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
     },
     {
-      "file": "vo2max_billat_30_30_3x_60min_v10.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "vo2max_billat_30_30_3x_60min_v8.zwo",
+      "file": "anaerobic_3x25s_54min.zwo",
       "old_primary": "endurance",
+      "new_primary": "neuromuscular"
+    },
+    {
+      "file": "recovery_steady_18min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "recovery_spin_40min_v4.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "over_under_4x30s_90min.zwo",
+      "old_primary": "over_under",
       "new_primary": "tempo_intervals"
     },
     {
+      "file": "over_under_steady_58min_v6.zwo",
+      "old_primary": "over_under",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "sweetspot_2x0min_63min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "neuromuscular"
+    },
+    {
+      "file": "threshold_steady_54min_v3.zwo",
+      "old_primary": "sweet_spot",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "anaerobic_ou_56min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "vo2max_short_30s_60s_6x_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "sweetspot_2x1min_41min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "over_under_5x20s_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "sweet_spot_steady_20min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "threshold_steady_33min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "anaerobic_30s120s_18x_92min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "endurance_steady_20min_v6.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "neuromuscular_15s270s_20x_120min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "over_under_2x5min_51min.zwo",
+      "old_primary": "tempo",
+      "new_primary": "neuromuscular"
+    },
+    {
+      "file": "vo2max_30s180s_10x_111min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "over_under_20x30s_61min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "vo2max_mixed_40min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "over_under_ou_42min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "vo2_3x1min_32min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "anaerobic_3x2min_67min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "pyramid_2x3min_28min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_3x40s_59min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "anaerobic_20s129s_6x_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "neuromuscular_15s15s_60x_60min_renamed_v46_1.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "vo2_short"
+    },
+    {
+      "file": "sweetspot_1x0min_32min_v2.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "neuromuscular_ou_42min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "over_under"
+    },
+    {
+      "file": "vo2max_1min_18x_105min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2_short_30s30s_15x_60min.zwo",
+      "old_primary": "vo2_short",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "tempo_steady_60min_renamed_v46_2.zwo",
+      "old_primary": "tempo",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "tempo_mixed_60min_renamed_v46_11.zwo",
+      "old_primary": "tempo",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "recovery_steady_32min_v4.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_2x1min_38min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_ou_70min_renamed_v46_2.zwo",
+      "old_primary": "over_under",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "over_under_3x3min_86min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "endurance_intervals"
+    },
+    {
+      "file": "neuromuscular_30s0s_6x_52min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "threshold_ladder"
+    },
+    {
+      "file": "tempo_3x30s_60min_renamed_v46_2.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "vo2max_3x3min_90min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "over_under_4x2min_40min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "anaerobic_4x30s_60min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "over_under_30s300s_12x_155min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "over_under_1min_6x_41min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "vo2max_1min_6x_40min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "tempo_mixed_40min.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "anaerobic_30s60s_8x_50min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "anaerobic_30s75s_7x_30min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_3x30s_45min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo"
+    },
+    {
+      "file": "neuromuscular_5x30s_60min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "tempo_mixed_58min_renamed_v46_2.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "recovery_steady_22min_v2.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "over_under_10s170s_12x_70min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "vo2max_1min_10x_45min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "vo2_short_4x6min_90min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2_short"
+    },
+    {
+      "file": "anaerobic_steady_56min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_2x4_under180s_over30s_47min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "neuromuscular_mixed_33min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "threshold_steady_40min_v5.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "neuromuscular_30s40s_10x_60min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "over_under"
+    },
+    {
+      "file": "over_under_10s180s_15x_62min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "vo2max_4x1min_90min_v4.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "recovery_30min_v1.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2_2x4min_28min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2max_5x6min_76min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "pyramid_ladder_1-2-3-2-1_30min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2max_billat_30_30_3x_120min_v3.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "neuromuscular_4x15s_63min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "anaerobic_6x2min_56min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_30s64s_7x_53min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "tempo_3x30s_65min_renamed_v46_3.zwo",
+      "old_primary": "sweet_spot",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "pyramid_3x2min_27min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "anaerobic_45s120s_12x_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "neuromuscular_30s60s_20x_120min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "vo2_short"
+    },
+    {
+      "file": "neuromuscular_3x30s_60min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "anaerobic_2x1min_64min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "anaerobic_1min_18x_97min_renamed_v46_1.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "neuromuscular_30s30s_10x_95min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "over_under"
+    },
+    {
+      "file": "tempo_4x1min_40min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "z2_endurance_50min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_steady_16min_v2.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "tempo_mixed_60min_renamed_v46_13.zwo",
+      "old_primary": "tempo",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "z2_endurance_55min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "pyramid_steady_23min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "neuromuscular_30s0s_6x_48min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "vo2_ladder"
+    },
+    {
+      "file": "neuromuscular_30s30s_15x_120min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "vo2_short"
+    },
+    {
+      "file": "anaerobic_ou_54min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "over_under_3x1min_29min.zwo",
+      "old_primary": "sweet_spot",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "over_under_steady_53min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "recovery_steady_22min_v3.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "recovery_2x2min_15min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "neuromuscular_2x30s_60min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "vo2max_mixed_62min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "recovery_spin_16min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "recovery_45min_v1.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "recovery_steady_15min_v3.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2max_ou_49min_renamed_v46_1.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "over_under"
+    },
+    {
+      "file": "anaerobic_18x1min_51min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_10s36s_6x_75min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "sweetspot_1x0min_40min_v2.zwo",
+      "old_primary": "endurance",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "anaerobic_1min_18x_97min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "tempo_3x3min_57min_renamed_v46_1.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "over_under_3x10s_70min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo"
+    },
+    {
+      "file": "vo2max_mixed_34min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "over_under_ou_77min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
+    },
+    {
+      "file": "recovery_steady_23min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "sweet_spot_3x2min_17min.zwo",
+      "old_primary": "endurance",
+      "new_primary": "recovery"
+    },
+    {
+      "file": "vo2max_mixed_28min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2max_1min_18x_105min_renamed_v46_1.zwo",
+      "old_primary": "over_under",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2max_2x1min_85min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "anaerobic_3x30s_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "neuromuscular_30s60s_12x_54min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "anaerobic"
+    },
+    {
+      "file": "vo2max_4x5min_58min.zwo",
+      "old_primary": "vo2max",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2max_6x0min_105min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
       "file": "vo2max_billat_30_30_3x_66min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
     },
     {
-      "file": "vo2max_ou_45min_renamed_v46_2.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
+      "file": "over_under_20s0s_6x_56min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot"
     },
     {
-      "file": "vo2max_ou_47min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
+      "file": "vo2max_4x3min_69min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
     },
     {
-      "file": "vo2max_ou_47min_renamed_v46_2.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
+      "file": "anaerobic_ou_39min.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "tempo"
     },
     {
-      "file": "vo2max_ou_49min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
+      "file": "recovery_spin_30min_v4.zwo",
+      "old_primary": "tempo",
+      "new_primary": "vo2max"
     },
     {
-      "file": "vo2max_ou_50min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
+      "file": "tempo_12x30s_71min.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "endurance"
     },
     {
-      "file": "vo2max_ou_52min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "vo2max_ou_53min_renamed_v46_1.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "vo2max_ou_55min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "vo2max_ou_56min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "vo2max_ou_70min_renamed_v46_2.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "over_under"
-    },
-    {
-      "file": "vo2max_short_10s_50s_2x_55min.zwo",
+      "file": "threshold_6x5min_90min.zwo",
       "old_primary": "threshold",
-      "new_primary": "sweet_spot"
+      "new_primary": "ftp_test"
     },
     {
-      "file": "vo2max_short_20s_40s_3x_62min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
+      "file": "anaerobic_3x30s_89min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
     },
     {
-      "file": "vo2max_short_30s_60s_6x_44min.zwo",
+      "file": "z2_endurance_50min_v4.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "over_under_3x15s_40min.zwo",
+      "old_primary": "sweet_spot",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2max_3x1min_111min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max"
+    },
+    {
+      "file": "over_under_4x15s_42min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo"
+    },
+    {
+      "file": "recovery_spin_29min.zwo",
+      "old_primary": "sweet_spot",
+      "new_primary": "ftp_test"
+    },
+    {
+      "file": "neuromuscular_3x30s_60min_renamed_v46_1.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "threshold"
+    },
+    {
+      "file": "vo2max_mixed_40min_renamed_v46_1.zwo",
       "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
+      "new_primary": "threshold"
     },
     {
-      "file": "vo2max_short_30s_60s_6x_54min.zwo",
-      "old_primary": "vo2max",
-      "new_primary": "sweet_spot"
+      "file": "neuromuscular_15s45s_18x_42min.zwo",
+      "old_primary": "neuromuscular",
+      "new_primary": "anaerobic"
     },
     {
-      "file": "z2_endurance_120min_v3.zwo",
-      "old_primary": "endurance_intervals",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "z2_endurance_120min_v4.zwo",
-      "old_primary": "endurance_intervals",
-      "new_primary": "sweet_spot"
-    },
-    {
-      "file": "z2_endurance_49min.zwo",
+      "file": "tempo_steady_55min_v2.zwo",
       "old_primary": "endurance",
-      "new_primary": "sweet_spot"
+      "new_primary": "vo2max"
     },
     {
-      "file": "z2_endurance_64min.zwo",
-      "old_primary": "threshold",
-      "new_primary": "sweet_spot"
+      "file": "tempo_steady_45min_v2.zwo",
+      "old_primary": "anaerobic",
+      "new_primary": "vo2max"
     },
     {
-      "file": "z2_endurance_67min_v2.zwo",
+      "file": "recovery_spin_54min_v8.zwo",
       "old_primary": "endurance",
-      "new_primary": "sweet_spot"
+      "new_primary": "recovery"
+    },
+    {
+      "file": "over_under_4x30s_65min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals"
+    },
+    {
+      "file": "tempo_mixed_60min_renamed_v46_1.zwo",
+      "old_primary": "tempo_intervals",
+      "new_primary": "endurance"
+    },
+    {
+      "file": "anaerobic_20s180s_10x_45min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic"
     }
   ]
 }

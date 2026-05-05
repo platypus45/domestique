@@ -111,16 +111,18 @@ _CLASS_LABEL_V104 = {
     "ftp_test":            "FTP Test",
 }
 
-# Coggan 7-zone (FTP fractions). Half-open [low, high) to match
-# training_planner's existing convention. Allen/Coggan/McGregor 2019.
+# Coggan 7-zone (FTP fractions). Half-open `[low, high)`. Top-of-zone values
+# like 0.90, 1.05, 1.20, 1.50 stay in their named zone (Z3, Z4, Z5, Z6
+# respectively). Verified against ICU UI + Hunter Allen Power Blog.
+# Allen/Coggan/McGregor 2019.
 ZONES_FTP = {
-    "z1": (0.00, 0.55),  # Active Recovery
-    "z2": (0.55, 0.75),  # Endurance
-    "z3": (0.75, 0.91),  # Z3 Tempo: 76-90% FTP (Coggan/Allen + ICU standard); half-open top
-    "z4": (0.91, 1.05),  # Z4 Threshold: 91-105% FTP (Coggan/Allen + ICU standard)
-    "z5": (1.05, 1.20),  # VO2max
-    "z6": (1.20, 1.50),  # Anaerobic
-    "z7": (1.50, 5.00),  # Neuromuscular
+    "z1": (0.00, 0.56),  # Z1 Active Recovery: <55% FTP (top inclusive at 55)
+    "z2": (0.56, 0.76),  # Z2 Endurance: 55-75%
+    "z3": (0.76, 0.91),  # Z3 Tempo: 76-90% FTP (Coggan/Allen + ICU standard)
+    "z4": (0.91, 1.06),  # Z4 Threshold: 91-105% FTP (Coggan/Allen + ICU standard)
+    "z5": (1.06, 1.21),  # Z5 VO2max: 106-120%
+    "z6": (1.21, 1.51),  # Z6 Anaerobic: 121-150%
+    "z7": (1.51, 5.00),  # Z7 Neuromuscular: >150%
 }
 
 # Sweet Spot 88-94% FTP — Frank Overton / FasCat. TrainerRoad ships 88-94%.
@@ -465,9 +467,20 @@ def compute_np(power: list[float]) -> float:
 def detect_over_under_pattern(power: list[float]) -> tuple[bool, int]:
     """Return (is_over_under, transition_count).
 
-    Hunter Allen pattern: alternates ≥1.05 → 0.85-0.92 → ≥1.05 within 90-110%
-    band. Looks for at least 3 transitions where power drops from ≥1.05 to
-    <0.92 then climbs back to ≥1.05, with each leg lasting at least 30s.
+    Hunter Allen pattern: alternates ≥1.05 → 0.85-1.00 → ≥1.05 within the OU
+    band (85-110% FTP — see ``DOSE_OVERUNDER_BAND``). Looks for at least 3
+    transitions where power drops from the over-leg to under-leg then climbs
+    back, with each leg lasting at least 30s.
+
+    Both legs are bounded:
+      * under-leg in [0.85, 1.00) — upper Z3 around 85-90% FTP. Lower bound
+        0.85 (raised from 0.70 in v1.0.5d BUG-C fix) so Z2/Z3 ramps below 85%
+        FTP don't get treated as under-legs surrounding Z6 sprints.
+      * over-leg in [1.05, 1.10] — Z4 territory above 95%. Upper bound 1.10
+        excludes Z6 sprints (≥1.20) which are anaerobic/neuromuscular work,
+        not over-under work — Z6 sprints sandwiching upper-Z3 intervals were
+        being mis-routed to over_under (BUG-C per QA-V105 validation report).
+    Power outside both legs leaves state untouched (typical recovery dips).
     """
     transitions = 0
     state = None  # "over" or "under"
@@ -476,7 +489,7 @@ def detect_over_under_pattern(power: list[float]) -> tuple[bool, int]:
     for i, p in enumerate(power):
         if p < 0:
             continue
-        if p >= OU_OVER_FRAC:
+        if OU_OVER_FRAC <= p <= DOSE_OVERUNDER_BAND[1]:
             if state == "under" and (i - leg_start) >= 30:
                 transitions += 1
                 state = "over"
@@ -484,7 +497,7 @@ def detect_over_under_pattern(power: list[float]) -> tuple[bool, int]:
             elif state is None:
                 state = "over"
                 leg_start = i
-        elif p < OU_UNDER_FRAC and p >= 0.70:
+        elif p < OU_UNDER_FRAC and p >= 0.85:
             if state == "over" and (i - leg_start) >= 30:
                 state = "under"
                 leg_start = i
@@ -673,7 +686,7 @@ def extract_features(power: list[float]) -> dict:
     # is at 91% in the canonical zone model. ``z4_upper_s`` is computed
     # directly so it can't go negative when SS time exceeds Z4 time.
     z4_lower_s = sum(1 for p in power if p >= 0 and 0.88 <= p < 0.95)
-    z4_upper_s = sum(1 for p in power if p >= 0 and 0.95 <= p < 1.05)
+    z4_upper_s = sum(1 for p in power if p >= 0 and 0.95 <= p < 1.06)
 
     # Hard segments: contiguous p ≥ 0.95, duration ≥ 15s
     hard_segs = find_contiguous_segments(power, 0.95, min_dur_s=15)
@@ -1313,10 +1326,12 @@ def _zone_dominance_class(z_seconds: dict) -> str:
         return label[top]
     # Z1-dominated: re-route by hardest non-recovery stimulus if any.
     # Each higher band has a "minimum stimulus" floor — short bursts at z4
-    # don't make a workout "threshold" unless cumulative time crosses ~5min,
-    # but ≥30 s in z6/z7 is enough to call it anaerobic/NM (those are
-    # always-brief by definition).
-    floors_s = {"z7": 30, "z6": 60, "z5": 120, "z4": 5 * 60}
+    # don't make a workout "threshold" unless cumulative time crosses ~5min.
+    # Z7 stays at 30 s (sprint segments are correctly short).
+    # Z6 floor is 180 s per Coggan/FasCat anaerobic minimum (3 min cumulative
+    # Z6+Z7); a 60-s surge is too aggressive and was misrouting endurance/
+    # tempo workouts to anaerobic (BUG-B per QA-V105 validation report).
+    floors_s = {"z7": 30, "z6": 180, "z5": 120, "z4": 5 * 60}
     for z in ("z7", "z6", "z5", "z4"):
         if z_seconds.get(z, 0) >= floors_s[z]:
             return label[z]

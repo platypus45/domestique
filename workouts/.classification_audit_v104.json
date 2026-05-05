@@ -2,130 +2,456 @@
   "schema_version": "v1.0.4",
   "transitions": [
     {
-      "file": "vo2max_1min_10x_60min_renamed_v46_1.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "vo2max",
-      "reason": "reclassified by content: peak=z5 (16.7%), z4_upper=0s, z5=16.67%"
+      "file": "anaerobic_15s105s_15x_59min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic",
+      "reason": "reclassified by content: peak=z4 (13.7%), z4_upper=180s, z5=1.69%"
     },
     {
-      "file": "vo2max_1min_15x_60min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "vo2max",
-      "reason": "reclassified by content: peak=z5 (25.0%), z4_upper=0s, z5=25.0%"
+      "file": "anaerobic_15s120s_9x_39min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z3 (63.5%), z4_upper=0s, z5=9.62%"
     },
     {
-      "file": "vo2max_5x2min_60min.zwo",
-      "old_primary": "sweet_spot",
+      "file": "anaerobic_18x1min_51min.zwo",
+      "old_primary": "over_under",
       "new_primary": "vo2max",
-      "reason": "reclassified by content: peak=z5 (22.5%), z4_upper=30s, z5=22.5%"
+      "reason": "reclassified by content: peak=z5 (17.6%), z4_upper=1080s, z5=17.56%"
     },
     {
-      "file": "vo2max_5x3min_60min.zwo",
-      "old_primary": "sweet_spot",
+      "file": "anaerobic_18x2min_60min.zwo",
+      "old_primary": "over_under",
       "new_primary": "vo2max",
-      "reason": "reclassified by content: peak=z5 (26.7%), z4_upper=30s, z5=26.67%"
+      "reason": "reclassified by content: peak=z5 (14.9%), z4_upper=1620s, z5=14.94%"
     },
     {
-      "file": "vo2max_5x3min_82min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "vo2max",
-      "reason": "reclassified by content: peak=z5 (20.1%), z4_upper=0s, z5=18.29%"
+      "file": "anaerobic_1min_6x_64min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z5 (9.4%), z4_upper=0s, z5=9.38%"
     },
     {
-      "file": "vo2max_6x2min_60min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "vo2max",
-      "reason": "reclassified by content: peak=z5 (21.7%), z4_upper=30s, z5=20.83%"
+      "file": "anaerobic_1min_8x_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic",
+      "reason": "reclassified by content: peak=z6 (13.9%), z4_upper=60s, z5=1.67%"
     },
     {
-      "file": "vo2max_billat_30_30_3x_60min_v6.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "vo2max",
-      "reason": "reclassified by content: peak=z5 (28.4%), z4_upper=0s, z5=28.45%"
+      "file": "anaerobic_20s120s_15x_66min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z3 (63.6%), z4_upper=0s, z5=7.58%"
     },
     {
-      "file": "vo2max_mixed_45min_renamed_v46_1.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "vo2max",
-      "reason": "reclassified by content: peak=z5 (17.8%), z4_upper=0s, z5=17.78%"
+      "file": "anaerobic_20s120s_18x_70min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z3 (62.9%), z4_upper=0s, z5=8.57%"
     },
     {
-      "file": "vo2max_ou_39min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "vo2max",
-      "reason": "reclassified by content: peak=z5 (25.6%), z4_upper=0s, z5=25.64%"
+      "file": "anaerobic_2x1min_64min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic",
+      "reason": "reclassified by content: peak=z3 (55.9%), z4_upper=0s, z5=0.0%"
     },
     {
-      "file": "vo2max_ou_44min.zwo",
-      "old_primary": "sweet_spot",
+      "file": "anaerobic_30s120s_18x_92min.zwo",
+      "old_primary": "over_under",
       "new_primary": "vo2max",
-      "reason": "reclassified by content: peak=z5 (18.2%), z4_upper=0s, z5=18.18%"
+      "reason": "reclassified by content: peak=z5 (16.3%), z4_upper=0s, z5=16.3%"
     },
     {
-      "file": "vo2max_ou_47min_renamed_v46_1.zwo",
-      "old_primary": "sweet_spot",
+      "file": "anaerobic_30s60s_8x_50min.zwo",
+      "old_primary": "over_under",
       "new_primary": "vo2max",
-      "reason": "reclassified by content: peak=z5 (25.5%), z4_upper=0s, z5=25.53%"
+      "reason": "reclassified by content: peak=z5 (23.6%), z4_upper=20s, z5=16.15%"
     },
     {
-      "file": "vo2max_ou_49min_renamed_v46_1.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "vo2max",
-      "reason": "reclassified by content: peak=z5 (30.6%), z4_upper=0s, z5=30.61%"
+      "file": "anaerobic_3x30s_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic",
+      "reason": "reclassified by content: peak=z3 (61.7%), z4_upper=0s, z5=0.0%"
     },
     {
-      "file": "vo2max_ou_51min.zwo",
-      "old_primary": "sweet_spot",
-      "new_primary": "vo2max",
-      "reason": "reclassified by content: peak=z5 (31.4%), z4_upper=0s, z5=31.37%"
+      "file": "anaerobic_3x30s_89min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic",
+      "reason": "reclassified by content: peak=z6 (10.7%), z4_upper=1080s, z5=6.74%"
     },
     {
-      "file": "vo2max_short_15s_30s_4x_60min.zwo",
-      "old_primary": "sweet_spot",
+      "file": "anaerobic_3x40s_59min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic",
+      "reason": "reclassified by content: peak=z6 (12.4%), z4_upper=258s, z5=10.37%"
+    },
+    {
+      "file": "anaerobic_40s280s_6x_56min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic",
+      "reason": "reclassified by content: peak=z3 (60.3%), z4_upper=0s, z5=0.0%"
+    },
+    {
+      "file": "anaerobic_45s120s_12x_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic",
+      "reason": "reclassified by content: peak=z6 (15.0%), z4_upper=0s, z5=0.0%"
+    },
+    {
+      "file": "anaerobic_4x20s_56min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic",
+      "reason": "reclassified by content: peak=z4 (16.6%), z4_upper=0s, z5=0.0%"
+    },
+    {
+      "file": "anaerobic_4x20s_61min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic",
+      "reason": "reclassified by content: peak=z4 (15.3%), z4_upper=0s, z5=0.0%"
+    },
+    {
+      "file": "anaerobic_4x2min_80min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic",
+      "reason": "reclassified by content: peak=z4 (17.3%), z4_upper=540s, z5=0.73%"
+    },
+    {
+      "file": "anaerobic_5x2min_64min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic",
+      "reason": "reclassified by content: peak=z6 (10.6%), z4_upper=420s, z5=1.55%"
+    },
+    {
+      "file": "anaerobic_5x2min_65min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic",
+      "reason": "reclassified by content: peak=z6 (11.5%), z4_upper=0s, z5=0.0%"
+    },
+    {
+      "file": "anaerobic_5x30s_56min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals",
+      "reason": "reclassified by content: peak=z4 (23.7%), z4_upper=560s, z5=4.44%"
+    },
+    {
+      "file": "anaerobic_ou_120min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z3 (55.4%), z4_upper=0s, z5=1.25%"
+    },
+    {
+      "file": "anaerobic_ou_45min_renamed_v46_1.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals",
+      "reason": "reclassified by content: peak=z3 (64.4%), z4_upper=120s, z5=9.26%"
+    },
+    {
+      "file": "anaerobic_ou_54min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "anaerobic",
+      "reason": "reclassified by content: peak=z6 (13.6%), z4_upper=258s, z5=7.62%"
+    },
+    {
+      "file": "anaerobic_ou_56min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z3 (64.3%), z4_upper=0s, z5=3.57%"
+    },
+    {
+      "file": "anaerobic_steady_54min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z3 (63.3%), z4_upper=0s, z5=3.67%"
+    },
+    {
+      "file": "neuromuscular_15s0s_8x_40min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z4 (34.7%), z4_upper=0s, z5=0.0%"
+    },
+    {
+      "file": "neuromuscular_2x1min_62min.zwo",
+      "old_primary": "over_under",
       "new_primary": "vo2max",
-      "reason": "reclassified by content: peak=z5 (31.7%), z4_upper=0s, z5=30.0%"
+      "reason": "reclassified by content: peak=z5 (18.1%), z4_upper=120s, z5=16.06%"
+    },
+    {
+      "file": "neuromuscular_2x30s_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z5 (8.1%), z4_upper=360s, z5=5.01%"
+    },
+    {
+      "file": "neuromuscular_3x2min_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z4 (16.7%), z4_upper=120s, z5=10.0%"
+    },
+    {
+      "file": "neuromuscular_3x2min_60min_renamed_v46_1.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z4 (36.4%), z4_upper=120s, z5=10.0%"
+    },
+    {
+      "file": "neuromuscular_4x15s_30min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z4 (39.4%), z4_upper=0s, z5=0.0%"
+    },
+    {
+      "file": "neuromuscular_5x30s_52min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z4 (43.7%), z4_upper=0s, z5=0.0%"
+    },
+    {
+      "file": "neuromuscular_ou_65min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z3 (61.5%), z4_upper=0s, z5=0.0%"
+    },
+    {
+      "file": "over_under_10s60s_12x_44min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "endurance",
+      "reason": "reclassified by content: peak=z4 (18.2%), z4_upper=360s, z5=0.0%"
+    },
+    {
+      "file": "over_under_10s90s_12x_50min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "endurance",
+      "reason": "reclassified by content: peak=z4 (16.0%), z4_upper=360s, z5=0.0%"
+    },
+    {
+      "file": "over_under_1min_6x_41min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z5 (14.6%), z4_upper=0s, z5=14.63%"
+    },
+    {
+      "file": "over_under_20s0s_6x_56min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z3 (44.6%), z4_upper=240s, z5=1.79%"
+    },
+    {
+      "file": "over_under_2x1min_55min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals",
+      "reason": "reclassified by content: peak=z4 (14.5%), z4_upper=420s, z5=0.0%"
+    },
+    {
+      "file": "over_under_2x1min_59min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals",
+      "reason": "reclassified by content: peak=z3 (53.0%), z4_upper=0s, z5=0.0%"
+    },
+    {
+      "file": "over_under_2x4_under180s_over30s_47min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z3 (59.6%), z4_upper=0s, z5=8.51%"
+    },
+    {
+      "file": "over_under_30s180s_8x_111min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z4 (9.0%), z4_upper=260s, z5=5.11%"
+    },
+    {
+      "file": "over_under_3x10s_70min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo",
+      "reason": "reclassified by content: peak=z3 (68.1%), z4_upper=0s, z5=0.0%"
+    },
+    {
+      "file": "over_under_3x10s_77min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo",
+      "reason": "reclassified by content: peak=z3 (57.1%), z4_upper=0s, z5=1.95%"
+    },
+    {
+      "file": "over_under_45s225s_8x_70min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z5 (10.7%), z4_upper=0s, z5=10.71%"
+    },
+    {
+      "file": "over_under_4x20s_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z3 (43.9%), z4_upper=240s, z5=1.67%"
+    },
+    {
+      "file": "over_under_4x2min_60min_renamed_v46_2.zwo",
+      "old_primary": "over_under",
+      "new_primary": "threshold",
+      "reason": "reclassified by content: peak=z4 (49.1%), z4_upper=1217s, z5=1.04%"
+    },
+    {
+      "file": "over_under_4x30s_90min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo_intervals",
+      "reason": "reclassified by content: peak=z5 (7.4%), z4_upper=740s, z5=7.41%"
+    },
+    {
+      "file": "over_under_ou_42min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "endurance",
+      "reason": "reclassified by content: peak=z4 (11.9%), z4_upper=180s, z5=0.0%"
+    },
+    {
+      "file": "over_under_ou_48min_renamed_v46_1.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z4 (29.1%), z4_upper=180s, z5=2.08%"
+    },
+    {
+      "file": "over_under_ou_53min_renamed_v46_1.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z4 (15.4%), z4_upper=0s, z5=4.08%"
+    },
+    {
+      "file": "over_under_ou_77min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z3 (61.0%), z4_upper=0s, z5=1.95%"
+    },
+    {
+      "file": "over_under_steady_51min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "tempo",
+      "reason": "reclassified by content: peak=z3 (57.4%), z4_upper=0s, z5=0.0%"
+    },
+    {
+      "file": "over_under_steady_53min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z4 (15.4%), z4_upper=0s, z5=4.08%"
+    },
+    {
+      "file": "over_under_steady_58min_v6.zwo",
+      "old_primary": "over_under",
+      "new_primary": "threshold",
+      "reason": "reclassified by content: peak=z4 (19.0%), z4_upper=327s, z5=3.25%"
+    },
+    {
+      "file": "vo2max_1min_10x_65min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max",
+      "reason": "reclassified by content: peak=z5 (15.4%), z4_upper=0s, z5=15.38%"
+    },
+    {
+      "file": "vo2max_1min_7x_59min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z5 (12.8%), z4_upper=60s, z5=12.77%"
+    },
+    {
+      "file": "vo2max_1min_7x_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "sweet_spot",
+      "reason": "reclassified by content: peak=z5 (12.5%), z4_upper=60s, z5=12.5%"
+    },
+    {
+      "file": "vo2max_4x1min_90min_v3.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max",
+      "reason": "reclassified by content: peak=z5 (9.6%), z4_upper=20s, z5=9.62%"
+    },
+    {
+      "file": "vo2max_4x1min_90min_v4.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max",
+      "reason": "reclassified by content: peak=z5 (9.6%), z4_upper=740s, z5=9.62%"
+    },
+    {
+      "file": "vo2max_6x0min_105min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max",
+      "reason": "reclassified by content: peak=z5 (8.6%), z4_upper=600s, z5=8.57%"
+    },
+    {
+      "file": "vo2max_8x0min_106min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max",
+      "reason": "reclassified by content: peak=z5 (17.0%), z4_upper=0s, z5=16.98%"
+    },
+    {
+      "file": "vo2max_billat_30_30_3x_66min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max",
+      "reason": "reclassified by content: peak=z5 (13.2%), z4_upper=0s, z5=13.23%"
+    },
+    {
+      "file": "vo2max_ou_53min_renamed_v46_1.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max",
+      "reason": "reclassified by content: peak=z5 (24.5%), z4_upper=122s, z5=22.64%"
+    },
+    {
+      "file": "vo2max_ou_55min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max",
+      "reason": "reclassified by content: peak=z5 (24.5%), z4_upper=122s, z5=22.64%"
+    },
+    {
+      "file": "vo2max_ou_70min_renamed_v46_1.zwo",
+      "old_primary": "over_under",
+      "new_primary": "vo2max",
+      "reason": "reclassified by content: peak=z5 (22.9%), z4_upper=0s, z5=22.86%"
+    },
+    {
+      "file": "vo2max_short_30s_60s_6x_60min.zwo",
+      "old_primary": "over_under",
+      "new_primary": "endurance",
+      "reason": "reclassified by content: peak=z4 (27.2%), z4_upper=660s, z5=6.67%"
     }
   ],
   "summary": {
     "total_files": 3054,
-    "transitioned": 14,
+    "transitioned": 68,
     "old_class_counts": {
-      "over_under": 198,
-      "anaerobic": 183,
-      "sweet_spot": 392,
-      "vo2max": 339,
-      "threshold": 298,
-      "sweet_spot_ladder": 43,
-      "threshold_ladder": 95,
-      "vo2_ladder": 55,
-      "endurance": 392,
-      "recovery": 221,
-      "neuromuscular": 297,
-      "tempo_ladder": 79,
-      "tempo": 114,
+      "over_under": 150,
+      "anaerobic": 131,
+      "sweet_spot": 383,
+      "vo2max": 361,
+      "endurance": 303,
+      "threshold": 386,
+      "tempo_intervals": 121,
+      "sweet_spot_ladder": 42,
+      "threshold_ladder": 93,
+      "vo2_ladder": 52,
+      "recovery": 342,
+      "neuromuscular": 243,
+      "tempo_ladder": 80,
+      "ftp_test": 74,
+      "tempo": 103,
       "null": 95,
-      "ftp_test": 35,
-      "tempo_intervals": 129,
-      "vo2_short": 89
+      "vo2_short": 94,
+      "endurance_intervals": 1
     },
     "new_class_counts": {
-      "over_under": 198,
-      "anaerobic": 183,
-      "sweet_spot": 378,
-      "vo2max": 353,
-      "threshold": 298,
-      "sweet_spot_ladder": 43,
-      "threshold_ladder": 95,
-      "vo2_ladder": 55,
-      "endurance": 392,
-      "recovery": 221,
-      "neuromuscular": 297,
-      "tempo_ladder": 79,
-      "tempo": 114,
+      "over_under": 82,
+      "anaerobic": 145,
+      "sweet_spot": 409,
+      "vo2max": 375,
+      "endurance": 307,
+      "threshold": 388,
+      "tempo_intervals": 126,
+      "sweet_spot_ladder": 42,
+      "threshold_ladder": 93,
+      "vo2_ladder": 52,
+      "recovery": 342,
+      "neuromuscular": 243,
+      "tempo_ladder": 80,
+      "ftp_test": 74,
+      "tempo": 106,
       "null": 95,
-      "ftp_test": 35,
-      "tempo_intervals": 129,
-      "vo2_short": 89
+      "vo2_short": 94,
+      "endurance_intervals": 1
     }
   }
 }

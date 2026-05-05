@@ -52,7 +52,13 @@ def _write_zwo(tmpdir: Path, name: str, segments_xml: str) -> Path:
 
 class TestZoneBands(unittest.TestCase):
     """Z3 = 76-90% FTP, Z4 = 91-105% FTP. v1.0.5c reverts IMPL-V105's
-    incorrect 87/88 boundary back to the canonical Coggan + ICU UI band."""
+    incorrect 87/88 boundary back to the canonical Coggan + ICU UI band.
+
+    v1.0.5d (BUG-A fix) extends ZONES_FTP upper bounds by +0.01 so that
+    half-open `[low, high)` semantics put exact-zone-boundary values like
+    0.90, 1.05, 1.20, 1.50 in their named zone (Z3, Z4, Z5, Z6), not the
+    next zone up. ICU UI + Hunter Allen Power Blog confirm 105% = top of
+    Z4 Threshold (not Z5 VO2max)."""
 
     def test_zone_for_088_is_z3(self):
         """88% FTP is in Z3 (top of tempo, also bottom of Sweet Spot)."""
@@ -67,13 +73,19 @@ class TestZoneBands(unittest.TestCase):
         self.assertEqual(clc._zone_for_power(0.91), "z4")
 
     def test_zones_ftp_dict(self):
-        """ZONES_FTP source-of-truth: Z3 = [0.75, 0.91), Z4 = [0.91, 1.05).
-        Half-open `[low, high)` convention so 0.90 bins to Z3 and 0.91 bins to Z4."""
-        self.assertEqual(clc.ZONES_FTP["z3"], (0.75, 0.91))
-        self.assertEqual(clc.ZONES_FTP["z4"], (0.91, 1.05))
+        """ZONES_FTP source-of-truth post v1.0.5d (BUG-A fix):
+        Z3 = [0.76, 0.91), Z4 = [0.91, 1.06), Z5 = [1.06, 1.21).
+        Half-open `[low, high)` — top-of-zone values 0.90/1.05/1.20/1.50 stay
+        in their named zone (Z3/Z4/Z5/Z6), verified against ICU UI + Coggan."""
+        self.assertEqual(clc.ZONES_FTP["z3"], (0.76, 0.91))
+        self.assertEqual(clc.ZONES_FTP["z4"], (0.91, 1.06))
+        self.assertEqual(clc.ZONES_FTP["z5"], (1.06, 1.21))
+        self.assertEqual(clc.ZONES_FTP["z6"], (1.21, 1.51))
 
     def test_zones_py_power_fracs_match(self):
-        """zones.py _POWER_FRACS Z3/Z4 must agree with ICU/Coggan canonical."""
+        """zones.py _POWER_FRACS Z3/Z4 must agree with ICU/Coggan canonical.
+        zones.py uses inclusive `[low, high]` tuples so its (0.91, 1.05) for
+        Z4 is correct under inclusive semantics — no v1.0.5d change there."""
         sys.path.insert(0, str(REPO_ROOT))
         import zones  # noqa: E402
         z3_lo, z3_hi, z3_name = zones._POWER_FRACS[2]
@@ -298,6 +310,113 @@ class TestJSONIntegrity(unittest.TestCase):
         ]
         self.assertEqual(empty, [],
                          f"{len(empty)} entries have empty display_name")
+
+
+# ── 7: v1.0.5d half-open boundary regression (BUG-A) ──────────────────────────
+
+
+class TestZoneBoundariesV105D(unittest.TestCase):
+    """Half-open `[low, high)` semantics post BUG-A fix. Top-of-zone values
+    (0.90, 1.05, 1.20, 1.50) stay in their named zone — they no longer drift
+    one zone up under the previous off-by-one upper bounds."""
+
+    def test_zone_for_top_of_z3_stays_z3(self):
+        """0.90 (top of Z3 per Coggan/ICU) → Z3."""
+        self.assertEqual(clc._zone_for_power(0.90), "z3")
+
+    def test_zone_for_top_of_z4_stays_z4(self):
+        """1.05 (top of Z4 Threshold per Coggan/ICU) → Z4. BUG-A regression
+        guard — was binning to Z5 under the previous upper bound 1.05."""
+        self.assertEqual(clc._zone_for_power(1.05), "z4")
+
+    def test_zone_for_top_of_z5_stays_z5(self):
+        """1.20 (top of Z5 VO2max) → Z5."""
+        self.assertEqual(clc._zone_for_power(1.20), "z5")
+
+    def test_zone_for_bottom_of_z4(self):
+        """0.91 (bottom of Z4 Threshold) → Z4."""
+        self.assertEqual(clc._zone_for_power(0.91), "z4")
+
+    def test_zone_for_bottom_of_z5(self):
+        """1.06 (bottom of Z5 VO2max) → Z5."""
+        self.assertEqual(clc._zone_for_power(1.06), "z5")
+
+
+# ── 8: v1.0.5d confirmed-bug regression files (cache-driven) ──────────────────
+
+
+class TestConfirmedBugsV105D(unittest.TestCase):
+    """All 8 confirmed classifier bugs from /tmp/qa_v105_validation.md must
+    resolve to non-buggy classes in the regenerated cache."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not CLASSIFICATION_PATH.exists():
+            raise unittest.SkipTest(f"missing {CLASSIFICATION_PATH}")
+        with CLASSIFICATION_PATH.open() as f:
+            cache = json.load(f)
+        cls.cls_map = cache.get("classifications", {})
+
+    def _primary(self, fname: str) -> str:
+        entry = self.cls_map.get(fname)
+        self.assertIsNotNone(entry, f"{fname} missing from classification cache")
+        return entry["primary"]
+
+    # --- BUG-A: 105% FTP top-of-Z4 was binning to Z5 → vo2max instead of threshold
+
+    def test_bug_a_vo2max_2min_7x_56min_now_threshold(self):
+        """vo2max_2min_7x_56min.zwo → threshold (BUG-A; was vo2max)."""
+        self.assertEqual(self._primary("vo2max_2min_7x_56min.zwo"), "threshold")
+
+    def test_bug_a_vo2max_mixed_40min_now_threshold(self):
+        """vo2max_mixed_40min.zwo → threshold (BUG-A; was vo2max)."""
+        self.assertEqual(self._primary("vo2max_mixed_40min.zwo"), "threshold")
+
+    def test_bug_a_vo2max_mixed_60min_now_threshold(self):
+        """vo2max_mixed_60min.zwo → threshold (BUG-A; was vo2max)."""
+        self.assertEqual(self._primary("vo2max_mixed_60min.zwo"), "threshold")
+
+    def test_bug_a_vo2max_10x2min_70min_now_threshold(self):
+        """vo2max_10x2min_70min.zwo → threshold (BUG-A; was vo2max)."""
+        self.assertEqual(self._primary("vo2max_10x2min_70min.zwo"), "threshold")
+
+    # --- BUG-B: z6 ≥60s floor in z1-dom fallback → mis-routing endurance to anaerobic
+
+    def test_bug_b_billat_30_30_not_anaerobic(self):
+        """vo2max_billat_30_30_2x_31min.zwo → NOT anaerobic (BUG-B). Billat
+        30/30 microintervals have brief Z6 surges that were tripping the 60-s
+        z6 floor; raised to 180 s (3 min Coggan/FasCat anaerobic minimum). Per
+        QA-V105 the right destination is one of vo2_short (microinterval
+        pattern), vo2max (Z5 dose) or endurance (Z2-dominant majority) — the
+        v1.0.5d boundary fix exposed Z5 dose that previously binned to Z6."""
+        self.assertNotEqual(
+            self._primary("vo2max_billat_30_30_2x_31min.zwo"), "anaerobic",
+        )
+
+    def test_bug_b_tempo_steady_45min_v2_not_anaerobic(self):
+        """tempo_steady_45min_v2.zwo → NOT anaerobic (BUG-B)."""
+        self.assertNotEqual(
+            self._primary("tempo_steady_45min_v2.zwo"), "anaerobic",
+        )
+
+    # --- BUG-C: OU detector under-leg lower bound 0.70 caught Z3 ramps
+
+    def test_bug_c_anaerobic_2x1min_64min_not_over_under(self):
+        """anaerobic_2x1min_64min.zwo → anaerobic or vo2_short (BUG-C; was
+        over_under). Z3 ramp before/after Z6 sprint was satisfying alternation
+        count under the old 0.70 under-leg lower bound."""
+        self.assertIn(
+            self._primary("anaerobic_2x1min_64min.zwo"),
+            ("anaerobic", "vo2_short"),
+        )
+
+    def test_bug_c_anaerobic_4x20s_56min_not_over_under(self):
+        """anaerobic_4x20s_56min.zwo → vo2_ladder, anaerobic, or neuromuscular
+        (BUG-C; was over_under)."""
+        self.assertIn(
+            self._primary("anaerobic_4x20s_56min.zwo"),
+            ("vo2_ladder", "anaerobic", "neuromuscular"),
+        )
 
 
 if __name__ == "__main__":

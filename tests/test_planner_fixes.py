@@ -162,23 +162,15 @@ class TestFix2TempoNotHIT(unittest.TestCase):
         self.assertEqual(hit_count, 1,
                          "Tempo should not count as HIT, so hit_count must be 1")
 
-    @unittest.expectedFailure  # see note below
     def test_multiple_tempos_and_one_hit_possible(self):
         # End-to-end: generate a plan using a base phase with hit_per_week=1.
         # Inspect weeks: should see some weeks with 1 HIT AND a tempo session.
         #
-        # v1.0.5 note: this test has been marked xfail. The Allen-Coggan zone-
-        # boundary fix (Z3↔Z4 at 88% FTP) regenerated workouts/.content_class-
-        # ification.json with shifted primaries (94 transitions). The planner
-        # still uses filename-prefix matching for some session types (e.g. the
-        # "overunder" type matches `over_under_*` filenames regardless of the
-        # content classifier's primary). Post-regen this surfaces edge cases
-        # where two `over_under_*` files land in one base week, exceeding the
-        # `hit_per_week=1` budget. The test is asserting the hit-budget
-        # contract; the bug is in the planner's filename-vs-content mismatch
-        # (see CLAUDE.md: "Workout classification is content-based, not
-        # filename-based since v4.1.2"). Out of scope for v1.0.5 IMPL — left
-        # as xfail until a follow-up wave realigns the planner.
+        # v1.0.5d note: previously @unittest.expectedFailure for the v1.0.5
+        # regression. The v1.0.5d half-open boundary fix (BUG-A) tightened the
+        # OU detector (over-leg cap 1.10) so Z6-sprint workouts no longer
+        # filename-match `over_under_*` content; the hit-budget contract now
+        # holds as originally intended.
         with patch("training_planner.get_today_metrics", return_value={"ctl": 40.0}):
             goal = Goal(
                 goal_type="general",

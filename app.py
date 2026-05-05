@@ -303,11 +303,18 @@ async def origin_check(request, call_next):
 @app.middleware("http")
 async def _security_headers(request, call_next):
     resp = await call_next(request)
+    # NOTE: 'unsafe-eval' is required by pywebview's injected bridge
+    # (webview/js/api.js:75 uses `new Function(...)` to construct the
+    # window.pywebview.api proxy after Python advertises its method list).
+    # Without it, the bridge silently fails to initialise — bug surfaces
+    # as "window.pywebview.api.save_zwo is not a function" + a CSP
+    # EvalError on the home screen. The app binds to 127.0.0.1 only and
+    # serves no third-party scripts, so unsafe-eval is acceptable here.
     resp.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; connect-src 'self' ws: wss:; "
-        "script-src 'self' 'unsafe-inline'",
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
     )
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("X-Frame-Options", "DENY")

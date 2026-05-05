@@ -13,6 +13,7 @@
 
 - Root cause: pywebview's WKWebView (macOS) silently ignores the `<a download>` attribute. The v1.0.1 fix only addressed FastAPI's route mismatch — the WebKit limitation persisted, so ZWO clicks rendered the file inline as text and FIT clicks did nothing.
 - Fix: `launcher.py` exposes a Python `JsApi` class with `save_zwo(filename, content)` / `save_fit(filename, b64_content)` via pywebview's `js_api=` bridge. Both methods open a native `webview.SAVE_DIALOG` and write to the user-chosen path. Browser-mode users (running `python launcher.py` and opening the URL in Chrome / Safari) keep the existing `<a download>` fallback path — graceful degradation.
+- **CSP fix (required for the bridge to initialise):** pywebview's injected `webview/js/api.js:75` uses `new Function(...)` to build the `window.pywebview.api` proxy after Python advertises its method list. The previous CSP `script-src 'self' 'unsafe-inline'` blocked that, so `save_zwo` / `save_fit` ended up undefined and a CSP `EvalError` surfaced on the home screen. Added `'unsafe-eval'` to the script-src directive — acceptable because the app binds to 127.0.0.1 only and serves no third-party scripts.
 - Persistence write-back fix — `/api/plan/reforecast` no longer drops `duration_min` from the JSON write-back loop. Without this, every duration scaling (both the new availability-overrides path AND the existing ZWO-swap pass) silently died on disk on the next reload. Now persisted. Same fix applied to the auto-fire path.
 
 ### Endpoints

@@ -386,46 +386,27 @@ These guardrails layered on top of TSS-driven planning are what makes Domestique
 
 The Norwegian Method (Marius Bakken / Ingebrigtsen / Bjørgen) explicitly **rejects TSS** as the primary intensity controller and substitutes blood lactate. Domestique covers parts of it but not the lactate-pacing core.
 
-| Norwegian Method element | What it controls intensity by | Domestique support |
+**Explicit non-goal:** Domestique does **not** capture or prescribe blood lactate during training. Finger-prick / earlobe-prick blood sampling adds friction we don't want — riders shouldn't have to draw blood mid-ride to use the planner. So we don't ship lactate input fields, lactate-prescribed sessions, or MLSS test protocols. Instead, we approximate the same physiology using signals already captured non-invasively from the FIT file (HR + RR-intervals → DFA α1 + autonomic load) and from the power trace (Skiba W'-balance + post-ride decoupling).
+
+| Norwegian Method element | What it controls intensity by | Domestique substitute |
 |---|---|---|
-| Lactate-controlled threshold work | Blood lactate samples DURING the workout, paced to keep lactate at 2-4 mmol/L (sub-MLSS) | ❌ Not supported. No lactate input field. **v1.1.0 roadmap.** |
-| Double-threshold sessions (AM + PM, both sub-LT2) | Volume at LT1-LT2 boundary, lactate-controlled | Partially — threshold-class workouts exist; no enforcement of double-day structure. |
-| HR as secondary intensity proxy when lactate isn't available | HR ceiling that approximates LT2 | HR ingested from FIT but threshold prescription doesn't run off it yet. |
-| MLSS testing protocol | Distinct test from FTP | ❌ Not supported. **v1.1.0 roadmap.** |
-| Conservative volume ramp (no big TSS spikes) | Total volume in hours | Tracked but TSS is the headline. |
-| Avoidance of the moderate/threshold "trap" (Seiler-style) | Sessions explicitly avoid Z3 (76-90 % FTP) | ✅ Yes — Stöggl/Sperlich 80/0/20 + G3 enforce this. |
+| Lactate-controlled threshold work | Blood lactate 2-4 mmol/L during the session | **Power-based threshold class** (95-105 % FTP) + **HR ceiling** at ~88 % HR_max → flags G6 if exceeded for >15 min in a sub-threshold session. |
+| Double-threshold sessions (AM + PM) | Two sub-LT2 sessions same day | Partially — threshold-class workouts exist; v1.1.0 adds explicit AM/PM scheduling **without lactate gating**. |
+| HR as primary intensity proxy when lactate isn't available | HR ceiling that approximates LT2 | HR ingested from FIT; v1.1.0 wires HR-ceiling into session prescription (e.g. "stay below 88 % HR_max for the steady block"). |
+| MLSS testing protocol | Distinct test from FTP, requires blood draws | **Out of scope.** FTP + Coggan-20 + Ramp tests only. |
+| Conservative volume ramp (no big TSS spikes) | Total volume in hours | ✅ Tracked + Gabbett ACWR (G4) caps weekly TSS jumps. |
+| Avoidance of the moderate/threshold "trap" (Seiler-style) | Sessions explicitly avoid Z3 (76-90 % FTP) | ✅ Stöggl/Sperlich 80/0/20 + G3 enforce this. |
+| Daily readiness signal (Bakken: lactate response to a fixed warmup) | Resting lactate or sub-LT1 sample-power | **DFA α1 from RR-intervals** — same physiological substrate (autonomic / parasympathetic withdrawal proxy). [Rogers et al. 2021](https://pubmed.ncbi.nlm.nih.gov/34547011/) shows DFA α1 tracks the LT1 boundary non-invasively from beat-to-beat HR variability. |
+| In-session "back off" signal | Lactate climbing above 4 mmol/L | **W'-balance** from Skiba 2015 differential — depleting W' captures the same "above-threshold for too long" dynamic that drives lactate accumulation. Live during ride. |
+| Workout-was-too-hard detection | Post-session lactate elevation | **Aerobic decoupling** post-ride from FIT (HR drift vs. power drift) + DFA α1 nadir during the session. |
 
-So Domestique gets the **polarization piece** and the **conservative-load piece** but not the **lactate-prescribed pacing piece**. Lactate input + lactate-prescribed sessions + double-threshold structure + MLSS testing protocol is a v1.1.0 multi-wave feature on the roadmap.
+**The honest framing**: Domestique gives you a Norwegian-Method-shaped polarization plan (80/0/20, Z3 avoidance, conservative ramp) and approximates the daily-readiness piece via DFA α1 (autonomic) and W'-balance (mechanical) — both come for free from the FIT file with the right sensors. We don't replicate the lactate-prescribed precision of the Norwegian elites, but we capture the *intent* (sub-LT2 controlled work + autonomic-fatigue-aware day-to-day adjustment) without asking the rider to bleed.
 
-#### What MLSS actually is and how you'd test it
-
-**MLSS = Maximum Lactate Steady State** — defined as the highest constant exercise intensity at which blood lactate concentration stays stable (rises by ≤ 1 mmol/L over 30 minutes of riding) ([Heck et al. 1985](https://pubmed.ncbi.nlm.nih.gov/4030186/), [Beneke 2003](https://pubmed.ncbi.nlm.nih.gov/12527975/)). Above MLSS, lactate accumulates progressively and you can't sustain the effort; below MLSS, lactate may rise initially but then plateaus.
-
-**Why MLSS is more rigorous than FTP:** FTP is a *power proxy* for the threshold ("the highest hour-power"); MLSS is a *direct physiological measurement* of the metabolic threshold (the lactate steady-state ceiling). Most riders' MLSS sits at **88–92 % of FTP**, but the relationship is athlete-specific — a 60 kg climber and a 80 kg pursuiter with the same FTP can have MLSS at 88 % and 94 % respectively because of muscle-fibre type / mitochondrial density / lactate-clearance capacity.
-
-**The protocol** (single-day binary search; older multi-day continuous-incremental protocols also valid):
-
-1. **Estimate starting power.** Start at ~85 % FTP.
-2. **Ride 30 minutes at constant power.** Power must be steady — variability invalidates the test.
-3. **Sample blood lactate at minute 10 and minute 30.** Fingertip or earlobe prick with a lancet, drop on a test strip in a portable analyser (Lactate Plus, EKF Biosen, Lactate Scout, Edge — €200–1200).
-4. **Compare:**
-   - Δlactate ≤ 1 mmol/L (and lactate < 4 mmol/L) → you're at or below MLSS. Increase power by ~5 W and retest after a recovery day.
-   - Δlactate > 1 mmol/L OR lactate climbs above 4 mmol/L → you're above MLSS. Decrease power by ~5 W and retest.
-5. **Iterate** over 3–5 sessions until you find the highest power where Δlactate ≤ 1 mmol/L over the 20-min sample window. That power **is** MLSS.
-
-**The 4 mmol/L surrogate ("anaerobic threshold" or LT2)**: if you can only afford one-point sampling, hold a steady power and look for the value at which lactate parks at ~4 mmol/L. This is a defensible approximation but not strictly equivalent — true MLSS varies between individuals from ~3 to ~7 mmol/L. Mader's classic 4-mmol/L convention is the simplification, not the gold standard.
-
-**Why daily lactate input matters (Norwegian Method's central insight):** even at well-defined MLSS, blood lactate during a sub-MLSS session can drift up if you're under-recovered, dehydrated, glycogen-depleted, or simply having an off day. The Bakken / Ingebrigtsen approach is to sample DURING the workout (every 10–20 min) and adjust power *down* if lactate exceeds the prescription (e.g., 2–3 mmol/L for an LT1 / sub-MLSS session). The session ends not when the clock says so but when lactate says so. This is the data Domestique doesn't currently capture.
-
-**v1.1.0 Norwegian Method support — design sketch:**
-
-- **Per-session lactate samples**: a small JSON list `[{minute, watts, lactate_mmol_l, hr_bpm}, ...]` attached to the planned session. Web form for manual entry; future Bluetooth integration with a digital lactate analyser if standards emerge.
-- **Threshold-prescribed sessions**: a new session class `lactate_threshold` whose target is "stay at 2.5–3.5 mmol/L for 40 min" rather than "stay at 90–95 % FTP." Power is the *output*, lactate is the *input*.
-- **Double-threshold structure**: a session pattern type that schedules AM + PM both at sub-LT2 with adequate carbs between (per Bakken's writing).
-- **MLSS test protocol class**: a `mlss_test` workout type with a structured 30-min hold + lactate-prompt instructions. Test results feed an `mlss_w` field on the profile alongside FTP, and threshold-prescribed sessions key off MLSS rather than FTP when available.
-- **HR-fallback when no lactate device**: if the rider doesn't have a lactate analyser, the LT2 surrogate is HR at ~88 % HR_max (or estimated from a separate HR-LT step test). The session prescription then says "HR < 165 bpm" instead of "lactate < 4 mmol/L." Less precise but still better than power-only.
-
-Domestique's current threshold class enforces *power-based* threshold pacing (95–105 % FTP). v1.1.0 will add a second, parallel `lactate_threshold` class that enforces *lactate-based* pacing — the two will coexist and the rider picks which framework to use based on whether they have a lactate analyser. Norwegian-Method-curious riders without a lactate analyser still benefit from the polarization piece (G3) Domestique already enforces.
+**v1.1.0 design sketch (no lactate input):**
+- **HR-ceiling-prescribed sessions**: a new session attribute `hr_ceiling_pct` derived from HR_max. Threshold-class sessions get prescribed as "≤ 88 % HR_max for the steady block" alongside the existing power target. Watch deviates → flagged in post-ride QA.
+- **Double-threshold scheduling**: explicit AM + PM same-day pattern in the planner for build/peak weeks, both sessions sub-threshold by design (e.g. 3×10 min @ 88-92 % FTP + 4×8 min @ 88-90 % FTP) — power-prescribed only.
+- **DFA α1 as the daily readiness gate**: when DFA α1 was depressed yesterday (< 0.75 sustained), today's HIT slot drops one tier — same logic as the existing TSB-based G7 cap, just keyed off autonomic data.
+- **W'-balance live readout**: already implemented at `training_live.py:500-545`; v1.1.0 adds a "back off" toast when W'-balance drops below 50 % during a sub-threshold block (signals the rider is fatiguing faster than the prescribed power suggests).
 
 ---
 

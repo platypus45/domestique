@@ -46,17 +46,70 @@ from typing import Optional
 PRIMARY_TYPES = [
     "recovery",
     "endurance",
+    "endurance_intervals",
     "tempo",
+    "tempo_intervals",
+    "tempo_ladder",
     "sweet_spot",
+    "sweet_spot_ladder",
     "threshold",
+    "threshold_ladder",
     "over_under",
     "vo2max",
     "vo2_short",
+    "vo2_ladder",
     "anaerobic",
     "neuromuscular",
     "ftp_test",
-    "mixed",
 ]
+
+# v1.0.4 — locked 16-class canonical taxonomy. See
+# /tmp/MASTER_DECISIONS_v104.md §1. ``mixed`` is dropped; structural ladder
+# variants and an interval-vs-steady split are introduced. Library JSON now
+# emits one of these 16. The legacy ``PRIMARY_TYPES`` list is retained for
+# backward-compatibility with the existing planner protocol map and existing
+# tests that pre-date the structural rewrite.
+CANONICAL_TYPES_V104 = [
+    "recovery",
+    "endurance",
+    "endurance_intervals",
+    "tempo",
+    "tempo_intervals",
+    "tempo_ladder",
+    "sweet_spot",
+    "sweet_spot_ladder",
+    "threshold",
+    "threshold_ladder",
+    "over_under",
+    "vo2max",
+    "vo2_short",
+    "vo2_ladder",
+    "anaerobic",
+    "neuromuscular",
+    "ftp_test",
+]
+
+# Human-readable structure label per canonical class (used by
+# ``generate_display_name`` for Layer 3 strings).
+_CLASS_LABEL_V104 = {
+    "recovery":            "Recovery",
+    "endurance":           "Endurance",
+    "endurance_intervals": "Endurance + Strides",
+    "tempo":               "Tempo",
+    "tempo_intervals":     "Tempo Intervals",
+    "tempo_ladder":        "Tempo Ladder",
+    "sweet_spot":          "Sweet Spot",
+    "sweet_spot_ladder":   "Sweet Spot Ladder",
+    "threshold":           "Threshold",
+    "threshold_ladder":    "Threshold Ladder",
+    "over_under":          "Over-Unders",
+    "vo2max":              "VO2max",
+    "vo2_short":           "VO2 Short",
+    "vo2_ladder":          "VO2 Ladder",
+    "anaerobic":           "Anaerobic",
+    "neuromuscular":       "Neuromuscular",
+    "ftp_test":            "FTP Test",
+}
 
 # Coggan 7-zone (FTP fractions). Half-open [low, high) to match
 # training_planner's existing convention. Allen/Coggan/McGregor 2019.
@@ -162,6 +215,90 @@ CITATIONS = {
 
 
 # ── ZWO parsing → 1-Hz power-time array ───────────────────────────────────────
+
+
+def parse_zwo_full(zwo_path: Path) -> tuple[list[float], list[str], dict, list[dict]]:
+    """Like :func:`parse_zwo_to_power_array` but additionally returns a list of
+    structured segments — one entry per ZWO ``<workout>`` child element.
+
+    The structured-segment view is what the v1.0.4 cascade uses for the ladder
+    detector and peak-zone gate, since reasoning over the original power
+    targets (rather than the 1-Hz sampling) lets us recognise rung structure
+    and warmup/cooldown framing.
+
+    Each segment dict contains:
+        kind: "warmup" | "cooldown" | "ramp" | "steady" | "intervals" |
+              "free_ride"
+        duration_s: int
+        power_low / power_high: float (for ramps/warmup/cooldown)
+        power: float (for steady — mid-power)
+        on_power / off_power / on_s / off_s / repeat: for intervals
+    """
+    power_array, tags, meta = parse_zwo_to_power_array(zwo_path)
+    tree = ET.parse(zwo_path)
+    workout_el = tree.getroot().find("workout")
+    segments: list[dict] = []
+    if workout_el is None:
+        return power_array, tags, meta, segments
+    for seg in workout_el:
+        tag = seg.tag
+        if tag in ("Warmup", "Cooldown", "Ramp"):
+            try:
+                dur = int(float(seg.get("Duration", 0) or 0))
+            except (ValueError, TypeError):
+                dur = 0
+            if dur <= 0:
+                continue
+            plo = float(seg.get("PowerLow", 0.5))
+            phi = float(seg.get("PowerHigh", 0.7))
+            kind = {"Warmup": "warmup", "Cooldown": "cooldown", "Ramp": "ramp"}[tag]
+            segments.append({
+                "kind": kind, "duration_s": dur,
+                "power_low": plo, "power_high": phi,
+                "power": (plo + phi) / 2.0,
+            })
+        elif tag == "SteadyState":
+            try:
+                dur = int(float(seg.get("Duration", 0) or 0))
+            except (ValueError, TypeError):
+                dur = 0
+            if dur <= 0:
+                continue
+            p = float(seg.get("Power", 0.65))
+            segments.append({
+                "kind": "steady", "duration_s": dur, "power": p,
+                "power_low": p, "power_high": p,
+            })
+        elif tag == "IntervalsT":
+            try:
+                reps = int(seg.get("Repeat", 1))
+            except (ValueError, TypeError):
+                reps = 1
+            try:
+                on_s = int(float(seg.get("OnDuration", 0) or 0))
+                off_s = int(float(seg.get("OffDuration", 0) or 0))
+            except (ValueError, TypeError):
+                on_s = off_s = 0
+            on_p = float(seg.get("OnPower", 1.0))
+            off_p = float(seg.get("OffPower", 0.5))
+            segments.append({
+                "kind": "intervals", "duration_s": reps * (on_s + off_s),
+                "repeat": reps, "on_s": on_s, "off_s": off_s,
+                "on_power": on_p, "off_power": off_p,
+                "power": on_p,  # peak for ladder detection
+                "power_low": min(on_p, off_p), "power_high": max(on_p, off_p),
+            })
+        elif tag == "FreeRide":
+            try:
+                dur = int(float(seg.get("Duration", 0) or 0))
+            except (ValueError, TypeError):
+                dur = 0
+            if dur > 0:
+                segments.append({
+                    "kind": "free_ride", "duration_s": dur,
+                    "power": -1.0, "power_low": -1.0, "power_high": -1.0,
+                })
+    return power_array, tags, meta, segments
 
 
 def parse_zwo_to_power_array(zwo_path: Path) -> tuple[list[float], list[str], dict]:
@@ -800,15 +937,652 @@ def classify_zwo(zwo_path: Path) -> dict:
     }
 
 
+# ── v1.0.4 structural detectors + 16-class cascade ────────────────────────────
+#
+# Cascade order locked by /tmp/MASTER_DECISIONS_v104.md §2:
+#   0. Empty <workout> → flag empty (caller-handled, before invocation)
+#   1. FreeRide-only   → flag free_ride (caller-handled, before invocation)
+#   2. FTP test
+#   3. Neuromuscular / sprint
+#   4. Ladder detector → <peak_zone>_ladder
+#   5. Peak-zone gate (≥5 min contiguous Z4+, ≥30% of work time)
+#   6. Over-Under
+#   7. VO2 (vo2_short / vo2max — vo2_ladder branch already taken at step 4)
+#   8. Threshold / sweet_spot / tempo_intervals / tempo (existing dose rules)
+#   9. Endurance / endurance_intervals
+#   10. Recovery
+#   11. Zone-dominance fallback (NEVER "mixed")
+
+
+def _peak_zone_for_power(p: float) -> str:
+    """Map a power fraction to the v1.0.4 ladder peak-zone bucket.
+
+    The four ladder buckets are aligned to the §1 taxonomy:
+        tempo:       <0.88   (Z3 floor through 87% upper bound — TEMPO ladder)
+        sweet_spot:  0.88–0.94  (Overton SS band — SWEET_SPOT ladder)
+        threshold:   0.95–1.05  (Coggan LT2 ± 5% — THRESHOLD ladder)
+        vo2:         ≥1.06       (VO2max range — VO2 ladder)
+    """
+    if p < 0.88:
+        return "tempo"
+    if p < 0.95:
+        return "sweet_spot"
+    if p < 1.06:
+        return "threshold"
+    return "vo2"
+
+
+def detect_ladder(segments: list[dict]) -> dict:
+    """Detect ascending/descending steady-state ladders per §2 spec.
+
+    A rung is a SteadyState segment (or an IntervalsT element treated as a
+    single high-power on-block at OnPower). The detector walks the segment
+    list looking for runs of ≥3 segments that monotonically ascend or descend
+    with ≥0.05 (5% FTP) gap between consecutive rungs. After the run, a
+    recovery segment ≥45 s with mean power ≤0.50 FTP terminates the set.
+    Two such cycles → ladder.
+    """
+    # Minimum rung duration to count toward the ladder structure. Below this
+    # the segment is treated as a transition/recovery (not skipped, not a
+    # rung). 30 s matches the audit's "≥30 s sustained" zone definition.
+    MIN_RUNG_S = 30
+    # Minimum rung duration that's allowed to set the peak-zone classifier.
+    # A 60 s blip to 120% FTP doesn't make a workout vo2_ladder if the
+    # ≥SUSTAINED_RUNG_S-duration rungs all peak at threshold.
+    SUSTAINED_RUNG_S = 90
+
+    # Each rung-tuple is (power, duration_s). We track durations so the
+    # peak-zone mapping can use sustained-only rungs.
+    rungs_per_set: list[list[tuple[float, int]]] = []
+    n = len(segments)
+    i = 0
+    while i < n and segments[i]["kind"] in ("warmup", "free_ride"):
+        i += 1
+
+    while i < n:
+        run: list[tuple[float, int]] = []
+        j = i
+        direction = 0
+
+        while j < n:
+            seg = segments[j]
+            if seg["kind"] in ("steady", "intervals"):
+                p = seg["power"]
+                dur = seg.get("duration_s", 0)
+                if p < 0.60 or dur < MIN_RUNG_S:
+                    break
+                if not run:
+                    run.append((p, dur))
+                    j += 1
+                    continue
+                gap = p - run[-1][0]
+                if abs(gap) < 0.05:
+                    j += 1
+                    continue
+                if direction == 0:
+                    direction = 1 if gap > 0 else -1
+                    run.append((p, dur))
+                    j += 1
+                    continue
+                if direction == 1 and gap >= 0.05:
+                    run.append((p, dur))
+                    j += 1
+                    continue
+                if direction == -1 and gap <= -0.05:
+                    run.append((p, dur))
+                    j += 1
+                    continue
+                break
+            elif seg["kind"] in ("ramp", "warmup", "cooldown", "free_ride"):
+                break
+            else:
+                break
+
+        if len(run) >= 3:
+            rungs_per_set.append(run)
+            if j < n:
+                seg = segments[j]
+                if (seg["kind"] in ("steady", "intervals")
+                        and seg["duration_s"] >= 45
+                        and seg["power"] < 0.60):
+                    j += 1
+                elif seg["kind"] in ("ramp", "cooldown") and seg["duration_s"] >= 45:
+                    j += 1
+            i = j
+        else:
+            i = max(j, i + 1)
+
+    set_count = len(rungs_per_set)
+    if set_count >= 2:
+        # Peak power for naming = absolute peak rung. Peak power for
+        # classification = highest rung that's at least SUSTAINED_RUNG_S
+        # long; falls back to absolute peak if every rung is brief.
+        all_powers = [p for rs in rungs_per_set for p, _ in rs]
+        all_floors = [min(p for p, _ in rs) for rs in rungs_per_set]
+        from collections import Counter as _C
+        rung_count = _C(len(rs) for rs in rungs_per_set).most_common(1)[0][0]
+        peak_power = max(all_powers)
+        sustained = [p for rs in rungs_per_set for p, d in rs if d >= SUSTAINED_RUNG_S]
+        classifying_peak = max(sustained) if sustained else peak_power
+        min_rung_power = min(all_floors)
+        return {
+            "is_ladder": True,
+            "rung_count": rung_count,
+            "set_count": set_count,
+            "peak_power": round(peak_power, 4),
+            "min_rung_power": round(min_rung_power, 4),
+            "peak_zone": _peak_zone_for_power(classifying_peak),
+        }
+    return {
+        "is_ladder": False,
+        "rung_count": 0,
+        "set_count": 0,
+        "peak_power": 0.0,
+        "min_rung_power": 0.0,
+        "peak_zone": "",
+    }
+
+
+def _peak_band_features(power: list[float], segments: list[dict]) -> dict:
+    """Compute peak-zone-gate features required by §2."""
+    valid_dur = sum(1 for p in power if p >= 0)
+
+    peak_band = "z1"
+    for z in ("z7", "z6", "z5", "z4", "z3", "z2"):
+        thresh = ZONES_FTP[z][0]
+        run = 0
+        found = False
+        for p in power:
+            if p >= thresh and p >= 0:
+                run += 1
+                if run >= 30:
+                    peak_band = z
+                    found = True
+                    break
+            else:
+                run = 0
+        if found:
+            break
+
+    if peak_band == "z1":
+        peak_band_pct = 0.0
+    else:
+        thresh = ZONES_FTP[peak_band][0]
+        time_at_or_above = sum(1 for p in power if p >= thresh and p >= 0)
+        peak_band_pct = round(time_at_or_above / max(valid_dur, 1), 4)
+
+    dominant_band = "z1"
+    longest = 0
+    cur_zone = None
+    cur_run = 0
+    for p in power:
+        if p < 0:
+            cur_zone = None
+            cur_run = 0
+            continue
+        z = _zone_for_power(p)
+        if z == cur_zone:
+            cur_run += 1
+        else:
+            if cur_run > longest:
+                longest = cur_run
+                dominant_band = cur_zone or "z1"
+            cur_zone = z
+            cur_run = 1
+    if cur_run > longest:
+        longest = cur_run
+        dominant_band = cur_zone or "z1"
+
+    hard_count = 0
+    longest_hard = 0
+    run = 0
+    for p in power:
+        if p >= 0.85 and p >= 0:
+            run += 1
+        else:
+            if run >= 180:
+                hard_count += 1
+                if run > longest_hard:
+                    longest_hard = run
+            run = 0
+    if run >= 180:
+        hard_count += 1
+        if run > longest_hard:
+            longest_hard = run
+
+    z4plus_run = 0
+    longest_z4plus = 0
+    z4_thresh = ZONES_FTP["z4"][0]
+    for p in power:
+        if p >= z4_thresh and p >= 0:
+            z4plus_run += 1
+            if z4plus_run > longest_z4plus:
+                longest_z4plus = z4plus_run
+        else:
+            z4plus_run = 0
+
+    work_dur = 0
+    warmup_dur = 0
+    cooldown_dur = 0
+    for seg in segments:
+        if seg["kind"] == "warmup":
+            warmup_dur += seg["duration_s"]
+        elif seg["kind"] == "cooldown":
+            cooldown_dur += seg["duration_s"]
+        else:
+            work_dur += seg["duration_s"]
+    if work_dur <= 0:
+        work_dur = max(valid_dur - warmup_dur - cooldown_dur, 1)
+
+    z4plus_time = sum(1 for p in power if p >= z4_thresh and p >= 0)
+    z4plus_in_work_pct = round(z4plus_time / max(work_dur, 1), 4)
+
+    return {
+        "peak_band": peak_band,
+        "peak_band_pct": peak_band_pct,
+        "dominant_segment_band": dominant_band,
+        "hard_segment_count": hard_count,
+        "longest_hard_segment_s": longest_hard,
+        "longest_z4plus_block_s": longest_z4plus,
+        "z4plus_in_work_pct": z4plus_in_work_pct,
+        "work_dur_s": work_dur,
+    }
+
+
+def extract_features_v104(power: list[float], segments: list[dict]) -> dict:
+    """Compute legacy + v1.0.4 features in one merged dict."""
+    legacy = extract_features(power)
+    ladder = detect_ladder(segments)
+    peak = _peak_band_features(power, segments)
+    legacy.update({
+        "is_ladder": ladder["is_ladder"],
+        "ladder_rung_count": ladder["rung_count"],
+        "ladder_set_count": ladder["set_count"],
+        "ladder_peak_power": ladder["peak_power"],
+        "ladder_min_rung_power": ladder["min_rung_power"],
+        "ladder_peak_zone": ladder["peak_zone"],
+        "peak_band": peak["peak_band"],
+        "peak_band_pct": peak["peak_band_pct"],
+        "dominant_segment_band": peak["dominant_segment_band"],
+        "hard_segment_count_v104": peak["hard_segment_count"],
+        "longest_hard_segment_s_v104": peak["longest_hard_segment_s"],
+        "longest_z4plus_block_s": peak["longest_z4plus_block_s"],
+        "z4plus_in_work_pct": peak["z4plus_in_work_pct"],
+        "work_dur_s": peak["work_dur_s"],
+    })
+    return legacy
+
+
+def _audit_reason(old_primary, new_primary, new_entry: dict) -> str:
+    """Heuristic reason for an audit transition.
+
+    Looks at the v104 features in ``new_entry`` to give a short
+    human-readable rationale. Used for the audit-trail JSON only.
+    """
+    f = (new_entry.get("features") or {})
+    if old_primary == "mixed":
+        return f"mixed→{new_primary} via zone-dominance fallback (v104 drops mixed)"
+    if new_entry.get("flags"):
+        return f"flagged: {','.join(new_entry['flags'])}"
+    if f.get("is_ladder") and new_primary and new_primary.endswith("_ladder"):
+        return (f"ladder detected: {f.get('ladder_set_count', 0)} sets × "
+                f"{f.get('ladder_rung_count', 0)} rungs, "
+                f"peak {int(round(f.get('ladder_peak_power', 0) * 100))}% FTP")
+    if old_primary != new_primary:
+        return (f"reclassified by content: peak={f.get('peak_band')} "
+                f"({f.get('peak_band_pct', 0) * 100:.1f}%), "
+                f"z4_upper={f.get('z4_upper_s', 0)}s, "
+                f"z5={f.get('z5_pct', 0)}%")
+    return ""
+
+
+def _zone_dominance_class(z_seconds: dict) -> str:
+    """Mixed-class fallback: pick the dominant-zone class. Never returns
+    ``mixed``.
+
+    The naive "max-time zone wins" rule misroutes short workouts dominated
+    by Z1 recovery between bursts (e.g. a 2×15s anaerobic session whose
+    z1=420 s, z6=30 s) to ``recovery`` — discarding the actual stimulus.
+    The refined rule:
+        * If the highest-time zone is Z2 or above, use it.
+        * If Z1 dominates BUT there is ≥30 s in any zone ≥ Z4, pick the
+          highest such zone (the workout's real stimulus).
+        * Otherwise default to ``recovery``.
+    """
+    if not z_seconds:
+        return "endurance"
+    top = max(z_seconds.items(), key=lambda kv: kv[1])[0]
+    label = {
+        "z1": "recovery",
+        "z2": "endurance",
+        "z3": "tempo",
+        "z4": "threshold",
+        "z5": "vo2max",
+        "z6": "anaerobic",
+        "z7": "neuromuscular",
+    }
+    if top != "z1":
+        return label[top]
+    # Z1-dominated: re-route by hardest non-recovery stimulus if any.
+    # Each higher band has a "minimum stimulus" floor — short bursts at z4
+    # don't make a workout "threshold" unless cumulative time crosses ~5min,
+    # but ≥30 s in z6/z7 is enough to call it anaerobic/NM (those are
+    # always-brief by definition).
+    floors_s = {"z7": 30, "z6": 60, "z5": 120, "z4": 5 * 60}
+    for z in ("z7", "z6", "z5", "z4"):
+        if z_seconds.get(z, 0) >= floors_s[z]:
+            return label[z]
+    # No meaningful hard work — true recovery / Z1+Z2 spin.
+    return "recovery"
+
+
+def classify_v104(features: dict, tags: list[str] | None = None,
+                  segments: list[dict] | None = None) -> tuple[str, float, dict]:
+    """v1.0.4 cascade — emits one of :data:`CANONICAL_TYPES_V104`."""
+    z = features["z_seconds"]
+    z1_s, z2_s, z3_s = z["z1"], z["z2"], z["z3"]
+    z4_s, z5_s, z6_s, z7_s = z["z4"], z["z5"], z["z6"], z["z7"]
+    valid_dur = features["valid_dur_s"]
+
+    secondary = {
+        "has_threshold_work": features.get("z4_upper_s", z4_s) >= FLAG_THRESHOLD_S,
+        "has_vo2_work": z5_s >= FLAG_VO2_S,
+        "has_sprints": features["sprint_segment_count"] >= FLAG_SPRINT_COUNT,
+        "has_sweet_spot_work": features["sweet_spot_s"] >= FLAG_SWEETSPOT_S,
+        "pattern_over_under": features["is_over_under"],
+        "pattern_microinterval": features["is_microinterval"],
+        "polarized_consistent": (
+            valid_dur > 0
+            and (z1_s + z2_s) / valid_dur >= POLARIZED_LOW_FRAC
+            and (z3_s + z4_s) / valid_dur < POLARIZED_MID_FRAC
+            and (z5_s + z6_s + z7_s) > 0
+        ),
+        "pyramidal_consistent": (
+            valid_dur > 0
+            and (z1_s + z2_s) / valid_dur >= PYRAMIDAL_LOW_FRAC
+            and (z3_s + z4_s) / valid_dur >= PYRAMIDAL_MID_FRAC
+            and (z5_s + z6_s + z7_s) / valid_dur >= PYRAMIDAL_HIGH_FRAC
+        ),
+        "is_ladder": features.get("is_ladder", False),
+    }
+
+    if tags and "ftp_test" in {t.lower() for t in tags}:
+        return "ftp_test", 1.0, secondary
+
+    if features["is_ftp_test"]:
+        return "ftp_test", 0.9, secondary
+
+    if features["sprint_segment_count"] >= DOSE_NM_MIN_SPRINTS and z7_s >= 20:
+        conf = _confidence_from_dose(features["sprint_segment_count"], DOSE_NM_MIN_SPRINTS, 8)
+        return "neuromuscular", conf, secondary
+
+    if features.get("is_ladder", False):
+        peak_zone = features.get("ladder_peak_zone", "")
+        ladder_class = {
+            "tempo": "tempo_ladder",
+            "sweet_spot": "sweet_spot_ladder",
+            "threshold": "threshold_ladder",
+            "vo2": "vo2_ladder",
+        }.get(peak_zone)
+        if ladder_class:
+            conf = _confidence_from_dose(features.get("ladder_set_count", 0), 2, 4)
+            return ladder_class, conf, secondary
+
+    # Peak-zone gate. Skip when the workout is a microinterval session that
+    # hits ≥8 min cumulative Z5+ — those are vo2_short workouts whose Z4+
+    # accumulators land >30% by virtue of brief on-cycles, not because the
+    # workout is structurally a long Z4 block.
+    high_intensity_s = z5_s + z6_s + z7_s
+    is_micro_vo2 = (features["is_microinterval"]
+                    and high_intensity_s >= DOSE_VO2_Z5_S)
+    longest_z4plus = features.get("longest_z4plus_block_s", 0)
+    z4plus_pct = features.get("z4plus_in_work_pct", 0.0)
+    if not is_micro_vo2 and longest_z4plus >= 5 * 60 and z4plus_pct >= 0.30:
+        band = features.get("peak_band", "z4")
+        if band == "z4":
+            # Distinguish true threshold (≥95% FTP — the LT2 ± 5% zone)
+            # from sweet-spot Z4 (90-94%, Overton's band). If most of the
+            # Z4 time sits in 90-94% rather than ≥95%, the workout is
+            # structurally sweet spot, not threshold.
+            z4_upper = features.get("z4_upper_s", 0)
+            z4_lower = features.get("z4_lower_s", 0)
+            if z4_upper >= z4_lower:
+                return "threshold", 0.85, secondary
+            return "sweet_spot", 0.85, secondary
+        if band == "z5":
+            return "vo2max", 0.85, secondary
+
+    band_s = z3_s + z4_s + min(z5_s, 60)
+    if features["is_over_under"] and band_s >= DOSE_OVERUNDER_BAND_S:
+        conf = _confidence_from_dose(features["ou_transitions"], DOSE_OVERUNDER_TRANSITIONS, 8)
+        return "over_under", conf, secondary
+
+    # vo2_short — micro-cycles with ≥8 min cumulative high-intensity time.
+    # ``high_intensity_s`` was already computed for the peak-gate guard above.
+    if features["is_microinterval"] and high_intensity_s >= DOSE_VO2_Z5_S:
+        conf = _confidence_from_dose(features["micro_cycles"], DOSE_MICRO_MIN_CYCLES, 16)
+        return "vo2_short", conf, secondary
+    if (z6_s + z7_s) >= DOSE_ANAEROBIC_Z6Z7_S and z5_s < DOSE_VO2_Z5_S:
+        conf = _confidence_from_dose(z6_s + z7_s, DOSE_ANAEROBIC_Z6Z7_S, 6 * 60)
+        return "anaerobic", conf, secondary
+    if z5_s >= DOSE_VO2_Z5_S:
+        conf = _confidence_from_dose(z5_s, DOSE_VO2_Z5_S, 16 * 60)
+        return "vo2max", conf, secondary
+
+    z4_upper_s = features.get("z4_upper_s", z4_s)
+    if z4_upper_s >= DOSE_THRESHOLD_Z4_S:
+        conf = _confidence_from_dose(z4_upper_s, DOSE_THRESHOLD_Z4_S, 30 * 60)
+        return "threshold", conf, secondary
+
+    pool_total = max(z3_s + z4_s, 1)
+    ss_ratio = features["sweet_spot_s"] / pool_total
+    if features["sweet_spot_s"] >= DOSE_SWEETSPOT_S and ss_ratio >= DOSE_SWEETSPOT_FRAC:
+        conf = _confidence_from_dose(features["sweet_spot_s"], DOSE_SWEETSPOT_S, 50 * 60)
+        return "sweet_spot", conf, secondary
+
+    if z3_s >= DOSE_TEMPO_Z3_S:
+        is_intervals = False
+        if segments:
+            steady_count = sum(1 for s in segments
+                               if s["kind"] == "steady" and 0.75 <= s["power"] < 0.90)
+            iv_count = sum(1 for s in segments if s["kind"] == "intervals")
+            if iv_count >= 1 or steady_count >= 3:
+                is_intervals = True
+        conf = _confidence_from_dose(z3_s, DOSE_TEMPO_Z3_S, 40 * 60)
+        return ("tempo_intervals" if is_intervals else "tempo"), conf, secondary
+
+    if z2_s >= DOSE_ENDURANCE_DUR_S and valid_dur >= 60 * 60:
+        has_strides = (
+            features["sprint_segment_count"] >= 2
+            or features.get("hard_segment_count_v104", 0) >= 2
+        )
+        conf = _confidence_from_dose(z2_s, DOSE_ENDURANCE_DUR_S, 90 * 60)
+        return ("endurance_intervals" if has_strides else "endurance"), conf, secondary
+
+    if valid_dur >= DOSE_RECOVERY_DUR_S and z1_s / max(valid_dur, 1) >= DOSE_RECOVERY_Z1_FRAC:
+        no_long_burst = (z3_s + z4_s + z5_s + z6_s + z7_s) == 0 \
+            or features["longest_hard_segment_s"] < DOSE_RECOVERY_BURST_S
+        if no_long_burst:
+            conf = _confidence_from_dose(z1_s / valid_dur, DOSE_RECOVERY_Z1_FRAC, 0.90)
+            return "recovery", conf, secondary
+
+    fallback = _zone_dominance_class(features["z_seconds"])
+    return fallback, 0.55, secondary
+
+
+# ── Display-name (Layer 3) generation ─────────────────────────────────────────
+
+
+def _round_minutes(seconds: int) -> int:
+    """Round seconds to the nearest minute, with floor of 1."""
+    if seconds <= 0:
+        return 0
+    return max(1, (seconds + 30) // 60)
+
+
+def _detect_interval_signature(segments: list[dict]) -> tuple[int, int, int, float] | None:
+    """Return (reps, on_s, off_s, peak_power_pct) for the dominant interval
+    pattern, or None."""
+    iv_segs = [s for s in segments if s["kind"] == "intervals"]
+    if iv_segs:
+        iv = max(iv_segs, key=lambda s: s.get("repeat", 0))
+        return iv["repeat"], iv["on_s"], iv["off_s"], iv["on_power"]
+
+    pairs: dict[tuple, int] = {}
+    body = [s for s in segments if s["kind"] == "steady"]
+    i = 0
+    while i + 1 < len(body):
+        on = body[i]
+        off = body[i + 1]
+        if on["power"] >= 0.75 and off["power"] < 0.75:
+            key = (round(on["power"], 2), round(off["power"], 2),
+                   on["duration_s"], off["duration_s"])
+            pairs[key] = pairs.get(key, 0) + 1
+            i += 2
+        else:
+            i += 1
+    if not pairs:
+        return None
+    best = max(pairs.items(), key=lambda kv: kv[1])
+    (on_p, off_p, on_s, off_s), reps = best
+    if reps < 2:
+        return None
+    return reps, on_s, off_s, on_p
+
+
+def generate_display_name(primary: str, features: dict, segments: list[dict],
+                          meta: dict | None = None) -> str:
+    """Layer-3 display name per §3 schema."""
+    duration_min = _round_minutes(features.get("duration_s", 0))
+    label = _CLASS_LABEL_V104.get(primary, primary.replace("_", " ").title())
+
+    if primary == "ftp_test":
+        return f"FTP Test {duration_min}min"
+
+    if features.get("is_ladder", False):
+        start = int(round(features.get("ladder_min_rung_power", 0.85) * 100))
+        peak = int(round(features.get("ladder_peak_power", 0.95) * 100))
+        sets = features.get("ladder_set_count", 2)
+        return f"{label} {duration_min}min — {start}→{peak}% × {sets}"
+
+    sig = _detect_interval_signature(segments)
+    if sig is not None and primary not in ("recovery", "endurance"):
+        reps, on_s, off_s, on_p = sig
+        peak_pct = int(round(on_p * 100))
+
+        def fmt(secs: int) -> str:
+            if secs >= 60 and secs % 60 == 0:
+                return f"{secs // 60}min"
+            return f"{secs}s"
+        return f"{label} {duration_min}min — {reps}×{fmt(on_s)}/{fmt(off_s)} @ {peak_pct}%"
+
+    band = features.get("dominant_segment_band") or features.get("peak_band", "z2")
+    return f"{label} {duration_min}min — {band.upper()}"
+
+
+def classify_zwo_v104(zwo_path: Path) -> dict:
+    """Parse + extract v104 features + classify. Returns the new schema dict."""
+    try:
+        power, tags, meta, segments = parse_zwo_full(zwo_path)
+    except (ET.ParseError, OSError) as e:
+        return {
+            "file": zwo_path.name,
+            "primary": "endurance",
+            "display_name": f"Endurance {zwo_path.stem}",
+            "confidence": 0.0,
+            "error": f"parse: {e}",
+            "secondary_flags": {},
+            "features": {},
+            "tags": [],
+            "flags": ["parse_error"],
+        }
+    if not power:
+        return {
+            "file": zwo_path.name,
+            "primary": None,
+            "display_name": "",
+            "confidence": 0.0,
+            "secondary_flags": {},
+            "features": {"duration_s": 0, "valid_dur_s": 0},
+            "tags": tags,
+            "flags": ["empty"],
+        }
+    valid = [p for p in power if p >= 0]
+    if not valid or all(s["kind"] in ("free_ride", "warmup", "cooldown") for s in segments):
+        duration_min = _round_minutes(len(power))
+        return {
+            "file": zwo_path.name,
+            "primary": None,
+            "display_name": f"Free Ride {duration_min}min",
+            "confidence": 0.0,
+            "secondary_flags": {},
+            "features": {"duration_s": len(power), "valid_dur_s": len(valid)},
+            "tags": tags,
+            "flags": ["free_ride"],
+        }
+
+    features = extract_features_v104(power, segments)
+    primary, confidence, secondary = classify_v104(features, tags=tags, segments=segments)
+    display_name = generate_display_name(primary, features, segments, meta=meta)
+
+    feat_out = {
+        "duration_s": features["duration_s"],
+        "valid_dur_s": features["valid_dur_s"],
+        "z1_pct": features["z1_pct"],
+        "z2_pct": features["z2_pct"],
+        "z3_pct": features["z3_pct"],
+        "z4_pct": features["z4_pct"],
+        "z5_pct": features["z5_pct"],
+        "z6_pct": features["z6_pct"],
+        "z7_pct": features["z7_pct"],
+        "z4_lower_s": features.get("z4_lower_s", 0),
+        "z4_upper_s": features.get("z4_upper_s", 0),
+        "sweet_spot_pct": features["sweet_spot_pct"],
+        "hard_segment_count": features["hard_segment_count"],
+        "longest_hard_segment_s": features["longest_hard_segment_s"],
+        "sprint_segment_count": features["sprint_segment_count"],
+        "np_fraction": features["np_fraction"],
+        "if_fraction": features["if_fraction"],
+        "peak_power_fraction": features["peak_power_fraction"],
+        "ou_transitions": features["ou_transitions"],
+        "micro_cycles": features["micro_cycles"],
+        "is_ladder": features.get("is_ladder", False),
+        "ladder_rung_count": features.get("ladder_rung_count", 0),
+        "ladder_set_count": features.get("ladder_set_count", 0),
+        "ladder_peak_power": features.get("ladder_peak_power", 0.0),
+        "ladder_peak_zone": features.get("ladder_peak_zone", ""),
+        "peak_band": features.get("peak_band", ""),
+        "peak_band_pct": features.get("peak_band_pct", 0.0),
+        "dominant_segment_band": features.get("dominant_segment_band", ""),
+        "longest_z4plus_block_s": features.get("longest_z4plus_block_s", 0),
+        "z4plus_in_work_pct": features.get("z4plus_in_work_pct", 0.0),
+        "work_dur_s": features.get("work_dur_s", 0),
+    }
+
+    return {
+        "file": zwo_path.name,
+        "primary": primary,
+        "display_name": display_name,
+        "confidence": round(confidence, 3),
+        "secondary_flags": secondary,
+        "features": feat_out,
+        "tags": tags,
+    }
+
+
 # ── Library-wide pass + cache ─────────────────────────────────────────────────
 
 
-def classify_all(workout_dir: Path) -> dict:
-    """Classify every ZWO in workout_dir. Returns dict keyed by basename."""
+def classify_all(workout_dir: Path, *, use_v104: bool = True) -> dict:
+    """Classify every ZWO in workout_dir. Returns dict keyed by basename.
+
+    With ``use_v104=True`` (default) emits the v1.0.4 16-class schema.
+    """
+    classifier = classify_zwo_v104 if use_v104 else classify_zwo
     results: dict[str, dict] = {}
     files = sorted(workout_dir.glob("*.zwo"))
     for i, zwo in enumerate(files, 1):
-        results[zwo.name] = classify_zwo(zwo)
+        results[zwo.name] = classifier(zwo)
         if i % 500 == 0:
             print(f"  …classified {i}/{len(files)}", file=sys.stderr)
     return results
@@ -972,15 +1746,75 @@ def main():
 
     if args.all:
         print(f"Classifying all ZWO files in {args.workout_dir} …", file=sys.stderr)
-        classifications = classify_all(args.workout_dir)
+        # v1.0.4: load prior cache (for audit-trail "was → now" diff) BEFORE
+        # we overwrite it.
+        prior = load_cache(args.output) or {}
+        prior_classifications = prior.get("classifications", {})
+        classifications = classify_all(args.workout_dir, use_v104=True)
+
+        # Merge any user-curated metadata from the prior cache that the new
+        # classifier doesn't itself produce. Specifically tags added by
+        # post-classification scripts (e.g. is_ronnestad from
+        # reclassify_mixed_v461.py) — these aren't in the ZWO <tags>
+        # element so the parser doesn't see them.
+        for fname, new_entry in classifications.items():
+            old = prior_classifications.get(fname, {})
+            old_tags = old.get("tags") or []
+            new_tags = list(new_entry.get("tags") or [])
+            for t in old_tags:
+                if t not in new_tags:
+                    new_tags.append(t)
+            new_entry["tags"] = new_tags
+
         write_cache(args.output, classifications, args.workout_dir)
         print(f"Wrote {len(classifications)} classifications → {args.output}", file=sys.stderr)
-        # Distribution summary
-        dist = Counter(c["primary"] for c in classifications.values())
+
+        # Audit trail — write classification_audit_v104.json with class
+        # transitions for every file whose primary changed.
+        audit_path = args.output.parent / ".classification_audit_v104.json"
+        transitions: list[dict] = []
+        for fname, new_entry in classifications.items():
+            old = prior_classifications.get(fname, {})
+            old_primary = old.get("primary")
+            new_primary = new_entry.get("primary")
+            if old_primary != new_primary:
+                transitions.append({
+                    "file": fname,
+                    "old_primary": old_primary,
+                    "new_primary": new_primary,
+                    "reason": _audit_reason(old_primary, new_primary, new_entry),
+                })
+        from collections import Counter as _AC
+        with audit_path.open("w", encoding="utf-8") as f:
+            json.dump({
+                "schema_version": "v1.0.4",
+                "transitions": transitions,
+                "summary": {
+                    "total_files": len(classifications),
+                    "transitioned": len(transitions),
+                    "old_class_counts": dict(_AC(
+                        prior_classifications.get(fn, {}).get("primary")
+                        for fn in classifications)),
+                    "new_class_counts": dict(_AC(
+                        c.get("primary") for c in classifications.values())),
+                },
+            }, f, indent=2)
+        print(f"Wrote audit trail ({len(transitions)} transitions) → {audit_path}",
+              file=sys.stderr)
+
+        dist = Counter(c.get("primary") for c in classifications.values())
         print("\nPrimary distribution:")
-        for k in PRIMARY_TYPES:
+        for k in CANONICAL_TYPES_V104:
             n = dist.get(k, 0)
-            print(f"  {k:>14}  {n:>5}  {100*n/max(len(classifications),1):>5.1f}%")
+            print(f"  {k:>22}  {n:>5}  {100*n/max(len(classifications),1):>5.1f}%")
+        empty = sum(1 for c in classifications.values()
+                    if "empty" in (c.get("flags") or []))
+        free = sum(1 for c in classifications.values()
+                   if "free_ride" in (c.get("flags") or []))
+        if empty:
+            print(f"  {'(empty)':>22}  {empty:>5}  flagged, not classified")
+        if free:
+            print(f"  {'(free_ride)':>22}  {free:>5}  flagged, not classified")
         return 0
 
     if args.golden_eval:

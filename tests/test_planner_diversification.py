@@ -241,6 +241,13 @@ def test_polarized_distribution_within_5pp_of_target(plan_24w_7day, library):
         )
 
 
+@pytest.mark.xfail(
+    reason="v1.0.4 IMPL-CLASSIFIER: the `mixed` content class is dropped from "
+           "the canonical taxonomy (MASTER §1) — every former-mixed file has "
+           "been re-routed by zone-dominance fallback. The 1069-strong mixed "
+           "pool no longer exists.",
+    strict=False,
+)
 def test_mixed_content_class_used_in_z2_slots(plan_24w_7day, library):
     """Regression for training_planner.py:1769 fix — Mixed is now in z2
     fallback. After v4.5 a non-trivial fraction of endurance-side sessions

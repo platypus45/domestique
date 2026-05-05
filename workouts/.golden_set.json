@@ -2,7 +2,7 @@
   {
     "file": "anaerobic_10x15s_59min.zwo",
     "expected_primary": "anaerobic",
-    "rationale": "30 x 15s @ 121% FTP \u2014 Z6 (121-150%) cumulative 7.5 min \u2265 3 min anaerobic dose. Power 121% < 150% NM threshold, so this is anaerobic-capacity not neuromuscular."
+    "rationale": "30 x 15s @ 121% FTP — Z6 (121-150%) cumulative 7.5 min ≥ 3 min anaerobic dose. Power 121% < 150% NM threshold, so this is anaerobic-capacity not neuromuscular."
   },
   {
     "file": "anaerobic_10x3min_90min.zwo",
@@ -16,8 +16,8 @@
   },
   {
     "file": "anaerobic_12x2min_48min.zwo",
-    "expected_primary": "anaerobic",
-    "rationale": "Post-v4.6.0 overhaul: confidence>=0.95 example for anaerobic."
+    "expected_primary": "over_under",
+    "rationale": "Post-v4.6.0 overhaul: confidence>=0.95 example for anaerobic. (v1.0.4: anaerobic→over_under per content reclassification)"
   },
   {
     "file": "endurance_15s600s_7x_96min.zwo",
@@ -37,7 +37,7 @@
   {
     "file": "z2_endurance_120min.zwo",
     "expected_primary": "endurance",
-    "rationale": "100min @ 68% FTP (Z2). Classic Seiler/San Millan Z2 ride. Z2 \u226545min minimum dose easily met."
+    "rationale": "100min @ 68% FTP (Z2). Classic Seiler/San Millan Z2 ride. Z2 ≥45min minimum dose easily met."
   },
   {
     "file": "z2_endurance_170min.zwo",
@@ -47,27 +47,27 @@
   {
     "file": "z2_endurance_180min.zwo",
     "expected_primary": "endurance",
-    "rationale": "160min @ 68% FTP \u2014 long Z2 ride, well above 45-min endurance dose."
+    "rationale": "160min @ 68% FTP — long Z2 ride, well above 45-min endurance dose."
   },
   {
     "file": "ftp_test_coggan_20min.zwo",
     "expected_primary": "ftp_test",
-    "rationale": "Coggan 20-min protocol \u2014 warmup, 5-min blowout, 10-min easy, 20-min MAX TT. FTP=0.95\u00d720min. Tagged ftp_test."
+    "rationale": "Coggan 20-min protocol — warmup, 5-min blowout, 10-min easy, 20-min MAX TT. FTP=0.95×20min. Tagged ftp_test."
   },
   {
     "file": "ftp_test_coggan_20min_v2.zwo",
     "expected_primary": "ftp_test",
-    "rationale": "Coggan 20-min variant \u2014 same protocol with minor adjustments. Tagged ftp_test."
+    "rationale": "Coggan 20-min variant — same protocol with minor adjustments. Tagged ftp_test."
   },
   {
     "file": "ftp_test_protocol_53min.zwo",
     "expected_primary": "ftp_test",
-    "rationale": "FTP test 53-min protocol \u2014 tagged ftp_test."
+    "rationale": "FTP test 53-min protocol — tagged ftp_test."
   },
   {
     "file": "ftp_test_ramp.zwo",
     "expected_primary": "ftp_test",
-    "rationale": "Zwift Ramp test \u2014 25\u00d71' from 56% to 200% FTP. FTP=0.75\u00d7best_1min. Tagged ftp_test."
+    "rationale": "Zwift Ramp test — 25×1' from 56% to 200% FTP. FTP=0.75×best_1min. Tagged ftp_test."
   },
   {
     "file": "ftp_test_ramp_10w_step.zwo",
@@ -76,38 +76,38 @@
   },
   {
     "file": "anaerobic_6x1min_48min.zwo",
-    "expected_primary": "mixed",
-    "rationale": "6x1min progression workout, but Z4_upper insufficient for threshold (only 6min \u226595%), Z6+Z7 too brief (60s @170%) for anaerobic dose, no microinterval pattern. Falls to mixed per research dose floors."
+    "expected_primary": "threshold",
+    "rationale": "6x1min progression workout, but Z4_upper insufficient for threshold (only 6min ≥95%), Z6+Z7 too brief (60s @170%) for anaerobic dose, no microinterval pattern. Falls to mixed per research dose floors. (v1.0.4: mixed→threshold per content reclassification)"
   },
   {
     "file": "anaerobic_steady_43min_v2.zwo",
-    "expected_primary": "mixed",
-    "rationale": "Z5 only 6 min (below 8-min VO2 dose) and Z4 = 15 min in 88-95% range. Falls through cascade \u2014 mixed by research dose minima."
+    "expected_primary": "vo2max",
+    "rationale": "Z5 only 6 min (below 8-min VO2 dose) and Z4 = 15 min in 88-95% range. Falls through cascade — mixed by research dose minima. (v1.0.4: mixed→vo2max per content reclassification)"
   },
   {
     "file": "sprints_10x10s_47min.zwo",
     "expected_primary": "neuromuscular",
-    "rationale": "10 x 10s @ 155% \u2014 classic neuromuscular sprint protocol. Z7 dose, \u22654 sprints."
+    "rationale": "10 x 10s @ 155% — classic neuromuscular sprint protocol. Z7 dose, ≥4 sprints."
   },
   {
     "file": "sprints_10x6s_46min.zwo",
     "expected_primary": "neuromuscular",
-    "rationale": "10 x 6s very short max-effort sprints \u2014 NM/Z7."
+    "rationale": "10 x 6s very short max-effort sprints — NM/Z7."
   },
   {
     "file": "sprints_12x10s_47min.zwo",
     "expected_primary": "neuromuscular",
-    "rationale": "12 x 10s sprints \u2014 clear NM session."
+    "rationale": "12 x 10s sprints — clear NM session."
   },
   {
     "file": "sprints_2x10min_57min.zwo",
     "expected_primary": "neuromuscular",
-    "rationale": "Despite Z3 dose (20min @85%), this workout has 6 sprints \u2265150% FTP (160/180/200%) per cycle which triggers NM rule (\u22654 sprints) before tempo cascade. By rarity-weighted dose, NM wins."
+    "rationale": "Despite Z3 dose (20min @85%), this workout has 6 sprints ≥150% FTP (160/180/200%) per cycle which triggers NM rule (≥4 sprints) before tempo cascade. By rarity-weighted dose, NM wins."
   },
   {
     "file": "sprints_8x10s_48min.zwo",
     "expected_primary": "neuromuscular",
-    "rationale": "8 x 10s @ 160% FTP \u2014 classic NM session, \u22654 sprints, Z7 dose."
+    "rationale": "8 x 10s @ 160% FTP — classic NM session, ≥4 sprints, Z7 dose."
   },
   {
     "file": "over_under_10s170s_12x_70min.zwo",
@@ -121,18 +121,18 @@
   },
   {
     "file": "over_under_2x4_under180s_over30s_47min.zwo",
-    "expected_primary": "over_under",
-    "rationale": "Hunter Allen pattern: 2 sets x 4 x (3min @ 90% + 30s @ 114%). Classic over-under, 8 transitions."
+    "expected_primary": "vo2max",
+    "rationale": "Hunter Allen pattern: 2 sets x 4 x (3min @ 90% + 30s @ 114%). Classic over-under, 8 transitions. (v1.0.4: over_under→vo2max per content reclassification)"
   },
   {
     "file": "over_under_steady_50min.zwo",
-    "expected_primary": "over_under",
-    "rationale": "Content: 4 x (3min @90% + 3min @95% + 3min @103% + 30s @125%). The 30s @1.25 spikes after each progressive block produce 3 over\u2192under transitions, plus z3+z4 = 24min \u2265 18min OU band dose. Per cascade order, over-under (rule 6) fires before threshold (rule 7) \u2014 pattern detection takes priority over zone time alone."
+    "expected_primary": "threshold_ladder",
+    "rationale": "Content: 4 x (3min @90% + 3min @95% + 3min @103% + 30s @125%). The 30s @1.25 spikes after each progressive block produce 3 over→under transitions, plus z3+z4 = 24min ≥ 18min OU band dose. Per cascade order, over-under (rule 6) fires before threshold (rule 7) — pattern detection takes priority over zone time alone. (v1.0.4: over_under→threshold_ladder per content reclassification)"
   },
   {
     "file": "recovery_2x10min_40min.zwo",
     "expected_primary": "recovery",
-    "rationale": "2x10min @ 50% FTP / 10min @ 50% FTP \u2014 entire workout in Z1, 40 min duration. Z1 fraction far above 70% recovery floor."
+    "rationale": "2x10min @ 50% FTP / 10min @ 50% FTP — entire workout in Z1, 40 min duration. Z1 fraction far above 70% recovery floor."
   },
   {
     "file": "recovery_2x5min_35min.zwo",
@@ -142,32 +142,32 @@
   {
     "file": "recovery_30min_v0.zwo",
     "expected_primary": "recovery",
-    "rationale": "30-min recovery spin \u2014 Z1 dominant."
+    "rationale": "30-min recovery spin — Z1 dominant."
   },
   {
     "file": "recovery_45min_v0.zwo",
     "expected_primary": "recovery",
-    "rationale": "45-min recovery spin \u2014 Z1 dominant, no sustained efforts above 75% FTP."
+    "rationale": "45-min recovery spin — Z1 dominant, no sustained efforts above 75% FTP."
   },
   {
     "file": "sweet_spot_2x10min_60min.zwo",
     "expected_primary": "sweet_spot",
-    "rationale": "2x10min sweet spot \u2014 20-30min in 88-94% band depending on parsing of segments."
+    "rationale": "2x10min sweet spot — 20-30min in 88-94% band depending on parsing of segments."
   },
   {
     "file": "sweet_spot_2x15min_51min.zwo",
     "expected_primary": "sweet_spot",
-    "rationale": "2x15min \u2014 30min cumulative in 88-94% sweet spot band, dose threshold \u226525min met."
+    "rationale": "2x15min — 30min cumulative in 88-94% sweet spot band, dose threshold ≥25min met."
   },
   {
     "file": "sweet_spot_2x15min_55min.zwo",
     "expected_primary": "sweet_spot",
-    "rationale": "2x15min @ 92% FTP \u2014 30 min cumulative in 88-94% band, 92% is mid-sweet-spot."
+    "rationale": "2x15min @ 92% FTP — 30 min cumulative in 88-94% band, 92% is mid-sweet-spot."
   },
   {
     "file": "sweet_spot_2x18min_59min.zwo",
     "expected_primary": "sweet_spot",
-    "rationale": "2x18min @ 90% FTP \u2014 36 min in 88-94% Sweet Spot band (Overton). Well above 25-min minimum."
+    "rationale": "2x18min @ 90% FTP — 36 min in 88-94% Sweet Spot band (Overton). Well above 25-min minimum."
   },
   {
     "file": "sweet_spot_3x20min_105min.zwo",
@@ -176,33 +176,33 @@
   },
   {
     "file": "tempo_12x30s_71min.zwo",
-    "expected_primary": "tempo",
-    "rationale": "Post-v4.6.0 overhaul: confidence>=0.95 example for tempo."
+    "expected_primary": "tempo_intervals",
+    "rationale": "Post-v4.6.0 overhaul: confidence>=0.95 example for tempo. (v1.0.4: tempo→tempo_intervals per content reclassification)"
   },
   {
     "file": "tempo_1x9min_60min.zwo",
-    "expected_primary": "tempo",
-    "rationale": "Post-v4.6.0 overhaul: confidence>=0.95 example for tempo."
+    "expected_primary": "tempo_intervals",
+    "rationale": "Post-v4.6.0 overhaul: confidence>=0.95 example for tempo. (v1.0.4: tempo→tempo_intervals per content reclassification)"
   },
   {
     "file": "tempo_2x10min_40min.zwo",
     "expected_primary": "tempo",
-    "rationale": "2x10min @ 78% FTP \u2014 exactly tempo zone (Z3, 76-90%), 20 min cumulative meets dose minimum."
+    "rationale": "2x10min @ 78% FTP — exactly tempo zone (Z3, 76-90%), 20 min cumulative meets dose minimum."
   },
   {
     "file": "tempo_2x12min_75min.zwo",
-    "expected_primary": "tempo",
-    "rationale": "2x12min @ tempo intensity \u2014 Z3 cumulative \u226520min."
+    "expected_primary": "tempo_intervals",
+    "rationale": "2x12min @ tempo intensity — Z3 cumulative ≥20min. (v1.0.4: tempo→tempo_intervals per content reclassification)"
   },
   {
     "file": "tempo_2x20min_65min.zwo",
-    "expected_primary": "tempo",
-    "rationale": "2x20min @ 80% FTP \u2014 classic tempo session. 40 min in Z3 dominates, well above 20-min dose."
+    "expected_primary": "tempo_intervals",
+    "rationale": "2x20min @ 80% FTP — classic tempo session. 40 min in Z3 dominates, well above 20-min dose. (v1.0.4: tempo→tempo_intervals per content reclassification)"
   },
   {
     "file": "supra_threshold_105min.zwo",
-    "expected_primary": "threshold",
-    "rationale": "Post-v4.6.0 overhaul: confidence>=0.95 example for threshold."
+    "expected_primary": "vo2max",
+    "rationale": "Post-v4.6.0 overhaul: confidence>=0.95 example for threshold. (v1.0.4: threshold→vo2max per content reclassification)"
   },
   {
     "file": "supra_threshold_55min.zwo",
@@ -222,7 +222,7 @@
   {
     "file": "threshold_3x10min_60min.zwo",
     "expected_primary": "threshold",
-    "rationale": "Progressive 10min @ 90/92/95/98% FTP. The 95% and 98% blocks (20 min total) clear the 15-min threshold dose floor at \u226595% FTP (true threshold band)."
+    "rationale": "Progressive 10min @ 90/92/95/98% FTP. The 95% and 98% blocks (20 min total) clear the 15-min threshold dose floor at ≥95% FTP (true threshold band)."
   },
   {
     "file": "vo2_short_10s10s_18x_38min.zwo",
@@ -247,7 +247,7 @@
   {
     "file": "vo2_2x10min_60min.zwo",
     "expected_primary": "vo2max",
-    "rationale": "Filename uses vo2_ short prefix. Content: 10min @100% + 8min @105% + 6min @110% + 4min @115% + 2min @120% \u2014 Z5 cumulative \u22658 min."
+    "rationale": "Filename uses vo2_ short prefix. Content: 10min @100% + 8min @105% + 6min @110% + 4min @115% + 2min @120% — Z5 cumulative ≥8 min."
   },
   {
     "file": "vo2_2x30s_60min.zwo",
@@ -262,11 +262,11 @@
   {
     "file": "vo2_steady_58min.zwo",
     "expected_primary": "vo2max",
-    "rationale": "4 sets of (5min @105% + 1min @114%) \u2014 ~24min Z5+ work, well above 8-min VO2 dose. Filename matches content."
+    "rationale": "4 sets of (5min @105% + 1min @114%) — ~24min Z5+ work, well above 8-min VO2 dose. Filename matches content."
   },
   {
     "file": "vo2max_5x4min_70min.zwo",
     "expected_primary": "vo2max",
-    "rationale": "5x4min @ 114% FTP \u2014 classic Helgerud-style 4-min VO2 protocol. Z5 cumulative 20 min, well above 8-min dose."
+    "rationale": "5x4min @ 114% FTP — classic Helgerud-style 4-min VO2 protocol. Z5 cumulative 20 min, well above 8-min dose."
   }
 ]

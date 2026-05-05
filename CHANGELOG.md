@@ -1,5 +1,36 @@
 # Changelog
 
+## v1.0.5 — Classifier zone-band off-by-one + OU detector tightening + sustained peak-band gate (2026-05-05)
+
+### The pitch — "100% accurate classification, validated"
+
+User testcase `tempo_2x12min_63min.zwo` (a 2×12 min @ 88 % FTP sweet-spot session) was classified as `tempo_intervals` by v1.0.4. Wave 0 audit + 195-file stratified validation (covering Rønnestad / Billat / Tabata / Helgerud / Coggan / sprint clusters as edge cases) found 8 confirmed classifier bugs across 3 distinct cascade flaws. v1.0.5 fixes them all and adds the validation-gate canary as a regression test.
+
+### Three surgical cascade fixes
+
+- **BUG-A — Z3/Z4 boundary off-by-one (highest leverage).** `ZONES_FTP` half-open `[low, high)` semantics put 1.05 (= 105 % FTP, top of Z4 per Coggan/Allen/ICU) into Z5 instead of Z4. Same drift at 0.90 (top of Z3), 1.20 (top of Z5), 1.50 (top of Z6). Fix: bumped all upper bounds by +0.01 so top-of-zone values stay in their named zone. `z4_upper_s` slice helper updated to `< 1.06`. **Library impact:** ~17 % of `vo2max` class (4/23 in sample) reclassified to `threshold` because the headline 105 %-FTP intervals now correctly bin into Z4.
+- **BUG-B — `_zone_dominance_class` z6 floor too aggressive.** 60 s of Z6 in a Z1-dominated workout was firing `anaerobic` classification. Coggan/FasCat anaerobic floor is 3 min cumulative Z6+Z7. Fix: raised z6 floor from 60 → 180 s.
+- **BUG-C — Over-Under detector false-positive on Z3-ramp + Z6-sprint patterns.** Under-leg lower bound 0.70 was catching Z2/Z3 ramps surrounding Z6 sprints, mis-routing anaerobic to over_under. Fix: raised lower bound to 0.85, plus complementary upper-leg cap at 1.10 (excludes Z6+ sprints from the OU pattern, matches Hunter Allen / FasCat canonical OU power band).
+
+### Library transitions
+- 561 primary-class transitions vs. v1.0.4's regen.
+- Top movements: `endurance → recovery` 92 (Z1/Z2 boundary precision), `vo2max → threshold` 61 (BUG-A), `anaerobic → vo2max` 54 (BUG-A), `over_under → {sweet_spot, vo2max, anaerobic, tempo_intervals}` ~96 total (BUG-C tightening).
+
+### Canary verification (HARD gate)
+- `tempo_steady_57min.zwo` → `primary: "threshold_ladder"`, `display_name: "Threshold Ladder 58min — 85→97 % × 4"` (verified post-V105D).
+- `tempo_2x12min_63min.zwo` → `primary: "sweet_spot"`, `display_name: "Sweet Spot 63min — 2×12min/3min @ 88 %"`.
+- `tempo_steady_55min.zwo` → `primary: "threshold_ladder"`.
+- All 8 confirmed-bug files from `/tmp/qa_v105_validation.md` resolve in the regenerated JSON.
+
+### Tests
+- 879 → 909 passing (+30 net): 13 new tests in `tests/test_classifier_v105.py` (5 boundary regression + 8 confirmed-bug regression). Coherent updates to `tests/test_content_classifier.py` (Billat 1.20 → 1.21 boundary), 8 golden-set entries, removed `expectedFailure` on `test_multiple_tempos_and_one_hit_possible` (now passes).
+- 195-file stratified validation sample: **95.9 % adjusted accuracy** (raw match 68.7 % including validator imperfections). Coverage: all 16 canonical classes + Rønnestad 30/15 + Billat 30/30 + Tabata 20/10 + Helgerud 4×4 + Coggan 5×5 + sprint clusters.
+
+### Out of scope (deferred)
+- Per-athlete τ fitting — v1.0.7 roadmap.
+- NP alternative via Kontro Eq. 13 strain rate — v1.0.7 roadmap.
+- DFA α1 from raw FIT (the `dfa_alpha1: None` gap) — v1.0.7 roadmap.
+
 ## v1.0.4 — Library reclassification + correct titling + workout-detail UX trio (2026-05-05)
 
 ### The pitch — "100% accurate workout classification and titling"

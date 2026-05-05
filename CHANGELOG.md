@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.0.2 — Update notification + first-boot migration toast + upgrade docs (2026-05-05)
+
+### User-facing — three coordinated pieces, all centred on the promise that rider data survives every install
+
+- **Update-check banner** on the home page — `GET /api/update/check` polls the GitHub Releases API (cached 6h at `~/.domestique/update_check_cache.json`), filters assets by `sys.platform` (`.dmg` for macOS, `.zip`/`.exe` for Windows). The banner displays the EXACT copy stating which rider data is preserved across the update — rides, training plan, FTP history, wellness logs, profile. `[What's new]` and `[Download]` buttons link LIVE to `release_url` / `download_url` pulled from the API response (never hardcoded). Per-version dismissal via `localStorage["update-banner-dismissed-<version>"]` — resurfaces on the next release.
+- **First-boot-after-upgrade migration toast** — startup version-aware self-check compares `~/.domestique/last_run_version.txt` to `VERSION`. On first boot at a new version: runs additive schema migrations (zero columns added in v1.0.2 — framework only for future use), writes the new version stamp, surfaces a 5s toast naming the from/to versions and "all rider data preserved". Idempotent — same-version reboots don't re-fire the toast (per-from/to-pair `localStorage` flag).
+- **Upgrade docs** — new `docs/upgrading.md` (≤400 words) + new `## Updating Domestique` README section. Per-data-type preservation table guarantees rider state lives in `~/.domestique/` outside the app bundle, so DMG / EXE replacement never touches profiles, rides, plans, FTP history, wellness logs, or ICU credentials.
+
+### Endpoints
+- `GET /api/update/check` — returns `{current, latest, update_available, release_url, download_url, asset_name, platform, checked_at, cached, error}`. 6h TTL disk cache. Sentinel `error` field for offline / rate-limited / 4xx fallback.
+- `GET /api/migrations/last-run-result` — returns `{migration_check_passed, from_version, to_version, columns_added, schema_changes[], data_migrations[], rider_data_preserved, show_toast}`. Read by the dashboard to decide whether to fire the toast.
+
+### Persistence trace
+- `~/.domestique/last_run_version.txt` — single-line version string, atomic write via temp+rename.
+- `~/.domestique/update_check_cache.json` — last successful API response, 6h TTL.
+- `localStorage["migration-toast-shown-<from>-<to>"]` — dedup flag, ensures the toast fires exactly once per upgrade.
+
+### Tests
+- 793 → 806 passing (+13 net across `tests/test_update_check.py` (9 new) + `tests/test_migration_v102.py` (4 new)). Same 3 pre-existing wellness/training-load isolation failures.
+- Hard data-preservation E2E gate verified: boot at v1.0.1 → populate test data → bump to v1.0.2 → boot → migration toast fires once + `rider_data_preserved=true` + `last_run_version.txt` updated → boot again same version → toast does NOT re-fire.
+
+### Out of scope (deferred)
+- Real schema changes — framework only in v1.0.2; future versions drop additive migrations into the clean slot.
+- Code-signing / notarisation.
+- Auto-download / silent install.
+
 ## v1.0.1 — Download bugs + Karoo + DMG bundling (2026-05-04)
 
 ### Download bugs (closes 3 user-visible issues)

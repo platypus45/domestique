@@ -146,15 +146,19 @@ If you ride with optical-only HR, Domestique still tracks NP / TSS / IF / TSB an
 
 **⚠ One-time Garmin device setting required.** Most Garmin head units ship with HRV recording **disabled** for activities — they use HRM-Pro's RR data for Body Battery / Stress / morning HRV (which is what populates `wellness.hrv` already), but they don't write per-beat RR-intervals to the FIT unless you explicitly enable it.
 
-**Important: the HRM-Pro strap itself doesn't have an HRV toggle** — it always emits RR-intervals over ANT+ / BLE. The setting lives on the **head unit** (telling it to RECORD what the strap is sending). So there's no Garmin Connect Mobile setting "for the strap"; it's per-device, per-activity-profile.
+**Important: the HRM-Pro strap itself doesn't have an HRV toggle** — it always emits RR-intervals over ANT+ / BLE. The toggle that tells the head unit to RECORD what the strap is sending lives under the head unit's **Data Recording** menu, NOT under Sensors / HRM (which only configures pairing / battery / ANT ID).
 
 | Device family | Exact path |
 |---|---|
 | **Edge 530 / 830 / 1030 / 1030 Plus / 1040** | Settings (gear icon) → Activity Profiles → [Bike] → Data Recording → **HRV** = On |
 | **Edge Explore / Edge 130** | Firmware doesn't expose HRV recording; not supported |
-| **Forerunner 255 / 265 / 745 / 945 / 955 / 965** | Settings → Sensors & Accessories → Heart Rate → **HRV Logging** = On (firmware-dependent) |
-| **Fenix 6 / 7 / 8 / Epix 2** | Settings → Sensors & Accessories → Heart Rate → **Record HRV** = On |
-| **Garmin Connect Mobile** (universal path) | Devices tab → [your device] → Activity Profiles → Cycling → Data Recording → enable **HRV** or **Beat-to-Beat** |
+| **Fēnix 8** | Hold watch face → Watch Settings → System → Advanced → **Data Recording → Log HRV** = On (verified against [Fēnix 8 owner's manual](https://www8.garmin.com/manuals/webhelp/GUID-EECCAC99-90D6-4AB1-9A3A-EC433D3365E2/EN-US/GUID-62E32BA1-D258-421A-A192-D7DB5453F7EB.html)) |
+| **Fēnix 6 / 7 / Epix 2** | Settings → System → Data Recording → **Log HRV** = On |
+| **Forerunner 255 / 265 / 745 / 945 / 955 / 965** | Settings → System → Data Recording → **Log HRV** = On (firmware-dependent — also try System → Advanced → Data Recording on newer firmwares) |
+| **Some watches with newer firmware** | Settings → Physiological Metrics → Log HRV |
+| **Garmin Connect Mobile** (universal fallback) | Devices tab → [your device] → Activity Profiles → Cycling → Data Recording → enable **HRV** or **Beat-to-Beat** |
+
+**Common mistake**: looking for HRV under Sensors → HRM. That menu only configures the strap (pairing / battery / ANT ID). The recording toggle is under **System → Data Recording** (or **System → Advanced → Data Recording** on Fēnix 8). Bonus: while you're in that menu, switch from "Smart Recording" to **"Every Second"** for maximum data fidelity (slightly larger FIT files but more precise DFA α1 windows).
 
 We verified this against a real ride: an HRM-Pro paired correctly to an Edge can still produce a FIT with **zero `HrvMessage` records** if the device-side recording flag is off. The FIT contains 4 000+ records of HR / power / cadence / GPS as expected, but the per-beat RR series isn't captured. After flipping the setting, future rides will include the data; pre-existing rides can't be backfilled.
 

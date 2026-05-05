@@ -16,6 +16,7 @@ This table compares the free (or formerly free) cycling apps that accept
 | Rouvy | 7-day trial; no permanent free tier | Yes (.zwo/.erg/.mrc via Riders Portal) | No | Yes | Yes, full ERG + virtual shifting | Win/Mac/iOS/Android/AppleTV | Paid-only (~$15/mo); real-video focus not workout-focus |
 | IndieVelo / TP Virtual | No (free period ended ~March 2025; now TP Premium) | Yes (.zwo/.erg/.mrc) | No | Yes | Yes | Win/Mac/iOS/Android | Now $20/mo bundled with TrainingPeaks Premium |
 | Wahoo SYSTM | 14-day trial only | Workaround via email (legacy RGT path); no UI import | No | Yes, 4DP-based | Yes | Win/Mac/iOS/Android | Paid-only; no native workout builder; clunky import |
+| Hammerhead Karoo Workouts | Yes, free with Karoo hardware | No (only FIT-structured) | Yes (native — sideload .fit structured workouts via Karoo Workouts app) | Yes (FIT-based) | Trainer pairs over BLE FTMS; ERG via head unit | Karoo head unit (Android-based) | Head-unit-only (no desktop UI); ZWO must be converted to FIT first |
 | TrainerRoad | No (30-day money-back only) | No native ZWO import (own .ert/workout builder) | No | Yes, best-in-class AI plans | Yes, full ERG | Win/Mac/iOS/Android | $22/mo; closed ecosystem, no ZWO interop |
 | Kinomap | Freemium (public workouts only; your own custom = paid) | No | No | Yes in paid tier | Yes | Win/Mac/iOS/Android | Video-first; your own workouts locked behind sub (~€12/mo) |
 | BKOOL | N/A — shut down, merged into Rouvy (Mar 2026) | N/A | N/A | N/A | N/A | N/A | Dead platform; use Rouvy |

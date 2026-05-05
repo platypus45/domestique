@@ -238,6 +238,16 @@ Connect in Settings > Intervals.icu with your Athlete ID and API key from [inter
 
 ---
 
+## Updating Domestique
+
+Drag the new DMG onto your Applications folder. **Your rides, training plan, FTP history, wellness logs, ICU credentials, and athlete profile all survive the install** — they live in `~/.domestique/` outside the app bundle and are never touched.
+
+On first launch after an upgrade you'll see a one-off confirmation toast naming the version transition and the data preserved.
+
+See [docs/upgrading.md](docs/upgrading.md) for the full per-data-type preservation table and rollback steps.
+
+---
+
 ## How the planner thinks (logic + science)
 
 Every threshold below is in the code with an inline citation. This section explains *why* each value, not just *that* it exists.

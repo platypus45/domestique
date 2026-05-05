@@ -21,9 +21,63 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 log = logging.getLogger("domestique.fit_activity")
+
+
+def parse_rr_intervals(fit_path: Path) -> list[float]:
+    """v1.0.7 — extract RR-intervals (in seconds) from a FIT file's HrvMessage records.
+
+    FIT spec: each ``hrv`` mesg (global id 78) carries a ``time`` array of up to
+    5 RR-intervals in seconds, 0-padded. A chest-strap pairing emits one
+    ``HrvMessage`` per second; optical-wrist HR emits none. Returns a flat
+    chronological list of RR durations with zero-padding stripped. Empty list
+    when the FIT has no HrvMessage records or the parse fails.
+    """
+    try:
+        from fit_tool.fit_file import FitFile
+    except Exception as e:
+        log.warning(f"parse_rr_intervals: fit_tool import failed: {e}")
+        return []
+
+    try:
+        ff = FitFile.from_file(str(fit_path))
+    except Exception as e:
+        log.warning(f"parse_rr_intervals({fit_path}) FIT parse failed: {e}")
+        return []
+
+    rrs: list[float] = []
+    try:
+        for rec in ff.records:
+            msg = rec.message
+            if type(msg).__name__ != "HrvMessage":
+                continue
+            t = None
+            try:
+                t = msg.time
+            except Exception:
+                # Some fit_tool versions only expose via get_value.
+                try:
+                    t = msg.get_value("time")
+                except Exception:
+                    t = None
+            if t is None:
+                continue
+            if not isinstance(t, (list, tuple)):
+                t = [t]
+            for x in t:
+                try:
+                    v = float(x)
+                except (TypeError, ValueError):
+                    continue
+                if v > 0:
+                    rrs.append(v)
+    except Exception as e:
+        log.warning(f"parse_rr_intervals({fit_path}) walk failed: {e}")
+        return rrs
+    return rrs
 
 
 def _serial_for_profile(profile_id: str) -> int:

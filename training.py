@@ -468,6 +468,37 @@ def fetch_activity_full(activity_id: str) -> dict | None:
     return detail
 
 
+def fetch_activity_fit_file(activity_id: str) -> bytes | None:
+    """v1.0.7 — fetch the raw FIT-file blob for an activity.
+
+    ICU exposes the rider's raw FIT at ``/api/v1/activity/<id>/fit-file``.
+    Returns the raw bytes on 200, None on 4xx / 5xx / network failures so
+    the caller can degrade gracefully (no DFA α1 cached, ride still imports).
+    """
+    try:
+        _require_credentials()
+    except ICUCredentialsMissing:
+        return None
+
+    url = f"{config.ICU_BASE}/activity/{activity_id}/fit-file"
+    headers = _auth_header()
+    headers["User-Agent"] = ICU_USER_AGENT
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            status = resp.getcode()
+            if 200 <= status < 300:
+                return resp.read()
+            _log.warning(f"fetch_activity_fit_file({activity_id}) status={status}")
+            return None
+    except urllib.error.HTTPError as e:
+        _log.warning(f"fetch_activity_fit_file({activity_id}) HTTP {e.code}: {e.reason}")
+        return None
+    except (urllib.error.URLError, OSError, TimeoutError) as e:
+        _log.warning(f"fetch_activity_fit_file({activity_id}) network: {e}")
+        return None
+
+
 def fetch_activity_streams(activity_id: str) -> dict | None:
     """v4.4.0 — fetch raw 1Hz streams for an activity.
 

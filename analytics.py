@@ -23,7 +23,11 @@ Classification (v4.5.5 REFINE-CLASSIFY):
 """
 from __future__ import annotations
 
+import logging
 import math
+from pathlib import Path
+
+_log_dfa = logging.getLogger("domestique.analytics.dfa")
 
 
 # Canonical centroids in (Z1+Z2 %, Z3+Z4 %, Z5+ %) space.
@@ -141,4 +145,262 @@ def compute_polarization_block(time_in_zone: dict | None) -> dict | None:
         "polarization_index": pi,
         "classification": classify_distribution(z1z2, z3z4, z5plus, pi),
         "confidence": classification_confidence(z1z2, z3z4, z5plus),
+    }
+
+
+# ── DFA α1 (v1.0.7) ──────────────────────────────────────────────────────────
+#
+# Detrended Fluctuation Analysis short-term scaling exponent (α1) over a
+# rider's RR-interval series, computed in a sliding 120-s / 30-s-step window
+# per Rogers 2021 (PMID 34547011). Ported from the dormant in-ride
+# implementation at training_live.py:823-942 — same maths, sliding-window
+# wrapper, no nolds dependency.
+#
+# Sanity gate: any fit producing α1 outside [0.30, 1.60] is dropped (Rogers
+# physiological range; values outside indicate dropped beats / data quality).
+
+DFA_SANITY_MIN = 0.30
+DFA_SANITY_MAX = 1.60
+DFA_LT1_THRESHOLD = 0.75
+
+
+def _dfa_alpha1_window(rr_window: list[float]) -> float | None:
+    """Compute α1 for a single RR-interval window (no sanity / R² gate).
+
+    Algorithm matches training_live._compute_dfa_alpha1 maths:
+      1. Cumulative sum of mean-removed RR.
+      2. Per-segment linear-detrended RMS for n in [4, 16].
+      3. Log-log slope across n vs F(n).
+      4. R² ≥ 0.95 required for the fit.
+
+    Returns None when fewer than three valid (n, F(n)) points fit, the slope
+    is degenerate, or R² is below 0.95.
+    """
+    n_beats = len(rr_window)
+    if n_beats < 16:
+        return None
+
+    rr_mean = sum(rr_window) / n_beats
+    y: list[float] = []
+    cumsum = 0.0
+    for r in rr_window:
+        cumsum += (r - rr_mean)
+        y.append(cumsum)
+    N = len(y)
+
+    n_values: list[float] = []
+    f_values: list[float] = []
+    for n in range(4, 17):
+        num_segs = N // n
+        if num_segs < 2:
+            continue
+        fluct_sq: list[float] = []
+        for s in range(num_segs):
+            seg = y[s * n:(s + 1) * n]
+            x_mean = (n - 1) / 2.0
+            y_mean_seg = sum(seg) / n
+            num = sum((i - x_mean) * (seg[i] - y_mean_seg) for i in range(n))
+            den = sum((i - x_mean) ** 2 for i in range(n))
+            a = num / den if den > 0 else 0.0
+            b = y_mean_seg - a * x_mean
+            rms_sq = sum((seg[i] - (a * i + b)) ** 2 for i in range(n)) / n
+            fluct_sq.append(rms_sq)
+        if fluct_sq:
+            f_n = math.sqrt(sum(fluct_sq) / len(fluct_sq))
+            if f_n > 0:
+                n_values.append(math.log(n))
+                f_values.append(math.log(f_n))
+
+    if len(n_values) < 3:
+        return None
+
+    n_pts = len(n_values)
+    x_mean = sum(n_values) / n_pts
+    y_mean = sum(f_values) / n_pts
+    num = sum((n_values[i] - x_mean) * (f_values[i] - y_mean) for i in range(n_pts))
+    den = sum((n_values[i] - x_mean) ** 2 for i in range(n_pts))
+    if den <= 0:
+        return None
+    alpha1 = num / den
+
+    ss_res = sum(
+        (f_values[i] - (y_mean + alpha1 * (n_values[i] - x_mean))) ** 2
+        for i in range(n_pts)
+    )
+    ss_tot = sum((f_values[i] - y_mean) ** 2 for i in range(n_pts))
+    r_sq = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+    if r_sq < 0.95:
+        return None
+
+    return alpha1
+
+
+def compute_dfa_alpha1(
+    rr_seconds: list[float],
+    window_s: float = 120.0,
+    step_s: float = 30.0,
+) -> dict:
+    """v1.0.7 — sliding-window DFA α1 across an RR-interval series.
+
+    Args:
+        rr_seconds: chronological list of RR-intervals in seconds.
+        window_s: window length in seconds (Rogers 2021 default = 120 s).
+        step_s: step between windows in seconds (default = 30 s).
+
+    Returns:
+        ``{avg, series, lt1_minutes, window_s, step_s, n_windows}``
+
+        - ``avg``: mean of all valid per-window α1 values, sanity-gated to
+          [0.30, 1.60]. ``None`` if no valid windows OR the mean falls
+          outside the sanity range (signal for caller to mark
+          ``dfa_alpha1_status='sanity_rejected'``).
+        - ``series``: list of ``{min, alpha1}`` per-window values (offset to
+          window start in minutes). Includes only valid (sanity-passing) fits.
+        - ``lt1_minutes``: minutes spent with α1 < 0.75 (LT1 marker proxy).
+        - ``window_s`` / ``step_s``: echoed for reproducibility.
+        - ``n_windows``: count of valid (sanity-passing) windows.
+    """
+    out_empty = {
+        "avg": None,
+        "series": [],
+        "lt1_minutes": None,
+        "window_s": window_s,
+        "step_s": step_s,
+        "n_windows": 0,
+    }
+
+    if not rr_seconds:
+        return out_empty
+    rr = [float(x) for x in rr_seconds if x and x > 0]
+    if len(rr) < 16:
+        return out_empty
+
+    # Walk the RR series, advancing by elapsed-time (sum of RR), collecting a
+    # window worth of beats per step. Track window-start elapsed time for the
+    # series x-axis.
+    cum_t: list[float] = []
+    t = 0.0
+    for r in rr:
+        t += r
+        cum_t.append(t)
+
+    if cum_t[-1] < window_s:
+        return out_empty
+
+    series: list[dict] = []
+    valid_alphas: list[float] = []
+    lt1_minutes_acc = 0.0
+
+    next_start = 0.0
+    end_time = cum_t[-1] - window_s
+    while next_start <= end_time + 1e-6:
+        # Find indexes of beats whose elapsed time falls in [next_start, next_start + window_s].
+        # Linear scan is fine — typical ride is O(10000) beats.
+        win_lo = next_start
+        win_hi = next_start + window_s
+        # Index of first beat with cum_t >= win_lo.
+        i_lo = 0
+        for i, ct in enumerate(cum_t):
+            if ct >= win_lo:
+                i_lo = i
+                break
+        i_hi = len(cum_t)
+        for i in range(i_lo, len(cum_t)):
+            if cum_t[i] > win_hi:
+                i_hi = i
+                break
+
+        rr_window = rr[i_lo:i_hi]
+        alpha = _dfa_alpha1_window(rr_window)
+        if alpha is not None and DFA_SANITY_MIN <= alpha <= DFA_SANITY_MAX:
+            alpha_r = round(alpha, 3)
+            valid_alphas.append(alpha_r)
+            series.append({
+                "min": round(next_start / 60.0, 2),
+                "alpha1": alpha_r,
+            })
+            if alpha_r < DFA_LT1_THRESHOLD:
+                lt1_minutes_acc += step_s / 60.0
+
+        next_start += step_s
+
+    if not valid_alphas:
+        return out_empty
+
+    avg = sum(valid_alphas) / len(valid_alphas)
+    avg_r = round(avg, 3)
+    if not (DFA_SANITY_MIN <= avg_r <= DFA_SANITY_MAX):
+        # Caller is expected to surface this as ``sanity_rejected``.
+        return {
+            "avg": None,
+            "series": series,
+            "lt1_minutes": round(lt1_minutes_acc, 2),
+            "window_s": window_s,
+            "step_s": step_s,
+            "n_windows": len(valid_alphas),
+        }
+
+    return {
+        "avg": avg_r,
+        "series": series,
+        "lt1_minutes": round(lt1_minutes_acc, 2),
+        "window_s": window_s,
+        "step_s": step_s,
+        "n_windows": len(valid_alphas),
+    }
+
+
+def compute_dfa_alpha1_for_fit(fit_path: Path) -> dict | None:
+    """v1.0.7 — chain RR-extraction + sliding-window α1 for a FIT file.
+
+    Returns a dict with these fields ALWAYS set (None values when no RR data
+    or the sanity gate rejected the fit). Status field is one of:
+
+      - ``'computed'``        : successful fit, ``dfa_alpha1_avg`` in [0.30, 1.60].
+      - ``'no_rr_data'``      : FIT had no HrvMessage records / parse returned [].
+      - ``'sanity_rejected'`` : RR present but DFA produced out-of-range α1.
+
+    Returns None only on a hard failure (e.g. fit_path missing / unreadable),
+    so callers can distinguish "no DFA available" (None) from "DFA pipeline
+    ran, here's the status" (dict).
+    """
+    try:
+        from fit_activity import parse_rr_intervals
+        rr = parse_rr_intervals(fit_path)
+    except Exception as e:
+        _log_dfa.warning(f"compute_dfa_alpha1_for_fit({fit_path}) parse error: {e}")
+        return None
+
+    if not rr:
+        return {
+            "dfa_alpha1_avg": None,
+            "dfa_alpha1_series": [],
+            "dfa_alpha1_lt1_minutes": None,
+            "dfa_alpha1_status": "no_rr_data",
+            "rr_intervals_count": 0,
+        }
+
+    result = compute_dfa_alpha1(rr)
+    if result["avg"] is None:
+        # Distinguish: no valid windows at all (n_windows == 0) → no_rr_data
+        # (insufficient data even though parse returned beats); vs. valid
+        # windows with out-of-range mean → sanity_rejected.
+        if result["n_windows"] == 0:
+            status = "no_rr_data"
+        else:
+            status = "sanity_rejected"
+        return {
+            "dfa_alpha1_avg": None,
+            "dfa_alpha1_series": result["series"],
+            "dfa_alpha1_lt1_minutes": result["lt1_minutes"],
+            "dfa_alpha1_status": status,
+            "rr_intervals_count": len(rr),
+        }
+
+    return {
+        "dfa_alpha1_avg": result["avg"],
+        "dfa_alpha1_series": result["series"],
+        "dfa_alpha1_lt1_minutes": result["lt1_minutes"],
+        "dfa_alpha1_status": "computed",
+        "rr_intervals_count": len(rr),
     }

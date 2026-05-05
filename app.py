@@ -55,6 +55,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from training import get_today_metrics, fetch_wellness, fetch_activities, TRIMP_TO_TSS_FACTOR
 from sleep import get_sleep_metrics
 from readiness import compute_readiness
+from readiness_composite import compute_readiness_composite  # v1.1.0 IMPL-HRV-RECOVERY
 import config
 import db
 import zones as _zones_mod
@@ -1281,6 +1282,111 @@ async def api_readiness_revert_cap(request: Request):
     }
 
 
+# ─── v1.1.0 — Bayesian HRV-readiness composite ─────────────────────────────
+# Lives alongside /api/readiness (legacy 0-100). The composite is a 0-10
+# score that requires ≥30 days of wellness data; it surfaces on the home
+# page as a separate card and is consumed by the planner advisory only when
+# status='dynamic_weights'. See readiness_composite.py for the contract.
+
+@app.get("/api/readiness/composite")
+def api_readiness_composite(date: str = Query(None)):
+    """v1.1.0 IMPL-HRV-RECOVERY — Bayesian HRV-readiness composite (0-10).
+
+    Cached for 5 min (key includes the date so per-day re-fetch works).
+    Returns the dict shape from compute_readiness_composite() unchanged.
+    """
+    from datetime import date as _date_cls
+    target_iso = date or _date_cls.today().isoformat()
+    profile_id = "default"  # single-rider scope; profile_manager is a separate concern
+    cache_key = f"readiness_composite_{profile_id}_{target_iso}"
+    return cached(cache_key, lambda: compute_readiness_composite(profile_id, target_iso))
+
+
+@app.post("/api/wellness/import-hrv4training")
+async def api_wellness_import_hrv4training(file: UploadFile = File(...)):
+    """v1.1.0 IMPL-HRV-RECOVERY — HRV4Training CSV import (PATCH G16).
+
+    Locked columns: date, rmssd, hrv_baseline, recovery_points.
+    Skip rows missing date or rmssd. Optional columns ignored.
+    Each row upserts wellness.hrv (= rmssd value); other wellness columns
+    are left untouched if the row already exists.
+
+    Returns {"imported": int, "skipped": int}.
+    """
+    import csv as _csv
+    raw = await file.read()
+    try:
+        text = raw.decode("utf-8-sig")  # tolerates BOM
+    except UnicodeDecodeError:
+        text = raw.decode("utf-8", errors="replace")
+    reader = _csv.DictReader(text.splitlines())
+    imported = 0
+    skipped = 0
+    conn = db.get_db()
+    for row in reader:
+        d = (row.get("date") or "").strip()
+        rmssd_raw = (row.get("rmssd") or "").strip()
+        if not d or not rmssd_raw:
+            skipped += 1
+            continue
+        try:
+            rmssd = float(rmssd_raw)
+        except (TypeError, ValueError):
+            skipped += 1
+            continue
+        # Upsert: if a wellness row exists, only update hrv; else insert minimal row.
+        existing = conn.execute("SELECT date FROM wellness WHERE date = ?", (d,)).fetchone()
+        if existing:
+            conn.execute("UPDATE wellness SET hrv = ? WHERE date = ?", (rmssd, d))
+        else:
+            conn.execute(
+                "INSERT INTO wellness (date, ctl, atl, hrv, rhr, sleep_secs, sleep_score, eftp, raw_json) "
+                "VALUES (?, NULL, NULL, ?, NULL, NULL, NULL, NULL, '{}')",
+                (d, rmssd),
+            )
+        imported += 1
+    conn.commit()
+    # invalidate composite-readiness caches that span this date range
+    for k in list(_cache.keys()):
+        if k.startswith("readiness_composite_"):
+            _cache.pop(k, None)
+            _cache_ts.pop(k, None)
+    return {"imported": imported, "skipped": skipped}
+
+
+@app.post("/api/wellness/manual-hrv")
+async def api_wellness_manual_hrv(request: Request):
+    """v1.1.0 IMPL-HRV-RECOVERY — manual HRV entry (rMSSD ms).
+
+    Body: {"date": "YYYY-MM-DD" (default today), "rmssd": float}.
+    Writes to wellness.hrv via UPSERT. The field name `hrv_manual_rmssd`
+    distinguishes this path from ICU-pulled `hrv` in audit logs.
+    """
+    body = await _get_json_body(request)
+    d = (body.get("date") or date.today().isoformat()).strip()
+    rmssd_raw = body.get("hrv_manual_rmssd", body.get("rmssd"))
+    try:
+        rmssd = float(rmssd_raw)
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "hrv_manual_rmssd must be numeric"}, 400)
+    if rmssd <= 0 or rmssd > 250:
+        return JSONResponse({"error": "rmssd out of range (0, 250]"}, 400)
+    conn = db.get_db()
+    existing = conn.execute("SELECT date FROM wellness WHERE date = ?", (d,)).fetchone()
+    if existing:
+        conn.execute("UPDATE wellness SET hrv = ? WHERE date = ?", (rmssd, d))
+    else:
+        conn.execute(
+            "INSERT INTO wellness (date, ctl, atl, hrv, rhr, sleep_secs, sleep_score, eftp, raw_json) "
+            "VALUES (?, NULL, NULL, ?, NULL, NULL, NULL, NULL, '{}')",
+            (d, rmssd),
+        )
+    conn.commit()
+    for k in list(_cache.keys()):
+        if k.startswith("readiness_composite_"):
+            _cache.pop(k, None)
+            _cache_ts.pop(k, None)
+    return {"ok": True, "date": d, "hrv_manual_rmssd": rmssd}
 
 
 @app.get("/api/activities")
@@ -9259,6 +9365,90 @@ def _sync_icu_wellness(force: bool = False, days: int = 90) -> dict:
     return {"added": added, "total": total}
 
 
+def _augment_icu_record_with_dfa(rec_path: Path, external_id: str) -> None:
+    """v1.0.7 — fetch raw FIT for an ICU activity, compute DFA α1, merge back.
+
+    Skips work when the persisted record already has a final
+    ``dfa_alpha1_status`` (one of ``computed`` / ``no_rr_data`` /
+    ``sanity_rejected``). The ``fetch_failed`` status is retried so a
+    transient ICU outage doesn't permanently disable DFA for that ride.
+    """
+    import json as _json
+    import tempfile as _tempfile
+    import os as _os
+
+    try:
+        rec = _json.loads(rec_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        _log.debug(f"_augment_icu_record_with_dfa: read failed: {e}")
+        return
+    if not isinstance(rec, dict):
+        return
+
+    # Final-state statuses are sticky; only retry fetch_failed.
+    existing_status = rec.get("dfa_alpha1_status")
+    if existing_status in ("computed", "no_rr_data", "sanity_rejected"):
+        return
+
+    import training as _training
+    raw = None
+    try:
+        raw = _training.fetch_activity_fit_file(external_id)
+    except Exception as e:
+        _log.debug(f"fetch_activity_fit_file({external_id}) raised: {e}")
+        raw = None
+
+    if not raw:
+        # Mark fetch_failed so the dashboard can render informational copy;
+        # next sync will retry.
+        rec["dfa_alpha1_status"] = "fetch_failed"
+        rec.setdefault("dfa_alpha1_avg", None)
+        rec.setdefault("dfa_alpha1_series", [])
+        rec.setdefault("dfa_alpha1_lt1_minutes", None)
+        rec.setdefault("rr_intervals_count", 0)
+        try:
+            rec_path.write_text(_json.dumps(rec, indent=2), encoding="utf-8")
+        except OSError as e:
+            _log.debug(f"_augment_icu_record_with_dfa: write fetch_failed: {e}")
+        return
+
+    tmp_path = None
+    try:
+        with _tempfile.NamedTemporaryFile(suffix=".fit", delete=False) as tf:
+            tf.write(raw)
+            tmp_path = tf.name
+        from analytics import compute_dfa_alpha1_for_fit
+        dfa = compute_dfa_alpha1_for_fit(Path(tmp_path))
+    except Exception as e:
+        _log.debug(f"_augment_icu_record_with_dfa({external_id}) compute: {e}")
+        dfa = None
+    finally:
+        if tmp_path:
+            try:
+                _os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    if not isinstance(dfa, dict):
+        rec["dfa_alpha1_status"] = "fetch_failed"
+        rec.setdefault("dfa_alpha1_avg", None)
+        rec.setdefault("dfa_alpha1_series", [])
+        rec.setdefault("dfa_alpha1_lt1_minutes", None)
+        rec.setdefault("rr_intervals_count", 0)
+    else:
+        rec["dfa_alpha1"] = dfa.get("dfa_alpha1_avg")
+        rec["dfa_alpha1_avg"] = dfa.get("dfa_alpha1_avg")
+        rec["dfa_alpha1_series"] = dfa.get("dfa_alpha1_series") or []
+        rec["dfa_alpha1_lt1_minutes"] = dfa.get("dfa_alpha1_lt1_minutes")
+        rec["dfa_alpha1_status"] = dfa.get("dfa_alpha1_status") or "no_rr_data"
+        rec["rr_intervals_count"] = int(dfa.get("rr_intervals_count") or 0)
+
+    try:
+        rec_path.write_text(_json.dumps(rec, indent=2), encoding="utf-8")
+    except OSError as e:
+        _log.debug(f"_augment_icu_record_with_dfa: write back: {e}")
+
+
 def _sync_icu_activities(force: bool = False) -> dict:
     """v4.4.0 — pull recent ICU activities + persist normalized records.
 
@@ -9329,6 +9519,15 @@ def _sync_icu_activities(force: bool = False) -> dict:
             updated += 1
         else:
             added += 1
+        # v1.0.7 — augment the persisted ICU record with DFA α1 from the raw
+        # FIT (when ICU's payload didn't carry it). We only fetch the FIT once
+        # per activity (skip when the persisted record already has a non-null
+        # ``dfa_alpha1_status``). Failure is non-fatal — the record stays as
+        # persisted, status='fetch_failed' so the dashboard can render copy.
+        try:
+            _augment_icu_record_with_dfa(path, str(ext))
+        except Exception as e:
+            _log.debug(f"_augment_icu_record_with_dfa({ext}) failed: {e}")
 
     now = time.time()
     _write_last_sync_at(now)
@@ -9794,6 +9993,27 @@ def _build_icu_samples(rec: dict) -> dict:
 def _build_fit_normalized(fit_path: Path, ride_id: str) -> dict:
     """Build the §3 normalized record from a FIT file by parsing it once."""
     stats = _parse_fit_stats(fit_path)
+    # v1.0.7 — compute DFA α1 from the FIT's HrvMessage records (chest-strap
+    # rides only). compute_dfa_alpha1_for_fit returns a dict with
+    # ``dfa_alpha1_status`` always set; status='no_rr_data' when the ride
+    # had no RR-intervals (optical-wrist HR or HRV-recording-off Garmin).
+    dfa_avg = None
+    dfa_series: list = []
+    dfa_lt1_min = None
+    dfa_status = "no_rr_data"
+    rr_count = 0
+    try:
+        from analytics import compute_dfa_alpha1_for_fit
+        dfa = compute_dfa_alpha1_for_fit(fit_path)
+        if isinstance(dfa, dict):
+            dfa_avg = dfa.get("dfa_alpha1_avg")
+            dfa_series = dfa.get("dfa_alpha1_series") or []
+            dfa_lt1_min = dfa.get("dfa_alpha1_lt1_minutes")
+            dfa_status = dfa.get("dfa_alpha1_status") or "no_rr_data"
+            rr_count = int(dfa.get("rr_intervals_count") or 0)
+    except Exception as e:
+        _log.debug(f"_build_fit_normalized DFA α1 compute failed: {e}")
+
     return {
         "ride_id": ride_id,
         "source": "fit",
@@ -9818,7 +10038,12 @@ def _build_fit_normalized(fit_path: Path, ride_id: str) -> dict:
         "ftp_at_ride": getattr(config, "ATHLETE_FTP_W", None),
         "eftp_at_ride": getattr(config, "ATHLETE_FTP_W", None),
         "decoupling_pct": None,
-        "dfa_alpha1": None,
+        "dfa_alpha1": dfa_avg,
+        "dfa_alpha1_avg": dfa_avg,
+        "dfa_alpha1_series": dfa_series,
+        "dfa_alpha1_lt1_minutes": dfa_lt1_min,
+        "dfa_alpha1_status": dfa_status,
+        "rr_intervals_count": rr_count,
         "time_in_zone": {f"z{i}": 0 for i in range(1, 8)},
         "intervals": [],
         "samples_url": f"/api/ride/{ride_id}/detail?include=samples",

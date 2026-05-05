@@ -997,6 +997,50 @@ def api_profile_tau_fits(refresh: int = Query(0)):
     return result
 
 
+@app.get("/api/profile/banister-validation")
+def api_profile_banister_validation(refresh: int = Query(0)):
+    """v1.2.0 IMPL-OOS-VALIDATION — out-of-sample Banister model accuracy.
+
+    Calls ``oos_validation.validate_banister_oos()`` which fits τ on weeks
+    1..N-4 and predicts the trailing 4-week holdout. Returns MAE per
+    metric + bootstrap CIs + Hellard 2006 literature comparison. Cached
+    for 24 hours via the standard ``_cache``/``_cache_ts`` mechanism;
+    pass ``?refresh=1`` to force recompute.
+
+    PATCH G4: ``validate_banister_oos`` calls ``fit_tau_per_athlete``
+    with ``persist=False`` so this endpoint never pollutes the live
+    nls_fit τ values. PATCH G12: 24h lazy cache, no scheduled task.
+    """
+    cache_key = "banister_oos_default"
+    now = time.time()
+    ttl = 24 * 3600  # 24h
+    if not refresh and cache_key in _cache and now - _cache_ts.get(cache_key, 0) < ttl:
+        return _cache[cache_key]
+    try:
+        import oos_validation
+        result = oos_validation.validate_banister_oos("default")
+    except Exception as e:
+        _log.warning("api_profile_banister_validation failed: %s", e)
+        result = {
+            "fit_status": "insufficient_data",
+            "horizon_weeks": 0, "holdout_weeks": 4,
+            "n_markers_in_holdout": 0, "predictions": [],
+            "ftp_mae_w": None, "ftp_mae_pct": None,
+            "ftp_mae_pct_ci_low": None, "ftp_mae_pct_ci_high": None,
+            "ctl_mae_tss": None, "ctl_mae_tss_ci_low": None,
+            "ctl_mae_tss_ci_high": None,
+            "hellard_2006_baseline_pct": "5-8",
+            "comparison": "insufficient_data",
+            "cp_fitness_mae_pct": None,
+            "wprime_fitness_mae_pct": None,
+            "pmax_fitness_mae_pct": None,
+            "tau_fits_used": {},
+        }
+    _cache[cache_key] = result
+    _cache_ts[cache_key] = now
+    return result
+
+
 @app.post("/api/activity/{activity_id}/race")
 def api_activity_set_race(activity_id: str, body: dict):
     """v1.0.7 IMPL-TAU-FIT-WIRING — toggle the is_race flag on an activity.

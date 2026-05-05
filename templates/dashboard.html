@@ -1267,6 +1267,17 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
     <div id="morning-log-content"></div>
   </div>
 
+  <!-- v1.1.0 IMPL-HRV-RECOVERY — Readiness today (Bayesian composite, 0-10).
+       Separate card from the existing 0-100 Readiness card lower down.
+       Reads /api/readiness/composite. When status='insufficient_data', shows
+       a "≥30 days of wellness sync needed" hint instead of a score. -->
+  <div class="card" style="margin-bottom:12px;" id="readiness-composite-card">
+    <h3>Readiness today</h3>
+    <div id="readiness-composite-content" style="display:flex;gap:16px;align-items:center;">
+      <div id="readiness-composite-loading" style="font-size:12px;color:var(--text3);">Loading…</div>
+    </div>
+  </div>
+
   <!-- v4.4.0 IMPL-UI: On-track summary bar (closes user bug #4).
        Shows compliance/CTL/polarized/phase headline + Z1+Z2 / Z3+Z4 / Z5+ / TSS
        target-vs-actual rails per CONCEPT-UX §4 + MASTER §3. Populated from
@@ -2095,6 +2106,41 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
       </div>
       <button class="btn btn-primary" onclick="saveIcuCredentials()">Save ICU Credentials</button>
       <span id="icu-saved" style="color:var(--green);font-size:12px;margin-left:8px;display:none;">Saved</span>
+    </div>
+
+    <!-- v1.1.0 IMPL-HRV-RECOVERY — HRV4Training CSV import + manual HRV entry.
+         Locked CSV columns (PATCH G16): date, rmssd, hrv_baseline, recovery_points.
+         Rows missing date or rmssd are skipped server-side. -->
+    <div style="padding:12px;border:1px solid var(--border);border-radius:8px;margin-top:12px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        <strong style="font-size:14px;">HRV4Training (CSV)</strong>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:8px;">
+        Upload your HRV4Training CSV export. Expected columns:
+        <code>date, rmssd, hrv_baseline, recovery_points</code>. Rows missing
+        date or rmssd are skipped.
+      </div>
+      <div class="form-row">
+        <div class="form-group" style="flex:1;">
+          <input type="file" id="hrv4t-csv-file" accept=".csv,text/csv">
+        </div>
+        <button class="btn btn-primary" onclick="uploadHrv4tCsv()">Upload</button>
+      </div>
+      <div id="hrv4t-result" style="font-size:12px;color:var(--text2);margin-top:6px;display:none;"></div>
+      <hr style="border-color:var(--border);margin:14px 0;">
+      <div style="font-size:12px;color:var(--text2);margin-bottom:6px;">Manual HRV (rMSSD ms)</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label style="font-size:10px;">Date</label>
+          <input type="date" id="hrv-manual-date">
+        </div>
+        <div class="form-group">
+          <label style="font-size:10px;">rMSSD (ms)</label>
+          <input type="number" id="hrv-manual-rmssd" step="0.1" min="0" max="250" placeholder="e.g. 56.0">
+        </div>
+        <button class="btn" onclick="submitManualHrv()">Save HRV</button>
+      </div>
+      <div id="hrv-manual-result" style="font-size:12px;color:var(--text2);margin-top:6px;display:none;"></div>
     </div>
   </div>
 
@@ -3881,8 +3927,73 @@ async function loadHome() {
     loadMorningLog();
     loadBodyPerf();
     loadPowerCurve();
+    // v1.1.0 IMPL-HRV-RECOVERY — Readiness today (composite, 0-10).
+    loadReadinessComposite();
 
   } catch(e) { console.error(e); }
+}
+
+// v1.1.0 IMPL-HRV-RECOVERY — Bayesian-composite readiness card.
+// Reads /api/readiness/composite (5-min server-side cache). Renders a
+// coloured circle + 1-line advice + collapsed component breakdown. When
+// status='insufficient_data', renders a "Need ≥30 days of wellness sync"
+// hint instead of a score (no circle).
+async function loadReadinessComposite() {
+  const host = document.getElementById('readiness-composite-content');
+  if (!host) return;
+  try {
+    const res = await fetch('/api/readiness/composite');
+    if (!res.ok) {
+      host.innerHTML = '<div style="font-size:12px;color:var(--text3);">Composite readiness unavailable.</div>';
+      return;
+    }
+    const d = await res.json();
+    if (d.status === 'insufficient_data' || d.score === null || d.score === undefined) {
+      host.innerHTML = `
+        <div style="font-size:12px;color:var(--text2);padding:8px 0;">
+          ${esc(d.advice || 'Need ≥30 days of wellness sync to enable readiness scoring.')}
+        </div>`;
+      return;
+    }
+    const s = Number(d.score);
+    let color = 'var(--red)';
+    if (s >= 8.0) color = 'var(--green)';
+    else if (s >= 5.0) color = 'var(--yellow)';
+    else if (s >= 3.0) color = '#f59e0b'; // orange
+    const circle = `
+      <div style="width:84px;height:84px;border-radius:50%;border:6px solid ${color};display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;flex-shrink:0;">
+        ${s.toFixed(1)}<span style="font-size:10px;font-weight:400;color:var(--text3);margin-left:2px;">/10</span>
+      </div>`;
+    const statusLabel = d.status === 'dynamic_weights' ? 'dynamic weights'
+                       : d.status === 'static_weights' ? 'static weights' : d.status;
+    const conf = (d.confidence !== undefined && d.confidence !== null)
+      ? ` &middot; confidence ${(Number(d.confidence)*100).toFixed(0)}%` : '';
+    const comp = d.components || {};
+    const weights = d.weights || {};
+    const compRows = Object.entries(weights).map(([k, w]) => {
+      const v = comp[k];
+      const display = (v === null || v === undefined) ? '—' : Number(v).toFixed(2);
+      return `<tr><td style="padding:2px 8px 2px 0;color:var(--text2);">${esc(k)}</td>
+              <td style="padding:2px 8px;text-align:right;">${display}</td>
+              <td style="padding:2px 0;text-align:right;color:var(--text3);">${(Number(w)*100).toFixed(0)}%</td></tr>`;
+    }).join('');
+    host.innerHTML = `
+      ${circle}
+      <div style="flex:1;">
+        <div style="font-size:13px;color:var(--text);margin-bottom:6px;">${esc(d.advice || '')}</div>
+        <div style="font-size:10px;color:var(--text3);">${statusLabel}${conf}</div>
+        <details style="margin-top:8px;">
+          <summary style="cursor:pointer;font-size:11px;color:var(--text2);">Component breakdown</summary>
+          <table style="margin-top:6px;font-size:11px;">
+            <thead><tr style="color:var(--text3);"><th style="text-align:left;">component</th><th style="text-align:right;">z</th><th style="text-align:right;">w</th></tr></thead>
+            <tbody>${compRows}</tbody>
+          </table>
+        </details>
+      </div>`;
+  } catch (e) {
+    console.error('readiness-composite load failed', e);
+    host.innerHTML = '<div style="font-size:12px;color:var(--text3);">Composite readiness unavailable.</div>';
+  }
 }
 
 // ═══ PICKER ═══════════════════════════════════════════════════════════════
@@ -9041,6 +9152,79 @@ function acceptEftp() {
   const txt = $('set-eftp').textContent;
   const val = parseInt(txt);
   if (val > 0) { $('set-ftp').value = val; saveSettings(); }
+}
+
+// v1.1.0 IMPL-HRV-RECOVERY — HRV4Training CSV upload + manual HRV entry.
+// POSTs the file to /api/wellness/import-hrv4training (multipart). Server
+// parses columns date, rmssd, hrv_baseline, recovery_points and skips rows
+// missing date or rmssd. Refreshes /api/readiness/composite cache server-side.
+async function uploadHrv4tCsv() {
+  const f = $('hrv4t-csv-file').files[0];
+  const out = $('hrv4t-result');
+  if (!f) {
+    out.style.display = 'block';
+    out.style.color = 'var(--red)';
+    out.textContent = 'Pick a CSV file first.';
+    return;
+  }
+  const fd = new FormData();
+  fd.append('file', f);
+  try {
+    const res = await fetch('/api/wellness/import-hrv4training', {method: 'POST', body: fd});
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`${res.status}: ${txt}`);
+    }
+    const d = await res.json();
+    out.style.display = 'block';
+    out.style.color = 'var(--green)';
+    out.textContent = `Imported ${d.imported} row${d.imported === 1 ? '' : 's'}, skipped ${d.skipped}.`;
+    // refresh readiness card if the user is looking at the home tab
+    if (typeof loadReadinessComposite === 'function') {
+      try { loadReadinessComposite(); } catch (_) {}
+    }
+  } catch (e) {
+    out.style.display = 'block';
+    out.style.color = 'var(--red)';
+    out.textContent = 'Upload failed: ' + e.message;
+  }
+}
+
+async function submitManualHrv() {
+  const dateInput = $('hrv-manual-date');
+  const valInput = $('hrv-manual-rmssd');
+  const out = $('hrv-manual-result');
+  const v = parseFloat(valInput.value);
+  if (!(v > 0 && v <= 250)) {
+    out.style.display = 'block';
+    out.style.color = 'var(--red)';
+    out.textContent = 'rMSSD must be between 0 and 250 ms.';
+    return;
+  }
+  const body = {hrv_manual_rmssd: v};
+  if (dateInput.value) body.date = dateInput.value;
+  try {
+    const res = await fetch('/api/wellness/manual-hrv', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`${res.status}: ${txt}`);
+    }
+    const d = await res.json();
+    out.style.display = 'block';
+    out.style.color = 'var(--green)';
+    out.textContent = `Saved HRV ${d.hrv_manual_rmssd} ms for ${d.date}.`;
+    if (typeof loadReadinessComposite === 'function') {
+      try { loadReadinessComposite(); } catch (_) {}
+    }
+  } catch (e) {
+    out.style.display = 'block';
+    out.style.color = 'var(--red)';
+    out.textContent = 'Save failed: ' + e.message;
+  }
 }
 
 // ═══ TOOLTIP SYSTEM ═══════════════════════════════════════════════════════

@@ -74,12 +74,25 @@ class FitnessSignature:
         ftp:        Functional Threshold Power (watts) — sustainable ~1hr power.
         ltp:        Lower Threshold Power (watts) — ~75% of FTP, aerobic threshold.
         hie:        High Intensity Energy (kJ) — anaerobic work capacity above FTP.
+                    NOTE: kept for backward compatibility; for the v1.0.6 3D
+                    strain-score model use ``wprime_j`` (joules) instead.
         peak_power: Peak Power (watts) — maximal 1-5 second sprint power.
+        cp_w:       v1.0.6+ Critical Power (watts) — Monod 2-param fit value
+                    when available; ``None`` => downstream code falls back to
+                    ``int(ftp * 1.03)`` (McGrath 2021 approximation).
+        wprime_j:   v1.0.6+ W' anaerobic work capacity (joules) — Monod fit
+                    value; ``None`` => fallback to ``hie * 1000``.
+        pmax_w:     v1.0.6+ maximum instantaneous power (watts) — best 5 s
+                    or ICU sportInfo[0].pMax; ``None`` => downstream code
+                    falls back to ``int(ftp * 1.30)`` (Coggan 2-min approx).
     """
     ftp: int
     ltp: int
     hie: float
     peak_power: int
+    cp_w: int | None = None
+    wprime_j: float | None = None
+    pmax_w: int | None = None
 
 
 # ══════════════════════════════════════════════════════════════════════════════

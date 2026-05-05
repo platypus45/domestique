@@ -35,6 +35,17 @@ ICU_USER_AGENT = "Domestique/4.5.4 (+https://github.com/platypus45/health_tracke
 CTL_TAU = 42
 ATL_TAU = 7
 
+# v1.0.6 — three-dimensional Banister τ defaults from Kontro 2026 Fig S2.
+# These are SINGLE-ATHLETE illustrative examples, not population-validated.
+# Profile-overridable. The existing CTL_TAU/ATL_TAU stays as the
+# one-dimensional primary curve; the 3D set is additive.
+CP_TAU1 = 52.0   # CP fitness time constant (days)
+CP_TAU2 = 10.0   # CP fatigue time constant (days)
+WPRIME_TAU1 = 5.0
+WPRIME_TAU2 = 5.0
+PMAX_TAU1 = 10.0
+PMAX_TAU2 = 4.0
+
 
 class ICUCredentialsMissing(Exception):
     """Raised when ICU_ATHLETE_ID or ICU_API_KEY is not configured."""

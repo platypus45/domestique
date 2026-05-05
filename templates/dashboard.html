@@ -1097,6 +1097,43 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
   @page { size: A4; margin: 10mm; }
   #programme-summary-content canvas { max-height: 220px !important; }
 }
+
+/* v1.0.3 IMPL-UI: (i) info-icon + popover for plan-update help. Cloned from
+   the existing .hint pattern (~L1463) but with italic Georgia "i" glyph and
+   a parallel .info-popover for tap/click rich-text help on Plan tab. */
+.info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 4px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text3);
+  font-size: 10px;
+  font-weight: 700;
+  font-style: italic;
+  font-family: Georgia, serif;
+  cursor: help;
+  vertical-align: middle;
+  user-select: none;
+}
+.info-popover {
+  display: none;
+  position: absolute;
+  z-index: 10000;
+  max-width: 360px;
+  padding: 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+}
+.info-popover.open { display: block; }
 </style>
 </head>
 <body>
@@ -1625,6 +1662,31 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
   <!-- Current Metrics Banner -->
   <div id="plan-metrics-banner" style="display:flex;gap:16px;margin-bottom:12px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--text2);flex-wrap:wrap;"></div>
 
+  <!-- v1.0.3 IMPL-UI: collapsed help panel — explains the four ways the plan
+       updates (Reforecast / Regenerate / Availability / Rematch). Closed by
+       default; <details>/<summary> matches the pattern used at L1406 + L8048. -->
+  <details class="plan-help-panel" style="margin-bottom:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;">
+    <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--text);">How your plan updates</summary>
+    <div style="margin-top:8px;font-size:12px;line-height:1.5;color:var(--text2);">
+      Your plan adapts in four ways. <strong>Reforecast</strong> keeps the structure but rebalances load to today's fitness, fatigue, and overshoot — use it weekly. <strong>Regenerate Plan</strong> rebuilds from scratch using today's CTL and your remaining weeks — use it after a goal change, a long break, or illness. The <strong>Availability Calendar</strong> edits which days you can train; click a day to set hours, right-click to mark unavailable. After editing, click <strong>Generate Plan</strong> to save and rebuild. <strong>Rematch workout</strong> (in any day's detail view) re-rolls only that single workout if the suggestion doesn't fit. Don't manually edit unless something's clearly wrong — the planner already accounts for fatigue and load.
+    </div>
+  </details>
+
+  <!-- v1.0.3 IMPL-UI: missed-session reschedule banner — populated by
+       loadMissedSuggestions() from GET /api/plan/missed-suggestions. Hidden
+       until at least one suggestion fetched. Cloned from #plan-gap-alert. -->
+  <div id="plan-missed-banner" style="display:none;margin-bottom:12px;padding:12px 16px;background:rgba(234,179,8,0.1);border:1px solid var(--yellow);border-radius:var(--radius);">
+    <div style="font-weight:700;color:var(--yellow);margin-bottom:6px;font-size:13px;">Reschedule missed sessions?</div>
+    <div id="plan-missed-chips" style="display:flex;flex-direction:column;gap:6px;"></div>
+  </div>
+
+  <!-- v1.0.3 IMPL-UI: hidden info-popovers for the four (i) icons. Class
+       .info-popover toggles via .open from the delegated handler below. -->
+  <div class="info-popover" id="planpop-reforecast"><strong>Reforecast</strong> keeps your plan's structure but rebalances daily load to today's TSB (fatigue), ACWR (load ratio), and polarization compliance. Click weekly, after a hard ride, or when you've overshot. Doesn't touch phase splits or workout types.</div>
+  <div class="info-popover" id="planpop-regenerate"><strong>Regenerate Plan</strong> wipes the plan and rebuilds it from today's CTL, with phase splits derived from weeks-to-event. Use after a goal change, missed 2+ weeks, illness, or new event date. This is the nuclear option.</div>
+  <div class="info-popover" id="planpop-availability"><strong>Edit availability</strong> sets per-day training time. Click a date to set hours; right-click to mark unavailable (holiday/injury). After edits, click <strong>Generate Plan</strong> to save and rebuild — your edits won't take effect until then.</div>
+  <div class="info-popover" id="planpop-rematch"><strong>Rematch workout</strong> re-rolls only this one day's ZWO file from the matching workout pool. Same intent (intervals, endurance, etc.) — different specific session. Use when the suggested workout doesn't fit your equipment or mood.</div>
+
   <!-- Gap Alert Banner (shown when missed sessions detected) -->
   <div id="plan-gap-alert" style="display:none;margin-bottom:12px;padding:12px 16px;background:rgba(234,179,8,0.1);border:1px solid var(--yellow);border-radius:var(--radius);">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;">
@@ -1633,7 +1695,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
         <div style="font-size:12px;color:var(--text2);" id="gap-alert-detail"></div>
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0;">
-        <button class="btn btn-primary" onclick="regeneratePlan()" style="font-size:11px;">Regenerate Plan</button>
+        <button class="btn btn-primary" onclick="regeneratePlan()" style="font-size:11px;">Regenerate Plan</button><span class="info-icon" data-popover="planpop-regenerate" tabindex="0" role="button" aria-label="What does Regenerate Plan do?" title="Wipes and rebuilds the plan from today's CTL.">i</span>
         <button class="btn" onclick="showMarkUnavailable()" style="font-size:11px;">Mark Holiday/Injury</button>
         <button class="btn" onclick="$('plan-gap-alert').style.display='none'" style="font-size:11px;">Dismiss</button>
       </div>
@@ -1695,9 +1757,9 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
         <div style="font-size:10px;color:var(--text3);margin-top:4px;">Total: <span id="plan-total-mins">750</span>min/week</div>
       </div>
 
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
         <button class="btn btn-primary" onclick="generatePlan()">Generate Plan</button>
-        <button class="btn" onclick="reforecastPlan()">Reforecast</button>
+        <button class="btn" onclick="reforecastPlan()">Reforecast</button><span class="info-icon" data-popover="planpop-reforecast" tabindex="0" role="button" aria-label="What does Reforecast do?" title="Keeps plan structure; rebalances daily load to today's fitness/fatigue.">i</span>
         <!-- v4.6.7 IMPL-SUM: summary modal trigger BEGIN -->
         <button class="btn" onclick="showProgrammeSummary()" id="btn-programme-summary" title="End-of-plan literature-grounded recap">Programme summary</button>
         <!-- v4.6.7 IMPL-SUM: summary modal trigger END -->
@@ -1850,7 +1912,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
   <!-- Monthly Availability Calendar -->
   <div class="card" style="margin-bottom:12px;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-      <h3>Availability Calendar</h3>
+      <h3 style="display:flex;align-items:center;">Availability Calendar<span class="info-icon" data-popover="planpop-availability" tabindex="0" role="button" aria-label="How does the Availability Calendar work?" title="Click to set hours; right-click to mark unavailable. Then Generate Plan.">i</span></h3>
       <div style="display:flex;gap:6px;align-items:center;">
         <button class="btn" onclick="changeAvailMonth(-1)" style="padding:4px 8px;">&larr;</button>
         <span id="avail-month-label" style="font-size:13px;font-weight:600;min-width:120px;text-align:center;"></span>
@@ -2322,7 +2384,7 @@ document.querySelectorAll('.tab[data-tab]').forEach(t => {
                        if (typeof loadWorldCards === 'function') loadWorldCards();
                      },
                      picker:()=>{ if (typeof loadRoutePickerRegionChips === 'function') loadRoutePickerRegionChips(); },
-                     plan:()=>{triggerPlanAutoRecalc();loadPlan();loadPlanMetrics();checkPlanGaps();initAvailCalendar();loadCalendar();loadCapabilityProjection();}, settings:()=>{loadSettings();loadIcuCredentials();}, library:loadWorkouts};
+                     plan:()=>{triggerPlanAutoRecalc();loadPlan();loadPlanMetrics();checkPlanGaps();initAvailCalendar();loadCalendar();loadCapabilityProjection();loadMissedSuggestions();}, settings:()=>{loadSettings();loadIcuCredentials();}, library:loadWorkouts};
     if (loaders[tab]) loaders[tab]();
   });
 });
@@ -2374,6 +2436,140 @@ function showToast(msg, duration=3000) {
     t.style.opacity = '0';
     setTimeout(() => { try { t.remove(); } catch(_) {} }, 250);
   }, duration);
+}
+
+// ═══ v1.0.3 IMPL-UI: (i) info-popover handler ═════════════════════════════
+// Single delegated handler for any element with [data-popover]. Click toggles
+// the matching .info-popover; one open at a time; outside-click closes it.
+// Pairs with the .info-icon CSS at the top of the file.
+(function initInfoPopovers() {
+  let _activePopId = null;
+  function closeActive() {
+    if (!_activePopId) return;
+    const el = document.getElementById(_activePopId);
+    if (el) el.classList.remove('open');
+    _activePopId = null;
+  }
+  function openAt(icon, popId) {
+    const pop = document.getElementById(popId);
+    if (!pop) return;
+    closeActive();
+    // Position the popover just below+right of the icon.
+    const r = icon.getBoundingClientRect();
+    pop.style.top = (window.scrollY + r.bottom + 6) + 'px';
+    pop.style.left = Math.max(8, Math.min(
+      window.scrollX + r.left,
+      window.scrollX + window.innerWidth - 380
+    )) + 'px';
+    pop.classList.add('open');
+    _activePopId = popId;
+  }
+  document.addEventListener('click', (e) => {
+    const icon = e.target.closest && e.target.closest('[data-popover]');
+    if (icon) {
+      e.preventDefault();
+      e.stopPropagation();
+      const popId = icon.getAttribute('data-popover');
+      if (_activePopId === popId) { closeActive(); return; }
+      openAt(icon, popId);
+      return;
+    }
+    // outside-click — close any open popover (but not when clicking inside one)
+    if (_activePopId) {
+      const active = document.getElementById(_activePopId);
+      if (active && !active.contains(e.target)) closeActive();
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeActive();
+  });
+})();
+
+// ═══ v1.0.3 IMPL-UI: missed-session reschedule banner ═════════════════════
+// Fetches GET /api/plan/missed-suggestions on Plan-tab init (and on home init
+// for early discoverability). Renders chip-style "Move missed X to Y?" rows
+// above the calendar; [Move] POSTs /api/plan/move-session, [Dismiss] sets a
+// localStorage flag scoped to the missed_date.
+async function loadMissedSuggestions() {
+  const banner = document.getElementById('plan-missed-banner');
+  const chips = document.getElementById('plan-missed-chips');
+  if (!banner || !chips) return;
+  // Reset visibility first; if anything errors below, banner stays hidden.
+  banner.style.display = 'none';
+  chips.innerHTML = '';
+  let data = null;
+  try {
+    const res = await fetch('/api/plan/missed-suggestions');
+    if (!res.ok) return;
+    data = await res.json();
+  } catch (_) { return; }
+  const all = (data && Array.isArray(data.suggestions)) ? data.suggestions : [];
+  if (!all.length) return;
+  // Filter out per-missed_date dismissals stored in localStorage.
+  const visible = all.filter(s => {
+    try { return localStorage.getItem('missed-dismissed-' + s.missed_date) !== 'true'; }
+    catch (_) { return true; }
+  });
+  if (!visible.length) return;
+  const top3 = visible.slice(0, 3);
+  const more = visible.length - top3.length;
+  top3.forEach(s => {
+    const chip = document.createElement('div');
+    chip.className = 'missed-chip';
+    chip.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;color:var(--text);background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 10px;';
+    const dur = s.missed_summary || `${s.missed_session_type || 'session'}`;
+    const missedDay = s.missed_day_name || (s.missed_date || '').slice(5);
+    const sugDay = s.suggested_day_name || (s.suggested_date || '').slice(5);
+    chip.innerHTML = `<span>&#x1F501; Move missed <strong>${missedDay} ${s.missed_date}</strong> [${dur}] to <strong>${sugDay} ${s.suggested_date}</strong>?</span>
+      <span style="display:flex;gap:6px;">
+        <button class="btn btn-primary" style="font-size:11px;padding:3px 10px;" data-msug-act="move">Move</button>
+        <button class="btn" style="font-size:11px;padding:3px 10px;" data-msug-act="dismiss">Dismiss</button>
+      </span>`;
+    const moveBtn = chip.querySelector('[data-msug-act="move"]');
+    const dismissBtn = chip.querySelector('[data-msug-act="dismiss"]');
+    moveBtn.addEventListener('click', async () => {
+      moveBtn.disabled = true; dismissBtn.disabled = true;
+      try {
+        const res = await fetch('/api/plan/move-session', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({date: s.missed_date, new_date: s.suggested_date}),
+        });
+        const ok = res.ok;
+        if (ok) {
+          try { showToast(`Moved to ${sugDay} ${s.suggested_date}`, 3000); } catch (_) {}
+          chip.remove();
+          if (!chips.children.length) banner.style.display = 'none';
+          try { await loadCalendar(); } catch (_) {}
+        } else {
+          let msg = 'Move failed';
+          try { const d = await res.json(); if (d && (d.error || d.detail)) msg = `Move failed: ${d.error || d.detail}`; } catch (_) {}
+          try { showToast(msg, 4000); } catch (_) {}
+          moveBtn.disabled = false; dismissBtn.disabled = false;
+        }
+      } catch (e) {
+        try { showToast('Move failed: network error', 3000); } catch (_) {}
+        moveBtn.disabled = false; dismissBtn.disabled = false;
+      }
+    });
+    dismissBtn.addEventListener('click', () => {
+      try { localStorage.setItem('missed-dismissed-' + s.missed_date, 'true'); } catch (_) {}
+      chip.remove();
+      if (!chips.children.length) banner.style.display = 'none';
+    });
+    chips.appendChild(chip);
+  });
+  if (more > 0) {
+    const moreEl = document.createElement('a');
+    moreEl.href = '#';
+    moreEl.textContent = `+${more} more`;
+    moreEl.style.cssText = 'font-size:11px;color:var(--text2);text-decoration:underline;cursor:pointer;align-self:flex-start;';
+    moreEl.addEventListener('click', (e) => {
+      e.preventDefault();
+      try { openMissedSessionsModal(); } catch (_) {}
+    });
+    chips.appendChild(moreEl);
+  }
+  banner.style.display = 'block';
 }
 
 // ═══ IMPORT FIT (v4.0.0-alpha) ════════════════════════════════════════════
@@ -9993,8 +10189,8 @@ async function openDayWorkout(sessionIdx) {
   // (FIX-SERVER P6) and animates the new workout inline; falls back to the
   // week-level classifier rematch if re-draw isn't available yet.
   html += `<div id="rematch-result-${session.day}" style="margin-top:16px;"></div>`;
-  html += `<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
-    <button class="btn" onclick="rematchDaySession('${session.day}')" style="font-size:12px;">&#x21bb; Rematch workout</button>
+  html += `<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+    <button class="btn" onclick="rematchDaySession('${session.day}')" style="font-size:12px;">&#x21bb; Rematch workout</button><span class="info-icon" data-popover="planpop-rematch" tabindex="0" role="button" aria-label="What does Rematch workout do?" title="Re-rolls only this one day's ZWO from the matching workout pool.">i</span>
   </div>`;
 
   // fix26 §6.8 — Dismiss / Un-dismiss action surfaces in the day modal

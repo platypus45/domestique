@@ -1,5 +1,42 @@
 # Changelog
 
+## v1.0.3 — Availability-aware reforecast + auto-fire on sync + Plan-tab guidance + missed-session reschedule + ZWO/FIT downloads finally work in the bundled app (2026-05-05)
+
+### User-facing — the plan stays current with reality
+
+- **Availability-aware reforecast** — `plan["availability"]` finally feeds `tp.reforecast()` so per-day hour overrides actually rescale daily duration / TSS. Previously the dashboard accepted availability edits but the reforecast call ignored them — closes the silent failure where "I changed availability but plan didn't budge". Per-week scaling clamped to [0.4×, 2.0×]; `hours=0` zeroes the day to rest.
+- **Auto-fire reforecast on sync / FIT import** — successful `_sync_icu_activities`, `/api/rides/sync`, and `/api/ride/import` now trigger a debounced reforecast (5-min cooldown via `plan["reforecast_date"]`) when `added > 0`. Best-effort: wrapped in try/except, never propagates failures back to the sync response. CTL/TSB drift now rolls into the plan automatically — no manual click required.
+- **Plan tab guidance** — collapsed `<details>` "How your plan updates" panel at the top of the Plan tab explaining when to use Reforecast vs. Regenerate vs. Edit Availability vs. Rematch. Plus four (i) info-icons next to each button with hover/tap popovers (≤40 words each, science-grounded copy). Hybrid behaviour: native `title=` short fallback + JS popover for richer copy. Single delegated handler — outside-click closes; one popover open at a time.
+- **Missed-session reschedule suggestions** — new `GET /api/plan/missed-suggestions` walks the plan for `status="missed"` sessions and proposes a same-ISO-week future slot (rest day or unfilled available day). Banner above the calendar: "Move missed Tue 04-21 [endurance, 60min] to Fri 04-24? [Move] [Dismiss]". `[Move]` reuses existing `POST /api/plan/move-session` — read-only suggestion, user always confirms. Greedy first-fit by missed_date; max 3 chips inline + `+N more` link to the existing missed-sessions modal.
+
+### Bugfix — ZWO + FIT downloads silent-failed in the bundled DMG
+
+- Root cause: pywebview's WKWebView (macOS) silently ignores the `<a download>` attribute. The v1.0.1 fix only addressed FastAPI's route mismatch — the WebKit limitation persisted, so ZWO clicks rendered the file inline as text and FIT clicks did nothing.
+- Fix: `launcher.py` exposes a Python `JsApi` class with `save_zwo(filename, content)` / `save_fit(filename, b64_content)` via pywebview's `js_api=` bridge. Both methods open a native `webview.SAVE_DIALOG` and write to the user-chosen path. Browser-mode users (running `python launcher.py` and opening the URL in Chrome / Safari) keep the existing `<a download>` fallback path — graceful degradation.
+- Persistence write-back fix — `/api/plan/reforecast` no longer drops `duration_min` from the JSON write-back loop. Without this, every duration scaling (both the new availability-overrides path AND the existing ZWO-swap pass) silently died on disk on the next reload. Now persisted. Same fix applied to the auto-fire path.
+
+### Endpoints
+- `GET /api/plan/missed-suggestions` — `{"suggestions":[{missed_date, missed_session_type, missed_summary, suggested_date, suggested_day_name, reason}]}`. `reason` ∈ `{"rest_slot","unfilled_available_day"}`. Read-only.
+- `tp.reforecast(...)` gains `availability_overrides: dict[str, float] | None = None`. Per-week scale clamped [0.4, 2.0]; hours≤0 → rest with TSS=0.
+- `_maybe_auto_reforecast(profile_id, new_rides)` — module-level helper, 300 s debounce, `plan_write_lock()`, full persistence pattern.
+- `pywebview.api.save_zwo(filename, content)` / `save_fit(filename, b64_content)` — JS-callable bridges.
+
+### Tests
+- 806 → 826 passing (+20 net across `tests/test_availability_reforecast.py` (4 new) + `tests/test_auto_reforecast.py` (4 new) + `tests/test_missed_suggestions.py` (5 new) + `tests/test_ui_v103.py` (3 new) + `tests/test_download_pywebview_bridge.py` (4 new)). Same 3 pre-existing wellness/training-load isolation failures.
+- E2E gate verified: half-hour availability rescales duration_min to disk; rest-day availability zeroes session_type/duration/TSS; missed-session endpoint returns same-week future rest-slot suggestion; pywebview bridge surfaces save dialog (static-checked).
+
+## v1.0.2 — Update notification + first-boot migration toast + upgrade docs (2026-05-05)
+
+### User-facing — three coordinated pieces, all centred on the promise that rider data survives every install
+
+- **Update-check banner** on the home page — `GET /api/update/check` polls the GitHub Releases API (cached 6h at `~/.domestique/update_check_cache.json`), filters assets by `sys.platform` (`.dmg` for macOS, `.zip`/`.exe` for Windows). The banner displays the EXACT copy stating which rider data is preserved across the update — rides, training plan, FTP history, wellness logs, profile. `[What's new]` and `[Download]` buttons link LIVE to `release_url` / `download_url` pulled from the API response (never hardcoded). Per-version dismissal via `localStorage["update-banner-dismissed-<version>"]` — resurfaces on the next release.
+- **First-boot-after-upgrade migration toast** — startup version-aware self-check compares `~/.domestique/last_run_version.txt` to `VERSION`. On first boot at a new version: runs additive schema migrations (zero columns added in v1.0.2 — framework only for future use), writes the new version stamp, surfaces a 5s toast naming the from/to versions and "all rider data preserved". Idempotent — same-version reboots don't re-fire the toast (per-from/to-pair `localStorage` flag).
+- **Upgrade docs** — new `docs/upgrading.md` (≤400 words) + new `## Updating Domestique` README section. Per-data-type preservation table guarantees rider state lives in `~/.domestique/` outside the app bundle, so DMG / EXE replacement never touches profiles, rides, plans, FTP history, wellness logs, or ICU credentials.
+
+### Endpoints (v1.0.2)
+- `GET /api/update/check` — returns `{current, latest, update_available, release_url, download_url, asset_name, platform, checked_at, cached, error}`. 6h TTL disk cache.
+- `GET /api/migrations/last-run-result` — returns `{migration_check_passed, from_version, to_version, columns_added, schema_changes[], data_migrations[], rider_data_preserved, show_toast}`.
+
 ## v1.0.1 — Download bugs + Karoo + DMG bundling (2026-05-04)
 
 ### Download bugs (closes 3 user-visible issues)

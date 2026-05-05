@@ -2714,7 +2714,14 @@ function workoutProfileSVG(segments, ftp, totalSec) {
       const y = yScale(s.power);
       const h = yScale(0) - y;
       const z = powerToZone(s.pct);
-      const tip = `${TYPE}: ${formatDur(s.duration)} at ${Math.round(s.pct)}% FTP`;
+      // v1.0.3 fix-forward(workout-detail UX): include absolute wattage so a
+      // hover on the colour bar reads "5 min • 240 W (97% FTP)" — the user
+      // explicitly asked for the watts ("5 min 300 watt") rather than the
+      // FTP-percentage alone. ZWO `<SteadyState Power=...>` is a fraction of
+      // FTP; ftp is in watts, so the prerendered `s.power` field is already
+      // round(ftp * fraction) (see api_workout_detail).
+      const watts = Math.round(s.power);
+      const tip = `${TYPE}: ${formatDur(s.duration)} • ${watts} W (${Math.round(s.pct)}% FTP)`;
       rects += `<rect x="${x1}" y="${y}" width="${w}" height="${h}" fill="${z.color}" opacity="0.85"><title>${tip}</title></rect>`;
     } else if (s.type === 'Warmup' || s.type === 'Cooldown' || s.type === 'Ramp') {
       const x2 = xScale(s.start + s.duration);
@@ -2743,7 +2750,14 @@ function workoutProfileSVG(segments, ftp, totalSec) {
       rects += `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="1" y2="0">
         <stop offset="0%" stop-color="${zStart.color}"/><stop offset="100%" stop-color="${zEnd.color}"/>
       </linearGradient></defs>`;
-      const tip = `${TYPE}: ${formatDur(s.duration)} at ${Math.round(pctStart)}%→${Math.round(pctEnd)}% FTP`;
+      // v1.0.3 fix-forward(workout-detail UX): wattage range alongside the
+      // FTP-percentage range. `s.power_low` / `s.power_high` are already the
+      // round(ftp * fraction) values; pick the start/end the same way the
+      // ramp orientation logic above does so the tooltip reads in the
+      // direction the bar visually slopes.
+      const wattsStart = Math.round(isCooldown ? Math.max(s.power_low, s.power_high) : Math.min(s.power_low, s.power_high));
+      const wattsEnd = Math.round(isCooldown ? Math.min(s.power_low, s.power_high) : Math.max(s.power_low, s.power_high));
+      const tip = `${TYPE}: ${formatDur(s.duration)} • ${wattsStart}→${wattsEnd} W (${Math.round(pctStart)}%→${Math.round(pctEnd)}% FTP)`;
       rects += `<polygon points="${x1},${yStart} ${x2},${yEnd} ${x2},${yBot} ${x1},${yBot}" fill="url(#${gid})" opacity="0.85"><title>${tip}</title></polygon>`;
     } else if (s.type === 'IntervalsT') {
       let cursor = s.start;
@@ -2754,7 +2768,11 @@ function workoutProfileSVG(segments, ftp, totalSec) {
         const oy = yScale(s.on_power);
         const oBot = yScale(0);
         const zOn = powerToZone(s.on_pct);
-        const onTip = `INTERVALS: ${formatDur(s.on_duration)} at ${Math.round(s.on_pct)}% FTP`;
+        // v1.0.3 fix-forward(workout-detail UX): wattage on each ON / OFF
+        // bar so the rider hovering an interval sees "3 min • 280 W
+        // (113% FTP)" instead of just the percentage.
+        const onWatts = Math.round(s.on_power);
+        const onTip = `INTERVALS ON: ${formatDur(s.on_duration)} • ${onWatts} W (${Math.round(s.on_pct)}% FTP)`;
         rects += `<rect x="${ox1}" y="${oy}" width="${ox2-ox1}" height="${oBot-oy}" fill="${zOn.color}" opacity="0.85"><title>${onTip}</title></rect>`;
         cursor += s.on_duration;
         // Off interval
@@ -2762,7 +2780,8 @@ function workoutProfileSVG(segments, ftp, totalSec) {
         const fx2 = xScale(cursor + s.off_duration);
         const fy = yScale(s.off_power);
         const zOff = powerToZone(s.off_pct);
-        const offTip = `INTERVALS: ${formatDur(s.off_duration)} at ${Math.round(s.off_pct)}% FTP`;
+        const offWatts = Math.round(s.off_power);
+        const offTip = `INTERVALS OFF: ${formatDur(s.off_duration)} • ${offWatts} W (${Math.round(s.off_pct)}% FTP)`;
         rects += `<rect x="${fx1}" y="${fy}" width="${fx2-fx1}" height="${oBot-fy}" fill="${zOff.color}" opacity="0.85"><title>${offTip}</title></rect>`;
         cursor += s.off_duration;
       }
@@ -2770,7 +2789,9 @@ function workoutProfileSVG(segments, ftp, totalSec) {
       const w = xScale(s.start + s.duration) - x1;
       const y = yScale(ftp * 0.5);
       const h = yScale(0) - y;
-      const tip = `FREERIDE: ${formatDur(s.duration)}`;
+      // v1.0.3 fix-forward(workout-detail UX): no wattage on FreeRide — it's
+      // a free segment by definition; the rider picks the effort.
+      const tip = `FREERIDE: ${formatDur(s.duration)} • free`;
       rects += `<rect x="${x1}" y="${y}" width="${w}" height="${h}" fill="var(--text3)" opacity="0.3"><title>${tip}</title></rect>`;
       rects += `<text x="${x1 + w/2}" y="${y + h/2 + 4}" text-anchor="middle" fill="var(--text2)" font-size="10">FREE RIDE</text>`;
     }
@@ -10177,6 +10198,14 @@ async function openDayWorkout(sessionIdx) {
 
   // Download buttons
   html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;">';
+  // v1.0.3 fix-forward(workout-detail UX): when a library ZWO is matched,
+  // both the ZWO and the FIT download mirror that file's basename so the
+  // two filenames stay in lockstep and the FIT body matches the ZWO content
+  // (FIX B in app.py — `zwo_file=` query param triggers parse + transcode).
+  // Without a library match, the day_name+typeUpper fallback is preserved.
+  const fitName = session.zwo_file
+    ? session.zwo_file.replace(/\.zwo$/i, '')
+    : `${session.day_name} ${typeUpper}`;
   if (session.zwo_file) {
     // v1.0.3: route through downloadZwoFile() — WKWebView ignores <a download>.
     html += `<button class="btn btn-primary" onclick="downloadZwoFile('${escJs(session.zwo_file)}')">Download ZWO (Virtual Trainer)</button>`;
@@ -10184,7 +10213,7 @@ async function openDayWorkout(sessionIdx) {
     // Generate ZWO on-the-fly only when no matched library file is available.
     html += `<button class="btn btn-primary" onclick="downloadGeneratedZwo('${escJs(type)}', ${session.duration_min}, '${escJs(session.day_name)} ${escJs(typeUpper)}')">Download ZWO (Virtual Trainer)</button>`;
   }
-  html += `<button class="btn" onclick="downloadFIT('${escJs(type)}', ${session.duration_min}, '${escJs(session.day_name)} ${escJs(typeUpper)}')">Download FIT (Garmin / Wahoo / Karoo)</button>`;
+  html += `<button class="btn" onclick="downloadFIT('${escJs(type)}', ${session.duration_min}, '${escJs(fitName)}', ${session.zwo_file ? `'${escJs(session.zwo_file)}'` : 'null'})">Download FIT (Garmin / Wahoo / Karoo)</button>`;
   html += '</div>';
   html += '<div style="font-size:10px;color:var(--text3);margin-top:8px;">ZWO = Virtual trainers (MyWhoosh / Tacx / Zwift / Hammerhead Karoo — ERG mode, power targets). FIT = Garmin Edge + Wahoo ELEMNT. Ride in your chosen app, then use Import FIT to analyze.</div>';
 
@@ -10641,14 +10670,17 @@ async function downloadZwoFile(filename) {
   setTimeout(() => { try { a.remove(); } catch(_) {} }, 1000);
 }
 
-async function downloadFIT(type, durationMin, name) {
+async function downloadFIT(type, durationMin, name, zwoFile = null) {
   // v1.0.1 fix: pre-fix the button used <a download href=...>.click(), which
   // is fire-and-forget — pywebview's webkit silently swallowed JSON 4xx/5xx
   // responses (no download dialog, no error). fetch() + Blob lets us inspect
   // the response and surface failures as a toast instead of silent nothing.
   // v1.0.3 fix: synthetic anchor clicks ALSO don't trigger a save in
   // WKWebView, so try the pywebview bridge first when available.
-  const url = `/api/export/fit-workout?session_type=${encodeURIComponent(type)}&duration_min=${durationMin}&name=${encodeURIComponent(name)}`;
+  // v1.0.3 fix-forward: when zwoFile is supplied, the server transcodes the
+  // exact ZWO library file into FIT (matching content + matching basename).
+  let url = `/api/export/fit-workout?session_type=${encodeURIComponent(type)}&duration_min=${durationMin}&name=${encodeURIComponent(name)}`;
+  if (zwoFile) url += `&zwo_file=${encodeURIComponent(zwoFile)}`;
   const fitName = name.replace(/[^a-zA-Z0-9]/g, '_') + '.fit';
   if (await _saveViaPywebview('fit', fitName, url)) return;
   try {

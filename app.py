@@ -6294,6 +6294,7 @@ def api_export_fit_workout(
     session_type: str = Query("z2"),
     duration_min: int = Query(75),
     name: str = Query("Workout"),
+    zwo_file: str | None = Query(None),
 ):
     """Generate a FIT binary workout file for Garmin Edge / Wahoo ELEMNT / Hammerhead Karoo.
 
@@ -6302,55 +6303,72 @@ def api_export_fit_workout(
     ("sweet_spot", "over_under") now route to the same elif branch. Pre-fix,
     the snake_case forms fell through to the else branch (a generic Z2 block),
     which silently produced a wrong workout instead of the requested intervals.
+
+    v1.0.3 fix-forward(workout-detail UX): when ``zwo_file`` is supplied, the
+    server parses that exact ZWO file out of WORKOUT_DIR and transcodes its
+    blocks into FIT workout steps — so the FIT body matches the ZWO content
+    (was previously a generic block keyed only on session_type+duration). If
+    the named file is missing the route 404s loudly rather than silently
+    falling back to a wrong workout. When ``zwo_file`` is None or empty, the
+    pre-existing generic generator path is preserved (used by the no-library
+    fallback at L10185 in dashboard.html).
     """
     try:
         from fit_tool.fit_file_builder import FitFileBuilder  # verify fit_tool is available
 
         ftp = config.ATHLETE_FTP_W
 
-        # v1.0.1: normalise to lowercase + strip "_" / "-" so "sweet_spot",
-        # "Sweet-Spot", and "sweetspot" all map to the same key.
-        st_norm = (session_type or "").lower().replace("_", "").replace("-", "")
-
-        # Build power blocks (reuse existing logic)
-        blocks = []
-        warmup = min(10, duration_min // 8)
-        cooldown = min(5, duration_min // 12)
-        main_min = duration_min - warmup - cooldown
-
-        blocks.append({"name": "Warmup", "min": warmup, "pctLow": 45, "pctHigh": 65, "intensity": "warmup"})
-
-        if st_norm == "vo2max":
-            reps = min(5, max(3, main_min // 7))
-            for i in range(reps):
-                blocks.append({"name": f"VO2 {i+1}", "min": 4, "pctLow": 106, "pctHigh": 115, "intensity": "active"})
-                if i < reps - 1:
-                    blocks.append({"name": "Rest", "min": 3, "pctLow": 40, "pctHigh": 40, "intensity": "rest"})
-        elif st_norm == "threshold":
-            blocks.append({"name": "FTP 1", "min": 20, "pctLow": 95, "pctHigh": 100, "intensity": "active"})
-            blocks.append({"name": "Rest", "min": 5, "pctLow": 50, "pctHigh": 50, "intensity": "rest"})
-            blocks.append({"name": "FTP 2", "min": 20, "pctLow": 95, "pctHigh": 100, "intensity": "active"})
-        elif st_norm == "sweetspot":
-            for i in range(3):
-                blocks.append({"name": f"SS {i+1}", "min": 15, "pctLow": 88, "pctHigh": 93, "intensity": "active"})
-                if i < 2:
-                    blocks.append({"name": "Rest", "min": 5, "pctLow": 55, "pctHigh": 55, "intensity": "rest"})
-        elif st_norm == "overunder":
-            for i in range(3):
-                for j in range(4):
-                    blocks.append({"name": "Over", "min": 2, "pctLow": 105, "pctHigh": 105, "intensity": "active"})
-                    blocks.append({"name": "Under", "min": 1, "pctLow": 90, "pctHigh": 90, "intensity": "active"})
-                if i < 2:
-                    blocks.append({"name": "Rest", "min": 5, "pctLow": 50, "pctHigh": 50, "intensity": "rest"})
+        if zwo_file:
+            # v1.0.3 fix-forward: ZWO-content path — mirror exactly what the
+            # rider sees in MyWhoosh / Tacx / Zwift.
+            zwo_path = _safe_path(WORKOUT_DIR, zwo_file)
+            if not zwo_path or not zwo_path.exists():
+                return JSONResponse({"error": f"ZWO file not found: {zwo_file}"}, 404)
+            fit_data = _build_fit_workout_from_zwo(name, zwo_path, ftp)
         else:
-            blocks.append({"name": session_type, "min": main_min, "pctLow": 56, "pctHigh": 75, "intensity": "active"})
+            # v1.0.1: normalise to lowercase + strip "_" / "-" so "sweet_spot",
+            # "Sweet-Spot", and "sweetspot" all map to the same key.
+            st_norm = (session_type or "").lower().replace("_", "").replace("-", "")
 
-        blocks.append({"name": "Cooldown", "min": cooldown, "pctLow": 60, "pctHigh": 40, "intensity": "cooldown"})
+            # Build power blocks (reuse existing logic)
+            blocks = []
+            warmup = min(10, duration_min // 8)
+            cooldown = min(5, duration_min // 12)
+            main_min = duration_min - warmup - cooldown
 
-        # Build FIT file manually (lightweight binary format)
-        # FIT header + data records + CRC
-        # For compatibility, generate a minimal FIT workout that Garmin can read
-        fit_data = _build_fit_workout(name, blocks, ftp)
+            blocks.append({"name": "Warmup", "min": warmup, "pctLow": 45, "pctHigh": 65, "intensity": "warmup"})
+
+            if st_norm == "vo2max":
+                reps = min(5, max(3, main_min // 7))
+                for i in range(reps):
+                    blocks.append({"name": f"VO2 {i+1}", "min": 4, "pctLow": 106, "pctHigh": 115, "intensity": "active"})
+                    if i < reps - 1:
+                        blocks.append({"name": "Rest", "min": 3, "pctLow": 40, "pctHigh": 40, "intensity": "rest"})
+            elif st_norm == "threshold":
+                blocks.append({"name": "FTP 1", "min": 20, "pctLow": 95, "pctHigh": 100, "intensity": "active"})
+                blocks.append({"name": "Rest", "min": 5, "pctLow": 50, "pctHigh": 50, "intensity": "rest"})
+                blocks.append({"name": "FTP 2", "min": 20, "pctLow": 95, "pctHigh": 100, "intensity": "active"})
+            elif st_norm == "sweetspot":
+                for i in range(3):
+                    blocks.append({"name": f"SS {i+1}", "min": 15, "pctLow": 88, "pctHigh": 93, "intensity": "active"})
+                    if i < 2:
+                        blocks.append({"name": "Rest", "min": 5, "pctLow": 55, "pctHigh": 55, "intensity": "rest"})
+            elif st_norm == "overunder":
+                for i in range(3):
+                    for j in range(4):
+                        blocks.append({"name": "Over", "min": 2, "pctLow": 105, "pctHigh": 105, "intensity": "active"})
+                        blocks.append({"name": "Under", "min": 1, "pctLow": 90, "pctHigh": 90, "intensity": "active"})
+                    if i < 2:
+                        blocks.append({"name": "Rest", "min": 5, "pctLow": 50, "pctHigh": 50, "intensity": "rest"})
+            else:
+                blocks.append({"name": session_type, "min": main_min, "pctLow": 56, "pctHigh": 75, "intensity": "active"})
+
+            blocks.append({"name": "Cooldown", "min": cooldown, "pctLow": 60, "pctHigh": 40, "intensity": "cooldown"})
+
+            # Build FIT file manually (lightweight binary format)
+            # FIT header + data records + CRC
+            # For compatibility, generate a minimal FIT workout that Garmin can read
+            fit_data = _build_fit_workout(name, blocks, ftp)
 
         from fastapi.responses import Response
         # Sanitize aggressively — any char outside [A-Za-z0-9_.-] becomes '_'.
@@ -6427,6 +6445,119 @@ def _build_fit_workout(name: str, blocks: list[dict], ftp: int) -> bytes:
         builder.add(step)
 
     # Build and return binary FIT data
+    fit_file = builder.build()
+    return fit_file.to_bytes()
+
+
+def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int) -> bytes:
+    """v1.0.3 fix-forward(workout-detail UX): transcode a ZWO file directly
+    into a FIT workout. The previous code path keyed only on
+    ``(session_type, duration_min)`` so the FIT body could be a generic Tempo
+    block while the ZWO download was the matched library file (a ladder, an
+    over-under, etc.). When both files exist for the same session they MUST
+    represent the same workout.
+
+    Element coverage:
+    - ``<SteadyState Duration=N Power=P>`` → 1 step at duration_time=N s,
+      power = ftp * P (watts).
+    - ``<Warmup>`` / ``<Ramp>`` → 1 step at the segment's average power
+      (most head units don't render true ramps; average is sufficient).
+    - ``<Cooldown>`` → 1 step at min(low,high) end power. Same convention as
+      v4.6.8 fix in the visualiser.
+    - ``<IntervalsT Repeat=N OnDuration=A OnPower=B OffDuration=C OffPower=D>``
+      → expanded into 2*N alternating on/off steps.
+    - ``<FreeRide Duration=N>`` → single step at 50% FTP (ZWO doesn't pin a
+      target; pick a sensible default so the head unit shows something).
+
+    The fit_tool import stays inside the function so PyInstaller's
+    hiddenimports list (which already references the same names as
+    `_build_fit_workout`) keeps working unchanged.
+    """
+    from fit_tool.fit_file_builder import FitFileBuilder
+    from fit_tool.profile.messages.file_id_message import FileIdMessage
+    from fit_tool.profile.messages.workout_message import WorkoutMessage
+    from fit_tool.profile.messages.workout_step_message import WorkoutStepMessage
+    from fit_tool.profile.profile_type import (
+        FileType, Manufacturer, Sport, Intensity, WorkoutStepDuration, WorkoutStepTarget,
+    )
+
+    tree = ET.parse(zwo_path)
+    root = tree.getroot()
+    workout_el = root.find("workout")
+
+    # (intensity, duration_seconds, power_low_pct_fraction, power_high_pct_fraction)
+    raw_steps: list[tuple[str, int, float, float]] = []
+    if workout_el is not None:
+        for el in workout_el:
+            tag = el.tag
+            dur = int(float(el.get("Duration", 0) or 0))
+            if tag == "SteadyState":
+                pw = float(el.get("Power", 0.65))
+                raw_steps.append(("active", dur, pw, pw))
+            elif tag == "Warmup":
+                plo = float(el.get("PowerLow", 0.5))
+                phi = float(el.get("PowerHigh", 0.7))
+                avg = (plo + phi) / 2
+                raw_steps.append(("warmup", dur, avg, avg))
+            elif tag == "Ramp":
+                plo = float(el.get("PowerLow", 0.5))
+                phi = float(el.get("PowerHigh", 0.7))
+                avg = (plo + phi) / 2
+                raw_steps.append(("active", dur, avg, avg))
+            elif tag == "Cooldown":
+                plo = float(el.get("PowerLow", 0.5))
+                phi = float(el.get("PowerHigh", 0.7))
+                # Cooldown ends at min(low, high) per v4.6.8 visualiser fix.
+                end = min(plo, phi)
+                raw_steps.append(("cooldown", dur, end, end))
+            elif tag == "IntervalsT":
+                reps = int(el.get("Repeat", 1))
+                on_d = int(float(el.get("OnDuration", 0) or 0))
+                off_d = int(float(el.get("OffDuration", 0) or 0))
+                on_p = float(el.get("OnPower", 0.95))
+                off_p = float(el.get("OffPower", 0.50))
+                for _ in range(reps):
+                    raw_steps.append(("active", on_d, on_p, on_p))
+                    raw_steps.append(("rest", off_d, off_p, off_p))
+            elif tag == "FreeRide":
+                # No target in ZWO; default to 50% FTP so the head unit isn't blank.
+                raw_steps.append(("active", dur, 0.5, 0.5))
+            # Anything else (e.g. <textevent>) is ignored.
+
+    INTENSITY_MAP = {
+        "active": Intensity.ACTIVE,
+        "rest": Intensity.REST,
+        "warmup": Intensity.WARMUP,
+        "cooldown": Intensity.COOLDOWN,
+    }
+
+    builder = FitFileBuilder()
+    file_id = FileIdMessage()
+    file_id.type = FileType.WORKOUT
+    file_id.manufacturer = Manufacturer.DEVELOPMENT.value
+    file_id.product = 0
+    file_id.serial_number = 12345
+    builder.add(file_id)
+
+    workout = WorkoutMessage()
+    workout.workout_name = name
+    workout.sport = Sport.CYCLING
+    workout.num_valid_steps = len(raw_steps)
+    builder.add(workout)
+
+    for i, (intensity_kind, dur_s, p_lo, p_hi) in enumerate(raw_steps):
+        step = WorkoutStepMessage()
+        step.message_index = i
+        step.duration_type = WorkoutStepDuration.TIME
+        step.duration_value = dur_s * 1000  # milliseconds
+        step.target_type = WorkoutStepTarget.POWER
+        step.intensity = INTENSITY_MAP.get(intensity_kind, Intensity.ACTIVE)
+        # FIT uses absolute watts + 1000 offset for custom targets.
+        step.custom_target_power_low = round(ftp * p_lo) + 1000
+        step.custom_target_power_high = round(ftp * p_hi) + 1000
+        step.target_value = 0  # 0 = custom target (not a zone)
+        builder.add(step)
+
     fit_file = builder.build()
     return fit_file.to_bytes()
 

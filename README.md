@@ -182,6 +182,17 @@ Domestique plans + analyzes — you ride in a separate app. See [docs/cycling_ap
 | **MyWhoosh** | ✅ fully free | ✅ via web builder | Scenery + Zwift-style ride experience; full ERG on Neo 2T |
 | Tacx Training | ✅ free with Tacx HW | ❌ ZWO, only GPX | Native Tacx integration but no ZWO import |
 
+### No laptop? Drive your smart trainer from a head unit / watch with the FIT export
+
+Both download formats — **ZWO** and **FIT** — drive a smart trainer in ERG, just through different middlemen:
+
+- **ZWO** → load into a virtual-trainer app on a laptop / phone (MyWhoosh / Tacx / Zwift / Golden Cheetah) → the app pairs to your trainer over ANT+ FE-C or Bluetooth FTMS and steers power.
+- **FIT** → push to a **Garmin Edge**, **Hammerhead Karoo**, **Wahoo ELEMNT**, or compatible Garmin watch (Forerunner / Fenix / Edge series with the Workouts feature) → the head unit pairs to your trainer over ANT+ FE-C or Bluetooth FTMS and steers power directly. **No laptop, no virtual world, no subscription.** Just the head unit → trainer.
+
+To use the FIT path: click "Download FIT" in any session card, drop the file into Garmin Connect / Hammerhead Dashboard / Wahoo ELEMNT Companion under the "Workouts" section, then sync to the device. Start the workout on the head unit and pair your trainer when prompted — the device drives the resistance per the structured intervals (ERG mode) and shows you the targets in real time.
+
+This is the cleanest setup for outdoor + indoor athletes who already own a head unit and a smart trainer and don't want a screen-with-Watopia-on-it style experience.
+
 ---
 
 ## Quick Start

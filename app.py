@@ -5672,6 +5672,167 @@ async def api_plan_generate(request: Request):
         return JSONResponse({"detail": "Plan update failed"}, status_code=500)
 
 
+def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
+    """v1.0.3 — best-effort auto-reforecast on ride sync / FIT import.
+
+    Re-fires reforecast when ``new_rides > 0`` and >5 min since the last
+    one (debounced via ``plan["reforecast_date"]``). Always passes the
+    current ``plan["availability"]`` so day-level overrides land on disk.
+
+    Wraps everything in try/except: logs warnings but never raises. Sync
+    / import responses must stay clean even if reforecast errors.
+    """
+    try:
+        if new_rides <= 0:
+            return
+        json_path = _plan_dir() / "current_plan.json"
+        if not json_path.exists():
+            return
+
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+
+        # Debounce: skip if last reforecast was <5 min ago.
+        last_iso = plan.get("reforecast_date") or ""
+        if last_iso:
+            try:
+                last_dt = datetime.fromisoformat(last_iso)
+                if (datetime.now() - last_dt).total_seconds() < 300:
+                    return
+            except (ValueError, TypeError):
+                # Malformed timestamp — treat as no debounce; fall through.
+                pass
+
+        with tp.plan_write_lock():
+            # Re-read inside the lock so a concurrent /api/plan/reforecast
+            # didn't just write a fresher reforecast_date we should respect.
+            with open(json_path, encoding="utf-8") as f:
+                plan = json.load(f)
+            last_iso = plan.get("reforecast_date") or ""
+            if last_iso:
+                try:
+                    last_dt = datetime.fromisoformat(last_iso)
+                    if (datetime.now() - last_dt).total_seconds() < 300:
+                        return
+                except (ValueError, TypeError):
+                    pass
+
+            activities = db.query_activities(days=120)
+            training = cached("training", get_today_metrics)
+            current_tsb = training.get("tsb")
+
+            goal_dict = plan.get("goal", {})
+            try:
+                reforecast_goal = tp.Goal(
+                    goal_type=goal_dict.get("type", goal_dict.get("goal_type", "general")),
+                    hours_per_week=goal_dict.get("hours_per_week", 8.0),
+                    rest_days=goal_dict.get("rest_days", [0]),
+                    available_days=goal_dict.get("available_days") or [d for d in range(7) if d not in goal_dict.get("rest_days", [0])],
+                )
+            except Exception:
+                reforecast_goal = tp.Goal(goal_type="general", hours_per_week=8.0)
+
+            pw_list = []
+            for w in plan.get("weeks", []):
+                try:
+                    ws = date.fromisoformat(w["start"])
+                    we = date.fromisoformat(w["end"])
+                except (KeyError, ValueError):
+                    continue
+                sess_list = []
+                for s_json in w.get("sessions", []):
+                    try:
+                        sd = date.fromisoformat(s_json["day"])
+                    except (KeyError, ValueError):
+                        continue
+                    sess_list.append(tp.PlannedSession(
+                        day=sd, day_name=s_json.get("day_name", sd.strftime("%a")),
+                        session_type=s_json.get("session_type", "z2"),
+                        duration_min=int(s_json.get("duration_min", 0) or 0),
+                        tss_estimate=float(s_json.get("tss_estimate", 0) or 0),
+                        description=s_json.get("description", ""),
+                        zwo_file=s_json.get("zwo_file", "") or "",
+                        zwo_name=s_json.get("zwo_name", "") or "",
+                        status=s_json.get("status", "pending"),
+                    ))
+                pw_list.append(tp.PlannedWeek(
+                    week_num=w.get("week_num", 0), start=ws, end=we,
+                    phase=w.get("phase", ""),
+                    tss_target=w.get("tss_target", 0),
+                    is_stepback=w.get("is_stepback", False),
+                    sessions=sess_list,
+                    hit_per_week=int(w.get("hit_per_week", 0) or 0),
+                    auto_acwr_scaled=bool(w.get("auto_acwr_scaled", False)),
+                ))
+
+            tsb_series = None
+            if current_tsb is not None:
+                tsb_series = {pw.start + timedelta(days=i): current_tsb
+                              for pw in pw_list
+                              for i in range(7)}
+
+            availability_overrides = {
+                day_iso: float(entry["hours"])
+                for day_iso, entry in plan.get("availability", {}).items()
+                if isinstance(entry, dict) and "hours" in entry
+            }
+
+            _, reforecast_info = tp.reforecast(
+                reforecast_goal, pw_list,
+                tsb_series=tsb_series,
+                recent_activities=activities,
+                availability_overrides=availability_overrides,
+            )
+
+            # Persist mutations using the same write-back pattern as
+            # /api/plan/reforecast (with the duration_min fix).
+            touched = set(reforecast_info.get("touched_days") or [])
+            touched |= set(reforecast_info.get("g3_dropped_days") or [])
+            by_day: dict[str, tp.PlannedSession] = {}
+            for pw in pw_list:
+                for s in pw.sessions:
+                    by_day[s.day.isoformat()] = s
+            for w in plan.get("weeks", []):
+                for s_json in w.get("sessions", []):
+                    day_iso = s_json.get("day", "")
+                    if not day_iso or day_iso not in touched:
+                        continue
+                    src = by_day.get(day_iso)
+                    if src is None:
+                        continue
+                    s_json["session_type"] = src.session_type
+                    s_json["duration_min"] = src.duration_min
+                    s_json["tss_estimate"] = src.tss_estimate
+                    s_json["description"] = src.description
+                    s_json["zwo_file"] = ""
+                    s_json["zwo_name"] = ""
+                    s_json["adapted"] = True
+                    s_json["adapted_reason"] = src.description
+
+            pw_by_num = {pw.week_num: pw for pw in pw_list}
+            for w in plan.get("weeks", []):
+                wn = w.get("week_num")
+                src_pw = pw_by_num.get(wn)
+                if src_pw is None:
+                    continue
+                if w.get("tss_target") != src_pw.tss_target:
+                    w["tss_target"] = src_pw.tss_target
+                if w.get("hit_per_week") != src_pw.hit_per_week:
+                    w["hit_per_week"] = src_pw.hit_per_week
+                if src_pw.auto_acwr_scaled and not w.get("auto_acwr_scaled"):
+                    w["auto_acwr_scaled"] = True
+
+            plan["reforecast_date"] = datetime.now().isoformat()
+            plan["last_reforecast_info"] = reforecast_info
+
+            tmp_path = json_path.with_suffix('.tmp')
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(plan, f, indent=2, default=str)
+            tmp_path.rename(json_path)
+    except Exception as e:  # noqa: BLE001
+        _log.warning(f"auto-reforecast skipped: {e}")
+
+
 @app.post("/api/plan/reforecast")
 async def api_plan_reforecast():
     """Reforecast the plan based on actual training data."""
@@ -5800,12 +5961,23 @@ async def api_plan_reforecast():
         except Exception:  # noqa: BLE001
             target_pol_kwarg = None
 
+        # v1.0.3 — plumb plan["availability"] into reforecast so per-day
+        # hour overrides actually rescale daily duration / TSS. Sparse:
+        # only days the user touched are in the dict; absent days keep
+        # current planned duration.
+        availability_overrides = {
+            day_iso: float(entry["hours"])
+            for day_iso, entry in plan.get("availability", {}).items()
+            if isinstance(entry, dict) and "hours" in entry
+        }
+
         _, reforecast_info = tp.reforecast(
             reforecast_goal, pw_list,
             tsb_series=tsb_series,
             recent_activities=activities,
             actual_polarization=actual_pol_kwarg,
             target_polarization=target_pol_kwarg,
+            availability_overrides=availability_overrides,
         )
 
         # Propagate the reforecast() mutations back into the persisted plan.
@@ -5828,6 +6000,7 @@ async def api_plan_reforecast():
                 if src is None:
                     continue
                 s_json["session_type"] = src.session_type
+                s_json["duration_min"] = src.duration_min
                 s_json["tss_estimate"] = src.tss_estimate
                 s_json["description"] = src.description
                 s_json["zwo_file"] = ""
@@ -6558,6 +6731,173 @@ async def api_plan_move_session(request: Request):
     except Exception:
         _log.exception("Plan move-session failed")
         return JSONResponse({"detail": "Move failed"}, 500)
+
+
+@app.get("/api/plan/missed-suggestions")
+def api_plan_missed_suggestions():
+    """v1.0.3 — propose same-week reschedule slots for missed sessions.
+
+    Read-only. Walks ``plan["weeks"]`` for sessions with ``status=="missed"``,
+    finds same-ISO-week candidate slots that satisfy all six rules in
+    MASTER §1, and emits at most one suggestion per missed session via
+    greedy first-fit by ``missed_date`` ascending.
+
+    Acceptance happens client-side: the dashboard POSTs the existing
+    ``/api/plan/move-session`` with ``{date: missed_date,
+    new_date: suggested_date}``. No new mutation endpoint.
+    """
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return {"suggestions": []}
+
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+
+        goal = plan.get("goal", {}) or {}
+        rest_days_idx = set(int(d) for d in goal.get("rest_days", []) or [])
+        avail_days_raw = goal.get("available_days")
+        if avail_days_raw is None:
+            avail_days_idx = set(d for d in range(7) if d not in rest_days_idx)
+        else:
+            avail_days_idx = set(int(d) for d in avail_days_raw)
+        availability = plan.get("availability", {}) or {}
+
+        today = date.today()
+
+        # Index every session by ISO date for the rule §2 check.
+        sess_by_day: dict[str, dict] = {}
+        for w in plan.get("weeks", []) or []:
+            for s in w.get("sessions", []) or []:
+                day_iso = s.get("day", "")
+                if day_iso:
+                    sess_by_day[day_iso] = s
+
+        def _is_available_slot(d_iso: str, missed_iso: str) -> bool:
+            """Apply the locked six-rule "available slot" predicate."""
+            try:
+                d = date.fromisoformat(d_iso)
+            except ValueError:
+                return False
+            # Rule 1: D >= today
+            if d < today:
+                return False
+            # Rule 5: D is not the missed_date itself
+            if d_iso == missed_iso:
+                return False
+            # Rule 6: same ISO Mon-Sun week
+            try:
+                missed_d = date.fromisoformat(missed_iso)
+            except ValueError:
+                return False
+            if d.isocalendar()[:2] != missed_d.isocalendar()[:2]:
+                return False
+            # Rule 3: weekday in available_days AND not in rest_days
+            wd = d.weekday()
+            if wd not in avail_days_idx:
+                return False
+            if wd in rest_days_idx:
+                return False
+            # Rule 4: availability entry not "unavailable"
+            entry = availability.get(d_iso)
+            if isinstance(entry, dict) and entry.get("type") == "unavailable":
+                return False
+            # Rule 2: stored session at D must be rest + clean status
+            sess = sess_by_day.get(d_iso)
+            if sess is None:
+                return False
+            if sess.get("session_type") != "rest":
+                return False
+            stat = (sess.get("status") or "")
+            if stat in ("done", "done_partial", "ambiguous"):
+                return False
+            if stat.startswith("moved_from:"):
+                return False
+            if sess.get("user_moved") is True:
+                return False
+            if sess.get("dismissed_at"):
+                return False
+            return True
+
+        # Collect missed sessions with date metadata, sorted ascending
+        # by missed_date for greedy first-fit.
+        misses: list[dict] = []
+        for w in plan.get("weeks", []) or []:
+            for s in w.get("sessions", []) or []:
+                if (s.get("status") or "") != "missed":
+                    continue
+                d_iso = s.get("day", "")
+                if not d_iso:
+                    continue
+                misses.append(s)
+        misses.sort(key=lambda s: s.get("day", ""))
+
+        used: set[str] = set()
+        suggestions: list[dict] = []
+
+        for miss in misses:
+            missed_iso = miss.get("day", "")
+            try:
+                missed_d = date.fromisoformat(missed_iso)
+            except ValueError:
+                continue
+            iso_year, iso_week = missed_d.isocalendar()[:2]
+
+            # Walk all sessions in the same ISO week, ordered by date.
+            same_week_dates: list[str] = []
+            for d_iso in sess_by_day.keys():
+                try:
+                    dd = date.fromisoformat(d_iso)
+                except ValueError:
+                    continue
+                if dd.isocalendar()[:2] == (iso_year, iso_week):
+                    same_week_dates.append(d_iso)
+            same_week_dates.sort()
+
+            chosen: str | None = None
+            chosen_reason: str = ""
+            for cand_iso in same_week_dates:
+                if cand_iso in used:
+                    continue
+                if not _is_available_slot(cand_iso, missed_iso):
+                    continue
+                chosen = cand_iso
+                cand_sess = sess_by_day.get(cand_iso, {})
+                chosen_reason = "rest_slot" if cand_sess.get("session_type") == "rest" else "unfilled_available_day"
+                break
+
+            if chosen is None:
+                continue
+
+            used.add(chosen)
+            try:
+                suggested_d = date.fromisoformat(chosen)
+                suggested_day_name = suggested_d.strftime("%a")
+            except ValueError:
+                suggested_day_name = ""
+            sess_type = miss.get("session_type", "")
+            dur = int(miss.get("duration_min", 0) or 0)
+            summary_bits = []
+            if sess_type:
+                summary_bits.append(sess_type)
+            if dur:
+                summary_bits.append(f"{dur}min")
+            summary = ", ".join(summary_bits) if summary_bits else (miss.get("description") or "")
+
+            suggestions.append({
+                "missed_date": missed_iso,
+                "missed_session_type": sess_type,
+                "missed_summary": summary,
+                "suggested_date": chosen,
+                "suggested_day_name": suggested_day_name,
+                "reason": chosen_reason,
+            })
+
+        return {"suggestions": suggestions}
+
+    except Exception:
+        _log.exception("missed-suggestions failed")
+        return {"suggestions": []}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -8434,6 +8774,10 @@ async def api_ride_import(
     except Exception as _e:
         log_ride_import.warning(f"ICU upload skipped: {_e}")
 
+    # v1.0.3 — best-effort auto-reforecast: a FIT import = 1 new ride.
+    # Helper swallows all exceptions; the import response stays unchanged.
+    _maybe_auto_reforecast("default", 1)
+
     return {
         "ride_id": ride_id,
         "bytes": len(data),
@@ -8634,6 +8978,9 @@ def _sync_icu_activities(force: bool = False) -> dict:
     now = time.time()
     _write_last_sync_at(now)
     total = len(_load_all_rides_safe())
+    # v1.0.3 — best-effort auto-reforecast on new rides. Helper swallows
+    # all exceptions so the sync result stays clean.
+    _maybe_auto_reforecast("default", added)
     return {
         "added": added, "updated": updated, "total": total,
         "status": "ok",
@@ -8861,6 +9208,9 @@ def api_rides_sync(force: int = Query(0)):
     # when the throttle returned status="throttled" (a recently-finished
     # ride still posts via a separate ICU push).
     result["plan_load_alert"] = _detect_plan_load_alert()
+    # v1.0.3 — best-effort auto-reforecast on new rides. Helper swallows
+    # all exceptions so the sync response stays unchanged.
+    _maybe_auto_reforecast("default", result.get("added", 0))
     return result
 
 

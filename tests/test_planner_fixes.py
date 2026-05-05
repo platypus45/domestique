@@ -261,7 +261,9 @@ class TestFix4AtomicWrites(unittest.TestCase):
     fix26 §6 added 3 new plan-write endpoints (move-session, rematch-apply,
     dismiss-session) and removed 1 legacy write path (daily-adapt's in-place
     mutation). Net: 7 → 9 atomic sites. v4.1.0 FIX-SERVER adds 2 more
-    (today-session/persist + rematch-day) → 11.
+    (today-session/persist + rematch-day) → 11. v1.0.3 IMPL-WIRING adds
+    one more inside ``_maybe_auto_reforecast`` (best-effort auto-reforecast
+    on ride sync / FIT import) → 12.
     """
 
     def test_all_sites_use_atomic_pattern(self):
@@ -272,8 +274,8 @@ class TestFix4AtomicWrites(unittest.TestCase):
             for i, line in enumerate(src.splitlines())
             if re.search(r"json\.dump\((plan|plan_dict),\s*f", line)
         ]
-        self.assertEqual(len(dump_lines), 11,
-                         f"Expected 11 json.dump(plan) sites, found {len(dump_lines)}")
+        self.assertEqual(len(dump_lines), 12,
+                         f"Expected 12 json.dump(plan) sites, found {len(dump_lines)}")
 
         lines = src.splitlines()
         violations = []

@@ -144,6 +144,16 @@ If you ride with optical-only HR, Domestique still tracks NP / TSS / IF / TSB an
 
 **Acquisition path (post-v1.0.7):** the chest strap polls itself; the head unit (Garmin Edge / Forerunner / Wahoo / Karoo) records every RR-interval into the FIT file; Domestique pulls the raw FIT from ICU's `/api/v1/activity/{id}/fit-file` endpoint, parses the `HrvMessage` records with `fit_activity.parse_hrv_messages()`, runs sliding-window DFA α1, writes the result to the ride summary. **No live polling, no Garmin OAuth, no manual upload.** Just wear a chest strap.
 
+**⚠ One-time Garmin device setting required.** Most Garmin head units ship with HRV recording **disabled** for activities — they use HRM-Pro's RR data for Body Battery / Stress / morning HRV (which is what populates `wellness.hrv` already), but they don't write per-beat RR-intervals to the FIT unless you explicitly enable it. To turn it on:
+
+| Device family | Path |
+|---|---|
+| Edge 530 / 830 / 1030 / 1040 | Settings → Activity Profiles → [bike profile] → **Data Recording → HRV** = On |
+| Forerunner / Fenix / Epix | Settings → Sensors → Heart Rate → **HRV Recording** = On |
+| Across all Garmin | Garmin Connect mobile → Device → [device] → Activity Profiles → Cycling → Data Recording → enable HRV / Beat-to-beat |
+
+We verified this against a real ride: a HRM-Pro paired correctly to an Edge can still produce a FIT with **zero `HrvMessage` records** if the device-side recording flag is off. The FIT contains 4 000+ records of HR / power / cadence / GPS as expected, but the per-beat RR series isn't captured. After flipping the setting, future rides will include the data; pre-existing rides can't be backfilled (the data was never recorded).
+
 **Resting HRV (separate signal):** Garmin's morning HRV (rMSSD overnight) lands in Domestique automatically via the ICU wellness sync — `wellness.hrv` is already populated for any rider whose Garmin Connect is linked to ICU. This is the input for v1.1.0's Bayesian readiness composite. Different from in-ride DFA α1; both come for free with the same hardware.
 
 ### Score rubric (structure-aware, not just TSS)

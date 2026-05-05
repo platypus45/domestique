@@ -5885,6 +5885,27 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
             training = cached("training", get_today_metrics)
             current_tsb = training.get("tsb")
 
+            # ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ──────────
+            # Opportunistically extract 3D metrics from the training dict.
+            # When ANY are missing the planner falls back to TSS-only path
+            # (preserves all v1.0.4/v1.0.5 behaviour).
+            wprime_balance_24h_v106: float | None = None
+            w_prime_v106: float | None = None
+            wprime_acwr_v106: float | None = None
+            try:
+                wp_bal_raw = training.get("wprime_balance_24h")
+                if wp_bal_raw is not None:
+                    wprime_balance_24h_v106 = float(wp_bal_raw)
+                wp_raw = training.get("w_prime") or training.get("wprime")
+                if wp_raw is not None:
+                    w_prime_v106 = float(wp_raw)
+                wp_acwr_raw = training.get("wprime_acwr")
+                if wp_acwr_raw is not None:
+                    wprime_acwr_v106 = float(wp_acwr_raw)
+            except (TypeError, ValueError):
+                # Any malformed value → fall back to None (TSS-only path)
+                pass
+
             goal_dict = plan.get("goal", {})
             try:
                 reforecast_goal = tp.Goal(
@@ -5946,6 +5967,10 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
                 tsb_series=tsb_series,
                 recent_activities=activities,
                 availability_overrides=availability_overrides,
+                # v1.0.6 IMPL-3D-PLANNER additive 3D inputs (None ⇒ TSS-only)
+                wprime_balance_24h=wprime_balance_24h_v106,
+                w_prime=w_prime_v106,
+                wprime_acwr=wprime_acwr_v106,
             )
 
             # Persist mutations using the same write-back pattern as

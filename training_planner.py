@@ -524,6 +524,32 @@ TSS_PER_HOUR = {
     "sprint":    95,  # neuromuscular: short max efforts, high WP → high TSS/hr
 }
 
+# ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ──────────────────────
+# Parallel rough estimates for W'-load (kJ above CP) and Pmax-load (kJ PCr)
+# per hour, by session type. Values are advisory ONLY: when consumed they
+# augment the TSS-driven path, never replace it.
+WPRIME_PER_HOUR = {
+    "recovery":   0,
+    "z2":         0,
+    "tempo":      2,
+    "sweetspot":  5,
+    "threshold": 12,
+    "vo2max":    50,
+    "overunder": 35,
+    "sprint":    25,
+}
+
+PMAX_PER_HOUR = {
+    "recovery":   0,
+    "z2":         0,
+    "tempo":      0,
+    "sweetspot":  1,
+    "threshold":  2,
+    "vo2max":     8,
+    "overunder":  6,
+    "sprint":    35,
+}
+
 # CTL needed for events (from CTS/TrainingPeaks data)
 EVENT_CTL_TARGETS = {
     # Cycling events
@@ -840,6 +866,10 @@ class Phase:
     hit_per_week: int   # max HIT sessions per week
     session_types: list  # preferred session types — kept for backward compat;
                          # primary driver is now IntensityBudget below.
+    # ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ──────────────────
+    # Optional W'/Pmax mirrors of weekly_tss_target. None ⇒ TSS-only path.
+    weekly_wprime_target: float | None = None
+    weekly_pmax_target: float | None = None
 
 
 @dataclass
@@ -862,6 +892,10 @@ class IntensityBudget:
     hit_count_max: int           # max hard sessions per week
     rest_days_per_week: int      # default 2
     polarized_target: dict       # mirror of PHASE_POLARIZED_TARGETS row
+    # ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ──────────────────
+    # Optional W'/Pmax weekly budgets. None ⇒ TSS-only path.
+    wprime_per_week: int | None = None
+    pmax_per_week: int | None = None
 
 
 @dataclass
@@ -882,6 +916,10 @@ class PlannedWeek:
     # injury-prevention. Read by the dashboard to render an "ACWR-scaled"
     # chip so the user knows why next week is lighter.
     auto_acwr_scaled: bool = False
+    # ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ──────────────────
+    # Optional W'/Pmax weekly mirrors. None ⇒ TSS-only path.
+    wprime_target: float | None = None
+    pmax_target: float | None = None
 
 
 @dataclass
@@ -913,6 +951,10 @@ class PlannedSession:
     moved_from: str = ""      # ISO date string of original slot, set when user_moved=True
     completion_matches: list = None  # list of {activity_id, tss, duration_min, match_score, match_axes}
     dismissed_at: str = ""    # ISO timestamp when user dismissed this prescription
+    # ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ──────────────────
+    # Optional W'/Pmax mirrors of tss_estimate. None ⇒ TSS-only path.
+    wprime_estimate: float | None = None
+    pmax_estimate: float | None = None
 
 
 # ── v4.4.0 — phase targets (CONCEPT-SCI §1, §5) ───────────────────────────────
@@ -2667,6 +2709,30 @@ _USED_NAMES_ROLLING_WEEKS = 12
 # constraints (graceful fallback — no hard failure mode).
 _NOVELTY_BOOST = {0: 5.0, 1: 0.05, 2: 0.001}
 
+# ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ──────────────────────
+# Glycolytic-load weight per content_class for soft anti-stacking. The
+# v1.0.6 picker scales today's weight ×0.7 IF the prior day's pick had
+# glycolytic_load ≥0.7 — SOFT bias, NOT a hard reject.
+_GLYCOLYTIC_LOAD_BY_CLASS: dict[str, float] = {
+    "vo2max":              1.0,
+    "anaerobic":           1.0,
+    "vo2_short":           0.9,
+    "vo2_ladder":          0.9,
+    "tempo_ladder":        0.5,
+    "over_under":          0.7,
+    "threshold_ladder":    0.7,
+    "neuromuscular":       0.6,
+    "threshold":           0.5,
+    "sweet_spot_ladder":   0.3,
+    "sweet_spot":          0.2,
+    "tempo_intervals":     0.15,
+    "tempo":               0.1,
+    "endurance_intervals": 0.1,
+    "endurance":           0.0,
+    "recovery":            0.0,
+    "ftp_test":            0.5,
+}
+
 
 def _scaled_class_min_distinct(plan_total_weeks: int) -> dict[str, int]:
     """Scale ``_PLAN_CLASS_MIN_DISTINCT_24W`` by plan length (vs 24 weeks)."""
@@ -3282,6 +3348,9 @@ def sample_week_workouts(
     week_picked: dict[str, int] = {}  # name -> count this week
     out: list[PlannedSession] = [None] * 7  # type: ignore[list-item]
     week_hit_picks: list[str] = []  # content_classes picked for HIT slots THIS week
+    # v1.0.6 IMPL-3D-PLANNER: track prior day's glycolytic load for soft
+    # anti-stacking (TSS PRIMARY, 3D ADDITIVE).
+    prev_day_glyco_load: float = 0.0
 
     for off, d, day_name, weekday, max_min, is_rest in slots:
         if is_rest:
@@ -3290,6 +3359,8 @@ def sample_week_workouts(
                 duration_min=0, tss_estimate=0,
                 description="Rest — recovery takes priority",
             )
+            # v1.0.6: rest day clears glycolytic stacking memory.
+            prev_day_glyco_load = 0.0
             continue
 
         is_hit = off in hit_slot_idxs
@@ -3449,10 +3520,19 @@ def sample_week_workouts(
             # exported for downstream callers and unit-test pinning.
             var_mult = 1.0
 
+            # v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE): soft
+            # anti-stacking penalty. ×0.7 (soft) NOT 0.0 (reject).
+            glyco_stack_mult = 1.0
+            if prev_day_glyco_load >= 0.7 and row_cc:
+                today_glyco = _GLYCOLYTIC_LOAD_BY_CLASS.get(row_cc, 0.0)
+                if today_glyco >= 0.7:
+                    glyco_stack_mult = 0.7
+
             wt = max(0.0001,
                      (0.2 + soft_fit) * novelty * (0.5 + quality)
                      * dup_penalty * (0.3 + mix_mult * 5.0)
-                     * tuple_bonus * class_min_bonus * var_mult)
+                     * tuple_bonus * class_min_bonus * var_mult
+                     * glyco_stack_mult)
             weights.append(wt)
 
         total_w = sum(weights)
@@ -3499,6 +3579,10 @@ def sample_week_workouts(
         pick_cc = _content_class_for_row(pick)
         if is_hit and pick_cc:
             week_hit_picks.append(pick_cc)
+
+        # v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE): update
+        # prev-day glycolytic-load tracker for tomorrow's stacking check.
+        prev_day_glyco_load = _GLYCOLYTIC_LOAD_BY_CLASS.get(pick_cc or "", 0.0)
 
         # v4.5.0 acceptance: record (cc, dur_quintile) to drive next slot's
         # tuple-novelty bonus toward unfilled tuples.
@@ -4502,6 +4586,15 @@ def reforecast(
     # to prevent runaway expansion / collapse. Algorithm runs BEFORE the G3
     # / G4 blocks so downshift logic operates on already-rescaled durations.
     availability_overrides: "dict[str, float] | None" = None,
+    # ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ──────────────────
+    # Optional W'-balance / capacity / ACWR / polarisation inputs. NONE BY
+    # DEFAULT — preserves all existing call sites byte-for-byte. When
+    # supplied, advisory checks fire (G3b, wprime_acwr advisory, G8) but
+    # NEVER mutate sessions; TSS-driven gates remain primary.
+    wprime_balance_24h: "float | None" = None,
+    w_prime: "float | None" = None,
+    wprime_acwr: "float | None" = None,
+    actual_wprime_polarization: "dict | None" = None,
 ) -> tuple[list[PlannedWeek], dict]:
     """Shift future hard sessions up/down one intensity level based on TSB.
 
@@ -4692,6 +4785,89 @@ def reforecast(
             if dropped_count >= 2:
                 break
 
+    # ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ─────────────────
+    # Advisory log block. Every entry here is LOG-ONLY: never mutates a
+    # session. The planner's primary TSS-driven gates (TSB/G3a/G4 above)
+    # remain authoritative.
+    advisory_log: list[str] = []
+    g8_softened_day: str | None = None
+    g3b_breach = False
+
+    # G3b: W'-load polarisation advisory. Volume polarisation (G3a) is the
+    # hard gate; G3b warns when above-CP load distribution drifts >10%.
+    if (
+        actual_wprime_polarization is not None
+        and target_polarization is not None
+    ):
+        try:
+            for zone_key, target_val in target_polarization.items():
+                actual_val = actual_wprime_polarization.get(zone_key)
+                if actual_val is None:
+                    continue
+                if abs(float(actual_val) - float(target_val)) > 10.0:
+                    g3b_breach = True
+                    advisory_log.append(
+                        f"G3b advisory: W'-load polarization {zone_key}="
+                        f"{float(actual_val):.1f}% deviates >10% from target "
+                        f"{float(target_val):.1f}% (log-only; G3a still primary)"
+                    )
+        except (TypeError, ValueError):
+            pass
+
+    # wprime_acwr advisory (parallel to G4). TSS-based G4 stays primary.
+    if wprime_acwr is not None:
+        try:
+            if float(wprime_acwr) > 1.5:
+                advisory_log.append(
+                    f"wprime_acwr={float(wprime_acwr):.2f} > 1.5 advisory "
+                    "(TSS-based G4 remains primary trip)"
+                )
+        except (TypeError, ValueError):
+            pass
+
+    # NEW G8: W'-balance next-day soft bias. Advisory only — does NOT
+    # mutate session_type. Hard tier-downs come from TSB<-25 and G3a.
+    if (
+        wprime_balance_24h is not None
+        and w_prime is not None
+        and w_prime > 0
+    ):
+        try:
+            wp_ratio = float(wprime_balance_24h) / float(w_prime)
+            if wp_ratio < 0.5:
+                for pw in plan_weeks:
+                    if pw.end < today:
+                        continue
+                    found = False
+                    for s in pw.sessions:
+                        if s.day <= today:
+                            continue
+                        if s.session_type not in _HARD_SESSION_TYPES:
+                            continue
+                        # Advisory only — DO NOT mutate s.session_type.
+                        g8_softened_day = s.day.isoformat()
+                        advisory_log.append(
+                            f"G8 advisory: wprime_balance_24h="
+                            f"{float(wprime_balance_24h):.0f}J "
+                            f"({wp_ratio*100:.0f}% of W'={float(w_prime):.0f}J) "
+                            f"— prefer Z2 today; next hard slot "
+                            f"({g8_softened_day}, {s.session_type}) "
+                            f"flagged for soft tier-down"
+                        )
+                        found = True
+                        break
+                    if found:
+                        break
+                if g8_softened_day is None:
+                    advisory_log.append(
+                        f"G8 advisory: wprime_balance_24h="
+                        f"{float(wprime_balance_24h):.0f}J "
+                        f"({wp_ratio*100:.0f}% of W'={float(w_prime):.0f}J) "
+                        "— prefer Z2 today (no future hard slot to flag)"
+                    )
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+
     # v1.0.3 IMPL-AVAILABILITY: merge availability-touched dates into
     # touched_days so the app.py write-back loop persists duration_min /
     # tss_estimate / session_type changes for those days too.
@@ -4710,6 +4886,10 @@ def reforecast(
             "acwr_scaled_week": acwr_scaled_week,
             "polarization_breach": g3_polarization_breached,
             "g3_dropped_days": g3_dropped_days,
+            # v1.0.6 IMPL-3D-PLANNER advisory fields (log-only)
+            "advisory_log": advisory_log,
+            "g3b_breach": g3b_breach,
+            "g8_softened_day": g8_softened_day,
         }
 
     action = "reforecasted" if (
@@ -4723,6 +4903,10 @@ def reforecast(
         "acwr_scaled_week": acwr_scaled_week,
         "polarization_breach": g3_polarization_breached,
         "g3_dropped_days": g3_dropped_days,
+        # v1.0.6 IMPL-3D-PLANNER advisory fields (log-only)
+        "advisory_log": advisory_log,
+        "g3b_breach": g3b_breach,
+        "g8_softened_day": g8_softened_day,
     }
 
 

@@ -265,28 +265,167 @@ Every threshold below is in the code with an inline citation. This section expla
 
 ### 0. The training-load model — TSS / IF / NP / CTL / ATL / TSB
 
-Domestique uses the canonical Coggan / Allen / Banister fitness-fatigue framework end-to-end. Every number on the dashboard rolls up from these primitives:
+Domestique uses the canonical Coggan / Allen / Banister fitness-fatigue framework end-to-end. Every number on the dashboard rolls up from these primitives.
 
-**Per-ride scalars** (computed on FIT import OR pulled from intervals.icu):
-- **NP** (Normalised Power) — 30-second rolling average of power, raised to the 4th, averaged, 4th-root taken. Penalises variable efforts vs steady ones (Coggan 2003). Code: `analytics.py compute_normalised_power()`.
-- **IF** (Intensity Factor) = `NP / FTP`. A 1.0 IF ride = sustained at threshold; recovery rides ~0.5–0.6; race day ~0.85+. Allen & Coggan TR&P.
-- **TSS** (Training Stress Score) = `(duration_seconds × NP × IF) / (FTP × 3600) × 100`. A 1-hour all-out at FTP = 100 TSS by definition. Foster's session-RPE × duration analogue. Allen & Coggan TR&P 3rd ed.
-- **kJ work** = avg_power × duration. Used for nutrition planning (carb/h target).
+#### Per-ride scalars (computed on FIT import OR pulled from intervals.icu)
 
-**Multi-day fitness/fatigue** (Banister 1975 impulse-response, Coggan refinement):
-- **CTL** (Chronic Training Load, "Fitness") = exponentially-weighted moving average of daily TSS with τ=42 days. `fitness_t = fitness_{t−1} + (TSS_t − fitness_{t−1}) / τ`.
-- **ATL** (Acute Training Load, "Fatigue") = same EWMA with τ=7 days.
-- **TSB** (Training Stress Balance, "Form") = CTL − ATL. Positive = freshening up; deeply negative = overreached.
+| metric | formula | what it captures | code |
+|---|---|---|---|
+| **NP** (Normalised Power) | 1. 30-second rolling average of the raw power trace<br>2. Raise each rolled value to the 4th power<br>3. Average those<br>4. Take the 4th root | "Equivalent steady-state power that would have produced the same physiological cost." The 30-s window approximates physiological response lag; the 4th power penalises spikes more than steady riding. | `analytics.py compute_normalised_power()` |
+| **IF** (Intensity Factor) | `NP / FTP` | Unitless. IF=1.0 = sustained at threshold. IF=0.7 = tempo. IF=1.1 = hard interval. | inline |
+| **TSS** (Training Stress Score) | `(duration_seconds × NP × IF) / (FTP × 3600) × 100` | Calibrated so 1 h at exactly FTP = 100 TSS. Quadratic in IF, linear in duration. | inline |
+| **kJ work** | `avg_power_W × duration_s / 1000` | Total mechanical work. Used for nutrition planning (carb/hour target). | `ride_storage._summarise_ride()` |
 
-**Where each comes from:**
-- ICU-synced rider: `training.get_today_metrics()` pulls all three from intervals.icu's wellness API.
-- ICU-unreachable: `ride_storage.compute_local_ctl()` rebuilds CTL from your local FIT archive (42-day EWMA over `summary.tss`). Same algorithm, different source.
-- Per-ride zone-time, polarisation, and decoupling come from `analytics.py compute_polarization_block()` and the FIT zone-counting in `ride_storage._summarise_ride()`.
+**Honest about NP's recipe.** The 30-s window and the 4th-power exponent were chosen by Coggan empirically because the resulting numbers tracked rider-perceived effort. Neither falls out of any physiological first-principles model. They've been operationalised in commercial software for ~20 years; they have not been validated against any direct physiological criterion (lactate, VO₂, RPE-correlation aside). v1.0.6 adds a **Belastingscore (Strain Score, Kontro 2026)** as a complementary lens computed from per-second strain attribution rather than a rolling average — see [§0e](#0e-belastingscore--3d-impulse-response-model-v106).
 
-**TSB-driven daily caps:**
+#### Multi-day fitness/fatigue (Banister 1975 impulse-response, Coggan/Allen refinement)
+
+| metric | formula | what it captures |
+|---|---|---|
+| **CTL** ("Fitness") | exponentially-weighted moving average of daily TSS with τ=42 days. `fitness_t = fitness_{t−1} + (TSS_t − fitness_{t−1}) / τ`. | A long-window memory of how much load you've been absorbing. Builds slowly, fades slowly. |
+| **ATL** ("Fatigue") | same EWMA with τ=7 days. | Short-window memory of recent stress. |
+| **TSB** ("Form") | `CTL − ATL`. | Positive = freshening up; deeply negative = overreached; near zero = "in the work." |
+
+**Honest about τ=42/7.** These time constants are conventional, not validated per-athlete. They trace back to early-1990s Banister fits on athletes who weren't even cyclists; published τ₁ values across literature span ~21 to >60 days for fitness, and ~5 to ~20 days for fatigue (see Table 2 of [Kontro et al. 2026](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0341721)). Domestique ships with the conventional 42/7 because that's what every commercial platform also ships, but a future version will fit τ per-athlete from a ≥6-month log.
+
+#### Where each metric comes from
+
+- **ICU-synced rider**: `training.get_today_metrics()` pulls CTL/ATL/TSB from intervals.icu's wellness API.
+- **ICU-unreachable**: `ride_storage.compute_local_ctl()` rebuilds CTL from your local FIT archive (42-day EWMA over `summary.tss`). Same algorithm, different source.
+- **Per-ride zone-time, polarisation, decoupling**: `analytics.py compute_polarization_block()` and the FIT zone-counting in `ride_storage._summarise_ride()`.
+
+#### TSB-driven daily caps
+
 - **TSB < −10**: dashboard shows "Recover" badge.
 - **TSB < −25**: `reforecast()` drops the next hard session one tier (`vo2max → threshold → tempo`).
 - **TSB < −30**: deeply overreached. `daily_adapt_plan()` rescales remaining-week TSS to 0.6× as a forced de-load. Coggan/Allen overload threshold.
+
+---
+
+### 0a. Honest limitations of the TSS-based stack
+
+The peer-reviewed evidence supporting TSS as a *quantifier of training that was done* is reasonable. The evidence supporting it as a *predictor of training that will work* is correlational, mixed, and rarely tested out-of-sample. Domestique acknowledges this directly:
+
+| Study | n | finding |
+|---|---|---|
+| [Sanders et al. 2017](https://pubmed.ncbi.nlm.nih.gov/28095100/) | road cyclists, season-long | TSS correlated **r ≈ 0.75–0.79** with sub-maximal lactate-threshold power changes |
+| [Wallace et al. 2014](https://pubmed.ncbi.nlm.nih.gov/24766776/) | runners | TSS vs. 1500 m time **r ≈ 0.70**, slightly better than TRIMP (r ≈ 0.65) and session-RPE (r ≈ 0.60) |
+| [Vermeire et al. 2021](https://pubmed.ncbi.nlm.nih.gov/34107251/) | 11 recreational cyclists, 12 weeks | **inconsistent** associations between TSS, multiple TRIMP variants, and 3 km TT performance. Different training types produce different adaptations despite identical TSS — "the relationship to performance will always be distorted." |
+
+**Where TSS works:** as a workout descriptor for steady-state efforts; as a cumulative dose tracker when training is homogeneous; as a rough heuristic for taper/race timing.
+
+**Where TSS breaks:** when training is intensity-heterogeneous (interval-heavy ≠ endurance-heavy at same TSS); when efforts are above FTP and duration matters (the minute-2 vs minute-19 problem); when one event-specific energy system dominates; when workouts are highly intermittent (the NP recipe was designed for steady road riding, not 30/30 intervals).
+
+**How Domestique mitigates** without replacing TSS as the primary load currency: the seven injury-prevention guardrails (G1–G7) layered on top of TSS-driven planning capture several of the failure modes Vermeire flags — see [§0b](#0b-literature-wired-into-the-planner) below.
+
+---
+
+### 0b. Literature wired into the planner
+
+| Critique area / failure mode | Mitigation in Domestique | Source |
+|---|---|---|
+| Heterogeneous intensity (interval ≠ endurance at same TSS) | **G3 polarization-breach guardrail** + Treff polarization index classification | [Treff et al. 2019 (PMC)](https://pmc.ncbi.nlm.nih.gov/articles/PMC6582670/), [Stöggl & Sperlich 2014](https://pubmed.ncbi.nlm.nih.gov/25309613/) |
+| Above-FTP minute-2-vs-minute-19 (Kontro's headline) | **Live W'-balance during ride** (Skiba 2015 differential) at `training_live.py:500-545` | [Skiba 2012 (PMID 22382171)](https://pubmed.ncbi.nlm.nih.gov/22382171/) |
+| Acute:chronic load mismatch | **G4 ACWR** (7-day load > 1.5 × 28-day → trim next week 15 %) | [Gabbett 2016 (BJSM)](https://bjsm.bmj.com/content/50/5/273) |
+| Yesterday-was-hard / RPE 3-day drop | **G1 monotony** + **G7 RPE drop** | [Foster 1998 (PMID 9694422)](https://pubmed.ncbi.nlm.nih.gov/9694422/) |
+| Z5+ accumulation ceiling | **G2 48 h Z5+ ≤ 25 min** | [Hulin et al. 2014 (BJSM)](https://bjsm.bmj.com/content/48/8/708) |
+| Subjective fatigue TSS misses | **G5/G6 Hooper composite** + peripheral fatigue cap | [Hooper & Mackinnon 1995](https://pubmed.ncbi.nlm.nih.gov/8531627/), [Cheung et al. 2003](https://pubmed.ncbi.nlm.nih.gov/12831711/) |
+| 80/20 polarisation target | **POL 80/0/20** distribution baked into `WORKOUT_MIX_PREFERENCE` | [Stöggl & Sperlich 2014](https://pubmed.ncbi.nlm.nih.gov/25309613/) |
+| Autonomic fatigue TSS can't see | **DFA α1 from RR-intervals** → next-day intensity decision | [Rogers et al. 2021](https://pubmed.ncbi.nlm.nih.gov/34547011/) |
+| Climb-specific record power profile | **Pinot & Grappe 2011 RPP gate** for capability projection | [Pinot & Grappe 2011](https://pubmed.ncbi.nlm.nih.gov/22090214/) |
+| CP-from-FTP approximation | `int(ftp × 1.03)` (was naive `CP = FTP`) | [McGrath et al. 2021](https://pubmed.ncbi.nlm.nih.gov/33999907/) |
+| FTP detection from real rides | Auto-eFTP from FIT archive + ICU eFTP cross-check | inline `fitness_estimation.py:220-263` |
+| W' / Pmax energy-system decomposition (v1.0.6) | **Belastingscore quartet** (Aerobe / Glycolytisch / PCr) — secondary lens to TSS | [Kontro et al. 2026 (PLOS ONE)](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0341721) |
+
+These guardrails layered on top of TSS-driven planning are what makes Domestique more than a TSS-EWMA dashboard. They directly address several of the failure modes Vermeire 2021 flags, while keeping TSS as the central currency the rider sees.
+
+---
+
+### 0c. Norwegian Method support — what's in, what's missing
+
+The Norwegian Method (Marius Bakken / Ingebrigtsen / Bjørgen) explicitly **rejects TSS** as the primary intensity controller and substitutes blood lactate. Domestique covers parts of it but not the lactate-pacing core.
+
+| Norwegian Method element | What it controls intensity by | Domestique support |
+|---|---|---|
+| Lactate-controlled threshold work | Blood lactate samples DURING the workout, paced to keep lactate at 2-4 mmol/L (sub-MLSS) | ❌ Not supported. No lactate input field. **v1.1.0 roadmap.** |
+| Double-threshold sessions (AM + PM, both sub-LT2) | Volume at LT1-LT2 boundary, lactate-controlled | Partially — threshold-class workouts exist; no enforcement of double-day structure. |
+| HR as secondary intensity proxy when lactate isn't available | HR ceiling that approximates LT2 | HR ingested from FIT but threshold prescription doesn't run off it yet. |
+| MLSS testing protocol | Distinct test from FTP | ❌ Not supported. **v1.1.0 roadmap.** |
+| Conservative volume ramp (no big TSS spikes) | Total volume in hours | Tracked but TSS is the headline. |
+| Avoidance of the moderate/threshold "trap" (Seiler-style) | Sessions explicitly avoid Z3 (76-90 % FTP) | ✅ Yes — Stöggl/Sperlich 80/0/20 + G3 enforce this. |
+
+So Domestique gets the **polarization piece** and the **conservative-load piece** but not the **lactate-prescribed pacing piece**. Lactate input + lactate-prescribed sessions + double-threshold structure + MLSS testing protocol is a v1.1.0 multi-wave feature on the roadmap.
+
+---
+
+### 0d. How a ride is indexed end-to-end
+
+```
+You finish a ride
+  │
+  ▼
+Garmin / Wahoo / Karoo / virtual trainer uploads to Strava / intervals.icu
+  │
+  ▼
+intervals.icu computes (server-side):
+  ├─ NP, IF, TSS, kJ
+  ├─ time-in-zone (Z1-Z7 + SS)
+  ├─ aerobic decoupling
+  ├─ polarization-index + classification (Polarized / Pyramidal / Threshold / HIIT / Base / Unique)
+  └─ on-profile: wPrime, pMax (v1.0.6+), eFTP, CP
+  │
+  ▼
+Domestique's _sync_icu_activities() (app.py:9141)
+  │ pulls activities list
+  │ fetches detail + samples per ride
+  ▼
+Cached as ~/.domestique/rides/icu/i<external_id>.json (24-field envelope)
+  │
+  ▼
+SQLite athlete_metrics table ← daily CTL/ATL/TSB + (v1.0.6) per-component fitness/fatigue
+  │
+  ▼
+Library matching ← Domestique's 16-class taxonomy (sweet_spot / threshold / vo2max / vo2_short / …)
+  │ matches the picked workout's structure
+  │ surfaces display_name as the modal title
+  │
+  ▼
+Planner reads back on every reforecast / regenerate
+  │ G1-G7 guardrails check what was actually done
+  │ Treff PI feeds G3 polarization breach
+  │ Auto-fire reforecast (v1.0.3) if added > 0
+  │ Glycolytic-stacking soft penalty (v1.0.6 advisory)
+  │
+  ▼
+Tomorrow's session adapts to today's ride
+```
+
+**What ICU computes vs. what Domestique computes:**
+- **From ICU** (cached as-is): NP, IF, TSS, time-in-zone, aerobic decoupling, kJ above FTP, wPrime, pMax, eFTP, CTL/ATL/TSB defaults.
+- **Locally computed by Domestique**: Treff polarization index + classification (so the result is identical even when ICU is offline), the 16-class library taxonomy match, the seven G1–G7 guardrails, eFTP cross-check from local FIT archive, capability projection (Pinot & Grappe RPP), DFA α1 (when RR-intervals are present in the FIT), Belastingscore (v1.0.6) for energy-system decomposition.
+
+---
+
+### 0e. Belastingscore / 3D impulse-response model (v1.0.6)
+
+The 3-dimensional impulse-response model from [Kontro/Mastracci/Cheung/MacInnis 2026 (PLOS ONE)](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0341721) ships in v1.0.6 as an **additive lens** alongside TSS — not a replacement. It splits training stress into three energy systems with their own time constants:
+
+| component | power-curve param | what it tracks | Banister τ₁ / τ₂ (paper defaults, profile-overridable) |
+|---|---|---|---|
+| **CP** (aerobic) | Critical Power | mitochondrial / oxidative capacity | 52 d / 10 d |
+| **W′** (glycolytic) | W-prime, anaerobic work capacity | lactate-tolerance / above-CP work | 5 d / 5 d |
+| **Pmax** (alactic) | Peak Power | PCr / sprint capacity | 10 d / 4 d |
+
+**Per-ride breakdown (Kontro Eq. 8–10):** for each second of the ride, power is attributed to the three systems based on proximity to MPA (Maximum Power Available, Eq. 4). The result is **Belastingscore = SS_CP + SS_W′ + SS_Pmax**, calibrated so 1 h at CP ≈ 100 SS (matches the Coggan TSS convention).
+
+**Where v1.0.6 surfaces it:**
+- **Ride detail panel**: a secondary "Belastingscore — energy-system breakdown" card under the existing TSS hero grid (Total / Aerobe / Glycolytisch / PCr).
+- **Athlete-Metrics chart**: a collapsed `<details>` panel below the existing CTL/ATL/TSB chart with three normalised fitness curves (CP / W′ / Pmax), τ defaults from the paper.
+- **Plan tab phase rows**: a small subordinate stacked bar showing CP / W′ / Pmax distribution under the primary `weekly_tss` headline.
+
+**Honest caveat the paper itself states**: "no published data exist to support the energy-system specific model parameters." The τ defaults (52/10, 5/5, 10/4) are a single-athlete illustrative example from the paper's supplementary, not population-validated. Domestique exposes them as profile-level overrides and documents the caveat in the dashboard tooltip copy.
+
+**Why TSS stays primary:** the Kontro paper is intentionally additive — its authors keep the conventional Banister/CTL framework alongside the 3D decomposition. Domestique mirrors that. The 3D model adds resolution for athletes who want to see which energy system was stressed, but the planner still picks workouts based on the existing TSS-driven taxonomy the rider is already used to.
 
 ### 1. Periodisation engine
 

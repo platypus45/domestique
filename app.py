@@ -76,6 +76,40 @@ def _plan_dir() -> Path:
     d.mkdir(parents=True, exist_ok=True)
     return d
 
+
+def _session_naming_lookup(
+    zwo_file: str,
+    classifications: dict | None,
+    lib_by_file: dict | None,
+) -> tuple[str, int]:
+    """v1.0.4 IMPL-WIRING — resolve display_name + zwo_duration_min for a session.
+
+    ``display_name`` comes from the ``.content_classification.json`` field
+    (Layer 3, MASTER §3). When the entry is missing or the field is empty,
+    returns "" — the dashboard cascade then falls back to ``zwo_name`` then
+    ``session_type``.
+
+    ``zwo_duration_min`` is the actual library duration of the matched ZWO
+    (sum of segment durations, rounded), so the dashboard can render the
+    *real* workout length instead of the planner's ``duration_min`` target
+    when the two disagree (e.g. "title says 51min but content is 82min").
+
+    Free-form sessions (no zwo_file) yield ("", 0) — caller decides whether
+    to emit empty string or null.
+    """
+    if not zwo_file:
+        return "", 0
+    entry = (classifications or {}).get(zwo_file) or {}
+    display_name = str(entry.get("display_name") or "")
+    lib_meta = (lib_by_file or {}).get(zwo_file) or {}
+    raw_dur = lib_meta.get("Duration(min)")
+    try:
+        zwo_duration_min = int(round(float(raw_dur))) if raw_dur is not None else 0
+    except (TypeError, ValueError):
+        zwo_duration_min = 0
+    return display_name, zwo_duration_min
+
+
 # Legacy alias for any direct references
 PLAN_DIR = _DEFAULT_PLAN_DIR
 WORKOUT_DIR   = Path(__file__).parent / "workouts"  # bundled workout files
@@ -4507,10 +4541,21 @@ def api_weekly_plan(week_offset: int = Query(0)):
     except Exception:
         _lib_by_file = {}
 
+    # v1.0.4 IMPL-WIRING: load content classifications once so every session
+    # can surface display_name (Layer 3) without re-reading the JSON.
+    try:
+        _classifications = tp._load_content_classifications() or {}
+    except Exception:
+        _classifications = {}
+
     def _session_out(s):
         day_iso = s.day.isoformat()
         stored = stored_by_day.get(day_iso) or {}
         zwo_file = stored.get("zwo_file") or getattr(s, "zwo_file", "")
+        # v1.0.4 IMPL-WIRING — resolve canonical title + actual library duration.
+        display_name, zwo_duration_min = _session_naming_lookup(
+            zwo_file, _classifications, _lib_by_file,
+        )
         out = {
             "day": day_iso,
             "day_name": s.day_name,
@@ -4520,6 +4565,8 @@ def api_weekly_plan(week_offset: int = Query(0)):
             "description": stored.get("description") or s.description,
             "zwo_file": zwo_file,
             "zwo_name": stored.get("zwo_name") or getattr(s, "zwo_name", ""),
+            "display_name": display_name,
+            "zwo_duration_min": zwo_duration_min,
             # fix26 §6 — status + move + completion round-trips
             "status": stored.get("status", "pending"),
             "user_moved": stored.get("user_moved", False),
@@ -5275,6 +5322,12 @@ def api_plan():
             try:
                 library = tp.load_workout_library()
                 lib_by_file = {w.get("File"): w for w in library}
+                # v1.0.4 IMPL-WIRING: load classifications once for display_name
+                # lookup (Layer 3, MASTER §3). Same pattern as _session_out.
+                try:
+                    classifications = tp._load_content_classifications() or {}
+                except Exception:
+                    classifications = {}
                 # v4.3.0 B6 — also need rides indexed by date so card_state
                 # can flag "completed" sessions (matched to an actual ride).
                 # Cheap enough to do once per /api/plan call; uses the same
@@ -5302,6 +5355,14 @@ def api_plan():
                     for s in w.get("sessions", []):
                         zwo = s.get("zwo_file") or ""
                         meta = lib_by_file.get(zwo) if zwo else None
+                        # v1.0.4 IMPL-WIRING — every session payload carries
+                        # display_name + zwo_duration_min so the dashboard
+                        # cascade (display_name → zwo_name → session_type)
+                        # can pick the canonical title and the actual library
+                        # duration. Free-form sessions get ("", 0).
+                        _dn, _zdur = _session_naming_lookup(zwo, classifications, lib_by_file)
+                        s["display_name"] = _dn
+                        s["zwo_duration_min"] = _zdur
                         if meta:
                             s["zone_dist"] = {
                                 "z1": meta.get("Z1%", 0),
@@ -6901,6 +6962,22 @@ def api_plan_missed_suggestions():
             avail_days_idx = set(int(d) for d in avail_days_raw)
         availability = plan.get("availability", {}) or {}
 
+        # v1.0.4 IMPL-WIRING — surface display_name + zwo_duration_min on each
+        # suggestion so the missed-session reschedule banner can render the
+        # canonical title (Layer 3) instead of the planner's session_type.
+        try:
+            classifications = tp._load_content_classifications() or {}
+        except Exception:
+            classifications = {}
+        _missed_lib_by_file: dict[str, dict] = {}
+        try:
+            for _w in tp.load_workout_library():
+                _fname = _w.get("File")
+                if _fname:
+                    _missed_lib_by_file[_fname] = _w
+        except Exception:
+            _missed_lib_by_file = {}
+
         today = date.today()
 
         # Index every session by ISO date for the rule §2 check.
@@ -7021,11 +7098,17 @@ def api_plan_missed_suggestions():
             if dur:
                 summary_bits.append(f"{dur}min")
             summary = ", ".join(summary_bits) if summary_bits else (miss.get("description") or "")
+            # v1.0.4 IMPL-WIRING — pull canonical title for the missed session.
+            _missed_dn, _missed_zdur = _session_naming_lookup(
+                miss.get("zwo_file") or "", classifications, _missed_lib_by_file,
+            )
 
             suggestions.append({
                 "missed_date": missed_iso,
                 "missed_session_type": sess_type,
                 "missed_summary": summary,
+                "missed_display_name": _missed_dn,
+                "missed_zwo_duration_min": _missed_zdur,
                 "suggested_date": chosen,
                 "suggested_day_name": suggested_day_name,
                 "reason": chosen_reason,
@@ -7752,6 +7835,12 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
         _log.debug(f"calendar: library load failed: {_e}")
         lib_by_file = {}
 
+    # v1.0.4 IMPL-WIRING: classifications for display_name (Layer 3, MASTER §3).
+    try:
+        classifications = tp._load_content_classifications() or {}
+    except Exception:
+        classifications = {}
+
     # ── Index rides by local-TZ date for O(N) merge ─────────────────────────
     rides_by_date: dict[str, list[dict]] = {}
     for r in rides:
@@ -7949,18 +8038,25 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
 
             planned_payload = None
             if sess and not sess.get("_synthetic_history"):
+                # v1.0.4 IMPL-WIRING — display_name + zwo_duration_min on every
+                # calendar planned cell so the dashboard cascade can pick the
+                # canonical title and the actual library duration.
+                _zwo = sess.get("zwo_file") or ""
+                _dn, _zdur = _session_naming_lookup(_zwo, classifications, lib_by_file)
                 planned_payload = {
                     "session_type": sess.get("session_type") or "",
                     "content_class": (
-                        (lib_by_file.get(sess.get("zwo_file") or "") or {}).get("content_class")
+                        (lib_by_file.get(_zwo) or {}).get("content_class")
                         or sess.get("content_class")
                         or ""
                     ),
                     "name": sess.get("zwo_name") or sess.get("description") or "",
+                    "display_name": _dn,
+                    "zwo_duration_min": _zdur,
                     "duration_min": sess.get("duration_min") or 0,
                     "tss": sess.get("tss_estimate") or 0,
                     "score": sess.get("score"),
-                    "zwo_file": sess.get("zwo_file") or "",
+                    "zwo_file": _zwo,
                 }
                 pz12, pz34, pz5p = _planned_zone_split_minutes(sess)
                 planned_z12 += pz12

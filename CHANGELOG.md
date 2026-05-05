@@ -1,5 +1,60 @@
 # Changelog
 
+## v1.0.4 — Library reclassification + correct titling + workout-detail UX trio (2026-05-05)
+
+### The pitch — "100% accurate workout classification and titling"
+
+User report: a session labeled "Tempo (58min)" was actually a 4×threshold-ladder; another labeled "vo2max" was actually pure Z2 endurance. Wave 0 audit confirmed the bug class is systemic — **48.2% of the 3,054-file library is misclassified** against an independent structural fingerprinter, **25.5% have at least one disagreement** between filename / `<name>` tag / classifier primary, and the canonical `display_name` field that should drive UI titles literally didn't exist (0/3,054 entries had it).
+
+v1.0.4 rebuilds the classifier, regenerates the JSON, and rewires the planner + dashboard so titles tell the truth.
+
+### Library reclassification
+
+- **Classifier rewrite** — `scripts/classify_library_content.py` gains a structural cascade prioritised above the legacy dose-time rules:
+  1. Empty `<workout>` / FreeRide-only → flagged, not classified (95 files)
+  2. FTP test detector — Coggan-20 + Ramp protocol shapes
+  3. Neuromuscular detector — sprint segments / <30 s @ >150% FTP
+  4. **Ladder detector (NEW)** — ≥3 ascending or descending SteadyState rungs (≥5% FTP gap, ≥30 s each), ≥2 sets. Output: `{peak_zone}_ladder`.
+  5. **Peak-zone gate (NEW)** — ≥5 min contiguous Z4+ at ≥30% of work time → classify by peak zone, not zone-time accumulation.
+  6–11. Existing dose rules.
+  12. Zone-dominance fallback — never returns `mixed`.
+- **Taxonomy expanded from 12 → 16 canonical classes** (`mixed` dropped, 217 files re-routed). Adds `endurance_intervals`, `tempo_intervals`, `tempo_ladder`, `sweet_spot_ladder`, `threshold_ladder`, `vo2_ladder`. Each exists because its training stimulus differs materially from the parent class.
+- **`workouts/.content_classification.json` regenerated** — every file's `primary` re-derived; 1,339 of 3,054 reclassified (43.8%); new `display_name` field added on every classified entry (100% non-empty); `mixed: 217 → 0`. Audit trail at `workouts/.classification_audit_v104.json` records every transition.
+- **Canary verifications:**
+  - `tempo_steady_57min.zwo` → `primary: "threshold_ladder"`, `display_name: "Threshold Ladder 58min — 85→97% × 4"` (byte-exact).
+  - `tempo_steady_55min.zwo` → `threshold_ladder`.
+  - One previously-mis-filed `vo2max` Z2 file reclassified out of the vo2max pool.
+
+### Planner — 6 maps wired + anaerobic orphan fixed
+
+- **`anaerobic` slot orphan fixed.** Previously weighted at 5–15% in `WORKOUT_MIX_PREFERENCE` for build/peak phases but excluded from `_HIT_SLOT_CONTENT_CLASSES` — so 311 anaerobic files were never picked. Now in the slot eligibility map; pickable on peak-week HIT slots.
+- All 6 planner maps wired with the new classes: `_CONTENT_TO_PROTOCOL`, `_HIT_SLOT_CONTENT_CLASSES`, `_ENDURANCE_SLOT_CONTENT_CLASSES`, `WORKOUT_MIX_PREFERENCE`, `_PLAN_CLASS_MIN_DISTINCT_24W`, `_INTERVAL_SHAPED_CONTENT_CLASSES`. `mixed` dropped from all six.
+
+### Dashboard — modal title cascade + 16-class filter
+
+- **Modal title source fix.** Previously the workout-detail modal title rendered from `session.session_type` (the plan's INTENT), not the picked file's actual class. So a session planned as vo2max but matched to a Z2 file would title "vo2max" while the chart underneath showed pure Z2 — the user's "title is completely off" complaint. New cascade: `display_name` → `zwo_name` → `session_type`. Same cascade applied to calendar cell labels. The duration in the title also reflects the picked file's actual duration (`zwo_duration_min`), not the planned `duration_min`.
+- **Library filter dropdown** updated from 12 → 16 canonical class options. `mixed` removed.
+- **`<title>` SVG tooltip enrichment** (folded from the v1.0.3 fix-forward): every interval bar in `workoutProfileSVG()` now shows watts + duration + zone — e.g. `STEADYSTATE: 2 min 30 sec • 240 W (97% FTP)` instead of just `97% FTP`.
+
+### Backend — display_name plumbed through every session payload
+
+- `/api/plan`, `/api/plan/today`, `/api/plan/week`, `/api/calendar`, `/api/plan/missed-suggestions` (and all other session-bearing endpoints) now include `display_name` and `zwo_duration_min` for every session whose `zwo_file` has a library match. Graceful empty for free-form sessions.
+
+### Workout-detail UX trio (folded from v1.0.3 fix-forward at `8cef603d`)
+
+- **Filename consistency** — when `session.zwo_file` exists, the FIT download name derives from the same base. So both downloads share `tempo_steady_57min.zwo` / `tempo_steady_57min.fit` instead of one library-named ZWO and one generic-named `Tuesday_TEMPO.fit`.
+- **FIT mirrors ZWO content** — `/api/export/fit-workout` accepts a `zwo_file` query param. When supplied, the endpoint parses the ZWO XML and emits a FIT structured workout with the same segments. Downloading both formats now genuinely gives the SAME workout, not the ladder ZWO + a generic-tempo FIT.
+- **Pywebview download bridge** (already in v1.0.3 + CSP `unsafe-eval` fix) — both downloads pop a native macOS save dialog instead of white-screening (ZWO) or doing nothing (FIT).
+
+### Tests
+- 832 → 879 passing (+47 net across 5 new test files: `test_fit_from_zwo.py` (4), `test_workout_filename_consistency.py` (2), `test_classifier_v104.py` (14), `test_planner_taxonomy_v104.py` (34), `test_ui_v104_title_source.py` (3), `test_session_payload_display_name.py` (5)). Same 3 pre-existing wellness/training-load isolation failures. 9 xfails are filename-hygiene + legacy-taxonomy tests deliberately invalidated by v1.0.4 (filename rename is out of scope).
+
+### Out of scope (deferred)
+- Renaming the 3,054 ZWO files to match the proposed `{class}_{structure}_{key}_{duration}min.zwo` convention. Filename rename would break external links — separate Wave.
+- Regenerating the 3,054 ZWO `<name>` tags from content. With `display_name` as the canonical UI source, the on-disk `<name>` is now a fallback only — optional cleanup later.
+- Curating the 95 free-ride / empty-`<workout>` files flagged by the audit.
+- Deduplicating the ~80 `_renamed_v46_*` siblings.
+
 ## v1.0.3 — Availability-aware reforecast + auto-fire on sync + Plan-tab guidance + missed-session reschedule + ZWO/FIT downloads finally work in the bundled app (2026-05-05)
 
 ### User-facing — the plan stays current with reality

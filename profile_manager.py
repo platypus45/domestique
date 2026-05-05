@@ -186,6 +186,20 @@ class ProfileManager:
         return int(v) if v else int(self.ftp * 80)
 
     @property
+    def pmax_w(self) -> int:
+        """v1.0.6 IMPL-3D-INGEST: Maximum power (Pmax) in watts. Used by
+        the 3D impulse-response strain model (Kontro 2026) for per-second
+        attribution of P > CP into PCr vs glycolytic shares.
+
+        Falls back to int(ftp * 1.30) — Coggan's 2-min approximation.
+        ICU exposes the real value at sportInfo[0].pMax (best 1s power);
+        when an ICU sync has populated athlete_metrics.pmax it gets
+        mirrored into self._athlete["pmax_w"] via _set_pmax(..., "icu").
+        """
+        v = self._athlete.get("pmax_w")
+        return int(v) if v else int(self.ftp * 1.30)
+
+    @property
     def age(self) -> int | None:
         v = self._athlete.get("age")
         return int(v) if v else None
@@ -518,6 +532,7 @@ class ProfileManager:
             "max_hr":    (120, 240),
             "cp":        (100, 500),     # Critical Power in watts
             "wprime_j":  (5000, 40000),  # W' in joules
+            "pmax_w":    (300, 2500),    # Pmax in watts (v1.0.6 IMPL-3D-INGEST)
             "age":       (10, 100),      # years
             # sex handled separately -- string not numeric
         }
@@ -544,12 +559,16 @@ class ProfileManager:
         # before the generic update() + disk write so `_set_wprime`'s
         # atomic _write_json is the only path that touches the key.
         wprime_manual = data.pop("wprime_j", None)
+        # v1.0.6 IMPL-3D-INGEST: same pattern for pmax_w.
+        pmax_manual = data.pop("pmax_w", None)
 
         self._athlete.update(data)
         self._write_json(self.active_dir / "athlete.json", self._athlete)
 
         if wprime_manual is not None:
             self._set_wprime(int(wprime_manual), "manual")
+        if pmax_manual is not None:
+            self._set_pmax(int(pmax_manual), "manual")
 
     def _set_wprime(self, value: int | float, source: str) -> bool:
         """Shared write-path for `wprime_j` with source tracking (v3.6.0-fix26
@@ -617,6 +636,71 @@ class ProfileManager:
         wprime has been written yet (callers treat empty as "fallback").
         """
         return str(self._athlete.get("wprime_source", "") or "")
+
+    def _set_pmax(self, value: int | float, source: str) -> bool:
+        """v1.0.6 IMPL-3D-INGEST: shared write-path for `pmax_w` with source
+        tracking. Cloned from `_set_wprime` (v3.6.0-fix26 §4.1).
+
+        Source priority (higher wins):
+            manual > icu > computed > fallback
+
+        Args:
+            value: Pmax in watts. Clamped to [300, 2500]; anything outside
+                   returns False and does NOT touch disk.
+            source: One of "manual", "icu", "computed", "fallback". Anything
+                    else raises ValueError.
+
+        Returns:
+            True if the value was written; False if it was rejected (out of
+            range, or a higher-priority source is already set).
+
+        Used by:
+          * `save_athlete` when the user types a pmax_w in settings
+            (source="manual").
+          * `db._refresh_pmax_from_metrics` after ICU sync_wellness
+            batches (source="icu").
+          * `fitness_estimation` peak-15s estimator (source="computed").
+
+        Atomic write via the existing `_write_json` path (tmp+fsync+rename).
+        """
+        _PRIO = {"manual": 3, "icu": 2, "computed": 1, "fallback": 0}
+        if source not in _PRIO:
+            raise ValueError(f"unknown pmax source: {source!r}")
+
+        try:
+            v = int(float(value))
+        except (TypeError, ValueError):
+            log.warning("_set_pmax: invalid value %r; ignored", value)
+            return False
+        if not (300 <= v <= 2500):
+            log.warning(
+                "_set_pmax: %d out of range [300, 2500] "
+                "(source=%s); ignored", v, source,
+            )
+            return False
+
+        current_source = self._athlete.get("pmax_source")
+        if current_source in _PRIO:
+            if _PRIO[source] < _PRIO[current_source]:
+                log.debug(
+                    "_set_pmax: skipping %s write (%d W); current source "
+                    "%s has higher priority", source, v, current_source,
+                )
+                return False
+
+        self._athlete["pmax_w"] = v
+        self._athlete["pmax_source"] = source
+        self._write_json(self.active_dir / "athlete.json", self._athlete)
+        log.info("_set_pmax: pmax_w=%d W source=%s", v, source)
+        return True
+
+    @property
+    def pmax_source(self) -> str:
+        """v1.0.6 IMPL-3D-INGEST: source of the currently stored `pmax_w`
+        value. Returns one of "manual", "icu", "computed", "fallback", or
+        "" when the property still falls back to int(ftp * 1.30).
+        """
+        return str(self._athlete.get("pmax_source", "") or "")
 
     # v3.6.0-fix35e: FTP-test persistence.
     @property

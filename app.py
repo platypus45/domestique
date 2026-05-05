@@ -4011,6 +4011,10 @@ def update_settings(request_body: dict):
         "ftp": ("ftp", "ATHLETE_FTP_W", int),
         "lthr": ("lthr", "ATHLETE_LTHR", int),
         "max_hr": ("max_hr", "ATHLETE_MAX_HR", int),
+        # v1.0.6 IMPL-3D-INGEST: manual pmax_w override. The athlete_key
+        # "pmax_w" is recognised by save_athlete() which routes through
+        # _set_pmax(..., "manual") so later ICU writes can't clobber.
+        "pmax": ("pmax_w", "ATHLETE_PMAX_W", int),
     }
     athlete_updates = {}
     old_ftp = pm.ftp

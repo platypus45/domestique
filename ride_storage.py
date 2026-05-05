@@ -539,6 +539,111 @@ def _build_summary_dict(summary, dc: dict, session=None) -> dict:
     return out
 
 
+# v1.0.6 IMPL-3D-INGEST: per-ride 3D strain decomposition hook.
+def compute_ride_xss(
+    power_series: list,
+    started_at: str | None = None,
+    summary: dict | None = None,
+    cp: int | None = None,
+    wprime_j: int | None = None,
+    pmax: int | None = None,
+) -> dict:
+    """Compute and persist 3D strain decomposition for one ride.
+
+    Calls ``strain_score.compute_xss_components(power_series, cp, wprime_j,
+    pmax)`` to get per-ride totals (Kontro 2026 PLOS ONE — see
+    MASTER_DECISIONS_v106 §1) and:
+
+      * mutates ``summary`` in place to add ``xss_total``, ``xss_cp``,
+        ``xss_w_prime``, ``xss_pmax`` keys (so the on-disk summary the
+        ride-detail UI reads carries them).
+      * writes per-day aggregates ``ss_cp_daily`` / ``ss_w_prime_daily``
+        / ``ss_pmax_daily`` into ``athlete_metrics`` via
+        ``db.log_metric`` (source="computed").
+
+    A ride without a usable power trace (empty / None / all-zeros) returns
+    an empty dict and writes nothing — the caller can pass through without
+    branching.
+
+    Returns the components dict (or {} when no power data).
+
+    The CP / W' / Pmax inputs default to the active profile's values when
+    not supplied. strain_score is imported lazily so this module loads even
+    before IMPL-3D-MODEL lands.
+    """
+    if not power_series or not any(int(p or 0) > 0 for p in power_series):
+        if summary is not None:
+            # Mark the ride explicitly so the UI can render "no power trace"
+            # rather than mistakenly treating xss as zero.
+            summary.setdefault("xss_total", None)
+            summary.setdefault("xss_cp", None)
+            summary.setdefault("xss_w_prime", None)
+            summary.setdefault("xss_pmax", None)
+        return {}
+
+    # Default CP / W' / Pmax from the active profile.
+    if cp is None or wprime_j is None or pmax is None:
+        try:
+            from profile_manager import ProfileManager
+            pm = ProfileManager.get()
+            cp = cp if cp is not None else pm.cp
+            wprime_j = wprime_j if wprime_j is not None else pm.wprime_j
+            pmax = pmax if pmax is not None else pm.pmax_w
+        except Exception as e:
+            log.warning("compute_ride_xss: profile lookup failed: %s", e)
+            return {}
+
+    try:
+        import strain_score
+        components = strain_score.compute_xss_components(
+            power_series, cp=cp, wprime_j=wprime_j, pmax=pmax,
+        )
+    except ImportError:
+        # IMPL-3D-MODEL hasn't landed in this run — graceful no-op.
+        log.info("compute_ride_xss: strain_score module not yet available")
+        return {}
+    except Exception as e:
+        log.warning("compute_ride_xss: strain_score raised: %s", e)
+        return {}
+
+    if not isinstance(components, dict):
+        return {}
+
+    # Cache on the summary dict so the on-disk ride.json and the
+    # /api/ride/<id>/detail endpoint serializer can both read it.
+    if summary is not None:
+        summary["xss_total"] = components.get("xss_total")
+        summary["xss_cp"] = components.get("xss_cp")
+        summary["xss_w_prime"] = components.get("xss_w_prime")
+        summary["xss_pmax"] = components.get("xss_pmax")
+
+    # Write per-day aggregates into athlete_metrics (one row per metric per
+    # ride day; INSERT OR REPLACE so re-imports don't double-count). The
+    # date prefix from started_at is what the dashboard time-series reads.
+    if started_at:
+        try:
+            import db
+            day = str(started_at)[:10]
+            for metric_key, value in (
+                ("ss_cp_daily", components.get("xss_cp")),
+                ("ss_w_prime_daily", components.get("xss_w_prime")),
+                ("ss_pmax_daily", components.get("xss_pmax")),
+            ):
+                if value is None:
+                    continue
+                try:
+                    db.log_metric(day, metric_key, float(value), source="computed")
+                except Exception as inner:
+                    log.warning(
+                        "compute_ride_xss: log_metric(%s) failed: %s",
+                        metric_key, inner,
+                    )
+        except Exception as e:
+            log.warning("compute_ride_xss: db write failed: %s", e)
+
+    return components
+
+
 # v4.0.0-alpha (FIX-SERVER): save_ride() removed. The live TrainingSession
 # runtime it depended on (session._recorder, session._metrics, session.mode,
 # session._workout) is gone; rides now arrive via ``POST /api/ride/import``

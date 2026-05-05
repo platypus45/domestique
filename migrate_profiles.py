@@ -300,6 +300,108 @@ def migrate_to_profiles() -> None:
             src.unlink()
 
 
+# ─── v1.0.2 IMPL-MIGRATION ──────────────────────────────────────────────────
+# Startup version-aware self-check + first-boot-after-upgrade toast framework.
+#
+# Detects an app-version bump by comparing the persisted last-run version
+# (`~/.domestique/last_run_version.txt`) to the current ``VERSION`` and returns
+# a result dict shaped per MASTER_DECISIONS_v102.md §1. v1.0.2 adds NO actual
+# schema changes — this is the framework for future additive migrations to
+# slot in. The dashboard reads the result from
+# `GET /api/migrations/last-run-result` and toasts on first upgrade boot.
+#
+# Locked field names (do not rename without bumping MASTER):
+#   migration_check_passed, from_version, to_version, columns_added,
+#   schema_changes[].{table,action,column,coltype},
+#   data_migrations[].{id,description,applied},
+#   rider_data_preserved, show_toast.
+
+_LAST_RUN_VERSION_FILENAME = "last_run_version.txt"
+
+
+def _read_last_run_version(data_dir: Path) -> str | None:
+    """Return the persisted last-run version string, or None on first boot."""
+    p = data_dir / _LAST_RUN_VERSION_FILENAME
+    try:
+        return p.read_text(encoding="utf-8").strip() or None
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _write_last_run_version_atomic(data_dir: Path, version: str) -> None:
+    """Atomically persist the current version (tmp + os.replace).
+
+    Best-effort: failure to persist is logged but never raised — a missing
+    last_run_version.txt simply re-fires the upgrade toast on next boot,
+    which is recoverable. We do not want a flaky filesystem to break boot.
+    """
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        target = data_dir / _LAST_RUN_VERSION_FILENAME
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(version)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            os.replace(str(tmp), str(target))
+        except Exception:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise
+    except Exception as e:
+        log.warning(f"v1.0.2 migration: failed to write {_LAST_RUN_VERSION_FILENAME}: {e}")
+
+
+def run_v102_migration_check(data_dir: Path, current_version: str) -> dict:
+    """Return the locked v1.0.2 migration-result dict.
+
+    Idempotent. Safe to call every boot. Compares the persisted last-run
+    version to ``current_version``; on a version change, marks ``show_toast``
+    True and populates ``from_version``/``to_version``. v1.0.2 ships NO
+    schema changes — ``columns_added=0``, ``schema_changes=[]``. The
+    framework is in place for future additive migrations to slot into the
+    ``schema_changes`` list and bump ``columns_added``.
+    """
+    last_run = _read_last_run_version(data_dir)
+    is_upgrade = last_run is not None and last_run != current_version
+
+    # v1.0.2 has NO actual schema changes (per MASTER §0 + §1 + §5). Future
+    # versions append to schema_changes and increment columns_added here.
+    schema_changes: list = []
+    columns_added = 0
+
+    # Persist the current version every boot — first run writes it for the
+    # first time so subsequent boots can detect upgrades. Done BEFORE
+    # building the data_migrations entry so its `applied=True` is honest.
+    _write_last_run_version_atomic(data_dir, current_version)
+
+    data_migrations = [
+        {
+            "id": "v102_init_last_run_version",
+            "description": "Recorded last-run version for future upgrade-aware migrations.",
+            "applied": True,
+        }
+    ]
+
+    return {
+        "migration_check_passed": True,
+        "from_version": last_run if is_upgrade else current_version,
+        "to_version": current_version,
+        "columns_added": columns_added,
+        "schema_changes": schema_changes,
+        "data_migrations": data_migrations,
+        "rider_data_preserved": True,
+        "show_toast": bool(is_upgrade),
+    }
+
+
 if __name__ == "__main__":
     migrate_to_profiles()
     print("Migration complete.")

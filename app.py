@@ -112,6 +112,11 @@ except OSError:
 # the resulting FIT afterward via POST /api/ride/import.
 APP_VERSION = "4.0.0-alpha"
 
+# v1.0.2 IMPL-MIGRATION: cached migration-check result for the dashboard.
+# Populated once at lifespan startup; consumed by GET /api/migrations/last-run-result.
+# Default `show_toast=False` is the defensive value before lifespan runs.
+_LAST_MIGRATION_RESULT: dict = {"show_toast": False}
+
 
 @asynccontextmanager
 async def lifespan(app):
@@ -119,10 +124,31 @@ async def lifespan(app):
     # Order matters: ProfileManager.get() runs the v3 data-dir rename
     # (~/.chickencycling → ~/.domestique). After that runs, the legacy
     # single-user migration operates against the new dir name.
-    from migrate_profiles import migrate_to_profiles, migrate_to_v4
+    from migrate_profiles import migrate_to_profiles, migrate_to_v4, run_v102_migration_check
     from profile_manager import ProfileManager
     pm = ProfileManager.get()
     migrate_to_profiles()
+
+    # v1.0.2 IMPL-MIGRATION: startup version-aware self-check. Detects an
+    # upgrade by comparing ~/.domestique/last_run_version.txt to _VERSION;
+    # on first boot after a bump, the result dict carries `show_toast=True`
+    # and the dashboard surfaces a toast naming from→to versions and
+    # confirming rider data is preserved. v1.0.2 has NO schema changes —
+    # this is the framework slot for future additive migrations.
+    global _LAST_MIGRATION_RESULT
+    try:
+        _LAST_MIGRATION_RESULT = run_v102_migration_check(DATA_DIR, _VERSION)
+        if _LAST_MIGRATION_RESULT.get("show_toast"):
+            _log.info(
+                f"v1.0.2 migration check: upgraded from "
+                f"v{_LAST_MIGRATION_RESULT.get('from_version')} → "
+                f"v{_LAST_MIGRATION_RESULT.get('to_version')}, "
+                f"{_LAST_MIGRATION_RESULT.get('columns_added')} columns added, "
+                f"rider data preserved."
+            )
+    except Exception as e:
+        _log.warning(f"v1.0.2 migration check failed (non-fatal): {e}")
+        _LAST_MIGRATION_RESULT = {"show_toast": False}
 
     # v4.0.0-alpha: strip removed profile fields (device-pair list,
     # trainer-difficulty scaler, bike-weight) from every existing profile.
@@ -3708,6 +3734,20 @@ def api_version():
         "frozen": getattr(sys, "frozen", False),
         "data_dir": str(Path.home() / ".domestique"),
     }
+
+
+@app.get("/api/migrations/last-run-result")
+def api_migrations_last_run_result():
+    """Return the v1.0.2 startup migration-check result.
+
+    Populated once during `lifespan` startup by ``run_v102_migration_check``.
+    The dashboard fetches this on home-page boot; if ``show_toast`` is true
+    AND the per-version localStorage flag isn't set, it surfaces a toast
+    confirming rider data is preserved across the upgrade. Returns the
+    defensive ``{"show_toast": False}`` shape if lifespan hasn't populated
+    the cache yet (shouldn't happen in production).
+    """
+    return _LAST_MIGRATION_RESULT
 
 
 @app.get("/api/settings")

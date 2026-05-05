@@ -3381,7 +3381,37 @@ function renderCapabilityWidget(p) {
   }
 }
 
+// v1.0.2 IMPL-MIGRATION: first-boot-after-upgrade toast.
+// Reads the cached startup migration check from /api/migrations/last-run-result.
+// If show_toast is true AND we haven't already toasted this from→to pair on
+// this device, surface a one-line confirmation that rider data is preserved
+// and set the localStorage flag so it never re-fires for the same upgrade.
+// Best-effort — never raises to the home-page load path.
+async function loadMigrationToast() {
+  try {
+    const r = await fetch('/api/migrations/last-run-result');
+    if (!r.ok) return;
+    const m = await r.json();
+    if (!m || !m.show_toast) return;
+    const from = m.from_version || '';
+    const to = m.to_version || '';
+    if (!from || !to) return;
+    const key = 'migration-toast-shown-' + from + '-' + to;
+    if (localStorage.getItem(key) === '1') return;
+    const cols = m.columns_added || 0;
+    const msg = cols > 0
+      ? '✅ Migrated from v' + from + ' → v' + to + ', ' + cols + ' columns added, all rider data preserved.'
+      : '✅ Migrated from v' + from + ' → v' + to + ' — all rider data preserved.';
+    showToast(msg, 5000);
+    try { localStorage.setItem(key, '1'); } catch (_) {}
+  } catch (_) {
+    // network or parse error — silently no-op so home boot is unaffected.
+  }
+}
+
 async function loadHome() {
+  // v1.0.2 IMPL-MIGRATION: fire-and-forget upgrade-toast check (non-blocking).
+  try { loadMigrationToast(); } catch (_) {}
   try {
     const [rRes, wRes, aRes] = await Promise.all([
       fetch('/api/readiness'), fetch('/api/wellness?days=90'), fetch('/api/activities')

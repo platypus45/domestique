@@ -1253,6 +1253,18 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
         </div>
       </div>
     </details>
+    <!-- v1.0.7 IMPL-TAU-FIT-WIRING — per-athlete τ fit panel.
+         Default collapsed so the primary CTL/ATL/TSB view leads. Reads
+         /api/profile/tau-fits which returns the current fit τ values per
+         component (CTL/ATL + CP/W'/Pmax) with bootstrap CI ranges and the
+         success/low_confidence/insufficient_data status. Falls back to
+         conventional τ when the rider's data is too sparse to fit. -->
+    <details class="tau-fit-results" style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;" id="tau-fit-results-panel" ontoggle="if(this.open)loadTauFitPanel()">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text2);user-select:none;">Per-athlete τ fit — beta</summary>
+      <div id="tau-fit-results-content" style="margin-top:8px;font-size:12px;color:var(--text2);">
+        <div style="color:var(--text3);">Loading…</div>
+      </div>
+    </details>
   </div>
 
   <!-- Event Countdown + eFTP Drift -->
@@ -3635,6 +3647,93 @@ async function loadFitnessChart(days=90) {
   } catch(e) { console.error(e); }
 }
 
+// v1.0.7 IMPL-TAU-FIT-WIRING — per-athlete τ fit panel.
+// Lazy-loaded on <details> open. Reads /api/profile/tau-fits which calls
+// fit_tau_per_athlete(persist=False) under the hood — never writes nls_fit
+// rows from the open event. Re-fetches on the race-toggle callback so
+// tagging a ride immediately re-weights the marker count.
+let _tauFitLoaded = false;
+async function loadTauFitPanel(forceRefresh = false) {
+  const container = document.getElementById('tau-fit-results-content');
+  if (!container) return;
+  if (_tauFitLoaded && !forceRefresh) return;
+  container.innerHTML = '<div style="color:var(--text3);">Loading…</div>';
+  try {
+    const res = await fetch('/api/profile/tau-fits');
+    const d = await res.json();
+    _tauFitLoaded = true;
+
+    if (d.fit_status === 'insufficient_data') {
+      container.innerHTML = `
+        <div style="color:var(--text3);">
+          Not enough data yet for a personal τ fit. Need ≥ 5 weighted markers
+          (1.0 per race-tagged ride, 0.8 per FTP test, 0.5 per ≥3 W eFTP step).
+          Currently: ${(d.weighted_n || 0).toFixed(1)} weighted from ${d.n_markers || 0} eFTP rows.
+          Falling back to conventional τ_CTL = 42 d, τ_ATL = 7 d.
+        </div>`;
+      return;
+    }
+
+    const conv = d.conventional || {};
+    const fmt = v => (v == null ? '—' : Number(v).toFixed(1));
+    const ctlFit = fmt(d.ctl_tau_fit);
+    const atlFit = fmt(d.atl_tau_fit);
+    const ctlConv = fmt(conv.ctl_tau);
+    const atlConv = fmt(conv.atl_tau);
+    const ctlCi = (d.ctl_tau_ci_low != null && d.ctl_tau_ci_high != null)
+      ? `${fmt(d.ctl_tau_ci_low)}–${fmt(d.ctl_tau_ci_high)}`
+      : '—';
+    const atlCi = (d.atl_tau_ci_low != null && d.atl_tau_ci_high != null)
+      ? `${fmt(d.atl_tau_ci_low)}–${fmt(d.atl_tau_ci_high)}`
+      : '—';
+
+    const isLowConf = d.fit_status === 'low_confidence';
+    const statusBadge = d.fit_status === 'success'
+      ? '<span style="color:var(--green);font-weight:700;">success</span>'
+      : isLowConf
+        ? '<span style="color:#f97316;font-weight:700;">low confidence</span>'
+        : `<span style="color:var(--text3);">${d.fit_status}</span>`;
+    const rowOpacity = isLowConf ? '0.55' : '1';
+    const lowConfNote = isLowConf
+      ? `<div style="margin-top:8px;color:#f97316;font-size:11px;">Fit rejected — CI too wide, r² &lt; 0.40, or marker density too low. Planner uses conventional τ as fallback.</div>`
+      : '';
+
+    container.innerHTML = `
+      <div>
+        <div style="margin-bottom:6px;">
+          Status: ${statusBadge}
+          <span style="color:var(--text3);">·</span>
+          <span style="color:var(--text3);">${d.n_markers || 0} eFTP rows · ${(d.weighted_n || 0).toFixed(1)} weighted markers · r² ${d.fit_residual_r2 != null ? Number(d.fit_residual_r2).toFixed(2) : '—'}</span>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px;opacity:${rowOpacity};">
+          <thead>
+            <tr style="color:var(--text3);text-align:left;">
+              <th style="padding:4px 6px;">Component</th>
+              <th style="padding:4px 6px;">Fit (d)</th>
+              <th style="padding:4px 6px;">95% CI</th>
+              <th style="padding:4px 6px;">Conventional (d)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td style="padding:4px 6px;">τ_CTL (fitness)</td><td style="padding:4px 6px;font-weight:700;">${ctlFit}</td><td style="padding:4px 6px;color:var(--text3);">${ctlCi}</td><td style="padding:4px 6px;color:var(--text3);">${ctlConv}</td></tr>
+            <tr><td style="padding:4px 6px;">τ_ATL (fatigue)</td><td style="padding:4px 6px;font-weight:700;">${atlFit}</td><td style="padding:4px 6px;color:var(--text3);">${atlCi}</td><td style="padding:4px 6px;color:var(--text3);">${atlConv}</td></tr>
+            <tr><td style="padding:4px 6px;">τ_CP fit/fat</td><td style="padding:4px 6px;">${fmt(d.cp_tau1_fit)} / ${fmt(d.cp_tau2_fit)}</td><td style="padding:4px 6px;color:var(--text3);">—</td><td style="padding:4px 6px;color:var(--text3);">${fmt(conv.cp_tau1)} / ${fmt(conv.cp_tau2)}</td></tr>
+            <tr><td style="padding:4px 6px;">τ_W' fit/fat</td><td style="padding:4px 6px;">${fmt(d.wprime_tau1_fit)} / ${fmt(d.wprime_tau2_fit)}</td><td style="padding:4px 6px;color:var(--text3);">—</td><td style="padding:4px 6px;color:var(--text3);">${fmt(conv.wprime_tau1)} / ${fmt(conv.wprime_tau2)}</td></tr>
+            <tr><td style="padding:4px 6px;">τ_Pmax fit/fat</td><td style="padding:4px 6px;">${fmt(d.pmax_tau1_fit)} / ${fmt(d.pmax_tau2_fit)}</td><td style="padding:4px 6px;color:var(--text3);">—</td><td style="padding:4px 6px;color:var(--text3);">${fmt(conv.pmax_tau1)} / ${fmt(conv.pmax_tau2)}</td></tr>
+          </tbody>
+        </table>
+        <div style="margin-top:8px;color:var(--text3);font-size:11px;line-height:1.4;">
+          Per-component τ values currently fall through to the Kontro 2026 single-athlete defaults.
+          Per-component refit is a v1.1.0+ refinement — see /tmp/MASTER_DECISIONS_v107.md §5.
+        </div>
+        ${lowConfNote}
+      </div>`;
+  } catch (e) {
+    console.error('tau-fits load failed', e);
+    container.innerHTML = '<div style="color:var(--text3);">Failed to load τ fit panel. See console.</div>';
+  }
+}
+
 // v1.0.6 IMPL-3D-DASHBOARD — three normalized fitness curves (CP/W'/Pmax)
 // on a 0-100 axis. Reuses the SVG pattern from fitnessChart() but is much
 // simpler: single y-axis, three polylines, no tooltip area-fill. Renders
@@ -4945,11 +5044,28 @@ async function openRideDetail(rideId) {
       if (totalHr > 0) html += renderZoneBar(z.hr, hrNames, hrColors, 'HEART-RATE ZONE DISTRIBUTION');
     }
 
-    // Action bar — Download FIT + Delete
+    // v1.0.7 IMPL-TAU-FIT-WIRING — race checkbox.
+    // Posts to /api/activity/{activity_id}/race so per-athlete τ fitting
+    // weights this ride higher (race-tagged activities count 1.0 vs eFTP
+    // step changes at 0.5 — see PATCH G9). Initial state from ride.is_race.
+    const _activityId = ride.activity_id || '';
+    const _isRaceChecked = ride.is_race === true ? 'checked' : '';
+    const _raceCheckboxHtml = _activityId
+      ? `<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer;user-select:none;" title="Race-tagged rides anchor the per-athlete τ fit (PATCH G9 weight 1.0 vs 0.5 for eFTP step changes).">
+          <input type="checkbox" ${_isRaceChecked} onchange="setActivityRace('${escJs(_activityId)}', this.checked, this)" style="cursor:pointer;"/>
+          <span>🏁 Mark as race</span>
+          <span id="race-toggle-status-${escJs(_activityId)}" style="font-size:11px;color:var(--text3);"></span>
+        </label>`
+      : `<span style="font-size:11px;color:var(--text3);">Race tagging unavailable — ride not in activity cache.</span>`;
+
+    // Action bar — Race toggle + Download FIT + Delete
     const rideIdEnc = encodeURIComponent(ride.id);
     html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;gap:12px;flex-wrap:wrap;">
-      <a class="btn" href="/api/rides/${rideIdEnc}/fit" download style="background:var(--surface2);text-decoration:none;display:inline-block;">Download FIT</a>
-      <button class="btn" style="background:var(--surface2);color:var(--dev-red);border-color:var(--dev-red);" onclick="if(confirm('Delete this ride?')){fetch('/api/rides/${rideIdEnc}',{method:'DELETE'}).then(r=>{if(!r.ok)throw new Error('Failed');$('ride-detail-overlay').style.display='none';loadRideHistory();}).catch(e=>alert('Failed to delete ride: '+e.message))}">Delete Ride</button>
+      ${_raceCheckboxHtml}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <a class="btn" href="/api/rides/${rideIdEnc}/fit" download style="background:var(--surface2);text-decoration:none;display:inline-block;">Download FIT</a>
+        <button class="btn" style="background:var(--surface2);color:var(--dev-red);border-color:var(--dev-red);" onclick="if(confirm('Delete this ride?')){fetch('/api/rides/${rideIdEnc}',{method:'DELETE'}).then(r=>{if(!r.ok)throw new Error('Failed');$('ride-detail-overlay').style.display='none';loadRideHistory();}).catch(e=>alert('Failed to delete ride: '+e.message))}">Delete Ride</button>
+      </div>
     </div>`;
 
     $('ride-detail-content').innerHTML = html;
@@ -4959,6 +5075,38 @@ async function openRideDetail(rideId) {
     errEl.textContent = 'Failed to load ride: ' + e.message;
     $('ride-detail-content').innerHTML = '';
     $('ride-detail-content').appendChild(errEl);
+  }
+}
+
+// v1.0.7 IMPL-TAU-FIT-WIRING — POST the race-toggle change.
+// 204 = OK; 404 = activity not in local cache (rare). The checkbox reverts
+// on failure so the UI state matches server state.
+async function setActivityRace(activityId, isRace, checkboxEl) {
+  const statusEl = document.getElementById('race-toggle-status-' + activityId);
+  if (statusEl) statusEl.textContent = '…';
+  try {
+    const r = await fetch('/api/activity/' + encodeURIComponent(activityId) + '/race', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({is_race: !!isRace}),
+    });
+    if (r.status === 204) {
+      if (statusEl) {
+        statusEl.textContent = 'saved';
+        setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 1800);
+      }
+      // Refresh the τ-fit panel if it's currently open — race weighting
+      // changes the weighted_n + can flip fit_status.
+      if (typeof loadTauFitPanel === 'function') {
+        try { loadTauFitPanel(true); } catch(_) {}
+      }
+    } else {
+      if (checkboxEl) checkboxEl.checked = !isRace;
+      if (statusEl) statusEl.textContent = 'failed (' + r.status + ')';
+    }
+  } catch (e) {
+    if (checkboxEl) checkboxEl.checked = !isRace;
+    if (statusEl) statusEl.textContent = 'failed';
   }
 }
 

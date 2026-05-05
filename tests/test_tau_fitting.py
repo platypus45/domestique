@@ -122,9 +122,18 @@ def _add_is_race_column_and_tag_some(conn, daily_pairs, n_races: int = 12):
     """Add the is_race column (post-WIRING shape) and tag every Nth synth
     activity as a race so weighted_n clears the success threshold.
 
+    Idempotent — the WIRING agent's ``db.init_db()`` now adds is_race by
+    default (PATCH G11), so we swallow the duplicate-column error if it
+    fires here. Tests that ran against a pre-WIRING DB still work.
+
     Returns the number of races tagged.
     """
-    conn.execute("ALTER TABLE activities ADD COLUMN is_race INTEGER DEFAULT 0")
+    import sqlite3
+    try:
+        conn.execute("ALTER TABLE activities ADD COLUMN is_race INTEGER DEFAULT 0")
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
     if not daily_pairs:
         return 0
     n = len(daily_pairs)
@@ -141,18 +150,33 @@ def _add_is_race_column_and_tag_some(conn, daily_pairs, n_races: int = 12):
 
 
 class _TauFittingFixture(unittest.TestCase):
-    """tmp DB scaffold shared across tests."""
+    """tmp DB scaffold shared across tests.
+
+    Monkey-patches tau_fitting._BOOTSTRAP_N to 50 for the duration of each
+    test so the 1000-resample default doesn't blow up the test runtime.
+    Production callers (and the contract test) keep the 1000 default.
+    Acceptance gate (v1.0.7 IMPL-TAU-FIT-WIRING): full file <60 s.
+    """
 
     def setUp(self):
         import db
+        import tau_fitting
         self.tmp = Path(tempfile.mkdtemp())
         self.dbfile = self.tmp / "tau.db"
         db.set_db_path(self.dbfile)
         db.close_all_connections()
         db.init_db()
         self._db_module = db
+        # Reduce bootstrap from 1000 to 50 so the full file runs <60 s.
+        # The CI envelope is still well-formed at n=50 — see PATCH G15
+        # speed gate. Any test that needs the production n=1000 should
+        # restore this in its own setUp before calling the fit.
+        self._orig_bootstrap_n = tau_fitting._BOOTSTRAP_N
+        tau_fitting._BOOTSTRAP_N = 50
 
     def tearDown(self):
+        import tau_fitting
+        tau_fitting._BOOTSTRAP_N = self._orig_bootstrap_n
         self._db_module.close_all_connections()
         shutil.rmtree(self.tmp, ignore_errors=True)
 
@@ -262,11 +286,16 @@ class TestManualOverrideBlocksWrite(_TauFittingFixture):
             noise_w=1.0,
         )
         # Enough markers + races to push weighted_n ≥ 10 so we'd otherwise
-        # write a successful fit row. Add the is_race column ourselves
-        # (the WIRING agent normally does this — we're simulating the
-        # post-WIRING DB shape here).
+        # write a successful fit row. The WIRING agent's db.init_db() now
+        # adds is_race by default (PATCH G11), so the ALTER is wrapped in
+        # a duplicate-column swallow.
+        import sqlite3
         conn = db.get_db()
-        conn.execute("ALTER TABLE activities ADD COLUMN is_race INTEGER DEFAULT 0")
+        try:
+            conn.execute("ALTER TABLE activities ADD COLUMN is_race INTEGER DEFAULT 0")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
         _seed_db_with_synthetic(conn, daily, eftp)
         # Tag 12 activities as races so the weighted_n is high.
         race_ids = [f"synth-{i}" for i in range(0, 84, 7)]  # 12 races
@@ -347,8 +376,14 @@ class TestEndToEndRealisticLog(_TauFittingFixture):
             noise_w=2.0,
         )
         conn = db.get_db()
-        # Add is_race column (simulating post-WIRING DB).
-        conn.execute("ALTER TABLE activities ADD COLUMN is_race INTEGER DEFAULT 0")
+        # Add is_race column (simulating post-WIRING DB). Idempotent —
+        # WIRING's db.init_db() now adds the column by default (PATCH G11).
+        import sqlite3
+        try:
+            conn.execute("ALTER TABLE activities ADD COLUMN is_race INTEGER DEFAULT 0")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
         _seed_db_with_synthetic(conn, daily, eftp)
 
         # 4 races spread through the year + 1 FTP test
@@ -383,6 +418,43 @@ class TestEndToEndRealisticLog(_TauFittingFixture):
                       ("success", "low_confidence", "insufficient_data"))
         # Per-component τ fields fall back to conventional values, never None.
         self.assertEqual(result["cp_tau1_fit"], 52.0)
+
+
+class TestVectorisedEwmaMatchesPythonLoop(unittest.TestCase):
+    """v1.0.7 IMPL-TAU-FIT-WIRING — numerical-fidelity snapshot.
+
+    The bootstrap-vectorisation refactor replaces the per-day Python
+    loop in _ewma_series with a scipy.signal.lfilter call. Acceptance
+    gate: lfilter output must match the legacy Python-loop output
+    within 0.5 % at every sample, so the speedup doesn't sneak in
+    silent numerical drift.
+    """
+
+    def test_lfilter_matches_python_loop(self):
+        import tau_fitting
+
+        # Recreate the exact pre-vectorisation Python loop here so the
+        # snapshot test isn't coupled to whatever _ewma_series ends up
+        # being after future refactors.
+        def _python_loop(loads, tau):
+            out, f = [], 0.0
+            for L in loads:
+                f = f + (L - f) / tau
+                out.append(f)
+            return out
+
+        rng = np.random.default_rng(2026)
+        # Realistic 365-day load series spanning the typical fit window.
+        loads = np.maximum(0.0, rng.normal(80.0, 40.0, 365))
+
+        for tau in (3.0, 7.0, 14.0, 42.0, 60.0, 90.0):
+            expected = np.array(_python_loop(loads.tolist(), tau))
+            got = tau_fitting._ewma_vec(loads, tau)
+            # Numerical-fidelity gate: max relative error < 0.5 %.
+            denom = np.maximum(np.abs(expected), 1e-9)
+            max_rel = float(np.max(np.abs(got - expected) / denom))
+            self.assertLess(max_rel, 5e-3,
+                            f"τ={tau}: lfilter drifted {max_rel*100:.4f} %")
 
 
 if __name__ == "__main__":

@@ -956,6 +956,73 @@ def api_profile_update_ftp(body: dict):
             "ftp_test_history": pm.ftp_test_history}
 
 
+@app.get("/api/profile/tau-fits")
+def api_profile_tau_fits(refresh: int = Query(0)):
+    """v1.0.7 IMPL-TAU-FIT-WIRING — return current per-athlete τ fit + CIs.
+
+    Drives the dashboard's <details class="tau-fit-results"> panel under
+    the CTL/ATL/TSB chart. The dict mirrors ``fit_tau_per_athlete``'s
+    return shape (PATCH §1) plus the conventional defaults for the UI's
+    "vs. default" comparison columns.
+
+    Calls ``tau_fitting.fit_tau_per_athlete(persist=False)`` so this
+    endpoint never writes nls_fit rows on its own — the planner-side
+    integration in ``training.get_today_metrics`` is the only writer.
+    """
+    try:
+        import tau_fitting
+        result = tau_fitting.fit_tau_per_athlete("default", persist=False)
+    except Exception as e:
+        _log.warning("api_profile_tau_fits failed: %s", e)
+        result = {
+            "ctl_tau_fit": None, "atl_tau_fit": None,
+            "ctl_tau_ci_low": None, "ctl_tau_ci_high": None,
+            "atl_tau_ci_low": None, "atl_tau_ci_high": None,
+            "cp_tau1_fit": None, "cp_tau2_fit": None,
+            "wprime_tau1_fit": None, "wprime_tau2_fit": None,
+            "pmax_tau1_fit": None, "pmax_tau2_fit": None,
+            "fit_residual_r2": None,
+            "n_markers": 0, "weighted_n": 0.0,
+            "fit_horizon_days": 365,
+            "fit_status": "insufficient_data",
+        }
+    # Conventional τ defaults for the dashboard "vs. default" column.
+    # Mirror training.py's CTL_TAU/ATL_TAU + the v1.0.6 3D defaults.
+    result["conventional"] = {
+        "ctl_tau": 42.0, "atl_tau": 7.0,
+        "cp_tau1": 52.0, "cp_tau2": 10.0,
+        "wprime_tau1": 5.0, "wprime_tau2": 5.0,
+        "pmax_tau1": 10.0, "pmax_tau2": 4.0,
+    }
+    return result
+
+
+@app.post("/api/activity/{activity_id}/race")
+def api_activity_set_race(activity_id: str, body: dict):
+    """v1.0.7 IMPL-TAU-FIT-WIRING — toggle the is_race flag on an activity.
+
+    Body: ``{"is_race": bool}``. Returns 204 on success, 404 when the
+    activity doesn't exist in the local SQLite ``activities`` table.
+
+    The is_race column is added by ``db.init_db()`` (PATCH G11). Race-tagged
+    activities are weighted higher in ``tau_fitting.count_weighted_markers``
+    and the τ-fit recomputes on the next ``GET /api/profile/tau-fits`` hit.
+    """
+    if not isinstance(activity_id, str) or not activity_id or len(activity_id) > 80:
+        return JSONResponse({"error": "bad activity_id"}, status_code=400)
+    if not re.match(r"^[\w\-]+$", activity_id):
+        return JSONResponse({"error": "bad activity_id"}, status_code=400)
+    is_race = bool(body.get("is_race", False))
+    try:
+        existed = db._set_is_race(activity_id, is_race)
+    except Exception as e:
+        _log.warning("api_activity_set_race failed: %s", e)
+        return JSONResponse({"error": str(e)}, status_code=500)
+    if not existed:
+        return JSONResponse({"error": "activity not found"}, status_code=404)
+    return Response(status_code=204)
+
+
 @app.get("/profile-picker", response_class=HTMLResponse)
 def profile_picker_page(request: Request):
     return templates.TemplateResponse(request=request, name="profile_picker.html")
@@ -10008,6 +10075,32 @@ def api_ride_full_detail(ride_id: str, include: str = Query("")):
         summary.setdefault("xss_pmax", rec_dict.get("xss_pmax"))
         summary.setdefault("sr_avg_w", rec_dict.get("sr_avg_w"))
         summary.setdefault("sr_if", rec_dict.get("sr_if"))
+
+        # v1.0.7 IMPL-TAU-FIT-WIRING: surface is_race + activity_id from the
+        # SQLite activities table so the dashboard "🏁 Mark as race" checkbox
+        # can reflect current state. Look up by external_id (ICU rides) or
+        # the bare ride id (legacy/FIT). Gracefully None when the activity
+        # row doesn't exist or the column is missing (pre-migration DB).
+        ext = rec_dict.get("external_id") or rec_dict.get("id") or ""
+        is_race_val = None
+        try:
+            if ext:
+                conn = db.get_db()
+                cols = [r[1] for r in conn.execute(
+                    "PRAGMA table_info(activities)"
+                ).fetchall()]
+                if "is_race" in cols:
+                    row = conn.execute(
+                        "SELECT is_race FROM activities WHERE id = ?",
+                        (str(ext),),
+                    ).fetchone()
+                    if row is not None and row[0] is not None:
+                        is_race_val = bool(row[0])
+        except Exception as e:
+            _log.debug(f"_attach_xss_summary: is_race lookup failed: {e}")
+            is_race_val = None
+        rec_dict["is_race"] = is_race_val
+        rec_dict["activity_id"] = str(ext) if ext else None
         return rec_dict
 
     # ── ICU rides ──────────────────────────────────────────────────────────

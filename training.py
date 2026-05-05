@@ -711,6 +711,15 @@ def get_today_metrics() -> dict:
             "elevation_gain": elevation_gain,
         })
 
+    # v1.0.7 IMPL-TAU-FIT-WIRING: read effective τ values for the planner
+    # backbone. Locked precedence (per /tmp/MASTER_DECISIONS_v107.md §1):
+    # ``manual > nls_fit > conventional``. The manual / nls_fit rows live in
+    # athlete_metrics under metric ∈ {ctl_tau_fit, atl_tau_fit, cp_tau1_fit,
+    # ...}. We only adopt nls_fit values when fit_status == 'success' (the
+    # planner falls back to conventional otherwise — same TSS-primary
+    # contract preserved).
+    effective_taus = _effective_taus_from_db()
+
     return {
         "date": today_rec["id"],
         "ctl": round(ctl, 1) if ctl is not None else None,
@@ -721,7 +730,92 @@ def get_today_metrics() -> dict:
         "monotony": mono,
         "strain": strain,
         "recent_activities": recent,
+        # v1.0.7 effective τ values consumed by the per-component Banister
+        # (v1.0.6) and the planner's CTL/ATL EWMA path. Always present —
+        # consumers can read these without an availability check.
+        "effective_taus": effective_taus,
     }
+
+
+def _effective_taus_from_db() -> dict:
+    """v1.0.7 IMPL-TAU-FIT-WIRING — return the effective τ values applied to
+    the CTL/ATL Banister + the v1.0.6 per-component (CP / W' / Pmax) curves.
+
+    Source-tier ladder (highest to lowest priority):
+      1. ``manual`` — user-typed override in athlete_metrics (tier-1).
+      2. ``nls_fit`` — written by tau_fitting.fit_tau_per_athlete() when
+         fit_status == 'success' (tier-2).
+      3. Conventional defaults (CTL_TAU=42, ATL_TAU=7, plus the v1.0.6 3D
+         set in this module).
+
+    Always returns a complete dict — every τ field is present and numeric.
+    A fit_status field reports which tier won for CTL/ATL ("manual",
+    "nls_fit", or "conventional"). Per-component τ values currently only
+    fall through to nls_fit when the v1.0.7 tau_fitting populates them
+    (presently they default to the Kontro 2026 single-athlete values).
+    """
+    out: dict = {
+        "ctl_tau": float(CTL_TAU),
+        "atl_tau": float(ATL_TAU),
+        "cp_tau1": float(CP_TAU1), "cp_tau2": float(CP_TAU2),
+        "wprime_tau1": float(WPRIME_TAU1), "wprime_tau2": float(WPRIME_TAU2),
+        "pmax_tau1": float(PMAX_TAU1), "pmax_tau2": float(PMAX_TAU2),
+        "ctl_atl_source": "conventional",
+    }
+    try:
+        import db as _db
+        conn = _db.get_db()
+        # Latest row per metric — small table, single scan is fine. Manual
+        # takes precedence over nls_fit; we read source explicitly so the
+        # tier check happens at the read site (db hot path; cheap).
+        rows = conn.execute(
+            "SELECT metric, value, source, date FROM athlete_metrics "
+            "WHERE metric IN ('ctl_tau_fit','atl_tau_fit',"
+            "'cp_tau1_fit','cp_tau2_fit',"
+            "'wprime_tau1_fit','wprime_tau2_fit',"
+            "'pmax_tau1_fit','pmax_tau2_fit') "
+            "ORDER BY date DESC"
+        ).fetchall()
+        # Coalesce per-metric: keep the first row encountered per metric
+        # (rows are pre-sorted DESC by date).
+        seen: dict[str, dict] = {}
+        for r in rows:
+            metric = r[0]
+            if metric not in seen:
+                seen[metric] = {"value": r[1], "source": r[2]}
+        # Map metric → out key + source-tier resolution.
+        metric_map = {
+            "ctl_tau_fit": "ctl_tau",
+            "atl_tau_fit": "atl_tau",
+            "cp_tau1_fit": "cp_tau1",
+            "cp_tau2_fit": "cp_tau2",
+            "wprime_tau1_fit": "wprime_tau1",
+            "wprime_tau2_fit": "wprime_tau2",
+            "pmax_tau1_fit": "pmax_tau1",
+            "pmax_tau2_fit": "pmax_tau2",
+        }
+        ctl_atl_source = "conventional"
+        for metric, key in metric_map.items():
+            entry = seen.get(metric)
+            if not entry:
+                continue
+            src = (entry["source"] or "").lower()
+            # Adopt manual unconditionally; nls_fit is also adopted (the
+            # tau_fitting layer only writes nls_fit on fit_status='success').
+            if src in ("manual", "nls_fit"):
+                try:
+                    out[key] = float(entry["value"])
+                except (TypeError, ValueError):
+                    continue
+                if metric in ("ctl_tau_fit", "atl_tau_fit"):
+                    # Track the highest-tier source that won for CTL/ATL.
+                    # manual > nls_fit > conventional.
+                    if src == "manual" or ctl_atl_source != "manual":
+                        ctl_atl_source = src
+        out["ctl_atl_source"] = ctl_atl_source
+    except Exception as e:
+        _log.debug(f"_effective_taus_from_db: read failed ({e}); using conventional")
+    return out
 
 
 def classify_acwr(acwr: float | None) -> str:

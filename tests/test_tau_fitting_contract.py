@@ -114,9 +114,16 @@ class TestPersistFalseDoesNotWrite(unittest.TestCase):
         # tests/test_tau_fitting.py — the latter isn't a sibling-import
         # under pytest's rootdir layout.
         import numpy as np
+        import sqlite3
         from datetime import date, timedelta
         conn = self._db.get_db()
-        conn.execute("ALTER TABLE activities ADD COLUMN is_race INTEGER DEFAULT 0")
+        # WIRING's db.init_db() now adds is_race by default — swallow the
+        # duplicate-column error so this still works against a pre-WIRING DB.
+        try:
+            conn.execute("ALTER TABLE activities ADD COLUMN is_race INTEGER DEFAULT 0")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
 
         rng = np.random.default_rng(2026)
         days = 365
@@ -255,10 +262,16 @@ class TestCountWeightedMarkersFixture(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_fixture_yields_4_point_3(self):
+        import sqlite3
         conn = self._db.get_db()
         # Add is_race column up front — production schema (post-WIRING)
-        # has it; the contract test is for the post-WIRING world.
-        conn.execute("ALTER TABLE activities ADD COLUMN is_race INTEGER DEFAULT 0")
+        # has it; the contract test is for the post-WIRING world. Idempotent
+        # since WIRING's db.init_db() now adds it by default (PATCH G11).
+        try:
+            conn.execute("ALTER TABLE activities ADD COLUMN is_race INTEGER DEFAULT 0")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
 
         today = date.today()
         # 2 races

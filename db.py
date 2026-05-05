@@ -217,6 +217,10 @@ def init_db():
     _maybe_add_column(db, "activities", "kilojoules", "REAL")
     _maybe_add_column(db, "activities", "calories", "REAL")
     _maybe_add_column(db, "activities", "elevation_gain", "REAL")
+    # v1.0.7 IMPL-TAU-FIT-WIRING (PATCH G11): is_race INTEGER (not BOOL) to
+    # match SQLite affinity rules + sibling activities columns. tau_fitting
+    # weights race-tagged rides higher in the marker count.
+    _maybe_add_column(db, "activities", "is_race", "INTEGER DEFAULT 0")
     db.commit()
 
 
@@ -572,6 +576,25 @@ def query_activities(days: int = 14) -> list[dict]:
         "SELECT * FROM activities WHERE date >= ? ORDER BY date", (oldest,)
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def _set_is_race(activity_id: str, is_race: bool) -> bool:
+    """v1.0.7 IMPL-TAU-FIT-WIRING — set the is_race flag on an activity row.
+
+    Returns True if the row existed (and was updated), False otherwise.
+    Casts the bool to 0/1 at the boundary so the SQLite column stays an
+    INTEGER (PATCH G11). Idempotent — toggling to the same value is a no-op
+    update (no row-count change visible to the caller).
+    """
+    if not isinstance(activity_id, str) or not activity_id:
+        raise ValueError("activity_id must be a non-empty string")
+    db = get_db()
+    cur = db.execute(
+        "UPDATE activities SET is_race = ? WHERE id = ?",
+        (1 if is_race else 0, activity_id),
+    )
+    db.commit()
+    return cur.rowcount > 0
 
 
 def get_sync_status() -> dict:

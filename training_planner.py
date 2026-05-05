@@ -4440,6 +4440,13 @@ def reforecast(
     # session_type mutations in the `# G3:` block below.
     actual_polarization: "dict | None" = None,
     target_polarization: "dict | None" = None,
+    # v1.0.3 IMPL-AVAILABILITY: per-day override of available training hours.
+    # Sparse mapping iso-date → daily hours. 0.0 = rest day, > 0 rescales the
+    # planned session's duration_min and tss_estimate. Days NOT present keep
+    # their current planned duration. Per-week scale clamped to [0.4, 2.0]
+    # to prevent runaway expansion / collapse. Algorithm runs BEFORE the G3
+    # / G4 blocks so downshift logic operates on already-rescaled durations.
+    availability_overrides: "dict[str, float] | None" = None,
 ) -> tuple[list[PlannedWeek], dict]:
     """Shift future hard sessions up/down one intensity level based on TSB.
 
@@ -4491,6 +4498,50 @@ def reforecast(
             return m.get("tsb")
         except Exception:  # noqa: BLE001
             return None
+
+    # ── v1.0.3 IMPL-AVAILABILITY: per-day availability override scaling ──
+    # `plan["availability"]` finally gets plumbed through reforecast so per-day
+    # hour overrides actually rescale duration_min / tss_estimate. Runs BEFORE
+    # the G3/G4 blocks so downshift logic operates on already-rescaled
+    # durations. Per-week scale clamped to [0.4, 2.0] (sparse coverage — only
+    # days the user touched are present; absent days keep current duration).
+    touched: set[str] = set()
+    if availability_overrides:
+        for pw in plan_weeks:
+            if pw.start < today:
+                continue  # past weeks — don't touch
+            week_keys = [
+                s.day.isoformat() for s in pw.sessions
+                if s.day.isoformat() in availability_overrides
+            ]
+            if not week_keys:
+                continue
+            available_mins = sum(
+                int(float(availability_overrides[k]) * 60) for k in week_keys
+            )
+            current_mins = sum(
+                s.duration_min for s in pw.sessions
+                if s.day.isoformat() in availability_overrides
+            )
+            if current_mins <= 0:
+                continue
+            raw_scale = available_mins / current_mins
+            scale = min(2.0, max(0.4, raw_scale))
+            for s in pw.sessions:
+                d_iso = s.day.isoformat()
+                if d_iso not in availability_overrides:
+                    continue
+                hours = float(availability_overrides[d_iso])
+                if hours <= 0:
+                    s.session_type = "rest"
+                    s.duration_min = 0
+                    s.tss_estimate = 0
+                else:
+                    new_dur = max(0, int(round(s.duration_min * scale)))
+                    s.duration_min = new_dur
+                    tss_per_h = TSS_PER_HOUR.get(s.session_type, 45)
+                    s.tss_estimate = round(new_dur / 60 * tss_per_h)
+                touched.add(d_iso)
 
     downshifts: list[str] = []
     for pw in plan_weeks:
@@ -4586,9 +4637,20 @@ def reforecast(
             if dropped_count >= 2:
                 break
 
+    # v1.0.3 IMPL-AVAILABILITY: merge availability-touched dates into
+    # touched_days so the app.py write-back loop persists duration_min /
+    # tss_estimate / session_type changes for those days too.
+    merged_touched: list[str] = list(downshifts)
+    seen = set(downshifts)
+    for d_iso in sorted(touched):
+        if d_iso not in seen:
+            merged_touched.append(d_iso)
+            seen.add(d_iso)
+
     if not plan_weeks or all(pw.end < today for pw in plan_weeks):
         return plan_weeks, {
-            "action": "no_future", "downshifts": 0, "touched_days": [],
+            "action": "no_future", "downshifts": 0,
+            "touched_days": merged_touched,
             "acwr_ratio": round(acwr_ratio, 3),
             "acwr_scaled_week": acwr_scaled_week,
             "polarization_breach": g3_polarization_breached,
@@ -4596,12 +4658,12 @@ def reforecast(
         }
 
     action = "reforecasted" if (
-        downshifts or acwr_scaled_week is not None or g3_dropped_days
+        downshifts or acwr_scaled_week is not None or g3_dropped_days or touched
     ) else "no_change"
     return plan_weeks, {
         "action": action,
         "downshifts": len(downshifts),
-        "touched_days": downshifts,
+        "touched_days": merged_touched,
         "acwr_ratio": round(acwr_ratio, 3),
         "acwr_scaled_week": acwr_scaled_week,
         "polarization_breach": g3_polarization_breached,

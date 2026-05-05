@@ -288,6 +288,47 @@ Domestique uses the canonical Coggan / Allen / Banister fitness-fatigue framewor
 
 **Honest about τ=42/7.** These time constants are conventional, not validated per-athlete. They trace back to early-1990s Banister fits on athletes who weren't even cyclists; published τ₁ values across literature span ~21 to >60 days for fitness, and ~5 to ~20 days for fatigue (see Table 2 of [Kontro et al. 2026](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0341721)). Domestique ships with the conventional 42/7 because that's what every commercial platform also ships, but a future version will fit τ per-athlete from a ≥6-month log.
 
+#### What τ (tau) actually means and why it matters
+
+τ is the **time constant** of an exponentially-weighted moving average. The differential equation is:
+
+```
+dy/dt = (input − y) / τ
+```
+
+In plain English: each day, the metric (`y`) moves toward today's input (`TSS`) by a fraction `1/τ` of the gap between them. The discrete daily form Domestique uses is the standard PMC update:
+
+```
+y_today = y_yesterday + (TSS_today − y_yesterday) / τ
+```
+
+**What different τ values mean physically:**
+
+| time elapsed | how much of a step-change the metric has absorbed |
+|---|---|
+| 1 × τ days | ~63 % (= 1 − 1/e) |
+| 2 × τ days | ~86 % |
+| 3 × τ days | ~95 % |
+| 5 × τ days | ~99 % |
+
+So with **τ = 42 days for CTL**: a single 200-TSS workout raises CTL by `200 / 42 ≈ 4.8` points the next day, and the contribution decays to half its remaining effect every ~29 days (the half-life is `τ × ln(2) ≈ 0.69 × τ`). After ~6 weeks, the workout's contribution is mostly absorbed into the equilibrium.
+
+With **τ = 7 days for ATL**: the same workout raises ATL by `200 / 7 ≈ 28.6` points, and decays to half-effect in ~5 days. ATL "forgets" much faster than CTL.
+
+**Why the gap between τ values creates "Form" (TSB):**
+- Today's hard ride spikes BOTH curves up.
+- Over the next week, ATL falls fast (small τ); CTL barely budges.
+- TSB = CTL − ATL therefore RISES through the recovery week — you "freshen up."
+- Stop training entirely, and ATL → 0 in ~3 weeks while CTL → 0 takes ~5 months. That's the structural reason classic taper plans are short (let ATL drop) and classic detraining curves are long (CTL is sticky).
+
+**Why τ choice is consequential:**
+- Pick τ_CTL too small (say 21 days) and CTL becomes too reactive — you'll over-react to a single hard week.
+- Pick τ_CTL too large (say 70 days) and CTL becomes too sluggish — you'll under-react to a real fitness gain or loss.
+- Per-athlete variation is real: a young rider rebounding from a single hard week behaves like τ ≈ 25 days; a masters rider needs τ ≈ 55 days for the same recovery shape ([Hellard et al. 2017](https://pubmed.ncbi.nlm.nih.gov/29059038/)).
+- Commercial platforms ship τ = 42/7 as a one-size-fits-all default; a more rigorous build would fit τ per-athlete from at least 6 months of TSS + race-performance pairs. v1.0.7 roadmap.
+
+**Why v1.0.6 has THREE pairs of τ values** (CP / W' / Pmax): the [Kontro paper](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0341721) argues each energy system has its own time scale — the PCr (Pmax) system recovers in seconds-to-days while the aerobic (CP) system takes months. Forcing all three into one τ pair (the Banister 1975 single-curve model) loses that physiology. So v1.0.6's 3D model has τ_CP = 52/10, τ_W' = 5/5, τ_Pmax = 10/4 — the same EWMA math, three times in parallel.
+
 #### Where each metric comes from
 
 - **ICU-synced rider**: `training.get_today_metrics()` pulls CTL/ATL/TSB from intervals.icu's wellness API.
@@ -355,6 +396,36 @@ The Norwegian Method (Marius Bakken / Ingebrigtsen / Bjørgen) explicitly **reje
 | Avoidance of the moderate/threshold "trap" (Seiler-style) | Sessions explicitly avoid Z3 (76-90 % FTP) | ✅ Yes — Stöggl/Sperlich 80/0/20 + G3 enforce this. |
 
 So Domestique gets the **polarization piece** and the **conservative-load piece** but not the **lactate-prescribed pacing piece**. Lactate input + lactate-prescribed sessions + double-threshold structure + MLSS testing protocol is a v1.1.0 multi-wave feature on the roadmap.
+
+#### What MLSS actually is and how you'd test it
+
+**MLSS = Maximum Lactate Steady State** — defined as the highest constant exercise intensity at which blood lactate concentration stays stable (rises by ≤ 1 mmol/L over 30 minutes of riding) ([Heck et al. 1985](https://pubmed.ncbi.nlm.nih.gov/4030186/), [Beneke 2003](https://pubmed.ncbi.nlm.nih.gov/12527975/)). Above MLSS, lactate accumulates progressively and you can't sustain the effort; below MLSS, lactate may rise initially but then plateaus.
+
+**Why MLSS is more rigorous than FTP:** FTP is a *power proxy* for the threshold ("the highest hour-power"); MLSS is a *direct physiological measurement* of the metabolic threshold (the lactate steady-state ceiling). Most riders' MLSS sits at **88–92 % of FTP**, but the relationship is athlete-specific — a 60 kg climber and a 80 kg pursuiter with the same FTP can have MLSS at 88 % and 94 % respectively because of muscle-fibre type / mitochondrial density / lactate-clearance capacity.
+
+**The protocol** (single-day binary search; older multi-day continuous-incremental protocols also valid):
+
+1. **Estimate starting power.** Start at ~85 % FTP.
+2. **Ride 30 minutes at constant power.** Power must be steady — variability invalidates the test.
+3. **Sample blood lactate at minute 10 and minute 30.** Fingertip or earlobe prick with a lancet, drop on a test strip in a portable analyser (Lactate Plus, EKF Biosen, Lactate Scout, Edge — €200–1200).
+4. **Compare:**
+   - Δlactate ≤ 1 mmol/L (and lactate < 4 mmol/L) → you're at or below MLSS. Increase power by ~5 W and retest after a recovery day.
+   - Δlactate > 1 mmol/L OR lactate climbs above 4 mmol/L → you're above MLSS. Decrease power by ~5 W and retest.
+5. **Iterate** over 3–5 sessions until you find the highest power where Δlactate ≤ 1 mmol/L over the 20-min sample window. That power **is** MLSS.
+
+**The 4 mmol/L surrogate ("anaerobic threshold" or LT2)**: if you can only afford one-point sampling, hold a steady power and look for the value at which lactate parks at ~4 mmol/L. This is a defensible approximation but not strictly equivalent — true MLSS varies between individuals from ~3 to ~7 mmol/L. Mader's classic 4-mmol/L convention is the simplification, not the gold standard.
+
+**Why daily lactate input matters (Norwegian Method's central insight):** even at well-defined MLSS, blood lactate during a sub-MLSS session can drift up if you're under-recovered, dehydrated, glycogen-depleted, or simply having an off day. The Bakken / Ingebrigtsen approach is to sample DURING the workout (every 10–20 min) and adjust power *down* if lactate exceeds the prescription (e.g., 2–3 mmol/L for an LT1 / sub-MLSS session). The session ends not when the clock says so but when lactate says so. This is the data Domestique doesn't currently capture.
+
+**v1.1.0 Norwegian Method support — design sketch:**
+
+- **Per-session lactate samples**: a small JSON list `[{minute, watts, lactate_mmol_l, hr_bpm}, ...]` attached to the planned session. Web form for manual entry; future Bluetooth integration with a digital lactate analyser if standards emerge.
+- **Threshold-prescribed sessions**: a new session class `lactate_threshold` whose target is "stay at 2.5–3.5 mmol/L for 40 min" rather than "stay at 90–95 % FTP." Power is the *output*, lactate is the *input*.
+- **Double-threshold structure**: a session pattern type that schedules AM + PM both at sub-LT2 with adequate carbs between (per Bakken's writing).
+- **MLSS test protocol class**: a `mlss_test` workout type with a structured 30-min hold + lactate-prompt instructions. Test results feed an `mlss_w` field on the profile alongside FTP, and threshold-prescribed sessions key off MLSS rather than FTP when available.
+- **HR-fallback when no lactate device**: if the rider doesn't have a lactate analyser, the LT2 surrogate is HR at ~88 % HR_max (or estimated from a separate HR-LT step test). The session prescription then says "HR < 165 bpm" instead of "lactate < 4 mmol/L." Less precise but still better than power-only.
+
+Domestique's current threshold class enforces *power-based* threshold pacing (95–105 % FTP). v1.1.0 will add a second, parallel `lactate_threshold` class that enforces *lactate-based* pacing — the two will coexist and the rider picks which framework to use based on whether they have a lactate analyser. Norwegian-Method-curious riders without a lactate analyser still benefit from the polarization piece (G3) Domestique already enforces.
 
 ---
 

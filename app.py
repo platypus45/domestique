@@ -3750,6 +3750,167 @@ def api_migrations_last_run_result():
     return _LAST_MIGRATION_RESULT
 
 
+# ─── v1.0.2 IMPL-BANNER: update-check endpoint ──────────────────────────────
+# Hits the public GitHub Releases API to discover newer versions, caches the
+# response at DATA_DIR/update_check_cache.json with a 6h TTL, filters the
+# release assets by `sys.platform` so macOS users see the .dmg and Windows
+# users see the .exe (or .zip fallback). On any httpx error, returns the
+# last-good cached response with `error` populated — never raises to the UI.
+#
+# Response contract (locked by MASTER_DECISIONS_v102.md §1):
+#   { current, latest, update_available, release_url, download_url,
+#     asset_name, platform, checked_at, cached, error }
+_UPDATE_CHECK_CACHE_TTL_S = 6 * 60 * 60  # 6 hours
+_GITHUB_RELEASES_LATEST_URL = "https://api.github.com/repos/platypus45/domestique/releases/latest"
+
+
+def _update_check_cache_path() -> Path:
+    """Indirection so tests can monkeypatch the cache file location cleanly."""
+    return DATA_DIR / "update_check_cache.json"
+
+
+def _select_platform_asset(assets, plat):
+    """Pick (download_url, asset_name) from a GitHub release `assets` list
+    based on `plat` (sys.platform string).
+
+    macOS (`darwin`) → `.dmg`, prefer plain `Domestique.dmg` over decorated
+    variants like `Domestique-1.0.3.dmg` so the canonical asset wins.
+    Windows (`win32`) → prefer `.exe`, fall back to `.zip`.
+    Anything else (Linux, BSD) → no asset; banner falls back to release_url.
+    """
+    if not isinstance(assets, list):
+        return None, None
+
+    def _name(a):
+        return (a.get("name") or "") if isinstance(a, dict) else ""
+
+    def _url(a):
+        return (a.get("browser_download_url") or "") if isinstance(a, dict) else ""
+
+    if plat == "darwin":
+        dmgs = [a for a in assets if _name(a).lower().endswith(".dmg")]
+        if not dmgs:
+            return None, None
+        canonical = [a for a in dmgs if _name(a) == "Domestique.dmg"]
+        chosen = canonical[0] if canonical else dmgs[0]
+        return _url(chosen) or None, _name(chosen) or None
+
+    if plat == "win32":
+        exes = [a for a in assets if _name(a).lower().endswith(".exe")]
+        if exes:
+            return _url(exes[0]) or None, _name(exes[0]) or None
+        zips = [a for a in assets if _name(a).lower().endswith(".zip")]
+        if zips:
+            return _url(zips[0]) or None, _name(zips[0]) or None
+        return None, None
+
+    return None, None
+
+
+def _read_update_check_cache():
+    p = _update_check_cache_path()
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _write_update_check_cache(payload):
+    p = _update_check_cache_path()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        body = dict(payload)
+        body["cache_written_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        p.write_text(json.dumps(body, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _cache_is_fresh(cache, now):
+    if not cache:
+        return False
+    written = cache.get("cache_written_at")
+    if not written:
+        return False
+    try:
+        ts = datetime.strptime(written, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return (now - ts).total_seconds() < _UPDATE_CHECK_CACHE_TTL_S
+
+
+@app.get("/api/update/check")
+def api_update_check():
+    """Live GitHub-Releases poll with 6h cache + platform-specific asset.
+
+    Always returns 200; on upstream failure, populates `error` and returns
+    the last-good cache so the dashboard banner can still render.
+    """
+    import httpx
+    from packaging.version import parse as _vparse, InvalidVersion
+
+    plat = sys.platform
+    now = datetime.now(timezone.utc)
+    cache = _read_update_check_cache()
+
+    if _cache_is_fresh(cache, now):
+        out = {k: cache.get(k) for k in (
+            "current", "latest", "update_available", "release_url",
+            "download_url", "asset_name", "platform", "checked_at", "error",
+        )}
+        out["cached"] = True
+        return out
+
+    try:
+        resp = httpx.get(_GITHUB_RELEASES_LATEST_URL, timeout=10)
+        if resp.status_code != 200:
+            raise RuntimeError("GitHub returned status " + str(resp.status_code))
+        rel = resp.json()
+        tag = (rel.get("tag_name") or "").lstrip("v").strip()
+        if not tag:
+            raise RuntimeError("release missing tag_name")
+        try:
+            update_available = _vparse(_VERSION) < _vparse(tag)
+        except InvalidVersion:
+            update_available = False
+        download_url, asset_name = _select_platform_asset(rel.get("assets") or [], plat)
+        payload = {
+            "current": _VERSION,
+            "latest": tag,
+            "update_available": bool(update_available),
+            "release_url": rel.get("html_url") or ("https://github.com/platypus45/domestique/releases/tag/v" + tag),
+            "download_url": download_url,
+            "asset_name": asset_name,
+            "platform": plat,
+            "checked_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "cached": False,
+            "error": None,
+        }
+        _write_update_check_cache(payload)
+        return payload
+    except Exception as e:
+        if cache:
+            out = {k: cache.get(k) for k in (
+                "current", "latest", "update_available", "release_url",
+                "download_url", "asset_name", "platform", "checked_at",
+            )}
+            out["cached"] = True
+            out["error"] = str(e)
+            return out
+        return {
+            "current": _VERSION,
+            "latest": None,
+            "update_available": False,
+            "release_url": None,
+            "download_url": None,
+            "asset_name": None,
+            "platform": plat,
+            "checked_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "cached": False,
+            "error": str(e),
+        }
+
+
 @app.get("/api/settings")
 def api_settings():
     from profile_manager import ProfileManager

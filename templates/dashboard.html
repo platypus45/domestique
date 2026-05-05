@@ -1152,6 +1152,11 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
      Dismissable per session via sessionStorage('icu-banner-dismissed'). -->
 <div id="icu-sync-banner" style="display:none;margin:8px 0 12px;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.4;"></div>
 
+<!-- v1.0.2 IMPL-BANNER: update-check banner (GitHub Releases API poll).
+     Populated by loadUpdateCheck() from /api/update/check (cached 6h server-side).
+     Dismissable per-version via localStorage('update-banner-dismissed-<latest>'). -->
+<div id="update-banner" style="display:none;margin:8px 0 12px;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.4;"></div>
+
 <!-- v4.1.0 U6: Readiness action banner (DFA cap / decoupling advisory) -->
 <div id="readiness-action-banner" style="display:none;margin:8px 0 12px;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.4;background:rgba(234,179,8,0.12);border:1px solid #eab308;color:var(--text);"></div>
 
@@ -10640,6 +10645,62 @@ function dismissSyncBanner() {
   if (el) el.style.display = 'none';
 }
 
+// v1.0.2 IMPL-BANNER ───────────────────────────────────────────────────
+// Update-check banner. Reads /api/update/check (server caches 6h, polls
+// GitHub Releases). Skips if no update, no platform asset, or the user
+// previously dismissed THIS specific version. Dismissal is per-version
+// so the banner re-appears when a NEW release lands.
+async function loadUpdateCheck() {
+  const el = document.getElementById('update-banner');
+  if (!el) return;
+  try {
+    const r = await fetch('/api/update/check');
+    if (!r.ok) { el.style.display = 'none'; return; }
+    const u = await r.json();
+    if (!u || !u.update_available || !u.latest) { el.style.display = 'none'; return; }
+    // Skip Linux/BSD or any platform without a pinned download asset.
+    if (!u.download_url) { el.style.display = 'none'; return; }
+    // Per-version dismissal flag.
+    const dismissKey = 'update-banner-dismissed-' + u.latest;
+    if (localStorage.getItem(dismissKey) === '1') { el.style.display = 'none'; return; }
+    // Build the banner. Copy is FIXED — every word matters because it
+    // promises rider data is preserved across the update.
+    const safeLatest = String(u.latest).replace(/[<>]/g, '');
+    const safeRelease = String(u.release_url || '#');
+    const safeDownload = String(u.download_url);
+    const safeAsset = String(u.asset_name || 'download');
+    el.innerHTML =
+      '<div style="display:flex;align-items:flex-start;gap:10px;">' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div><strong>&#x1f514; Domestique v' + safeLatest + ' available</strong></div>' +
+          '<div style="opacity:0.85;margin-top:2px;">Your rides, training plan, FTP history, wellness logs, and profile<br>' +
+          'will all be preserved across this update.</div>' +
+          '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">' +
+            '<a href="' + safeRelease + '" target="_blank" rel="noopener noreferrer" ' +
+              'style="display:inline-block;padding:6px 12px;border-radius:6px;background:rgba(59,130,246,0.15);' +
+              'border:1px solid #3b82f6;color:inherit;text-decoration:none;font-size:12px;">What&rsquo;s new</a>' +
+            '<a href="' + safeDownload + '" download="' + safeAsset + '" ' +
+              'style="display:inline-block;padding:6px 12px;border-radius:6px;background:#3b82f6;' +
+              'border:1px solid #3b82f6;color:#fff;text-decoration:none;font-size:12px;">Download</a>' +
+          '</div>' +
+        '</div>' +
+        '<button onclick="dismissUpdateBanner(\'' + safeLatest.replace(/'/g, "\\'") + '\')" aria-label="Dismiss" ' +
+          'style="background:none;border:0;color:inherit;font-size:18px;cursor:pointer;opacity:0.6;line-height:1;">&times;</button>' +
+      '</div>';
+    el.style.background = 'rgba(59,130,246,0.10)';
+    el.style.border = '1px solid rgba(59,130,246,0.35)';
+    el.style.color = 'var(--text)';
+    el.style.display = 'block';
+  } catch (e) {
+    el.style.display = 'none';
+  }
+}
+function dismissUpdateBanner(latest) {
+  try { localStorage.setItem('update-banner-dismissed-' + latest, '1'); } catch (_) {}
+  const el = document.getElementById('update-banner');
+  if (el) el.style.display = 'none';
+}
+
 // ═══ v4.4.0 IMPL-UI ════════════════════════════════════════════════════
 // Per MASTER §3 + CONCEPT-UX §4. Closes user bugs #1, #3, #4.
 //   #1 THIS WEEK Mon-anchored (was Sun-anchored due to getDay() off-by-one)
@@ -11367,6 +11428,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Sync banner: poll once on load, then every 60s.
   loadSyncBanner();
   setInterval(loadSyncBanner, 60000);
+  // v1.0.2 IMPL-BANNER: update-check banner. Server caches 6h, so a single
+  // call per page-load is plenty (no setInterval needed).
+  try { loadUpdateCheck(); } catch (_) {}
   // v4.1.0 U1: auto-open FTP-test modal for recent imported FITs.
   try { maybeShowFtpTestModal(); } catch(_) {}
   // v4.1.0 U6: DFA / decoupling action banner.

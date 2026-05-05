@@ -27,6 +27,12 @@ python-multipart>=0.0.9,<1
 # app also works with xml.etree from stdlib alone).
 lxml>=5.0,<7
 
+# v1.0.2 IMPL-BANNER: explicit pin for `packaging.version.parse` used by the
+# /api/update/check endpoint (already a transitive dep of fastapi/pydantic,
+# but pinning here locks the version so the update-check banner doesn't
+# silently break if a parent pulls a different range).
+packaging>=23,<27
+
 # Desktop app (launcher)
 pystray>=0.19.0
 Pillow>=10.0.0

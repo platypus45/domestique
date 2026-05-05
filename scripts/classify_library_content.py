@@ -116,8 +116,8 @@ _CLASS_LABEL_V104 = {
 ZONES_FTP = {
     "z1": (0.00, 0.55),  # Active Recovery
     "z2": (0.55, 0.75),  # Endurance
-    "z3": (0.75, 0.90),  # Tempo
-    "z4": (0.90, 1.05),  # Threshold (Coggan widens 91-105 → use 90-105)
+    "z3": (0.75, 0.88),  # Tempo (Allen-Coggan: Z3 = 76-87% exclusive top)
+    "z4": (0.88, 1.05),  # Threshold (Allen-Coggan: Z4 = 88-105% inclusive bottom; SS 88-94, thresh 95-105)
     "z5": (1.05, 1.20),  # VO2max
     "z6": (1.20, 1.50),  # Anaerobic
     "z7": (1.50, 5.00),  # Neuromuscular
@@ -651,7 +651,7 @@ def extract_features(power: list[float]) -> dict:
     # Split Z4 into "sweet-spot Z4" (90-94%) vs "true threshold" (95-105%)
     # so Rule 7 (Threshold) doesn't fire on a workout that's entirely in
     # the sweet-spot band but happens to land in Coggan Z4 boundary-wise.
-    z4_lower_s = sum(1 for p in power if p >= 0 and 0.90 <= p < 0.95)
+    z4_lower_s = sum(1 for p in power if p >= 0 and 0.88 <= p < 0.95)
     z4_upper_s = z_sec["z4"] - z4_lower_s
 
     # Hard segments: contiguous p ≥ 0.95, duration ≥ 15s
@@ -1425,7 +1425,17 @@ def _detect_interval_signature(segments: list[dict]) -> tuple[int, int, int, flo
     pattern, or None."""
     iv_segs = [s for s in segments if s["kind"] == "intervals"]
     if iv_segs:
-        iv = max(iv_segs, key=lambda s: s.get("repeat", 0))
+        # v1.0.5: rank by total work-seconds (repeat × on_s) so the dominant
+        # interval block wins. Tie-break on on_power (higher = more salient).
+        # Old `max(..., key=repeat)` ignored on_s and let a 4×60s @ 98% block
+        # outrank a 2×720s @ 88% block (240s vs 1440s of work).
+        iv = max(
+            iv_segs,
+            key=lambda s: (
+                s.get("repeat", 1) * s.get("on_s", 0),  # total work seconds
+                s.get("on_power", 0.0),                  # tie-break: higher OnPower
+            ),
+        )
         return iv["repeat"], iv["on_s"], iv["off_s"], iv["on_power"]
 
     pairs: dict[tuple, int] = {}

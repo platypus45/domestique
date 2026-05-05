@@ -5287,10 +5287,10 @@ def _session_power_target(session_type: str) -> dict:
         "rest": None, "recovery": {"low": 0, "high": round(ftp * 0.55)},
         "z2": {"low": round(ftp * 0.56), "high": round(ftp * 0.75)},
         "long_z2": {"low": round(ftp * 0.56), "high": round(ftp * 0.75)},
-        "tempo": {"low": round(ftp * 0.76), "high": round(ftp * 0.90)},
-        "sweetspot": {"low": round(ftp * 0.88), "high": round(ftp * 0.93)},
-        "threshold": {"low": round(ftp * 0.91), "high": round(ftp * 1.05)},
-        "overunder": {"low": round(ftp * 0.90), "high": round(ftp * 1.05)},
+        "tempo": {"low": round(ftp * 0.76), "high": round(ftp * 0.87)},
+        "sweetspot": {"low": round(ftp * 0.88), "high": round(ftp * 0.94)},
+        "threshold": {"low": round(ftp * 0.95), "high": round(ftp * 1.05)},
+        "overunder": {"low": round(ftp * 0.88), "high": round(ftp * 1.05)},
         "vo2max": {"low": round(ftp * 1.06), "high": round(ftp * 1.20)},
     }
     t = targets.get(session_type)

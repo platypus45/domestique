@@ -425,15 +425,16 @@ class TestZoneBuilders:
         assert len(zones) == 7
 
     def test_power_zone_z4_is_threshold(self):
-        # Coggan 7-zone model names Z4 "Z4 Threshold" (FTP-range 91-105%).
-        # "Sweet Spot" is a sub-band of Z3/Z4 used informally, not a
-        # standalone zone in the canonical model.
+        # Coggan 7-zone model names Z4 "Z4 Threshold". v1.0.5 fixed the
+        # Z3/Z4 boundary to Allen-Coggan canonical values: Z4 = 88-105% FTP
+        # (sweet-spot 88-94 + true threshold 95-105). "Sweet Spot" is a
+        # sub-band of Z4 used informally, not a standalone zone.
         zones = _build_power_zones(250)
         z4 = [z for z in zones if z["zone"] == "Z4"][0]
         assert z4["name"] == "Z4 Threshold"
-        # Coggan 7-zone bounds: Z4 spans 91-105% FTP.
-        # zones.py uses max(prev_high+1, round(0.91*ftp)) for the low edge.
-        assert z4["low"] == round(250 * 0.91)
+        # Coggan 7-zone bounds (post-v1.0.5 boundary fix): Z4 spans 88-105% FTP.
+        # zones.py uses max(prev_high+1, round(0.88*ftp)) for the low edge.
+        assert z4["low"] == round(250 * 0.88)
         assert z4["high"] == round(250 * 1.05)
 
 

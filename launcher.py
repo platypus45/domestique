@@ -8,6 +8,7 @@ fork issues), opens the browser, and shows a system tray icon.
 Works both in dev mode (python launcher.py) and frozen mode (PyInstaller).
 """
 
+import base64
 import multiprocessing
 import os
 import sys
@@ -262,6 +263,65 @@ def _activate_existing_window() -> bool:
     return False
 
 
+class JsApi:
+    """Native-save bridge exposed to dashboard JS as ``window.pywebview.api``.
+
+    WKWebView (pywebview's macOS backend) silently ignores the HTML5
+    ``<a download>`` attribute — clicking a "Download ZWO" link just
+    navigates to the URL and renders the ZWO inline as text, and a
+    synthetic anchor click in ``downloadFIT()`` does nothing at all. This
+    bridge lets the JS hand a payload to Python and pop a native save
+    dialog instead.
+
+    Only ``save_zwo`` / ``save_fit`` are exposed — pywebview makes every
+    public attribute of the api object callable from JS, so we
+    deliberately don't add anything else here.
+    """
+
+    def _save(self, filename: str, data: bytes, file_types) -> dict:
+        try:
+            import webview
+
+            # webview.windows is populated by webview.start() — at the
+            # moment JS calls in, there's exactly one window (the main one).
+            if not webview.windows:
+                return {"ok": False, "error": "no window"}
+            window = webview.windows[0]
+            result = window.create_file_dialog(
+                webview.SAVE_DIALOG,
+                save_filename=filename,
+                file_types=file_types,
+            )
+            if not result:
+                return {"ok": False, "error": "cancelled"}
+            # pywebview returns either a string (some platforms) or a
+            # sequence of strings — normalise.
+            path = result if isinstance(result, str) else result[0]
+            with open(path, "wb") as f:
+                f.write(data)
+            return {"ok": True, "path": path}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def save_zwo(self, filename: str, content: str) -> dict:
+        return self._save(
+            filename,
+            content.encode("utf-8"),
+            ("ZWO Workout (*.zwo)", "All files (*.*)"),
+        )
+
+    def save_fit(self, filename: str, content_b64: str) -> dict:
+        try:
+            data = base64.b64decode(content_b64, validate=True)
+        except Exception as e:
+            return {"ok": False, "error": f"base64 decode failed: {e}"}
+        return self._save(
+            filename,
+            data,
+            ("FIT Workout (*.fit)", "All files (*.*)"),
+        )
+
+
 def main():
     # Single-instance guard: if another instance is already serving on our
     # port, activate its native window instead of opening a browser tab.
@@ -334,6 +394,8 @@ def main():
             width=1400, height=900,
             min_size=(1000, 600),
             x=100, y=50,  # position near top-left, not bottom
+            js_api=JsApi(),  # WKWebView ignores <a download>; JS calls
+                             # window.pywebview.api.save_zwo/save_fit instead.
         )
         webview.start()
         print("Window closed — shutting down.")

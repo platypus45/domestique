@@ -9867,8 +9867,10 @@ function openTodaySessionDetail() {
   }
 
   // If there's a matched ZWO file, show download button
+  // v1.0.3: route through downloadZwoFile() so pywebview gets a native save
+  // dialog (WKWebView silently ignores <a download>).
   if (adj.zwo_file) {
-    html += `<div style="margin-top:12px;"><a href="/api/download/zwo/${encodeURIComponent(adj.zwo_file)}" class="btn btn-primary" download>Download ZWO Workout</a></div>`;
+    html += `<div style="margin-top:12px;"><button class="btn btn-primary" onclick="downloadZwoFile('${escJs(adj.zwo_file)}')">Download ZWO Workout</button></div>`;
   }
 
   openModal(html);
@@ -10176,7 +10178,8 @@ async function openDayWorkout(sessionIdx) {
   // Download buttons
   html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;">';
   if (session.zwo_file) {
-    html += `<a href="/api/download/zwo/${encodeURIComponent(session.zwo_file)}" class="btn btn-primary" download>Download ZWO (Virtual Trainer)</a>`;
+    // v1.0.3: route through downloadZwoFile() — WKWebView ignores <a download>.
+    html += `<button class="btn btn-primary" onclick="downloadZwoFile('${escJs(session.zwo_file)}')">Download ZWO (Virtual Trainer)</button>`;
   } else {
     // Generate ZWO on-the-fly only when no matched library file is available.
     html += `<button class="btn btn-primary" onclick="downloadGeneratedZwo('${escJs(type)}', ${session.duration_min}, '${escJs(session.day_name)} ${escJs(typeUpper)}')">Download ZWO (Virtual Trainer)</button>`;
@@ -10239,7 +10242,7 @@ async function rematchDaySession(day) {
       <div style="font-size:11px;color:var(--accent);letter-spacing:0.5px;font-weight:700;margin-bottom:4px;">NEW MATCH</div>
       <div style="font-size:14px;font-weight:600;margin-bottom:4px;">${esc(String(name))}</div>
       <div style="font-size:11px;color:var(--text2);">${esc(String(cat))}${dur ? ' &middot; ' + dur + 'min' : ''}${tss ? ' &middot; ' + tss + ' TSS' : ''}</div>
-      ${zwo ? `<div style="margin-top:8px;"><a class="btn btn-sm" href="/api/download/zwo/${encodeURIComponent(String(zwo))}" download>Download ZWO</a></div>` : ''}
+      ${zwo ? `<div style="margin-top:8px;"><button class="btn btn-sm" onclick="downloadZwoFile('${escJs(String(zwo))}')">Download ZWO</button></div>` : ''}
     </div>`;
     requestAnimationFrame(() => {
       const el = document.getElementById('rematch-new-' + day);
@@ -10576,12 +10579,78 @@ async function downloadGeneratedZwo(type, durationMin, name) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
+// v1.0.3: pywebview (macOS WKWebView) silently ignores <a download> and
+// synthetic anchor clicks, so the user just sees the file rendered inline
+// (ZWO) or nothing at all (FIT). When running inside the native window we
+// hand the payload to Python via window.pywebview.api which pops a real
+// native save dialog. In a regular browser there's no pywebview, so this
+// helper returns false and the caller falls back to the browser path.
+async function _saveViaPywebview(kind, filename, fetchUrl) {
+  if (!window.pywebview || !window.pywebview.api) return false;
+  try {
+    const r = await fetch(fetchUrl);
+    if (!r.ok) {
+      let detail = String(r.status);
+      try {
+        const err = await r.json();
+        if (err && err.error) detail = err.error;
+      } catch(_) {}
+      try { showToast(`Download failed: ${detail}`, 4000); } catch(_) {}
+      return true; // bridge IS available; we handled it (with an error toast)
+    }
+    let res;
+    if (kind === 'zwo') {
+      res = await window.pywebview.api.save_zwo(filename, await r.text());
+    } else {
+      const buf = await r.arrayBuffer();
+      // Avoid String.fromCharCode(...new Uint8Array(buf)) call-stack blowup
+      // for large FIT files — chunk through a Uint8Array.
+      const bytes = new Uint8Array(buf);
+      let bin = '';
+      const CHUNK = 0x8000;
+      for (let i = 0; i < bytes.length; i += CHUNK) {
+        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+      }
+      const b64 = btoa(bin);
+      res = await window.pywebview.api.save_fit(filename, b64);
+    }
+    if (res && res.ok) {
+      try { showToast(`Saved to ${res.path}`, 4000); } catch(_) {}
+    } else if (res && res.error && res.error !== 'cancelled') {
+      try { showToast(`Save failed: ${res.error}`, 4000); } catch(_) {}
+    }
+    return true;  // handled — caller must NOT fall back
+  } catch (e) {
+    try { showToast(`Save error: ${e.message || e}`, 4000); } catch(_) {}
+    return true;
+  }
+}
+
+// v1.0.3: ZWO download click handler — when running in pywebview we route
+// through the JS bridge (native save dialog); in a regular browser we
+// recreate the original `<a download>` behaviour (synthetic anchor click).
+async function downloadZwoFile(filename) {
+  const url = `/api/download/zwo/${encodeURIComponent(filename)}`;
+  if (await _saveViaPywebview('zwo', filename, url)) return;
+  // Browser fallback: replicate `<a href=url download>` click.
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { try { a.remove(); } catch(_) {} }, 1000);
+}
+
 async function downloadFIT(type, durationMin, name) {
   // v1.0.1 fix: pre-fix the button used <a download href=...>.click(), which
   // is fire-and-forget — pywebview's webkit silently swallowed JSON 4xx/5xx
   // responses (no download dialog, no error). fetch() + Blob lets us inspect
   // the response and surface failures as a toast instead of silent nothing.
+  // v1.0.3 fix: synthetic anchor clicks ALSO don't trigger a save in
+  // WKWebView, so try the pywebview bridge first when available.
   const url = `/api/export/fit-workout?session_type=${encodeURIComponent(type)}&duration_min=${durationMin}&name=${encodeURIComponent(name)}`;
+  const fitName = name.replace(/[^a-zA-Z0-9]/g, '_') + '.fit';
+  if (await _saveViaPywebview('fit', fitName, url)) return;
   try {
     const r = await fetch(url);
     if (!r.ok) {
@@ -10596,7 +10665,7 @@ async function downloadFIT(type, durationMin, name) {
     const blob = await r.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = name.replace(/[^a-zA-Z0-9]/g, '_') + '.fit';
+    a.download = fitName;
     document.body.appendChild(a);
     a.click();
     setTimeout(() => {

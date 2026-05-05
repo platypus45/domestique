@@ -1,5 +1,90 @@
 # Changelog
 
+## v1.2.0 — Out-of-sample Banister validation per athlete (2026-05-05)
+
+User-visible: a "Model accuracy" panel under the existing CTL / ATL / TSB chart now shows your personal model's prediction error vs. literature ([Hellard 2006](https://pubmed.ncbi.nlm.nih.gov/17909403/) baseline 5–8 % MAE), updated lazily on a 24-hour cache.
+
+- **`oos_validation.py`** (NEW, 525 LoC) — `validate_banister_oos(profile_id, holdout_weeks=4, bootstrap_n=1000)`. Fits τ on weeks 1..N-4 via `tau_fitting.fit_tau_per_athlete(persist=False, horizon_end_date=...)` per PATCH G4 (no live-fit pollution), forward-simulates the trailing 4 weeks, compares predicted FTP / CP / 5-min / 1-min power against actuals from `is_race`-tagged + FTP-test sessions in the holdout, computes per-metric MAE + bootstrap CIs. Hellard 2006 literature comparison built in (`better_than_literature` / `in_line` / `worse_than_literature`).
+- **`GET /api/profile/banister-validation`** — 24-hour lazy cache (PATCH G12; no scheduled task). `?refresh=1` forces recompute.
+- **Below-threshold path** — riders with < 8 calendar months OR < 12 markers cleanly return `fit_status: "insufficient_data"` instead of substituting a population MAE.
+
+Honest framing baked into the dashboard: the Banister TSS-based stack has been operationalised in commercial software for 20 years and rarely tested out-of-sample (per the README §0a Vermeire 2021 critique). v1.2.0 is the user-visible answer: **"your model is X% accurate FOR YOU"** rather than relying on population averages.
+
+Tests: 7 new tests in `tests/test_oos_validation.py`. PATCH G14 contract guard (`test_no_nls_fit_rows_after_validation`) verifies `persist=False` keeps the live nls_fit table clean.
+
+## v1.1.0 — Norwegian Method support (HR-only) + HRV-based readiness composite (2026-05-05)
+
+Two coordinated additions, both layered on signals already plumbed (no blood-lactate sampling per explicit non-goal):
+
+### Norwegian Method — HR-only
+
+- **HR ceiling on threshold sessions** (`hr_ceiling_pct=0.88` of HR_max). New `_set_max_hr(value, source)` setter cloned from `_set_wprime` (PATCH G6: matches existing `ProfileManager.max_hr` property; NOT `hr_max`). Tanaka 2001 fallback `int(208 - 0.7 × age)`. ICU sync at `db.sync_wellness()` writes the field automatically.
+- **`double_threshold` session class** — AM + PM same-day pattern in `WORKOUT_MIX_PREFERENCE`, gated to build1-W3+ / build2 / peak phases only, ≥ 4-hour gap. Both halves sub-threshold by power + HR.
+- **G9 advisory tier-down** — when yesterday's `dfa_alpha1_avg < 0.75` (Rogers 2021 LT1 marker), today's hard slot drops one tier as a SOFT ADVISORY. NEVER mutates `today_session.session_type` (PATCH G10: no-op for already-low-tier classes — endurance / recovery / rest return `advised_class=session_type, reason='already at lowest tier'`).
+- **`detect_wbal_overshoot`** post-ride flag — when W'bal trough during a sub-threshold ride drops below 60 % of W', flags the ride as "ran hotter than prescribed" (informational only; doesn't gate anything).
+
+### HRV-based readiness composite
+
+- **`readiness_composite.py`** (NEW, 602 LoC) — module name + function name renamed per PATCH G1 BLOCKER (`readiness.py` already exists in production with a different signature). `compute_readiness_composite(profile_id, date)` returns a 0–10 score combining `wellness.hrv` (rMSSD), `ln_rmssd_7d` trend, TSB, Hooper composite, yesterday's `dfa_alpha1_avg` (when available), subjective feel.
+- **Bayesian weight update** — initial weights from [Plews 2018](https://pubmed.ncbi.nlm.nih.gov/30053662/) + [Buchheit 2017](https://www.frontiersin.org/articles/10.3389/fphys.2017.00543/). PATCH G7 minimum-history floor: <30 days wellness → `score=None, status='insufficient_data'`; 30-59 days → static weights; ≥60 days → ridge-regression update against next-day eFTP proxy. PATCH G13 weight re-normalisation when components are missing (rider has no chest strap → DFA component drops, remaining weights re-normalised, confidence reduced).
+- **`GET /api/readiness/composite?date=YYYY-MM-DD`** — 5-min cache. Renders a "Readiness today" home-page card.
+- **HRV4Training CSV upload** — wellness tab accepts manual exports with locked columns `date, rmssd, hrv_baseline, recovery_points` (PATCH G16).
+
+## v1.0.7 — DFA α1 from raw FIT + NP alternative (strain-rate lens) + per-athlete τ fitting + HRV-recording auto-prompt (2026-05-05)
+
+Closes the README's "DFA α1 is computed post-ride if your FIT has them" gap that was aspirational since v4.1.0 — every cached ride before v1.0.7 has `dfa_alpha1: None`.
+
+### DFA α1 from raw FIT (closes the wiring gap)
+
+- ICU exposes the raw FIT at `/api/v1/activity/{id}/fit-file` (verified live: 140,585-byte download for the user's most recent ride). `training.fetch_activity_fit_file()` pulls it post-sync.
+- `fit_activity.parse_rr_intervals()` walks `fit_tool.fit_file.FitFile` `HrvMessage` records (NOT `fitparse` per PATCH G3 — `fit_tool` is already in `requirements.txt` since v1.0.1).
+- `analytics.compute_dfa_alpha1()` ports the dormant DFA implementation from `training_live.py:823-942` into the post-ride path. Sliding window 120 s / 30 s step per [Rogers 2021](https://pubmed.ncbi.nlm.nih.gov/34547011/).
+- New `dfa_alpha1_status` field per PATCH G8 with one of `computed` / `no_rr_data` / `fetch_failed` / `sanity_rejected` — distinguishes the four failure modes for the dashboard's actionable copy.
+- Hardware caveat documented in README: chest strap needed (HRM-Pro / Polar H10 / TICKR X / Verity Sense in HR mode), AND the head unit's "Log HRV" toggle enabled (Fēnix 8: `Watch Settings → System → Advanced → Data Recording → Log HRV` — verified against the official manual).
+
+### HRV-recording auto-prompt (educational toast)
+
+- After every ICU sync, when a ride lands with `dfa_alpha1_status == 'no_rr_data'`, Domestique surfaces a one-time-per-version toast.
+- Auto-detect of the rider's Garmin device from FIT `file_id.garmin_product` — 21 device IDs mapped (Edge 530/830/1030/1030 Plus/1040, Fēnix 6/7/8, Epix 2, Forerunner 255/265/745/945/955/965).
+- `[Show me how]` opens a modal with the device-by-device path table — the rider's row is **pre-highlighted in green**, others dimmed at 50 % opacity.
+- `[Dismiss]` (per-version) and `[Don't show again]` (permanent) flags persisted in profile.
+
+### NP alternative — strain-rate comparison lens
+
+- `strain_score.compute_sr_avg(power_trace, cp, w_prime, pmax, tau_pcr=30)` returns `sr_avg_w` / `sr_if` / `sr_total_ss` watt-equivalents derived from Kontro 2026 Eq. 13 strain rate.
+- Ride-detail modal gains a "Two lenses" comparison block: NP / IF / TSS labelled "Coggan 2003 — empirical" beside SR_avg / SR_IF / Belastingscore labelled "Kontro 2026 — mechanistic".
+- Most diagnostic divergence: above-FTP repeating intervals (5×5). NP saturates at 4-th-power weighting, strain rate accelerates as W'bal drains. The metric pair makes that physiology visible.
+- Greys out gracefully when CP / W' / Pmax aren't calibrated.
+
+### Per-athlete τ fitting (replaces folkloric defaults)
+
+- `tau_fitting.fit_tau_per_athlete(profile_id, persist=True, horizon_end_date=None)` — auto-fits CTL_TAU + per-component τ_CP / τ_W' / τ_Pmax from the rider's actual training log + race-performance markers (PATCH G4: `persist=False` for OOS validation reuse).
+- `count_weighted_markers` — race=1.0, eFTP step ≥ 3 W=0.5, FTP test=0.8, Coggan-20=0.8 (PATCH G9). Threshold: `weighted_n ≥ 10` for a real fit; `5 ≤ weighted_n < 10` returns `low_confidence`; below 5 returns `insufficient_data`.
+- Identifiability fragility documented: [Hellard 2006](https://pmc.ncbi.nlm.nih.gov/articles/PMC1974899/) found τ_a × τ_f correlate 0.99 across elite swimmers. Fit rejected if bootstrap CI > 50 % of point estimate, τ1/τ2 < 1.5 (collinearity), or residual r² < 0.40 — falls back to conventional τ in those cases.
+- New `is_race INTEGER DEFAULT 0` column on `activities` (PATCH G11). 🏁 checkbox on ride-detail panel sets it via `POST /api/activity/{id}/race`.
+- `<details class="tau-fit-results">` panel under CTL chart shows per-athlete τ values + bootstrap CIs + status.
+- `training.get_today_metrics()` reads fit τ from `athlete_metrics` when status==success, falls back to conventional otherwise. Precedence: `manual > nls_fit > conventional`.
+
+### Bootstrap vectorisation — 21× speedup
+
+- `tau_fitting._ewma_vec()` replaces the Python loop in `_banister_predict()` with `scipy.signal.lfilter`-backed Banister IIR (numpy under the hood, no pandas — pandas would have added ~30 MB to the DMG and is still excluded in `domestique.spec`).
+- `pytest tests/test_tau_fitting.py` runs in **12 s** (was 9+ minutes pre-vectorisation). Numerical-fidelity snapshot test verifies < 0.5 % drift across τ ∈ {3, 7, 14, 42, 60, 90}.
+- `scipy>=1.13,<2` added to `requirements.txt`; `scipy` + `scipy.optimize` + `scipy.linalg` + `scipy._lib.array_api_compat` added to `domestique.spec` `hiddenimports` (PATCH G2).
+
+### Cross-version contracts (locked by GRILL phase)
+
+- 16 issues identified by adversarial review (1 BLOCKER, 5 HIGH, 6 MEDIUM, 3 LOW). All resolved before Wave 2 dispatch via the consolidated `MASTER_DECISIONS_v107_v110_v120_PATCH.md`. The BLOCKER (G1: `readiness.py` name shadow) prevented production breakage.
+
+### Tests
+
+- 1027 → 1037 passing (+10 net across 7 new test files: `test_dfa_alpha1.py` (7), `test_sr_avg.py` (4), `test_tau_fitting.py` (7), `test_tau_fitting_contract.py` (4), `test_norwegian_hr.py` (18 — PATCH G10 no-op verified), `test_readiness_composite.py` (7), `test_hrv_recording_prompt.py` (5), `test_is_race_column.py` (3), `test_tau_fits_endpoint.py` (3), `test_oos_validation.py` (7) = 65 new tests). Plus the v1.0.6 baseline + the existing v1.0.4/5 regression invariants — 130/130 of the latter still green.
+- 4 pre-existing failures (none introduced by v1.0.7+ work). Verified via stash-bisect against `c54c9b79`.
+
+### Out of scope / honest deferrals
+
+- **Banister-validation dashboard panel** — IMPL-V120-OOS-VALIDATION's agent stalled before adding the `<details class="banister-validation">` panel. The endpoint works (`/api/profile/banister-validation` returns the locked dict). Panel ships in v1.2.1 fix-forward.
+- **DFA α1 backfill** — pre-v1.0.7 cached rides cannot be retroactively given DFA α1; the data was never recorded by the head unit if the rider hadn't enabled "Log HRV" yet. Documented in README and surfaced via the in-app prompt.
+
 ## v1.0.6 — 3D impulse-response model (Belastingscore decomposition) — TSS still primary, 3D additive (2026-05-05)
 
 ### The pitch — "TSS PRIMARY, 3D ADDITIVE"

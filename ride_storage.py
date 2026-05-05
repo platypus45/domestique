@@ -905,3 +905,45 @@ def delete_ride(ride_id: str) -> bool:
         log.info(f"Ride deleted: {ride_id}")
         return True
     return False
+
+
+def detect_wbal_overshoot(ride: dict, wprime_j: int | None = None) -> bool:
+    """v1.1.0 IMPL-NORWEGIAN-HR — return True when W'bal trough during
+    a sub-threshold session dropped below 60% of W'.
+
+    "Overshoot" means the rider went HARDER than the prescribed power
+    suggested — useful as a post-ride flag distinct from TSS overshoot
+    (Skiba 2015 W'bal recovers fast; the trough captures peak depletion
+    even when total work is moderate).
+
+    Inputs:
+        ride: dict containing ``wbal_min_kj`` (W'bal trough in kJ; written
+              by the v1.0.6 strain_score path during _summarise_ride).
+        wprime_j: optional explicit W' in joules. Falls back to the
+              athlete metric if omitted; default 20000 J (20 kJ) when
+              neither is available.
+
+    Returns:
+        True iff the trough exists AND is strictly below 60 % of W'.
+        False when the signal is missing (key absent or value <= 0) or
+        the trough is at-or-above the 60 % threshold.
+
+    Threshold rationale:
+        Master §1 locks "< 60 % of W'". Strict less-than: a trough at
+        exactly 60 % is not flagged. Below that the rider was burning
+        glycolytic capacity faster than a sub-LT2 prescription should.
+    """
+    if not isinstance(ride, dict):
+        return False
+    trough_kj = ride.get("wbal_min_kj")
+    if not isinstance(trough_kj, (int, float)):
+        return False
+    if trough_kj <= 0.0:
+        # 0 = unpopulated default, NOT a signal.
+        return False
+    if wprime_j is None:
+        wprime_j = 20000  # Coggan/Skiba default if profile not supplied.
+    if not isinstance(wprime_j, (int, float)) or wprime_j <= 0:
+        return False
+    threshold_kj = (wprime_j / 1000.0) * 0.60
+    return trough_kj < threshold_kj

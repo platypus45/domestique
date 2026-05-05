@@ -308,6 +308,23 @@ def sync_wellness(days: int = 90) -> int:
                         (dt, round(p_max)),
                     )
 
+            # v1.1.0 IMPL-NORWEGIAN-HR: pull max_hr from ICU wellness payload
+            # when exposed (athlete profile may carry it as `maxHr` or
+            # `max_hr`). Same manual-source guard as wPrime / pMax.
+            # PATCH G6: metric name is `max_hr` (not `hr_max`) — matches
+            # ProfileManager.max_hr property at profile_manager.py:147.
+            ahr = w.get("maxHr") or w.get("max_hr")
+            if ahr and isinstance(ahr, (int, float)) and 140 <= ahr <= 220:
+                existing_hr = db.execute(
+                    "SELECT source FROM athlete_metrics WHERE date = ? AND metric = 'max_hr'",
+                    (dt,),
+                ).fetchone()
+                if not (existing_hr and existing_hr[0] == "manual"):
+                    db.execute(
+                        "INSERT OR REPLACE INTO athlete_metrics (date, metric, value, source) VALUES (?, 'max_hr', ?, 'intervals.icu')",
+                        (dt, round(ahr)),
+                    )
+
             count += 1
     except Exception:
         db.rollback()
@@ -322,6 +339,8 @@ def sync_wellness(days: int = 90) -> int:
     _refresh_wprime_from_metrics()
     # v1.0.6 IMPL-3D-INGEST: same mirror pattern for Pmax.
     _refresh_pmax_from_metrics()
+    # v1.1.0 IMPL-NORWEGIAN-HR: same mirror pattern for max_hr.
+    _refresh_max_hr_from_metrics()
 
     return count
 
@@ -388,6 +407,38 @@ def _refresh_pmax_from_metrics() -> None:
         pm._set_pmax(int(float(value)), "icu")
     except Exception as e:
         log.warning("refresh_pmax_from_metrics failed: %s", e)
+
+
+def _refresh_max_hr_from_metrics() -> None:
+    """v1.1.0 IMPL-NORWEGIAN-HR: copy the newest athlete_metrics.max_hr row
+    (source='intervals.icu') into the active ProfileManager athlete.max_hr.
+
+    Mirror of `_refresh_wprime_from_metrics()`. Called after sync_wellness()
+    finishes its ICU batch. Failures are logged but never re-raised.
+
+    PATCH G6: metric name is `max_hr` (not `hr_max`) — matches
+    ProfileManager.max_hr property at profile_manager.py:147.
+    """
+    try:
+        from profile_manager import ProfileManager
+        pm = ProfileManager.get()
+        db = get_db()
+        row = db.execute(
+            "SELECT value, source FROM athlete_metrics "
+            "WHERE metric = 'max_hr' ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            return
+        value, source = row[0], row[1]
+        if value is None or float(value) <= 0:
+            return
+        # Only mirror intervals.icu-sourced max_hr. Manual rows go through
+        # save_athlete directly with source="manual" already.
+        if source != "intervals.icu":
+            return
+        pm._set_max_hr(int(float(value)), "icu")
+    except Exception as e:
+        log.warning("refresh_max_hr_from_metrics failed: %s", e)
 
 
 def sync_activities(days: int = 90) -> int:

@@ -561,6 +561,8 @@ class ProfileManager:
         wprime_manual = data.pop("wprime_j", None)
         # v1.0.6 IMPL-3D-INGEST: same pattern for pmax_w.
         pmax_manual = data.pop("pmax_w", None)
+        # v1.1.0 IMPL-NORWEGIAN-HR: same pattern for max_hr.
+        max_hr_manual = data.pop("max_hr", None)
 
         self._athlete.update(data)
         self._write_json(self.active_dir / "athlete.json", self._athlete)
@@ -569,6 +571,8 @@ class ProfileManager:
             self._set_wprime(int(wprime_manual), "manual")
         if pmax_manual is not None:
             self._set_pmax(int(pmax_manual), "manual")
+        if max_hr_manual is not None:
+            self._set_max_hr(int(max_hr_manual), "manual")
 
     def _set_wprime(self, value: int | float, source: str) -> bool:
         """Shared write-path for `wprime_j` with source tracking (v3.6.0-fix26
@@ -701,6 +705,76 @@ class ProfileManager:
         "" when the property still falls back to int(ftp * 1.30).
         """
         return str(self._athlete.get("pmax_source", "") or "")
+
+    def _set_max_hr(self, value: int | float, source: str) -> bool:
+        """v1.1.0 IMPL-NORWEGIAN-HR: shared write-path for `max_hr` with
+        source tracking. Cloned from `_set_wprime` (v3.6.0-fix26 §4.1).
+
+        Source priority (higher wins):
+            manual > icu > computed > age_tanaka
+
+        Args:
+            value: Max HR in bpm. Clamped to [140, 220]; anything outside
+                   returns False and does NOT touch disk.
+            source: One of "manual", "icu", "computed", "age_tanaka".
+                    Anything else raises ValueError.
+
+        Returns:
+            True if the value was written; False if it was rejected (out of
+            range, or a higher-priority source is already set).
+
+        Used by:
+          * `save_athlete` when the user types max_hr in settings
+            (source="manual").
+          * `db.sync_wellness` when ICU exposes athlete.max_hr
+            (source="icu").
+          * Auto-compute path: best 30-s peak HR over last-90-d FIT archive
+            (source="computed").
+          * Tanaka fallback `int(208 - 0.7 * age)` (source="age_tanaka").
+
+        Atomic write via the existing `_write_json` path (tmp+fsync+rename).
+
+        NOTE: keeps the canonical key `max_hr` to match `ProfileManager.max_hr`
+        property at line 147 and the existing settings field. PATCH G6.
+        """
+        _PRIO = {"manual": 3, "icu": 2, "computed": 1, "age_tanaka": 0}
+        if source not in _PRIO:
+            raise ValueError(f"unknown max_hr source: {source!r}")
+
+        try:
+            v = int(float(value))
+        except (TypeError, ValueError):
+            log.warning("_set_max_hr: invalid value %r; ignored", value)
+            return False
+        if not (140 <= v <= 220):
+            log.warning(
+                "_set_max_hr: %d out of range [140, 220] "
+                "(source=%s); ignored", v, source,
+            )
+            return False
+
+        current_source = self._athlete.get("max_hr_source")
+        if current_source in _PRIO:
+            if _PRIO[source] < _PRIO[current_source]:
+                log.debug(
+                    "_set_max_hr: skipping %s write (%d bpm); current source "
+                    "%s has higher priority", source, v, current_source,
+                )
+                return False
+
+        self._athlete["max_hr"] = v
+        self._athlete["max_hr_source"] = source
+        self._write_json(self.active_dir / "athlete.json", self._athlete)
+        log.info("_set_max_hr: max_hr=%d bpm source=%s", v, source)
+        return True
+
+    @property
+    def max_hr_source(self) -> str:
+        """v1.1.0 IMPL-NORWEGIAN-HR: source of the currently stored `max_hr`
+        value. Returns one of "manual", "icu", "computed", "age_tanaka", or
+        "" when no source has been written yet.
+        """
+        return str(self._athlete.get("max_hr_source", "") or "")
 
     # v3.6.0-fix35e: FTP-test persistence.
     @property

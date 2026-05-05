@@ -522,6 +522,10 @@ TSS_PER_HOUR = {
     "vo2max":     75,
     "overunder":  85,
     "sprint":    95,  # neuromuscular: short max efforts, high WP → high TSS/hr
+    # v1.1.0 IMPL-NORWEGIAN-HR: AM+PM sub-LT2 threshold pair. Per-half ~85
+    # (slightly under threshold because the HR ceiling caps glycolytic load
+    # — Stöggl & Sperlich 2014). Total day = 2× this when both halves run.
+    "double_threshold": 85,
 }
 
 # ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ──────────────────────
@@ -955,6 +959,16 @@ class PlannedSession:
     # Optional W'/Pmax mirrors of tss_estimate. None ⇒ TSS-only path.
     wprime_estimate: float | None = None
     pmax_estimate: float | None = None
+    # ── v1.1.0 IMPL-NORWEGIAN-HR (HR-only Norwegian Method) ────────────────
+    # All four fields nullable / None-default ⇒ preserves v1.0.6 behaviour.
+    # When `hr_ceiling_pct` is set, prescription is dual-target (% FTP AND
+    # HR ≤ pct × max_hr). When `is_double_threshold_pair` is True, this
+    # session is half of an AM+PM same-day pair sharing
+    # `double_threshold_partner_id`. `am_or_pm` records which half.
+    hr_ceiling_pct: float | None = None              # 0.88 = "stay below 88% HR_max"
+    is_double_threshold_pair: bool = False
+    double_threshold_partner_id: str | None = None
+    am_or_pm: str | None = None                      # "am" or "pm"
 
 
 # ── v4.4.0 — phase targets (CONCEPT-SCI §1, §5) ───────────────────────────────
@@ -2582,27 +2596,30 @@ WORKOUT_MIX_PREFERENCE: dict[str, list[dict[str, float]]] = {
          "sweet_spot_ladder": 0.04, "threshold": 0.14, "threshold_ladder": 0.05,
          "vo2max": 0.16, "over_under": 0.08, "vo2_short": 0.06,
          "anaerobic": 0.04, "neuromuscular": 0.03},
-        # W3+
-        {"endurance": 0.14, "endurance_intervals": 0.04, "tempo": 0.05,
+        # W3+ — v1.1.0 IMPL-NORWEGIAN-HR: small allocation for double_threshold
+        # (AM+PM same-day pair, both ≤88% max_hr) gated to build1 W3+ only.
+        {"endurance": 0.13, "endurance_intervals": 0.04, "tempo": 0.05,
          "tempo_intervals": 0.06, "tempo_ladder": 0.04, "sweet_spot": 0.10,
-         "sweet_spot_ladder": 0.04, "threshold": 0.12, "threshold_ladder": 0.05,
+         "sweet_spot_ladder": 0.04, "threshold": 0.11, "threshold_ladder": 0.05,
          "vo2max": 0.16, "over_under": 0.08, "vo2_short": 0.06,
-         "anaerobic": 0.05, "neuromuscular": 0.04},
+         "anaerobic": 0.05, "neuromuscular": 0.04, "double_threshold": 0.05},
     ],
     "build2": [
         # vo2 + neuromuscular emphasis — v1.0.4 adds tempo_intervals + ladders.
-        {"endurance": 0.12, "endurance_intervals": 0.03, "tempo": 0.04,
+        # v1.1.0 IMPL-NORWEGIAN-HR: double_threshold appears in build2.
+        {"endurance": 0.11, "endurance_intervals": 0.03, "tempo": 0.04,
          "tempo_intervals": 0.05, "tempo_ladder": 0.03, "sweet_spot": 0.08,
-         "sweet_spot_ladder": 0.03, "threshold": 0.12, "threshold_ladder": 0.06,
+         "sweet_spot_ladder": 0.03, "threshold": 0.11, "threshold_ladder": 0.06,
          "vo2max": 0.18, "over_under": 0.09, "vo2_short": 0.09,
-         "anaerobic": 0.09, "neuromuscular": 0.05},
+         "anaerobic": 0.08, "neuromuscular": 0.05, "double_threshold": 0.06},
     ],
     "peak": [
         # Race-specific — v1.0.4 adds tempo_intervals + threshold_ladder + vo2_ladder.
-        {"endurance": 0.13, "tempo": 0.04, "tempo_intervals": 0.05,
-         "threshold": 0.13, "threshold_ladder": 0.06, "vo2max": 0.17,
+        # v1.1.0 IMPL-NORWEGIAN-HR: double_threshold appears in peak.
+        {"endurance": 0.12, "tempo": 0.04, "tempo_intervals": 0.05,
+         "threshold": 0.12, "threshold_ladder": 0.06, "vo2max": 0.17,
          "vo2_ladder": 0.04, "over_under": 0.09, "vo2_short": 0.09,
-         "anaerobic": 0.13, "neuromuscular": 0.09},
+         "anaerobic": 0.13, "neuromuscular": 0.09, "double_threshold": 0.05},
     ],
     "taper": [
         # Short openers + recovery
@@ -2636,6 +2653,9 @@ _HIT_SLOT_CONTENT_CLASSES = frozenset({
     "sweet_spot", "sweet_spot_ladder",
     "tempo_intervals", "tempo_ladder",
     "anaerobic", "neuromuscular",
+    # v1.1.0 IMPL-NORWEGIAN-HR: double_threshold counts as a HIT slot
+    # (AM+PM threshold-class pair, ≥4 h gap, both with HR ceiling 88% max_hr).
+    "double_threshold",
 })
 _ENDURANCE_SLOT_CONTENT_CLASSES = frozenset({
     "endurance", "endurance_intervals",
@@ -4529,7 +4549,171 @@ def _content_class_for_zwo(zwo_file: str) -> str:
 # Hard session types whose intensity we re-evaluate in reforecast (PL4).
 _HARD_SESSION_TYPES = frozenset({
     "vo2max", "threshold", "overunder", "sweetspot", "sprint", "tempo",
+    # v1.1.0 IMPL-NORWEGIAN-HR: double_threshold counts as a hard session
+    # (AM+PM threshold-class pair, both with HR ceiling 88% max_hr).
+    "double_threshold",
 })
+
+
+# ── v1.1.0 IMPL-NORWEGIAN-HR — double_threshold AM+PM same-day scheduling ──
+
+# Norwegian Method protocol: AM + PM same-day threshold-class pair, both
+# with HR ceiling 88% max_hr (sub-LT2 controlled work). Min ≥4 h gap.
+# AM 3-4×8-10 min @ 88-92% FTP, PM 3-4×6-8 min @ 88-90% FTP. Bakken /
+# Stöggl & Sperlich 2014 / Casado 2024.
+DOUBLE_THRESHOLD_HR_CEILING_PCT = 0.88
+DOUBLE_THRESHOLD_AM_DURATION_MIN = 60
+DOUBLE_THRESHOLD_PM_DURATION_MIN = 50
+DOUBLE_THRESHOLD_MIN_GAP_HOURS = 4
+
+
+def schedule_double_threshold_pair(
+    day: "date",
+    day_name: str,
+    pair_id: str,
+    am_duration_min: int = DOUBLE_THRESHOLD_AM_DURATION_MIN,
+    pm_duration_min: int = DOUBLE_THRESHOLD_PM_DURATION_MIN,
+    hr_ceiling_pct: float = DOUBLE_THRESHOLD_HR_CEILING_PCT,
+) -> "tuple[PlannedSession, PlannedSession]":
+    """v1.1.0 IMPL-NORWEGIAN-HR: build the (am, pm) PlannedSession pair for
+    a Norwegian-Method same-day double-threshold day.
+
+    Both sessions share `pair_id` via `double_threshold_partner_id`,
+    `is_double_threshold_pair=True`, and the same `hr_ceiling_pct`. The
+    UI uses these to render 🌅+🌆 on the calendar cell and to expand
+    AM+PM detail when the cell is clicked.
+
+    The actual AM/PM clock-time scheduling is left to ride-storage / the
+    user's calendar widget; the planner only emits both sessions on the
+    same `day` and tags them. ≥4 h gap is a UI-side constraint when the
+    rider opens the day to plan it.
+    """
+    am = PlannedSession(
+        day=day,
+        day_name=day_name,
+        session_type="double_threshold",
+        duration_min=am_duration_min,
+        tss_estimate=round(am_duration_min / 60 * TSS_PER_HOUR["double_threshold"]),
+        description=(
+            f"Norwegian double-threshold AM (≤{int(hr_ceiling_pct*100)}% HR_max). "
+            "3-4×8-10 min @ 88-92% FTP."
+        ),
+        hr_ceiling_pct=hr_ceiling_pct,
+        is_double_threshold_pair=True,
+        double_threshold_partner_id=pair_id,
+        am_or_pm="am",
+    )
+    pm = PlannedSession(
+        day=day,
+        day_name=day_name,
+        session_type="double_threshold",
+        duration_min=pm_duration_min,
+        tss_estimate=round(pm_duration_min / 60 * TSS_PER_HOUR["double_threshold"]),
+        description=(
+            f"Norwegian double-threshold PM (≤{int(hr_ceiling_pct*100)}% HR_max). "
+            f"3-4×6-8 min @ 88-90% FTP. ≥{DOUBLE_THRESHOLD_MIN_GAP_HOURS} h after AM."
+        ),
+        hr_ceiling_pct=hr_ceiling_pct,
+        is_double_threshold_pair=True,
+        double_threshold_partner_id=pair_id,
+        am_or_pm="pm",
+    )
+    return am, pm
+
+
+# ── v1.1.0 IMPL-NORWEGIAN-HR — G9 advisory (DFA α1 tier-down) ─────────────────
+
+# Below this threshold, autonomic strain has dropped (Rogers 2021 — DFA α1
+# crossing 0.75 marks LT1; values <0.75 indicate sympathetic shift / fatigue).
+G9_DFA_ALPHA1_THRESHOLD = 0.75
+
+# Per master §1: when yesterday's α1 is below the threshold, today's HIT
+# class drops one tier. PATCH G10: classes NOT in this map are already at
+# the lowest sensible tier — g9_advisory returns a no-op for them so we
+# never raise KeyError.
+G9_TIER_DOWN_BUCKETS = {
+    "vo2max":          "threshold",
+    "vo2_short":       "threshold",
+    "threshold":       "tempo",
+    "tempo_intervals": "tempo",
+    "tempo":           "endurance_intervals",
+    # double_threshold is the Norwegian Method showcase; α1 fatigue should
+    # collapse it to single threshold rather than skip a day entirely.
+    "double_threshold": "threshold",
+}
+
+
+def g9_advisory(
+    yesterday_dfa_alpha1: float | None,
+    today_class: str,
+) -> dict:
+    """v1.1.0 IMPL-NORWEGIAN-HR: G9 advisory — DFA α1 driven tier-down.
+
+    Pure advisory function. NEVER mutates a session. Callers (planner
+    reforecast, dashboard chips) consume the returned dict.
+
+    Args:
+        yesterday_dfa_alpha1: yesterday's `dfa_alpha1_avg` from the cached
+            ride summary (v1.0.7 IMPL-DFA-ALPHA1). None when the rider
+            doesn't have a chest strap, the FIT lacks RR data, or v1.0.7
+            isn't yet feeding the cache. SAFE DEGRADATION when None.
+        today_class: today's planned session_type (e.g. "vo2max", "endurance").
+
+    Returns:
+        {"advised_class": str | None,
+         "reason": str,
+         "should_log": bool}
+
+    PATCH G10 contract: when today_class is NOT in G9_TIER_DOWN_BUCKETS
+    (e.g. "endurance", "recovery", "rest"), returns
+    `{"advised_class": today_class, "reason": "already at lowest tier",
+      "should_log": False}` — NO KeyError.
+    """
+    # Safe degradation: missing α1 data ⇒ no advisory.
+    if yesterday_dfa_alpha1 is None:
+        return {
+            "advised_class": today_class,
+            "reason": "no DFA α1 data for yesterday",
+            "should_log": False,
+        }
+
+    try:
+        a1 = float(yesterday_dfa_alpha1)
+    except (TypeError, ValueError):
+        return {
+            "advised_class": today_class,
+            "reason": "invalid DFA α1 value",
+            "should_log": False,
+        }
+
+    # Above threshold ⇒ no advisory (rider is recovered).
+    if a1 >= G9_DFA_ALPHA1_THRESHOLD:
+        return {
+            "advised_class": today_class,
+            "reason": (
+                f"yesterday's α1 was {a1:.2f} ≥ {G9_DFA_ALPHA1_THRESHOLD} "
+                "— no tier-down"
+            ),
+            "should_log": False,
+        }
+
+    # PATCH G10: no-op when today's class is already at lowest tier.
+    if today_class not in G9_TIER_DOWN_BUCKETS:
+        return {
+            "advised_class": today_class,
+            "reason": "already at lowest tier",
+            "should_log": False,
+        }
+
+    advised = G9_TIER_DOWN_BUCKETS[today_class]
+    return {
+        "advised_class": advised,
+        "reason": (
+            f"yesterday's α1 was {a1:.2f} < {G9_DFA_ALPHA1_THRESHOLD} "
+            f"(LT1 drift, Rogers 2021) — consider {advised} today"
+        ),
+        "should_log": True,
+    }
 
 
 # v4.6.6 IMPL-A: ACWR helper (Gabbett 2016 Br J Sports Med 50:273-280).
@@ -4595,6 +4779,13 @@ def reforecast(
     w_prime: "float | None" = None,
     wprime_acwr: "float | None" = None,
     actual_wprime_polarization: "dict | None" = None,
+    # ── v1.1.0 IMPL-NORWEGIAN-HR (G9 advisory — DFA α1 tier-down) ──────────
+    # Yesterday's `dfa_alpha1_avg` from cached ride summary (v1.0.7 IMPL-DFA).
+    # When < G9_DFA_ALPHA1_THRESHOLD (0.75), today's HIT class drops one
+    # tier ADVISORY — never mutates today_session.session_type. NULL-safe:
+    # None ⇒ no advisory fires (rider has no chest strap or v1.0.7 not yet
+    # populated). Mirrors G3b / G8 advisory pattern.
+    yesterday_dfa_alpha1: "float | None" = None,
 ) -> tuple[list[PlannedWeek], dict]:
     """Shift future hard sessions up/down one intensity level based on TSB.
 
@@ -4868,6 +5059,39 @@ def reforecast(
         except (TypeError, ValueError, ZeroDivisionError):
             pass
 
+    # ── v1.1.0 IMPL-NORWEGIAN-HR — G9 advisory: DFA α1 tier-down ──────────
+    # When yesterday's α1 < 0.75 (Rogers 2021 LT1 drift), today's HIT class
+    # drops one tier. ADVISORY ONLY — mirrors G3b/G8: NEVER mutates
+    # today_session.session_type. Returns dict consumed by the dashboard
+    # chip and persisted in the plan reforecast log.
+    g9_advisory_class: str | None = None
+    g9_today_class: str | None = None
+    g9_reason: str | None = None
+    if yesterday_dfa_alpha1 is not None:
+        # Locate today's planned session (if any) — used as input to g9_advisory.
+        today_session = None
+        for pw in plan_weeks:
+            if pw.end < today:
+                continue
+            for s in pw.sessions:
+                if s.day == today:
+                    today_session = s
+                    break
+            if today_session is not None:
+                break
+        if today_session is not None:
+            adv = g9_advisory(yesterday_dfa_alpha1, today_session.session_type)
+            g9_today_class = today_session.session_type
+            g9_reason = adv["reason"]
+            if adv["should_log"]:
+                g9_advisory_class = adv["advised_class"]
+                advisory_log.append(
+                    f"G9 advisory: today's planned {today_session.session_type} "
+                    f"(yesterday's α1={float(yesterday_dfa_alpha1):.2f}) "
+                    f"— consider {adv['advised_class']} today. "
+                    "Session NOT mutated (advisory only)."
+                )
+
     # v1.0.3 IMPL-AVAILABILITY: merge availability-touched dates into
     # touched_days so the app.py write-back loop persists duration_min /
     # tss_estimate / session_type changes for those days too.
@@ -4890,6 +5114,10 @@ def reforecast(
             "advisory_log": advisory_log,
             "g3b_breach": g3b_breach,
             "g8_softened_day": g8_softened_day,
+            # v1.1.0 IMPL-NORWEGIAN-HR G9 advisory (log-only).
+            "g9_advisory_class": g9_advisory_class,
+            "g9_today_class": g9_today_class,
+            "g9_reason": g9_reason,
         }
 
     action = "reforecasted" if (
@@ -4907,6 +5135,10 @@ def reforecast(
         "advisory_log": advisory_log,
         "g3b_breach": g3b_breach,
         "g8_softened_day": g8_softened_day,
+        # v1.1.0 IMPL-NORWEGIAN-HR G9 advisory (log-only).
+        "g9_advisory_class": g9_advisory_class,
+        "g9_today_class": g9_today_class,
+        "g9_reason": g9_reason,
     }
 
 

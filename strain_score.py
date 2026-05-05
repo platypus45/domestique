@@ -289,6 +289,168 @@ def compute_xss_components(
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# v1.0.7 NP-ALTERNATIVE — STRAIN-RATE WATT-EQUIVALENT (Kontro Eq. 11–12)
+#
+# Sibling to compute_xss_components. Surfaces the strain-rate-derived analogue
+# of NP/IF/TSS so the dashboard can render a side-by-side comparison
+# (Coggan 2003 — empirical vs Kontro 2026 — mechanistic).
+#
+# Contract (LOCKED per /tmp/MASTER_DECISIONS_v107.md §1):
+#
+#     def compute_sr_avg(power_trace, cp, w_prime, pmax, tau_pcr=30.0) -> dict
+#     -> {"sr_avg_w", "sr_if", "sr_total_ss"}    (None values when uncalibrated)
+#
+# Calibration: SR_avg_W = mean_t(SR(t)) * (Pmax / CP). At anchor (1 h at exactly
+# CP, full W'), MPA = Pmax → k_strain = CP/Pmax → SR_per_sec = CP^2/Pmax →
+# SR_avg_W = (CP^2/Pmax) * (Pmax/CP) = CP. Verified by test #1.
+#
+# Why a watt-equivalent post-multiplier instead of inverse-engineering watts
+# from xss_total: keeps the divergence pattern simple to interpret on the
+# dashboard ("SR_avg in watts is mean strain rate, not back-solved equivalent
+# constant power"). Also lets the per-interval acceleration test (test #3)
+# slice `sr_series` directly — the diagnostic case.
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _compute_sr_series(
+    power_trace: Sequence[float],
+    cp: float,
+    w_prime: float,
+    pmax: float,
+    tau_pcr: float = DEFAULT_TAU_PCR_S,
+) -> dict:
+    """Internal helper: walk power trace and return per-second SR series in
+    watt-equivalent units, plus aggregate SR_avg_W / SR_IF / SR_total_ss.
+
+    Same W'bal + Pmax_bal walk as compute_xss_components, only the output
+    shape differs (this returns ``sr_series`` for slicing tests + the locked
+    summary scalars). Public callers use ``compute_sr_avg`` which strips the
+    series.
+    """
+    cp_f = float(cp)
+    wp_f = float(w_prime)
+    pmax_f = float(pmax)
+
+    n = sum(1 for _ in power_trace)
+    sr_series: list[float] = []
+
+    if cp_f <= 0 or wp_f <= 0 or pmax_f <= cp_f or n == 0:
+        return {
+            "sr_avg_w": None,
+            "sr_if": None,
+            "sr_total_ss": None,
+            "sr_series": sr_series,
+        }
+
+    w_bal = wp_f
+    pmax_bal = pmax_f
+    sr_sum = 0.0
+    ss_sum = 0.0
+    count = 0
+
+    dt = 1.0
+    pmax_drain_window = max(1.0, tau_pcr)
+    # Watt-equivalent calibration: SR_per_sec * (Pmax/CP) -> watts.
+    sr_w_calib = pmax_f / cp_f
+
+    for raw in power_trace:
+        try:
+            P = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if P < 0 or not math.isfinite(P):
+            P = 0.0
+
+        mpa_t = MPA(w_bal, wp_f, cp_f, pmax_f)
+        sr_per_sec = strain_rate(P, mpa_t, cp_f, pmax_f)
+        sr_w = sr_per_sec * sr_w_calib
+        sr_series.append(sr_w)
+        sr_sum += sr_w
+
+        # SS accumulation (mirrors compute_xss_components; we cache it so the
+        # caller doesn't need to call the sibling for the total).
+        ss_sum += ss_per_second(P, mpa_t, cp_f, pmax_f, dt=dt)
+        count += 1
+
+        # ─── W'bal update (Skiba 2012, mirror compute_xss_components) ──────
+        if P > cp_f:
+            w_bal -= (P - cp_f) * dt
+        else:
+            dcp = max(0.0, cp_f - P)
+            tau_w = SKIBA_TAU_A * math.exp(-SKIBA_TAU_K * dcp) + SKIBA_TAU_B
+            w_bal += (wp_f - w_bal) * (1.0 - math.exp(-dt / tau_w))
+        w_bal = max(0.0, min(wp_f, w_bal))
+
+        # ─── Pmax_bal update (PCr depletion/recovery) ─────────────────────
+        # Need P_Pmax share for the drain term — recompute the attribution
+        # locally rather than allocate a tuple per second.
+        if P > cp_f:
+            excess = P - cp_f
+            denom = pmax_f - cp_f
+            P_Pmax_share = (excess * excess) / denom if denom > 0 else 0.0
+            if P_Pmax_share > excess:
+                P_Pmax_share = excess
+            pmax_bal -= (P_Pmax_share / pmax_drain_window) * dt
+        else:
+            pmax_bal += (pmax_f - pmax_bal) * (
+                1.0 - math.exp(-dt / max(1e-6, tau_pcr))
+            )
+        pmax_bal = max(cp_f, min(pmax_f, pmax_bal))
+
+    if count == 0:
+        return {
+            "sr_avg_w": None,
+            "sr_if": None,
+            "sr_total_ss": None,
+            "sr_series": sr_series,
+        }
+
+    sr_avg_w = sr_sum / count
+    sr_if = sr_avg_w / cp_f
+    return {
+        "sr_avg_w": sr_avg_w,
+        "sr_if": sr_if,
+        "sr_total_ss": ss_sum,
+        "sr_series": sr_series,
+    }
+
+
+def compute_sr_avg(
+    power_trace: Sequence[float],
+    cp: int | float | None,
+    w_prime: int | float | None,
+    pmax: int | float | None,
+    tau_pcr: float = DEFAULT_TAU_PCR_S,
+) -> dict:
+    """Strain-rate-derived intensity metric (NP-alternative lens).
+
+    Returns a dict with three keys — sr_avg_w, sr_if, sr_total_ss — mirroring
+    the Coggan 2003 NP / IF / TSS triplet but derived from Kontro 2026's
+    strain-rate equation (Eq. 11–13). Calibrated so 1 hour at exactly CP →
+    sr_avg_w ≈ CP (within ±2 W).
+
+    Inputs:
+      power_trace : 1 Hz watts series
+      cp, w_prime, pmax : athlete fitness signature (watts, joules, watts)
+      tau_pcr : PCr recovery time constant (seconds, default 30)
+
+    Returns ``{"sr_avg_w": None, "sr_if": None, "sr_total_ss": None}`` when
+    any of CP / W' / Pmax is None or physiologically invalid (Pmax ≤ CP).
+    The dashboard uses these None values to render the "Calibrate W' & Pmax"
+    tooltip for the mechanistic column.
+
+    Public API per /tmp/MASTER_DECISIONS_v107.md §1.
+    """
+    if cp is None or w_prime is None or pmax is None:
+        return {"sr_avg_w": None, "sr_if": None, "sr_total_ss": None}
+    res = _compute_sr_series(power_trace, cp, w_prime, pmax, tau_pcr=tau_pcr)
+    return {
+        "sr_avg_w": res["sr_avg_w"],
+        "sr_if": res["sr_if"],
+        "sr_total_ss": res["sr_total_ss"],
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # PER-COMPONENT BANISTER IMPULSE-RESPONSE
 # ═════════════════════════════════════════════════════════════════════════════
 

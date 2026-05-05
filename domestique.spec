@@ -96,11 +96,25 @@ a = Analysis(
         "fit_tool.profile.messages.file_id_message",
         "fit_tool.profile.messages.workout_message",
         "fit_tool.profile.messages.workout_step_message",
+        # v1.0.7 IMPL-TAU-FIT-CORE: scipy is now a hard dependency for
+        # tau_fitting.py (Banister NLS via scipy.optimize.curve_fit +
+        # bootstrap-CI). PyInstaller's static analyser misses scipy's lazy
+        # `_lib.array_api_compat` shim, which scipy.optimize imports on
+        # first call — without these explicit hidden imports the frozen
+        # bundle raises ModuleNotFoundError on the first τ-fit run.
+        "scipy",
+        "scipy.optimize",
+        "scipy.linalg",
+        "scipy._lib.array_api_compat",
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["matplotlib", "numpy", "scipy", "pandas"],  # keep tkinter for folder picker
+    # v1.0.7: numpy + scipy were previously excluded for a leaner DMG; both are
+    # now required for τ-fitting and must NOT be excluded. matplotlib + pandas
+    # remain excluded — Domestique never imports them. (~50 MB bundle hit, see
+    # MASTER_DECISIONS_v107_v110_v120_PATCH.md G2.)
+    excludes=["matplotlib", "pandas"],  # keep tkinter for folder picker
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

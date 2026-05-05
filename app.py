@@ -9833,6 +9833,12 @@ def api_ride_full_detail(ride_id: str, include: str = Query("")):
     def _attach_xss_summary(rec_dict: dict) -> dict:
         """v1.0.6 — surface xss_* on rec.summary so the Belastingscore card
         always finds the keys (None when 3D model has not run on this ride).
+
+        v1.0.7 IMPL-NP-ALT — also surfaces sr_avg_w / sr_if (strain-rate
+        watt-equivalent, NP-alternative lens) so the "Two lenses" comparison
+        block on the ride-detail modal renders Coggan NP/IF/TSS vs Kontro
+        SR_avg/SR_IF/Belastingscore side-by-side. Both fields are None when
+        CP/W'/Pmax aren't calibrated — dashboard greys out the right column.
         """
         if not isinstance(rec_dict, dict):
             return rec_dict
@@ -9847,6 +9853,8 @@ def api_ride_full_detail(ride_id: str, include: str = Query("")):
         summary.setdefault("xss_cp", rec_dict.get("xss_cp"))
         summary.setdefault("xss_w_prime", rec_dict.get("xss_w_prime"))
         summary.setdefault("xss_pmax", rec_dict.get("xss_pmax"))
+        summary.setdefault("sr_avg_w", rec_dict.get("sr_avg_w"))
+        summary.setdefault("sr_if", rec_dict.get("sr_if"))
         return rec_dict
 
     # ── ICU rides ──────────────────────────────────────────────────────────

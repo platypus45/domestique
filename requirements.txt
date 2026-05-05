@@ -33,6 +33,14 @@ lxml>=5.0,<7
 # silently break if a parent pulls a different range).
 packaging>=23,<27
 
+# v1.0.7 IMPL-TAU-FIT-CORE: scipy is needed by tau_fitting.py for nonlinear
+# least-squares (`scipy.optimize.curve_fit`, Trust Region Reflective bounds)
+# + the bootstrap-CI helpers. ~50 MB DMG hit is acceptable for the reliability
+# gain over a hand-rolled Levenberg-Marquardt. Upper bound <2 keeps a future
+# major-version release from silently breaking the fit (curve_fit behaviour
+# changes have happened across major versions before).
+scipy>=1.13,<2
+
 # Desktop app (launcher)
 pystray>=0.19.0
 Pillow>=10.0.0

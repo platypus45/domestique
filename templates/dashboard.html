@@ -4402,6 +4402,44 @@ async function openRideDetail(rideId) {
         <div style="font-size:24px;font-weight:900;color:${dcColor(s.decoupling_color)}">${s.decoupling_pct != null ? s.decoupling_pct + '%' : '---'}</div><div style="font-size:10px;color:var(--text3);">DECOUPLING</div></div>
     </div>`;
 
+    // v1.0.7 IMPL-NP-ALT: "Two lenses" comparison block — Coggan 2003
+    // empirical NP/IF/TSS vs Kontro 2026 mechanistic SR_avg/SR_IF/
+    // Belastingscore. Right column greys out behind a "Calibrate W' & Pmax"
+    // tooltip when CP/W'/Pmax aren't calibrated (sr_avg_w == null).
+    const _twoLensWp  = (s.weighted_power != null ? s.weighted_power
+                          : (s.normalized_power != null ? s.normalized_power : null));
+    const _twoLensIfPct = (s.intensity_factor != null)
+        ? Math.round(Number(s.intensity_factor) * 100)
+        : (s.if_pct != null ? Math.round(Number(s.if_pct)) : null);
+    const _twoLensTss = (s.tss != null) ? Math.round(Number(s.tss)) : null;
+    const _srAvgW   = (s.sr_avg_w != null) ? Math.round(Number(s.sr_avg_w)) : null;
+    const _srIfPct  = (s.sr_if    != null) ? Math.round(Number(s.sr_if) * 100) : null;
+    const _xssTotalRound = (s.xss_total != null) ? Math.round(Number(s.xss_total)) : null;
+    const _srEnabled = (_srAvgW != null);
+    const _rightOpacity = _srEnabled ? '1' : '0.45';
+    const _rightTooltip = _srEnabled
+        ? 'Strain-rate weighted by proximity to MPA. Mechanistic — Kontro 2026.'
+        : 'Calibrate W\\u2032 & Pmax in Settings to enable mechanistic strain.';
+    const _fmtVal = v => (v == null ? '—' : v);
+    html += `<div class="two-lenses-card" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;">
+      <div style="background:var(--surface2);border-radius:10px;padding:12px;border:1px solid var(--border);" title="Normalized Power weights spikes by the 4th-power (TrainingPeaks NP&reg;). Empirical &mdash; Coggan 2003.">
+        <div style="font-size:10px;font-weight:700;letter-spacing:0.5px;color:var(--text3);margin-bottom:8px;">COGGAN 2003 &mdash; EMPIRICAL</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">
+          <div style="text-align:center;"><div style="font-size:16px;font-weight:800;">${_fmtVal(_twoLensWp)}${_twoLensWp != null ? 'W' : ''}</div><div style="font-size:9px;color:var(--text3);">NP</div></div>
+          <div style="text-align:center;"><div style="font-size:16px;font-weight:800;">${_fmtVal(_twoLensIfPct)}${_twoLensIfPct != null ? '%' : ''}</div><div style="font-size:9px;color:var(--text3);">IF</div></div>
+          <div style="text-align:center;"><div style="font-size:16px;font-weight:800;">${_fmtVal(_twoLensTss)}</div><div style="font-size:9px;color:var(--text3);">TSS</div></div>
+        </div>
+      </div>
+      <div style="background:var(--surface2);border-radius:10px;padding:12px;border:1px solid var(--border);opacity:${_rightOpacity};" title="${esc(_rightTooltip)}">
+        <div style="font-size:10px;font-weight:700;letter-spacing:0.5px;color:var(--text3);margin-bottom:8px;">KONTRO 2026 &mdash; MECHANISTIC</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">
+          <div style="text-align:center;"><div style="font-size:16px;font-weight:800;">${_fmtVal(_srAvgW)}${_srAvgW != null ? 'W' : ''}</div><div style="font-size:9px;color:var(--text3);">SR_AVG</div></div>
+          <div style="text-align:center;"><div style="font-size:16px;font-weight:800;">${_fmtVal(_srIfPct)}${_srIfPct != null ? '%' : ''}</div><div style="font-size:9px;color:var(--text3);">SR_IF</div></div>
+          <div style="text-align:center;"><div style="font-size:16px;font-weight:800;">${_fmtVal(_xssTotalRound)}</div><div style="font-size:9px;color:var(--text3);">BELASTINGSCORE</div></div>
+        </div>
+      </div>
+    </div>`;
+
     // v1.0.6 IMPL-3D-DASHBOARD: Belastingscore secondary card — energy-system
     // breakdown. SECONDARY by design: hero grid above (TSS / WP / DECOUPLING)
     // stays the primary lens; this card is BELOW. Cells: Total (neutral),

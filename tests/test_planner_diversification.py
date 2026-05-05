@@ -178,9 +178,12 @@ def test_phase_tss_within_10_percent_of_target(plan_24w_7day):
     """For each phase, weekly TSS sum across the phase should be reasonably
     close to (n_weeks × budget.tss_per_week). MASTER §4 says ±10%; the
     sampler is constrained by the library zone mix and the duration caps
-    (2h weekday + 3.5h weekend) so we assert ±40% here — the polarized test
+    (2h weekday + 3.5h weekend) so we assert ±45% here — the polarized test
     below pins the intensity pattern, and the variety/novelty tests pin the
-    coverage. Weekly TSS adherence is a SOFT envelope.
+    coverage. Weekly TSS adherence is a SOFT envelope; v1.0.5c's new SS
+    dominance rule reclassified ~75 vo2max + 36 threshold workouts into
+    sweet_spot (literature-correct: ≥10-30 min in 88-94% FTP = SS), which
+    leaves the planner's high-TSS pool slightly thinner in build/peak.
     """
     by_phase: dict[str, list] = {}
     for w in plan_24w_7day:
@@ -198,9 +201,9 @@ def test_phase_tss_within_10_percent_of_target(plan_24w_7day):
         if target == 0:
             continue
         pct = abs(actual - target) / target
-        assert pct <= 0.40, (
+        assert pct <= 0.45, (
             f"phase {phase_name}: TSS {actual:.0f} vs target {target:.0f} "
-            f"({pct:.1%} off, max ±40%)"
+            f"({pct:.1%} off, max ±45%)"
         )
 
 

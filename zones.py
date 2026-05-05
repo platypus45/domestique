@@ -10,19 +10,19 @@ class Zone(NamedTuple):
     name: str       # short canonical name
 
 # Coggan 7-zone power model. Fractions are of FTP.
+# Coggan/Allen + ICU standard: Z3 76-90%, Z4 91-105%.
 # Z1 Active Recovery: 0-55%
 # Z2 Endurance:       56-75%
-# Z3 Tempo:           76-87%
-# Z4 Threshold:       88-105%   (sweet-spot 88-94, true threshold 95-105)
+# Z3 Tempo:           76-90%
+# Z4 Threshold:       91-105%
 # Z5 VO2max:          106-120%
 # Z6 Anaerobic:       121-150%
 # Z7 Neuromuscular:   151%+
-# Allen-Coggan boundary fix v1.0.5: 88% FTP belongs in Z4, not Z3.
 _POWER_FRACS = [
     (0.00, 0.55, "Z1 Active Recovery"),
     (0.56, 0.75, "Z2 Endurance"),
-    (0.76, 0.87, "Z3 Tempo"),
-    (0.88, 1.05, "Z4 Threshold"),
+    (0.76, 0.90, "Z3 Tempo"),
+    (0.91, 1.05, "Z4 Threshold"),
     (1.06, 1.20, "Z5 VO2max"),
     (1.21, 1.50, "Z6 Anaerobic"),
     (1.51, 99.99, "Z7 Neuromuscular"),

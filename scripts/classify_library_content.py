@@ -116,8 +116,8 @@ _CLASS_LABEL_V104 = {
 ZONES_FTP = {
     "z1": (0.00, 0.55),  # Active Recovery
     "z2": (0.55, 0.75),  # Endurance
-    "z3": (0.75, 0.88),  # Tempo (Allen-Coggan: Z3 = 76-87% exclusive top)
-    "z4": (0.88, 1.05),  # Threshold (Allen-Coggan: Z4 = 88-105% inclusive bottom; SS 88-94, thresh 95-105)
+    "z3": (0.75, 0.91),  # Z3 Tempo: 76-90% FTP (Coggan/Allen + ICU standard); half-open top
+    "z4": (0.91, 1.05),  # Z4 Threshold: 91-105% FTP (Coggan/Allen + ICU standard)
     "z5": (1.05, 1.20),  # VO2max
     "z6": (1.20, 1.50),  # Anaerobic
     "z7": (1.50, 5.00),  # Neuromuscular
@@ -139,6 +139,24 @@ DOSE_TEMPO_Z3_S = 20 * 60  # Coggan / TrainerRoad / FasCat: ≥20 min Z3
 
 DOSE_SWEETSPOT_S = 25 * 60  # Overton 2x ~12.5 min minimum
 DOSE_SWEETSPOT_FRAC = 0.55  # ≥55% of Z3 time spent in 88-94% band
+
+# v1.0.5c Sweet-Spot dominance gate. Allen-Coggan call a workout "sweet-spot
+# training" when the primary block dwells in 88-94% FTP for 10-30 min. We fire
+# the SS branch when the SS band carries ≥25% of work time OR ≥10 min absolute
+# (whichever is met). The threshold-domination guard prevents misrouting a true
+# threshold workout (e.g. 4×8min @ 100%) that brushes 88-94% during ramp.
+SS_DOMINANCE_THRESHOLD = 0.25     # 25% of work time in 88-94% band
+SS_MIN_BLOCK_S = 10 * 60          # OR ≥10 min absolute (Allen-Coggan SS minimum)
+SS_THRESHOLD_DOMINATION_RATIO = 1.5  # Z4 (91-105%) > 1.5× SS time → threshold-dominated
+
+# v1.0.5c peak_band sustained-presence gates. Stöggl & Sperlich 2014 / Billat
+# 30/30 / Rønnestad 30/15: a VO2max workout requires sustained Z5 ≥3 min OR
+# multi-rep microintervals (≥4 reps at Z5) cumulating ≥6 min. A standalone
+# 60-s warmup surge fails both gates and must NOT promote peak_band to Z5.
+PEAK_BAND_SUSTAINED_S = 180        # ≥3 min sustained
+PEAK_BAND_MICROINTERVAL_REPS = 4   # ≥4 reps at-or-above the band
+PEAK_BAND_MICROINTERVAL_TOTAL_S = 360  # cumulative ≥6 min across those reps
+PEAK_BAND_MICRO_REP_MIN_S = 30     # each rep must be ≥30 s to count
 
 DOSE_THRESHOLD_Z4_S = 15 * 60  # Allen/Coggan: ≥15 min cumulative
 
@@ -648,11 +666,14 @@ def extract_features(power: list[float]) -> dict:
         z_sec[_zone_for_power(p)] += 1
 
     sweet_spot_s = sum(1 for p in power if p >= 0 and SWEET_SPOT_BAND[0] <= p < SWEET_SPOT_BAND[1])
-    # Split Z4 into "sweet-spot Z4" (90-94%) vs "true threshold" (95-105%)
-    # so Rule 7 (Threshold) doesn't fire on a workout that's entirely in
-    # the sweet-spot band but happens to land in Coggan Z4 boundary-wise.
+    # Split the wider sweet-spot disambiguation band (88-94%) from "true
+    # threshold" (≥95%) so Rule 7 (Threshold) doesn't fire on a workout
+    # that's entirely in the sweet-spot band. ``z4_lower_s`` deliberately
+    # spans 88-94% — the full Coggan SS window — even though Z3/Z4 split
+    # is at 91% in the canonical zone model. ``z4_upper_s`` is computed
+    # directly so it can't go negative when SS time exceeds Z4 time.
     z4_lower_s = sum(1 for p in power if p >= 0 and 0.88 <= p < 0.95)
-    z4_upper_s = z_sec["z4"] - z4_lower_s
+    z4_upper_s = sum(1 for p in power if p >= 0 and 0.95 <= p < 1.05)
 
     # Hard segments: contiguous p ≥ 0.95, duration ≥ 15s
     hard_segs = find_contiguous_segments(power, 0.95, min_dur_s=15)
@@ -1084,32 +1105,72 @@ def detect_ladder(segments: list[dict]) -> dict:
 
 
 def _peak_band_features(power: list[float], segments: list[dict]) -> dict:
-    """Compute peak-zone-gate features required by §2."""
+    """Compute peak-zone-gate features required by §2.
+
+    ``peak_band`` is the highest zone whose presence is *sustained or repeated*
+    in the workout — not merely "touched". A 60-s warmup surge must NOT promote
+    peak_band to that zone, otherwise the cascade routes by a non-representative
+    pulse instead of the workout's actual training stimulus.
+
+    v1.0.5c: a zone qualifies if EITHER
+      * a single contiguous block in the band lasts ≥180 s (Stöggl & Sperlich
+        sustained VO2max minimum), OR
+      * ≥4 reps in the band each ≥30 s, cumulating ≥360 s (Billat 30/30,
+        Rønnestad 30/15 microinterval cumulative dose).
+    A standalone 60-s pulse fails both gates (1 rep, 60 s contiguous).
+    """
     valid_dur = sum(1 for p in power if p >= 0)
 
-    peak_band = "z1"
-    for z in ("z7", "z6", "z5", "z4", "z3", "z2"):
+    # Compute work_dur_s up front (was previously computed below) so we can
+    # use it to gate peak_band. Mirror the same warmup/cooldown subtraction
+    # logic; if there are no labelled segments fall back to valid_dur.
+    work_dur = 0
+    warmup_dur = 0
+    cooldown_dur = 0
+    for seg in segments:
+        if seg["kind"] == "warmup":
+            warmup_dur += seg["duration_s"]
+        elif seg["kind"] == "cooldown":
+            cooldown_dur += seg["duration_s"]
+        else:
+            work_dur += seg["duration_s"]
+    if work_dur <= 0:
+        work_dur = max(valid_dur - warmup_dur - cooldown_dur, 1)
+
+    # Build per-zone contiguous-block lengths (seconds at-or-above zone floor).
+    contiguous_blocks: dict[str, list[int]] = {z: [] for z in ZONES_FTP}
+    for z in ZONES_FTP:
         thresh = ZONES_FTP[z][0]
         run = 0
-        found = False
         for p in power:
-            if p >= thresh and p >= 0:
+            if p >= 0 and p >= thresh:
                 run += 1
-                if run >= 30:
-                    peak_band = z
-                    found = True
-                    break
             else:
+                if run > 0:
+                    contiguous_blocks[z].append(run)
                 run = 0
-        if found:
-            break
+        if run > 0:
+            contiguous_blocks[z].append(run)
 
-    if peak_band == "z1":
-        peak_band_pct = 0.0
-    else:
-        thresh = ZONES_FTP[peak_band][0]
-        time_at_or_above = sum(1 for p in power if p >= thresh and p >= 0)
-        peak_band_pct = round(time_at_or_above / max(valid_dur, 1), 4)
+    peak_band = "z1"
+    peak_band_pct = 0.0
+    for z in ("z7", "z6", "z5", "z4", "z3", "z2"):
+        blocks = contiguous_blocks.get(z, [])
+        longest = max(blocks, default=0)
+        # Gate A: sustained ≥180 s in the band.
+        sustained = longest >= PEAK_BAND_SUSTAINED_S
+        # Gate B: ≥4 reps each ≥30 s, cumulative ≥360 s (microinterval dose).
+        qualifying_reps = [b for b in blocks if b >= PEAK_BAND_MICRO_REP_MIN_S]
+        rep_count = len(qualifying_reps)
+        rep_total = sum(qualifying_reps)
+        repeated = (rep_count >= PEAK_BAND_MICROINTERVAL_REPS
+                    and rep_total >= PEAK_BAND_MICROINTERVAL_TOTAL_S)
+        if sustained or repeated:
+            thresh = ZONES_FTP[z][0]
+            time_at_or_above = sum(1 for p in power if p >= thresh and p >= 0)
+            peak_band = z
+            peak_band_pct = round(time_at_or_above / max(valid_dur, 1), 4)
+            break
 
     dominant_band = "z1"
     longest = 0
@@ -1160,19 +1221,6 @@ def _peak_band_features(power: list[float], segments: list[dict]) -> dict:
                 longest_z4plus = z4plus_run
         else:
             z4plus_run = 0
-
-    work_dur = 0
-    warmup_dur = 0
-    cooldown_dur = 0
-    for seg in segments:
-        if seg["kind"] == "warmup":
-            warmup_dur += seg["duration_s"]
-        elif seg["kind"] == "cooldown":
-            cooldown_dur += seg["duration_s"]
-        else:
-            work_dur += seg["duration_s"]
-    if work_dur <= 0:
-        work_dur = max(valid_dur - warmup_dur - cooldown_dur, 1)
 
     z4plus_time = sum(1 for p in power if p >= z4_thresh and p >= 0)
     z4plus_in_work_pct = round(z4plus_time / max(work_dur, 1), 4)
@@ -1365,6 +1413,42 @@ def classify_v104(features: dict, tags: list[str] | None = None,
     if (z6_s + z7_s) >= DOSE_ANAEROBIC_Z6Z7_S and z5_s < DOSE_VO2_Z5_S:
         conf = _confidence_from_dose(z6_s + z7_s, DOSE_ANAEROBIC_Z6Z7_S, 6 * 60)
         return "anaerobic", conf, secondary
+
+    # v1.0.5c Sweet-Spot dominance branch — fires BEFORE the Tempo, Threshold
+    # and VO2max dose-based branches so a workout whose primary block dwells
+    # 88-94% FTP routes to sweet_spot even when a brief Z5+ surge would
+    # otherwise pull it into vo2max via cumulative-dose rules. Allen-Coggan
+    # call any workout with ≥10-30 min in 88-94% FTP "sweet-spot training".
+    # Structural detectors above (over_under, vo2_short, anaerobic) take
+    # precedence — those are pattern-based, not dose-based.
+    sweet_spot_s = features.get("sweet_spot_s", 0)
+    work_dur_s = features.get("work_dur_s") or max(valid_dur, 1)
+    ss_pct = sweet_spot_s / max(work_dur_s, 1)
+    # Domination guards. The SS branch is suppressed when the workout is
+    # actually structurally something else:
+    #   * threshold-dominated — Z4 (91-105%) time ≥ 1.5× SS time and meets
+    #     threshold dose. The session brushes 88-94% during ramps but the
+    #     primary stimulus is at LT2.
+    #   * vo2max-dominated — ≥8 min cumulative Z5+ (Laursen & Jenkins 2002
+    #     PMID 11772161 / Seiler 4×8 PMID 21812820). The SS band is
+    #     incidental during recovery between Z5+ intervals.
+    is_threshold_dominated = (
+        z4_s >= sweet_spot_s * SS_THRESHOLD_DOMINATION_RATIO
+        and z4_s >= DOSE_THRESHOLD_Z4_S
+    )
+    is_vo2_dominated = z5_s >= DOSE_VO2_Z5_S
+    # The absolute-floor branch (≥10 min in SS band) is gated by a soft
+    # proportional check (≥10% of work time) so a 10-min SS finisher inside
+    # a 2-hour Z2 ride doesn't get reclassified as sweet-spot. The pct
+    # branch (25%) doesn't need this guard.
+    ss_absolute_qualifies = (sweet_spot_s >= SS_MIN_BLOCK_S
+                             and ss_pct >= 0.10)
+    ss_pct_qualifies = ss_pct >= SS_DOMINANCE_THRESHOLD
+    if (not is_threshold_dominated and not is_vo2_dominated
+            and (ss_pct_qualifies or ss_absolute_qualifies)):
+        conf = _confidence_from_dose(sweet_spot_s, SS_MIN_BLOCK_S, 30 * 60)
+        return "sweet_spot", conf, secondary
+
     if z5_s >= DOSE_VO2_Z5_S:
         conf = _confidence_from_dose(z5_s, DOSE_VO2_Z5_S, 16 * 60)
         return "vo2max", conf, secondary

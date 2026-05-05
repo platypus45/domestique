@@ -10119,6 +10119,11 @@ def api_ride_full_detail(ride_id: str, include: str = Query("")):
         summary.setdefault("xss_pmax", rec_dict.get("xss_pmax"))
         summary.setdefault("sr_avg_w", rec_dict.get("sr_avg_w"))
         summary.setdefault("sr_if", rec_dict.get("sr_if"))
+        # v1.0.7 IMPL-DFA: surface DFA α1 series + status field so the
+        # ride-detail panel + the v1.0.7 IMPL-HRV-PROMPT toast both find
+        # the keys (None when sensor didn't emit RR-intervals).
+        summary.setdefault("dfa_alpha1_avg", rec_dict.get("dfa_alpha1_avg"))
+        summary.setdefault("dfa_alpha1_status", rec_dict.get("dfa_alpha1_status"))
 
         # v1.0.7 IMPL-TAU-FIT-WIRING: surface is_race + activity_id from the
         # SQLite activities table so the dashboard "🏁 Mark as race" checkbox

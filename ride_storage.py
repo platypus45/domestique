@@ -947,3 +947,37 @@ def detect_wbal_overshoot(ride: dict, wprime_j: int | None = None) -> bool:
         return False
     threshold_kj = (wprime_j / 1000.0) * 0.60
     return trough_kj < threshold_kj
+
+
+def summarise_fit_device(fit_path: Path) -> dict:
+    """v1.0.7 IMPL-HRV-PROMPT — extract recording-device fields for the ride summary.
+
+    Wraps ``fit_activity.parse_device_info`` and shapes the result for
+    inclusion in the on-disk ride summary. Used by ``_build_fit_normalized``
+    so the home-page HRV-recording-prompt toast can name the rider's
+    specific Garmin device ("Edge 530" / "Fēnix 8" / etc.).
+
+    Returns a dict with keys ``device_manufacturer``, ``device_product_name``,
+    ``device_product_id`` — all None / "unknown" for non-Garmin or
+    unparseable FITs (the toast handles those gracefully by not naming a
+    specific device).
+    """
+    try:
+        from fit_activity import parse_device_info
+        info = parse_device_info(fit_path)
+    except Exception as e:
+        log.debug(f"summarise_fit_device({fit_path}) parse failed: {e}")
+        info = None
+
+    if not isinstance(info, dict):
+        return {
+            "device_manufacturer": None,
+            "device_product_name": None,
+            "device_product_id": None,
+        }
+
+    return {
+        "device_manufacturer": info.get("manufacturer"),
+        "device_product_name": info.get("garmin_product_name"),
+        "device_product_id": info.get("garmin_product_id"),
+    }

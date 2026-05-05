@@ -1946,6 +1946,133 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
       } catch (_) {}
     }, 1500);
   });
+
+  // ── v1.0.7 IMPL-HRV-PROMPT — home-page HRV-recording educational toast ──
+  // Fires on home-page init when the most-recent ride had HR data but no
+  // HrvMessage records (dfa_alpha1_status == 'no_rr_data'). Per-version
+  // dismissal: re-fires after a release bump unless the rider clicked
+  // "Don't show again" (permanent). Modal mirrors the README §"DFA Alpha1"
+  // device-by-device path table; the rider's row is pre-highlighted in green.
+  function _hrvPromptDeviceRows() {
+    return [
+      { match:/edge\s*(530|830|1030|1040)/i,
+        label:'Edge 530 / 830 / 1030 / 1030 Plus / 1040',
+        path:'Settings (gear icon) → Activity Profiles → [Bike] → Data Recording → HRV = On',
+        href:'https://support.garmin.com/' },
+      { match:/edge\s*(explore|130)/i,
+        label:'Edge Explore / Edge 130',
+        path:"Firmware doesn't expose HRV recording; not supported.",
+        href:'https://support.garmin.com/' },
+      { match:/f.{0,3}nix\s*8/i,
+        label:'Fēnix 8',
+        path:'Hold watch face → Watch Settings → System → Advanced → Data Recording → Log HRV = On',
+        href:'https://www8.garmin.com/manuals/webhelp/GUID-EECCAC99-90D6-4AB1-9A3A-EC433D3365E2/EN-US/GUID-62E32BA1-D258-421A-A192-D7DB5453F7EB.html' },
+      { match:/f.{0,3}nix\s*(6|7)|epix\s*2/i,
+        label:'Fēnix 6 / 7 / Epix 2',
+        path:'Settings → System → Data Recording → Log HRV = On',
+        href:'https://support.garmin.com/' },
+      { match:/forerunner|fr\s?\d+/i,
+        label:'Forerunner 255 / 265 / 745 / 945 / 955 / 965',
+        path:'Settings → System → Data Recording → Log HRV = On (try System → Advanced → Data Recording on newer firmware)',
+        href:'https://support.garmin.com/' },
+      { match:/.*/,
+        label:'Garmin Connect Mobile (universal fallback)',
+        path:'Devices tab → [your device] → Activity Profiles → Cycling → Data Recording → enable HRV / Beat-to-Beat',
+        href:'https://support.garmin.com/' },
+    ];
+  }
+  function _hrvPromptShowModal(deviceName) {
+    const rows = _hrvPromptDeviceRows();
+    const dn = (deviceName || '').toString();
+    let highlightedIdx = -1;
+    if (dn) {
+      for (let i = 0; i < rows.length - 1; i++) {  // skip the universal-fallback last row
+        if (rows[i].match.test(dn)) { highlightedIdx = i; break; }
+      }
+    }
+    const trs = rows.map((r, idx) => {
+      const dim = (highlightedIdx >= 0 && idx !== highlightedIdx && idx !== rows.length - 1) ? 0.5 : 1.0;
+      const bg = (idx === highlightedIdx) ? 'background:rgba(34,197,94,0.18);' : '';
+      const link = `<a href="${r.href}" target="_blank" rel="noopener noreferrer" title="Open Garmin support" style="margin-left:6px;color:var(--accent);text-decoration:none;">↗</a>`;
+      return `<tr style="opacity:${dim};${bg}"><td style="padding:8px;border-bottom:1px solid var(--border);font-weight:600;">${r.label}</td><td style="padding:8px;border-bottom:1px solid var(--border);user-select:text;">${r.path}${link}</td></tr>`;
+    }).join('');
+    const detected = dn ? `<div style="margin:0 0 12px 0;font-size:12px;color:var(--text2);">Detected device: <strong>${dn}</strong>${highlightedIdx >= 0 ? ' (highlighted below)' : ''}</div>` : '';
+    const html = `
+      <h2 style="margin:0 0 8px 0;">Enable HRV recording on your Garmin</h2>
+      <p style="margin:0 0 6px 0;font-size:13px;color:var(--text2);">
+        DFA α1 needs beat-to-beat RR-intervals. Your chest strap emits them, but
+        most Garmin head units ship with HRV recording <strong>disabled</strong>
+        until you flip a single device-side switch. After flipping the toggle,
+        future rides will include the data; pre-existing rides can't be backfilled.
+      </p>
+      ${detected}
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead><tr><th style="text-align:left;padding:8px;border-bottom:2px solid var(--border);">Device family</th><th style="text-align:left;padding:8px;border-bottom:2px solid var(--border);">Exact path</th></tr></thead>
+        <tbody>${trs}</tbody>
+      </table>
+      <p style="margin:12px 0 0 0;font-size:11px;color:var(--text3);">
+        Tip: while you're in Data Recording, switch from "Smart Recording" to
+        "Every Second" for maximum DFA α1 fidelity.
+      </p>
+      <div style="margin-top:14px;text-align:right;">
+        <button class="btn" onclick="closeModal()">Close</button>
+      </div>
+    `;
+    openModal(html);
+  }
+  async function _hrvPromptDismiss(level) {
+    try {
+      await fetch('/api/wellness/hrv-recording-dismiss', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({level: level}),
+      });
+    } catch (_) {}
+  }
+  document.addEventListener('DOMContentLoaded', function(){
+    setTimeout(async function(){
+      try {
+        const res = await fetch('/api/wellness/hrv-recording-status');
+        if (!res.ok) return;
+        const d = await res.json();
+        if (!d || !d.should_show_prompt) return;
+        const dev = d.device_product_name || 'your Garmin';
+        try {
+          const tc = document.getElementById('toast-container') || (function(){
+            const c = document.createElement('div');
+            c.id = 'toast-container';
+            c.style.cssText = 'position:fixed;top:80px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;';
+            document.body.appendChild(c);
+            return c;
+          })();
+          const t = document.createElement('div');
+          t.style.cssText = 'background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:12px 16px;border-radius:8px;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.2);max-width:380px;';
+          t.innerHTML = `
+            <div style="margin-bottom:8px;line-height:1.4;">Your last ride had HR but no beat-to-beat HRV — enable HRV recording on ${dev === 'your Garmin' ? dev : '<strong>' + dev + '</strong>'} to unlock DFA α1 fatigue tracking.</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button class="btn" data-act="show">Show me how</button>
+              <button class="btn" data-act="dismiss">Dismiss</button>
+              <button class="btn" data-act="never">Don't show again</button>
+            </div>
+          `;
+          t.querySelector('[data-act="show"]').addEventListener('click', () => {
+            _hrvPromptShowModal(d.device_product_name);
+            _hrvPromptDismiss('version');
+            t.remove();
+          });
+          t.querySelector('[data-act="dismiss"]').addEventListener('click', () => {
+            _hrvPromptDismiss('version');
+            t.remove();
+          });
+          t.querySelector('[data-act="never"]').addEventListener('click', () => {
+            _hrvPromptDismiss('permanent');
+            t.remove();
+          });
+          tc.appendChild(t);
+        } catch (_) {}
+      } catch (_) {}
+    }, 2000);
+  });
   </script>
   <!-- v4.6.7 IMPL-SUM: summary modal END -->
   <!-- Monthly Availability Calendar -->

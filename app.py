@@ -1519,6 +1519,159 @@ def api_wellness(days: int = Query(28)):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# v1.0.7 IMPL-HRV-PROMPT — HRV-recording prompt endpoints
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _hrv_prompt_state_path() -> Path:
+    """Per-profile JSON file holding HRV-prompt dismissal flags.
+
+    Layout::
+        {"version_dismissed": {"<version>": True, ...},
+         "permanent_dismissed": True | False}
+
+    Stored under DATA_DIR (same pattern as ``_readiness_revert_flag_path``)
+    so it survives across runs. Tests can stub by monkeypatching DATA_DIR
+    or this helper directly.
+    """
+    return DATA_DIR / "hrv_prompt_state.json"
+
+
+def _read_hrv_prompt_state() -> dict:
+    """Load the dismissal-flag JSON; return an empty-default shape on error."""
+    p = _hrv_prompt_state_path()
+    try:
+        if p.exists():
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+    except (json.JSONDecodeError, OSError) as e:
+        _log.debug(f"_read_hrv_prompt_state read failed: {e}")
+    return {"version_dismissed": {}, "permanent_dismissed": False}
+
+
+def _write_hrv_prompt_state(state: dict) -> None:
+    """Persist the dismissal-flag JSON. Failure is logged-only."""
+    p = _hrv_prompt_state_path()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    except OSError as e:
+        _log.debug(f"_write_hrv_prompt_state write failed: {e}")
+
+
+def _last_ride_for_hrv_prompt() -> dict | None:
+    """Return the most-recent saved ride (ICU-or-FIT), normalized into a dict.
+
+    Used by ``/api/wellness/hrv-recording-status`` to inspect
+    ``dfa_alpha1_status`` + device fields. Falls back to None when no rides
+    exist or the loader raises.
+    """
+    try:
+        merged = _load_all_rides_safe()
+    except Exception as e:
+        _log.debug(f"_last_ride_for_hrv_prompt: load failed: {e}")
+        return None
+    if not merged:
+        return None
+    # merged is sorted newest-first per ride_storage.load_all_rides contract.
+    most_recent = merged[0]
+    if not isinstance(most_recent, dict):
+        return None
+    rid = most_recent.get("ride_id") or ""
+    # ICU records carry dfa_alpha1_status inline (written by
+    # _augment_icu_record_with_dfa). FIT bare entries do not — we need to
+    # build the normalized record to read the status.
+    if isinstance(rid, str) and rid.startswith("fit_"):
+        try:
+            stem = rid[4:]
+            fit_path = _rides_fit_dir() / f"{stem}.fit"
+            if fit_path.exists():
+                return _build_fit_normalized(fit_path, rid)
+        except Exception as e:
+            _log.debug(f"_last_ride_for_hrv_prompt: FIT normalize failed: {e}")
+    return most_recent
+
+
+@app.get("/api/wellness/hrv-recording-status")
+def api_hrv_recording_status():
+    """v1.0.7 IMPL-HRV-PROMPT — does the home-page toast fire?
+
+    Checks the most-recent saved ride. Returns
+    ``should_show_prompt=True`` when:
+      * the ride's ``dfa_alpha1_status == 'no_rr_data'`` (FIT had HR
+        records but no HrvMessage records — rider didn't enable HRV
+        recording on their Garmin), AND
+      * neither ``hrv_prompt_dismissed_<VERSION>`` nor
+        ``hrv_prompt_never_show`` flag is set.
+
+    The response also names the device when known so the dashboard modal
+    can pre-highlight the rider's row in the device-by-device path table.
+    """
+    state = _read_hrv_prompt_state()
+    if state.get("permanent_dismissed"):
+        return {
+            "should_show_prompt": False,
+            "device_product_name": None,
+            "last_ride_id": None,
+            "dismissal_state": "permanent",
+            "version": _VERSION,
+        }
+    version_flag = bool((state.get("version_dismissed") or {}).get(_VERSION))
+    if version_flag:
+        return {
+            "should_show_prompt": False,
+            "device_product_name": None,
+            "last_ride_id": None,
+            "dismissal_state": "version",
+            "version": _VERSION,
+        }
+
+    ride = _last_ride_for_hrv_prompt()
+    if not isinstance(ride, dict):
+        return {
+            "should_show_prompt": False,
+            "device_product_name": None,
+            "last_ride_id": None,
+            "dismissal_state": "none",
+            "version": _VERSION,
+        }
+    status = ride.get("dfa_alpha1_status")
+    should_show = status == "no_rr_data"
+    return {
+        "should_show_prompt": bool(should_show),
+        "device_product_name": ride.get("device_product_name"),
+        "last_ride_id": ride.get("ride_id"),
+        "dismissal_state": "none",
+        "version": _VERSION,
+    }
+
+
+@app.post("/api/wellness/hrv-recording-dismiss")
+def api_hrv_recording_dismiss(payload: dict = Body(...)):
+    """v1.0.7 IMPL-HRV-PROMPT — record toast dismissal.
+
+    ``level='version'`` suppresses the toast for the current ``_VERSION``
+    (re-fires on the next release). ``level='permanent'`` suppresses it
+    forever. Anything else returns 400.
+    """
+    if not isinstance(payload, dict):
+        return JSONResponse({"error": "bad payload"}, 400)
+    level = payload.get("level")
+    if level not in ("version", "permanent"):
+        return JSONResponse({"error": "level must be 'version' or 'permanent'"}, 400)
+    state = _read_hrv_prompt_state()
+    if not isinstance(state, dict):
+        state = {"version_dismissed": {}, "permanent_dismissed": False}
+    state.setdefault("version_dismissed", {})
+    if level == "permanent":
+        state["permanent_dismissed"] = True
+    else:
+        state["version_dismissed"][_VERSION] = True
+    _write_hrv_prompt_state(state)
+    return {"ok": True, "level": level, "version": _VERSION}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # WORKOUT APIs
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -10022,6 +10175,21 @@ def _build_fit_normalized(fit_path: Path, ride_id: str) -> dict:
     except Exception as e:
         _log.debug(f"_build_fit_normalized DFA α1 compute failed: {e}")
 
+    # v1.0.7 IMPL-HRV-PROMPT — read FIT FileIdMessage so the home-page toast
+    # can name the rider's specific Garmin device. Failure is non-fatal.
+    device_manufacturer = None
+    device_product_name = None
+    device_product_id = None
+    try:
+        import ride_storage as _rs_dev
+        dev = _rs_dev.summarise_fit_device(fit_path)
+        if isinstance(dev, dict):
+            device_manufacturer = dev.get("device_manufacturer")
+            device_product_name = dev.get("device_product_name")
+            device_product_id = dev.get("device_product_id")
+    except Exception as e:
+        _log.debug(f"_build_fit_normalized device-info read failed: {e}")
+
     return {
         "ride_id": ride_id,
         "source": "fit",
@@ -10052,6 +10220,12 @@ def _build_fit_normalized(fit_path: Path, ride_id: str) -> dict:
         "dfa_alpha1_lt1_minutes": dfa_lt1_min,
         "dfa_alpha1_status": dfa_status,
         "rr_intervals_count": rr_count,
+        # v1.0.7 IMPL-HRV-PROMPT — device fields used by the
+        # /api/wellness/hrv-recording-status endpoint to name the rider's
+        # head unit in the toast / modal.
+        "device_manufacturer": device_manufacturer,
+        "device_product_name": device_product_name,
+        "device_product_id": device_product_id,
         "time_in_zone": {f"z{i}": 0 for i in range(1, 8)},
         "intervals": [],
         "samples_url": f"/api/ride/{ride_id}/detail?include=samples",

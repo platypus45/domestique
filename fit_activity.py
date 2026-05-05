@@ -27,6 +27,152 @@ from typing import Optional
 log = logging.getLogger("domestique.fit_activity")
 
 
+# v1.0.7 IMPL-HRV-PROMPT — friendly-name lookup for FIT FileIdMessage.garmin_product
+# Per master decisions G8 (dfa_alpha1_status='no_rr_data'), the dashboard surfaces
+# a one-time-per-version toast educating the rider how to enable HRV recording on
+# THEIR specific Garmin device. Auto-detection reads file_id.garmin_product.
+#
+# Numeric IDs verified against fit_tool.profile.profile_type.GarminProduct enum
+# (where present) and Garmin's public ProductTable for newer devices not yet in
+# fit_tool's bundled enum (e.g. Fēnix 8 = 4426). IDs not in this table fall back
+# to "Unknown Garmin product ID <n>".
+_GARMIN_PRODUCT_NAMES: dict[int, str] = {
+    # Edge head units — full HRV-recording support (per README §"DFA Alpha1").
+    3121: "Edge 530",
+    3122: "Edge 830",
+    2713: "Edge 1030",
+    3570: "Edge 1030 Plus",
+    4061: "Edge 1040",
+    # Fēnix multisport watches.
+    3290: "Fēnix 6",
+    3291: "Fēnix 6X",
+    3288: "Fēnix 6S",
+    3905: "Fēnix 7",
+    3906: "Fēnix 7S",
+    3907: "Fēnix 7X",
+    4426: "Fēnix 8",
+    # Epix watches.
+    3943: "Epix 2",
+    # Forerunner — newer firmware exposes HRV recording.
+    3589: "Forerunner 745",
+    3113: "Forerunner 945",
+    4024: "Forerunner 255",
+    4025: "Forerunner 255S",
+    4063: "Forerunner 265",
+    4068: "Forerunner 265S",
+    3858: "Forerunner 955",
+    3989: "Forerunner 965",
+}
+# NOTE: where fit_tool.profile_type.GarminProduct disagrees with our table
+# (Garmin reuses some product IDs across regions / "Asia" variants), we trust
+# our table — it's keyed by the model name the rider sees in the README's
+# device-by-device path table.
+
+
+def parse_device_info(fit_path: Path) -> dict | None:
+    """v1.0.7 IMPL-HRV-PROMPT — extract recording device info from a FIT file.
+
+    Walks the ``file_id`` (FileIdMessage, global mesg id 0) record and returns
+    ``{manufacturer, garmin_product, garmin_product_id, garmin_product_name}``
+    for use by the home-page HRV-recording-prompt toast.
+
+    The toast fires when a synced ride lands with HR data but
+    ``dfa_alpha1_status == 'no_rr_data'``. To show the rider an actionable
+    "Settings → Activity Profiles → … → HRV = On" path, we need to know
+    which Garmin head unit they're using. ``manufacturer`` (e.g. "garmin")
+    plus ``garmin_product`` (numeric) plus the friendly-name lookup
+    (``_GARMIN_PRODUCT_NAMES``) supply that.
+
+    Returns:
+        dict with keys ``manufacturer`` (str | None: "garmin" / "unknown"),
+        ``garmin_product`` (int | None: raw numeric ID),
+        ``garmin_product_id`` (int | None: alias for ``garmin_product`` —
+        kept for v1.0.7 master-decisions field-name compatibility),
+        ``garmin_product_name`` (str: friendly name or
+        "Unknown Garmin product ID <n>").
+        Returns ``None`` only when the FIT itself fails to parse.
+    """
+    try:
+        from fit_tool.fit_file import FitFile
+    except Exception as e:
+        log.warning(f"parse_device_info: fit_tool import failed: {e}")
+        return None
+
+    try:
+        ff = FitFile.from_file(str(fit_path))
+    except Exception as e:
+        log.warning(f"parse_device_info({fit_path}) FIT parse failed: {e}")
+        return None
+
+    manufacturer: str | None = None
+    garmin_product_id: int | None = None
+    try:
+        for rec in ff.records:
+            msg = rec.message
+            if type(msg).__name__ != "FileIdMessage":
+                continue
+            # ── manufacturer (FIT spec: numeric enum; 1 = Garmin) ─────
+            try:
+                m_raw = msg.manufacturer
+            except Exception:
+                m_raw = None
+            if m_raw is None:
+                try:
+                    m_raw = msg.get_value("manufacturer")
+                except Exception:
+                    m_raw = None
+            if m_raw is not None:
+                # FitFile may surface the enum object or the int.
+                try:
+                    m_int = int(getattr(m_raw, "value", m_raw))
+                    manufacturer = "garmin" if m_int == 1 else f"id_{m_int}"
+                except (TypeError, ValueError):
+                    manufacturer = str(m_raw).lower()
+            # ── garmin_product (numeric; resolved to friendly name below) ─
+            try:
+                gp_raw = msg.garmin_product
+            except Exception:
+                gp_raw = None
+            if gp_raw is None:
+                try:
+                    gp_raw = msg.get_value("garmin_product")
+                except Exception:
+                    gp_raw = None
+            if gp_raw is not None:
+                try:
+                    garmin_product_id = int(getattr(gp_raw, "value", gp_raw))
+                except (TypeError, ValueError):
+                    garmin_product_id = None
+            # The first FileIdMessage is the activity's authoritative one.
+            break
+    except Exception as e:
+        log.warning(f"parse_device_info({fit_path}) walk failed: {e}")
+        return {
+            "manufacturer": manufacturer or "unknown",
+            "garmin_product": garmin_product_id,
+            "garmin_product_id": garmin_product_id,
+            "garmin_product_name": "unknown",
+        }
+
+    if manufacturer is None:
+        manufacturer = "unknown"
+
+    if garmin_product_id is None:
+        product_name = "unknown"
+    else:
+        product_name = _GARMIN_PRODUCT_NAMES.get(
+            garmin_product_id,
+            f"Unknown Garmin product ID {garmin_product_id}",
+        )
+
+    return {
+        "manufacturer": manufacturer,
+        "garmin_product": garmin_product_id,
+        "garmin_product_id": garmin_product_id,
+        "garmin_product_name": product_name,
+    }
+
+
 def parse_rr_intervals(fit_path: Path) -> list[float]:
     """v1.0.7 — extract RR-intervals (in seconds) from a FIT file's HrvMessage records.
 

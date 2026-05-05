@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.0.1 — Download bugs + Karoo + DMG bundling (2026-05-04)
+
+### Download bugs (closes 3 user-visible issues)
+- **"Download ZWO" returned 404 "not found"** — the dashboard hit `/api/download/zwo/<filename>` (single-segment path) but the only registered route was `/api/download/zwo/{category}/{filename}` (two-segment). FastAPI never matched. Added a single-arg route variant.
+- **"Download FIT" silently did nothing** — root cause was a session_type literal mismatch: dashboard's `<select>` emitted `sweet_spot` and `over_under` (snake_case) but the FIT endpoint's elif chain checked `sweetspot` / `overunder` (no underscore). Picks fell through to a generic Z2 block which sometimes errored, returning 500 JSON that the `<a download>` element silently ignored. Fix: normalise input via `session_type.lower().replace("-", "_")` and accept both shapes. Plus rewrote `downloadFIT()` JS to `fetch()` + Blob so 4xx/5xx now surfaces as a toast instead of failing silently.
+- **"Download FIT (Garmin/Wahoo)" → "Download FIT (Garmin / Wahoo / Karoo)"** — Hammerhead Karoo natively imports FIT structured workouts via the Karoo Workouts app, same flow as Garmin Edge and Wahoo ELEMNT.
+- **PyInstaller bundling** — `fit_tool` and 6 submodules added to `domestique.spec` `hiddenimports=[...]` so the macOS DMG and Windows EXE actually have the FIT-builder library (PyInstaller's static analyser missed it because the import was inside a function).
+
+### Tests
+- 783 → 793 passed (+10 across `tests/test_download_routes.py` + new FIT-endpoint coverage). Same 3 pre-existing wellness/training-load flakes.
+
 ## v1.0.0 — First open-source release (2026-05-04)
 
 Domestique reaches public availability. The codebase has been in private development since 2026 — the iteration history is preserved below as "pre-release development log" so users can see the path from concept to v1.0.

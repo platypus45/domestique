@@ -126,7 +126,25 @@ Ride a Coggan 20-min test or Ramp test in Golden Cheetah / any app → import th
 - Every FTP change logged in a `ftp_test_history` ledger with source provenance (`tested_coggan_20min` / `tested_ramp` / `eftp_auto` / `manual`) + sparkline chart in Settings
 
 ### DFA Alpha1 — from FIT, not live
-DFA α1 is computed post-ride from RR-intervals if your FIT has them (Polar H10, Garmin HRM-Pro, Wahoo TICKR X). Not just displayed — actually **fed into the planner** as a fatigue signal that can downgrade tomorrow's intensity.
+
+DFA α1 is computed post-ride from beat-to-beat RR-intervals (HRV — heart-rate variability), not from average HR. It's fed into the planner as a fatigue signal that can downgrade tomorrow's intensity (Rogers et al. 2021 — α1 < 0.75 marks aerobic-threshold drift).
+
+**Hardware requirement — explicit:** DFA α1 needs a heart-rate sensor that emits **RR-intervals** over ANT+ / Bluetooth. Your head unit then writes them to the FIT file as `HrvMessage` records.
+
+| Sensor | Records RR-intervals? | DFA α1 supported |
+|---|---|---|
+| Garmin **HRM-Pro** / **HRM-Pro Plus** / **HRM-Dual** chest strap | ✅ yes | ✅ |
+| **Polar H10** chest strap | ✅ yes | ✅ |
+| **Wahoo TICKR X** chest strap | ✅ yes | ✅ |
+| **Polar Verity Sense** (arm strap, HR mode only) | ✅ yes | ✅ |
+| Optical wrist HR (any Garmin Forerunner / Edge optical / Apple Watch / Fitbit) | ❌ averaged HR only | ❌ |
+| Coros / Suunto wrist optical | ❌ | ❌ |
+
+If you ride with optical-only HR, Domestique still tracks NP / TSS / IF / TSB and the existing G1–G7 guardrails work. You just don't get the autonomic-fatigue layer; G9 (v1.1.0) won't fire for you.
+
+**Acquisition path (post-v1.0.7):** the chest strap polls itself; the head unit (Garmin Edge / Forerunner / Wahoo / Karoo) records every RR-interval into the FIT file; Domestique pulls the raw FIT from ICU's `/api/v1/activity/{id}/fit-file` endpoint, parses the `HrvMessage` records with `fit_activity.parse_hrv_messages()`, runs sliding-window DFA α1, writes the result to the ride summary. **No live polling, no Garmin OAuth, no manual upload.** Just wear a chest strap.
+
+**Resting HRV (separate signal):** Garmin's morning HRV (rMSSD overnight) lands in Domestique automatically via the ICU wellness sync — `wellness.hrv` is already populated for any rider whose Garmin Connect is linked to ICU. This is the input for v1.1.0's Bayesian readiness composite. Different from in-ride DFA α1; both come for free with the same hardware.
 
 ### Score rubric (structure-aware, not just TSS)
 Each workout gets a 1-10 score combining TSS (60%), protocol variety (distinct power targets above Z2), and VO2 bonus (presence of >105% FTP intervals). Fills the library's "Min Score" filter with something meaningful.

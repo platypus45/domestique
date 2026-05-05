@@ -1338,7 +1338,15 @@ def api_activities():
 
 
 def _wellness_record_to_api_dict(w: dict) -> dict:
-    """v4.5.0 — common ICU/local wellness record → /api/wellness response shape."""
+    """v4.5.0 — common ICU/local wellness record → /api/wellness response shape.
+
+    v1.0.6 IMPL-3D-DASHBOARD: additionally surface per-day 3D fitness/fatigue
+    components (cp_fitness, cp_fatigue, w_prime_fitness, w_prime_fatigue,
+    pmax_fitness, pmax_fatigue) when present in the record. These mirror the
+    Banister curves IMPL-3D-MODEL writes to athlete_metrics. Gracefully empty
+    when the 3D model has not yet computed values for this date — preserves
+    TSS-primary contract (CTL/ATL/TSB always present).
+    """
     ctl = w.get("ctl")
     atl = w.get("atl")
     sport_info = w.get("sportInfo") or []
@@ -1353,6 +1361,13 @@ def _wellness_record_to_api_dict(w: dict) -> dict:
         "sleep_h": round(w.get("sleepSecs", 0) / 3600, 2) if w.get("sleepSecs") else None,
         "sleep_score": w.get("sleepScore"),
         "eftp": eftp,
+        # v1.0.6 — 3D Banister components (None when not yet computed)
+        "cp_fitness": w.get("cp_fitness"),
+        "cp_fatigue": w.get("cp_fatigue"),
+        "w_prime_fitness": w.get("w_prime_fitness"),
+        "w_prime_fatigue": w.get("w_prime_fatigue"),
+        "pmax_fitness": w.get("pmax_fitness"),
+        "pmax_fatigue": w.get("pmax_fatigue"),
     }
 
 
@@ -5356,6 +5371,39 @@ def api_plan():
                     pass
 
                 for w in plan_data.get("weeks", []):
+                    # v1.0.6 IMPL-3D-DASHBOARD: per-week 3D XSS mirrors.
+                    # PRIMARY weekly_tss is preserved untouched. Mirrors are
+                    # aggregated from session-level wprime_*/pmax_* fields
+                    # (IMPL-3D-PLANNER writes these when 3D fields are
+                    # available). None per TSS-primary contract when absent.
+                    _w_xss_cp = 0.0
+                    _w_xss_wp = 0.0
+                    _w_xss_pm = 0.0
+                    _w_xss_any = False
+                    for _s in w.get("sessions", []) or []:
+                        if isinstance(_s, dict):
+                            _wp = _s.get("wprime_tss") or _s.get("wprime_xss")
+                            _pm = _s.get("pmax_tss") or _s.get("pmax_xss")
+                            _cp = _s.get("cp_tss") or _s.get("cp_xss")
+                            if _wp is not None:
+                                _w_xss_wp += float(_wp); _w_xss_any = True
+                            if _pm is not None:
+                                _w_xss_pm += float(_pm); _w_xss_any = True
+                            if _cp is not None:
+                                _w_xss_cp += float(_cp); _w_xss_any = True
+                    if _w_xss_any:
+                        w.setdefault("weekly_xss_cp", round(_w_xss_cp, 1))
+                        w.setdefault("weekly_xss_w_prime", round(_w_xss_wp, 1))
+                        w.setdefault("weekly_xss_pmax", round(_w_xss_pm, 1))
+                        w.setdefault(
+                            "weekly_xss_total",
+                            round(_w_xss_cp + _w_xss_wp + _w_xss_pm, 1),
+                        )
+                    else:
+                        w.setdefault("weekly_xss_cp", None)
+                        w.setdefault("weekly_xss_w_prime", None)
+                        w.setdefault("weekly_xss_pmax", None)
+                        w.setdefault("weekly_xss_total", None)
                     for s in w.get("sessions", []):
                         zwo = s.get("zwo_file") or ""
                         meta = lib_by_file.get(zwo) if zwo else None
@@ -5390,6 +5438,50 @@ def api_plan():
                         s["card_state"] = _classify_card_state(
                             s, has_actual=_has_actual, library_lookup=lib_by_file,
                         )
+                # v1.0.6 IMPL-3D-DASHBOARD: phase-level weekly_xss_* mirrors.
+                # Dashboard plan-tab phase rows render per-phase weekly_tss as
+                # PRIMARY. The mirrors here let the secondary stacked bar
+                # size CP/W'/Pmax. None when 3D values aren't populated.
+                try:
+                    _phases = plan_data.get("phases") or []
+                    _weeks = plan_data.get("weeks") or []
+                    for _ph in _phases:
+                        if not isinstance(_ph, dict):
+                            continue
+                        _ph_name = (_ph.get("name") or "").lower()
+                        _xc = 0.0; _xw = 0.0; _xp = 0.0
+                        _any = False; _cnt = 0
+                        for _wk in _weeks:
+                            if not isinstance(_wk, dict):
+                                continue
+                            _wphase = (_wk.get("phase") or _wk.get("phase_name") or "").lower()
+                            if _ph_name and _wphase and _wphase != _ph_name:
+                                continue
+                            _wxc = _wk.get("weekly_xss_cp")
+                            _wxw = _wk.get("weekly_xss_w_prime")
+                            _wxp = _wk.get("weekly_xss_pmax")
+                            if _wxc is not None:
+                                _xc += float(_wxc); _any = True
+                            if _wxw is not None:
+                                _xw += float(_wxw); _any = True
+                            if _wxp is not None:
+                                _xp += float(_wxp); _any = True
+                            _cnt += 1
+                        if _any and _cnt > 0:
+                            _ph.setdefault("weekly_xss_cp", round(_xc / _cnt, 1))
+                            _ph.setdefault("weekly_xss_w_prime", round(_xw / _cnt, 1))
+                            _ph.setdefault("weekly_xss_pmax", round(_xp / _cnt, 1))
+                            _ph.setdefault(
+                                "weekly_xss_total",
+                                round((_xc + _xw + _xp) / _cnt, 1),
+                            )
+                        else:
+                            _ph.setdefault("weekly_xss_cp", None)
+                            _ph.setdefault("weekly_xss_w_prime", None)
+                            _ph.setdefault("weekly_xss_pmax", None)
+                            _ph.setdefault("weekly_xss_total", None)
+                except Exception as _e:
+                    _log.debug(f"/api/plan phase xss_mirror failed: {_e}")
             except Exception as _e:
                 _log.debug(f"/api/plan zone_dist annotate failed: {_e}")
             # Also include markdown if available
@@ -9499,6 +9591,13 @@ def api_ride_full_detail(ride_id: str, include: str = Query("")):
     ``ride_id`` accepts the prefixed forms ``icu_<external_id>`` or
     ``fit_<stem>``, plus legacy ride ids (assumed JSON archive).
     Optional ``?include=samples`` adds a decimated 1Hz time-series block.
+
+    v1.0.6 IMPL-3D-DASHBOARD: also exposes the Belastingscore (XSS)
+    decomposition under ``summary.xss_*`` (xss_total, xss_cp,
+    xss_w_prime, xss_pmax). None when ride has no power data — the
+    field is added unconditionally so consumers can rely on its
+    presence (TSS-primary contract preserved; tss / np_w / if_pct
+    untouched).
     """
     if not isinstance(ride_id, str) or not ride_id or len(ride_id) > 80:
         return JSONResponse({"error": "bad ride_id"}, 400)
@@ -9506,6 +9605,25 @@ def api_ride_full_detail(ride_id: str, include: str = Query("")):
         return JSONResponse({"error": "bad ride_id"}, 400)
 
     want_samples = "samples" in (include or "").split(",")
+
+    def _attach_xss_summary(rec_dict: dict) -> dict:
+        """v1.0.6 — surface xss_* on rec.summary so the Belastingscore card
+        always finds the keys (None when 3D model has not run on this ride).
+        """
+        if not isinstance(rec_dict, dict):
+            return rec_dict
+        summary = rec_dict.get("summary")
+        if not isinstance(summary, dict):
+            summary = {}
+            rec_dict["summary"] = summary
+        # Read from the ride's stored summary cache; IMPL-3D-INGEST writes
+        # these after strain-score integration. Fallback to top-level rec
+        # fields when caller stored xss_* there directly.
+        summary.setdefault("xss_total", rec_dict.get("xss_total"))
+        summary.setdefault("xss_cp", rec_dict.get("xss_cp"))
+        summary.setdefault("xss_w_prime", rec_dict.get("xss_w_prime"))
+        summary.setdefault("xss_pmax", rec_dict.get("xss_pmax"))
+        return rec_dict
 
     # ── ICU rides ──────────────────────────────────────────────────────────
     if ride_id.startswith("icu_"):
@@ -9520,7 +9638,7 @@ def api_ride_full_detail(ride_id: str, include: str = Query("")):
         rec = _maybe_enrich_icu_record(rec)
         if want_samples:
             rec["samples"] = _build_icu_samples(rec)
-        return rec
+        return _attach_xss_summary(rec)
 
     # ── FIT rides ──────────────────────────────────────────────────────────
     if ride_id.startswith("fit_"):
@@ -9531,7 +9649,7 @@ def api_ride_full_detail(ride_id: str, include: str = Query("")):
         rec = _build_fit_normalized(fit_path, ride_id)
         if want_samples:
             rec["samples"] = _build_fit_samples(fit_path)
-        return rec
+        return _attach_xss_summary(rec)
 
     # ── Legacy JSON rides ──────────────────────────────────────────────────
     import ride_storage as _rs2
@@ -9541,7 +9659,7 @@ def api_ride_full_detail(ride_id: str, include: str = Query("")):
     rec = _legacy_ride_to_normalized(legacy, ride_id)
     if want_samples:
         rec["samples"] = _legacy_ride_samples(legacy)
-    return rec
+    return _attach_xss_summary(rec)
 
 
 def _maybe_enrich_icu_record(rec: dict) -> dict:
@@ -9904,6 +10022,13 @@ def api_ride_detail(ride_id: str):
             "ftp_test_halt_at_step": stats.get("ftp_test_halt_at_step"),
             "ftp_test_halt_step": stats.get("ftp_test_halt_step"),
             "local_eftp_suggestion": stats.get("local_eftp_suggestion"),
+            # v1.0.6 IMPL-3D-DASHBOARD: Belastingscore (XSS) decomposition.
+            # IMPL-3D-INGEST writes these into the ride summary cache after
+            # strain-score integration. None when ride has no power data.
+            "xss_total": stats.get("xss_total"),
+            "xss_cp": stats.get("xss_cp"),
+            "xss_w_prime": stats.get("xss_w_prime"),
+            "xss_pmax": stats.get("xss_pmax"),
         }
         return {
             "ride_id": ride_id,
@@ -9918,6 +10043,19 @@ def api_ride_detail(ride_id: str):
     ride = ride_storage.get_ride(ride_id)
     if not ride:
         return JSONResponse({"error": "Ride not found"}, 404)
+    # v1.0.6 IMPL-3D-DASHBOARD: ensure xss_* fields are present in the
+    # legacy/ICU ride summary block so the dashboard's Belastingscore card
+    # always has a key to read (None when not computed). Preserves the
+    # TSS-primary contract — does not modify TSS or any existing field.
+    try:
+        _summary = ride.get("summary") if isinstance(ride, dict) else None
+        if isinstance(_summary, dict):
+            _summary.setdefault("xss_total", _summary.get("xss_total"))
+            _summary.setdefault("xss_cp", _summary.get("xss_cp"))
+            _summary.setdefault("xss_w_prime", _summary.get("xss_w_prime"))
+            _summary.setdefault("xss_pmax", _summary.get("xss_pmax"))
+    except Exception:
+        pass
     return ride
 
 

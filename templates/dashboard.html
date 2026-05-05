@@ -1232,6 +1232,27 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
       </div>
     </div>
     <div id="fitness-chart" style="min-height:320px;"></div>
+    <!-- v1.0.6 IMPL-3D-DASHBOARD: secondary collapsed panel — additive lens.
+         CTL/ATL/TSB chart above stays the PRIMARY view (TSS-driven, untouched).
+         This <details> defaults closed so the dashboard hierarchy continues
+         to lead with TSS; opening reveals the three normalized fitness curves
+         (CP/W'/Pmax) on a 0-100 axis. Each tooltip uses the locked verbatim
+         copy from MASTER_DECISIONS_v106 §5. -->
+    <details class="energy-system-breakdown" style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text2);user-select:none;">Energy-system breakdown — beta</summary>
+      <div style="margin-top:8px;">
+        <div class="chart-legend" style="margin-bottom:6px;">
+          <span title="Your aerobic engine. Builds and recovers slowly over a 52-day window; long Z2 rides move it."><span class="dot" style="background:#3b82f6;"></span> CP fitness</span>
+          <span title="Glycolytic capacity above threshold. Recovers in days; built by VO2max and over-under intervals (5-day window)."><span class="dot" style="background:#f97316;"></span> W' fitness</span>
+          <span title="Sprint and PCr power. Recovers fastest (10-day window); driven by short all-out efforts under 20 s."><span class="dot" style="background:#ef4444;"></span> Pmax fitness</span>
+        </div>
+        <div id="energy-system-chart" style="min-height:180px;"></div>
+        <div style="font-size:10px;color:var(--text3);margin-top:4px;line-height:1.4;">
+          Three normalized Banister fitness curves (CP/W'/Pmax) on a 0-100 axis.
+          Secondary lens — CTL/ATL/TSB above stays primary. Source: Kontro et al. 2026 (PLOS ONE), τ defaults from Fig S2.
+        </div>
+      </div>
+    </details>
   </div>
 
   <!-- Event Countdown + eFTP Drift -->
@@ -3434,7 +3455,70 @@ async function loadFitnessChart(days=90) {
     const data = await wRes.json();
     if (days === 90) _wellnessCache = data;
     fitnessChart(data, 'fitness-chart');
+    // v1.0.6 IMPL-3D-DASHBOARD: also render the secondary energy-system
+    // breakdown (lazy — only paints into the <details> body, which stays
+    // collapsed by default so the primary CTL/ATL/TSB view leads).
+    try { energySystemChart(data, 'energy-system-chart'); } catch(_) {}
   } catch(e) { console.error(e); }
+}
+
+// v1.0.6 IMPL-3D-DASHBOARD — three normalized fitness curves (CP/W'/Pmax)
+// on a 0-100 axis. Reuses the SVG pattern from fitnessChart() but is much
+// simpler: single y-axis, three polylines, no tooltip area-fill. Renders
+// inside the collapsed <details class="energy-system-breakdown"> panel.
+function energySystemChart(data, containerId) {
+  const container = $(containerId);
+  if (!container) return;
+  if (!data || data.length < 2) { container.innerHTML = '<div class="loading">Not enough data</div>'; return; }
+  // Extract per-day fitness values (None when not yet computed by the 3D model).
+  const cp  = data.map(d => d.cp_fitness ?? null);
+  const wp  = data.map(d => d.w_prime_fitness ?? null);
+  const pm  = data.map(d => d.pmax_fitness ?? null);
+  const dates = data.map(d => d.date);
+  // If every series is empty, show a friendly placeholder rather than a blank SVG.
+  const anyVal = [...cp, ...wp, ...pm].some(v => v !== null);
+  if (!anyVal) {
+    container.innerHTML = '<div style="font-size:11px;color:var(--text3);padding:12px 0;">3D fitness curves will populate after IMPL-3D-MODEL has computed Banister components for the wellness window.</div>';
+    return;
+  }
+  // Normalize each series to 0..100 against its own historical max so all
+  // three coexist on one axis. This is intentionally additive — the units
+  // are heterogenous (TSS-equiv vs J-equiv) so a shared raw scale would
+  // be meaningless.
+  function norm(values) {
+    const max = values.reduce((a,b) => (b !== null && b > a ? b : a), 0) || 1;
+    return values.map(v => v !== null ? (v / max) * 100 : null);
+  }
+  const cpN = norm(cp), wpN = norm(wp), pmN = norm(pm);
+  const W = 900, H = 200, PAD_L = 36, PAD_R = 12, PAD_T = 8, PAD_B = 22;
+  const cw = W - PAD_L - PAD_R, ch = H - PAD_T - PAD_B;
+  function xPos(i) { return PAD_L + (i / (data.length - 1)) * cw; }
+  function yPos(v) { return PAD_T + ch - (v / 100) * ch; }
+  function poly(values) {
+    return values.map((v, i) => v !== null ? `${xPos(i)},${yPos(v)}` : null).filter(Boolean).join(' ');
+  }
+  // Y gridlines (0/25/50/75/100)
+  let yLabels = '';
+  for (const v of [0, 25, 50, 75, 100]) {
+    yLabels += `<text x="${PAD_L - 6}" y="${yPos(v) + 3}" fill="var(--text3)" font-size="9" text-anchor="end">${v}</text>`;
+    yLabels += `<line x1="${PAD_L}" y1="${yPos(v)}" x2="${PAD_L + cw}" y2="${yPos(v)}" stroke="var(--border)" stroke-width="0.5"/>`;
+  }
+  // X-axis labels (every ~7 days)
+  let xLabels = '';
+  const step = Math.max(1, Math.floor(data.length / 8));
+  for (let i = 0; i < data.length; i += step) {
+    const d = new Date(dates[i] + 'T12:00:00');
+    const label = d.toLocaleDateString('en-GB', {day:'numeric', month:'short'});
+    xLabels += `<text x="${xPos(i)}" y="${H - 4}" fill="var(--text3)" font-size="9" text-anchor="middle">${label}</text>`;
+  }
+  container.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" style="width:100%;height:${H}px;">
+      ${yLabels}
+      <polyline points="${poly(cpN)}" fill="none" stroke="#3b82f6" stroke-width="2"/>
+      <polyline points="${poly(wpN)}" fill="none" stroke="#f97316" stroke-width="2"/>
+      <polyline points="${poly(pmN)}" fill="none" stroke="#ef4444" stroke-width="2"/>
+      ${xLabels}
+    </svg>`;
 }
 
 // ═══ v4.6.7 IMPL-CAP: capability projection widget ═══════════════════════
@@ -4205,6 +4289,40 @@ async function openRideDetail(rideId) {
         <div style="font-size:24px;font-weight:900;">${wp || '---'}W</div><div style="font-size:10px;color:var(--text3);">WP</div></div>
       <div style="background:var(--surface2);padding:12px;border-radius:10px;text-align:center;">
         <div style="font-size:24px;font-weight:900;color:${dcColor(s.decoupling_color)}">${s.decoupling_pct != null ? s.decoupling_pct + '%' : '---'}</div><div style="font-size:10px;color:var(--text3);">DECOUPLING</div></div>
+    </div>`;
+
+    // v1.0.6 IMPL-3D-DASHBOARD: Belastingscore secondary card — energy-system
+    // breakdown. SECONDARY by design: hero grid above (TSS / WP / DECOUPLING)
+    // stays the primary lens; this card is BELOW. Cells: Total (neutral),
+    // Aerobe (CP, blue), Glycolytisch (W', orange), PCr (Pmax, red).
+    // Tooltip copy is verbatim from MASTER_DECISIONS_v106 §5.
+    const _xssTotal = (s.xss_total != null) ? Number(s.xss_total).toFixed(1) : '—';
+    const _xssCp    = (s.xss_cp    != null) ? Number(s.xss_cp).toFixed(1)    : '—';
+    const _xssWp    = (s.xss_w_prime != null) ? Number(s.xss_w_prime).toFixed(1) : '—';
+    const _xssPm    = (s.xss_pmax  != null) ? Number(s.xss_pmax).toFixed(1)  : '—';
+    html += `<div class="belastingscore-card" style="background:var(--surface2);border-radius:10px;padding:12px;margin-bottom:16px;border:1px solid var(--border);">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--text2);">Belastingscore — energy-system breakdown</div>
+        <div style="font-size:10px;color:var(--text3);">secondary lens · v1.0.6</div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">
+        <div style="text-align:center;padding:8px;background:var(--surface);border-radius:8px;" title="Total stress this ride imposed across all three energy systems. Sum of Aerobe + Glycolytisch + PCr.">
+          <div style="font-size:22px;font-weight:900;color:var(--text);">${_xssTotal}</div>
+          <div style="font-size:9px;color:var(--text3);letter-spacing:0.4px;">TOTAL</div>
+        </div>
+        <div style="text-align:center;padding:8px;background:var(--surface);border-radius:8px;" title="Your aerobic engine. Builds and recovers slowly over a 52-day window; long Z2 rides move it.">
+          <div style="font-size:18px;font-weight:800;color:#3b82f6;">${_xssCp}</div>
+          <div style="font-size:9px;color:var(--text3);letter-spacing:0.4px;">AEROBE</div>
+        </div>
+        <div style="text-align:center;padding:8px;background:var(--surface);border-radius:8px;" title="Glycolytic capacity above threshold. Recovers in days; built by VO2max and over-under intervals (5-day window).">
+          <div style="font-size:18px;font-weight:800;color:#f97316;">${_xssWp}</div>
+          <div style="font-size:9px;color:var(--text3);letter-spacing:0.4px;">GLYCOLYTISCH</div>
+        </div>
+        <div style="text-align:center;padding:8px;background:var(--surface);border-radius:8px;" title="Sprint and PCr power. Recovers fastest (10-day window); driven by short all-out efforts under 20 s.">
+          <div style="font-size:18px;font-weight:800;color:#ef4444;">${_xssPm}</div>
+          <div style="font-size:9px;color:var(--text3);letter-spacing:0.4px;">PCR</div>
+        </div>
+      </div>
     </div>`;
 
     // Extended stats grid — 2 rows of 6 so IF / max power / max HR / elevation get first-class billing
@@ -6717,6 +6835,27 @@ async function renderPlanJSON(plan) {
     const widthPct = ((p.weeks || 1) / totalWeeks * 100);
     const startFmt = p.start ? new Date(p.start+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : '';
     const endFmt = p.end ? new Date(p.end+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : '';
+    // v1.0.6 IMPL-3D-DASHBOARD: subordinate xss stacked bar — additive lens.
+    // weekly_tss above stays the PRIMARY headline (TSS-driven, untouched).
+    // Bar caps at 60px wide × 4px tall; segments sized by weekly_xss_cp /
+    // weekly_xss_w_prime / weekly_xss_pmax. Empty bar when 3D fields aren't
+    // populated, preserving v1.0.5 visual layout.
+    const _xCp = Number(p.weekly_xss_cp || 0);
+    const _xWp = Number(p.weekly_xss_w_prime || 0);
+    const _xPm = Number(p.weekly_xss_pmax || 0);
+    const _xTot = _xCp + _xWp + _xPm;
+    const _xssBarTip = `Belastingscore breakdown — Aerobe ${_xCp.toFixed(1)} · Glycolytisch ${_xWp.toFixed(1)} · PCr ${_xPm.toFixed(1)} (secondary lens, v1.0.6)`;
+    let _xssBarHtml = '';
+    if (_xTot > 0) {
+      const _cpPct = (_xCp / _xTot) * 100;
+      const _wpPct = (_xWp / _xTot) * 100;
+      const _pmPct = (_xPm / _xTot) * 100;
+      _xssBarHtml = `<div title="${_xssBarTip}" style="display:flex;width:60px;height:4px;border-radius:2px;overflow:hidden;background:var(--surface);margin-top:3px;margin-left:auto;">
+        <div style="width:${_cpPct}%;background:#3b82f6;"></div>
+        <div style="width:${_wpPct}%;background:#f97316;"></div>
+        <div style="width:${_pmPct}%;background:#ef4444;"></div>
+      </div>`;
+    }
     phaseHtml += `<div style="padding:8px 10px;border-left:4px solid ${col};background:var(--surface2);border-radius:0 6px 6px 0;margin-bottom:4px;">
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <div>
@@ -6727,7 +6866,10 @@ async function renderPlanJSON(plan) {
       </div>
       <div style="display:flex;justify-content:space-between;margin-top:2px;">
         <div style="font-size:10px;color:var(--text3);">${esc(p.focus || '')}</div>
-        <div style="font-size:10px;color:var(--text2);font-weight:600;">${p.weekly_tss||'—'} TSS/wk</div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;">
+          <div style="font-size:10px;color:var(--text2);font-weight:600;">${p.weekly_tss||'—'} TSS/wk</div>
+          ${_xssBarHtml}
+        </div>
       </div>
       <div style="height:4px;background:var(--surface);border-radius:2px;margin-top:4px;overflow:hidden;">
         <div style="width:${widthPct}%;height:100%;background:${col};border-radius:2px;"></div>

@@ -94,16 +94,21 @@ _CONTENT_CLASSIFICATION_HASH: str | None = None
 _CONTENT_TO_PROTOCOL = {
     "recovery": "Recovery",
     "endurance": "Endurance",
+    "endurance_intervals": "Endurance + Strides",
     "tempo": "Tempo",
+    "tempo_intervals": "Tempo Intervals",
+    "tempo_ladder": "Tempo Ladder",
     "sweet_spot": "Sweet Spot",
+    "sweet_spot_ladder": "Sweet Spot Ladder",
     "threshold": "Threshold",
+    "threshold_ladder": "Threshold Ladder",
     "over_under": "Over-Unders",
     "vo2max": "VO2max",
+    "vo2_ladder": "VO2 Ladder",
     "vo2_short": "VO2max",
     "anaerobic": "Anaerobic",
     "neuromuscular": "Sprint",
     "ftp_test": "FTP Test",
-    "mixed": "Mixed",
 }
 
 
@@ -2506,43 +2511,56 @@ WORKOUT_MIX_PREFERENCE: dict[str, list[dict[str, float]]] = {
     # / vo2_short coverage in every build phase. The variety_score multi-
     # plier (gentle, sqrt-shouldered) handles the per-file Rønnestad bias.
     "base": [
-        # W1-2 early: aerobic-leaning, sweet_spot still the structural intro
-        {"endurance": 0.30, "tempo": 0.15, "sweet_spot": 0.25,
-         "recovery": 0.15, "mixed": 0.10, "threshold": 0.05},
+        # W1-2 early: aerobic-leaning, sweet_spot still the structural intro.
+        # v1.0.4: dropped `mixed` (junk drawer); redistributed weight into
+        # endurance_intervals (Z2 + strides) which is the natural early-base
+        # finish-fast variant.
+        {"endurance": 0.25, "endurance_intervals": 0.08, "tempo": 0.15,
+         "sweet_spot": 0.25, "recovery": 0.15, "threshold": 0.05,
+         "tempo_intervals": 0.05},
         # W3-4 mid
-        {"endurance": 0.25, "tempo": 0.15, "sweet_spot": 0.25,
-         "threshold": 0.15, "vo2_short": 0.05, "recovery": 0.10,
-         "mixed": 0.05},
+        {"endurance": 0.20, "endurance_intervals": 0.07, "tempo": 0.12,
+         "tempo_intervals": 0.06, "sweet_spot": 0.22, "threshold": 0.15,
+         "vo2_short": 0.05, "recovery": 0.08},
         # W5+ late
-        {"endurance": 0.20, "tempo": 0.15, "sweet_spot": 0.25,
-         "threshold": 0.20, "vo2max": 0.10, "vo2_short": 0.05,
-         "recovery": 0.05},
+        {"endurance": 0.18, "endurance_intervals": 0.05, "tempo": 0.10,
+         "tempo_intervals": 0.07, "sweet_spot": 0.22, "threshold": 0.18,
+         "vo2max": 0.10, "vo2_short": 0.05, "recovery": 0.05},
     ],
     "build1": [
-        # W1
-        {"endurance": 0.20, "tempo": 0.10, "sweet_spot": 0.15,
-         "threshold": 0.20, "vo2max": 0.15, "over_under": 0.10,
-         "vo2_short": 0.05, "anaerobic": 0.05},
+        # W1 — v1.0.4 adds tempo_intervals + ladder shapes (build phase).
+        {"endurance": 0.16, "endurance_intervals": 0.05, "tempo": 0.06,
+         "tempo_intervals": 0.06, "tempo_ladder": 0.04, "sweet_spot": 0.13,
+         "sweet_spot_ladder": 0.04, "threshold": 0.16, "threshold_ladder": 0.05,
+         "vo2max": 0.13, "over_under": 0.08, "vo2_short": 0.04,
+         "anaerobic": 0.04},
         # W2
-        {"endurance": 0.18, "tempo": 0.08, "sweet_spot": 0.12,
-         "threshold": 0.18, "vo2max": 0.18, "over_under": 0.10,
-         "vo2_short": 0.08, "anaerobic": 0.05, "neuromuscular": 0.03},
+        {"endurance": 0.14, "endurance_intervals": 0.04, "tempo": 0.05,
+         "tempo_intervals": 0.06, "tempo_ladder": 0.04, "sweet_spot": 0.10,
+         "sweet_spot_ladder": 0.04, "threshold": 0.14, "threshold_ladder": 0.05,
+         "vo2max": 0.16, "over_under": 0.08, "vo2_short": 0.06,
+         "anaerobic": 0.04, "neuromuscular": 0.03},
         # W3+
-        {"endurance": 0.18, "tempo": 0.08, "sweet_spot": 0.12,
-         "threshold": 0.15, "vo2max": 0.18, "over_under": 0.10,
-         "vo2_short": 0.08, "anaerobic": 0.06, "neuromuscular": 0.05},
+        {"endurance": 0.14, "endurance_intervals": 0.04, "tempo": 0.05,
+         "tempo_intervals": 0.06, "tempo_ladder": 0.04, "sweet_spot": 0.10,
+         "sweet_spot_ladder": 0.04, "threshold": 0.12, "threshold_ladder": 0.05,
+         "vo2max": 0.16, "over_under": 0.08, "vo2_short": 0.06,
+         "anaerobic": 0.05, "neuromuscular": 0.04},
     ],
     "build2": [
-        # vo2 + neuromuscular emphasis
-        {"endurance": 0.15, "tempo": 0.05, "sweet_spot": 0.10,
-         "threshold": 0.15, "vo2max": 0.20, "over_under": 0.10,
-         "vo2_short": 0.10, "anaerobic": 0.10, "neuromuscular": 0.05},
+        # vo2 + neuromuscular emphasis — v1.0.4 adds tempo_intervals + ladders.
+        {"endurance": 0.12, "endurance_intervals": 0.03, "tempo": 0.04,
+         "tempo_intervals": 0.05, "tempo_ladder": 0.03, "sweet_spot": 0.08,
+         "sweet_spot_ladder": 0.03, "threshold": 0.12, "threshold_ladder": 0.06,
+         "vo2max": 0.18, "over_under": 0.09, "vo2_short": 0.09,
+         "anaerobic": 0.09, "neuromuscular": 0.05},
     ],
     "peak": [
-        # Race-specific
-        {"endurance": 0.15, "tempo": 0.05, "threshold": 0.15,
-         "vo2max": 0.20, "over_under": 0.10, "vo2_short": 0.10,
-         "anaerobic": 0.15, "neuromuscular": 0.10},
+        # Race-specific — v1.0.4 adds tempo_intervals + threshold_ladder + vo2_ladder.
+        {"endurance": 0.13, "tempo": 0.04, "tempo_intervals": 0.05,
+         "threshold": 0.13, "threshold_ladder": 0.06, "vo2max": 0.17,
+         "vo2_ladder": 0.04, "over_under": 0.09, "vo2_short": 0.09,
+         "anaerobic": 0.13, "neuromuscular": 0.09},
     ],
     "taper": [
         # Short openers + recovery
@@ -2550,45 +2568,82 @@ WORKOUT_MIX_PREFERENCE: dict[str, list[dict[str, float]]] = {
          "vo2_short": 0.10, "neuromuscular": 0.10},
     ],
     "history": [
-        # Mirror base W1
-        {"endurance": 0.30, "tempo": 0.15, "sweet_spot": 0.25,
-         "recovery": 0.15, "mixed": 0.10, "threshold": 0.05},
+        # Mirror base W1 — v1.0.4: drop `mixed`, add endurance_intervals.
+        {"endurance": 0.25, "endurance_intervals": 0.08, "tempo": 0.15,
+         "sweet_spot": 0.25, "recovery": 0.15, "threshold": 0.05,
+         "tempo_intervals": 0.05},
     ],
 }
 
 # Slot kind → which content_classes are eligible for this slot. Layer 2 row
 # entries outside this set are filtered out before sampling.
+#
+# v1.0.4 IMPL-PLANNER:
+# - Added `anaerobic` (was an orphan: weighted 5–15% in WORKOUT_MIX_PREFERENCE
+#   build/peak rows but excluded here, so 311 anaerobic files were never
+#   actually picked).
+# - Added the 6 new structural-variant classes:
+#   `tempo_intervals`, `tempo_ladder`, `sweet_spot_ladder`, `threshold_ladder`,
+#   `vo2_ladder` to HIT slots; `endurance_intervals` to endurance slots.
+# - Dropped `mixed` (217 files re-routed by IMPL-CLASSIFIER's zone-dominance
+#   pass; class no longer exists in the canonical 16-class taxonomy).
 _HIT_SLOT_CONTENT_CLASSES = frozenset({
-    "threshold", "vo2max", "over_under", "sweet_spot",
-    "anaerobic", "neuromuscular", "vo2_short",
+    "threshold", "threshold_ladder",
+    "vo2max", "vo2_ladder", "vo2_short",
+    "over_under",
+    "sweet_spot", "sweet_spot_ladder",
+    "tempo_intervals", "tempo_ladder",
+    "anaerobic", "neuromuscular",
 })
 _ENDURANCE_SLOT_CONTENT_CLASSES = frozenset({
-    "endurance", "tempo", "sweet_spot", "recovery", "mixed",
+    "endurance", "endurance_intervals",
+    "tempo",
+    "sweet_spot", "recovery",
 })
 
 # v4.5.4 FIX-PLANNER-INTERVALS: classes whose .zwo files contain interval
 # shapes (4×8, 5×3, 30/30, sprints) — used to enforce a per-week interval
 # floor so the plan visibly mixes blocks instead of cycling through steady-
 # state z2/tempo "diagonal" workouts.
+#
+# v1.0.4 IMPL-PLANNER: `*_intervals` and `*_ladder` are interval-shaped — the
+# dose isn't bunched into a single steady block.
 _INTERVAL_SHAPED_CONTENT_CLASSES = frozenset({
-    "vo2max", "vo2_short", "threshold", "over_under",
-    "sweet_spot", "anaerobic", "neuromuscular",
+    "vo2max", "vo2_short", "vo2_ladder",
+    "threshold", "threshold_ladder",
+    "over_under",
+    "sweet_spot", "sweet_spot_ladder",
+    "tempo_intervals", "tempo_ladder",
+    "endurance_intervals",
+    "anaerobic", "neuromuscular",
 })
 
 # v4.6.0 IMPL-PLANNER-UTILIZATION (Pillar B): soft minimum DISTINCT files per
 # content_class for a 24-week plan. The sampler uses these to bias picks
 # toward unseen files in classes that are below their trajectory.
+#
+# v1.0.4 IMPL-PLANNER: minimums for the 6 new structural-variant classes set
+# to 1–3 — they're carved out of larger parents (tempo / sweet_spot /
+# threshold / vo2max / endurance) and are expected to have small file pools
+# (tens of files, not hundreds). Defer to the existing pattern for similarly-
+# small classes (e.g. neuromuscular=5, recovery=5).
 _PLAN_CLASS_MIN_DISTINCT_24W: dict[str, int] = {
-    "tempo":         20,
-    "sweet_spot":    20,
-    "threshold":     20,
-    "vo2max":        20,
-    "over_under":    10,
-    "vo2_short":     10,
-    "anaerobic":      8,
-    "neuromuscular":  5,
-    "endurance":     15,
-    "recovery":       5,
+    "tempo":               20,
+    "tempo_intervals":      3,
+    "tempo_ladder":         2,
+    "sweet_spot":          20,
+    "sweet_spot_ladder":    2,
+    "threshold":           20,
+    "threshold_ladder":     3,
+    "vo2max":              20,
+    "vo2_ladder":           2,
+    "over_under":          10,
+    "vo2_short":           10,
+    "anaerobic":            8,
+    "neuromuscular":        5,
+    "endurance":           15,
+    "endurance_intervals":  3,
+    "recovery":             5,
 }
 
 # v4.6.2 PLANNER-DIVERSITY-PUSH: per-file diversity-budget divisor. Across

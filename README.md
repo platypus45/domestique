@@ -144,15 +144,21 @@ If you ride with optical-only HR, Domestique still tracks NP / TSS / IF / TSB an
 
 **Acquisition path (post-v1.0.7):** the chest strap polls itself; the head unit (Garmin Edge / Forerunner / Wahoo / Karoo) records every RR-interval into the FIT file; Domestique pulls the raw FIT from ICU's `/api/v1/activity/{id}/fit-file` endpoint, parses the `HrvMessage` records with `fit_activity.parse_hrv_messages()`, runs sliding-window DFA α1, writes the result to the ride summary. **No live polling, no Garmin OAuth, no manual upload.** Just wear a chest strap.
 
-**⚠ One-time Garmin device setting required.** Most Garmin head units ship with HRV recording **disabled** for activities — they use HRM-Pro's RR data for Body Battery / Stress / morning HRV (which is what populates `wellness.hrv` already), but they don't write per-beat RR-intervals to the FIT unless you explicitly enable it. To turn it on:
+**⚠ One-time Garmin device setting required.** Most Garmin head units ship with HRV recording **disabled** for activities — they use HRM-Pro's RR data for Body Battery / Stress / morning HRV (which is what populates `wellness.hrv` already), but they don't write per-beat RR-intervals to the FIT unless you explicitly enable it.
 
-| Device family | Path |
+**Important: the HRM-Pro strap itself doesn't have an HRV toggle** — it always emits RR-intervals over ANT+ / BLE. The setting lives on the **head unit** (telling it to RECORD what the strap is sending). So there's no Garmin Connect Mobile setting "for the strap"; it's per-device, per-activity-profile.
+
+| Device family | Exact path |
 |---|---|
-| Edge 530 / 830 / 1030 / 1040 | Settings → Activity Profiles → [bike profile] → **Data Recording → HRV** = On |
-| Forerunner / Fenix / Epix | Settings → Sensors → Heart Rate → **HRV Recording** = On |
-| Across all Garmin | Garmin Connect mobile → Device → [device] → Activity Profiles → Cycling → Data Recording → enable HRV / Beat-to-beat |
+| **Edge 530 / 830 / 1030 / 1030 Plus / 1040** | Settings (gear icon) → Activity Profiles → [Bike] → Data Recording → **HRV** = On |
+| **Edge Explore / Edge 130** | Firmware doesn't expose HRV recording; not supported |
+| **Forerunner 255 / 265 / 745 / 945 / 955 / 965** | Settings → Sensors & Accessories → Heart Rate → **HRV Logging** = On (firmware-dependent) |
+| **Fenix 6 / 7 / 8 / Epix 2** | Settings → Sensors & Accessories → Heart Rate → **Record HRV** = On |
+| **Garmin Connect Mobile** (universal path) | Devices tab → [your device] → Activity Profiles → Cycling → Data Recording → enable **HRV** or **Beat-to-Beat** |
 
-We verified this against a real ride: a HRM-Pro paired correctly to an Edge can still produce a FIT with **zero `HrvMessage` records** if the device-side recording flag is off. The FIT contains 4 000+ records of HR / power / cadence / GPS as expected, but the per-beat RR series isn't captured. After flipping the setting, future rides will include the data; pre-existing rides can't be backfilled (the data was never recorded).
+We verified this against a real ride: an HRM-Pro paired correctly to an Edge can still produce a FIT with **zero `HrvMessage` records** if the device-side recording flag is off. The FIT contains 4 000+ records of HR / power / cadence / GPS as expected, but the per-beat RR series isn't captured. After flipping the setting, future rides will include the data; pre-existing rides can't be backfilled.
+
+**Domestique detects this and prompts you (v1.0.7).** When a synced ride has heart-rate data but no `HrvMessage` records, the app surfaces a one-time toast: *"Your last ride had HR but no beat-to-beat HRV — enable HRV recording on your Garmin to unlock DFA α1 fatigue tracking. [Show me how] [Dismiss] [Don't show again]."* `[Show me how]` opens a modal with the device-by-device table above. The toast is per-version (won't re-fire after dismissal until a new release).
 
 **Resting HRV (separate signal):** Garmin's morning HRV (rMSSD overnight) lands in Domestique automatically via the ICU wellness sync — `wellness.hrv` is already populated for any rider whose Garmin Connect is linked to ICU. This is the input for v1.1.0's Bayesian readiness composite. Different from in-ride DFA α1; both come for free with the same hardware.
 

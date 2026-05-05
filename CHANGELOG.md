@@ -1,5 +1,96 @@
 # Changelog
 
+## v1.0.6 — 3D impulse-response model (Belastingscore decomposition) — TSS still primary, 3D additive (2026-05-05)
+
+### The pitch — "TSS PRIMARY, 3D ADDITIVE"
+
+User-locked constraint: "We should still weight TSS based training, as that is the golden standard. But 1.0.6 with their triphase model is fun to add." So v1.0.6 ships the [Kontro/Mastracci/Cheung/MacInnis 2026 PLOS ONE](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0341721) 3D impulse-response model as a **secondary lens**, NOT a replacement for the TSS-based planner backbone. Existing CTL/ATL/TSB chart stays primary; existing Banister τ=42/7 untouched; existing 6 v1.0.4-locked planner maps untouched.
+
+### What v1.0.6 ships
+
+- **`strain_score.py`** (NEW, 327 LOC) — implements Kontro Eq. 4 / 8-13: per-second power → MPA proximity → strain attribution to CP / W' / Pmax components. Reuses Skiba 2012 W'-balance differential (mirrors `training_live.py:514-523` exactly). PCr depletion uses literature-anchored τ_PCr = 30 s (PMC2636983; the paper itself doesn't specify). Calibrated so 1 hour at exactly CP ≈ 100 SS (matches Xert XSS convention).
+- **`FitnessSignature` dataclass** extended with optional `cp_w` / `wprime_j` / `pmax_w` fields. Backward-compat: existing `hie` field unchanged. None defaults preserve all v1.0.4 / v1.0.5 behaviour exactly.
+- **Per-component Banister τ constants** added alongside existing CTL_TAU/ATL_TAU at `training.py:35-46`: CP τ₁/τ₂ = 52/10, W' τ₁/τ₂ = 5/5, Pmax τ₁/τ₂ = 10/4. **All four convention sets live in parallel** — single CTL/ATL/TSB stays primary. Per Kontro paper supplementary Fig S2 — single-athlete illustrative example, profile-overridable, NOT validated population defaults.
+
+### Pmax ingestion + per-ride decomposition
+
+- ICU exposes `sportInfo[0].pMax` directly on every wellness record (live: 1,114.7 W on 2026-05-05). Same slot as the existing wPrime sync at `db.py:279-294` — copy-paste pattern.
+- `db.py:294` gains a guarded upsert reading pMax → `athlete_metrics.pmax` row. Source-tier: `manual > intervals.icu > computed > fallback`.
+- New `_set_pmax(value, source)` cloned from `_set_wprime` at `profile_manager.py:573-629`. Range validation 300-2500 W. Profile fallback `int(ftp × 1.30)` (Coggan 2-min approximation).
+- Settings UI extended with manual override at `app.py:4030`.
+- `ride_storage._summarise_ride()` now calls `strain_score.compute_xss_components()` per imported ride, writing `xss_total` / `xss_cp` / `xss_w_prime` / `xss_pmax` to the cached summary + `ss_*_daily` aggregates to `athlete_metrics`.
+
+### Soft 3D guardrails added to the planner (advisory only)
+
+- **NEW `_GLYCOLYTIC_LOAD_BY_CLASS` map** at `training_planner.py` module level (vo2max/anaerobic 1.0, vo2_short/ladder 0.9, over_under 0.7, neuromuscular 0.6, threshold 0.5, sweet_spot 0.2, …). Soft anti-stacking: if prior day's pick had glycolytic load ≥ 0.7, scale today's same-bucket weights ×0.7 (NOT a hard reject — soft picker bias only).
+- **`reforecast()` extension** (training_planner.py:4488-4727): adds optional `wprime_balance_24h` kwarg (None default preserves existing call sites). Soft additions:
+  - **G3b advisory** — log only when W'-load polarisation deviates >10% from target. G3a (volume polarisation) stays the hard gate.
+  - **G8 advisory** — log only when `wprime_balance_24h < 0.5 × W'`. Recommends "prefer Z2 today" but doesn't gate.
+  - **W'-ACWR advisory** — log when wprime_acwr > 1.5. TSS-ACWR (G4) stays the primary trip.
+- `_maybe_auto_reforecast` at `app.py:5743-5894` augmented to read 3D metrics opportunistically when available; passes through new kwargs. Preserves existing TSS-only path when 3D fields are None.
+
+### Dashboard — additive surfacing (TSS still primary)
+
+- **CTL/ATL/TSB chart unchanged.** New collapsed `<details class="energy-system-breakdown">` panel BELOW the existing chart, default closed. When opened: three normalised fitness curves (CP / W' / Pmax) on a 0-100 axis. Reuses the existing SVG pattern.
+- **Ride-detail modal**: TSS hero grid unchanged. NEW secondary "Belastingscore — energy-system breakdown" card BELOW the hero grid with 4 cells (Total / Aerobe / Glycolytisch / PCr). Each cell has a tooltip with locked science-grounded copy.
+- **Plan-tab phase rows**: `weekly_tss` headline unchanged. NEW small subordinate stacked bar UNDERNEATH it (60px wide, 4px tall) showing CP / W' / Pmax distribution.
+- **API contract additions** (all additive, all nullable):
+  - `/api/ride/<id>/detail` summary block: `xss_total`, `xss_cp`, `xss_w_prime`, `xss_pmax`.
+  - `/api/metrics/history?metric=cp_fitness/w_prime_fitness/pmax_fitness` accepted.
+  - `/api/plan` per-week block: `weekly_xss_*` mirrors.
+  - `/api/wellness` per-day record: `cp_fitness/cp_fatigue/w_prime_fitness/w_prime_fatigue/pmax_fitness/pmax_fatigue`.
+
+### Honest documentation
+
+- README §0e "Belastingscore / 3D impulse-response model (v1.0.6 preview)" added.
+- README §0a "Honest limitations of the TSS-based stack" added with Sanders 2017 / Wallace 2014 / Vermeire 2021 evidence summary.
+- README §0b "Literature wired into the planner" — table of every G1-G7 guardrail with peer-reviewed source.
+- README §0c "Norwegian Method support — what's in, what's missing" with explicit non-goal: NO blood-lactate sampling.
+- README "What τ (tau) actually means" subsection — EWMA math, absorption table, why per-athlete τ varies.
+
+### Tests
+- 909 → 959 passing (+50 net): 12 new tests in `tests/test_strain_score.py`, 18 in `tests/test_pmax_ingest.py` + `tests/test_xss_per_ride.py`, 16 in `tests/test_planner_3d_v106.py`, 4 in `tests/test_ui_v106.py`. Same 3 pre-existing wellness/training-load isolation failures.
+- Hard regression invariant verified: every v1.0.4 / v1.0.5 test passes UNCHANGED. The 3D additions are nullable / optional / collapsed-by-default by design.
+- Strain-score model invariants: `SS_CP + SS_W' + SS_Pmax ≈ SS_total ± 1%`; 1-hour ride at CP → SS ≈ 100 ± 2; all-Z2 ride → SS_W' < 5%, SS_Pmax < 1%; W'bal monotonically decreasing during P > CP, exponentially recovering during P < CP.
+
+### Honest caveats baked into the docs
+
+- The Kontro paper itself states: "no published data exist to support the energy-system specific model parameters." The τ defaults (52/10, 5/5, 10/4) are a single-athlete illustrative example from supplementary Fig S2, not population-validated. Domestique exposes them as profile-level overrides and documents this in dashboard tooltip copy.
+- TSS-based Banister τ=42/7 in CTL/ATL is folkloric (per literature: 21-60 d range across athletes; Hellard 2017). v1.0.7 will fit per-athlete.
+
+### Out of scope (deferred)
+- Per-athlete τ fitting from real training data — v1.0.7.
+- NP alternative via Kontro Eq. 13 strain rate as comparison view — v1.0.7.
+- DFA α1 from raw FIT (`fit_activity.py` doesn't parse `HrvMessage` today; the `dfa_alpha1: None` gap on every ride) — v1.0.7.
+- Norwegian Method support (HR-only, no lactate) — v1.1.0.
+- HRV-based Bayesian readiness composite — v1.1.0.
+- Out-of-sample Banister validation per athlete — v1.2.0.
+
+## v1.0.5 — Classifier zone-band off-by-one + OU detector tightening + sustained peak-band gate (2026-05-05)
+
+### The pitch — "100% accurate classification, validated"
+
+User testcase `tempo_2x12min_63min.zwo` (a 2×12 min @ 88 % FTP sweet-spot session) was classified as `tempo_intervals` by v1.0.4. Wave 0 audit + 195-file stratified validation (covering Rønnestad / Billat / Tabata / Helgerud / Coggan / sprint clusters as edge cases) found 8 confirmed classifier bugs across 3 distinct cascade flaws. v1.0.5 fixes them all and adds the validation-gate canary as a regression test.
+
+### Three surgical cascade fixes
+
+- **BUG-A — Z3/Z4 boundary off-by-one (highest leverage).** `ZONES_FTP` half-open `[low, high)` semantics put 1.05 (= 105 % FTP, top of Z4 per Coggan/Allen/ICU) into Z5 instead of Z4. Same drift at 0.90 (top of Z3), 1.20 (top of Z5), 1.50 (top of Z6). Fix: bumped all upper bounds by +0.01 so top-of-zone values stay in their named zone. `z4_upper_s` slice helper updated to `< 1.06`. **Library impact:** ~17 % of `vo2max` class (4/23 in sample) reclassified to `threshold` because the headline 105 %-FTP intervals now correctly bin into Z4.
+- **BUG-B — `_zone_dominance_class` z6 floor too aggressive.** 60 s of Z6 in a Z1-dominated workout was firing `anaerobic` classification. Coggan/FasCat anaerobic floor is 3 min cumulative Z6+Z7. Fix: raised z6 floor from 60 → 180 s.
+- **BUG-C — Over-Under detector false-positive on Z3-ramp + Z6-sprint patterns.** Under-leg lower bound 0.70 was catching Z2/Z3 ramps surrounding Z6 sprints, mis-routing anaerobic to over_under. Fix: raised lower bound to 0.85, plus complementary upper-leg cap at 1.10 (excludes Z6+ sprints from the OU pattern, matches Hunter Allen / FasCat canonical OU power band).
+
+### Library transitions
+- 561 primary-class transitions vs. v1.0.4's regen.
+- Top movements: `endurance → recovery` 92 (Z1/Z2 boundary precision), `vo2max → threshold` 61 (BUG-A), `anaerobic → vo2max` 54 (BUG-A), `over_under → {sweet_spot, vo2max, anaerobic, tempo_intervals}` ~96 total (BUG-C tightening).
+
+### Canary verification (HARD gate)
+- `tempo_steady_57min.zwo` → `primary: "threshold_ladder"`, `display_name: "Threshold Ladder 58min — 85→97 % × 4"`.
+- `tempo_2x12min_63min.zwo` → `primary: "sweet_spot"`, `display_name: "Sweet Spot 63min — 2×12min/3min @ 88 %"`.
+- `tempo_steady_55min.zwo` → `primary: "threshold_ladder"`.
+- All 8 confirmed-bug files from `/tmp/qa_v105_validation.md` resolve in the regenerated JSON.
+
+### Tests
+- 879 → 909 passing (+30 net). 195-file stratified validation sample: **95.9 % adjusted accuracy** (raw match 68.7 % including validator imperfections). Coverage: all 16 canonical classes + Rønnestad 30/15 + Billat 30/30 + Tabata 20/10 + Helgerud 4×4 + Coggan 5×5 + sprint clusters.
+
 ## v1.0.4 — Library reclassification + correct titling + workout-detail UX trio (2026-05-05)
 
 ### The pitch — "100% accurate workout classification and titling"

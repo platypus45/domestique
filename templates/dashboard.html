@@ -1521,22 +1521,29 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
           <option value="Recovery">Recovery</option>
           <!-- v4.1.0 U7: FTP Tests category filter (backend filters on ?tags=ftp_test) -->
           <option value="__ftp_test__">FTP Tests</option></select></div>
-      <!-- v4.2.0 IMPL-LIBRARY: content-class filter (12-rule cascade primary). -->
-      <div class="form-group"><label>Content class <span class="hint" title="Content-based 12-rule cascade primary type from /scripts/classify_library_content.py. Matches the actual workout structure, not the filename." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span></label>
+      <!-- v1.0.4 IMPL-DASHBOARD: content-class filter — 16 canonical classes
+           per MASTER_DECISIONS_v104 §1. `mixed` dropped (junk drawer routed
+           by zone-dominance). 6 NEW structural variants added. -->
+      <div class="form-group"><label>Content class <span class="hint" title="Content-based cascade primary type from /scripts/classify_library_content.py — 16 canonical classes (v1.0.4). Matches the actual workout structure, not the filename." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span></label>
         <select id="wk-content-class" onchange="loadWorkouts()">
           <option value="" selected>Any type</option>
           <option value="recovery">Recovery</option>
           <option value="endurance">Endurance</option>
+          <option value="endurance_intervals">Endurance + Strides</option>
           <option value="tempo">Tempo</option>
+          <option value="tempo_intervals">Tempo Intervals</option>
+          <option value="tempo_ladder">Tempo Ladder</option>
           <option value="sweet_spot">Sweet Spot</option>
+          <option value="sweet_spot_ladder">Sweet Spot Ladder</option>
           <option value="threshold">Threshold</option>
+          <option value="threshold_ladder">Threshold Ladder</option>
           <option value="over_under">Over-Under</option>
           <option value="vo2max">VO2max</option>
           <option value="vo2_short">VO2 Short</option>
+          <option value="vo2_ladder">VO2 Ladder</option>
           <option value="anaerobic">Anaerobic</option>
           <option value="neuromuscular">Neuromuscular</option>
           <option value="ftp_test">FTP Test</option>
-          <option value="mixed">Mixed</option>
         </select></div>
       <!-- v4.2.0 IMPL-LIBRARY: duration range slider, 0-120 min default open. -->
       <div class="form-group"><label>Duration <span id="wk-duration-label" style="color:var(--text2);font-size:11px;">0–120 min</span></label>
@@ -7256,8 +7263,16 @@ function calContentCss(cclass, stype) {
 }
 
 function calCardTitle(planned) {
-  // B2 fix — title comes from content_class, not session_type.
+  // v1.0.4 IMPL-DASHBOARD — calendar cell label uses the same cascade as the
+  // workout-detail modal: picked file's display_name first, then zwo_name,
+  // then content_class shorthand, then session_type fallback. The ⚠ warning
+  // icon (rendered by the cell builder) still flags session_type vs content
+  // disagreement — that's a UX feature, not a bug.
   if (!planned) return '';
+  const dn = (planned.display_name || '').trim();
+  if (dn) return dn;
+  const zn = (planned.zwo_name || '').trim();
+  if (zn) return zn;
   const cc = (planned.content_class || '').toLowerCase();
   if (cc && CAL_CONTENT_LABEL[cc]) return CAL_CONTENT_LABEL[cc];
   if (cc) return cc.toUpperCase().replace(/_/g, ' ');
@@ -10161,23 +10176,24 @@ async function openDayWorkout(sessionIdx) {
     blocksSvg = renderPowerBlocksSVG(blocks, settingsFtp);
   }
 
-  // v4.4.2 B5 — display name pulls from content_class when it disagrees
-  // with the filename-derived zwo_name. The full zwo_name (e.g. "Sweet
-  // Spot 6x2min (90min)") lives in a subtitle so power-users still see
-  // provenance, but the BIG hero name is the truthful content_class
-  // label ("Endurance — 90min") when the file doesn't match its name.
-  const ccLabel = (typeof calCardTitle === 'function' && session.content_class)
-    ? calCardTitle({ content_class: session.content_class, session_type: type })
-    : '';
+  // v1.0.4 IMPL-DASHBOARD — modal title cascade reads the picked file's
+  // display_name first (canonical Layer 3 from .content_classification.json),
+  // then ZWO `<name>`, then session_type as last-resort. Duration reflects
+  // the picked file's actual duration when available — fixes the user-stated
+  // bug where a 51min plan slot showed an 82min ZWO under a misleading title.
+  const titleClass = (session.display_name && session.display_name.trim())
+                   || (session.zwo_name && session.zwo_name.trim())
+                   || session.session_type;
+  const actualDur  = (session.zwo_duration_min || session.duration_min);
+  const heroTitle = `${titleClass} (${actualDur}min)`;
   const filenameDerived = (session.zwo_name || '').trim();
-  const heroTitle = ccLabel
-    ? `${ccLabel} — ${session.duration_min}min`
-    : (filenameDerived || typeUpper);
-  // Show provenance subtitle only when filename name disagrees with the
-  // content-class label — otherwise it would just repeat the hero.
-  const showProvenance = filenameDerived
-    && ccLabel
-    && filenameDerived.toLowerCase().indexOf(ccLabel.toLowerCase()) === -1;
+  // Show "sampled from library" provenance subtitle when a library file
+  // is matched and its display_name differs from the bare zwo_name.
+  const displayNameStr = (session.display_name || '').trim();
+  const showProvenance = !!session.zwo_file
+    && displayNameStr
+    && filenameDerived
+    && filenameDerived.toLowerCase() !== displayNameStr.toLowerCase();
 
   let html = `<h2>${session.day_name} — ${esc(heroTitle)}</h2>`;
   if (showProvenance) {

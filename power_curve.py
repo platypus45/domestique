@@ -760,3 +760,309 @@ def latest_ride_id_in_window(profile_id: str = "default",
         return ""
     rides.sort(key=lambda r: _ride_started_iso_date(r), reverse=True)
     return rides[0].get("ride_id") or ""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FATIGUE RESISTANCE (Pinot 2014 robustness index)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Duration tiers used for the FR index per audit §2 (1/5/15/30/60 min). The
+# headline robustness score averages 1/5/15/30 min only — 60-min windows
+# rarely surface past 2000 kJ and would skew the mean.
+_FR_DURATIONS_S: list[int] = [60, 300, 900, 1800, 3600]
+_FR_HEADLINE_DURATIONS_S: set[int] = {60, 300, 900, 1800}
+
+# Allowed kj_threshold values per PATCH G5 — both literature-grounded
+# (1500: van Erp 2021 / Mateo-March 2022; 2000: Pinot & Grappe 2014).
+_FR_VALID_KJ_THRESHOLDS: set[int] = {1500, 2000}
+
+# A "fresh" peak window starts before the rider has accumulated this much
+# kJ. Audit §2 — 0..500 kJ counts as fresh-leg state.
+_FR_FRESH_KJ_CEILING: int = 500
+
+
+def _ride_power_stream(ride: dict) -> list[int]:
+    """Return the per-second watts list for ``ride`` if streams are cached.
+
+    The v1.0.6 envelope at ``ride.streams.watts`` carries 1Hz data after
+    backfill has hydrated it. Rides without streams contribute NO sliding
+    windows but their summary ``ride.kj`` still counts toward the long-
+    ride gate (so insufficient_data reasons stay honest).
+    """
+    streams = ride.get("streams") or {}
+    if not isinstance(streams, dict):
+        return []
+    pwr = streams.get("watts") or streams.get("power") or []
+    if not isinstance(pwr, list) or not pwr:
+        return []
+    out: list[int] = []
+    for p in pwr:
+        try:
+            out.append(int(p) if p is not None else 0)
+        except (TypeError, ValueError):
+            out.append(0)
+    return out
+
+
+def _fr_per_ride_peaks(power_w: list[int],
+                        durations: list[int],
+                        kj_threshold: int,
+                        fresh_kj_ceiling: int = _FR_FRESH_KJ_CEILING,
+                        ) -> dict[int, dict]:
+    """Compute fresh + tired peaks per duration for a single ride.
+
+    Walks ``power_w`` (1 Hz). For each duration, slides a window and tracks
+    two peak watts:
+      • ``fresh_w`` — best window whose kJ-at-start is < ``fresh_kj_ceiling``.
+      • ``tired_w`` — best window whose kJ-at-start is ≥ ``kj_threshold``.
+
+    Uses NumPy when present (sub-second on 14400-sample rides). Returns
+    ``{duration_s: {"fresh_w", "fresh_kj_at_start",
+                    "tired_w", "tired_kj_at_start"}}`` — values are None
+    when no window in that bucket exists for the ride.
+
+    The kJ axis ALWAYS resets per ride per audit §6 + brief checklist.
+    Cumulative-across-day kJ stacking is explicitly out of scope.
+    """
+    n = len(power_w)
+    out: dict[int, dict] = {}
+    if n == 0:
+        return out
+
+    # NumPy fast path — vectorise both cumulative kJ and sliding-window mean.
+    try:
+        import numpy as np
+        arr = np.asarray(power_w, dtype=np.float64)
+        # cum kJ in kJ (1 W·s == 0.001 kJ).
+        cum_kj = np.cumsum(arr) / 1000.0
+        # Sliding-window sum via cumsum trick — compute once, reuse per d.
+        csum = np.concatenate(([0.0], np.cumsum(arr)))
+        for d in durations:
+            if d > n:
+                out[d] = {"fresh_w": None, "fresh_kj_at_start": None,
+                          "tired_w": None, "tired_kj_at_start": None}
+                continue
+            window_sums = csum[d:] - csum[:-d]
+            window_means = window_sums / float(d)
+            # kJ-at-start of each window. Window i starts at index i, so
+            # the kJ accumulated BEFORE that window is cum_kj[i-1] (or 0
+            # when i==0). n_windows == n - d + 1.
+            kj_before = np.concatenate(([0.0], cum_kj[:-1]))[: n - d + 1]
+            fresh_mask = kj_before < float(fresh_kj_ceiling)
+            tired_mask = kj_before >= float(kj_threshold)
+            fresh_w = None
+            fresh_kj = None
+            tired_w = None
+            tired_kj = None
+            if fresh_mask.any():
+                idx = int(np.argmax(np.where(fresh_mask, window_means,
+                                              -np.inf)))
+                fresh_w = float(window_means[idx])
+                fresh_kj = float(kj_before[idx])
+            if tired_mask.any():
+                idx = int(np.argmax(np.where(tired_mask, window_means,
+                                              -np.inf)))
+                tired_w = float(window_means[idx])
+                tired_kj = float(kj_before[idx])
+            out[d] = {
+                "fresh_w": fresh_w,
+                "fresh_kj_at_start": fresh_kj,
+                "tired_w": tired_w,
+                "tired_kj_at_start": tired_kj,
+            }
+        return out
+    except ImportError:
+        pass
+
+    # Pure-Python fallback (no NumPy) — same algorithm, slower.
+    cum_kj = [0.0] * n
+    s = 0.0
+    for i, p in enumerate(power_w):
+        s += float(p) / 1000.0
+        cum_kj[i] = s
+    for d in durations:
+        if d > n:
+            out[d] = {"fresh_w": None, "fresh_kj_at_start": None,
+                      "tired_w": None, "tired_kj_at_start": None}
+            continue
+        wsum = sum(power_w[:d])
+        best_fresh_w = None
+        best_fresh_kj = None
+        best_tired_w = None
+        best_tired_kj = None
+        for i in range(0, n - d + 1):
+            if i > 0:
+                wsum += power_w[i + d - 1] - power_w[i - 1]
+            mean_w = wsum / d
+            kj_at_start = cum_kj[i - 1] if i > 0 else 0.0
+            if kj_at_start < fresh_kj_ceiling:
+                if best_fresh_w is None or mean_w > best_fresh_w:
+                    best_fresh_w = mean_w
+                    best_fresh_kj = kj_at_start
+            if kj_at_start >= kj_threshold:
+                if best_tired_w is None or mean_w > best_tired_w:
+                    best_tired_w = mean_w
+                    best_tired_kj = kj_at_start
+        out[d] = {
+            "fresh_w": best_fresh_w,
+            "fresh_kj_at_start": best_fresh_kj,
+            "tired_w": best_tired_w,
+            "tired_kj_at_start": best_tired_kj,
+        }
+    return out
+
+
+def compute_fatigue_resistance(profile_id: str = "default",
+                                window_days: int = 365,
+                                kj_threshold: int = 1500) -> dict:
+    """Pinot 2014 robustness index — peak power on tired vs fresh legs.
+
+    Per PATCH G5 the kj_threshold is a 2-button toggle; only {1500, 2000}
+    are accepted. Determines BOTH the minimum kJ a ride must reach to count
+    as a "long ride" AND the kJ accumulation point at which the "tired
+    peak" is measured.
+
+    Algorithm (audit §2 / §3):
+      1. Walk every cached ride within ``window_days``.
+      2. For each ride, compute per-duration sliding-window peaks split by
+         the kJ axis: a "fresh" peak (kJ-at-start < 500) and a "tired" peak
+         (kJ-at-start >= kj_threshold). Per-ride kJ axis resets to 0
+         (a PM ride does NOT carry over the AM ride's kJ).
+      3. Long-ride gate: a ride counts toward ``n_long_rides`` iff its
+         max kJ reaches kj_threshold. Falls back to ``ride.kj`` summary
+         when the streams aren't cached (ride.kj is the canonical total).
+      4. Robustness score = mean of FR indices across the headline
+         durations (60 / 300 / 900 / 1800 s) — the 60-min window is
+         shown in scatter only, not in the headline mean.
+
+    Returns (locked):
+      {"window_days": 365, "n_long_rides": 7, "fit_status": "success",
+       "kj_threshold": 1500, "robustness_score": 88.4,
+       "by_duration": [{"duration_s":300,"fr_index_pct":92.1,
+                        "n_data_points":12}, ...],
+       "scatter": [{"duration_s":300,"kj":1850,"watts":295,
+                    "ride_id":"icu_iXXX","date":"..."}, ...]}
+
+    ``fit_status='insufficient_data'`` when fewer than 4 rides reach the
+    threshold. When ``kj_threshold`` is not in {1500, 2000} we coerce to
+    1500 (graceful — the API endpoint validates upstream).
+
+    Bonk inclusion (per audit §6 + brief checklist): rides whose power
+    drops to 0 in the last hour STILL count — Pinot 2014 includes them
+    because fatigue is signal, not noise.
+    """
+    # Coerce invalid kj_threshold to default 1500 — endpoint validates first.
+    if kj_threshold not in _FR_VALID_KJ_THRESHOLDS:
+        kj_threshold = 1500
+
+    insufficient_dict = {
+        "window_days": int(window_days),
+        "n_long_rides": 0,
+        "fit_status": "insufficient_data",
+        "kj_threshold": int(kj_threshold),
+        "robustness_score": None,
+        "by_duration": [],
+        "scatter": [],
+    }
+
+    all_rides = _load_cached_rides()
+    rides = _filter_rides_by_window(all_rides, window_days)
+    if not rides:
+        return insufficient_dict
+
+    # Per-duration aggregates across rides.
+    by_duration: dict[int, dict] = {
+        d: {"fresh_best_w": 0.0, "tired_best_w": 0.0,
+            "n_data_points": 0}
+        for d in _FR_DURATIONS_S
+    }
+    scatter: list[dict] = []
+    n_long_rides = 0
+
+    for r in rides:
+        ride_id = r.get("ride_id") or ""
+        ride_date = _ride_started_iso_date(r)
+        # Long-ride gate. Use ride.kj summary as the cheapest signal — it's
+        # always present in the v1.0.6 envelope. Fall back to streams if
+        # the summary kj is missing.
+        ride_kj = r.get("kj")
+        try:
+            ride_kj_f = float(ride_kj) if ride_kj is not None else 0.0
+        except (TypeError, ValueError):
+            ride_kj_f = 0.0
+        powers = _ride_power_stream(r)
+        # When stream is present but envelope kj missing, derive from stream.
+        if ride_kj_f == 0.0 and powers:
+            ride_kj_f = sum(powers) / 1000.0
+        is_long = ride_kj_f >= float(kj_threshold)
+        if is_long:
+            n_long_rides += 1
+
+        if not powers:
+            # No streams cached — can't compute sliding-window peaks but
+            # the ride still contributes to the long-ride gate via summary.
+            continue
+
+        peaks = _fr_per_ride_peaks(powers, _FR_DURATIONS_S, kj_threshold)
+        for d, pk in peaks.items():
+            agg = by_duration[d]
+            fresh_w = pk.get("fresh_w")
+            tired_w = pk.get("tired_w")
+            if fresh_w is not None and fresh_w > agg["fresh_best_w"]:
+                agg["fresh_best_w"] = float(fresh_w)
+            if tired_w is not None:
+                if tired_w > agg["tired_best_w"]:
+                    agg["tired_best_w"] = float(tired_w)
+                # Each ride contributes one tired data point per duration.
+                agg["n_data_points"] += 1
+                # Scatter row: one point per (ride, duration) tired peak.
+                kj_at_start = pk.get("tired_kj_at_start") or 0.0
+                scatter.append({
+                    "duration_s": int(d),
+                    "kj": round(float(kj_at_start), 1),
+                    "watts": int(round(float(tired_w))),
+                    "ride_id": ride_id,
+                    "date": ride_date,
+                })
+
+    if n_long_rides < 4:
+        insufficient_dict["n_long_rides"] = n_long_rides
+        return insufficient_dict
+
+    # Build by_duration response + headline robustness mean.
+    by_duration_out: list[dict] = []
+    headline_indices: list[float] = []
+    for d in _FR_DURATIONS_S:
+        agg = by_duration[d]
+        fresh = agg["fresh_best_w"]
+        tired = agg["tired_best_w"]
+        n_pts = agg["n_data_points"]
+        fr_index = None
+        if fresh > 0 and tired > 0:
+            fr_index = round(100.0 * tired / fresh, 1)
+            if d in _FR_HEADLINE_DURATIONS_S:
+                headline_indices.append(float(fr_index))
+        by_duration_out.append({
+            "duration_s": int(d),
+            "fr_index_pct": fr_index,
+            "n_data_points": int(n_pts),
+        })
+
+    if not headline_indices:
+        # We have ≥4 long rides BUT no overlap of fresh + tired peaks at
+        # any of the headline durations. Honest insufficient.
+        out = dict(insufficient_dict)
+        out["n_long_rides"] = n_long_rides
+        return out
+
+    robustness = round(sum(headline_indices) / len(headline_indices), 1)
+
+    return {
+        "window_days": int(window_days),
+        "n_long_rides": int(n_long_rides),
+        "fit_status": "success",
+        "kj_threshold": int(kj_threshold),
+        "robustness_score": robustness,
+        "by_duration": by_duration_out,
+        "scatter": scatter,
+    }

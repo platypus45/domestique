@@ -11,8 +11,8 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-3054-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v1.3.3-brightgreen" alt="Version">
-  <img src="https://img.shields.io/badge/Tests-1127%20passing-success" alt="Tests">
+  <img src="https://img.shields.io/badge/Version-v1.3.4-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Tests-1130%20passing-success" alt="Tests">
 </p>
 
 Domestique builds you a periodised training plan, ships **3,054 structured ZWO workouts**, imports your post-ride FITs, and feeds *every* signal — TSS overshoot, polarisation breach, soreness, DFA α1, aerobic decoupling, training monotony, eFTP drift — back into the next day's plan. Most "smart" planners stop at the dashboard. Domestique mutates the prescription.

@@ -8496,10 +8496,17 @@ def _planned_ctl_today(plan: dict, today: date) -> float | None:
 
 
 def _actual_ctl_today(rides: list[dict], today: date) -> float | None:
-    """Best-effort actual CTL: prefer ICU wellness, fall back to local."""
+    """Best-effort actual CTL: prefer ICU wellness, fall back to local.
+
+    v1.3.3 perf: route through ``cached()`` (5-min TTL) instead of calling
+    ``fetch_wellness`` directly. Pre-fix every /api/calendar served the
+    homepage triggered a 200-400ms ICU HTTP round-trip here AND another in
+    ``_hrv_trend_score``, blocking the dashboard's main paint. The cache
+    key matches the one ``/api/wellness?days=7`` already uses so the two
+    paths share a single TTL window.
+    """
     try:
-        import training as _training
-        wellness = _training.fetch_wellness(days=7)
+        wellness = cached("wellness_7", lambda: fetch_wellness(7))
         if wellness:
             for w in reversed(wellness):
                 if w.get("ctl") is not None:
@@ -8541,10 +8548,13 @@ def _ctl_ramp_score(actual: float | None, planned: float | None) -> float | None
 
 
 def _hrv_trend_score() -> float | None:
-    """7-day HRV (rMSSD) trend score per Plews 2013. 100 = stable/up."""
+    """7-day HRV (rMSSD) trend score per Plews 2013. 100 = stable/up.
+
+    v1.3.3 perf: route through ``cached()`` (5-min TTL) so /api/calendar
+    no longer fires a fresh ICU HTTP round-trip every dashboard load.
+    """
     try:
-        import training as _training
-        wellness = _training.fetch_wellness(days=14)
+        wellness = cached("wellness_14", lambda: fetch_wellness(14))
     except Exception:
         return None
     rmssds = [float(w.get("hrv") or w.get("rmssd") or 0) for w in (wellness or [])]

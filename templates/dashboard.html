@@ -4969,8 +4969,12 @@ async function loadHome() {
       try { await loadCalendar(); } catch(_) {}
     })();
 
-    // Today's adjusted session from weekly mesocycle planner (replaces legacy picker)
-    await loadTodaySession();
+    // v1.3.3 perf — dashboard load was blocking 200-700ms on /api/today-session
+    // here, leaving every card below ("recent activities", power curve, body
+    // perf, readiness composite) stuck on "Loading…". loadTodaySession only
+    // paints the #home-recommendation card, so it has no reason to gate the
+    // rest of the page. Fire-and-forget like the other tail loaders below.
+    loadTodaySession();
 
     // Recent activities
     // v4.5.1 FIX-UI B4 — click opens in-app activity modal (was window.open

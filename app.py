@@ -1101,10 +1101,19 @@ def api_profile_power_curve(window_days: int = Query(90, ge=1, le=3650),
 
 
 def _run_backfill_job(task_id: str) -> None:
-    """Worker thread — runs the one-shot backfill and updates the task entry."""
+    """Worker thread — runs the one-shot backfill and updates the task entry.
+
+    GRILL-WAVE2A W2A-G2 fix: the lock acquired by the endpoint is held
+    until this worker finishes (success or crash). Released exactly once,
+    here, in the `finally`. Closes the TOCTOU window where two POSTs
+    between endpoint-release and worker-acquire could spawn duplicate
+    ICU workers.
+    """
     import power_curve
     try:
-        result = power_curve.backfill_icu_history("default", max_per_second=1)
+        result = power_curve.backfill_icu_history(
+            "default", max_per_second=1, _skip_lock=True
+        )
         with _backfill_thread_lock:
             _backfill_tasks[task_id] = {
                 "task_id": task_id,
@@ -1119,6 +1128,12 @@ def _run_backfill_job(task_id: str) -> None:
                 "state": "error",
                 "error": str(e),
             }
+    finally:
+        # Always release — endpoint held it, worker owns it now.
+        try:
+            power_curve.release_backfill_lock()
+        except Exception:
+            pass
 
 
 @app.post("/api/profile/backfill-history")
@@ -1139,12 +1154,12 @@ def api_profile_backfill_history():
             "task_id": lock.get("task_id"),
         }
     task_id = lock.get("task_id") or uuid.uuid4().hex
-    # IMPORTANT: release the on-disk lock — the worker thread will re-acquire
-    # immediately at the start of backfill_icu_history(). We acquired here only
-    # to honour the single-flight contract at /api/profile/backfill-history's
-    # gate. If a second concurrent POST arrives before the worker starts, that
-    # gate fires and returns already_running with our task_id.
-    power_curve.release_backfill_lock()
+    # GRILL-WAVE2A W2A-G2 fix: do NOT release the lock here. The worker
+    # holds it for the full job and releases in its `finally` clause. Earlier
+    # implementation released between endpoint and thread-start, opening a
+    # TOCTOU window where two concurrent POSTs could each see the lock as
+    # free and spawn duplicate ICU workers. Lock now released exactly once,
+    # by the worker thread, when the job ends or crashes.
     with _backfill_thread_lock:
         _backfill_tasks[task_id] = {
             "task_id": task_id,
@@ -9996,24 +10011,50 @@ def _longest_ride_h_90d(rides: list[dict] | None = None) -> float | None:
     return round(longest_s / 3600.0, 2)
 
 
-def _aggregate_best_efforts_90d(rides: list[dict] | None = None) -> dict[int, int]:
-    """v1.3.0 shim — delegates to ``power_curve.aggregate_power_curve``.
+def _aggregate_best_efforts_90d(rides: list[dict] | None = None,
+                                profile_id: str = "default") -> dict[int, int]:
+    """v1.3.0 shim — aggregates best efforts across rides into a 4-tier dict.
 
-    Locked to a 90-day window and the original 4-tier output shape
-    (180/300/600/1200 → best watts seen) so existing call sites keep working.
-    All real aggregation logic lives in ``power_curve.py`` per PATCH G1; this
-    function exists only as a backward-compatibility surface for callers that
-    pre-date the v1.3.0 power-curve module.
+    GRILL-WAVE2A W2A-G1 fix: honours BOTH call patterns (rides supplied vs not).
+    Capability-projection at app.py:6150 passes a pre-filtered last-30d ride
+    list and EXPECTS those exact rides to be aggregated (including FIT-imported
+    rides not yet in ICU cache). The earlier "rides arg is unused" implementation
+    silently dropped FIT rides — that's the BLOCKER fix here.
 
-    The ``rides`` argument is kept for signature compatibility (the old
-    implementation accepted an injected list) but is unused — the v1.3.0
-    aggregator always reads the cached ICU envelope directly so callers
-    cannot accidentally feed it a stale subset.
+    Modes:
+    1. ``rides`` supplied (legacy capability-projection path): walks the
+       supplied list, returns per-duration max watts seen across those rides.
+       Honours the caller's filtering (last-30d in capability case).
+    2. ``rides`` is None (v1.3.0 default): delegates to
+       ``power_curve.aggregate_power_curve(profile_id, 90)`` for a 90-day
+       window from the local ICU cache.
+
+    Either way, output shape is locked to {180, 300, 600, 1200} → max_w
+    (the original Monod-tier contract).
+
     """
+    target_durations = (180, 300, 600, 1200)
+    if rides is not None:
+        # Legacy mode (capability-projection): walk the supplied rides + aggregate
+        # per-tier max watts. Honours caller's filtering.
+        result: dict[int, int] = {d: 0 for d in target_durations}
+        for r in rides:
+            efforts = r.get("efforts") or []
+            for e in efforts:
+                try:
+                    secs = int(e.get("secs") or 0)
+                    watts = int(e.get("watts") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if secs in target_durations and watts > result[secs]:
+                    result[secs] = watts
+        # Drop tiers with zero (no caller-supplied effort at that duration)
+        return {d: w for d, w in result.items() if w > 0}
+    # v1.3.0 default mode: delegate to power_curve.
     import power_curve
-    full = power_curve.aggregate_power_curve("default", window_days=90)
+    full = power_curve.aggregate_power_curve(profile_id, window_days=90)
     return {pt["duration_s"]: pt["watts"] for pt in full["rider_curve"]
-            if pt["duration_s"] in (180, 300, 600, 1200)}
+            if pt["duration_s"] in target_durations}
 
 
 def _maybe_lazy_icu_sync(force_if_today_missing: bool = False) -> None:

@@ -190,8 +190,13 @@ def is_sensor_glitch(effort: dict, ride: dict, profile: dict) -> bool:
         # as-recorded (per "an effort = an effort").
         return False
 
-    # HR_max — first ride.hr_max, then profile.hr_max, then 220-age fallback.
-    hr_max = ride.get("hr_max") or profile.get("hr_max")
+    # HR_max — first ride.hr_max, then profile (accept BOTH `max_hr` and
+    # `hr_max` for robustness — ProfileManager exposes `max_hr`, but earlier
+    # callers used `hr_max`; GRILL-WAVE2A W2A-G4 found this mismatch made
+    # the filter near-inert on real envelopes).
+    hr_max = (ride.get("hr_max")
+              or profile.get("max_hr")
+              or profile.get("hr_max"))
     try:
         hr_max_i = int(hr_max) if hr_max is not None else None
     except (TypeError, ValueError):
@@ -237,7 +242,17 @@ def aggregate_power_curve(profile_id: str = "default",
       }
     """
     profile_ftp, profile_weight = _profile_ftp_weight(profile_id)
-    profile = {"ftp": profile_ftp, "weight_kg": profile_weight}
+    # GRILL-WAVE2A W2A-G4 fix: pass max_hr in the profile dict so
+    # is_sensor_glitch can apply the 1-s phantom-spike filter when ride.hr_max
+    # is absent. Best-effort fetch via ProfileManager; falls back to None.
+    try:
+        from profile_manager import ProfileManager
+        _pm = ProfileManager.get()
+        profile_max_hr = int(_pm.max_hr) if _pm.max_hr else None
+    except Exception:
+        profile_max_hr = None
+    profile = {"ftp": profile_ftp, "weight_kg": profile_weight,
+               "max_hr": profile_max_hr}
 
     all_rides = _load_cached_rides()
     rides = _filter_rides_by_window(all_rides, window_days)
@@ -588,7 +603,8 @@ def release_backfill_lock() -> None:
 
 
 def backfill_icu_history(profile_id: str = "default",
-                          max_per_second: int = 1) -> dict:
+                          max_per_second: int = 1,
+                          _skip_lock: bool = False) -> dict:
     """One-shot detail+streams pull for cached-list rides missing efforts.
 
     For each ride file in ``~/.domestique/rides/icu/`` that fails the G15
@@ -603,12 +619,26 @@ def backfill_icu_history(profile_id: str = "default",
     Rate-limited at ``max_per_second`` requests / sec. Default 1 to respect
     ICU's published rate limits.
 
+    GRILL-WAVE2A W2A-G2: ``_skip_lock=True`` is for callers that already hold
+    the lock at a higher level (the FastAPI endpoint at app.py:1124 holds the
+    lock for the worker thread's full lifetime to close the TOCTOU window).
+
     Returns:
       {"status": "ok" | "already_running",
        "task_id": "...", "backfilled": N, "already_cached": M,
        "failed": K, "elapsed_s": float}
     """
-    acquired, lock = acquire_backfill_lock()
+    if _skip_lock:
+        # Caller (the FastAPI worker thread) already holds the lock.
+        # Build a lock dict locally for task_id continuity.
+        lock_path = _backfill_lock_path()
+        try:
+            lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            lock = {"task_id": uuid.uuid4().hex, "started_at": time.time()}
+        acquired = True
+    else:
+        acquired, lock = acquire_backfill_lock()
     if not acquired:
         return {
             "status": "already_running",
@@ -685,7 +715,11 @@ def backfill_icu_history(profile_id: str = "default",
                 continue
             backfilled += 1
     finally:
-        release_backfill_lock()
+        # GRILL-WAVE2A W2A-G2: when caller passed _skip_lock=True the worker
+        # thread owns the lock and releases in its own finally. Don't double-
+        # release here.
+        if not _skip_lock:
+            release_backfill_lock()
 
     return {
         "status": "ok",

@@ -2403,7 +2403,14 @@ def match_zwo(
         # Score: category match + evidence score + duration proximity
         score = float(w["Score"])
 
-        if cat == primary_cat:
+        # v1.3.4 fix: ftp_test category check is unreliable — the ftp_test
+        # ZWOs (Coggan-20, Ramp) have varying Protocol values that don't
+        # consistently match "Endurance"/"Threshold"/etc, so the category
+        # gate dropped all candidates. The ftp_test tag filter above is
+        # sufficient identification; skip the category gate here for tests.
+        if want_test:
+            score += 5
+        elif cat == primary_cat:
             score += 5  # primary category match
         elif cat in fallback_cats:
             score += 2  # fallback match
@@ -2429,10 +2436,47 @@ def match_zwo(
     candidates = list(seen_names.values())
 
     if not candidates:
-        # No library match. For bulk plan generation we log + flag the session
-        # so ``generate_plan`` can surface the count once at the end. For
-        # ad-hoc rematches (raise_on_empty=True) we raise so the caller — and
-        # ultimately the UI — sees a concrete error instead of a blank zwo.
+        # v1.3.4 fix: when target_dur exceeds library coverage (e.g. a 222-min
+        # vo2max slot from heavy weekend availability — library tops out at
+        # 150min vo2max), DON'T leave zwo_file="". The user's symptom was
+        # yellow ⚠ on every long-duration cell; zwo_file="" is the only path
+        # `_classify_card_state` uses to flag missing_workout. Instead, fall
+        # back to the LONGEST workout in the right category and let the
+        # dashboard surface "extend on trainer" via the existing showGap
+        # banner. The session keeps matched=True because the content is
+        # correct — only the duration is short.
+        coverage_pool: list = []
+        for w in library:
+            if w["Score"] < 3:
+                continue
+            tags_lower = {t.lower() for t in (w.get("Tags") or [])}
+            if "ftp_test" in tags_lower and not want_test:
+                continue
+            if want_test and "ftp_test" not in tags_lower:
+                continue
+            protocol = w.get("Protocol", "")
+            cat = protocol.split(" — ")[0] if " — " in protocol else protocol
+            # v1.3.4 fix: ftp_test bypasses the protocol-category gate (see
+            # the upstream comment); the tag filter alone identifies tests.
+            if want_test or cat == primary_cat or cat in fallback_cats:
+                coverage_pool.append(w)
+        if coverage_pool:
+            coverage_pool.sort(key=lambda x: -float(x.get("Duration(min)", 0) or 0))
+            picked = coverage_pool[0]
+            session.zwo_file = picked.get("File", "") or ""
+            session.zwo_name = picked.get("Name", "") or ""
+            try:
+                session.matched = True  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            log.info(
+                "match_zwo: target_dur=%smin exceeds library for %s — "
+                "fell back to longest %s file (%smin)",
+                target_dur, session.session_type,
+                primary_cat, picked.get("Duration(min)"),
+            )
+            return session
+        # Nothing in any acceptable category — preserve old behaviour.
         log.warning(
             "match_zwo: no candidates for session_type=%s duration=%smin "
             "target_if≈%s primary_cat=%s fallbacks=%s library_size=%d",
@@ -4168,13 +4212,44 @@ def generate_plan(
                     s.tss_estimate = round(new_dur / 60 * tss_per_h)
                     # Duration changed → existing zwo_file may not fit the new
                     # slot. Clear and re-match so the workout shape matches.
-                    if s.session_type not in ("rest", "ftp_test"):
+                    # v1.3.4 fix: include ftp_test in the re-match (was skipped
+                    # pre-fix, so injected ftp_test slots kept zwo_file="" →
+                    # yellow ⚠ in the dashboard). match_zwo's want_test branch
+                    # filters to ftp_test-tagged ZWOs (Coggan-20 / Ramp).
+                    if s.session_type != "rest":
                         s.zwo_file = ""
                         s.zwo_name = ""
                         match_zwo(s, library, week_num=pw.week_num,
                                   day_idx=day_idx, used_names=used_names_set,
                                   plan_start_date=plan_start_date,
                                   seed_salt=seed_salt)
+                        # v1.3.4 fix: refresh description to match new duration.
+                        # Pre-fix the tooltip read "z2 (70min) — sampled from
+                        # library · 154m" because description kept the original
+                        # library duration after rescale.
+                        if s.session_type != "ftp_test":
+                            s.description = (
+                                f"{s.session_type} ({new_dur}min) — sampled from library"
+                            )
+
+    # v1.3.4 fix: final sweep — any non-rest session that still has
+    # zwo_file="" gets a match_zwo call. The FTP-test injector (and a few
+    # other paths) deliberately leave zwo_file="" for downstream resolution;
+    # without this sweep those land on the dashboard as yellow ⚠.
+    for pw in weeks:
+        for day_idx, s in enumerate(pw.sessions):
+            if s.session_type == "rest":
+                continue
+            if getattr(s, "zwo_file", "") or "":
+                continue
+            try:
+                match_zwo(s, library, week_num=pw.week_num,
+                          day_idx=day_idx, used_names=used_names_set,
+                          plan_start_date=plan_start_date,
+                          seed_salt=seed_salt)
+            except Exception:  # noqa: BLE001
+                log.debug("generate_plan final sweep match_zwo failed",
+                          exc_info=True)
 
     # Audit: if match_zwo fell through to the empty-candidates path, surface it
     # once at the end rather than silently producing zwo_file="" sessions.

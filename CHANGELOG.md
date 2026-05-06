@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.3.4 — Hot-fix: generate-plan no longer paints yellow ⚠ on every cell (2026-05-06)
+
+The v1.3.2 fix (`9e68246f`) wired availability_overrides into `generate_plan()` but didn't address the underlying causes of "yellow ⚠ on every cell" — it only fixed the first-paint vs reload-paint disagreement. With heavy availability (e.g. weekend 4h, weekday 1.5h), session durations got rescaled past library coverage and `match_zwo` returned `zwo_file=""` for every long-duration cell. The injected mid-cycle ftp_test slot also painted yellow because match_zwo's category gate filtered out every ftp_test-tagged ZWO. Description text stayed stale ("z2 (70min) — sampled from library · 154m") because it embedded the original ZWO's duration after rescale.
+
+### Fixes
+
+- **`match_zwo` falls back to longest-available when target_dur exceeds library coverage** (`training_planner.py:2429-2469`). Pre-fix: a 222-min vo2max slot found no candidates within the duration window (max diff 60min, library tops at 150-min vo2max) → `zwo_file=""` → `card_state="missing_workout"` → yellow ⚠. Post-fix: when the duration-window pool is empty, scan the same primary+fallback categories for the LONGEST available file, set `s.matched=True` (the content matches; only the duration is short), let the dashboard's existing "Workout file is N min, session planned for M min" banner surface the gap. log.info instead of log.warning so it doesn't pollute the audit trail.
+
+- **ftp_test sessions now find a Coggan-20 / Ramp ZWO** (`training_planner.py:2417-2425`, `4187-4231`). Pre-fix the protocol-category gate (`cat == primary_cat or cat in fallback_cats`) dropped every ftp_test-tagged ZWO because the test files have varied Protocol values (Endurance/Threshold/etc) that don't consistently match the gate. The tag filter alone is sufficient identification; bypass the category gate when `want_test=True`. Also: the availability_overrides loop previously skipped ftp_test sessions entirely (kept zwo_file="" from the injector); now they get re-matched alongside everything else.
+
+- **Final sweep fills any remaining `zwo_file=""` slots** (`training_planner.py:4233-4248`). Defensive backstop: after all the per-pass logic runs, walk every non-rest session and call match_zwo if it still has empty zwo_file. The injector + hard-floor + ronnestad passes can leave gaps that no other path covers.
+
+- **Description refresh after availability rescale** (`training_planner.py:4218-4224`). Pre-fix the description embedded the ORIGINAL library duration ("z2 (70min) — sampled from library"), then availability scaled `s.duration_min` to e.g. 154 → tooltip read "z2 (70min) — sampled from library · 154m" (description vs duration disagreement). Post-fix: regenerate description as `f"{session_type} ({new_dur}min) — sampled from library"` after the re-match.
+
+### Verification
+
+User repro (12-week plan, weekday 1-1.5h, weekend 4h):
+- Before: 2-3 yellow cells per plan (2.6%) typically; up to 5+ on extreme settings.
+- After: **0 yellow cells** under the same heavy availability.
+
+Default user setup (3 days at 0.5h override): 0 yellow cells (was 0; not regression).
+
+### Tests
+
+3 new in `tests/test_v134_generate_plan_no_yellow.py`:
+- `test_high_volume_availability_under_5pct_yellow` — repro headline (asserts <5% yellow).
+- `test_long_duration_z2_falls_back_to_longest` — 240-min long_z2 picks longest endurance file, not ''.
+- `test_ftp_test_session_picks_a_test_zwo` — ftp_test session matches a tagged ZWO.
+
+158 planner tests pass. 1 pre-existing failure (`test_planner_interval_variety::test_mid_late_base_has_at_least_one_interval_pick_per_week`) unchanged.
+
+---
+
+
 ## v1.3.3 — Perf + correctness hot-fix: frontpage no longer blocks, energy curves render real data, UPDATE plan 33× faster (2026-05-06)
 
 Three parallel agents in isolated worktrees, each on a separate v1.3.2 regression. All three cherry-picked clean back to `clean-main`.

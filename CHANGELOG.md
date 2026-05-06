@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.3.1 — Hot-fix: Chart.js loading + mid-week pacing + availability reflow + redraw visibility (2026-05-06)
+
+Same-day hot-fix for four real-user-feedback bugs surfaced after v1.3.0 ship. Four parallel agents in isolated worktrees, one per bug; all four landed clean.
+
+### Fixes
+
+- **BLOCKER — Chart.js never loaded** (`96c83db0`). v1.3.0's Power Curve, Fatigue Resistance scatter, and 6 phase-summary charts all called `new Chart(...)` but `templates/dashboard.html` had ZERO Chart.js script tags — the panels rendered as the "Chart.js not loaded" fallback for every user. Vendored Chart.js 4.5.1 UMD (208 KB) into `static/vendor/chart.umd.min.js` and added one `<script>` to `<head>`. Existing fallback guards left intact as defense-in-depth. Regression test asserts the script tag precedes every `new Chart(` call site.
+
+- **HIGH — Redrawn training didn't show up** (`9eb51189`). The day-detail modal's "Rematch workout" button (`templates/dashboard.html:11814` `rematchDaySession()`) repainted the legacy `#wc-grid` host via `loadWeeklyCalendar()` but didn't refresh the visible THIS WEEK panel (`#weekly-calendar`) or calendar overlay (`#cal-overlay`) which are fed by `loadCalendar()` + `loadPlan()`. Server persisted the new ZWO correctly; user's view stayed in `missing_workout` state. Surgical 10-line addition of `await loadCalendar(); await loadPlan();` on both success and classifier-fallback paths. The other two redraw entry points (`pgRedrawSession`, `calRedrawDay`) were already correctly wired.
+
+- **HIGH — Mid-week pacing read as "behind plan"** (`260e863a`). On Wednesday the dashboard showed `Z1+Z2: 37 min / 360 min planned (10%)` and `COMPLIANCE 24% ✗` — mathematically correct against END OF WEEK but misleading mid-week when 4 of 7 days are still ahead. `/api/calendar` (`merge_plan_with_rides`) now emits `planned_*_to_date` alongside `planned_*` and `days_elapsed` / `days_total`. The `rail()` helper in `templates/dashboard.html` renders a two-segment Planned bar (full-opacity to-date, dimmed remaining) and grades the headline % against to-date. New annotation `"{N} of 7 days elapsed · pacing math vs to-date plan"` under the THIS WEEK header explains the scaling. Compliance band recomputes via `completion_pct_to_date` (with full-week fallback so legacy callers don't regress).
+
+- **HIGH — Availability didn't auto-reflow** (`b7433e37`). User marked Sat/Sun unavailable; planned trainings remained on those days. Root cause: `api_save_availability` (`app.py:6917-6938`) wrote `plan["availability"]` to JSON but never invoked `tp.reforecast()` even though the plumbing existed at `training_planner.py:4841-4900` with the `availability_overrides` kwarg already correctly rescaling `duration_min` / `tss_estimate`. Endpoint now builds `PlannedWeek` list, calls `tp.reforecast(goal, pw_list, availability_overrides=...)`, propagates `session_type` / `duration_min` / `tss_estimate` back to the plan JSON, persists, and returns `{ok: true, sessions_modified: int}`. Dashboard's `_saveAvailability` now calls `loadCalendar()` after the response. Popover copy at `dashboard.html:1841` swapped from "click Generate Plan to save and rebuild" → "Saved — plan reflowed automatically." New `availability_hours` / `availability_type` fields per day; days with `availability_hours == 0` render an UNAVAILABLE badge (red-tinted) instead of the planned card — distinct from planned REST.
+
+### Tests
+
+12 new tests across 4 new files:
+- `tests/test_v131_chart_loaded.py` (3 tests)
+- `tests/test_v131_redraw_visible.py` (3 tests)
+- `tests/test_v131_midweek_pacing.py` (3 tests)
+- `tests/test_v131_availability_reflow.py` (3 tests)
+
+All 52 v1.3.1-touched + neighbouring tests pass. Full pytest 1103+ passing.
+
 ## v1.3.0 — 90-day Power Curve + Pinot 2014 Fatigue Resistance + Per-Ride PR Detection (2026-05-06)
 
 Three coordinated additions, all rolling on top of the v1.0.6 3D-energy-system foundation. **TSS-PRIMARY 3D-ADDITIVE invariant preserved** — none of these replace the CTL/ATL/TSB backbone; they layer on top.

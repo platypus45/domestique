@@ -1,20 +1,28 @@
 # Changelog
 
-## v1.3.3 — Hot-fix: energy-system breakdown chart renders actual CP/W'/Pmax curves (2026-05-06)
+## v1.3.3 — Perf + correctness hot-fix: frontpage no longer blocks, energy curves render real data, UPDATE plan 33× faster (2026-05-06)
 
-The v1.3.2 fix wired `energySystemChart()` into `loadHome()` so the call fires on every dashboard load, but the chart still fell through to the friendly placeholder text. Root cause: `/api/wellness` was returning `cp_fitness`, `w_prime_fitness`, `pmax_fitness` as `None` on every record because nobody was running the per-component Banister convolution. The per-ride writer (`ride_storage.compute_ride_xss`) was correctly stamping `ss_cp_daily` / `ss_w_prime_daily` / `ss_pmax_daily` per-day impulses into `athlete_metrics`, but no code was integrating those impulses into the per-day fitness/fatigue curves the chart consumes.
+Three parallel agents in isolated worktrees, each on a separate v1.3.2 regression. All three cherry-picked clean back to `clean-main`.
 
-### Fix
+### Fixes
 
-- **`app._augment_wellness_with_3d_fitness()`**: new helper that runs once per `/api/wellness` request. Pulls 365 days of `ss_*_daily` rows from `athlete_metrics`, builds an oldest-first contiguous load series per component, and runs `strain_score.banister()` per record date with Kontro Fig. S2 τ defaults (CP 52/10 d, W' 5/5 d, Pmax 10/4 d) to compute `(fitness, fatigue, _form)`. Six keys (`cp_fitness`, `cp_fatigue`, `w_prime_fitness`, `w_prime_fatigue`, `pmax_fitness`, `pmax_fatigue`) are stamped onto each record dict in-place. Idempotent — keys already populated by an upstream writer are not overwritten. Wired into all three `/api/wellness` return paths (live ICU, local file store, SQLite fallback).
-- Sample API record after the fix (with 7 d of seeded SS_x data): `cp_fitness=559.5, cp_fatigue=439.2, w_prime_fitness=122.4, w_prime_fatigue=122.4, pmax_fitness=66.7, pmax_fatigue=45.0`.
-- New regression `tests/test_v133_energy_system_curves.py` (3 tests): augmenter populates curves when SS history exists, no-ops when athlete_metrics is empty, and respects upstream-written values.
+- **PERF — Whole frontpage was stuck on "Loading…"** (`1162e767`). Two compounding roots: (a) `templates/dashboard.html:4973` `loadHome()` did `await loadTodaySession()` which gated EVERY card painted below it (recent-activities, body-perf-card, power-curve-chart, readiness-composite-content, morning-log) until `/api/today-session` resolved (200-700ms warm; far worse cold with real ICU latency). (b) `app.py:8502` `_actual_ctl_today()` and `app.py:8547` `_hrv_trend_score()` called `training.fetch_wellness()` directly, bypassing the `cached()` 5-min-TTL helper. Both fire on every `/api/calendar` request via `_build_summary_block`, doubling ICU HTTP round-trips on every dashboard load. Fix: dropped `await` from `loadTodaySession()` so it runs alongside the other tail loaders; routed both bypass calls through `cached("wellness_7", ...)` / `cached("wellness_14", ...)` — same keys `/api/wellness` already uses, so they share a single TTL window. Measured: `/api/calendar` 482ms → 105ms (4.6×); `/api/today-session` 215ms warm but no longer blocks tail loaders.
+
+- **3D — Energy-system breakdown chart now renders actual CP/W'/Pmax curves** (`d647ea23`). The v1.3.2 fix wired `energySystemChart()` into `loadHome()` but the chart still fell through to placeholder text. Root cause: `/api/wellness` was returning `cp_fitness`/`w_prime_fitness`/`pmax_fitness` as `None` on every record because nobody was running the per-component Banister convolution. The per-ride writer (`ride_storage.compute_ride_xss`) correctly stamped `ss_cp_daily` / `ss_w_prime_daily` / `ss_pmax_daily` per-day impulses into `athlete_metrics`, but no code integrated those impulses into per-day fitness/fatigue curves. Fix: new `app._augment_wellness_with_3d_fitness()` runs once per `/api/wellness` request, pulls 365 days of `ss_*_daily` rows, builds oldest-first contiguous load series per component, runs `strain_score.banister()` per record date with Kontro Fig. S2 τ defaults (CP 52/10 d, W' 5/5 d, Pmax 10/4 d). Six keys stamped onto each record dict in-place, idempotent (won't clobber upstream values). Wired into all three `/api/wellness` return paths (live ICU, local file store, SQLite fallback). Sample after fix (7d seeded SS_x): `cp_fitness=559.5, cp_fatigue=439.2, w_prime_fitness=122.4, w_prime_fatigue=122.4, pmax_fitness=66.7, pmax_fatigue=45.0`.
+
+- **PERF — UPDATE plan button was 13s on a 12-week plan** (`f0ebc04e`). Root cause: `/api/plan/save-availability` called `tp.reforecast()` without `tsb_series`, so reforecast's per-day `_tsb_at` callback fell through to `get_today_metrics()` — which makes 2 ICU HTTPS calls per future hard session (~270ms each). On a 12-week plan with ~18 future hard sessions that was 36 ICU calls = 5–13s of network I/O on every UPDATE click. Fix: `app.py:7072` pass `tsb_series={}` so `_tsb_at` short-circuits to dict (returns None) and the network fallback never fires. Save-availability's only job is the availability rescale; TSB-driven downshifts belong to `/api/plan/reforecast` (which already pre-fetches `tsb_series` correctly). Core `training_planner.py` reforecast logic untouched. Profile (12-week plan, ICU creds): before save-availability 13207ms / calendar 422ms = **13629ms click-to-paint**; after save-availability 14ms / calendar 388ms = **402ms click-to-paint** (33× speedup).
 
 ### Tests
 
-1118 → **1121 passing** (3 new). v1.3.2 contract tests still green.
+9 new across 3 files:
+- `tests/test_v133_frontpage_perf.py` (3 tests) — `/api/calendar < 250ms` warm, `/api/today-session < 1000ms` tripwire, `loadHome()` does NOT await `loadTodaySession()`
+- `tests/test_v133_energy_system_curves.py` (3 tests) — augmenter populates curves with SS history, no-ops empty `athlete_metrics`, respects upstream-written values
+- `tests/test_v133_update_plan_perf.py` — patches `get_today_metrics` with 250ms sleep, asserts median click-to-paint < 1500ms + zero ICU calls from save-availability (zero-call invariant locks the regression)
+
+1118 → **1127 passing** (+9). 4 pre-existing unrelated failures unchanged.
 
 ---
+
 
 ## v1.3.2 — Hot-fix: 4 dashboard/plan-gen bugs (energy chart, avail UPDATE button, generate-plan trio, session duration) (2026-05-06)
 

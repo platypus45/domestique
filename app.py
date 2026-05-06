@@ -7182,8 +7182,17 @@ async def api_save_availability(request: Request):
                 if isinstance(entry, dict) and "hours" in entry
             }
 
+            # v1.3.3 PERF: pass tsb_series={} so reforecast()'s per-day _tsb_at
+            # callback short-circuits to the dict (returning None) instead of
+            # falling through to get_today_metrics() — which makes 2 ICU HTTPS
+            # calls per future hard session (~270 ms each). With ~18 future
+            # hard sessions on a 12-week plan that was 5–12 s of network I/O on
+            # every UPDATE click. This endpoint's only job is the availability
+            # rescale (TSB-driven downshifts belong to /api/plan/reforecast),
+            # so skipping the TSB block is faithful to its v1.3.1 design.
             _, reforecast_info = tp.reforecast(
                 reforecast_goal, pw_list,
+                tsb_series={},
                 availability_overrides=availability_overrides,
             )
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.3.3 — Hot-fix: energy-system breakdown chart renders actual CP/W'/Pmax curves (2026-05-06)
+
+The v1.3.2 fix wired `energySystemChart()` into `loadHome()` so the call fires on every dashboard load, but the chart still fell through to the friendly placeholder text. Root cause: `/api/wellness` was returning `cp_fitness`, `w_prime_fitness`, `pmax_fitness` as `None` on every record because nobody was running the per-component Banister convolution. The per-ride writer (`ride_storage.compute_ride_xss`) was correctly stamping `ss_cp_daily` / `ss_w_prime_daily` / `ss_pmax_daily` per-day impulses into `athlete_metrics`, but no code was integrating those impulses into the per-day fitness/fatigue curves the chart consumes.
+
+### Fix
+
+- **`app._augment_wellness_with_3d_fitness()`**: new helper that runs once per `/api/wellness` request. Pulls 365 days of `ss_*_daily` rows from `athlete_metrics`, builds an oldest-first contiguous load series per component, and runs `strain_score.banister()` per record date with Kontro Fig. S2 τ defaults (CP 52/10 d, W' 5/5 d, Pmax 10/4 d) to compute `(fitness, fatigue, _form)`. Six keys (`cp_fitness`, `cp_fatigue`, `w_prime_fitness`, `w_prime_fatigue`, `pmax_fitness`, `pmax_fatigue`) are stamped onto each record dict in-place. Idempotent — keys already populated by an upstream writer are not overwritten. Wired into all three `/api/wellness` return paths (live ICU, local file store, SQLite fallback).
+- Sample API record after the fix (with 7 d of seeded SS_x data): `cp_fitness=559.5, cp_fatigue=439.2, w_prime_fitness=122.4, w_prime_fatigue=122.4, pmax_fitness=66.7, pmax_fatigue=45.0`.
+- New regression `tests/test_v133_energy_system_curves.py` (3 tests): augmenter populates curves when SS history exists, no-ops when athlete_metrics is empty, and respects upstream-written values.
+
+### Tests
+
+1118 → **1121 passing** (3 new). v1.3.2 contract tests still green.
+
+---
+
 ## v1.3.2 — Hot-fix: 4 dashboard/plan-gen bugs (energy chart, avail UPDATE button, generate-plan trio, session duration) (2026-05-06)
 
 Same-day hot-fix for five real-user-feedback issues from the v1.3.1 dashboard. Three parallel agents in isolated worktrees + one resumed; all 4 cherry-picked clean back to `clean-main`.

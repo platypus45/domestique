@@ -1805,6 +1805,106 @@ def api_activities():
     ]
 
 
+# v1.3.3 — Banister τ defaults for the three Kontro 2026 components.
+# CP slow / W' fast / Pmax mid — Fig. S2 single-athlete illustrative values.
+# These are NOT population-fit; they are the same defaults the README and
+# strain_score module document (line 60-62), so the energy-system breakdown
+# chart can render *something* before tau_fitting per-component lands.
+_V133_TAU_DEFAULTS_DAYS = {
+    "cp":      (52.0, 10.0),
+    "w_prime": ( 5.0,  5.0),
+    "pmax":    (10.0,  4.0),
+}
+
+
+def _augment_wellness_with_3d_fitness(records: list[dict]) -> None:
+    """v1.3.3 — populate cp_fitness / cp_fatigue / w_prime_* / pmax_* in-place.
+
+    The v1.0.6 IMPL-3D-MODEL wired strain_score.compute_xss_components into
+    every ride import — so per-day SS_x sums are written to athlete_metrics
+    (rows ss_cp_daily / ss_w_prime_daily / ss_pmax_daily). What was missing
+    was the per-component Banister convolution that turns those daily
+    impulses into the fitness/fatigue curves the dashboard chart consumes.
+    This helper closes that gap on read: it walks athlete_metrics once,
+    builds an oldest-first contiguous per-day load series for each
+    component, runs strain_score.banister() per record date, and writes
+    the six keys onto each wellness dict in-place. Idempotent — keys that
+    are already populated (e.g. by an upstream writer in a future patch)
+    are not overwritten.
+    """
+    if not records:
+        return
+    dates = [r.get("id") or r.get("date") for r in records if isinstance(r, dict)]
+    dates = [d for d in dates if isinstance(d, str) and len(d) >= 10]
+    if not dates:
+        return
+    try:
+        import strain_score as _ss
+    except Exception as e:
+        _log.debug(f"_augment_wellness_with_3d_fitness: strain_score import failed: {e}")
+        return
+    # Pull a window large enough to span the longest fitness τ × ~3 plus the
+    # span of the requested wellness records. 365 days covers > 7×τ_CP=52d,
+    # which is well past the Banister equilibrium tail.
+    span_days = 365
+    histories: dict[str, dict[str, float]] = {}
+    for component, metric in (("cp", "ss_cp_daily"),
+                              ("w_prime", "ss_w_prime_daily"),
+                              ("pmax", "ss_pmax_daily")):
+        try:
+            rows = db.query_metric_history(metric, days=span_days)
+        except Exception as e:
+            _log.debug(f"_augment_wellness_with_3d_fitness: query {metric}: {e}")
+            rows = []
+        per_day: dict[str, float] = {}
+        for r in rows:
+            d = r.get("date")
+            v = r.get("value")
+            if not d or v is None:
+                continue
+            try:
+                per_day[d] = per_day.get(d, 0.0) + float(v)
+            except (TypeError, ValueError):
+                continue
+        histories[component] = per_day
+    # If nothing in athlete_metrics yet, leave records alone — keys will be
+    # absent and the chart's "not-yet-computed" placeholder still applies.
+    if not any(histories.values()):
+        return
+    import datetime as _dt
+    earliest = min(dates)
+    try:
+        start = _dt.date.fromisoformat(earliest) - _dt.timedelta(days=span_days)
+    except Exception:
+        return
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        rid = rec.get("id") or rec.get("date")
+        if not isinstance(rid, str) or len(rid) < 10:
+            continue
+        try:
+            today = _dt.date.fromisoformat(rid[:10])
+        except Exception:
+            continue
+        for component, (tau_fit, tau_fat) in _V133_TAU_DEFAULTS_DAYS.items():
+            per_day = histories.get(component) or {}
+            # Build oldest-first contiguous series ending on `today`.
+            series: list[float] = []
+            d = start
+            while d <= today:
+                series.append(per_day.get(d.isoformat(), 0.0))
+                d += _dt.timedelta(days=1)
+            fit_v, fat_v, _form = _ss.banister(series, tau_fit=tau_fit, tau_fat=tau_fat)
+            fit_key = f"{component}_fitness"
+            fat_key = f"{component}_fatigue"
+            # Idempotent: don't clobber an upstream-written value.
+            if rec.get(fit_key) is None:
+                rec[fit_key] = round(float(fit_v), 1)
+            if rec.get(fat_key) is None:
+                rec[fat_key] = round(float(fat_v), 1)
+
+
 def _wellness_record_to_api_dict(w: dict) -> dict:
     """v4.5.0 — common ICU/local wellness record → /api/wellness response shape.
 
@@ -1814,6 +1914,11 @@ def _wellness_record_to_api_dict(w: dict) -> dict:
     Banister curves IMPL-3D-MODEL writes to athlete_metrics. Gracefully empty
     when the 3D model has not yet computed values for this date — preserves
     TSS-primary contract (CTL/ATL/TSB always present).
+
+    v1.3.3: callers are expected to run _augment_wellness_with_3d_fitness on
+    the record list BEFORE invoking this serializer, which writes the six
+    Banister-curve keys in-place. This function still gracefully reads None
+    for any key the augmenter declined to populate.
     """
     ctl = w.get("ctl")
     atl = w.get("atl")
@@ -1844,6 +1949,10 @@ def api_wellness(days: int = Query(28)):
     # Try live API first, fall back to local file store, then SQLite.
     data = cached(f"wellness_{days}", lambda: fetch_wellness(days))
     if data:
+        # v1.3.3: convolve per-day SS_x series (athlete_metrics) into per-day
+        # CP / W' / Pmax fitness curves and stamp them onto the records the
+        # dashboard energy-system chart reads.
+        _augment_wellness_with_3d_fitness(data)
         return [_wellness_record_to_api_dict(w) for w in data]
     # v4.5.0: local file store fallback. If empty AND ICU creds available,
     # do a one-shot fetch + persist before returning.
@@ -1862,22 +1971,26 @@ def api_wellness(days: int = Query(28)):
     if local:
         # local records are newest-first; API contract is unspecified order so
         # leave as-is.
+        _augment_wellness_with_3d_fitness(local)
         return [_wellness_record_to_api_dict(w) for w in local]
-    # Fallback to SQLite
+    # Fallback to SQLite — reshape into the ICU-record shape the augmenter
+    # expects (id-keyed) before convolving, then project the API dict.
     rows = db.query_wellness(days)
-    return [
+    shaped = [
         {
-            "date": r["date"], "ctl": r.get("ctl"), "atl": r.get("atl"),
-            # Truthy check would treat ctl=0 / atl=0 as missing (training.py
-            # special-cases ctl==0 for fresh-athlete data). Use `is not None`.
-            "tsb": round(r["ctl"] - r["atl"], 1) if (r.get("ctl") is not None and r.get("atl") is not None) else None,
-            "hrv": r.get("hrv"), "rhr": r.get("rhr"),
-            "sleep_h": round(r["sleep_secs"] / 3600, 2) if r.get("sleep_secs") else None,
-            "sleep_score": r.get("sleep_score"),
-            "eftp": r.get("eftp"),
+            "id": r["date"],
+            "ctl": r.get("ctl"),
+            "atl": r.get("atl"),
+            "hrv": r.get("hrv"),
+            "restingHR": r.get("rhr"),
+            "sleepSecs": r.get("sleep_secs"),
+            "sleepScore": r.get("sleep_score"),
+            "sportInfo": [{"eftp": r.get("eftp")}] if r.get("eftp") is not None else [],
         }
         for r in rows
     ]
+    _augment_wellness_with_3d_fitness(shaped)
+    return [_wellness_record_to_api_dict(w) for w in shaped]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

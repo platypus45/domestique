@@ -1189,6 +1189,73 @@ def api_profile_backfill_history_status(task_id: str = Query(...)):
     return entry
 
 
+@app.get("/api/profile/fatigue-resistance")
+def api_profile_fatigue_resistance(window_days: int = Query(365, ge=1, le=3650),
+                                     kj_threshold: int = Query(1500),
+                                     refresh: int = Query(0)):
+    """v1.3.0 IMPL-FATIGUE — Pinot 2014 robustness index.
+
+    Compares peak power on fresh legs (kJ-at-start < 500) versus tired legs
+    (kJ-at-start ≥ ``kj_threshold``) across all cached rides in window.
+    Per PATCH G5 the threshold is a 2-button toggle: ``{1500, 2000}`` only.
+
+    Cached for 24h via the standard ``_cache``/``_cache_ts`` mechanism. Per
+    PATCH G4 the cache key includes ``kj_threshold`` AND
+    ``latest_ride_id_in_window`` so threshold flips invalidate AND a freshly
+    imported ride invalidates automatically. Pass ``?refresh=1`` to force
+    recompute.
+
+    Falls back to ``insufficient_data`` on any exception so the dashboard
+    never gets a 500.
+    """
+    import power_curve
+    # PATCH G5 — only 1500 and 2000 are valid thresholds. Coerce others to
+    # the default rather than 422'ing — the dashboard sends one of two
+    # values via the toggle but a curl-tester gets the friendly default.
+    if kj_threshold not in (1500, 2000):
+        kj_threshold = 1500
+    try:
+        latest = power_curve.latest_ride_id_in_window("default",
+                                                      int(window_days))
+    except Exception as e:
+        _log.debug(f"fatigue_resistance latest_ride_id failed: {e}")
+        latest = ""
+    cache_key = (f"fatigue_resistance_default_{int(window_days)}_"
+                 f"{int(kj_threshold)}_{latest}")
+    now = time.time()
+    ttl = 24 * 3600
+    if not refresh and cache_key in _cache and \
+       now - _cache_ts.get(cache_key, 0) < ttl:
+        return _cache[cache_key]
+    try:
+        result = power_curve.compute_fatigue_resistance(
+            "default",
+            window_days=int(window_days),
+            kj_threshold=int(kj_threshold),
+        )
+    except Exception as e:
+        _log.warning(f"api_profile_fatigue_resistance failed: {e}")
+        result = {
+            "window_days": int(window_days),
+            "n_long_rides": 0,
+            "fit_status": "insufficient_data",
+            "kj_threshold": int(kj_threshold),
+            "robustness_score": None,
+            "by_duration": [],
+            "scatter": [],
+        }
+    # Lazy GC — prune stale fatigue_resistance_* entries with old keys for
+    # the same (window_days, kj_threshold) pair.
+    prefix = f"fatigue_resistance_default_{int(window_days)}_{int(kj_threshold)}_"
+    for k in list(_cache.keys()):
+        if k.startswith(prefix) and k != cache_key:
+            _cache.pop(k, None)
+            _cache_ts.pop(k, None)
+    _cache[cache_key] = result
+    _cache_ts[cache_key] = now
+    return result
+
+
 @app.post("/api/activity/{activity_id}/race")
 def api_activity_set_race(activity_id: str, body: dict):
     """v1.0.7 IMPL-TAU-FIT-WIRING — toggle the is_race flag on an activity.
@@ -9910,6 +9977,7 @@ def _sync_icu_activities(force: bool = False) -> dict:
 
     added = 0
     updated = 0
+    added_paths: list[Path] = []
     icu_dir = _rs._icu_rides_dir()
     for a in activities or []:
         # Cycling-ish only — same filter the planner uses elsewhere. The
@@ -9931,6 +9999,7 @@ def _sync_icu_activities(force: bool = False) -> dict:
             updated += 1
         else:
             added += 1
+            added_paths.append(path)
         # v1.0.7 — augment the persisted ICU record with DFA α1 from the raw
         # FIT (when ICU's payload didn't carry it). We only fetch the FIT once
         # per activity (skip when the persisted record already has a non-null
@@ -9947,6 +10016,14 @@ def _sync_icu_activities(force: bool = False) -> dict:
     # v1.0.3 — best-effort auto-reforecast on new rides. Helper swallows
     # all exceptions so the sync result stays clean.
     _maybe_auto_reforecast("default", added)
+    # v1.3.0 IMPL-PR-DETECTION: queue toasts for newly-imported rides that
+    # landed at least one major PR. Per PATCH G7: ONE line per ride. Best-
+    # effort — failures must not break the sync return shape.
+    if added > 0 and added_paths:
+        try:
+            _maybe_queue_pr_toasts(added_paths)
+        except Exception as e:
+            _log.debug(f"_maybe_queue_pr_toasts swallowed: {e}")
     return {
         "added": added, "updated": updated, "total": total,
         "status": "ok",
@@ -10055,6 +10132,143 @@ def _aggregate_best_efforts_90d(rides: list[dict] | None = None,
     full = power_curve.aggregate_power_curve(profile_id, window_days=90)
     return {pt["duration_s"]: pt["watts"] for pt in full["rider_curve"]
             if pt["duration_s"] in target_durations}
+
+
+def _pr_toast_queue_path() -> Path:
+    """v1.3.0 IMPL-PR-DETECTION: per-version toast queue file.
+
+    Stores ``[{"ride_id": ..., "started_at": ..., "n_prs": int}]`` for rides
+    that landed major PRs since the last dashboard open. Drained by the GET
+    /api/ride/.../prs/toast-queue endpoint.
+    """
+    return Path.home() / ".domestique" / "last_pr_toast.json"
+
+
+def _read_pr_toast_queue() -> list[dict]:
+    p = _pr_toast_queue_path()
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return [e for e in data if isinstance(e, dict)]
+    except (json.JSONDecodeError, OSError) as e:
+        _log.debug(f"_read_pr_toast_queue: {e}")
+    return []
+
+
+def _write_pr_toast_queue(entries: list[dict]) -> None:
+    p = _pr_toast_queue_path()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+    except OSError as e:
+        _log.warning(f"_write_pr_toast_queue: {e}")
+
+
+def _maybe_queue_pr_toasts(added_paths: list[Path]) -> None:
+    """v1.3.0 IMPL-PR-DETECTION: append a toast entry for each newly-imported
+    ride that had at least one major PR.
+
+    Per PATCH G7: caps at ONE line per ride ("New PRs on yesterday's ride —
+    open ride detail to see all"). The full PR list is in the ride summary;
+    this queue just signals to the dashboard which rides to highlight.
+    """
+    if not added_paths:
+        return
+    queue = _read_pr_toast_queue()
+    seen = {e.get("ride_id") for e in queue if isinstance(e, dict)}
+    for path in added_paths:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        prs = data.get("prs") or []
+        if not isinstance(prs, list):
+            continue
+        n_major = sum(1 for p in prs if isinstance(p, dict)
+                      and p.get("tier") == "major")
+        if n_major <= 0:
+            continue
+        ride_id = data.get("ride_id") or ""
+        if not ride_id or ride_id in seen:
+            continue
+        queue.append({
+            "ride_id": ride_id,
+            "started_at": data.get("started_at") or "",
+            "n_prs": n_major,
+        })
+        seen.add(ride_id)
+    _write_pr_toast_queue(queue)
+
+
+@app.get("/api/ride/{ride_id}/prs")
+def api_ride_prs(ride_id: str):
+    """v1.3.0 — return the cached PR list for a ride.
+
+    Reads ``prs[]`` from the persisted ICU envelope; recomputes lazily when
+    the field is missing (older rides imported before v1.3.0). 404 when the
+    ride id is unknown.
+    """
+    if not isinstance(ride_id, str) or not ride_id or len(ride_id) > 80:
+        return JSONResponse({"error": "bad ride_id"}, 400)
+    if not re.match(r"^[\w\-]+$", ride_id):
+        return JSONResponse({"error": "bad ride_id"}, 400)
+    import ride_storage as _rs
+    ext = ride_id[4:] if ride_id.startswith("icu_") else ride_id
+    rec = _rs.get_icu_ride(ext)
+    if rec is None:
+        return JSONResponse({"error": "ride not found"}, 404)
+    prs = rec.get("prs")
+    if isinstance(prs, list):
+        return {"ride_id": ride_id, "prs": prs}
+    # Lazy compute when the field is missing (pre-v1.3.0 imports).
+    try:
+        import power_curve
+        prs = power_curve.compute_ride_prs(ride_id)
+    except Exception as e:
+        _log.warning(f"api_ride_prs lazy compute failed: {e}")
+        prs = []
+    # Best-effort cache the result back into the envelope so re-reads are O(1).
+    try:
+        rec["prs"] = prs
+        path = _rs._icu_rides_dir() / f"{ext}.json"
+        path.write_text(json.dumps(rec, indent=2), encoding="utf-8")
+    except Exception as e:
+        _log.debug(f"api_ride_prs persist failed: {e}")
+    return {"ride_id": ride_id, "prs": prs}
+
+
+@app.post("/api/ride/{ride_id}/prs/recompute")
+def api_ride_prs_recompute(ride_id: str):
+    """v1.3.0 — force a recompute of the PR list for a ride and persist back.
+
+    Useful when efforts were backfilled after the initial import — the
+    rolling-best changes, so the rebased PR list does too. Returns the
+    fresh list. 404 when the ride id is unknown.
+    """
+    if not isinstance(ride_id, str) or not ride_id or len(ride_id) > 80:
+        return JSONResponse({"error": "bad ride_id"}, 400)
+    if not re.match(r"^[\w\-]+$", ride_id):
+        return JSONResponse({"error": "bad ride_id"}, 400)
+    import ride_storage as _rs
+    ext = ride_id[4:] if ride_id.startswith("icu_") else ride_id
+    rec = _rs.get_icu_ride(ext)
+    if rec is None:
+        return JSONResponse({"error": "ride not found"}, 404)
+    try:
+        import power_curve
+        prs = power_curve.compute_ride_prs(ride_id)
+    except Exception as e:
+        _log.warning(f"api_ride_prs_recompute failed: {e}")
+        return JSONResponse({"error": str(e)}, 500)
+    try:
+        rec["prs"] = prs
+        path = _rs._icu_rides_dir() / f"{ext}.json"
+        path.write_text(json.dumps(rec, indent=2), encoding="utf-8")
+    except Exception as e:
+        _log.warning(f"api_ride_prs_recompute persist failed: {e}")
+    return {"ride_id": ride_id, "prs": prs}
 
 
 def _maybe_lazy_icu_sync(force_if_today_missing: bool = False) -> None:

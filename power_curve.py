@@ -399,15 +399,18 @@ def compute_ride_prs(ride_id: str, window_days: int = 90) -> list[dict]:
     Compares the named ride's effort at each standard duration against the
     maximum across rides in the same ``window_days`` window THAT STARTED
     BEFORE this ride. Only durations where today exceeds prior by ≥1 W
-    surface as a PR.
+    surface as a PR. Durations with NO prior best in window emit
+    ``tier='first'`` (PATCH G6 + GRILL W2A-G11).
 
     Output (locked, G7 — UI cap is the dashboard's job):
       [{duration_s, today_w, previous_w, previous_date, previous_ride_id,
-        exceedance_w, exceedance_pct, tier:'major'|'minor'}, ...]
+        exceedance_w, exceedance_pct, tier:'major'|'minor'|'first'}, ...]
 
     Tiering:
       'major' = exceedance_w ≥ 5 W OR exceedance_pct ≥ 2 %
       'minor' = otherwise (1-5 W exceedance below 2 %).
+      'first' = no prior best at this duration in the window.
+                previous_* fields are None; exceedance_pct is None.
     """
     if not isinstance(ride_id, str) or not ride_id:
         return []
@@ -462,8 +465,21 @@ def compute_ride_prs(ride_id: str, window_days: int = 90) -> list[dict]:
             continue
         prior = prior_best.get(secs_i)
         if prior is None:
-            continue  # First-recorded efforts are handled by the "day-1"
-                      # branch in the dashboard (G6); not a PR vs a previous.
+            # GRILL-WAVE2A W2A-G11 + PATCH G6: rides 1-N with no prior best at
+            # this duration emit a tier='first' entry instead of being silently
+            # dropped. Storage carries the FULL list (G7) — the dashboard caps
+            # at the top-3 highest watts when rendering tier='first' badges.
+            out.append({
+                "duration_s": secs_i,
+                "today_w": today_w,
+                "previous_w": None,
+                "previous_date": None,
+                "previous_ride_id": None,
+                "exceedance_w": today_w,   # vs nothing
+                "exceedance_pct": None,    # undefined
+                "tier": "first",
+            })
+            continue
         prev_w, prev_date, prev_ride_id = prior
         exceedance_w = today_w - prev_w
         if exceedance_w < 1:

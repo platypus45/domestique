@@ -6916,7 +6916,14 @@ async def api_mark_unavailable(request: Request):
 
 @app.post("/api/plan/save-availability")
 async def api_save_availability(request: Request):
-    """Save the monthly availability calendar data to the plan JSON."""
+    """Save the monthly availability calendar data to the plan JSON.
+
+    v1.3.1 HIGH fix: now invokes ``tp.reforecast(availability_overrides=...)``
+    so per-day hour overrides actually rescale ``duration_min`` /
+    ``tss_estimate`` (and zero out hours=0 sessions) on disk. Pre-fix this
+    endpoint only persisted ``plan["availability"]`` — the popover told the
+    user to "click Generate Plan" to apply, which was confusing UX.
+    """
     body = await _get_json_body(request)
     json_path = _plan_dir() / "current_plan.json"
     if not json_path.exists():
@@ -6929,13 +6936,106 @@ async def api_save_availability(request: Request):
         # body = { "availability": { "2026-04-01": { "hours": 1.5, "type": "available" }, ... } }
         plan["availability"] = body.get("availability", {})
 
+        # ── v1.3.1 HIGH fix: reflow plan immediately ──────────────────────
+        # Build PlannedWeek list, call reforecast() with availability_overrides,
+        # propagate session-level mutations back into the JSON. Mirrors the
+        # /api/plan/reforecast pattern but skips TSB / G3 / G4 inputs — this
+        # endpoint's only job is the availability rescale.
+        sessions_modified = 0
+        try:
+            goal_dict = plan.get("goal", {})
+            try:
+                reforecast_goal = tp.Goal(
+                    goal_type=goal_dict.get("type", goal_dict.get("goal_type", "general")),
+                    hours_per_week=goal_dict.get("hours_per_week", 8.0),
+                    rest_days=goal_dict.get("rest_days", [0]),
+                    available_days=goal_dict.get("available_days") or [d for d in range(7) if d not in goal_dict.get("rest_days", [0])],
+                )
+            except Exception:
+                reforecast_goal = tp.Goal(goal_type="general", hours_per_week=8.0)
+
+            pw_list: list = []
+            for w in plan.get("weeks", []):
+                try:
+                    ws = date.fromisoformat(w["start"])
+                    we = date.fromisoformat(w["end"])
+                except (KeyError, ValueError):
+                    continue
+                sess_list = []
+                for s_json in w.get("sessions", []):
+                    try:
+                        sd = date.fromisoformat(s_json["day"])
+                    except (KeyError, ValueError):
+                        continue
+                    sess_list.append(tp.PlannedSession(
+                        day=sd, day_name=s_json.get("day_name", sd.strftime("%a")),
+                        session_type=s_json.get("session_type", "z2"),
+                        duration_min=int(s_json.get("duration_min", 0) or 0),
+                        tss_estimate=float(s_json.get("tss_estimate", 0) or 0),
+                        description=s_json.get("description", ""),
+                        zwo_file=s_json.get("zwo_file", "") or "",
+                        zwo_name=s_json.get("zwo_name", "") or "",
+                        status=s_json.get("status", "pending"),
+                    ))
+                pw_list.append(tp.PlannedWeek(
+                    week_num=w.get("week_num", 0), start=ws, end=we,
+                    phase=w.get("phase", ""),
+                    tss_target=w.get("tss_target", 0),
+                    is_stepback=w.get("is_stepback", False),
+                    sessions=sess_list,
+                    hit_per_week=int(w.get("hit_per_week", 0) or 0),
+                    auto_acwr_scaled=bool(w.get("auto_acwr_scaled", False)),
+                ))
+
+            availability_overrides = {
+                day_iso: float(entry["hours"])
+                for day_iso, entry in plan.get("availability", {}).items()
+                if isinstance(entry, dict) and "hours" in entry
+            }
+
+            _, reforecast_info = tp.reforecast(
+                reforecast_goal, pw_list,
+                availability_overrides=availability_overrides,
+            )
+
+            # Propagate availability-rescaled sessions back into the JSON.
+            # Only consider days actually in the overrides dict — that's the
+            # set of days reforecast() may have touched on this code path.
+            by_day: dict = {}
+            for pw in pw_list:
+                for s in pw.sessions:
+                    by_day[s.day.isoformat()] = s
+            for w in plan.get("weeks", []):
+                for s_json in w.get("sessions", []):
+                    day_iso = s_json.get("day", "")
+                    if not day_iso or day_iso not in availability_overrides:
+                        continue
+                    src = by_day.get(day_iso)
+                    if src is None:
+                        continue
+                    changed = (
+                        s_json.get("session_type") != src.session_type
+                        or int(s_json.get("duration_min", 0) or 0) != src.duration_min
+                        or float(s_json.get("tss_estimate", 0) or 0) != src.tss_estimate
+                    )
+                    if not changed:
+                        continue
+                    s_json["session_type"] = src.session_type
+                    s_json["duration_min"] = src.duration_min
+                    s_json["tss_estimate"] = src.tss_estimate
+                    sessions_modified += 1
+        except Exception:  # noqa: BLE001
+            # Reflow is best-effort: if reforecast errors we still persist the
+            # availability dict so the next /api/plan/reforecast picks it up.
+            _log.exception("save-availability reflow skipped")
+
         with tp.plan_write_lock():
             tmp_path = json_path.with_suffix('.tmp')
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(plan, f, indent=2, default=str)
             tmp_path.rename(json_path)
 
-        return {"ok": True}
+        return {"ok": True, "sessions_modified": sessions_modified}
 
     except Exception:
         # SEC3: don't leak exception text.
@@ -8600,6 +8700,14 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
             continue
         rides_by_date.setdefault(d, []).append(r)
 
+    # v1.3.1 HIGH fix — surface user-blocked days in the calendar payload so
+    # the THIS WEEK render can show an UNAVAILABLE badge instead of the
+    # planned session card. Sparse: only days the user touched are present.
+    availability_map: dict[str, dict] = {
+        k: v for k, v in (plan.get("availability") or {}).items()
+        if isinstance(v, dict)
+    }
+
     # ── Past 12 weeks of history + plan weeks (avoid double-counting) ───────
     plan_weeks = plan.get("weeks", []) if plan else []
     plan_dates: set[str] = set()
@@ -8848,6 +8956,15 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
                 "actual": actual_payload,
                 "card_state": card_state,
             }
+            # v1.3.1 HIGH fix — emit availability_hours / availability_type
+            # so the UI can render an UNAVAILABLE badge for user-blocked days.
+            avail_entry = availability_map.get(day_iso)
+            if avail_entry is not None:
+                try:
+                    day_out["availability_hours"] = float(avail_entry.get("hours", 0) or 0)
+                except (TypeError, ValueError):
+                    day_out["availability_hours"] = 0.0
+                day_out["availability_type"] = avail_entry.get("type") or ""
             if secondary_list:
                 day_out["actual_secondary"] = secondary_list
             days_out.append(day_out)

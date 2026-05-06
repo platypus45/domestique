@@ -1839,7 +1839,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
   <details class="plan-help-panel" style="margin-bottom:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;">
     <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--text);">How your plan updates</summary>
     <div style="margin-top:8px;font-size:12px;line-height:1.5;color:var(--text2);">
-      Your plan adapts in four ways. <strong>Reforecast</strong> keeps the structure but rebalances load to today's fitness, fatigue, and overshoot — use it weekly. <strong>Regenerate Plan</strong> rebuilds from scratch using today's CTL and your remaining weeks — use it after a goal change, a long break, or illness. The <strong>Availability Calendar</strong> edits which days you can train; click a day to set hours, right-click to mark unavailable. After editing, click <strong>Generate Plan</strong> to save and rebuild. <strong>Rematch workout</strong> (in any day's detail view) re-rolls only that single workout if the suggestion doesn't fit. Don't manually edit unless something's clearly wrong — the planner already accounts for fatigue and load.
+      Your plan adapts in four ways. <strong>Reforecast</strong> keeps the structure but rebalances load to today's fitness, fatigue, and overshoot — use it weekly. <strong>Regenerate Plan</strong> rebuilds from scratch using today's CTL and your remaining weeks — use it after a goal change, a long break, or illness. The <strong>Availability Calendar</strong> edits which days you can train; click a day to set hours, right-click to mark unavailable. <strong>Saved — plan reflowed automatically.</strong> <strong>Rematch workout</strong> (in any day's detail view) re-rolls only that single workout if the suggestion doesn't fit. Don't manually edit unless something's clearly wrong — the planner already accounts for fatigue and load.
     </div>
   </details>
 
@@ -1855,7 +1855,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
        .info-popover toggles via .open from the delegated handler below. -->
   <div class="info-popover" id="planpop-reforecast"><strong>Reforecast</strong> keeps your plan's structure but rebalances daily load to today's TSB (fatigue), ACWR (load ratio), and polarization compliance. Click weekly, after a hard ride, or when you've overshot. Doesn't touch phase splits or workout types.</div>
   <div class="info-popover" id="planpop-regenerate"><strong>Regenerate Plan</strong> wipes the plan and rebuilds it from today's CTL, with phase splits derived from weeks-to-event. Use after a goal change, missed 2+ weeks, illness, or new event date. This is the nuclear option.</div>
-  <div class="info-popover" id="planpop-availability"><strong>Edit availability</strong> sets per-day training time. Click a date to set hours; right-click to mark unavailable (holiday/injury). After edits, click <strong>Generate Plan</strong> to save and rebuild — your edits won't take effect until then.</div>
+  <div class="info-popover" id="planpop-availability"><strong>Edit availability</strong> sets per-day training time. Click a date to set hours; right-click to mark unavailable (holiday/injury). <strong>Saved — plan reflowed automatically.</strong></div>
   <div class="info-popover" id="planpop-rematch"><strong>Rematch workout</strong> re-rolls only this one day's ZWO file from the matching workout pool. Same intent (intervals, endurance, etc.) — different specific session. Use when the suggested workout doesn't fit your equipment or mood.</div>
 
   <!-- Gap Alert Banner (shown when missed sessions detected) -->
@@ -8005,7 +8005,10 @@ function _setAvailDay(dateKey, hours, type) {
 
 let _saveAvailDebounce = null;
 function _saveAvailability() {
-  // Debounced save to backend (persist across refresh)
+  // Debounced save to backend (persist across refresh).
+  // v1.3.1 HIGH fix — server now reflows the plan immediately, so re-fetch
+  // /api/calendar after the response lands so THIS WEEK + intensity bar
+  // pick up the rescaled / zeroed sessions without forcing a full reload.
   clearTimeout(_saveAvailDebounce);
   _saveAvailDebounce = setTimeout(async () => {
     try {
@@ -8013,6 +8016,7 @@ function _saveAvailability() {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ availability: _availData }),
       });
+      try { await loadCalendar(); } catch(_) {}
     } catch(e) {}
   }, 500);
 }
@@ -9559,9 +9563,17 @@ function renderThisWeekFromCalendar(data) {
       tintCls = 'twk-tss-red';
     }
 
+    // v1.3.1 HIGH fix — user-blocked day badge (distinct from planned REST).
+    // availability_hours == 0 means the user marked this day off in the
+    // availability calendar. Render in a faint red tint so the user can
+    // tell "user-blocked" from "planned rest" at a glance.
+    const isUserBlocked = (d.availability_hours === 0);
+
     // Planned half
     let plannedHtml = '';
-    if (planned) {
+    if (isUserBlocked && !actual) {
+      plannedHtml = `<div class="twk-planned"><div class="wc-type" style="font-size:10px;color:var(--red);opacity:0.75;letter-spacing:0.05em;">UNAVAILABLE</div></div>`;
+    } else if (planned) {
       const phaseKey = (cur.phase || 'history').toLowerCase();
       const phaseCol = CAL_PHASE_COLORS[phaseKey] || CAL_PHASE_COLORS.history;
       // v4.5.1 FIX-UI variety — title now includes structure suffix.

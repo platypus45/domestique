@@ -36,8 +36,16 @@ log_power = logging.getLogger("domestique.power")
 # CONSTANTS
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Standard durations (seconds) for best-effort extraction
-STANDARD_DURATIONS = [5, 30, 60, 300, 480, 1200, 1800, 3600]
+# Standard durations (seconds) for best-effort extraction.
+# v1.3.0 widened from 8 to 12 tiers (added 1, 15, 120, 600 s) so the Power
+# Curve module can render fast-twitch sprints, neuromuscular bands, and
+# 10-minute climbs. Verified safe per /tmp/audit_v130_power_curve.md §3:
+#   estimate_ftp filters by MIN_FTP_EFFORT_DURATION (300 s) — extra short
+#   tiers are ignored. compute_cp_wprime filters to MONOD_DURATIONS_S
+#   (180/300/600/1200) — adding 600 doesn't change behaviour because 600
+#   was already in MONOD_DURATIONS_S. compute_fitness_signature reads
+#   only 5 and 300, both still present.
+STANDARD_DURATIONS = [1, 5, 15, 30, 60, 120, 300, 480, 600, 1200, 1800, 3600]
 
 # FTP scaling factors: {duration_seconds: multiplier}
 # FTP = best_watts_for_duration * multiplier

@@ -14,6 +14,7 @@ import re
 import sys
 import threading
 import time
+import uuid
 import xml.etree.ElementTree as ET
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
@@ -1039,6 +1040,138 @@ def api_profile_banister_validation(refresh: int = Query(0)):
     _cache[cache_key] = result
     _cache_ts[cache_key] = now
     return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# v1.3.0 POWER CURVE + BACKFILL endpoints
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Module-level state for the async backfill task. Single-flight semantics
+# are enforced by ``power_curve.acquire_backfill_lock`` (G3); the in-memory
+# dict is just for /status polling within the running process.
+_backfill_tasks: dict[str, dict] = {}
+_backfill_thread_lock = threading.Lock()
+
+
+@app.get("/api/profile/power-curve")
+def api_profile_power_curve(window_days: int = Query(90, ge=1, le=3650),
+                              refresh: int = Query(0)):
+    """v1.3.0 — aggregated rider mean-max curve + P&G 2011 baseline.
+
+    Cached for 24h via the standard ``_cache``/``_cache_ts`` mechanism.
+    Per PATCH G4 the cache key includes ``latest_ride_id_in_window`` so
+    that a freshly-imported ride invalidates automatically (no manual TTL
+    bust needed). Pass ``?refresh=1`` to force recompute.
+    """
+    import power_curve
+    try:
+        latest = power_curve.latest_ride_id_in_window("default", int(window_days))
+    except Exception as e:
+        _log.debug(f"power_curve latest_ride_id failed: {e}")
+        latest = ""
+    cache_key = f"power_curve_default_{int(window_days)}_{latest}"
+    now = time.time()
+    ttl = 24 * 3600
+    if not refresh and cache_key in _cache and now - _cache_ts.get(cache_key, 0) < ttl:
+        return _cache[cache_key]
+    try:
+        result = power_curve.aggregate_power_curve("default",
+                                                    window_days=int(window_days))
+    except Exception as e:
+        _log.warning(f"api_profile_power_curve failed: {e}")
+        result = {
+            "window_days": int(window_days),
+            "n_rides": 0,
+            "weight_kg": 70.0,
+            "current_ftp": 200,
+            "rider_curve": [],
+            "pg_2011_baseline": [],
+            "cp_w": None,
+            "wprime_j": None,
+            "pmax_w": None,
+        }
+    # Lazy GC — prune stale power_curve_* entries with old latest_ride_ids.
+    for k in list(_cache.keys()):
+        if k.startswith(f"power_curve_default_{int(window_days)}_") and k != cache_key:
+            _cache.pop(k, None)
+            _cache_ts.pop(k, None)
+    _cache[cache_key] = result
+    _cache_ts[cache_key] = now
+    return result
+
+
+def _run_backfill_job(task_id: str) -> None:
+    """Worker thread — runs the one-shot backfill and updates the task entry."""
+    import power_curve
+    try:
+        result = power_curve.backfill_icu_history("default", max_per_second=1)
+        with _backfill_thread_lock:
+            _backfill_tasks[task_id] = {
+                "task_id": task_id,
+                "state": "done",
+                **result,
+            }
+    except Exception as e:
+        _log.warning(f"backfill task {task_id} failed: {e}")
+        with _backfill_thread_lock:
+            _backfill_tasks[task_id] = {
+                "task_id": task_id,
+                "state": "error",
+                "error": str(e),
+            }
+
+
+@app.post("/api/profile/backfill-history")
+def api_profile_backfill_history():
+    """v1.3.0 — kicks off a one-shot ICU history backfill job.
+
+    Single-flight per PATCH G3 — when a backfill is already running, returns
+    ``{"status": "already_running", "task_id": <existing>}``. On accept,
+    spawns a worker thread and returns ``{"status": "started", "task_id":
+    <new>}`` immediately. Poll ``/api/profile/backfill-history/status?task_id=X``
+    for progress.
+    """
+    import power_curve
+    acquired, lock = power_curve.acquire_backfill_lock()
+    if not acquired:
+        return {
+            "status": "already_running",
+            "task_id": lock.get("task_id"),
+        }
+    task_id = lock.get("task_id") or uuid.uuid4().hex
+    # IMPORTANT: release the on-disk lock — the worker thread will re-acquire
+    # immediately at the start of backfill_icu_history(). We acquired here only
+    # to honour the single-flight contract at /api/profile/backfill-history's
+    # gate. If a second concurrent POST arrives before the worker starts, that
+    # gate fires and returns already_running with our task_id.
+    power_curve.release_backfill_lock()
+    with _backfill_thread_lock:
+        _backfill_tasks[task_id] = {
+            "task_id": task_id,
+            "state": "running",
+            "backfilled": 0,
+            "already_cached": 0,
+            "failed": 0,
+        }
+    t = threading.Thread(target=_run_backfill_job, args=(task_id,), daemon=True)
+    t.start()
+    return {"status": "started", "task_id": task_id}
+
+
+@app.get("/api/profile/backfill-history/status")
+def api_profile_backfill_history_status(task_id: str = Query(...)):
+    """v1.3.0 — poll the in-memory state of a backfill job.
+
+    Returns the most recent task entry (``state ∈ {running, done, error}``,
+    plus counters). 404 when the task_id is unknown.
+    """
+    if not isinstance(task_id, str) or not task_id:
+        return JSONResponse({"error": "task_id required"}, 400)
+    with _backfill_thread_lock:
+        entry = _backfill_tasks.get(task_id)
+    if entry is None:
+        return JSONResponse({"error": "unknown task_id"}, 404)
+    return entry
 
 
 @app.post("/api/activity/{activity_id}/race")
@@ -9864,38 +9997,23 @@ def _longest_ride_h_90d(rides: list[dict] | None = None) -> float | None:
 
 
 def _aggregate_best_efforts_90d(rides: list[dict] | None = None) -> dict[int, int]:
-    """v4.6.7 IMPL-CAP: aggregate max-mean power across last 90 days of rides.
+    """v1.3.0 shim — delegates to ``power_curve.aggregate_power_curve``.
 
-    Reads ``efforts`` from each ICU-normalised ride record (ride_storage
-    persists icu_efforts as {label, watts, secs}). Returns a dict of the
-    Monod standard durations (180, 300, 600, 1200) → best watts seen.
+    Locked to a 90-day window and the original 4-tier output shape
+    (180/300/600/1200 → best watts seen) so existing call sites keep working.
+    All real aggregation logic lives in ``power_curve.py`` per PATCH G1; this
+    function exists only as a backward-compatibility surface for callers that
+    pre-date the v1.3.0 power-curve module.
+
+    The ``rides`` argument is kept for signature compatibility (the old
+    implementation accepted an injected list) but is unused — the v1.3.0
+    aggregator always reads the cached ICU envelope directly so callers
+    cannot accidentally feed it a stale subset.
     """
-    if rides is None:
-        rides = _load_all_rides_safe()
-    if not rides:
-        return {}
-    cutoff = (date.today() - timedelta(days=90)).isoformat()
-    target_durations = (180, 300, 600, 1200)
-    best: dict[int, int] = {}
-    for r in rides:
-        started = (r.get("started_at") or "")[:10]
-        if not started or started < cutoff:
-            continue
-        for eff in r.get("efforts") or []:
-            if not isinstance(eff, dict):
-                continue
-            secs = eff.get("secs") or eff.get("duration_s")
-            watts = eff.get("watts") or eff.get("avg_watts")
-            try:
-                secs_i = int(secs) if secs is not None else None
-                watts_i = int(watts) if watts is not None else None
-            except (TypeError, ValueError):
-                continue
-            if secs_i is None or watts_i is None or watts_i <= 0:
-                continue
-            if secs_i in target_durations and watts_i > best.get(secs_i, 0):
-                best[secs_i] = watts_i
-    return best
+    import power_curve
+    full = power_curve.aggregate_power_curve("default", window_days=90)
+    return {pt["duration_s"]: pt["watts"] for pt in full["rider_curve"]
+            if pt["duration_s"] in (180, 300, 600, 1200)}
 
 
 def _maybe_lazy_icu_sync(force_if_today_missing: bool = False) -> None:

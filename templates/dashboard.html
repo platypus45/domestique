@@ -4812,6 +4812,11 @@ async function loadHome() {
 
     // Fitness chart
     fitnessChart(wellness, 'fitness-chart');
+    // v1.3.2 fix: also paint the secondary energy-system breakdown chart on
+    // initial home-load. Previously this only fired from loadFitnessChart()
+    // (button-driven), so the <details> panel showed an empty canvas until
+    // the user clicked a date-range button. Inline with fitnessChart() above.
+    try { energySystemChart(wellness, 'energy-system-chart'); } catch(_) {}
 
     // Gauge
     $('gauge').innerHTML = gaugeArc(r.score);

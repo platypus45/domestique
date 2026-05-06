@@ -935,17 +935,32 @@ def compute_fatigue_resistance(profile_id: str = "default",
          durations (60 / 300 / 900 / 1800 s) — the 60-min window is
          shown in scatter only, not in the headline mean.
 
-    Returns (locked):
-      {"window_days": 365, "n_long_rides": 7, "fit_status": "success",
-       "kj_threshold": 1500, "robustness_score": 88.4,
+    Returns (locked, post W2B-G2 fix-forward):
+      {"window_days": 365,
+       "n_long_rides": 7,                # rides whose summary kJ >= threshold
+       "n_long_rides_with_streams": 6,   # subset that have streams cached
+       "fit_status": "success" | "insufficient_data",
+       "reason": null | "no_rides_in_window" |
+                 "fewer_than_4_long_rides" |
+                 "streams_not_hydrated_run_backfill" |
+                 "no_fresh_tired_overlap" | "compute_failed",
+       "kj_threshold": 1500,
+       "robustness_score": 88.4,
        "by_duration": [{"duration_s":300,"fr_index_pct":92.1,
                         "n_data_points":12}, ...],
        "scatter": [{"duration_s":300,"kj":1850,"watts":295,
                     "ride_id":"icu_iXXX","date":"..."}, ...]}
 
-    ``fit_status='insufficient_data'`` when fewer than 4 rides reach the
-    threshold. When ``kj_threshold`` is not in {1500, 2000} we coerce to
-    1500 (graceful — the API endpoint validates upstream).
+    ``fit_status='insufficient_data'`` when fewer than 4 long rides have
+    cached power streams (W2B-G2 fix: was previously firing on summary-
+    only rides too, silently misleading users with cached envelopes that
+    lack streams). The ``reason`` field tells the dashboard which
+    insufficient-data path triggered so it can surface a useful message
+    instead of "Need 4 long rides".
+
+    When ``kj_threshold`` is not in {1500, 2000} we coerce to 1500 here
+    (graceful — the API endpoint at /api/profile/fatigue-resistance
+    rejects with 422 upstream so callers see the explicit error).
 
     Bonk inclusion (per audit §6 + brief checklist): rides whose power
     drops to 0 in the last hour STILL count — Pinot 2014 includes them
@@ -958,7 +973,9 @@ def compute_fatigue_resistance(profile_id: str = "default",
     insufficient_dict = {
         "window_days": int(window_days),
         "n_long_rides": 0,
+        "n_long_rides_with_streams": 0,
         "fit_status": "insufficient_data",
+        "reason": None,
         "kj_threshold": int(kj_threshold),
         "robustness_score": None,
         "by_duration": [],
@@ -968,7 +985,9 @@ def compute_fatigue_resistance(profile_id: str = "default",
     all_rides = _load_cached_rides()
     rides = _filter_rides_by_window(all_rides, window_days)
     if not rides:
-        return insufficient_dict
+        out = dict(insufficient_dict)
+        out["reason"] = "no_rides_in_window"
+        return out
 
     # Per-duration aggregates across rides.
     by_duration: dict[int, dict] = {
@@ -977,7 +996,8 @@ def compute_fatigue_resistance(profile_id: str = "default",
         for d in _FR_DURATIONS_S
     }
     scatter: list[dict] = []
-    n_long_rides = 0
+    n_long_rides = 0  # rides whose summary kJ ≥ threshold (any source)
+    n_long_rides_with_streams = 0  # rides we can ACTUALLY compute peaks for
 
     for r in rides:
         ride_id = r.get("ride_id") or ""
@@ -999,9 +1019,14 @@ def compute_fatigue_resistance(profile_id: str = "default",
             n_long_rides += 1
 
         if not powers:
-            # No streams cached — can't compute sliding-window peaks but
-            # the ride still contributes to the long-ride gate via summary.
+            # No streams cached — can't compute sliding-window peaks. The
+            # ride STILL counts toward the diagnostic n_long_rides so the
+            # response can explain to the user *why* the score is missing
+            # (W2B-G2: avoid silently misleading insufficient_data).
             continue
+
+        if is_long:
+            n_long_rides_with_streams += 1
 
         peaks = _fr_per_ride_peaks(powers, _FR_DURATIONS_S, kj_threshold)
         for d, pk in peaks.items():
@@ -1026,8 +1051,21 @@ def compute_fatigue_resistance(profile_id: str = "default",
                 })
 
     if n_long_rides < 4:
-        insufficient_dict["n_long_rides"] = n_long_rides
-        return insufficient_dict
+        out = dict(insufficient_dict)
+        out["n_long_rides"] = n_long_rides
+        out["n_long_rides_with_streams"] = n_long_rides_with_streams
+        out["reason"] = "fewer_than_4_long_rides"
+        return out
+
+    if n_long_rides_with_streams < 4:
+        # User has enough long rides on the calendar BUT the per-second
+        # power streams aren't cached for them — can't compute peaks.
+        # W2B-G2: explain instead of silently saying insufficient_data.
+        out = dict(insufficient_dict)
+        out["n_long_rides"] = n_long_rides
+        out["n_long_rides_with_streams"] = n_long_rides_with_streams
+        out["reason"] = "streams_not_hydrated_run_backfill"
+        return out
 
     # Build by_duration response + headline robustness mean.
     by_duration_out: list[dict] = []
@@ -1053,6 +1091,8 @@ def compute_fatigue_resistance(profile_id: str = "default",
         # any of the headline durations. Honest insufficient.
         out = dict(insufficient_dict)
         out["n_long_rides"] = n_long_rides
+        out["n_long_rides_with_streams"] = n_long_rides_with_streams
+        out["reason"] = "no_fresh_tired_overlap"
         return out
 
     robustness = round(sum(headline_indices) / len(headline_indices), 1)
@@ -1060,7 +1100,9 @@ def compute_fatigue_resistance(profile_id: str = "default",
     return {
         "window_days": int(window_days),
         "n_long_rides": int(n_long_rides),
+        "n_long_rides_with_streams": int(n_long_rides_with_streams),
         "fit_status": "success",
+        "reason": None,
         "kj_threshold": int(kj_threshold),
         "robustness_score": robustness,
         "by_duration": by_duration_out,

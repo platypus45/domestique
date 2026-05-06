@@ -603,5 +603,127 @@ class Test08Performance(_FRTestBase):
         self.assertEqual(result["fit_status"], "success")
 
 
+class Test09RealBonk(_FRTestBase):
+    """Test 9 (W2B-G8 fix) — Pinot bonk inclusion, the HARD case.
+
+    The original Test04BonkIncluded had a 250W tired peak BEFORE the bonk
+    so the assert "scatter has bonk_pts" passed via the 250W peak, not the
+    bonk. This test removes the pre-bonk tired peak so the ONLY post-1500
+    kJ window is 0W. Verifies a scatter row still appears (i.e. the
+    function doesn't silently drop true-bonk rides). Headline robustness
+    must NOT be polluted — we still need ≥4 long rides with healthy
+    fresh+tired peaks alongside.
+    """
+
+    def test_pure_bonk_ride_still_in_scatter(self):
+        # Hand-build a ride that hits 1700 kJ via tempo, then 0 W for 60 min.
+        powers: list[int] = []
+        cum_kj = 0.0
+        # Fresh peak in first 5 min.
+        for _ in range(300):
+            powers.append(310)
+            cum_kj += 0.31
+        # Steady tempo until 1700 kJ — NO tired peak before bonk.
+        while cum_kj < 1700.0:
+            powers.append(220)
+            cum_kj += 0.22
+        # Pure bonk for 60 min — 0 W.
+        for _ in range(3600):
+            powers.append(0)
+        ride = _ride_dict(
+            ext_id="i6001",
+            started_at=f"{(date.today() - timedelta(days=4)).isoformat()}"
+                       f"T08:00:00",
+            powers=powers,
+            kj=cum_kj,
+        )
+        self._write(ride)
+        # 4 healthy long rides for the headline.
+        for i in range(4):
+            day = date.today() - timedelta(days=20 + i * 3)
+            r = _build_long_ride(
+                ext_id=f"i6{i + 100}",
+                started_at=f"{day.isoformat()}T08:00:00",
+                fresh_peak_w=300, tired_peak_w=270,
+                fresh_dur_s=300, tired_dur_s=300,
+                base_w=180, total_kj_target=2200.0,
+                tired_kj_at_start=1700.0,
+            )
+            self._write(r)
+        result = power_curve.compute_fatigue_resistance(
+            "default", window_days=365, kj_threshold=1500,
+        )
+        self.assertEqual(result["fit_status"], "success")
+        # Bonk ride is in n_long_rides.
+        self.assertGreaterEqual(result["n_long_rides"], 5)
+        # Bonk ride contributes a scatter row at kj ≥ 1500 — even though
+        # watts is 0, the data point is preserved (Pinot inclusion).
+        bonk_pts = [s for s in result["scatter"]
+                    if s["ride_id"] == "icu_i6001"]
+        self.assertGreater(len(bonk_pts), 0,
+                            "bonk ride should produce scatter rows even "
+                            "when post-1500-kJ windows are all 0 W")
+        # Headline robustness not polluted by the 0W bonk: still based on
+        # the 4 healthy rides.
+        self.assertGreater(float(result["robustness_score"]), 70.0)
+
+
+class Test10ReasonField(_FRTestBase):
+    """Test 10 (W2B-G2 fix) — insufficient_data carries a `reason` so the
+    user knows WHY the metric is unavailable instead of just "insufficient".
+    """
+
+    def test_no_rides_in_window_reason(self):
+        # No rides at all.
+        result = power_curve.compute_fatigue_resistance(
+            "default", window_days=365, kj_threshold=1500,
+        )
+        self.assertEqual(result["fit_status"], "insufficient_data")
+        self.assertEqual(result["reason"], "no_rides_in_window")
+
+    def test_fewer_than_4_long_rides_reason(self):
+        for i in range(3):
+            day = date.today() - timedelta(days=10 + i * 3)
+            r = _build_long_ride(
+                ext_id=f"i7{i + 100}",
+                started_at=f"{day.isoformat()}T08:00:00",
+                fresh_peak_w=300, tired_peak_w=270,
+                fresh_dur_s=300, tired_dur_s=300,
+                base_w=180, total_kj_target=1700.0,
+                tired_kj_at_start=1500.0,
+            )
+            self._write(r)
+        result = power_curve.compute_fatigue_resistance(
+            "default", window_days=365, kj_threshold=1500,
+        )
+        self.assertEqual(result["fit_status"], "insufficient_data")
+        self.assertEqual(result["reason"], "fewer_than_4_long_rides")
+        self.assertEqual(result["n_long_rides"], 3)
+
+    def test_streams_not_hydrated_reason(self):
+        # 5 rides whose summary kJ ≥ threshold but with NO power streams.
+        for i in range(5):
+            day = date.today() - timedelta(days=10 + i * 3)
+            ride = {
+                "ride_id": f"icu_i8{i + 100}",
+                "external_id": f"i8{i + 100}",
+                "source": "icu",
+                "started_at": f"{day.isoformat()}T08:00:00",
+                "kj": 1700.0,
+                "ftp_at_ride": 250,
+                "weight_kg": 70.0,
+                # No 'streams' field at all.
+            }
+            self._write(ride)
+        result = power_curve.compute_fatigue_resistance(
+            "default", window_days=365, kj_threshold=1500,
+        )
+        self.assertEqual(result["fit_status"], "insufficient_data")
+        self.assertEqual(result["reason"],
+                          "streams_not_hydrated_run_backfill")
+        self.assertEqual(result["n_long_rides"], 5)
+        self.assertEqual(result["n_long_rides_with_streams"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -736,6 +736,23 @@ def setup_save(body: dict):
 _cache = {}
 _cache_ts = {}
 
+# W2B-G5 fix: per-key lock map for the fatigue-resistance endpoint so
+# concurrent same-key requests don't both compute and don't race the
+# lazy-GC pass against the cache-write.
+import threading as _threading_for_fr
+_fatigue_resistance_locks: dict[str, _threading_for_fr.Lock] = {}
+_fatigue_resistance_locks_master = _threading_for_fr.Lock()
+
+
+def _fatigue_resistance_cache_lock(cache_key: str):
+    """Return (and lazily create) a per-cache-key Lock for FR compute."""
+    with _fatigue_resistance_locks_master:
+        lk = _fatigue_resistance_locks.get(cache_key)
+        if lk is None:
+            lk = _threading_for_fr.Lock()
+            _fatigue_resistance_locks[cache_key] = lk
+        return lk
+
 def cached(key, fn, ttl=300):
     now = time.time()
     if key in _cache and now - _cache_ts.get(key, 0) < ttl:
@@ -1209,11 +1226,20 @@ def api_profile_fatigue_resistance(window_days: int = Query(365, ge=1, le=3650),
     never gets a 500.
     """
     import power_curve
-    # PATCH G5 — only 1500 and 2000 are valid thresholds. Coerce others to
-    # the default rather than 422'ing — the dashboard sends one of two
-    # values via the toggle but a curl-tester gets the friendly default.
+    from fastapi import HTTPException
+    # PATCH G5 — only 1500 and 2000 are valid thresholds. W2B-G6: prior
+    # implementation silently coerced other values to 1500 → response
+    # said kj_threshold:1500 but the request asked for something else.
+    # Reject explicitly so the caller sees the bug instead of being lied to.
     if kj_threshold not in (1500, 2000):
-        kj_threshold = 1500
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "invalid_kj_threshold",
+                "valid": [1500, 2000],
+                "received": int(kj_threshold),
+            },
+        )
     try:
         latest = power_curve.latest_ride_id_in_window("default",
                                                       int(window_days))
@@ -1224,36 +1250,46 @@ def api_profile_fatigue_resistance(window_days: int = Query(365, ge=1, le=3650),
                  f"{int(kj_threshold)}_{latest}")
     now = time.time()
     ttl = 24 * 3600
-    if not refresh and cache_key in _cache and \
-       now - _cache_ts.get(cache_key, 0) < ttl:
-        return _cache[cache_key]
-    try:
-        result = power_curve.compute_fatigue_resistance(
-            "default",
-            window_days=int(window_days),
-            kj_threshold=int(kj_threshold),
-        )
-    except Exception as e:
-        _log.warning(f"api_profile_fatigue_resistance failed: {e}")
-        result = {
-            "window_days": int(window_days),
-            "n_long_rides": 0,
-            "fit_status": "insufficient_data",
-            "kj_threshold": int(kj_threshold),
-            "robustness_score": None,
-            "by_duration": [],
-            "scatter": [],
-        }
-    # Lazy GC — prune stale fatigue_resistance_* entries with old keys for
-    # the same (window_days, kj_threshold) pair.
-    prefix = f"fatigue_resistance_default_{int(window_days)}_{int(kj_threshold)}_"
-    for k in list(_cache.keys()):
-        if k.startswith(prefix) and k != cache_key:
-            _cache.pop(k, None)
-            _cache_ts.pop(k, None)
-    _cache[cache_key] = result
-    _cache_ts[cache_key] = now
-    return result
+    # W2B-G5 fix: serialise concurrent same-key compute via a per-key lock
+    # so two simultaneous dashboard polls don't both compute, and so
+    # lazy-GC + cache-write are atomic.
+    with _fatigue_resistance_cache_lock(cache_key):
+        if not refresh and cache_key in _cache and \
+           now - _cache_ts.get(cache_key, 0) < ttl:
+            return _cache[cache_key]
+        try:
+            result = power_curve.compute_fatigue_resistance(
+                "default",
+                window_days=int(window_days),
+                kj_threshold=int(kj_threshold),
+            )
+        except Exception as e:
+            _log.warning(f"api_profile_fatigue_resistance failed: {e}")
+            result = {
+                "window_days": int(window_days),
+                "n_long_rides": 0,
+                "n_long_rides_with_streams": 0,
+                "fit_status": "insufficient_data",
+                "reason": "compute_failed",
+                "kj_threshold": int(kj_threshold),
+                "robustness_score": None,
+                "by_duration": [],
+                "scatter": [],
+            }
+        # Lazy GC — prune stale fatigue_resistance_* entries with old keys
+        # for the same (window_days, kj_threshold) pair. W2B-G5: skip GC
+        # when latest=="" so a transient latest-ride-lookup failure doesn't
+        # nuke a perfectly good cached result.
+        if latest:
+            prefix = (f"fatigue_resistance_default_{int(window_days)}_"
+                      f"{int(kj_threshold)}_")
+            for k in list(_cache.keys()):
+                if k.startswith(prefix) and k != cache_key:
+                    _cache.pop(k, None)
+                    _cache_ts.pop(k, None)
+        _cache[cache_key] = result
+        _cache_ts[cache_key] = now
+        return result
 
 
 @app.post("/api/activity/{activity_id}/race")
@@ -10256,6 +10292,9 @@ def api_ride_prs_recompute(ride_id: str):
     rec = _rs.get_icu_ride(ext)
     if rec is None:
         return JSONResponse({"error": "ride not found"}, 404)
+    # W2B-G9 fix: on compute failure, return 500 WITHOUT touching the
+    # persisted record. The prior `prs[]` (if any) stays intact so a
+    # transient compute error doesn't wipe data.
     try:
         import power_curve
         prs = power_curve.compute_ride_prs(ride_id)
@@ -10269,6 +10308,25 @@ def api_ride_prs_recompute(ride_id: str):
     except Exception as e:
         _log.warning(f"api_ride_prs_recompute persist failed: {e}")
     return {"ride_id": ride_id, "prs": prs}
+
+
+@app.get("/api/profile/pr-toast-queue")
+def api_profile_pr_toast_queue(drain: int = Query(0)):
+    """v1.3.0 IMPL-PR-DETECTION (W2B-G4 fix) — read pending PR toasts.
+
+    The dashboard polls this on init to surface a single line per ride
+    that landed a major PR since the user last opened the page. Per
+    PATCH G7 the cap is one entry per ride. Pass ``?drain=1`` to clear
+    the queue after read (the dashboard does this on the first poll
+    each session so toasts don't replay forever).
+    """
+    queue = _read_pr_toast_queue()
+    if drain:
+        try:
+            _write_pr_toast_queue([])
+        except Exception as e:
+            _log.debug(f"pr-toast-queue drain failed: {e}")
+    return {"queue": queue, "count": len(queue)}
 
 
 def _maybe_lazy_icu_sync(force_if_today_missing: bool = False) -> None:

@@ -4032,6 +4032,7 @@ async function maybeKickBackfill(data) {
 let _fatigueResistanceLoaded = false;
 let _fatigueResistanceInflight = false;
 let _fatigueResistanceThreshold = 1500;
+let _fatigueResistanceWindowDays = 365;
 let _fatigueScatterChart = null;
 async function loadFatigueResistance(force=false) {
   const body = document.getElementById('fatigue-resistance-body');
@@ -4042,10 +4043,22 @@ async function loadFatigueResistance(force=false) {
   const content = document.getElementById('fatigue-resistance-content');
   if (content) content.setAttribute('aria-busy', 'true');
   try {
-    const r = await fetch('/api/profile/fatigue-resistance?kj_threshold=' + _fatigueResistanceThreshold + (force ? '&refresh=1' : ''));
+    // W2B-G7 fix: pass window_days alongside kj_threshold so the
+    // endpoint's cache key + compute respect the user's window selection.
+    const wd = Number(_fatigueResistanceWindowDays) || 365;
+    const url = '/api/profile/fatigue-resistance?kj_threshold=' +
+                encodeURIComponent(_fatigueResistanceThreshold) +
+                '&window_days=' + encodeURIComponent(wd) +
+                (force ? '&refresh=1' : '');
+    const r = await fetch(url);
     if (!r.ok) {
       if (r.status === 404) {
         body.innerHTML = '<div style="color:var(--text3);">Fatigue Resistance not available in this build.</div>';
+        return;
+      }
+      // W2B-G17 fix: surface 422 (invalid kj_threshold) distinctly.
+      if (r.status === 422) {
+        body.innerHTML = '<div style="color:#f97316;">Invalid threshold — must be 1500 or 2000 kJ.</div>';
         return;
       }
       throw new Error('HTTP ' + r.status);
@@ -4078,17 +4091,35 @@ function renderFatigueResistance(d) {
   const body = document.getElementById('fatigue-resistance-body');
   const headline = document.getElementById('fatigue-resistance-headline');
   if (!body) return;
-  if (!d || d.fit_status === 'insufficient_data' || (d.n_long_rides != null && d.n_long_rides < 4) || (d.n_long_rides_at_threshold != null && d.n_long_rides_at_threshold < 4)) {
-    const n = Number((d && (d.n_long_rides_at_threshold || d.n_long_rides)) || 0);
+  // W2B-G15 fix: API never set n_long_rides_at_threshold — drop that
+  // alias path and read n_long_rides directly. W2B-G2 fix: surface the
+  // `reason` field so the user knows WHY the metric is unavailable
+  // (no_rides_in_window vs streams_not_hydrated_run_backfill vs <4 rides).
+  if (!d || d.fit_status === 'insufficient_data' || (d.n_long_rides != null && d.n_long_rides < 4)) {
+    const n = Number((d && d.n_long_rides) || 0);
+    const nStreams = Number((d && d.n_long_rides_with_streams) || 0);
+    const reason = d && d.reason;
+    let detail;
+    if (reason === 'streams_not_hydrated_run_backfill') {
+      detail = `${n} long rides found, but only ${nStreams} have power streams cached. Run a backfill to hydrate the rest.`;
+    } else if (reason === 'no_rides_in_window') {
+      detail = `No rides in the ${Number(_fatigueResistanceWindowDays)||365}-day window yet.`;
+    } else if (reason === 'no_fresh_tired_overlap') {
+      detail = `${n} long rides cached, but none have a fresh-leg peak that overlaps with a post-${_fatigueResistanceThreshold} kJ tired peak. Need rides with both a hard fresh segment AND a tired-leg effort.`;
+    } else if (reason === 'compute_failed') {
+      detail = 'The compute step errored. Check the server logs.';
+    } else {
+      detail = `Need 4 long rides ≥${_fatigueResistanceThreshold} kJ to unlock — currently ${n} in the ${Number(_fatigueResistanceWindowDays)||365}-day window.`;
+    }
     body.innerHTML = `<div style="color:var(--text3);line-height:1.5;">
-      <div>Need 4 long rides ≥${_fatigueResistanceThreshold} kJ to unlock — currently ${n} in the 365-day window.</div>
+      <div>${esc(detail)}</div>
       <div style="margin-top:6px;font-size:11px;">Threshold rationale (Coyle 1986 / Pinot &amp; Grappe 2014) — see (i) above.</div>
     </div>`;
     if (headline) headline.textContent = '';
     return;
   }
   const score = (d.robustness_score != null) ? Number(d.robustness_score).toFixed(1) : '—';
-  const n = Number(d.n_long_rides_at_threshold || d.n_long_rides || 0);
+  const n = Number(d.n_long_rides || 0);
   if (headline) headline.textContent = `Robustness ${score}% @ > ${_fatigueResistanceThreshold} kJ`;
   let tableRows = '';
   (d.by_duration || []).forEach(row => {
@@ -4180,6 +4211,52 @@ async function loadPRBadges(rideId) {
     return await r.json();
   } catch (_) { return null; }
 }
+
+// W2B-G4 fix: drain the PR toast queue on init so users see one line per
+// newly-imported ride that landed at least one major PR. Per PATCH G7 the
+// queue caps at one entry per ride. Drains on first read each session so
+// toasts don't replay forever.
+let _prToastsDrained = false;
+async function drainPRToastQueue() {
+  if (_prToastsDrained) return;
+  _prToastsDrained = true;
+  try {
+    const r = await fetch('/api/profile/pr-toast-queue?drain=1');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (!d || !Array.isArray(d.queue) || d.queue.length === 0) return;
+    // Render at most 3 toasts (most recent first); rest are silently
+    // dropped — the badges are already in the ride detail modal.
+    const top = d.queue.slice(-3).reverse();
+    top.forEach(entry => {
+      const rid = entry && entry.ride_id ? String(entry.ride_id) : '';
+      const n = Number((entry && entry.n_prs) || 0);
+      if (!rid || n <= 0) return;
+      const toast = document.createElement('div');
+      toast.style.cssText = 'position:fixed;top:80px;right:24px;background:var(--surface2);border:1px solid var(--accent);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--text);box-shadow:0 4px 12px rgba(0,0,0,0.18);cursor:pointer;z-index:1000;max-width:320px;';
+      toast.title = 'Click to open ride';
+      toast.textContent = n === 1
+        ? 'New PR on a recent ride — open ride detail to see it.'
+        : 'New PRs on a recent ride — ' + n + ' efforts. Click to open.';
+      toast.addEventListener('click', () => {
+        try { openRideDetail(rid); } catch(_){}
+        toast.remove();
+      });
+      document.body.appendChild(toast);
+      setTimeout(() => { try { toast.remove(); } catch(_){} }, 8000);
+    });
+  } catch (_) { /* graceful — toast feature is non-critical */ }
+}
+// Auto-fire after the dashboard finishes its initial paint.
+try {
+  if (typeof window !== 'undefined') {
+    window.addEventListener('load', () => {
+      // Give the rest of the dashboard 1s to settle so we don't stack
+      // a toast on top of the loading skeleton.
+      setTimeout(() => { drainPRToastQueue(); }, 1000);
+    });
+  }
+} catch(_) {}
 
 // v1.0.7 IMPL-TAU-FIT-WIRING — per-athlete τ fit panel.
 // Lazy-loaded on <details> open. Reads /api/profile/tau-fits which calls
@@ -5436,7 +5513,18 @@ async function openRideDetail(rideId) {
                          (Array.isArray(m && m.prs) ? m.prs.slice() : []));
         if (_prsAll.length > 0) {
           const TOP_PR_LIMIT = 3;
-          _prsAll.sort((a, b) => Number(b.exceedance_pct || 0) - Number(a.exceedance_pct || 0));
+          // W2B-G11 fix: tier='first' has null exceedance_pct → would
+          // otherwise sort to the bottom as 0. Promote first-tier above
+          // major/minor regardless of exceedance, then break ties on
+          // today_w descending (longer/larger watts first).
+          const _tierRank = t => t === 'first' ? 2 : (t === 'major' ? 1 : 0);
+          _prsAll.sort((a, b) => {
+            const tr = _tierRank(b.tier) - _tierRank(a.tier);
+            if (tr !== 0) return tr;
+            const ex = Number(b.exceedance_pct || 0) - Number(a.exceedance_pct || 0);
+            if (ex !== 0) return ex;
+            return Number(b.today_w || 0) - Number(a.today_w || 0);
+          });
           const _prsTop = _prsAll.slice(0, TOP_PR_LIMIT);
           const _prsRest = _prsAll.length - _prsTop.length;
           const _fmtDur = sec => {
@@ -5458,37 +5546,71 @@ async function openRideDetail(rideId) {
                 const tier = String(p.tier || 'minor');
                 const prevId = p.previous_ride_id ? String(p.previous_ride_id) : '';
                 const prevDate = p.previous_date ? String(p.previous_date) : '';
-                const onclick = prevId ? `onclick="openRideDetail('${escJs(prevId)}')"` : '';
+                // W2B-G3 fix: prevId is interpolated into an HTML attribute.
+                // escJs() handles JS-string escaping but not " or > → an
+                // attacker-controlled ride_id could break out of the
+                // attribute. Use esc() (HTML-attr-safe) into a data-attr
+                // and read it back via the delegated click handler in
+                // openRideDetail-from-pr-badge below.
                 const cursor = prevId ? 'cursor:pointer;' : 'cursor:default;';
-                return `<div data-pr-tier="${esc(tier)}" data-pr-duration="${Number(p.duration_s)||0}" ${onclick} title="${prevId ? 'Click to open previous ride' : 'First recorded effort'}" style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:${_tierBg(tier)};border-radius:6px;${cursor}">
+                const tab = prevId ? 'tabindex="0" role="button"' : '';
+                return `<div class="pr-badge-row" data-pr-tier="${esc(tier)}" data-pr-duration="${Number(p.duration_s)||0}" data-prev-ride-id="${esc(prevId)}" ${tab} title="${prevId ? 'Click to open previous ride' : 'First recorded effort'}" style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:${_tierBg(tier)};border-radius:6px;${cursor}">
                   <span style="font-size:9px;font-weight:800;letter-spacing:0.5px;padding:2px 6px;border-radius:4px;color:white;background:${_tierColor(tier)};">${_tierLabel(tier)}</span>
                   <span style="font-size:13px;font-weight:700;color:var(--text);">${_fmtDur(p.duration_s)}</span>
                   <span style="font-size:13px;color:var(--text);">${Number(p.today_w || 0)} W</span>
                   ${tier === 'first'
                     ? `<span style="font-size:11px;color:var(--text3);">first recorded</span>`
-                    : `<span style="font-size:11px;color:var(--text3);">+${Number(p.exceedance_w || 0)} W (${_fmtPct(p.exceedance_pct)}) vs ${prevDate || 'previous'}</span>`}
+                    : `<span style="font-size:11px;color:var(--text3);">+${Number(p.exceedance_w || 0)} W (${_fmtPct(p.exceedance_pct)}) vs ${esc(prevDate) || 'previous'}</span>`}
                 </div>`;
               }).join('')}
             </div>
-            ${_prsRest > 0 ? `<div id="pr-badges-more" style="margin-top:6px;font-size:11px;color:var(--text3);cursor:pointer;" onclick="(function(){var c=document.getElementById('pr-badges-card');if(!c)return;var more=document.getElementById('pr-badges-more');var hidden=document.getElementById('pr-badges-extra');if(hidden){hidden.style.display='';if(more)more.style.display='none';}})()">and ${_prsRest} more — click to expand</div>
+            ${_prsRest > 0 ? `<div id="pr-badges-more" tabindex="0" role="button" style="margin-top:6px;font-size:11px;color:var(--text3);cursor:pointer;" data-pr-expand="1">and ${_prsRest} more — click to expand</div>
             <div id="pr-badges-extra" style="display:none;flex-direction:column;gap:6px;margin-top:6px;">
               ${_prsAll.slice(TOP_PR_LIMIT).map(p => {
                 const tier = String(p.tier || 'minor');
                 const prevId = p.previous_ride_id ? String(p.previous_ride_id) : '';
                 const prevDate = p.previous_date ? String(p.previous_date) : '';
-                const onclick = prevId ? `onclick="openRideDetail('${escJs(prevId)}')"` : '';
                 const cursor = prevId ? 'cursor:pointer;' : 'cursor:default;';
-                return `<div data-pr-tier="${esc(tier)}" data-pr-duration="${Number(p.duration_s)||0}" ${onclick} style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:${_tierBg(tier)};border-radius:6px;${cursor}">
+                const tab = prevId ? 'tabindex="0" role="button"' : '';
+                return `<div class="pr-badge-row" data-pr-tier="${esc(tier)}" data-pr-duration="${Number(p.duration_s)||0}" data-prev-ride-id="${esc(prevId)}" ${tab} style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:${_tierBg(tier)};border-radius:6px;${cursor}">
                   <span style="font-size:9px;font-weight:800;letter-spacing:0.5px;padding:2px 6px;border-radius:4px;color:white;background:${_tierColor(tier)};">${_tierLabel(tier)}</span>
                   <span style="font-size:13px;font-weight:700;color:var(--text);">${_fmtDur(p.duration_s)}</span>
                   <span style="font-size:13px;color:var(--text);">${Number(p.today_w || 0)} W</span>
                   ${tier === 'first'
                     ? `<span style="font-size:11px;color:var(--text3);">first recorded</span>`
-                    : `<span style="font-size:11px;color:var(--text3);">+${Number(p.exceedance_w || 0)} W (${_fmtPct(p.exceedance_pct)}) vs ${prevDate || 'previous'}</span>`}
+                    : `<span style="font-size:11px;color:var(--text3);">+${Number(p.exceedance_w || 0)} W (${_fmtPct(p.exceedance_pct)}) vs ${esc(prevDate) || 'previous'}</span>`}
                 </div>`;
               }).join('')}
             </div>` : ''}
           </div>`;
+          // W2B-G3 / W2B-G16 fix: delegated click + keyboard handler.
+          // Reads ride_id from data-prev-ride-id (HTML-escaped, never
+          // interpolated into a JS string literal). Runs once after the
+          // fragment lands in the modal.
+          setTimeout(() => {
+            const card = document.getElementById('pr-badges-card');
+            if (!card || card.dataset.prDelegated === '1') return;
+            card.dataset.prDelegated = '1';
+            const open = (rid) => { try { if (rid) openRideDetail(rid); } catch(_){} };
+            card.addEventListener('click', e => {
+              const more = e.target.closest('#pr-badges-more');
+              if (more) {
+                const extra = document.getElementById('pr-badges-extra');
+                if (extra) extra.style.display = '';
+                more.style.display = 'none';
+                return;
+              }
+              const row = e.target.closest('.pr-badge-row');
+              if (row) open(row.getAttribute('data-prev-ride-id') || '');
+            });
+            card.addEventListener('keydown', e => {
+              if (e.key !== 'Enter' && e.key !== ' ') return;
+              const more = e.target.closest && e.target.closest('#pr-badges-more');
+              if (more) { e.preventDefault(); more.click(); return; }
+              const row = e.target.closest && e.target.closest('.pr-badge-row');
+              if (row) { e.preventDefault(); open(row.getAttribute('data-prev-ride-id') || ''); }
+            });
+          }, 0);
         }
       }
     } catch (_e_pr) { /* feature graceful-degrade */ }
@@ -12217,88 +12339,9 @@ async function loadBodyPerf() {
 
 
 
-async function loadPowerCurve() {
-  const el = $('power-curve-chart');
-  if (!el) return;
-  try {
-    const res = await fetch('/api/power-curve?days=90&compare_days=365');
-    const d = await res.json();
-    const cur = d.current || [];
-    const hist = d.historical || [];
-    if (!cur.length || cur.every(p => !p.watts)) {
-      el.innerHTML = '<div style="color:var(--text3);font-size:12px;">No power data available yet</div>';
-      return;
-    }
-
-    const W = 700, H = 260, PAD_L = 60, PAD_R = 30, PAD_T = 24, PAD_B = 50;
-    const cw = W - PAD_L - PAD_R, ch = H - PAD_T - PAD_B;
-    const labels = d.durations || cur.map(p => p.duration);
-    const n = labels.length;
-
-    // Max watts for Y axis
-    const allW = [...cur, ...hist].map(p => p.watts).filter(Boolean);
-    const maxW = allW.reduce((a, b) => Math.max(a, b), 100);
-    const minW = 0;
-
-    const x = (i) => PAD_L + (n > 1 ? (i / (n - 1)) * cw : cw / 2);
-    const rangeW = maxW - minW || 1;  // guard against division by zero
-    const y = (w) => PAD_T + ch - ((w - minW) / rangeW) * ch;
-
-    // Grid lines
-    const yTicks = 5;
-    let grid = '';
-    for (let i = 0; i <= yTicks; i++) {
-      const val = Math.round(minW + (maxW - minW) * (i / yTicks));
-      const yy = y(val);
-      grid += `<line x1="${PAD_L}" y1="${yy}" x2="${W - PAD_R}" y2="${yy}" stroke="var(--border)" stroke-width="0.5"/>`;
-      grid += `<text x="${PAD_L - 8}" y="${yy + 4}" fill="var(--text3)" font-size="10" text-anchor="end">${val}</text>`;
-    }
-
-    // X labels
-    let xLabels = '';
-    for (let i = 0; i < n; i++) {
-      xLabels += `<text x="${x(i)}" y="${H - 10}" fill="var(--text2)" font-size="11" text-anchor="middle">${labels[i]}</text>`;
-    }
-
-    // Historical line (dashed, dimmer)
-    const histPts = hist.map((p, i) => `${x(i)},${y(p.watts || 0)}`).join(' ');
-    // Current line (solid, bright)
-    const curPts = cur.map((p, i) => `${x(i)},${y(p.watts || 0)}`).join(' ');
-
-    // Dots + value labels
-    let dots = '';
-    for (let i = 0; i < n; i++) {
-      const hw = hist[i]?.watts || 0;
-      const cw2 = cur[i]?.watts || 0;
-      if (hw) {
-        dots += `<circle cx="${x(i)}" cy="${y(hw)}" r="4" fill="var(--text3)" stroke="var(--surface)" stroke-width="1.5"/>`;
-        dots += `<text x="${x(i)}" y="${y(hw) - 10}" fill="var(--text3)" font-size="9" text-anchor="middle">${hw}W</text>`;
-      }
-      if (cw2) {
-        dots += `<circle cx="${x(i)}" cy="${y(cw2)}" r="5" fill="var(--accent)" stroke="var(--surface)" stroke-width="1.5"/>`;
-        const wkg = cur[i]?.wkg ? ` (${cur[i].wkg})` : '';
-        dots += `<text x="${x(i)}" y="${y(cw2) - 12}" fill="var(--accent)" font-size="10" font-weight="600" text-anchor="middle">${cw2}W${wkg}</text>`;
-      }
-    }
-
-    // Axis titles
-    const yTitle = `<text x="12" y="${PAD_T + ch/2}" fill="var(--accent)" font-size="10" font-weight="600" text-anchor="middle" transform="rotate(-90,12,${PAD_T + ch/2})">Power (W)</text>`;
-    const xTitle = `<text x="${PAD_L + cw/2}" y="${H - 0}" fill="var(--text2)" font-size="10" text-anchor="middle">Duration</text>`;
-
-    // Legend
-    const legend = `<text x="${PAD_L}" y="14" fill="var(--accent)" font-size="10" font-weight="600">● 90d Best</text>
-      <text x="${PAD_L + 80}" y="14" fill="var(--text3)" font-size="10">● 365d Best</text>`;
-
-    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;">
-      ${grid}${xLabels}${yTitle}${xTitle}${legend}
-      <polyline points="${histPts}" fill="none" stroke="var(--text3)" stroke-width="1.5" stroke-dasharray="5,3"/>
-      <polyline points="${curPts}" fill="none" stroke="var(--accent)" stroke-width="2.5"/>
-      ${dots}
-    </svg>`;
-  } catch(e) {
-    el.innerHTML = '<div style="color:var(--text3);font-size:12px;">Could not load power curve</div>';
-  }
-}
+// W2B-G1 fix: legacy loadPowerCurve(/api/power-curve?days=90&compare_days=365)
+// hoisted over the v1.3.0 implementation at L3796 → chart never painted.
+// Removed in fix-forward post Wave 2B grill (commit follows e7addf8b).
 
 async function logMetric() {
   const metric = $('lm-metric').value;

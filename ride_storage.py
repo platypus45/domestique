@@ -337,6 +337,19 @@ def persist_icu_activity(activity: dict) -> Path | None:
     if not icu_id:
         return None
     path = _icu_rides_dir() / f"{icu_id}.json"
+    # W2B-G9 fix: read prior `prs[]` (if any) BEFORE we overwrite, so a
+    # subsequent compute_ride_prs failure doesn't silently drop the
+    # existing PR list. We carry it forward into the fresh `norm`.
+    prior_prs = None
+    if path.exists():
+        try:
+            prior = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(prior, dict) and isinstance(prior.get("prs"), list):
+                prior_prs = prior["prs"]
+        except (json.JSONDecodeError, OSError) as e:
+            log.debug(f"persist_icu_activity({icu_id}) prior-prs read: {e}")
+    if prior_prs is not None:
+        norm["prs"] = prior_prs
     try:
         path.write_text(json.dumps(norm, indent=2), encoding="utf-8")
     except OSError as e:
@@ -344,8 +357,8 @@ def persist_icu_activity(activity: dict) -> Path | None:
         return None
     # v1.3.0 PR-DETECTION final step (audit §4): compute PRs against the
     # 90-day rolling window after the envelope is on disk so compute_ride_prs
-    # can read the just-written ride_id from cache. Persist the result inside
-    # the same envelope so re-opening the modal serves the cached list.
+    # can read the just-written ride_id from cache. On failure keep
+    # `prior_prs` (already in `norm`) so we don't lose data.
     try:
         import power_curve
         prs = power_curve.compute_ride_prs(norm["ride_id"])

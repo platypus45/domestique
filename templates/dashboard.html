@@ -1839,7 +1839,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
   <details class="plan-help-panel" style="margin-bottom:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;">
     <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--text);">How your plan updates</summary>
     <div style="margin-top:8px;font-size:12px;line-height:1.5;color:var(--text2);">
-      Your plan adapts in four ways. <strong>Reforecast</strong> keeps the structure but rebalances load to today's fitness, fatigue, and overshoot — use it weekly. <strong>Regenerate Plan</strong> rebuilds from scratch using today's CTL and your remaining weeks — use it after a goal change, a long break, or illness. The <strong>Availability Calendar</strong> edits which days you can train; click a day to set hours, right-click to mark unavailable. <strong>Saved — plan reflowed automatically.</strong> <strong>Rematch workout</strong> (in any day's detail view) re-rolls only that single workout if the suggestion doesn't fit. Don't manually edit unless something's clearly wrong — the planner already accounts for fatigue and load.
+      Your plan adapts in four ways. <strong>Reforecast</strong> keeps the structure but rebalances load to today's fitness, fatigue, and overshoot — use it weekly. <strong>Regenerate Plan</strong> rebuilds from scratch using today's CTL and your remaining weeks — use it after a goal change, a long break, or illness. The <strong>Availability Calendar</strong> edits which days you can train; click a day to set hours, right-click to mark unavailable. <strong>Press the pulsing UPDATE button to apply changes — the plan reflows on click.</strong> <strong>Rematch workout</strong> (in any day's detail view) re-rolls only that single workout if the suggestion doesn't fit. Don't manually edit unless something's clearly wrong — the planner already accounts for fatigue and load.
     </div>
   </details>
 
@@ -1855,7 +1855,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
        .info-popover toggles via .open from the delegated handler below. -->
   <div class="info-popover" id="planpop-reforecast"><strong>Reforecast</strong> keeps your plan's structure but rebalances daily load to today's TSB (fatigue), ACWR (load ratio), and polarization compliance. Click weekly, after a hard ride, or when you've overshot. Doesn't touch phase splits or workout types.</div>
   <div class="info-popover" id="planpop-regenerate"><strong>Regenerate Plan</strong> wipes the plan and rebuilds it from today's CTL, with phase splits derived from weeks-to-event. Use after a goal change, missed 2+ weeks, illness, or new event date. This is the nuclear option.</div>
-  <div class="info-popover" id="planpop-availability"><strong>Edit availability</strong> sets per-day training time. Click a date to set hours; right-click to mark unavailable (holiday/injury). <strong>Saved — plan reflowed automatically.</strong></div>
+  <div class="info-popover" id="planpop-availability"><strong>Edit availability</strong> sets per-day training time. Click a date to set hours; right-click to mark unavailable (holiday/injury). <strong>Press the pulsing UPDATE button to apply changes — the plan reflows on click.</strong></div>
   <div class="info-popover" id="planpop-rematch"><strong>Rematch workout</strong> re-rolls only this one day's ZWO file from the matching workout pool. Same intent (intervals, endurance, etc.) — different specific session. Use when the suggested workout doesn't fit your equipment or mood.</div>
 
   <!-- Gap Alert Banner (shown when missed sessions detected) -->
@@ -2208,9 +2208,36 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
   </script>
   <!-- v4.6.7 IMPL-SUM: summary modal END -->
   <!-- Monthly Availability Calendar -->
+  <!-- v1.3.2 IMPL-UI: explicit UPDATE button replaces auto-save. Pulses
+       accent when dirty; click commits + reflows. -->
+  <style>
+    #avail-update-btn {
+      font-size:12px; padding:6px 14px; border-radius:6px;
+      border:1px solid var(--border); background:transparent;
+      color:var(--text2); font-weight:500; cursor:default;
+      transition: all 0.18s ease;
+    }
+    #avail-update-btn.dirty {
+      background: var(--accent); color: #fff; border-color: var(--accent);
+      font-size:13px; font-weight:700; padding:8px 18px;
+      letter-spacing:0.5px; cursor:pointer;
+      box-shadow: 0 0 0 0 var(--accent);
+      animation: availUpdatePulse 1.6s ease-out infinite;
+    }
+    @keyframes availUpdatePulse {
+      0%   { box-shadow: 0 0 0 0   rgba(79,156,247,0.55); }
+      70%  { box-shadow: 0 0 0 12px rgba(79,156,247,0);    }
+      100% { box-shadow: 0 0 0 0   rgba(79,156,247,0);    }
+    }
+    #avail-update-confirm {
+      font-size:11px; color:var(--green); font-weight:600;
+      transition: opacity 0.4s ease; opacity:0;
+    }
+    #avail-update-confirm.show { opacity:1; }
+  </style>
   <div class="card" style="margin-bottom:12px;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-      <h3 style="display:flex;align-items:center;">Availability Calendar<span class="info-icon" data-popover="planpop-availability" tabindex="0" role="button" aria-label="How does the Availability Calendar work?" title="Click to set hours; right-click to mark unavailable. Then Generate Plan.">i</span></h3>
+      <h3 style="display:flex;align-items:center;">Availability Calendar<span class="info-icon" data-popover="planpop-availability" tabindex="0" role="button" aria-label="How does the Availability Calendar work?" title="Click to set hours; right-click to mark unavailable. Press UPDATE to apply.">i</span></h3>
       <div style="display:flex;gap:6px;align-items:center;">
         <button class="btn" onclick="changeAvailMonth(-1)" style="padding:4px 8px;">&larr;</button>
         <span id="avail-month-label" style="font-size:13px;font-weight:600;min-width:120px;text-align:center;"></span>
@@ -2224,6 +2251,11 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
       <span style="margin-left:auto;color:var(--text3);">Click to edit &middot; Right-click for unavailable</span>
     </div>
     <div id="avail-calendar" style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;"></div>
+    <!-- v1.3.2 IMPL-UI: UPDATE button + aria-live confirmation. -->
+    <div style="display:flex;justify-content:flex-end;align-items:center;gap:12px;margin-top:10px;">
+      <span id="avail-update-confirm" role="status" aria-live="polite"></span>
+      <button id="avail-update-btn" type="button" onclick="_commitAvailUpdate()" aria-label="Update plan with availability changes">UP TO DATE</button>
+    </div>
   </div>
 
   <!-- v4.3.0 IMPL-UI: Calendar overlay (intervals.icu-style).
@@ -8008,23 +8040,98 @@ function _setAvailDay(dateKey, hours, type) {
   _saveAvailability();
 }
 
-let _saveAvailDebounce = null;
+// v1.3.2 IMPL-UI: explicit UPDATE button replaces auto-save. Local edits
+// flip _availDirty + paint the UPDATE button; user must click UPDATE to
+// commit. ESC with dirty state prompts confirm-discard.
+let _availDirty = false;
 function _saveAvailability() {
-  // Debounced save to backend (persist across refresh).
-  // v1.3.1 HIGH fix — server now reflows the plan immediately, so re-fetch
-  // /api/calendar after the response lands so THIS WEEK + intensity bar
-  // pick up the rescaled / zeroed sessions without forcing a full reload.
-  clearTimeout(_saveAvailDebounce);
-  _saveAvailDebounce = setTimeout(async () => {
-    try {
-      await fetch('/api/plan/save-availability', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ availability: _availData }),
-      });
-      try { await loadCalendar(); } catch(_) {}
-    } catch(e) {}
-  }, 500);
+  // Mark dirty + repaint the UPDATE button. Does NOT POST — that happens
+  // when the user clicks UPDATE (see _commitAvailUpdate).
+  _availDirty = true;
+  _renderAvailUpdateBtn();
 }
+
+function _renderAvailUpdateBtn() {
+  const btn = document.getElementById('avail-update-btn');
+  if (!btn) return;
+  if (_availDirty) {
+    btn.classList.add('dirty');
+    btn.textContent = 'UPDATE PLAN';
+    btn.setAttribute('aria-label', 'Update plan with availability changes (unsaved)');
+  } else {
+    btn.classList.remove('dirty');
+    btn.textContent = 'UP TO DATE';
+    btn.setAttribute('aria-label', 'Update plan — no pending changes');
+  }
+}
+
+async function _commitAvailUpdate() {
+  if (!_availDirty) return;
+  const btn = document.getElementById('avail-update-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'UPDATING…'; }
+  try {
+    const r = await fetch('/api/plan/save-availability', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ availability: _availData }),
+    });
+    const data = await r.json().catch(() => ({}));
+    const n = (data && typeof data.sessions_modified === 'number') ? data.sessions_modified : 0;
+    _availDirty = false;
+    if (btn) btn.disabled = false;
+    _renderAvailUpdateBtn();
+    const conf = document.getElementById('avail-update-confirm');
+    if (conf) {
+      conf.textContent = `Plan reflowed — ${n} session${n === 1 ? '' : 's'} changed`;
+      conf.classList.add('show');
+      setTimeout(() => { conf.classList.remove('show'); setTimeout(() => { conf.textContent = ''; }, 400); }, 4000);
+    }
+    try { await loadCalendar(); } catch(_) {}
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    _renderAvailUpdateBtn();
+    const conf = document.getElementById('avail-update-confirm');
+    if (conf) {
+      conf.style.color = 'var(--red)';
+      conf.textContent = 'Update failed — try again';
+      conf.classList.add('show');
+      setTimeout(() => { conf.classList.remove('show'); setTimeout(() => { conf.style.color = ''; conf.textContent = ''; }, 400); }, 4000);
+    }
+  }
+}
+
+function _confirmDiscardAvailIfDirty() {
+  // Returns true if it's safe to proceed (clean, or user discarded), false if
+  // the user wants to keep editing.
+  if (!_availDirty) return true;
+  const ok = window.confirm('Discard unsaved availability changes?');
+  if (ok) {
+    _availDirty = false;
+    loadAvailData();
+    renderAvailCalendar();
+    _renderAvailUpdateBtn();
+  }
+  return ok;
+}
+
+// Keyboard: Enter inside the per-day picker commits UPDATE; ESC at the
+// calendar level (no modal) with dirty state prompts confirm-discard.
+document.addEventListener('keydown', e => {
+  const overlay = document.getElementById('modal-overlay');
+  const modalOpen = overlay && overlay.classList.contains('open');
+  if (e.key === 'Enter' && modalOpen && _availDirty) {
+    // Detect per-day picker by the unavailable checkbox we render there.
+    if (document.getElementById('avail-unavail-cb')) {
+      e.preventDefault();
+      closeModal();
+      _commitAvailUpdate();
+    }
+    return;
+  }
+  if (e.key === 'Escape' && !modalOpen && _availDirty) {
+    // Calendar-level ESC: prompt to discard.
+    _confirmDiscardAvailIfDirty();
+  }
+});
 
 function _toggleUnavailable(dateKey, checked) {
   const typeDiv = $('avail-unavail-type');
@@ -8059,6 +8166,9 @@ function markDayUnavailable(dateKey) {
 function initAvailCalendar() {
   loadAvailData();
   renderAvailCalendar();
+  // v1.3.2: paint UPDATE button to match current dirty state on tab open.
+  _availDirty = false;
+  _renderAvailUpdateBtn();
 }
 
 async function loadPlanMetrics() {

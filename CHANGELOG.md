@@ -1,5 +1,63 @@
 # Changelog
 
+## v1.3.0 — 90-day Power Curve + Pinot 2014 Fatigue Resistance + Per-Ride PR Detection (2026-05-06)
+
+Three coordinated additions, all rolling on top of the v1.0.6 3D-energy-system foundation. **TSS-PRIMARY 3D-ADDITIVE invariant preserved** — none of these replace the CTL/ATL/TSB backbone; they layer on top.
+
+### 90-day Power Curve
+
+- **`power_curve.py`** (NEW, 1078 LoC) — `aggregate_power_curve(profile_id, window_days=90)` walks the cached ICU envelope (`~/.domestique/rides/icu/`) and emits the rolling mean-max curve across [`STANDARD_DURATIONS = [1,5,15,30,60,120,300,480,600,1200,1800,3600]`]. Each rider point carries its source ride for click-through.
+- **Sensor-glitch filter** (`is_sensor_glitch`) — keeps every effort by default (USER-FOUGHT decision: "an effort = an effort, no editorial filtering"); only filters confirmed sensor dropouts (1-second 10× FTP spikes paired with HR drops > 30 bpm vs `profile.max_hr`).
+- **3-way y-axis toggle** — Watts / W·kg⁻¹ / %FTP. W/kg uses the per-effort `weight_kg` recorded at the time of the ride; %FTP uses `ftp_at_ride`. The Pinot & Grappe 2011 baseline curve scales with the rider's CURRENT FTP+weight.
+- **Window selector** — 30 / 90 / 180 / 365 / All. Polls a single `GET /api/profile/power-curve?window_days=N`, cached 24h.
+- **Single-flight backfill lock** — TOCTOU-safe ownership: lock travels with the worker through `_run_backfill_job` and releases in `finally`, so two simultaneous POSTs can't double-spawn (Wave 2A grill W2A-G2).
+- **`POST /api/profile/backfill-history`** — pulls 90 days of ICU activity streams in chunks of 30, rate-limited to 10 req/s with `Retry-After` honour.
+
+### Pinot 2014 Fatigue Resistance
+
+- **`compute_fatigue_resistance(profile_id, window_days, kj_threshold)`** — robustness index = peak power on tired legs (kJ-at-start ≥ threshold) ÷ peak on fresh legs (kJ-at-start < 500 kJ) × 100, averaged across {60, 300, 900, 1800} s. Per-ride kJ axis resets (PM ride does NOT carry over the AM ride's tail).
+- **2-button kJ threshold toggle** — only `{1500, 2000}` accepted; anything else returns **HTTP 422**. The 1500 kJ default is grounded in [Coyle 1986](https://pubmed.ncbi.nlm.nih.gov/3536834/) muscle glycogen depletion (~1800 kJ at threshold) + [Mateo-March 2022](https://journals.humankinetics.com/view/journals/ijspp/17/6/article-p926.xml) WT race intensity; 2000 kJ is the strict [Pinot & Grappe 2014](https://www.fredericgrappe.com/wp-content/uploads/2014/07/MAP.pdf) MAP threshold.
+- **`reason` field** (Wave 2B grill W2B-G2 fix-forward) — `insufficient_data` responses now carry one of `no_rides_in_window` / `fewer_than_4_long_rides` / `streams_not_hydrated_run_backfill` / `no_fresh_tired_overlap` / `compute_failed`. Avoids the failure mode where the user saw `n_long_rides:11` + `insufficient_data` with no explanation.
+- **Bonk inclusion** — rides whose power drops to 0 in the last hour STILL count (Pinot methodology: fatigue is signal, not noise).
+- **`GET /api/profile/fatigue-resistance`** — 24-hour cache keyed on `(profile_id, window_days, kj_threshold, latest_ride_id)`. Per-key Lock serialises concurrent same-key compute. Skip-GC-on-empty-latest so a transient ride-lookup failure can't nuke a healthy cached result.
+- **Collapsed `<details>` panel** with Chart.js scatter (kJ on x, watts on y, color per duration tier) + (i) tooltip listing all four literature anchors (Coyle 1986 / Pinot 2014 / Mateo-March 2022 / [Maturana 2025](https://pubmed.ncbi.nlm.nih.gov/39875789/)).
+
+### Per-ride PR detection
+
+- **`compute_ride_prs(ride_id, window_days=90)`** — for every effort in `ride.efforts[]`, compares against the rolling-best across the previous `window_days` (excluding the current ride). Tier classification: **major** (≥ 2.5 % exceedance), **minor** (any positive exceedance), **first** (no prior recorded effort at that duration — emits `tier='first'` so day-1 badges still appear).
+- **Persistence hook** — `ride_storage.persist_icu_activity` and `_build_summary_dict` (FIT-live path) now land `prs[]` inside the ride envelope after import. **Read-merge-on-error** (Wave 2B grill W2B-G9): if `compute_ride_prs` raises, prior `prs[]` survives instead of being silently overwritten with `[]`.
+- **`GET /api/ride/{id}/prs`** + **`POST /api/ride/{id}/prs/recompute`** — read with lazy compute fallback for pre-v1.3.0 imports.
+- **PR badges in ride detail** — top 3 by tier+exceedance (first > major > minor; tiebreak on `today_w` desc per Wave 2B grill W2B-G11). **XSS-hardened**: `data-prev-ride-id="${esc(prevId)}"` + delegated click+keyboard handler instead of inline `onclick="...${escJs(prevId)}..."` (Wave 2B grill W2B-G3).
+- **`GET /api/profile/pr-toast-queue?drain=1`** (Wave 2B grill W2B-G4: previously the writer existed but no reader). Dashboard polls on `window.load` + 1s settle, renders one toast per ride that landed major PRs since last open.
+
+### Wave structure (8 commits across 5 waves)
+
+| Wave | Commits | Verdict |
+|---|---|---|
+| 2A — POWER-CURVE-CORE | `e7bab0cb` → `30e2842d` | 1 BLOCKER + 3 HIGH grilled + fixed |
+| 2B — DASHBOARD + PR + FATIGUE | `cf882c8f` + `12443efc` + `e7addf8b` | 4 BLOCKER + 7 HIGH grilled |
+| 2B fix-forward | `afef17e9` | all 11 grill IDs landed + 11 regression tests |
+| 3 — QA | SHIP-NOW, all 6 gates PASS |
+
+**Tests:** 1091 passing across the full suite (38 → 54 v1.3.0 tests + 11 fix-forward regressions). Pre-existing 4 unrelated failures verified at `61a6dbd7` baseline.
+
+## v1.2.1 — Banister validation panel under CTL chart (2026-05-06)
+
+User-visible: the v1.2.0 `/api/profile/banister-validation` endpoint now has a collapsed `<details>` panel directly under the CTL/ATL/TSB chart on Home, so the model-accuracy data lands without a navigation step.
+
+- **`templates/dashboard.html`** — collapsed-by-default `<details>` panel; force-open on `?refresh=1` callback.
+- **PATCH G1 BLOCKER fix** — comparison-nullability path (literature_mae_pct can be null on insufficient data); the panel uses optional-chaining instead of crashing on dot-access.
+- **PATCH G2** — en-dash hardcoded for date ranges (was platform-dependent).
+- **PATCH G3** — fetch `AbortController` with 90s timeout (the OOS validation can take > 30s on the first cold cache).
+- **PATCH G4** — race fix between panel open + auto-refresh on first paint.
+- **PATCH G5** — accessibility: `aria-busy` on the panel container, `aria-label` on the (i) tooltip trigger, `cursor:pointer` on the toggle.
+- **PATCH G9** — force-open on refresh so the user sees the new fit immediately.
+- **PATCH G12** — all 16 locked-field bindings tested.
+- **PATCH G13** — guard against unbalanced `<script>` tags.
+- **PATCH G14** — optional-chain pattern across all `d.banister_validation_*` reads.
+
+Tests: 5 new tests in `tests/test_dashboard_v121.py`. All 5 pass.
+
 ## v1.2.0 — Out-of-sample Banister validation per athlete (2026-05-05)
 
 User-visible: a "Model accuracy" panel under the existing CTL / ATL / TSB chart now shows your personal model's prediction error vs. literature ([Hellard 2006](https://pubmed.ncbi.nlm.nih.gov/17909403/) baseline 5–8 % MAE), updated lazily on a 24-hour cache.

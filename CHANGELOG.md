@@ -1,28 +1,32 @@
 # Changelog
 
-## v1.3.2 — Hot-fix: generate-plan honors availability + matches workouts inline + faster (2026-05-06)
+## v1.3.2 — Hot-fix: 4 dashboard/plan-gen bugs (energy chart, avail UPDATE button, generate-plan trio, session duration) (2026-05-06)
 
-Same-day hot-fix for three real-user-feedback bugs surfaced from `/api/plan/generate`. Common root cause: `tp.generate_plan()` and the `/api/plan/generate` endpoint both ignored the persisted per-date availability calendar (only the Mon-Sun weekly grid landed on the wire), and the response payload skipped the same per-session enrichment (card_state, content_class, display_name, zone_dist) that `/api/plan` adds — so dashboard cells legitimately picked workouts whose content_class disagreed with the session_type, painting a yellow ⚠ on every day on first paint.
+Same-day hot-fix for five real-user-feedback issues from the v1.3.1 dashboard. Three parallel agents in isolated worktrees + one resumed; all 4 cherry-picked clean back to `clean-main`.
 
 ### Fixes
 
-- **HIGH — Generate-Plan ignored availability calendar.** `tp.generate_plan()` now accepts an `availability_overrides: dict[str, float] | None` kwarg and applies the same per-day rescale logic `tp.reforecast()` uses (per-week scale clamped [0.4, 2.0]; `hours == 0` → rest; `hours > 0` rescales duration/TSS and re-runs `match_zwo` so the picked workout fits the new slot). `/api/plan/generate` reads `plan["availability"]` from the existing `current_plan.json` (mirroring `/api/plan/reforecast`) and threads the overrides through. The persisted availability dict survives regeneration so the next generate honors the calendar too.
+- **Energy-system breakdown chart was empty** (`f7173c30`). `loadHome()` painted the primary `fitnessChart()` on DOMContentLoaded but never called `energySystemChart()`. The secondary chart was wired only into `loadFitnessChart(days)` (date-range button clicks). On initial page load the `<details>` host got its 180px min-height but no inner SVG. Surgical 5-line addition to `loadHome()`. The chart is pure inline SVG via `container.innerHTML` — Chart.js is not involved here. When `cp_fitness` is None on all wellness records (default until IMPL-3D-MODEL writes real values), the chart renders the placeholder text "3D fitness curves will populate after IMPL-3D-MODEL has computed Banister components..." instead of staying blank.
 
-- **HIGH — Yellow ⚠ on every day after Generate-Plan.** Pre-fix, the `/api/plan/generate` response payload did NOT include `card_state` / `display_name` / `content_class` / `zone_dist` (those derived fields were only added by `/api/plan` GET). The dashboard renders the response directly via `renderPlanJSON(d.plan_json)`; without `card_state`, cells fell through to the legacy `'planned'` fallback — but the next `/api/plan` reload pulled the augmented version which exposed any content-class mismatches as `missing_workout` warnings. Endpoint now mirrors `/api/plan`'s post-load enrichment so the freshly generated payload carries the same fields. Persistence stays clean: enrichment runs AFTER the JSON write so derived fields don't bake into disk.
+- **Availability calendar UX: explicit UPDATE button replaces auto-save** (`639349c5`). v1.3.1 auto-saved on every field change. User feedback: "maybe we should use a button… that if you alter the daily availability a very alerting UPDATE button starts to light up." Replaced debounced auto-save with a dirty-flag flip; new pulsing accent UPDATE button; aria-live confirmation "Plan reflowed — N sessions changed" auto-fades 4s; ESC with unsaved changes shows confirm-discard; Enter inside picker triggers UPDATE. Endpoint contract unchanged — POST happens only on UPDATE click now.
 
-- **HIGH — Generate-Plan was rather slow.** No new code path was needed — the existing `_WORKOUT_LIB_CACHE` already memoizes the 3,054-file ZWO scan after the first call. Cold path 1.9s, warm 0.7s for 8wk; warm 0.9s for 12wk. Validated by a perf gate test that asserts 8wk warm finishes in < 5s.
+- **Session-detail modal title showed duplicate duration** `Wednesday — Tempo (45min) (81min)` (`94508162`). Root cause: `display_name` / `zwo_name` already embed the workout file's duration (e.g. `"Tempo (45min)"`), and `openDayWorkout` then appended `(${actualDur}min)` on top. Fix strips any embedded `(Nmin)` from `titleClass`, appends a single `(${session.duration_min}min)` suffix (the planned duration), and renders an orange mismatch label "Workout file is N min, session planned for M min. Pace/extend on trainer." when `|fileDur − sessionDur| / sessionDur > 0.10`.
+
+- **Generate-Plan trio: ignored availability + yellow ⚠ on every day + slow** (`9e68246f`). `tp.generate_plan()` and `/api/plan/generate` both ignored the persisted per-date availability calendar (only the Mon-Sun weekly grid landed on the wire), and the response payload skipped the same per-session enrichment (`card_state` / `display_name` / `content_class` / `zone_dist`) that `/api/plan` adds — so dashboard cells legitimately picked workouts whose content_class disagreed with the session_type, painting a yellow ⚠ on every day on first paint. Fix: `tp.generate_plan()` now accepts `availability_overrides`, applies the same per-day rescale logic as `tp.reforecast()` (per-week scale clamped [0.4, 2.0]; `hours == 0` → rest; `hours > 0` rescales duration/TSS and re-runs `match_zwo`). `/api/plan/generate` reads `plan["availability"]` from `current_plan.json`, threads the overrides through, mirrors `/api/plan`'s post-load enrichment so the freshly generated payload carries the derived fields. Perf: cold 1.9s, warm 0.7s for 8wk; warm 0.9s for 12wk (existing `_WORKOUT_LIB_CACHE` memoizes the 3,054-file ZWO scan).
+
+### Out of scope (separate fix)
+
+`/api/plan/reforecast` and `/api/plan/save-availability` both wipe `s_json["zwo_file"] = ""` for downshifted/G3-touched sessions but never re-run `match_zwo` inline. After Generate-Plan, the new path produces clean zwo_files; subsequent reforecasts should also re-match. Tracked for v1.3.3.
 
 ### Tests
 
-6 new tests in `tests/test_v132_plan_generate_fixes.py`:
-- `test_generated_plan_honors_availability_overrides` — Sat hours=0 → Sat sessions become rest
-- `test_availability_override_with_hours_rescales` — hours > 0 rescales duration
-- `test_generated_plan_has_no_missing_workouts` — < 5% of non-rest sessions carry empty zwo_file
-- `test_generate_plan_under_5s` — perf gate (warm cache, 8wk plan)
-- `test_api_plan_generate_reads_availability` — persisted plan["availability"] flows into generate_plan
-- `test_api_plan_generate_response_has_card_state` — response carries card_state / display_name / zone_dist
+15 new tests across 4 files:
+- `tests/test_v132_energy_system_chart.py` (3 tests)
+- `tests/test_v132_availability_update_button.py` (3 tests)
+- `tests/test_v132_session_duration_display.py` (3 tests)
+- `tests/test_v132_plan_generate_fixes.py` (6 tests)
 
-198 planner-related tests + 95 endpoint tests all pass with the change.
+34/34 v1.3.2-touched + neighbouring tests green.
 
 ## v1.3.1 — Hot-fix: Chart.js loading + mid-week pacing + availability reflow + redraw visibility (2026-05-06)
 

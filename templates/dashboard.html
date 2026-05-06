@@ -1291,6 +1291,101 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
     </details>
   </div>
 
+  <!-- v1.3.0 IMPL-DASHBOARD — Power Curve card on Home, BELOW CTL/ATL/TSB.
+       Per MASTER_DECISIONS_v130 §2 + PATCH G10/G11/G14: Chart.js log-x linear-y
+       (3-way y-axis: Watts / W/kg / %FTP, each reading per-ride ftp_at_ride
+       + weight_kg). Window selector 30/90/180/365/All (default 90). P&G 2011
+       baseline as dashed gray line scaled per current y-axis mode. Hover
+       tooltip on each rider point shows source ride + date + raw watts
+       regardless of toggle mode. Click → opens source ride. (?) tooltip
+       documents the silent 1-s sub-HR sensor-glitch filter (PATCH G16+G9 —
+       the only surviving filter; "an effort = an effort"). Backfill toast
+       fires when n_rides<30 + ICU has more list entries than locally cached
+       (PATCH G3 single-flight). Feature flag: window.FEATURES.power_curve. -->
+  <div class="card" style="margin-bottom:12px;" id="power-curve-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <h3 style="margin:0;">Power Curve</h3>
+        <span id="power-curve-help" style="cursor:help;font-size:12px;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;line-height:1;" title="Mean-max power per duration across selected window. An effort = an effort: indoor erg, paceline, structured workouts all count as recorded. The ONLY filter is a silent sensor-glitch drop on 1-s peaks where HR is below 50% of HR_max during that 1-s window — the wireless dropout reporting a phantom 1500W spike. (PATCH G16 + G9: position-based filters dropped; cached envelope has no offset data.)" aria-label="Help">?</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+        <div class="power-curve-yaxis-toggle" role="group" aria-label="Y-axis units" style="display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:11px;">
+          <button id="pc-yaxis-watts" type="button" class="pc-yaxis-btn active" data-yaxis="watts" onclick="setPowerCurveYAxis('watts')" style="background:var(--accent);color:white;border:0;padding:4px 8px;cursor:pointer;">Watts</button>
+          <button id="pc-yaxis-wkg" type="button" class="pc-yaxis-btn" data-yaxis="wkg" onclick="setPowerCurveYAxis('wkg')" style="background:transparent;color:var(--text2);border:0;border-left:1px solid var(--border);padding:4px 8px;cursor:pointer;">W/kg</button>
+          <button id="pc-yaxis-pct-ftp" type="button" class="pc-yaxis-btn" data-yaxis="pct_ftp" onclick="setPowerCurveYAxis('pct_ftp')" style="background:transparent;color:var(--text2);border:0;border-left:1px solid var(--border);padding:4px 8px;cursor:pointer;">% FTP</button>
+        </div>
+        <div class="power-curve-window-btns" role="group" aria-label="Window" style="display:inline-flex;flex-wrap:wrap;gap:4px;">
+          <button id="pc-win-30" type="button" class="pc-win-btn" data-win="30" onclick="setPowerCurveWindow(30)" style="font-size:11px;padding:4px 8px;background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;cursor:pointer;">30</button>
+          <button id="pc-win-90" type="button" class="pc-win-btn active" data-win="90" onclick="setPowerCurveWindow(90)" style="font-size:11px;padding:4px 8px;background:var(--accent);color:white;border:1px solid var(--accent);border-radius:6px;cursor:pointer;">90</button>
+          <button id="pc-win-180" type="button" class="pc-win-btn" data-win="180" onclick="setPowerCurveWindow(180)" style="font-size:11px;padding:4px 8px;background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;cursor:pointer;">180</button>
+          <button id="pc-win-365" type="button" class="pc-win-btn" data-win="365" onclick="setPowerCurveWindow(365)" style="font-size:11px;padding:4px 8px;background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;cursor:pointer;">365</button>
+          <button id="pc-win-all" type="button" class="pc-win-btn" data-win="all" onclick="setPowerCurveWindow('all')" style="font-size:11px;padding:4px 8px;background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;cursor:pointer;">All</button>
+        </div>
+      </div>
+    </div>
+    <div id="power-curve-chart-container" style="position:relative;height:280px;">
+      <canvas id="power-curve-chart"></canvas>
+    </div>
+    <div id="power-curve-meta" style="font-size:11px;color:var(--text3);margin-top:6px;">Loading…</div>
+    <div id="power-curve-backfill-toast" style="display:none;margin-top:8px;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text2);">
+      <span id="power-curve-backfill-msg">Backfilling rides from ICU history…</span>
+      <div id="power-curve-backfill-progress" style="margin-top:4px;height:4px;background:var(--border);border-radius:2px;overflow:hidden;">
+        <div id="power-curve-backfill-bar" style="height:100%;width:0%;background:var(--accent);transition:width 0.4s;"></div>
+      </div>
+    </div>
+
+    <!-- v1.3.0 IMPL-DASHBOARD — Fatigue Resistance panel.
+         Collapsed <details> below the Power Curve. Pinot 2014 robustness
+         index + per-duration table + scatter (kJ on x, watts on y, color
+         per duration tier). PATCH G5: TWO-button kJ threshold toggle
+         (1500 default, 2000 strict Pinot 2014) + (i) info popover with
+         four literature anchors (Coyle 1986 / Pinot 2014 /
+         Mateo-March 2022 / Maturana 2025). Each toggle re-fetches with
+         kj_threshold= query param (per PATCH G4 cache key). Empty state
+         honours threshold context. Feature flag: window.FEATURES.fatigue_resistance. -->
+    <details class="fatigue-resistance" id="fatigue-resistance-panel"
+             style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;"
+             ontoggle="if(this.open)loadFatigueResistance()">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text2);user-select:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span>Fatigue Resistance — robustness index (beta)</span>
+        <span id="fatigue-resistance-headline" style="font-size:11px;color:var(--text3);"></span>
+      </summary>
+      <div id="fatigue-resistance-content" style="margin-top:8px;font-size:12px;color:var(--text2);" aria-busy="false">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+          <span style="font-size:11px;color:var(--text3);">Threshold:</span>
+          <div role="group" aria-label="kJ threshold" style="display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:11px;">
+            <button id="fr-kj-1500" type="button" class="fr-kj-btn active" data-kj="1500" onclick="setFatigueResistanceThreshold(1500)" style="background:var(--accent);color:white;border:0;padding:4px 10px;cursor:pointer;">&gt; 1500 kJ</button>
+            <button id="fr-kj-2000" type="button" class="fr-kj-btn" data-kj="2000" onclick="setFatigueResistanceThreshold(2000)" style="background:transparent;color:var(--text2);border:0;border-left:1px solid var(--border);padding:4px 10px;cursor:pointer;">&gt; 2000 kJ</button>
+          </div>
+          <span id="fatigue-resistance-info-icon" tabindex="0" role="button" aria-label="Threshold info" onclick="toggleFatigueResistanceInfo()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleFatigueResistanceInfo();}" style="cursor:pointer;font-size:11px;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;line-height:1;">i</span>
+        </div>
+        <div id="fatigue-resistance-info-popover" style="display:none;margin-bottom:10px;padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:11px;color:var(--text2);line-height:1.5;">
+          <div style="font-weight:700;margin-bottom:4px;">THRESHOLD: &gt; 1500 kJ (default)</div>
+          <div style="color:var(--text3);margin-bottom:8px;">
+            The conventional "durability ride" inclusion threshold used in van Erp et al. 2021 (Visma retrospective),
+            <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC12174182/" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Maturana et al. 2025</a> review,
+            and <a href="https://journals.humankinetics.com/view/journals/ijspp/17/6/article-p926.xml" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Mateo-March et al. 2022</a> (IJSPP 17:6).
+            Captures meaningful glycogen depletion onset (~1800–2200 kJ for trained cyclists per
+            <a href="https://pubmed.ncbi.nlm.nih.gov/3536834/" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Coyle 1986</a>).
+            Wide adoption in performance research and the broadest sample size for most amateur riders.
+          </div>
+          <div style="font-weight:700;margin-bottom:4px;">THRESHOLD: &gt; 2000 kJ (strict Pinot 2014)</div>
+          <div style="color:var(--text3);">
+            The original
+            <a href="https://www.fredericgrappe.com/wp-content/uploads/2014/07/MAP.pdf" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Pinot &amp; Grappe 2014</a>
+            measurement point — the threshold at which trained-cyclist glycogen depletion approaches its peak,
+            derived from Grand Tour stage data (3500–4500 kJ per stage) and validated against post-stage
+            power retention. The gold standard for elite-rider durability assessment. Smaller N for amateurs,
+            but the most rigorous comparison against the WorldTour 92–95% robustness benchmark.
+          </div>
+        </div>
+        <div id="fatigue-resistance-body">
+          <div style="color:var(--text3);">Loading…</div>
+        </div>
+      </div>
+    </details>
+  </div>
+
   <!-- Event Countdown + eFTP Drift -->
   <div id="event-countdown-card" class="card" style="margin-bottom:12px;display:none;"></div>
 
@@ -3668,7 +3763,422 @@ async function loadFitnessChart(days=90) {
     // breakdown (lazy — only paints into the <details> body, which stays
     // collapsed by default so the primary CTL/ATL/TSB view leads).
     try { energySystemChart(data, 'energy-system-chart'); } catch(_) {}
+    // v1.3.0 IMPL-DASHBOARD: kick the Power Curve fetch alongside the
+    // primary CTL/ATL/TSB load (one round-trip on Home open). The chart
+    // renders below the CTL/ATL/TSB card.
+    try { if (typeof loadPowerCurve === 'function') loadPowerCurve(); } catch(_) {}
   } catch(e) { console.error(e); }
+}
+
+// v1.3.0 IMPL-DASHBOARD — feature flags. Per PATCH G14: each panel checks
+// its flag before rendering. If a sibling backend agent stalls (FATIGUE or
+// PR-DETECTION endpoint not yet live), the dashboard ships partial without
+// JS errors propagating. Flags re-detect at runtime: a function existing in
+// scope is the lightest available "endpoint live" probe.
+window.FEATURES = window.FEATURES || {};
+window.FEATURES.power_curve = (typeof loadPowerCurve === 'function');
+window.FEATURES.fatigue_resistance = (typeof loadFatigueResistance === 'function');
+window.FEATURES.pr_detection = (typeof loadPRBadges === 'function' || true);
+
+// v1.3.0 IMPL-DASHBOARD — Power Curve panel state + load logic.
+// Reads /api/profile/power-curve?window_days=N (POWER-CURVE-CORE landed).
+// Tooltip on each rider point shows source ride + date + raw watts (regardless
+// of toggle mode, per MASTER §1). Click a point opens that source ride.
+// Three-way y-axis (PATCH G10): per-effort weight_kg + ftp_at_ride drive
+// W/kg + %FTP. P&G 2011 baseline (PATCH G11) uses CURRENT weight + FTP for
+// scaling (no date dimension). Backfill toast (PATCH G3) when n_rides<30.
+let _powerCurveData = null;
+let _powerCurveChart = null;
+let _powerCurveYAxis = 'watts';   // 'watts' | 'wkg' | 'pct_ftp'
+let _powerCurveWindow = 90;       // 30 / 90 / 180 / 365 / 'all'
+let _powerCurveBackfillSeen = false;
+let _powerCurveInflight = false;
+async function loadPowerCurve(force=false) {
+  const meta = document.getElementById('power-curve-meta');
+  const canvas = document.getElementById('power-curve-chart');
+  if (!canvas) return;
+  if (_powerCurveInflight && !force) return;
+  _powerCurveInflight = true;
+  if (meta) meta.textContent = 'Loading…';
+  try {
+    const w = (_powerCurveWindow === 'all') ? 3650 : Number(_powerCurveWindow);
+    const r = await fetch('/api/profile/power-curve?window_days=' + w + (force ? '&refresh=1' : ''));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    _powerCurveData = data;
+    renderPowerCurve();
+    maybeKickBackfill(data);
+  } catch (e) {
+    if (meta) meta.innerHTML = '<span style="color:#f97316;">Power curve unavailable in this build.</span>';
+    if (canvas && canvas.parentElement) {
+      canvas.parentElement.title = 'feature not available in this build';
+    }
+  } finally {
+    _powerCurveInflight = false;
+  }
+}
+function setPowerCurveWindow(w) {
+  _powerCurveWindow = w;
+  document.querySelectorAll('.pc-win-btn').forEach(b => {
+    const isActive = String(b.getAttribute('data-win')) === String(w);
+    b.classList.toggle('active', isActive);
+    b.style.background = isActive ? 'var(--accent)' : 'transparent';
+    b.style.color = isActive ? 'white' : 'var(--text2)';
+    b.style.borderColor = isActive ? 'var(--accent)' : 'var(--border)';
+  });
+  loadPowerCurve();
+}
+function setPowerCurveYAxis(mode) {
+  _powerCurveYAxis = mode;
+  document.querySelectorAll('.pc-yaxis-btn').forEach(b => {
+    const isActive = String(b.getAttribute('data-yaxis')) === String(mode);
+    b.classList.toggle('active', isActive);
+    b.style.background = isActive ? 'var(--accent)' : 'transparent';
+    b.style.color = isActive ? 'white' : 'var(--text2)';
+  });
+  renderPowerCurve();
+}
+function renderPowerCurve() {
+  const meta = document.getElementById('power-curve-meta');
+  const canvas = document.getElementById('power-curve-chart');
+  if (!canvas || !_powerCurveData) return;
+  if (typeof Chart === 'undefined') {
+    if (meta) meta.innerHTML = '<span style="color:var(--text3);">Chart.js not loaded.</span>';
+    return;
+  }
+  const data = _powerCurveData;
+  const yMode = _powerCurveYAxis;
+  const yLabel = yMode === 'watts' ? 'watts' : (yMode === 'wkg' ? 'W/kg' : '% FTP');
+  const currentFtp = Number(data.ftp_w || data.current_ftp_w || data.ftp || 0) || null;
+  const currentWeight = Number(data.weight_kg || data.current_weight_kg || 0) || null;
+  // Rider curve mapping per yMode using PER-RIDE values when available
+  // (PATCH G10): each point should carry its own ftp_at_ride + weight_kg.
+  const yForPoint = pt => {
+    const watts = Number(pt.watts || 0);
+    if (yMode === 'watts') return watts;
+    const w = Number(pt.weight_kg || pt.ride_weight_kg || currentWeight || 0);
+    if (yMode === 'wkg') return (w > 0 && watts > 0) ? Number((watts / w).toFixed(2)) : null;
+    if (yMode === 'pct_ftp') {
+      const f = Number(pt.ftp_at_ride || pt.ftp_w || currentFtp || 0);
+      return (f > 0 && watts > 0) ? Number(((watts / f) * 100).toFixed(1)) : null;
+    }
+    return null;
+  };
+  const ridePts = (data.rider_curve || [])
+    .filter(p => Number(p.duration_s) > 0 && Number(p.watts) > 0)
+    .map(p => ({
+      x: Number(p.duration_s),
+      y: yForPoint(p),
+      _watts: Number(p.watts),
+      _ride_id: p.ride_id || '',
+      _date: p.date || '',
+      _duration: Number(p.duration_s),
+    }))
+    .filter(p => p.y != null);
+  // P&G baseline scaling per PATCH G11 (uses current_weight + current_ftp):
+  const pgBaseline = (data.pg_2011_baseline || []).map(p => {
+    const wpkg = Number(p.watts_per_kg || 0);
+    const dur = Number(p.duration_s || 0);
+    if (dur <= 0 || wpkg <= 0) return null;
+    if (yMode === 'wkg') return { x: dur, y: wpkg };
+    if (yMode === 'watts') {
+      return (currentWeight && currentWeight > 0) ? { x: dur, y: Number((wpkg * currentWeight).toFixed(0)) } : null;
+    }
+    if (yMode === 'pct_ftp') {
+      return (currentWeight && currentFtp && currentFtp > 0)
+        ? { x: dur, y: Number(((wpkg * currentWeight / currentFtp) * 100).toFixed(1)) }
+        : null;
+    }
+    return null;
+  }).filter(Boolean);
+  // Destroy previous chart instance.
+  try { if (_powerCurveChart && _powerCurveChart.destroy) _powerCurveChart.destroy(); } catch(_) {}
+  _powerCurveChart = new Chart(canvas, {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          label: 'Your power',
+          data: ridePts,
+          parsing: false,
+          showLine: true,
+          borderColor: '#58a6ff',
+          backgroundColor: '#58a6ff',
+          tension: 0.2,
+          pointRadius: 4,
+          pointHoverRadius: 6,
+        },
+        {
+          label: 'P&G 2011 baseline',
+          data: pgBaseline,
+          parsing: false,
+          showLine: true,
+          borderColor: 'rgba(140,140,140,0.5)',
+          backgroundColor: 'rgba(140,140,140,0.5)',
+          borderDash: [6, 4],
+          pointRadius: 0,
+          tension: 0.2,
+          fill: false,
+        },
+      ],
+    },
+    options: {
+      maintainAspectRatio: false,
+      responsive: true,
+      onClick: (evt, els) => {
+        if (!els || !els.length) return;
+        const e = els[0];
+        if (e.datasetIndex !== 0) return;
+        const p = ridePts[e.index];
+        if (p && p._ride_id && typeof openRideDetail === 'function') {
+          try { openRideDetail(p._ride_id); } catch(_) {}
+        }
+      },
+      scales: {
+        x: {
+          type: 'logarithmic',
+          title: { display: true, text: 'Duration (s, log scale)' },
+          ticks: {
+            callback: function(v) {
+              const allowed = [1, 5, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600];
+              return allowed.indexOf(Number(v)) >= 0 ? String(v) : '';
+            },
+          },
+        },
+        y: {
+          type: 'linear',
+          title: { display: true, text: yLabel },
+          beginAtZero: true,
+        },
+      },
+      plugins: {
+        legend: { position: 'bottom' },
+        tooltip: {
+          callbacks: {
+            label: function(ctx) {
+              if (ctx.datasetIndex === 0) {
+                const p = ridePts[ctx.dataIndex];
+                if (!p) return '';
+                const dur = p._duration >= 60 ? (p._duration/60).toFixed(0) + ' min' : p._duration + ' s';
+                return [
+                  `${dur}: ${p._watts} W (raw)`,
+                  `Source: ${p._date || 'unknown'} (ride ${p._ride_id || '—'})`,
+                ];
+              }
+              const v = ctx.parsed.y;
+              return `P&G 2011: ${v} ${yLabel}`;
+            },
+          },
+        },
+      },
+    },
+  });
+  if (meta) {
+    const n = Number(data.n_rides || 0);
+    const wkg = (data.weight_kg != null) ? Number(data.weight_kg).toFixed(1) : '—';
+    const cp = data.cp_w != null ? Number(data.cp_w).toFixed(0) + ' W' : '—';
+    const wp = data.wprime_j != null ? (Number(data.wprime_j)/1000).toFixed(1) + ' kJ' : '—';
+    const pmax = data.pmax_w != null ? Number(data.pmax_w).toFixed(0) + ' W' : '—';
+    const winLbl = (_powerCurveWindow === 'all') ? 'all-time' : (_powerCurveWindow + ' d');
+    meta.textContent = `Window: ${winLbl} · ${n} rides · weight ${wkg} kg · CP ${cp} · W' ${wp} · Pmax ${pmax}`;
+  }
+}
+async function maybeKickBackfill(data) {
+  if (_powerCurveBackfillSeen) return;
+  if (!data || Number(data.n_rides || 0) >= 30) return;
+  // Probe ICU list count vs cached count via the locked endpoint contract.
+  const icuListN = Number(data.icu_list_count || 0);
+  const cachedN = Number(data.n_rides || 0);
+  if (icuListN <= cachedN) return;
+  _powerCurveBackfillSeen = true;
+  const toast = document.getElementById('power-curve-backfill-toast');
+  const msg = document.getElementById('power-curve-backfill-msg');
+  const bar = document.getElementById('power-curve-backfill-bar');
+  if (!toast || !msg || !bar) return;
+  toast.style.display = '';
+  const eta = Math.max(1, Math.round((icuListN - cachedN) / 60));
+  msg.textContent = `Backfilling ${icuListN - cachedN} rides from ICU history… ETA ${eta} min.`;
+  try {
+    const r = await fetch('/api/profile/backfill-history', { method: 'POST' });
+    const j = await r.json();
+    const taskId = j && (j.task_id || (j.lock && j.lock.task_id));
+    if (!taskId) return;
+    const poll = async () => {
+      try {
+        const sr = await fetch('/api/profile/backfill-history/status?task_id=' + encodeURIComponent(taskId));
+        const sj = await sr.json();
+        const done = Number(sj.done || sj.backfilled || 0);
+        const total = Number(sj.total || icuListN || 1);
+        const pct = Math.min(100, Math.round((done / total) * 100));
+        bar.style.width = pct + '%';
+        if (sj.status === 'complete' || pct >= 100) {
+          msg.textContent = `Backfill complete · ${done} rides imported.`;
+          setTimeout(() => { toast.style.display = 'none'; loadPowerCurve(true); }, 2000);
+          return;
+        }
+      } catch (_) {}
+      setTimeout(poll, 5000);
+    };
+    setTimeout(poll, 3000);
+  } catch (_) {
+    msg.textContent = 'Backfill unavailable in this build.';
+  }
+}
+
+// v1.3.0 IMPL-DASHBOARD — Fatigue Resistance panel.
+// Lazy-loaded on <details> open. Reads /api/profile/fatigue-resistance with
+// kj_threshold ∈ {1500, 2000} per PATCH G5. Renders headline + per-duration
+// table + scatter (kJ on x, watts on y, color per duration tier).
+let _fatigueResistanceLoaded = false;
+let _fatigueResistanceInflight = false;
+let _fatigueResistanceThreshold = 1500;
+let _fatigueScatterChart = null;
+async function loadFatigueResistance(force=false) {
+  const body = document.getElementById('fatigue-resistance-body');
+  if (!body) return;
+  if (_fatigueResistanceInflight) return;
+  _fatigueResistanceInflight = true;
+  body.innerHTML = '<div style="color:var(--text3);">Loading…</div>';
+  const content = document.getElementById('fatigue-resistance-content');
+  if (content) content.setAttribute('aria-busy', 'true');
+  try {
+    const r = await fetch('/api/profile/fatigue-resistance?kj_threshold=' + _fatigueResistanceThreshold + (force ? '&refresh=1' : ''));
+    if (!r.ok) {
+      if (r.status === 404) {
+        body.innerHTML = '<div style="color:var(--text3);">Fatigue Resistance not available in this build.</div>';
+        return;
+      }
+      throw new Error('HTTP ' + r.status);
+    }
+    const d = await r.json();
+    renderFatigueResistance(d);
+    _fatigueResistanceLoaded = true;
+  } catch (e) {
+    body.innerHTML = '<div style="color:#f97316;">Failed to load fatigue resistance data.</div>';
+  } finally {
+    _fatigueResistanceInflight = false;
+    if (content) content.setAttribute('aria-busy', 'false');
+  }
+}
+function setFatigueResistanceThreshold(kj) {
+  _fatigueResistanceThreshold = Number(kj);
+  document.querySelectorAll('.fr-kj-btn').forEach(b => {
+    const isActive = String(b.getAttribute('data-kj')) === String(kj);
+    b.classList.toggle('active', isActive);
+    b.style.background = isActive ? 'var(--accent)' : 'transparent';
+    b.style.color = isActive ? 'white' : 'var(--text2)';
+  });
+  loadFatigueResistance(true);
+}
+function toggleFatigueResistanceInfo() {
+  const pop = document.getElementById('fatigue-resistance-info-popover');
+  if (pop) pop.style.display = (pop.style.display === 'none' || !pop.style.display) ? 'block' : 'none';
+}
+function renderFatigueResistance(d) {
+  const body = document.getElementById('fatigue-resistance-body');
+  const headline = document.getElementById('fatigue-resistance-headline');
+  if (!body) return;
+  if (!d || d.fit_status === 'insufficient_data' || (d.n_long_rides != null && d.n_long_rides < 4) || (d.n_long_rides_at_threshold != null && d.n_long_rides_at_threshold < 4)) {
+    const n = Number((d && (d.n_long_rides_at_threshold || d.n_long_rides)) || 0);
+    body.innerHTML = `<div style="color:var(--text3);line-height:1.5;">
+      <div>Need 4 long rides ≥${_fatigueResistanceThreshold} kJ to unlock — currently ${n} in the 365-day window.</div>
+      <div style="margin-top:6px;font-size:11px;">Threshold rationale (Coyle 1986 / Pinot &amp; Grappe 2014) — see (i) above.</div>
+    </div>`;
+    if (headline) headline.textContent = '';
+    return;
+  }
+  const score = (d.robustness_score != null) ? Number(d.robustness_score).toFixed(1) : '—';
+  const n = Number(d.n_long_rides_at_threshold || d.n_long_rides || 0);
+  if (headline) headline.textContent = `Robustness ${score}% @ > ${_fatigueResistanceThreshold} kJ`;
+  let tableRows = '';
+  (d.by_duration || []).forEach(row => {
+    const dur = Number(row.duration_s || 0);
+    const durLbl = dur >= 60 ? (dur/60) + ' min' : dur + ' s';
+    const fri = row.fr_index_pct != null ? Number(row.fr_index_pct).toFixed(1) + '%' : '—';
+    tableRows += `<tr>
+      <td style="padding:4px 6px;">${durLbl}</td>
+      <td style="padding:4px 6px;font-weight:700;">${fri}</td>
+      <td style="padding:4px 6px;color:var(--text3);">${Number(row.n_data_points || 0)}</td>
+    </tr>`;
+  });
+  body.innerHTML = `
+    <div style="margin-bottom:8px;">
+      <div style="font-size:14px;"><strong>Robustness ${score}%</strong> <span style="color:var(--text3);">(top WorldTour: 92–95%)</span></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:2px;">Based on ${n} rides exceeding ${_fatigueResistanceThreshold} kJ (in the 365-day window).</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;">
+      <div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead>
+            <tr style="color:var(--text3);text-align:left;">
+              <th style="padding:4px 6px;">Duration</th>
+              <th style="padding:4px 6px;">FR index</th>
+              <th style="padding:4px 6px;">N points</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+      <div style="position:relative;height:180px;">
+        <canvas id="fatigue-resistance-scatter"></canvas>
+      </div>
+    </div>`;
+  // Scatter (lazy — only if Chart.js loaded)
+  try {
+    if (typeof Chart !== 'undefined' && Array.isArray(d.scatter)) {
+      const colors = { 60:'#3b82f6', 300:'#22c55e', 900:'#eab308', 1800:'#f97316', 3600:'#ef4444' };
+      const groups = {};
+      d.scatter.forEach(p => {
+        const key = Number(p.duration_s || 0);
+        groups[key] = groups[key] || [];
+        groups[key].push({ x: Number(p.kj || 0), y: Number(p.watts || 0), _ride_id: p.ride_id, _date: p.date });
+      });
+      const datasets = Object.keys(groups).map(k => {
+        const dur = Number(k);
+        const dlbl = dur >= 60 ? (dur/60) + ' min' : dur + ' s';
+        return {
+          label: dlbl,
+          data: groups[k],
+          parsing: false,
+          backgroundColor: colors[dur] || '#8c78ff',
+          borderColor: colors[dur] || '#8c78ff',
+          showLine: false,
+          pointRadius: 3,
+        };
+      });
+      const ctx = document.getElementById('fatigue-resistance-scatter');
+      if (ctx) {
+        try { if (_fatigueScatterChart && _fatigueScatterChart.destroy) _fatigueScatterChart.destroy(); } catch(_) {}
+        _fatigueScatterChart = new Chart(ctx, {
+          type: 'scatter',
+          data: { datasets },
+          options: {
+            maintainAspectRatio: false,
+            responsive: true,
+            plugins: { legend: { position: 'bottom' } },
+            scales: {
+              x: { title: { display: true, text: 'Accumulated kJ' } },
+              y: { title: { display: true, text: 'Watts' } },
+            },
+          },
+        });
+      }
+    }
+  } catch (_) {}
+}
+
+// v1.3.0 IMPL-DASHBOARD — PR badges loader.
+// PR rendering itself is inline inside openRideDetail() (it reads ride.prs
+// from the summary the PR-DETECTION agent persists). This stub function
+// exists so window.FEATURES.pr_detection probes positively when the
+// endpoint is wired.
+async function loadPRBadges(rideId) {
+  if (!rideId) return null;
+  try {
+    const r = await fetch('/api/ride/' + encodeURIComponent(rideId) + '/prs');
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (_) { return null; }
 }
 
 // v1.0.7 IMPL-TAU-FIT-WIRING — per-athlete τ fit panel.
@@ -4912,6 +5422,76 @@ async function openRideDetail(rideId) {
         </div>
       </div>
     </div>`;
+
+    // v1.3.0 IMPL-DASHBOARD — PR badges. Reads ride.prs (PR-DETECTION agent
+    // persists per ride summary). PATCH G7: render TOP 3 by exceedance_pct
+    // with footer "and N more — click to expand" if storage has more.
+    // PATCH G6: tier='first' (day-1, first 5 rides, no prior bests) shown
+    // gold; tier='major' green; tier='minor' blue. Click row → opens that
+    // previous ride. Feature flag: window.FEATURES.pr_detection.
+    try {
+      if (window.FEATURES && window.FEATURES.pr_detection !== false) {
+        const _prsAll = Array.isArray(s && s.prs) ? s.prs.slice() :
+                        (Array.isArray(ride && ride.prs) ? ride.prs.slice() :
+                         (Array.isArray(m && m.prs) ? m.prs.slice() : []));
+        if (_prsAll.length > 0) {
+          const TOP_PR_LIMIT = 3;
+          _prsAll.sort((a, b) => Number(b.exceedance_pct || 0) - Number(a.exceedance_pct || 0));
+          const _prsTop = _prsAll.slice(0, TOP_PR_LIMIT);
+          const _prsRest = _prsAll.length - _prsTop.length;
+          const _fmtDur = sec => {
+            const n = Number(sec || 0);
+            if (n >= 60) return (n % 60 === 0 ? (n/60) + ' min' : (n/60).toFixed(1) + ' min');
+            return n + ' s';
+          };
+          const _fmtPct = v => (v == null ? '—' : Number(v).toFixed(1) + '%');
+          const _tierColor = t => t === 'first' ? '#fbbf24' : (t === 'major' ? 'var(--green)' : 'var(--accent)');
+          const _tierBg = t => t === 'first' ? 'rgba(251,191,36,0.10)' : (t === 'major' ? 'rgba(34,197,94,0.10)' : 'rgba(88,166,255,0.10)');
+          const _tierLabel = t => t === 'first' ? 'FIRST' : (t === 'major' ? 'MAJOR' : 'MINOR');
+          html += `<div class="pr-badges-card" id="pr-badges-card" style="background:var(--surface2);border-radius:10px;padding:12px;margin-bottom:16px;border:1px solid var(--border);">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">
+              <div style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--text2);">Personal Records — top 3</div>
+              <div style="font-size:10px;color:var(--text3);">v1.3.0</div>
+            </div>
+            <div id="pr-badges-list" style="display:flex;flex-direction:column;gap:6px;">
+              ${_prsTop.map(p => {
+                const tier = String(p.tier || 'minor');
+                const prevId = p.previous_ride_id ? String(p.previous_ride_id) : '';
+                const prevDate = p.previous_date ? String(p.previous_date) : '';
+                const onclick = prevId ? `onclick="openRideDetail('${escJs(prevId)}')"` : '';
+                const cursor = prevId ? 'cursor:pointer;' : 'cursor:default;';
+                return `<div data-pr-tier="${esc(tier)}" data-pr-duration="${Number(p.duration_s)||0}" ${onclick} title="${prevId ? 'Click to open previous ride' : 'First recorded effort'}" style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:${_tierBg(tier)};border-radius:6px;${cursor}">
+                  <span style="font-size:9px;font-weight:800;letter-spacing:0.5px;padding:2px 6px;border-radius:4px;color:white;background:${_tierColor(tier)};">${_tierLabel(tier)}</span>
+                  <span style="font-size:13px;font-weight:700;color:var(--text);">${_fmtDur(p.duration_s)}</span>
+                  <span style="font-size:13px;color:var(--text);">${Number(p.today_w || 0)} W</span>
+                  ${tier === 'first'
+                    ? `<span style="font-size:11px;color:var(--text3);">first recorded</span>`
+                    : `<span style="font-size:11px;color:var(--text3);">+${Number(p.exceedance_w || 0)} W (${_fmtPct(p.exceedance_pct)}) vs ${prevDate || 'previous'}</span>`}
+                </div>`;
+              }).join('')}
+            </div>
+            ${_prsRest > 0 ? `<div id="pr-badges-more" style="margin-top:6px;font-size:11px;color:var(--text3);cursor:pointer;" onclick="(function(){var c=document.getElementById('pr-badges-card');if(!c)return;var more=document.getElementById('pr-badges-more');var hidden=document.getElementById('pr-badges-extra');if(hidden){hidden.style.display='';if(more)more.style.display='none';}})()">and ${_prsRest} more — click to expand</div>
+            <div id="pr-badges-extra" style="display:none;flex-direction:column;gap:6px;margin-top:6px;">
+              ${_prsAll.slice(TOP_PR_LIMIT).map(p => {
+                const tier = String(p.tier || 'minor');
+                const prevId = p.previous_ride_id ? String(p.previous_ride_id) : '';
+                const prevDate = p.previous_date ? String(p.previous_date) : '';
+                const onclick = prevId ? `onclick="openRideDetail('${escJs(prevId)}')"` : '';
+                const cursor = prevId ? 'cursor:pointer;' : 'cursor:default;';
+                return `<div data-pr-tier="${esc(tier)}" data-pr-duration="${Number(p.duration_s)||0}" ${onclick} style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:${_tierBg(tier)};border-radius:6px;${cursor}">
+                  <span style="font-size:9px;font-weight:800;letter-spacing:0.5px;padding:2px 6px;border-radius:4px;color:white;background:${_tierColor(tier)};">${_tierLabel(tier)}</span>
+                  <span style="font-size:13px;font-weight:700;color:var(--text);">${_fmtDur(p.duration_s)}</span>
+                  <span style="font-size:13px;color:var(--text);">${Number(p.today_w || 0)} W</span>
+                  ${tier === 'first'
+                    ? `<span style="font-size:11px;color:var(--text3);">first recorded</span>`
+                    : `<span style="font-size:11px;color:var(--text3);">+${Number(p.exceedance_w || 0)} W (${_fmtPct(p.exceedance_pct)}) vs ${prevDate || 'previous'}</span>`}
+                </div>`;
+              }).join('')}
+            </div>` : ''}
+          </div>`;
+        }
+      }
+    } catch (_e_pr) { /* feature graceful-degrade */ }
 
     // Extended stats grid — 2 rows of 6 so IF / max power / max HR / elevation get first-class billing
     const ifTxt = (s.intensity_factor != null) ? Number(s.intensity_factor).toFixed(2) : '---';

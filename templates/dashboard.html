@@ -12593,41 +12593,50 @@ function renderOnTrackBar(data) {
   }
 
   // v4.6.5 FIX-WEEK-COMPLIANCE-LABELS: per-zone rail now renders TWO sub-bars
-  // (PLANNED and ACTUAL), both scaled to max(planned, actual) so the eye
-  // directly compares lengths. Explicit labels remove the pre-v4.6.5
-  // ambiguity ("151 min / 0 min —" had no header so users read the 0 as
-  // "I did 0 minutes" instead of "the plan said 0 minutes").
-  const rail = (label, actual, target, color) => {
+  // (PLANNED and ACTUAL). v1.3.1 HIGH fix: the PLANNED bar is split into
+  // a TO-DATE segment (full color) and a REMAINING segment (dimmed) so
+  // mid-week the user sees how much they're meant to have done by today
+  // vs. how much is still ahead. Headline % is graded vs to-date.
+  const rail = (label, actual, targetFull, targetToDate, color) => {
     const a = Number(actual || 0);
-    const t = Number(target || 0);
+    const t = Number(targetFull || 0);
+    // If to-date wasn't emitted by the server (legacy payload), fall back
+    // to the full-week target so behavior is unchanged.
+    const td = (targetToDate == null) ? t : Number(targetToDate || 0);
+    const remaining = Math.max(0, t - td);
     const max = Math.max(a, t, 1);
     const pctA = Math.round((a / max) * 100);
-    const pctP = Math.round((t / max) * 100);
+    const pctTD = Math.round((td / max) * 100);
+    const pctREM = Math.max(0, Math.round((remaining / max) * 100));
     const unit = label === 'TSS' ? '' : ' min';
     const aTxt = `${Math.round(a)}${unit}`;
     const pTxt = `${Math.round(t)}${unit}`;
-    // Compliance % vs planned + delta
+    const tdTxt = `${Math.round(td)}${unit}`;
+    // Headline % + delta now grade vs the TO-DATE target.
     let pctTxt = '';
     let deltaTxt = '';
-    if (t > 0) {
-      const ratio = Math.round(a / t * 100);
+    if (td > 0) {
+      const ratio = Math.round(a / td * 100);
       pctTxt = `${ratio}%`;
-      const delta = Math.round(a - t);
+      const delta = Math.round(a - td);
       if (delta > 0) deltaTxt = ` <span class="ontrack-rail-val-delta" style="color:var(--text3);">(+${delta}${unit})</span>`;
       else if (delta < 0) deltaTxt = ` <span class="ontrack-rail-val-delta" style="color:var(--yellow);">(${delta}${unit})</span>`;
-    } else if (a > 0) {
+    } else if (t > 0 && a === 0) {
+      // No to-date target yet (e.g. all of Mon-Tue were REST and today is Tue).
+      pctTxt = 'on rest';
+    } else if (a > 0 && td <= 0) {
       pctTxt = 'unplanned';
-      deltaTxt = '';
     } else {
       pctTxt = '—';
     }
     return `<div class="ontrack-rail">
       <div class="ontrack-rail-label">${label}</div>
       <div class="ontrack-rail-stack">
-        <div class="ontrack-rail-substack" title="Planned ${pTxt}">
+        <div class="ontrack-rail-substack" title="Planned to-date ${tdTxt} of full-week ${pTxt}">
           <div class="ontrack-rail-sublabel">Planned</div>
-          <div class="ontrack-rail-subbar">
-            <div class="ontrack-rail-subfill" style="width:${pctP}%;background:var(--text3);opacity:0.6;"></div>
+          <div class="ontrack-rail-subbar" style="display:flex;">
+            <div class="ontrack-rail-subfill" style="width:${pctTD}%;background:var(--text3);opacity:0.85;"></div>
+            <div class="ontrack-rail-subfill" style="width:${pctREM}%;background:var(--text3);opacity:0.30;"></div>
           </div>
         </div>
         <div class="ontrack-rail-substack" title="Actual ${aTxt}">
@@ -12638,7 +12647,7 @@ function renderOnTrackBar(data) {
         </div>
       </div>
       <div class="ontrack-rail-val">
-        ${aTxt}<span class="ontrack-rail-val-pct"> / ${pTxt} planned</span>
+        ${aTxt}<span class="ontrack-rail-val-pct"> / ${tdTxt} to-date · ${pTxt} wk</span>
         <div class="ontrack-rail-val-pct">${pctTxt}${deltaTxt}</div>
       </div>
     </div>`;
@@ -12651,10 +12660,10 @@ function renderOnTrackBar(data) {
   // / planned_z3z4_min / actual_z3z4_min and analogous z5plus + tss.
   // Z5+ keys may not exist on older payloads; treat missing as 0.
   const w = cur || {};
-  const railZ12 = rail('Z1+Z2', w.actual_z1z2_min, w.planned_z1z2_min, '#3b82f6');
-  const railZ34 = rail('Z3+Z4', w.actual_z3z4_min, w.planned_z3z4_min, '#f97316');
-  const railZ5  = rail('Z5+',   w.actual_z5plus_min, w.planned_z5plus_min, '#ef4444');
-  const railTSS = rail('TSS',   w.actual_tss, w.planned_tss, '#a855f7');
+  const railZ12 = rail('Z1+Z2', w.actual_z1z2_min,   w.planned_z1z2_min,   w.planned_z1z2_min_to_date,   '#3b82f6');
+  const railZ34 = rail('Z3+Z4', w.actual_z3z4_min,   w.planned_z3z4_min,   w.planned_z3z4_min_to_date,   '#f97316');
+  const railZ5  = rail('Z5+',   w.actual_z5plus_min, w.planned_z5plus_min, w.planned_z5plus_min_to_date, '#ef4444');
+  const railTSS = rail('TSS',   w.actual_tss,        w.planned_tss,        w.planned_tss_to_date,        '#a855f7');
 
   // Bottom action line: session counts. Pull from cur.days when present.
   // v4.5.0 IMPL-UI Pillar C — adherence rule per MASTER §3:
@@ -12782,10 +12791,11 @@ function renderOnTrackBar(data) {
 
   // Final HTML
   host.innerHTML = `<div id="ontrack-bar" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px;color:var(--text2);font-weight:600;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:10px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px;color:var(--text2);font-weight:600;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:4px;">
       <span>THIS WEEK (${esc(rangeStr)} · ${esc(phaseHeader)})</span>
       ${varietyBadge}
     </div>
+    <div style="font-size:10px;color:var(--text3);font-weight:500;letter-spacing:0.04em;margin-bottom:10px;">${Number(w.days_elapsed || 0)} of ${Number(w.days_total || 7)} days elapsed · pacing math vs to-date plan</div>
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;">
       <div class="ot-stat">
         <div class="ot-stat-label">COMPLIANCE</div>

@@ -8481,8 +8481,17 @@ def _build_summary_block(
     except (ValueError, TypeError):
         pass
 
-    # Compliance.
-    comp_ratio = float(cur.get("completion_pct") or 0.0) if cur else 0.0
+    # Compliance — v1.3.1 HIGH fix: prefer to-date math for the headline
+    # band so Wednesday doesn't read as red just because Thu/Fri/Sat/Sun
+    # haven't happened yet. Falls back to full-week ratio when to-date
+    # isn't emitted (e.g. legacy callers passing weeks without the field).
+    comp_ratio = 0.0
+    if cur:
+        comp_ratio = float(
+            cur.get("completion_pct_to_date")
+            if cur.get("completion_pct_to_date") is not None
+            else (cur.get("completion_pct") or 0.0)
+        )
     comp_pct_int = int(round(comp_ratio * 100))
     band = tp.compliance_band(comp_ratio if comp_ratio > 0 else None)
 
@@ -8732,6 +8741,12 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
         actual_tss = 0.0
         planned_z12 = planned_z34 = planned_z5p = 0.0
         actual_z12 = actual_z34 = actual_z5p = 0.0
+        # v1.3.1 HIGH fix — time-aware mid-week pacing. Sum planned-to-date
+        # (only for days where date <= today) so the headline % isn't graded
+        # against the FULL week on Wednesday.
+        planned_tss_td = 0.0
+        planned_z12_td = planned_z34_td = planned_z5p_td = 0.0
+        days_elapsed = 0
 
         days_out: list[dict] = []
         # v4.4.0 §6 — pull sessions from the *global* plan map (across all
@@ -8741,6 +8756,10 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
         for off in range(7):
             day_d = w_start + timedelta(days=off)
             day_iso = day_d.isoformat()
+            # v1.3.1 HIGH fix — count days that have elapsed within this week
+            # (date <= today). On Wed: Mon,Tue,Wed → 3. On Sun: 7. On Mon: 1.
+            if day_iso <= today_iso:
+                days_elapsed += 1
             sess = sessions_by_day.get(day_iso)
             # If this is a history-only shell (no plan), pull only the
             # week's own sessions (which include the synthetic rest rows).
@@ -8805,6 +8824,13 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
                 planned_z34 += pz34
                 planned_z5p += pz5p
                 planned_tss += float(planned_payload["tss"] or 0)
+                # v1.3.1 HIGH fix — accumulate to-date totals for the
+                # mid-week pacing math.
+                if day_iso <= today_iso:
+                    planned_z12_td += pz12
+                    planned_z34_td += pz34
+                    planned_z5p_td += pz5p
+                    planned_tss_td += float(planned_payload["tss"] or 0)
 
             # card_state is emitted on the day-row (not on planned alone) so
             # the UI dispatcher can read it without nesting.
@@ -8829,6 +8855,14 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
         completion_pct = 0.0
         if planned_tss > 0:
             completion_pct = round(min(actual_tss / planned_tss, 2.0), 3)
+        # v1.3.1 HIGH fix — for the current week, grade actual against the
+        # to-date planned target so Wednesday doesn't read as "behind".
+        # Past + future weeks keep the full-week ratio (unchanged behavior).
+        completion_pct_to_date = completion_pct
+        if is_current and planned_tss_td > 0:
+            completion_pct_to_date = round(
+                min(actual_tss / planned_tss_td, 2.0), 3
+            )
 
         # v4.4.0 — per-week additions: phase_week_index, target_polarized,
         # planned_ctl_eow. phase_week_index counts from the start of the
@@ -8855,7 +8889,16 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
             "actual_z3z4_min": round(actual_z34, 1),
             "planned_z5plus_min": round(planned_z5p, 1),
             "actual_z5plus_min": round(actual_z5p, 1),
+            # v1.3.1 HIGH fix — to-date planned totals (sum of planned
+            # for days where date <= today, capped at the full week).
+            "planned_tss_to_date": round(planned_tss_td, 1),
+            "planned_z1z2_min_to_date": round(planned_z12_td, 1),
+            "planned_z3z4_min_to_date": round(planned_z34_td, 1),
+            "planned_z5plus_min_to_date": round(planned_z5p_td, 1),
+            "days_elapsed": days_elapsed,
+            "days_total": 7,
             "completion_pct": completion_pct,
+            "completion_pct_to_date": completion_pct_to_date,
             "phase_week_index": 0,        # second-pass below
             "phase_weeks_total": 0,        # second-pass below
             "target_polarized": dict(target_polarized),

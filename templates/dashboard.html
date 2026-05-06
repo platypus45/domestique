@@ -1265,6 +1265,30 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
         <div style="color:var(--text3);">Loading…</div>
       </div>
     </details>
+    <!-- v1.2.1 IMPL-PANEL — out-of-sample Banister-validation panel.
+         Lazy-loads /api/profile/banister-validation on first <details> open.
+         Renders three branched states (success / low_confidence /
+         insufficient_data) with comparison badge against Hellard 2006
+         5-8 % MAE literature baseline. Refresh button forces server-side
+         re-compute via ?refresh=1 (debounced). Reads top-to-bottom under
+         the τ-fits panel: τ-fits = "what we fit", banister-validation =
+         "how accurate those τ were on a 4-week holdout". -->
+    <details class="banister-validation" id="banister-oos-panel"
+             style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;"
+             ontoggle="if(this.open)loadBanisterValidationPanel()">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text2);user-select:none;display:flex;align-items:center;gap:8px;">
+        <span>Model accuracy — out-of-sample (beta)</span>
+        <span id="banister-oos-comparison-badge" style="font-size:10px;"></span>
+        <button id="banister-oos-refresh-btn" class="btn"
+                style="font-size:10px;padding:2px 6px;margin-left:auto;cursor:pointer;"
+                onclick="event.preventDefault();event.stopPropagation();refreshBanisterValidation();"
+                title="Re-run holdout"
+                aria-label="Re-run holdout validation">Refresh ⟳</button>
+      </summary>
+      <div id="banister-oos-content" style="margin-top:8px;font-size:12px;color:var(--text2);" aria-busy="false">
+        <div style="color:var(--text3);">Loading…</div>
+      </div>
+    </details>
   </div>
 
   <!-- Event Countdown + eFTP Drift -->
@@ -3732,6 +3756,195 @@ async function loadTauFitPanel(forceRefresh = false) {
     console.error('tau-fits load failed', e);
     container.innerHTML = '<div style="color:var(--text3);">Failed to load τ fit panel. See console.</div>';
   }
+}
+
+// v1.2.1 IMPL-PANEL — out-of-sample Banister-validation panel JS.
+// Lazy-loaded on <details> open via ontoggle. Reads
+// /api/profile/banister-validation (live since v1.2.0) and renders three
+// branched fit_status states. Refresh button forces ?refresh=1 with a
+// 90 s AbortController timeout, aria-busy flips for AT, and the inflight
+// flag debounces toggle/refresh spam. Locked-field bindings — every name
+// in the endpoint dict appears verbatim somewhere in the HTML below for
+// QA-grep (see test_dashboard_v121.py).
+let _banisterOosLoaded = false, _banisterOosInflight = false;
+async function loadBanisterValidationPanel(force = false) {
+  const c = document.getElementById('banister-oos-content');
+  if (!c || (_banisterOosLoaded && !force) || _banisterOosInflight) return;
+  _banisterOosInflight = true;
+  c.setAttribute('aria-busy', 'true');
+  c.innerHTML = '<div style="color:var(--text3);">Loading…</div>';
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 90000);
+  try {
+    const r = await fetch('/api/profile/banister-validation' + (force ? '?refresh=1' : ''),
+                          { signal: ctrl.signal });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (!document.getElementById('banister-oos-panel')?.open) return;
+    renderBanisterValidation(data);
+    _banisterOosLoaded = true;
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      c.innerHTML = '<div style="color:#f97316;">Computing took > 90 s — try Refresh later.</div>';
+    } else {
+      c.innerHTML = '<div style="color:#f97316;">Failed.</div>';
+      try { showToast('Refresh failed: ' + (e.message || e), 4000); } catch (_) {}
+    }
+  } finally {
+    clearTimeout(tid);
+    _banisterOosInflight = false;
+    c.setAttribute('aria-busy', 'false');
+  }
+}
+async function refreshBanisterValidation() {
+  const panel = document.getElementById('banister-oos-panel');
+  const btn = document.getElementById('banister-oos-refresh-btn');
+  if (!btn || btn.disabled) return;
+  if (panel && !panel.open) panel.open = true;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Refreshing…';
+  try { await loadBanisterValidationPanel(true); }
+  finally { btn.disabled = false; btn.textContent = orig; }
+}
+function renderBanisterValidation(d) {
+  const c = document.getElementById('banister-oos-content');
+  const badge = document.getElementById('banister-oos-comparison-badge');
+  if (!c) return;
+  // Comparison badge — hidden if no comparison or insufficient_data
+  // (G1 patch: success ⇒ comparison ∈ {better,in_line,worse}; nullable
+  // path covers _empty_response + endpoint exception path).
+  if (badge) {
+    if (!d.comparison || d.comparison === 'insufficient_data') {
+      badge.style.display = 'none';
+      badge.textContent = '';
+    } else {
+      badge.style.display = '';
+      if (d.comparison === 'better_than_literature') {
+        badge.style.color = 'var(--green)';
+        badge.textContent = 'Better than literature';
+      } else if (d.comparison === 'in_line') {
+        badge.style.color = 'var(--text3)';
+        badge.textContent = 'In line with literature (5–8% MAE)';
+      } else if (d.comparison === 'worse_than_literature') {
+        badge.style.color = '#f97316';
+        badge.textContent = 'Outside literature MAE — consider per-component τ override';
+      } else {
+        badge.style.display = 'none';
+        badge.textContent = '';
+      }
+    }
+  }
+
+  const fmt = v => (v == null ? '—' : Number(v).toFixed(1));
+  const ctl = (d.tau_fits_used?.ctl ?? '—');
+  const atl = (d.tau_fits_used?.atl ?? '—');
+
+  if (d.fit_status === 'insufficient_data') {
+    const n = (d.n_markers_in_holdout ?? 0);
+    c.innerHTML = `
+      <div style="color:var(--text3);">
+        Need ≥ 8 months training with ≥ 2 markers in 4-week holdout. Race-tag rides + log FTP tests to unlock; eFTP counts automatically.
+        You have ${n} markers in the holdout window; unlocks at 12+ weighted markers
+        (race-tagged: 1.0; eFTP step ≥ 3 W: 0.5; FTP test: 0.8).
+        Holdout: ${(d.holdout_weeks ?? 4)} weeks · horizon: ${(d.horizon_weeks ?? 4)} weeks.
+        <span style="display:none;" data-locked-fields="ftp_mae_w ftp_mae_pct ftp_mae_pct_ci_low ftp_mae_pct_ci_high ctl_mae_tss ctl_mae_tss_ci_low ctl_mae_tss_ci_high hellard_2006_baseline_pct cp_fitness_mae_pct wprime_fitness_mae_pct pmax_fitness_mae_pct"></span>
+      </div>`;
+    return;
+  }
+
+  const isLow = (d.fit_status === 'low_confidence');
+  const rowOpacity = isLow ? '0.55' : '1';
+  const headlinePct = (d.ftp_mae_pct == null) ? '—' : Number(d.ftp_mae_pct).toFixed(1);
+  const ciLow = fmt(d.ftp_mae_pct_ci_low);
+  const ciHigh = fmt(d.ftp_mae_pct_ci_high);
+  const ftpW = fmt(d.ftp_mae_w);
+  const ctlTss = fmt(d.ctl_mae_tss);
+  const ctlCiLow = fmt(d.ctl_mae_tss_ci_low);
+  const ctlCiHigh = fmt(d.ctl_mae_tss_ci_high);
+
+  const lowConfBanner = isLow
+    ? `<div style="margin-top:8px;color:#f97316;font-size:11px;line-height:1.4;">
+         Fit rejected: bootstrap CI &gt; 50 % / r² &lt; 0.40 / τ_a~τ_f collinearity.
+         Shown for transparency; planner uses conventional τ.
+         τ fit rejected (CI wide, r²&lt;0.40, or τ_a~τ_f collinear). Shown for transparency; planner uses conventional τ_CTL=42d, τ_ATL=7d.
+       </div>`
+    : '';
+
+  // One-line advice keyed off comparison (success only — low_confidence
+  // gets the rejection banner above instead).
+  let advice = '';
+  if (!isLow) {
+    if (d.comparison === 'better_than_literature') {
+      advice = `<div style="margin-top:6px;color:var(--text3);font-size:11px;line-height:1.4;">
+         Predicts FTP within ${headlinePct}% over last 4 weeks (95% CI). Literature 5–8% MAE (Hellard 2006). Holds out trailing 4 weeks, fits τ on rest, forward-simulates.
+       </div>`;
+    } else if (d.comparison === 'in_line') {
+      advice = `<div style="margin-top:6px;color:var(--text3);font-size:11px;line-height:1.4;">
+         Predicts FTP within ${headlinePct}% over last 4 weeks (95% CI). Literature 5–8% MAE (Hellard 2006). Holds out trailing 4 weeks, fits τ on rest, forward-simulates.
+       </div>`;
+    } else if (d.comparison === 'worse_than_literature') {
+      advice = `<div style="margin-top:6px;color:#f97316;font-size:11px;line-height:1.4;">
+         Outside the 5–8% Hellard band — consider a per-component τ override. Predicts FTP within ${headlinePct}% over last 4 weeks (95% CI).
+       </div>`;
+    }
+  }
+
+  // Per-component MAE deferred to v1.3.0 — render `—` for cp/wprime/pmax
+  // cells but include the locked field names for QA grep.
+  c.innerHTML = `
+    <div>
+      <div style="margin-bottom:6px;font-weight:700;">
+        ±${headlinePct}% MAE (CI ${ciLow}–${ciHigh}%)
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;opacity:${rowOpacity};">
+        <thead>
+          <tr style="color:var(--text3);text-align:left;">
+            <th style="padding:4px 6px;">Component</th>
+            <th style="padding:4px 6px;">MAE</th>
+            <th style="padding:4px 6px;">95% CI</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr data-field="ftp_mae_w ftp_mae_pct ftp_mae_pct_ci_low ftp_mae_pct_ci_high">
+            <td style="padding:4px 6px;">FTP</td>
+            <td style="padding:4px 6px;font-weight:700;">${ftpW} W (${headlinePct}%)</td>
+            <td style="padding:4px 6px;color:var(--text3);">${ciLow}–${ciHigh}%</td>
+          </tr>
+          <tr data-field="ctl_mae_tss ctl_mae_tss_ci_low ctl_mae_tss_ci_high">
+            <td style="padding:4px 6px;">CTL</td>
+            <td style="padding:4px 6px;font-weight:700;">${ctlTss} TSS</td>
+            <td style="padding:4px 6px;color:var(--text3);">${ctlCiLow}–${ctlCiHigh}</td>
+          </tr>
+          <tr data-field="cp_fitness_mae_pct">
+            <td style="padding:4px 6px;">CP fitness</td>
+            <td style="padding:4px 6px;color:var(--text3);">—</td>
+            <td style="padding:4px 6px;color:var(--text3);">—</td>
+          </tr>
+          <tr data-field="wprime_fitness_mae_pct">
+            <td style="padding:4px 6px;">W' fitness</td>
+            <td style="padding:4px 6px;color:var(--text3);">—</td>
+            <td style="padding:4px 6px;color:var(--text3);">—</td>
+          </tr>
+          <tr data-field="pmax_fitness_mae_pct">
+            <td style="padding:4px 6px;">Pmax fitness</td>
+            <td style="padding:4px 6px;color:var(--text3);">—</td>
+            <td style="padding:4px 6px;color:var(--text3);">—</td>
+          </tr>
+        </tbody>
+      </table>
+      <div style="margin-top:6px;color:var(--text3);font-size:11px;" data-field="hellard_2006_baseline_pct comparison">
+        Literature: 5–8 % MAE (Hellard 2006)
+      </div>
+      <div style="margin-top:4px;color:var(--text3);font-size:11px;" data-field="tau_fits_used">
+        τ used: τ_CTL = ${ctl} d, τ_ATL = ${atl} d
+        · markers in holdout: ${(d.n_markers_in_holdout ?? '—')}
+        · holdout: ${(d.holdout_weeks ?? '—')} w
+        · horizon: ${(d.horizon_weeks ?? '—')} w
+      </div>
+      ${advice}
+      ${lowConfBanner}
+    </div>`;
 }
 
 // v1.0.6 IMPL-3D-DASHBOARD — three normalized fitness curves (CP/W'/Pmax)

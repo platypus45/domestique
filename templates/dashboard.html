@@ -11850,6 +11850,13 @@ async function rematchDaySession(day) {
       const el = document.getElementById('rematch-new-' + day);
       if (el) el.style.opacity = '1';
     });
+    // v1.3.1 HIGH fix — also refresh THIS WEEK / calendar overlay (fed by
+    // loadCalendar) and the plan grid (fed by loadPlan). loadWeeklyCalendar
+    // alone only repaints the legacy #wc-grid host, leaving the dashboard's
+    // visible THIS WEEK panel and calendar overlay showing the stale (pre-
+    // redraw) ZWO until a hard refresh.
+    try { window._calDidAutoScroll = true; await loadCalendar(); } catch(_) {}
+    try { await loadPlan(); } catch(_) {}
     try { loadWeeklyCalendar(); } catch(_) {}
     return;
   }
@@ -11866,6 +11873,9 @@ async function rematchDaySession(day) {
     }
     if (resultEl) resultEl.innerHTML = '<div style="font-size:11px;color:var(--text2);padding:6px 0;">Week reconciled via classifier. Re-open this day to see the new match.</div>';
     try { showToast('Classifier rematch applied', 2500); } catch(_) {}
+    // v1.3.1 HIGH fix — same as above; refresh all three views.
+    try { window._calDidAutoScroll = true; await loadCalendar(); } catch(_) {}
+    try { await loadPlan(); } catch(_) {}
     try { loadWeeklyCalendar(); } catch(_) {}
   } catch(e) {
     if (resultEl) resultEl.innerHTML = '<div style="font-size:11px;color:var(--red);padding:6px 0;">Rematch failed: ' + esc(e.message) + '</div>';

@@ -6375,7 +6375,30 @@ async def api_plan_generate(request: Request):
         # passed seed_salt previously, so the very first generate run always
         # produced the same library picks). Mirrors the regenerate pattern.
         seed_salt = time.time_ns()
-        phases, weeks = tp.generate_plan(goal, seed_salt=seed_salt)
+
+        # v1.3.2 — read PERSISTED availability calendar from existing plan and
+        # pass overrides to generate_plan. Pre-fix, /api/plan/generate ignored
+        # plan["availability"] entirely → freshly generated plan produced
+        # sessions on dates the user had marked as unavailable. Mirrors the
+        # /api/plan/reforecast pattern.
+        json_path = _plan_dir() / "current_plan.json"
+        availability_overrides: dict[str, float] = {}
+        if json_path.exists():
+            try:
+                with open(json_path, encoding="utf-8") as f:
+                    _existing_plan = json.load(f)
+                availability_overrides = {
+                    day_iso: float(entry["hours"])
+                    for day_iso, entry in _existing_plan.get("availability", {}).items()
+                    if isinstance(entry, dict) and "hours" in entry
+                }
+            except (json.JSONDecodeError, OSError, KeyError, ValueError, TypeError):
+                availability_overrides = {}
+
+        phases, weeks = tp.generate_plan(
+            goal, seed_salt=seed_salt,
+            availability_overrides=availability_overrides or None,
+        )
         plan_path = tp.export_plan_md(goal, phases, weeks)
 
         # Also save structured JSON
@@ -6441,12 +6464,65 @@ async def api_plan_generate(request: Request):
             "generated": datetime.now().isoformat(),
         }
 
-        json_path = _plan_dir() / "current_plan.json"
+        # v1.3.2 — preserve persisted availability calendar across regeneration
+        # so the user's per-date calendar isn't wiped on every Generate Plan.
+        if availability_overrides or json_path.exists():
+            try:
+                with open(json_path, encoding="utf-8") as f:
+                    _prev = json.load(f)
+                if _prev.get("availability"):
+                    plan_dict["availability"] = _prev["availability"]
+            except (json.JSONDecodeError, OSError):
+                pass
+
         with tp.plan_write_lock():
             tmp_path = json_path.with_suffix('.tmp')
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(plan_dict, f, indent=2, default=str)
             tmp_path.rename(json_path)
+
+        # v1.3.2 — enrich the RESPONSE PAYLOAD with the same per-session fields
+        # /api/plan computes (card_state, content_class, display_name,
+        # zone_dist, score, protocol). Pre-fix the dashboard rendered the
+        # generate response without these so the cells fell through to a
+        # generic 'planned' style; on the next /api/plan reload the same
+        # cells suddenly displayed missing-workout warnings whose
+        # content-class disagreed with the freshly picked workouts. Doing
+        # this inline means the post-generate paint matches the
+        # post-reload paint. Mutates plan_dict in-place AFTER persistence
+        # so the on-disk plan stays clean (these are derived fields).
+        try:
+            library = tp.load_workout_library()
+            lib_by_file = {w.get("File"): w for w in library}
+            try:
+                classifications = tp._load_content_classifications() or {}
+            except Exception:
+                classifications = {}
+            for w in plan_dict.get("weeks", []):
+                for s in w.get("sessions", []):
+                    zwo = s.get("zwo_file") or ""
+                    meta = lib_by_file.get(zwo) if zwo else None
+                    _dn, _zdur = _session_naming_lookup(zwo, classifications, lib_by_file)
+                    s["display_name"] = _dn
+                    s["zwo_duration_min"] = _zdur
+                    if meta:
+                        s["zone_dist"] = {
+                            "z1": meta.get("Z1%", 0), "z2": meta.get("Z2%", 0),
+                            "z3": meta.get("Z3%", 0), "z4": meta.get("Z4%", 0),
+                            "z5": meta.get("Z5%", 0), "z6": meta.get("Z6%", 0),
+                        }
+                        s["score"] = meta.get("Score")
+                        s["protocol"] = meta.get("Protocol")
+                        s["content_class"] = meta.get("content_class") or ""
+                    else:
+                        s.setdefault("zone_dist", None)
+                        s.setdefault("score", None)
+                        s.setdefault("content_class", "")
+                    s["card_state"] = _classify_card_state(
+                        s, has_actual=False, library_lookup=lib_by_file,
+                    )
+        except Exception as _e:
+            _log.debug(f"/api/plan/generate enrich failed: {_e}")
 
         return {"ok": True, "plan_json": plan_dict, "plan_file": str(plan_path)}
 

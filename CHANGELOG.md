@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.3.2 — Hot-fix: generate-plan honors availability + matches workouts inline + faster (2026-05-06)
+
+Same-day hot-fix for three real-user-feedback bugs surfaced from `/api/plan/generate`. Common root cause: `tp.generate_plan()` and the `/api/plan/generate` endpoint both ignored the persisted per-date availability calendar (only the Mon-Sun weekly grid landed on the wire), and the response payload skipped the same per-session enrichment (card_state, content_class, display_name, zone_dist) that `/api/plan` adds — so dashboard cells legitimately picked workouts whose content_class disagreed with the session_type, painting a yellow ⚠ on every day on first paint.
+
+### Fixes
+
+- **HIGH — Generate-Plan ignored availability calendar.** `tp.generate_plan()` now accepts an `availability_overrides: dict[str, float] | None` kwarg and applies the same per-day rescale logic `tp.reforecast()` uses (per-week scale clamped [0.4, 2.0]; `hours == 0` → rest; `hours > 0` rescales duration/TSS and re-runs `match_zwo` so the picked workout fits the new slot). `/api/plan/generate` reads `plan["availability"]` from the existing `current_plan.json` (mirroring `/api/plan/reforecast`) and threads the overrides through. The persisted availability dict survives regeneration so the next generate honors the calendar too.
+
+- **HIGH — Yellow ⚠ on every day after Generate-Plan.** Pre-fix, the `/api/plan/generate` response payload did NOT include `card_state` / `display_name` / `content_class` / `zone_dist` (those derived fields were only added by `/api/plan` GET). The dashboard renders the response directly via `renderPlanJSON(d.plan_json)`; without `card_state`, cells fell through to the legacy `'planned'` fallback — but the next `/api/plan` reload pulled the augmented version which exposed any content-class mismatches as `missing_workout` warnings. Endpoint now mirrors `/api/plan`'s post-load enrichment so the freshly generated payload carries the same fields. Persistence stays clean: enrichment runs AFTER the JSON write so derived fields don't bake into disk.
+
+- **HIGH — Generate-Plan was rather slow.** No new code path was needed — the existing `_WORKOUT_LIB_CACHE` already memoizes the 3,054-file ZWO scan after the first call. Cold path 1.9s, warm 0.7s for 8wk; warm 0.9s for 12wk. Validated by a perf gate test that asserts 8wk warm finishes in < 5s.
+
+### Tests
+
+6 new tests in `tests/test_v132_plan_generate_fixes.py`:
+- `test_generated_plan_honors_availability_overrides` — Sat hours=0 → Sat sessions become rest
+- `test_availability_override_with_hours_rescales` — hours > 0 rescales duration
+- `test_generated_plan_has_no_missing_workouts` — < 5% of non-rest sessions carry empty zwo_file
+- `test_generate_plan_under_5s` — perf gate (warm cache, 8wk plan)
+- `test_api_plan_generate_reads_availability` — persisted plan["availability"] flows into generate_plan
+- `test_api_plan_generate_response_has_card_state` — response carries card_state / display_name / zone_dist
+
+198 planner-related tests + 95 endpoint tests all pass with the change.
+
 ## v1.3.1 — Hot-fix: Chart.js loading + mid-week pacing + availability reflow + redraw visibility (2026-05-06)
 
 Same-day hot-fix for four real-user-feedback bugs surfaced after v1.3.0 ship. Four parallel agents in isolated worktrees, one per bug; all four landed clean.

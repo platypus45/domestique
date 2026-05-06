@@ -3920,6 +3920,7 @@ def generate_plan(
     goal: Goal,
     unavailable_periods: "list[tuple[date, date]] | None" = None,
     seed_salt: int = 0,
+    availability_overrides: "dict[str, float] | None" = None,
 ) -> tuple[list[Phase], list[PlannedWeek]]:
     """Generate the full training plan.
 
@@ -3933,6 +3934,12 @@ def generate_plan(
             match_zwo seeds so consecutive regenerations produce visibly
             different ZWO picks. Default 0 keeps the legacy deterministic
             output (used by tests and first-gen plans).
+        availability_overrides: v1.3.2 — sparse mapping iso-date → daily hours
+            applied AFTER the bulk planner runs. ``hours == 0`` converts that
+            day to rest; ``hours > 0`` rescales duration_min/tss_estimate
+            (per-week clamp [0.4, 2.0]) and re-runs match_zwo so the picked
+            workout fits the new duration. Mirrors the reforecast() availability
+            block so first-time plan creation honors the persisted calendar.
     """
     metrics = get_today_metrics()
     # F4 (v4.1.0) — local CTL fallback. Previously this path hardcoded 37.0
@@ -4116,6 +4123,58 @@ def generate_plan(
     # neuromuscular, threshold, recovery) so the per-class floor above can't
     # express the constraint — runs as a separate pass.
     _enforce_ronnestad_floor(weeks, pool_index, plan_pick_counts)
+
+    # ── v1.3.2 IMPL-AVAILABILITY-IN-GENERATE ──────────────────────────────
+    # Apply persisted per-DATE availability overrides AFTER bulk planning so
+    # a fresh /api/plan/generate honors the same calendar that reforecast()
+    # honors. Mirrors the reforecast() block at line ~4847: per-week scale
+    # clamped [0.4, 2.0]; hours==0 → rest; hours>0 rescales duration and
+    # re-matches the ZWO so the picked workout fits the new duration.
+    if availability_overrides:
+        for pw in weeks:
+            week_keys = [
+                s.day.isoformat() for s in pw.sessions
+                if s.day.isoformat() in availability_overrides
+            ]
+            if not week_keys:
+                continue
+            available_mins = sum(
+                int(float(availability_overrides[k]) * 60) for k in week_keys
+            )
+            current_mins = sum(
+                s.duration_min for s in pw.sessions
+                if s.day.isoformat() in availability_overrides
+            )
+            if current_mins <= 0:
+                continue
+            raw_scale = available_mins / current_mins
+            scale = min(2.0, max(0.4, raw_scale))
+            for day_idx, s in enumerate(pw.sessions):
+                d_iso = s.day.isoformat()
+                if d_iso not in availability_overrides:
+                    continue
+                hours = float(availability_overrides[d_iso])
+                if hours <= 0:
+                    s.session_type = "rest"
+                    s.duration_min = 0
+                    s.tss_estimate = 0
+                    s.description = "Rest (unavailable)"
+                    s.zwo_file = ""
+                    s.zwo_name = ""
+                else:
+                    new_dur = max(0, int(round(s.duration_min * scale)))
+                    s.duration_min = new_dur
+                    tss_per_h = TSS_PER_HOUR.get(s.session_type, 45)
+                    s.tss_estimate = round(new_dur / 60 * tss_per_h)
+                    # Duration changed → existing zwo_file may not fit the new
+                    # slot. Clear and re-match so the workout shape matches.
+                    if s.session_type not in ("rest", "ftp_test"):
+                        s.zwo_file = ""
+                        s.zwo_name = ""
+                        match_zwo(s, library, week_num=pw.week_num,
+                                  day_idx=day_idx, used_names=used_names_set,
+                                  plan_start_date=plan_start_date,
+                                  seed_salt=seed_salt)
 
     # Audit: if match_zwo fell through to the empty-candidates path, surface it
     # once at the end rather than silently producing zwo_file="" sessions.

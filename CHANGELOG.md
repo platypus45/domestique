@@ -1,5 +1,56 @@
 # Changelog
 
+## v1.3.6 — Hot-fix: availability restore + 3D-fitness placeholder UX (2026-05-07)
+
+Two user-reported bugs landed in one multi-wave pass.
+
+### Issue A — Restoring availability hours doesn't re-add sessions
+
+User flow: open availability calendar → set Sat=0h, Sun=0h → click UPDATE → Sat/Sun become REST (works post v1.3.5). User changes mind → set Sat=4h, Sun=4h → click UPDATE → **Sat/Sun stay REST**. Asymmetric: reforecast un-rests nothing when hours go from 0 → positive.
+
+**Root cause** (`training_planner.py:5025-5029`): the `hours > 0` branch only did `s.duration_min * scale`. When `s.session_type == "rest"` already, `duration_min == 0` so `new_dur = 0` — session stayed REST.
+
+**Fix** (`training_planner.py:5025+`): in the `hours > 0` branch, when `s.session_type == "rest"`, restore to z2 (Layer-1 endurance default), set `duration_min = round(hours * 60)`, recompute tss_estimate, clear `zwo_file/zwo_name` so the dashboard match-on-render path picks a fresh workout.
+
+Also fixed Wave-2-grill-#2: pre-fix `if current_mins <= 0: continue` short-circuited weeks where every override day was already rest (e.g. a holiday week the user marked all-zero, then later wanted to restore one day). The loop now permits per-day handling when the week budget is empty.
+
+### Issue B — 3D-fitness placeholder is opaque
+
+User: *"what do you mean with this note, can we state when that will be calculated, whats blocking it etc?"*
+
+**Root cause**: `ride_storage.compute_ride_xss` (v1.0.6 IMPL-3D-INGEST) was added but **never wired into a production ride-import path**. So `ss_cp_daily / ss_w_prime_daily / ss_pmax_daily` rows never landed in `athlete_metrics`, `_augment_wellness_with_3d_fitness` had nothing to convolve, and the energy-system chart placeholder fired forever.
+
+**Fix**:
+
+1. **`app.py:_parse_fit_stats`** — added the missing `compute_ride_xss(power_series, started_at, summary=out)` call so future FIT imports populate SS aggregates.
+2. **`GET /api/wellness/3d-fitness-status`** — returns `{rides_with_ss: K, rides_total_post_v106: M}` so the dashboard can render an actionable line.
+3. **`POST /api/wellness/backfill-3d-fitness`** — one-shot backfill: iterates post-v1.0.6 rides, re-parses FITs (or fetches ICU streams), runs `compute_ride_xss` per ride, busts the wellness cache.
+4. **`templates/dashboard.html`** — replaced the opaque placeholder with an actionable text + "Backfill rides" button.
+
+### Behavior contract change
+
+Pre-fix, a goal-rest day (e.g. Monday with `goal.rest_days=[0]`) set to hours>0 in the availability popover was a no-op. Post-fix, that day is restored to z2 — taking the user at their word that they're overriding the goal-rest. No existing test relies on the old behavior.
+
+### Tests
+
+13 new tests across 2 files:
+
+- `tests/test_v136_availability_restore.py` (7 tests, 1 skip-when-not-Sunday)
+- `tests/test_v136_3d_fitness_backfill.py` (5 tests)
+
+5 pre-existing failures remain pre-existing (matches `clean-main` HEAD baseline): `test_readiness_data_status_field_set_when_insufficient`, `test_mid_late_base_has_at_least_one_interval_pick_per_week`, `test_all_four_canonical_hard_types_appear_in_build1_build2`, `test_wellness_tsb_zero_when_ctl_and_atl_zero`, `test_wellness_tsb_none_when_ctl_missing`.
+
+Suite: 1141 passing (was 1129).
+
+### Files touched
+
+- `training_planner.py` — Issue A surgical fix (~25 lines)
+- `app.py` — Issue B endpoints + FIT-import hook (~140 lines)
+- `templates/dashboard.html` — placeholder rewrite + JS handler (~55 lines)
+- `tests/test_v136_*.py` — 2 new test files
+
+---
+
 ## v1.3.5 — Hot-fix: UPDATE plan now rests unavailable days (2026-05-07)
 
 User flow: open availability calendar → set Sat=0h, Sun=0h → click UPDATE → "Plan reflowed — N sessions changed" toast → dashboard reloads → Sat/Sun **still** show planned z2/long sessions instead of REST. v1.3.1's `availability_overrides` plumbing was correctly wired but reforecast silently no-op'd the current in-progress week.

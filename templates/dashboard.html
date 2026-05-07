@@ -4567,6 +4567,41 @@ function renderBanisterValidation(d) {
     </div>`;
 }
 
+// v1.3.6 — backfill click handler for the energy-system placeholder.
+// Posts to /api/wellness/backfill-3d-fitness, surfaces a status line,
+// and re-loads /api/wellness so the chart re-renders if SS data is now
+// present. The endpoint busts the server cache before returning.
+async function _v136RunBackfill() {
+  const btn = document.getElementById('v136-ss-backfill-btn');
+  const msg = document.getElementById('v136-ss-msg');
+  if (btn) { btn.disabled = true; btn.textContent = 'Backfilling…'; }
+  if (msg) msg.textContent = '';
+  try {
+    const r = await fetch('/api/wellness/backfill-3d-fitness', {method: 'POST'});
+    const data = await r.json().catch(() => ({}));
+    const n = data.backfilled || 0;
+    const f = data.failed || 0;
+    if (msg) {
+      if (n === 0) {
+        msg.textContent = 'No rides backfilled — see Activity tab for ride list.';
+      } else {
+        msg.textContent = `Backfilled ${n} ride${n === 1 ? '' : 's'}` +
+                          (f > 0 ? ` (${f} failed)` : '') + '. Reloading chart…';
+      }
+    }
+    if (n > 0) {
+      // Re-fetch wellness so the chart re-renders. Most callers route
+      // through loadFitnessChart; the energy-system chart shares the same
+      // /api/wellness payload via the dashboard refresh path.
+      try { await loadFitnessChart(); } catch(_) {}
+    }
+  } catch (e) {
+    if (msg) msg.textContent = 'Backfill failed — try again later.';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Backfill rides'; }
+  }
+}
+
 // v1.0.6 IMPL-3D-DASHBOARD — three normalized fitness curves (CP/W'/Pmax)
 // on a 0-100 axis. Reuses the SVG pattern from fitnessChart() but is much
 // simpler: single y-axis, three polylines, no tooltip area-fill. Renders
@@ -4580,10 +4615,38 @@ function energySystemChart(data, containerId) {
   const wp  = data.map(d => d.w_prime_fitness ?? null);
   const pm  = data.map(d => d.pmax_fitness ?? null);
   const dates = data.map(d => d.date);
-  // If every series is empty, show a friendly placeholder rather than a blank SVG.
+  // If every series is empty, show an actionable placeholder. v1.3.6:
+  // pre-fix the placeholder said "will populate after IMPL-3D-MODEL has
+  // computed Banister components" with no signal what the user could do.
+  // Now we surface K of M post-v1.0.6 rides + a Backfill button so the
+  // user can populate ss_*_daily on demand.
   const anyVal = [...cp, ...wp, ...pm].some(v => v !== null);
   if (!anyVal) {
-    container.innerHTML = '<div style="font-size:11px;color:var(--text3);padding:12px 0;">3D fitness curves will populate after IMPL-3D-MODEL has computed Banister components for the wellness window.</div>';
+    container.innerHTML =
+      '<div style="font-size:11px;color:var(--text3);padding:12px 0;line-height:1.4;">' +
+      '<p style="margin:0 0 6px 0;">Energy-system fitness curves are computed from ' +
+      'each ride\'s strain-score (SS) decomposition. Older rides are missing ' +
+      'this data because the SS aggregator wasn\'t wired into ride imports ' +
+      'until v1.3.6.</p>' +
+      '<p id="v136-ss-status" style="margin:0 0 6px 0;">Loading ride status…</p>' +
+      '<button id="v136-ss-backfill-btn" class="btn" ' +
+      'style="font-size:11px;padding:4px 10px;" ' +
+      'onclick="_v136RunBackfill()">Backfill rides</button>' +
+      '<span id="v136-ss-msg" style="margin-left:8px;color:var(--text3);"></span>' +
+      '</div>';
+    fetch('/api/wellness/3d-fitness-status').then(r => r.json()).then(s => {
+      const line = document.getElementById('v136-ss-status');
+      if (!line) return;
+      const k = s.rides_with_ss || 0, m = s.rides_total_post_v106 || 0;
+      if (m === 0) {
+        line.textContent = 'No rides since v1.0.6 yet — future rides will ' +
+          'populate the chart automatically.';
+        const btn = document.getElementById('v136-ss-backfill-btn');
+        if (btn) btn.disabled = true;
+      } else {
+        line.textContent = `${k} of ${m} rides post-v1.0.6 have SS data.`;
+      }
+    }).catch(() => {});
     return;
   }
   // Normalize each series to 0..100 against its own historical max so all

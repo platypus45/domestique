@@ -5003,10 +5003,20 @@ def reforecast(
                 s.duration_min for s in pw.sessions
                 if s.day.isoformat() in availability_overrides
             )
-            if current_mins <= 0:
+            # v1.3.6 fix: pre-fix `if current_mins <= 0: continue` short-
+            # circuited weeks where every override day was already REST
+            # (e.g. a holiday week the user marked all-zero, then later
+            # wants to restore one day). Permit the per-day loop to run
+            # even when current_mins=0; only skip when there is nothing
+            # to do on either side. The rest-restore branch below uses
+            # `hours * 60` literally so it doesn't depend on `scale`.
+            if current_mins <= 0 and available_mins <= 0:
                 continue
-            raw_scale = available_mins / current_mins
-            scale = min(2.0, max(0.4, raw_scale))
+            if current_mins <= 0:
+                scale = 1.0  # unused; rest-restore branch ignores scale.
+            else:
+                raw_scale = available_mins / current_mins
+                scale = min(2.0, max(0.4, raw_scale))
             for s in pw.sessions:
                 d_iso = s.day.isoformat()
                 if d_iso not in availability_overrides:
@@ -5020,6 +5030,22 @@ def reforecast(
                     s.duration_min = 0
                     s.tss_estimate = 0
                     s.description = "Rest (unavailable)"
+                    s.zwo_file = ""
+                    s.zwo_name = ""
+                elif s.session_type == "rest":
+                    # v1.3.6 fix: rest-day → training-day restore. When the
+                    # user raises hours from 0 → positive on a day previously
+                    # zeroed out, duration_min is 0 so `dur * scale` stays 0.
+                    # Re-seed with z2 (Layer-1 endurance default — matches
+                    # _pick_session's fallback) so the day actually trains.
+                    # Use `hours * 60` literally because scale = available /
+                    # current and current=0 makes the ratio undefined.
+                    new_dur = int(round(hours * 60))
+                    s.session_type = "z2"
+                    s.duration_min = new_dur
+                    tss_per_h = TSS_PER_HOUR.get("z2", 45)
+                    s.tss_estimate = round(new_dur / 60 * tss_per_h)
+                    s.description = f"z2 ({new_dur}min) — restored from rest"
                     s.zwo_file = ""
                     s.zwo_name = ""
                 else:

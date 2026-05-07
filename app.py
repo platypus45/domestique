@@ -1994,6 +1994,159 @@ def api_wellness(days: int = Query(28)):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# v1.3.6 — 3D-fitness backfill UX (status + on-demand backfill)
+# ═══════════════════════════════════════════════════════════════════════════════
+# IMPL-3D-INGEST (v1.0.6) wired ride_storage.compute_ride_xss but never landed
+# a production callsite — so ss_*_daily rows in athlete_metrics stayed empty
+# and the energy-system chart's placeholder fired forever. v1.3.6 adds the
+# missing FIT-import hook (see _parse_fit_stats above) plus this two-endpoint
+# pair so users can audit existing rides and run a one-shot backfill from
+# the dashboard. The cutoff date is the v1.0.6 release — older rides predate
+# the SS partition contract.
+_V136_SS_CUTOFF_DATE = "2026-05-04"  # v1.0.6 release
+
+
+def _v136_status_counts() -> dict:
+    """Return {'rides_with_ss': K, 'rides_total_post_v106': M}.
+
+    M counts rides whose started_at-day is on or after the v1.0.6 release
+    date. K counts the subset of those rides whose ride-day already has an
+    ss_cp_daily row in athlete_metrics. The dashboard placeholder consumes
+    these to render an actionable line ("K of M rides have SS data").
+    """
+    try:
+        import ride_storage as _rs136
+        rides = _rs136.load_all_rides()
+    except Exception:
+        rides = []
+    eligible = [
+        r for r in rides
+        if (r.get("started_at") or "")[:10] >= _V136_SS_CUTOFF_DATE
+    ]
+    M = len(eligible)
+    try:
+        rows = db.query_metric_history("ss_cp_daily", days=730)
+        ss_dates = {r.get("date") for r in rows if r.get("date")}
+    except Exception:
+        ss_dates = set()
+    K = sum(
+        1 for r in eligible
+        if (r.get("started_at") or "")[:10] in ss_dates
+    )
+    return {"rides_with_ss": K, "rides_total_post_v106": M}
+
+
+@app.get("/api/wellness/3d-fitness-status")
+def api_3d_fitness_status():
+    """v1.3.6 — count K of M rides that have SS data."""
+    return _v136_status_counts()
+
+
+def _v136_extract_fit_power_series(fit_path: Path) -> list:
+    """Lightweight FIT → power_series helper for the backfill loop.
+
+    Mirrors the RecordMessage scan in `_parse_fit_stats` but returns ONLY
+    the watts list — used so the backfill doesn't redo FTP-test detection
+    or eFTP estimation on every old ride.
+    """
+    try:
+        from fit_tool.fit_file import FitFile
+    except Exception:
+        return []
+    try:
+        ff = FitFile.from_file(str(fit_path))
+    except Exception:
+        return []
+    out: list = []
+    try:
+        for rec in ff.records:
+            msg = rec.message
+            if type(msg).__name__ != "RecordMessage":
+                continue
+            try:
+                pw = msg.get_value("power")
+                out.append(int(pw) if pw is not None else 0)
+            except Exception:
+                out.append(0)
+    except Exception:
+        return out
+    return out
+
+
+@app.post("/api/wellness/backfill-3d-fitness")
+def api_backfill_3d_fitness():
+    """v1.3.6 — one-shot SS backfill for post-v1.0.6 rides.
+
+    For each ride whose day has no ss_cp_daily row in athlete_metrics:
+      * FIT rides → re-parse to recover power_series, call compute_ride_xss
+      * ICU rides → fetch streams via training.fetch_activity_streams,
+        pass watts to compute_ride_xss
+
+    Returns ``{'backfilled': N, 'skipped': K, 'failed': F}`` and busts the
+    server cache so the next /api/wellness call re-augments with the
+    fresh SS rows.
+    """
+    import ride_storage as _rs136
+    try:
+        rides = _rs136.load_all_rides()
+    except Exception as e:
+        _log.warning(f"backfill-3d-fitness load_all_rides failed: {e}")
+        return {"backfilled": 0, "skipped": 0, "failed": 0}
+
+    try:
+        rows = db.query_metric_history("ss_cp_daily", days=730)
+        already = {r.get("date") for r in rows if r.get("date")}
+    except Exception:
+        already = set()
+
+    backfilled = 0
+    skipped = 0
+    failed = 0
+    for r in rides:
+        day = (r.get("started_at") or "")[:10]
+        if not day or day < _V136_SS_CUTOFF_DATE:
+            skipped += 1
+            continue
+        if day in already:
+            skipped += 1
+            continue
+        try:
+            ps: list = []
+            if r.get("source") == "fit" and r.get("_fit_path"):
+                ps = _v136_extract_fit_power_series(Path(r["_fit_path"]))
+            elif r.get("source") == "icu" and r.get("external_id"):
+                try:
+                    import training as _training
+                    streams = _training.fetch_activity_streams(
+                        str(r["external_id"])
+                    ) or {}
+                except Exception:
+                    streams = {}
+                ps = streams.get("watts") or streams.get("power") or []
+            if not ps or not any(int(p or 0) > 0 for p in ps):
+                skipped += 1
+                continue
+            comp = _rs136.compute_ride_xss(
+                ps, started_at=r.get("started_at"),
+            )
+            if comp:
+                backfilled += 1
+                already.add(day)
+            else:
+                skipped += 1
+        except Exception as e:
+            _log.debug(f"backfill-3d-fitness ride {r.get('ride_id')}: {e}")
+            failed += 1
+
+    # Bust cache so /api/wellness re-augments next read.
+    try:
+        clear_cache()
+    except Exception:
+        pass
+    return {"backfilled": backfilled, "skipped": skipped, "failed": failed}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # v1.0.7 IMPL-HRV-PROMPT — HRV-recording prompt endpoints
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -10018,7 +10171,7 @@ def _parse_fit_stats(fit_path: Path) -> dict:
     except Exception as _e:
         log_ride_import.debug(f"local eFTP suggestion skipped: {_e}")
 
-    return {
+    out = {
         "sport": sport,
         "start_time": start_time,
         "sample_count": sample_count,
@@ -10043,6 +10196,17 @@ def _parse_fit_stats(fit_path: Path) -> dict:
         # E3 (v4.1.0):
         "local_eftp_suggestion": local_eftp_suggestion,
     }
+    # v1.3.6: wire compute_ride_xss into the FIT-import path so future
+    # rides populate ss_cp_daily / ss_w_prime_daily / ss_pmax_daily in
+    # athlete_metrics. Pre-fix this hook only existed in tests, which is
+    # why the 3D-fitness chart placeholder fired forever — there were no
+    # SS rows for _augment_wellness_with_3d_fitness to convolve.
+    try:
+        import ride_storage as _rs136
+        _rs136.compute_ride_xss(power_series, started_at=start_time, summary=out)
+    except Exception as _e:
+        log_ride_import.debug(f"compute_ride_xss skipped in _parse_fit_stats: {_e}")
+    return out
 
 
 @app.post("/api/ride/import")

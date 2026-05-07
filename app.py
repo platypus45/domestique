@@ -6952,12 +6952,14 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
                     src = by_day.get(day_iso)
                     if src is None:
                         continue
+                    # v1.3.7 fix: preserve src.zwo_file/zwo_name rather than
+                    # always clearing — see api_plan_reforecast for the rationale.
                     s_json["session_type"] = src.session_type
                     s_json["duration_min"] = src.duration_min
                     s_json["tss_estimate"] = src.tss_estimate
                     s_json["description"] = src.description
-                    s_json["zwo_file"] = ""
-                    s_json["zwo_name"] = ""
+                    s_json["zwo_file"] = getattr(src, "zwo_file", "") or ""
+                    s_json["zwo_name"] = getattr(src, "zwo_name", "") or ""
                     s_json["adapted"] = True
                     s_json["adapted_reason"] = src.description
 
@@ -7151,12 +7153,24 @@ async def api_plan_reforecast():
                 src = by_day.get(day_iso)
                 if src is None:
                     continue
+                # v1.3.7 fix: preserve src.zwo_file/zwo_name rather than
+                # always clearing. Pre-fix the propagation hard-coded
+                # zwo_file="" for every touched day → users with availability
+                # overrides ended up with every future session carrying
+                # zwo_file="" → /api/calendar served those as
+                # card_state="missing_workout" → the bottom calendar painted
+                # yellow ⚠ on every cell with no workout title. tp.reforecast
+                # already nulls out zwo_file inside its per-day branches when
+                # the session genuinely needs re-matching (v1.3.5 hours<=0
+                # rest path, v1.3.6 rest→z2 restore path), so propagating
+                # whatever the source PlannedSession holds keeps the picked
+                # workout intact whenever no swap actually happened.
                 s_json["session_type"] = src.session_type
                 s_json["duration_min"] = src.duration_min
                 s_json["tss_estimate"] = src.tss_estimate
                 s_json["description"] = src.description
-                s_json["zwo_file"] = ""
-                s_json["zwo_name"] = ""
+                s_json["zwo_file"] = getattr(src, "zwo_file", "") or ""
+                s_json["zwo_name"] = getattr(src, "zwo_name", "") or ""
                 s_json["adapted"] = True
                 s_json["adapted_reason"] = src.description
                 sessions_changed += 1

@@ -5316,6 +5316,215 @@ def reforecast(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# v1.5.0 — Single-layer reforecast (closes drift class A permanently).
+# `reforecast_dict(plan_dict, ...)` is the new entrypoint. Internally it
+# converts plan_dict ↔ PlannedWeek list, runs `reforecast()`, then
+# propagates the result back. Old `reforecast(goal, pw_list, ...)` is
+# kept as a deprecated alias for tests + external callers; removal in
+# v1.6.0.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _plan_dict_to_planned_weeks(plan_dict: dict) -> list[PlannedWeek]:
+    """v1.5.0 — build a PlannedWeek list from the persisted plan_dict.
+
+    Replaces the inline PlannedWeek-building blocks in
+    `_maybe_auto_reforecast`, `api_plan_reforecast`, and
+    `api_save_availability` (app.py). Single conversion site means
+    field-name drift between the JSON shape and PlannedWeek can only
+    happen here.
+
+    Days/weeks with malformed dates are skipped silently (matches the
+    pre-migration behaviour — those callers wrapped their list-builds
+    in try/except per session).
+    """
+    pw_list: list[PlannedWeek] = []
+    for w in plan_dict.get("weeks", []) or []:
+        try:
+            ws = date.fromisoformat(w["start"])
+            we = date.fromisoformat(w["end"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        sess_list: list[PlannedSession] = []
+        for s_json in w.get("sessions", []) or []:
+            try:
+                sd = date.fromisoformat(s_json["day"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            sess_list.append(PlannedSession(
+                day=sd,
+                day_name=s_json.get("day_name", sd.strftime("%a")),
+                session_type=s_json.get("session_type", "z2"),
+                duration_min=int(s_json.get("duration_min", 0) or 0),
+                tss_estimate=float(s_json.get("tss_estimate", 0) or 0),
+                description=s_json.get("description", ""),
+                zwo_file=s_json.get("zwo_file", "") or "",
+                zwo_name=s_json.get("zwo_name", "") or "",
+                status=s_json.get("status", "pending"),
+            ))
+        pw_list.append(PlannedWeek(
+            week_num=w.get("week_num", 0), start=ws, end=we,
+            phase=w.get("phase", ""),
+            tss_target=w.get("tss_target", 0),
+            is_stepback=w.get("is_stepback", False),
+            sessions=sess_list,
+            hit_per_week=int(w.get("hit_per_week", 0) or 0),
+            auto_acwr_scaled=bool(w.get("auto_acwr_scaled", False)),
+        ))
+    return pw_list
+
+
+def _apply_reforecast_to_dict(
+    plan_dict: dict,
+    pw_list: list["PlannedWeek"],
+    touched_days: set,
+) -> int:
+    """v1.5.0 — propagate post-reforecast PlannedWeek state back into
+    `plan_dict`. Replaces app.py's `_propagate_reforecast_to_dict`.
+
+    Mutates `plan_dict["weeks"][*]["sessions"][*]` in place for every
+    day in `touched_days` (typically `touched_days ∪ g3_dropped_days`
+    from `reforecast_info`). Round-trips the same field set as the
+    pre-v1.5.0 helper:
+      session_type, duration_min, tss_estimate, description, zwo_file,
+      zwo_name, adapted, adapted_reason
+    Plus week-level G4 ACWR mutations:
+      tss_target, hit_per_week, auto_acwr_scaled
+
+    Diff-based: only counts a session as "modified" if any field
+    actually changed.
+
+    Returns: number of sessions changed.
+    """
+    by_day: dict[str, "PlannedSession"] = {
+        s.day.isoformat(): s for pw in pw_list for s in pw.sessions
+    }
+    sessions_changed = 0
+    for w in plan_dict.get("weeks", []) or []:
+        for s_json in w.get("sessions", []) or []:
+            day_iso = s_json.get("day", "") or ""
+            if not day_iso or day_iso not in touched_days:
+                continue
+            src = by_day.get(day_iso)
+            if src is None:
+                continue
+            new_session_type = src.session_type
+            new_duration_min = src.duration_min
+            new_tss_estimate = src.tss_estimate
+            new_zwo_file = getattr(src, "zwo_file", "") or ""
+            new_zwo_name = getattr(src, "zwo_name", "") or ""
+            new_description = getattr(src, "description", "") or ""
+            changed = (
+                s_json.get("session_type") != new_session_type
+                or int(s_json.get("duration_min", 0) or 0) != new_duration_min
+                or float(s_json.get("tss_estimate", 0) or 0) != new_tss_estimate
+                or (s_json.get("zwo_file", "") or "") != new_zwo_file
+                or (s_json.get("zwo_name", "") or "") != new_zwo_name
+                or (s_json.get("description", "") or "") != new_description
+            )
+            if not changed:
+                continue
+            s_json["session_type"] = new_session_type
+            s_json["duration_min"] = new_duration_min
+            s_json["tss_estimate"] = new_tss_estimate
+            s_json["zwo_file"] = new_zwo_file
+            s_json["zwo_name"] = new_zwo_name
+            s_json["description"] = new_description
+            if getattr(src, "adapted", False):
+                s_json["adapted"] = True
+                s_json["adapted_reason"] = new_description
+            sessions_changed += 1
+    # Week-level G4 ACWR mutations.
+    pw_by_num = {pw.week_num: pw for pw in pw_list}
+    for w in plan_dict.get("weeks", []) or []:
+        wn = w.get("week_num")
+        src_pw = pw_by_num.get(wn)
+        if src_pw is None:
+            continue
+        if w.get("tss_target") != src_pw.tss_target:
+            w["tss_target"] = src_pw.tss_target
+        if w.get("hit_per_week") != src_pw.hit_per_week:
+            w["hit_per_week"] = src_pw.hit_per_week
+        if src_pw.auto_acwr_scaled and not w.get("auto_acwr_scaled"):
+            w["auto_acwr_scaled"] = True
+    return sessions_changed
+
+
+def reforecast_dict(
+    plan_dict: dict,
+    today_iso: "str | None" = None,
+    tsb_series: "dict | None" = None,
+    recent_activities: "list[dict] | None" = None,
+    actual_polarization: "dict | None" = None,
+    target_polarization: "dict | None" = None,
+    availability_overrides: "dict[str, float] | None" = None,
+    wprime_balance_24h: "float | None" = None,
+    w_prime: "float | None" = None,
+    wprime_acwr: "float | None" = None,
+    actual_wprime_polarization: "dict | None" = None,
+    yesterday_dfa_alpha1: "float | None" = None,
+    propagation_days: "set | None" = None,
+) -> "tuple[dict, int, dict]":
+    """v1.5.0 — single-layer reforecast on the persisted plan dict.
+
+    Closes drift class A: callers no longer maintain a separate
+    PlannedWeek list and a JSON-dict propagation block. This is the
+    only function that mutates `plan_dict` in response to a reforecast.
+
+    Returns: ``(plan_dict, sessions_modified, reforecast_info)``.
+    `plan_dict` is the SAME object passed in (mutated in place; not a
+    copy). `sessions_modified` is the diff count; `reforecast_info` is
+    forwarded from the underlying `reforecast()`.
+
+    `propagation_days` (optional): when provided, the diff-and-write
+    block runs against this exact set of iso-date strings instead of
+    the default `touched_days ∪ g3_dropped_days` from `reforecast_info`.
+    Used by the save-availability endpoint, which propagates the user's
+    availability-touched days verbatim (no TSB / G3 inputs on that
+    path; same behaviour as pre-v1.5.0).
+
+    The legacy `reforecast(goal, pw_list, ...)` API is kept as a
+    deprecated alias for tests + external callers (removal in v1.6.0).
+    """
+    goal_dict = plan_dict.get("goal", {}) or {}
+    try:
+        reforecast_goal = Goal(
+            goal_type=goal_dict.get("type", goal_dict.get("goal_type", "general")),
+            hours_per_week=goal_dict.get("hours_per_week", 8.0),
+            rest_days=goal_dict.get("rest_days", [0]),
+            available_days=goal_dict.get("available_days") or [
+                d for d in range(7) if d not in goal_dict.get("rest_days", [0])
+            ],
+        )
+    except Exception:  # noqa: BLE001
+        reforecast_goal = Goal(goal_type="general", hours_per_week=8.0)
+
+    pw_list = _plan_dict_to_planned_weeks(plan_dict)
+
+    _, reforecast_info = reforecast(
+        reforecast_goal, pw_list,
+        tsb_series=tsb_series,
+        recent_activities=recent_activities,
+        actual_polarization=actual_polarization,
+        target_polarization=target_polarization,
+        availability_overrides=availability_overrides,
+        wprime_balance_24h=wprime_balance_24h,
+        w_prime=w_prime,
+        wprime_acwr=wprime_acwr,
+        actual_wprime_polarization=actual_wprime_polarization,
+        yesterday_dfa_alpha1=yesterday_dfa_alpha1,
+    )
+
+    if propagation_days is not None:
+        touched = set(propagation_days)
+    else:
+        touched = set(reforecast_info.get("touched_days") or [])
+        touched |= set(reforecast_info.get("g3_dropped_days") or [])
+    sessions_modified = _apply_reforecast_to_dict(plan_dict, pw_list, touched)
+    return plan_dict, sessions_modified, reforecast_info
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # DYNAMIC PLAN REGENERATION — Mujika 2000/2001/2003, Gabbett 2016
 # ══════════════════════════════════════════════════════════════════════════════
 

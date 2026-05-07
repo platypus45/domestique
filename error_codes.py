@@ -85,6 +85,43 @@ class Codes:
     FRONTEND_PROMISE_REJECT  = "E_FRONTEND_PROMISE_REJECT"
     FRONTEND_GENERIC         = "E_FRONTEND_GENERIC"
 
+    # ---- v1.6.1 frontend homepage panel codes ----------------------------
+    FRONTEND_HOMEPAGE_INIT       = "E_FRONTEND_HOMEPAGE_INIT"
+    FRONTEND_FITNESS_FETCH       = "E_FRONTEND_FITNESS_FETCH"
+    FRONTEND_FITNESS_PARSE       = "E_FRONTEND_FITNESS_PARSE"
+    FRONTEND_FITNESS_RENDER      = "E_FRONTEND_FITNESS_RENDER"
+    FRONTEND_ACTIVITIES_FETCH    = "E_FRONTEND_ACTIVITIES_FETCH"
+    FRONTEND_ACTIVITIES_PARSE    = "E_FRONTEND_ACTIVITIES_PARSE"
+    FRONTEND_ACTIVITIES_RENDER   = "E_FRONTEND_ACTIVITIES_RENDER"
+    FRONTEND_READINESS_FETCH     = "E_FRONTEND_READINESS_FETCH"
+    FRONTEND_READINESS_PARSE     = "E_FRONTEND_READINESS_PARSE"
+    FRONTEND_READINESS_RENDER    = "E_FRONTEND_READINESS_RENDER"
+    FRONTEND_TODAY_SESSION_FETCH  = "E_FRONTEND_TODAY_SESSION_FETCH"
+    FRONTEND_TODAY_SESSION_PARSE  = "E_FRONTEND_TODAY_SESSION_PARSE"
+    FRONTEND_TODAY_SESSION_RENDER = "E_FRONTEND_TODAY_SESSION_RENDER"
+    FRONTEND_EFTP_FETCH          = "E_FRONTEND_EFTP_FETCH"
+    FRONTEND_EFTP_PARSE          = "E_FRONTEND_EFTP_PARSE"
+    FRONTEND_EFTP_RENDER         = "E_FRONTEND_EFTP_RENDER"
+    FRONTEND_BODY_PERF_FETCH     = "E_FRONTEND_BODY_PERF_FETCH"
+    FRONTEND_BODY_PERF_PARSE     = "E_FRONTEND_BODY_PERF_PARSE"
+    FRONTEND_BODY_PERF_RENDER    = "E_FRONTEND_BODY_PERF_RENDER"
+    FRONTEND_ENERGY_SYS_RENDER   = "E_FRONTEND_ENERGY_SYS_RENDER"
+
+    # ---- v1.6.1 backend homepage codes -----------------------------------
+    WELLNESS_FETCH_FAILED        = "E_WELLNESS_FETCH_FAILED"
+    ACTIVITIES_LIST_FAILED       = "E_ACTIVITIES_LIST_FAILED"
+    TODAY_SESSION_LOOKUP_FAILED  = "E_TODAY_SESSION_LOOKUP_FAILED"
+    EFTP_PROGRESS_FAILED         = "E_EFTP_PROGRESS_FAILED"
+
+    # ---- v1.6.1 training_planner codes -----------------------------------
+    PLAN_PHASE_BUILD_FAILED      = "E_PLAN_PHASE_BUILD_FAILED"
+    REFORECAST_WEEK_FAILED       = "E_REFORECAST_WEEK_FAILED"
+    REFORECAST_DICT_FAILED       = "E_REFORECAST_DICT_FAILED"
+    MATCH_ZWO_NO_CANDIDATES      = "E_MATCH_ZWO_NO_CANDIDATES"
+    MATCH_ZWO_ALL_FILTERED       = "E_MATCH_ZWO_ALL_FILTERED"
+    MATCH_ZWO_MALFORMED_META     = "E_MATCH_ZWO_MALFORMED_META"
+    PHASE_DERIVE_FAILED          = "E_PHASE_DERIVE_FAILED"
+
 
 REGISTRY: dict[str, CodeMeta] = {
     Codes.PLAN_PARSE_CORRUPT: {
@@ -266,6 +303,164 @@ REGISTRY: dict[str, CodeMeta] = {
         "severity": "ERROR",
         "description": "Unknown frontend error code reported (coerced).",
         "user_action": "Check the original code in log context.",
+    },
+    # ---- v1.6.1 frontend homepage panel codes ---------------------------
+    Codes.FRONTEND_HOMEPAGE_INIT: {
+        "severity": "ERROR",
+        "description": "loadHome() initial fetch/parse pass threw before any panel painted.",
+        "user_action": "Check browser console; reload page.",
+    },
+    Codes.FRONTEND_FITNESS_FETCH: {
+        "severity": "ERROR",
+        "description": "/api/wellness fetch failed (network or non-2xx) inside loadFitnessChart.",
+        "user_action": "Check connectivity; the chart will retry on next reload.",
+    },
+    Codes.FRONTEND_FITNESS_PARSE: {
+        "severity": "ERROR",
+        "description": "Wellness JSON failed to parse inside loadFitnessChart.",
+        "user_action": "Check /api/wellness manually; data may be corrupt.",
+    },
+    Codes.FRONTEND_FITNESS_RENDER: {
+        "severity": "ERROR",
+        "description": "Fitness chart render (fitnessChart()) raised; panel may be empty.",
+        "user_action": "Check browser console; the data parsed but the SVG paint failed.",
+    },
+    Codes.FRONTEND_ACTIVITIES_FETCH: {
+        "severity": "ERROR",
+        "description": "/api/activities fetch failed in loadHome.",
+        "user_action": "Check connectivity.",
+    },
+    Codes.FRONTEND_ACTIVITIES_PARSE: {
+        "severity": "ERROR",
+        "description": "Activities JSON failed to parse in loadHome.",
+        "user_action": "Check /api/activities manually; the response may be malformed.",
+    },
+    Codes.FRONTEND_ACTIVITIES_RENDER: {
+        "severity": "ERROR",
+        "description": "Recent activities DOM populate raised; panel shows fallback.",
+        "user_action": "Check browser console.",
+    },
+    Codes.FRONTEND_READINESS_FETCH: {
+        "severity": "ERROR",
+        "description": "/api/readiness fetch failed in loadHome.",
+        "user_action": "Check connectivity.",
+    },
+    Codes.FRONTEND_READINESS_PARSE: {
+        "severity": "ERROR",
+        "description": "Readiness JSON failed to parse in loadHome.",
+        "user_action": "Check /api/readiness manually.",
+    },
+    Codes.FRONTEND_READINESS_RENDER: {
+        "severity": "ERROR",
+        "description": "Readiness gauge / metrics DOM render raised.",
+        "user_action": "Check browser console.",
+    },
+    Codes.FRONTEND_TODAY_SESSION_FETCH: {
+        "severity": "ERROR",
+        "description": "/api/today-session fetch failed inside loadTodaySession.",
+        "user_action": "Check connectivity.",
+    },
+    Codes.FRONTEND_TODAY_SESSION_PARSE: {
+        "severity": "ERROR",
+        "description": "Today-session JSON failed to parse.",
+        "user_action": "Check /api/today-session manually.",
+    },
+    Codes.FRONTEND_TODAY_SESSION_RENDER: {
+        "severity": "ERROR",
+        "description": "Today-session card render raised; fallback text shown.",
+        "user_action": "Check browser console.",
+    },
+    Codes.FRONTEND_EFTP_FETCH: {
+        "severity": "ERROR",
+        "description": "eFTP card fetch failed (sourced from /api/wellness in loadHome).",
+        "user_action": "Check connectivity.",
+    },
+    Codes.FRONTEND_EFTP_PARSE: {
+        "severity": "ERROR",
+        "description": "eFTP card JSON parse failed (sourced from wellness payload).",
+        "user_action": "Check /api/wellness response shape.",
+    },
+    Codes.FRONTEND_EFTP_RENDER: {
+        "severity": "ERROR",
+        "description": "eFTP card DOM render raised; sparkline missing.",
+        "user_action": "Check browser console.",
+    },
+    Codes.FRONTEND_BODY_PERF_FETCH: {
+        "severity": "ERROR",
+        "description": "Body & Performance panel fetch failed (one of /api/metrics/history calls).",
+        "user_action": "Check connectivity; panel falls back to 'no history yet'.",
+    },
+    Codes.FRONTEND_BODY_PERF_PARSE: {
+        "severity": "ERROR",
+        "description": "Body & Performance JSON failed to parse.",
+        "user_action": "Check /api/metrics/history manually.",
+    },
+    Codes.FRONTEND_BODY_PERF_RENDER: {
+        "severity": "ERROR",
+        "description": "Body & Performance render raised; fallback text shown.",
+        "user_action": "Check browser console.",
+    },
+    Codes.FRONTEND_ENERGY_SYS_RENDER: {
+        "severity": "ERROR",
+        "description": "Energy-system breakdown chart render raised.",
+        "user_action": "Check browser console; primary fitness chart is unaffected.",
+    },
+    # ---- v1.6.1 backend homepage codes ----------------------------------
+    Codes.WELLNESS_FETCH_FAILED: {
+        "severity": "ERROR",
+        "description": "/api/wellness handler raised; client got 500.",
+        "user_action": "Check ICU connectivity and ~/.domestique/wellness/.",
+    },
+    Codes.ACTIVITIES_LIST_FAILED: {
+        "severity": "ERROR",
+        "description": "/api/activities handler raised; client got 500.",
+        "user_action": "Check ICU connectivity and the local rides archive.",
+    },
+    Codes.TODAY_SESSION_LOOKUP_FAILED: {
+        "severity": "ERROR",
+        "description": "/api/today-session handler raised; client got 500.",
+        "user_action": "Check the active plan (current_plan.json) and readiness data.",
+    },
+    Codes.EFTP_PROGRESS_FAILED: {
+        "severity": "ERROR",
+        "description": "eFTP progress compute path raised; reserved for future endpoint.",
+        "user_action": "Inspect server log.",
+    },
+    # ---- v1.6.1 training_planner codes ---------------------------------
+    Codes.PLAN_PHASE_BUILD_FAILED: {
+        "severity": "ERROR",
+        "description": "generate_plan phase iteration raised mid-build; plan may be partial.",
+        "user_action": "Try regenerating; if persistent, check workout library and goal inputs.",
+    },
+    Codes.REFORECAST_WEEK_FAILED: {
+        "severity": "ERROR",
+        "description": "reforecast() per-week iteration raised; that week kept previous state.",
+        "user_action": "Try reforecasting again or regenerating the plan.",
+    },
+    Codes.REFORECAST_DICT_FAILED: {
+        "severity": "ERROR",
+        "description": "reforecast_dict raised; the in-place plan mutation aborted.",
+        "user_action": "Check current_plan.json shape and regenerate if needed.",
+    },
+    Codes.MATCH_ZWO_NO_CANDIDATES: {
+        "severity": "WARN",
+        "description": "match_zwo found no library candidate for a session; coverage fallback also empty.",
+        "user_action": "Check that the workout library is intact and tagged correctly.",
+    },
+    Codes.MATCH_ZWO_ALL_FILTERED: {
+        "severity": "WARN",
+        "description": "match_zwo's primary pool was empty; fell back to coverage pool (longest in category).",
+        "user_action": "Inspect duration/category tolerance — session may be longer than any library workout.",
+    },
+    Codes.MATCH_ZWO_MALFORMED_META: {
+        "severity": "WARN",
+        "description": "Library entry skipped due to malformed metadata (e.g. missing Score field).",
+        "user_action": "Re-scan the workout library to refresh metadata.",
+    },
+    Codes.PHASE_DERIVE_FAILED: {
+        "severity": "ERROR",
+        "description": "generate_phases raised inside generate_plan; cannot build a plan.",
+        "user_action": "Check goal inputs (target_date, hours_per_week, goal_type).",
     },
 }
 

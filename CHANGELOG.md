@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.3.5 — Hot-fix: UPDATE plan now rests unavailable days (2026-05-07)
+
+User flow: open availability calendar → set Sat=0h, Sun=0h → click UPDATE → "Plan reflowed — N sessions changed" toast → dashboard reloads → Sat/Sun **still** show planned z2/long sessions instead of REST. v1.3.1's `availability_overrides` plumbing was correctly wired but reforecast silently no-op'd the current in-progress week.
+
+### Root cause
+
+Two bugs:
+
+1. **`training_planner.reforecast()`'s `availability_overrides` loop short-circuited every current week** with `if pw.start < today: continue`. `pw.start` is Monday — by definition < today on any non-Monday — so a Sat=0/Sun=0 UPDATE click silently no-op'd those days. The endpoint reported `sessions_modified > 0` only when the pre-fix v1.3.1 test happened to anchor on a *future* Monday, dodging the gate.
+2. **Rest branch didn't clear `zwo_file` / `zwo_name` / `description`**, so even when the gate passed (future weeks), the dashboard rendered the old workout name on rest cells.
+
+### Fix
+
+- **`training_planner.py:4984`** — gate on `pw.end < today` (matches the G3 block at line 5021), so the current week's *future* days re-rest.
+- **`training_planner.py:5008-5014`** — rest branch now also clears `zwo_file`, `zwo_name`, sets `description="Rest (unavailable)"` (mirrors `generate_plan` block).
+- **`app.py:7214-7229`** — propagation loop diffs/copies `zwo_file` / `zwo_name` / `description` back to JSON.
+
+### Tests
+
+- `tests/test_v135_availability_rests_unavail_days.py` (NEW, 2 tests) — anchors on the current Monday, asserts Sat/Sun get `session_type='rest'`, `duration_min=0`, `tss_estimate=0`, `zwo_file=''`, `zwo_name=''`, AND that Mon/Tue/Wed/Thu/Fri sessions are untouched. Both fail pre-fix, pass post-fix.
+- `tests/test_v131_availability_reflow.py:178` — count bumped 1→2 because Sun's description flips from "rest 0min" to "Rest (unavailable)" so it correctly counts as modified now.
+- Full suite: 1127 → **1129 passing** (+2). 4 pre-existing unrelated failures unchanged.
+
 ## v1.3.4 — Hot-fix: generate-plan no longer paints yellow ⚠ on every cell (2026-05-06)
 
 The v1.3.2 fix (`9e68246f`) wired availability_overrides into `generate_plan()` but didn't address the underlying causes of "yellow ⚠ on every cell" — it only fixed the first-paint vs reload-paint disagreement. With heavy availability (e.g. weekend 4h, weekday 1.5h), session durations got rescaled past library coverage and `match_zwo` returned `zwo_file=""` for every long-duration cell. The injected mid-cycle ftp_test slot also painted yellow because match_zwo's category gate filtered out every ftp_test-tagged ZWO. Description text stayed stale ("z2 (70min) — sampled from library · 154m") because it embedded the original ZWO's duration after rescale.

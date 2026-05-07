@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.4.1 — card_state_v2 rendering distinguishes 10 calendar states (2026-05-07)
+
+Calendar `renderCalDay` now reads `card_state_v2` (10-state machine from
+v1.4.0) with fallback to legacy 4-string `card_state`. Six finer-grained
+variant classes layer on top of legacy `cal-completed` / `cal-missing` /
+`cal-rest`:
+
+- `past_planned_no_ride` (skipped, red tint, border-left red)
+- `past_actual_only` (unplanned ride, purple tint, border-left purple)
+- `past_planned_actual` (completed, green tint, border-left green)
+- `today_planned` (planned today, blue tint)
+- `today_actual` (completed today, strong green)
+- `future_unavailable` (gray tint over the existing UNAVAILABLE badge)
+
+The remaining 4 v2 states (`past_no_ride`, `future_planned`,
+`future_rest`, `missing_workout`) keep their legacy short-circuit
+rendering. The cell now also carries `data-cs-v2="<state>"` so future
+panels can dispatch on it without reading `card_state_v2` from JS data.
+
+Tests: `tests/test_v141_card_state_v2_render.py` (6 tests) — assert the
+JS dispatch table, the 6 CSS rules, the data-cs-v2 attribute, and that
+v1.4.0's classifier output drives the new variant classes.
+
 ## v1.4.0 — Calendar/plan/availability architecture rebuild (2026-05-07)
 
 Closes the v1.3.5/6/7 regression cycle by collapsing the two-layer field-update

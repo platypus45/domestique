@@ -510,6 +510,17 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
 .cal-day.cal-completed { background: rgba(34,197,94,0.05); }
 .cal-day.cal-missing  { background: rgba(239,68,68,0.06); }
 
+/* v1.4.1 — card_state_v2 finer tints. Layered ON TOP of legacy
+   .cal-completed / .cal-missing / .cal-rest (additive, not replacing).
+   Specificity: .cal-day.cal-day-* matches both classes — beats .cal-day
+   alone but still loses to .cal-today (which is what we want). */
+.cal-day.cal-day-past-skipped     { background: rgba(239, 68, 68, 0.10); border-left-color: #ef4444; }
+.cal-day.cal-day-past-unplanned   { background: rgba(168, 85, 247, 0.10); border-left-color: #a855f7; }
+.cal-day.cal-day-past-completed   { background: rgba(34, 197, 94, 0.10); border-left-color: #22c55e; }
+.cal-day.cal-day-today-planned    { background: rgba(59, 130, 246, 0.18); }
+.cal-day.cal-day-today-completed  { background: rgba(34, 197, 94, 0.18); }
+.cal-day.cal-day-future-unavailable { background: rgba(100, 116, 139, 0.12); }
+
 .cal-day .cal-planned {
   flex: 1; padding: 2px 0; min-height: 28px;
 }
@@ -9254,6 +9265,20 @@ function renderCalDay(d, wi, di, phaseKey, today) {
     return `<div class="cal-day cal-rest"><div style="font-size:9px;color:var(--text3);">—</div></div>`;
   }
   const cs = d.card_state || 'rest';
+  // v1.4.1 — read card_state_v2 (10-state, since v1.4.0) for finer cell tints.
+  // Falls back to legacy `cs` so older payloads still render. Mapping is
+  // ADDITIVE: legacy class (cal-completed/cal-missing/cal-rest) is still
+  // applied; v2 just paints an extra tint on past_skipped / past_unplanned /
+  // past_completed / today_planned / today_actual / future_unavailable.
+  const csV2 = d.card_state_v2 || cs;
+  const v2Cls = ({
+    past_planned_no_ride: ' cal-day-past-skipped',
+    past_actual_only:     ' cal-day-past-unplanned',
+    past_planned_actual:  ' cal-day-past-completed',
+    today_planned:        ' cal-day-today-planned',
+    today_actual:         ' cal-day-today-completed',
+    future_unavailable:   ' cal-day-future-unavailable',
+  }[csV2] || '');
   const isToday = d.is_today === true;
   const planned = d.planned;
   const actual = d.actual;
@@ -9376,6 +9401,8 @@ function renderCalDay(d, wi, di, phaseKey, today) {
   }
   if (isEventDay && !isToday) stateCls += ' cal-event-day';
   if (isToday) stateCls += ' cal-today';
+  // v1.4.1 — append v2 class so CSS can paint state-specific tints.
+  stateCls += v2Cls;
 
   // v4.3.1 FIX-UI: drag-drop wiring. Only `card_state="planned"` cells are
   // draggable (matches plan-grid semantics — rest/completed/missing-workout
@@ -9397,7 +9424,7 @@ function renderCalDay(d, wi, di, phaseKey, today) {
   // duration + score so power-users can see provenance.
   const cellTip = calCellTooltip(planned, actual);
   const tipAttr = cellTip ? ` title="${esc(cellTip)}"` : '';
-  return `<div class="cal-day cal-phase-${phaseKey}${stateCls}" data-cs="${cs}"
+  return `<div class="cal-day cal-phase-${phaseKey}${stateCls}" data-cs="${cs}" data-cs-v2="${esc(csV2)}"
     data-date="${esc(d.date)}" data-week-idx="${wi}" data-day-idx="${di}"
     data-cal-rest="${restFlag}" data-cal-completed="${completedFlag}" data-cal-missing="${missingFlag}"
     ${dragAttrs}${tipAttr}

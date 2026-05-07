@@ -46,6 +46,76 @@ log = log_config.get_logger(__name__)
 log_library = log_config.get_logger("domestique.library")
 log_ride_import = log_config.get_logger("domestique.ride_import")
 
+# v1.6.0 — error-code observability layer.
+# ``_log_error`` is the single funnel for "something failed inside an
+# error path that the user might never see directly". Every call emits a
+# structured log line with the literal E_<domain>_<failure> code AND
+# appends an entry to the in-process ring buffer that
+# ``/api/diag/recent-errors`` reads.
+import error_codes
+_DIAG_RING_MAX = 256
+_DIAG_RING: collections.deque = collections.deque(maxlen=_DIAG_RING_MAX)
+_DIAG_RING_LOCK = threading.Lock()
+
+
+def _log_error(code: str, exc: Exception | None = None, **context) -> None:
+    """Log a structured error event under the error-code taxonomy.
+
+    Signature: ``_log_error(Codes.X, exc=e, key=value, ...)``. The ``code``
+    must be a registered string from ``error_codes.REGISTRY``; passing an
+    unregistered code is allowed (best-effort) but will be tagged as
+    ``unregistered`` in the ring entry. ``exc`` (optional) records type
+    and message. ``context`` keys are arbitrary diagnostic breadcrumbs.
+
+    Always non-throwing: this helper sits inside other except clauses, so
+    it must never raise. Worst case it logs nothing.
+    """
+    try:
+        meta = error_codes.metadata(code)
+        severity = (meta or {}).get("severity", "ERROR")
+        entry: dict = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "code": code,
+            "severity": severity,
+            "context": dict(context),
+        }
+        if meta is None:
+            entry["context"]["_unregistered_code"] = True
+        if exc is not None:
+            entry["exc_type"] = type(exc).__name__
+            entry["exc_msg"] = str(exc)[:500]
+        with _DIAG_RING_LOCK:
+            _DIAG_RING.append(entry)
+        # Console + file via standard logger. Severity → level mapping:
+        # FATAL/ERROR → ERROR, WARN → WARNING, INFO → INFO.
+        if severity in ("FATAL", "ERROR"):
+            level = logging.ERROR
+        elif severity == "WARN":
+            level = logging.WARNING
+        else:
+            level = logging.INFO
+        ctx_repr = " ".join(f"{k}={v!r}" for k, v in entry["context"].items())
+        if exc is not None:
+            _log.log(level, "%s %s exc=%s:%s", code, ctx_repr,
+                     entry["exc_type"], entry["exc_msg"])
+        else:
+            _log.log(level, "%s %s", code, ctx_repr)
+    except Exception:
+        # Never let observability break the host code path.
+        pass
+
+
+def _diag_ring_snapshot(limit: int = 50, since_iso: str | None = None) -> list[dict]:
+    """Return up to ``limit`` recent ring entries newest-first, optionally
+    filtered to entries with ``ts > since_iso``.
+    """
+    with _DIAG_RING_LOCK:
+        items = list(_DIAG_RING)
+    items.reverse()  # newest first
+    if since_iso:
+        items = [e for e in items if e.get("ts", "") > since_iso]
+    return items[:limit]
+
 from fastapi import FastAPI, File, Form, Request, Query, UploadFile, HTTPException, Body
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -760,11 +830,25 @@ def cached(key, fn, ttl=300):
     try:
         result = fn()
     except Exception as e:
-        # If API call fails (no internet, DNS error), return stale cache or empty dict
+        # If API call fails (no internet, DNS error), return stale cache.
         if key in _cache:
             return _cache[key]
-        import logging
-        logging.getLogger(__name__).warning("cached(%s) failed: %s — returning empty", key, e)
+        # v1.6.0 — log under E_CACHE_<key>-or-GENERIC and stick the empty
+        # result for only 30s so transient errors don't sit in cache for
+        # the full ttl. Trick: backdate _cache_ts to (now - (ttl - 30))
+        # so the staleness check ``now - ts < ttl`` flips back to False
+        # after 30 wall-clock seconds.
+        cache_code = {
+            "training": error_codes.Codes.CACHE_TRAINING,
+            "sleep": error_codes.Codes.CACHE_SLEEP,
+            "wellness": error_codes.Codes.CACHE_WELLNESS,
+        }.get(key, error_codes.Codes.CACHE_GENERIC)
+        _log_error(cache_code, exc=e, cache_key=key)
+        _cache[key] = {}
+        if ttl > 30:
+            _cache_ts[key] = now - (ttl - 30)
+        else:
+            _cache_ts[key] = now
         return {}
     _cache[key] = result
     _cache_ts[key] = now
@@ -6311,12 +6395,18 @@ def api_plan():
             except Exception as _e:
                 _log.debug(f"/api/plan zone_dist annotate failed: {_e}")
             # v1.4.0 — single enrichment helper for per-session fields.
+            # v1.6.0 — surface failure under E_ENRICH_FAILED so silently
+            # un-enriched plans become visible in /api/diag/recent-errors.
             try:
                 _enrich_plan_for_response(
                     plan_data, today_iso=date.today().isoformat(),
                 )
             except Exception as _e:
-                _log.debug(f"/api/plan _enrich_plan_for_response failed: {_e}")
+                _log_error(
+                    error_codes.Codes.ENRICH_FAILED, exc=_e,
+                    endpoint="/api/plan",
+                    week_count=len(plan_data.get("weeks", [])) if isinstance(plan_data, dict) else 0,
+                )
             # Also include markdown if available
             plans = sorted(_plan_dir().glob("*.md"), reverse=True)
             md = None
@@ -6696,10 +6786,15 @@ async def api_plan_generate(request: Request):
         # v1.4.0 — single enrichment helper (replaces the inline duplicate).
         # Adds card_state / card_state_v2 / content_class / display_name /
         # zone_dist / score / protocol / zwo_duration_min per session.
+        # v1.6.0 — surface failure under E_ENRICH_FAILED.
         try:
             _enrich_plan_for_response(plan_dict, today_iso=date.today().isoformat())
         except Exception as _e:
-            _log.debug(f"/api/plan/generate enrich failed: {_e}")
+            _log_error(
+                error_codes.Codes.ENRICH_FAILED, exc=_e,
+                endpoint="/api/plan/generate",
+                week_count=len(plan_dict.get("weeks", [])) if isinstance(plan_dict, dict) else 0,
+            )
 
         return {"ok": True, "plan_json": plan_dict, "plan_file": str(plan_path)}
 
@@ -9382,7 +9477,7 @@ def api_calendar():
     try:
         _maybe_lazy_icu_sync(force_if_today_missing=True)
     except Exception as _e:
-        _log.debug(f"/api/calendar: lazy ICU sync swallowed: {_e}")
+        _log_error(error_codes.Codes.CALENDAR_ICU_SYNC, exc=_e)
 
     plan: dict = {}
     json_path = _plan_dir() / "current_plan.json"
@@ -9390,8 +9485,24 @@ def api_calendar():
         try:
             with open(json_path, encoding="utf-8") as f:
                 plan = json.load(f)
-        except (json.JSONDecodeError, OSError) as _e:
-            _log.warning(f"/api/calendar: plan load failed: {_e}")
+        except json.JSONDecodeError as _e:
+            # v1.6.0 — corrupt plan file is a render-blocker for the
+            # homepage's THIS-WEEK card. Surface E_PLAN_PARSE_CORRUPT in
+            # the response so the frontend can paint a clear "Plan
+            # unreadable, regenerate" message instead of silently
+            # falling back to history-only weeks.
+            _log_error(error_codes.Codes.PLAN_PARSE_CORRUPT, exc=_e, path=str(json_path))
+            return {
+                "error": error_codes.Codes.PLAN_PARSE_CORRUPT,
+                "weeks": [],
+                "summary": {},
+                "current_iso_week": None,
+                "today": date.today().isoformat(),
+            }
+        except OSError as _e:
+            # OS-level read failure is recoverable (perms, transient I/O).
+            # Fall through to "no plan" — caller still wants ride history.
+            _log_error(error_codes.Codes.PLAN_LOAD_OS_ERROR, exc=_e, path=str(json_path))
 
     # v4.4.0 — single rides source: ICU + FIT merged via ride_storage; legacy
     # JSON rides retained for back-compat (pre-v4 archive).
@@ -9399,7 +9510,7 @@ def api_calendar():
     try:
         rides = list(_load_all_rides_safe())
     except Exception as _e:
-        _log.warning(f"/api/calendar: load_all_rides failed: {_e}")
+        _log_error(error_codes.Codes.CALENDAR_RIDES_LOAD, exc=_e)
 
     try:
         import ride_storage
@@ -9409,9 +9520,19 @@ def api_calendar():
             r.setdefault("source", "json")
         rides.extend(legacy)
     except Exception as _e:
-        _log.warning(f"/api/calendar: legacy ride_storage scan failed: {_e}")
+        _log_error(error_codes.Codes.CALENDAR_LEGACY_RIDES, exc=_e)
 
-    return merge_plan_with_rides(plan, rides)
+    try:
+        return merge_plan_with_rides(plan, rides)
+    except Exception as _e:
+        _log_error(error_codes.Codes.CALENDAR_MERGE, exc=_e)
+        return {
+            "error": error_codes.Codes.CALENDAR_MERGE,
+            "weeks": [],
+            "summary": {},
+            "current_iso_week": None,
+            "today": date.today().isoformat(),
+        }
 
 
 @app.post("/api/plan/rematch")
@@ -12088,6 +12209,178 @@ def api_programme_summary_png(plan_id: str = Query("current")):
     return Response(content=png, media_type="image/png",
                     headers={"Content-Disposition":
                              f'inline; filename="programme-summary-{plan_id}.png"'})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DIAGNOSTICS (v1.6.0)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# 60-second cache for the health check — cheap protection against repeated
+# clicks on the Diagnostics modal hammering the disk.
+_DIAG_HEALTH_CACHE: dict = {"ts": 0.0, "result": None}
+_DIAG_HEALTH_CACHE_TTL = 60.0
+
+
+def _diag_local_only(request: Request) -> bool:
+    """True iff the request is from localhost. Domestique listens only on
+    127.0.0.1, so any non-local client is suspicious. Returns True when
+    ``request.client`` is None or the host is the FastAPI TestClient
+    sentinel, so tests pass without special-casing.
+    """
+    client = getattr(request, "client", None)
+    if client is None or client.host is None:
+        return True
+    return client.host in ("127.0.0.1", "localhost", "::1", "testclient")
+
+
+@app.get("/api/diag/recent-errors")
+def api_diag_recent_errors(
+    request: Request,
+    since: str | None = Query(None),
+    limit: int = Query(50),
+    verbose: int = Query(0),
+):
+    """v1.6.0 — return the last N entries from the in-process error ring.
+
+    ``since`` is an ISO timestamp filter (return only entries with ts >
+    since). ``limit`` is clamped to [1, 256]. ``verbose=1`` includes the
+    full exc_msg; default truncates / strips PII-ish keys.
+    """
+    if not _diag_local_only(request):
+        return JSONResponse({"error": "local-only"}, status_code=403)
+    n = max(1, min(int(limit or 50), _DIAG_RING_MAX))
+    items = _diag_ring_snapshot(limit=n, since_iso=since)
+    if not verbose:
+        # Strip context keys that could carry PII / big payloads.
+        BAN = {"path", "body", "headers", "cookie", "authorization"}
+        scrubbed: list[dict] = []
+        for e in items:
+            ctx = {k: v for k, v in (e.get("context") or {}).items() if k not in BAN}
+            row = dict(e)
+            row["context"] = ctx
+            # Truncate exc_msg defensively (already capped at 500 in _log_error).
+            if "exc_msg" in row and isinstance(row["exc_msg"], str):
+                row["exc_msg"] = row["exc_msg"][:240]
+            scrubbed.append(row)
+        items = scrubbed
+    return {"count": len(items), "items": items}
+
+
+@app.post("/api/diag/frontend-error")
+async def api_diag_frontend_error(request: Request):
+    """v1.6.0 — accept structured error reports from the dashboard JS.
+
+    Body: ``{"code": "E_FRONTEND_*", "context": {...}, "url": str, "user_agent": str}``.
+    Unknown codes are coerced to ``E_FRONTEND_GENERIC`` with the original
+    code preserved in context.
+    """
+    if not _diag_local_only(request):
+        return JSONResponse({"error": "local-only"}, status_code=403)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    raw_code = str(body.get("code") or "")
+    if error_codes.is_valid_code(raw_code):
+        code = raw_code
+        ctx_extra: dict = {}
+    else:
+        code = error_codes.Codes.FRONTEND_GENERIC
+        ctx_extra = {"original_code": raw_code or "(missing)"}
+    ctx = body.get("context") or {}
+    if not isinstance(ctx, dict):
+        ctx = {"_raw": str(ctx)[:200]}
+    ctx = dict(ctx)
+    ctx.update(ctx_extra)
+    if "url" in body:
+        ctx["url"] = str(body["url"])[:300]
+    if "user_agent" in body:
+        ctx["user_agent"] = str(body["user_agent"])[:200]
+    _log_error(code, **ctx)
+    return {"ok": True, "code": code}
+
+
+@app.get("/api/diag/health")
+def api_diag_health(request: Request):
+    """v1.6.0 — system-state self-check.
+
+    Always returns 200 so the modal can reach it even when the app is
+    in a degraded state. ``ok`` is False if ANY check failed; per-check
+    results are in ``checks``. 60-second in-process cache.
+    """
+    if not _diag_local_only(request):
+        return JSONResponse({"error": "local-only"}, status_code=403)
+    now = time.time()
+    cached = _DIAG_HEALTH_CACHE.get("result")
+    if cached is not None and (now - _DIAG_HEALTH_CACHE.get("ts", 0)) < _DIAG_HEALTH_CACHE_TTL:
+        return cached
+    checks: dict = {}
+    plan_path = _plan_dir() / "current_plan.json"
+    plan_data: dict | None = None
+    # plan_readable
+    try:
+        if not plan_path.exists():
+            checks["plan_readable"] = {"ok": False, "code": error_codes.Codes.PLAN_PARSE_MISSING}
+        else:
+            with open(plan_path, encoding="utf-8") as f:
+                plan_data = json.load(f)
+            checks["plan_readable"] = {"ok": True}
+    except json.JSONDecodeError as e:
+        checks["plan_readable"] = {"ok": False, "code": error_codes.Codes.PLAN_PARSE_CORRUPT, "msg": str(e)[:200]}
+    except OSError as e:
+        checks["plan_readable"] = {"ok": False, "code": error_codes.Codes.PLAN_LOAD_OS_ERROR, "msg": str(e)[:200]}
+    # workout_library
+    try:
+        lib = tp.load_workout_library()
+        checks["workout_library"] = {"ok": True, "count": len(lib) if hasattr(lib, "__len__") else None}
+    except Exception as e:
+        checks["workout_library"] = {"ok": False, "code": error_codes.Codes.ENRICH_LIBRARY, "msg": str(e)[:200]}
+    # enrich
+    if plan_data is not None and isinstance(plan_data, dict):
+        try:
+            sample = json.loads(json.dumps(plan_data, default=str))
+            _enrich_plan_for_response(sample, today_iso=date.today().isoformat())
+            # Spot-check at least one session got an enrichment field.
+            ok = False
+            for w in (sample.get("weeks") or []):
+                for s in (w.get("sessions") or []):
+                    if "card_state" in s or "card_state_v2" in s:
+                        ok = True
+                        break
+                if ok:
+                    break
+            checks["enrich"] = {"ok": True} if ok else {"ok": False, "code": error_codes.Codes.ENRICH_FAILED, "msg": "no card_state on any session"}
+        except Exception as e:
+            checks["enrich"] = {"ok": False, "code": error_codes.Codes.ENRICH_FAILED, "msg": str(e)[:200]}
+    else:
+        checks["enrich"] = {"ok": True, "skipped": "no plan_data"}
+    # rides_dir
+    try:
+        rides_dir = Path.home() / ".domestique" / "rides"
+        if rides_dir.exists():
+            _ = list(rides_dir.iterdir())
+        checks["rides_dir"] = {"ok": True, "exists": rides_dir.exists()}
+    except Exception as e:
+        checks["rides_dir"] = {"ok": False, "msg": str(e)[:200]}
+    # log_dir
+    try:
+        log_dir = Path.home() / ".domestique" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        checks["log_dir"] = {"ok": True, "writable": os.access(str(log_dir), os.W_OK)}
+    except Exception as e:
+        checks["log_dir"] = {"ok": False, "msg": str(e)[:200]}
+    overall_ok = all(c.get("ok") for c in checks.values())
+    result = {
+        "ok": overall_ok,
+        "checks": checks,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "ring_size": len(_DIAG_RING),
+    }
+    _DIAG_HEALTH_CACHE["result"] = result
+    _DIAG_HEALTH_CACHE["ts"] = now
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

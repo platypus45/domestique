@@ -1149,6 +1149,46 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
 <script src="/static/vendor/chart.umd.min.js"></script>
 </head>
 <body>
+<!-- v1.6.0 — Frontend error capture. Posts every uncaught error and
+     unhandled promise rejection to /api/diag/frontend-error so server-side
+     /api/diag/recent-errors picks them up. Defined inline (no /static/
+     dependency) so it loads before any other JS that might throw. -->
+<script>
+window._diagFrontendError = function(code, context) {
+  try {
+    fetch('/api/diag/frontend-error', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        code: code,
+        context: context || {},
+        url: location.href,
+        user_agent: navigator.userAgent
+      })
+    }).catch(function(){ /* silent — diag must never raise */ });
+  } catch(_) { /* silent */ }
+};
+window.addEventListener('error', function(e) {
+  try {
+    window._diagFrontendError('E_FRONTEND_UNHANDLED', {
+      msg: String((e && e.message) || ''),
+      src: String((e && e.filename) || ''),
+      line: (e && e.lineno) || 0,
+      col: (e && e.colno) || 0
+    });
+  } catch(_) {}
+});
+window.addEventListener('unhandledrejection', function(e) {
+  try {
+    var reason = e && e.reason;
+    var msg = '';
+    if (reason) {
+      msg = (reason.message != null) ? String(reason.message) : String(reason);
+    }
+    window._diagFrontendError('E_FRONTEND_PROMISE_REJECT', {reason: msg.slice(0, 300)});
+  } catch(_) {}
+});
+</script>
 <!-- SVG defs for gradients -->
 <svg width="0" height="0" style="position:absolute">
   <defs>
@@ -5072,7 +5112,11 @@ async function loadHome() {
     // v1.1.0 IMPL-HRV-RECOVERY — Readiness today (composite, 0-10).
     loadReadinessComposite();
 
-  } catch(e) { console.error(e); }
+  } catch(e) {
+    console.error(e);
+    // v1.6.0 — surface to /api/diag/recent-errors so server-side log has context
+    try { window._diagFrontendError('E_FRONTEND_LOADHOME', {msg: String(e && e.message || e)}); } catch(_) {}
+  }
 }
 
 // v1.1.0 IMPL-HRV-RECOVERY — Bayesian-composite readiness card.
@@ -9067,7 +9111,21 @@ async function loadCalendar() {
     }
     data = await res.json();
   } catch (e) {
+    try { window._diagFrontendError('E_FRONTEND_LOADCAL', {msg: String(e && e.message || e), stage: 'fetch'}); } catch(_) {}
     renderCalendarEmpty();
+    return;
+  }
+  // v1.6.0 — server may flag a corrupt-plan or merge failure with an
+  // error code AND empty weeks; render a clear "regenerate plan" hint
+  // instead of the generic empty skeleton.
+  if (data && data.error === 'E_PLAN_PARSE_CORRUPT') {
+    const host = document.getElementById('calendar') || document.getElementById('plan-calendar');
+    if (host) {
+      host.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text2);">' +
+        '<div style="font-size:14px;margin-bottom:8px;">Plan file is unreadable.</div>' +
+        '<div style="font-size:12px;color:var(--text3);">Open the Plan tab and click <b>Generate</b> to recover.</div>' +
+        '</div>';
+    }
     return;
   }
   if (!data || !Array.isArray(data.weeks) || data.weeks.length === 0) {
@@ -9075,11 +9133,21 @@ async function loadCalendar() {
     return;
   }
   window._calData = data;
-  renderCalendar(data);
+  try {
+    renderCalendar(data);
+  } catch (e) {
+    try { window._diagFrontendError('E_FRONTEND_RENDER_CAL', {msg: String(e && e.message || e)}); } catch(_) {}
+    renderCalendarEmpty();
+    return;
+  }
   // Also refresh THIS WEEK's plan-vs-actual rendering (B5).
-  try { renderThisWeekFromCalendar(data); } catch(_) {}
+  try { renderThisWeekFromCalendar(data); } catch(e) {
+    try { window._diagFrontendError('E_FRONTEND_RENDER_CAL', {msg: String(e && e.message || e), stage: 'thisweek'}); } catch(_) {}
+  }
   // v4.4.0 IMPL-UI: on-track summary block (closes user bug #4).
-  try { renderOnTrackBar(data); } catch(_) {}
+  try { renderOnTrackBar(data); } catch(e) {
+    try { window._diagFrontendError('E_FRONTEND_RENDER_CAL', {msg: String(e && e.message || e), stage: 'ontrack'}); } catch(_) {}
+  }
 }
 
 // v4.5.0 IMPL-UI Pillar C — Sync now: POST /api/rides/sync?force=1 (server
@@ -10004,7 +10072,12 @@ async function loadPlan() {
   let d;
   try {
     d = await (await fetch('/api/plan')).json();
-  } catch(e) { console.error('loadPlan failed:', e); $('plan-content').innerHTML = '<div style="color:var(--red);padding:20px;">Failed to load plan. Check server connection.</div>'; return; }
+  } catch(e) {
+    console.error('loadPlan failed:', e);
+    try { window._diagFrontendError('E_FRONTEND_LOADPLAN', {msg: String(e && e.message || e)}); } catch(_) {}
+    $('plan-content').innerHTML = '<div style="color:var(--red);padding:20px;">Failed to load plan. Check server connection.</div>';
+    return;
+  }
   if (d.plan_json) {
     await renderPlanJSON(d.plan_json);
   }
@@ -13525,6 +13598,74 @@ document.addEventListener('DOMContentLoaded', () => {
   // v4.6.0 IMPL-PLAN-CONFIG-UI: initialize goal-aware PLAN WEEKS state +
   // populate Plan Overview right panel before user clicks Generate.
   try { if (document.getElementById('plan-goal')) togglePlanFields(); } catch(_) {}
+});
+
+// v1.6.0 — Diagnostics modal. Pulls last 20 errors + system health and
+// renders them in a small read-only modal. Triggered by the footer link.
+async function openDiagnosticsModal() {
+  let modal = document.getElementById('diag-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'diag-modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;';
+    modal.innerHTML = '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;max-width:760px;width:90%;max-height:80vh;overflow:auto;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+      '<h3 style="font-size:14px;color:var(--text);">Diagnostics</h3>' +
+      '<button onclick="document.getElementById(\'diag-modal\').remove()" style="background:none;border:none;color:var(--text2);font-size:18px;cursor:pointer;">&times;</button>' +
+      '</div>' +
+      '<div id="diag-body" style="font-size:12px;color:var(--text2);">Loading…</div>' +
+      '</div>';
+    document.body.appendChild(modal);
+    modal.addEventListener('click', function(e) { if (e.target === modal) modal.remove(); });
+  }
+  const body = document.getElementById('diag-body');
+  try {
+    const [healthR, errorsR] = await Promise.all([
+      fetch('/api/diag/health').then(r => r.json()),
+      fetch('/api/diag/recent-errors?limit=20').then(r => r.json())
+    ]);
+    let html = '<div style="margin-bottom:12px;"><b>Health:</b> ' +
+      (healthR.ok ? '<span style="color:var(--green);">OK</span>' : '<span style="color:var(--red);">DEGRADED</span>') +
+      '</div>';
+    html += '<div style="margin-bottom:12px;font-size:11px;"><b>Checks:</b><ul style="list-style:none;padding-left:8px;">';
+    for (const k in (healthR.checks || {})) {
+      const v = healthR.checks[k];
+      const ok = v && v.ok;
+      html += '<li>' + (ok ? '<span style="color:var(--green);">&check;</span>' : '<span style="color:var(--red);">&times;</span>') + ' ' + k;
+      if (!ok && v) html += ' <span style="color:var(--text3);">(' + (v.code || v.msg || '') + ')</span>';
+      html += '</li>';
+    }
+    html += '</ul></div>';
+    html += '<div><b>Last errors (' + (errorsR.count || 0) + '):</b></div>';
+    if (!errorsR.items || errorsR.items.length === 0) {
+      html += '<div style="color:var(--text3);font-size:11px;">No errors recorded since boot.</div>';
+    } else {
+      html += '<table style="width:100%;font-size:11px;border-collapse:collapse;margin-top:6px;">';
+      html += '<thead><tr style="border-bottom:1px solid var(--border);"><th style="text-align:left;padding:4px;">When</th><th style="text-align:left;padding:4px;">Code</th><th style="text-align:left;padding:4px;">Detail</th></tr></thead><tbody>';
+      for (const e of errorsR.items) {
+        const ts = (e.ts || '').replace('T', ' ').slice(0, 19);
+        const detail = (e.exc_msg || '') + ' ' + JSON.stringify(e.context || {});
+        html += '<tr style="border-bottom:1px solid var(--border);"><td style="padding:4px;color:var(--text3);">' + ts + '</td>' +
+          '<td style="padding:4px;font-family:monospace;">' + (e.code || '') + '</td>' +
+          '<td style="padding:4px;color:var(--text3);">' + detail.slice(0, 160).replace(/</g,'&lt;') + '</td></tr>';
+      }
+      html += '</tbody></table>';
+    }
+    body.innerHTML = html;
+  } catch (e) {
+    body.innerHTML = '<div style="color:var(--red);">Could not load diagnostics: ' + String(e && e.message || e) + '</div>';
+  }
+}
+
+// Footer link injection — runs once on DOMContentLoaded so it always exists.
+document.addEventListener('DOMContentLoaded', function() {
+  if (document.getElementById('diag-footer-link')) return;
+  const container = document.querySelector('.container') || document.body;
+  const footer = document.createElement('div');
+  footer.id = 'diag-footer-link';
+  footer.style.cssText = 'text-align:center;padding:12px 0;font-size:11px;color:var(--text3);';
+  footer.innerHTML = '<a href="#" onclick="event.preventDefault();openDiagnosticsModal();" style="color:var(--text3);text-decoration:none;">Diagnostics</a>';
+  container.appendChild(footer);
 });
 </script>
 </body>

@@ -4981,8 +4981,15 @@ def reforecast(
     touched: set[str] = set()
     if availability_overrides:
         for pw in plan_weeks:
-            if pw.start < today:
-                continue  # past weeks — don't touch
+            # v1.3.5 fix: gate on pw.end (mirrors the G3 downshift block at
+            # line ~5021). The pre-fix `pw.start < today` test silently
+            # skipped the *current* week — whose Monday is by definition <
+            # today on any non-Monday — so a Sat/Sun=0 UPDATE click left
+            # those days as planned z2/long sessions on disk. Gating on
+            # pw.end keeps past *completed* weeks out while still letting
+            # the current week's future days be re-rested.
+            if pw.end < today:
+                continue  # fully-past weeks — don't touch
             week_keys = [
                 s.day.isoformat() for s in pw.sessions
                 if s.day.isoformat() in availability_overrides
@@ -5006,9 +5013,15 @@ def reforecast(
                     continue
                 hours = float(availability_overrides[d_iso])
                 if hours <= 0:
+                    # v1.3.5 fix: also clear ZWO + description so the
+                    # dashboard renders the cell as REST (mirrors the
+                    # generate_plan block at line ~4202).
                     s.session_type = "rest"
                     s.duration_min = 0
                     s.tss_estimate = 0
+                    s.description = "Rest (unavailable)"
+                    s.zwo_file = ""
+                    s.zwo_name = ""
                 else:
                     new_dur = max(0, int(round(s.duration_min * scale)))
                     s.duration_min = new_dur

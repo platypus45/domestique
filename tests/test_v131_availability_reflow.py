@@ -160,7 +160,9 @@ class TestAvailabilityReflow(AvailabilityReflowBase):
 
     def test_response_reports_sessions_modified_count(self):
         # Mark Sat AND Sun unavailable. Sat had a planned session; Sun was
-        # already REST 0min 0TSS — only Sat should count as modified.
+        # already REST 0min 0TSS but its description changes from the
+        # planned ``rest 0min`` to the v1.3.5 ``Rest (unavailable)`` marker,
+        # so both days now count as modified.
         body = {
             "availability": {
                 self._sat.isoformat(): {"hours": 0, "type": "holiday"},
@@ -174,8 +176,9 @@ class TestAvailabilityReflow(AvailabilityReflowBase):
         self.assertEqual(r.status_code, 200, r.text)
         data = r.json()
         self.assertTrue(data.get("ok"))
-        # Sat changed (long_z2 → rest); Sun was already rest=0/0 so no change.
-        self.assertEqual(data.get("sessions_modified"), 1)
+        # Sat changed (long_z2 → rest); Sun's description flips to
+        # "Rest (unavailable)" so it also counts as modified post-v1.3.5.
+        self.assertEqual(data.get("sessions_modified"), 2)
 
     def test_idempotent_second_save_returns_zero_modified(self):
         body = {

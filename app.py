@@ -7211,16 +7211,27 @@ async def api_save_availability(request: Request):
                     src = by_day.get(day_iso)
                     if src is None:
                         continue
+                    # v1.3.5 fix: also diff/propagate zwo_file, zwo_name,
+                    # description. When reforecast() rests a day it clears
+                    # those fields (so the dashboard renders REST); pre-fix
+                    # the propagation loop only copied session_type /
+                    # duration / tss back, leaving stale zwo_name on disk.
                     changed = (
                         s_json.get("session_type") != src.session_type
                         or int(s_json.get("duration_min", 0) or 0) != src.duration_min
                         or float(s_json.get("tss_estimate", 0) or 0) != src.tss_estimate
+                        or (s_json.get("zwo_file", "") or "") != (src.zwo_file or "")
+                        or (s_json.get("zwo_name", "") or "") != (src.zwo_name or "")
+                        or (s_json.get("description", "") or "") != (src.description or "")
                     )
                     if not changed:
                         continue
                     s_json["session_type"] = src.session_type
                     s_json["duration_min"] = src.duration_min
                     s_json["tss_estimate"] = src.tss_estimate
+                    s_json["zwo_file"] = src.zwo_file or ""
+                    s_json["zwo_name"] = src.zwo_name or ""
+                    s_json["description"] = src.description or ""
                     sessions_modified += 1
         except Exception:  # noqa: BLE001
             # Reflow is best-effort: if reforecast errors we still persist the

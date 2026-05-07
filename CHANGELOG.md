@@ -1,5 +1,44 @@
 # Changelog
 
+## v1.6.1 — Fine-grained logging wired into homepage + training planner (2026-05-07)
+
+v1.6.0 shipped the infrastructure (error_codes.py, `_log_error`, ring buffer, diag endpoints). v1.6.1 wires that infrastructure into the user-visible critical paths so the next "homepage empty" report carries actual evidence.
+
+### Wired sites
+
+**Frontend** (`templates/dashboard.html`) — 6 loaders wrapped with FETCH/PARSE/RENDER `_diagFrontendError(code, ctx)` + render-fallback:
+- `loadHome()` (root loader)
+- `loadFitnessChart()` (`/api/wellness`)
+- `loadTodaySession()` (`/api/today-session`)
+- `loadBodyPerf()` (body-perf-card)
+- eFTP progress block
+- `energySystemChart()` (Banister curves)
+
+**Backend** — 3 homepage endpoints wrapped in outer try/except with `_log_error` on raise + re-raise (preserves 200/500 surface):
+- `/api/wellness` → `E_WELLNESS_FETCH_FAILED`
+- `/api/activities` → `E_ACTIVITIES_LIST_FAILED` (per-ride parse failures emit `E_RIDE_PARSE_*` with ride_id)
+- `/api/today-session` → `E_TODAY_SESSION_LOOKUP_FAILED`
+
+**Training planner** (`training_planner.py`) — new `_tp_log_error` helper (avoids circular import with `app.py`); per-phase, per-week, per-step instrumentation:
+- `generate_plan()` per-phase build → `E_PLAN_PHASE_BUILD_FAILED`
+- `reforecast()` per-week → `E_REFORECAST_WEEK_FAILED`
+- `reforecast_dict()` step-wise → `E_REFORECAST_DICT_FAILED`
+- `_plan_dict_to_planned_weeks()` malformed weeks → `E_REFORECAST_DICT_TO_PW` (WARN, recoverable)
+- `match_zwo()` → `E_MATCH_ZWO_NO_CANDIDATES` / `E_MATCH_ZWO_ALL_FILTERED` / `E_MATCH_ZWO_MALFORMED_META`
+- `derive_phases()` → `E_PHASE_DERIVE_FAILED`
+
+### New error codes
+
+31 new codes (20 frontend, 4 backend, 7 planner). Total now 67 across `E_PLAN_*`, `E_ENRICH_*`, `E_REFORECAST_*`, `E_CACHE_*`, `E_CALENDAR_*`, `E_AUGMENT_*`, `E_RIDE_*`, `E_FRONTEND_*`, `E_WELLNESS_*`, `E_ACTIVITIES_*`, `E_TODAY_SESSION_*`, `E_MATCH_ZWO_*`, `E_PHASE_*`, `E_PLAN_PHASE_*`.
+
+### Tests
+
+11 new across 3 files: `test_v161_frontend_logging.py` (regex-grep template + diag-helper invocation), `test_v161_planner_logging.py` (synthetic exceptions in generate_phases / plan_week / `_plan_dict_to_planned_weeks` / `match_zwo`), `test_v161_homepage_endpoint_logging.py` (synthetic exceptions in wellness / activities / today-session paths). 1215 → **1223 passing** (+8 net visible — 11 new less 3 fixtures consolidated).
+
+### Why this matters
+
+When you see "homepage empty" again: open the 🔬 Diagnostics modal (footer link) and see the exact code + context. No more guessing.
+
 ## v1.6.0 — Error-codes + logging infrastructure (2026-05-07)
 
 Closes the "homepage empty, why?" debug gap. Three parallel investigation agents (Wave 1) confirmed v1.5.1 server + bundle are correct, surfaced 3 silent-swallow sites in `app.py` that mask render-blocking errors. v1.6.0 builds the infrastructure to surface those errors to user + remote diagnostics.

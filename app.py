@@ -131,6 +131,14 @@ import config
 import db
 import zones as _zones_mod
 import training_planner as tp  # module-level: every plan endpoint uses tp.plan_write_lock()
+# v1.6.1 — register _log_error as the planner's observability hook so any
+# planner-internal failure (generate_plan phase build, reforecast, match_zwo
+# library scan) lands in the shared diag ring buffer. Hook indirection
+# avoids the cycle that would result from training_planner importing app.
+try:
+    tp._set_log_error_hook(_log_error)
+except Exception:
+    pass
 
 # User data directory — must be defined before any path that uses it.
 # NOTE: directory creation is deferred until lifespan startup (after
@@ -1837,56 +1845,63 @@ async def api_wellness_manual_hrv(request: Request):
 
 @app.get("/api/activities")
 def api_activities():
-    # v4.4.2 §B1+B2: wire lazy ICU sync here so the frontpage triggers
-    # syncs (loadHome calls /api/activities, not /api/calendar). Also
-    # force-resync if today's date isn't cached locally.
+    # v1.6.1: outer-fn try; surfaces E_ACTIVITIES_LIST_FAILED on any uncaught
+    # exception so the diag ring carries evidence when the homepage list is
+    # mysteriously empty.
     try:
-        _maybe_lazy_icu_sync(force_if_today_missing=True)
+        # v4.4.2 §B1+B2: wire lazy ICU sync here so the frontpage triggers
+        # syncs (loadHome calls /api/activities, not /api/calendar). Also
+        # force-resync if today's date isn't cached locally.
+        try:
+            _maybe_lazy_icu_sync(force_if_today_missing=True)
+        except Exception as _e:
+            _log.debug(f"/api/activities: lazy ICU sync swallowed: {_e}")
+        training = cached("training", get_today_metrics)
+        activities = training.get("recent_activities", [])
+        if activities:
+            return activities
+        # v4.4.2 §B1: when ICU wellness path returns empty, fall back to the
+        # local rides store (FIT + ICU-synced) so today's ride still surfaces
+        # on the frontpage.
+        try:
+            rides = _load_all_rides_safe()
+        except Exception:
+            rides = []
+        if rides:
+            out = []
+            cutoff = (date.today() - timedelta(days=7)).isoformat()
+            for r in rides:
+                d = _ride_started_local_iso_date(r) or ""
+                if not d or d < cutoff:
+                    continue
+                summary = r.get("summary") or {}
+                out.append({
+                    "date": d,
+                    "name": r.get("name") or summary.get("name") or "",
+                    "sport": r.get("sport") or "Ride",
+                    "duration_min": round((r.get("duration_s") or summary.get("duration_s") or 0) / 60),
+                    "tss": r.get("tss") if r.get("tss") is not None else summary.get("tss"),
+                    "avg_power": r.get("avg_power_w") if r.get("avg_power_w") is not None else summary.get("avg_power"),
+                    "avg_hr": r.get("avg_hr") if r.get("avg_hr") is not None else summary.get("avg_hr"),
+                    "id": r.get("ride_id") or r.get("id") or "",
+                })
+            if out:
+                out.sort(key=lambda a: a.get("date") or "", reverse=True)
+                return out
+        # Final fallback to SQLite
+        rows = db.query_activities(days=7)
+        return [
+            {
+                "date": r["date"], "name": r.get("name", ""),
+                "sport": r.get("sport", ""), "duration_min": round((r.get("duration_sec") or 0) / 60),
+                "tss": r.get("tss"), "avg_power": r.get("avg_power"), "avg_hr": r.get("avg_hr"),
+                "id": r.get("id"),
+            }
+            for r in rows
+        ]
     except Exception as _e:
-        _log.debug(f"/api/activities: lazy ICU sync swallowed: {_e}")
-    training = cached("training", get_today_metrics)
-    activities = training.get("recent_activities", [])
-    if activities:
-        return activities
-    # v4.4.2 §B1: when ICU wellness path returns empty, fall back to the
-    # local rides store (FIT + ICU-synced) so today's ride still surfaces
-    # on the frontpage.
-    try:
-        rides = _load_all_rides_safe()
-    except Exception:
-        rides = []
-    if rides:
-        out = []
-        cutoff = (date.today() - timedelta(days=7)).isoformat()
-        for r in rides:
-            d = _ride_started_local_iso_date(r) or ""
-            if not d or d < cutoff:
-                continue
-            summary = r.get("summary") or {}
-            out.append({
-                "date": d,
-                "name": r.get("name") or summary.get("name") or "",
-                "sport": r.get("sport") or "Ride",
-                "duration_min": round((r.get("duration_s") or summary.get("duration_s") or 0) / 60),
-                "tss": r.get("tss") if r.get("tss") is not None else summary.get("tss"),
-                "avg_power": r.get("avg_power_w") if r.get("avg_power_w") is not None else summary.get("avg_power"),
-                "avg_hr": r.get("avg_hr") if r.get("avg_hr") is not None else summary.get("avg_hr"),
-                "id": r.get("ride_id") or r.get("id") or "",
-            })
-        if out:
-            out.sort(key=lambda a: a.get("date") or "", reverse=True)
-            return out
-    # Final fallback to SQLite
-    rows = db.query_activities(days=7)
-    return [
-        {
-            "date": r["date"], "name": r.get("name", ""),
-            "sport": r.get("sport", ""), "duration_min": round((r.get("duration_sec") or 0) / 60),
-            "tss": r.get("tss"), "avg_power": r.get("avg_power"), "avg_hr": r.get("avg_hr"),
-            "id": r.get("id"),
-        }
-        for r in rows
-    ]
+        _log_error(error_codes.Codes.ACTIVITIES_LIST_FAILED, exc=_e)
+        raise
 
 
 # v1.3.3 — Banister τ defaults for the three Kontro 2026 components.
@@ -2030,51 +2045,59 @@ def _wellness_record_to_api_dict(w: dict) -> dict:
 
 @app.get("/api/wellness")
 def api_wellness(days: int = Query(28)):
-    # Try live API first, fall back to local file store, then SQLite.
-    data = cached(f"wellness_{days}", lambda: fetch_wellness(days))
-    if data:
-        # v1.3.3: convolve per-day SS_x series (athlete_metrics) into per-day
-        # CP / W' / Pmax fitness curves and stamp them onto the records the
-        # dashboard energy-system chart reads.
-        _augment_wellness_with_3d_fitness(data)
-        return [_wellness_record_to_api_dict(w) for w in data]
-    # v4.5.0: local file store fallback. If empty AND ICU creds available,
-    # do a one-shot fetch + persist before returning.
+    # v1.6.1: outer-fn try wraps the whole compute path so any unexpected
+    # throw lands in the diag ring as E_WELLNESS_FETCH_FAILED before being
+    # re-raised. Inner branches keep their own narrower fallbacks (cached
+    # already logs E_CACHE_WELLNESS; ride_storage debug-logs).
     try:
-        import ride_storage as _rs
-        local = _rs.load_recent_wellness(days=days)
-    except Exception as e:
-        _log.debug(f"/api/wellness local load failed: {e}")
-        local = []
-    if not local and _icu_credentials_present():
+        # Try live API first, fall back to local file store, then SQLite.
+        data = cached(f"wellness_{days}", lambda: fetch_wellness(days))
+        if data:
+            # v1.3.3: convolve per-day SS_x series (athlete_metrics) into per-day
+            # CP / W' / Pmax fitness curves and stamp them onto the records the
+            # dashboard energy-system chart reads.
+            _augment_wellness_with_3d_fitness(data)
+            return [_wellness_record_to_api_dict(w) for w in data]
+        # v4.5.0: local file store fallback. If empty AND ICU creds available,
+        # do a one-shot fetch + persist before returning.
         try:
-            _sync_icu_wellness(force=True, days=days)
+            import ride_storage as _rs
             local = _rs.load_recent_wellness(days=days)
         except Exception as e:
-            _log.debug(f"/api/wellness one-shot sync failed: {e}")
-    if local:
-        # local records are newest-first; API contract is unspecified order so
-        # leave as-is.
-        _augment_wellness_with_3d_fitness(local)
-        return [_wellness_record_to_api_dict(w) for w in local]
-    # Fallback to SQLite — reshape into the ICU-record shape the augmenter
-    # expects (id-keyed) before convolving, then project the API dict.
-    rows = db.query_wellness(days)
-    shaped = [
-        {
-            "id": r["date"],
-            "ctl": r.get("ctl"),
-            "atl": r.get("atl"),
-            "hrv": r.get("hrv"),
-            "restingHR": r.get("rhr"),
-            "sleepSecs": r.get("sleep_secs"),
-            "sleepScore": r.get("sleep_score"),
-            "sportInfo": [{"eftp": r.get("eftp")}] if r.get("eftp") is not None else [],
-        }
-        for r in rows
-    ]
-    _augment_wellness_with_3d_fitness(shaped)
-    return [_wellness_record_to_api_dict(w) for w in shaped]
+            _log.debug(f"/api/wellness local load failed: {e}")
+            local = []
+        if not local and _icu_credentials_present():
+            try:
+                _sync_icu_wellness(force=True, days=days)
+                local = _rs.load_recent_wellness(days=days)
+            except Exception as e:
+                _log.debug(f"/api/wellness one-shot sync failed: {e}")
+        if local:
+            # local records are newest-first; API contract is unspecified order so
+            # leave as-is.
+            _augment_wellness_with_3d_fitness(local)
+            return [_wellness_record_to_api_dict(w) for w in local]
+        # Fallback to SQLite — reshape into the ICU-record shape the augmenter
+        # expects (id-keyed) before convolving, then project the API dict.
+        rows = db.query_wellness(days)
+        shaped = [
+            {
+                "id": r["date"],
+                "ctl": r.get("ctl"),
+                "atl": r.get("atl"),
+                "hrv": r.get("hrv"),
+                "restingHR": r.get("rhr"),
+                "sleepSecs": r.get("sleep_secs"),
+                "sleepScore": r.get("sleep_score"),
+                "sportInfo": [{"eftp": r.get("eftp")}] if r.get("eftp") is not None else [],
+            }
+            for r in rows
+        ]
+        _augment_wellness_with_3d_fitness(shaped)
+        return [_wellness_record_to_api_dict(w) for w in shaped]
+    except Exception as _e:
+        _log_error(error_codes.Codes.WELLNESS_FETCH_FAILED, exc=_e, days=days)
+        raise
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -6035,7 +6058,21 @@ async def api_today_session_persist(request: Request):
 
 @app.get("/api/today-session")
 def api_today_session():
-    """Return today's adjusted session based on readiness + HRV protocol."""
+    """Return today's adjusted session based on readiness + HRV protocol.
+
+    v1.6.1: thin wrapper around _api_today_session_impl that surfaces any
+    uncaught exception as E_TODAY_SESSION_LOOKUP_FAILED in the diag ring
+    before re-raising. The impl path is unchanged.
+    """
+    try:
+        return _api_today_session_impl()
+    except Exception as _e:
+        _log_error(error_codes.Codes.TODAY_SESSION_LOOKUP_FAILED, exc=_e)
+        raise
+
+
+def _api_today_session_impl():
+    """Internal — actual /api/today-session compute path."""
     # v4.4.2 §B1+B2: lazy ICU sync hook so frontpage triggers it.
     try:
         _maybe_lazy_icu_sync(force_if_today_missing=True)

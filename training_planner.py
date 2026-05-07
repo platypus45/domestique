@@ -43,6 +43,53 @@ import threading
 import xml.etree.ElementTree as ET
 
 log = logging.getLogger(__name__)
+
+# v1.6.1 — observability hook. ``app.py``'s ``_log_error`` is registered via
+# ``_set_log_error_hook`` immediately after ``import training_planner`` so
+# planner-internal failures land in the same diag ring buffer as the rest
+# of the app. The hook is optional: when running training_planner stand-
+# alone (CLI / tests that don't import app), ``_tp_log_error`` falls back
+# to stdlib logging so observability still gets a record. The indirection
+# avoids a circular import (app -> tp -> app).
+import error_codes  # leaf module — no circular risk
+_LOG_ERROR_HOOK = None
+
+
+def _set_log_error_hook(fn) -> None:
+    """Register the app-level _log_error funnel for planner observability."""
+    global _LOG_ERROR_HOOK
+    _LOG_ERROR_HOOK = fn
+
+
+def _tp_log_error(code: str, exc: Exception | None = None, **context) -> None:
+    """Emit a structured E_<code> via the registered hook (or stdlib log).
+
+    Always non-throwing — used inside except clauses.
+    """
+    try:
+        if _LOG_ERROR_HOOK is not None:
+            _LOG_ERROR_HOOK(code, exc=exc, **context)
+            return
+        # Fallback path — stdlib logger only. The diag ring is unreachable
+        # without the hook, but the line still appears in the boot log.
+        meta = error_codes.metadata(code)
+        severity = (meta or {}).get("severity", "ERROR")
+        ctx_repr = " ".join(f"{k}={v!r}" for k, v in context.items())
+        if severity == "WARN":
+            level = logging.WARNING
+        elif severity == "INFO":
+            level = logging.INFO
+        else:
+            level = logging.ERROR
+        if exc is not None:
+            log.log(level, "%s %s exc=%s:%s", code, ctx_repr,
+                    type(exc).__name__, str(exc)[:300])
+        else:
+            log.log(level, "%s %s", code, ctx_repr)
+    except Exception:
+        pass
+
+
 from contextlib import contextmanager
 from dataclasses import dataclass, field, asdict
 from datetime import date, datetime, timedelta
@@ -2379,14 +2426,22 @@ def match_zwo(
     # Sweet Spot / Threshold). Planner types "ftp_test" explicitly opt in.
     want_test = session.session_type == "ftp_test"
     for w in library:
-        if w["Score"] < 3:
+        try:
+            if w["Score"] < 3:
+                continue
+            tags_lower = {t.lower() for t in (w.get("Tags") or [])}
+            if "ftp_test" in tags_lower and not want_test:
+                continue
+            if want_test and "ftp_test" not in tags_lower:
+                continue
+            dur_diff = abs(w["Duration(min)"] - target_dur)
+        except (KeyError, TypeError) as _e:
+            # v1.6.1 — library entry has malformed metadata (e.g. missing
+            # Score / Duration field). Skip + log; the rest of the loop
+            # continues so one bad row doesn't tank the whole match.
+            _tp_log_error(error_codes.Codes.MATCH_ZWO_MALFORMED_META, exc=_e,
+                          file=(w or {}).get("File", "?"))
             continue
-        tags_lower = {t.lower() for t in (w.get("Tags") or [])}
-        if "ftp_test" in tags_lower and not want_test:
-            continue
-        if want_test and "ftp_test" not in tags_lower:
-            continue
-        dur_diff = abs(w["Duration(min)"] - target_dur)
         # PL7: duration bucket uses <= at the 120-min boundary so a 120-min
         # workout picks up the wider (60-min) tolerance. The previous
         # `target_dur >= 120` vs strict `<` cousin step caused a 120-min
@@ -2475,6 +2530,14 @@ def match_zwo(
                 target_dur, session.session_type,
                 primary_cat, picked.get("Duration(min)"),
             )
+            # v1.6.1 — coverage-pool fallback fired (primary pool empty).
+            # WARN severity: recoverable degradation; the picked file is
+            # the longest in the right category but may not match duration.
+            _tp_log_error(error_codes.Codes.MATCH_ZWO_ALL_FILTERED,
+                          session_type=session.session_type,
+                          target_dur=target_dur,
+                          picked_file=session.zwo_file,
+                          picked_dur=picked.get("Duration(min)"))
             return session
         # Nothing in any acceptable category — preserve old behaviour.
         log.warning(
@@ -2484,6 +2547,12 @@ def match_zwo(
             getattr(session, "target_if", None),
             primary_cat, fallback_cats, len(library),
         )
+        # v1.6.1 — both pools empty: nothing in the library for this slot.
+        _tp_log_error(error_codes.Codes.MATCH_ZWO_NO_CANDIDATES,
+                      session_type=session.session_type,
+                      target_dur=target_dur,
+                      primary_cat=primary_cat,
+                      library_size=len(library))
         if raise_on_empty:
             raise NoCandidateWorkoutError(
                 f"No candidate workouts for duration={target_dur}min "
@@ -4004,7 +4073,16 @@ def generate_plan(
     if current_ctl is None:
         current_ctl = 37.0
 
-    phases = generate_phases(goal, current_ctl)
+    try:
+        phases = generate_phases(goal, current_ctl)
+    except Exception as _e:
+        # v1.6.1 — phase derivation failed (bad goal inputs / target_date in past).
+        # Re-raise after logging so the caller (app.py /api/plan/generate) can
+        # surface the failure to the user.
+        _tp_log_error(error_codes.Codes.PHASE_DERIVE_FAILED, exc=_e,
+                      goal_type=getattr(goal, "goal_type", "?"),
+                      current_ctl=current_ctl)
+        raise
     library = load_workout_library()
 
     # The plan's anchor date for stable seeding: start of the first phase.
@@ -4046,102 +4124,113 @@ def generate_plan(
     class_distinct_files: dict[str, set] = {}
     plan_total_weeks = sum(p.weeks for p in phases) if phases else 0
     for phase in phases:
-        cursor = phase.start
-        week_in_phase = 0  # 0-indexed within this phase (for Layer 2 mix-row pick)
-        while cursor <= phase.end:
-            global_week += 1
-            is_stepback = (global_week % STEP_BACK_EVERY == 0) and phase.name not in ("taper",)
+        # v1.6.1 — wrap each phase's per-week build so an exception inside
+        # plan_week / sample_week_workouts / match_zwo surfaces as
+        # E_PLAN_PHASE_BUILD_FAILED with phase-name + week-num context. We
+        # re-raise so the caller (app.py /api/plan/generate) returns 500;
+        # the diag ring carries the structured breadcrumb for triage.
+        try:
+            cursor = phase.start
+            week_in_phase = 0  # 0-indexed within this phase (for Layer 2 mix-row pick)
+            while cursor <= phase.end:
+                global_week += 1
+                is_stepback = (global_week % STEP_BACK_EVERY == 0) and phase.name not in ("taper",)
 
-            # Run plan_week first so the legacy structural skeleton (rest days,
-            # 48h-gap, ftp_test slots) is preserved. Then the sampler overwrites
-            # non-rest slots with library-sampled workouts.
-            pw = plan_week(week_num, cursor, phase, goal, is_stepback,
-                           prev_week_sessions=prev_week_sessions,
-                           seed_salt=seed_salt)
+                # Run plan_week first so the legacy structural skeleton (rest days,
+                # 48h-gap, ftp_test slots) is preserved. Then the sampler overwrites
+                # non-rest slots with library-sampled workouts.
+                pw = plan_week(week_num, cursor, phase, goal, is_stepback,
+                               prev_week_sessions=prev_week_sessions,
+                               seed_salt=seed_salt)
 
-            # v4.6.0: rolling-eviction window 12 weeks (was 24) so files
-            # re-enter the "fresh" novelty pool sooner in long plans.
-            stale = [n for n, wk in used_names_dict.items()
-                     if week_num - wk >= _USED_NAMES_ROLLING_WEEKS]
-            for n in stale:
-                used_names_dict.pop(n, None)
-                used_names_set.discard(n)
+                # v4.6.0: rolling-eviction window 12 weeks (was 24) so files
+                # re-enter the "fresh" novelty pool sooner in long plans.
+                stale = [n for n, wk in used_names_dict.items()
+                         if week_num - wk >= _USED_NAMES_ROLLING_WEEKS]
+                for n in stale:
+                    used_names_dict.pop(n, None)
+                    used_names_set.discard(n)
 
-            # v4.5.0 IMPL-PLANNER: sampler-driven workout selection per week.
-            budget = get_budget_for_phase(phase.name)
-            phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
-            sampled = sample_week_workouts(
-                phase=phase, budget=budget, library=library,
-                used_names=used_names_dict,
-                week_num=week_num, seed_salt=seed_salt,
-                week_start=cursor,
-                available_days=goal.available_days,
-                rest_days=goal.rest_days,
-                daily_max_hours=goal.daily_max_hours,
-                max_weekday_hours=goal.max_weekday_hours,
-                max_weekend_hours=goal.max_weekend_hours,
-                is_stepback=is_stepback,
-                pool_index=pool_index,
-                week_in_phase=week_in_phase,
-                recent_hit_types=phase_rot,
-                seen_cc_dur_tuples=seen_cc_dur_tuples,
-                plan_pick_counts=plan_pick_counts,
-                class_session_counts=class_session_counts,
-                class_distinct_files=class_distinct_files,
-                plan_total_weeks=plan_total_weeks,
-            )
-            # Trim rotation window to last 4 weeks worth of picks (≤3 HITs/wk
-            # × 4 weeks = 12 entries max). Anything older has no penalty.
-            if len(phase_rot) > 12:
-                del phase_rot[: len(phase_rot) - 12]
-            # Mirror used_names_dict updates into the set for legacy callers.
-            for nm in used_names_dict:
-                used_names_set.add(nm)
+                # v4.5.0 IMPL-PLANNER: sampler-driven workout selection per week.
+                budget = get_budget_for_phase(phase.name)
+                phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
+                sampled = sample_week_workouts(
+                    phase=phase, budget=budget, library=library,
+                    used_names=used_names_dict,
+                    week_num=week_num, seed_salt=seed_salt,
+                    week_start=cursor,
+                    available_days=goal.available_days,
+                    rest_days=goal.rest_days,
+                    daily_max_hours=goal.daily_max_hours,
+                    max_weekday_hours=goal.max_weekday_hours,
+                    max_weekend_hours=goal.max_weekend_hours,
+                    is_stepback=is_stepback,
+                    pool_index=pool_index,
+                    week_in_phase=week_in_phase,
+                    recent_hit_types=phase_rot,
+                    seen_cc_dur_tuples=seen_cc_dur_tuples,
+                    plan_pick_counts=plan_pick_counts,
+                    class_session_counts=class_session_counts,
+                    class_distinct_files=class_distinct_files,
+                    plan_total_weeks=plan_total_weeks,
+                )
+                # Trim rotation window to last 4 weeks worth of picks (≤3 HITs/wk
+                # × 4 weeks = 12 entries max). Anything older has no penalty.
+                if len(phase_rot) > 12:
+                    del phase_rot[: len(phase_rot) - 12]
+                # Mirror used_names_dict updates into the set for legacy callers.
+                for nm in used_names_dict:
+                    used_names_set.add(nm)
 
-            # Replace pw.sessions with the sampled set, BUT preserve any
-            # ftp_test slots from plan_week (the sampler doesn't pick those —
-            # ftp_test workouts have an explicit tag and are excluded from the
-            # sampler's pool).
-            for off, legacy_s in enumerate(pw.sessions):
-                if getattr(legacy_s, "session_type", "") == "ftp_test":
-                    continue
-                if 0 <= off < len(sampled) and sampled[off] is not None:
-                    pw.sessions[off] = sampled[off]
+                # Replace pw.sessions with the sampled set, BUT preserve any
+                # ftp_test slots from plan_week (the sampler doesn't pick those —
+                # ftp_test workouts have an explicit tag and are excluded from the
+                # sampler's pool).
+                for off, legacy_s in enumerate(pw.sessions):
+                    if getattr(legacy_s, "session_type", "") == "ftp_test":
+                        continue
+                    if 0 <= off < len(sampled) and sampled[off] is not None:
+                        pw.sessions[off] = sampled[off]
 
-            # Apply unavailable-period overrides + final fallback match_zwo for
-            # any slot the sampler couldn't fill (rare — usually only ftp_test).
-            for day_idx, s in enumerate(pw.sessions):
-                if _in_unavailable(s.day):
-                    s.session_type = "rest"
-                    s.duration_min = 0
-                    s.tss_estimate = 0
-                    s.description = "Rest (unavailable)"
-                    s.zwo_file = ""
-                    s.zwo_name = ""
-                    continue
-                if s.session_type == "ftp_test":
-                    continue
-                if s.session_type == "rest":
-                    continue
-                # If the sampler already filled zwo_file, skip match_zwo.
-                if getattr(s, "zwo_file", ""):
-                    continue
-                # Fallback path — match_zwo for unfilled slots.
-                before = len(used_names_set)
-                match_zwo(s, library, week_num=week_num, day_idx=day_idx,
-                          used_names=used_names_set, plan_start_date=plan_start_date,
-                          seed_salt=seed_salt)
-                if not getattr(s, "matched", True):
-                    unmatched_count += 1
-                if len(used_names_set) > before:
-                    for n in used_names_set - set(used_names_dict.keys()):
-                        used_names_dict[n] = week_num
+                # Apply unavailable-period overrides + final fallback match_zwo for
+                # any slot the sampler couldn't fill (rare — usually only ftp_test).
+                for day_idx, s in enumerate(pw.sessions):
+                    if _in_unavailable(s.day):
+                        s.session_type = "rest"
+                        s.duration_min = 0
+                        s.tss_estimate = 0
+                        s.description = "Rest (unavailable)"
+                        s.zwo_file = ""
+                        s.zwo_name = ""
+                        continue
+                    if s.session_type == "ftp_test":
+                        continue
+                    if s.session_type == "rest":
+                        continue
+                    # If the sampler already filled zwo_file, skip match_zwo.
+                    if getattr(s, "zwo_file", ""):
+                        continue
+                    # Fallback path — match_zwo for unfilled slots.
+                    before = len(used_names_set)
+                    match_zwo(s, library, week_num=week_num, day_idx=day_idx,
+                              used_names=used_names_set, plan_start_date=plan_start_date,
+                              seed_salt=seed_salt)
+                    if not getattr(s, "matched", True):
+                        unmatched_count += 1
+                    if len(used_names_set) > before:
+                        for n in used_names_set - set(used_names_dict.keys()):
+                            used_names_dict[n] = week_num
 
-            weeks.append(pw)
-            prev_week_sessions = pw.sessions  # feed into next plan_week for 48h gap
-            cursor += timedelta(weeks=1)
-            week_num += 1
-            week_in_phase += 1
+                weeks.append(pw)
+                prev_week_sessions = pw.sessions  # feed into next plan_week for 48h gap
+                cursor += timedelta(weeks=1)
+                week_num += 1
+                week_in_phase += 1
+        except Exception as _e:
+            _tp_log_error(error_codes.Codes.PLAN_PHASE_BUILD_FAILED, exc=_e,
+                          phase=getattr(phase, "name", "?"),
+                          week_num=week_num)
+            raise
 
     # v1.0.0: inject mid-cycle FTP-test sessions to prevent stale-FTP overload.
     # Allen-Coggan TR&P 3rd ed. recommends re-testing every 4-6 weeks during
@@ -5059,26 +5148,34 @@ def reforecast(
     for pw in plan_weeks:
         if pw.end < today:
             continue  # past weeks — don't touch
-        for s in pw.sessions:
-            if s.day <= today:
-                continue  # today + past already handled by daily_adapt_plan
-            if s.session_type not in _HARD_SESSION_TYPES:
-                continue
-            tsb = _tsb_at(s.day)
-            if tsb is None:
-                continue
-            if tsb < -25:
-                new_type = _drop_intensity(s.session_type)
-                if new_type != s.session_type:
-                    s.session_type = new_type
-                    new_tss_per_h = TSS_PER_HOUR.get(new_type, 45)
-                    s.tss_estimate = round(s.duration_min / 60 * new_tss_per_h)
-                    s.description = f"Reforecast: TSB {tsb:.0f} → {new_type}"
-                    s.adapted = True
-                    # Force a library re-match downstream by clearing ZWO.
-                    s.zwo_file = ""
-                    s.zwo_name = ""
-                    downshifts.append(s.day.isoformat())
+        # v1.6.1 — per-week wrap: log E_REFORECAST_WEEK_FAILED and continue
+        # so one malformed week doesn't sink the whole reforecast pass.
+        try:
+            for s in pw.sessions:
+                if s.day <= today:
+                    continue  # today + past already handled by daily_adapt_plan
+                if s.session_type not in _HARD_SESSION_TYPES:
+                    continue
+                tsb = _tsb_at(s.day)
+                if tsb is None:
+                    continue
+                if tsb < -25:
+                    new_type = _drop_intensity(s.session_type)
+                    if new_type != s.session_type:
+                        s.session_type = new_type
+                        new_tss_per_h = TSS_PER_HOUR.get(new_type, 45)
+                        s.tss_estimate = round(s.duration_min / 60 * new_tss_per_h)
+                        s.description = f"Reforecast: TSB {tsb:.0f} → {new_type}"
+                        s.adapted = True
+                        # Force a library re-match downstream by clearing ZWO.
+                        s.zwo_file = ""
+                        s.zwo_name = ""
+                        downshifts.append(s.day.isoformat())
+        except Exception as _e:
+            _tp_log_error(error_codes.Codes.REFORECAST_WEEK_FAILED, exc=_e,
+                          week_num=getattr(pw, "week_num", 0),
+                          week_start=str(getattr(pw, "start", "")))
+            continue
 
     # ── G4: ACWR weekly scaling (Gabbett 2016) ────────────────────────────
     # Rationale: ACWR sweet-spot is 0.8-1.3; >1.5 doubles injury risk
@@ -5339,11 +5436,17 @@ def _plan_dict_to_planned_weeks(plan_dict: dict) -> list[PlannedWeek]:
     in try/except per session).
     """
     pw_list: list[PlannedWeek] = []
-    for w in plan_dict.get("weeks", []) or []:
+    for _w_idx, w in enumerate(plan_dict.get("weeks", []) or []):
         try:
             ws = date.fromisoformat(w["start"])
             we = date.fromisoformat(w["end"])
-        except (KeyError, ValueError, TypeError):
+        except (KeyError, ValueError, TypeError) as _e:
+            # v1.6.1 — log skip with index + which keys were missing.
+            # WARN severity: malformed week is recoverable (we just skip it).
+            missing = [k for k in ("start", "end") if k not in (w or {})]
+            _tp_log_error(error_codes.Codes.REFORECAST_DICT_TO_PW, exc=_e,
+                          week_index=_w_idx,
+                          missing_keys=missing or ["?"])
             continue
         sess_list: list[PlannedSession] = []
         for s_json in w.get("sessions", []) or []:
@@ -5499,28 +5602,44 @@ def reforecast_dict(
     except Exception:  # noqa: BLE001
         reforecast_goal = Goal(goal_type="general", hours_per_week=8.0)
 
-    pw_list = _plan_dict_to_planned_weeks(plan_dict)
+    # v1.6.1 — wrap each major step so a failure carries which step in ctx.
+    try:
+        pw_list = _plan_dict_to_planned_weeks(plan_dict)
+    except Exception as _e:
+        _tp_log_error(error_codes.Codes.REFORECAST_DICT_FAILED, exc=_e,
+                      step="dict_to_planned_weeks")
+        raise
 
-    _, reforecast_info = reforecast(
-        reforecast_goal, pw_list,
-        tsb_series=tsb_series,
-        recent_activities=recent_activities,
-        actual_polarization=actual_polarization,
-        target_polarization=target_polarization,
-        availability_overrides=availability_overrides,
-        wprime_balance_24h=wprime_balance_24h,
-        w_prime=w_prime,
-        wprime_acwr=wprime_acwr,
-        actual_wprime_polarization=actual_wprime_polarization,
-        yesterday_dfa_alpha1=yesterday_dfa_alpha1,
-    )
+    try:
+        _, reforecast_info = reforecast(
+            reforecast_goal, pw_list,
+            tsb_series=tsb_series,
+            recent_activities=recent_activities,
+            actual_polarization=actual_polarization,
+            target_polarization=target_polarization,
+            availability_overrides=availability_overrides,
+            wprime_balance_24h=wprime_balance_24h,
+            w_prime=w_prime,
+            wprime_acwr=wprime_acwr,
+            actual_wprime_polarization=actual_wprime_polarization,
+            yesterday_dfa_alpha1=yesterday_dfa_alpha1,
+        )
+    except Exception as _e:
+        _tp_log_error(error_codes.Codes.REFORECAST_DICT_FAILED, exc=_e,
+                      step="reforecast")
+        raise
 
     if propagation_days is not None:
         touched = set(propagation_days)
     else:
         touched = set(reforecast_info.get("touched_days") or [])
         touched |= set(reforecast_info.get("g3_dropped_days") or [])
-    sessions_modified = _apply_reforecast_to_dict(plan_dict, pw_list, touched)
+    try:
+        sessions_modified = _apply_reforecast_to_dict(plan_dict, pw_list, touched)
+    except Exception as _e:
+        _tp_log_error(error_codes.Codes.REFORECAST_DICT_FAILED, exc=_e,
+                      step="apply_reforecast_to_dict")
+        raise
     return plan_dict, sessions_modified, reforecast_info
 
 

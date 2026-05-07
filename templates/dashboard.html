@@ -3839,14 +3839,31 @@ async function loadFitnessChart(days=90) {
   if (btn) btn.classList.add('active');
   try {
     const fetchDays = days === 0 ? 1825 : days; // 0 = all → fetch 5 years
-    const wRes = await fetch(`/api/wellness?days=${fetchDays}`);
-    const data = await wRes.json();
+    let wRes;
+    try { wRes = await fetch(`/api/wellness?days=${fetchDays}`); }
+    catch (eF) {
+      try { window._diagFrontendError('E_FRONTEND_FITNESS_FETCH', {msg: String(eF && eF.message || eF), days: fetchDays}); } catch(_) {}
+      throw eF;
+    }
+    if (!wRes.ok) {
+      try { window._diagFrontendError('E_FRONTEND_FITNESS_FETCH', {status: wRes.status, days: fetchDays}); } catch(_) {}
+    }
+    let data;
+    try { data = await wRes.json(); }
+    catch (eP) {
+      try { window._diagFrontendError('E_FRONTEND_FITNESS_PARSE', {msg: String(eP && eP.message || eP), status: wRes.status}); } catch(_) {}
+      throw eP;
+    }
     if (days === 90) _wellnessCache = data;
-    fitnessChart(data, 'fitness-chart');
+    try { fitnessChart(data, 'fitness-chart'); }
+    catch (eR) {
+      try { window._diagFrontendError('E_FRONTEND_FITNESS_RENDER', {msg: String(eR && eR.message || eR)}); } catch(_) {}
+    }
     // v1.0.6 IMPL-3D-DASHBOARD: also render the secondary energy-system
     // breakdown (lazy — only paints into the <details> body, which stays
     // collapsed by default so the primary CTL/ATL/TSB view leads).
-    try { energySystemChart(data, 'energy-system-chart'); } catch(_) {}
+    try { energySystemChart(data, 'energy-system-chart'); }
+    catch(eE) { try { window._diagFrontendError('E_FRONTEND_ENERGY_SYS_RENDER', {msg: String(eE && eE.message || eE)}); } catch(_) {} }
     // v1.3.0 IMPL-DASHBOARD: kick the Power Curve fetch alongside the
     // primary CTL/ATL/TSB load (one round-trip on Home open). The chart
     // renders below the CTL/ATL/TSB card.
@@ -4947,56 +4964,89 @@ async function loadHome() {
   // v1.0.2 IMPL-MIGRATION: fire-and-forget upgrade-toast check (non-blocking).
   try { loadMigrationToast(); } catch (_) {}
   try {
-    const [rRes, wRes, aRes] = await Promise.all([
-      fetch('/api/readiness'), fetch('/api/wellness?days=90'), fetch('/api/activities')
-    ]);
-    const d = await rRes.json();
-    const wellness = await wRes.json();
+    // v1.6.1 — fine-grained fetch + parse instrumentation. Each /api/* call
+    // gets its own try-around-fetch and try-around-json so a single failed
+    // panel ships an E_FRONTEND_<panel>_<step> code instead of just the
+    // catch-all E_FRONTEND_LOADHOME. The Promise.all is preserved for
+    // parallelism; the per-response parsing is what's split.
+    let rRes, wRes, aRes;
+    try {
+      [rRes, wRes, aRes] = await Promise.all([
+        fetch('/api/readiness'), fetch('/api/wellness?days=90'), fetch('/api/activities')
+      ]);
+    } catch (eFetch) {
+      // Network error in any of the three. Best-effort tag: prefer the
+      // homepage-init code so the ring entry shows the bulk fetch failed
+      // before any panel had data.
+      try { window._diagFrontendError('E_FRONTEND_HOMEPAGE_INIT', {msg: String(eFetch && eFetch.message || eFetch), stage: 'fetch'}); } catch(_) {}
+      throw eFetch;
+    }
+    let d, wellness, activities;
+    try { d = await rRes.json(); }
+    catch (e) { try { window._diagFrontendError('E_FRONTEND_READINESS_PARSE', {msg: String(e && e.message || e), status: rRes && rRes.status}); } catch(_) {} throw e; }
+    if (!rRes.ok) {
+      try { window._diagFrontendError('E_FRONTEND_READINESS_FETCH', {status: rRes.status}); } catch(_) {}
+    }
+    try { wellness = await wRes.json(); }
+    catch (e) { try { window._diagFrontendError('E_FRONTEND_FITNESS_PARSE', {msg: String(e && e.message || e), status: wRes && wRes.status}); } catch(_) {} throw e; }
+    if (!wRes.ok) {
+      try { window._diagFrontendError('E_FRONTEND_FITNESS_FETCH', {status: wRes.status}); } catch(_) {}
+    }
     _wellnessCache = wellness;
-    const activities = await aRes.json();
+    try { activities = await aRes.json(); }
+    catch (e) { try { window._diagFrontendError('E_FRONTEND_ACTIVITIES_PARSE', {msg: String(e && e.message || e), status: aRes && aRes.status}); } catch(_) {} throw e; }
+    if (!aRes.ok) {
+      try { window._diagFrontendError('E_FRONTEND_ACTIVITIES_FETCH', {status: aRes.status}); } catch(_) {}
+    }
     const r=d.readiness, t=d.training, s=d.sleep;
 
     // Fitness chart
-    fitnessChart(wellness, 'fitness-chart');
+    try { fitnessChart(wellness, 'fitness-chart'); }
+    catch (e) { try { window._diagFrontendError('E_FRONTEND_FITNESS_RENDER', {msg: String(e && e.message || e)}); } catch(_) {} }
     // v1.3.2 fix: also paint the secondary energy-system breakdown chart on
     // initial home-load. Previously this only fired from loadFitnessChart()
     // (button-driven), so the <details> panel showed an empty canvas until
     // the user clicked a date-range button. Inline with fitnessChart() above.
-    try { energySystemChart(wellness, 'energy-system-chart'); } catch(_) {}
+    try { energySystemChart(wellness, 'energy-system-chart'); }
+    catch(e) { try { window._diagFrontendError('E_FRONTEND_ENERGY_SYS_RENDER', {msg: String(e && e.message || e)}); } catch(_) {} }
 
-    // Gauge
-    $('gauge').innerHTML = gaugeArc(r.score);
-    $('gauge-status').textContent = r.status || '';
+    try {
+      // Gauge
+      $('gauge').innerHTML = gaugeArc(r.score);
+      $('gauge-status').textContent = r.status || '';
 
-    // Advice
-    $('readiness-advice').textContent = r.advice || '';
+      // Advice
+      $('readiness-advice').textContent = r.advice || '';
 
-    // Component bars
-    const comp = r.components || {};
-    const weights = {hrv:'30%',tsb:'20%',subjective:'20%',sleep:'15%',rhr:'15%'};
-    $('readiness-components').innerHTML = Object.entries(weights).map(([k,w]) =>
-      compBar(k.toUpperCase(), comp[k] !== undefined && comp[k] !== null ? comp[k] : '—', w)
-    ).join('');
+      // Component bars
+      const comp = r.components || {};
+      const weights = {hrv:'30%',tsb:'20%',subjective:'20%',sleep:'15%',rhr:'15%'};
+      $('readiness-components').innerHTML = Object.entries(weights).map(([k,w]) =>
+        compBar(k.toUpperCase(), comp[k] !== undefined && comp[k] !== null ? comp[k] : '—', w)
+      ).join('');
 
-    // Training metrics — now with color coding
-    const metrics = [
-      {v:t.ctl,l:'CTL',t:'ctl',k:null},
-      {v:t.atl,l:'ATL',t:'atl',k:null},
-      {v:t.tsb,l:'TSB',t:'tsb',k:'tsb'},
-      {v:t.acwr,l:'ACWR',t:'acwr',k:'acwr'},
-      {v:t.ramp_rate,l:'Ramp',t:'ramp',k:'ramp_rate'},
-      {v:t.monotony,l:'Monotony',t:'monotony',k:'monotony'}
-    ];
-    $('training-metrics').innerHTML = metrics.map(m => {
-      const col = m.k ? metricColor(m.k, m.v) : '';
-      return `<div class="metric" data-tip="${m.t}"><div class="mv ${col}">${m.v??'—'}</div><div class="ml">${m.l}</div></div>`;
-    }).join('');
+      // Training metrics — now with color coding
+      const metrics = [
+        {v:t.ctl,l:'CTL',t:'ctl',k:null},
+        {v:t.atl,l:'ATL',t:'atl',k:null},
+        {v:t.tsb,l:'TSB',t:'tsb',k:'tsb'},
+        {v:t.acwr,l:'ACWR',t:'acwr',k:'acwr'},
+        {v:t.ramp_rate,l:'Ramp',t:'ramp',k:'ramp_rate'},
+        {v:t.monotony,l:'Monotony',t:'monotony',k:'monotony'}
+      ];
+      $('training-metrics').innerHTML = metrics.map(m => {
+        const col = m.k ? metricColor(m.k, m.v) : '';
+        return `<div class="metric" data-tip="${m.t}"><div class="mv ${col}">${m.v??'—'}</div><div class="ml">${m.l}</div></div>`;
+      }).join('');
 
-    // Header stats
-    $('header-stats').innerHTML = [
-      {v:r.score??'—',l:'Readiness'},{v:t.ctl??'—',l:'CTL'},
-      {v:d.ftp+'W',l:'FTP'},{v:d.weight+'kg',l:'Weight'}
-    ].map(h => `<div class="hs"><div class="hs-val">${h.v}</div><div>${h.l}</div></div>`).join('');
+      // Header stats
+      $('header-stats').innerHTML = [
+        {v:r.score??'—',l:'Readiness'},{v:t.ctl??'—',l:'CTL'},
+        {v:d.ftp+'W',l:'FTP'},{v:d.weight+'kg',l:'Weight'}
+      ].map(h => `<div class="hs"><div class="hs-val">${h.v}</div><div>${h.l}</div></div>`).join('');
+    } catch (e) {
+      try { window._diagFrontendError('E_FRONTEND_READINESS_RENDER', {msg: String(e && e.message || e)}); } catch(_) {}
+    }
 
     // Sleep metrics with sparklines
     $('sleep-metrics').innerHTML = [
@@ -5017,21 +5067,34 @@ async function loadHome() {
     sparkHtml += `<div style="text-align:center;"><div style="font-size:10px;color:var(--text2);margin-bottom:2px;">RHR 14d</div>${miniSparklineSVG(rhrVals, 100, 28, '#f472b6', null)}</div>`;
     $('sleep-sparklines').innerHTML = sparkHtml;
 
-    // eFTP card
-    const eftpVals = wellness.map(w => w.eftp).filter(v => v !== null && v !== undefined);
-    if (eftpVals.length >= 2) {
-      const current = Math.round(eftpVals[eftpVals.length - 1]);
-      const peak = Math.round(eftpVals.reduce((a, b) => Math.max(a, b), 0));
-      const prev = eftpVals.length >= 14 ? Math.round(eftpVals[eftpVals.length - 14]) : Math.round(eftpVals[0]);
-      const arrow = current > prev ? '<span class="wb-up">↑</span>' : current < prev ? '<span class="wb-down">↓</span>' : '<span class="wb-flat">→</span>';
-      $('eftp-card').innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <div><span style="font-size:28px;font-weight:800;">${current}W</span> ${arrow}</div>
-          <div style="font-size:11px;color:var(--text2);">Peak: ${peak}W</div>
-        </div>
-        ${eftpSparklineSVG(wellness.map(w => w.eftp), 200, 35)}`;
-    } else {
-      $('eftp-card').innerHTML = '<div style="color:var(--text3);font-size:12px;">Not enough eFTP data</div>';
+    // eFTP card — sourced from wellness payload (already fetched + parsed
+    // above). When the wellness fetch fails the FITNESS_FETCH code fires;
+    // this block additionally tags the eFTP-specific codes so the diag
+    // ring shows BOTH the wellness-level and eftp-panel signals when the
+    // shared upstream goes down.
+    if (typeof wellness === 'undefined' || wellness === null) {
+      try { window._diagFrontendError('E_FRONTEND_EFTP_FETCH', {reason: 'wellness payload missing'}); } catch(_) {}
+    } else if (!Array.isArray(wellness)) {
+      try { window._diagFrontendError('E_FRONTEND_EFTP_PARSE', {reason: 'wellness payload not an array', got: typeof wellness}); } catch(_) {}
+    }
+    try {
+      const eftpVals = wellness.map(w => w.eftp).filter(v => v !== null && v !== undefined);
+      if (eftpVals.length >= 2) {
+        const current = Math.round(eftpVals[eftpVals.length - 1]);
+        const peak = Math.round(eftpVals.reduce((a, b) => Math.max(a, b), 0));
+        const prev = eftpVals.length >= 14 ? Math.round(eftpVals[eftpVals.length - 14]) : Math.round(eftpVals[0]);
+        const arrow = current > prev ? '<span class="wb-up">↑</span>' : current < prev ? '<span class="wb-down">↓</span>' : '<span class="wb-flat">→</span>';
+        $('eftp-card').innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <div><span style="font-size:28px;font-weight:800;">${current}W</span> ${arrow}</div>
+            <div style="font-size:11px;color:var(--text2);">Peak: ${peak}W</div>
+          </div>
+          ${eftpSparklineSVG(wellness.map(w => w.eftp), 200, 35)}`;
+      } else {
+        $('eftp-card').innerHTML = '<div style="color:var(--text3);font-size:12px;">Not enough eFTP data</div>';
+      }
+    } catch (e) {
+      try { window._diagFrontendError('E_FRONTEND_EFTP_RENDER', {msg: String(e && e.message || e)}); } catch(_) {}
     }
 
     // Weekly summary
@@ -5094,16 +5157,20 @@ async function loadHome() {
     // v4.5.1 FIX-UI B4 — click opens in-app activity modal (was window.open
     // to intervals.icu URL which 404'd anyway with prefixed ride_id like
     // "icu_i143119390"). Modal has its own "Open on intervals.icu" button.
-    const recent = (activities||[]).slice(-5).reverse();
-    $('recent-activities').innerHTML = recent.length ? recent.map(a => {
-      const clickAttr = a.id ? `onclick="openActivityModal('${escJs(a.id)}')" style="cursor:pointer;"` : '';
-      const loadLabel = a.effective_load && a.effective_load !== a.tss
-        ? `Load ${a.effective_load} <span style="font-size:9px;color:var(--text3);">(TSS ${a.tss||0}${a.trimp ? ', TRIMP '+a.trimp : ''})</span>`
-        : (a.tss ? 'TSS '+a.tss : '');
-      return `<div class="activity" ${clickAttr}><div><span class="act-name">${esc(a.name||'Activity')}</span>
-       <span class="act-meta"> ${esc(a.sport||'')}</span></div>
-       <div class="act-meta">${a.duration_min||0}min ${loadLabel} ${a.avg_power?a.avg_power+'W':''}</div></div>`;
-    }).join('') : '<div style="color:var(--text3)">No recent activities</div>';
+    try {
+      const recent = (activities||[]).slice(-5).reverse();
+      $('recent-activities').innerHTML = recent.length ? recent.map(a => {
+        const clickAttr = a.id ? `onclick="openActivityModal('${escJs(a.id)}')" style="cursor:pointer;"` : '';
+        const loadLabel = a.effective_load && a.effective_load !== a.tss
+          ? `Load ${a.effective_load} <span style="font-size:9px;color:var(--text3);">(TSS ${a.tss||0}${a.trimp ? ', TRIMP '+a.trimp : ''})</span>`
+          : (a.tss ? 'TSS '+a.tss : '');
+        return `<div class="activity" ${clickAttr}><div><span class="act-name">${esc(a.name||'Activity')}</span>
+         <span class="act-meta"> ${esc(a.sport||'')}</span></div>
+         <div class="act-meta">${a.duration_min||0}min ${loadLabel} ${a.avg_power?a.avg_power+'W':''}</div></div>`;
+      }).join('') : '<div style="color:var(--text3)">No recent activities</div>';
+    } catch (e) {
+      try { window._diagFrontendError('E_FRONTEND_ACTIVITIES_RENDER', {msg: String(e && e.message || e)}); } catch(_) {}
+    }
 
     // Morning log + Body & Performance + Power Curve (parallel, non-blocking)
     loadMorningLog();
@@ -11691,8 +11758,21 @@ function openMissedSessionsModal() {
 
 async function loadTodaySession() {
   try {
-    const res = await fetch('/api/today-session');
-    const d = await res.json();
+    let res;
+    try { res = await fetch('/api/today-session'); }
+    catch (eF) {
+      try { window._diagFrontendError('E_FRONTEND_TODAY_SESSION_FETCH', {msg: String(eF && eF.message || eF)}); } catch(_) {}
+      throw eF;
+    }
+    if (!res.ok) {
+      try { window._diagFrontendError('E_FRONTEND_TODAY_SESSION_FETCH', {status: res.status}); } catch(_) {}
+    }
+    let d;
+    try { d = await res.json(); }
+    catch (eP) {
+      try { window._diagFrontendError('E_FRONTEND_TODAY_SESSION_PARSE', {msg: String(eP && eP.message || eP), status: res.status}); } catch(_) {}
+      throw eP;
+    }
     if (!d.planned) return;
 
     const el = $('home-recommendation');
@@ -11745,9 +11825,14 @@ async function loadTodaySession() {
 
     // Store today session data for click handler
     window._todaySessionData = d;
-    el.innerHTML = html;
-    el.style.cursor = 'pointer';
-    el.onclick = () => openTodaySessionDetail();
+    try {
+      el.innerHTML = html;
+      el.style.cursor = 'pointer';
+      el.onclick = () => openTodaySessionDetail();
+    } catch (eR) {
+      try { window._diagFrontendError('E_FRONTEND_TODAY_SESSION_RENDER', {msg: String(eR && eR.message || eR)}); } catch(_) {}
+      throw eR;
+    }
   } catch(e) {
     $('home-recommendation').innerHTML = '<div style="color:var(--text3);font-size:12px;">Session unavailable</div>';
   }
@@ -12644,15 +12729,27 @@ async function downloadFIT(type, durationMin, name, zwoFile = null) {
 
 async function loadBodyPerf() {
   try {
-    const [wRes, fRes, wkgRes, vo2Res] = await Promise.all([
-      fetch('/api/metrics/history?metric=weight&days=180'),
-      fetch('/api/metrics/history?metric=ftp&days=180'),
-      fetch('/api/metrics/history?metric=w_per_kg&days=180'),
-      fetch('/api/metrics/history?metric=vo2max&days=365'),
-    ]);
-    const wData = await wRes.json();
-    const fData = await fRes.json();
-    const wkgData = await wkgRes.json();
+    let wRes, fRes, wkgRes, vo2Res;
+    try {
+      [wRes, fRes, wkgRes, vo2Res] = await Promise.all([
+        fetch('/api/metrics/history?metric=weight&days=180'),
+        fetch('/api/metrics/history?metric=ftp&days=180'),
+        fetch('/api/metrics/history?metric=w_per_kg&days=180'),
+        fetch('/api/metrics/history?metric=vo2max&days=365'),
+      ]);
+    } catch (eF) {
+      try { window._diagFrontendError('E_FRONTEND_BODY_PERF_FETCH', {msg: String(eF && eF.message || eF)}); } catch(_) {}
+      throw eF;
+    }
+    let wData, fData, wkgData;
+    try {
+      wData = await wRes.json();
+      fData = await fRes.json();
+      wkgData = await wkgRes.json();
+    } catch (eP) {
+      try { window._diagFrontendError('E_FRONTEND_BODY_PERF_PARSE', {msg: String(eP && eP.message || eP)}); } catch(_) {}
+      throw eP;
+    }
 
     let html = '<div style="display:flex;gap:20px;flex-wrap:wrap;">';
 
@@ -12687,7 +12784,11 @@ async function loadBodyPerf() {
 
     html += '</div>';
     if (!wVals.length && !fVals.length && !vo2Vals.length) html = '<div style="font-size:12px;color:var(--text3);">Save settings to start tracking history</div>';
-    $('body-perf-card').innerHTML = html;
+    try { $('body-perf-card').innerHTML = html; }
+    catch (eR) {
+      try { window._diagFrontendError('E_FRONTEND_BODY_PERF_RENDER', {msg: String(eR && eR.message || eR)}); } catch(_) {}
+      throw eR;
+    }
   } catch(e) {
     $('body-perf-card').innerHTML = '<div style="font-size:12px;color:var(--text3);">No metric history yet</div>';
   }

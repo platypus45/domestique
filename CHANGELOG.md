@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.4.2 — `_enrich_plan_for_response` mtime-keyed cache (2026-05-07)
+
+`_enrich_plan_for_response` now wraps its uncached body
+(`_enrich_plan_for_response_uncached`) in a 5-min TTL cache keyed on
+`(plan_path mtime, plan_path size, today_iso)`. Saves ~50 ms per
+`/api/plan` call when no mutation has touched the JSON. Cache GCs to 4
+entries by insertion time. Mutation endpoints already touch the JSON
+via `tmp+rename`, so the cache busts automatically.
+
+Single-process FastAPI worker → no thread race; plan writes are also
+serialised via `tp.plan_write_lock()`. The cache key uses 6-decimal
+mtime + `st_size` so concurrent ms-coincident writes can't collide.
+
+The cached path still mutates the caller's `plan_dict` in place (same
+contract as v1.4.0) by replaying a snapshot of the enrichment fields.
+
+Tests: `tests/test_v142_enrich_cache.py` (5 tests) — hit, mtime bust,
+today_iso bust, no-persisted-plan fallthrough, in-place mutation
+preserved on cache hit.
+
 ## v1.4.1 — card_state_v2 rendering distinguishes 10 calendar states (2026-05-07)
 
 Calendar `renderCalDay` now reads `card_state_v2` (10-state machine from

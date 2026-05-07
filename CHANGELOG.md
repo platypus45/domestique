@@ -1,5 +1,37 @@
 # Changelog
 
+## v1.6.0 — Error-codes + logging infrastructure (2026-05-07)
+
+Closes the "homepage empty, why?" debug gap. Three parallel investigation agents (Wave 1) confirmed v1.5.1 server + bundle are correct, surfaced 3 silent-swallow sites in `app.py` that mask render-blocking errors. v1.6.0 builds the infrastructure to surface those errors to user + remote diagnostics.
+
+### Error code taxonomy
+
+`error_codes.py` (NEW, 296 LOC) — 36 codes across `E_PLAN_*`, `E_ENRICH_*`, `E_REFORECAST_*`, `E_CACHE_*`, `E_CALENDAR_*`, `E_AUGMENT_*`, `E_RIDE_*`, `E_FRONTEND_*` domains. Each has severity (FATAL / ERROR / WARN / INFO), human description, suggested user action.
+
+### `_log_error` helper
+
+Replaces ad-hoc `_log.exception` / `_log.warning` / silent `} catch(_) {}`. Structured JSON lines to `~/.domestique/logs/app.log` (5MB × 5 rotation). Console + file dual-handler. Errors land in an in-process ring buffer for the diag endpoints.
+
+### Diagnostics endpoints
+
+- `GET /api/diag/health` — system check: plan readable? ride dirs accessible? library loadable? Returns `{ok, checks: {name: pass/fail/error_code}}`. 60s cache.
+- `GET /api/diag/recent-errors?since=ISO&limit=N` — sanitised log entries (no PII, no full tracebacks unless `?verbose=1`).
+- `POST /api/diag/frontend-error` — accepts `{code, context, user_agent, url}` from JS. Logs server-side.
+
+### Frontend error capture
+
+`window.onerror` + `unhandledrejection` POST to `/api/diag/frontend-error`. Silent `} catch(_) {}` in `loadHome`, `loadCalendar`, `loadPlan`, `renderCalendar` replaced with structured calls to `_diagFrontendError(code, ctx)` followed by a render-fallback (skeleton + clear error message instead of permanent "Loading…"). New "🔬 Diagnostics" footer link opens a modal showing last 20 errors.
+
+### Three silent-swallow sites fixed (Wave 1/C findings)
+
+- **`app.py:9387`** corrupt-plan path: was `plan = {}` continuing silently → empty THIS WEEK card. Now surfaces `error: E_PLAN_PARSE_CORRUPT` in response so frontend renders "Plan unreadable, click to regenerate".
+- **`app.py:760`** `cached()` global wrapper: error-empty result was sticky for 300s. Now 30s + logs `E_CACHE_<key>` with exception details.
+- **`app.py:6315 + 6699`** `_enrich_plan_for_response` try/except: now logs `E_ENRICH_FAILED` with subsystem (library / classification / propagation / classify_card_state).
+
+### Tests
+
+26 new across 3 files: `test_v160_error_codes.py` (registry consistency), `test_v160_diag_endpoints.py` (contract), `test_v160_silent_swallow_fixes.py` (regression). 1189 → **1215 passing** (+26).
+
 ## v1.5.1 — Wire-contract regression suite + fresh DMG (2026-05-07)
 
 User reported "homepage + calendar empty" after v1.4.1/v1.4.2/v1.5.0 ship. Investigation: backend endpoints all 200 (verified via TestClient AND headless Chrome on the live render). v1.4.2 cache byte-stable across two calls. v1.5.0 reforecast_dict produces same field shape as PlannedWeek-flow. Frontend JS passes `node --check`; HTML script tags balanced; CSS specificity fine.

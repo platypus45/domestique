@@ -8345,8 +8345,20 @@ def legacy_card_state(state10: str) -> str:
     return "planned"
 
 
+# v1.4.2 — mtime-keyed cache for _enrich_plan_for_response.
+# Per-call ride scan + library load costs ~50 ms on plans with N=84
+# sessions. Cache invalidates on plan mtime change (every mutation
+# endpoint already touches the JSON via tmp+rename) or today rollover.
+# Single-process FastAPI worker → no thread race; plan writes are also
+# serialized via tp.plan_write_lock().
+_ENRICH_CACHE: dict[str, tuple[float, dict]] = {}
+_ENRICH_CACHE_TTL = 300  # 5 min
+
+
 def _enrich_plan_for_response(plan_dict: dict, today_iso: str) -> dict:
     """v1.4.0 — single enrichment helper (CALENDAR_REDESIGN §5b).
+    v1.4.2 — wrapped with mtime-keyed cache; uncached body lives in
+    :func:`_enrich_plan_for_response_uncached`.
 
     Mutates ``plan_dict["weeks"][*]["sessions"][*]`` in place AND returns
     the plan for chaining. Adds the seven enrichment fields per session
@@ -8357,6 +8369,74 @@ def _enrich_plan_for_response(plan_dict: dict, today_iso: str) -> dict:
 
     Idempotent: calling twice produces the same output. Safe to chain
     after every plan mutation.
+    """
+    # Cache key includes mtime + size so concurrent ms-coincident writes
+    # can't collide (grill I5). today_iso busts on rollover.
+    plan_path = _plan_dir() / "current_plan.json"
+    try:
+        st = plan_path.stat()
+        key = f"{st.st_mtime:.6f}|{st.st_size}|{today_iso}"
+    except OSError:
+        # No persisted plan (e.g. first-run /api/plan/generate). Skip the
+        # cache; the result is short-lived anyway.
+        return _enrich_plan_for_response_uncached(plan_dict, today_iso)
+    now = time.time()
+    cached = _ENRICH_CACHE.get(key)
+    if cached and (now - cached[0]) < _ENRICH_CACHE_TTL:
+        # Apply cached enrichment to the live plan_dict (so callers get the
+        # same in-place-mutated object semantics as the uncached path).
+        _apply_cached_enrichment(plan_dict, cached[1])
+        return plan_dict
+    enriched = _enrich_plan_for_response_uncached(plan_dict, today_iso)
+    _ENRICH_CACHE[key] = (now, _snapshot_enrichment(enriched))
+    # Bound cache size — keep last 4 entries by insertion time. Avoids
+    # unbounded growth when developers tap mtime in tight loops.
+    if len(_ENRICH_CACHE) > 4:
+        oldest = sorted(_ENRICH_CACHE.items(), key=lambda kv: kv[1][0])[:-4]
+        for k, _ in oldest:
+            _ENRICH_CACHE.pop(k, None)
+    return enriched
+
+
+# v1.4.2 — enrichment fields written by _enrich_plan_for_response_uncached.
+# Snapshot/apply on the cache hot path uses this list.
+_ENRICH_FIELDS = (
+    "display_name", "zwo_duration_min", "zone_dist", "score", "protocol",
+    "content_class", "card_state", "card_state_v2",
+)
+
+
+def _snapshot_enrichment(plan_dict: dict) -> dict:
+    """Capture the enrichment fields for cache storage. Keyed by ISO day
+    so the snapshot is independent of week/session ordering.
+    """
+    snap: dict[str, dict] = {}
+    for w in plan_dict.get("weeks", []) or []:
+        for s in w.get("sessions", []) or []:
+            day = s.get("day")
+            if not day:
+                continue
+            snap[day] = {f: s.get(f) for f in _ENRICH_FIELDS if f in s}
+    return snap
+
+
+def _apply_cached_enrichment(plan_dict: dict, snap: dict) -> None:
+    """Replay cached enrichment fields onto a live plan_dict."""
+    for w in plan_dict.get("weeks", []) or []:
+        for s in w.get("sessions", []) or []:
+            day = s.get("day")
+            if not day:
+                continue
+            cached_fields = snap.get(day)
+            if not cached_fields:
+                continue
+            for f, v in cached_fields.items():
+                s[f] = v
+
+
+def _enrich_plan_for_response_uncached(plan_dict: dict, today_iso: str) -> dict:
+    """v1.4.2 — uncached body of :func:`_enrich_plan_for_response`. Same
+    semantics as before v1.4.2; the wrapper above adds caching only.
     """
     # Library + classifications loaded once per call.
     try:

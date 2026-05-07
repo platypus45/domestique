@@ -1,5 +1,69 @@
 # Changelog
 
+## v1.4.0 — Calendar/plan/availability architecture rebuild (2026-05-07)
+
+Closes the v1.3.5/6/7 regression cycle by collapsing the two-layer field-update
+drift between `training_planner.py` and `app.py` into single mutation +
+enrichment helpers.
+
+### Root cause closed
+
+Each v1.3.x patch fixed *one* of three duplicated propagation blocks
+(`app.py:6943-6977`, `7141-7200`, `7369-7402`). The other two stayed stale,
+producing a new regression each release. v1.3.5 fixed availability rest;
+v1.3.6 fixed restore-from-rest but left layer-2 propagation hard-coding
+`zwo_file=""`; v1.3.7 fixed that propagation in two places but a third
+identical block in `_maybe_auto_reforecast` would have drifted again.
+
+### Architecture changes
+
+- **`_propagate_reforecast_to_dict(plan, pw_list, touched_days) -> int`** —
+  single mutation site replacing all 3 duplicated post-`tp.reforecast`
+  field-copy blocks. Round-trips session-level fields (session_type,
+  duration_min, tss_estimate, description, zwo_file, zwo_name, adapted)
+  AND week-level G4 ACWR mutations (tss_target, hit_per_week,
+  auto_acwr_scaled).
+- **`_enrich_plan_for_response(plan_dict, today_iso) -> dict`** — single
+  enrichment helper, replaces 5 duplicates in `/api/plan`,
+  `/api/plan/generate`, etc. Adds card_state / card_state_v2 /
+  content_class / display_name / zone_dist / score / protocol /
+  zwo_duration_min per session. Idempotent (test-asserted).
+- **`classify_card_state_v2(s, has_actual, today_iso) -> str`** — pure
+  10-state classifier per the new declared rules table (CALENDAR_REDESIGN
+  §5d). `legacy_card_state(state10) -> str` maps to the legacy 4-string
+  wire contract (`completed`, `rest`, `missing_workout`, `planned`) for
+  back-compat. Both `card_state` (legacy) and `card_state_v2` (new) ship
+  on the wire so future UI rev can migrate without a wire break.
+- **`SESSION_FIELDS_LOCKED`** — frozen field superset enforced by
+  `tests/test_v140_session_fields_contract.py`. Future drift fails the test.
+
+### Dashboard wiring
+
+- `generatePlan()`, `reforecastPlan()`, `regeneratePlan()` now `await
+  loadCalendar()` after the mutation so top cards / right panel /
+  bottom calendar stay synchronized (CALENDAR_REDESIGN §8.4 — single
+  canonical refresh path). The other mutation handlers
+  (`_commitAvailUpdate`, redraw paths, `syncNowAction`) already wired.
+- `renderCalDay` now distinguishes UNAVAILABLE from REST per
+  CALENDAR_REDESIGN §8.1: `availability_hours==0` future days render a
+  red UNAVAILABLE badge with the originally-planned session faded
+  behind at 30% opacity. Restoration semantics per §8.2: re-running
+  the planner with current hours picks the best-fit workout (no stored
+  history of the original session).
+
+### Tests
+
+26 new (3 contract + 23 classify_card_state). Full v131-137 + auto/availability
+regression suite (53 tests) all passing under the new architecture.
+Full suite: **1169 passing** (up from 1143). 5 pre-existing failures
+unchanged (planner interval variety × 2, wellness TSB × 2, local training
+load fallback × 1) — same set as v1.3.7.
+
+### Breaking changes
+
+None. `card_state` legacy 4-string contract preserved on wire.
+`SESSION_FIELDS_LOCKED` is a SUPERSET — future fields can be added.
+
 ## v1.3.7 — Hot-fix: bottom calendar renders again (regression from v1.3.6) (2026-05-07)
 
 User report: "whole calendar on the bottom is now broken and doesnt show anything anymore. no single activity. the availability calendar does work. also when i regenerate plan, whole calendar bottom not working."

@@ -6218,45 +6218,15 @@ def api_plan():
             with open(json_path, encoding="utf-8") as f:
                 plan_data = json.load(f)
             # v4.1.1 FIX-PLANNER B: attach per-session `zone_dist` so the
-            # dashboard mini-graph (dashboard.html ~5449 buildPowerBlocks)
-            # can render the ACTUAL ZWO's zone distribution instead of a
-            # stock silhouette keyed on session_type alone. Without this,
-            # Base weeks all render identical SVGs even though each week's
-            # ZWO is different. zone_dist = {z1..z6} as percent of time.
-            # Also surface per-session `score` for filter UX parity with
-            # /api/workouts. Non-fatal if library load fails.
+            # dashboard mini-graph can render the ACTUAL ZWO's zone
+            # distribution. v1.4.0: per-session enrichment now lives in
+            # _enrich_plan_for_response (single helper, replaces 5
+            # duplicates). Phase-level + week-level XSS mirrors stay here.
             try:
-                library = tp.load_workout_library()
-                lib_by_file = {w.get("File"): w for w in library}
-                # v1.0.4 IMPL-WIRING: load classifications once for display_name
-                # lookup (Layer 3, MASTER §3). Same pattern as _session_out.
-                try:
-                    classifications = tp._load_content_classifications() or {}
-                except Exception:
-                    classifications = {}
-                # v4.3.0 B6 — also need rides indexed by date so card_state
-                # can flag "completed" sessions (matched to an actual ride).
-                # Cheap enough to do once per /api/plan call; uses the same
-                # path /api/calendar uses.
-                rides_by_date_for_state: dict[str, bool] = {}
-                try:
-                    import ride_storage as _rs
-                    for _r in _rs.list_rides():
-                        _d = _ride_started_local_iso_date(_r)
-                        if _d:
-                            rides_by_date_for_state[_d] = True
-                    for _f in sorted(_rides_fit_dir().glob("*.fit")):
-                        try:
-                            _st = _f.stat()
-                            _ddt = datetime.fromtimestamp(
-                                _st.st_mtime, timezone.utc
-                            ).astimezone().date().isoformat()
-                            rides_by_date_for_state[_ddt] = True
-                        except OSError:
-                            pass
-                except Exception:
-                    pass
-
+                # Phase/week 3D mirrors are computed inline because they
+                # aggregate session-level fields. Per-session fields
+                # (zone_dist / score / content_class / display_name /
+                # zwo_duration_min / card_state) come from the helper below.
                 for w in plan_data.get("weeks", []):
                     # v1.0.6 IMPL-3D-DASHBOARD: per-week 3D XSS mirrors.
                     # PRIMARY weekly_tss is preserved untouched. Mirrors are
@@ -6291,40 +6261,9 @@ def api_plan():
                         w.setdefault("weekly_xss_w_prime", None)
                         w.setdefault("weekly_xss_pmax", None)
                         w.setdefault("weekly_xss_total", None)
-                    for s in w.get("sessions", []):
-                        zwo = s.get("zwo_file") or ""
-                        meta = lib_by_file.get(zwo) if zwo else None
-                        # v1.0.4 IMPL-WIRING — every session payload carries
-                        # display_name + zwo_duration_min so the dashboard
-                        # cascade (display_name → zwo_name → session_type)
-                        # can pick the canonical title and the actual library
-                        # duration. Free-form sessions get ("", 0).
-                        _dn, _zdur = _session_naming_lookup(zwo, classifications, lib_by_file)
-                        s["display_name"] = _dn
-                        s["zwo_duration_min"] = _zdur
-                        if meta:
-                            s["zone_dist"] = {
-                                "z1": meta.get("Z1%", 0),
-                                "z2": meta.get("Z2%", 0),
-                                "z3": meta.get("Z3%", 0),
-                                "z4": meta.get("Z4%", 0),
-                                "z5": meta.get("Z5%", 0),
-                                "z6": meta.get("Z6%", 0),
-                            }
-                            s["score"] = meta.get("Score")
-                            s["protocol"] = meta.get("Protocol")
-                            s["content_class"] = meta.get("content_class") or ""
-                        else:
-                            s.setdefault("zone_dist", None)
-                            s.setdefault("score", None)
-                            s.setdefault("content_class", "")
-                        # v4.3.0 B6 — emit card_state for every session so the
-                        # UI can dispatch click handlers + styling without
-                        # rerunning content-class lookups in the browser.
-                        _has_actual = bool(rides_by_date_for_state.get(s.get("day", "")))
-                        s["card_state"] = _classify_card_state(
-                            s, has_actual=_has_actual, library_lookup=lib_by_file,
-                        )
+                # v1.4.0 — per-session enrichment moved to
+                # _enrich_plan_for_response below. The for-loop above only
+                # computes per-week 3D-XSS aggregations.
                 # v1.0.6 IMPL-3D-DASHBOARD: phase-level weekly_xss_* mirrors.
                 # Dashboard plan-tab phase rows render per-phase weekly_tss as
                 # PRIMARY. The mirrors here let the secondary stacked bar
@@ -6371,6 +6310,13 @@ def api_plan():
                     _log.debug(f"/api/plan phase xss_mirror failed: {_e}")
             except Exception as _e:
                 _log.debug(f"/api/plan zone_dist annotate failed: {_e}")
+            # v1.4.0 — single enrichment helper for per-session fields.
+            try:
+                _enrich_plan_for_response(
+                    plan_data, today_iso=date.today().isoformat(),
+                )
+            except Exception as _e:
+                _log.debug(f"/api/plan _enrich_plan_for_response failed: {_e}")
             # Also include markdown if available
             plans = sorted(_plan_dir().glob("*.md"), reverse=True)
             md = None
@@ -6747,46 +6693,11 @@ async def api_plan_generate(request: Request):
                 json.dump(plan_dict, f, indent=2, default=str)
             tmp_path.rename(json_path)
 
-        # v1.3.2 — enrich the RESPONSE PAYLOAD with the same per-session fields
-        # /api/plan computes (card_state, content_class, display_name,
-        # zone_dist, score, protocol). Pre-fix the dashboard rendered the
-        # generate response without these so the cells fell through to a
-        # generic 'planned' style; on the next /api/plan reload the same
-        # cells suddenly displayed missing-workout warnings whose
-        # content-class disagreed with the freshly picked workouts. Doing
-        # this inline means the post-generate paint matches the
-        # post-reload paint. Mutates plan_dict in-place AFTER persistence
-        # so the on-disk plan stays clean (these are derived fields).
+        # v1.4.0 — single enrichment helper (replaces the inline duplicate).
+        # Adds card_state / card_state_v2 / content_class / display_name /
+        # zone_dist / score / protocol / zwo_duration_min per session.
         try:
-            library = tp.load_workout_library()
-            lib_by_file = {w.get("File"): w for w in library}
-            try:
-                classifications = tp._load_content_classifications() or {}
-            except Exception:
-                classifications = {}
-            for w in plan_dict.get("weeks", []):
-                for s in w.get("sessions", []):
-                    zwo = s.get("zwo_file") or ""
-                    meta = lib_by_file.get(zwo) if zwo else None
-                    _dn, _zdur = _session_naming_lookup(zwo, classifications, lib_by_file)
-                    s["display_name"] = _dn
-                    s["zwo_duration_min"] = _zdur
-                    if meta:
-                        s["zone_dist"] = {
-                            "z1": meta.get("Z1%", 0), "z2": meta.get("Z2%", 0),
-                            "z3": meta.get("Z3%", 0), "z4": meta.get("Z4%", 0),
-                            "z5": meta.get("Z5%", 0), "z6": meta.get("Z6%", 0),
-                        }
-                        s["score"] = meta.get("Score")
-                        s["protocol"] = meta.get("Protocol")
-                        s["content_class"] = meta.get("content_class") or ""
-                    else:
-                        s.setdefault("zone_dist", None)
-                        s.setdefault("score", None)
-                        s.setdefault("content_class", "")
-                    s["card_state"] = _classify_card_state(
-                        s, has_actual=False, library_lookup=lib_by_file,
-                    )
+            _enrich_plan_for_response(plan_dict, today_iso=date.today().isoformat())
         except Exception as _e:
             _log.debug(f"/api/plan/generate enrich failed: {_e}")
 
@@ -6936,45 +6847,13 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
                 wprime_acwr=wprime_acwr_v106,
             )
 
-            # Persist mutations using the same write-back pattern as
-            # /api/plan/reforecast (with the duration_min fix).
+            # v1.4.0 — single propagation helper (replaces the 3 duplicated
+            # write-back blocks; closes the layer-1/layer-2 drift that drove
+            # the v1.3.5/6/7 regression cycle). See _propagate_reforecast_to_dict
+            # for field round-trip + week-level G4 ACWR copy.
             touched = set(reforecast_info.get("touched_days") or [])
             touched |= set(reforecast_info.get("g3_dropped_days") or [])
-            by_day: dict[str, tp.PlannedSession] = {}
-            for pw in pw_list:
-                for s in pw.sessions:
-                    by_day[s.day.isoformat()] = s
-            for w in plan.get("weeks", []):
-                for s_json in w.get("sessions", []):
-                    day_iso = s_json.get("day", "")
-                    if not day_iso or day_iso not in touched:
-                        continue
-                    src = by_day.get(day_iso)
-                    if src is None:
-                        continue
-                    # v1.3.7 fix: preserve src.zwo_file/zwo_name rather than
-                    # always clearing — see api_plan_reforecast for the rationale.
-                    s_json["session_type"] = src.session_type
-                    s_json["duration_min"] = src.duration_min
-                    s_json["tss_estimate"] = src.tss_estimate
-                    s_json["description"] = src.description
-                    s_json["zwo_file"] = getattr(src, "zwo_file", "") or ""
-                    s_json["zwo_name"] = getattr(src, "zwo_name", "") or ""
-                    s_json["adapted"] = True
-                    s_json["adapted_reason"] = src.description
-
-            pw_by_num = {pw.week_num: pw for pw in pw_list}
-            for w in plan.get("weeks", []):
-                wn = w.get("week_num")
-                src_pw = pw_by_num.get(wn)
-                if src_pw is None:
-                    continue
-                if w.get("tss_target") != src_pw.tss_target:
-                    w["tss_target"] = src_pw.tss_target
-                if w.get("hit_per_week") != src_pw.hit_per_week:
-                    w["hit_per_week"] = src_pw.hit_per_week
-                if src_pw.auto_acwr_scaled and not w.get("auto_acwr_scaled"):
-                    w["auto_acwr_scaled"] = True
+            _propagate_reforecast_to_dict(plan, pw_list, touched)
 
             plan["reforecast_date"] = datetime.now().isoformat()
             plan["last_reforecast_info"] = reforecast_info
@@ -7134,70 +7013,11 @@ async def api_plan_reforecast():
             availability_overrides=availability_overrides,
         )
 
-        # Propagate the reforecast() mutations back into the persisted plan.
-        # v4.6.6 WAVE-4-FIX CRITICAL-5: G3 drops live in `g3_dropped_days`,
-        # G4-TSB drops live in `touched_days`. Union both so persistence
-        # picks up both classes of session-level mutation.
+        # v1.4.0 — single propagation helper (replaces the duplicated
+        # write-back blocks; G3+G4-TSB days union'd inside the helper).
         touched = set(reforecast_info.get("touched_days") or [])
         touched |= set(reforecast_info.get("g3_dropped_days") or [])
-        sessions_changed = 0
-        by_day: dict[str, tp.PlannedSession] = {}
-        for pw in pw_list:
-            for s in pw.sessions:
-                by_day[s.day.isoformat()] = s
-        for w in plan.get("weeks", []):
-            for s_json in w.get("sessions", []):
-                day_iso = s_json.get("day", "")
-                if not day_iso or day_iso not in touched:
-                    continue
-                src = by_day.get(day_iso)
-                if src is None:
-                    continue
-                # v1.3.7 fix: preserve src.zwo_file/zwo_name rather than
-                # always clearing. Pre-fix the propagation hard-coded
-                # zwo_file="" for every touched day → users with availability
-                # overrides ended up with every future session carrying
-                # zwo_file="" → /api/calendar served those as
-                # card_state="missing_workout" → the bottom calendar painted
-                # yellow ⚠ on every cell with no workout title. tp.reforecast
-                # already nulls out zwo_file inside its per-day branches when
-                # the session genuinely needs re-matching (v1.3.5 hours<=0
-                # rest path, v1.3.6 rest→z2 restore path), so propagating
-                # whatever the source PlannedSession holds keeps the picked
-                # workout intact whenever no swap actually happened.
-                s_json["session_type"] = src.session_type
-                s_json["duration_min"] = src.duration_min
-                s_json["tss_estimate"] = src.tss_estimate
-                s_json["description"] = src.description
-                s_json["zwo_file"] = getattr(src, "zwo_file", "") or ""
-                s_json["zwo_name"] = getattr(src, "zwo_name", "") or ""
-                s_json["adapted"] = True
-                s_json["adapted_reason"] = src.description
-                sessions_changed += 1
-
-        # v4.6.6 WAVE-4-FIX CRITICAL-4: persist PlannedWeek-level G4
-        # mutations (tss_target *= 0.85, hit_per_week -= 1,
-        # auto_acwr_scaled=True) back to JSON. Pre-fix only day-level
-        # session changes were saved → G4 ran in memory then evaporated.
-        pw_by_num = {pw.week_num: pw for pw in pw_list}
-        weeks_changed = 0
-        for w in plan.get("weeks", []):
-            wn = w.get("week_num")
-            src_pw = pw_by_num.get(wn)
-            if src_pw is None:
-                continue
-            changed_this_week = False
-            if w.get("tss_target") != src_pw.tss_target:
-                w["tss_target"] = src_pw.tss_target
-                changed_this_week = True
-            if w.get("hit_per_week") != src_pw.hit_per_week:
-                w["hit_per_week"] = src_pw.hit_per_week
-                changed_this_week = True
-            if src_pw.auto_acwr_scaled and not w.get("auto_acwr_scaled"):
-                w["auto_acwr_scaled"] = True
-                changed_this_week = True
-            if changed_this_week:
-                weeks_changed += 1
+        sessions_changed = _propagate_reforecast_to_dict(plan, pw_list, touched)
 
         # Save updated plan
         plan["reforecast_date"] = datetime.now().isoformat()
@@ -7363,43 +7183,12 @@ async def api_save_availability(request: Request):
                 availability_overrides=availability_overrides,
             )
 
-            # Propagate availability-rescaled sessions back into the JSON.
-            # Only consider days actually in the overrides dict — that's the
-            # set of days reforecast() may have touched on this code path.
-            by_day: dict = {}
-            for pw in pw_list:
-                for s in pw.sessions:
-                    by_day[s.day.isoformat()] = s
-            for w in plan.get("weeks", []):
-                for s_json in w.get("sessions", []):
-                    day_iso = s_json.get("day", "")
-                    if not day_iso or day_iso not in availability_overrides:
-                        continue
-                    src = by_day.get(day_iso)
-                    if src is None:
-                        continue
-                    # v1.3.5 fix: also diff/propagate zwo_file, zwo_name,
-                    # description. When reforecast() rests a day it clears
-                    # those fields (so the dashboard renders REST); pre-fix
-                    # the propagation loop only copied session_type /
-                    # duration / tss back, leaving stale zwo_name on disk.
-                    changed = (
-                        s_json.get("session_type") != src.session_type
-                        or int(s_json.get("duration_min", 0) or 0) != src.duration_min
-                        or float(s_json.get("tss_estimate", 0) or 0) != src.tss_estimate
-                        or (s_json.get("zwo_file", "") or "") != (src.zwo_file or "")
-                        or (s_json.get("zwo_name", "") or "") != (src.zwo_name or "")
-                        or (s_json.get("description", "") or "") != (src.description or "")
-                    )
-                    if not changed:
-                        continue
-                    s_json["session_type"] = src.session_type
-                    s_json["duration_min"] = src.duration_min
-                    s_json["tss_estimate"] = src.tss_estimate
-                    s_json["zwo_file"] = src.zwo_file or ""
-                    s_json["zwo_name"] = src.zwo_name or ""
-                    s_json["description"] = src.description or ""
-                    sessions_modified += 1
+            # v1.4.0 — single propagation helper. The save-availability
+            # path only touches days in `availability_overrides` (that's
+            # the set reforecast() may have rescaled on this no-TSB call).
+            sessions_modified = _propagate_reforecast_to_dict(
+                plan, pw_list, set(availability_overrides.keys()),
+            )
         except Exception:  # noqa: BLE001
             # Reflow is best-effort: if reforecast errors we still persist the
             # availability dict so the next /api/plan/reforecast picks it up.
@@ -8447,6 +8236,272 @@ def _planned_zone_split_minutes(session: dict) -> tuple[float, float, float]:
         return (round(dur * 0.40, 1), round(dur * 0.45, 1), round(dur * 0.15, 1))
     # Unknown: lump in z3z4 so it's at least visible.
     return (0.0, round(dur, 1), 0.0)
+
+
+# ── v1.4.0 — locked session field contract ────────────────────────────────
+# Every key emitted in /api/plan session payloads MUST be in this set.
+# When adding a new session field, add it here OR fix a regression that
+# leaked an unsanctioned key. SESSION_FIELDS_LOCKED is enforced by
+# tests/test_v140_session_fields_contract.py.
+SESSION_FIELDS_LOCKED: frozenset[str] = frozenset({
+    # core (training_planner.PlannedSession)
+    "day", "day_name", "session_type", "duration_min", "tss_estimate",
+    "description", "zwo_file", "zwo_name", "status",
+    # adapt + redraw + dismiss + move
+    "adapted", "adapted_reason", "variation",
+    "dismissed_at", "completion_matches", "user_moved", "moved_from",
+    # 3D mirrors (None when 3D unavailable; v1.0.6)
+    "wprime_tss", "pmax_tss", "cp_tss",
+    "wprime_xss", "pmax_xss", "cp_xss",
+    # synthetic history shells (calendar payload only; v4.3.0)
+    "_synthetic_history",
+    # match_zwo redraw seeds
+    "profile_id",
+    # enriched (added by _enrich_plan_for_response)
+    "card_state", "card_state_v2", "content_class", "display_name",
+    "zone_dist", "score", "protocol", "zwo_duration_min",
+    # availability (v1.3.5+)
+    "availability_hours", "availability_type",
+})
+
+
+def classify_card_state_v2(
+    session: dict, has_actual: bool, today_iso: str,
+) -> str:
+    """v1.4.0 — pure 10-state classifier per CALENDAR_REDESIGN §5d.
+
+    Inputs → output, no side effects. Single source of truth for the new
+    10-state UI dispatch. Legacy 4-string `_classify_card_state` is kept
+    for wire back-compat (mapped via :func:`legacy_card_state`).
+
+    States:
+      past_no_ride, past_planned_no_ride, past_actual_only,
+      past_planned_actual, today_planned, today_actual,
+      future_planned, future_unavailable, future_rest, missing_workout
+    """
+    day_iso = session.get("day") or ""
+    stype = (session.get("session_type") or "").lower()
+    zwo = session.get("zwo_file") or ""
+    avail = session.get("availability_hours")
+
+    # 1. has_actual ALWAYS wins. Even on rest or unavailable days, a logged
+    #    ride surfaces in the calendar (rider rode anyway).
+    if has_actual:
+        if day_iso < today_iso:
+            return "past_planned_actual" if zwo else "past_actual_only"
+        if day_iso == today_iso:
+            return "today_actual"
+        # future + actual: treat as past_actual_only
+        return "past_actual_only"
+
+    # 2. rest beats availability=0 for visual reasons (no red badge on a
+    #    rest day the user also marked unavailable — already a rest day).
+    if stype == "rest":
+        if day_iso < today_iso:
+            # past + rest + no actual: show as past_no_ride (genuine rest)
+            return "past_no_ride"
+        if day_iso > today_iso:
+            return "future_rest"
+        return "rest"  # today's rest
+
+    # 3. availability=0 → future_unavailable (only meaningful for today/future).
+    if avail is not None:
+        try:
+            if float(avail) == 0 and day_iso >= today_iso:
+                return "future_unavailable"
+        except (TypeError, ValueError):
+            pass
+
+    # 4. past/today/future split.
+    if day_iso < today_iso:
+        return "past_planned_no_ride"
+    if day_iso == today_iso:
+        return "today_planned"
+    if not zwo:
+        return "missing_workout"
+    return "future_planned"
+
+
+def legacy_card_state(state10: str) -> str:
+    """v1.4.0 — map new 10-state → legacy 4-state wire contract.
+
+    Dashboard renderCalDay + plan grid hardcode 4 strings (`completed`,
+    `rest`, `missing_workout`, `planned`). Keep `card_state` on the wire
+    using these 4 values for back-compat; emit `card_state_v2` alongside
+    so future UI rev can use the 10-state without a wire break.
+    """
+    if state10 in ("today_actual", "past_planned_actual", "past_actual_only"):
+        return "completed"
+    if state10 in ("rest", "future_rest", "past_no_ride"):
+        return "rest"
+    if state10 == "missing_workout":
+        return "missing_workout"
+    if state10 == "future_unavailable":
+        # bottom-cal already paints UNAVAILABLE via availability_hours==0;
+        # fall through to "rest" so plan grid doesn't render yellow ⚠.
+        return "rest"
+    if state10 == "past_planned_no_ride":
+        return "planned"  # past unfilled — UI can paint it red via isPast
+    return "planned"
+
+
+def _enrich_plan_for_response(plan_dict: dict, today_iso: str) -> dict:
+    """v1.4.0 — single enrichment helper (CALENDAR_REDESIGN §5b).
+
+    Mutates ``plan_dict["weeks"][*]["sessions"][*]`` in place AND returns
+    the plan for chaining. Adds the seven enrichment fields per session
+    + ``card_state`` (legacy 4-string) + ``card_state_v2`` (new 10-state).
+    Replaces the previously-duplicated blocks in /api/plan,
+    /api/plan/generate, /api/plan/save-availability, /api/plan/reforecast,
+    and /api/plan/redraw-day.
+
+    Idempotent: calling twice produces the same output. Safe to chain
+    after every plan mutation.
+    """
+    # Library + classifications loaded once per call.
+    try:
+        library = tp.load_workout_library()
+        lib_by_file = {w.get("File"): w for w in library if w.get("File")}
+    except Exception as _e:
+        _log.debug(f"_enrich_plan_for_response: library load failed: {_e}")
+        lib_by_file = {}
+    try:
+        classifications = tp._load_content_classifications() or {}
+    except Exception:
+        classifications = {}
+
+    # Rides-by-date for has_actual flag (used by card_state).
+    rides_by_date: dict[str, bool] = {}
+    try:
+        import ride_storage as _rs
+        for _r in _rs.list_rides():
+            _d = _ride_started_local_iso_date(_r)
+            if _d:
+                rides_by_date[_d] = True
+        for _f in sorted(_rides_fit_dir().glob("*.fit")):
+            try:
+                _st = _f.stat()
+                _ddt = datetime.fromtimestamp(
+                    _st.st_mtime, timezone.utc,
+                ).astimezone().date().isoformat()
+                rides_by_date[_ddt] = True
+            except OSError:
+                pass
+    except Exception:
+        pass
+
+    for w in plan_dict.get("weeks", []) or []:
+        for s in w.get("sessions", []) or []:
+            zwo = s.get("zwo_file") or ""
+            meta = lib_by_file.get(zwo) if zwo else None
+            _dn, _zdur = _session_naming_lookup(zwo, classifications, lib_by_file)
+            s["display_name"] = _dn
+            s["zwo_duration_min"] = _zdur
+            if meta:
+                s["zone_dist"] = {
+                    "z1": meta.get("Z1%", 0), "z2": meta.get("Z2%", 0),
+                    "z3": meta.get("Z3%", 0), "z4": meta.get("Z4%", 0),
+                    "z5": meta.get("Z5%", 0), "z6": meta.get("Z6%", 0),
+                }
+                s["score"] = meta.get("Score")
+                s["protocol"] = meta.get("Protocol")
+                s["content_class"] = meta.get("content_class") or ""
+            else:
+                s.setdefault("zone_dist", None)
+                s.setdefault("score", None)
+                s.setdefault("content_class", "")
+            _has_actual = bool(rides_by_date.get(s.get("day", "")))
+            # Legacy 4-state on wire (back-compat); v2 alongside for migration.
+            s["card_state"] = _classify_card_state(
+                s, has_actual=_has_actual, library_lookup=lib_by_file,
+            )
+            s["card_state_v2"] = classify_card_state_v2(
+                s, has_actual=_has_actual, today_iso=today_iso,
+            )
+    return plan_dict
+
+
+def _propagate_reforecast_to_dict(
+    plan: dict, pw_list: list, touched_days: set[str],
+) -> int:
+    """v1.4.0 — single propagation helper (CALENDAR_REDESIGN §5a + audit).
+
+    Replaces the 3 duplicated post-`tp.reforecast` field-copy blocks in
+    `_maybe_auto_reforecast` (app.py:6943-6977), `api_plan_reforecast`
+    (app.py:7141-7200), and `api_save_availability` (app.py:7369-7402).
+
+    Single mutation site means a future field-name drift between
+    `tp.reforecast` and the JSON dict cannot reproduce v1.3.5/6/7-style
+    regressions. Closes the layer-1/layer-2 architecture flaw described
+    in CALENDAR_REDESIGN §4.
+
+    Args:
+        plan: persisted JSON dict; mutated in place.
+        pw_list: PlannedWeek list returned by tp.reforecast.
+        touched_days: union of `touched_days` + `g3_dropped_days` from
+            reforecast_info; only these dates are propagated back.
+
+    Returns: number of sessions changed.
+    """
+    by_day: dict[str, "tp.PlannedSession"] = {}
+    for pw in pw_list:
+        for s in pw.sessions:
+            by_day[s.day.isoformat()] = s
+
+    sessions_changed = 0
+    for w in plan.get("weeks", []) or []:
+        for s_json in w.get("sessions", []) or []:
+            day_iso = s_json.get("day", "") or ""
+            if not day_iso or day_iso not in touched_days:
+                continue
+            src = by_day.get(day_iso)
+            if src is None:
+                continue
+            # Diff to keep `sessions_modified` count honest. Identical
+            # round-trip is a no-op (used by save-availability path).
+            new_session_type = src.session_type
+            new_duration_min = src.duration_min
+            new_tss_estimate = src.tss_estimate
+            new_zwo_file = getattr(src, "zwo_file", "") or ""
+            new_zwo_name = getattr(src, "zwo_name", "") or ""
+            new_description = getattr(src, "description", "") or ""
+            changed = (
+                s_json.get("session_type") != new_session_type
+                or int(s_json.get("duration_min", 0) or 0) != new_duration_min
+                or float(s_json.get("tss_estimate", 0) or 0) != new_tss_estimate
+                or (s_json.get("zwo_file", "") or "") != new_zwo_file
+                or (s_json.get("zwo_name", "") or "") != new_zwo_name
+                or (s_json.get("description", "") or "") != new_description
+            )
+            if not changed:
+                continue
+            s_json["session_type"] = new_session_type
+            s_json["duration_min"] = new_duration_min
+            s_json["tss_estimate"] = new_tss_estimate
+            s_json["zwo_file"] = new_zwo_file
+            s_json["zwo_name"] = new_zwo_name
+            s_json["description"] = new_description
+            # Adapt flags travel with TSB / G3 mutations.
+            if getattr(src, "adapted", False):
+                s_json["adapted"] = True
+                s_json["adapted_reason"] = new_description
+            sessions_changed += 1
+
+    # Week-level mutations (G4 ACWR scaling).
+    pw_by_num = {pw.week_num: pw for pw in pw_list}
+    for w in plan.get("weeks", []) or []:
+        wn = w.get("week_num")
+        src_pw = pw_by_num.get(wn)
+        if src_pw is None:
+            continue
+        if w.get("tss_target") != src_pw.tss_target:
+            w["tss_target"] = src_pw.tss_target
+        if w.get("hit_per_week") != src_pw.hit_per_week:
+            w["hit_per_week"] = src_pw.hit_per_week
+        if src_pw.auto_acwr_scaled and not w.get("auto_acwr_scaled"):
+            w["auto_acwr_scaled"] = True
+
+    return sessions_changed
 
 
 def _classify_card_state(session: dict, has_actual: bool, library_lookup: dict | None) -> str:

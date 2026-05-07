@@ -8305,6 +8305,10 @@ async function generatePlan() {
     $('plan-status').textContent = 'Plan generated!';
     $('plan-status').style.color = 'var(--green)';
     await renderPlanJSON(d.plan_json);
+    // v1.4.0 — mandatory loadCalendar() after every plan mutation
+    // (CALENDAR_REDESIGN §8.4). Single canonical refresh path keeps
+    // top cards / right panel / bottom calendar in sync.
+    try { await loadCalendar(); } catch(_) {}
   } catch(e) {
     $('plan-status').textContent = 'Failed: ' + e.message;
     $('plan-status').style.color = 'var(--red)';
@@ -8327,6 +8331,8 @@ async function reforecastPlan() {
     $('plan-status').textContent = 'Reforecast complete!';
     $('plan-status').style.color = 'var(--green)';
     await renderPlanJSON(d.plan_json);
+    // v1.4.0 — mandatory loadCalendar() after every plan mutation.
+    try { await loadCalendar(); } catch(_) {}
   } catch(e) {
     $('plan-status').textContent = 'Failed: ' + e.message;
     $('plan-status').style.color = 'var(--red)';
@@ -9252,6 +9258,32 @@ function renderCalDay(d, wi, di, phaseKey, today) {
   const planned = d.planned;
   const actual = d.actual;
 
+  // v1.4.0 — UNAVAILABLE cell distinct from REST (CALENDAR_REDESIGN §8.1).
+  // availability_hours==0 means the user marked this day off in the
+  // availability calendar. Render with a red UNAVAILABLE badge + the
+  // originally-planned session faded behind at 30% opacity (so the rider
+  // remembers what was there before they blocked the day).
+  // Per §8.2: the "originally planned" view is whatever the planner picked
+  // for this slot AT THIS RENDER — there's no stored history. Restoration
+  // re-runs the planner with current hours.
+  const isUnavailable = (d.availability_hours === 0);
+  if (isUnavailable && !actual && d.date >= today) {
+    let fadedPlannedHtml = '';
+    if (planned) {
+      const fadedTitle = calCardTitleWithStructure(planned);
+      const fadedCss = calContentCss(planned.content_class, planned.session_type);
+      const fadedDur = planned.duration_min ? `${Math.round(planned.duration_min)}m` : '';
+      fadedPlannedHtml = `<div class="cal-planned" style="opacity:0.3;">
+        <span class="cal-planned-type ${fadedCss}">${esc(fadedTitle)}</span>
+        <div class="cal-planned-meta">${fadedDur}${planned.tss ? ' · ' + Math.round(planned.tss) + ' TSS' : ''}</div>
+      </div>`;
+    }
+    return `<div class="cal-day cal-rest cal-phase-${phaseKey}${isToday ? ' cal-today' : ''}" data-cs="future_unavailable" data-date="${d.date}" style="position:relative;">
+      <div style="font-size:9px;font-weight:700;color:var(--red);letter-spacing:0.05em;opacity:0.85;">UNAVAILABLE</div>
+      ${fadedPlannedHtml}
+    </div>`;
+  }
+
   // REST day — planned is null and no activity → just centered REST label.
   if (cs === 'rest' && !actual) {
     // v4.6.7 F4 — event-day marker may land on a rest day.
@@ -10050,6 +10082,8 @@ async function regeneratePlan() {
     $('plan-status').style.color = 'var(--green)';
     $('plan-gap-alert').style.display = 'none';
     await renderPlanJSON(d.plan_json);
+    // v1.4.0 — mandatory loadCalendar() after every plan mutation.
+    try { await loadCalendar(); } catch(_) {}
   } catch(e) {
     $('plan-status').textContent = 'Failed: ' + e.message;
     $('plan-status').style.color = 'var(--red)';

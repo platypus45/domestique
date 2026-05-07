@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.3.7 — Hot-fix: bottom calendar renders again (regression from v1.3.6) (2026-05-07)
+
+User report: "whole calendar on the bottom is now broken and doesnt show anything anymore. no single activity. the availability calendar does work. also when i regenerate plan, whole calendar bottom not working."
+
+### Root cause
+
+`app.py:7158` (`api_plan_reforecast`) and `app.py:6959` (`_maybe_auto_reforecast`) both hard-coded `s_json["zwo_file"] = ""` in the reforecast propagation block. After `tp.reforecast()` returned freshly-matched workouts (v1.3.6 added the rest→z2 restore branch + final `match_zwo` sweep), the propagation step nuked every `zwo_file` back to empty string. `_classify_card_state` then emitted `"missing_workout"` for every cell → bottom `#cal-overlay` painted yellow ⚠ everywhere with no workout titles. User perceived this as "no single activity" because every cell was a warning placeholder.
+
+### Fix
+
+Both call sites now propagate `getattr(src, "zwo_file", "") or ""` from the `PlannedSession` that `tp.reforecast` returned. The per-day branches inside reforecast already null out `zwo` when a swap is genuinely needed (v1.3.5 `hours<=0` rest path; v1.3.6 rest→z2 restore path). Propagating whatever the source holds keeps the picked workout intact when no swap happened.
+
+### Tests
+
+2 new in `tests/test_v137_calendar_renders_post_v136.py`. Full suite: **1143 passing** (up from 1141). 5 pre-existing failures match v1.3.6 commit body verbatim — no regression.
+
 ## v1.3.6 — Hot-fix: availability restore + 3D-fitness placeholder UX (2026-05-07)
 
 Two user-reported bugs landed in one multi-wave pass.

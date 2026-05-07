@@ -1,5 +1,44 @@
 # Changelog
 
+## v1.5.0 — `tp.reforecast_dict` single-layer reforecast (2026-05-07)
+
+Closes drift class A permanently. The v1.4.0 architecture rebuild
+replaced 3 duplicated propagation blocks with one helper
+(`_propagate_reforecast_to_dict` in app.py), but the **two-module split**
+still required callers to maintain a separate PlannedWeek list, call
+`tp.reforecast(goal, pw_list, ...)`, then propagate the result back.
+v1.5.0 collapses that into a single function in `training_planner.py`:
+
+- **`tp.reforecast_dict(plan_dict, ...)`** — accepts the persisted plan
+  dict, mutates it in place, returns `(plan_dict, sessions_modified,
+  reforecast_info)`. Internally builds the PlannedWeek list, runs the
+  existing `reforecast()`, and applies the result via the new private
+  `_apply_reforecast_to_dict`. Callers no longer touch PlannedWeek
+  directly.
+- **`tp._plan_dict_to_planned_weeks(plan_dict)`** — the
+  PlannedWeek-list-from-dict conversion (previously inlined at every
+  callsite in app.py) is now a single helper. Used by `reforecast_dict`
+  internally and by callers that still need a list (e.g. for
+  `detect_plan_gaps`).
+- **3 callers in app.py migrated**: `_maybe_auto_reforecast`,
+  `api_plan_reforecast`, `api_save_availability` — each shrinks from
+  ~50 lines to ~10. The `propagation_days` kwarg lets save-availability
+  preserve its v1.3.x contract (propagate only the user-touched dates).
+- **`_propagate_reforecast_to_dict` removed from app.py**. There is now
+  exactly one mutation site for reforecast field propagation. Drift
+  between training_planner and app.py is structurally impossible.
+
+The legacy `tp.reforecast(goal, pw_list, ...)` API is kept as a
+deprecated alias for tests + external callers; removal in v1.6.0.
+
+Tests: `tests/test_v150_reforecast_dict_signature.py` (5 tests):
+- Returns the same dict object (in-place mutation contract).
+- Identity reforecast (no overrides) → 0 sessions modified.
+- Old `tp.reforecast` alias still callable.
+- `_propagate_reforecast_to_dict` is GONE from app.py (regression
+  guard for drift class A).
+- Drift class A: `zwo_file` round-trips on untouched sessions.
+
 ## v1.4.2 — `_enrich_plan_for_response` mtime-keyed cache (2026-05-07)
 
 `_enrich_plan_for_response` now wraps its uncached body

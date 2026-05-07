@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.5.1 — Wire-contract regression suite + fresh DMG (2026-05-07)
+
+User reported "homepage + calendar empty" after v1.4.1/v1.4.2/v1.5.0 ship. Investigation: backend endpoints all 200 (verified via TestClient AND headless Chrome on the live render). v1.4.2 cache byte-stable across two calls. v1.5.0 reforecast_dict produces same field shape as PlannedWeek-flow. Frontend JS passes `node --check`; HTML script tags balanced; CSS specificity fine.
+
+Root cause likely external: stale bundled DMG (predates v1.4.x) cached on user's machine. Rebuild fixes.
+
+### Hardening
+
+`tests/test_v151_homepage_calendar_renders.py` — 4 contract tests catching the failure modes the agent ruled out: (a) byte-stable `/api/plan` across cache miss/hit, (b) `card_state_v2` field present on every session, (c) `/api/calendar` weeks have 7 days each, (d) cached path doesn't strip enrichment fields. Locks the wire contract so future v1.4.x/v1.5.x-style cache/refactor drift fails CI before ship.
+
+### Tests
+
+1185 → 1189 passing (+4).
+
 ## v1.5.0 — `tp.reforecast_dict` single-layer reforecast (2026-05-07)
 
 Closes drift class A permanently. The v1.4.0 architecture rebuild

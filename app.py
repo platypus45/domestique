@@ -157,6 +157,47 @@ def _plan_dir() -> Path:
     return d
 
 
+def _maybe_restore_plan_from_backup(plan_path: Path) -> str | None:
+    """v1.6.2 — restore current_plan.json from the newest non-empty .bak* file.
+
+    Triggered on app startup. If ``plan_path`` is missing or zero-bytes AND
+    at least one ``current_plan.json.bak*`` snapshot exists with parseable
+    JSON, atomically copies the newest valid snapshot back into place.
+
+    Returns the source filename (e.g. ``"current_plan.json.bak"``) on
+    successful restore, else ``None``. Never raises — boot must continue.
+    """
+    try:
+        live_ok = plan_path.exists() and plan_path.stat().st_size > 0
+        if live_ok:
+            return None
+        # Walk .bak, .bak2, ..., .bak{depth} in age order (newest first).
+        candidates = [plan_path.with_suffix(plan_path.suffix + ".bak")]
+        for n in range(2, tp.PLAN_BACKUP_DEPTH + 1):
+            candidates.append(plan_path.with_suffix(plan_path.suffix + f".bak{n}"))
+        for src in candidates:
+            if not src.exists() or src.stat().st_size == 0:
+                continue
+            try:
+                with open(src, encoding="utf-8") as f:
+                    parsed = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(parsed, dict) or not parsed:
+                continue
+            # Atomic copy: write tmp + rename. Don't go through atomic_write_plan
+            # because we don't want to rotate (the .bak files we're restoring
+            # FROM should be preserved as-is, not shifted).
+            tmp = plan_path.with_suffix(plan_path.suffix + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(parsed, f, indent=2, default=str)
+            tmp.replace(plan_path)
+            return src.name
+        return None
+    except Exception:
+        return None
+
+
 def _session_naming_lookup(
     zwo_file: str,
     classifications: dict | None,
@@ -303,6 +344,25 @@ async def lifespan(app):
     db.set_db_path(pm.db_path)
     db.init_db()
     db.start_background_sync()
+
+    # v1.6.2 — boot-time plan auto-restore. If current_plan.json is missing
+    # or zero-bytes but at least one .bak* snapshot exists, restore from
+    # the newest valid one. Closes the failure mode where a release-time
+    # mutation nuked the live file but the rotated .bak files survived.
+    try:
+        _restored_from = _maybe_restore_plan_from_backup(_plan_dir() / "current_plan.json")
+        if _restored_from:
+            _log_error(
+                error_codes.Codes.PLAN_AUTO_RESTORED,
+                source=_restored_from,
+                plan_path=str(_plan_dir() / "current_plan.json"),
+            )
+            _log.warning(
+                f"v1.6.2 plan auto-restore: live current_plan.json was "
+                f"missing — restored from {_restored_from}."
+            )
+    except Exception as _e:
+        _log.debug(f"plan auto-restore on boot failed: {_e}")
 
     # v4.1.1 FIX-PLANNER A: on boot, walk the stored plan and rewrite any
     # session whose zwo_file prefix disagrees with its session_type. Before
@@ -6043,11 +6103,7 @@ async def api_today_session_persist(request: Request):
         if not found:
             return JSONResponse({"error": f"No session at {today_iso}"}, 404)
 
-        with tp.plan_write_lock():
-            tmp_path = json_path.with_suffix('.tmp')
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(plan, f, indent=2, default=str)
-            tmp_path.rename(json_path)
+        tp.atomic_write_plan(json_path, plan)
 
         return {"ok": True, "day": today_iso, "adapted_reason": reason,
                 "session_type": new_type}
@@ -6814,11 +6870,7 @@ async def api_plan_generate(request: Request):
             except (json.JSONDecodeError, OSError):
                 pass
 
-        with tp.plan_write_lock():
-            tmp_path = json_path.with_suffix('.tmp')
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(plan_dict, f, indent=2, default=str)
-            tmp_path.rename(json_path)
+        tp.atomic_write_plan(json_path, plan_dict)
 
         # v1.4.0 — single enrichment helper (replaces the inline duplicate).
         # Adds card_state / card_state_v2 / content_class / display_name /
@@ -6950,10 +7002,7 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
             plan["reforecast_date"] = datetime.now().isoformat()
             plan["last_reforecast_info"] = reforecast_info
 
-            tmp_path = json_path.with_suffix('.tmp')
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(plan, f, indent=2, default=str)
-            tmp_path.rename(json_path)
+            tp.atomic_write_plan(json_path, plan)
     except Exception as e:  # noqa: BLE001
         _log.warning(f"auto-reforecast skipped: {e}")
 
@@ -7069,11 +7118,7 @@ async def api_plan_reforecast():
         # Save updated plan
         plan["reforecast_date"] = datetime.now().isoformat()
         plan["last_reforecast_info"] = reforecast_info
-        with tp.plan_write_lock():
-            tmp_path = json_path.with_suffix('.tmp')
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(plan, f, indent=2, default=str)
-            tmp_path.rename(json_path)
+        tp.atomic_write_plan(json_path, plan)
 
         # Also detect gaps (tiered absence detection). v1.5.0: rebuild
         # pw_list from the (now-mutated) plan dict — the previous local
@@ -7126,11 +7171,7 @@ async def api_mark_unavailable(request: Request):
         unavailable.append(period)
         plan["unavailable_periods"] = unavailable
 
-        with tp.plan_write_lock():
-            tmp_path = json_path.with_suffix('.tmp')
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(plan, f, indent=2, default=str)
-            tmp_path.rename(json_path)
+        tp.atomic_write_plan(json_path, plan)
 
         return {"ok": True, "period": period, "plan_json": plan}
 
@@ -7191,11 +7232,7 @@ async def api_save_availability(request: Request):
             # availability dict so the next /api/plan/reforecast picks it up.
             _log.exception("save-availability reflow skipped")
 
-        with tp.plan_write_lock():
-            tmp_path = json_path.with_suffix('.tmp')
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(plan, f, indent=2, default=str)
-            tmp_path.rename(json_path)
+        tp.atomic_write_plan(json_path, plan)
 
         return {"ok": True, "sessions_modified": sessions_modified}
 
@@ -7336,11 +7373,7 @@ async def api_plan_regenerate_dynamic(request: Request):
             "last_regen_at": seed_salt,
         }
 
-        with tp.plan_write_lock():
-            tmp_path = json_path.with_suffix('.tmp')
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(plan_dict, f, indent=2, default=str)
-            tmp_path.rename(json_path)
+        tp.atomic_write_plan(json_path, plan_dict)
 
         return {"ok": True, "plan_json": plan_dict, "regen_info": regen_info}
 
@@ -7923,11 +7956,7 @@ async def api_plan_move_session(request: Request):
 
         plan["last_move"] = {"date": src_iso, "new_date": dst_iso, "at": datetime.now().isoformat()}
 
-        with tp.plan_write_lock():
-            tmp_path = json_path.with_suffix('.tmp')
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(plan, f, indent=2, default=str)
-            tmp_path.rename(json_path)
+        tp.atomic_write_plan(json_path, plan)
 
         return {"ok": True, "moved": moved_payload, "vacated": src_iso}
 
@@ -9629,11 +9658,7 @@ async def api_plan_rematch(request: Request, apply: int = Query(0)):
         weeks_data[week_idx]["sessions"] = sessions_out
         plan["last_rematch"] = datetime.now().isoformat()
 
-        with tp.plan_write_lock():
-            tmp_path = json_path.with_suffix('.tmp')
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(plan, f, indent=2, default=str)
-            tmp_path.rename(json_path)
+        tp.atomic_write_plan(json_path, plan)
 
         return {"ok": True, "apply": True, **preview}
 
@@ -9778,11 +9803,7 @@ async def api_plan_rematch_day(day: str):
         plan["last_rematch_day"] = {"date": day, "at": datetime.now().isoformat(),
                                     "new_zwo": planned.zwo_file}
 
-        with tp.plan_write_lock():
-            tmp_path = json_path.with_suffix('.tmp')
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(plan, f, indent=2, default=str)
-            tmp_path.rename(json_path)
+        tp.atomic_write_plan(json_path, plan)
 
         return {"ok": True, "action": "redrawn", "day": day,
                 "zwo_file": planned.zwo_file, "zwo_name": planned.zwo_name,
@@ -9834,11 +9855,7 @@ async def api_plan_dismiss_session(request: Request):
         if not found:
             return JSONResponse({"error": f"no session at {d_iso}"}, 404)
 
-        with tp.plan_write_lock():
-            tmp_path = json_path.with_suffix('.tmp')
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(plan, f, indent=2, default=str)
-            tmp_path.rename(json_path)
+        tp.atomic_write_plan(json_path, plan)
 
         return {"ok": True, "dismissed": not undo}
 
@@ -9989,11 +10006,7 @@ def api_plan_auto_recalc():
             "unavailable_periods": plan.get("unavailable_periods", []),
         }
 
-        with tp.plan_write_lock():
-            tmp_path = json_path.with_suffix('.tmp')
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(plan_dict, f, indent=2, default=str)
-            tmp_path.rename(json_path)
+        tp.atomic_write_plan(json_path, plan_dict)
 
         return {"action": "recalculated", "plan_json": plan_dict, **recalc_info}
 

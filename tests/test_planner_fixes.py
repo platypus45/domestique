@@ -262,7 +262,7 @@ class TestFix3ThreeDayWeekHITScaling(unittest.TestCase):
 
 
 class TestFix4AtomicWrites(unittest.TestCase):
-    """All json.dump(plan) sites in app.py use atomic tmp+rename.
+    """All plan-mutation sites in app.py go through ``tp.atomic_write_plan``.
 
     fix26 §6 added 3 new plan-write endpoints (move-session, rematch-apply,
     dismiss-session) and removed 1 legacy write path (daily-adapt's in-place
@@ -270,43 +270,40 @@ class TestFix4AtomicWrites(unittest.TestCase):
     (today-session/persist + rematch-day) → 11. v1.0.3 IMPL-WIRING adds
     one more inside ``_maybe_auto_reforecast`` (best-effort auto-reforecast
     on ride sync / FIT import) → 12.
+
+    v1.6.2: the inline ``tmp_path = json_path.with_suffix('.tmp') ...
+    tmp_path.rename(json_path)`` pattern is replaced by a single helper
+    call ``tp.atomic_write_plan(json_path, plan)`` that also rotates
+    backups. The site count stays 12.
     """
 
-    def test_all_sites_use_atomic_pattern(self):
+    def test_all_sites_use_atomic_write_plan_helper(self):
+        """Every plan-mutation endpoint must call ``tp.atomic_write_plan``
+        instead of inlining tmp+rename. Count must stay at 12."""
         src = APP_PY.read_text()
-        # Find all json.dump(plan...) lines.
-        dump_lines = [
-            (i + 1, line)
-            for i, line in enumerate(src.splitlines())
-            if re.search(r"json\.dump\((plan|plan_dict),\s*f", line)
-        ]
-        self.assertEqual(len(dump_lines), 12,
-                         f"Expected 12 json.dump(plan) sites, found {len(dump_lines)}")
+        helper_calls = re.findall(
+            r"tp\.atomic_write_plan\(\s*json_path\s*,\s*(plan|plan_dict)\s*\)",
+            src,
+        )
+        self.assertEqual(
+            len(helper_calls), 12,
+            f"Expected 12 tp.atomic_write_plan() sites, found {len(helper_calls)}",
+        )
 
-        lines = src.splitlines()
-        violations = []
-        for lineno, line in dump_lines:
-            # Look backward up to 10 lines for "tmp_path = ... .tmp"
-            preceding = "\n".join(lines[max(0, lineno - 11):lineno - 1])
-            # Look forward up to 5 lines for "tmp_path.rename("
-            following = "\n".join(lines[lineno:min(len(lines), lineno + 6)])
-            if "tmp_path" not in preceding or ".tmp" not in preceding:
-                violations.append(f"Line {lineno}: missing tmp_path/.tmp "
-                                  f"setup before dump")
-                continue
-            if "tmp_path.rename(" not in following:
-                violations.append(f"Line {lineno}: missing tmp_path.rename() "
-                                  f"after dump")
-        self.assertEqual(violations, [],
-                         f"Atomic write violations: {violations}")
-
-    def test_atomic_pattern_uses_with_suffix_tmp(self):
-        # The requested pattern is: tmp_path = json_path.with_suffix('.tmp')
+    def test_no_inline_tmp_rename_pattern(self):
+        """v1.6.2: the legacy inline ``tmp_path = json_path.with_suffix('.tmp')``
+        pattern must not survive in app.py — every plan write goes through
+        the helper now."""
         src = APP_PY.read_text()
-        count = len(re.findall(r"with_suffix\(\s*['\"]\.tmp['\"]\s*\)", src))
-        self.assertGreaterEqual(count, 7,
-                                f"Expected at least 7 with_suffix('.tmp') "
-                                f"calls, found {count}")
+        leftovers = re.findall(
+            r"tmp_path\s*=\s*json_path\.with_suffix\(\s*['\"]\.tmp['\"]\s*\)",
+            src,
+        )
+        self.assertEqual(
+            leftovers, [],
+            f"Inline tmp+rename plan-write blocks must be migrated to "
+            f"tp.atomic_write_plan; found {len(leftovers)}",
+        )
 
     def test_no_direct_json_dump_to_final_path(self):
         # Make sure no "with open(json_path" is directly followed by

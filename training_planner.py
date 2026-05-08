@@ -38,6 +38,7 @@ import hashlib
 import json
 import logging
 import math
+import shutil
 import sys
 import threading
 import xml.etree.ElementTree as ET
@@ -224,7 +225,13 @@ def _compute_workouts_dir_hash() -> str:
 # `with training_planner.plan_write_lock(): ...` around the tmp-write + rename.
 # Helper `atomic_write_plan(json_path, plan)` wraps the full write for callers
 # who don't want to manage the tmp path themselves.
-_plan_write_lock = threading.Lock()
+#
+# v1.6.2 — ``_plan_write_lock`` is an ``RLock`` so callers already inside
+# ``plan_write_lock()`` can safely call ``atomic_write_plan`` without
+# deadlocking.
+_plan_write_lock = threading.RLock()
+
+PLAN_BACKUP_DEPTH = 7  # v1.6.2: keep .bak through .bak7 (7 snapshots).
 
 
 @contextmanager
@@ -238,16 +245,61 @@ def plan_write_lock():
         yield
 
 
+def _rotate_plan_backups(plan_path: "Path") -> None:
+    """v1.6.2 — shift backups down: .bak6→.bak7, ..., .bak→.bak2, then live→.bak.
+
+    Best-effort: per-file failures (perm, disk) are logged and swallowed so
+    the upcoming write still proceeds. The live file is COPIED (not moved)
+    to .bak so the about-to-be-replaced file stays intact until the atomic
+    rename swaps it. Caller MUST hold ``_plan_write_lock``.
+    """
+    p = Path(plan_path)
+    # Drop the oldest if at depth (unlink only used here — guarded by tests).
+    oldest = p.with_suffix(p.suffix + f".bak{PLAN_BACKUP_DEPTH}")
+    if oldest.exists():
+        try:
+            oldest.unlink()
+        except OSError as e:
+            log.debug(f"_rotate_plan_backups: drop oldest failed: {e}")
+    # Shift bak{n} → bak{n+1}, downward from N-1 to 1.
+    for n in range(PLAN_BACKUP_DEPTH - 1, 0, -1):
+        src = p.with_suffix(p.suffix + (f".bak{n}" if n > 1 else ".bak"))
+        dst = p.with_suffix(p.suffix + f".bak{n+1}")
+        if src.exists():
+            try:
+                src.replace(dst)
+            except OSError as e:
+                log.debug(f"_rotate_plan_backups: shift {src.name}→{dst.name} failed: {e}")
+    # Snapshot live → .bak (copy so the original remains for the atomic
+    # rename of the new tmp file to overwrite).
+    bak = p.with_suffix(p.suffix + ".bak")
+    try:
+        shutil.copy2(p, bak)
+    except OSError as e:
+        log.debug(f"_rotate_plan_backups: copy live→.bak failed: {e}")
+
+
 def atomic_write_plan(json_path: "Path | str", plan: dict) -> None:
     """Atomically write ``plan`` to ``json_path`` under the plan-write lock.
 
-    Writes to `<json_path>.tmp` under the module-level lock and renames on
-    success. Replaces the ad-hoc `tmp_path = json_path.with_suffix('.tmp')` +
-    `tmp_path.rename(json_path)` pattern in app.py.
+    v1.6.2:
+      - Refuses to write an empty / non-dict plan (guards the bug where a
+        mutation produced ``{}`` or ``None`` and silently nuked the live file).
+      - Rotates existing live → .bak → .bak2 ... → .bak7 BEFORE writing, so
+        a crash mid-write still leaves at least 7 prior snapshots intact.
+      - Writes to `<json_path>.tmp` and atomic-renames on success. If the
+        write or rotation raises, the live file is unchanged.
     """
+    if not isinstance(plan, dict) or not plan:
+        raise ValueError(
+            "atomic_write_plan: refusing to write empty / non-dict plan "
+            f"(got {type(plan).__name__})"
+        )
     p = Path(json_path)
     tmp = p.with_suffix('.tmp')
     with _plan_write_lock:
+        if p.exists():
+            _rotate_plan_backups(p)
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(plan, f, indent=2, default=str)
         tmp.replace(p)

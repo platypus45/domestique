@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.6.2 — Plan file delete-protection + atomic write + auto-restore (2026-05-08)
+
+User hit `E_PLAN_PARSE_MISSING` — `~/.domestique/plans/current_plan.json` vanished, 7 backups (`.bak`...`.bak7` from May 6 14:43-14:51) survived. Wave 0 audit found no `unlink`/`remove` site on the live file in source; diagnosis: non-atomic-mutation paths could write `{}` and overwrite. The `.bak` files were external (editor/OS), incidentally lifesaving.
+
+### Hardening
+
+- **`tp.atomic_write_plan(json_path, plan_dict)`** — extended: rejects empty/non-dict input, rotates backups before write, tmp+replace atomic rename. Crash-safe.
+- **`tp._rotate_plan_backups`** — 7-deep rotation (`.bak` → `.bak7`); shifts oldest out, copies live to `.bak`. Sole sanctioned `unlink` site for backup files.
+- **`_plan_write_lock` → `threading.RLock`** — fixes potential deadlock when auto-reforecast (already inside outer lock) re-enters the helper.
+- **`app._maybe_restore_plan_from_backup`** — boot-time scan: zero-byte/missing live + valid `.bak*` → atomic restore, logs `E_PLAN_AUTO_RESTORED` (WARN). User notified via diag modal next open.
+- **All 12 inline tmp+rename blocks in `app.py` migrated to `tp.atomic_write_plan(json_path, plan)`** — single mutation site, contract-tested.
+- **`tests/test_v162_plan_no_unlink.py`** — grep source for direct `.unlink`/`os.remove` on plan path; 0 hits outside the safety helpers.
+
+### Tests
+
+17 new across 3 files: `test_v162_plan_atomic_write.py` (6), `test_v162_plan_auto_restore.py` (9), `test_v162_plan_no_unlink.py` (2). 1223 → **1240 passing** (+17). 5 pre-existing unrelated failures unchanged.
+
+### Why this matters
+
+Future v1.x ships cannot accidentally nuke `current_plan.json`. If something does, boot auto-restores from latest backup. Direct `.unlink` on plan path is now a test failure.
+
 ## v1.6.1 — Fine-grained logging wired into homepage + training planner (2026-05-07)
 
 v1.6.0 shipped the infrastructure (error_codes.py, `_log_error`, ring buffer, diag endpoints). v1.6.1 wires that infrastructure into the user-visible critical paths so the next "homepage empty" report carries actual evidence.

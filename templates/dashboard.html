@@ -3178,7 +3178,11 @@ function workoutProfileSVG(segments, ftp, totalSec) {
       // hover hint shows instantly even in WKWebView (which serves SVG
       // <title> with a ~1s delay if at all). <title> is kept as a no-cost
       // fallback for non-WebKit user agents.
-      rects += `<rect x="${x1}" y="${y}" width="${w}" height="${h}" fill="${z.color}" opacity="0.85" data-charttip="${esc(tip)}"><title>${tip}</title></rect>`;
+      // v1.6.7: <title> dropped — user saw two stacked tooltips (custom
+      // chart-tip + browser-native title) in WKWebView. The custom one
+      // is the canonical hover surface; <title> was a v1.6.5 fallback
+      // that turned out to render alongside, not instead of, the JS tip.
+      rects += `<rect x="${x1}" y="${y}" width="${w}" height="${h}" fill="${z.color}" opacity="0.85" data-charttip="${esc(tip)}"></rect>`;
     } else if (s.type === 'Warmup' || s.type === 'Cooldown' || s.type === 'Ramp') {
       const x2 = xScale(s.start + s.duration);
       // v4.6.8 F1-FIX — the v4.6.7 attempt assumed every Cooldown stores
@@ -3215,7 +3219,7 @@ function workoutProfileSVG(segments, ftp, totalSec) {
       const wattsEnd = Math.round(isCooldown ? Math.min(s.power_low, s.power_high) : Math.max(s.power_low, s.power_high));
       const tip = `${TYPE}: ${formatDur(s.duration)} • ${wattsStart}→${wattsEnd} W (${Math.round(pctStart)}%→${Math.round(pctEnd)}% FTP)`;
       // v1.6.5: see SteadyState branch for the data-charttip / <title> rationale.
-      rects += `<polygon points="${x1},${yStart} ${x2},${yEnd} ${x2},${yBot} ${x1},${yBot}" fill="url(#${gid})" opacity="0.85" data-charttip="${esc(tip)}"><title>${tip}</title></polygon>`;
+      rects += `<polygon points="${x1},${yStart} ${x2},${yEnd} ${x2},${yBot} ${x1},${yBot}" fill="url(#${gid})" opacity="0.85" data-charttip="${esc(tip)}"></polygon>`;
     } else if (s.type === 'IntervalsT') {
       let cursor = s.start;
       for (let r = 0; r < s.repeats; r++) {
@@ -3231,7 +3235,7 @@ function workoutProfileSVG(segments, ftp, totalSec) {
         const onWatts = Math.round(s.on_power);
         const onTip = `INTERVALS ON: ${formatDur(s.on_duration)} • ${onWatts} W (${Math.round(s.on_pct)}% FTP)`;
         // v1.6.5: data-charttip mirrors <title> — see SteadyState branch.
-        rects += `<rect x="${ox1}" y="${oy}" width="${ox2-ox1}" height="${oBot-oy}" fill="${zOn.color}" opacity="0.85" data-charttip="${esc(onTip)}"><title>${onTip}</title></rect>`;
+        rects += `<rect x="${ox1}" y="${oy}" width="${ox2-ox1}" height="${oBot-oy}" fill="${zOn.color}" opacity="0.85" data-charttip="${esc(onTip)}"></rect>`;
         cursor += s.on_duration;
         // Off interval
         const fx1 = xScale(cursor);
@@ -3241,7 +3245,7 @@ function workoutProfileSVG(segments, ftp, totalSec) {
         const offWatts = Math.round(s.off_power);
         const offTip = `INTERVALS OFF: ${formatDur(s.off_duration)} • ${offWatts} W (${Math.round(s.off_pct)}% FTP)`;
         // v1.6.5: data-charttip mirrors <title>.
-        rects += `<rect x="${fx1}" y="${fy}" width="${fx2-fx1}" height="${oBot-fy}" fill="${zOff.color}" opacity="0.85" data-charttip="${esc(offTip)}"><title>${offTip}</title></rect>`;
+        rects += `<rect x="${fx1}" y="${fy}" width="${fx2-fx1}" height="${oBot-fy}" fill="${zOff.color}" opacity="0.85" data-charttip="${esc(offTip)}"></rect>`;
         cursor += s.off_duration;
       }
     } else if (s.type === 'FreeRide') {
@@ -3252,7 +3256,7 @@ function workoutProfileSVG(segments, ftp, totalSec) {
       // a free segment by definition; the rider picks the effort.
       const tip = `FREERIDE: ${formatDur(s.duration)} • free`;
       // v1.6.5: data-charttip mirrors <title>.
-      rects += `<rect x="${x1}" y="${y}" width="${w}" height="${h}" fill="var(--text3)" opacity="0.3" data-charttip="${esc(tip)}"><title>${tip}</title></rect>`;
+      rects += `<rect x="${x1}" y="${y}" width="${w}" height="${h}" fill="var(--text3)" opacity="0.3" data-charttip="${esc(tip)}"></rect>`;
       rects += `<text x="${x1 + w/2}" y="${y + h/2 + 4}" text-anchor="middle" fill="var(--text2)" font-size="10">FREE RIDE</text>`;
     }
   }
@@ -12728,10 +12732,10 @@ function renderPowerBlocksSVG(blocks, ftp) {
     // delegated handlers.
     if (kind === 'ramp' && b.pctLow !== b.pctHigh) {
       // Ramp: draw as trapezoid
-      svg += `<polygon points="${x1},${y(b.pctLow)} ${x2},${y(b.pctHigh)} ${x2},${y(0)} ${x1},${y(0)}" fill="${col}" opacity="0.7" style="cursor:pointer;" data-charttip="${esc(tipText)}"><title>${esc(tipText)}</title></polygon>`;
+      svg += `<polygon points="${x1},${y(b.pctLow)} ${x2},${y(b.pctHigh)} ${x2},${y(0)} ${x1},${y(0)}" fill="${col}" opacity="0.7" style="cursor:pointer;" data-charttip="${esc(tipText)}"></polygon>`;
     } else {
       // Steady (or interval block): draw as rectangle at avg pct.
-      svg += `<rect x="${x1}" y="${y(avgPct)}" width="${bw}" height="${y(0)-y(avgPct)}" fill="${col}" opacity="0.7" rx="1" style="cursor:pointer;" data-charttip="${esc(tipText)}"><title>${esc(tipText)}</title></rect>`;
+      svg += `<rect x="${x1}" y="${y(avgPct)}" width="${bw}" height="${y(0)-y(avgPct)}" fill="${col}" opacity="0.7" rx="1" style="cursor:pointer;" data-charttip="${esc(tipText)}"></rect>`;
     }
 
     // Label (if block is wide enough)

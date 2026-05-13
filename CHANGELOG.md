@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.6.7 — Chart tooltip dedup (2026-05-13)
+
+User saw TWO stacked popups on hover: the v1.6.5 custom `.chart-tip` (dark, instant) and the SVG `<title>` (gray, browser-native, delayed). v1.6.5 had left `<title>` in as a fallback for non-WebKit user agents, but WKWebView renders both — the gray box covered part of the custom one in screenshots.
+
+Fix: dropped `<title>` from every chart segment that already carries `data-charttip`. The JS-driven custom tooltip is now the single hover surface (8 sites total: 5 in `workoutProfileSVG` + 3 in `renderPowerBlocksSVG`). Other SVG elements that use `<title>` for unrelated hover info (FTP history points, route surface bands, week-volume bars) are unchanged.
+
 ## v1.6.6 — Chart tooltip z-index fix (2026-05-13)
 
 v1.6.5 added the `.chart-tip` custom tooltip at `z-index:1002`, but `.modal-overlay` sits at `z-index:2000` (and the programme-summary modal at 9000). Result: the tooltip rendered BEHIND the workout modal — user could only see its right edge peeking out past the modal box on hover.

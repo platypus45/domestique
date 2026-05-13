@@ -123,6 +123,9 @@ class Codes:
     MATCH_ZWO_MALFORMED_META     = "E_MATCH_ZWO_MALFORMED_META"
     PHASE_DERIVE_FAILED          = "E_PHASE_DERIVE_FAILED"
 
+    # ---- v1.6.3 sync / threading ----------------------------------------
+    SYNC_BLOCKING_SLOW           = "E_SYNC_BLOCKING_SLOW"  # ICU sync >10s wall clock
+
 
 REGISTRY: dict[str, CodeMeta] = {
     Codes.PLAN_PARSE_CORRUPT: {
@@ -467,6 +470,11 @@ REGISTRY: dict[str, CodeMeta] = {
         "severity": "ERROR",
         "description": "generate_phases raised inside generate_plan; cannot build a plan.",
         "user_action": "Check goal inputs (target_date, hours_per_week, goal_type).",
+    },
+    Codes.SYNC_BLOCKING_SLOW: {
+        "severity": "WARN",
+        "description": "Background ICU sync exceeded 10s wall clock; frontpage served cached data.",
+        "user_action": "Slow ICU response or many new rides. Next sync will be fast once cache catches up.",
     },
 }
 

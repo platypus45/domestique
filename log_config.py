@@ -144,6 +144,13 @@ def setup_logging(level: int | None = None) -> None:
     first call.
     """
     global _configured
+    # v1.6.3: pin third-party noise levels on EVERY call, not just the
+    # first. ``fit_tool`` writes its level lazily after its first import,
+    # which sometimes happens AFTER ``setup_logging()`` returned; without
+    # this re-pin, the WARNING spam returns the moment the FIT parser
+    # touches a record. Idempotent — setLevel is a no-op when the level
+    # is already correct.
+    logging.getLogger("fit_tool").setLevel(logging.ERROR)
     if _configured:
         return
     _configured = True
@@ -204,6 +211,15 @@ def setup_logging(level: int | None = None) -> None:
     # Quiet noisy libraries.
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+    # v1.6.3: fit_tool emits per-record WARNINGs for non-standard FIT fields
+    # (e.g. "Field id: 108 is not defined for message record:20"). Garmin
+    # devices stamp ~3,000 records per hour-long ride and each produces 1-2
+    # warning lines. On first-boot ICU sync after install this floods the
+    # log to >13,000 lines / 5 MB inside 70 s, which (a) makes triage
+    # impossible and (b) blocks the request thread doing the FIT parse.
+    # Promote to ERROR — we never inspect these warnings, and any genuine
+    # FIT parse failure already raises an exception that's caught upstream.
+    logging.getLogger("fit_tool").setLevel(logging.ERROR)
 
     # DOMESTIQUE_LOG_CATEGORIES: opt-in per-category DEBUG, e.g.
     # DOMESTIQUE_LOG_CATEGORIES=plan,library. Unknown tokens are ignored

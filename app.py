@@ -1912,10 +1912,13 @@ def api_activities():
         # v4.4.2 §B1+B2: wire lazy ICU sync here so the frontpage triggers
         # syncs (loadHome calls /api/activities, not /api/calendar). Also
         # force-resync if today's date isn't cached locally.
+        # v1.6.3: fire-and-forget so the request thread never blocks on the
+        # per-ride FIT-download/DFA augment loop (was the root cause of the
+        # frontpage-hangs-30s bug).
         try:
-            _maybe_lazy_icu_sync(force_if_today_missing=True)
+            _kick_lazy_icu_sync(force_if_today_missing=True)
         except Exception as _e:
-            _log.debug(f"/api/activities: lazy ICU sync swallowed: {_e}")
+            _log.debug(f"/api/activities: lazy ICU sync kick swallowed: {_e}")
         training = cached("training", get_today_metrics)
         activities = training.get("recent_activities", [])
         if activities:
@@ -6130,10 +6133,12 @@ def api_today_session():
 def _api_today_session_impl():
     """Internal — actual /api/today-session compute path."""
     # v4.4.2 §B1+B2: lazy ICU sync hook so frontpage triggers it.
+    # v1.6.3: fire-and-forget background thread so the request returns
+    # immediately with cached state; sync settles in the background.
     try:
-        _maybe_lazy_icu_sync(force_if_today_missing=True)
+        _kick_lazy_icu_sync(force_if_today_missing=True)
     except Exception as _e:
-        _log.debug(f"/api/today-session: lazy ICU sync swallowed: {_e}")
+        _log.debug(f"/api/today-session: lazy ICU sync kick swallowed: {_e}")
 
     # Get weekly plan
     week_data = api_weekly_plan(week_offset=0)
@@ -9540,8 +9545,11 @@ def api_calendar():
     # v4.4.2 §B2: force-resync if today's date isn't represented locally and
     # last_sync was > 30 min ago (catches "user just rode, ICU has it but
     # cache is stale" case).
+    # v1.6.3: fire-and-forget — endpoint must not block on the per-ride FIT
+    # augment loop.  Calendar serves the existing local cache; the next
+    # /api/calendar after the sync completes will reflect new rides.
     try:
-        _maybe_lazy_icu_sync(force_if_today_missing=True)
+        _kick_lazy_icu_sync(force_if_today_missing=True)
     except Exception as _e:
         _log_error(error_codes.Codes.CALENDAR_ICU_SYNC, exc=_e)
 
@@ -10532,6 +10540,9 @@ def _sync_icu_wellness(force: bool = False, days: int = 90) -> dict:
     return {"added": added, "total": total}
 
 
+_DFA_AUGMENT_TIMEOUT_S: float = 5.0
+
+
 def _augment_icu_record_with_dfa(rec_path: Path, external_id: str) -> None:
     """v1.0.7 — fetch raw FIT for an ICU activity, compute DFA α1, merge back.
 
@@ -10539,10 +10550,18 @@ def _augment_icu_record_with_dfa(rec_path: Path, external_id: str) -> None:
     ``dfa_alpha1_status`` (one of ``computed`` / ``no_rr_data`` /
     ``sanity_rejected``). The ``fetch_failed`` status is retried so a
     transient ICU outage doesn't permanently disable DFA for that ride.
+
+    v1.6.3: hard 5 s timeout on the combined fetch+parse step. Without the
+    cap a single slow ICU response or a >10k-record FIT file could keep
+    the background sync thread busy for minutes (and pre-v1.6.3, when the
+    sync was synchronous, hang the request thread). On timeout the record
+    is persisted with ``dfa_alpha1_status='timeout'`` so the next sync
+    retries it.
     """
     import json as _json
     import tempfile as _tempfile
     import os as _os
+    import concurrent.futures as _futures
 
     try:
         rec = _json.loads(rec_path.read_text(encoding="utf-8"))
@@ -10552,51 +10571,72 @@ def _augment_icu_record_with_dfa(rec_path: Path, external_id: str) -> None:
     if not isinstance(rec, dict):
         return
 
-    # Final-state statuses are sticky; only retry fetch_failed.
+    # Final-state statuses are sticky; only retry fetch_failed and timeout.
     existing_status = rec.get("dfa_alpha1_status")
     if existing_status in ("computed", "no_rr_data", "sanity_rejected"):
         return
 
     import training as _training
-    raw = None
-    try:
-        raw = _training.fetch_activity_fit_file(external_id)
-    except Exception as e:
-        _log.debug(f"fetch_activity_fit_file({external_id}) raised: {e}")
-        raw = None
 
-    if not raw:
-        # Mark fetch_failed so the dashboard can render informational copy;
-        # next sync will retry.
-        rec["dfa_alpha1_status"] = "fetch_failed"
+    def _fetch_and_compute() -> "dict | None":
+        # Combined fetch + parse path. Returns the dfa dict on success, or
+        # None on any sub-step failure. Runs in a worker thread so the
+        # outer .result(timeout=_DFA_AUGMENT_TIMEOUT_S) can abandon it.
+        try:
+            raw = _training.fetch_activity_fit_file(external_id)
+        except Exception as e:
+            _log.debug(f"fetch_activity_fit_file({external_id}) raised: {e}")
+            return None
+        if not raw:
+            return None
+        tmp_path = None
+        try:
+            with _tempfile.NamedTemporaryFile(suffix=".fit", delete=False) as tf:
+                tf.write(raw)
+                tmp_path = tf.name
+            from analytics import compute_dfa_alpha1_for_fit
+            return compute_dfa_alpha1_for_fit(Path(tmp_path))
+        except Exception as e:
+            _log.debug(f"_augment_icu_record_with_dfa({external_id}) compute: {e}")
+            return None
+        finally:
+            if tmp_path:
+                try:
+                    _os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+    dfa: "dict | None" = None
+    timed_out = False
+    # NOTE: do NOT use ``with ThreadPoolExecutor(...)`` — its ``__exit__``
+    # calls ``shutdown(wait=True)`` which would block until the worker
+    # finishes, defeating the timeout entirely. Construct with daemon-style
+    # threads (default since Python 3.9 is non-daemon, so call
+    # ``shutdown(wait=False, cancel_futures=True)`` explicitly and let the
+    # worker thread continue running in the background; it lives on the
+    # ICU-sync daemon thread anyway, so it dies at process exit).
+    _ex = _futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="dfa_augment")
+    try:
+        fut = _ex.submit(_fetch_and_compute)
+        try:
+            dfa = fut.result(timeout=_DFA_AUGMENT_TIMEOUT_S)
+        except _futures.TimeoutError:
+            timed_out = True
+            fut.cancel()
+            _log.debug(
+                f"_augment_icu_record_with_dfa({external_id}) "
+                f"timed out after {_DFA_AUGMENT_TIMEOUT_S}s"
+            )
+    finally:
+        _ex.shutdown(wait=False, cancel_futures=True)
+
+    if timed_out:
+        rec["dfa_alpha1_status"] = "timeout"
         rec.setdefault("dfa_alpha1_avg", None)
         rec.setdefault("dfa_alpha1_series", [])
         rec.setdefault("dfa_alpha1_lt1_minutes", None)
         rec.setdefault("rr_intervals_count", 0)
-        try:
-            rec_path.write_text(_json.dumps(rec, indent=2), encoding="utf-8")
-        except OSError as e:
-            _log.debug(f"_augment_icu_record_with_dfa: write fetch_failed: {e}")
-        return
-
-    tmp_path = None
-    try:
-        with _tempfile.NamedTemporaryFile(suffix=".fit", delete=False) as tf:
-            tf.write(raw)
-            tmp_path = tf.name
-        from analytics import compute_dfa_alpha1_for_fit
-        dfa = compute_dfa_alpha1_for_fit(Path(tmp_path))
-    except Exception as e:
-        _log.debug(f"_augment_icu_record_with_dfa({external_id}) compute: {e}")
-        dfa = None
-    finally:
-        if tmp_path:
-            try:
-                _os.unlink(tmp_path)
-            except OSError:
-                pass
-
-    if not isinstance(dfa, dict):
+    elif not isinstance(dfa, dict):
         rec["dfa_alpha1_status"] = "fetch_failed"
         rec.setdefault("dfa_alpha1_avg", None)
         rec.setdefault("dfa_alpha1_series", [])
@@ -10979,6 +11019,66 @@ def api_profile_pr_toast_queue(drain: int = Query(0)):
         except Exception as e:
             _log.debug(f"pr-toast-queue drain failed: {e}")
     return {"queue": queue, "count": len(queue)}
+
+
+# v1.6.3 — background-thread lazy ICU sync. Pre-v1.6.3 the three frontpage
+# endpoints (/api/activities, /api/today-session, /api/calendar) all called
+# _maybe_lazy_icu_sync() synchronously on the request thread. _sync_icu_activities
+# downloads + parses the raw FIT for every new ICU ride to augment DFA α1,
+# which on a cold install (many new rides) takes minutes and starves the
+# uvicorn threadpool — the dashboard renders an indefinite loading spinner.
+# Fix: spawn a daemon thread, return immediately. An Event guard prevents N
+# threads under concurrent requests. _SYNC_SLOW_THRESHOLD_S=10 emits
+# E_SYNC_BLOCKING_SLOW so the diag modal carries evidence on the next slow
+# sync. _last_sync_elapsed_s is exposed for the test suite.
+_icu_sync_in_progress: threading.Event = threading.Event()
+_SYNC_SLOW_THRESHOLD_S: float = 10.0
+_last_sync_elapsed_s: float | None = None
+
+
+def _kick_lazy_icu_sync(force_if_today_missing: bool = False) -> bool:
+    """Fire-and-forget wrapper around ``_maybe_lazy_icu_sync``.
+
+    Returns ``True`` iff a new background thread was started. Returns
+    ``False`` (silently) when a sync is already in flight, so concurrent
+    requests don't stack N redundant threads.
+
+    The thread is daemonic so it never blocks process exit. Endpoints
+    that call this serve whatever is cached locally and the dashboard
+    becomes interactive immediately; the next request after the sync
+    completes sees the fresh data.
+    """
+    if _icu_sync_in_progress.is_set():
+        return False
+    _icu_sync_in_progress.set()
+
+    def _runner() -> None:
+        global _last_sync_elapsed_s
+        t0 = time.time()
+        try:
+            _maybe_lazy_icu_sync(force_if_today_missing=force_if_today_missing)
+        except Exception as e:
+            _log.debug(f"_kick_lazy_icu_sync: background sync swallowed: {e}")
+        finally:
+            elapsed = time.time() - t0
+            _last_sync_elapsed_s = elapsed
+            _icu_sync_in_progress.clear()
+            if elapsed > _SYNC_SLOW_THRESHOLD_S:
+                try:
+                    _log_error(
+                        error_codes.Codes.SYNC_BLOCKING_SLOW,
+                        ms=int(elapsed * 1000),
+                        threshold_s=_SYNC_SLOW_THRESHOLD_S,
+                    )
+                except Exception as e:
+                    _log.debug(f"_kick_lazy_icu_sync: slow-warn log swallowed: {e}")
+
+    threading.Thread(
+        target=_runner,
+        name="domestique.icu_sync",
+        daemon=True,
+    ).start()
+    return True
 
 
 def _maybe_lazy_icu_sync(force_if_today_missing: bool = False) -> None:

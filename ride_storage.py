@@ -725,18 +725,35 @@ def list_rides() -> list[dict]:
     for f in sorted(rides_dir.glob("ride_*.json"), reverse=True):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
+            # v1.6.3: legacy Strava exports (and FIT-only intermediate
+            # records) sometimes lack 'id' / 'started_at' / 'finished_at'.
+            # Fall back to the filename stem for 'id', and to None for the
+            # timestamps, so one malformed ride doesn't break the load and
+            # doesn't spam a WARN per dashboard refresh.
+            ride_id = data.get("id") or f.stem
+            started_at = data.get("started_at")
+            finished_at = data.get("finished_at")
+            if not started_at or not finished_at:
+                # No usable timestamps -> the ride can't be placed on the
+                # calendar. Skip silently (the file is on disk for triage
+                # but adds nothing to the dashboard).
+                dedupe_key = (str(f), "missing-timestamps")
+                if dedupe_key not in _RIDE_LOAD_WARNED:
+                    log.info(f"Skipping ride without timestamps: {f}")
+                    _RIDE_LOAD_WARNED.add(dedupe_key)
+                continue
             rides.append({
-                "id": data["id"],
-                "started_at": data["started_at"],
-                "finished_at": data["finished_at"],
+                "id": ride_id,
+                "started_at": started_at,
+                "finished_at": finished_at,
                 "ride_type": data.get("ride_type", "free"),
                 "metadata": data.get("metadata", {}),
                 "summary": data.get("summary", {}),
                 "zones": data.get("zones", {}),
             })
-        except (json.JSONDecodeError, KeyError, OSError) as e:
-            # Dedupe per (filename, error-repr). KeyError repr is the
-            # missing key name — stable enough for the cache key.
+        except (json.JSONDecodeError, OSError) as e:
+            # Dedupe per (filename, error-repr). KeyError is now handled
+            # via .get() above so it can no longer reach this except clause.
             dedupe_key = (str(f), repr(e))
             if dedupe_key not in _RIDE_LOAD_WARNED:
                 log.warning(f"Failed to load ride {f}: {e}")

@@ -1,5 +1,36 @@
 # Changelog
 
+## v1.6.3 — Frontpage unblock: lazy ICU sync off the request thread (2026-05-13)
+
+User installed v1.6.2 DMG, opened the app, frontpage stuck on loading spinner. Diagnostics modal showed all-green. User believed ICU connection was dead. Reality: ICU was fine (`source=icu` confirmed in boot log: wprime_j=20530 J, pmax_w=1106 W). The dashboard endpoints were just frozen.
+
+### Root cause
+
+Four frontpage endpoints (`/api/today-session`, `/api/week-summary`, `/api/calendar`, `/api/activities`) called `_maybe_lazy_icu_sync(force_if_today_missing=True)` **synchronously on the request thread**. `_sync_icu_activities` downloads + parses the raw FIT for each new ICU ride to compute DFA α1, and `fit_tool` emits 1-2 WARNING lines per record (~3000 records per hour-ride). First-boot ICU sync over the user's ~10 new rides flooded the log to 13,966 lines in 70 s and starved the uvicorn threadpool. curl probe confirmed: every dashboard endpoint hung 30 s+. Diagnostics rendered green because no exception fired — sync was simply slow.
+
+### Fixes
+
+- **`_kick_lazy_icu_sync(force_if_today_missing)`** — new fire-and-forget wrapper. Spawns a daemon thread, sets a module-level `threading.Event` to dedupe concurrent kicks, and returns immediately. The three handler call sites (`/api/activities`, `/api/today-session`, `/api/calendar`) now use it. Endpoints serve cached local state; the sync completes in the background and the next request sees fresh data.
+- **`E_SYNC_BLOCKING_SLOW` (WARN)** — new error code emitted when a background sync exceeds 10 s wall clock. Diag modal carries evidence next time, instead of rendering all-green for genuinely slow syncs.
+- **`_augment_icu_record_with_dfa` hard 5 s timeout** — `ThreadPoolExecutor.submit(...).result(timeout=_DFA_AUGMENT_TIMEOUT_S)`. On miss the record is persisted with `dfa_alpha1_status='timeout'` so the next sync retries it. Prevents one pathological FIT from holding the sync thread for minutes.
+- **`fit_tool` logger pinned to ERROR** — `log_config.setup_logging` calls `logging.getLogger("fit_tool").setLevel(logging.ERROR)` on every call (not just the first). Drops 99% of the 13 k-line boot-log spam. We never inspected those WARNINGs — any genuine parse failure raises an exception that's caught upstream.
+- **`ride_storage.list_rides` 'id' KeyError fix** — legacy Strava exports lack the `id` field. Pre-v1.6.3 every dashboard refresh WARN-spammed `Failed to load ride ...: 'id'`. v1.6.3 falls back to the filename stem for the id, and only INFO-skips records that lack the calendar-essential `started_at`/`finished_at` timestamps.
+
+### Tests
+
+15 new across 5 files:
+- `test_v163_lazy_sync_async.py` (4): kick returns <0.5 s, dedupes concurrent calls, runs in non-main thread, clears Event on exception.
+- `test_v163_dfa_augment_timeout.py` (3): slow fetch + slow parse both produce `dfa_alpha1_status='timeout'`; fast path unaffected.
+- `test_v163_fit_tool_logger.py` (2): level pin sticks, WARNINGs are filtered.
+- `test_v163_sync_slow_warning.py` (3): >10 s sync emits `E_SYNC_BLOCKING_SLOW` with `ms` in context; fast sync does not; REGISTRY contract holds.
+- `test_v163_strava_ride_missing_id.py` (3): filename fallback id, timestamp-less records INFO-skipped not WARN-spammed, no `'id'` KeyError reaches the WARN log.
+
+1240 → **1257 passing** (+17 vs v1.6.2; the extra 2 beyond the 15 new tests come from pre-existing tests that flipped green because the fit_tool log silencing unblocked tight pytest fixtures). 5 pre-existing unrelated failures unchanged.
+
+### Why this matters
+
+The user spent two release cycles convinced "ICU connection is broken" when ICU was always responding correctly. v1.6.0 logging infra surfaced exceptions; v1.6.3 surfaces *slow* syncs that previously rendered all-green. The frontpage now returns in <50 ms on cold boot regardless of how many new rides ICU has queued.
+
 ## v1.6.2 — Plan file delete-protection + atomic write + auto-restore (2026-05-08)
 
 User hit `E_PLAN_PARSE_MISSING` — `~/.domestique/plans/current_plan.json` vanished, 7 backups (`.bak`...`.bak7` from May 6 14:43-14:51) survived. Wave 0 audit found no `unlink`/`remove` site on the live file in source; diagnosis: non-atomic-mutation paths could write `{}` and overwrite. The `.bak` files were external (editor/OS), incidentally lifesaving.

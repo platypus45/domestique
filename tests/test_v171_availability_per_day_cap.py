@@ -122,9 +122,16 @@ def test_per_day_cap_shrinks_to_hours(tmp_path, monkeypatch):
     assert wed_session["tss_estimate"] == 45
 
 
-def test_per_day_cap_does_not_extend(tmp_path, monkeypatch):
-    """User has 3h on Wednesday (more than planner needs). The 110min
-    session is kept — availability is a ceiling, not a target."""
+def test_per_day_explicit_extension_applied(tmp_path, monkeypatch):
+    """v1.7.3 — explicit extension is honoured (bidirectional).
+
+    User sets Wednesday to 3h (an EXPLICIT increase from the absent
+    prior availability entry). The 110-min session expands to 180-min.
+    v1.7.1's ceiling-only rule was reverted in v1.7.3 because it made
+    cap-then-restore impossible: once shrunk, the user had no way to
+    raise the duration back. The save-availability endpoint now diffs
+    incoming vs prior availability so the literal apply only fires on
+    days the user actually edited."""
     plan_dir = _isolate_plan_dir(tmp_path, monkeypatch)
     json_path = _seed_two_day_plan(plan_dir)
     plan_before = json.loads(json_path.read_text(encoding="utf-8"))
@@ -136,8 +143,8 @@ def test_per_day_cap_does_not_extend(tmp_path, monkeypatch):
     assert r.status_code == 200, r.text
 
     wed_session = _load_session(json_path, wed)
-    assert wed_session["duration_min"] == 110, \
-        f"Wed expected unchanged 110min, got {wed_session['duration_min']}"
+    assert wed_session["duration_min"] == 180, \
+        f"Wed expected expanded 180min, got {wed_session['duration_min']}"
 
 
 def test_per_day_cap_isolates_untouched_day(tmp_path, monkeypatch):

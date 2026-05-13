@@ -7225,7 +7225,28 @@ async def api_save_availability(request: Request):
             plan = json.load(f)
 
         # body = { "availability": { "2026-04-01": { "hours": 1.5, "type": "available" }, ... } }
-        plan["availability"] = body.get("availability", {})
+        # v1.7.3 — capture prior availability BEFORE overwriting so we can
+        # diff incoming vs old and feed only USER-CHANGED days into the
+        # reforecast scaler. Pre-v1.7.3 the frontend POSTed every day in
+        # the visible calendar (180 days of weekly-grid defaults), so the
+        # scaling loop saw the entire window as "overrides" and (a)
+        # diluted the targeted day's effect (b) couldn't tell user-intent
+        # from auto-fill. v1.7.1 patched the dilution via per-day cap,
+        # but the cap is one-way (shrink only) so once a session was
+        # capped down the user could not raise it back up — they reported
+        # "0 sessions changed" on subsequent updates.
+        prior_availability = plan.get("availability", {}) or {}
+        new_availability = body.get("availability", {}) or {}
+        plan["availability"] = new_availability
+
+        def _hours_of(entry: "dict | None") -> "float | None":
+            if not isinstance(entry, dict):
+                return None
+            h = entry.get("hours")
+            try:
+                return float(h) if h is not None else None
+            except (TypeError, ValueError):
+                return None
 
         # ── v1.3.1 HIGH fix: reflow plan immediately ──────────────────────
         # v1.5.0 — collapsed into tp.reforecast_dict.
@@ -7238,11 +7259,26 @@ async def api_save_availability(request: Request):
         # justifies dropping downstream propagation.
         sessions_modified = 0
         try:
-            availability_overrides = {
-                day_iso: float(entry["hours"])
-                for day_iso, entry in plan.get("availability", {}).items()
-                if isinstance(entry, dict) and "hours" in entry
-            }
+            # v1.7.3 — only feed CHANGED days into the scaler. A day's
+            # ``hours`` value must differ from the prior plan's entry
+            # (or be new) to count as user intent. Days the frontend
+            # auto-filled with the weekly-grid default never enter the
+            # override set, so they keep the planner's existing duration
+            # untouched.
+            availability_overrides: dict[str, float] = {}
+            for day_iso, entry in new_availability.items():
+                new_h = _hours_of(entry)
+                if new_h is None:
+                    continue
+                old_h = _hours_of(prior_availability.get(day_iso))
+                if old_h is None or abs(new_h - old_h) > 1e-6:
+                    availability_overrides[day_iso] = new_h
+            if not availability_overrides:
+                # No user edits → nothing to reflow. Persist the new
+                # availability dict (might carry type metadata changes
+                # like holiday-without-hours-change) and return.
+                tp.atomic_write_plan(json_path, plan)
+                return {"ok": True, "sessions_modified": 0}
 
             # Build a flat-projected tsb_series from the cached training
             # snapshot so per-day _tsb_at lookups inside reforecast hit

@@ -5194,75 +5194,56 @@ def reforecast(
                     s.zwo_file = ""
                     s.zwo_name = ""
                 else:
-                    # v1.7.1 fix: user's hours act as a per-day CEILING, not
-                    # a weekly-averaged scale.
+                    # v1.7.3 — apply user's hours LITERALLY (both up and
+                    # down). v1.7.1 used a ceiling-only rule, but that
+                    # made the cap one-way: once a session was shrunk,
+                    # raising hours on the calendar could never restore
+                    # the original duration. Callers are now expected to
+                    # filter ``availability_overrides`` to user-changed
+                    # days (save-availability does this via prior-vs-new
+                    # diff); every override is intentional so literal
+                    # application is safe.
                     #
-                    # Pre-v1.7.1 bug: ``scale = available_mins / current_mins``
-                    # was computed PER WEEK across ALL touched days, then
-                    # applied uniformly. User reported "set today 1.5h → 60min,
-                    # plan shrank from 110 → 90 (not 60)". Cause: the frontend
-                    # POSTs every day in the visible calendar (180 days of
-                    # defaults), so most other days are touched with their
-                    # weekly-grid defaults. The week-average dilutes the
-                    # single day the user actually changed.
-                    #
-                    # Why ceiling, not literal: applying literal hours
-                    # unconditionally would clobber legitimate planner
-                    # tuning on UN-touched days (e.g. a tempo run sized to
-                    # 110min on a weekly-grid 2h day would jump to 120min).
-                    # Treating hours as a ceiling means:
-                    #   user 1h, plan 110m → shrink to 60 (user wants cap)
-                    #   weekly 2h, plan 110m → keep 110 (planner choice)
-                    # Side effect: increasing a day's hours via the calendar
-                    # never EXTENDS the planned session. The user's stated
-                    # weekly grid (in Settings) is the upward expansion
-                    # signal; per-day cap is downward only.
+                    # Pre-v1.7.1 bug recap (still relevant for context):
+                    # ``scale = available_mins / current_mins`` was
+                    # computed PER WEEK across all touched days, then
+                    # applied uniformly. Frontend POSTs 180 days of
+                    # defaults so the user-targeted day was diluted.
+                    # v1.7.1 fixed the dilution with a ceiling; v1.7.3
+                    # makes it bidirectional and the diff at the caller
+                    # side prevents clobbering planner choices on
+                    # untouched days.
                     target_min = int(round(hours * 60))
-                    if target_min < s.duration_min:
+                    if target_min != s.duration_min:
                         old_dur = s.duration_min
                         s.duration_min = max(0, target_min)
                         tss_per_h = TSS_PER_HOUR.get(s.session_type, 45)
                         s.tss_estimate = round(s.duration_min / 60 * tss_per_h)
-                        # v1.7.2 — when the cap meaningfully shrinks the
-                        # session, re-match the ZWO so the loaded workout
-                        # actually fits the new duration. Pre-v1.7.2 the
-                        # original 90-min ZWO stayed bound to a session
-                        # whose ``duration_min`` had dropped to 45, so the
-                        # dashboard's modal showed "(45min)" in the title
-                        # but rendered the 90-min ZWO segments on the
-                        # chart — the user (rightfully) called this a bug.
-                        # Re-match only on >= 15% shrink to avoid spamming
-                        # match_zwo for trivial duration tweaks. On
-                        # NoCandidateWorkoutError we clear the ZWO fields
-                        # so the dashboard at least flags "no ZWO" rather
-                        # than showing the wrong workout.
-                        if old_dur > 0 and (old_dur - s.duration_min) / old_dur >= 0.15:
-                            try:
-                                if _rematch_library is None:
-                                    _rematch_library = load_workout_library()
-                                # used_names excludes the current ZWO so
-                                # we don't re-pick the same workout that
-                                # spawned the mismatch in the first place.
-                                _excluded = {s.zwo_name} if s.zwo_name else set()
-                                match_zwo(
-                                    s, _rematch_library,
-                                    week_num=pw.week_num,
-                                    day_idx=(s.day - pw.start).days,
-                                    used_names=_excluded,
-                                    raise_on_empty=True,
-                                )
-                            except NoCandidateWorkoutError:
-                                # Library has nothing short enough — clear
-                                # ZWO so the UI shows the unmatched warning
-                                # instead of the wrong workout.
-                                s.zwo_file = ""
-                                s.zwo_name = ""
-                            except Exception:
-                                # Best-effort re-match: leave existing
-                                # ZWO in place; dashboard will still show
-                                # the duration mismatch but the swap
-                                # itself is persisted.
-                                pass
+                        # v1.7.2 — when the duration change is meaningful
+                        # (>= 15 % shrink OR >= 15 % expand), re-match the
+                        # ZWO so the loaded workout actually fits the new
+                        # duration. Without this the dashboard would show
+                        # "45min" in the title but render a 90-min ZWO
+                        # chart (and vice versa after expansion).
+                        if old_dur > 0:
+                            ratio = abs(s.duration_min - old_dur) / old_dur
+                            if ratio >= 0.15:
+                                try:
+                                    if _rematch_library is None:
+                                        _rematch_library = load_workout_library()
+                                    _excluded = {s.zwo_name} if s.zwo_name else set()
+                                    match_zwo(
+                                        s, _rematch_library,
+                                        week_num=pw.week_num,
+                                        day_idx=(s.day - pw.start).days,
+                                        used_names=_excluded,
+                                        raise_on_empty=True,
+                                    )
+                                except NoCandidateWorkoutError:
+                                    s.zwo_file = ""
+                                    s.zwo_name = ""
+                                except Exception:
+                                    pass
                 touched.add(d_iso)
 
     downshifts: list[str] = []

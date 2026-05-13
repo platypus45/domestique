@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.7.3 — Availability: diff vs prior + bidirectional apply (2026-05-13)
+
+User: "plan reflowed, 0 sessions changed" after editing availability. Plan agenda doesn't move.
+
+### Bug
+
+Two layered issues from v1.7.1:
+
+1. **Frontend POSTs every day in the visible calendar** (180 days, mostly weekly-grid auto-fills). Backend couldn't distinguish user intent from default flood.
+2. **Ceiling-only cap was one-way**. Once a session shrank from 110 → 60 min via a 1h cap, raising the calendar back to 2.5h could never restore it. User saw "0 sessions changed" because the cap branch (`target_min < s.duration_min`) silently no-op'd on upward moves.
+
+### Fix
+
+- **`save-availability` diffs incoming vs prior**: capture `plan["availability"]` BEFORE overwriting, then build `availability_overrides` only from days where the incoming hours differ from the stored value. Auto-fills that match prior never enter the override set. If the diff is empty, the endpoint short-circuits to a `{ok: true, sessions_modified: 0}` response without invoking `reforecast()` — quick and accurate.
+- **Cap branch made bidirectional**: `target_min != s.duration_min` now triggers the literal apply (both shrink and expand). Pre-v1.7.3's `< s.duration_min` was reverted. Safe because the caller (save-availability) has filtered to intentional edits.
+- **ZWO re-match symmetric**: the v1.7.2 ≥ 15 % re-match threshold now applies on both shrink AND expand (`abs(new - old) / old >= 0.15`). User raises a 60 → 150 min session, ZWO swaps to a 150-min library file instead of staying bound to the 60-min one.
+
+### Tests
+
+4 new in `test_v173_avail_diff_changed_days.py`:
+- Resubmitting an unchanged availability dict returns 0 (no sessions touched, no reforecast invoked).
+- Cap-then-restore: shrink Wed to 60min, then raise to 2.5h → expands back to 150min.
+- Auto-fill days that match prior availability are ignored even when frontend POSTs them.
+- All-unchanged POST short-circuits without writing back any session changes.
+
+Also updated `test_v171_per_day_cap_does_not_extend` → renamed to `test_per_day_explicit_extension_applied`. v1.7.3 explicitly allows extensions when the user edits a day.
+
+1289 → **1293 passing** (+4). 5 pre-existing failures unchanged.
+
 ## v1.7.2 — Cap re-matches ZWO so chart fits new duration (2026-05-13)
 
 User screenshot: modal titled "Wednesday — Endurance 6x2min (45min)" but the power chart rendered 90 min worth of segments (`0m` → `1h30`).

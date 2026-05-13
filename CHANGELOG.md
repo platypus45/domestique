@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.6.5 — Rematch preview + custom chart tooltip (2026-05-13)
+
+Two UX requests on the rematch flow:
+
+1. **Rematch result should preview the workout shape** — pre-v1.6.5 the "NEW MATCH" panel only showed name + category + duration + TSS. The user had to download the ZWO before knowing whether the matched workout was endurance, intervals, sweet-spot, etc.
+2. **Hover should reveal time + watts per block** on the workout chart. Pre-v1.6.5 the chart relied on SVG `<title>` for hover hints, which WKWebView (the packaged DMG webview) renders with a ~1-second delay or fails to render at all.
+
+### Fixes
+
+- **Rematch result panel now embeds `workoutProfileSVG`** (the same renderer used by `openWorkoutDetail` for the library tab). After `/api/plan/re-draw` returns the new match, the panel fetches `/api/workout/<cat>/<file>` for segments and paints the chart inline. The route's flat-layout fallback (when a category guess is wrong) keeps the preview reliable even when the re-draw response omits Category.
+- **Custom JS chart tooltip** (`#chart-tip` div, CSS-positioned, mouse-tracked):
+  - Both chart renderers (`workoutProfileSVG` + `renderPowerBlocksSVG`) now annotate every segment shape with `data-charttip="..."` in addition to the existing `<title>`.
+  - A delegated `mouseover` / `mousemove` / `mouseout` listener paints the tooltip instantly at the cursor, clamped to the viewport. The `<title>` markup is preserved as a fallback for non-WebKit user agents.
+  - Affects: today-session card, rematch result, library modal, and every other call site that uses the two SVG renderers.
+
+### Tests
+
+6 new in `test_v165_rematch_preview_contract.py`:
+
+- 3 contract tests for `/api/workout/{cat}/{file}` — top-level fields (`segments`, `ftp`, `total_seconds`), per-segment-type fields the chart's tooltip text interpolates, and the category-guess-wrong → flat-layout fallback.
+- 1 route registration smoke test for `/api/plan/re-draw`.
+- 2 wiring tests for the v1.6.5 chart tooltip — `.chart-tip` CSS, `#chart-tip` host div, `_showChartTip` handler, and `data-charttip` emission counts in both chart renderers (≥3 in `workoutProfileSVG`, ≥2 in `renderPowerBlocksSVG`).
+
+1268 → **1270 passing** (+6 new tests; full-suite total fluctuates a couple of tests in either direction from order-dependent flakes in unrelated files). 5 pre-existing unrelated failures unchanged.
+
 ## v1.6.4 — ZWO download fix + availability persistence (2026-05-13)
 
 User reported two bugs after installing v1.6.3:

@@ -232,6 +232,13 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
 .zone-tip-pct { font-weight:700; width:40px; text-align:right; }
 .zone-tip-min { color:var(--text2); font-size:11px; }
 
+/* v1.6.5 — workout-chart per-block hover tooltip. Replaces SVG <title>
+   which WKWebView either delays for ~1s or fails to render at all. */
+.chart-tip { position:fixed; background:var(--surface); border:1px solid var(--accent);
+  border-radius:6px; padding:6px 10px; font-size:12px; pointer-events:none;
+  z-index:1002; box-shadow:0 4px 12px rgba(0,0,0,0.4); display:none;
+  white-space:pre-line; max-width:260px; color:var(--text); }
+
 /* Fitness Chart */
 .fitness-chart-wrap { position:relative; }
 .fitness-chart-wrap svg { display:block; width:100%; }
@@ -2517,6 +2524,10 @@ window.addEventListener('unhandledrejection', function(e) {
 <!-- Zone tooltip (rich) -->
 <div class="zone-tip" id="zone-tip"></div>
 
+<!-- v1.6.5 — workout-chart per-block tooltip (instant, mouse-tracked).
+     Replaces SVG <title> which WKWebView renders unreliably. -->
+<div class="chart-tip" id="chart-tip"></div>
+
 <script>
 // Global error handler — shows JS errors visually (critical for pywebview debugging)
 window.onerror = function(msg, url, line, col, error) {
@@ -3159,7 +3170,11 @@ function workoutProfileSVG(segments, ftp, totalSec) {
       // round(ftp * fraction) (see api_workout_detail).
       const watts = Math.round(s.power);
       const tip = `${TYPE}: ${formatDur(s.duration)} • ${watts} W (${Math.round(s.pct)}% FTP)`;
-      rects += `<rect x="${x1}" y="${y}" width="${w}" height="${h}" fill="${z.color}" opacity="0.85"><title>${tip}</title></rect>`;
+      // v1.6.5: data-charttip drives the custom JS tooltip (chart-tip) so the
+      // hover hint shows instantly even in WKWebView (which serves SVG
+      // <title> with a ~1s delay if at all). <title> is kept as a no-cost
+      // fallback for non-WebKit user agents.
+      rects += `<rect x="${x1}" y="${y}" width="${w}" height="${h}" fill="${z.color}" opacity="0.85" data-charttip="${esc(tip)}"><title>${tip}</title></rect>`;
     } else if (s.type === 'Warmup' || s.type === 'Cooldown' || s.type === 'Ramp') {
       const x2 = xScale(s.start + s.duration);
       // v4.6.8 F1-FIX — the v4.6.7 attempt assumed every Cooldown stores
@@ -3195,7 +3210,8 @@ function workoutProfileSVG(segments, ftp, totalSec) {
       const wattsStart = Math.round(isCooldown ? Math.max(s.power_low, s.power_high) : Math.min(s.power_low, s.power_high));
       const wattsEnd = Math.round(isCooldown ? Math.min(s.power_low, s.power_high) : Math.max(s.power_low, s.power_high));
       const tip = `${TYPE}: ${formatDur(s.duration)} • ${wattsStart}→${wattsEnd} W (${Math.round(pctStart)}%→${Math.round(pctEnd)}% FTP)`;
-      rects += `<polygon points="${x1},${yStart} ${x2},${yEnd} ${x2},${yBot} ${x1},${yBot}" fill="url(#${gid})" opacity="0.85"><title>${tip}</title></polygon>`;
+      // v1.6.5: see SteadyState branch for the data-charttip / <title> rationale.
+      rects += `<polygon points="${x1},${yStart} ${x2},${yEnd} ${x2},${yBot} ${x1},${yBot}" fill="url(#${gid})" opacity="0.85" data-charttip="${esc(tip)}"><title>${tip}</title></polygon>`;
     } else if (s.type === 'IntervalsT') {
       let cursor = s.start;
       for (let r = 0; r < s.repeats; r++) {
@@ -3210,7 +3226,8 @@ function workoutProfileSVG(segments, ftp, totalSec) {
         // (113% FTP)" instead of just the percentage.
         const onWatts = Math.round(s.on_power);
         const onTip = `INTERVALS ON: ${formatDur(s.on_duration)} • ${onWatts} W (${Math.round(s.on_pct)}% FTP)`;
-        rects += `<rect x="${ox1}" y="${oy}" width="${ox2-ox1}" height="${oBot-oy}" fill="${zOn.color}" opacity="0.85"><title>${onTip}</title></rect>`;
+        // v1.6.5: data-charttip mirrors <title> — see SteadyState branch.
+        rects += `<rect x="${ox1}" y="${oy}" width="${ox2-ox1}" height="${oBot-oy}" fill="${zOn.color}" opacity="0.85" data-charttip="${esc(onTip)}"><title>${onTip}</title></rect>`;
         cursor += s.on_duration;
         // Off interval
         const fx1 = xScale(cursor);
@@ -3219,7 +3236,8 @@ function workoutProfileSVG(segments, ftp, totalSec) {
         const zOff = powerToZone(s.off_pct);
         const offWatts = Math.round(s.off_power);
         const offTip = `INTERVALS OFF: ${formatDur(s.off_duration)} • ${offWatts} W (${Math.round(s.off_pct)}% FTP)`;
-        rects += `<rect x="${fx1}" y="${fy}" width="${fx2-fx1}" height="${oBot-fy}" fill="${zOff.color}" opacity="0.85"><title>${offTip}</title></rect>`;
+        // v1.6.5: data-charttip mirrors <title>.
+        rects += `<rect x="${fx1}" y="${fy}" width="${fx2-fx1}" height="${oBot-fy}" fill="${zOff.color}" opacity="0.85" data-charttip="${esc(offTip)}"><title>${offTip}</title></rect>`;
         cursor += s.off_duration;
       }
     } else if (s.type === 'FreeRide') {
@@ -3229,7 +3247,8 @@ function workoutProfileSVG(segments, ftp, totalSec) {
       // v1.0.3 fix-forward(workout-detail UX): no wattage on FreeRide — it's
       // a free segment by definition; the rider picks the effort.
       const tip = `FREERIDE: ${formatDur(s.duration)} • free`;
-      rects += `<rect x="${x1}" y="${y}" width="${w}" height="${h}" fill="var(--text3)" opacity="0.3"><title>${tip}</title></rect>`;
+      // v1.6.5: data-charttip mirrors <title>.
+      rects += `<rect x="${x1}" y="${y}" width="${w}" height="${h}" fill="var(--text3)" opacity="0.3" data-charttip="${esc(tip)}"><title>${tip}</title></rect>`;
       rects += `<text x="${x1 + w/2}" y="${y + h/2 + 4}" text-anchor="middle" fill="var(--text2)" font-size="10">FREE RIDE</text>`;
     }
   }
@@ -3364,6 +3383,48 @@ document.addEventListener('mousemove', e => {
 });
 document.addEventListener('mouseout', e => {
   if (e.target.closest('[data-zones]')) $('zone-tip').style.display = 'none';
+});
+
+// v1.6.5 — workout-chart per-block tooltip. WKWebView (packaged DMG)
+// serves SVG <title> with multi-second delay (or not at all on some
+// versions), so the user reported "no tooltip on the workout preview
+// blocks". This delegated listener fires instantly on hover of any
+// element carrying data-charttip="..." (set by workoutProfileSVG and
+// renderPowerBlocksSVG). The <title> markup is preserved as a fallback
+// for non-WebKit user agents that don't run this script.
+function _showChartTip(el, e) {
+  const tip = $('chart-tip');
+  if (!tip) return;
+  const text = el.getAttribute('data-charttip') || '';
+  if (!text) return;
+  tip.textContent = text;
+  tip.style.display = 'block';
+  // Position near the cursor, but clamp inside viewport so the box
+  // doesn't get cropped off the right or bottom edges.
+  const W = window.innerWidth, H = window.innerHeight;
+  tip.style.left = Math.min(e.clientX + 14, W - tip.offsetWidth - 8) + 'px';
+  tip.style.top = Math.min(e.clientY + 14, H - tip.offsetHeight - 8) + 'px';
+}
+function _hideChartTip() {
+  const tip = $('chart-tip');
+  if (tip) tip.style.display = 'none';
+}
+document.addEventListener('mouseover', e => {
+  const el = e.target.closest('[data-charttip]');
+  if (el) { _showChartTip(el, e); return; }
+  if (!e.target.closest('[data-charttip]')) _hideChartTip();
+});
+document.addEventListener('mousemove', e => {
+  const tip = $('chart-tip');
+  if (!tip || tip.style.display !== 'block') return;
+  const el = e.target.closest('[data-charttip]');
+  if (!el) { _hideChartTip(); return; }
+  const W = window.innerWidth, H = window.innerHeight;
+  tip.style.left = Math.min(e.clientX + 14, W - tip.offsetWidth - 8) + 'px';
+  tip.style.top = Math.min(e.clientY + 14, H - tip.offsetHeight - 8) + 'px';
+});
+document.addEventListener('mouseout', e => {
+  if (e.target.closest('[data-charttip]')) _hideChartTip();
 });
 
 // ═══ SVG HELPERS ═══════════════════════════════════════════════════════════
@@ -12322,16 +12383,55 @@ async function rematchDaySession(day) {
     const dur = w.duration_min || w['Duration(min)'] || '';
     const tss = w.tss_estimate || w.TSS || '';
     const zwo = w.zwo_file || w.file || w.File || '';
+    // v1.6.5 — fetch the matched workout's segments and render the full
+    // workoutProfileSVG (Warmup / Z2 / Cooldown / intervals etc.) inline.
+    // Pre-v1.6.5 the rematch panel only showed name + duration + TSS, so
+    // the user had to download the ZWO to know the workout's shape. The
+    // SVG comes with per-block <title> tooltips that show "BLOCK_TYPE:
+    // 105min @ 172W (70% FTP)" on hover — the user explicitly asked for
+    // time+watts per block. Same renderer as openWorkoutDetail() so the
+    // shape matches what library tab shows.
+    const chartHolderId = `rematch-chart-${day}`;
     resultEl.innerHTML = `<div style="opacity:0;transition:opacity 0.4s;border:1px solid var(--accent);background:rgba(59,130,246,0.08);border-radius:8px;padding:10px 12px;" id="rematch-new-${day}">
       <div style="font-size:11px;color:var(--accent);letter-spacing:0.5px;font-weight:700;margin-bottom:4px;">NEW MATCH</div>
       <div style="font-size:14px;font-weight:600;margin-bottom:4px;">${esc(String(name))}</div>
       <div style="font-size:11px;color:var(--text2);">${esc(String(cat))}${dur ? ' &middot; ' + dur + 'min' : ''}${tss ? ' &middot; ' + tss + ' TSS' : ''}</div>
+      <div id="${chartHolderId}" style="margin-top:10px;min-height:140px;font-size:11px;color:var(--text3);">Loading workout preview&hellip;</div>
       ${zwo ? `<div style="margin-top:8px;"><button class="btn btn-sm" onclick="downloadZwoFile('${escJs(String(zwo))}')">Download ZWO</button></div>` : ''}
     </div>`;
     requestAnimationFrame(() => {
       const el = document.getElementById('rematch-new-' + day);
       if (el) el.style.opacity = '1';
     });
+    // Best-effort preview load: needs a category + filename. The re-draw
+    // payload usually carries `category` (or `Category`); when missing we
+    // try a permissive call that the backend falls back to flat layout.
+    (async () => {
+      const holder = document.getElementById(chartHolderId);
+      if (!holder) return;
+      if (!zwo) {
+        holder.textContent = 'No preview available (workout has no ZWO file).';
+        return;
+      }
+      try {
+        const wcat = cat || 'misc';
+        const r = await fetch(`/api/workout/${encodeURIComponent(wcat)}/${encodeURIComponent(zwo)}`);
+        if (!r.ok) {
+          holder.textContent = 'Preview unavailable (workout file not found).';
+          return;
+        }
+        const segData = await r.json();
+        if (segData && segData.error) {
+          holder.textContent = 'Preview unavailable: ' + esc(String(segData.error));
+          return;
+        }
+        const settingsFtp = (window._athleteFtp || 250);
+        const ftp = segData.ftp || settingsFtp;
+        holder.innerHTML = workoutProfileSVG(segData.segments, ftp, segData.total_seconds);
+      } catch (e) {
+        holder.textContent = 'Preview load error.';
+      }
+    })();
     // v1.3.1 HIGH fix — also refresh THIS WEEK / calendar overlay (fed by
     // loadCalendar) and the plan grid (fed by loadPlan). loadWeeklyCalendar
     // alone only repaints the legacy #wc-grid host, leaving the dashboard's
@@ -12619,12 +12719,15 @@ function renderPowerBlocksSVG(blocks, ftp) {
     // genuine ramp blocks (kind='ramp' = warmup/cooldown). Steady
     // workout blocks always render as rectangles so a Z2 endurance
     // doesn't look like a sligly-diagonal gradient.
+    // v1.6.5: data-charttip drives the custom JS tooltip; <title> is kept
+    // as a no-cost fallback for non-WebKit user agents that don't run our
+    // delegated handlers.
     if (kind === 'ramp' && b.pctLow !== b.pctHigh) {
       // Ramp: draw as trapezoid
-      svg += `<polygon points="${x1},${y(b.pctLow)} ${x2},${y(b.pctHigh)} ${x2},${y(0)} ${x1},${y(0)}" fill="${col}" opacity="0.7" style="cursor:pointer;"><title>${esc(tipText)}</title></polygon>`;
+      svg += `<polygon points="${x1},${y(b.pctLow)} ${x2},${y(b.pctHigh)} ${x2},${y(0)} ${x1},${y(0)}" fill="${col}" opacity="0.7" style="cursor:pointer;" data-charttip="${esc(tipText)}"><title>${esc(tipText)}</title></polygon>`;
     } else {
       // Steady (or interval block): draw as rectangle at avg pct.
-      svg += `<rect x="${x1}" y="${y(avgPct)}" width="${bw}" height="${y(0)-y(avgPct)}" fill="${col}" opacity="0.7" rx="1" style="cursor:pointer;"><title>${esc(tipText)}</title></rect>`;
+      svg += `<rect x="${x1}" y="${y(avgPct)}" width="${bw}" height="${y(0)-y(avgPct)}" fill="${col}" opacity="0.7" rx="1" style="cursor:pointer;" data-charttip="${esc(tipText)}"><title>${esc(tipText)}</title></rect>`;
     }
 
     // Label (if block is wide enough)

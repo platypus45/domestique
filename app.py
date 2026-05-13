@@ -2839,10 +2839,12 @@ def download_workout_by_id(filename: str):
     path = _safe_path(WORKOUT_DIR, filename)
     if not path or not path.exists():
         return JSONResponse({"error": "not found"}, 404)
+    # v1.6.4: media_type "application/octet-stream" (was "application/xml")
+    # so WKWebView always treats it as a download.
     return FileResponse(
         path,
         filename=filename,
-        media_type="application/xml",
+        media_type="application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
@@ -4647,22 +4649,39 @@ def download_zwo_flat(filename: str):
     (one segment) but the only registered route was /api/download/zwo/{category}
     /{filename} (two segments) — FastAPI returned 404 with body {error: 'not
     found'} on every click. Added this single-arg variant to match the call site.
+
+    v1.6.4: media_type changed from "application/xml" to "application/octet-stream"
+    and Content-Disposition explicitly stamped. WKWebView (packaged DMG) honors
+    the Disposition header for octet-stream but renders application/xml inline,
+    which was the "white screen with Times New Roman text" the user reported when
+    clicking Download ZWO in the Library tab.
     """
     path = _safe_path(WORKOUT_DIR, filename)
     if not path or not path.exists():
         return JSONResponse({"error": "not found"}, 404)
-    return FileResponse(path, filename=filename, media_type="application/xml")
+    return FileResponse(
+        path,
+        filename=filename,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/download/zwo/{category}/{filename}")
 def download_zwo(category: str, filename: str):
+    """v1.6.4: see download_zwo_flat docstring for media-type + Disposition change."""
     # Flat layout first, legacy category/file fallback
     path = _safe_path(WORKOUT_DIR, filename)
     if not path or not path.exists():
         path = _safe_path(WORKOUT_DIR, category, filename)
     if not path or not path.exists():
         return JSONResponse({"error": "not found"}, 404)
-    return FileResponse(path, filename=filename, media_type="application/xml")
+    return FileResponse(
+        path,
+        filename=filename,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/climb-zwo/{region}/{filename}")

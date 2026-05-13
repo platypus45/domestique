@@ -57,10 +57,12 @@ class TestZwoDownloadRoutes(unittest.TestCase):
     def test_single_arg_route_returns_xml(self):
         r = self.client.get(f"/api/download/zwo/{self.zwo_name}")
         self.assertEqual(r.status_code, 200)
-        # FileResponse media_type is "application/xml" (no charset suffix —
-        # FastAPI's StreamingResponse only appends charset for text/* types).
+        # v1.6.4: media_type changed from "application/xml" to
+        # "application/octet-stream" because WKWebView (packaged DMG)
+        # rendered XML inline instead of triggering save. Body is still
+        # the raw ZWO XML — only the wire framing changed.
         self.assertTrue(
-            r.headers["content-type"].startswith("application/xml"),
+            r.headers["content-type"].startswith("application/octet-stream"),
             f"unexpected content-type: {r.headers['content-type']!r}",
         )
         # Filename is in the Content-Disposition header
@@ -73,10 +75,10 @@ class TestZwoDownloadRoutes(unittest.TestCase):
         # any category prefix — the route falls back to flat layout if not found
         r = self.client.get(f"/api/download/zwo/anycat/{self.zwo_name}")
         self.assertEqual(r.status_code, 200)
-        # FileResponse media_type is "application/xml" (no charset suffix —
-        # FastAPI's StreamingResponse only appends charset for text/* types).
+        # v1.6.4: media_type changed to "application/octet-stream" (see
+        # test_single_arg_route_returns_xml above for context).
         self.assertTrue(
-            r.headers["content-type"].startswith("application/xml"),
+            r.headers["content-type"].startswith("application/octet-stream"),
             f"unexpected content-type: {r.headers['content-type']!r}",
         )
         cd = r.headers.get("content-disposition", "")

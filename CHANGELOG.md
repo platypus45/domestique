@@ -1,5 +1,61 @@
 # Changelog
 
+## v1.6.4 — ZWO download fix + availability persistence (2026-05-13)
+
+User reported two bugs after installing v1.6.3:
+
+1. **"Download ZWO" shows a white screen of Times New Roman text** instead of saving the file. (FIT download works.)
+2. **Availability calendar changes don't survive a restart** — set holidays, click UPDATE, see new workouts, close + reopen, all back to old state.
+
+### Bug 1: ZWO inline render in WKWebView
+
+`/api/download/zwo/...` returned `Content-Type: application/xml`. WKWebView (the engine inside the packaged macOS DMG) renders XML inline and ignores `Content-Disposition: attachment` for that MIME type. Frontend `downloadZwo()` used `window.open()` which navigates the webview to the response — user saw the raw ZWO XML rendered in the browser's default XML stylesheet (Times New Roman serif on white).
+
+`downloadFIT()` already worked because it used `fetch()` + `Blob` + `URL.createObjectURL` + synthetic `<a download>` click, which forces save-as regardless of MIME type.
+
+### Bug 2: availability not surviving restart
+
+Pure JS race condition in the Plan-tab handler (dashboard.html line 2803):
+
+```js
+plan: () => {
+  triggerPlanAutoRecalc();   // async, not awaited
+  loadPlan();                // async, sets window._planData via renderPlanJSON
+  loadPlanMetrics();
+  checkPlanGaps();
+  initAvailCalendar();       // SYNCHRONOUS — reads window._planData NOW
+  loadCalendar();
+  loadCapabilityProjection();
+  loadMissedSuggestions();
+}
+```
+
+`initAvailCalendar()` → `loadAvailData()` reads `window._planData.availability`, but `loadPlan()` is async and hasn't resolved yet. The plan data on disk was correct — the UI just re-populated `_availData` from the weekly-grid defaults before the persisted dict arrived, so every holiday/illness/override the user saved appeared to be wiped on reopen.
+
+### Fixes
+
+- **`downloadZwoFile(filename)`** (dashboard.html ~line 12678) — switched from `<a href download>` click to the same `fetch()` + `Blob` + synthetic anchor pattern used by `downloadFIT()`. WKWebView always treats blob URLs as downloads regardless of source MIME type.
+- **`downloadZwo(cat, file)`** (dashboard.html ~line 6434) — same `fetch()` + `Blob` fix. This was the Library-tab "Download ZWO" button the user clicked.
+- **`/api/download/zwo/{filename}`, `/api/download/zwo/{category}/{filename}`, `/api/workout/download/{filename}`** — `media_type` changed from `application/xml` to `application/octet-stream`. Explicit `Content-Disposition: attachment; filename="..."` header added/preserved on all three. Belt-and-braces: even if some future call path bypasses the JS download wrapper and navigates directly, the response is now unambiguously a binary download.
+- **Plan-tab handler** (dashboard.html line 2803) — converted to `async`. `triggerPlanAutoRecalc()` still fires non-awaited (fire-and-forget), but `await loadPlan()` resolves before `initAvailCalendar()` runs, so `window._planData.availability` is populated when the calendar paints.
+
+### Verified: ZWO + FIT export the same workout
+
+User asked. Both buttons pass `session.zwo_file`:
+
+- `downloadZwo(category, file)` → `/api/download/zwo/{cat}/{file}` → serves that exact library ZWO.
+- `downloadFIT(type, dur, name, zwoFile)` → `/api/export/fit-workout?zwo_file={file}&name={name}` → `_build_fit_workout_from_zwo` parses the same ZWO file and transcodes its Warmup/SteadyState/IntervalsT/Cooldown blocks into FIT workout steps. If `zwo_file` is omitted the route falls back to a generic block generator keyed on `session_type` + `duration_min`; that path is reserved for the no-library fallback and is covered by its own test.
+
+### Tests
+
+11 new across 3 files:
+
+- `test_v164_zwo_download_attachment.py` (4) — three ZWO endpoints all return `application/octet-stream` + `Content-Disposition: attachment; filename=...`; 404 path unchanged.
+- `test_v164_zwo_fit_same_workout.py` (4) — `/api/export/fit-workout?zwo_file=X` invokes `_build_fit_workout_from_zwo(name, zwo_path, ftp)` with the named path; 404 when the ZWO is missing; generic path still works without `zwo_file`; ZWO + FIT round-trip on the same filename both 200.
+- `test_v164_availability_persists.py` (3) — POST `/api/plan/save-availability` writes through to disk; GET `/api/plan` returns the saved `availability` dict; multiple successive saves fully replace (not merge) the dict.
+
+1257 → **1268 passing** (+11). Updated `test_download_routes.py::test_single_arg_route_returns_xml` + `test_two_arg_route_still_works` to assert the new `application/octet-stream` content-type. 5 pre-existing unrelated failures unchanged.
+
 ## v1.6.3 — Frontpage unblock: lazy ICU sync off the request thread (2026-05-13)
 
 User installed v1.6.2 DMG, opened the app, frontpage stuck on loading spinner. Diagnostics modal showed all-green. User believed ICU connection was dead. Reality: ICU was fine (`source=icu` confirmed in boot log: wprime_j=20530 J, pmax_w=1106 W). The dashboard endpoints were just frozen.

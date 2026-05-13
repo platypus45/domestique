@@ -2800,7 +2800,26 @@ document.querySelectorAll('.tab[data-tab]').forEach(t => {
                        if (typeof loadWorldCards === 'function') loadWorldCards();
                      },
                      picker:()=>{ if (typeof loadRoutePickerRegionChips === 'function') loadRoutePickerRegionChips(); },
-                     plan:()=>{triggerPlanAutoRecalc();loadPlan();loadPlanMetrics();checkPlanGaps();initAvailCalendar();loadCalendar();loadCapabilityProjection();loadMissedSuggestions();}, settings:()=>{loadSettings();loadIcuCredentials();}, library:loadWorkouts};
+                     plan:async()=>{
+                       // v1.6.4 fix: loadPlan() is async and sets window._planData
+                       // via renderPlanJSON() once /api/plan resolves. Pre-fix the
+                       // tab handler fired initAvailCalendar() synchronously BEFORE
+                       // loadPlan() had a chance to populate _planData, so
+                       // loadAvailData() saw an empty plan, fell back to defaults
+                       // from the weekly-hours grid, and clobbered every saved
+                       // availability override (holidays, illness days, custom
+                       // hours) the moment the user reopened the app. Await
+                       // loadPlan() so initAvailCalendar() reads the freshly-
+                       // loaded availability dict.
+                       triggerPlanAutoRecalc();
+                       await loadPlan();
+                       loadPlanMetrics();
+                       checkPlanGaps();
+                       initAvailCalendar();
+                       loadCalendar();
+                       loadCapabilityProjection();
+                       loadMissedSuggestions();
+                     }, settings:()=>{loadSettings();loadIcuCredentials();}, library:loadWorkouts};
     if (loaders[tab]) loaders[tab]();
   });
 });
@@ -6431,8 +6450,37 @@ function renderLibrary(data) {
   setTimeout(_loadLibrarySvgs, 100);
 }
 
-function downloadZwo(cat, file) {
-  window.open(`/api/download/zwo/${encodeURIComponent(cat)}/${encodeURIComponent(file)}`, '_blank');
+async function downloadZwo(cat, file) {
+  // v1.6.4 fix: window.open() in WKWebView (packaged DMG) navigates to the
+  // ZWO and renders it inline as XML — user sees "Wednesday Z2 bike" on a
+  // white screen in Times New Roman instead of a save dialog. Mirror the
+  // downloadFIT() / downloadZwoFile() pattern: pywebview bridge first, then
+  // fetch() + Blob to force save-as regardless of MIME type.
+  const url = `/api/download/zwo/${encodeURIComponent(cat)}/${encodeURIComponent(file)}`;
+  if (await _saveViaPywebview('zwo', file, url)) return;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) {
+      let detail = String(r.status);
+      try {
+        const err = await r.json();
+        if (err && err.error) detail = err.error;
+      } catch(_) {}
+      try { showToast(`ZWO download failed: ${detail}`, 4000); } catch(_) {}
+      return;
+    }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = file;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      try { URL.revokeObjectURL(a.href); a.remove(); } catch(_) {}
+    }, 1000);
+  } catch (e) {
+    try { showToast(`ZWO download error: ${e.message || e}`, 4000); } catch(_) {}
+  }
 }
 
 // Shared IntersectionObserver across all library rows (1 observer, not N)
@@ -12676,15 +12724,38 @@ async function _saveViaPywebview(kind, filename, fetchUrl) {
 // through the JS bridge (native save dialog); in a regular browser we
 // recreate the original `<a download>` behaviour (synthetic anchor click).
 async function downloadZwoFile(filename) {
+  // v1.6.4 fix: WKWebView (used by the packaged DMG) ignores the server's
+  // Content-Disposition: attachment header for `application/xml` and renders
+  // the ZWO inline — the user sees a white screen of Times New Roman text
+  // instead of a save dialog. Mirror the v1.0.3 downloadFIT() pattern: try
+  // the pywebview native bridge first, then fall back to fetch() + Blob +
+  // synthetic anchor click. The blob URL forces the browser into save mode
+  // regardless of the response's MIME type.
   const url = `/api/download/zwo/${encodeURIComponent(filename)}`;
   if (await _saveViaPywebview('zwo', filename, url)) return;
-  // Browser fallback: replicate `<a href=url download>` click.
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => { try { a.remove(); } catch(_) {} }, 1000);
+  try {
+    const r = await fetch(url);
+    if (!r.ok) {
+      let detail = String(r.status);
+      try {
+        const err = await r.json();
+        if (err && err.error) detail = err.error;
+      } catch(_) {}
+      try { showToast(`ZWO download failed: ${detail}`, 4000); } catch(_) {}
+      return;
+    }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      try { URL.revokeObjectURL(a.href); a.remove(); } catch(_) {}
+    }, 1000);
+  } catch (e) {
+    try { showToast(`ZWO download error: ${e.message || e}`, 4000); } catch(_) {}
+  }
 }
 
 async function downloadFIT(type, durationMin, name, zwoFile = null) {

@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-3054-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v1.6.5-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v1.6.6-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-1270%20passing-success" alt="Tests">
 </p>
 

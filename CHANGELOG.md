@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.6.6 — Chart tooltip z-index fix (2026-05-13)
+
+v1.6.5 added the `.chart-tip` custom tooltip at `z-index:1002`, but `.modal-overlay` sits at `z-index:2000` (and the programme-summary modal at 9000). Result: the tooltip rendered BEHIND the workout modal — user could only see its right edge peeking out past the modal box on hover.
+
+Fix: bumped `.chart-tip` to `z-index:10001`, clearing every modal/overlay/toast in the app.
+
+Single-line CSS change. No new tests (existing v1.6.5 wiring tests still pin the class + handler).
+
 ## v1.6.5 — Rematch preview + custom chart tooltip (2026-05-13)
 
 Two UX requests on the rematch flow:

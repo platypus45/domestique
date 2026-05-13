@@ -233,10 +233,14 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
 .zone-tip-min { color:var(--text2); font-size:11px; }
 
 /* v1.6.5 — workout-chart per-block hover tooltip. Replaces SVG <title>
-   which WKWebView either delays for ~1s or fails to render at all. */
+   which WKWebView either delays for ~1s or fails to render at all.
+   v1.6.5 fix: z-index bumped to 10001 (was 1002). The .modal-overlay
+   sits at z-index:2000 and the programme-summary modal at 9000, so the
+   tooltip was rendering BEHIND those modals — only its right edge was
+   visible past the modal box. 10001 clears every modal/toast in the app. */
 .chart-tip { position:fixed; background:var(--surface); border:1px solid var(--accent);
   border-radius:6px; padding:6px 10px; font-size:12px; pointer-events:none;
-  z-index:1002; box-shadow:0 4px 12px rgba(0,0,0,0.4); display:none;
+  z-index:10001; box-shadow:0 4px 12px rgba(0,0,0,0.4); display:none;
   white-space:pre-line; max-width:260px; color:var(--text); }
 
 /* Fitness Chart */

@@ -12360,116 +12360,172 @@ async function openDayWorkout(sessionIdx) {
   openModal(html);
 }
 
-// v4.1.0 U8: Per-session rematch. Tries new /api/plan/re-draw (FIX-SERVER P6)
-// and falls back to the existing week-level classifier rematch if the new
-// endpoint doesn't exist. Renders the replacement inline with a fade-in.
+// v1.7.0 — Per-session rematch with Accept / Decline / Reshuffle UX.
+// Pre-v1.7.0 the rematch was instant-apply: one click swapped the ZWO,
+// no preview-then-commit, no downstream TSS / TSB reflow. New flow:
+//   1. rematchDaySession(day) — calls /api/plan/preview-redraw to fetch
+//      a candidate WITHOUT persisting; paints chart + name + dur + TSS
+//      + 3 action buttons (Accept / Decline / Reshuffle).
+//   2. Reshuffle — calls preview-redraw again with the current pick
+//      appended to exclude_extra so the user sees a different workout.
+//   3. Accept — calls /api/plan/accept-redraw with the picked candidate;
+//      server persists AND triggers tp.reforecast_dict so downstream
+//      sessions (TSS, polarisation, availability flow) recalculate.
+//   4. Decline — drops the panel without touching the plan.
+// State per-day kept on window._rematchState[day] = {excluded:[zwo,...],
+// current:<candidate>} so Reshuffle and Accept can read the most-recent
+// preview without an extra round-trip.
+window._rematchState = window._rematchState || {};
+
 async function rematchDaySession(day) {
+  const st = window._rematchState[day] = window._rematchState[day] || { excluded: [] };
+  await _rematchPreview(day, st);
+}
+
+async function _rematchPreview(day, st) {
   const resultEl = document.getElementById('rematch-result-' + day);
   if (resultEl) {
-    resultEl.innerHTML = '<div style="font-size:12px;color:var(--text2);padding:6px 0;">Re-drawing workout&hellip;</div>';
+    resultEl.innerHTML = '<div style="font-size:12px;color:var(--text2);padding:6px 0;">Looking for a workout candidate&hellip;</div>';
   }
-  let drawOk = false;
-  let drawData = null;
+  let candidate = null;
   try {
-    const res = await fetch('/api/plan/re-draw', {
+    const res = await fetch('/api/plan/preview-redraw', {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({date: day})
+      body: JSON.stringify({ date: day, exclude_extra: st.excluded || [] }),
     });
-    if (res.ok) {
-      drawData = await res.json();
-      // Consider "empty" responses as a miss so we fall through to classifier.
-      if (drawData && (drawData.zwo_file || drawData.workout || drawData.name || drawData.file)) {
-        drawOk = true;
-      }
-    }
-  } catch(_) { /* endpoint missing or network error — fall back */ }
+    if (res.ok) candidate = await res.json();
+  } catch(_) { /* network error — handled below */ }
 
-  if (drawOk && resultEl) {
-    const w = drawData || {};
-    const name = w.name || w.workout_name || w.File || 'Replacement workout';
-    const cat = w.Category || w.category || '';
-    const dur = w.duration_min || w['Duration(min)'] || '';
-    const tss = w.tss_estimate || w.TSS || '';
-    const zwo = w.zwo_file || w.file || w.File || '';
-    // v1.6.5 — fetch the matched workout's segments and render the full
-    // workoutProfileSVG (Warmup / Z2 / Cooldown / intervals etc.) inline.
-    // Pre-v1.6.5 the rematch panel only showed name + duration + TSS, so
-    // the user had to download the ZWO to know the workout's shape. The
-    // SVG comes with per-block <title> tooltips that show "BLOCK_TYPE:
-    // 105min @ 172W (70% FTP)" on hover — the user explicitly asked for
-    // time+watts per block. Same renderer as openWorkoutDetail() so the
-    // shape matches what library tab shows.
-    const chartHolderId = `rematch-chart-${day}`;
-    resultEl.innerHTML = `<div style="opacity:0;transition:opacity 0.4s;border:1px solid var(--accent);background:rgba(59,130,246,0.08);border-radius:8px;padding:10px 12px;" id="rematch-new-${day}">
-      <div style="font-size:11px;color:var(--accent);letter-spacing:0.5px;font-weight:700;margin-bottom:4px;">NEW MATCH</div>
-      <div style="font-size:14px;font-weight:600;margin-bottom:4px;">${esc(String(name))}</div>
-      <div style="font-size:11px;color:var(--text2);">${esc(String(cat))}${dur ? ' &middot; ' + dur + 'min' : ''}${tss ? ' &middot; ' + tss + ' TSS' : ''}</div>
-      <div id="${chartHolderId}" style="margin-top:10px;min-height:140px;font-size:11px;color:var(--text3);">Loading workout preview&hellip;</div>
-      ${zwo ? `<div style="margin-top:8px;"><button class="btn btn-sm" onclick="downloadZwoFile('${escJs(String(zwo))}')">Download ZWO</button></div>` : ''}
-    </div>`;
-    requestAnimationFrame(() => {
-      const el = document.getElementById('rematch-new-' + day);
-      if (el) el.style.opacity = '1';
-    });
-    // Best-effort preview load: needs a category + filename. The re-draw
-    // payload usually carries `category` (or `Category`); when missing we
-    // try a permissive call that the backend falls back to flat layout.
-    (async () => {
-      const holder = document.getElementById(chartHolderId);
-      if (!holder) return;
-      if (!zwo) {
-        holder.textContent = 'No preview available (workout has no ZWO file).';
-        return;
-      }
-      try {
-        const wcat = cat || 'misc';
-        const r = await fetch(`/api/workout/${encodeURIComponent(wcat)}/${encodeURIComponent(zwo)}`);
-        if (!r.ok) {
-          holder.textContent = 'Preview unavailable (workout file not found).';
-          return;
-        }
-        const segData = await r.json();
-        if (segData && segData.error) {
-          holder.textContent = 'Preview unavailable: ' + esc(String(segData.error));
-          return;
-        }
-        const settingsFtp = (window._athleteFtp || 250);
-        const ftp = segData.ftp || settingsFtp;
-        holder.innerHTML = workoutProfileSVG(segData.segments, ftp, segData.total_seconds);
-      } catch (e) {
-        holder.textContent = 'Preview load error.';
-      }
-    })();
-    // v1.3.1 HIGH fix — also refresh THIS WEEK / calendar overlay (fed by
-    // loadCalendar) and the plan grid (fed by loadPlan). loadWeeklyCalendar
-    // alone only repaints the legacy #wc-grid host, leaving the dashboard's
-    // visible THIS WEEK panel and calendar overlay showing the stale (pre-
-    // redraw) ZWO until a hard refresh.
-    try { window._calDidAutoScroll = true; await loadCalendar(); } catch(_) {}
-    try { await loadPlan(); } catch(_) {}
-    try { loadWeeklyCalendar(); } catch(_) {}
+  if (!candidate || !candidate.ok || !candidate.zwo_file) {
+    const reason = candidate && candidate.reason ? candidate.reason : (candidate && candidate.action === 'no_candidate' ? 'no_candidate' : 'unknown');
+    if (resultEl) {
+      resultEl.innerHTML = `<div style="font-size:11px;color:var(--orange);padding:6px 0;">No alternative workouts left for this session (${esc(reason)}). Try Decline to keep the current pick.</div>
+        <div style="margin-top:6px;"><button class="btn" onclick="_rematchDecline('${escJs(day)}')" style="font-size:12px;">Decline</button></div>`;
+    }
     return;
   }
+  st.current = candidate;
+  _renderRematchCandidate(day, candidate);
+}
 
-  // Fall back to classifier: week-level /api/plan/rematch?apply=1. We still
-  // surface a toast + refresh the calendar so the user gets feedback.
-  if (resultEl) resultEl.innerHTML = '<div style="font-size:11px;color:var(--text3);padding:6px 0;">Re-draw unavailable, running classifier fallback&hellip;</div>';
-  try {
-    const res = await fetch('/api/plan/rematch?apply=1', { method: 'POST' });
-    if (!res.ok) {
-      if (resultEl) resultEl.innerHTML = '<div style="font-size:11px;color:var(--red);padding:6px 0;">Rematch failed — server update needed.</div>';
-      try { showToast('Rematch unavailable — server update needed', 4000); } catch(_) {}
+function _renderRematchCandidate(day, candidate) {
+  const resultEl = document.getElementById('rematch-result-' + day);
+  if (!resultEl) return;
+  const name = candidate.zwo_name || candidate.zwo_file || 'Replacement workout';
+  const cat = candidate.Category || candidate.category || '';
+  const dur = candidate.duration_min || '';
+  const tss = candidate.tss_estimate || '';
+  const zwo = candidate.zwo_file || '';
+  const chartHolderId = `rematch-chart-${day}`;
+  resultEl.innerHTML = `<div style="opacity:0;transition:opacity 0.4s;border:1px solid var(--accent);background:rgba(59,130,246,0.08);border-radius:8px;padding:10px 12px;" id="rematch-new-${day}">
+    <div style="font-size:11px;color:var(--accent);letter-spacing:0.5px;font-weight:700;margin-bottom:4px;">CANDIDATE (PREVIEW)</div>
+    <div style="font-size:14px;font-weight:600;margin-bottom:4px;">${esc(String(name))}</div>
+    <div style="font-size:11px;color:var(--text2);">${esc(String(cat))}${dur ? ' &middot; ' + dur + 'min' : ''}${tss ? ' &middot; ' + tss + ' TSS' : ''}</div>
+    <div id="${chartHolderId}" style="margin-top:10px;min-height:140px;font-size:11px;color:var(--text3);">Loading workout preview&hellip;</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+      <button class="btn btn-primary" onclick="_rematchAccept('${escJs(day)}')" style="font-size:12px;">&#x2713; Accept &amp; reflow plan</button>
+      <button class="btn" onclick="_rematchReshuffle('${escJs(day)}')" style="font-size:12px;">&#x21bb; Reshuffle (try another)</button>
+      <button class="btn" onclick="_rematchDecline('${escJs(day)}')" style="font-size:12px;color:var(--text3);">&#x2715; Decline</button>
+    </div>
+    <div style="font-size:10px;color:var(--text3);margin-top:6px;">Accept rewrites the plan and reforecasts downstream TSS / availability so the rest of the week stays consistent.</div>
+  </div>`;
+  requestAnimationFrame(() => {
+    const el = document.getElementById('rematch-new-' + day);
+    if (el) el.style.opacity = '1';
+  });
+  // Background preview-chart load. Same renderer as openWorkoutDetail
+  // for shape parity. /api/workout/<cat>/<file> falls back to the flat
+  // workouts dir when <cat> guess is wrong, so the call is always safe.
+  (async () => {
+    const holder = document.getElementById(chartHolderId);
+    if (!holder) return;
+    if (!zwo) {
+      holder.textContent = 'No preview available (workout has no ZWO file).';
       return;
     }
-    if (resultEl) resultEl.innerHTML = '<div style="font-size:11px;color:var(--text2);padding:6px 0;">Week reconciled via classifier. Re-open this day to see the new match.</div>';
-    try { showToast('Classifier rematch applied', 2500); } catch(_) {}
-    // v1.3.1 HIGH fix — same as above; refresh all three views.
+    try {
+      const wcat = cat || 'misc';
+      const r = await fetch(`/api/workout/${encodeURIComponent(wcat)}/${encodeURIComponent(zwo)}`);
+      if (!r.ok) {
+        holder.textContent = 'Preview unavailable (workout file not found).';
+        return;
+      }
+      const segData = await r.json();
+      if (segData && segData.error) {
+        holder.textContent = 'Preview unavailable: ' + esc(String(segData.error));
+        return;
+      }
+      const settingsFtp = (window._athleteFtp || 250);
+      const ftp = segData.ftp || settingsFtp;
+      holder.innerHTML = workoutProfileSVG(segData.segments, ftp, segData.total_seconds);
+    } catch (e) {
+      holder.textContent = 'Preview load error.';
+    }
+  })();
+}
+
+async function _rematchReshuffle(day) {
+  const st = window._rematchState[day];
+  if (!st || !st.current) return;
+  // Push the current pick onto the exclusion list so preview-redraw
+  // doesn't hand us the same workout twice in a row.
+  if (st.current.zwo_name) st.excluded.push(st.current.zwo_name);
+  st.current = null;
+  await _rematchPreview(day, st);
+}
+
+async function _rematchAccept(day) {
+  const st = window._rematchState[day];
+  if (!st || !st.current) return;
+  const resultEl = document.getElementById('rematch-result-' + day);
+  if (resultEl) {
+    resultEl.innerHTML = '<div style="font-size:12px;color:var(--text2);padding:6px 0;">Applying rematch and reforecasting downstream sessions&hellip;</div>';
+  }
+  try {
+    const c = st.current;
+    const res = await fetch('/api/plan/accept-redraw', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        date: day,
+        zwo_file: c.zwo_file,
+        zwo_name: c.zwo_name,
+        variation: c.variation,
+        tss_estimate: c.tss_estimate,
+        duration_min: c.duration_min,
+      }),
+    });
+    if (!res.ok) {
+      if (resultEl) resultEl.innerHTML = '<div style="font-size:11px;color:var(--red);padding:6px 0;">Accept failed: server returned ' + res.status + '</div>';
+      return;
+    }
+    const data = await res.json();
+    const n = (data && typeof data.sessions_modified === 'number') ? data.sessions_modified : 0;
+    if (resultEl) {
+      resultEl.innerHTML = `<div style="border:1px solid var(--accent);background:rgba(34,197,94,0.10);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--text);">
+        <strong style="color:var(--accent);">Applied</strong> &middot; ${esc(String(st.current.zwo_name || st.current.zwo_file))} &middot; ${n} session${n === 1 ? '' : 's'} reflowed.
+        <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm" onclick="downloadZwoFile('${escJs(String(st.current.zwo_file || ''))}')">Download ZWO</button>
+          <button class="btn btn-sm" onclick="downloadFIT('${escJs(String(st.current.session_type || 'z2'))}', ${Number(st.current.duration_min || 0)}, '${escJs(String((st.current.zwo_file||'').replace(/\.zwo$/i, '') || 'workout'))}', '${escJs(String(st.current.zwo_file || ''))}')">Download FIT</button>
+        </div>
+      </div>`;
+    }
+    // Clear per-day state so the next Rematch click starts fresh.
+    delete window._rematchState[day];
+    // Refresh dependent views so the swap (and reforecast) lands in the
+    // visible UI without a hard reload. v1.6.5 inherited from
+    // pre-v1.7.0 — same three calls.
     try { window._calDidAutoScroll = true; await loadCalendar(); } catch(_) {}
     try { await loadPlan(); } catch(_) {}
     try { loadWeeklyCalendar(); } catch(_) {}
-  } catch(e) {
-    if (resultEl) resultEl.innerHTML = '<div style="font-size:11px;color:var(--red);padding:6px 0;">Rematch failed: ' + esc(e.message) + '</div>';
+  } catch (e) {
+    if (resultEl) resultEl.innerHTML = '<div style="font-size:11px;color:var(--red);padding:6px 0;">Accept failed: ' + esc(e.message || e) + '</div>';
   }
+}
+
+function _rematchDecline(day) {
+  delete window._rematchState[day];
+  const resultEl = document.getElementById('rematch-result-' + day);
+  if (resultEl) resultEl.innerHTML = '';
 }
 
 function buildPowerBlocks(type, durationMin, ftp, secondaryFlags) {

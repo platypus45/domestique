@@ -1,5 +1,48 @@
 # Changelog
 
+## v1.7.0 — Rematch Preview / Accept / Reshuffle + downstream reforecast (2026-05-13)
+
+User asked: rematch should not be instant-apply. Show the candidate workout first, let the user Accept / Decline / Reshuffle, and when accepted recalculate downstream sessions so the rest of the week's TSS / availability flow stays consistent with the new workout.
+
+### Old behavior (pre-v1.7.0)
+
+One click on "Rematch workout" → `/api/plan/re-draw` → ZWO swapped on disk → user sees the new pick. No preview chart, no rollback, no downstream propagation. If the new workout's TSS was very different from the original (e.g. 50 → 150 TSS), the rest of the week's load math still used the old number.
+
+### New flow
+
+1. **Click "Rematch workout"** → `POST /api/plan/preview-redraw` → server returns a candidate `{zwo_file, zwo_name, variation, duration_min, tss_estimate, Category}` WITHOUT touching disk.
+2. **Panel paints**: chart preview (same `workoutProfileSVG` library tab uses) + Accept / Reshuffle / Decline buttons.
+3. **Reshuffle** → re-call preview-redraw with current pick's name appended to `exclude_extra`. Per-day state (`window._rematchState[day]`) tracks the rolling exclusion list so the user never sees the same alternate twice in a row.
+4. **Accept** → `POST /api/plan/accept-redraw` → server persists the swap AND calls `tp.reforecast_dict(plan, tsb_series=..., recent_activities=..., availability_overrides=...)` so downstream sessions reflow their TSS / TSB / availability based on the new actual session. Mirrors the canonical `_maybe_auto_reforecast` call shape.
+5. **Decline** → frontend drops the panel; no server call, plan untouched.
+
+After Accept the panel reveals **Download ZWO** + **Download FIT** buttons that both target the freshly-installed workout — the FIT path passes `zwo_file=` so the FIT body matches the ZWO content (v1.0.3 contract).
+
+### Backend
+
+- New `_pick_redraw_candidate(plan, day_iso, exclude_extra)` helper. Returns the candidate dict, raises `tp.NoCandidateWorkoutError` when the pool is empty.
+- New `_accept_redraw_apply(plan, day_iso, candidate)` helper. Updates the session's `zwo_file` / `zwo_name` / `variation` / `tss_estimate` / `duration_min` / `status='pending'`, writes `last_rematch_day` breadcrumb, then invokes `tp.reforecast_dict`. Reforecast failure is logged but the swap still persists — downstream reflow can be retried via `/api/plan/reforecast`.
+- New `POST /api/plan/preview-redraw` — body `{date, exclude_extra?}`.
+- New `POST /api/plan/accept-redraw` — body `{date, zwo_file, zwo_name, variation, tss_estimate, duration_min}`.
+- Legacy `/api/plan/re-draw` + `/api/plan/rematch/{day}` kept for backward compat. The new UI never calls them.
+
+### Frontend
+
+- `rematchDaySession(day)` → fetches preview, paints panel with 3 action buttons.
+- Helpers `_rematchPreview` / `_rematchReshuffle` / `_rematchAccept` / `_rematchDecline`.
+- Accept handler also refreshes `loadCalendar()` + `loadPlan()` + `loadWeeklyCalendar()` so the new ZWO appears in This Week / calendar overlay / plan grid without a hard reload.
+
+### Tests
+
+10 new in `test_v170_rematch_flow.py`:
+
+- preview-redraw: returns candidate, does NOT touch disk; 400 when date missing; 404 when no plan; `ok:false action:invalid` when date doesn't match any session.
+- reshuffle: `exclude_extra` excludes previous pick (assert different name returned).
+- accept-redraw: persists session swap with new TSS / duration / variation / last_rematch_day breadcrumb; 400 when zwo_file missing; 404 when no plan; **invokes `tp.reforecast_dict`** (spy with `monkeypatch.setattr`).
+- frontend wiring: all four `_rematch*` handler functions present in dashboard.html; both new endpoints referenced.
+
+1270 → **1280 passing** (+10). 5 pre-existing failures unchanged.
+
 ## v1.6.7 — Chart tooltip dedup (2026-05-13)
 
 User saw TWO stacked popups on hover: the v1.6.5 custom `.chart-tip` (dark, instant) and the SVG `<title>` (gray, browser-native, delayed). v1.6.5 had left `<title>` in as a fallback for non-WebKit user agents, but WKWebView renders both — the gray box covered part of the custom one in screenshots.

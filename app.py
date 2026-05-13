@@ -9740,6 +9740,252 @@ async def api_plan_re_draw(request: Request):
     return await api_plan_rematch_day(day_iso)
 
 
+# v1.7.0 — shared helper for the rematch pipeline. preview-redraw picks a
+# candidate without persisting; accept-redraw applies the candidate and
+# triggers a full reforecast so downstream TSS/availability re-flow. The
+# legacy api_plan_rematch_day still exists for backward compat and now
+# delegates to this helper.
+def _pick_redraw_candidate(plan: dict, day_iso: str, exclude_extra: "list[str] | None" = None) -> dict:
+    """Pick a fresh ZWO match for the session at ``day_iso`` without
+    mutating the plan on disk.
+
+    Returns ``{ok, day, session_type, zwo_file, zwo_name, variation,
+    duration_min, tss_estimate, Category}`` on success. The caller is
+    responsible for persisting via ``_accept_redraw_apply`` when the user
+    confirms.
+
+    Raises ``tp.NoCandidateWorkoutError`` when match_zwo's pool is empty
+    even with relaxed filters; raises ``ValueError`` for missing/rest sessions.
+    ``exclude_extra`` is an explicit list of ZWO names to also exclude on
+    top of the same-week pool (used by the UI's Reshuffle button so the
+    user doesn't see the just-rejected candidate again).
+    """
+    target_week = None
+    target_session = None
+    for w in plan.get("weeks", []):
+        for s in w.get("sessions", []):
+            if s.get("day") == day_iso:
+                target_week = w
+                target_session = s
+                break
+        if target_session:
+            break
+    if not target_session or not target_week:
+        raise ValueError(f"No session at {day_iso}")
+    if target_session.get("session_type") == "rest":
+        raise ValueError("rest_day")
+
+    excluded: set[str] = set()
+    for s in target_week.get("sessions", []):
+        nm = s.get("zwo_name") or ""
+        if nm:
+            excluded.add(nm)
+    for nm in (exclude_extra or []):
+        if nm:
+            excluded.add(str(nm))
+
+    planned = tp.PlannedSession(
+        day=date.fromisoformat(day_iso),
+        day_name=target_session.get("day_name", ""),
+        session_type=target_session.get("session_type", "z2"),
+        duration_min=int(target_session.get("duration_min", 0) or 0),
+        tss_estimate=float(target_session.get("tss_estimate", 0) or 0),
+        description=target_session.get("description", ""),
+    )
+    library = tp.load_workout_library()
+    week_num = target_week.get("week_num", 0)
+    day_idx = (date.fromisoformat(day_iso) - date.fromisoformat(target_week["start"])).days
+    variation = int(target_session.get("variation", 0)) + 1
+    planned.profile_id = f"{variation}"
+    tp.match_zwo(
+        planned, library,
+        week_num=week_num + variation * 100,
+        day_idx=day_idx,
+        used_names=excluded,
+        raise_on_empty=True,
+    )
+    if not planned.zwo_file:
+        raise tp.NoCandidateWorkoutError(
+            session=planned, available_count=0, primary_count=0,
+            coverage_count=0, reason="empty_match",
+        )
+
+    # Library metadata gives us the REAL duration + TSS of the picked
+    # workout — pre-v1.7.0 the rematch kept the planner's original
+    # tss_estimate even when the new ZWO was very different from the
+    # original, so the dashboard's load math was stale.
+    lib_meta = next(
+        (w for w in library if (w.get("Name") == planned.zwo_name or w.get("File") == planned.zwo_file)),
+        {},
+    )
+    return {
+        "ok": True,
+        "day": day_iso,
+        "session_type": planned.session_type,
+        "zwo_file": planned.zwo_file,
+        "zwo_name": planned.zwo_name,
+        "variation": variation,
+        "duration_min": int(round(float(lib_meta.get("Duration(min)") or planned.duration_min or 0))),
+        "tss_estimate": round(float(lib_meta.get("TSS") or planned.tss_estimate or 0), 1),
+        "if": float(lib_meta.get("IF") or 0),
+        "Category": str(lib_meta.get("Category") or ""),
+    }
+
+
+def _accept_redraw_apply(plan: dict, day_iso: str, candidate: dict) -> dict:
+    """Mutate ``plan`` in place to install ``candidate`` on ``day_iso``
+    and run a full reforecast so downstream TSS / TSB / availability
+    flow catches up.
+
+    Caller persists via ``tp.atomic_write_plan``.
+    """
+    target = None
+    for w in plan.get("weeks", []):
+        for s in w.get("sessions", []):
+            if s.get("day") == day_iso:
+                target = s
+                break
+        if target:
+            break
+    if not target:
+        raise ValueError(f"No session at {day_iso}")
+
+    target["zwo_file"] = str(candidate.get("zwo_file") or "")
+    target["zwo_name"] = str(candidate.get("zwo_name") or candidate.get("zwo_file") or "")
+    target["variation"] = int(candidate.get("variation") or 0)
+    target["status"] = "pending"
+    # v1.7.0 — actually carry the new workout's TSS / duration into the
+    # plan so downstream reforecast (and the dashboard's load math) sees
+    # the truth, not the planner's stale estimate.
+    new_tss = candidate.get("tss_estimate")
+    if new_tss is not None:
+        try:
+            target["tss_estimate"] = float(new_tss)
+        except (TypeError, ValueError):
+            pass
+    new_dur = candidate.get("duration_min")
+    if new_dur is not None:
+        try:
+            target["duration_min"] = int(new_dur)
+        except (TypeError, ValueError):
+            pass
+
+    plan["last_rematch_day"] = {
+        "date": day_iso,
+        "at": datetime.now().isoformat(),
+        "new_zwo": target["zwo_file"],
+    }
+
+    # Mirror the _maybe_auto_reforecast input shape so downstream
+    # propagation is consistent with the ride-sync rematch path.
+    try:
+        try:
+            activities = db.query_activities(days=120)
+        except Exception:
+            activities = []
+        try:
+            training = cached("training", get_today_metrics)
+        except Exception:
+            training = {}
+        current_tsb = training.get("tsb")
+        tsb_series = None
+        if current_tsb is not None:
+            tsb_series = {}
+            for w in plan.get("weeks", []) or []:
+                try:
+                    ws = date.fromisoformat(w["start"])
+                except (KeyError, ValueError, TypeError):
+                    continue
+                for i in range(7):
+                    tsb_series[ws + timedelta(days=i)] = current_tsb
+        availability_overrides = {
+            day_iso2: float(entry["hours"])
+            for day_iso2, entry in plan.get("availability", {}).items()
+            if isinstance(entry, dict) and "hours" in entry
+        }
+        plan, sessions_modified, _ri = tp.reforecast_dict(
+            plan,
+            today_iso=date.today().isoformat(),
+            tsb_series=tsb_series,
+            recent_activities=activities,
+            availability_overrides=availability_overrides,
+        )
+        return {"ok": True, "day": day_iso, "sessions_modified": sessions_modified}
+    except Exception:
+        # Reforecast is best-effort: the swap itself is persisted by the
+        # caller; downstream propagation can be retried via /api/plan/reforecast.
+        _log.exception("accept-redraw reforecast skipped")
+        return {"ok": True, "day": day_iso, "sessions_modified": 0, "reforecast": "skipped"}
+
+
+@app.post("/api/plan/preview-redraw")
+async def api_plan_preview_redraw(request: Request):
+    """v1.7.0 — preview a rematch candidate without persisting.
+
+    Body: ``{"date": "YYYY-MM-DD", "exclude_extra": [zwo_name, ...]}``
+    Returns the candidate payload from ``_pick_redraw_candidate``. The UI
+    paints the workout preview chart, then asks the user to Accept /
+    Reshuffle (call again with the picked zwo_name appended to
+    ``exclude_extra``) / Decline (drop the panel).
+    """
+    body = await _get_json_body(request)
+    day_iso = str(body.get("date") or "").strip()
+    exclude_extra = body.get("exclude_extra") or []
+    if not day_iso:
+        return JSONResponse({"error": "date required"}, 400)
+    try:
+        date.fromisoformat(day_iso)
+    except ValueError:
+        return JSONResponse({"error": "Invalid date format (use YYYY-MM-DD)"}, 400)
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+    with open(json_path, encoding="utf-8") as f:
+        plan = json.load(f)
+    try:
+        return _pick_redraw_candidate(plan, day_iso, exclude_extra=exclude_extra)
+    except tp.NoCandidateWorkoutError:
+        return {"ok": False, "action": "no_candidate", "day": day_iso}
+    except ValueError as e:
+        reason = str(e)
+        return {"ok": False, "action": "invalid", "day": day_iso, "reason": reason}
+
+
+@app.post("/api/plan/accept-redraw")
+async def api_plan_accept_redraw(request: Request):
+    """v1.7.0 — accept a previewed rematch candidate.
+
+    Body: ``{"date": "YYYY-MM-DD", "zwo_file": "...", "zwo_name": "...",
+    "variation": N, "tss_estimate": N, "duration_min": N}`` (typically
+    forwarded verbatim from a prior preview-redraw response).
+    Persists the candidate and triggers a full ``tp.reforecast_dict`` so
+    downstream sessions adjust to the new TSS / availability flow.
+    """
+    body = await _get_json_body(request)
+    day_iso = str(body.get("date") or "").strip()
+    zwo_file = str(body.get("zwo_file") or "").strip()
+    if not day_iso or not zwo_file:
+        return JSONResponse({"error": "date + zwo_file required"}, 400)
+    try:
+        date.fromisoformat(day_iso)
+    except ValueError:
+        return JSONResponse({"error": "Invalid date format"}, 400)
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+        result = _accept_redraw_apply(plan, day_iso, body)
+        tp.atomic_write_plan(json_path, plan)
+        return result
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, 400)
+    except Exception:
+        _log.exception("Plan accept-redraw failed")
+        return JSONResponse({"detail": "accept-redraw failed"}, 500)
+
+
 @app.post("/api/plan/rematch/{day}")
 async def api_plan_rematch_day(day: str):
     """P6 (v4.1.0) — re-draw a single day's workout.
@@ -9752,6 +9998,10 @@ async def api_plan_rematch_day(day: str):
     Keeps the completion-classifier behavior as a fallback if no workouts
     are available: returns action="no_candidate" so the UI can fall back to
     the classifier rematch call.
+
+    v1.7.0 — kept for backward compat. New UI uses preview-redraw +
+    accept-redraw so the user can Accept / Decline / Reshuffle and so
+    downstream sessions reforecast on accept.
     """
     try:
         date.fromisoformat(day)

@@ -5120,6 +5120,10 @@ def reforecast(
     # durations. Per-week scale clamped to [0.4, 2.0] (sparse coverage — only
     # days the user touched are present; absent days keep current duration).
     touched: set[str] = set()
+    # v1.7.2 — lazy-loaded library cache; the re-match-on-cap branch below
+    # populates this on first miss and reuses it across the loop so we
+    # don't re-read the full library N times in the worst case.
+    _rematch_library: "list[dict] | None" = None
     if availability_overrides:
         for pw in plan_weeks:
             # v1.3.5 fix: gate on pw.end (mirrors the G3 downshift block at
@@ -5215,9 +5219,50 @@ def reforecast(
                     # signal; per-day cap is downward only.
                     target_min = int(round(hours * 60))
                     if target_min < s.duration_min:
+                        old_dur = s.duration_min
                         s.duration_min = max(0, target_min)
                         tss_per_h = TSS_PER_HOUR.get(s.session_type, 45)
                         s.tss_estimate = round(s.duration_min / 60 * tss_per_h)
+                        # v1.7.2 — when the cap meaningfully shrinks the
+                        # session, re-match the ZWO so the loaded workout
+                        # actually fits the new duration. Pre-v1.7.2 the
+                        # original 90-min ZWO stayed bound to a session
+                        # whose ``duration_min`` had dropped to 45, so the
+                        # dashboard's modal showed "(45min)" in the title
+                        # but rendered the 90-min ZWO segments on the
+                        # chart — the user (rightfully) called this a bug.
+                        # Re-match only on >= 15% shrink to avoid spamming
+                        # match_zwo for trivial duration tweaks. On
+                        # NoCandidateWorkoutError we clear the ZWO fields
+                        # so the dashboard at least flags "no ZWO" rather
+                        # than showing the wrong workout.
+                        if old_dur > 0 and (old_dur - s.duration_min) / old_dur >= 0.15:
+                            try:
+                                if _rematch_library is None:
+                                    _rematch_library = load_workout_library()
+                                # used_names excludes the current ZWO so
+                                # we don't re-pick the same workout that
+                                # spawned the mismatch in the first place.
+                                _excluded = {s.zwo_name} if s.zwo_name else set()
+                                match_zwo(
+                                    s, _rematch_library,
+                                    week_num=pw.week_num,
+                                    day_idx=(s.day - pw.start).days,
+                                    used_names=_excluded,
+                                    raise_on_empty=True,
+                                )
+                            except NoCandidateWorkoutError:
+                                # Library has nothing short enough — clear
+                                # ZWO so the UI shows the unmatched warning
+                                # instead of the wrong workout.
+                                s.zwo_file = ""
+                                s.zwo_name = ""
+                            except Exception:
+                                # Best-effort re-match: leave existing
+                                # ZWO in place; dashboard will still show
+                                # the duration mismatch but the swap
+                                # itself is persisted.
+                                pass
                 touched.add(d_iso)
 
     downshifts: list[str] = []

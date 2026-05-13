@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.7.2 — Cap re-matches ZWO so chart fits new duration (2026-05-13)
+
+User screenshot: modal titled "Wednesday — Endurance 6x2min (45min)" but the power chart rendered 90 min worth of segments (`0m` → `1h30`).
+
+### Bug
+
+v1.7.1 shrank `session.duration_min` (110 → 45) and recomputed TSS when the user capped a day's hours, but left `session.zwo_file` / `zwo_name` pointing at the original 90-min library file. `openWorkoutDetail()` fetched that file's segments → chart showed the wrong workout.
+
+### Fix
+
+Re-run `match_zwo` whenever the cap shrinks duration by ≥ 15 %. The original ZWO is added to `used_names` so the matcher returns a different (correctly-sized) workout. If the library has nothing short enough, `zwo_file` / `zwo_name` are cleared so the UI can flag "unmatched" instead of rendering the wrong chart.
+
+Threshold guards: < 15 % shrink (e.g. 110 → 100) skips the re-match — keeps the original ZWO bound and just updates duration / TSS.
+
+### Tests
+
+4 new in `test_v172_cap_rematches_zwo.py`:
+- 110 → 45 cap invokes `match_zwo` with the shrunk duration and excludes the original ZWO.
+- 110 → 100 cap (9 %) skips re-match; ZWO stays bound.
+- `NoCandidateWorkoutError` path clears `zwo_file` / `zwo_name`.
+- End-to-end with the real library: a 110 → 45 cap lands on a ZWO whose name differs from the 110-min original.
+
+1285 → **1289 passing** (+4). 5 pre-existing failures unchanged.
+
 ## v1.7.1 — Availability per-day cap + downstream reforecast (2026-05-13)
 
 User: "I set today's availability from 1.5h to 60 min → Update → workout shrank 110 → 90 min. But I only have 60 min!"

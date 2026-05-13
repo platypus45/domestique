@@ -7228,11 +7228,14 @@ async def api_save_availability(request: Request):
         plan["availability"] = body.get("availability", {})
 
         # ── v1.3.1 HIGH fix: reflow plan immediately ──────────────────────
-        # v1.5.0 — collapsed into tp.reforecast_dict. Same behaviour: TSB / G3
-        # / G4 inputs are skipped (this endpoint's only job is the availability
-        # rescale), and propagation_days is fixed to the user-touched dates
-        # from `availability_overrides` so we don't accidentally leak G3/G4
-        # mutations from a future call into this path.
+        # v1.5.0 — collapsed into tp.reforecast_dict.
+        # v1.7.1 — also pass tsb_series + recent_activities so downstream
+        # G3 / TSB-based downshifts actually fire after an availability
+        # change. Pre-v1.7.1 these were both empty (v1.3.3 perf trade-off
+        # against 2× ICU HTTPS per future hard session). v1.6.3 moved ICU
+        # sync off the request thread, and ``cached("training", ...)``
+        # serves the local snapshot in ~ms, so the perf concern no longer
+        # justifies dropping downstream propagation.
         sessions_modified = 0
         try:
             availability_overrides = {
@@ -7241,15 +7244,39 @@ async def api_save_availability(request: Request):
                 if isinstance(entry, dict) and "hours" in entry
             }
 
-            # v1.3.3 PERF: pass tsb_series={} so reforecast()'s per-day _tsb_at
-            # callback short-circuits to the dict (returning None) instead of
-            # falling through to get_today_metrics() — which makes 2 ICU HTTPS
-            # calls per future hard session (~270 ms each).
+            # Build a flat-projected tsb_series from the cached training
+            # snapshot so per-day _tsb_at lookups inside reforecast hit
+            # the dict (no fall-through to live ICU).
+            tsb_series: "dict | None" = None
+            try:
+                training_snap = cached("training", get_today_metrics)
+                current_tsb = training_snap.get("tsb")
+            except Exception:
+                current_tsb = None
+            if current_tsb is not None:
+                tsb_series = {}
+                for w in plan.get("weeks", []) or []:
+                    try:
+                        ws = date.fromisoformat(w["start"])
+                    except (KeyError, ValueError, TypeError):
+                        continue
+                    for i in range(7):
+                        tsb_series[ws + timedelta(days=i)] = current_tsb
+            try:
+                recent_activities = db.query_activities(days=120)
+            except Exception:
+                recent_activities = []
+
             plan, sessions_modified, _ri = tp.reforecast_dict(
                 plan,
-                tsb_series={},
+                tsb_series=tsb_series,
+                recent_activities=recent_activities,
                 availability_overrides=availability_overrides,
-                propagation_days=set(availability_overrides.keys()),
+                # propagation_days=None lets reforecast emit its own
+                # touched ∪ g3_dropped set so downstream G3 downshifts
+                # land on disk too. Pre-v1.7.1 we pinned this to
+                # availability keys only, which suppressed downstream
+                # propagation entirely.
             )
         except Exception:  # noqa: BLE001
             # Reflow is best-effort: if reforecast errors we still persist the

@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.7.1 — Availability per-day cap + downstream reforecast (2026-05-13)
+
+User: "I set today's availability from 1.5h to 60 min → Update → workout shrank 110 → 90 min. But I only have 60 min!"
+
+### Bug
+
+`reforecast()`'s availability path computed `scale = sum(available_mins) / sum(current_mins)` PER WEEK across **all touched days**, then applied the scale uniformly. The frontend POSTs every day in the visible calendar (180 days) with weekly-grid-default hours, so a single user-edited day's effect was diluted by the surrounding defaults — the 110 → 60 shrink came out as 110 → 90.
+
+### Fix
+
+- **`training_planner.reforecast` per-day cap**: `hours * 60` acts as a CEILING. If the user's hours imply a shorter session than the planner chose, shrink to fit and recompute TSS from `TSS_PER_HOUR[session_type]`. If the user's hours allow more time, keep the planner's choice (don't extend training without explicit ask). Untouched days are never clobbered by the surrounding scaling.
+- **`save-availability` downstream propagation enabled**: pre-v1.7.1 the endpoint passed `tsb_series={}` and `propagation_days={availability_keys}` to keep the call fast (v1.3.3 perf trade-off against 2× live ICU HTTPS per future hard session). v1.6.3 moved ICU off the request thread; `cached("training", get_today_metrics)` now returns the local snapshot in milliseconds. v1.7.1 builds the flat-projected `tsb_series` and passes `recent_activities=db.query_activities(days=120)` so downstream G3 / TSB-based downshifts actually fire after an availability change. `propagation_days=None` lets `reforecast()` emit its own touched ∪ g3_dropped set so those downshifts land on disk too.
+
+### Tests
+
+5 new in `test_v171_availability_per_day_cap.py`:
+- per-day cap shrinks Wed's 110min to 60min when user sets 1h.
+- per-day cap does NOT extend Wed's 110min when user sets 3h.
+- shrinking Wed leaves Thu's 120min untouched (pre-v1.7.1 the weekly average changed both).
+- zero-hours-becomes-rest branch (v1.3.5 holiday handling) still works.
+- direct `tp.reforecast_dict` unit test pinning the per-day cap.
+
+1280 → **1285 passing** (+5). 5 pre-existing failures unchanged.
+
 ## v1.7.0 — Rematch Preview / Accept / Reshuffle + downstream reforecast (2026-05-13)
 
 User asked: rematch should not be instant-apply. Show the candidate workout first, let the user Accept / Decline / Reshuffle, and when accepted recalculate downstream sessions so the rest of the week's TSS / availability flow stays consistent with the new workout.

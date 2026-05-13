@@ -5190,10 +5190,34 @@ def reforecast(
                     s.zwo_file = ""
                     s.zwo_name = ""
                 else:
-                    new_dur = max(0, int(round(s.duration_min * scale)))
-                    s.duration_min = new_dur
-                    tss_per_h = TSS_PER_HOUR.get(s.session_type, 45)
-                    s.tss_estimate = round(new_dur / 60 * tss_per_h)
+                    # v1.7.1 fix: user's hours act as a per-day CEILING, not
+                    # a weekly-averaged scale.
+                    #
+                    # Pre-v1.7.1 bug: ``scale = available_mins / current_mins``
+                    # was computed PER WEEK across ALL touched days, then
+                    # applied uniformly. User reported "set today 1.5h → 60min,
+                    # plan shrank from 110 → 90 (not 60)". Cause: the frontend
+                    # POSTs every day in the visible calendar (180 days of
+                    # defaults), so most other days are touched with their
+                    # weekly-grid defaults. The week-average dilutes the
+                    # single day the user actually changed.
+                    #
+                    # Why ceiling, not literal: applying literal hours
+                    # unconditionally would clobber legitimate planner
+                    # tuning on UN-touched days (e.g. a tempo run sized to
+                    # 110min on a weekly-grid 2h day would jump to 120min).
+                    # Treating hours as a ceiling means:
+                    #   user 1h, plan 110m → shrink to 60 (user wants cap)
+                    #   weekly 2h, plan 110m → keep 110 (planner choice)
+                    # Side effect: increasing a day's hours via the calendar
+                    # never EXTENDS the planned session. The user's stated
+                    # weekly grid (in Settings) is the upward expansion
+                    # signal; per-day cap is downward only.
+                    target_min = int(round(hours * 60))
+                    if target_min < s.duration_min:
+                        s.duration_min = max(0, target_min)
+                        tss_per_h = TSS_PER_HOUR.get(s.session_type, 45)
+                        s.tss_estimate = round(s.duration_min / 60 * tss_per_h)
                 touched.add(d_iso)
 
     downshifts: list[str] = []

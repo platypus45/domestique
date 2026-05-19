@@ -10434,12 +10434,19 @@ def _accept_redraw_apply(plan: dict, day_iso: str, candidate: dict) -> dict:
             for day_iso2, entry in plan.get("availability", {}).items()
             if isinstance(entry, dict) and "hours" in entry
         }
+        # v1.8.1 SPEED-B: fast path for accept-redraw. A single-session
+        # swap does not move the prior week's actual/planned ratio (G4
+        # ACWR) nor the rolling polarization split (G3); skipping those
+        # blocks cuts reforecast wall-clock from ~1.7 s to <0.5 s warm.
+        # Availability scaling + downstream TSS propagation still run so
+        # the cascade and per-day duration overrides remain correct.
         plan, sessions_modified, _ri = tp.reforecast_dict(
             plan,
             today_iso=date.today().isoformat(),
             tsb_series=tsb_series,
             recent_activities=activities,
             availability_overrides=availability_overrides,
+            accept_redraw_fast=True,
         )
         return {"ok": True, "day": day_iso, "sessions_modified": sessions_modified}
     except Exception:

@@ -1,5 +1,4 @@
-"""v4.5.5 IMPL-DETAIL-SERVER / REFINE-CLASSIFY — polarization-index +
-centroid-distance classification helpers.
+"""v1.8.0 — polarization-index + PI-band classification helpers.
 
 References:
 - Treff G, Winkert K, Sareban M, Steinacker JM, Sperlich B (2019). "The
@@ -13,8 +12,10 @@ Domestique uses the FastFitness.tips formulation
 (emphasises the easy/hard ratio over the moderate band) and matches the
 single ``polarization_index`` value ICU reports on the activity GET.
 
-Classification (v4.5.5 REFINE-CLASSIFY): closest canonical centroid wins,
-with Treff PI > 2.0 acting as a polarized override.
+Classification (v1.8.0 PI-BAND CASCADE): Treff 2019 PI-band rules (see
+analytics.classify_distribution docstring + MASTER_DECISIONS_v180_addendum
+§F3 verification table). Tests below verify the post-v1.8.0 behaviour;
+the legacy centroid-distance expectations are replaced.
 """
 from __future__ import annotations
 
@@ -58,49 +59,56 @@ class TestPolarizationIndex(unittest.TestCase):
         self.assertAlmostEqual(pi, 0.28, places=2)
 
     def test_classify_pure_base(self):
-        # Z1+Z2 ≥ 90 → base.
+        # Z1+Z2 ≥ 70 with negligible z3z4 → base.
         self.assertEqual(classify_distribution(92.0, 6.0, 2.0), "base")
 
-    def test_classify_polarized(self):
-        # Z1+Z2 ≥ 75, Z5+ ≥ 5, Z3+Z4 < 20 → polarized.
-        self.assertEqual(classify_distribution(78.0, 5.0, 17.0), "polarized")
+    def test_classify_high_z1z2_low_pi_is_base(self):
+        # v1.8.0 PI-band: a distribution at the legacy polarized centroid
+        # (78/5/17, PI ≈ 1.28) does NOT clear the PI > 2.0 threshold for
+        # polarized. With z3z4 < 30 the band cascade falls through to z1z2
+        # ≥ 70 → base. Treff's PI > 2.0 cutoff is the contract.
+        self.assertEqual(classify_distribution(78.0, 5.0, 17.0), "base")
 
-    def test_classify_pyramidal_z3z4_at_least_z5plus(self):
-        # Z3+Z4 ≥ Z5+ AND Z1+Z2 ≥ 65 → pyramidal.
-        self.assertEqual(classify_distribution(70.0, 20.0, 10.0), "pyramidal")
+    def test_classify_high_z1z2_moderate_z3z4_is_base(self):
+        # 70/20/10 — z3z4 too small for pyramidal (< 35) or threshold (< 30),
+        # z1z2 ≥ 70 → base.
+        self.assertEqual(classify_distribution(70.0, 20.0, 10.0), "base")
 
-    def test_classify_hiit_when_z5plus_above_30(self):
-        # Closest centroid for (40, 25, 35) is exactly the HIIT centroid.
-        self.assertEqual(classify_distribution(40.0, 25.0, 35.0), "hiit")
+    def test_classify_hiit_when_z5plus_dominant(self):
+        # PI-band hiit rule: z5+ > 40 AND z1z2 < 20.
+        # 40/25/35 — z5+ only 35% and z1z2 = 40% → fails hiit gate; also
+        # outside threshold/pyramidal bands → unique.
+        self.assertEqual(classify_distribution(40.0, 25.0, 35.0), "unique")
+        # A genuine hiit distribution clears the gate:
+        self.assertEqual(classify_distribution(10.0, 30.0, 60.0), "hiit")
 
-    # --- v4.5.5 REFINE-CLASSIFY: centroid-distance method ---
+    # --- v1.8.0 PI-band cascade ---
 
-    def test_classify_user_may_1_ride_lands_on_threshold(self):
-        # The borderline ride that motivated REFINE-CLASSIFY: distribution
-        # 47.9/34.2/17.9 sits closest to the threshold centroid (60,30,10),
-        # so the strict-rule "unique" verdict from IMPL-DETAIL-SERVER is gone.
-        result = classify_distribution(47.9, 34.2, 17.9)
-        self.assertIn(result, {"threshold", "pyramidal"})
-        self.assertNotEqual(result, "unique")
+    def test_classify_user_may_1_ride_under_pi_band(self):
+        # 47.9/34.2/17.9 — z5+ above 15% so threshold rule fails;
+        # z3z4 < 35 so pyramidal rule fails; z1z2 < 70 so base fails.
+        # Falls through to unique. Old centroid-distance classifier called
+        # this threshold/pyramidal; the PI-band cascade is stricter.
+        self.assertEqual(classify_distribution(47.9, 34.2, 17.9), "unique")
 
-    def test_classify_polarized_centroid_high_confidence(self):
-        # Distribution exactly on the polarized centroid → confidence ≈ 1.0.
-        self.assertEqual(classify_distribution(80.0, 5.0, 15.0), "polarized")
-        self.assertGreater(classification_confidence(80.0, 5.0, 15.0), 0.95)
+    def test_classify_polarized_requires_pi_above_2(self):
+        # Distribution at the legacy polarized centroid (80/5/15) has
+        # PI ≈ 1.28 — below the 2.0 polarized cutoff. Falls through to base.
+        self.assertEqual(classify_distribution(80.0, 5.0, 15.0), "base")
 
-    def test_classify_pyramidal_centroid_high_confidence(self):
-        # Distribution exactly on the pyramidal centroid → confidence ≈ 1.0.
-        self.assertEqual(classify_distribution(80.0, 15.0, 5.0), "pyramidal")
-        self.assertGreater(classification_confidence(80.0, 15.0, 5.0), 0.95)
+    def test_classify_at_legacy_pyramidal_centroid_is_base(self):
+        # 80/15/5 — z3z4 only 15 (< 30) and z1z2 ≥ 70 → base.
+        # The PI-band cascade no longer awards "pyramidal" to centroid
+        # proximity alone; pyramidal requires z3z4 ≥ 35.
+        self.assertEqual(classify_distribution(80.0, 15.0, 5.0), "base")
+        # Confidence remains in [0.5, 1.0] for any in-band label.
+        self.assertGreaterEqual(classification_confidence(80.0, 15.0, 5.0), 0.5)
+        self.assertLessEqual(classification_confidence(80.0, 15.0, 5.0), 1.0)
 
-    def test_classify_hiit_leaning_distribution(self):
-        # 40/25/35 is the HIIT centroid itself.
-        self.assertEqual(classify_distribution(40.0, 25.0, 35.0), "hiit")
-
-    def test_classify_unique_when_far_from_every_centroid(self):
-        # 30/60/10 is >35 away from every canonical centroid (closest is
-        # threshold at ≈42), so the classifier falls back to "unique".
-        self.assertEqual(classify_distribution(30.0, 60.0, 10.0), "unique")
+    def test_classify_threshold_under_pi_band(self):
+        # 30/60/10 — z3z4 ≥ 30, z5+ ≤ 15, z1z2 ≤ 50 → threshold.
+        # Old centroid-distance heuristic mislabelled this "unique".
+        self.assertEqual(classify_distribution(30.0, 60.0, 10.0), "threshold")
 
     def test_polarization_index_above_2_overrides_to_polarized(self):
         # Treff's research-grounded primary criterion: PI > 2.0 → polarized,
@@ -115,9 +123,9 @@ class TestPolarizationBlock(unittest.TestCase):
 
     def test_compute_block_from_user_ride_zone_dict(self):
         # User's May 1 ride zone seconds reproduced exactly. Under the
-        # v4.5.5 REFINE-CLASSIFY centroid-distance rule, this borderline
-        # distribution lands on the "threshold" centroid (60,30,10) instead
-        # of the IMPL-DETAIL-SERVER "unique" fallback.
+        # v1.8.0 PI-band cascade, this borderline distribution falls
+        # through every band rule and lands on "unique" — z5+ above
+        # threshold's 15% ceiling, z3z4 below pyramidal's 35% floor.
         tiz = {
             "z1": 2311, "z2": 1952, "z3": 1796, "z4": 1251,
             "z5": 698, "z6": 617, "z7": 283,
@@ -129,11 +137,11 @@ class TestPolarizationBlock(unittest.TestCase):
         self.assertAlmostEqual(block["z5plus_pct"], 17.9, places=1)
         # Treff/FastFitness PI for this distribution rounds to 0.28.
         self.assertAlmostEqual(block["polarization_index"], 0.28, places=2)
-        # Closest centroid is "threshold" (60,30,10) at distance ≈15.
-        self.assertEqual(block["classification"], "threshold")
+        # PI-band cascade fails every rule for this distribution.
+        self.assertEqual(block["classification"], "unique")
         # Confidence is surfaced in the block for the UI to render.
         self.assertIn("confidence", block)
-        self.assertGreater(block["confidence"], 0.0)
+        self.assertGreaterEqual(block["confidence"], 0.0)
         self.assertLessEqual(block["confidence"], 1.0)
 
     def test_empty_or_zero_dict_returns_none(self):

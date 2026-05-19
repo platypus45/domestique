@@ -106,17 +106,21 @@ def classify_distribution(
     Returns one of: 'polarized', 'pyramidal', 'threshold', 'hiit', 'base', 'unique'.
 
     Rules (first match wins):
-      1. PI > 2.0                                      → polarized
-      2. z5+ > 40 AND z1z2 < 20                        → hiit
-      3. z3z4 >= 30 AND z5+ <= 15 AND z1z2 <= 50       → threshold
-      4. z3z4 >= 35 AND z3z4 > z5+ + 10                → pyramidal
-      5. z1z2 >= 70                                    → base
-      6. fallthrough                                   → unique
+      1. PI > 2.0                                              → polarized
+      2. z5+ > 40 AND z1z2 < 20                                → hiit
+      3. z3z4 >= 30 AND z5+ <= 15 AND z1z2 <= 50               → threshold
+      4. z3z4 >= 35 AND z3z4 > z5+ + 10                        → pyramidal (strict)
+      5. z1z2 >= 70                                            → base
+      6. z3z4 >= 20 AND z3z4 > z5+ AND 40 <= z1z2 < 70         → pyramidal (moderate)
+      7. fallthrough                                           → unique
 
     Threshold is evaluated BEFORE pyramidal so that a high-z3z4 / low-z5+
     / moderate-z1z2 distribution (e.g. 30/60/10) lands on `threshold`
     rather than `pyramidal`. The Treff reference ride (15/49.2/35.8) has
-    enough z5+ to skip threshold and is caught by the pyramidal rule.
+    enough z5+ to skip threshold and is caught by the strict pyramidal
+    rule. v1.8.3 adds rule #6 (moderate pyramidal) to catch real-world
+    endurance rides like 58.3/27.6/14.1 that ICU's FastFitness.Tips
+    labels Pyramidaal but the strict z3z4>=35 rule misses.
     """
     if pi is None:
         pi = polarization_index(z1z2_pct, z3z4_pct, z5plus_pct)
@@ -130,6 +134,14 @@ def classify_distribution(
         return "pyramidal"
     if z1z2_pct >= 70:
         return "base"
+    # Moderate pyramidal — Z1+Z2 dominant base + visible Z3+Z4 middle +
+    # smaller Z5+ peak. Catches "real-world endurance ride with tempo
+    # bursts and short anaerobic kicks" — the textbook pyramid that
+    # Treff 2019's strict z3z4>=35 rule misses. Matches ICU's
+    # FastFitness.Tips pyramidal classification for distributions like
+    # 58.3/27.6/14.1.
+    if z3z4_pct >= 20 and z3z4_pct > z5plus_pct and 40 <= z1z2_pct < 70:
+        return "pyramidal"
     return "unique"
 
 

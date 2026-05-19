@@ -2807,6 +2807,49 @@ def _last_ride_for_hrv_prompt() -> dict | None:
     return most_recent
 
 
+def _recent_rides_have_dfa_computed(n: int = 3) -> bool:
+    """v1.8.3 BUG-B: any of the last ``n`` rides has dfa_alpha1_status='computed'?
+
+    Walks the newest-first ride list and normalizes FIT-only entries on the
+    fly (same pattern as :func:`_last_ride_for_hrv_prompt`). Returns True as
+    soon as one ride reports ``dfa_alpha1_status == 'computed'``.
+
+    Used by ``/api/wellness/hrv-recording-status`` to suppress the
+    educational toast when the rider is already capturing HRV on most
+    rides — a single misfire (strap dropout, no HR connected) shouldn't
+    trigger "enable HRV recording on your Garmin".
+    """
+    try:
+        merged = _load_all_rides_safe()
+    except Exception as e:
+        _log.debug(f"_recent_rides_have_dfa_computed: load failed: {e}")
+        return False
+    if not merged:
+        return False
+    for ride in merged[: max(1, int(n))]:
+        if not isinstance(ride, dict):
+            continue
+        status = ride.get("dfa_alpha1_status")
+        if status == "computed":
+            return True
+        # FIT-only entries don't carry dfa_alpha1_status inline; normalize.
+        if status is None:
+            rid = ride.get("ride_id") or ""
+            if isinstance(rid, str) and rid.startswith("fit_"):
+                try:
+                    stem = rid[4:]
+                    fit_path = _rides_fit_dir() / f"{stem}.fit"
+                    if fit_path.exists():
+                        rec = _build_fit_normalized(fit_path, rid)
+                        if isinstance(rec, dict) and rec.get("dfa_alpha1_status") == "computed":
+                            return True
+                except Exception as e:
+                    _log.debug(
+                        f"_recent_rides_have_dfa_computed: FIT normalize failed: {e}"
+                    )
+    return False
+
+
 @app.get("/api/wellness/hrv-recording-status")
 def api_hrv_recording_status():
     """v1.0.7 IMPL-HRV-PROMPT — does the home-page toast fire?
@@ -2852,6 +2895,12 @@ def api_hrv_recording_status():
         }
     status = ride.get("dfa_alpha1_status")
     should_show = status == "no_rr_data"
+    # v1.8.3 BUG-B: suppress the toast when ANY of the last 3 rides has
+    # dfa_alpha1_status='computed'. A single misfire (strap dropout, HR
+    # not connected) shouldn't trigger "enable HRV recording" when the
+    # rider is already capturing HRV on most rides.
+    if should_show and _recent_rides_have_dfa_computed(n=3):
+        should_show = False
     return {
         "should_show_prompt": bool(should_show),
         "device_product_name": ride.get("device_product_name"),

@@ -5231,6 +5231,18 @@ def reforecast(
     # None ⇒ no advisory fires (rider has no chest strap or v1.0.7 not yet
     # populated). Mirrors G3b / G8 advisory pattern.
     yesterday_dfa_alpha1: "float | None" = None,
+    # ── v1.8.1 SPEED-B (accept-redraw fast path) ────────────────────────────
+    # When True, skips the G3 polarization-breach recompute AND the G4 ACWR
+    # weekly-rescale block. The single-session swap on /api/plan/accept-redraw
+    # changes ONE session's TSS / duration — neither the rolling polarization
+    # mix nor the prior week's actual/planned ratio is affected. Skipping
+    # these two blocks reduces wall-clock by ~70 % on a 26-week plan.
+    # KEEP-PATH includes: availability scaling, TSB-driven intensity downshift,
+    # advisory log (G3b / G8 / G9), and downstream propagation via
+    # `_apply_reforecast_to_dict`. Defaults to False so existing callers
+    # (save-availability, /api/plan/reforecast, daily_adapt_plan) keep the
+    # full algorithm.
+    accept_redraw_fast: bool = False,
 ) -> tuple[list[PlannedWeek], dict]:
     """Shift future hard sessions up/down one intensity level based on TSB.
 
@@ -5261,6 +5273,13 @@ def reforecast(
         recent_activities: optional list of activity dicts (date / tss /
               icu_training_load) used by the G4 ACWR gate. When None or empty,
               the gate is skipped — TSB-only behavior is preserved.
+        accept_redraw_fast: v1.8.1 SPEED-B — when True, skip the G3
+              polarization recompute and G4 ACWR weekly rescale. Trade-off:
+              a single-session swap (accept-redraw hot path) does NOT change
+              the prior week's actual/planned ratio nor the rolling
+              polarization split, so re-running those two blocks is wasted
+              work. Use ONLY for small-mutation cases. Large reshuffles or
+              the daily reforecast endpoint must keep the default (False).
 
     Returns:
         (plan_weeks, info) where `info` is
@@ -5461,21 +5480,22 @@ def reforecast(
     # unloaded — scaling them again would over-rest.
     acwr_ratio = 0.0
     acwr_scaled_week: int | None = None
-    try:
-        acwr_ratio = _last_completed_week_acwr(plan_weeks, recent_activities or [])
-    except Exception:  # noqa: BLE001
-        acwr_ratio = 0.0
-    if acwr_ratio > 1.5:
-        for pw in plan_weeks:
-            if pw.start <= today:
-                continue  # don't scale past or in-progress weeks
-            if pw.is_stepback:
-                continue  # stepback already unloaded; double-cut would be too aggressive
-            pw.tss_target = pw.tss_target * 0.85
-            pw.hit_per_week = max(1, (pw.hit_per_week or 0) - 1)
-            pw.auto_acwr_scaled = True
-            acwr_scaled_week = pw.week_num
-            break  # only the next planned non-stepback week
+    if not accept_redraw_fast:
+        try:
+            acwr_ratio = _last_completed_week_acwr(plan_weeks, recent_activities or [])
+        except Exception:  # noqa: BLE001
+            acwr_ratio = 0.0
+        if acwr_ratio > 1.5:
+            for pw in plan_weeks:
+                if pw.start <= today:
+                    continue  # don't scale past or in-progress weeks
+                if pw.is_stepback:
+                    continue  # stepback already unloaded; double-cut would be too aggressive
+                pw.tss_target = pw.tss_target * 0.85
+                pw.hit_per_week = max(1, (pw.hit_per_week or 0) - 1)
+                pw.auto_acwr_scaled = True
+                acwr_scaled_week = pw.week_num
+                break  # only the next planned non-stepback week
 
     # G3: Polarization-breach gate (Seiler 2010 / Stöggl 2014 / Treff 2019).
     # When this week's actual polarized split has busted either the Z4+ ceiling
@@ -5484,7 +5504,7 @@ def reforecast(
     # tss_target / hit_per_week mutations belong to IMPL-A's G4 block above.
     g3_polarization_breached = False
     g3_dropped_days: list[str] = []
-    if _polarization_breach(actual_polarization, target_polarization):
+    if not accept_redraw_fast and _polarization_breach(actual_polarization, target_polarization):
         g3_polarization_breached = True
         dropped_count = 0
         for pw in plan_weeks:
@@ -5839,6 +5859,7 @@ def reforecast_dict(
     actual_wprime_polarization: "dict | None" = None,
     yesterday_dfa_alpha1: "float | None" = None,
     propagation_days: "set | None" = None,
+    accept_redraw_fast: bool = False,
 ) -> "tuple[dict, int, dict]":
     """v1.5.0 — single-layer reforecast on the persisted plan dict.
 
@@ -5857,6 +5878,14 @@ def reforecast_dict(
     Used by the save-availability endpoint, which propagates the user's
     availability-touched days verbatim (no TSB / G3 inputs on that
     path; same behaviour as pre-v1.5.0).
+
+    `accept_redraw_fast` (v1.8.1 SPEED-B): forwarded to the underlying
+    `reforecast()`. When True, skips G3 polarization recompute and G4
+    ACWR weekly rescale — the accept-redraw hot path swaps ONE session
+    and does not move either signal. Trade-off: weekly tss_target won't
+    auto-rescale on a single-session swap; large reshuffles should keep
+    the default (False) and call the full path. Availability scaling +
+    downstream TSS propagation still run.
 
     The legacy `reforecast(goal, pw_list, ...)` API is kept as a
     deprecated alias for tests + external callers (removal in v1.6.0).
@@ -5895,6 +5924,7 @@ def reforecast_dict(
             wprime_acwr=wprime_acwr,
             actual_wprime_polarization=actual_wprime_polarization,
             yesterday_dfa_alpha1=yesterday_dfa_alpha1,
+            accept_redraw_fast=accept_redraw_fast,
         )
     except Exception as _e:
         _tp_log_error(error_codes.Codes.REFORECAST_DICT_FAILED, exc=_e,

@@ -4830,6 +4830,136 @@ _HARD_SESSION_TYPES = frozenset({
 })
 
 
+def apply_week_tier_down(
+    plan: dict, day_iso: str, dry_run: bool = False,
+) -> dict:
+    """v1.8.0 §F1 — walk remaining hard sessions in the current Mon-Sun
+    window and tier-down each by one ladder step.
+
+    Selection:
+      - session.day >= day_iso AND session.day <= sunday(day_iso) (strict
+        Mon-Sun, no wrap into next week).
+      - session.session_type in ``_HARD_SESSION_TYPES``.
+      - session.status != "completed".
+
+    Per-session: capture ``before`` snapshot, call ``_drop_intensity``,
+    recompute ``tss_estimate`` from ``TSS_PER_HOUR[new_type]``, mark
+    ``adapted=True``, re-match ZWO with the prior name in ``used_names``.
+    ``NoCandidateWorkoutError`` mid-walk → clear ZWO fields, mark
+    ``rematched=False, zwo_cleared=True`` and continue (don't abort).
+
+    Dry-run: operates on ``copy.deepcopy(plan)``. Caller must skip
+    persistence and reforecast on dry-run paths.
+
+    Returns:
+        {"sessions_modified": int, "actions": list[dict], "note": str}
+        Each action: {day, before, after, rematched, zwo_cleared}.
+    """
+    import copy as _copy
+    working = _copy.deepcopy(plan) if dry_run else plan
+    try:
+        anchor = date.fromisoformat(day_iso)
+    except (TypeError, ValueError):
+        return {"sessions_modified": 0, "actions": [],
+                "note": f"invalid day_iso: {day_iso!r}"}
+    sunday = anchor + timedelta(days=(6 - anchor.weekday()))
+
+    actions: list[dict] = []
+    sessions_modified = 0
+
+    # Library loaded once for all rematches; tolerate failure.
+    try:
+        library = load_workout_library()
+    except Exception:
+        library = []
+
+    for week in working.get("weeks", []) or []:
+        for sess in week.get("sessions", []) or []:
+            s_day = sess.get("day") or ""
+            try:
+                s_date = date.fromisoformat(s_day)
+            except (TypeError, ValueError):
+                continue
+            if s_date < anchor or s_date > sunday:
+                continue
+            if sess.get("status") == "completed":
+                continue
+            old_type = sess.get("session_type", "") or ""
+            if old_type not in _HARD_SESSION_TYPES:
+                continue
+            new_type = _drop_intensity(old_type)
+            if not new_type or new_type == old_type:
+                continue
+
+            old_duration = int(sess.get("duration_min", 0) or 0)
+            old_tss = float(sess.get("tss_estimate", 0) or 0)
+            tss_per_h = TSS_PER_HOUR.get(new_type, 45)
+            new_tss = round(old_duration / 60 * tss_per_h, 1)
+
+            before = {"type": old_type, "duration_min": old_duration,
+                      "tss": old_tss}
+
+            sess["session_type"] = new_type
+            sess["tss_estimate"] = new_tss
+            sess["adapted"] = True
+            sess["adapted_reason"] = (
+                f"Week tier-down: {old_type} → {new_type} (auto-adjust)"
+            )
+            sess["status"] = "pending"
+
+            rematched = False
+            zwo_cleared = False
+            old_zwo_name = sess.get("zwo_name", "")
+            try:
+                planned = PlannedSession(
+                    day=s_date,
+                    day_name=sess.get("day_name", ""),
+                    session_type=new_type,
+                    duration_min=old_duration,
+                    tss_estimate=new_tss,
+                    description=sess.get("description", ""),
+                )
+                week_num = week.get("week_num", 0)
+                week_start_iso = week.get("start", "")
+                try:
+                    day_idx = (s_date - date.fromisoformat(week_start_iso)).days
+                except (TypeError, ValueError):
+                    day_idx = 0
+                excluded = {old_zwo_name} if old_zwo_name else set()
+                match_zwo(
+                    planned, library,
+                    week_num=week_num, day_idx=day_idx,
+                    used_names=excluded, raise_on_empty=True,
+                )
+                sess["zwo_file"] = planned.zwo_file
+                sess["zwo_name"] = planned.zwo_name
+                rematched = True
+            except NoCandidateWorkoutError:
+                sess["zwo_file"] = ""
+                sess["zwo_name"] = ""
+                zwo_cleared = True
+            except Exception:
+                # Other failures: leave existing ZWO in place, mark not rematched.
+                pass
+
+            after = {"type": new_type, "duration_min": old_duration,
+                     "tss": new_tss}
+            actions.append({
+                "day": s_day,
+                "before": before,
+                "after": after,
+                "rematched": rematched,
+                "zwo_cleared": zwo_cleared,
+            })
+            sessions_modified += 1
+
+    return {
+        "sessions_modified": 0 if dry_run else sessions_modified,
+        "actions": actions,
+        "note": "",
+    }
+
+
 # ── v1.1.0 IMPL-NORWEGIAN-HR — double_threshold AM+PM same-day scheduling ──
 
 # Norwegian Method protocol: AM + PM same-day threshold-class pair, both

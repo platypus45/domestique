@@ -1472,6 +1472,19 @@ window.addEventListener('unhandledrejection', function(e) {
     </div>
   </div>
 
+  <!-- v1.7.6 — Last week feedback panel. Reads /api/week-summary?week_offset=-1
+       and surfaces an explicit "you trained X above plan" context next to the
+       readiness card. The readiness score is a downstream signal (HRV + TSB);
+       this panel makes the CAUSE legible so the user knows why today's
+       prescription was adjusted — and one-clicks the tier-down button above
+       when the prior week was an overreach. -->
+  <div class="card" style="margin-bottom:12px;display:none;" id="last-week-feedback-card">
+    <h3>Last week — how the actual load compared</h3>
+    <div id="last-week-feedback-content" style="font-size:12px;color:var(--text2);">
+      Loading…
+    </div>
+  </div>
+
   <!-- v4.4.0 IMPL-UI: On-track summary bar (closes user bug #4).
        Shows compliance/CTL/polarized/phase headline + Z1+Z2 / Z3+Z4 / Z5+ / TSS
        target-vs-actual rails per CONCEPT-UX §4 + MASTER §3. Populated from
@@ -5274,6 +5287,8 @@ async function loadHome() {
     loadPowerCurve();
     // v1.1.0 IMPL-HRV-RECOVERY — Readiness today (composite, 0-10).
     loadReadinessComposite();
+    // v1.7.6 — last week feedback panel (planned vs actual + overreach).
+    try { loadLastWeekFeedback(); } catch(_) {}
 
   } catch(e) {
     console.error(e);
@@ -5326,11 +5341,31 @@ async function loadReadinessComposite() {
               <td style="padding:2px 8px;text-align:right;">${display}</td>
               <td style="padding:2px 0;text-align:right;color:var(--text3);">${(Number(w)*100).toFixed(0)}%</td></tr>`;
     }).join('');
+    // v1.7.5 — when the advice recommends a tier-down (score in [3, 5))
+    // surface an "Apply tier-down" button that POSTs to
+    // /api/readiness/apply-tier-down. Pre-v1.7.5 the advice was
+    // copy-only; the user had to manually open the Plan tab and re-match
+    // to act on it.
+    const showTierDownBtn = (s >= 3.0 && s < 5.0);
+    const tierDownHtml = showTierDownBtn
+      ? `<div style="margin-top:8px;">
+           <button class="btn btn-primary" id="apply-tier-down-btn"
+                   onclick="applyReadinessTierDown()"
+                   style="font-size:11px;padding:4px 10px;">
+             &#x21e3; Apply tier-down to today
+           </button>
+           <span style="font-size:10px;color:var(--text3);margin-left:8px;">
+             Drops one step on the Seiler ladder + recomputes TSS + re-matches ZWO.
+           </span>
+           <div id="apply-tier-down-status" style="font-size:11px;color:var(--text2);margin-top:6px;"></div>
+         </div>`
+      : '';
     host.innerHTML = `
       ${circle}
       <div style="flex:1;">
         <div style="font-size:13px;color:var(--text);margin-bottom:6px;">${esc(d.advice || '')}</div>
         <div style="font-size:10px;color:var(--text3);">${statusLabel}${conf}</div>
+        ${tierDownHtml}
         <details style="margin-top:8px;">
           <summary style="cursor:pointer;font-size:11px;color:var(--text2);">Component breakdown</summary>
           <table style="margin-top:6px;font-size:11px;">
@@ -5342,6 +5377,131 @@ async function loadReadinessComposite() {
   } catch (e) {
     console.error('readiness-composite load failed', e);
     host.innerHTML = '<div style="font-size:12px;color:var(--text3);">Composite readiness unavailable.</div>';
+  }
+}
+
+// v1.7.6 — Last week feedback panel. Renders planned-vs-actual TSS + zone
+// minutes, and an OVERREACH callout when /api/week-summary's server-side
+// overreach flag is set (actual TSS >130% of plan OR high-intensity minutes
+// >150% of plan). The panel ties context to the readiness composite card:
+// "score is 4.7 because last week was a 70% TSS overreach with 150min
+// unplanned tempo — apply the tier-down button above to drop today's
+// vo2max session by one tier."
+async function loadLastWeekFeedback() {
+  const card = document.getElementById('last-week-feedback-card');
+  const host = document.getElementById('last-week-feedback-content');
+  if (!card || !host) return;
+  try {
+    const res = await fetch('/api/week-summary?week_offset=-1');
+    if (!res.ok) { card.style.display = 'none'; return; }
+    const d = await res.json();
+    if (!d || (d.tss_target === null && d.tss_done === 0)) {
+      card.style.display = 'none';
+      return;
+    }
+    const tssTgt = Number(d.tss_target || 0);
+    const tssDone = Number(d.tss_done || 0);
+    const adherence = Number(d.tss_adherence_pct || 0);
+    const exp = d.exposure_minutes || {};
+    const expP = d.exposure_minutes_planned || {};
+    const high = (exp.high_aerobic || 0) + (exp.anaerobic || 0);
+    const highP = (expP.high_aerobic || 0) + (expP.anaerobic || 0);
+    const low = (exp.low_aerobic || 0);
+    const lowP = (expP.low_aerobic || 0);
+    const mid = (exp.mid_aerobic || 0);
+    const midP = (expP.mid_aerobic || 0);
+    const overreach = !!d.overreach;
+    const reasons = Array.isArray(d.overreach_reasons) ? d.overreach_reasons : [];
+
+    const row = (label, done, planned, badStyle) => {
+      const tag = badStyle && planned !== 0 && done > planned ? 'var(--orange)'
+                : badStyle === 'over' && planned === 0 && done > 0 ? 'var(--orange)'
+                : 'var(--text)';
+      return `<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:12px;">
+                <span style="color:var(--text2);">${esc(label)}</span>
+                <span style="color:${tag};"><b>${done}</b> / ${planned}</span>
+              </div>`;
+    };
+
+    const calloutHtml = overreach
+      ? `<div style="margin-top:8px;padding:8px 10px;background:rgba(234,88,12,0.10);border:1px solid var(--orange);border-radius:6px;font-size:12px;color:var(--orange);">
+           <b>⚠ Overreach last week.</b> ${reasons.length ? esc(reasons.join(' &middot; ')) : ''}<br>
+           <span style="color:var(--text2);">That's why readiness is below 5 today. Use <b>Apply tier-down</b> on the Readiness card above to drop today's hard session by one tier so the rest of the week stays consistent.</span>
+         </div>`
+      : (adherence >= 70 && adherence <= 110
+          ? `<div style="margin-top:8px;padding:6px 10px;background:rgba(34,197,94,0.08);border:1px solid var(--green);border-radius:6px;font-size:12px;color:var(--green);">
+               ✓ Load roughly matched plan (${adherence}%). Carry on as prescribed.
+             </div>`
+          : '');
+
+    host.innerHTML = `
+      <div style="display:flex;gap:24px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:180px;">
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">${esc(d.week_start)} → ${esc(d.week_end)}</div>
+          ${row('TSS', tssDone, tssTgt, 'over')}
+          ${row('Duration (min)', d.duration_min_done || 0, d.duration_min_planned || 0)}
+        </div>
+        <div style="flex:1;min-width:180px;">
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">Exposure (min)</div>
+          ${row('Z1+Z2 low aerobic', low, lowP)}
+          ${row('Z3 mid aerobic', mid, midP, 'over')}
+          ${row('Z4-Z5+ high', high, highP, 'over')}
+        </div>
+      </div>
+      ${calloutHtml}
+    `;
+    card.style.display = '';
+  } catch (e) {
+    card.style.display = 'none';
+  }
+}
+
+// v1.7.5 — apply a one-tier intensity drop to today's session in response
+// to the readiness composite's "Soft tier-down recommended" advice.
+// Posts to /api/readiness/apply-tier-down; server drops session_type one
+// step (vo2max→threshold→sweetspot→tempo→z2→…), recomputes TSS,
+// re-matches the ZWO so the chart fits the new bucket, and reforecasts
+// downstream. UI then refreshes the today-session card + plan grid +
+// calendar so the change is visible everywhere immediately.
+async function applyReadinessTierDown() {
+  const btn = document.getElementById('apply-tier-down-btn');
+  const statusEl = document.getElementById('apply-tier-down-status');
+  if (btn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.textContent = 'Applying…';
+  }
+  if (statusEl) statusEl.textContent = '';
+  try {
+    const res = await fetch('/api/readiness/apply-tier-down', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({}),  // server defaults to today
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+      const reason = (data.error || data.action || ('HTTP ' + res.status));
+      if (statusEl) statusEl.innerHTML = `<span style="color:var(--orange);">Could not apply: ${esc(String(reason))}</span>`;
+      try { showToast('Tier-down: ' + reason, 4000); } catch(_) {}
+      if (btn) { btn.disabled = false; btn.textContent = '⇣ Apply tier-down to today'; }
+      return;
+    }
+    const o = (data.old_type || '').toUpperCase();
+    const n = (data.new_type || '').toUpperCase();
+    const dTss = (Number(data.new_tss || 0) - Number(data.old_tss || 0));
+    const dTssTxt = (isFinite(dTss) ? (dTss >= 0 ? '+' : '') + dTss.toFixed(0) : '0');
+    if (statusEl) {
+      statusEl.innerHTML = `<span style="color:var(--green);"><b>Applied.</b> ${esc(o)} → ${esc(n)} &middot; TSS ${data.old_tss} → ${data.new_tss} (${dTssTxt}) &middot; ${esc(String(data.zwo_name || 'new ZWO'))}</span>`;
+    }
+    try { showToast(`Tier-down applied: ${o} → ${n}`, 3500); } catch(_) {}
+    if (btn) { btn.disabled = true; btn.textContent = 'Applied'; }
+    // Refresh dependent panels so user sees the change without a hard reload.
+    try { await loadTodaySession(); } catch(_) {}
+    try { await loadCalendar(); } catch(_) {}
+    try { await loadPlan(); } catch(_) {}
+    try { loadWeeklyCalendar(); } catch(_) {}
+  } catch (e) {
+    if (statusEl) statusEl.innerHTML = `<span style="color:var(--red);">Network error: ${esc(String(e && e.message || e))}</span>`;
+    if (btn) { btn.disabled = false; btn.textContent = '⇣ Apply tier-down to today'; }
   }
 }
 

@@ -1816,6 +1816,166 @@ def api_readiness_composite(date: str = Query(None)):
     return cached(cache_key, lambda: compute_readiness_composite(profile_id, target_iso))
 
 
+@app.post("/api/readiness/apply-tier-down")
+async def api_readiness_apply_tier_down(request: Request):
+    """v1.7.5 — apply a one-tier intensity drop to today's planned session.
+
+    Trigger context: the readiness composite card surfaces "Soft tier-down
+    recommended. Drop today's hard session by one tier." when the score
+    lands in [3.0, 5.0). Pre-v1.7.5 that was advice-only — the user had
+    to manually open the Plan tab and use Rematch to make the change
+    stick. This endpoint executes the drop in one click:
+
+      1. Find target session (defaults to today).
+      2. Walk one step down ``tp._INTENSITY_LADDER`` via ``_drop_intensity``.
+         Rest / recovery / unknown types short-circuit (no_change / already_easy).
+      3. Keep duration_min, recompute tss_estimate from
+         ``TSS_PER_HOUR[new_type]``.
+      4. Re-match ZWO so the loaded workout matches the new bucket
+         (the prior ZWO is added to ``used_names`` to force a different
+         pick). NoCandidateWorkoutError clears the ZWO fields.
+      5. Persist ``last_tier_down`` breadcrumb + run a full
+         ``tp.reforecast_dict`` so downstream sessions catch up to the
+         new actual TSS / availability flow (mirrors accept-redraw).
+
+    Body: ``{"date": "YYYY-MM-DD"}`` (date optional → defaults to today).
+    Returns: ``{ok, day, old_type, new_type, old_tss, new_tss,
+    zwo_file, zwo_name}``.
+    """
+    body = await _get_json_body(request)
+    day_iso = str(body.get("date") or date.today().isoformat()).strip()
+    try:
+        date.fromisoformat(day_iso)
+    except ValueError:
+        return JSONResponse({"error": "Invalid date format (use YYYY-MM-DD)"}, 400)
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+        target = None
+        target_week = None
+        for w in plan.get("weeks", []):
+            for s in w.get("sessions", []):
+                if s.get("day") == day_iso:
+                    target = s
+                    target_week = w
+                    break
+            if target:
+                break
+        if not target or not target_week:
+            return JSONResponse({"error": f"No session at {day_iso}"}, 404)
+        old_type = target.get("session_type", "") or ""
+        if old_type in ("rest", "recovery"):
+            return {"ok": False, "action": "already_easy", "day": day_iso,
+                    "session_type": old_type}
+        new_type = tp._drop_intensity(old_type)
+        if not new_type or new_type == old_type:
+            return {"ok": False, "action": "no_change", "day": day_iso,
+                    "session_type": old_type}
+
+        old_duration = int(target.get("duration_min", 0) or 0)
+        old_tss = float(target.get("tss_estimate", 0) or 0)
+        tss_per_h = tp.TSS_PER_HOUR.get(new_type, 45)
+        new_tss = round(old_duration / 60 * tss_per_h, 1)
+        target["session_type"] = new_type
+        target["tss_estimate"] = new_tss
+        target["adapted"] = True
+        target["adapted_reason"] = f"Tier-down: {old_type} → {new_type} (readiness)"
+        target["status"] = "pending"
+
+        # Re-match ZWO to the new session-type bucket.
+        try:
+            library = tp.load_workout_library()
+            planned = tp.PlannedSession(
+                day=date.fromisoformat(day_iso),
+                day_name=target.get("day_name", ""),
+                session_type=new_type,
+                duration_min=old_duration,
+                tss_estimate=new_tss,
+                description=target.get("description", ""),
+            )
+            week_num = target_week.get("week_num", 0)
+            day_idx = (date.fromisoformat(day_iso)
+                       - date.fromisoformat(target_week["start"])).days
+            old_zwo_name = target.get("zwo_name", "")
+            excluded = {old_zwo_name} if old_zwo_name else set()
+            tp.match_zwo(
+                planned, library,
+                week_num=week_num, day_idx=day_idx,
+                used_names=excluded, raise_on_empty=True,
+            )
+            target["zwo_file"] = planned.zwo_file
+            target["zwo_name"] = planned.zwo_name
+        except tp.NoCandidateWorkoutError:
+            # Library has nothing in the new bucket — clear so the UI
+            # shows unmatched state instead of the wrong workout.
+            target["zwo_file"] = ""
+            target["zwo_name"] = ""
+        except Exception:
+            _log.exception("apply-tier-down re-match swallowed")
+
+        plan["last_tier_down"] = {
+            "date": day_iso,
+            "at": datetime.now().isoformat(),
+            "old_type": old_type,
+            "new_type": new_type,
+        }
+
+        # Downstream reforecast (mirrors accept-redraw + save-availability).
+        try:
+            try:
+                activities = db.query_activities(days=120)
+            except Exception:
+                activities = []
+            try:
+                training_snap = cached("training", get_today_metrics)
+                current_tsb = training_snap.get("tsb")
+            except Exception:
+                current_tsb = None
+            tsb_series: "dict | None" = None
+            if current_tsb is not None:
+                tsb_series = {}
+                for w in plan.get("weeks", []) or []:
+                    try:
+                        ws = date.fromisoformat(w["start"])
+                    except (KeyError, ValueError, TypeError):
+                        continue
+                    for i in range(7):
+                        tsb_series[ws + timedelta(days=i)] = current_tsb
+            avail = {
+                day_iso2: float(entry["hours"])
+                for day_iso2, entry in plan.get("availability", {}).items()
+                if isinstance(entry, dict) and "hours" in entry
+            }
+            plan, _modified, _ri = tp.reforecast_dict(
+                plan,
+                today_iso=date.today().isoformat(),
+                tsb_series=tsb_series,
+                recent_activities=activities,
+                availability_overrides=avail,
+            )
+        except Exception:
+            _log.exception("apply-tier-down reforecast skipped")
+
+        tp.atomic_write_plan(json_path, plan)
+        return {
+            "ok": True,
+            "day": day_iso,
+            "old_type": old_type,
+            "new_type": new_type,
+            "old_tss": old_tss,
+            "new_tss": new_tss,
+            "duration_min": old_duration,
+            "zwo_file": target.get("zwo_file", ""),
+            "zwo_name": target.get("zwo_name", ""),
+        }
+    except Exception:
+        _log.exception("apply-tier-down failed")
+        return JSONResponse({"detail": "tier-down failed"}, 500)
+
+
 @app.post("/api/wellness/import-hrv4training")
 async def api_wellness_import_hrv4training(file: UploadFile = File(...)):
     """v1.1.0 IMPL-HRV-RECOVERY — HRV4Training CSV import (PATCH G16).
@@ -5867,11 +6027,16 @@ def _classify_exposure_with_signal(activity: dict, lthr: float) -> tuple[str, st
 
 
 @app.get("/api/week-summary")
-def api_week_summary():
-    """Current ISO week (Mon→Sun) training summary for the dashboard week tile.
+def api_week_summary(week_offset: int = Query(0)):
+    """ISO week (Mon→Sun) training summary for the dashboard week tile.
 
-    Reuses the existing /api/activities helper + /api/weekly-plan + /api/settings
-    so this stays consistent with the rest of the UI.
+    Reuses /api/activities + /api/weekly-plan + /api/settings.
+
+    v1.7.6: ``?week_offset=-1`` requests the PREVIOUS completed week so
+    the homepage can paint a "last week feedback" panel — planned vs
+    actual TSS + zone-time bands + an overreach flag the dashboard uses
+    to nudge the rider toward the readiness tier-down apply button when
+    they've spent the prior week well above plan.
     """
     # Pin `today` to the athlete's configured timezone so "which week is
     # this?" doesn't flip around midnight when the server's local clock and
@@ -5886,8 +6051,11 @@ def api_week_summary():
         tz = datetime.now().astimezone().tzinfo
     today = datetime.now(tz).date()
     iso_year, iso_week, iso_weekday = today.isocalendar()
-    # Monday of current ISO week
-    week_start = today - timedelta(days=iso_weekday - 1)
+    # v1.7.6 — shift the target Monday by week_offset weeks so negative
+    # offsets surface prior weeks. week_offset=0 keeps the legacy
+    # behaviour (current ISO week).
+    base_monday = today - timedelta(days=iso_weekday - 1)
+    week_start = base_monday + timedelta(weeks=week_offset)
     week_end = week_start + timedelta(days=6)
     week_start_str = week_start.isoformat()
     week_end_str = week_end.isoformat()
@@ -5895,7 +6063,7 @@ def api_week_summary():
 
     # Reuse existing helpers — do NOT re-implement.
     activities_all = api_activities()
-    plan = api_weekly_plan(week_offset=0)
+    plan = api_weekly_plan(week_offset=week_offset)
     settings = api_settings()
     lthr = settings.get("lthr") or 175
 
@@ -6054,6 +6222,36 @@ def api_week_summary():
         dur = int(round(s.get("duration_min") or 0))
         exposure_minutes_planned[band] = exposure_minutes_planned.get(band, 0) + dur
 
+    # v1.7.6 — overreach flag for the "last week feedback" UI. Triggers
+    # when actual TSS exceeds plan by >30 %, OR when high-zone minutes
+    # (high_aerobic + anaerobic) exceed planned by >50 %. Either signals
+    # that the user ran harder than the plan asked for, which is the
+    # context behind the readiness composite's tier-down recommendation.
+    high_zone_done = (exposure_minutes.get("high_aerobic", 0)
+                      + exposure_minutes.get("anaerobic", 0))
+    high_zone_planned = (exposure_minutes_planned.get("high_aerobic", 0)
+                         + exposure_minutes_planned.get("anaerobic", 0))
+    overreach_flag = False
+    overreach_reasons: list[str] = []
+    if tss_target is not None and tss_target > 0:
+        if tss_done / max(tss_target, 1) > 1.30:
+            overreach_flag = True
+            overreach_reasons.append(
+                f"TSS {tss_done:.0f} vs target {tss_target:.0f} "
+                f"({round(tss_done / tss_target * 100)}%)"
+            )
+    if high_zone_planned == 0 and high_zone_done >= 30:
+        overreach_flag = True
+        overreach_reasons.append(
+            f"{high_zone_done} min above Z2 with 0 min planned"
+        )
+    elif high_zone_planned > 0 and high_zone_done > high_zone_planned * 1.5:
+        overreach_flag = True
+        overreach_reasons.append(
+            f"high-intensity {high_zone_done} vs planned {high_zone_planned} min "
+            f"({round(high_zone_done / high_zone_planned * 100)}%)"
+        )
+
     return {
         "week_start": week_start_str,
         "week_end": week_end_str,
@@ -6074,6 +6272,9 @@ def api_week_summary():
         "planned_days_done": planned_days_done,
         "planned_days_missed": planned_days_missed,
         "activities_by_day": activities_by_day,
+        "overreach": overreach_flag,
+        "overreach_reasons": overreach_reasons,
+        "week_offset": week_offset,
     }
 
 
@@ -10872,7 +11073,16 @@ def _sync_icu_wellness(force: bool = False, days: int = 90) -> dict:
     return {"added": added, "total": total}
 
 
-_DFA_AUGMENT_TIMEOUT_S: float = 5.0
+# v1.7.5: bumped from 5.0 → 45.0. v1.7.2 set the timeout aggressively
+# because the rematch UI surfaced the augment latency directly. v1.6.3
+# moved ICU sync (and the augment call inside it) to a background daemon
+# thread, so there is no UX urgency. A ~3h Garmin Fenix 8 FIT carries
+# 30k+ records and fit_tool parse takes ~20s; 5s was killing every
+# real-world ride's DFA computation in a permanent retry loop (status
+# 'timeout' is retry-eligible, but the next retry would also hit 5s
+# → never converged). 45s comfortably covers 95th-percentile rides
+# while still bailing on truly pathological FITs.
+_DFA_AUGMENT_TIMEOUT_S: float = 45.0
 
 
 def _augment_icu_record_with_dfa(rec_path: Path, external_id: str) -> None:

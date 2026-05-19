@@ -220,17 +220,21 @@ class TestPolarizationMath(unittest.TestCase):
         self.assertGreater(pi, 0)
 
     def test_classification_base_polarized(self):
-        # v4.5.5 REFINE-CLASSIFY: closest canonical centroid wins.
-        # (88, 8, 4) — closer to base (95,3,2) than to pyramidal (80,15,5).
+        # v1.8.0 PI-band cascade (Treff 2019).
+        # (88, 8, 4) — z3z4 < 30 & z1z2 ≥ 70 → base.
         self.assertEqual(classify_distribution(88, 8, 4), "base")
-        # (92, 6, 2) — exactly on the base side.
+        # (92, 6, 2) — base.
         self.assertEqual(classify_distribution(92, 6, 2), "base")
-        # (78, 5, 17) — closest to polarized (80,5,15).
-        self.assertEqual(classify_distribution(78, 5, 17), "polarized")
-        # (70, 20, 10) — closest to pyramidal (80,15,5).
-        self.assertEqual(classify_distribution(70, 20, 10), "pyramidal")
-        # (40, 25, 35) — exactly on the HIIT centroid.
-        self.assertEqual(classify_distribution(40, 25, 35), "hiit")
+        # (78, 5, 17) — PI ≈ 1.28 (below 2.0 polarized cutoff), z3z4 < 30,
+        # z1z2 ≥ 70 → base. The old centroid-distance classifier called
+        # this polarized; the PI-band cascade is stricter.
+        self.assertEqual(classify_distribution(78, 5, 17), "base")
+        # (70, 20, 10) — z3z4 < 35, z3z4 < 30, z1z2 ≥ 70 → base.
+        self.assertEqual(classify_distribution(70, 20, 10), "base")
+        # (40, 25, 35) — z5+ < 40 fails hiit gate, z3z4 < 30, z1z2 < 70 → unique.
+        # A genuine hiit distribution (e.g. 10/30/60) clears the gate.
+        self.assertEqual(classify_distribution(40, 25, 35), "unique")
+        self.assertEqual(classify_distribution(10, 30, 60), "hiit")
 
 
 if __name__ == "__main__":

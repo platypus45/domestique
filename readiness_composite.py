@@ -600,3 +600,151 @@ def _advice_for_score(score: float | None, status: str) -> str:
     if score >= 3.0:
         return "Soft tier-down recommended. Drop today's hard session by one tier."
     return "Advisory rest day. Recovery takes priority over training."
+
+
+# ── v1.8.0 — Hooper-precedence severity helper ──────────────────────────────
+
+# Severity tokens — locked contract from /tmp/MASTER_DECISIONS_v180.md §F1.
+SEVERITY_REST = "rest"
+SEVERITY_TIER_DOWN = "tier_down"
+SEVERITY_NORMAL = "normal"
+
+# Source tokens.
+SOURCE_HOOPER = "hooper"
+SOURCE_TSB_HRV_AUTO = "tsb_hrv_auto"
+SOURCE_INSUFFICIENT = "insufficient"
+
+
+def _hooper_submitted(day_iso: str) -> tuple[int | None, dict | None]:
+    """Read `daily_log[day_iso]` directly (don't reuse `tp._hooper_index_today`
+    — that helper coerces missing rows to 0 and collapses "not submitted" with
+    "all-1 rating", per /tmp/MASTER_DECISIONS_v180_addendum.md §F1).
+
+    Returns (hooper_index, row_dict). hooper_index is None when no row exists
+    OR when sleep_quality+fatigue+stress+soreness == 0 (none of the four
+    rating fields were written).
+    """
+    conn = db.get_db()
+    try:
+        row = conn.execute(
+            "SELECT date, sleep_quality, fatigue, soreness, stress, mood, "
+            "hooper_index FROM daily_log WHERE date = ?",
+            (day_iso,),
+        ).fetchone()
+    except Exception:
+        return None, None
+    if row is None:
+        return None, None
+    row_d = dict(row)
+    sq = row_d.get("sleep_quality") or 0
+    fa = row_d.get("fatigue") or 0
+    st = row_d.get("stress") or 0
+    so = row_d.get("soreness") or 0
+    if (sq + fa + st + so) <= 0:
+        # row exists but no rating data — treat as not submitted
+        return None, row_d
+    h = _safe_float(row_d.get("hooper_index"))
+    if h is None:
+        return None, row_d
+    return int(round(h)), row_d
+
+
+def _tsb_for_day(day_iso: str) -> float | None:
+    """TSB (ctl - atl) for `day_iso` from the local wellness store."""
+    conn = db.get_db()
+    try:
+        row = conn.execute(
+            "SELECT ctl, atl FROM wellness WHERE date = ?", (day_iso,)
+        ).fetchone()
+    except Exception:
+        return None
+    if row is None:
+        return None
+    ctl = _safe_float(row["ctl"] if "ctl" in row.keys() else row[0])
+    atl = _safe_float(row["atl"] if "atl" in row.keys() else row[1])
+    if ctl is None or atl is None:
+        return None
+    return round(ctl - atl, 1)
+
+
+def compute_training_severity(profile_id: str, day_iso: str) -> dict:
+    """v1.8.0 — Hooper-precedence severity for the auto-adjust planner.
+
+    Precedence (from /tmp/MASTER_DECISIONS_v180.md §F1):
+      1. Hooper submitted today (row in daily_log with non-zero rating sum)
+         → severity from Hooper bands. source=hooper.
+            hooper >= 18 → rest
+            14 <= hooper <= 17 → tier_down
+            hooper < 14 → normal
+      2. Otherwise → readiness-composite score bands. source=tsb_hrv_auto.
+            score < 3 → rest
+            3 <= score < 5 → tier_down
+            score >= 5 → normal
+      3. Score None (insufficient history) → severity=normal,
+         source=insufficient. UI shows "no actionable signal".
+
+    Returns the locked v1.8.0 shape:
+        {"score", "severity", "source", "reasons", "hooper_index", "tsb"}
+    Exactly these six keys, no extras.
+    """
+    hooper_idx, _row = _hooper_submitted(day_iso)
+    tsb = _tsb_for_day(day_iso)
+
+    # Hooper precedence
+    if hooper_idx is not None:
+        if hooper_idx >= 18:
+            sev = SEVERITY_REST
+            reasons = [f"Hooper index {hooper_idx} ≥ 18 — advisory rest"]
+        elif hooper_idx >= 14:
+            sev = SEVERITY_TIER_DOWN
+            reasons = [f"Hooper index {hooper_idx} in 14-17 — tier-down recommended"]
+        else:
+            sev = SEVERITY_NORMAL
+            reasons = [f"Hooper index {hooper_idx} < 14 — normal training day"]
+        return {
+            "score": None,
+            "severity": sev,
+            "source": SOURCE_HOOPER,
+            "reasons": reasons[:3],
+            "hooper_index": hooper_idx,
+            "tsb": tsb,
+        }
+
+    # Fall through to readiness composite (TSB + HRV blend)
+    composite = compute_readiness_composite(profile_id, day_iso)
+    score = composite.get("score")
+    if score is None:
+        return {
+            "score": None,
+            "severity": SEVERITY_NORMAL,
+            "source": SOURCE_INSUFFICIENT,
+            "reasons": ["Insufficient wellness history for auto-adjust"],
+            "hooper_index": None,
+            "tsb": tsb,
+        }
+
+    if score < 3.0:
+        sev = SEVERITY_REST
+        reasons = [f"Readiness {score:.1f}/10 — advisory rest"]
+    elif score < 5.0:
+        sev = SEVERITY_TIER_DOWN
+        reasons = [f"Readiness {score:.1f}/10 — tier-down recommended"]
+    else:
+        sev = SEVERITY_NORMAL
+        reasons = [f"Readiness {score:.1f}/10 — normal training day"]
+
+    # Add TSB context if available
+    if tsb is not None and len(reasons) < 3:
+        if tsb < -15:
+            reasons.append(f"TSB {tsb} — deep fatigue")
+        elif tsb > 10:
+            reasons.append(f"TSB {tsb} — freshness")
+
+    return {
+        "score": score,
+        "severity": sev,
+        "source": SOURCE_TSB_HRV_AUTO,
+        "reasons": reasons[:3],
+        "hooper_index": None,
+        "tsb": tsb,
+    }

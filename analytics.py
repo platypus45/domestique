@@ -1,4 +1,4 @@
-"""v4.5.5 — Training intensity distribution analytics.
+"""v1.8.0 — Training intensity distribution analytics.
 
 References:
 - Treff G, Winkert K, Sareban M, Steinacker JM, Sperlich B (2019).
@@ -15,11 +15,11 @@ single ``polarization_index`` value ICU reports on the activity GET, which
 keeps the Domestique number consistent with what the user already sees in
 intervals.icu.
 
-Classification (v4.5.5 REFINE-CLASSIFY):
-- Treff PI > 2.0 → polarized (research-grounded primary criterion).
-- Otherwise: closest canonical centroid wins (Euclidean distance over the
-  Z1+Z2 / Z3+Z4 / Z5+ triplet). If the closest centroid is still further
-  than ``UNIQUE_DISTANCE_THRESHOLD``, fall back to "unique".
+Classification (v1.8.0 PI-BAND CASCADE):
+PI-band rules per Treff 2019, replacing the centroid-distance heuristic so
+the Treff reference ride (15/49.2/35.8) lands on `pyramidal` rather than the
+old `hiit @ 1% confidence` mis-classification. Evaluate top-down, first match
+wins. Centroid centres are retained only for confidence scoring.
 """
 from __future__ import annotations
 
@@ -31,6 +31,8 @@ _log_dfa = logging.getLogger("domestique.analytics.dfa")
 
 
 # Canonical centroids in (Z1+Z2 %, Z3+Z4 %, Z5+ %) space.
+# Used for `classification_confidence` only; classification itself uses
+# the PI-band cascade in `classify_distribution`.
 CLASSIFICATION_CENTROIDS = {
     "polarized": (80, 5, 15),   # Seiler-style: easy + hard, minimal moderate
     "pyramidal": (80, 15, 5),   # Decreasing pyramid: most easy, some moderate, little hard
@@ -40,8 +42,27 @@ CLASSIFICATION_CENTROIDS = {
 }
 
 # A point further than this Euclidean distance from every canonical centroid
-# is labelled "unique" — none of the named patterns describes it well.
+# is treated as "edge of band" by `classification_confidence`.
 UNIQUE_DISTANCE_THRESHOLD = 35.0
+
+# v1.8.0 — band-centre PI values used by `classification_confidence`.
+# Centres approximated from Treff 2019 thresholds: polarized PI > 2.0
+# (centre at 2.5), pyramidal 1.0-2.0 (centre 1.5), threshold 0.5-1.0
+# (centre 0.75), hiit 0.0-0.5 (centre 0.25).
+_BAND_PI_CENTRES = {
+    "polarized": 2.5,
+    "pyramidal": 1.5,
+    "threshold": 0.75,
+    "hiit":      0.25,
+}
+# Approximate half-width of each band — used to map PI-distance to a [0.5, 1.0]
+# confidence so non-unique rides always score at least 0.5.
+_BAND_PI_HALFWIDTH = {
+    "polarized": 0.5,
+    "pyramidal": 0.5,
+    "threshold": 0.25,
+    "hiit":      0.25,
+}
 
 
 def polarization_index(z1z2_pct: float, z3z4_pct: float, z5plus_pct: float) -> float | None:
@@ -80,40 +101,76 @@ def classify_distribution(
     z5plus_pct: float,
     pi: float | None = None,
 ) -> str:
-    """Classify intensity distribution by closest canonical centroid.
+    """Classify intensity distribution by Treff 2019 PI-band cascade.
 
     Returns one of: 'polarized', 'pyramidal', 'threshold', 'hiit', 'base', 'unique'.
 
-    Treff PI > 2.0 → polarized regardless of centroid distance (the research
-    paper's primary criterion). Otherwise the closest of CLASSIFICATION_CENTROIDS
-    wins; if the closest distance is greater than UNIQUE_DISTANCE_THRESHOLD,
-    the distribution is classified as 'unique'.
+    Rules (first match wins):
+      1. PI > 2.0                                      → polarized
+      2. z5+ > 40 AND z1z2 < 20                        → hiit
+      3. z3z4 >= 30 AND z5+ <= 15 AND z1z2 <= 50       → threshold
+      4. z3z4 >= 35 AND z3z4 > z5+ + 10                → pyramidal
+      5. z1z2 >= 70                                    → base
+      6. fallthrough                                   → unique
+
+    Threshold is evaluated BEFORE pyramidal so that a high-z3z4 / low-z5+
+    / moderate-z1z2 distribution (e.g. 30/60/10) lands on `threshold`
+    rather than `pyramidal`. The Treff reference ride (15/49.2/35.8) has
+    enough z5+ to skip threshold and is caught by the pyramidal rule.
     """
     if pi is None:
         pi = polarization_index(z1z2_pct, z3z4_pct, z5plus_pct)
     if pi is not None and pi > 2.0:
         return "polarized"
+    if z5plus_pct > 40 and z1z2_pct < 20:
+        return "hiit"
+    if z3z4_pct >= 30 and z5plus_pct <= 15 and z1z2_pct <= 50:
+        return "threshold"
+    if z3z4_pct >= 35 and z3z4_pct > z5plus_pct + 10:
+        return "pyramidal"
+    if z1z2_pct >= 70:
+        return "base"
+    return "unique"
 
-    label, dist = _closest_centroid(z1z2_pct, z3z4_pct, z5plus_pct)
-    if dist > UNIQUE_DISTANCE_THRESHOLD:
-        return "unique"
-    return label
 
-
-def classification_confidence(z1z2_pct: float, z3z4_pct: float, z5plus_pct: float) -> float:
+def classification_confidence(
+    z1z2_pct: float,
+    z3z4_pct: float,
+    z5plus_pct: float,
+    pi: float | None = None,
+) -> float:
     """Confidence in the chosen classification, in [0.0, 1.0].
 
-    Inverse-distance score against the closest centroid: distance 0 → 1.0,
-    distance ``UNIQUE_DISTANCE_THRESHOLD`` → 0.0. Beyond that, the result is
-    clamped to 0.0 (and the classification itself is "unique").
+    PI-distance from band centre maps to [0.5, 1.0] for any non-unique
+    label (band-centre → 1.0, band-edge → 0.5). The `base` band has no
+    natural PI centre, so it falls back to inverse centroid-distance
+    in the same [0.5, 1.0] range. `unique` returns 0.5 — the addendum
+    contract is "0.5-1.0 for in-band rides, 0.0-0.5 for unique/edge",
+    we sit at the boundary.
     """
-    _label, dist = _closest_centroid(z1z2_pct, z3z4_pct, z5plus_pct)
-    confidence = 1.0 - (dist / UNIQUE_DISTANCE_THRESHOLD)
-    if confidence < 0.0:
-        return 0.0
-    if confidence > 1.0:
-        return 1.0
-    return round(confidence, 2)
+    if pi is None:
+        pi = polarization_index(z1z2_pct, z3z4_pct, z5plus_pct)
+    label = classify_distribution(z1z2_pct, z3z4_pct, z5plus_pct, pi)
+
+    if label == "unique":
+        return 0.5
+
+    if label == "polarized" and pi is not None:
+        # Addendum formula: min(1.0, (pi - 2.0) / 2.0 + 0.5)
+        return round(max(0.5, min(1.0, (pi - 2.0) / 2.0 + 0.5)), 2)
+
+    if label in _BAND_PI_CENTRES and pi is not None:
+        centre = _BAND_PI_CENTRES[label]
+        half = _BAND_PI_HALFWIDTH[label]
+        # 1.0 at centre, 0.5 at edge (band-width = 2*half). Clamp to [0.5, 1.0].
+        dist = abs(pi - centre)
+        conf = 1.0 - 0.5 * min(1.0, dist / half)
+        return round(max(0.5, min(1.0, conf)), 2)
+
+    # `base` (or any band missing PI): inverse centroid-distance, in [0.5, 1.0].
+    _l, dist = _closest_centroid(z1z2_pct, z3z4_pct, z5plus_pct)
+    conf = 1.0 - 0.5 * min(1.0, dist / UNIQUE_DISTANCE_THRESHOLD)
+    return round(max(0.5, min(1.0, conf)), 2)
 
 
 def compute_polarization_block(time_in_zone: dict | None) -> dict | None:
@@ -144,7 +201,7 @@ def compute_polarization_block(time_in_zone: dict | None) -> dict | None:
         "z5plus_pct": z5plus,
         "polarization_index": pi,
         "classification": classify_distribution(z1z2, z3z4, z5plus, pi),
-        "confidence": classification_confidence(z1z2, z3z4, z5plus),
+        "confidence": classification_confidence(z1z2, z3z4, z5plus, pi),
     }
 
 

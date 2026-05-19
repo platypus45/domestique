@@ -9161,13 +9161,21 @@ def _ride_started_local_iso_date(ride: dict) -> str | None:
         return started[:10] if len(started) >= 10 else None
 
 
-def _summarize_ride_for_calendar(ride: dict, ftp: int | None) -> dict:
+def _summarize_ride_for_calendar(
+    ride: dict, ftp: int | None, planned_session: dict | None = None,
+) -> dict:
     """Project a ride dict (FIT, JSON, or ICU-normalized) into the canonical
     actual-payload shape per MASTER §3. Used by both /api/calendar's primary
     actual and actual_secondary lists.
 
     v4.4.0: ICU-normalized records (top-level §3 fields, source='icu') are
     also accepted — they bypass the legacy summary/parsed_stats lookups.
+
+    v1.8.2: optional ``planned_session`` kwarg. When supplied (calendar
+    primary-ride path), the payload gains a ``compare`` block from
+    ``analytics.compare_plan_to_actual``. Back-compat: when omitted (legacy
+    callers, actual_secondary list) the kwarg defaults to None and no
+    ``compare`` block is added.
     """
     # v4.4.0 — ICU rides already carry the §3 fields at the top level.
     if (ride.get("source") == "icu"
@@ -9181,7 +9189,7 @@ def _summarize_ride_for_calendar(ride: dict, ftp: int | None) -> dict:
         # v1.8.0 §F2 — pass through polarization classification + confidence
         # so the calendar can color activity cards by load profile.
         _pol = ride.get("polarization") or {}
-        return {
+        payload = {
             "ride_id": ride.get("ride_id") or "",
             "name": ride.get("name") or "",
             "source": "icu",
@@ -9196,6 +9204,10 @@ def _summarize_ride_for_calendar(ride: dict, ftp: int | None) -> dict:
             "classification": _pol.get("classification") if isinstance(_pol, dict) else None,
             "pol_confidence": _pol.get("confidence") if isinstance(_pol, dict) else None,
         }
+        if planned_session is not None:
+            from analytics import compare_plan_to_actual
+            payload["compare"] = compare_plan_to_actual(planned_session, payload)
+        return payload
 
     summary = ride.get("summary") or {}
     parsed = ride.get("parsed_stats") or {}
@@ -9222,7 +9234,7 @@ def _summarize_ride_for_calendar(ride: dict, ftp: int | None) -> dict:
     # v1.8.0 §F2 — pass through polarization classification + confidence
     # so the calendar can color activity cards by load profile.
     _pol = ride.get("polarization") or {}
-    return {
+    payload = {
         "ride_id": ride.get("ride_id") or ride.get("id") or "",
         "name": name,
         "source": ride.get("source") or ("json" if "samples" in ride else "fit"),
@@ -9237,6 +9249,10 @@ def _summarize_ride_for_calendar(ride: dict, ftp: int | None) -> dict:
         "classification": _pol.get("classification") if isinstance(_pol, dict) else None,
         "pol_confidence": _pol.get("confidence") if isinstance(_pol, dict) else None,
     }
+    if planned_session is not None:
+        from analytics import compare_plan_to_actual
+        payload["compare"] = compare_plan_to_actual(planned_session, payload)
+    return payload
 
 
 def _load_full_ride(ride: dict) -> dict:
@@ -9922,13 +9938,25 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
 
             actual_payload = None
             secondary_list: list[dict] = []
+            # v1.8.2 MATCH-IMPL — pass the same-day planned session into the
+            # calendar summarizer so the primary ride payload carries a
+            # `compare` block (analytics.compare_plan_to_actual). Synthetic
+            # history shells don't carry a real plan, so they get None.
+            _planned_for_compare = (
+                sess if (sess and not sess.get("_synthetic_history")) else None
+            )
             if primary_ride is not None:
-                actual_payload = _summarize_ride_for_calendar(primary_ride, ftp)
+                actual_payload = _summarize_ride_for_calendar(
+                    primary_ride, ftp, planned_session=_planned_for_compare,
+                )
                 actual_tss += float(actual_payload["tss"] or 0)
                 actual_z12  += actual_payload["z1z2_min"]
                 actual_z34  += actual_payload["z3z4_min"]
                 actual_z5p  += actual_payload["z5plus_min"]
             for r in secondary:
+                # Secondary rides are extras (free rides on a planned day),
+                # never "the planned one" — pass None to keep them
+                # un-compared.
                 secondary_list.append(_summarize_ride_for_calendar(r, ftp))
 
             planned_payload = None

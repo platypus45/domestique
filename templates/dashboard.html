@@ -5717,6 +5717,31 @@ function _classifColor(cls) {
   return CLASSIF_COLOR[String(cls).toLowerCase()] || null;
 }
 
+// v1.8.2 MATCH-IMPL — small inline badge for an activity card keyed on
+// `compare.match_status` (analytics.compare_plan_to_actual). Five visible
+// states; 'missed' returns empty (the red "missed" bar handles that branch).
+// Hover tooltip = `reasons` joined with " · ".
+function _calMatchBadge(compare) {
+  if (!compare || !compare.match_status) return '';
+  const MATCH_VISUAL = {
+    matched:           { glyph: '✓', color: 'var(--green)',  label: 'matched' },
+    matched_extended:  { glyph: '⤴', color: 'var(--accent)', label: 'extended' },
+    matched_truncated: { glyph: '⤵', color: 'var(--yellow)', label: 'truncated' },
+    different_workout: { glyph: '↗', color: 'var(--orange)', label: 'different' },
+    no_plan:           { glyph: '◯', color: 'var(--text3)',  label: 'no plan' },
+  };
+  const v = MATCH_VISUAL[compare.match_status];
+  if (!v) return '';
+  const reasons = Array.isArray(compare.reasons) ? compare.reasons : [];
+  const tip = reasons.length ? reasons.join(' · ') : v.label;
+  return ` <span class="cal-match-badge" data-match="${esc(compare.match_status)}"
+    title="${esc(tip)}"
+    style="display:inline-block;font-size:10px;font-weight:700;line-height:1;
+           padding:1px 4px;margin-left:4px;border-radius:6px;
+           background:${v.color}22;color:${v.color};border:1px solid ${v.color};
+           vertical-align:middle;">${v.glyph}</span>`;
+}
+
 // ═══ PICKER ═══════════════════════════════════════════════════════════════
 
 async function runPicker() {
@@ -10010,8 +10035,12 @@ function renderCalDay(d, wi, di, phaseKey, today) {
     const polColor = _classifColor(classif);
     const polCls = classif ? ` pol-${esc(String(classif).toLowerCase())}` : '';
     const polStyle = polColor ? ` style="border-left-color:${polColor};"` : '';
+    // v1.8.2 MATCH-IMPL — small badge keyed on compare.match_status. Five
+    // visible states (matched / extended / truncated / different / no_plan);
+    // hidden for "missed" (the red "missed" branch below already paints).
+    const matchBadge = _calMatchBadge(actual.compare);
     actualHtml = `<div class="cal-actual ${aCls}${polCls}"${polStyle}>
-      <div class="cal-actual-name">${esc(name) || 'Activity'}</div>
+      <div class="cal-actual-name">${esc(name) || 'Activity'}${matchBadge}</div>
       <div class="cal-actual-meta">${dur}${tss ? ' · ' + tss : ''}</div>
     </div>`;
   } else if (planned && d.date < today) {

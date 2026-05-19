@@ -510,3 +510,355 @@ def compute_dfa_alpha1_for_fit(fit_path: Path) -> dict | None:
         "dfa_alpha1_status": "computed",
         "rr_intervals_count": len(rr),
     }
+
+
+# ── v1.8.2 — planned-vs-actual ride comparison ──────────────────────────────
+#
+# `compare_plan_to_actual(planned_session, actual_ride)` returns the locked
+# 6-field dict per MATCH-B design. Used by `_summarize_ride_for_calendar` to
+# attach a `compare` block to each calendar day-row so the UI can render a
+# "matched / extended / truncated / different / no_plan" badge.
+#
+# Decision rules:
+#   * `zone_distribution_match` = cosine similarity on the 3-vec
+#     [z1z2_pct, z3z4_pct, z5plus_pct]. Cosine (not MSE) is shape-invariant
+#     so a longer ride at the same blend still scores high — exactly the
+#     "extended" intent.
+#   * `tss_delta_pct` threshold = ±25 % per Foster C (1998) "Monitoring
+#     training in athletes with reference to overtraining syndrome." Med Sci
+#     Sports Exerc 30(7):1164-1168. The same 25 %/1.5× constant gates
+#     `_detect_plan_load_alert`'s acute-load spike check.
+#   * `duration_delta_min` threshold = ±15 min — small enough that a normal
+#     warm-down extension doesn't trigger "extended", large enough that
+#     bailing out 20 min early reads as "truncated".
+#   * `zone_dist_match_min` = 0.7, `zone_dist_different_max` = 0.5. The
+#     0.5-0.7 shoulder is treated as `matched` (avoids false
+#     "different_workout" calls on the noisy `_planned_zone_split_minutes`
+#     heuristic).
+#   * Missing planned → `no_plan`. Missing actual → `missed`. Rest-day +
+#     spontaneous ride → `no_plan` (the ride wasn't the plan).
+
+_INTENT_BUCKETS = ("z1z2_pct", "z3z4_pct", "z5plus_pct")
+
+
+def _planned_zone_pcts(planned_session: dict) -> tuple[float, float, float] | None:
+    """Return planned (z1z2_pct, z3z4_pct, z5plus_pct) from a session's
+    `zone_dist` block (library row, Z1%..Z6%). Returns None when zone_dist is
+    missing or all zero — caller must degrade gracefully rather than fabricate.
+    """
+    zd = planned_session.get("zone_dist")
+    if not isinstance(zd, dict):
+        return None
+    z12 = float(zd.get("z1") or 0) + float(zd.get("z2") or 0)
+    z34 = float(zd.get("z3") or 0) + float(zd.get("z4") or 0)
+    z5p = float(zd.get("z5") or 0) + float(zd.get("z6") or 0)
+    total = z12 + z34 + z5p
+    if total <= 0:
+        return None
+    return (z12 * 100.0 / total, z34 * 100.0 / total, z5p * 100.0 / total)
+
+
+def _actual_zone_pcts(actual_ride: dict) -> tuple[float, float, float] | None:
+    """Return actual (z1z2_pct, z3z4_pct, z5plus_pct) from either a
+    `_summarize_ride_for_calendar` payload (z1z2_min / z3z4_min / z5plus_min)
+    or a raw ride with `time_in_zone`. Returns None when no zone data exists.
+    """
+    # Preferred: calendar-summary shape carries minute fields directly.
+    z12 = actual_ride.get("z1z2_min")
+    z34 = actual_ride.get("z3z4_min")
+    z5p = actual_ride.get("z5plus_min")
+    if z12 is not None or z34 is not None or z5p is not None:
+        z12f = float(z12 or 0)
+        z34f = float(z34 or 0)
+        z5pf = float(z5p or 0)
+        total = z12f + z34f + z5pf
+        if total > 0:
+            return (z12f * 100.0 / total, z34f * 100.0 / total, z5pf * 100.0 / total)
+
+    # Fallback: raw time_in_zone (seconds).
+    tiz = actual_ride.get("time_in_zone")
+    if isinstance(tiz, dict):
+        z12s = float(tiz.get("z1") or 0) + float(tiz.get("z2") or 0)
+        z34s = float(tiz.get("z3") or 0) + float(tiz.get("z4") or 0)
+        z5ps = sum(float(tiz.get(f"z{i}") or 0) for i in (5, 6, 7))
+        total = z12s + z34s + z5ps
+        if total > 0:
+            return (z12s * 100.0 / total, z34s * 100.0 / total, z5ps * 100.0 / total)
+    return None
+
+
+def _cosine3(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    """Cosine similarity on a 3-vec. Returns 0.0 when either vector is zero.
+    Result is clipped to [0.0, 1.0] (negative cosine is impossible with
+    non-negative zone percentages but be defensive)."""
+    dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+    na = math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2])
+    nb = math.sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2])
+    if na <= 0 or nb <= 0:
+        return 0.0
+    sim = dot / (na * nb)
+    if sim < 0.0:
+        return 0.0
+    if sim > 1.0:
+        return 1.0
+    return sim
+
+
+def _actual_duration_min(actual_ride: dict) -> float:
+    """Return actual ride duration in minutes from either shape."""
+    if "duration_min" in actual_ride and actual_ride.get("duration_min") is not None:
+        try:
+            return float(actual_ride.get("duration_min") or 0)
+        except (TypeError, ValueError):
+            pass
+    dur_s = actual_ride.get("duration_s")
+    if dur_s is None:
+        # raw JSON shape: summary.duration_sec or parsed_stats.duration_sec
+        summary = actual_ride.get("summary") or {}
+        parsed = actual_ride.get("parsed_stats") or {}
+        dur_s = summary.get("duration_sec") or parsed.get("duration_sec") or 0
+    try:
+        return float(dur_s or 0) / 60.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def compare_plan_to_actual(
+    planned_session: dict | None,
+    actual_ride: dict | None,
+    *,
+    tol_tss_pct: float = 0.25,
+    tol_duration_min: int = 15,
+    zone_dist_match_min: float = 0.7,
+    zone_dist_different_max: float = 0.5,
+) -> dict:
+    """Compare a planned session to an actual ride. Returns a 6-field dict.
+
+    Decision branches (per MATCH-B design):
+      ``matched``           — zdm ≥ 0.7 AND |tss_delta| ≤ 25 % AND
+                              |duration_delta| ≤ 15 min.
+      ``matched_extended``  — zdm ≥ 0.7 AND tss_delta > +25 % AND
+                              duration_delta > 0. Foster (1998) flags >25 %
+                              over planned as the acute-load spike side.
+      ``matched_truncated`` — zdm ≥ 0.7 AND tss_delta < -25 % AND
+                              duration_delta < 0.
+      ``different_workout`` — zdm < 0.5 (shape disagreement; e.g. planned
+                              VO2 but did Z2).
+      ``missed``            — planned exists, actual is None.
+      ``no_plan``           — no planned session (free ride OR rest day +
+                              spontaneous ride OR both None).
+
+    Foster threshold reference: Foster C (1998) "Monitoring training in
+    athletes with reference to overtraining syndrome." Med Sci Sports Exerc
+    30(7):1164-1168. The 25 % / 1.5× constant matches
+    ``app._detect_plan_load_alert``.
+
+    Returns the locked 6-field dict:
+      * ``match_status``: one of the 6 branch labels above.
+      * ``tss_delta_pct``: (actual - planned) / planned * 100. None when
+        planned TSS ≤ 0 or status is no_plan/missed.
+      * ``duration_delta_min``: int, actual - planned minutes (0 for
+        no_plan/missed).
+      * ``zone_distribution_match``: cosine similarity in [0.0, 1.0], or 0.0
+        when either side has no zone data (we never fabricate).
+      * ``intent_match``: fraction in [0.0, 1.0] of the planned dominant
+        zone-bucket that the actual ride delivered (capped at 1.0). 0.0 when
+        planned/actual zone data missing.
+      * ``reasons``: 2-4 human strings describing the verdict.
+    """
+    # ---- Branch: nothing planned ----
+    if planned_session is None:
+        return {
+            "match_status": "no_plan",
+            "tss_delta_pct": None,
+            "duration_delta_min": 0,
+            "zone_distribution_match": 0.0,
+            "intent_match": 0.0,
+            "reasons": ["No planned session for this day."],
+        }
+
+    p_stype = (planned_session.get("session_type") or "").lower()
+
+    # ---- Branch: planned rest day (spontaneous ride still = no_plan) ----
+    if p_stype == "rest":
+        return {
+            "match_status": "no_plan",
+            "tss_delta_pct": None,
+            "duration_delta_min": 0,
+            "zone_distribution_match": 0.0,
+            "intent_match": 0.0,
+            "reasons": ["Rest day was planned."],
+        }
+
+    # ---- Branch: planned but missed ----
+    if actual_ride is None:
+        return {
+            "match_status": "missed",
+            "tss_delta_pct": None,
+            "duration_delta_min": 0,
+            "zone_distribution_match": 0.0,
+            "intent_match": 0.0,
+            "reasons": ["Planned session was not completed."],
+        }
+
+    # ---- Numeric deltas ----
+    try:
+        p_tss = float(planned_session.get("tss") or planned_session.get("tss_estimate") or 0)
+    except (TypeError, ValueError):
+        p_tss = 0.0
+    try:
+        a_tss = float(actual_ride.get("tss") or 0)
+    except (TypeError, ValueError):
+        a_tss = 0.0
+
+    try:
+        p_min = float(planned_session.get("duration_min") or 0)
+    except (TypeError, ValueError):
+        p_min = 0.0
+    a_min = _actual_duration_min(actual_ride)
+
+    duration_delta_min = int(round(a_min - p_min))
+    tss_delta_pct: float | None = None
+    if p_tss > 0:
+        tss_delta_pct = round((a_tss - p_tss) / p_tss * 100.0, 1)
+
+    # ---- Zone-distribution cosine similarity ----
+    p_vec = _planned_zone_pcts(planned_session)
+    a_vec = _actual_zone_pcts(actual_ride)
+    if p_vec is None or a_vec is None:
+        zdm = 0.0
+        zone_data_missing = True
+    else:
+        zdm = round(_cosine3(p_vec, a_vec), 3)
+        zone_data_missing = False
+
+    # ---- Intent match: did the planned dominant bucket get any actual time? ----
+    intent_match = 0.0
+    if p_vec is not None and a_vec is not None:
+        # Pick the dominant planned bucket (largest of the three).
+        dom_idx = max(range(3), key=lambda i: p_vec[i])
+        p_share = p_vec[dom_idx]
+        a_share = a_vec[dom_idx]
+        if p_share > 0:
+            intent_match = round(min(1.0, a_share / p_share), 3)
+
+    # ---- Decision: zone-data-missing fallback (TSS-only) ----
+    reasons: list[str] = []
+    if zone_data_missing:
+        # Without zone data we can't classify shape; degrade to TSS deltas
+        # only. Never emit `different_workout` on missing data — that would
+        # be a false positive driven by missing instrumentation.
+        if tss_delta_pct is None:
+            reasons.append("No TSS or zone data to compare; treating as matched.")
+            status = "matched"
+        elif tss_delta_pct > tol_tss_pct * 100 and duration_delta_min > 0:
+            status = "matched_extended"
+            reasons.append(f"Extended: +{int(round(tss_delta_pct))}% TSS, +{duration_delta_min} min.")
+            reasons.append("No zone data; classification based on TSS only.")
+        elif tss_delta_pct < -tol_tss_pct * 100 and duration_delta_min < 0:
+            status = "matched_truncated"
+            reasons.append(f"Truncated: {int(round(tss_delta_pct))}% TSS, {duration_delta_min} min.")
+            reasons.append("No zone data; classification based on TSS only.")
+        else:
+            status = "matched"
+            reasons.append("On plan (TSS within ±25%); no zone data to verify shape.")
+        return {
+            "match_status": status,
+            "tss_delta_pct": tss_delta_pct,
+            "duration_delta_min": duration_delta_min,
+            "zone_distribution_match": 0.0,
+            "intent_match": intent_match,
+            "reasons": reasons[:4],
+        }
+
+    # ---- Decision: zone-data-present cascade ----
+    if zdm < zone_dist_different_max:
+        reasons.append(f"Different workout: zone match {zdm:.2f} (< {zone_dist_different_max:.2f}).")
+        if tss_delta_pct is not None:
+            reasons.append(f"TSS delta {int(round(tss_delta_pct))}%.")
+        return {
+            "match_status": "different_workout",
+            "tss_delta_pct": tss_delta_pct,
+            "duration_delta_min": duration_delta_min,
+            "zone_distribution_match": zdm,
+            "intent_match": intent_match,
+            "reasons": reasons[:4],
+        }
+
+    # zdm in shoulder [0.5, 0.7): treat as matched to avoid false positives.
+    if zdm < zone_dist_match_min:
+        reasons.append(f"On plan: zone shape close enough ({zdm:.2f}).")
+        if tss_delta_pct is not None:
+            reasons.append(f"TSS delta {int(round(tss_delta_pct))}%.")
+        return {
+            "match_status": "matched",
+            "tss_delta_pct": tss_delta_pct,
+            "duration_delta_min": duration_delta_min,
+            "zone_distribution_match": zdm,
+            "intent_match": intent_match,
+            "reasons": reasons[:4],
+        }
+
+    # zdm >= 0.7 → check TSS and duration bands.
+    if tss_delta_pct is None:
+        # Planned TSS missing/zero; can't gate on delta. Call it matched.
+        reasons.append(f"On plan: zone shape match {zdm:.2f}; planned TSS unavailable.")
+        return {
+            "match_status": "matched",
+            "tss_delta_pct": None,
+            "duration_delta_min": duration_delta_min,
+            "zone_distribution_match": zdm,
+            "intent_match": intent_match,
+            "reasons": reasons[:4],
+        }
+
+    within_tss = abs(tss_delta_pct) <= tol_tss_pct * 100
+    within_dur = abs(duration_delta_min) <= tol_duration_min
+    if within_tss and within_dur:
+        reasons.append(f"On plan: zone match {zdm:.2f}.")
+        reasons.append(f"TSS delta {int(round(tss_delta_pct))}%, duration delta {duration_delta_min} min.")
+        return {
+            "match_status": "matched",
+            "tss_delta_pct": tss_delta_pct,
+            "duration_delta_min": duration_delta_min,
+            "zone_distribution_match": zdm,
+            "intent_match": intent_match,
+            "reasons": reasons[:4],
+        }
+
+    if tss_delta_pct > tol_tss_pct * 100 and duration_delta_min > 0:
+        reasons.append(f"Extended: +{int(round(tss_delta_pct))}% TSS, +{duration_delta_min} min.")
+        reasons.append(f"Zone shape held ({zdm:.2f}).")
+        return {
+            "match_status": "matched_extended",
+            "tss_delta_pct": tss_delta_pct,
+            "duration_delta_min": duration_delta_min,
+            "zone_distribution_match": zdm,
+            "intent_match": intent_match,
+            "reasons": reasons[:4],
+        }
+
+    if tss_delta_pct < -tol_tss_pct * 100 and duration_delta_min < 0:
+        reasons.append(f"Truncated: {int(round(tss_delta_pct))}% TSS, {duration_delta_min} min.")
+        reasons.append(f"Zone shape held ({zdm:.2f}).")
+        return {
+            "match_status": "matched_truncated",
+            "tss_delta_pct": tss_delta_pct,
+            "duration_delta_min": duration_delta_min,
+            "zone_distribution_match": zdm,
+            "intent_match": intent_match,
+            "reasons": reasons[:4],
+        }
+
+    # Mixed signal (e.g. shorter but higher IF, or vice versa): same intent
+    # delivered with a different time/load shape — call it matched.
+    reasons.append(f"On plan: zone match {zdm:.2f}.")
+    reasons.append(f"Mixed delta: TSS {int(round(tss_delta_pct))}%, duration {duration_delta_min} min.")
+    return {
+        "match_status": "matched",
+        "tss_delta_pct": tss_delta_pct,
+        "duration_delta_min": duration_delta_min,
+        "zone_distribution_match": zdm,
+        "intent_match": intent_match,
+        "reasons": reasons[:4],
+    }

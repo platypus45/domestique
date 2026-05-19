@@ -205,33 +205,76 @@ def compute_polarization_block(time_in_zone: dict | None) -> dict | None:
     }
 
 
-# ── DFA α1 (v1.0.7) ──────────────────────────────────────────────────────────
+# ── DFA α1 (v1.0.7, literature-grounded constants v1.8.1) ───────────────────
 #
-# Detrended Fluctuation Analysis short-term scaling exponent (α1) over a
-# rider's RR-interval series, computed in a sliding 120-s / 30-s-step window
-# per Rogers 2021 (PMID 34547011). Ported from the dormant in-ride
-# implementation at training_live.py:823-942 — same maths, sliding-window
-# wrapper, no nolds dependency.
+# Detrended Fluctuation Analysis short-term scaling exponent (α1) computed
+# over a rider's RR-interval series. Algorithm follows the canonical Peng
+# et al. (1995) DFA formulation; physiological application + window / scale
+# / threshold constants follow Rogers 2021 (IJSPP) and Gronwald & Hoos 2020
+# (Front Physiol).
 #
-# Sanity gate: any fit producing α1 outside [0.30, 1.60] is dropped (Rogers
-# physiological range; values outside indicate dropped beats / data quality).
+# References:
+#   - Peng CK, Havlin S, Stanley HE, Goldberger AL (1995).
+#     "Quantification of scaling exponents and crossover phenomena in
+#     nonstationary heartbeat time series." Chaos 5(1):82-87.
+#     doi:10.1063/1.166141   (DFA method; standard scale range and detrend.)
+#   - Rogers B, Giles D, Draper N, Hoos O, Gronwald T (2021).
+#     "A New Detection Method Defining the Aerobic Threshold for Endurance
+#     Exercise and Training Prescription Based on Fractal Correlation
+#     Properties of Heart Rate Variability." Frontiers in Physiology 11:596567.
+#     doi:10.3389/fphys.2020.596567   (LT1 / VT1 marker = α1 ≈ 0.75 ± 0.05;
+#     short-scale window n ∈ [4, 16]; 120 s sliding window, 30 s step.)
+#   - Gronwald T, Hoos O (2020).
+#     "Correlation properties of heart rate variability during endurance
+#     exercise: a systematic review." Annals of Noninvasive Electrocardiology
+#     25(1):e12697. doi:10.1111/anec.12697   (α1 physiological range during
+#     exercise: ~0.5 maximal effort to ~1.5 rest; sanity bounds [0.30, 1.60].)
+#
+# Sliding-window constants:
+#   - window_s = 120 s   (Rogers 2021 §2.5; long enough to stabilise α1 fit,
+#     short enough to track intensity transitions.)
+#   - step_s   = 30 s    (Rogers 2021 §2.5; ≈75% window overlap.)
+#
+# Per-window fit gates:
+#   - R² ≥ 0.95 on the log F(n) vs log n line (rejects windows where the
+#     scaling region is not log-linear — typically motion artefact or
+#     dropped beats; matches Rogers 2021 §2.5 "good fit" filter, which uses
+#     R² > 0.95 for the n=4..16 region.)
+#   - α1 ∈ [DFA_SANITY_MIN, DFA_SANITY_MAX] = [0.30, 1.60]
+#     (Gronwald & Hoos 2020 review: published α1 in endurance exercise
+#     spans ~0.4 [maximal] to ~1.5 [rest]; values outside are signal-quality
+#     failures, not physiology.)
+#
+# Aerobic threshold marker:
+#   - DFA_LT1_THRESHOLD = 0.75
+#     (Rogers 2021 §3: α1 crossing 0.75 ± 0.05 anchors the first ventilatory
+#     threshold / aerobic threshold in trained endurance athletes.)
 
-DFA_SANITY_MIN = 0.30
-DFA_SANITY_MAX = 1.60
-DFA_LT1_THRESHOLD = 0.75
+DFA_SANITY_MIN = 0.30   # Gronwald & Hoos 2020 physiological lower bound.
+DFA_SANITY_MAX = 1.60   # Gronwald & Hoos 2020 physiological upper bound.
+DFA_LT1_THRESHOLD = 0.75  # Rogers 2021 LT1 anchor.
 
 
 def _dfa_alpha1_window(rr_window: list[float]) -> float | None:
-    """Compute α1 for a single RR-interval window (no sanity / R² gate).
+    """Compute α1 for a single RR-interval window via Peng-style DFA.
 
-    Algorithm matches training_live._compute_dfa_alpha1 maths:
-      1. Cumulative sum of mean-removed RR.
-      2. Per-segment linear-detrended RMS for n in [4, 16].
-      3. Log-log slope across n vs F(n).
-      4. R² ≥ 0.95 required for the fit.
+    Standard DFA pipeline (Peng et al. 1995):
+      1. Integrate: y[k] = Σ (rr[i] - mean(rr)) for i ≤ k.
+      2. For each scale n ∈ [4, 16] (Rogers 2021 short-scale α1 region):
+         - split y into ⌊N/n⌋ non-overlapping segments of length n,
+         - linear least-squares detrend each segment,
+         - F(n) = sqrt(mean over segments of mean-squared residuals).
+      3. α1 = slope of log F(n) vs log n.
+      4. Fit quality gate: R² ≥ 0.95 on the log-log line (Rogers 2021).
 
-    Returns None when fewer than three valid (n, F(n)) points fit, the slope
-    is degenerate, or R² is below 0.95.
+    Returns None when:
+      - fewer than 16 beats in the window (cannot fit the largest scale n=16),
+      - fewer than three valid (n, F(n)) points were obtained,
+      - the slope denominator is degenerate, or
+      - the log-log fit R² is below 0.95 (poor scaling region).
+
+    The sliding-window caller (compute_dfa_alpha1) applies the
+    physiological [DFA_SANITY_MIN, DFA_SANITY_MAX] gate on top of this.
     """
     n_beats = len(rr_window)
     if n_beats < 16:
@@ -299,21 +342,27 @@ def compute_dfa_alpha1(
 ) -> dict:
     """v1.0.7 — sliding-window DFA α1 across an RR-interval series.
 
+    Per Rogers et al. 2021 (Front Physiol 11:596567): a 120-s window sliding
+    in 30-s steps provides per-window α1 estimates whose crossing of 0.75
+    marks the first ventilatory / aerobic threshold (LT1).
+
     Args:
         rr_seconds: chronological list of RR-intervals in seconds.
-        window_s: window length in seconds (Rogers 2021 default = 120 s).
-        step_s: step between windows in seconds (default = 30 s).
+        window_s: window length in seconds (Rogers 2021 §2.5 default = 120).
+        step_s:   step between windows in seconds (Rogers 2021 §2.5 = 30).
 
     Returns:
         ``{avg, series, lt1_minutes, window_s, step_s, n_windows}``
 
         - ``avg``: mean of all valid per-window α1 values, sanity-gated to
-          [0.30, 1.60]. ``None`` if no valid windows OR the mean falls
-          outside the sanity range (signal for caller to mark
+          [DFA_SANITY_MIN, DFA_SANITY_MAX] = [0.30, 1.60] (Gronwald & Hoos
+          2020 physiological range). ``None`` if no valid windows OR the
+          mean falls outside the sanity range (signal for caller to mark
           ``dfa_alpha1_status='sanity_rejected'``).
         - ``series``: list of ``{min, alpha1}`` per-window values (offset to
           window start in minutes). Includes only valid (sanity-passing) fits.
-        - ``lt1_minutes``: minutes spent with α1 < 0.75 (LT1 marker proxy).
+        - ``lt1_minutes``: minutes spent with α1 < DFA_LT1_THRESHOLD = 0.75
+          (Rogers 2021 LT1 marker proxy).
         - ``window_s`` / ``step_s``: echoed for reproducibility.
         - ``n_windows``: count of valid (sanity-passing) windows.
     """

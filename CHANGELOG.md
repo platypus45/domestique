@@ -1,5 +1,57 @@
 # Changelog
 
+## v1.8.2 — Plan-vs-actual content match + README restructure (2026-05-19)
+
+Two threads delivered via 4-agent parallel dispatch (MATCH-A current-state research, MATCH-B design proposal, MATCH-IMPL implementation, README-AGENT restructure).
+
+### Feature: plan-vs-actual content matching
+
+Pre-v1.8.2, the calendar marked a day "completed" if ANY actual ride existed on that date (`has_actual = True`). Date-only matching — couldn't distinguish "did the planned workout" from "did something else entirely" or "did the planned workout PLUS an extra block".
+
+User reported: "I did `neuromuscular_4x5min_73min.fit` today and added a VO2 max block at the end — does the calendar see I did the suggested workout?"
+
+v1.8.2 adds **`analytics.compare_plan_to_actual(planned_session, actual_ride)`** returning a 6-field dict:
+
+| Field | Meaning |
+|---|---|
+| `match_status` | `matched` / `matched_extended` / `matched_truncated` / `different_workout` / `missed` / `no_plan` |
+| `tss_delta_pct` | `(actual_tss - planned_tss) / planned_tss * 100` |
+| `duration_delta_min` | `actual_min - planned_min` |
+| `zone_distribution_match` | Cosine similarity on the `[z1z2, z3z4, z5+]` pct 3-vector |
+| `intent_match` | Planned dominant-bucket share preserved in actual |
+| `reasons` | Human-readable list (≤3) |
+
+**Decision rules** (Foster 1998 spike threshold @ 1.5×, REMATCH_TOL constants from training_planner):
+
+- `matched`: zone_distribution_match ≥ 0.7 AND |tss_delta| ≤ 25% AND |duration_delta| ≤ 15 min.
+- `matched_extended`: zone match ≥ 0.7 AND tss_delta > 25% AND duration_delta > 0. ← user's case.
+- `matched_truncated`: zone match ≥ 0.7 AND tss_delta < -25% AND duration_delta < 0.
+- `different_workout`: zone_distribution_match < 0.5.
+- `missed`: planned session, no actual.
+- `no_plan`: actual exists, no planned session that day.
+
+**`_summarize_ride_for_calendar` extended** with optional `planned_session=None` kwarg. Back-compat: callers that don't pass it get the v1.8.0 shape; only the calendar-render path passes the day's planned session.
+
+**Frontend badge**: small inline span on activity cards (5 visual states): `✓` matched, `⤴` extended, `⤵` truncated, `↗` different, `◯` no-plan. Hover tooltip shows the `reasons` list joined with " · ".
+
+**Tests**: `test_v182_match_compare.py` — 11 tests (each status branch + missing-zone edge case + back-compat).
+
+### Docs: README restructure
+
+Pre-v1.8.2 README was 838 lines with 6+ major repetitions and TL;DR buried at line 236.
+
+- TL;DR + Quick start moved to top.
+- Releases section links to latest tag.
+- Development section consolidated at bottom.
+- Removed repetitions: "Most smart planners stop at the dashboard" was opening 3 sections — kept once. DFA α1 explained 3× — consolidated into one HRV paragraph. FTP test flow doubled — kept the deep-section version. ZWO library figures (3054 / 622) mentioned 5+ times — kept in TL;DR + Library + Sources.
+- Stale Zwift virtual-world claim removed: README line 161 had listed Watopia / Yorkshire / Innsbruckring as shipped routes. Watopia + Yorkshire are Zwift-proprietary virtual worlds (NOT redistributable) — never were in the library. Innsbruck IS shipped but as the real-world 2018 World Championships course. Now reads: "real-world route courses ... no Zwift virtual worlds".
+
+838 → 617 lines, -26%.
+
+### Tests
+
+1401 → **1412 passing** (+11 new MATCH tests). 6 pre-existing failures unchanged. 0 new regressions.
+
 ## v1.8.1 — DFA correctness + reshuffle speed + chest-strap RR pipeline (2026-05-19)
 
 Three threads, one ship, delivered via 4-agent parallel-worktree dispatch (DFA-A algorithm review, DFA-B ICU comparison research, SPEED-A library cache, SPEED-B reforecast fast path) + a v1.8.1-base patch (RR sentinel filter + staged reshuffle UX).

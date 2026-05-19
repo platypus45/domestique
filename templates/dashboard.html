@@ -564,6 +564,16 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
 .cal-day .cal-actual.cal-act-green  { border-left-color: var(--green); background: rgba(34,197,94,0.05); }
 .cal-day .cal-actual.cal-act-yellow { border-left-color: var(--yellow); background: rgba(234,179,8,0.05); }
 .cal-day .cal-actual.cal-act-red    { border-left-color: var(--red); background: rgba(239,68,68,0.05); }
+/* v1.8.0 — polarization classification border for actual activity cards.
+   Inline border-left-color from _classifColor() overrides these so dark/light
+   theme variables resolve at render time; the .pol-* class is the hook for
+   text-scan tests + diagnostics. */
+.cal-day .cal-actual.pol-polarized { border-left-color: var(--red); }
+.cal-day .cal-actual.pol-pyramidal { border-left-color: var(--orange); }
+.cal-day .cal-actual.pol-threshold { border-left-color: var(--yellow); }
+.cal-day .cal-actual.pol-hiit      { border-left-color: #ec4899; }
+.cal-day .cal-actual.pol-base      { border-left-color: var(--green); }
+.cal-day .cal-actual.pol-unique    { border-left-color: var(--text3); }
 .cal-day .cal-actual-name {
   font-size: 9px; font-weight: 600; color: var(--text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -5312,10 +5322,42 @@ async function loadReadinessComposite() {
       return;
     }
     const d = await res.json();
+    // v1.8.0 — source pill describes whether severity comes from Hooper
+    // override, TSB+HRV composite, or insufficient signal. Rendered next
+    // to the score circle (or inline when no score).
+    const sourceKey = d.source || 'insufficient';
+    const sourceLabel = sourceKey === 'hooper' ? 'From Hooper override'
+                      : sourceKey === 'tsb_hrv_auto' ? 'From HRV+TSB'
+                      : 'Insufficient signal';
+    const sourceColor = sourceKey === 'hooper' ? 'var(--green)'
+                      : sourceKey === 'tsb_hrv_auto' ? 'var(--accent)'
+                      : 'var(--text3)';
+    const sourcePill = `<span class="readiness-source-pill" data-source="${esc(sourceKey)}"
+        style="display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;
+               background:${sourceColor}22;color:${sourceColor};border:1px solid ${sourceColor};
+               vertical-align:middle;margin-left:8px;letter-spacing:0.02em;">${esc(sourceLabel)}</span>`;
     if (d.status === 'insufficient_data' || d.score === null || d.score === undefined) {
+      // v1.8.0 — even without a composite score, the backend may emit a
+      // Hooper-override severity. Render the pill + auto-adjust button
+      // when severity is actionable so the user isn't stuck.
+      const sev = d.severity || 'normal';
+      const showAuto = (sev === 'tier_down' || sev === 'rest');
+      const autoBtnLabel = (sev === 'rest') ? '🛏 Apply rest day' : '🩹 Auto-adjust this week';
+      const autoHtml = showAuto
+        ? `<div style="margin-top:8px;">
+             <button class="btn btn-primary" id="apply-week-tier-down-btn"
+                     onclick="applyWeekAutoAdjust()"
+                     style="font-size:11px;padding:4px 10px;">
+               ${autoBtnLabel}
+             </button>
+             <div id="apply-week-tier-down-status" style="font-size:11px;color:var(--text2);margin-top:6px;"></div>
+           </div>`
+        : `<div style="font-size:11px;color:var(--text3);margin-top:6px;">No actionable signal.</div>`;
       host.innerHTML = `
         <div style="font-size:12px;color:var(--text2);padding:8px 0;">
           ${esc(d.advice || 'Need ≥30 days of wellness sync to enable readiness scoring.')}
+          ${sourcePill}
+          ${autoHtml}
         </div>`;
       return;
     }
@@ -5341,12 +5383,12 @@ async function loadReadinessComposite() {
               <td style="padding:2px 8px;text-align:right;">${display}</td>
               <td style="padding:2px 0;text-align:right;color:var(--text3);">${(Number(w)*100).toFixed(0)}%</td></tr>`;
     }).join('');
-    // v1.7.5 — when the advice recommends a tier-down (score in [3, 5))
-    // surface an "Apply tier-down" button that POSTs to
-    // /api/readiness/apply-tier-down. Pre-v1.7.5 the advice was
-    // copy-only; the user had to manually open the Plan tab and re-match
-    // to act on it.
-    const showTierDownBtn = (s >= 3.0 && s < 5.0);
+    // v1.8.0 — severity gate (replaces v1.7.5 score-range gate so Hooper
+    // override with score===null still surfaces actions). Tier-down button
+    // remains the v1.7.5 single-day flow; a new "Auto-adjust this week"
+    // button covers the multi-session walk via dry-run preview.
+    const sev = d.severity || 'normal';
+    const showTierDownBtn = (sev === 'tier_down');
     const tierDownHtml = showTierDownBtn
       ? `<div style="margin-top:8px;">
            <button class="btn btn-primary" id="apply-tier-down-btn"
@@ -5360,12 +5402,31 @@ async function loadReadinessComposite() {
            <div id="apply-tier-down-status" style="font-size:11px;color:var(--text2);margin-top:6px;"></div>
          </div>`
       : '';
+    // v1.8.0 — auto-adjust whole week / rest button. When severity=rest,
+    // ONLY this button shows ("Apply rest day"); when severity=tier_down it
+    // shows IN ADDITION to the single-day v1.7.5 button.
+    const showAutoBtn = (sev === 'tier_down' || sev === 'rest');
+    const autoBtnLabel = (sev === 'rest') ? '🛏 Apply rest day' : '🩹 Auto-adjust this week';
+    const autoBtnHtml = showAutoBtn
+      ? `<div style="margin-top:8px;">
+           <button class="btn btn-primary" id="apply-week-tier-down-btn"
+                   onclick="applyWeekAutoAdjust()"
+                   style="font-size:11px;padding:4px 10px;">
+             ${autoBtnLabel}
+           </button>
+           <span style="font-size:10px;color:var(--text3);margin-left:8px;">
+             Preview every change first; nothing is saved until you click Apply.
+           </span>
+           <div id="apply-week-tier-down-status" style="font-size:11px;color:var(--text2);margin-top:6px;"></div>
+         </div>`
+      : '';
     host.innerHTML = `
       ${circle}
       <div style="flex:1;">
-        <div style="font-size:13px;color:var(--text);margin-bottom:6px;">${esc(d.advice || '')}</div>
+        <div style="font-size:13px;color:var(--text);margin-bottom:6px;">${esc(d.advice || '')}${sourcePill}</div>
         <div style="font-size:10px;color:var(--text3);">${statusLabel}${conf}</div>
         ${tierDownHtml}
+        ${autoBtnHtml}
         <details style="margin-top:8px;">
           <summary style="cursor:pointer;font-size:11px;color:var(--text2);">Component breakdown</summary>
           <table style="margin-top:6px;font-size:11px;">
@@ -5503,6 +5564,157 @@ async function applyReadinessTierDown() {
     if (statusEl) statusEl.innerHTML = `<span style="color:var(--red);">Network error: ${esc(String(e && e.message || e))}</span>`;
     if (btn) { btn.disabled = false; btn.textContent = '⇣ Apply tier-down to today'; }
   }
+}
+
+// v1.8.0 — auto-adjust this week.
+// Two-step flow per MASTER_DECISIONS_v180.md §F1:
+//   1. POST /api/plan/auto-adjust with dry_run:true → render preview modal
+//      listing each per-day action (before/after type, duration, TSS).
+//   2. User clicks Apply → POST again with dry_run:false → toast + refresh.
+// Reuses openModal/closeModal/showToast.
+async function applyWeekAutoAdjust() {
+  const btn = document.getElementById('apply-week-tier-down-btn');
+  const statusEl = document.getElementById('apply-week-tier-down-status');
+  if (btn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.textContent = 'Loading preview…';
+  }
+  if (statusEl) statusEl.textContent = '';
+  try {
+    const res = await fetch('/api/plan/auto-adjust', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({scope: 'week', dry_run: true}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+      const reason = (data.error || ('HTTP ' + res.status));
+      if (statusEl) statusEl.innerHTML = `<span style="color:var(--orange);">Could not preview: ${esc(String(reason))}</span>`;
+      try { showToast('Auto-adjust: ' + reason, 4000); } catch(_) {}
+      if (btn) { btn.disabled = false; btn.textContent = '🩹 Auto-adjust this week'; }
+      return;
+    }
+    const actions = Array.isArray(data.actions) ? data.actions : [];
+    const noteHtml = data.note
+      ? `<div style="margin-bottom:10px;padding:8px 10px;background:rgba(234,179,8,0.10);border:1px solid var(--yellow);border-radius:6px;font-size:12px;color:var(--text2);">${esc(String(data.note))}</div>`
+      : '';
+    let bodyHtml = '';
+    if (actions.length === 0) {
+      bodyHtml = `<div style="padding:12px;color:var(--text2);font-size:13px;">No sessions need adjustment.</div>`;
+    } else {
+      const rows = actions.map(a => {
+        const day = a.day || '';
+        const before = a.before || {};
+        const after = a.after || {};
+        const bType = (before.type || '—').toUpperCase();
+        const aType = (after.type || '—').toUpperCase();
+        const bDur = before.duration_min != null ? before.duration_min : '—';
+        const aDur = after.duration_min != null ? after.duration_min : '—';
+        const bTss = before.tss != null ? before.tss : '—';
+        const aTss = after.tss != null ? after.tss : '—';
+        const zwoNote = a.zwo_cleared
+          ? `<div style="font-size:10px;color:var(--orange);">⚠ ZWO cleared (no match in new bucket — re-match manually).</div>`
+          : '';
+        return `<tr style="border-top:1px solid var(--border);">
+          <td style="padding:6px 8px;font-size:11px;color:var(--text2);white-space:nowrap;">${esc(day)}</td>
+          <td style="padding:6px 8px;font-size:11px;">
+            <span style="color:var(--text);">${esc(bType)}</span>
+            <span style="color:var(--text3);"> (${esc(String(bDur))}min / ${esc(String(bTss))}TSS)</span>
+          </td>
+          <td style="padding:6px 8px;font-size:11px;color:var(--text3);">→</td>
+          <td style="padding:6px 8px;font-size:11px;">
+            <span style="color:var(--green);font-weight:600;">${esc(aType)}</span>
+            <span style="color:var(--text3);"> (${esc(String(aDur))}min / ${esc(String(aTss))}TSS)</span>
+            ${zwoNote}
+          </td>
+        </tr>`;
+      }).join('');
+      bodyHtml = `
+        <table style="width:100%;border-collapse:collapse;margin-bottom:12px;">
+          <thead><tr style="color:var(--text3);font-size:10px;">
+            <th style="text-align:left;padding:4px 8px;">Day</th>
+            <th style="text-align:left;padding:4px 8px;">Before</th>
+            <th></th>
+            <th style="text-align:left;padding:4px 8px;">After</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+    const sevLabel = (data.severity || '').toUpperCase();
+    const sourceLabel = data.source === 'hooper' ? 'Hooper override'
+                      : data.source === 'tsb_hrv_auto' ? 'HRV+TSB'
+                      : 'insufficient';
+    const applyDisabled = actions.length === 0 ? 'disabled' : '';
+    const modalHtml = `
+      <div style="padding:4px;">
+        <h3 style="margin:0 0 8px;font-size:16px;">Auto-adjust preview</h3>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:10px;">
+          Scope: <b>${esc(data.scope || 'week')}</b> &middot; Severity: <b>${esc(sevLabel)}</b> &middot; Source: <b>${esc(sourceLabel)}</b>
+        </div>
+        ${noteHtml}
+        ${bodyHtml}
+        <div style="display:flex;gap:8px;justify-content:flex-end;border-top:1px solid var(--border);padding-top:10px;">
+          <button class="btn" onclick="closeModal()" style="font-size:12px;padding:6px 14px;">Cancel</button>
+          <button class="btn btn-primary" id="auto-adjust-apply-btn"
+                  onclick="_applyWeekAutoAdjustCommit()" ${applyDisabled}
+                  style="font-size:12px;padding:6px 14px;">Apply</button>
+        </div>
+      </div>`;
+    openModal(modalHtml);
+    if (btn) { btn.disabled = false; btn.textContent = '🩹 Auto-adjust this week'; }
+  } catch (e) {
+    if (statusEl) statusEl.innerHTML = `<span style="color:var(--red);">Network error: ${esc(String(e && e.message || e))}</span>`;
+    if (btn) { btn.disabled = false; btn.textContent = '🩹 Auto-adjust this week'; }
+  }
+}
+
+// v1.8.0 — modal Apply button calls back into the same endpoint with
+// dry_run:false to persist changes, then refreshes the dependent panels.
+async function _applyWeekAutoAdjustCommit() {
+  const applyBtn = document.getElementById('auto-adjust-apply-btn');
+  if (applyBtn) { applyBtn.disabled = true; applyBtn.textContent = 'Applying…'; }
+  try {
+    const res = await fetch('/api/plan/auto-adjust', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({scope: 'week', dry_run: false}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+      const reason = (data.error || ('HTTP ' + res.status));
+      try { showToast('Auto-adjust failed: ' + reason, 4000); } catch(_) {}
+      if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = 'Apply'; }
+      return;
+    }
+    const n = Number(data.sessions_modified || 0);
+    try { showToast(`Auto-adjust applied: ${n} session${n === 1 ? '' : 's'} updated`, 3500); } catch(_) {}
+    closeModal();
+    // Refresh dependent panels so user sees the change without a hard reload.
+    try { await loadTodaySession(); } catch(_) {}
+    try { await loadCalendar(); } catch(_) {}
+    try { await loadPlan(); } catch(_) {}
+    try { loadWeeklyCalendar(); } catch(_) {}
+    try { loadReadinessComposite(); } catch(_) {}
+  } catch (e) {
+    try { showToast('Network error: ' + (e && e.message || e), 4000); } catch(_) {}
+    if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = 'Apply'; }
+  }
+}
+
+// v1.8.0 — calendar activity coloring by polarization classification.
+// Maps a classification string ('polarized','pyramidal','threshold','hiit',
+// 'base','unique') to a CSS color value. Returns null when unknown so
+// callers can skip the border override.
+function _classifColor(cls) {
+  const CLASSIF_COLOR = {
+    polarized: 'var(--red)',
+    pyramidal: 'var(--orange)',
+    threshold: 'var(--yellow)',
+    hiit: '#ec4899',
+    base: 'var(--green)',
+    unique: 'var(--text3)',
+  };
+  if (!cls) return null;
+  return CLASSIF_COLOR[String(cls).toLowerCase()] || null;
 }
 
 // ═══ PICKER ═══════════════════════════════════════════════════════════════
@@ -9790,7 +10002,15 @@ function renderCalDay(d, wi, di, phaseKey, today) {
     const name = (actual.name || '').slice(0, 22) + ((actual.name || '').length > 22 ? '…' : '');
     const dur = actual.duration_min ? `${Math.round(actual.duration_min)}m` : '';
     const tss = actual.tss ? `${Math.round(actual.tss)} TSS` : '';
-    actualHtml = `<div class="cal-actual ${aCls}">
+    // v1.8.0 — bind border-color to polarization classification so users see
+    // load profile (polarized/pyramidal/threshold/hiit/base/unique) at a
+    // glance. Class added alongside existing aCls; inline border-left-color
+    // wins over the green/yellow/red TSS-adherence tint.
+    const classif = (actual.polarization && actual.polarization.classification) || actual.classification || null;
+    const polColor = _classifColor(classif);
+    const polCls = classif ? ` pol-${esc(String(classif).toLowerCase())}` : '';
+    const polStyle = polColor ? ` style="border-left-color:${polColor};"` : '';
+    actualHtml = `<div class="cal-actual ${aCls}${polCls}"${polStyle}>
       <div class="cal-actual-name">${esc(name) || 'Activity'}</div>
       <div class="cal-actual-meta">${dur}${tss ? ' · ' + tss : ''}</div>
     </div>`;
@@ -11519,9 +11739,16 @@ async function loadWeeklyCalendar() {
               ? `<div style="font-size:8px;color:var(--red);font-weight:700;font-style:italic;">plan: ${plannedShort} missed</div>`
               : `<div style="font-size:8px;color:var(--text3);font-style:italic;">plan: ${plannedShort}${s.tss_estimate ? ' · ' + s.tss_estimate + 'T' : ''}</div>`)
           : '';
+        // v1.8.0 — polarization classification border. Pick the first
+        // cycling activity carrying a classification; fall back to none.
+        const _polAct = dayActs.find(a => (a.polarization && a.polarization.classification) || a.classification);
+        const _polClassif = _polAct ? ((_polAct.polarization && _polAct.polarization.classification) || _polAct.classification) : null;
+        const _polColor = _classifColor(_polClassif);
+        const _polCls = _polClassif ? ` pol-${esc(String(_polClassif).toLowerCase())}` : '';
+        const _polBorder = _polColor ? `border-left:3px solid ${_polColor};` : '';
         body = `
           ${planGhost}
-          <div class="wc-type" style="background:${expo.color}22;color:${expo.color};border:1px solid ${expo.color};font-weight:700;">${sportIcons} ${expo.label}</div>
+          <div class="wc-type${_polCls}" style="background:${expo.color}22;color:${expo.color};border:1px solid ${expo.color};${_polBorder}font-weight:700;">${sportIcons} ${expo.label}</div>
           <div class="wc-meta">${agg.total_min}m · ${agg.total_tss} TSS</div>
           ${adhTxt}
         `;

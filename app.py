@@ -12342,6 +12342,9 @@ def api_ride_full_detail(ride_id: str, include: str = Query("")):
         # extra round-trip on first detail-modal click; subsequent requests
         # come from the persisted normalized record.
         rec = _maybe_enrich_icu_record(rec)
+        # v1.8.3 BUG-E: rewrite "RECOVERY" labels that disagree with the
+        # computed zone-from-power before the modal renders them.
+        rec = _project_intervals_for_display(rec)
         if want_samples:
             rec["samples"] = _build_icu_samples(rec)
         return _attach_xss_summary(rec)
@@ -12353,6 +12356,7 @@ def api_ride_full_detail(ride_id: str, include: str = Query("")):
         if not fit_path.exists():
             return JSONResponse({"error": "Ride not found"}, 404)
         rec = _build_fit_normalized(fit_path, ride_id)
+        rec = _project_intervals_for_display(rec)
         if want_samples:
             rec["samples"] = _build_fit_samples(fit_path)
         return _attach_xss_summary(rec)
@@ -12363,6 +12367,7 @@ def api_ride_full_detail(ride_id: str, include: str = Query("")):
     if not legacy:
         return JSONResponse({"error": "Ride not found"}, 404)
     rec = _legacy_ride_to_normalized(legacy, ride_id)
+    rec = _project_intervals_for_display(rec)
     if want_samples:
         rec["samples"] = _legacy_ride_samples(legacy)
     return _attach_xss_summary(rec)

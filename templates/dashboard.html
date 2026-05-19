@@ -1996,6 +1996,14 @@ window.addEventListener('unhandledrejection', function(e) {
         <!-- v4.6.7 IMPL-SUM: summary modal trigger BEGIN -->
         <button class="btn" onclick="showProgrammeSummary()" id="btn-programme-summary" title="End-of-plan literature-grounded recap">Programme summary</button>
         <!-- v4.6.7 IMPL-SUM: summary modal trigger END -->
+        <!-- v1.7.4 — Sync now exposed on the plan tab too. Same handler
+             as the home-page button (syncNowAction posts to
+             /api/rides/sync?force=1 → bypasses the 1h throttle). Without
+             this the only way to force-pull recent ICU rides into the
+             plan view was the home tab; users on the plan tab would
+             reopen the app and see stale actuals because the boot
+             auto-sync had throttled. -->
+        <button class="btn" id="syncNowBtnPlan" onclick="syncNowAction('syncNowBtnPlan')" style="font-size:11px;" title="Pull latest rides + wellness from intervals.icu now (bypasses 1h throttle)">Sync now &#x21bb;</button>
       </div>
       <div id="plan-status" style="font-size:12px;color:var(--text2);margin-top:8px;"></div>
     </div>
@@ -9340,8 +9348,11 @@ async function loadCalendar() {
 // v4.5.1 FIX-UI B1 — branch toast on payload.status (server commit 1f26123
 // now returns status: ok | throttled | fetch_failed | no_credentials).
 // syncNowAction marker:
-async function syncNowAction() {
-  const btn = document.getElementById('syncNowBtn');
+async function syncNowAction(btnId) {
+  // v1.7.4 — accept optional btnId so callers from non-home tabs (Plan
+  // tab's syncNowBtnPlan) can drive the same flow. Default keeps the
+  // home-page wiring intact.
+  const btn = document.getElementById(btnId || 'syncNowBtn');
   if (!btn) return;
   if (btn.disabled) return;
   const origLabel = btn.textContent;
@@ -9391,6 +9402,11 @@ async function syncNowAction() {
     }
     // Re-fetch /api/calendar — loadCalendar() refreshes THIS WEEK + on-track bar.
     try { await loadCalendar(); } catch(_) {}
+    // v1.7.4 — also refresh plan grid + weekly calendar so the Plan
+    // tab's session cards reflect the newly-synced actuals (and any
+    // auto-reforecast that landed on the plan).
+    try { await loadPlan(); } catch(_) {}
+    try { loadWeeklyCalendar(); } catch(_) {}
   } catch (e) {
     showToast('Sync failed: network error', 4000);
   } finally {

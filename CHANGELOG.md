@@ -1,5 +1,36 @@
 # Changelog
 
+## v1.7.4 — Sync button on Plan tab + post-sync Plan/Weekly refresh (2026-05-19)
+
+User: "I reopen the app and have done some workouts this weekend. But in current training plan they're not there!"
+
+### Diagnosis
+
+Update cycle:
+- App boot → frontpage endpoint (`/api/today-session`) triggers `_kick_lazy_icu_sync` (v1.6.3 background daemon).
+- Daemon fetches recent activities + wellness from ICU, persists to `~/.domestique/rides/icu/`, fires `_maybe_auto_reforecast`.
+- `_sync_icu_activities` is 1h-throttled by `~/.domestique/rides/icu/.last_sync_at`. Subsequent calls within the same window silently return `status: "throttled"`.
+
+The home page header has a "Sync now ⟳" button (`syncNowBtn`) that POSTs `/api/rides/sync?force=1` to bypass the throttle, but the user spends most of their time on the **Plan tab** where no such button existed. Reopening the app on the Plan tab → boot auto-sync runs once and is then throttled → user clicks around the Plan tab → no visible way to force a refresh → "my weekend rides aren't here".
+
+Direct ICU probe confirmed the user's rides (May 14 + May 16) were on intervals.icu, just not yet pulled into the local cache for that session.
+
+### Fix
+
+- **Plan tab now has its own "Sync now ⟳" button** (`syncNowBtnPlan`) next to Reforecast / Programme summary. Same backend call (`/api/rides/sync?force=1`).
+- **`syncNowAction(btnId)`** extended to accept an optional button id (defaults to home button). One handler drives both buttons without DOM duplication.
+- **Post-sync refresh extended**: handler now also fires `loadPlan()` + `loadWeeklyCalendar()` in addition to `loadCalendar()`. Pre-v1.7.4 only the home-page THIS WEEK panel refreshed; the Plan tab's session cards stayed stale until the user navigated away and back.
+
+### Tests
+
+4 new in `test_v174_sync_button.py`:
+- Plan-tab Sync button exists with the correct id + handler.
+- `syncNowAction` accepts a `btnId` parameter and defaults to `syncNowBtn`.
+- Post-sync block fires `loadCalendar` + `loadPlan` + `loadWeeklyCalendar`.
+- `/api/rides/sync` endpoint registered.
+
+1293 → **1297 passing** (+4). 5 pre-existing failures unchanged.
+
 ## v1.7.3 — Availability: diff vs prior + bidirectional apply (2026-05-13)
 
 User: "plan reflowed, 0 sessions changed" after editing availability. Plan agenda doesn't move.

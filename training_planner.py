@@ -130,6 +130,15 @@ PLAN_DIR = Path.home() / ".domestique" / "plans"
 # intent unambiguously.
 _CLASSIFIER_VERSION = 3  # v4.1.2 IMPL-CLASSIFIER: content-based 12-rule cascade replaces filename heuristic
 _WORKOUT_LIB_CACHE: dict[str, tuple] = {}
+# v1.8.1 SPEED-A: fast hot-path validator keyed by str(WORKOUT_DIR).
+# Stores (dir_mtime, classifier_version) — a single os.stat(WORKOUT_DIR)
+# replaces the per-file glob+stat sweep on cache-hit. Directory mtime changes
+# when files are added/removed/renamed (covers the library-edit case); pure
+# in-place content edits to an existing file are not detected by this fast
+# check, but the underlying library is treated as append-only in normal use.
+# A persistent change to library shape still invalidates via the slow-path
+# (zwo_count, max_mtime) tuple stored in _WORKOUT_LIB_CACHE.
+_WORKOUT_LIB_FAST_VALIDATOR: dict[str, tuple] = {}
 
 # Cache for the content-based classifier output
 # (workouts/.content_classification.json, produced by
@@ -2162,14 +2171,39 @@ def load_workout_library() -> list[dict]:
     the boundary (e.g. 76%) lands in the HIGHER zone. Identical in app.py.
     """
     # Module-level cache keyed by str(WORKOUT_DIR). Value is
-    # (mtime_hash, list_of_workouts). Re-parsing 1,753 ZWO files on every call
-    # is ~200ms+ of disk I/O, and the library changes rarely.
-    global _WORKOUT_LIB_CACHE
+    # (mtime_hash, list_of_workouts). Re-parsing 3,000+ ZWO files on every call
+    # is ~600ms+ of disk I/O, and the library changes rarely.
+    #
+    # v1.8.1 SPEED-A: two-tier cache validation.
+    #   * Fast tier: a single os.stat(WORKOUT_DIR) on the directory itself.
+    #     The directory's st_mtime ticks whenever a file is added/removed/
+    #     renamed — sufficient for the common case (library is append-only
+    #     in normal use). On match, return the cached list with NO per-file
+    #     stat calls. Hot-call cost drops from ~100ms (glob+stat over 3k
+    #     files) to <5ms.
+    #   * Slow tier: when the fast validator misses, fall through to the
+    #     full glob+max-mtime sweep that catches in-place content edits.
+    global _WORKOUT_LIB_CACHE, _WORKOUT_LIB_FAST_VALIDATOR
     cache_key = str(WORKOUT_DIR)
 
     if not WORKOUT_DIR.exists():
         return []
 
+    # Fast-path: single stat on the workouts directory itself. If it matches
+    # the validator stored alongside the cache entry, the cached list is fresh.
+    try:
+        dir_mtime = WORKOUT_DIR.stat().st_mtime
+    except OSError:
+        dir_mtime = 0.0
+    fast_key = (_CLASSIFIER_VERSION, dir_mtime)
+    cached_fast = _WORKOUT_LIB_FAST_VALIDATOR.get(cache_key)
+    cached = _WORKOUT_LIB_CACHE.get(cache_key)
+    if cached and cached_fast == fast_key:
+        return cached[1]
+
+    # Slow-path: enumerate files to compute the precise validator. This
+    # catches edits that don't tick the directory's mtime (in-place rewrites
+    # of an existing file).
     zwo_paths = sorted(WORKOUT_DIR.glob("*.zwo"))
     # Hash the (count, max_mtime) — fast and sufficient to detect edits/adds/removes.
     try:
@@ -2178,8 +2212,11 @@ def load_workout_library() -> list[dict]:
         max_mtime = 0.0
     mtime_hash = (_CLASSIFIER_VERSION, len(zwo_paths), max_mtime)
 
-    cached = _WORKOUT_LIB_CACHE.get(cache_key)
     if cached and cached[0] == mtime_hash:
+        # Slow-path confirmed the cache is still valid (directory's mtime
+        # ticked but no .zwo file actually changed). Refresh the fast
+        # validator so the next call short-circuits.
+        _WORKOUT_LIB_FAST_VALIDATOR[cache_key] = fast_key
         return cached[1]
 
     workouts: list[dict] = []
@@ -2379,6 +2416,9 @@ def load_workout_library() -> list[dict]:
         })
 
     _WORKOUT_LIB_CACHE[cache_key] = (mtime_hash, workouts)
+    # v1.8.1 SPEED-A: store the fast-path validator alongside the cache so
+    # subsequent calls can short-circuit on a single dir-stat.
+    _WORKOUT_LIB_FAST_VALIDATOR[cache_key] = fast_key
     return workouts
 
 

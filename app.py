@@ -1808,12 +1808,27 @@ def api_readiness_composite(date: str = Query(None)):
 
     Cached for 5 min (key includes the date so per-day re-fetch works).
     Returns the dict shape from compute_readiness_composite() unchanged.
+
+    v1.8.0 §F1 — chains compute_training_severity to merge severity, source,
+    and severity_reasons fields onto the returned dict. Legacy fields preserved.
     """
     from datetime import date as _date_cls
     target_iso = date or _date_cls.today().isoformat()
     profile_id = "default"  # single-rider scope; profile_manager is a separate concern
     cache_key = f"readiness_composite_{profile_id}_{target_iso}"
-    return cached(cache_key, lambda: compute_readiness_composite(profile_id, target_iso))
+    result = cached(cache_key, lambda: compute_readiness_composite(profile_id, target_iso))
+    # v1.8.0 — chain severity helper (A-BACKEND owns the impl). Tolerate
+    # absence: helper may not be exported yet during cross-agent rollout.
+    try:
+        from readiness_composite import compute_training_severity as _cts
+        sev = _cts(profile_id, target_iso) or {}
+        if isinstance(result, dict) and isinstance(sev, dict):
+            result["severity"] = sev.get("severity")
+            result["source"] = sev.get("source")
+            result["severity_reasons"] = sev.get("reasons") or []
+    except Exception:
+        pass
+    return result
 
 
 @app.post("/api/readiness/apply-tier-down")
@@ -1974,6 +1989,248 @@ async def api_readiness_apply_tier_down(request: Request):
     except Exception:
         _log.exception("apply-tier-down failed")
         return JSONResponse({"detail": "tier-down failed"}, 500)
+
+
+@app.post("/api/plan/auto-adjust")
+async def api_plan_auto_adjust(request: Request):
+    """v1.8.0 §F1 — Automated TSB+HRV → planner with Hooper override.
+
+    Computes today's training severity (Hooper if logged, else TSB+HRV
+    composite) and adjusts the plan accordingly:
+
+      - severity=normal → no change (returns actions=[], note="no adjustment
+        needed").
+      - severity=rest → today's session set to rest (clear ZWO, tss=0).
+        scope=week is collapsed to today-only with an explanatory note.
+      - severity=tier_down + scope=today → drop today's hard session one tier.
+      - severity=tier_down + scope=week → walk all remaining hard sessions
+        Mon-Sun and tier-down each via training_planner.apply_week_tier_down.
+
+    Body: ``{"scope": "today"|"week", "dry_run": bool}``.
+    Response: ``{ok, severity, source, scope, dry_run, actions, sessions_modified, note}``.
+
+    dry_run=True works against a deepcopy of the plan; never writes disk
+    and never calls reforecast.
+    """
+    body = await _get_json_body(request)
+    scope = str(body.get("scope") or "today").strip().lower()
+    if scope not in ("today", "week"):
+        return JSONResponse({"error": "scope must be 'today' or 'week'"}, 400)
+    dry_run = bool(body.get("dry_run", False))
+
+    today_iso = date.today().isoformat()
+    profile_id = "default"
+
+    # 1. Resolve severity (A-BACKEND helper). Tolerate absence.
+    try:
+        from readiness_composite import compute_training_severity as _cts
+    except Exception:
+        return JSONResponse({"error": "severity unavailable"}, 503)
+    try:
+        sev = _cts(profile_id, today_iso) or {}
+    except Exception:
+        _log.exception("auto-adjust: compute_training_severity failed")
+        return JSONResponse({"error": "severity unavailable"}, 503)
+    severity = sev.get("severity") or "normal"
+    source = sev.get("source") or "insufficient"
+
+    # 2. severity=normal → no change.
+    if severity == "normal":
+        return {
+            "ok": True,
+            "severity": severity,
+            "source": source,
+            "scope": scope,
+            "dry_run": dry_run,
+            "actions": [],
+            "sessions_modified": 0,
+            "note": "no adjustment needed",
+        }
+
+    # 3. Load plan.
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+    except Exception:
+        _log.exception("auto-adjust: plan load failed")
+        return JSONResponse({"error": "plan load failed"}, 500)
+
+    # 4. Build working copy for dry-run.
+    import copy as _copy
+    working = _copy.deepcopy(plan) if dry_run else plan
+
+    actions: list[dict] = []
+    note = ""
+
+    # 5. severity=rest → today-only rest (week scope collapses to today).
+    if severity == "rest":
+        target = None
+        for w in working.get("weeks", []) or []:
+            for s in w.get("sessions", []) or []:
+                if s.get("day") == today_iso:
+                    target = s
+                    break
+            if target:
+                break
+        if target is not None:
+            old_type = target.get("session_type", "") or ""
+            old_duration = int(target.get("duration_min", 0) or 0)
+            old_tss = float(target.get("tss_estimate", 0) or 0)
+            target["session_type"] = "rest"
+            target["tss_estimate"] = 0
+            target["duration_min"] = 0
+            target["zwo_file"] = ""
+            target["zwo_name"] = ""
+            target["adapted"] = True
+            target["adapted_reason"] = "Auto-adjust: rest (severity=rest)"
+            target["status"] = "pending"
+            actions.append({
+                "day": today_iso,
+                "before": {"type": old_type, "duration_min": old_duration, "tss": old_tss},
+                "after": {"type": "rest", "duration_min": 0, "tss": 0.0},
+                "rematched": False,
+                "zwo_cleared": True,
+            })
+        if scope == "week":
+            note = "week scope ignored for severity=rest; applies to today only"
+
+    # 6. severity=tier_down.
+    elif severity == "tier_down":
+        if scope == "today":
+            # Walk today only — mirror apply-tier-down body inline so we
+            # share the dry-run path.
+            target = None
+            target_week = None
+            for w in working.get("weeks", []) or []:
+                for s in w.get("sessions", []) or []:
+                    if s.get("day") == today_iso:
+                        target = s
+                        target_week = w
+                        break
+                if target:
+                    break
+            if target is not None and target_week is not None:
+                old_type = target.get("session_type", "") or ""
+                if old_type in tp._HARD_SESSION_TYPES:
+                    new_type = tp._drop_intensity(old_type)
+                    old_duration = int(target.get("duration_min", 0) or 0)
+                    old_tss = float(target.get("tss_estimate", 0) or 0)
+                    tss_per_h = tp.TSS_PER_HOUR.get(new_type, 45)
+                    new_tss = round(old_duration / 60 * tss_per_h, 1)
+                    target["session_type"] = new_type
+                    target["tss_estimate"] = new_tss
+                    target["adapted"] = True
+                    target["adapted_reason"] = (
+                        f"Auto-adjust: {old_type} → {new_type} (severity=tier_down)"
+                    )
+                    target["status"] = "pending"
+                    rematched = False
+                    zwo_cleared = False
+                    try:
+                        library = tp.load_workout_library()
+                        planned = tp.PlannedSession(
+                            day=date.fromisoformat(today_iso),
+                            day_name=target.get("day_name", ""),
+                            session_type=new_type,
+                            duration_min=old_duration,
+                            tss_estimate=new_tss,
+                            description=target.get("description", ""),
+                        )
+                        week_num = target_week.get("week_num", 0)
+                        try:
+                            day_idx = (date.fromisoformat(today_iso)
+                                       - date.fromisoformat(target_week["start"])).days
+                        except (KeyError, ValueError, TypeError):
+                            day_idx = 0
+                        old_zwo_name = target.get("zwo_name", "")
+                        excluded = {old_zwo_name} if old_zwo_name else set()
+                        tp.match_zwo(
+                            planned, library,
+                            week_num=week_num, day_idx=day_idx,
+                            used_names=excluded, raise_on_empty=True,
+                        )
+                        target["zwo_file"] = planned.zwo_file
+                        target["zwo_name"] = planned.zwo_name
+                        rematched = True
+                    except tp.NoCandidateWorkoutError:
+                        target["zwo_file"] = ""
+                        target["zwo_name"] = ""
+                        zwo_cleared = True
+                    except Exception:
+                        _log.exception("auto-adjust: today rematch swallowed")
+                    actions.append({
+                        "day": today_iso,
+                        "before": {"type": old_type, "duration_min": old_duration, "tss": old_tss},
+                        "after": {"type": new_type, "duration_min": old_duration, "tss": new_tss},
+                        "rematched": rematched,
+                        "zwo_cleared": zwo_cleared,
+                    })
+        else:  # scope == "week"
+            try:
+                wk_result = tp.apply_week_tier_down(working, today_iso, dry_run=dry_run)
+                actions = wk_result.get("actions", [])
+                if wk_result.get("note"):
+                    note = wk_result["note"]
+            except Exception:
+                _log.exception("auto-adjust: apply_week_tier_down failed")
+                return JSONResponse({"error": "tier-down walk failed"}, 500)
+
+    # 7. Persist + reforecast on real (non-dry-run) paths only.
+    sessions_modified = 0 if dry_run else len(actions)
+    if not dry_run and actions:
+        try:
+            try:
+                activities = db.query_activities(days=120)
+            except Exception:
+                activities = []
+            try:
+                training_snap = cached("training", get_today_metrics)
+                current_tsb = training_snap.get("tsb")
+            except Exception:
+                current_tsb = None
+            tsb_series: "dict | None" = None
+            if current_tsb is not None:
+                tsb_series = {}
+                for w in working.get("weeks", []) or []:
+                    try:
+                        ws = date.fromisoformat(w["start"])
+                    except (KeyError, ValueError, TypeError):
+                        continue
+                    for i in range(7):
+                        tsb_series[ws + timedelta(days=i)] = current_tsb
+            avail = {
+                day_iso2: float(entry["hours"])
+                for day_iso2, entry in working.get("availability", {}).items()
+                if isinstance(entry, dict) and "hours" in entry
+            }
+            working, _modified, _ri = tp.reforecast_dict(
+                working,
+                today_iso=today_iso,
+                tsb_series=tsb_series,
+                recent_activities=activities,
+                availability_overrides=avail,
+            )
+        except Exception:
+            _log.exception("auto-adjust: reforecast skipped")
+        try:
+            tp.atomic_write_plan(json_path, working)
+        except Exception:
+            _log.exception("auto-adjust: atomic_write_plan failed")
+            return JSONResponse({"error": "plan write failed"}, 500)
+
+    return {
+        "ok": True,
+        "severity": severity,
+        "source": source,
+        "scope": scope,
+        "dry_run": dry_run,
+        "actions": actions,
+        "sessions_modified": sessions_modified,
+        "note": note,
+    }
 
 
 @app.post("/api/wellness/import-hrv4training")
@@ -8921,6 +9178,9 @@ def _summarize_ride_for_calendar(ride: dict, ftp: int | None) -> dict:
         z12_sec = (tiz.get("z1") or 0) + (tiz.get("z2") or 0)
         z34_sec = (tiz.get("z3") or 0) + (tiz.get("z4") or 0)
         z5p_sec = sum(tiz.get(f"z{i}") or 0 for i in (5, 6, 7))
+        # v1.8.0 §F2 — pass through polarization classification + confidence
+        # so the calendar can color activity cards by load profile.
+        _pol = ride.get("polarization") or {}
         return {
             "ride_id": ride.get("ride_id") or "",
             "name": ride.get("name") or "",
@@ -8933,6 +9193,8 @@ def _summarize_ride_for_calendar(ride: dict, ftp: int | None) -> dict:
             "z5plus_min": round(z5p_sec / 60.0, 1),
             "decoupling_pct": ride.get("decoupling_pct"),
             "started_at": ride.get("started_at") or "",
+            "classification": _pol.get("classification") if isinstance(_pol, dict) else None,
+            "pol_confidence": _pol.get("confidence") if isinstance(_pol, dict) else None,
         }
 
     summary = ride.get("summary") or {}
@@ -8957,6 +9219,9 @@ def _summarize_ride_for_calendar(ride: dict, ftp: int | None) -> dict:
         or ""
     )
 
+    # v1.8.0 §F2 — pass through polarization classification + confidence
+    # so the calendar can color activity cards by load profile.
+    _pol = ride.get("polarization") or {}
     return {
         "ride_id": ride.get("ride_id") or ride.get("id") or "",
         "name": name,
@@ -8969,6 +9234,8 @@ def _summarize_ride_for_calendar(ride: dict, ftp: int | None) -> dict:
         "z5plus_min": z5plus,
         "decoupling_pct": decoupling,
         "started_at": ride.get("started_at") or parsed.get("start_time") or "",
+        "classification": _pol.get("classification") if isinstance(_pol, dict) else None,
+        "pol_confidence": _pol.get("confidence") if isinstance(_pol, dict) else None,
     }
 
 

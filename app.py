@@ -2064,6 +2064,9 @@ async def api_plan_auto_adjust(request: Request):
 
     actions: list[dict] = []
     note = ""
+    # v1.8.3 BUG-C: track diagnostic info (filled by apply_week_tier_down)
+    # so the UI can explain "No sessions need adjustment".
+    diagnostic: dict | None = None
 
     # 5. severity=rest → today-only rest (week scope collapses to today).
     if severity == "rest":
@@ -2174,6 +2177,10 @@ async def api_plan_auto_adjust(request: Request):
                 actions = wk_result.get("actions", [])
                 if wk_result.get("note"):
                     note = wk_result["note"]
+                # v1.8.3 BUG-C: capture diagnostic from helper.
+                wk_diag = wk_result.get("diagnostic")
+                if isinstance(wk_diag, dict):
+                    diagnostic = wk_diag
             except Exception:
                 _log.exception("auto-adjust: apply_week_tier_down failed")
                 return JSONResponse({"error": "tier-down walk failed"}, 500)
@@ -2221,7 +2228,7 @@ async def api_plan_auto_adjust(request: Request):
             _log.exception("auto-adjust: atomic_write_plan failed")
             return JSONResponse({"error": "plan write failed"}, 500)
 
-    return {
+    response: dict = {
         "ok": True,
         "severity": severity,
         "source": source,
@@ -2231,6 +2238,12 @@ async def api_plan_auto_adjust(request: Request):
         "sessions_modified": sessions_modified,
         "note": note,
     }
+    # v1.8.3 BUG-C: emit diagnostic only when actions=[] so the UI can
+    # explain why nothing was adjusted. Non-empty actions speak for
+    # themselves; suppressing the field there keeps the response small.
+    if not actions and diagnostic is not None:
+        response["diagnostic"] = diagnostic
+    return response
 
 
 @app.post("/api/wellness/import-hrv4training")

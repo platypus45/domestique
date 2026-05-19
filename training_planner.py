@@ -4892,8 +4892,13 @@ def apply_week_tier_down(
     persistence and reforecast on dry-run paths.
 
     Returns:
-        {"sessions_modified": int, "actions": list[dict], "note": str}
+        {"sessions_modified": int, "actions": list[dict], "note": str,
+         "diagnostic": {"candidates_considered": int, "reasons": list[dict]}}
         Each action: {day, before, after, rematched, zwo_cleared}.
+        v1.8.3 BUG-C: ``diagnostic`` enumerates every in-week session that
+        was considered but rejected, with reason in
+        {rest_day, already_easy, completed, at_bottom}. Used by the UI to
+        explain "No sessions need adjustment" when actions=[].
     """
     import copy as _copy
     working = _copy.deepcopy(plan) if dry_run else plan
@@ -4901,11 +4906,16 @@ def apply_week_tier_down(
         anchor = date.fromisoformat(day_iso)
     except (TypeError, ValueError):
         return {"sessions_modified": 0, "actions": [],
-                "note": f"invalid day_iso: {day_iso!r}"}
+                "note": f"invalid day_iso: {day_iso!r}",
+                "diagnostic": {"candidates_considered": 0, "reasons": []}}
     sunday = anchor + timedelta(days=(6 - anchor.weekday()))
 
     actions: list[dict] = []
     sessions_modified = 0
+    # v1.8.3 BUG-C: collect rejection reasons for every in-week session so
+    # the UI can explain "no actions" instead of saying nothing changed.
+    reasons: list[dict] = []
+    candidates_considered = 0
 
     # Library loaded once for all rematches; tolerate failure.
     try:
@@ -4920,15 +4930,31 @@ def apply_week_tier_down(
                 s_date = date.fromisoformat(s_day)
             except (TypeError, ValueError):
                 continue
+            # Only consider sessions inside this Mon-Sun window from anchor.
             if s_date < anchor or s_date > sunday:
                 continue
+            candidates_considered += 1
             if sess.get("status") == "completed":
+                reasons.append({"day": s_day, "reason": "completed"})
                 continue
             old_type = sess.get("session_type", "") or ""
+            if old_type == "rest" or not old_type:
+                reasons.append({"day": s_day, "reason": "rest_day"})
+                continue
             if old_type not in _HARD_SESSION_TYPES:
+                reasons.append({
+                    "day": s_day,
+                    "reason": "already_easy",
+                    "session_type": old_type,
+                })
                 continue
             new_type = _drop_intensity(old_type)
             if not new_type or new_type == old_type:
+                reasons.append({
+                    "day": s_day,
+                    "reason": "at_bottom",
+                    "session_type": old_type,
+                })
                 continue
 
             old_duration = int(sess.get("duration_min", 0) or 0)
@@ -4993,10 +5019,18 @@ def apply_week_tier_down(
             })
             sessions_modified += 1
 
+    # v1.8.3 BUG-C: include diagnostic on every response. When actions=[] the
+    # caller/UI can explain WHY no sessions were adjusted; when actions are
+    # non-empty the diagnostic is still useful for audit/logging.
+    diagnostic = {
+        "candidates_considered": candidates_considered,
+        "reasons": reasons,
+    }
     return {
         "sessions_modified": 0 if dry_run else sessions_modified,
         "actions": actions,
         "note": "",
+        "diagnostic": diagnostic,
     }
 
 

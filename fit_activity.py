@@ -218,7 +218,18 @@ def parse_rr_intervals(fit_path: Path) -> list[float]:
                     v = float(x)
                 except (TypeError, ValueError):
                     continue
-                if v > 0:
+                # v1.8.1 — FIT encodes "no value" for unused RR slots in
+                # an HrvMessage as 0xFFFF / 1000 = 65.535 seconds. Each
+                # HrvMessage holds up to 5 RR slots; when the chest
+                # strap doesn't deliver 5 beats in the message window
+                # the trailing slots get the sentinel. Pre-v1.8.1 the
+                # filter was ``v > 0`` which let sentinels through — DFA
+                # then saw an array dominated by 65.535 and bailed with
+                # ``no_rr_data``. Realistic RR range: 0.3 s (200 bpm)
+                # → 2.0 s (30 bpm). Tolerate a wider 0.25-3.0 band for
+                # edge-case beats; anything above 3 s is either a sensor
+                # glitch or the 65.535 sentinel.
+                if 0.25 < v < 3.0:
                     rrs.append(v)
     except Exception as e:
         log.warning(f"parse_rr_intervals({fit_path}) walk failed: {e}")

@@ -12881,11 +12881,46 @@ async function _rematchAccept(day) {
   const st = window._rematchState[day];
   if (!st || !st.current) return;
   const resultEl = document.getElementById('rematch-result-' + day);
-  if (resultEl) {
-    resultEl.innerHTML = '<div style="font-size:12px;color:var(--text2);padding:6px 0;">Applying rematch and reforecasting downstream sessions&hellip;</div>';
-  }
+  // v1.8.1 — staged progress display. Pre-v1.8.1 the accept flow showed
+  // a single "Applying..." line, then jumped to "Applied" once the
+  // backend returned — meanwhile loadCalendar / loadPlan / loadWeekly
+  // ran silently for several seconds. User reported: "rough, no nice
+  // message showing WORKOUT SHUFFLED... UPDATING PLAN... DONE". Render
+  // a 3-step progress indicator so the reflow is legible.
+  const c = st.current;
+  const stages = [
+    {key: 'reshuffle', label: 'WORKOUT RESHUFFLED', detail: 'New ZWO bound to your day.'},
+    {key: 'reflow', label: 'UPDATING PLAN', detail: 'Reforecasting downstream TSS / availability...'},
+    {key: 'refresh', label: 'UPDATING CALENDAR', detail: 'Repainting calendar, plan grid, weekly view...'},
+    {key: 'done', label: 'DONE', detail: ''},
+  ];
+  const paintProgress = (currentKey, sessionsModified) => {
+    if (!resultEl) return;
+    const rows = stages.map(s => {
+      let icon = '◯';
+      let color = 'var(--text3)';
+      const idx = stages.findIndex(x => x.key === s.key);
+      const curIdx = stages.findIndex(x => x.key === currentKey);
+      if (idx < curIdx) { icon = '✓'; color = 'var(--green)'; }
+      else if (idx === curIdx) { icon = (s.key === 'done' ? '✓' : '⟳'); color = (s.key === 'done' ? 'var(--green)' : 'var(--accent)'); }
+      const detail = (s.key === 'reflow' && sessionsModified != null && idx <= curIdx)
+        ? `${sessionsModified} session${sessionsModified === 1 ? '' : 's'} reflowed.`
+        : s.detail;
+      return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px;color:${color};">
+                <span style="width:14px;text-align:center;">${icon}</span>
+                <span style="font-weight:600;letter-spacing:0.4px;">${s.label}</span>
+                <span style="color:var(--text3);font-weight:400;font-size:11px;">${esc(detail)}</span>
+              </div>`;
+    }).join('');
+    resultEl.innerHTML = `<div style="border:1px solid var(--accent);background:rgba(59,130,246,0.06);border-radius:8px;padding:10px 12px;">
+      <div style="font-size:10px;color:var(--accent);letter-spacing:0.5px;font-weight:700;margin-bottom:6px;">RESHUFFLE PIPELINE</div>
+      ${rows}
+    </div>`;
+  };
+
+  paintProgress('reshuffle');
+  let data = {};
   try {
-    const c = st.current;
     const res = await fetch('/api/plan/accept-redraw', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
@@ -12901,28 +12936,39 @@ async function _rematchAccept(day) {
       if (resultEl) resultEl.innerHTML = '<div style="font-size:11px;color:var(--red);padding:6px 0;">Accept failed: server returned ' + res.status + '</div>';
       return;
     }
-    const data = await res.json();
-    const n = (data && typeof data.sessions_modified === 'number') ? data.sessions_modified : 0;
-    if (resultEl) {
-      resultEl.innerHTML = `<div style="border:1px solid var(--accent);background:rgba(34,197,94,0.10);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--text);">
-        <strong style="color:var(--accent);">Applied</strong> &middot; ${esc(String(st.current.zwo_name || st.current.zwo_file))} &middot; ${n} session${n === 1 ? '' : 's'} reflowed.
-        <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-sm" onclick="downloadZwoFile('${escJs(String(st.current.zwo_file || ''))}')">Download ZWO</button>
-          <button class="btn btn-sm" onclick="downloadFIT('${escJs(String(st.current.session_type || 'z2'))}', ${Number(st.current.duration_min || 0)}, '${escJs(String((st.current.zwo_file||'').replace(/\.zwo$/i, '') || 'workout'))}', '${escJs(String(st.current.zwo_file || ''))}')">Download FIT</button>
-        </div>
-      </div>`;
-    }
-    // Clear per-day state so the next Rematch click starts fresh.
-    delete window._rematchState[day];
-    // Refresh dependent views so the swap (and reforecast) lands in the
-    // visible UI without a hard reload. v1.6.5 inherited from
-    // pre-v1.7.0 — same three calls.
-    try { window._calDidAutoScroll = true; await loadCalendar(); } catch(_) {}
-    try { await loadPlan(); } catch(_) {}
-    try { loadWeeklyCalendar(); } catch(_) {}
+    data = await res.json();
   } catch (e) {
     if (resultEl) resultEl.innerHTML = '<div style="font-size:11px;color:var(--red);padding:6px 0;">Accept failed: ' + esc(e.message || e) + '</div>';
+    return;
   }
+  const n = (data && typeof data.sessions_modified === 'number') ? data.sessions_modified : 0;
+  paintProgress('reflow', n);
+  // brief delay so the reflow stage is visible even on fast reforecasts
+  await new Promise(r => setTimeout(r, 250));
+
+  paintProgress('refresh', n);
+  try { window._calDidAutoScroll = true; await loadCalendar(); } catch(_) {}
+  try { await loadPlan(); } catch(_) {}
+  try { loadWeeklyCalendar(); } catch(_) {}
+
+  paintProgress('done', n);
+  // Final state: stages complete + download buttons surfaced.
+  if (resultEl) {
+    setTimeout(() => {
+      resultEl.innerHTML = `<div style="border:1px solid var(--green);background:rgba(34,197,94,0.10);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--text);">
+        <strong style="color:var(--green);">✓ Plan updated</strong>
+        &middot; ${esc(String(c.zwo_name || c.zwo_file))}
+        &middot; ${n} session${n === 1 ? '' : 's'} reflowed
+        <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm" onclick="downloadZwoFile('${escJs(String(c.zwo_file || ''))}')">Download ZWO</button>
+          <button class="btn btn-sm" onclick="downloadFIT('${escJs(String(c.session_type || 'z2'))}', ${Number(c.duration_min || 0)}, '${escJs(String((c.zwo_file||'').replace(/\.zwo$/i, '') || 'workout'))}', '${escJs(String(c.zwo_file || ''))}')">Download FIT</button>
+        </div>
+      </div>`;
+    }, 600);
+  }
+  // Clear per-day state so the next Rematch click starts fresh.
+  delete window._rematchState[day];
+  try { showToast('Plan updated · ' + n + ' session' + (n === 1 ? '' : 's') + ' reflowed', 3000); } catch(_) {}
 }
 
 function _rematchDecline(day) {

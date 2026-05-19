@@ -5540,9 +5540,23 @@ async function applyReadinessTierDown() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.ok === false) {
-      const reason = (data.error || data.action || ('HTTP ' + res.status));
-      if (statusEl) statusEl.innerHTML = `<span style="color:var(--orange);">Could not apply: ${esc(String(reason))}</span>`;
-      try { showToast('Tier-down: ' + reason, 4000); } catch(_) {}
+      // v1.8.3 BUG-D — branch on data.action so the toast tells the user
+      // WHAT the error actually was instead of the generic "no_change".
+      const action = String(data.action || '');
+      const sessType = String(data.session_type || '');
+      let msg;
+      if (action === 'already_easy' || action === 'already_at_bottom') {
+        msg = 'Session is already at the easiest tier. Nothing to drop.';
+      } else if (action === 'unknown_type') {
+        msg = `Cannot tier-down: session type '${sessType}' is not on the ladder.`;
+      } else if (action === 'no_change') {
+        msg = 'Could not apply: no_change (session_type unchanged after drop).';
+      } else {
+        const reason = (data.error || action || ('HTTP ' + res.status));
+        msg = 'Could not apply: ' + reason;
+      }
+      if (statusEl) statusEl.innerHTML = `<span style="color:var(--orange);">${esc(msg)}</span>`;
+      try { showToast(msg, 4000); } catch(_) {}
       if (btn) { btn.disabled = false; btn.textContent = '⇣ Apply tier-down to today'; }
       return;
     }

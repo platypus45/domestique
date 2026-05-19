@@ -1885,6 +1885,20 @@ async def api_readiness_apply_tier_down(request: Request):
         if old_type in ("rest", "recovery"):
             return {"ok": False, "action": "already_easy", "day": day_iso,
                     "session_type": old_type}
+        # v1.8.3 BUG-D — distinguish error reasons so the user gets a
+        # specific toast instead of the generic "could not apply: no_change":
+        #   1. session_type unknown to the Seiler ladder → unknown_type
+        #   2. session_type is already at the practical intensity bottom
+        #      (z2 / long_z2 — these ARE in the ladder but dropping them
+        #      yields a longer/lower-volume z2, not a real intensity tier-down)
+        #      → already_at_bottom
+        #   3. _drop_intensity returns same value defensively → no_change (kept)
+        if old_type not in tp._INTENSITY_LADDER:
+            return {"ok": False, "action": "unknown_type", "day": day_iso,
+                    "session_type": old_type}
+        if old_type in ("z2", "long_z2"):
+            return {"ok": False, "action": "already_at_bottom", "day": day_iso,
+                    "session_type": old_type}
         new_type = tp._drop_intensity(old_type)
         if not new_type or new_type == old_type:
             return {"ok": False, "action": "no_change", "day": day_iso,
@@ -12146,6 +12160,95 @@ def api_rides(limit: int = Query(0)):
         merged = merged[:limit]
 
     return merged
+
+
+# v1.8.3 BUG-E — interval label override for misclassified RECOVERY rows.
+# ICU's auto-detection labels long flat segments "RECOVERY" regardless of
+# actual power. Domestique used to display the label verbatim, so the user
+# saw "RECOVERY" rows in the 23 INTERVALS table for segments averaging
+# 189-297W (Z3-Z5+ on a 248W FTP). We now compute the zone from avg power
+# and override the displayed name when ICU's label disagrees.
+_RECOVERY_LABEL_TOKEN = "RECOVERY"
+# Structured ICU labels look like "302s@243w91rpm" or "11s@396w88rpm" —
+# group_id strings encoding duration+watts+cadence. Preserve those verbatim.
+_STRUCTURED_NAME_RE = re.compile(r"\d+\s*w", re.IGNORECASE)
+
+
+def _zone_from_ftp_pct(pct: float) -> str:
+    """Return the Z1..Z7 band for a %FTP value (Coggan 7-zone)."""
+    if pct >= 151:
+        return "Z7"
+    if pct >= 121:
+        return "Z6"
+    if pct >= 106:
+        return "Z5"
+    if pct >= 91:
+        return "Z4"
+    if pct >= 76:
+        return "Z3"
+    if pct >= 56:
+        return "Z2"
+    return "Z1"
+
+
+def _display_interval_name(row: dict, ftp: int | float | None) -> str:
+    """Override ICU's interval name when it disagrees with the computed zone.
+
+    Rules (in order):
+    1. Structured ICU labels (containing a "<watts>w" pattern like
+       "302s@243w91rpm") are always preserved.
+    2. If we have no FTP or no avg_power, fall back to ICU's raw name
+       (or an em-dash placeholder when it's blank).
+    3. If ICU's name is exactly "RECOVERY" but avg_power yields Z2+,
+       replace with "Z<n> <watts>W".
+    4. Otherwise keep ICU's name (with a zone+watts fallback when blank).
+    """
+    icu_name = (row.get("name") or "").strip()
+    try:
+        avg_w = int(row.get("avg_power_w") or 0)
+    except (TypeError, ValueError):
+        avg_w = 0
+    try:
+        ftp_v = float(ftp or 0)
+    except (TypeError, ValueError):
+        ftp_v = 0.0
+
+    # Rule 1: preserve structured names (e.g. "302s@243w91rpm").
+    if icu_name and _STRUCTURED_NAME_RE.search(icu_name):
+        return icu_name
+
+    # Rule 2: missing FTP or avg_power → no override possible.
+    if avg_w <= 0 or ftp_v <= 0:
+        return icu_name or "—"
+
+    pct = avg_w / ftp_v * 100.0
+    zone = _zone_from_ftp_pct(pct)
+
+    # Rule 3: override misclassified RECOVERY.
+    if icu_name.upper() == _RECOVERY_LABEL_TOKEN and zone != "Z1":
+        return f"{zone} {avg_w}W"
+
+    # Rule 4: keep ICU's name (or synthesise a zone+watts fallback).
+    return icu_name or f"{zone} {avg_w}W"
+
+
+def _project_intervals_for_display(rec: dict) -> dict:
+    """Apply the v1.8.3 BUG-E name override to each interval row.
+
+    Mutates the record's ``intervals`` list in place (each row gets its
+    ``name`` rewritten where Rule 3 applies). Safe on records with no
+    intervals or no FTP.
+    """
+    if not isinstance(rec, dict):
+        return rec
+    intervals = rec.get("intervals")
+    if not isinstance(intervals, list) or not intervals:
+        return rec
+    ftp = rec.get("ftp_at_ride") or getattr(config, "ATHLETE_FTP_W", None)
+    for row in intervals:
+        if isinstance(row, dict):
+            row["name"] = _display_interval_name(row, ftp)
+    return rec
 
 
 @app.get("/api/ride/{ride_id}/detail")

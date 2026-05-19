@@ -438,8 +438,15 @@ def rewrite_stale_plan_classifications(plan_path: "Path | str") -> int:
 # One-step de-escalation applied when TSB is deeply negative or actuals show
 # the athlete is running out of road. Ordering matches Seiler's HIT taxonomy:
 # VO2max → threshold → over-under → sweetspot → tempo → endurance → recovery.
+# v1.8.3 — add `sprint` at the top of the ladder. Sprint / neuromuscular
+# sessions ARE in `_HARD_SESSION_TYPES` (so the tier-down candidate
+# filter accepts them) but pre-v1.8.3 the ladder didn't include them,
+# so `_drop_intensity("sprint")` returned "sprint" unchanged → the
+# auto-adjust week walker silently skipped the session and reported
+# `actions=[]`. Sprint is the highest-intensity bucket in Seiler's
+# polarized model; one-step drop goes to vo2max.
 _INTENSITY_LADDER = (
-    "vo2max", "threshold", "overunder", "sweetspot",
+    "sprint", "vo2max", "threshold", "overunder", "sweetspot",
     "tempo", "z2", "long_z2", "recovery",
 )
 

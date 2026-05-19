@@ -1,5 +1,63 @@
 # Changelog
 
+## v1.8.1 — DFA correctness + reshuffle speed + chest-strap RR pipeline (2026-05-19)
+
+Three threads, one ship, delivered via 4-agent parallel-worktree dispatch (DFA-A algorithm review, DFA-B ICU comparison research, SPEED-A library cache, SPEED-B reforecast fast path) + a v1.8.1-base patch (RR sentinel filter + staged reshuffle UX).
+
+### Fix: chest-strap HRV pipeline (`fit_activity.parse_rr_intervals`)
+
+User wore HRM strap on today's ride. FIT carried 5,658 HrvMessage records (28,290 RR slots). But ~80 % of RR slots were the FIT-spec sentinel **`0xFFFF / 1000 = 65.535 s`** (emitted by Garmin for unused RR positions in each 5-slot HrvMessage when the strap doesn't deliver 5 beats inside the message window). Pre-v1.8.1 filter was `v > 0` — sentinels passed through; DFA saw an array dominated by 65.535 values and bailed with `no_rr_data`.
+
+v1.8.1 narrows the filter to `0.25 < v < 3.0` (realistic 30–200 bpm RR range). Verified live on today's ride: RR count went from 0 → 13,386 valid; DFA went `no_rr_data` → `computed`, `avg = 1.02`, `lt1_minutes = 4`.
+
+### Fix: DFA algorithm literature grounding (`analytics.compute_dfa_alpha1`)
+
+DFA-A agent reviewed `_dfa_alpha1_window` + `compute_dfa_alpha1` against Rogers 2021 and Gronwald & Hoos 2020. Algorithm itself was already correct (cumulative-sum + linear detrend + log-log slope over scale range [4, 16]). Added literature citations to docstrings + 12 tests covering: known-pattern stochastic series (white noise → α1 ≈ 0.5, near-constant → α1 ≈ 1.5, pink noise → α1 ≈ 1.0), insufficient-beats short-circuit, sanity gate boundaries, LT1 threshold accumulation. Constants confirmed:
+
+- Sanity range `[0.30, 1.60]` (Gronwald & Hoos 2020).
+- LT1 threshold `α1 < 0.75` (Rogers 2021).
+- Window 120 s / step 30 s (Rogers 2021 default).
+
+### Research: ICU does NOT expose DFA α1
+
+DFA-B agent probed 5 ICU API surfaces. ICU exposes raw RR via `streams.hrv` (the same data we already extract from FIT) but never computes α1 itself. Recommendation: keep DFA local. Two orthogonal future wins noted (not in this ship):
+
+1. RR-fallback via `streams.hrv` when FIT is missing (Strava/Coros imports).
+2. Persist ICU's `lthr` / FTP / CP per-ride for the Treff-2019 classifier anchors.
+
+Report at `/tmp/dfa_icu_comparison.md`.
+
+### Perf: `load_workout_library` hot-cache fix (SPEED-A)
+
+Cache key was `(zwo_count, max_mtime)` but the validator did `sorted(WORKOUT_DIR.glob("*.zwo")) + p.stat()` over 3,054 files on every call → 80–100 ms validator overhead drowned the cache hit. Added a fast-tier validator (`os.stat(WORKOUT_DIR).st_mtime` only) with the existing per-file sweep as fallback when the directory mtime moves. **Cold 794 ms → hot 0.082 ms (~9,700× speedup).** 4 tests pin cold/hot timing + invalidation.
+
+### Perf: `reforecast_dict` fast path (SPEED-B)
+
+New `accept_redraw_fast=True` kwarg on `reforecast` + `reforecast_dict` skips the whole-plan G4 ACWR rescale and G3 polarization-breach pass (both unnecessary for a single-session swap — the swap doesn't change last week's actual TSS or this week's rolling polarization). `_accept_redraw_apply` opts in via the kwarg; all other callers (save-availability, auto-reforecast, manual reforecast) keep full behavior. 6 tests verify: fast-path < 500 ms, downstream propagation still fires, G3+G4 skipped on fast path, default unchanged, source-level wiring on `_accept_redraw_apply`.
+
+Documented trade-off in docstring: a single-session swap won't auto-rescale next week's `tss_target` even if last week crossed the 1.5× ACWR threshold. Users must call `/api/plan/reforecast` (full path) to pick that up.
+
+### UX: staged reshuffle progress
+
+User reported "rough — no nice message showing WORKOUT SHUFFLED... UPDATING PLAN... DONE". Pre-v1.8.1 the accept-redraw flow showed a single "Applying..." line then jumped to "Applied" while `loadCalendar` + `loadPlan` + `loadWeeklyCalendar` ran silently for several seconds. v1.8.1 paints a 4-stage progress indicator (`WORKOUT RESHUFFLED` → `UPDATING PLAN` → `UPDATING CALENDAR` → `DONE`) so the multi-second refresh is legible. Final card surfaces Download ZWO + Download FIT.
+
+### Tests
+
+- `test_v181_rr_filter_and_reshuffle_ux.py` (5): RR sentinel filter + staged UX wiring.
+- `test_v181_dfa_algorithm.py` (12): known-input α1 validation + sanity gate.
+- `test_v181_library_cache.py` (4): cold/hot timing + invalidation.
+- `test_v181_reforecast_fastpath.py` (6): fast-path latency + skip semantics + default behavior.
+
+1375 → **1401 passing** (+26 new). 6 pre-existing failures unchanged. 1 flake (`test_route_archetypes`) confirmed isolation-only (passes when run alone).
+
+### Multi-wave dispatch outcome
+
+- Wave 0 research (DFA-B): 1 research agent, ICU comparison report.
+- Wave 2 impl: 3 parallel impl agents in worktrees (DFA-A, SPEED-A, SPEED-B) + 1 coordinator-staged base commit (RR + staged UX).
+- Wave 3 QA: full pytest sweep, 0 new regressions.
+- Wave 4 fix: skipped (no findings).
+- Wave 5 ship: cherry-pick 3 branches + base commit + tag + DMG + release.
+
 ## v1.8.0 — Automated TSB+HRV planner + Hooper override + Treff 2019 classifier + Calendar coloring (2026-05-19)
 
 Three features one ship, all driven by the same user goal: "**make the plan adjust itself based on live TSB + HRV, let me override with Hooper, and color past activities by their actual load profile**".

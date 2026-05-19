@@ -219,7 +219,7 @@ See [docs/cycling_apps.md](docs/cycling_apps.md) for the full table.
 
 ## Releases
 
-Latest: **[v1.8.1 — DFA correctness + reshuffle speed + chest-strap RR pipeline](https://github.com/platypus45/domestique/releases/latest)** (2026-05-19).
+Latest: **[v1.8.2 — Plan-vs-actual content match + README restructure](https://github.com/platypus45/domestique/releases/latest)** (2026-05-19).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

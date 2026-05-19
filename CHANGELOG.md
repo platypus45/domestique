@@ -1,5 +1,98 @@
 # Changelog
 
+## v1.8.0 — Automated TSB+HRV planner + Hooper override + Treff 2019 classifier + Calendar coloring (2026-05-19)
+
+Three features one ship, all driven by the same user goal: "**make the plan adjust itself based on live TSB + HRV, let me override with Hooper, and color past activities by their actual load profile**".
+
+Delivered via 3-agent parallel-worktree multi-wave dispatch (skipped grill wave — plans aligned). Each agent owned a disjoint file set; Wave 5 coordinator cherry-picked all three commits onto clean-main.
+
+### F1 — Automated severity → Hooper-override precedence
+
+**`compute_training_severity(profile_id, day_iso)`** in `readiness_composite.py`:
+
+| Source | Trigger | Severity |
+|---|---|---|
+| Hooper (manual) | `daily_log` row exists today AND sleep+fat+stress+sor > 0 | ≥18 → `rest`, 14-17 → `tier_down`, <14 → `normal` |
+| TSB+HRV (auto) | No Hooper today | score <3 → `rest`, 3-5 → `tier_down`, ≥5 → `normal` |
+| Insufficient | No HRV signal AND no Hooper | `normal` + source `insufficient` |
+
+Returns `{score, severity, source, reasons, hooper_index, tsb}`. Reuses existing `compute_readiness_composite` score; doesn't redesign the Bayesian blender.
+
+### F1 — `POST /api/plan/auto-adjust` endpoint
+
+Body `{scope: "today"|"week", dry_run: bool}`. Walks remaining hard sessions (Mon-Sun, `session_type ∈ _HARD_SESSION_TYPES`, `status != completed`), tier-downs each via `tp._drop_intensity`, recomputes TSS, re-matches ZWO, then triggers `tp.reforecast_dict` for downstream propagation.
+
+- `dry_run=true` → `copy.deepcopy(plan)`, returns actions without persisting (UI preview).
+- `dry_run=false` → persists via `tp.atomic_write_plan` + reforecast.
+- `severity=rest + scope=week` → collapses to today-only rest with explanatory `note`.
+- `severity=normal` → no actions, returns 0.
+- `NoCandidateWorkoutError` mid-walk → continue with `rematched: false, zwo_cleared: true` rather than aborting.
+
+### F1 — Frontend wiring
+
+- Readiness card source pill: "From HRV+TSB" / "From Hooper override" / "Insufficient signal" next to score circle.
+- **Two** action buttons when `severity = tier_down`: v1.7.5's "⇣ Apply tier-down to today" PLUS new "🩹 Auto-adjust this week".
+- Severity = `rest` → only "🛏 Apply rest day" button.
+- Dry-run preview modal: per-day table (day | before | after | rematched). Apply commits + toast + refresh of today-session/calendar/plan/weekly.
+
+### F3 — Treff 2019 PI-band classifier
+
+`analytics.classify_distribution` rewritten. Centroid-distance replaced with ordered PI-band cascade:
+
+```python
+if pi > 2.0:                          return "polarized"
+if z3z4 >= 35 and z3z4 > z5plus + 10: return "pyramidal"
+if z5plus > 40 and z1z2 < 20:         return "hiit"
+if z3z4 >= 30 and z5plus <= 15 and z1z2 <= 50: return "threshold"
+if z1z2 >= 70:                        return "base"
+return "unique"
+```
+
+**Treff verification cases (all green):**
+
+| z1z2 | z3z4 | z5+ | PI | Label |
+|---|---|---|---|---|
+| 15 | 49.2 | 35.8 | 0.01 | **pyramidal** (was `hiit @ 1% confidence`) |
+| 75 | 5 | 20 | 4.0 | polarized |
+| 80 | 15 | 5 | 0.5 | base |
+| 30 | 60 | 10 | 0.3 | threshold |
+| 10 | 30 | 60 | 0.2 | hiit |
+| 33 | 33 | 34 | 0.05 | unique |
+
+`classification_confidence` shifted from centroid-distance to PI-distance from band center, [0.5, 1.0] range for non-unique.
+
+### F2 — Calendar activity coloring
+
+Past activities on weekly + monthly calendar get border-color by polarization classification:
+
+```js
+polarized: var(--red)
+pyramidal: var(--orange)
+threshold: var(--yellow)
+hiit:      #ec4899  (pink, inline)
+base:      var(--green)
+unique:    var(--text3)
+```
+
+`_summarize_ride_for_calendar` extended to pass through `classification` + `pol_confidence` from `ride.polarization`. Both `renderCalDay` (main calendar) and `loadWeeklyCalendar` (weekly view) bind colors.
+
+### Tests
+
+- **A-BACKEND**: `test_v180_severity.py` + `test_v180_classifier.py` (+ adapted `test_polarization_index.py`, `test_ride_detail_zones.py` for new rules).
+- **B-API**: `test_v180_auto_adjust.py` (14 tests: 5 helper + 9 endpoint) + `test_v180_calendar_classification.py` (5 tests).
+- **C-FRONT**: `test_v180_frontend_wiring.py` (22 tests covering source pill, button gates, modal flow, calendar coloring helpers in both render paths).
+
+1316 → **1375 passing** (+59 new). 6 pre-existing unrelated failures unchanged.
+
+### Multi-wave dispatch summary
+
+- Wave 0: 3 research agents (backend / API / front) — 300-word reports to `/tmp/plan_v180_*.md`.
+- Wave 1 grill: **skipped** (plans aligned, edge-case questions resolved in /tmp/MASTER_DECISIONS_v180_addendum.md).
+- Wave 2: 3 parallel impl agents in isolated worktrees with locked file ownership (A-BACKEND: readiness/analytics; B-API: app/training_planner; C-FRONT: dashboard.html). Disjoint file sets → no merge conflicts on cherry-pick.
+- Wave 3 QA: full pytest sweep, 0 new regressions.
+- Wave 4 fix: skipped (no findings).
+- Wave 5 ship: cherry-pick + tag + DMG + release.
+
 ## v1.7.5 — Apply tier-down + Last-week feedback + DFA timeout fix (2026-05-19)
 
 Three changes rolled into one ship, all driven by the same user thread (readiness 4.7 with no actionable button + missing prior-week context + DFA α1 silently failing on every real ride).

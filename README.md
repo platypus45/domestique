@@ -11,8 +11,8 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-3054-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v1.8.2-brightgreen" alt="Version">
-  <img src="https://img.shields.io/badge/Tests-1412%20passing-success" alt="Tests">
+  <img src="https://img.shields.io/badge/Version-v1.8.3-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Tests-1422%20passing-success" alt="Tests">
 </p>
 
 ---
@@ -219,7 +219,7 @@ See [docs/cycling_apps.md](docs/cycling_apps.md) for the full table.
 
 ## Releases
 
-Latest: **[v1.8.2 — Plan-vs-actual content match + README restructure](https://github.com/platypus45/domestique/releases/latest)** (2026-05-19).
+Latest: **[v1.8.3 — 5-bug parallel wave (classifier / HRV-toast / week-tier-down / apply-tier-down / interval-labels)](https://github.com/platypus45/domestique/releases/latest)** (2026-05-19).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

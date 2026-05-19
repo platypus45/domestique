@@ -1,5 +1,52 @@
 # Changelog
 
+## v1.8.3 — 5-bug parallel wave (classifier / HRV-toast / week-tier-down / apply-tier-down / interval-labels) (2026-05-19)
+
+5 distinct bugs surfaced from user screenshots, delivered via 5-agent parallel-worktree wave.
+
+### BUG-A: Classifier — UNIQUE should be PYRAMIDAL
+
+ICU's FastFitness.Tips classified the user's ride (z1z2=58.3, z3z4=27.6, z5+=14.1, PI=1.47) as **Pyramidaal**; Domestique returned `unique` because the v1.8.0 strict rule required `z3z4 >= 35`. Added moderate-pyramid branch BEFORE the unique fallback: `z3z4 >= 20 AND z3z4 > z5+ AND 40 <= z1z2 < 70 → pyramidal`. Catches the textbook pyramid shape (Z1+Z2 base, mid Z3+Z4, small Z5+ peak) the strict rule misses. Existing v1.8.0 cases preserved — strict rule still catches the Treff reference ride (15/49.2/35.8). 5 new tests in `test_v183_classifier_moderate_pyramid.py`.
+
+### BUG-B: HRV-toast false positive
+
+Popup "Your last ride had HR but no beat-to-beat HRV" fired even after today's ride landed `dfa_alpha1_status='computed'` (13386 RR after v1.8.1 sentinel filter). Backend `/api/wellness/hrv-recording-status` was reading the very latest ride only; a single misfire showed the educational prompt unnecessarily. v1.8.3 walks the last 3 rides newest-first and suppresses the toast when ANY has `status='computed'`. Dismiss persistence + version flags unchanged. 3 new tests in `test_v183_hrv_prompt_suppress.py`.
+
+### BUG-C: Auto-adjust says "No sessions need adjustment" despite TIER_DOWN severity
+
+Two-layer bug:
+
+1. **Diagnostic gap (BUG-C agent)**: when `apply_week_tier_down` returns `actions=[]`, the response now includes a `diagnostic` block with `candidates_considered` + per-day rejection reasons (`rest_day`, `already_easy`, `completed`, `at_bottom`, `not_on_ladder`). Frontend renders the list under "No sessions need adjustment." so the user knows why.
+2. **Real filter bug (coordinator fix-forward)**: today's session was a `sprint` (90min, 142 TSS, status=pending). `sprint` IS in `_HARD_SESSION_TYPES` so the filter accepted it. But `_INTENSITY_LADDER` lacked `sprint` — `_drop_intensity("sprint")` returned `"sprint"` unchanged, and the `new_type == old_type → continue` line silently skipped today's session. Added `sprint` at index 0 of `_INTENSITY_LADDER`; one-step drop now goes `sprint → vo2max`. Existing `TSS_PER_HOUR["sprint"]=95`, `["vo2max"]=75` cover the tier-down rescale.
+
+7 new tests in `test_v183_week_tierdown_diagnostic.py` + ladder fix-forward.
+
+### BUG-D: Apply tier-down "could not apply: no_change"
+
+`POST /api/readiness/apply-tier-down` returned generic `no_change` for both "session at bottom" and "session_type unknown to ladder". v1.8.3 emits distinct actions:
+
+- `already_easy` — rest/recovery short-circuit (existing v1.7.5 contract).
+- `already_at_bottom` — session is at the bottom of the Seiler ladder.
+- `unknown_type` — session_type not in `_INTENSITY_LADDER` (e.g. `ftp_test`).
+- `no_change` — defensive fallback (unreachable after the above branches).
+
+Frontend renders specific toast per branch. 5 new tests in `test_v183_apply_tierdown_error.py`.
+
+### BUG-E: Interval labels show RECOVERY for Z3 power
+
+23 INTERVALS table showed rows labeled "RECOVERY" with Avg Power 189-297W (76-120% FTP — Z3 / Z4 / Z5+). ICU's auto-detection labels long flat segments "RECOVERY" regardless of power; Domestique displayed verbatim. Added `_display_interval_name(row, ftp)` helper that overrides ICU's name with `Z<n> <watts>W` when ICU says "RECOVERY" but computed zone-from-power is Z2 or above. Structured ICU names (`"302s@243w91rpm"`) and genuine Z1 segments preserved. 5 new tests in `test_v183_interval_label_override.py`.
+
+### Tests
+
+1412 → **1422+ passing** (+26 from BUG-A/B/C/D/E + ladder fix-forward). 2 existing `test_polarization_index` tests updated to match the new moderate-pyramid classification (the test had asserted the pre-v1.8.3 `unique` behavior — now correctly asserts `pyramidal`, matching ICU's UI).
+
+### Multi-wave dispatch outcome
+
+- Wave 2 (5 parallel impl agents in worktrees, file-ownership locked): BUG-A `1f5488ee`, BUG-B `ce9faa5c`, BUG-D `515746d9`, BUG-C `1dd8ef4b`, BUG-E `9bb6c0c4`. All committed to `clean-main`.
+- Coordinator post-merge fix-forward: ladder `96d5ef67` (sprint added to `_INTENSITY_LADDER`) — caught by user review of BUG-C agent's "legitimately-empty" conclusion that was wrong.
+- v1.8.0 test contract update for moderate-pyramid (2 polarization_index tests).
+- Wave 3 QA: full pytest sweep, 0 NEW regressions beyond the 2 intentional contract updates.
+
 ## v1.8.2 — Plan-vs-actual content match + README restructure (2026-05-19)
 
 Two threads delivered via 4-agent parallel dispatch (MATCH-A current-state research, MATCH-B design proposal, MATCH-IMPL implementation, README-AGENT restructure).

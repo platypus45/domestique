@@ -85,11 +85,12 @@ class TestPolarizationIndex(unittest.TestCase):
     # --- v1.8.0 PI-band cascade ---
 
     def test_classify_user_may_1_ride_under_pi_band(self):
-        # 47.9/34.2/17.9 — z5+ above 15% so threshold rule fails;
-        # z3z4 < 35 so pyramidal rule fails; z1z2 < 70 so base fails.
-        # Falls through to unique. Old centroid-distance classifier called
-        # this threshold/pyramidal; the PI-band cascade is stricter.
-        self.assertEqual(classify_distribution(47.9, 34.2, 17.9), "unique")
+        # 47.9/34.2/17.9 — v1.8.0 fell through to "unique". v1.8.3 added
+        # a moderate-pyramid branch (z3z4 >= 20 AND z3z4 > z5+ AND
+        # 40 <= z1z2 < 70 → pyramidal) — matches ICU's FastFitness.Tips
+        # which calls this distribution a textbook pyramid (Z1+Z2 base,
+        # smaller Z3+Z4 middle, tiny Z5+ peak).
+        self.assertEqual(classify_distribution(47.9, 34.2, 17.9), "pyramidal")
 
     def test_classify_polarized_requires_pi_above_2(self):
         # Distribution at the legacy polarized centroid (80/5/15) has
@@ -123,9 +124,13 @@ class TestPolarizationBlock(unittest.TestCase):
 
     def test_compute_block_from_user_ride_zone_dict(self):
         # User's May 1 ride zone seconds reproduced exactly. Under the
-        # v1.8.0 PI-band cascade, this borderline distribution falls
-        # through every band rule and lands on "unique" — z5+ above
-        # threshold's 15% ceiling, z3z4 below pyramidal's 35% floor.
+        # v1.8.0 PI-band cascade this fell through every rule and
+        # landed on "unique". v1.8.3 added a moderate-pyramid branch
+        # (z3z4 >= 20 AND z3z4 > z5+ AND 40 <= z1z2 < 70 → pyramidal)
+        # so the same ride now classifies as "pyramidal" — matching
+        # ICU's FastFitness.Tips UI which calls 47.9/34.2/17.9 a
+        # textbook pyramid (Z1+Z2 base, smaller Z3+Z4 middle, tiny
+        # Z5+ peak).
         tiz = {
             "z1": 2311, "z2": 1952, "z3": 1796, "z4": 1251,
             "z5": 698, "z6": 617, "z7": 283,
@@ -137,8 +142,8 @@ class TestPolarizationBlock(unittest.TestCase):
         self.assertAlmostEqual(block["z5plus_pct"], 17.9, places=1)
         # Treff/FastFitness PI for this distribution rounds to 0.28.
         self.assertAlmostEqual(block["polarization_index"], 0.28, places=2)
-        # PI-band cascade fails every rule for this distribution.
-        self.assertEqual(block["classification"], "unique")
+        # v1.8.3: now matches ICU's pyramidal label.
+        self.assertEqual(block["classification"], "pyramidal")
         # Confidence is surfaced in the block for the UI to render.
         self.assertIn("confidence", block)
         self.assertGreaterEqual(block["confidence"], 0.0)

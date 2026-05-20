@@ -50,39 +50,16 @@ After your first ride: drag the `.fit` onto the upload box (or let ICU sync). Do
 
 ### Installing on macOS
 
-Two install paths. Pick whichever you prefer.
+Download `Domestique-vX.Y.Z.dmg` from the [latest release](https://github.com/platypus45/domestique/releases/latest). Open it, drag `Domestique.app` to `Applications`, double-click. That's it.
 
-#### Path A — Direct DMG download (notarized, recommended)
-
-Grab `Domestique-vX.Y.Z.dmg` from the [latest release](https://github.com/platypus45/domestique/releases/latest), open it, drag `Domestique.app` onto `Applications`, double-click to launch. **No Gatekeeper prompts, no Terminal commands** — the DMG is codesigned with Apple Developer ID (team `L7Q39W3U8Z`) and notarized through Apple's malware scan, so macOS recognizes the bundle as trusted on first launch.
-
-Updates: re-grab the DMG from GitHub releases. (Auto-update via Sparkle is on the roadmap.)
-
-> **Legacy note (v1.8.4 and earlier).** Pre-notarization releases were ad-hoc signed only and triggered Sequoia's *"Apple could not verify..."* / *"Domestique is damaged..."* dialogs. The recommended bypass for those builds is one Terminal command after install: `xattr -dr com.apple.quarantine /Applications/Domestique.app`. The v1.8.5+ builds bypass this requirement entirely via Apple notarization. If you still see Gatekeeper dialogs on a v1.8.5+ DMG, you've downloaded a stale asset — refresh from the [latest release](https://github.com/platypus45/domestique/releases/latest).
-
-#### Path B — Homebrew Cask
-
-If you prefer package-manager workflows or want one-command upgrades, install via Homebrew. The Cask tap also strips the `com.apple.quarantine` flag (redundant once notarization lands, but harmless).
-
-**Don't have Homebrew yet?** Install it from [https://brew.sh](https://brew.sh):
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-```
-
-Then install Domestique:
+Or via Homebrew:
 
 ```bash
 brew tap platypus45/tap
 brew install --cask domestique
-open /Applications/Domestique.app
 ```
 
-Upgrade later via `brew upgrade --cask domestique`. Uninstall with `brew uninstall --cask domestique` (add `--zap` to also remove `~/.domestique`).
-
-(Tap repo: [https://github.com/platypus45/homebrew-tap](https://github.com/platypus45/homebrew-tap) — copy `Casks/domestique.rb` from this repo into a fresh tap repo if you maintain your own.)
-
-Either path lands the same app in `/Applications/Domestique.app`. Both paths use the same notarized DMG asset under the hood.
+(Homebrew not installed? One-liner at [https://brew.sh](https://brew.sh).)
 
 ### Installing on Windows (SmartScreen)
 

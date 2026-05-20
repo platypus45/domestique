@@ -24,21 +24,29 @@ pyinstaller domestique.spec --clean --noconfirm 2>&1 | tail -3
 
 # 1b. Ad-hoc codesign the .app bundle. Without ANY signature, downloaded
 # DMGs trigger macOS Gatekeeper's "Domestique is damaged and can't be
-# opened. You should move it to the Bin." dialog — which is misleading
-# (the app isn't damaged, just unsigned) and panics most users into
-# deleting it. With an ad-hoc signature (`-` identity), the same
-# binary instead triggers the milder "Domestique cannot be opened
-# because it is from an unidentified developer." dialog, which the
-# right-click → Open bypass reliably handles. We can't notarize
-# without an Apple Developer ID ($99/yr), so ad-hoc is the cheapest
-# friction reduction available.
+# opened. You should move it to the Bin." dialog. With an ad-hoc
+# signature (`-` identity), the dialog softens to "unidentified
+# developer" which is more bypassable.
+#
+# IMPORTANT: do NOT add `--options runtime` to the ad-hoc step.
+# Hardened runtime enforces library validation — every loaded .dylib
+# / .framework must share the binary's Team ID. Ad-hoc signing has
+# NO Team ID. PyInstaller-bundled apps load ~150 nested libs at
+# startup; with hardened runtime + ad-hoc, the dyld loader fails on
+# the first nested framework with:
+#     "code signature in <Python.framework> not valid for use in
+#      process: mapping process and mapped file (non-platform) have
+#      different Team IDs"
+# and the app silently refuses to launch (no Console error, no UI).
+# Hardened runtime is REQUIRED for notarization but ONLY when a real
+# Developer ID cert is in play. When this script switches to Developer
+# ID signing (v1.8.5+ once the cert lands), re-add `--options runtime`
+# alongside `--sign "Developer ID Application: ..."`.
 #
 # `--deep` signs nested frameworks (PyInstaller bundles ~150
-# dylibs/.so). `--force` overwrites prior signatures. `--options runtime`
-# enables the hardened runtime so future notarization (if we ever add
-# it) requires no re-architecture.
-echo "[2/6] Ad-hoc codesigning .app bundle..."
-codesign --force --deep --options runtime --sign - "dist/${DMG_NAME}.app" 2>&1 | tail -3
+# dylibs/.so). `--force` overwrites prior signatures.
+echo "[2/6] Ad-hoc codesigning .app bundle (no hardened runtime — ad-hoc has no Team ID)..."
+codesign --force --deep --sign - "dist/${DMG_NAME}.app" 2>&1 | tail -3
 codesign --verify --deep --strict "dist/${DMG_NAME}.app" && echo "✓ Ad-hoc signature verified" || echo "⚠ Signature verification failed"
 
 # 2. Stage DMG contents

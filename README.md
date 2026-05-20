@@ -74,29 +74,34 @@ open /Applications/Domestique.app
 
 #### Path B — Direct DMG download
 
-Grab `Domestique-vX.Y.Z.dmg` from the [latest release](https://github.com/platypus45/domestique/releases/latest). The DMG is ad-hoc codesigned (no Apple Developer ID — notarization would cost $99/yr). On macOS 15 (Sequoia) and recent Sonoma builds, first launch shows **"Apple could not verify 'Domestique-vX.Y.Z.dmg' is free of malware that may harm your Mac or compromise your privacy."** This is the modern Gatekeeper gate for unsigned apps — the right-click → Open bypass from older macOS is gone.
+Grab `Domestique-vX.Y.Z.dmg` from the [latest release](https://github.com/platypus45/domestique/releases/latest). The DMG is ad-hoc codesigned (no Apple Developer ID — notarization would cost $99/yr). On **macOS 15 Sequoia** and late Sonoma the Gatekeeper flow is two-stage: first it blocks the DMG with *"Apple could not verify ... is free of malware"*, then after you bypass via System Settings and drag the app to `/Applications`, double-clicking the installed app **still shows *"Domestique is damaged and can't be opened"*** because the `com.apple.quarantine` flag re-attaches when the .app is copied out of the DMG volume.
 
-Two ways to bypass on Sequoia / late Sonoma:
-
-**Option 1 — System Settings (GUI, recommended for non-Terminal users):**
-
-1. Open the downloaded DMG → drag `Domestique.app` onto `Applications`.
-2. Double-click `Domestique.app` in `/Applications`. Gatekeeper blocks it.
-3. Open **System Settings → Privacy & Security**. Scroll to the bottom. You'll see a message: *"Domestique was blocked to protect your Mac."* with an **Open Anyway** button next to it.
-4. Click **Open Anyway** → enter your Mac password if prompted → confirm with **Open Anyway** in the second dialog.
-5. macOS remembers the choice; future launches go straight to the app.
-
-**Option 2 — Terminal (one-liner, fastest):**
+There is **one reliable fix** on Sequoia. Open Terminal (Cmd+Space → "Terminal") and paste:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Domestique.app
 ```
 
-Strips the `com.apple.quarantine` extended attribute that browsers attach on download. After this the app opens normally on every launch — no Gatekeeper prompt. Run it once after dragging the app to `/Applications`.
+That strips the quarantine flag from the installed app. Double-click `Domestique.app` afterwards — opens cleanly, no prompts, won't ask again.
 
-**On older macOS (Ventura / early Sonoma)** the legacy right-click → Open bypass may still work:
+**Full step-by-step (Sequoia / late Sonoma):**
+
+1. Open the downloaded `Domestique-vX.Y.Z.dmg` from `~/Downloads`. macOS shows *"Apple could not verify..."* — click **Done**.
+2. Open **System Settings → Privacy & Security**. Scroll to the bottom: *"Domestique-vX.Y.Z.dmg was blocked..."* → click **Open Anyway**. The DMG mounts.
+3. Drag `Domestique.app` from the mounted DMG onto `Applications`.
+4. Open Terminal and paste:
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Domestique.app
+   ```
+5. Double-click `Domestique.app` from `/Applications`. App launches.
+
+**Older macOS (Ventura / early Sonoma):** legacy right-click → Open bypass may still work without the `xattr` step:
 
 1. Right-click `Domestique.app` in `/Applications` → **Open** → click **Open** again in the warning dialog.
+
+**Why Sequoia needs the `xattr` step:** Sequoia re-checks quarantine on every launch attempt. The Privacy & Security bypass only clears the mount of the DMG itself, not the .app extracted out. The `xattr -dr` command removes the extended attribute permanently. (Apple's sanctioned fix is notarization via $99/yr Developer ID — Domestique doesn't have one yet, so Terminal is the workaround.)
+
+If you can't use Terminal at all, install via [Path A — Homebrew Cask](#path-a--homebrew-cask-zero-gatekeeper-prompts) above. Brew strips quarantine automatically, no Gatekeeper prompts ever appear.
 
 Either path lands the same app in `/Applications/Domestique.app`. Homebrew users get auto-updates via `brew upgrade --cask domestique`; direct-download users re-grab the DMG from GitHub releases.
 

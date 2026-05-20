@@ -66,16 +66,29 @@ open /Applications/Domestique.app
 
 #### Path B — Direct DMG download
 
-Grab `Domestique-vX.Y.Z.dmg` from the [latest release](https://github.com/platypus45/domestique/releases/latest). The DMG is ad-hoc codesigned (no Apple Developer ID — notarization would cost $99/yr), so first launch shows a one-time **"Domestique cannot be opened because it is from an unidentified developer"** dialog. Bypass once and macOS remembers the choice:
+Grab `Domestique-vX.Y.Z.dmg` from the [latest release](https://github.com/platypus45/domestique/releases/latest). The DMG is ad-hoc codesigned (no Apple Developer ID — notarization would cost $99/yr). On macOS 15 (Sequoia) and recent Sonoma builds, first launch shows **"Apple could not verify 'Domestique-vX.Y.Z.dmg' is free of malware that may harm your Mac or compromise your privacy."** This is the modern Gatekeeper gate for unsigned apps — the right-click → Open bypass from older macOS is gone.
+
+Two ways to bypass on Sequoia / late Sonoma:
+
+**Option 1 — System Settings (GUI, recommended for non-Terminal users):**
 
 1. Open the downloaded DMG → drag `Domestique.app` onto `Applications`.
-2. **Right-click** (or Control-click) `Domestique.app` in `/Applications` → **Open** → click **Open** again in the warning dialog.
+2. Double-click `Domestique.app` in `/Applications`. Gatekeeper blocks it.
+3. Open **System Settings → Privacy & Security**. Scroll to the bottom. You'll see a message: *"Domestique was blocked to protect your Mac."* with an **Open Anyway** button next to it.
+4. Click **Open Anyway** → enter your Mac password if prompted → confirm with **Open Anyway** in the second dialog.
+5. macOS remembers the choice; future launches go straight to the app.
 
-If macOS still refuses (rare, older Sonoma builds without the right-click bypass), strip the quarantine flag once from Terminal:
+**Option 2 — Terminal (one-liner, fastest):**
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Domestique.app
 ```
+
+Strips the `com.apple.quarantine` extended attribute that browsers attach on download. After this the app opens normally on every launch — no Gatekeeper prompt. Run it once after dragging the app to `/Applications`.
+
+**On older macOS (Ventura / early Sonoma)** the legacy right-click → Open bypass may still work:
+
+1. Right-click `Domestique.app` in `/Applications` → **Open** → click **Open** again in the warning dialog.
 
 Either path lands the same app in `/Applications/Domestique.app`. Homebrew users get auto-updates via `brew upgrade --cask domestique`; direct-download users re-grab the DMG from GitHub releases.
 

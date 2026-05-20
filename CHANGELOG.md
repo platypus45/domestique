@@ -1,5 +1,45 @@
 # Changelog
 
+## v1.8.5 — Apple notarized DMG (zero Gatekeeper prompts on download) (2026-05-20)
+
+Maintainer enrolled in Apple Developer Program (team `VB8TF5LQ8P`). v1.8.5 is the first Domestique release codesigned with `Developer ID Application: Martijn Haring (VB8TF5LQ8P)` AND notarized through Apple's malware scan AND stapled offline.
+
+### What changes for users
+
+| | Pre-v1.8.5 | v1.8.5+ |
+|---|---|---|
+| Download DMG | "Apple could not verify..." → System Settings bypass | Opens cleanly, zero prompts |
+| Drag .app to Applications | "Domestique is damaged" → `xattr` Terminal fix | Launches on double-click |
+| Terminal commands needed | yes (`xattr -dr com.apple.quarantine ...`) | none |
+| Cask install | already worked (brew strips quarantine) | unchanged |
+
+### Build pipeline
+
+`build_dmg.sh` extended with the full Apple-documented notarization recipe. Key learnings (now codified in the `mac-app-notarize` skill):
+
+1. **Detect Mach-O by content, not extension.** PyInstaller bundles `Python.framework/Versions/3.12/Python` with no file extension; `*.dylib`/`*.so` globs miss it. `find ... | file -b ... | grep Mach-O` catches everything.
+2. **Strip PyInstaller's ad-hoc inner signatures BEFORE the resign pass.** Stale ad-hoc sigs cause "a sealed resource is missing or invalid" on `spctl --assess`.
+3. **Sign depth-first.** Sort by path length descending; nested binaries must sign before their parent bundle.
+4. **Full codesign quadruple on EVERY invocation**: `--force --options runtime --timestamp --entitlements entitlements.plist --sign "$IDENTITY"`. Missing any one → rejection.
+5. **Use null-delimited `find -print0` → `while IFS= read -r -d ''`.** xargs chokes on PyInstaller bundles (thousands of files); the resign loop silently does nothing → notarization rejects.
+6. **Sign `.framework` directories separately** as bundles, after their internal binaries.
+7. **Notarize + staple BOTH the .app and the DMG.** Stapling the .app puts the ticket onto the bundle directly so it survives extraction. Stapling only the DMG = extracted .app fails Gatekeeper.
+
+### Apple Developer setup
+
+- Developer ID Application certificate generated via developer.apple.com (Xcode UI's Manage Certificates dialog didn't show the option because the paid team wasn't selected).
+- App-specific password generated at appleid.apple.com → Sign-In and Security → App-Specific Passwords.
+- `.notarize.env` (gitignored) holds: P12 path/password, identity string, Apple ID, app password, team ID. `build_dmg.sh` falls back to ad-hoc signing when this file is missing.
+- `entitlements.plist` carries the three Python-via-PyInstaller exceptions: `allow-unsigned-executable-memory`, `allow-dyld-environment-variables`, `disable-library-validation`.
+
+### Skill: `mac-app-notarize`
+
+New Claude Code skill at `~/.claude/skills/mac-app-notarize/SKILL.md` captures the seven hard rules + pre-flight checks + rejection-log triage table so future ships one-shot through Apple's gate without 15-30 min wasted on each rejection cycle.
+
+### Release artifact
+
+Notarized DMG at `~/Desktop/Domestique.dmg` → `spctl --assess` reports `source=Notarized Developer ID`. Both the .app and the DMG carry stapled tickets (offline-validatable).
+
 ## v1.8.4 — Ad-hoc codesigned DMG (no more "damaged" dialog) (2026-05-19)
 
 User reported: downloaded DMG from GitHub releases triggered macOS Gatekeeper's "Domestique is damaged and can't be opened. You should move it to the Bin." dialog — the misleading message panics most users into deleting the app. Locally-built DMG worked fine (no browser-quarantine flag attached).

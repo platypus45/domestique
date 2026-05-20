@@ -52,11 +52,19 @@ After your first ride: drag the `.fit` onto the upload box (or let ICU sync). Do
 
 Two install paths. Pick whichever you prefer.
 
-#### Path A — Homebrew Cask (zero Gatekeeper prompts)
+#### Path A — Direct DMG download (notarized, recommended)
 
-If you have Homebrew (`brew --version`), this is the cleanest install. The Cask tap strips macOS's quarantine flag automatically so no "unidentified developer" dialog appears.
+Grab `Domestique-vX.Y.Z.dmg` from the [latest release](https://github.com/platypus45/domestique/releases/latest), open it, drag `Domestique.app` onto `Applications`, double-click to launch. **No Gatekeeper prompts, no Terminal commands** — the DMG is codesigned with Apple Developer ID (team `L7Q39W3U8Z`) and notarized through Apple's malware scan, so macOS recognizes the bundle as trusted on first launch.
 
-**Don't have Homebrew yet?** Install it from [https://brew.sh](https://brew.sh) — one paste-and-run command in Terminal:
+Updates: re-grab the DMG from GitHub releases. (Auto-update via Sparkle is on the roadmap.)
+
+> **Legacy note (v1.8.4 and earlier).** Pre-notarization releases were ad-hoc signed only and triggered Sequoia's *"Apple could not verify..."* / *"Domestique is damaged..."* dialogs. The recommended bypass for those builds is one Terminal command after install: `xattr -dr com.apple.quarantine /Applications/Domestique.app`. The v1.8.5+ builds bypass this requirement entirely via Apple notarization. If you still see Gatekeeper dialogs on a v1.8.5+ DMG, you've downloaded a stale asset — refresh from the [latest release](https://github.com/platypus45/domestique/releases/latest).
+
+#### Path B — Homebrew Cask
+
+If you prefer package-manager workflows or want one-command upgrades, install via Homebrew. The Cask tap also strips the `com.apple.quarantine` flag (redundant once notarization lands, but harmless).
+
+**Don't have Homebrew yet?** Install it from [https://brew.sh](https://brew.sh):
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -70,40 +78,11 @@ brew install --cask domestique
 open /Applications/Domestique.app
 ```
 
+Upgrade later via `brew upgrade --cask domestique`. Uninstall with `brew uninstall --cask domestique` (add `--zap` to also remove `~/.domestique`).
+
 (Tap repo: [https://github.com/platypus45/homebrew-tap](https://github.com/platypus45/homebrew-tap) — copy `Casks/domestique.rb` from this repo into a fresh tap repo if you maintain your own.)
 
-#### Path B — Direct DMG download
-
-Grab `Domestique-vX.Y.Z.dmg` from the [latest release](https://github.com/platypus45/domestique/releases/latest). The DMG is ad-hoc codesigned (no Apple Developer ID — notarization would cost $99/yr). On **macOS 15 Sequoia** and late Sonoma the Gatekeeper flow is two-stage: first it blocks the DMG with *"Apple could not verify ... is free of malware"*, then after you bypass via System Settings and drag the app to `/Applications`, double-clicking the installed app **still shows *"Domestique is damaged and can't be opened"*** because the `com.apple.quarantine` flag re-attaches when the .app is copied out of the DMG volume.
-
-There is **one reliable fix** on Sequoia. Open Terminal (Cmd+Space → "Terminal") and paste:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/Domestique.app
-```
-
-That strips the quarantine flag from the installed app. Double-click `Domestique.app` afterwards — opens cleanly, no prompts, won't ask again.
-
-**Full step-by-step (Sequoia / late Sonoma):**
-
-1. Open the downloaded `Domestique-vX.Y.Z.dmg` from `~/Downloads`. macOS shows *"Apple could not verify..."* — click **Done**.
-2. Open **System Settings → Privacy & Security**. Scroll to the bottom: *"Domestique-vX.Y.Z.dmg was blocked..."* → click **Open Anyway**. The DMG mounts.
-3. Drag `Domestique.app` from the mounted DMG onto `Applications`.
-4. Open Terminal and paste:
-   ```bash
-   xattr -dr com.apple.quarantine /Applications/Domestique.app
-   ```
-5. Double-click `Domestique.app` from `/Applications`. App launches.
-
-**Older macOS (Ventura / early Sonoma):** legacy right-click → Open bypass may still work without the `xattr` step:
-
-1. Right-click `Domestique.app` in `/Applications` → **Open** → click **Open** again in the warning dialog.
-
-**Why Sequoia needs the `xattr` step:** Sequoia re-checks quarantine on every launch attempt. The Privacy & Security bypass only clears the mount of the DMG itself, not the .app extracted out. The `xattr -dr` command removes the extended attribute permanently. (Apple's sanctioned fix is notarization via $99/yr Developer ID — Domestique doesn't have one yet, so Terminal is the workaround.)
-
-If you can't use Terminal at all, install via [Path A — Homebrew Cask](#path-a--homebrew-cask-zero-gatekeeper-prompts) above. Brew strips quarantine automatically, no Gatekeeper prompts ever appear.
-
-Either path lands the same app in `/Applications/Domestique.app`. Homebrew users get auto-updates via `brew upgrade --cask domestique`; direct-download users re-grab the DMG from GitHub releases.
+Either path lands the same app in `/Applications/Domestique.app`. Both paths use the same notarized DMG asset under the hood.
 
 ### Installing on Windows (SmartScreen)
 

@@ -56,13 +56,21 @@ Two install paths. Pick whichever you prefer.
 
 If you have Homebrew (`brew --version`), this is the cleanest install. The Cask tap strips macOS's quarantine flag automatically so no "unidentified developer" dialog appears.
 
+**Don't have Homebrew yet?** Install it from [https://brew.sh](https://brew.sh) — one paste-and-run command in Terminal:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+Then install Domestique:
+
 ```bash
 brew tap platypus45/tap
 brew install --cask domestique
 open /Applications/Domestique.app
 ```
 
-(Tap repo: https://github.com/platypus45/homebrew-tap — copy `Casks/domestique.rb` from this repo into a fresh tap repo if you maintain your own.)
+(Tap repo: [https://github.com/platypus45/homebrew-tap](https://github.com/platypus45/homebrew-tap) — copy `Casks/domestique.rb` from this repo into a fresh tap repo if you maintain your own.)
 
 #### Path B — Direct DMG download
 

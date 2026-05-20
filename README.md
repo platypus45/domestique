@@ -42,7 +42,7 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 
 ## Quick start
 
-1. **Install** — grab the [latest release](https://github.com/platypus45/domestique/releases/latest): macOS `Domestique.dmg` (drag onto Applications) or Windows `Domestique-Windows.zip` (unzip, run `Domestique.exe`). macOS DMG is ad-hoc codesigned; right-click → Open on first launch (see [Installing on macOS](#installing-on-macos)).
+1. **Install** — macOS users have two paths: `brew tap platypus45/tap && brew install --cask domestique` (no Gatekeeper prompts) OR grab `Domestique-vX.Y.Z.dmg` from the [latest release](https://github.com/platypus45/domestique/releases/latest) and right-click → Open on first launch. Windows users grab `Domestique-Windows.zip`, unzip, run `Domestique.exe`. See [Installing on macOS](#installing-on-macos) for details.
 2. **Connect Intervals.icu** — Settings -> Intervals.icu, paste Athlete ID + API key from [intervals.icu/settings](https://intervals.icu/settings). Optional; without ICU, Domestique falls back to local CTL from your imported FITs.
 3. **Generate a plan** — pick a goal type (event prep / FTP / VO2max / hybrid / general / endurance), target date, target CTL, hours/week. The planner sizes Base / Build1 / Build2 / Peak / (Taper or Consolidation) phases, draws 150 distinct ZWO files across a 24-week plan, and adapts daily to your readiness.
 
@@ -50,7 +50,23 @@ After your first ride: drag the `.fit` onto the upload box (or let ICU sync). Do
 
 ### Installing on macOS
 
-Releases ship with an ad-hoc codesignature (no Apple Developer ID — notarization would cost $99/yr). First launch will show a one-time **"Domestique cannot be opened because it is from an unidentified developer"** dialog. Bypass once and macOS remembers:
+Two install paths. Pick whichever you prefer.
+
+#### Path A — Homebrew Cask (zero Gatekeeper prompts)
+
+If you have Homebrew (`brew --version`), this is the cleanest install. The Cask tap strips macOS's quarantine flag automatically so no "unidentified developer" dialog appears.
+
+```bash
+brew tap platypus45/tap
+brew install --cask domestique
+open /Applications/Domestique.app
+```
+
+(Tap repo: https://github.com/platypus45/homebrew-tap — copy `Casks/domestique.rb` from this repo into a fresh tap repo if you maintain your own.)
+
+#### Path B — Direct DMG download
+
+Grab `Domestique-vX.Y.Z.dmg` from the [latest release](https://github.com/platypus45/domestique/releases/latest). The DMG is ad-hoc codesigned (no Apple Developer ID — notarization would cost $99/yr), so first launch shows a one-time **"Domestique cannot be opened because it is from an unidentified developer"** dialog. Bypass once and macOS remembers the choice:
 
 1. Open the downloaded DMG → drag `Domestique.app` onto `Applications`.
 2. **Right-click** (or Control-click) `Domestique.app` in `/Applications` → **Open** → click **Open** again in the warning dialog.
@@ -60,6 +76,8 @@ If macOS still refuses (rare, older Sonoma builds without the right-click bypass
 ```bash
 xattr -dr com.apple.quarantine /Applications/Domestique.app
 ```
+
+Either path lands the same app in `/Applications/Domestique.app`. Homebrew users get auto-updates via `brew upgrade --cask domestique`; direct-download users re-grab the DMG from GitHub releases.
 
 ### Installing on Windows (SmartScreen)
 

@@ -50,13 +50,20 @@ After your first ride: drag the `.fit` onto the upload box (or let ICU sync). Do
 
 ### Installing the unsigned DMG (macOS)
 
-Releases are not codesigned — the project has no Apple Developer ID. Gatekeeper will show "Domestique is damaged and can't be opened" on first launch:
+Releases are not codesigned — the project has no Apple Developer ID. Gatekeeper attaches `com.apple.quarantine` to every file downloaded via Safari / Chrome / Firefox, and on first launch shows **"Domestique is damaged and can't be opened. You should move it to the Bin."** That message is misleading — the app is not damaged, just untrusted.
 
-1. Open the DMG -> drag `Domestique.app` onto `Applications`.
-2. **Right-click** (or Control-click) `Domestique.app` -> **Open** -> **Open** again. macOS remembers the choice.
+Bypass:
 
-If the app still refuses to open, run once from Terminal:
-`xattr -dr com.apple.quarantine /Applications/Domestique.app`.
+1. Open the downloaded DMG → drag `Domestique.app` onto `Applications`.
+2. **Right-click** (or Control-click) `Domestique.app` in `/Applications` → **Open** → click **Open** again in the warning dialog. macOS remembers the choice for future launches.
+
+If macOS still refuses (some versions don't surface the right-click bypass), strip the quarantine flag once from Terminal:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Domestique.app
+```
+
+(A DMG built locally with `./build_dmg.sh` works without this step because no browser-quarantine flag was attached — only downloaded DMGs trip Gatekeeper.)
 
 ### Installing on Windows (SmartScreen)
 
@@ -65,6 +72,21 @@ The Windows EXE is also unsigned. On first run, SmartScreen shows a blue "Window
 ### First-run secrets
 
 On first launch the setup wizard writes Intervals.icu credentials to a per-profile env file at `~/.domestique/profiles/<id>/.env` (mode 0600). There is no repo-root `.env`. All data lives in `~/.domestique/` outside the app bundle and survives upgrades — see [docs/upgrading.md](docs/upgrading.md).
+
+### Multi-profile (multi-rider) support
+
+Although Domestique runs locally on one machine, **multiple riders can share the same install**. Each profile is an isolated bundle under `~/.domestique/profiles/<id>/` with its own:
+
+- Intervals.icu credentials (`.env`).
+- Plan + availability calendar (`plans/current_plan.json`).
+- Ride archive (`profiles/<id>/rides/*.json` + ICU sync cache).
+- Athlete settings (FTP, LTHR, max HR, weight, zones).
+- Daily log + morning Hooper composite.
+- Wellness sync state (HRV, sleep, RHR per-profile).
+
+Switch in the dashboard's **Settings → Profiles** panel, or via `POST /api/profiles/switch` directly. Create new profiles with **Create profile** in the same panel (`POST /api/profiles/create`). The active profile is persisted across app restarts (`~/.domestique/profile.txt`).
+
+Use cases: a couple sharing a single laptop, a coach managing two riders, your training profile vs a partner's lower-volume profile. All data stays local; profiles don't sync to any cloud.
 
 ---
 

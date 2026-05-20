@@ -39,6 +39,8 @@ assets/icon.iconset/
 
 # Secrets
 .env
+.notarize.env
+*.p12
 
 # Database (user-specific)
 *.db
@@ -50,3 +52,4 @@ routes.json.surface_bak
 
 # Claude Code agent runtime artefacts
 .claude/scheduled_tasks.lock
+.claude/worktrees/

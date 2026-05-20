@@ -35148,9 +35148,9 @@
     ]
   },
   {
-    "id": "dolomites/climb-dolomites-m-r-dl-giat",
-    "name": "Climb Dolomites   Mür Dl Giat × 43",
-    "crs_path": "courses/dolomites/Climb Dolomites - Mür dl giat.crs",
+    "id": "dolomites/climb-dolomites-mur-dl-giat",
+    "name": "Climb Dolomites - Mur Dl Giat x 43",
+    "crs_path": "courses/dolomites/Climb Dolomites - Mur dl giat.crs",
     "region": "dolomites",
     "source": "real_world",
     "distance_km": 15.05,
@@ -78358,9 +78358,9 @@
     ]
   },
   {
-    "id": "desert_loop/pavé-classic-45-414",
-    "name": "Pavé Classic 45",
-    "crs_path": "courses/virtual/desert_loop/desert-loop__pavé-classic-45-414.crs",
+    "id": "desert_loop/pave-classic-45-414",
+    "name": "Pave Classic 45",
+    "crs_path": "courses/virtual/desert_loop/desert-loop__pave-classic-45-414.crs",
     "region": "desert_loop",
     "source": "virtual",
     "distance_km": 45.0,

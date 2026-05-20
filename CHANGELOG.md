@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.8.4 — Ad-hoc codesigned DMG (no more "damaged" dialog) (2026-05-19)
+
+User reported: downloaded DMG from GitHub releases triggered macOS Gatekeeper's "Domestique is damaged and can't be opened. You should move it to the Bin." dialog — the misleading message panics most users into deleting the app. Locally-built DMG worked fine (no browser-quarantine flag attached).
+
+Pre-v1.8.4 the `.app` bundle was completely unsigned. macOS treats unsigned + quarantined bundles as "damaged" rather than offering the right-click → Open bypass.
+
+Fix: `build_dmg.sh` now ad-hoc codesigns the bundle and the DMG itself:
+
+```bash
+codesign --force --deep --options runtime --sign - dist/Domestique.app
+codesign --force --sign - ~/Desktop/Domestique.dmg
+```
+
+`-` (dash) = ad-hoc identity. `--deep` signs nested frameworks (~150 dylibs in the PyInstaller bundle). `--options runtime` enables the hardened runtime so future Apple-Developer-ID notarization (if we ever add it) needs no re-architecture.
+
+What changes for users:
+- First launch shows the milder **"Domestique cannot be opened because it is from an unidentified developer"** dialog instead of the alarming "damaged" message.
+- Right-click → Open works reliably to bypass it; macOS remembers the choice.
+- `xattr -dr com.apple.quarantine` Terminal fallback still documented for the rare cases where right-click → Open doesn't surface.
+
+No notarization yet — that costs $99/yr Apple Developer ID. README updated.
+
 ## v1.8.3 — 5-bug parallel wave (classifier / HRV-toast / week-tier-down / apply-tier-down / interval-labels) (2026-05-19)
 
 5 distinct bugs surfaced from user screenshots, delivered via 5-agent parallel-worktree wave.

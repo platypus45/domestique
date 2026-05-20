@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-3054-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v1.8.3-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v1.8.4-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-1422%20passing-success" alt="Tests">
 </p>
 
@@ -42,28 +42,24 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 
 ## Quick start
 
-1. **Install** — grab the [latest release](https://github.com/platypus45/domestique/releases/latest): macOS `Domestique.dmg` (drag onto Applications) or Windows `Domestique-Windows.zip` (unzip, run `Domestique.exe`). Both unsigned — see [Installing the unsigned DMG](#installing-the-unsigned-dmg-macos) for Gatekeeper bypass.
+1. **Install** — grab the [latest release](https://github.com/platypus45/domestique/releases/latest): macOS `Domestique.dmg` (drag onto Applications) or Windows `Domestique-Windows.zip` (unzip, run `Domestique.exe`). macOS DMG is ad-hoc codesigned; right-click → Open on first launch (see [Installing on macOS](#installing-on-macos)).
 2. **Connect Intervals.icu** — Settings -> Intervals.icu, paste Athlete ID + API key from [intervals.icu/settings](https://intervals.icu/settings). Optional; without ICU, Domestique falls back to local CTL from your imported FITs.
 3. **Generate a plan** — pick a goal type (event prep / FTP / VO2max / hybrid / general / endurance), target date, target CTL, hours/week. The planner sizes Base / Build1 / Build2 / Peak / (Taper or Consolidation) phases, draws 150 distinct ZWO files across a 24-week plan, and adapts daily to your readiness.
 
 After your first ride: drag the `.fit` onto the upload box (or let ICU sync). Domestique generates a post-ride report, detects FTP tests automatically, and the next-day session adapts to what the ride showed.
 
-### Installing the unsigned DMG (macOS)
+### Installing on macOS
 
-Releases are not codesigned — the project has no Apple Developer ID. Gatekeeper attaches `com.apple.quarantine` to every file downloaded via Safari / Chrome / Firefox, and on first launch shows **"Domestique is damaged and can't be opened. You should move it to the Bin."** That message is misleading — the app is not damaged, just untrusted.
-
-Bypass:
+Releases ship with an ad-hoc codesignature (no Apple Developer ID — notarization would cost $99/yr). First launch will show a one-time **"Domestique cannot be opened because it is from an unidentified developer"** dialog. Bypass once and macOS remembers:
 
 1. Open the downloaded DMG → drag `Domestique.app` onto `Applications`.
-2. **Right-click** (or Control-click) `Domestique.app` in `/Applications` → **Open** → click **Open** again in the warning dialog. macOS remembers the choice for future launches.
+2. **Right-click** (or Control-click) `Domestique.app` in `/Applications` → **Open** → click **Open** again in the warning dialog.
 
-If macOS still refuses (some versions don't surface the right-click bypass), strip the quarantine flag once from Terminal:
+If macOS still refuses (rare, older Sonoma builds without the right-click bypass), strip the quarantine flag once from Terminal:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Domestique.app
 ```
-
-(A DMG built locally with `./build_dmg.sh` works without this step because no browser-quarantine flag was attached — only downloaded DMGs trip Gatekeeper.)
 
 ### Installing on Windows (SmartScreen)
 
@@ -241,7 +237,7 @@ See [docs/cycling_apps.md](docs/cycling_apps.md) for the full table.
 
 ## Releases
 
-Latest: **[v1.8.3 — 5-bug parallel wave (classifier / HRV-toast / week-tier-down / apply-tier-down / interval-labels)](https://github.com/platypus45/domestique/releases/latest)** (2026-05-19).
+Latest: **[v1.8.4 — Ad-hoc codesigned DMG (no more "damaged" dialog)](https://github.com/platypus45/domestique/releases/latest)** (2026-05-19).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.8.6 — ASCII-only bundled filenames (fix sealed-resource invalid on notarized build) (2026-05-21)
+
+v1.8.5's notarized DMG still tripped `spctl --assess` with "a sealed resource is missing or invalid" on extracted .app — same `xxx added` / `xxx missing` pair from `codesign --verify --deep --strict`. Root cause: macOS code-signing seals filenames in their **NFC** Unicode form, but the HFS+/APFS layer hands paths back in **NFD** form. Any bundled resource with a diacritic (`Mür`, `pavé`) gets sealed under one normalization and looked up under the other, breaking the seal.
+
+### Fix
+
+Renamed three resources to ASCII-only:
+
+| Old path | New path |
+|---|---|
+| `courses/dolomites/Climb Dolomites - Mür dl giat.crs` | `... - Mur dl giat.crs` |
+| `courses/virtual/desert_loop/desert-loop__pavé-classic-45-414.crs` | `... __pave-classic-45-414.crs` |
+| `profiles/desert_loop__pavé-classic-45-414.json` | `... __pave-classic-45-414.json` |
+
+Updated `routes.json` `crs_path` references accordingly. No other content changed.
+
+### What changes for users
+
+Identical to v1.8.5 — download DMG → drag → double-click, zero Gatekeeper prompts. v1.8.5 didn't reliably launch from `/Applications/`; v1.8.6 does.
+
+### Skill captured
+
+[`mac-app-notarize`](.claude/skills/mac-app-notarize/SKILL.md) gained an 8th hard rule: **all bundled filenames must be ASCII**. Non-ASCII names will sign and notarize fine, but the offline staple verification breaks on extracted .app.
+
 ## v1.8.5 — Apple notarized DMG (zero Gatekeeper prompts on download) (2026-05-20)
 
 Maintainer enrolled in Apple Developer Program (team `VB8TF5LQ8P`). v1.8.5 is the first Domestique release codesigned with `Developer ID Application: Martijn Haring (VB8TF5LQ8P)` AND notarized through Apple's malware scan AND stapled offline.

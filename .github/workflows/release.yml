@@ -20,10 +20,26 @@ permissions:
 
 jobs:
   # ───────────────────────────────────────────────────────────────────
-  # macOS DMG
+  # macOS DMG — DISABLED since v1.8.8
+  #
+  # CI builds the DMG without the Apple notarization secrets
+  # (.notarize.env / Developer ID Application cert in keychain), so
+  # build_dmg.sh falls back to ad-hoc signing. That produces a
+  # Domestique.dmg that Gatekeeper rejects with "Domestique is damaged"
+  # the moment a user downloads it. Worse, the bare-name Domestique.dmg
+  # asset that CI uploaded sorted ahead of the manually-notarized
+  # Domestique-v$VER.dmg in _select_platform_asset, so the update banner
+  # served Mac users the broken one.
+  #
+  # macOS ships are produced manually via the [[domestique-release]] skill
+  # (build_dmg.sh + .notarize.env + xcrun notarytool + stapler). Re-enable
+  # this job only after the Apple secrets are wired into GitHub Actions
+  # (APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD, APPLE_P12_BASE64) and
+  # build_dmg.sh is taught to import the .p12 from base64 env in CI.
   # ───────────────────────────────────────────────────────────────────
   build-macos:
     name: Build macOS DMG
+    if: false  # ← disabled; manual notarized ship via domestique-release skill
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4

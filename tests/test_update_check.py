@@ -1,14 +1,15 @@
-"""v1.0.2 IMPL-BANNER — /api/update/check contract tests (MASTER §1).
+"""v1.0.2 IMPL-BANNER + v1.8.7 expand — /api/update/check contract tests (MASTER §1).
 
 Locked response shape (must not regress):
   current, latest, update_available, release_url, download_url,
-  asset_name, platform, checked_at, cached, error.
+  asset_name, platform, checked_at, cached, error, release_body.
 
 Tests cover:
   1. Cache hit (fresh cache returns cached=true without calling GitHub).
   2. Cache miss + API success (writes cache, returns cached=false).
   3. Cache miss + API failure (returns last-good cache, error populated).
   4. Platform asset filtering (darwin → .dmg, win32 → .exe/.zip).
+  5. release_body passthrough, truncation, null-on-failure, cache persistence.
 """
 from __future__ import annotations
 
@@ -24,9 +25,10 @@ from fastapi.testclient import TestClient
 import app as app_module
 
 
-def _fake_release(tag: str = "9.9.9", assets: list | None = None) -> dict:
+def _fake_release(tag: str = "9.9.9", assets: list | None = None,
+                  body: str | None = None) -> dict:
     """Synthesised GitHub Releases API payload."""
-    return {
+    rel = {
         "tag_name": f"v{tag}",
         "html_url": f"https://github.com/platypus45/domestique/releases/tag/v{tag}",
         "assets": assets if assets is not None else [
@@ -36,6 +38,9 @@ def _fake_release(tag: str = "9.9.9", assets: list | None = None) -> dict:
              "browser_download_url": f"https://example.com/Domestique-{tag}.exe"},
         ],
     }
+    if body is not None:
+        rel["body"] = body
+    return rel
 
 
 class _FakeResp:
@@ -83,6 +88,7 @@ class TestCacheHit(UpdateCheckBase):
             "platform": "darwin",
             "checked_at": "2026-05-01T00:00:00Z",
             "error": None,
+            "release_body": "## Header\n- cached bullet",
         }, age_seconds=60)  # 1 minute old → fresh
 
         # If GitHub is hit, the test fails: any httpx.get raises.
@@ -95,10 +101,11 @@ class TestCacheHit(UpdateCheckBase):
         self.assertTrue(data["cached"])
         self.assertEqual(data["latest"], "1.0.5")
         self.assertIsNone(data["error"])
+        self.assertEqual(data["release_body"], "## Header\n- cached bullet")
         # Locked field set must be present (no extras dropped).
         for k in ("current", "latest", "update_available", "release_url",
                   "download_url", "asset_name", "platform", "checked_at",
-                  "cached", "error"):
+                  "cached", "error", "release_body"):
             self.assertIn(k, data, f"missing locked field: {k}")
 
 
@@ -173,7 +180,7 @@ class TestCacheMissApiFailure(UpdateCheckBase):
         self.assertIsNotNone(data["error"])
         for k in ("current", "latest", "update_available", "release_url",
                   "download_url", "asset_name", "platform", "checked_at",
-                  "cached", "error"):
+                  "cached", "error", "release_body"):
             self.assertIn(k, data)
 
 
@@ -263,6 +270,75 @@ class TestPlatformAssetFiltering(UpdateCheckBase):
         self.assertIsNone(data["asset_name"])
         # release_url is still populated so the user can navigate to GitHub.
         self.assertTrue(data["release_url"].endswith("/v2.3.4"))
+
+
+class TestReleaseBody(UpdateCheckBase):
+    """v1.8.7 — release_body field (MASTER §5)."""
+
+    def test_release_body_passthrough(self):
+        """GitHub returns body markdown → endpoint surfaces it unmodified."""
+        rel = _fake_release(tag="9.9.9", body="## Header\n- bullet")
+        with patch("httpx.get", return_value=_FakeResp(200, rel)), \
+             patch.object(app_module, "sys") as _sys:
+            _sys.platform = "darwin"
+            r = self.client.get("/api/update/check")
+        self.assertEqual(r.status_code, 200, r.text)
+        data = r.json()
+        self.assertEqual(data["release_body"], "## Header\n- bullet")
+
+    def test_release_body_truncation(self):
+        """Body > 8192 chars is truncated to 8192 + suffix appended server-side."""
+        huge = "x" * 20000
+        rel = _fake_release(tag="9.9.9", body=huge)
+        with patch("httpx.get", return_value=_FakeResp(200, rel)), \
+             patch.object(app_module, "sys") as _sys:
+            _sys.platform = "darwin"
+            r = self.client.get("/api/update/check")
+        self.assertEqual(r.status_code, 200, r.text)
+        data = r.json()
+        body = data["release_body"]
+        self.assertIsNotNone(body)
+        suffix = "\n\n… (full release notes on GitHub)"
+        # 8192 chars of raw body then the suffix appended.
+        self.assertEqual(len(body), 8192 + len(suffix))
+        self.assertTrue(body.endswith(suffix))
+        # First 8192 chars are the raw body content.
+        self.assertEqual(body[:8192], "x" * 8192)
+
+    def test_release_body_null_on_failure_no_cache(self):
+        """GitHub call fails AND no cache file → release_body is None."""
+        self.assertFalse(self._cache_path.exists())
+        with patch("httpx.get", side_effect=RuntimeError("boom")):
+            r = self.client.get("/api/update/check")
+        self.assertEqual(r.status_code, 200, r.text)
+        data = r.json()
+        self.assertIsNone(data["release_body"])
+        self.assertIsNotNone(data["error"])
+
+    def test_release_body_persisted_in_cache(self):
+        """First call writes body to cache; second call within TTL returns same body from cache."""
+        rel = _fake_release(tag="9.9.9", body="## v9.9.9\n- shipped notarized DMG")
+        # First call hits API and writes cache.
+        with patch("httpx.get", return_value=_FakeResp(200, rel)) as mock_get, \
+             patch.object(app_module, "sys") as _sys:
+            _sys.platform = "darwin"
+            r1 = self.client.get("/api/update/check")
+            self.assertEqual(mock_get.call_count, 1)
+        data1 = r1.json()
+        self.assertFalse(data1["cached"])
+        self.assertEqual(data1["release_body"], "## v9.9.9\n- shipped notarized DMG")
+        # Cache file must contain the body.
+        self.assertTrue(self._cache_path.exists())
+        on_disk = json.loads(self._cache_path.read_text(encoding="utf-8"))
+        self.assertEqual(on_disk["release_body"], "## v9.9.9\n- shipped notarized DMG")
+        # Second call within TTL must NOT call httpx and must return the same body.
+        def _boom(*a, **kw):
+            raise AssertionError("httpx.get should not be called when cache is fresh")
+        with patch("httpx.get", side_effect=_boom):
+            r2 = self.client.get("/api/update/check")
+        data2 = r2.json()
+        self.assertTrue(data2["cached"])
+        self.assertEqual(data2["release_body"], "## v9.9.9\n- shipped notarized DMG")
 
 
 if __name__ == "__main__":

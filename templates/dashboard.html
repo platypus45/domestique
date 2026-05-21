@@ -13631,6 +13631,71 @@ function dismissSyncBanner() {
 // GitHub Releases). Skips if no update, no platform asset, or the user
 // previously dismissed THIS specific version. Dismissal is per-version
 // so the banner re-appears when a NEW release lands.
+//
+// v1.8.7: header shows current → latest; release notes render inline in
+// a <details> expander instead of an external link. See
+// MASTER_DECISIONS_v187_update_banner_expand.md §2 for markdown policy.
+//
+// Sample API response shape for visual QA / mocking:
+// { current: "1.8.6", latest: "1.8.7", update_available: true,
+//   release_url: "https://github.com/...", download_url: "https://...",
+//   asset_name: "Domestique-v1.8.7.dmg",
+//   release_body: "## What's new\n- bullet 1\n- bullet 2\n\nSee https://example.com" }
+
+// Minimal markdown renderer for release notes. NO external libraries
+// (no marked, no markdown-it, no DOMPurify). Escape-first sanitizer +
+// ordered regex transforms. Supports a tiny subset of CommonMark:
+//   ## heading        → <h4>
+//   ### heading       → <h5>
+//   - bullet          → <ul><li> (consecutive lines grouped)
+//   https://autolink  → <a href="..." target="_blank" rel="noopener">
+//   \n                → <br>
+// Code fences, tables, images, inline links are intentionally NOT
+// rendered — they fall through as escaped text. Caps final HTML at
+// 16 KB with a truncation link to the GitHub release page.
+function renderReleaseNotesMarkdown(raw, releaseUrl) {
+  if (!raw) return '';
+  // Step 1: HTML-escape the entire string FIRST. Order matters — escape
+  // & before the other characters so we don't double-escape entities.
+  let s = String(raw)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+  // Step 2: line-oriented transforms on the escaped string.
+  // Headings first so they don't get caught by the bullet/autolink regexes.
+  s = s.replace(/^### (.+)$/gm, '<h5 style="margin:8px 0 4px;font-size:13px;">$1</h5>');
+  s = s.replace(/^## (.+)$/gm, '<h4 style="margin:10px 0 4px;font-size:14px;">$1</h4>');
+  // Group consecutive `- ` bullets into a single <ul>. Match a block of
+  // one-or-more bullet lines, transform each line into <li>, wrap in <ul>.
+  s = s.replace(/(?:^- .+(?:\n|$))+/gm, function(block) {
+    const items = block.replace(/\n$/, '').split('\n').map(function(line) {
+      return '<li>' + line.replace(/^- /, '') + '</li>';
+    }).join('');
+    return '<ul style="margin:4px 0 4px 18px;padding:0;">' + items + '</ul>';
+  });
+  // Autolink raw URLs. Run AFTER bullets/headings so we don't break those.
+  s = s.replace(/(https?:\/\/[^\s<]+)/g, function(url) {
+    return '<a href="' + url + '" target="_blank" rel="noopener noreferrer" ' +
+      'style="color:#3b82f6;text-decoration:underline;">' + url + '</a>';
+  });
+  // Remaining newlines → <br>. Skip newlines that immediately follow a
+  // block-level close tag we just produced, to avoid spurious gaps.
+  s = s.replace(/(<\/(?:h4|h5|ul)>)\n+/g, '$1');
+  s = s.replace(/\n/g, '<br>');
+  // Step 3: cap at 16 KB. If we overshoot, hard-truncate and append a
+  // "full release notes on GitHub" tail link.
+  const CAP = 16384;
+  if (s.length > CAP) {
+    const safeUrl = String(releaseUrl || '#');
+    const tail = '… <a href="' + safeUrl + '" target="_blank" rel="noopener noreferrer" ' +
+      'style="color:#3b82f6;text-decoration:underline;">full release notes on GitHub</a>';
+    s = s.slice(0, CAP - tail.length) + tail;
+  }
+  return s;
+}
+
 async function loadUpdateCheck() {
   const el = document.getElementById('update-banner');
   if (!el) return;
@@ -13647,23 +13712,43 @@ async function loadUpdateCheck() {
     // Build the banner. Copy is FIXED — every word matters because it
     // promises rider data is preserved across the update.
     const safeLatest = String(u.latest).replace(/[<>]/g, '');
+    const safeCurrent = String(u.current || '').replace(/[<>]/g, '');
     const safeRelease = String(u.release_url || '#');
     const safeDownload = String(u.download_url);
     const safeAsset = String(u.asset_name || 'download');
+    // Render release notes only if body present (non-empty, non-null).
+    let detailsBlock = '';
+    if (u.release_body) {
+      const rendered = renderReleaseNotesMarkdown(u.release_body, safeRelease);
+      // Always append "View on GitHub →" footer link inside the panel.
+      const footer = '<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08);">' +
+        '<a href="' + safeRelease + '" target="_blank" rel="noopener noreferrer" ' +
+        'style="color:#3b82f6;text-decoration:none;font-size:12px;">View on GitHub &rarr;</a>' +
+        '</div>';
+      detailsBlock =
+        '<details style="margin-top:8px;">' +
+          '<summary style="cursor:pointer;display:inline-block;padding:6px 12px;border-radius:6px;' +
+            'background:rgba(59,130,246,0.15);border:1px solid #3b82f6;color:inherit;font-size:12px;' +
+            'list-style:none;">&#9654; What&rsquo;s new</summary>' +
+          '<div style="margin-top:8px;padding:10px 12px;border-radius:6px;background:rgba(0,0,0,0.15);' +
+            'border:1px solid rgba(255,255,255,0.08);font-size:12px;line-height:1.5;max-height:400px;' +
+            'overflow-y:auto;">' +
+            rendered + footer +
+          '</div>' +
+        '</details>';
+    }
     el.innerHTML =
       '<div style="display:flex;align-items:flex-start;gap:10px;">' +
         '<div style="flex:1;min-width:0;">' +
-          '<div><strong>&#x1f514; Domestique v' + safeLatest + ' available</strong></div>' +
+          '<div><strong>&#x1f514; Update available &mdash; v' + safeCurrent + ' &rarr; v' + safeLatest + '</strong></div>' +
           '<div style="opacity:0.85;margin-top:2px;">Your rides, training plan, FTP history, wellness logs, and profile<br>' +
           'will all be preserved across this update.</div>' +
           '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">' +
-            '<a href="' + safeRelease + '" target="_blank" rel="noopener noreferrer" ' +
-              'style="display:inline-block;padding:6px 12px;border-radius:6px;background:rgba(59,130,246,0.15);' +
-              'border:1px solid #3b82f6;color:inherit;text-decoration:none;font-size:12px;">What&rsquo;s new</a>' +
             '<a href="' + safeDownload + '" download="' + safeAsset + '" ' +
               'style="display:inline-block;padding:6px 12px;border-radius:6px;background:#3b82f6;' +
               'border:1px solid #3b82f6;color:#fff;text-decoration:none;font-size:12px;">Download</a>' +
           '</div>' +
+          detailsBlock +
         '</div>' +
         '<button onclick="dismissUpdateBanner(\'' + safeLatest.replace(/'/g, "\\'") + '\')" aria-label="Dismiss" ' +
           'style="background:none;border:0;color:inherit;font-size:18px;cursor:pointer;opacity:0.6;line-height:1;">&times;</button>' +

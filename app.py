@@ -5369,11 +5369,13 @@ def api_migrations_last_run_result():
 # users see the .exe (or .zip fallback). On any httpx error, returns the
 # last-good cached response with `error` populated — never raises to the UI.
 #
-# Response contract (locked by MASTER_DECISIONS_v102.md §1):
+# Response contract (locked by MASTER_DECISIONS_v102.md §1 + v187 expand):
 #   { current, latest, update_available, release_url, download_url,
-#     asset_name, platform, checked_at, cached, error }
+#     asset_name, platform, checked_at, cached, error, release_body }
 _UPDATE_CHECK_CACHE_TTL_S = 6 * 60 * 60  # 6 hours
 _GITHUB_RELEASES_LATEST_URL = "https://api.github.com/repos/platypus45/domestique/releases/latest"
+_RELEASE_BODY_MAX_CHARS = 8192
+_RELEASE_BODY_TRUNCATION_SUFFIX = "\n\n… (full release notes on GitHub)"
 
 
 def _update_check_cache_path() -> Path:
@@ -5469,6 +5471,7 @@ def api_update_check():
         out = {k: cache.get(k) for k in (
             "current", "latest", "update_available", "release_url",
             "download_url", "asset_name", "platform", "checked_at", "error",
+            "release_body",
         )}
         out["cached"] = True
         return out
@@ -5486,6 +5489,13 @@ def api_update_check():
         except InvalidVersion:
             update_available = False
         download_url, asset_name = _select_platform_asset(rel.get("assets") or [], plat)
+        raw_body = rel.get("body")
+        if raw_body is None:
+            release_body = ""
+        elif len(raw_body) > _RELEASE_BODY_MAX_CHARS:
+            release_body = raw_body[:_RELEASE_BODY_MAX_CHARS] + _RELEASE_BODY_TRUNCATION_SUFFIX
+        else:
+            release_body = raw_body
         payload = {
             "current": _VERSION,
             "latest": tag,
@@ -5497,6 +5507,7 @@ def api_update_check():
             "checked_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "cached": False,
             "error": None,
+            "release_body": release_body,
         }
         _write_update_check_cache(payload)
         return payload
@@ -5505,6 +5516,7 @@ def api_update_check():
             out = {k: cache.get(k) for k in (
                 "current", "latest", "update_available", "release_url",
                 "download_url", "asset_name", "platform", "checked_at",
+                "release_body",
             )}
             out["cached"] = True
             out["error"] = str(e)
@@ -5520,6 +5532,7 @@ def api_update_check():
             "checked_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "cached": False,
             "error": str(e),
+            "release_body": None,
         }
 
 

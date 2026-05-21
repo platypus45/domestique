@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.8.7 — Update banner shows current → latest + expandable release notes (2026-05-21)
+
+The dashboard update-available banner already polled GitHub Releases every 6 hours and offered a Download button. v1.8.7 makes it more informative:
+
+- **Header now reads `🔔 Update available — v{current} → v{latest}`** so the rider sees what they have AND what they'd get, not just the new tag.
+- **"▶ What's new" button expands inline** instead of opening an external page. The expanded panel renders the GitHub release body (markdown headings, bullets, autolinks) with HTML-escape-first XSS sanitization. No external markdown library — pure regex transforms cap rendered HTML at 16 KB.
+- **"View on GitHub →" footer** inside the expanded panel keeps the external link discoverable without taking it away from inline reading.
+- **Backend `/api/update/check`** gains a `release_body` field (raw markdown, capped at 8192 chars + truncation suffix) sourced from the GitHub Releases API `body` field. Cached identically to the rest of the payload.
+
+### What changes for users
+
+| | v1.8.6 | v1.8.7 |
+|---|---|---|
+| Banner header | "Domestique v1.8.7 available" | "Update available — v1.8.6 → v1.8.7" |
+| "What's new" button | Opens release page in browser | Expands inline with rendered notes |
+| Reading release notes | Browser tab away from app | Inline, scrollable panel inside banner |
+| External release link | The button itself | "View on GitHub →" inside expanded panel |
+
+Dismissal semantics unchanged: clicking `×` hides the banner for that specific `latest` version only.
+
+### Implementation
+
+Contract change locked in [MASTER_DECISIONS_v187](/tmp/MASTER_DECISIONS_v187_update_banner_expand.md). Backend at [app.py:5454](app.py:5454), frontend at [dashboard.html:13634](templates/dashboard.html:13634). 4 new contract tests in [test_update_check.py](tests/test_update_check.py) — all 13 endpoint tests pass.
+
 ## v1.8.6 — ASCII-only bundled filenames (fix sealed-resource invalid on notarized build) (2026-05-21)
 
 v1.8.5's notarized DMG still tripped `spctl --assess` with "a sealed resource is missing or invalid" on extracted .app — same `xxx added` / `xxx missing` pair from `codesign --verify --deep --strict`. Root cause: macOS code-signing seals filenames in their **NFC** Unicode form, but the HFS+/APFS layer hands paths back in **NFD** form. Any bundled resource with a diacritic (`Mür`, `pavé`) gets sealed under one normalization and looked up under the other, breaking the seal.

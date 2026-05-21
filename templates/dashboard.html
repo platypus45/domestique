@@ -1275,7 +1275,6 @@ window.addEventListener('unhandledrejection', function(e) {
 
 <div class="tabs" id="tabs">
   <div class="tab active" data-tab="home">Home</div>
-  <div class="tab" data-tab="rides">Ride History</div>
   <div class="tab" data-tab="picker">Workout Shuffle</div>
   <div class="tab" data-tab="library">Workout Library</div>
   <div class="tab" data-tab="courses">Routes & Climbs</div>
@@ -1480,6 +1479,10 @@ window.addEventListener('unhandledrejection', function(e) {
     <div id="readiness-composite-content" style="display:flex;gap:16px;align-items:center;">
       <div id="readiness-composite-loading" style="font-size:12px;color:var(--text3);">Loading…</div>
     </div>
+    <!-- v1.8.8 Bug 3 — last ride DFA α1 snapshot line. Populated after the
+         composite render lands; hidden until the last ride's detail has a
+         non-null dfa_alpha1_avg. -->
+    <div id="home-snapshot-dfa" style="display:none;margin-top:8px;font-size:12px;color:var(--text2);"></div>
   </div>
 
   <!-- v1.7.6 — Last week feedback panel. Reads /api/week-summary?week_offset=-1
@@ -1567,30 +1570,28 @@ window.addEventListener('unhandledrejection', function(e) {
   </div>
 
   <!-- Power Duration Curve -->
+  <!-- v1.8.8 Bug 2/11 — the legacy div here had id="power-curve-chart"
+       which collided with the <canvas id="power-curve-chart"> above.
+       Renamed to a unique placeholder id so renderPowerCurve() targets
+       only the canvas, and loadPowerCurve() can replace this placeholder
+       once the response lands (or with a backfill prompt when n_rides==0). -->
   <div class="card" style="margin-top:12px;">
     <h3>Power Duration Curve</h3>
-    <div id="power-curve-chart" class="loading">Loading...</div>
+    <div id="power-curve-loading-placeholder" class="loading">Loading...</div>
   </div>
 </div>
 
-<!-- ═══ PICKER ═════════════════════════════════════════════════════════════ -->
-<div class="section" id="sec-rides" style="display:none;">
-  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
-    <h2 style="margin:0;">Ride History</h2>
-    <button onclick="openImportFitPicker()" class="btn btn-primary" title="Upload a FIT file exported from MyWhoosh / Tacx / Zwift / Garmin / Wahoo / Golden Cheetah">Import FIT Ride &#x2b06;</button>
-  </div>
-  <div style="font-size:12px;color:var(--text3);margin-top:6px;">Ride in your trainer app (MyWhoosh, Tacx, Zwift, Golden Cheetah). Save the FIT, click Import above. Domestique parses it, stores it locally, and adds it to the history below.</div>
-  <div id="rides-list" style="margin-top:12px;">
-    <div class="loading">Loading rides...</div>
-  </div>
-  <div id="ride-detail-overlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:500;justify-content:center;align-items:center;">
-    <div style="background:var(--surface);border-radius:16px;padding:28px;max-width:900px;width:95%;max-height:90vh;overflow-y:auto;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-        <h2 id="ride-detail-title" style="margin:0;"></h2>
-        <button class="btn" onclick="$('ride-detail-overlay').style.display='none'">Close</button>
-      </div>
-      <div id="ride-detail-content"></div>
+<!-- v1.8.8 Bug 10 — Ride History section removed (homepage activity list +
+     agenda cover this surface). The #ride-detail-overlay below is kept
+     OUTSIDE any section because openRideDetail() is still called from the
+     power-curve click, PR-badge click, and calendar fallback paths. -->
+<div id="ride-detail-overlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:500;justify-content:center;align-items:center;">
+  <div style="background:var(--surface);border-radius:16px;padding:28px;max-width:900px;width:95%;max-height:90vh;overflow-y:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <h2 id="ride-detail-title" style="margin:0;"></h2>
+      <button class="btn" onclick="$('ride-detail-overlay').style.display='none'">Close</button>
     </div>
+    <div id="ride-detail-content"></div>
   </div>
 </div>
 
@@ -2837,8 +2838,7 @@ document.querySelectorAll('.tab[data-tab]').forEach(t => {
     document.querySelectorAll('.tab[data-tab]').forEach(t2 => t2.classList.remove('active'));
     t.classList.add('active');
     section.classList.add('active');
-    const loaders = {rides:loadRideHistory,
-                     courses:()=>{
+    const loaders = {courses:()=>{
                        // Default to the currently-selected source (All Routes on first visit)
                        if (_courseSource === 'virtual') loadVirtualRoutes();
                        else if (_courseSource === 'all') loadAllRoutes();
@@ -3087,10 +3087,7 @@ async function handleImportFit(inputEl) {
     const dur = ps.duration_sec ? Math.round(ps.duration_sec / 60) + ' min' : '';
     const tss = ps.tss ? ' · TSS ' + ps.tss : '';
     showToast('Imported ' + file.name + (dur ? ' (' + dur + tss + ')' : ''), 5000);
-    // Refresh ride history if the user is viewing it
-    if (typeof loadRideHistory === 'function') {
-      try { loadRideHistory(); } catch(_) {}
-    }
+    // v1.8.8 Bug 10 — Ride History tab + loadRideHistory() removed; nothing to refresh here.
     // v4.1.0 U1: the freshly imported ride might be an FTP test — check and
     // pop the modal if so. Non-fatal; runs async, doesn't block the tab switch.
     try {
@@ -3102,9 +3099,6 @@ async function handleImportFit(inputEl) {
       }
       setTimeout(() => { try { maybeShowFtpTestModal(); } catch(_) {} }, 400);
     } catch(_) {}
-    // Bounce to the rides tab so the user sees the new entry
-    const tab = document.querySelector('.tab[data-tab="rides"]');
-    if (tab) tab.click();
   } catch (e) {
     // The backend endpoint may not exist yet during the staged roll-out (§8).
     // Show a clear message so the user knows what's going on rather than a
@@ -3124,7 +3118,20 @@ function renderElevSvg(points) {
 
 async function openCourseDetail(region, filename) {
   try {
-    const res = await fetch(`/api/course/${encodeURIComponent(region)}/${encodeURIComponent(filename)}`);
+    // v1.8.8 Bug 4 — pre-v1.8.6 cached routes.json carried Unicode like
+    // "Mür" / "pavé" in the filename; the disk is ASCII since v1.8.6
+    // (Mur / pave). Normalize: drop combining marks, then strip any
+    // remaining non-ASCII so the request matches what the FS has. The
+    // backend also retries NFC/NFD on its side as defense-in-depth.
+    let asciiFilename = String(filename || '');
+    try {
+      // NFD splits "é" → "e" + U+0301 combining acute. Strip the combining
+      // marks (U+0300 .. U+036F), then drop any remaining non-ASCII so the
+      // request matches the on-disk ASCII filename from the v1.8.6 rename.
+      asciiFilename = asciiFilename.normalize('NFD').replace(/[̀-ͯ]/g, '');
+      asciiFilename = asciiFilename.replace(/[^\x00-\x7F]/g, '');
+    } catch(_) { /* normalize unsupported — leave as-is, backend will retry */ }
+    const res = await fetch(`/api/course/${encodeURIComponent(region)}/${encodeURIComponent(asciiFilename)}`);
     if (!res.ok) throw new Error('profile load failed (' + res.status + ')');
     const data = await res.json();
     const stats = data.stats || {};
@@ -3143,7 +3150,7 @@ async function openCourseDetail(region, filename) {
       </div>
       <div id="course-elev-svg">${renderElevSvg(data.points || data.profile || [])}</div>
       <div style="margin-top:14px;">
-        <a href="/api/course/${encodeURIComponent(region)}/${encodeURIComponent(filename)}/download" class="btn btn-primary" download>Download CRS</a>
+        <a href="/api/course/${encodeURIComponent(region)}/${encodeURIComponent(asciiFilename)}/download" class="btn btn-primary" download>Download CRS</a>
         <button onclick="closeModal()" class="btn" style="margin-left:8px;">Close</button>
       </div>
     </div>`);
@@ -4016,6 +4023,7 @@ let _powerCurveInflight = false;
 async function loadPowerCurve(force=false) {
   const meta = document.getElementById('power-curve-meta');
   const canvas = document.getElementById('power-curve-chart');
+  const placeholder = document.getElementById('power-curve-loading-placeholder');
   if (!canvas) return;
   if (_powerCurveInflight && !force) return;
   _powerCurveInflight = true;
@@ -4026,6 +4034,30 @@ async function loadPowerCurve(force=false) {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
     _powerCurveData = data;
+    // v1.8.8 Bug 2/11 — empty curve means we never cached power streams
+    // for any ride in the window. Show an actionable placeholder + a
+    // Refresh button that hits ?refresh=1 to trigger a fresh fetch. When
+    // data IS present, the duplicate Power-Duration card below the chart
+    // (legacy placeholder host) is hidden so we don't show an empty card.
+    const nRides = Number(data.n_rides || 0);
+    const needsBackfill = data.needs_backfill === true;
+    if (placeholder) {
+      if (nRides === 0 || needsBackfill) {
+        placeholder.classList.remove('loading');
+        placeholder.innerHTML = '<div style="font-size:12px;color:var(--text3);line-height:1.5;padding:8px 0;">'
+          + 'No cached power-curve data yet — your rides need a backfill before the curve can render.'
+          + '<div style="margin-top:8px;">'
+          + '<button class="btn" style="font-size:11px;padding:4px 10px;" '
+          + 'onclick="loadPowerCurve(true)">Refresh / backfill now</button>'
+          + '</div></div>';
+      } else {
+        // Data is present — hide the duplicate card (legacy host) so the
+        // primary canvas above is the only Power Curve surface visible.
+        const card = placeholder.closest('.card');
+        if (card) card.style.display = 'none';
+        else placeholder.style.display = 'none';
+      }
+    }
     renderPowerCurve();
     maybeKickBackfill(data);
   } catch (e) {
@@ -4254,6 +4286,11 @@ let _fatigueResistanceInflight = false;
 let _fatigueResistanceThreshold = 1500;
 let _fatigueResistanceWindowDays = 365;
 let _fatigueScatterChart = null;
+// v1.8.8 Bug 5 — backfill poll state. Tracks the start time so we can
+// halt polling after 10 minutes, and the active timer so concurrent
+// opens don't stack timers.
+let _fatigueResistanceBackfillStart = 0;
+let _fatigueResistanceBackfillTimer = null;
 async function loadFatigueResistance(force=false) {
   const body = document.getElementById('fatigue-resistance-body');
   if (!body) return;
@@ -4284,6 +4321,46 @@ async function loadFatigueResistance(force=false) {
       throw new Error('HTTP ' + r.status);
     }
     const d = await r.json();
+    // v1.8.8 Bug 5 — when the backend signals a fresh background backfill
+    // kick (auto_backfill_triggered=true), or when power streams aren't
+    // fully cached yet, render a "Backfilling…" placeholder and poll
+    // every 30s until the cache is 100% or 10 minutes elapse.
+    const triggered = d && d.auto_backfill_triggered === true;
+    const pct = Number((d && d.power_streams_cached_pct) || 0);
+    if (triggered || (pct > 0 && pct < 100)) {
+      if (!_fatigueResistanceBackfillStart) _fatigueResistanceBackfillStart = Date.now();
+      const pctTxt = isNaN(pct) ? '—' : (pct + '%');
+      body.innerHTML = `<div style="color:var(--text3);line-height:1.5;">
+        <div>Backfilling power streams — refresh in 1-2 minutes.</div>
+        <div style="font-size:11px;margin-top:4px;">Power streams cached: ${esc(pctTxt)}.</div>
+      </div>`;
+      // Cancel any prior timer before scheduling a fresh poll.
+      if (_fatigueResistanceBackfillTimer) {
+        try { clearTimeout(_fatigueResistanceBackfillTimer); } catch(_) {}
+        _fatigueResistanceBackfillTimer = null;
+      }
+      const elapsed = Date.now() - _fatigueResistanceBackfillStart;
+      if (elapsed < 10 * 60 * 1000) {
+        _fatigueResistanceBackfillTimer = setTimeout(() => {
+          _fatigueResistanceBackfillTimer = null;
+          loadFatigueResistance(true);
+        }, 30 * 1000);
+      } else {
+        // 10-minute ceiling reached — stop polling and surface a note.
+        body.innerHTML = `<div style="color:#f97316;line-height:1.5;">
+          Backfill still in progress after 10 minutes. Try opening this panel again later.
+        </div>`;
+        _fatigueResistanceBackfillStart = 0;
+      }
+      _fatigueResistanceLoaded = true;
+      return;
+    }
+    // Backfill done (or never needed) — clear poll state and render normally.
+    _fatigueResistanceBackfillStart = 0;
+    if (_fatigueResistanceBackfillTimer) {
+      try { clearTimeout(_fatigueResistanceBackfillTimer); } catch(_) {}
+      _fatigueResistanceBackfillTimer = null;
+    }
     renderFatigueResistance(d);
     _fatigueResistanceLoaded = true;
   } catch (e) {
@@ -4762,19 +4839,36 @@ async function _v136RunBackfill() {
   const btn = document.getElementById('v136-ss-backfill-btn');
   const msg = document.getElementById('v136-ss-msg');
   if (btn) { btn.disabled = true; btn.textContent = 'Backfilling…'; }
-  if (msg) msg.textContent = '';
+  if (msg) msg.innerHTML = '';
   try {
     const r = await fetch('/api/wellness/backfill-3d-fitness', {method: 'POST'});
     const data = await r.json().catch(() => ({}));
     const n = data.backfilled || 0;
     const f = data.failed || 0;
+    // v1.8.8 Bug 9 — render per-ride skipped_reason so the user knows WHY
+    // each ride didn't backfill. Backend Wave 2A adds a `results` list with
+    // {ride_id, skipped_reason} entries. Empty/missing list falls back to
+    // the prior summary line.
+    const results = Array.isArray(data.results) ? data.results : [];
     if (msg) {
+      let summary;
       if (n === 0) {
-        msg.textContent = 'No rides backfilled — see Activity tab for ride list.';
+        summary = 'No rides backfilled.';
       } else {
-        msg.textContent = `Backfilled ${n} ride${n === 1 ? '' : 's'}` +
-                          (f > 0 ? ` (${f} failed)` : '') + '. Reloading chart…';
+        summary = `Backfilled ${n} ride${n === 1 ? '' : 's'}` +
+                  (f > 0 ? ` (${f} failed)` : '') + '. Reloading chart…';
       }
+      let detailHtml = '';
+      const skipped = results.filter(rr => rr && rr.skipped_reason);
+      if (skipped.length) {
+        const items = skipped.map(rr => {
+          const rid = String(rr.ride_id || '—');
+          const reason = String(rr.skipped_reason || 'unknown');
+          return `<li>Ride ${esc(rid)}: ${esc(reason)}</li>`;
+        }).join('');
+        detailHtml = `<ul style="margin:6px 0 0 18px;padding:0;font-size:11px;color:var(--text3);">${items}</ul>`;
+      }
+      msg.innerHTML = `<div>${esc(summary)}</div>${detailHtml}`;
     }
     if (n > 0) {
       // Re-fetch wellness so the chart re-renders. Most callers route
@@ -5130,8 +5224,13 @@ async function loadHome() {
     catch(e) { try { window._diagFrontendError('E_FRONTEND_ENERGY_SYS_RENDER', {msg: String(e && e.message || e)}); } catch(_) {} }
 
     try {
-      // Gauge
-      $('gauge').innerHTML = gaugeArc(r.score);
+      // v1.8.8 Bug 8 — gauge consumes the canonical score_0_100 field from
+      // /api/readiness. Backend emits score_0_100 at the TOP level of the
+      // payload (not inside `readiness`). Falls back to legacy `r.score`
+      // while older builds are still in flight. The 0-10 scale lives on
+      // the "Readiness today" composite card; the gauge keeps 0-100.
+      const gaugeScore = (d.score_0_100 != null) ? d.score_0_100 : r.score;
+      $('gauge').innerHTML = gaugeArc(gaugeScore);
       $('gauge-status').textContent = r.status || '';
 
       // Advice
@@ -5297,6 +5396,8 @@ async function loadHome() {
     loadPowerCurve();
     // v1.1.0 IMPL-HRV-RECOVERY — Readiness today (composite, 0-10).
     loadReadinessComposite();
+    // v1.8.8 Bug 3 — last ride DFA α1 snapshot in the readiness card.
+    try { loadHomeSnapshotDfa(activities); } catch(_) {}
     // v1.7.6 — last week feedback panel (planned vs actual + overreach).
     try { loadLastWeekFeedback(); } catch(_) {}
 
@@ -5336,11 +5437,19 @@ async function loadReadinessComposite() {
         style="display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;
                background:${sourceColor}22;color:${sourceColor};border:1px solid ${sourceColor};
                vertical-align:middle;margin-left:8px;letter-spacing:0.02em;">${esc(sourceLabel)}</span>`;
+    // v1.8.8 Bug 8 — consume the canonical score_0_10 field. Backend
+    // Wave 2A returns both score_0_10 and score_0_100 on /api/readiness
+    // AND mirrors them onto /api/readiness/composite. Fall back to the
+    // legacy `score` field while older builds are still in flight.
+    if (d.score_0_10 != null && d.score == null) d.score = d.score_0_10;
     if (d.status === 'insufficient_data' || d.score === null || d.score === undefined) {
       // v1.8.0 — even without a composite score, the backend may emit a
       // Hooper-override severity. Render the pill + auto-adjust button
       // when severity is actionable so the user isn't stuck.
       const sev = d.severity || 'normal';
+      // v1.8.8 Bug 7 — stash severity so the auto-adjust commit can pass
+      // scope='day' for the rest-day branch.
+      window._readinessSeverity = sev;
       const showAuto = (sev === 'tier_down' || sev === 'rest');
       const autoBtnLabel = (sev === 'rest') ? '🛏 Apply rest day' : '🩹 Auto-adjust this week';
       const autoHtml = showAuto
@@ -5388,6 +5497,9 @@ async function loadReadinessComposite() {
     // remains the v1.7.5 single-day flow; a new "Auto-adjust this week"
     // button covers the multi-session walk via dry-run preview.
     const sev = d.severity || 'normal';
+    // v1.8.8 Bug 7 — stash severity so the auto-adjust commit can pass
+    // scope='day' for the rest-day branch.
+    window._readinessSeverity = sev;
     const showTierDownBtn = (sev === 'tier_down');
     const tierDownHtml = showTierDownBtn
       ? `<div style="margin-top:8px;">
@@ -5439,6 +5551,40 @@ async function loadReadinessComposite() {
     console.error('readiness-composite load failed', e);
     host.innerHTML = '<div style="font-size:12px;color:var(--text3);">Composite readiness unavailable.</div>';
   }
+}
+
+// v1.8.8 Bug 3 — homepage snapshot of the last ride's DFA α1. Reuses the
+// activities list already fetched by loadHome and pulls the prefixed
+// ride_id of the most recent activity, then fetches its detail to read
+// dfa_alpha1_avg. Renders a single line under the Readiness card; hides
+// the line when no ride or no DFA value is available.
+async function loadHomeSnapshotDfa(activities) {
+  const host = document.getElementById('home-snapshot-dfa');
+  if (!host) return;
+  host.style.display = 'none';
+  host.innerHTML = '';
+  try {
+    const list = Array.isArray(activities) ? activities : [];
+    if (!list.length) return;
+    // /api/activities returns newest-first; pick the first activity that
+    // has a known-prefix ride_id so the openActivityModal contract holds.
+    let lastId = '';
+    for (const a of list) {
+      const rid = a && a.id ? String(a.id) : '';
+      if (rid.startsWith('icu_') || rid.startsWith('fit_') || rid.startsWith('legacy_')) {
+        lastId = rid;
+        break;
+      }
+    }
+    if (!lastId) return;
+    const res = await fetch(`/api/ride/${encodeURIComponent(lastId)}/detail`);
+    if (!res.ok) return;
+    const d = await res.json();
+    if (!d || d.dfa_alpha1_avg == null) return;
+    const avg = Number(d.dfa_alpha1_avg).toFixed(2);
+    host.innerHTML = `<b style="color:var(--text);">Last ride DFA α1:</b> ${esc(avg)}`;
+    host.style.display = 'block';
+  } catch (_) { /* non-fatal */ }
 }
 
 // v1.7.6 — Last week feedback panel. Renders planned-vs-actual TSS + zone
@@ -5595,12 +5741,22 @@ async function applyWeekAutoAdjust() {
     btn.textContent = 'Loading preview…';
   }
   if (statusEl) statusEl.textContent = '';
+  // v1.8.8 Bug 7 — when the readiness composite signaled severity=rest,
+  // POST scope='day' so the backend writes the rest-day onto tomorrow's
+  // session. Severity=tier_down keeps the original scope='week' walk.
+  const sevFromCard = (window._readinessSeverity || 'tier_down');
+  const scope = sevFromCard === 'rest' ? 'day' : 'week';
+  window._autoAdjustScope = scope;
+  window._autoAdjustSeverity = sevFromCard;
+  const previewBody = { scope, dry_run: true, severity: sevFromCard };
+  try { console.info('auto-adjust preview POST', previewBody); } catch(_) {}
   try {
     const res = await fetch('/api/plan/auto-adjust', {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({scope: 'week', dry_run: true}),
+      body: JSON.stringify(previewBody),
     });
     const data = await res.json().catch(() => ({}));
+    try { console.info('auto-adjust preview RESPONSE', res.status, data); } catch(_) {}
     if (!res.ok || data.ok === false) {
       const reason = (data.error || ('HTTP ' + res.status));
       if (statusEl) statusEl.innerHTML = `<span style="color:var(--orange);">Could not preview: ${esc(String(reason))}</span>`;
@@ -5684,23 +5840,40 @@ async function applyWeekAutoAdjust() {
 
 // v1.8.0 — modal Apply button calls back into the same endpoint with
 // dry_run:false to persist changes, then refreshes the dependent panels.
+// v1.8.8 Bug 7 — track the severity from the preview render so the commit
+// can pass scope='day' for the rest-day case; the backend Wave 2A wires the
+// scope='day' + severity='rest' branch to write tomorrow's rest session.
+window._autoAdjustScope = window._autoAdjustScope || 'week';
+window._autoAdjustSeverity = window._autoAdjustSeverity || 'tier_down';
 async function _applyWeekAutoAdjustCommit() {
   const applyBtn = document.getElementById('auto-adjust-apply-btn');
   if (applyBtn) { applyBtn.disabled = true; applyBtn.textContent = 'Applying…'; }
+  const scope = window._autoAdjustScope || 'week';
+  const severity = window._autoAdjustSeverity || 'tier_down';
+  const postBody = { scope, dry_run: false, severity };
+  try { console.info('auto-adjust commit POST', postBody); } catch(_) {}
   try {
     const res = await fetch('/api/plan/auto-adjust', {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({scope: 'week', dry_run: false}),
+      body: JSON.stringify(postBody),
     });
     const data = await res.json().catch(() => ({}));
+    try { console.info('auto-adjust commit RESPONSE', res.status, data); } catch(_) {}
     if (!res.ok || data.ok === false) {
       const reason = (data.error || ('HTTP ' + res.status));
-      try { showToast('Auto-adjust failed: ' + reason, 4000); } catch(_) {}
+      const failMsg = severity === 'rest'
+        ? `✗ Apply failed: ${reason}`
+        : `Auto-adjust failed: ${reason}`;
+      try { showToast(failMsg, 4000); } catch(_) {}
       if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = 'Apply'; }
       return;
     }
-    const n = Number(data.sessions_modified || 0);
-    try { showToast(`Auto-adjust applied: ${n} session${n === 1 ? '' : 's'} updated`, 3500); } catch(_) {}
+    if (severity === 'rest') {
+      try { showToast('✓ Rest day applied to tomorrow', 3500); } catch(_) {}
+    } else {
+      const n = Number(data.sessions_modified || 0);
+      try { showToast(`Auto-adjust applied: ${n} session${n === 1 ? '' : 's'} updated`, 3500); } catch(_) {}
+    }
     closeModal();
     // Refresh dependent panels so user sees the change without a hard reload.
     try { await loadTodaySession(); } catch(_) {}
@@ -5709,7 +5882,10 @@ async function _applyWeekAutoAdjustCommit() {
     try { loadWeeklyCalendar(); } catch(_) {}
     try { loadReadinessComposite(); } catch(_) {}
   } catch (e) {
-    try { showToast('Network error: ' + (e && e.message || e), 4000); } catch(_) {}
+    const msg = severity === 'rest'
+      ? `✗ Apply failed: ${(e && e.message) || e}`
+      : `Network error: ${(e && e.message) || e}`;
+    try { showToast(msg, 4000); } catch(_) {}
     if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = 'Apply'; }
   }
 }
@@ -5853,80 +6029,8 @@ function sortLibrary(col) {
   renderLibrary(_libraryWorkouts);
 }
 
-// ═══ RIDE HISTORY ════════════════════════════════════════════════════════════
-
-async function loadRideHistory() {
-  try {
-    const rides = await (await fetch('/api/rides')).json();
-    if (!rides.length) {
-      $('rides-list').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3);"><div style="font-size:48px;margin-bottom:12px;">🚴</div><div style="font-size:16px;">No rides yet</div><div style="font-size:13px;margin-top:4px;">Import a FIT ride to see it here</div></div>';
-      return;
-    }
-
-    const zc = pct => pct < 56 ? '#64748b' : pct < 76 ? '#3b82f6' : pct < 91 ? '#22c55e' : pct < 106 ? '#eab308' : pct < 121 ? '#f97316' : pct < 150 ? '#ef4444' : '#a855f7';
-    const dcColor = c => c === 'green' ? '#22c55e' : c === 'yellow' ? '#eab308' : c === 'red' ? '#ef4444' : 'var(--text3)';
-    const fmtDur = s => { const h = Math.floor(s/3600); const m = Math.floor((s%3600)/60); return h ? `${h}h${m}m` : `${m}min`; };
-    const fmtDate = s => { const d = new Date(s); return d.toLocaleDateString('en-GB', {weekday:'short',day:'numeric',month:'short'}); };
-    const fmtTime = s => { const d = new Date(s); return d.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'}); };
-
-    let html = `<table style="width:100%;border-collapse:collapse;font-size:13px;">
-      <thead><tr style="border-bottom:2px solid var(--border);color:var(--text3);text-align:left;">
-        <th style="padding:8px;">Date</th>
-        <th style="padding:8px;">Ride</th>
-        <th style="padding:8px;">Duration</th>
-        <th style="padding:8px;">TSS</th>
-        <th style="padding:8px;" title="Weighted Power (equivalent to TrainingPeaks NP&reg;)">WP</th>
-        <th style="padding:8px;">IF</th>
-        <th style="padding:8px;">Avg W</th>
-        <th style="padding:8px;">Avg HR</th>
-        <th style="padding:8px;">Pw:Hr</th>
-        <th style="padding:8px;">Distance</th>
-      </tr></thead><tbody>`;
-
-    // Pill builder — derive kind from ride_type + metadata. ride_type values
-    // are `workout`, `course`, `hybrid`, `free` (from SessionMode in
-    // training_live.py). Hybrid = workout inside a course so we still call it
-    // TRAINING. Metadata flags are used as belt-and-braces in case older rides
-    // were saved without a ride_type.
-    const kindPill = (r) => {
-      const rt = (r.ride_type || '').toLowerCase();
-      const hasWorkout = !!(r.metadata && r.metadata.workout_name);
-      const hasCourse = !!(r.metadata && r.metadata.course_name);
-      let label, bg, fg;
-      if (rt === 'workout' || rt === 'hybrid' || (hasWorkout && !rt)) {
-        label = 'TRAINING'; bg = 'rgba(59,130,246,0.15)'; fg = '#3b82f6';
-      } else if (rt === 'course' || (hasCourse && !hasWorkout)) {
-        label = 'ROUTE'; bg = 'rgba(34,197,94,0.15)'; fg = '#22c55e';
-      } else {
-        label = 'FREE RIDE'; bg = 'rgba(100,116,139,0.15)'; fg = '#94a3b8';
-      }
-      return `<span style="background:${bg};color:${fg};padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:0.5px;white-space:nowrap;">${label}</span>`;
-    };
-
-    rides.forEach(r => {
-      const s = r.summary || {};
-      const name = r.metadata?.name || r.metadata?.workout_name || r.metadata?.course_name || 'Free Ride';
-      const dc = s.decoupling_pct;
-      const dcCol = dcColor(s.decoupling_color);
-      html += `<tr style="border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.15s;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''" onclick="openRideDetail('${escJs(r.id)}')">
-        <td style="padding:8px;white-space:nowrap;">${fmtDate(r.started_at)}<br><span style="font-size:11px;color:var(--text3);">${fmtTime(r.started_at)}</span></td>
-        <td style="padding:8px;font-weight:600;"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">${kindPill(r)}<span>${esc(name)}</span></div></td>
-        <td style="padding:8px;">${fmtDur(s.duration_sec || 0)}</td>
-        <td style="padding:8px;font-weight:700;">${s.tss || '---'}</td>
-        <td style="padding:8px;">${(s.weighted_power != null ? s.weighted_power : s.normalized_power) || '---'}W</td>
-        <td style="padding:8px;">${s.intensity_factor || '---'}</td>
-        <td style="padding:8px;">${s.avg_power || '---'}W</td>
-        <td style="padding:8px;">${s.avg_hr || '---'}</td>
-        <td style="padding:8px;font-weight:700;color:${dcCol};">${dc != null ? dc + '%' : '---'}</td>
-        <td style="padding:8px;">${s.distance_km ? s.distance_km.toFixed(1) + 'km' : '---'}</td>
-      </tr>`;
-    });
-    html += '</tbody></table>';
-    $('rides-list').innerHTML = html;
-  } catch(e) {
-    $('rides-list').innerHTML = '<div style="color:var(--text3);padding:20px;">Failed to load ride history</div>';
-  }
-}
+// v1.8.8 Bug 10 — loadRideHistory() removed alongside the Ride History tab.
+// Activity list on home + agenda + activity modal cover the surface.
 
 // v4.1.0 U1: FTP-test modal handlers + auto-open on dashboard load.
 // Works with the in-ride banner (backwards compatible with fix35e) AND a
@@ -6627,6 +6731,17 @@ async function openRideDetail(rideId) {
       </div>`;
     }
 
+    // v1.8.8 Bug 3 — DFA α1 single-ride summary line. Renders whenever
+    // dfa_alpha1_avg is present, regardless of whether the per-second
+    // history has enough points for a sparkline below.
+    if (s.dfa_alpha1_avg != null) {
+      const dfaAvgFmt = Number(s.dfa_alpha1_avg).toFixed(2);
+      const dfaStatus = String(s.dfa_alpha1_status || 'none');
+      html += `<div style="background:var(--surface2);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--text2);">
+        <b style="color:var(--text);">DFA α1 (HRV breakpoint):</b> ${esc(dfaAvgFmt)} &mdash; ${esc(dfaStatus)}
+      </div>`;
+    }
+
     // v3.6.0-fix28 M-1: DFA α1 post-ride sparkline. ride_storage persists
     // `dfa_history` (list of [elapsed_s, alpha1] pairs); render a compact
     // 220×40 SVG sparkline with dashed VT1 (α1=1.0) / VT2 (α1=0.75) lines.
@@ -6713,7 +6828,7 @@ async function openRideDetail(rideId) {
       ${_raceCheckboxHtml}
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <a class="btn" href="/api/rides/${rideIdEnc}/fit" download style="background:var(--surface2);text-decoration:none;display:inline-block;">Download FIT</a>
-        <button class="btn" style="background:var(--surface2);color:var(--dev-red);border-color:var(--dev-red);" onclick="if(confirm('Delete this ride?')){fetch('/api/rides/${rideIdEnc}',{method:'DELETE'}).then(r=>{if(!r.ok)throw new Error('Failed');$('ride-detail-overlay').style.display='none';loadRideHistory();}).catch(e=>alert('Failed to delete ride: '+e.message))}">Delete Ride</button>
+        <button class="btn" style="background:var(--surface2);color:var(--dev-red);border-color:var(--dev-red);" onclick="if(confirm('Delete this ride?')){fetch('/api/rides/${rideIdEnc}',{method:'DELETE'}).then(r=>{if(!r.ok)throw new Error('Failed');$('ride-detail-overlay').style.display='none';}).catch(e=>alert('Failed to delete ride: '+e.message))}">Delete Ride</button>
       </div>
     </div>`;
 
@@ -8505,19 +8620,27 @@ function togglePlanFields() {
 
 // v4.6.0 B2: live phase preview — call /api/plan/preview so the right
 // panel uses the SAME derive_phases() logic as /api/plan/generate.
+// v1.8.8 Bug 6 — weeks↔event-date single source of truth. Earlier the
+// preview call could end up reading the OLD slider value (set before the
+// computed value landed). Now: derive the canonical weeks first, push it
+// onto the slider, then read it BACK off the slider for the preview call.
+// All downstream code touches `weeks` only after this round-trip.
 async function refreshPlanPreview() {
   const goal = $('plan-goal').value;
   const isEvent = _isEventGoal(goal);
-  let weeks = parseInt($('plan-weeks').value) || 12;
   const eventDate = isEvent ? $('plan-edate').value : '';
+  const sliderEl = $('plan-weeks');
 
   if (isEvent && eventDate) {
     const computed = _computePlanWeeksFromEventDate(eventDate);
     if (computed) {
-      weeks = computed;
-      $('plan-weeks').value = computed;
+      // 1. Write the computed value onto the slider FIRST.
+      sliderEl.value = computed;
     }
   }
+  // 2. Read the slider AFTER any write. Single source of truth — the
+  //    preview call uses what the user (or the date-derived value) sees.
+  const weeks = parseInt(sliderEl.value) || 12;
 
   try {
     const params = new URLSearchParams({ goal, plan_weeks: String(weeks) });
@@ -14102,6 +14225,17 @@ function renderOnTrackBar(data) {
 window._activityModalCache = window._activityModalCache || new Map();
 async function openActivityModal(rideId) {
   if (!rideId) return;
+  // v1.8.8 Bug 1 — defensive ID format check. The homepage activity list
+  // and calendar should pass the prefixed ride_id (`icu_…`, `fit_…`, or
+  // `legacy_…`); a bare external_id will 404 on /api/ride/<id>/detail.
+  // Log + toast instead of hitting the server for an unknown shape.
+  const rid = String(rideId);
+  const hasKnownPrefix = rid.startsWith('icu_') || rid.startsWith('fit_') || rid.startsWith('legacy_');
+  if (!hasKnownPrefix) {
+    try { console.warn('openActivityModal: ride_id without known prefix', rid); } catch(_) {}
+    try { showToast('Activity ID format not recognised: ' + rid, 4000); } catch(_) {}
+    return;
+  }
   const overlay = document.getElementById('activity-modal-overlay');
   if (!overlay) return;
   overlay.style.display = 'flex';
@@ -14249,6 +14383,17 @@ function renderActivityModal(p) {
       <div style="font-size:9px;color:var(--text3);text-transform:uppercase;margin-top:2px;">${h.l}</div>
     </div>`).join('')}
   </div>`;
+
+  // v1.8.8 Bug 3 — DFA α1 single-ride summary. Backend's _attach_xss_summary
+  // already emits dfa_alpha1_avg + dfa_alpha1_status on the detail payload.
+  // Render whenever dfa_alpha1_avg is non-null, regardless of dfa_history.
+  if (p.dfa_alpha1_avg != null) {
+    const dfaAvgFmt = Number(p.dfa_alpha1_avg).toFixed(2);
+    const dfaStatus = String(p.dfa_alpha1_status || 'none');
+    html += `<div style="background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--text2);">
+      <b style="color:var(--text);">DFA α1 (HRV breakpoint):</b> ${esc(dfaAvgFmt)} &mdash; ${esc(dfaStatus)}
+    </div>`;
+  }
 
   // Sparklines (power + HR overlay)
   const samples = p.samples || null;

@@ -1259,6 +1259,16 @@ def api_profile_power_curve(window_days: int = Query(90, ge=1, le=3650),
             "wprime_j": None,
             "pmax_w": None,
         }
+    # v1.8.8 Bug 2/11 — surface `needs_backfill` so the dashboard can swap
+    # the "Loading…" placeholder for a "Run backfill" button when streams
+    # haven't been cached yet. True when n_rides==0 (nothing aggregated)
+    # — the legacy contract had no such field, so callers ignore it
+    # silently when absent. ADD-only, never rename/remove.
+    try:
+        n_rides = int(result.get("n_rides") or 0)
+    except (TypeError, ValueError):
+        n_rides = 0
+    result["needs_backfill"] = bool(n_rides == 0)
     # Lazy GC — prune stale power_curve_* entries with old latest_ride_ids.
     for k in list(_cache.keys()):
         if k.startswith(f"power_curve_default_{int(window_days)}_") and k != cache_key:
@@ -1428,6 +1438,54 @@ def api_profile_fatigue_resistance(window_days: int = Query(365, ge=1, le=3650),
                 "by_duration": [],
                 "scatter": [],
             }
+        # v1.8.8 Bug 5 — when long rides exist but no power streams have
+        # been cached, kick off the background backfill once and surface
+        # the state to the UI so it can show a "Backfilling…" placeholder
+        # and poll. Adds ADD-only fields:
+        #   - power_streams_cached_pct: int    coverage %, 0-100
+        #   - auto_backfill_triggered: bool    true when this call started one
+        try:
+            n_long = int(result.get("n_long_rides") or 0)
+        except (TypeError, ValueError):
+            n_long = 0
+        try:
+            n_with_streams = int(result.get("n_long_rides_with_streams") or 0)
+        except (TypeError, ValueError):
+            n_with_streams = 0
+        pct = int(round(100.0 * n_with_streams / n_long)) if n_long > 0 else 0
+        result["power_streams_cached_pct"] = pct
+        auto_triggered = False
+        if n_with_streams == 0 and n_long >= 1:
+            # Fire-and-forget: try acquiring the single-flight backfill lock
+            # and spawn the worker. Already-running case is fine — we just
+            # report the existing task implicitly via the lock.
+            try:
+                acquired, lock = power_curve.acquire_backfill_lock()
+                if acquired:
+                    task_id = lock.get("task_id") or uuid.uuid4().hex
+                    with _backfill_thread_lock:
+                        _backfill_tasks[task_id] = {
+                            "task_id": task_id,
+                            "state": "running",
+                            "backfilled": 0,
+                            "already_cached": 0,
+                            "failed": 0,
+                        }
+                    t = threading.Thread(
+                        target=_run_backfill_job,
+                        args=(task_id,),
+                        daemon=True,
+                    )
+                    t.start()
+                    auto_triggered = True
+                    _log.info(
+                        "fatigue_resistance: auto-triggered backfill "
+                        "n_long=%d streams=0 task_id=%s",
+                        n_long, task_id,
+                    )
+            except Exception as e:  # noqa: BLE001
+                _log.debug(f"fatigue_resistance auto-backfill kick failed: {e}")
+        result["auto_backfill_triggered"] = auto_triggered
         # Lazy GC — prune stale fatigue_resistance_* entries with old keys
         # for the same (window_days, kj_threshold) pair. W2B-G5: skip GC
         # when latest=="" so a transient latest-ride-lookup failure doesn't
@@ -1740,8 +1798,22 @@ def api_readiness(subjective: float = Query(None)):
     # enough components to compute readiness composite", not "no source".
     if data_status_local_wellness:
         r["data_status"] = "local_wellness"
+    # v1.8.8 Bug 8 — unify the two readiness scales so the homepage card
+    # and the scroll-down card stop disagreeing. `score_0_100` is the
+    # canonical compute_readiness output (legacy field, unchanged).
+    # `score_0_10` is the same metric expressed on the 0-10 scale used by
+    # the composite readiness card. ADD-only; existing `r.score` stays.
+    raw_score = r.get("score")
+    try:
+        s100 = float(raw_score) if raw_score is not None else None
+    except (TypeError, ValueError):
+        s100 = None
+    s10 = round(s100 / 10.0, 1) if s100 is not None else None
     return {
         "readiness": r,
+        # v1.8.8 Bug 8 — top-level unified score fields.
+        "score_0_10": s10,
+        "score_0_100": s100,
         "training": merged_load,
         "sleep": {
             "sleep_h": sleep.get("sleep_h"), "sleep_score": sleep.get("sleep_score"),
@@ -1828,6 +1900,10 @@ def api_readiness_composite(date: str = Query(None)):
             result["severity_reasons"] = sev.get("reasons") or []
     except Exception:
         pass
+    # v1.8.8 Bug 8 — mark this endpoint deprecated; callers should use
+    # /api/readiness (which now returns BOTH score_0_10 and score_0_100).
+    if isinstance(result, dict):
+        result["deprecated"] = True
     return result
 
 
@@ -2028,25 +2104,49 @@ async def api_plan_auto_adjust(request: Request):
     """
     body = await _get_json_body(request)
     scope = str(body.get("scope") or "today").strip().lower()
-    if scope not in ("today", "week"):
-        return JSONResponse({"error": "scope must be 'today' or 'week'"}, 400)
+    # v1.8.8 Bug 7 — accept `scope='day'` for "apply rest to tomorrow".
+    # 'today' / 'week' continue to mean what they always did. 'day' targets
+    # tomorrow's session so the "Apply rest day" button on the readiness
+    # card stops a planned hard ride before it happens.
+    if scope not in ("today", "week", "day"):
+        return JSONResponse(
+            {"error": "scope must be 'today', 'day', or 'week'"}, 400,
+        )
     dry_run = bool(body.get("dry_run", False))
+    # v1.8.8 Bug 7 — allow explicit severity override so the rest-day
+    # button can ask for "rest" regardless of computed severity (the user
+    # is asserting it). When provided it bypasses the computed-severity
+    # path. Backward-compat: when omitted, computed severity is used.
+    severity_override = body.get("severity")
+    if severity_override is not None:
+        severity_override = str(severity_override).strip().lower() or None
 
     today_iso = date.today().isoformat()
+    # v1.8.8 Bug 7 — `scope='day'` targets tomorrow's session.
+    target_iso = (
+        (date.today() + timedelta(days=1)).isoformat()
+        if scope == "day" else today_iso
+    )
     profile_id = "default"
 
     # 1. Resolve severity (A-BACKEND helper). Tolerate absence.
-    try:
-        from readiness_composite import compute_training_severity as _cts
-    except Exception:
-        return JSONResponse({"error": "severity unavailable"}, 503)
-    try:
-        sev = _cts(profile_id, today_iso) or {}
-    except Exception:
-        _log.exception("auto-adjust: compute_training_severity failed")
-        return JSONResponse({"error": "severity unavailable"}, 503)
-    severity = sev.get("severity") or "normal"
-    source = sev.get("source") or "insufficient"
+    # v1.8.8 Bug 7 — caller may override (severity in body) so the
+    # explicit "Apply rest day" button always lands rest.
+    if severity_override:
+        severity = severity_override
+        source = "user_override"
+    else:
+        try:
+            from readiness_composite import compute_training_severity as _cts
+        except Exception:
+            return JSONResponse({"error": "severity unavailable"}, 503)
+        try:
+            sev = _cts(profile_id, today_iso) or {}
+        except Exception:
+            _log.exception("auto-adjust: compute_training_severity failed")
+            return JSONResponse({"error": "severity unavailable"}, 503)
+        severity = sev.get("severity") or "normal"
+        source = sev.get("source") or "insufficient"
 
     # 2. severity=normal → no change.
     if severity == "normal":
@@ -2057,6 +2157,7 @@ async def api_plan_auto_adjust(request: Request):
             "scope": scope,
             "dry_run": dry_run,
             "actions": [],
+            "applied": [],
             "sessions_modified": 0,
             "note": "no adjustment needed",
         }
@@ -2079,12 +2180,13 @@ async def api_plan_auto_adjust(request: Request):
     actions: list[dict] = []
     note = ""
 
-    # 5. severity=rest → today-only rest (week scope collapses to today).
+    # 5. severity=rest → single-day rest. `scope='day'` targets tomorrow,
+    # everything else (including 'week' collapse) targets today.
     if severity == "rest":
         target = None
         for w in working.get("weeks", []) or []:
             for s in w.get("sessions", []) or []:
-                if s.get("day") == today_iso:
+                if s.get("day") == target_iso:
                     target = s
                     break
             if target:
@@ -2102,7 +2204,7 @@ async def api_plan_auto_adjust(request: Request):
             target["adapted_reason"] = "Auto-adjust: rest (severity=rest)"
             target["status"] = "pending"
             actions.append({
-                "day": today_iso,
+                "day": target_iso,
                 "before": {"type": old_type, "duration_min": old_duration, "tss": old_tss},
                 "after": {"type": "rest", "duration_min": 0, "tss": 0.0},
                 "rematched": False,
@@ -2235,6 +2337,14 @@ async def api_plan_auto_adjust(request: Request):
             _log.exception("auto-adjust: atomic_write_plan failed")
             return JSONResponse({"error": "plan write failed"}, 500)
 
+    # v1.8.8 Bug 7 — surface an `applied` summary list per master-doc
+    # contract: `[{date, session_type}]`. Empty when nothing changed
+    # (e.g. dry-run or target session not found in plan).
+    applied = [
+        {"date": a.get("day"), "session_type": a.get("after", {}).get("type")}
+        for a in actions
+        if not dry_run and a.get("day")
+    ]
     return {
         "ok": True,
         "severity": severity,
@@ -2242,6 +2352,7 @@ async def api_plan_auto_adjust(request: Request):
         "scope": scope,
         "dry_run": dry_run,
         "actions": actions,
+        "applied": applied,
         "sessions_modified": sessions_modified,
         "note": note,
     }
@@ -2681,18 +2792,29 @@ def api_backfill_3d_fitness():
     For each ride whose day has no ss_cp_daily row in athlete_metrics:
       * FIT rides → re-parse to recover power_series, call compute_ride_xss
       * ICU rides → fetch streams via training.fetch_activity_streams,
-        pass watts to compute_ride_xss
+        pass watts to compute_ride_xss. When ICU streams come back empty,
+        v1.8.8 Bug 9 also tries the local FIT file (if any) so rides
+        captured on a Garmin AND synced to ICU still backfill.
 
-    Returns ``{'backfilled': N, 'skipped': K, 'failed': F}`` and busts the
+    Returns ``{'backfilled': N, 'skipped': K, 'failed': F,
+    'results': [{ride_id, skipped_reason}, ...]}`` and busts the
     server cache so the next /api/wellness call re-augments with the
     fresh SS rows.
+
+    `skipped_reason` is one of:
+      ``"no_power_stream"`` — fetch returned nothing
+      ``"all_zero"``        — stream present but every sample == 0
+      ``"fit_missing"``     — FIT-sourced ride but the .fit file is gone
+      ``"cutoff"``          — ride pre-dates the SS feature cutoff
+      ``"already_cached"``  — day already has an ss_cp_daily row
+      ``None``              — successful backfill or fall-through
     """
     import ride_storage as _rs136
     try:
         rides = _rs136.load_all_rides()
     except Exception as e:
         _log.warning(f"backfill-3d-fitness load_all_rides failed: {e}")
-        return {"backfilled": 0, "skipped": 0, "failed": 0}
+        return {"backfilled": 0, "skipped": 0, "failed": 0, "results": []}
 
     try:
         rows = db.query_metric_history("ss_cp_daily", days=730)
@@ -2703,18 +2825,40 @@ def api_backfill_3d_fitness():
     backfilled = 0
     skipped = 0
     failed = 0
+    results: list[dict] = []
     for r in rides:
+        ride_id = r.get("ride_id") or r.get("external_id") or ""
         day = (r.get("started_at") or "")[:10]
         if not day or day < _V136_SS_CUTOFF_DATE:
             skipped += 1
+            results.append({"ride_id": ride_id, "skipped_reason": "cutoff"})
             continue
         if day in already:
             skipped += 1
+            results.append({"ride_id": ride_id, "skipped_reason": "already_cached"})
             continue
         try:
             ps: list = []
-            if r.get("source") == "fit" and r.get("_fit_path"):
-                ps = _v136_extract_fit_power_series(Path(r["_fit_path"]))
+            fit_path_attr = r.get("_fit_path")
+            if r.get("source") == "fit":
+                if fit_path_attr:
+                    fp = Path(fit_path_attr)
+                    if fp.exists():
+                        ps = _v136_extract_fit_power_series(fp)
+                    else:
+                        skipped += 1
+                        results.append({
+                            "ride_id": ride_id,
+                            "skipped_reason": "fit_missing",
+                        })
+                        continue
+                else:
+                    skipped += 1
+                    results.append({
+                        "ride_id": ride_id,
+                        "skipped_reason": "fit_missing",
+                    })
+                    continue
             elif r.get("source") == "icu" and r.get("external_id"):
                 try:
                     import training as _training
@@ -2724,8 +2868,25 @@ def api_backfill_3d_fitness():
                 except Exception:
                     streams = {}
                 ps = streams.get("watts") or streams.get("power") or []
-            if not ps or not any(int(p or 0) > 0 for p in ps):
+                # v1.8.8 Bug 9 — ICU streams unavailable? Try the local
+                # FIT file if one was synced alongside the ICU record.
+                if not ps and fit_path_attr:
+                    fp = Path(fit_path_attr)
+                    if fp.exists():
+                        ps = _v136_extract_fit_power_series(fp)
+            if not ps:
                 skipped += 1
+                results.append({
+                    "ride_id": ride_id,
+                    "skipped_reason": "no_power_stream",
+                })
+                continue
+            if not any(int(p or 0) > 0 for p in ps):
+                skipped += 1
+                results.append({
+                    "ride_id": ride_id,
+                    "skipped_reason": "all_zero",
+                })
                 continue
             comp = _rs136.compute_ride_xss(
                 ps, started_at=r.get("started_at"),
@@ -2733,18 +2894,35 @@ def api_backfill_3d_fitness():
             if comp:
                 backfilled += 1
                 already.add(day)
+                results.append({
+                    "ride_id": ride_id,
+                    "skipped_reason": None,
+                })
             else:
                 skipped += 1
+                results.append({
+                    "ride_id": ride_id,
+                    "skipped_reason": "no_power_stream",
+                })
         except Exception as e:
             _log.debug(f"backfill-3d-fitness ride {r.get('ride_id')}: {e}")
             failed += 1
+            results.append({
+                "ride_id": ride_id,
+                "skipped_reason": "no_power_stream",
+            })
 
     # Bust cache so /api/wellness re-augments next read.
     try:
         clear_cache()
     except Exception:
         pass
-    return {"backfilled": backfilled, "skipped": skipped, "failed": failed}
+    return {
+        "backfilled": backfilled,
+        "skipped": skipped,
+        "failed": failed,
+        "results": results,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3731,12 +3909,52 @@ def api_surface_types():
 
 @app.get("/api/course/{region}/{filename}")
 def api_course_profile(region: str, filename: str):
-    """Return elevation profile data from a CRS file for charting."""
-    path = _safe_path(COURSE_DIR, region, filename)
-    if not path or not path.exists():
+    """Return elevation profile data from a CRS file for charting.
+
+    v1.8.8 Bug 4 — cached routes.json from before the v1.8.6 ASCII rename
+    may carry non-ASCII filenames (``pavé``, ``Mür``). On 404, retry with
+    Unicode NFC and NFD normalization. If still 404, log the disk path
+    attempted so the next bug-report tells us exactly which name was
+    missing.
+    """
+    import unicodedata as _ud
+
+    def _resolve_course(fname: str) -> Path | None:
+        p = _safe_path(COURSE_DIR, region, fname)
+        if p and p.exists():
+            return p
         # Virtual routes live under courses/virtual/<region>/<filename>
-        path = _safe_path(COURSE_DIR, "virtual", region, filename)
-    if not path or not path.exists():
+        p = _safe_path(COURSE_DIR, "virtual", region, fname)
+        if p and p.exists():
+            return p
+        return None
+
+    attempts: list[str] = [filename]
+    path = _resolve_course(filename)
+    if path is None and any(ord(c) > 127 for c in filename):
+        # Try both Unicode normalization forms — file may be on disk in
+        # the opposite form from what the cached routes.json carries.
+        for form in ("NFC", "NFD"):
+            try:
+                candidate = _ud.normalize(form, filename)
+            except (TypeError, ValueError):
+                continue
+            if candidate in attempts:
+                continue
+            attempts.append(candidate)
+            path = _resolve_course(candidate)
+            if path is not None:
+                _log.info(
+                    "course profile resolved via %s normalization "
+                    "region=%s filename=%r resolved=%r",
+                    form, region, filename, candidate,
+                )
+                break
+    if path is None:
+        _log.warning(
+            "course profile 404 region=%s filename=%r attempts=%s",
+            region, filename, attempts,
+        )
         return JSONResponse({"error": "not found"}, 404)
     points = []
     in_data = False
@@ -12349,6 +12567,7 @@ def api_ride_full_detail(ride_id: str, include: str = Query("")):
         import ride_storage as _rs
         rec = _rs.get_icu_ride(ride_id)
         if rec is None:
+            _log.info("ride_detail 404 ride_id=%s", ride_id)
             return JSONResponse({"error": "Ride not found"}, 404)
         # v4.5.5 IMPL-DETAIL-SERVER: lazy-fetch ICU detail when the cached
         # record is missing zones / hr-zones / intervals (older sync). One
@@ -12367,6 +12586,7 @@ def api_ride_full_detail(ride_id: str, include: str = Query("")):
         stem = ride_id[4:]
         fit_path = _rides_fit_dir() / f"{stem}.fit"
         if not fit_path.exists():
+            _log.info("ride_detail 404 ride_id=%s", ride_id)
             return JSONResponse({"error": "Ride not found"}, 404)
         rec = _build_fit_normalized(fit_path, ride_id)
         rec = _project_intervals_for_display(rec)
@@ -12374,10 +12594,24 @@ def api_ride_full_detail(ride_id: str, include: str = Query("")):
             rec["samples"] = _build_fit_samples(fit_path)
         return _attach_xss_summary(rec)
 
-    # ── Legacy JSON rides ──────────────────────────────────────────────────
+    # ── Bare-id legacy rides (v1.8.8 Bug 1 fallback) ───────────────────────
+    # Homepages built before the prefix scheme pass the bare ICU external_id.
+    # Try ICU lookup first (covers the most common legacy case), then the
+    # legacy JSON archive. Logs the 404 so the next bug-report tells us the
+    # exact id format that failed.
     import ride_storage as _rs2
+    rec = _rs2.get_icu_ride(ride_id)
+    if rec is not None:
+        rec = _maybe_enrich_icu_record(rec)
+        rec = _project_intervals_for_display(rec)
+        if want_samples:
+            rec["samples"] = _build_icu_samples(rec)
+        return _attach_xss_summary(rec)
+
+    # ── Legacy JSON rides ──────────────────────────────────────────────────
     legacy = _rs2.get_ride(ride_id)
     if not legacy:
+        _log.info("ride_detail 404 ride_id=%s", ride_id)
         return JSONResponse({"error": "Ride not found"}, 404)
     rec = _legacy_ride_to_normalized(legacy, ride_id)
     rec = _project_intervals_for_display(rec)

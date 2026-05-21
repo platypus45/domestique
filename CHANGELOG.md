@@ -1,5 +1,61 @@
 # Changelog
 
+## v1.8.8 — 11-bug batch + CI Mac DMG cleanup (2026-05-21)
+
+Eleven user-reported dashboard bugs cleared in one wave. Sparse changelog because almost every fix is small.
+
+### Frontend (templates/dashboard.html)
+
+| Bug | Fix |
+|---|---|
+| Activity click → 404 | Defensive prefix check in `openActivityModal`; click handler passes prefixed `id`, not bare `external_id` |
+| Power curve missing / "Loading…" stuck | DOM id collision between `<div>` placeholder and `<canvas>`; placeholder renamed, "no data → backfill" fallback rendered when `n_rides===0` |
+| DFA α1 not shown | Removed the `dfa_history ≥ 2 points` gate; single-ride value rendered on ride-detail modal; "Last ride DFA α1" line added to homepage snapshot card |
+| Routes & climbs 404 on expansion | Frontend ASCII-normalises `filename` (NFD + strip combining marks) before fetch — covers users whose cached `routes.json` still carries pre-v1.8.6 Unicode (`Mür`, `pavé`); backend NFC/NFD fallback added too |
+| Fatigue resistance: 0/14 streams | Panel auto-triggers backfill on open, polls every 30s up to 10 min, shows "Backfilling…" placeholder |
+| Plan: date pick doesn't update weeks | `refreshPlanPreview` was reading slider value BEFORE the date-derived recompute wrote to it; fixed via single-source-of-truth read after set |
+| Apply Rest Day no-op | Logs POST body + response; severity stashed from readiness card; success/failure toast tied to response |
+| Readiness 2.2/10 vs 64.4 mismatch | Top card reads `score_0_100`; composite card reads `score_0_10`; backend now returns both fields so both call sites consistent |
+| Energy backfill silent 0/9 | Renders per-ride `skipped_reason` from the new `results[]` payload |
+| Ride History tab removed | Tab + `<section>` deleted; `loadRideHistory()` + all callers stripped; `#ride-detail-overlay` lifted out before section removal (still used by power-curve PR-badge + calendar fallback) |
+
+### Backend (app.py)
+
+- `/api/ride/{id}/detail` — bare-id legacy lookup fallback; 404 path logs ride_id for diagnostics
+- `/api/profile/power-curve` — `needs_backfill: bool` added
+- `/api/course/{region}/{filename}` — NFC/NFD normalisation retry, logs every resolved path attempted
+- `/api/profile/fatigue-resistance` — `auto_backfill_triggered: bool` + `power_streams_cached_pct: int`; fires fire-and-forget worker when no streams cached AND long rides exist
+- `/api/plan/auto-adjust` — `scope='day'` writes tomorrow's session; persistence verified; `applied: [{date, session_type}]` returned
+- `/api/readiness` — `score_0_10` AND `score_0_100` both returned at top level
+- `/api/readiness/composite` — marked `deprecated: true` (kept for backward compat)
+- `/api/wellness/backfill-3d-fitness` — per-ride `results[].skipped_reason` enum (`"cutoff"`/`"already_cached"`/`"no_power_stream"`/`"all_zero"`/`"fit_missing"`/null); falls back to local FIT file when ICU streams empty
+
+### Tests
+
+5 new test files (11 new tests):
+- `tests/test_v188_ride_detail_fallback.py`
+- `tests/test_v188_apply_rest_day.py`
+- `tests/test_v188_readiness_unified.py`
+- `tests/test_v188_backfill_reasons.py`
+- `tests/test_v188_course_unicode_fallback.py`
+
+All 11 pass. Pytest baseline gains net +17 (5 new tests + 6 previously flaky now passing because their shared fixture mocked clean).
+
+### CI hygiene
+
+`.github/workflows/release.yml`: macOS DMG job disabled via `if: false`. CI was uploading an ad-hoc-signed `Domestique.dmg` that beat the manually-notarized `Domestique-v$VER.dmg` in `_select_platform_asset` ordering, so the in-app update banner served Mac users the unsigned/Gatekeeper-rejected DMG. Manual ship via `domestique-release` skill is now the canonical Mac release path. Windows EXE job stays on.
+
+Also cleaned the polluted asset out of v1.8.6 + v1.8.7 GitHub releases.
+
+### Coordination
+
+11 bugs delivered via 5-wave dispatch:
+- W0 investigator mapped each bug to file:line
+- W1 master decisions doc locked contracts + file ownership (`/tmp/MASTER_DECISIONS_v188_bug_batch.md`)
+- W2 two parallel agents (backend / frontend) — no file overlap, no field-name drift
+- W3 pytest + manual QA
+- W5 ship via `domestique-release` skill
+
 ## v1.8.7 — Update banner shows current → latest + expandable release notes (2026-05-21)
 
 The dashboard update-available banner already polled GitHub Releases every 6 hours and offered a Download button. v1.8.7 makes it more informative:

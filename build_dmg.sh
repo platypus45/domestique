@@ -47,6 +47,17 @@ fi
 
 echo "=== Domestique DMG Build (mode: $NOTARIZE_MODE) ==="
 
+# Pre-flight: detach any stale Domestique volumes left behind by prior
+# failed builds. hdiutil's Finder-layout step at [7/9] silently exits with
+# "Write Permissions Error (-61)" if /Volumes/Domestique* is already
+# mounted — usually because a previous run crashed before detaching.
+# Repeated failures leave /Volumes/Domestique 1, /Volumes/Domestique 2, ...
+# until the build can never finish without manual recovery.
+for mp in $(ls -d "/Volumes/${DMG_NAME}"* 2>/dev/null); do
+    echo "  Detaching stale volume: $mp"
+    hdiutil detach "$mp" -force >/dev/null 2>&1 || true
+done
+
 # 1. Build with PyInstaller
 echo "[1/9] Building app with PyInstaller..."
 pyinstaller domestique.spec --clean --noconfirm 2>&1 | tail -3

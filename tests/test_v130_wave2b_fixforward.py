@@ -144,6 +144,12 @@ class W2BG5ConcurrentSameKey(unittest.TestCase):
             if k.startswith("fatigue_resistance_"):
                 app_module._cache.pop(k, None)
                 app_module._cache_ts.pop(k, None)
+        # v1.8.9 Bug 4 — also clear the lru_cache wrapper added in v1.8.9
+        # so the patched compute is actually invoked.
+        try:
+            app_module._fatigue_resistance_memoised.cache_clear()
+        except Exception:
+            pass
 
         compute_count = {"n": 0}
         real_compute = power_curve.compute_fatigue_resistance

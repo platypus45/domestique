@@ -155,6 +155,65 @@ class PowerCurveAggregationTests(unittest.TestCase):
         # All four distinct.
         self.assertEqual(len(set(peaks.values())), 4)
 
+    def test_v189_bug1_pct_ftp_always_positive_when_watts_set(self):
+        """v1.8.9 Bug 1 — pct_ftp must be a positive number for every point
+        whose watts > 0, even when per-ride ftp_at_ride is missing or zero
+        (falls back to current profile FTP). Locks master §1 contract."""
+        from datetime import date, timedelta
+        # Three rides: one with ftp_at_ride=250, one with ftp_at_ride=0,
+        # one with ftp_at_ride=None. All have watts > 0 — every emitted
+        # point must have pct_ftp > 0.
+        rides = [
+            _ride("rA",
+                  (date.today() - timedelta(days=5)).isoformat() + "T10:00:00",
+                  efforts=[{"label": "5m", "watts": 290, "secs": 300}],
+                  ftp_at_ride=250),
+            _ride("rB",
+                  (date.today() - timedelta(days=4)).isoformat() + "T10:00:00",
+                  efforts=[{"label": "1m", "watts": 380, "secs": 60}],
+                  ftp_at_ride=0),
+            _ride("rC",
+                  (date.today() - timedelta(days=3)).isoformat() + "T10:00:00",
+                  efforts=[{"label": "20m", "watts": 270, "secs": 1200}],
+                  ftp_at_ride=None),
+        ]
+        _write_rides_to_dir(rides, self._tmp)
+        out = power_curve.aggregate_power_curve("default", window_days=90)
+        self.assertEqual(out["n_rides"], 3)
+        rc = out["rider_curve"]
+        self.assertTrue(rc, "rider_curve must be populated")
+        for pt in rc:
+            if pt.get("watts") and pt["watts"] > 0:
+                self.assertIsNotNone(pt.get("pct_ftp"),
+                    f"pct_ftp None for {pt['duration_s']}s watts={pt['watts']}")
+                self.assertGreater(pt["pct_ftp"], 0,
+                    f"pct_ftp not positive for {pt['duration_s']}s")
+
+    def test_v189_bug2_30d_window_returns_curve(self):
+        """v1.8.9 Bug 2 — /api/profile/power-curve?window_days=30 must return
+        a populated rider_curve when ANY rides exist in last 30d. No min-
+        window clamp. Master §2 contract."""
+        from datetime import date, timedelta
+        # Two rides — one inside 30d, one outside. window_days=30 must
+        # include the inside-30d ride.
+        rides = [
+            _ride("rIN",
+                  (date.today() - timedelta(days=10)).isoformat() + "T10:00:00",
+                  efforts=[{"label": "5m", "watts": 280, "secs": 300}]),
+            _ride("rOUT",
+                  (date.today() - timedelta(days=60)).isoformat() + "T10:00:00",
+                  efforts=[{"label": "5m", "watts": 320, "secs": 300}]),
+        ]
+        _write_rides_to_dir(rides, self._tmp)
+        out = power_curve.aggregate_power_curve("default", window_days=30)
+        self.assertEqual(out["n_rides"], 1)
+        self.assertTrue(out["rider_curve"],
+            "30d window must return populated rider_curve when rides exist")
+        five = next((p for p in out["rider_curve"]
+                     if p["duration_s"] == 300), None)
+        self.assertIsNotNone(five)
+        self.assertEqual(five["watts"], 280)
+
     def test_pg_baseline_scaling(self):
         """Test 11 — P&G baseline returns W/kg + watts_at_current_weight at
         each STANDARD_DURATIONS tier. W = W/kg × current_weight."""

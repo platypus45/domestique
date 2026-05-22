@@ -296,9 +296,14 @@ def aggregate_power_curve(profile_id: str = "default",
         watts_per_kg = round(watts / float(weight_for_pt), 2) \
             if weight_for_pt and weight_for_pt > 0 else None
         # G10: %FTP uses the ride's FTP at the time, falling back to current.
+        # v1.8.9 Bug 1 (master §1): pct_ftp MUST be a positive number for
+        # every point whose watts > 0. When per-ride ftp is missing/zero,
+        # fall back to profile_ftp (which itself defaults to 200 via
+        # _profile_ftp_weight). Never emit None when watts > 0.
         ftp_for_pt = ride_ftp if (ride_ftp and ride_ftp > 0) else profile_ftp
-        pct_ftp = round(100.0 * watts / float(ftp_for_pt), 1) \
-            if ftp_for_pt and ftp_for_pt > 0 else None
+        if not (ftp_for_pt and ftp_for_pt > 0):
+            ftp_for_pt = profile_ftp if profile_ftp and profile_ftp > 0 else 200
+        pct_ftp = round(100.0 * watts / float(ftp_for_pt), 1)
         rider_curve.append({
             "duration_s": secs_i,
             "watts": int(watts),

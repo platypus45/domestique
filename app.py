@@ -8,6 +8,7 @@ Pure HTML + CSS + vanilla JS. No npm, no frameworks.
 """
 
 import collections
+import functools
 import json
 import os
 import re
@@ -891,6 +892,22 @@ def _fatigue_resistance_cache_lock(cache_key: str):
             _fatigue_resistance_locks[cache_key] = lk
         return lk
 
+
+# v1.8.9 Bug 4 (master §4/§10) — memoise the heavy fatigue-resistance
+# compute keyed on (latest_ride_id, current_ftp, window_days, kj_threshold).
+# Power streams don't change once written, so caching the result by these
+# inputs is safe. lru_cache(maxsize=4) covers the realistic combinations
+# (one window × two thresholds × maybe two profiles).
+@functools.lru_cache(maxsize=4)
+def _fatigue_resistance_memoised(latest_ride_id: str, current_ftp: int,
+                                  window_days: int, kj_threshold: int) -> dict:
+    import power_curve as _pc
+    return _pc.compute_fatigue_resistance(
+        "default",
+        window_days=int(window_days),
+        kj_threshold=int(kj_threshold),
+    )
+
 def cached(key, fn, ttl=300):
     now = time.time()
     if key in _cache and now - _cache_ts.get(key, 0) < ttl:
@@ -1408,23 +1425,48 @@ def api_profile_fatigue_resistance(window_days: int = Query(365, ge=1, le=3650),
     except Exception as e:
         _log.debug(f"fatigue_resistance latest_ride_id failed: {e}")
         latest = ""
+    # v1.8.9 Bug 4 — pull current FTP for the lru_cache key. Power streams
+    # don't change once written, so (latest_ride_id, current_ftp) is a safe
+    # identity for the compute output.
+    try:
+        from profile_manager import ProfileManager as _PM
+        _current_ftp = int(_PM.get().ftp or 0)
+    except Exception:
+        _current_ftp = 0
     cache_key = (f"fatigue_resistance_default_{int(window_days)}_"
                  f"{int(kj_threshold)}_{latest}")
     now = time.time()
     ttl = 24 * 3600
+    # v1.8.9 Bug 4 — bust the lru_cache + module cache on refresh=1.
+    if refresh:
+        try:
+            _fatigue_resistance_memoised.cache_clear()
+        except Exception:
+            pass
     # W2B-G5 fix: serialise concurrent same-key compute via a per-key lock
     # so two simultaneous dashboard polls don't both compute, and so
     # lazy-GC + cache-write are atomic.
     with _fatigue_resistance_cache_lock(cache_key):
         if not refresh and cache_key in _cache and \
            now - _cache_ts.get(cache_key, 0) < ttl:
-            return _cache[cache_key]
+            cached_result = dict(_cache[cache_key])
+            # v1.8.9 Bug 4 — surface a warm `compute_ms` so the UI can
+            # show "Loaded from cache" speed. Warm path is effectively 0ms.
+            cached_result["compute_ms"] = 0
+            return cached_result
+        compute_t0 = time.time()
         try:
-            result = power_curve.compute_fatigue_resistance(
-                "default",
-                window_days=int(window_days),
-                kj_threshold=int(kj_threshold),
+            # v1.8.9 Bug 4 — route through lru_cache wrapper. Repeated
+            # identical (latest, ftp, window, threshold) tuples return
+            # the memoised value in microseconds.
+            result = _fatigue_resistance_memoised(
+                latest, int(_current_ftp),
+                int(window_days), int(kj_threshold),
             )
+            # The lru_cache may return the same dict instance across calls,
+            # so we deepcopy before mutating with per-request fields below.
+            import copy as _copy_for_fr
+            result = _copy_for_fr.deepcopy(result)
         except Exception as e:
             _log.warning(f"api_profile_fatigue_resistance failed: {e}")
             result = {
@@ -1438,6 +1480,8 @@ def api_profile_fatigue_resistance(window_days: int = Query(365, ge=1, le=3650),
                 "by_duration": [],
                 "scatter": [],
             }
+        compute_ms = int(round((time.time() - compute_t0) * 1000))
+        result["compute_ms"] = compute_ms
         # v1.8.8 Bug 5 — when long rides exist but no power streams have
         # been cached, kick off the background backfill once and surface
         # the state to the UI so it can show a "Backfilling…" placeholder
@@ -1500,6 +1544,46 @@ def api_profile_fatigue_resistance(window_days: int = Query(365, ge=1, le=3650),
         _cache[cache_key] = result
         _cache_ts[cache_key] = now
         return result
+
+
+@app.get("/api/profile/dfa-alpha1")
+def api_profile_dfa_alpha1():
+    """v1.8.9 Bug 7 (master §7) — DFA α1 snapshot for the homepage.
+
+    Surfaces the most recent rides' ``summary.dfa_alpha1_avg`` value(s)
+    so the homepage snapshot card can render a readable line without
+    a 404 dance.
+
+    Returns 200 always:
+
+      Has HRV data (≥1 ride with ``dfa_alpha1_avg``):
+        ``{"value": float, "n_rides": int,
+           "message": "DFA α1 X.XX over last N ride(s)"}``
+
+      No HRV-tagged rides yet:
+        ``{"value": null, "n_rides": 0,
+           "message": "No HRV-tagged rides yet"}``
+
+    Locked field names per master §10.
+    """
+    try:
+        dfa_vals, _last_decoupling = _recent_dfa_and_decoupling()
+    except Exception as e:
+        _log.debug(f"api_profile_dfa_alpha1 lookup failed: {e}")
+        dfa_vals = []
+    n = len(dfa_vals)
+    if n == 0:
+        return {
+            "value": None,
+            "n_rides": 0,
+            "message": "No HRV-tagged rides yet",
+        }
+    avg = sum(dfa_vals) / float(n)
+    return {
+        "value": round(float(avg), 2),
+        "n_rides": int(n),
+        "message": f"DFA α1 {avg:.2f} over last {n} ride{'s' if n != 1 else ''}",
+    }
 
 
 @app.post("/api/activity/{activity_id}/race")
@@ -2157,7 +2241,11 @@ async def api_plan_auto_adjust(request: Request):
             "scope": scope,
             "dry_run": dry_run,
             "actions": [],
-            "applied": [],
+            # v1.8.9 Bug 9 (master §9/§10): `applied` is a bool — true iff
+            # the persistence step actually changed the plan. severity=normal
+            # never writes, so always false.
+            "applied": False,
+            "applied_sessions": [],
             "sessions_modified": 0,
             "note": "no adjustment needed",
         }
@@ -2337,14 +2425,17 @@ async def api_plan_auto_adjust(request: Request):
             _log.exception("auto-adjust: atomic_write_plan failed")
             return JSONResponse({"error": "plan write failed"}, 500)
 
-    # v1.8.8 Bug 7 — surface an `applied` summary list per master-doc
-    # contract: `[{date, session_type}]`. Empty when nothing changed
-    # (e.g. dry-run or target session not found in plan).
-    applied = [
+    # v1.8.9 Bug 9 (master §9/§10): `applied` is a bool — true iff the
+    # persistence step actually changed the plan (i.e. not a dry-run AND
+    # at least one action was applied). `applied_sessions` carries the
+    # `[{date, session_type}]` summary that the v1.8.8 `applied` list
+    # provided — preserved for the dashboard's toast wording.
+    applied_sessions = [
         {"date": a.get("day"), "session_type": a.get("after", {}).get("type")}
         for a in actions
         if not dry_run and a.get("day")
     ]
+    applied_bool = bool(not dry_run and applied_sessions)
     return {
         "ok": True,
         "severity": severity,
@@ -2352,7 +2443,8 @@ async def api_plan_auto_adjust(request: Request):
         "scope": scope,
         "dry_run": dry_run,
         "actions": actions,
-        "applied": applied,
+        "applied": applied_bool,
+        "applied_sessions": applied_sessions,
         "sessions_modified": sessions_modified,
         "note": note,
     }
@@ -2786,7 +2878,7 @@ def _v136_extract_fit_power_series(fit_path: Path) -> list:
 
 
 @app.post("/api/wellness/backfill-3d-fitness")
-def api_backfill_3d_fitness():
+def api_backfill_3d_fitness(auto: int = Query(0)):
     """v1.3.6 — one-shot SS backfill for post-v1.0.6 rides.
 
     For each ride whose day has no ss_cp_daily row in athlete_metrics:
@@ -2797,9 +2889,21 @@ def api_backfill_3d_fitness():
         captured on a Garmin AND synced to ICU still backfill.
 
     Returns ``{'backfilled': N, 'skipped': K, 'failed': F,
-    'results': [{ride_id, skipped_reason}, ...]}`` and busts the
-    server cache so the next /api/wellness call re-augments with the
-    fresh SS rows.
+    'results': [{ride_id, skipped_reason}, ...],
+    'aggregate_summary': {with_power, without_power, pre_cutoff,
+    successfully_backfilled}}`` and busts the server cache so the next
+    /api/wellness call re-augments with the fresh SS rows.
+
+    v1.8.9 Bug 3 (master §3): the aggregate_summary buckets the per-ride
+    results into the four categories the dashboard needs for its
+    user-facing message — `with_power` (had power streams),
+    `without_power` (HR-only rides — common indoor/Zwift no-meter),
+    `pre_cutoff` (predate the SS feature), `successfully_backfilled`
+    (skipped_reason None). The existing per-ride `results` list stays.
+
+    `?auto=1` query: server logs auto vs manual trigger so we can tell
+    user-initiated runs apart from the dashboard's auto-kick on load.
+    No behavioral difference.
 
     `skipped_reason` is one of:
       ``"no_power_stream"`` — fetch returned nothing
@@ -2809,6 +2913,8 @@ def api_backfill_3d_fitness():
       ``"already_cached"``  — day already has an ss_cp_daily row
       ``None``              — successful backfill or fall-through
     """
+    if auto:
+        _log.info("backfill-3d-fitness: auto-triggered run (?auto=1)")
     import ride_storage as _rs136
     try:
         rides = _rs136.load_all_rides()
@@ -2917,11 +3023,34 @@ def api_backfill_3d_fitness():
         clear_cache()
     except Exception:
         pass
+
+    # v1.8.9 Bug 3 (master §3/§10) — bucket per-ride results into the four
+    # categories the dashboard renders in its user-facing summary.
+    #   with_power: rides that had a usable power stream (incl. successful)
+    #   without_power: HR-only rides skipped for lack of watts
+    #   pre_cutoff: rides predating the SS feature
+    #   successfully_backfilled: subset that wrote a row (skipped_reason None)
+    pre_cutoff_n = sum(1 for r in results
+                       if r.get("skipped_reason") == "cutoff")
+    without_power_n = sum(1 for r in results
+                          if r.get("skipped_reason")
+                          in ("no_power_stream", "all_zero", "fit_missing"))
+    success_n = backfilled
+    with_power_n = success_n + sum(1 for r in results
+                                    if r.get("skipped_reason")
+                                    == "already_cached")
+    aggregate_summary = {
+        "with_power": int(with_power_n),
+        "without_power": int(without_power_n),
+        "pre_cutoff": int(pre_cutoff_n),
+        "successfully_backfilled": int(success_n),
+    }
     return {
         "backfilled": backfilled,
         "skipped": skipped,
         "failed": failed,
         "results": results,
+        "aggregate_summary": aggregate_summary,
     }
 
 

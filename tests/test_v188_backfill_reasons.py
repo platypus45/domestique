@@ -79,6 +79,60 @@ class TestBackfillReasons(unittest.TestCase):
         self.assertIn("results", data)
         self.assertEqual(data["results"], [])
 
+    def test_v189_bug3_aggregate_summary_buckets(self):
+        """v1.8.9 Bug 3 — response includes aggregate_summary keyed on
+        with_power / without_power / pre_cutoff / successfully_backfilled.
+
+        Master §3 + §10 contract. Existing per-ride `results` list stays."""
+        rides = [
+            # Pre-cutoff → pre_cutoff bucket
+            {"ride_id": "icu_pre1",
+             "source": "icu", "external_id": "old1",
+             "started_at": "2020-01-01T08:00:00Z"},
+            {"ride_id": "icu_pre2",
+             "source": "icu", "external_id": "old2",
+             "started_at": "2020-02-01T08:00:00Z"},
+            # ICU no streams → without_power
+            {"ride_id": "icu_nopw",
+             "source": "icu", "external_id": "nopw",
+             "started_at": "2026-05-10T08:00:00Z"},
+            # FIT missing file → without_power (fit_missing)
+            {"ride_id": "fit_lost",
+             "source": "fit",
+             "started_at": "2026-05-12T08:00:00Z"},
+        ]
+        with patch("ride_storage.load_all_rides", return_value=rides), \
+             patch("db.query_metric_history", return_value=[]), \
+             patch("training.fetch_activity_streams", return_value={}), \
+             patch.object(app_module, "_v136_extract_fit_power_series",
+                          return_value=[]):
+            r = self.client.post("/api/wellness/backfill-3d-fitness")
+        self.assertEqual(r.status_code, 200, r.text)
+        data = r.json()
+        self.assertIn("aggregate_summary", data, data)
+        ag = data["aggregate_summary"]
+        # Locked field names from master §10.
+        self.assertIn("with_power", ag)
+        self.assertIn("without_power", ag)
+        self.assertIn("pre_cutoff", ag)
+        self.assertIn("successfully_backfilled", ag)
+        self.assertEqual(ag["pre_cutoff"], 2)
+        self.assertEqual(ag["without_power"], 2)
+        self.assertEqual(ag["successfully_backfilled"], 0)
+        # Existing results list still present.
+        self.assertEqual(len(data["results"]), 4)
+
+    def test_v189_bug3_auto_query_param_accepted(self):
+        """v1.8.9 Bug 3 — ?auto=1 logged, no behavioral diff."""
+        with patch("ride_storage.load_all_rides", return_value=[]), \
+             patch("db.query_metric_history", return_value=[]):
+            r = self.client.post("/api/wellness/backfill-3d-fitness?auto=1")
+        self.assertEqual(r.status_code, 200, r.text)
+        data = r.json()
+        # Same shape — aggregate_summary present, results empty.
+        self.assertIn("aggregate_summary", data)
+        self.assertEqual(data["results"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

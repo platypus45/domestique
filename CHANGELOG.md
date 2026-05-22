@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.8.9 — 9-bug batch (power curve %FTP + 30d window, backfill UX, fatigue refresh, chevrons, recent-activities 404, DFA1 always-render, FTP date↔weeks, rest-day toast) (2026-05-21)
+
+Five-wave dispatch landed surgical fixes for the next-batch user reports. Backend (Wave 2A) extended five endpoint contracts under their existing field-name locks; frontend (Wave 2B) wired UX + CSS in `templates/dashboard.html` only — zero cross-file overlap.
+
+### Bug-by-bug
+
+1. **Power curve %FTP** — `pct_ftp` was returning null when per-window FTP was zero/missing. `power_curve.aggregate_power_curve()` now falls back through `ride.ftp → profile.ftp → 200` so the field is always a positive number when `watts > 0`. Frontend (`dashboard.html:4108-4124`) reads `pct_ftp` with a `Number(r.pct_ftp) || 0` guard.
+2. **30d window** — verified end-to-end. Backend already accepted `?window_days=30`; frontend buttons already passed `30`. Added a regression test (`test_v189_bug2_30d_window_returns_curve`) so a future clamp doesn't sneak in.
+3. **Energy-system backfill** — endpoint already correctly skipped HR-only and pre-v1.0.6 rides; the dashboard message was opaque. Backend gained `aggregate_summary: {with_power, without_power, pre_cutoff, successfully_backfilled}` and a `?auto=1` query param. Frontend rewrites the result message to: "Backfilled N rides (W had power, X HR-only, Y pre-v1.0.6). HR-only rides can't compute strain-score (requires watts). Indoor/Zwift sessions without a power meter are expected." Auto-trigger on first homepage load per day via `sessionStorage('backfill_kicked_<YYYYMMDD>')`.
+4. **Fatigue resistance refresh** — `@functools.lru_cache(maxsize=4)` keyed on `(latest_ride_id, current_ftp, window_days, kj_threshold)`; warm hit returns < 200ms. Response surfaces `compute_ms`. Added `Refresh ⟳` button (mirroring banister-validation); old "refresh in 1-2 minutes" copy deleted.
+5. **Chevron CSS** — every `<details>` element on the dashboard now has a `▶`/`▼` chevron that rotates on open, with a hover accent. Applied globally via `details > summary::before { content: "▶"; ... }`.
+6. **Recent activities click** → "Activity ID not recognized" — recent-activities panel passed bare integer (`135852993`) while `openActivityModal()` expected `icu_i135852993`. New `_normalizeRideId(a)` helper handles bare integers, half-prefixed `i…` IDs, and explicit `source: 'icu'|'fit'` fields.
+7. **DFA α₁ on homepage** — endpoint `/api/profile/dfa-alpha1` now always returns 200 with `{value, n_rides, message}` (previously 404 on empty). Frontend renders the card unconditionally; shows "DFA α1 — no recent HRV-tagged rides" when no HRV data.
+8. **Improve FTP weeks↔date** — both inputs now editable in event mode. `oninput` on either triggers the other via `_planSyncing` flag (no infinite loop). Picking a date updates weeks; changing weeks updates the date.
+9. **Apply rest day** — `/api/plan/auto-adjust` now returns `applied: bool` next to the existing per-session list (preserved as `applied_sessions`). Frontend reads the bool → green toast "Rest day applied for {date}" on true, yellow toast "No change (already rest)" on false. New round-trip test re-reads the plan JSON from disk to confirm persistence.
+
+### Field-name additions (LOCKED — add only, never rename/remove)
+
+| Endpoint | New field |
+|---|---|
+| `/api/profile/power-curve` | (unchanged — `pct_ftp` semantics fixed) |
+| `/api/wellness/backfill-3d-fitness` | `aggregate_summary` |
+| `/api/profile/fatigue-resistance` | `compute_ms` |
+| `/api/profile/dfa-alpha1` | always 200; shape `{value, n_rides, message}` |
+| `/api/plan/auto-adjust` | `applied: bool`, `applied_sessions: list` (old behavior preserved) |
+
+### Tests
+
++12 new tests, 1456 passed, 8 failed (all pre-existing v1.8.8 baseline failures, zero new regressions). Wave 3 QA matrix 9/9 ✓.
+
 ## v1.8.8 — 11-bug batch + CI Mac DMG cleanup (2026-05-21)
 
 Eleven user-reported dashboard bugs cleared in one wave. Sparse changelog because almost every fix is small.

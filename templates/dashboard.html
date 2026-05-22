@@ -1166,6 +1166,15 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
   color: var(--text);
 }
 .info-popover.open { display: block; }
+/* v1.8.9 Bug 5 — global chevron marker for every <details> summary.
+   Replaces the native triangle (which is invisible on some themes / Safari).
+   Rotates 90° when the panel is open. */
+details > summary { position: relative; padding-left: 18px; cursor: pointer; }
+details > summary::before { content: "\25B6"; position: absolute; left: 4px; transition: transform 0.15s; color: var(--text2); }
+details[open] > summary::before { transform: rotate(90deg); }
+details > summary::-webkit-details-marker { display: none; }
+details > summary::marker { content: ""; }
+details > summary:hover::before { color: var(--accent); }
 </style>
 <script src="/static/vendor/chart.umd.min.js"></script>
 </head>
@@ -1421,6 +1430,11 @@ window.addEventListener('unhandledrejection', function(e) {
       <summary style="cursor:pointer;font-size:12px;color:var(--text2);user-select:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <span>Fatigue Resistance — robustness index (beta)</span>
         <span id="fatigue-resistance-headline" style="font-size:11px;color:var(--text3);"></span>
+        <button id="fatigue-resistance-refresh-btn" class="btn"
+                style="font-size:10px;padding:2px 6px;margin-left:auto;cursor:pointer;"
+                onclick="event.preventDefault();event.stopPropagation();refreshFatigueResistance();"
+                title="Recompute robustness index"
+                aria-label="Refresh fatigue resistance">Refresh ⟳</button>
       </summary>
       <div id="fatigue-resistance-content" style="margin-top:8px;font-size:12px;color:var(--text2);" aria-busy="false">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
@@ -1479,10 +1493,10 @@ window.addEventListener('unhandledrejection', function(e) {
     <div id="readiness-composite-content" style="display:flex;gap:16px;align-items:center;">
       <div id="readiness-composite-loading" style="font-size:12px;color:var(--text3);">Loading…</div>
     </div>
-    <!-- v1.8.8 Bug 3 — last ride DFA α1 snapshot line. Populated after the
-         composite render lands; hidden until the last ride's detail has a
-         non-null dfa_alpha1_avg. -->
-    <div id="home-snapshot-dfa" style="display:none;margin-top:8px;font-size:12px;color:var(--text2);"></div>
+    <!-- v1.8.8 Bug 3 — last ride DFA α1 snapshot line. v1.8.9 Bug 7: always
+         visible; renders "no recent HRV-tagged rides" message instead of
+         hiding when value is null. -->
+    <div id="home-snapshot-dfa" style="margin-top:8px;font-size:12px;color:var(--text2);"></div>
   </div>
 
   <!-- v1.7.6 — Last week feedback panel. Reads /api/week-summary?week_offset=-1
@@ -1974,11 +1988,13 @@ window.addEventListener('unhandledrejection', function(e) {
           </select>
         </div>
         <div class="form-group"><label>Plan Weeks</label>
-          <input type="number" id="plan-weeks" value="12" min="4" max="52" style="width:70px;" onchange="refreshPlanPreview()"></div>
+          <!-- v1.8.9 Bug 8 — oninput syncs to plan-edate via _syncPlanWeeksToDate(). -->
+          <input type="number" id="plan-weeks" value="12" min="4" max="52" style="width:70px;" oninput="_syncPlanWeeksToDate();" onchange="refreshPlanPreview()"></div>
       </div>
       <div id="plan-event-fields">
         <div class="form-row">
-          <div class="form-group"><label>Event Date</label><input type="date" id="plan-edate" onchange="refreshPlanPreview()"></div>
+          <!-- v1.8.9 Bug 8 — oninput syncs to plan-weeks via _syncPlanDateToWeeks(). -->
+          <div class="form-group"><label>Event Date</label><input type="date" id="plan-edate" oninput="_syncPlanDateToWeeks();" onchange="refreshPlanPreview()"></div>
           <div class="form-group"><label>Event Name</label><input type="text" id="plan-ename" placeholder="e.g. Granfondo Stelvio" style="width:160px;"></div>
         </div>
         <div class="form-row">
@@ -2893,7 +2909,7 @@ function closeModal() {
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
 // ═══ TOAST ═════════════════════════════════════════════════════════════════
-function showToast(msg, duration=3000) {
+function showToast(msg, duration=3000, kind=null) {
   let tc = document.getElementById('toast-container');
   if (!tc) {
     tc = document.createElement('div');
@@ -2904,7 +2920,13 @@ function showToast(msg, duration=3000) {
     document.body.appendChild(tc);
   }
   const t = document.createElement('div');
-  t.style.cssText = 'background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:8px;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.2);max-width:360px;opacity:0;transition:opacity 0.2s;cursor:pointer;';
+  // v1.8.9 Bug 9 — optional kind="success"|"warning"|"error" tints the toast.
+  let borderCol = 'var(--border)';
+  let bgCol = 'var(--surface2)';
+  if (kind === 'success') { borderCol = 'var(--green)'; bgCol = 'rgba(34,197,94,0.10)'; }
+  else if (kind === 'warning') { borderCol = 'var(--yellow)'; bgCol = 'rgba(234,179,8,0.10)'; }
+  else if (kind === 'error') { borderCol = 'var(--red)'; bgCol = 'rgba(239,68,68,0.10)'; }
+  t.style.cssText = `background:${bgCol};border:1px solid ${borderCol};color:var(--text);padding:10px 14px;border-radius:8px;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.2);max-width:360px;opacity:0;transition:opacity 0.2s;cursor:pointer;`;
   t.textContent = msg;
   // v4.3.1 FIX-UI: click-to-dismiss (per MASTER §3 contract).
   t.addEventListener('click', () => {
@@ -4111,6 +4133,11 @@ function renderPowerCurve() {
     const w = Number(pt.weight_kg || pt.ride_weight_kg || currentWeight || 0);
     if (yMode === 'wkg') return (w > 0 && watts > 0) ? Number((watts / w).toFixed(2)) : null;
     if (yMode === 'pct_ftp') {
+      // v1.8.9 Bug 1 — read backend field pct_ftp (locked contract).
+      // Defensive Number(r.pct_ftp) || 0 so a null doesn't crash Plotly.
+      const v = Number(pt.pct_ftp) || 0;
+      if (v > 0) return Number(v.toFixed(1));
+      // Fallback to per-ride compute if backend pct_ftp missing.
       const f = Number(pt.ftp_at_ride || pt.ftp_w || currentFtp || 0);
       return (f > 0 && watts > 0) ? Number(((watts / f) * 100).toFixed(1)) : null;
     }
@@ -4242,6 +4269,16 @@ async function maybeKickBackfill(data) {
   const icuListN = Number(data.icu_list_count || 0);
   const cachedN = Number(data.n_rides || 0);
   if (icuListN <= cachedN) return;
+  // v1.8.9 Bug 3 — once-per-session-per-day guard. Prevents the toast from
+  // re-firing on every page refresh (the backfill is idempotent on the
+  // server but the toast noise is annoying).
+  try {
+    const today = new Date();
+    const ymd = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+    const key = 'backfill_kicked_' + ymd;
+    if (sessionStorage.getItem(key)) { _powerCurveBackfillSeen = true; return; }
+    sessionStorage.setItem(key, '1');
+  } catch(_) { /* sessionStorage unavailable — proceed without the guard */ }
   _powerCurveBackfillSeen = true;
   const toast = document.getElementById('power-curve-backfill-toast');
   const msg = document.getElementById('power-curve-backfill-msg');
@@ -4330,8 +4367,12 @@ async function loadFatigueResistance(force=false) {
     if (triggered || (pct > 0 && pct < 100)) {
       if (!_fatigueResistanceBackfillStart) _fatigueResistanceBackfillStart = Date.now();
       const pctTxt = isNaN(pct) ? '—' : (pct + '%');
+      // v1.8.9 Bug 4 — show Computing… (Nms) using the backend's compute_ms field.
+      // Old "refresh in 1-2 minutes" copy removed entirely.
+      const cms = Number((d && d.compute_ms) || 0);
+      const cmsTxt = cms > 0 ? `Computing… (${cms}ms)` : 'Computing…';
       body.innerHTML = `<div style="color:var(--text3);line-height:1.5;">
-        <div>Backfilling power streams — refresh in 1-2 minutes.</div>
+        <div>${esc(cmsTxt)}</div>
         <div style="font-size:11px;margin-top:4px;">Power streams cached: ${esc(pctTxt)}.</div>
       </div>`;
       // Cancel any prior timer before scheduling a fresh poll.
@@ -4379,6 +4420,19 @@ function setFatigueResistanceThreshold(kj) {
     b.style.color = isActive ? 'white' : 'var(--text2)';
   });
   loadFatigueResistance(true);
+}
+// v1.8.9 Bug 4 — force recompute via ?refresh=1, re-render. Mirrors
+// refreshBanisterValidation() pattern.
+async function refreshFatigueResistance() {
+  const panel = document.getElementById('fatigue-resistance-panel');
+  const btn = document.getElementById('fatigue-resistance-refresh-btn');
+  if (!btn || btn.disabled) return;
+  if (panel && !panel.open) panel.open = true;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Refreshing…';
+  try { await loadFatigueResistance(true); }
+  finally { btn.disabled = false; btn.textContent = orig; }
 }
 function toggleFatigueResistanceInfo() {
   const pop = document.getElementById('fatigue-resistance-info-popover');
@@ -4835,40 +4889,61 @@ function renderBanisterValidation(d) {
 // Posts to /api/wellness/backfill-3d-fitness, surfaces a status line,
 // and re-loads /api/wellness so the chart re-renders if SS data is now
 // present. The endpoint busts the server cache before returning.
-async function _v136RunBackfill() {
+async function _v136RunBackfill(auto=false) {
   const btn = document.getElementById('v136-ss-backfill-btn');
   const msg = document.getElementById('v136-ss-msg');
   if (btn) { btn.disabled = true; btn.textContent = 'Backfilling…'; }
   if (msg) msg.innerHTML = '';
   try {
-    const r = await fetch('/api/wellness/backfill-3d-fitness', {method: 'POST'});
+    // v1.8.9 Bug 3 — auto=1 query param so the server can log auto-vs-manual.
+    const url = '/api/wellness/backfill-3d-fitness' + (auto ? '?auto=1' : '');
+    const r = await fetch(url, {method: 'POST'});
     const data = await r.json().catch(() => ({}));
     const n = data.backfilled || 0;
     const f = data.failed || 0;
+    // v1.8.9 Bug 3 — backend now returns `aggregate_summary` with
+    // {with_power, without_power, pre_cutoff, successfully_backfilled}.
+    // Surface a single clear sentence instead of the per-ride skipped list
+    // (which was noisy and didn't tell the user WHY indoor/Zwift rides skip).
+    const agg = data.aggregate_summary || null;
     // v1.8.8 Bug 9 — render per-ride skipped_reason so the user knows WHY
     // each ride didn't backfill. Backend Wave 2A adds a `results` list with
     // {ride_id, skipped_reason} entries. Empty/missing list falls back to
     // the prior summary line.
     const results = Array.isArray(data.results) ? data.results : [];
     if (msg) {
-      let summary;
-      if (n === 0) {
-        summary = 'No rides backfilled.';
+      let summaryHtml = '';
+      if (agg) {
+        const wp = Number(agg.with_power || 0);
+        const wop = Number(agg.without_power || 0);
+        const pre = Number(agg.pre_cutoff || 0);
+        const succ = Number(agg.successfully_backfilled || 0);
+        let line = `Backfilled ${succ} ride${succ === 1 ? '' : 's'} (${wp} had power, ${wop} HR-only, ${pre} pre-v1.0.6).`;
+        summaryHtml = `<div>${esc(line)}</div>`;
+        if (wop > 0) {
+          summaryHtml += `<div style="margin-top:4px;color:var(--text3);font-size:11px;">HR-only rides can't compute strain-score (requires watts). Indoor/Zwift sessions without a power meter are expected.</div>`;
+        }
+      } else if (n === 0) {
+        summaryHtml = '<div>No rides backfilled.</div>';
       } else {
-        summary = `Backfilled ${n} ride${n === 1 ? '' : 's'}` +
-                  (f > 0 ? ` (${f} failed)` : '') + '. Reloading chart…';
+        summaryHtml = `<div>Backfilled ${n} ride${n === 1 ? '' : 's'}` +
+                  (f > 0 ? ` (${f} failed)` : '') + '. Reloading chart…</div>';
       }
       let detailHtml = '';
-      const skipped = results.filter(rr => rr && rr.skipped_reason);
-      if (skipped.length) {
-        const items = skipped.map(rr => {
-          const rid = String(rr.ride_id || '—');
-          const reason = String(rr.skipped_reason || 'unknown');
-          return `<li>Ride ${esc(rid)}: ${esc(reason)}</li>`;
-        }).join('');
-        detailHtml = `<ul style="margin:6px 0 0 18px;padding:0;font-size:11px;color:var(--text3);">${items}</ul>`;
+      // Only show per-ride detail when there's no aggregate_summary — the
+      // aggregate is more user-friendly than the raw skipped list.
+      if (!agg) {
+        const skipped = results.filter(rr => rr && rr.skipped_reason);
+        if (skipped.length) {
+          const items = skipped.map(rr => {
+            const rid = String(rr.ride_id || '—');
+            const reason = String(rr.skipped_reason || 'unknown');
+            return `<li>Ride ${esc(rid)}: ${esc(reason)}</li>`;
+          }).join('');
+          detailHtml = `<ul style="margin:6px 0 0 18px;padding:0;font-size:11px;color:var(--text3);">${items}</ul>`;
+        }
       }
-      msg.innerHTML = `<div>${esc(summary)}</div>${detailHtml}`;
+      msg.innerHTML = summaryHtml + detailHtml;
     }
     if (n > 0) {
       // Re-fetch wellness so the chart re-renders. Most callers route
@@ -5378,7 +5453,12 @@ async function loadHome() {
     try {
       const recent = (activities||[]).slice(-5).reverse();
       $('recent-activities').innerHTML = recent.length ? recent.map(a => {
-        const clickAttr = a.id ? `onclick="openActivityModal('${escJs(a.id)}')" style="cursor:pointer;"` : '';
+        // v1.8.9 Bug 6 — normalize ID before opening modal. /api/activities
+        // can emit bare external ID (e.g. "135852993") for ICU-sourced rows,
+        // which the modal rejects as "ID format not recognized". Helper
+        // prepends icu_i / fit_ as needed.
+        const normalizedId = _normalizeRideId(a);
+        const clickAttr = normalizedId ? `onclick="openActivityModal('${escJs(normalizedId)}')" style="cursor:pointer;"` : '';
         const loadLabel = a.effective_load && a.effective_load !== a.tss
           ? `Load ${a.effective_load} <span style="font-size:9px;color:var(--text3);">(TSS ${a.tss||0}${a.trimp ? ', TRIMP '+a.trimp : ''})</span>`
           : (a.tss ? 'TSS '+a.tss : '');
@@ -5553,38 +5633,49 @@ async function loadReadinessComposite() {
   }
 }
 
-// v1.8.8 Bug 3 — homepage snapshot of the last ride's DFA α1. Reuses the
-// activities list already fetched by loadHome and pulls the prefixed
-// ride_id of the most recent activity, then fetches its detail to read
-// dfa_alpha1_avg. Renders a single line under the Readiness card; hides
-// the line when no ride or no DFA value is available.
+// v1.8.8 Bug 3 — homepage snapshot of the last ride's DFA α1. v1.8.9 Bug 7:
+// ALWAYS render the card. Iterates the activities list (newest-first) and
+// fetches per-ride detail until one has a non-null dfa_alpha1_avg. When no
+// activity has DFA data, the card surfaces a "no recent HRV-tagged rides"
+// message body instead of hiding (previously the row was display:none which
+// silently hid the panel from the homepage).
 async function loadHomeSnapshotDfa(activities) {
   const host = document.getElementById('home-snapshot-dfa');
   if (!host) return;
-  host.style.display = 'none';
-  host.innerHTML = '';
+  // Always visible — fallback to "no data" message instead of display:none.
+  host.style.display = 'block';
+  host.innerHTML = '<span style="color:var(--text3);">DFA α1 — loading…</span>';
   try {
     const list = Array.isArray(activities) ? activities : [];
-    if (!list.length) return;
-    // /api/activities returns newest-first; pick the first activity that
-    // has a known-prefix ride_id so the openActivityModal contract holds.
-    let lastId = '';
+    // Try the first few rides; one of them might have DFA data even if the
+    // very latest doesn't (e.g. last ride was indoor-no-HRV). Uses
+    // _normalizeRideId() to handle bare integer / half-prefixed shapes.
+    let foundAvg = null;
+    let triedCount = 0;
+    const MAX_TRIES = 5;
     for (const a of list) {
-      const rid = a && a.id ? String(a.id) : '';
-      if (rid.startsWith('icu_') || rid.startsWith('fit_') || rid.startsWith('legacy_')) {
-        lastId = rid;
-        break;
-      }
+      if (triedCount >= MAX_TRIES) break;
+      const rid = (typeof _normalizeRideId === 'function') ? _normalizeRideId(a) : String((a && a.id) || '');
+      if (!rid) continue;
+      triedCount++;
+      try {
+        const res = await fetch(`/api/ride/${encodeURIComponent(rid)}/detail`);
+        if (!res.ok) continue;
+        const d = await res.json();
+        if (d && d.dfa_alpha1_avg != null) {
+          foundAvg = Number(d.dfa_alpha1_avg).toFixed(2);
+          break;
+        }
+      } catch (_) { /* skip ride */ }
     }
-    if (!lastId) return;
-    const res = await fetch(`/api/ride/${encodeURIComponent(lastId)}/detail`);
-    if (!res.ok) return;
-    const d = await res.json();
-    if (!d || d.dfa_alpha1_avg == null) return;
-    const avg = Number(d.dfa_alpha1_avg).toFixed(2);
-    host.innerHTML = `<b style="color:var(--text);">Last ride DFA α1:</b> ${esc(avg)}`;
-    host.style.display = 'block';
-  } catch (_) { /* non-fatal */ }
+    if (foundAvg != null) {
+      host.innerHTML = `<b style="color:var(--text);">Last ride DFA α1:</b> ${esc(foundAvg)}`;
+    } else {
+      host.innerHTML = '<span style="color:var(--text3);">DFA α1 — no recent HRV-tagged rides</span>';
+    }
+  } catch (_) {
+    host.innerHTML = '<span style="color:var(--text3);">DFA α1 — no recent HRV-tagged rides</span>';
+  }
 }
 
 // v1.7.6 — Last week feedback panel. Renders planned-vs-actual TSS + zone
@@ -5869,7 +5960,16 @@ async function _applyWeekAutoAdjustCommit() {
       return;
     }
     if (severity === 'rest') {
-      try { showToast('✓ Rest day applied to tomorrow', 3500); } catch(_) {}
+      // v1.8.9 Bug 9 — backend now returns `applied: bool` so we can
+      // distinguish a real write ("Rest day applied for {date}") from a
+      // no-op ("No change (already rest)"). Green/yellow toast tint.
+      const applied = data.applied === true;
+      const dayLabel = data.day || data.date || 'tomorrow';
+      if (applied) {
+        try { showToast(`Rest day applied for ${dayLabel}`, 3500, 'success'); } catch(_) {}
+      } else {
+        try { showToast('No change (already rest)', 3500, 'warning'); } catch(_) {}
+      }
     } else {
       const n = Number(data.sessions_modified || 0);
       try { showToast(`Auto-adjust applied: ${n} session${n === 1 ? '' : 's'} updated`, 3500); } catch(_) {}
@@ -8569,7 +8669,10 @@ function _wireDualRange(minId, maxId, fillId, labelId, unit) {
 // can restore it when they switch AWAY from event_preparation. While on
 // event_preparation the field is greyed/disabled and shows the value
 // auto-computed from event_date.
+// v1.8.9 Bug 8 — weeks ↔ date are now bi-directionally bound; neither
+// input is disabled. _planSyncing flag prevents oninput infinite-loop.
 let _planWeeksManualCache = null;
+let _planSyncing = false;
 
 function _isEventGoal(goal) {
   return goal === 'event' || goal === 'event_preparation';
@@ -8585,35 +8688,68 @@ function _computePlanWeeksFromEventDate(eventDateStr) {
   return Math.max(4, Math.ceil(days / 7));
 }
 
+// v1.8.9 Bug 8 — compute event_date = today + weeks*7 (ISO yyyy-mm-dd).
+function _computeEventDateFromPlanWeeks(weeks) {
+  const w = Math.max(4, Math.min(52, Number(weeks) || 0));
+  if (!w) return '';
+  const d = new Date();
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() + w * 7);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+// v1.8.9 Bug 8 — when the user edits plan-edate, push the computed weeks
+// onto plan-weeks. Guarded with _planSyncing to prevent oninput recursion.
+function _syncPlanDateToWeeks() {
+  if (_planSyncing) return;
+  _planSyncing = true;
+  try {
+    const ed = $('plan-edate');
+    const pw = $('plan-weeks');
+    if (!ed || !pw) return;
+    const computed = _computePlanWeeksFromEventDate(ed.value);
+    if (computed) pw.value = computed;
+  } finally { _planSyncing = false; }
+}
+
+// v1.8.9 Bug 8 — when the user edits plan-weeks, push the computed date
+// onto plan-edate. Guarded with _planSyncing to prevent oninput recursion.
+function _syncPlanWeeksToDate() {
+  if (_planSyncing) return;
+  _planSyncing = true;
+  try {
+    const ed = $('plan-edate');
+    const pw = $('plan-weeks');
+    if (!ed || !pw) return;
+    const goal = $('plan-goal') && $('plan-goal').value;
+    // Only auto-populate the event date in event-goal mode.
+    if (!_isEventGoal(goal)) return;
+    const dateStr = _computeEventDateFromPlanWeeks(pw.value);
+    if (dateStr) ed.value = dateStr;
+  } finally { _planSyncing = false; }
+}
+
 function togglePlanFields() {
   const goal = $('plan-goal').value;
   const isEvent = _isEventGoal(goal);
   $('plan-event-fields').style.display = isEvent ? 'block' : 'none';
   $('plan-target-fields').style.display = ['ftp','ctl','vo2max','ftp_vo2max'].includes(goal) ? 'block' : 'none';
 
-  // v4.6.0 B1: PLAN WEEKS is auto-computed from event date for event_preparation.
+  // v1.8.9 Bug 8 — both inputs are always editable. Date computes weeks
+  // and weeks computes date via oninput handlers. No disabled-state.
   const pw = $('plan-weeks');
+  pw.disabled = false;
+  pw.style.opacity = '';
+  pw.style.background = '';
+  pw.style.cursor = '';
+  pw.title = '';
   if (isEvent) {
-    if (_planWeeksManualCache === null) {
-      _planWeeksManualCache = pw.value;
-    }
-    pw.disabled = true;
-    pw.style.opacity = '0.55';
-    pw.style.background = 'var(--surface)';
-    pw.style.cursor = 'not-allowed';
-    pw.title = 'Computed from event date — edit event date to change';
+    // On entering event mode, seed weeks from the current event date.
     const computed = _computePlanWeeksFromEventDate($('plan-edate').value);
     if (computed) pw.value = computed;
-  } else {
-    pw.disabled = false;
-    pw.style.opacity = '';
-    pw.style.background = '';
-    pw.style.cursor = '';
-    pw.title = '';
-    if (_planWeeksManualCache !== null) {
-      pw.value = _planWeeksManualCache;
-      _planWeeksManualCache = null;
-    }
   }
   refreshPlanPreview();
 }
@@ -14223,6 +14359,20 @@ function renderOnTrackBar(data) {
 // ─── Activity detail modal (closes user bug #3) ──────────────────────
 // Cache last 5 fetched detail payloads in module-level Map keyed by ride_id.
 window._activityModalCache = window._activityModalCache || new Map();
+// v1.8.9 Bug 6 — normalize a raw activity object's id field into a prefixed
+// ride_id (icu_i… / fit_… / legacy_…). The /api/activities payload sometimes
+// emits the bare external integer ID OR the half-prefixed "i12345" form;
+// the modal endpoint requires the full "icu_iN" prefix.
+function _normalizeRideId(a) {
+  const id = String(a.id || a.ride_id || '');
+  if (!id) return '';
+  if (id.startsWith('icu_') || id.startsWith('fit_') || id.startsWith('legacy_')) return id;
+  // Bare integer (e.g. "135852993") or half-prefixed (e.g. "i148827325").
+  if (a.source === 'icu' || /^\d+$/.test(id)) return 'icu_i' + id;
+  if (/^i\d+$/.test(id)) return 'icu_' + id;
+  if (a.source === 'fit') return 'fit_' + id;
+  return id;
+}
 async function openActivityModal(rideId) {
   if (!rideId) return;
   // v1.8.8 Bug 1 — defensive ID format check. The homepage activity list

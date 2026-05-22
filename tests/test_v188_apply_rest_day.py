@@ -75,7 +75,11 @@ class TestApplyRestDay(unittest.TestCase):
         self._tmpdir.cleanup()
 
     def test_apply_rest_day_writes_tomorrow_to_disk(self):
-        """scope='day' + severity='rest' + dry_run=false replaces tomorrow."""
+        """scope='day' + severity='rest' + dry_run=false replaces tomorrow.
+
+        v1.8.9 Bug 9 (master §9/§10): `applied` is a bool (true when the
+        persistence step changed the plan); the per-day list moved to
+        `applied_sessions`."""
         with patch("readiness_composite.compute_training_severity",
                    return_value={"severity": "rest", "source": "user"}):
             r = self.client.post(
@@ -86,10 +90,13 @@ class TestApplyRestDay(unittest.TestCase):
         data = r.json()
         self.assertTrue(data["ok"])
         self.assertEqual(data["severity"], "rest")
-        # `applied` lists tomorrow as the rest day.
-        self.assertEqual(len(data["applied"]), 1)
-        self.assertEqual(data["applied"][0]["date"], self._tomorrow.isoformat())
-        self.assertEqual(data["applied"][0]["session_type"], "rest")
+        # v1.8.9 Bug 9 — `applied` is a bool now, persistence DID happen.
+        self.assertIs(data["applied"], True)
+        # The per-day list moved to `applied_sessions`.
+        self.assertEqual(len(data["applied_sessions"]), 1)
+        self.assertEqual(data["applied_sessions"][0]["date"],
+                         self._tomorrow.isoformat())
+        self.assertEqual(data["applied_sessions"][0]["session_type"], "rest")
         # Persisted to disk.
         stored = json.loads(self._plan_path.read_text(encoding="utf-8"))
         sessions = stored["weeks"][0]["sessions"]
@@ -111,11 +118,54 @@ class TestApplyRestDay(unittest.TestCase):
             )
         self.assertEqual(r.status_code, 200, r.text)
         data = r.json()
-        # actions populated, applied empty in dry-run.
+        # actions populated, applied_sessions empty in dry-run.
         self.assertEqual(len(data["actions"]), 1)
-        self.assertEqual(data["applied"], [])
+        self.assertEqual(data["applied_sessions"], [])
+        # v1.8.9 Bug 9 — `applied` is False because dry-run never persisted.
+        self.assertIs(data["applied"], False)
         # Disk unchanged.
         self.assertEqual(self._plan_path.read_text(encoding="utf-8"), before)
+
+    def test_v189_bug9_round_trip_reads_json_from_disk(self):
+        """v1.8.9 Bug 9 — explicit round-trip: POST, then re-open the plan
+        JSON from disk and assert the targeted day's session is rest.
+
+        Locks master §9 contract: persistence step ACTUALLY changed disk,
+        and `applied: True` matches the on-disk reality."""
+        with patch("readiness_composite.compute_training_severity",
+                   return_value={"severity": "rest", "source": "user"}):
+            r = self.client.post(
+                "/api/plan/auto-adjust",
+                json={"scope": "day", "dry_run": False, "severity": "rest"},
+            )
+        self.assertEqual(r.status_code, 200, r.text)
+        data = r.json()
+        self.assertIs(data["applied"], True)
+        # ROUND-TRIP: re-read the plan JSON from disk.
+        with open(self._plan_path, encoding="utf-8") as f:
+            disk_plan = json.load(f)
+        sessions = disk_plan["weeks"][0]["sessions"]
+        tomorrow_session = next(
+            s for s in sessions if s["day"] == self._tomorrow.isoformat()
+        )
+        # Master §9 contract: rest day means type=rest, duration=0, tss=0.
+        self.assertEqual(tomorrow_session["session_type"], "rest")
+        self.assertEqual(tomorrow_session["duration_min"], 0)
+        self.assertEqual(tomorrow_session["tss_estimate"], 0)
+
+    def test_v189_bug9_applied_false_when_severity_normal(self):
+        """v1.8.9 Bug 9 — severity=normal short-circuits with applied=False."""
+        with patch("readiness_composite.compute_training_severity",
+                   return_value={"severity": "normal", "source": "tsb"}):
+            r = self.client.post(
+                "/api/plan/auto-adjust",
+                json={"scope": "today", "dry_run": False},
+            )
+        self.assertEqual(r.status_code, 200, r.text)
+        data = r.json()
+        self.assertIs(data["applied"], False)
+        self.assertEqual(data["applied_sessions"], [])
+        self.assertEqual(data["actions"], [])
 
 
 if __name__ == "__main__":

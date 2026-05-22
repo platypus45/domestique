@@ -271,5 +271,78 @@ class TestComputeDFAForFit(unittest.TestCase):
             fit_path.unlink(missing_ok=True)
 
 
+class TestComputeDFAFromHRVStream(unittest.TestCase):
+    """v1.8.10 — lazy DFA compute from ICU's hrv-stream channel.
+
+    The stream is a per-second list where each non-null slot is a list
+    of RR-interval ints in milliseconds — same physical content as the
+    FIT HrvMessage records, just packaged differently. This test class
+    verifies the lazy path produces the same status semantics as
+    compute_dfa_alpha1_for_fit.
+    """
+
+    def test_none_input_returns_none(self):
+        from analytics import compute_dfa_alpha1_from_hrv_stream
+        self.assertIsNone(compute_dfa_alpha1_from_hrv_stream(None))
+        self.assertIsNone(compute_dfa_alpha1_from_hrv_stream("not a list"))
+
+    def test_empty_stream_returns_no_rr_data(self):
+        from analytics import compute_dfa_alpha1_from_hrv_stream
+        out = compute_dfa_alpha1_from_hrv_stream([None] * 60)
+        self.assertIsInstance(out, dict)
+        self.assertEqual(out["dfa_alpha1_status"], "no_rr_data")
+        self.assertEqual(out["rr_intervals_count"], 0)
+
+    def test_padding_and_sentinel_filtered(self):
+        from analytics import compute_dfa_alpha1_from_hrv_stream
+        # 0 ms (padding) and 65535 (sentinel) must be filtered.
+        stream = [[0, 800], [65535], [820, 0]]
+        out = compute_dfa_alpha1_from_hrv_stream(stream)
+        self.assertIsInstance(out, dict)
+        # 2 valid RR (800, 820) — too few for DFA → no_rr_data status,
+        # but rr_intervals_count must reflect the filter result.
+        self.assertEqual(out["rr_intervals_count"], 2)
+
+    def test_synthetic_pink_rr_status_computed_and_matches_fit_path(self):
+        """Same RR sequence delivered as FIT vs as hrv-stream must
+        produce α1 within 0.05 of each other (rounding + ~1-2 extra
+        beats captured by the stream's per-second boundaries).
+        """
+        from analytics import (
+            compute_dfa_alpha1_for_fit,
+            compute_dfa_alpha1_from_hrv_stream,
+        )
+        # Re-use the same pink-noise fixture as the FIT test.
+        rr = list(_seeded_pink_fft(2500, sd=0.05, seed=11))
+        fit_path = _build_fit_with_rr(rr)
+        try:
+            out_fit = compute_dfa_alpha1_for_fit(fit_path)
+            # Pack the SAME rr sequence into a per-second hrv-stream.
+            # Each second can hold up to 5 RR ints; we approximate by
+            # chunking 1-2 per "second" based on a 1 Hz time axis.
+            ms = [int(round(s * 1000)) for s in rr]
+            stream: list = []
+            i = 0
+            while i < len(ms):
+                # 1-2 beats per second alternation — mimics real-life
+                # variation without depending on a clock signal.
+                chunk = ms[i:i + (1 if i % 3 else 2)]
+                stream.append(chunk)
+                i += len(chunk)
+            out_stream = compute_dfa_alpha1_from_hrv_stream(stream)
+            self.assertEqual(out_fit["dfa_alpha1_status"], "computed")
+            self.assertEqual(out_stream["dfa_alpha1_status"], "computed")
+            self.assertAlmostEqual(
+                out_fit["dfa_alpha1_avg"],
+                out_stream["dfa_alpha1_avg"],
+                delta=0.05,
+                msg=("fit vs stream α1 must agree within 0.05; "
+                     f"fit={out_fit['dfa_alpha1_avg']} "
+                     f"stream={out_stream['dfa_alpha1_avg']}"),
+            )
+        finally:
+            fit_path.unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     unittest.main()

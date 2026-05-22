@@ -376,11 +376,22 @@ class BackfillTests(unittest.TestCase):
 
     def test_idempotent_skips_full_coverage(self):
         """Test 8 — a ride already covering the full STANDARD_DURATIONS set
-        is skipped; backfilled=0, already_cached=1."""
+        AND with streams.watts cached is skipped; backfilled=0,
+        already_cached=1.
+
+        v1.8.10 Bug A — ``_needs_refetch`` now ALSO requires
+        ``streams.watts`` to be present, so a ride with only ``efforts``
+        triggers a refetch (intentional — historic backfills wrote
+        efforts but skipped streams, leaving the fatigue panel stuck on
+        0%). Seed streams.watts here to keep the idempotency contract.
+        """
         # Build a ride with one effort per STANDARD_DURATIONS tier.
         full_efforts = [{"label": f"{d}s", "watts": 100 + d, "secs": d}
                         for d in STANDARD_DURATIONS]
         ride = _ride("rFULL", "2026-04-01T10:00:00", efforts=full_efforts)
+        # v1.8.10: streams.watts must be present too, else _needs_refetch
+        # returns True (we tightened the gate to fix the 0% stuck bug).
+        ride["streams"] = {"watts": [200] * 60, "heartrate": [140] * 60}
         _write_rides_to_dir([ride], self._tmp_rides)
 
         # No streams fetcher should ever be called — patch fetch_activity_streams
@@ -464,6 +475,57 @@ class BackfillTests(unittest.TestCase):
 
         # Cleanup.
         power_curve.release_backfill_lock()
+
+    def test_v1810_streams_persisted(self):
+        """v1.8.10 Bug A — backfill MUST write ``streams`` to disk, not
+        just ``efforts``. Without this the fatigue panel reports 0%
+        forever because ``_ride_power_stream`` reads
+        ``ride["streams"]["watts"]`` which was never written.
+        """
+        ride = _ride("rSTREAMS", "2026-04-01T10:00:00", efforts=[])
+        _write_rides_to_dir([ride], self._tmp_rides)
+
+        def _streams(_id):
+            n = 700
+            return {"watts": [200] * n, "heartrate": [140] * n}
+
+        with patch("training.fetch_activity_streams", side_effect=_streams):
+            result = power_curve.backfill_icu_history("default", max_per_second=100)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["backfilled"], 1)
+        # Read the persisted file: streams must be there, with watts.
+        persisted = json.loads(
+            (self._tmp_rides / "rSTREAMS.json").read_text(encoding="utf-8")
+        )
+        self.assertIn("streams", persisted, "streams key absent — bug A regression")
+        self.assertIn("watts", persisted["streams"])
+        self.assertEqual(len(persisted["streams"]["watts"]), 700)
+        # And efforts should also be present (existing contract).
+        self.assertIn("efforts", persisted)
+        self.assertGreater(len(persisted["efforts"]), 0)
+
+    def test_v1810_needs_refetch_when_only_efforts(self):
+        """v1.8.10 Bug A — a ride with full ``efforts`` coverage but NO
+        ``streams.watts`` MUST be re-fetched (the historical state that
+        caused the 0% stuck bug).
+        """
+        full_efforts = [{"label": f"{d}s", "watts": 100 + d, "secs": d}
+                        for d in STANDARD_DURATIONS]
+        ride = _ride("rSTALE", "2026-04-01T10:00:00", efforts=full_efforts)
+        # NO streams key — represents pre-v1.8.10 cached state.
+        _write_rides_to_dir([ride], self._tmp_rides)
+
+        path = self._tmp_rides / "rSTALE.json"
+        self.assertTrue(power_curve._needs_refetch(path),
+                        "ride with efforts but no streams must refetch")
+
+        # After we add streams.watts, _needs_refetch flips to False.
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["streams"] = {"watts": [200] * 60}
+        path.write_text(json.dumps(data), encoding="utf-8")
+        self.assertFalse(power_curve._needs_refetch(path),
+                         "ride with efforts AND streams.watts must NOT refetch")
 
 
 class AggregatorShimTests(unittest.TestCase):

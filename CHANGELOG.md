@@ -1,5 +1,80 @@
 # Changelog
 
+## v1.8.10 — fatigue 0% unstuck + DFA self-heals via streams.hrv (lazy compute, backfill retry, ICU-deleted state) (2026-05-22)
+
+Closes two persistent bugs the user hit twice across v1.8.8 + v1.8.9.
+
+### Bug A — Fatigue Resistance stuck at 0% Power streams cached
+
+`power_curve.backfill_icu_history` fetched streams from ICU, derived
+`efforts`, persisted only `efforts` — **never** wrote `streams` to
+disk. `_ride_power_stream` reads `ride["streams"]["watts"]`, which was
+always absent → 0% forever. Compounded by `_needs_refetch` only gating
+on efforts coverage, so once a ride's `efforts` block was complete the
+streams could never be filled. Fixed by (1) persisting `data["streams"]
+= streams` and (2) tightening `_needs_refetch` to also require
+`streams.watts` non-empty. Old rides get re-fetched once; afterwards
+fast-path stays fast.
+
+### Bug B — DFA α1 "No HRV-tagged rides yet" with HRV strap worn
+
+`_recent_dfa_and_decoupling` called `ride_storage.list_rides()` which
+reads ONLY `~/.domestique/profiles/<id>/rides/ride_*.json` (FIT
+imports, ≤14 records). ICU rides — where 99% of the user's DFA
+records actually live — sit in `~/.domestique/rides/icu/*.json` (62
+records) and were silently ignored. New helper `_iter_icu_dfa_rides`
+merges both directories, deduped by id (prefer the entry carrying a
+non-null `dfa_alpha1_avg`).
+
+### Lazy compute path (skip FIT fetch entirely)
+
+ICU's `/activity/i<id>/streams` endpoint exposes an `hrv` channel: a
+per-second list where each non-null slot is a list of RR-interval ints
+in milliseconds — same physical content as a FIT's HrvMessage records.
+New `analytics.compute_dfa_alpha1_from_hrv_stream(stream)` computes α1
+without touching the FIT endpoint at all. `_augment_icu_record_with_dfa`
+now tries three paths in order: cached local stream → fresh stream
+fetch → FIT fetch. On the test corpus, lazy stream path produced
+α1=0.626 versus FIT-based α1=0.627 — within rounding.
+
+### DFA backfill retry pass + cancel UI
+
+New endpoints:
+
+- `POST /api/profile/dfa-backfill` — single-flight retry over every
+  ICU ride whose `dfa_alpha1_status` is non-sticky. Optional
+  `?force=1` re-runs even sticky statuses (used after a user manually
+  re-uploads a deleted activity).
+- `GET /api/profile/dfa-backfill/status?task_id=X` — poll progress.
+- `POST /api/profile/dfa-backfill/cancel?task_id=X` — cooperative
+  cancel between rides.
+
+Homepage DFA card auto-triggers a backfill if the diagnostic suggests
+rides have non-sticky status, throttled to 30 min via localStorage.
+A progress block with cancel button overlays the card while running;
+on completion the card re-fetches and refreshes.
+
+### `icu_deleted` sticky state
+
+When ALL three augment paths (local stream, fresh stream, FIT) return
+nothing — meaning ICU genuinely no longer has the activity — the
+record is marked `icu_deleted` (sticky). Backfill skips it forever
+unless `force=true`. The homepage diagnostic surfaces the count so
+users understand WHICH rides got dropped from ICU vs. which were
+recorded without HRV.
+
+### Tests
+
+| Suite | Added |
+|---|---|
+| `test_dfa_alpha1.TestComputeDFAFromHRVStream` | 4 |
+| `test_power_curve.BackfillTests` | 2 (streams persist + needs_refetch) |
+| `test_v1810_dfa_backfill.TestAugmentIcuDeletedSticky` | 4 |
+| `test_v1810_dfa_backfill.TestDfaBackfillEndpoint` | 5 |
+
+All 15 new tests pass. Adjusted `test_idempotent_skips_full_coverage`
+to seed `streams.watts` (new contract).
+
 ## v1.8.9 — 9-bug batch (power curve %FTP + 30d window, backfill UX, fatigue refresh, chevrons, recent-activities 404, DFA1 always-render, FTP date↔weeks, rest-day toast) (2026-05-21)
 
 Five-wave dispatch landed surgical fixes for the next-batch user reports. Backend (Wave 2A) extended five endpoint contracts under their existing field-name locks; frontend (Wave 2B) wired UX + CSS in `templates/dashboard.html` only — zero cross-file overlap.

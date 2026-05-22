@@ -515,8 +515,16 @@ def compute_ride_prs(ride_id: str, window_days: int = 90) -> list[dict]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _needs_refetch(ride_path: Path) -> bool:
-    """G15 — return True iff the cached envelope is missing the v1.3.0
-    full STANDARD_DURATIONS coverage.
+    """G15 — return True iff the cached envelope is missing EITHER the
+    v1.3.0 full STANDARD_DURATIONS coverage OR the per-second power
+    stream (``streams.watts``) needed by the fatigue-resistance pass.
+
+    v1.8.10 Bug A — the historical backfill persisted ``efforts`` but
+    NEVER ``streams``, so every ride that already went through one
+    backfill returned False here forever, even though
+    ``ride["streams"]["watts"]`` was missing and the fatigue panel was
+    stuck on 0%. Re-tightening the gate forces a one-time refetch of
+    every ride lacking streams; subsequent calls go fast.
 
     Re-reads the file each call (cheap; one stat + one parse per ride).
     """
@@ -532,7 +540,15 @@ def _needs_refetch(ride_path: Path) -> bool:
         return True
     efforts = data.get("efforts") or []
     cached_secs = {e.get("secs") for e in efforts if isinstance(e, dict)}
-    return not cached_secs.issuperset(set(_SD))
+    if not cached_secs.issuperset(set(_SD)):
+        return True
+    streams = data.get("streams") or {}
+    if not isinstance(streams, dict):
+        return True
+    watts = streams.get("watts") if isinstance(streams, dict) else None
+    if not (isinstance(watts, list) and len(watts) > 0):
+        return True
+    return False
 
 
 def _extract_efforts_from_streams(streams: dict) -> list[dict]:
@@ -728,6 +744,14 @@ def backfill_icu_history(profile_id: str = "default",
                 continue
 
             data["efforts"] = efforts
+            # v1.8.10 Bug A — persist the full ICU streams dict, not just
+            # the derived efforts. _ride_power_stream() (and therefore
+            # compute_fatigue_resistance, the homepage power-curve render,
+            # and the energy-system breakdown) all read
+            # ride["streams"]["watts"] directly. Without this line every
+            # downstream consumer thinks streams are uncached and the
+            # fatigue panel reports 0% forever.
+            data["streams"] = streams
             try:
                 _atomic_write_json(ride_path, data)
             except OSError as e:

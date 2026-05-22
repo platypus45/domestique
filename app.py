@@ -1385,6 +1385,211 @@ def api_profile_backfill_history_status(task_id: str = Query(...)):
     return entry
 
 
+# ───────────────────────────────────────────────────────────────────────────
+# v1.8.10 — DFA α1 backfill (retry pass)
+# ───────────────────────────────────────────────────────────────────────────
+# The ICU sync runs ``_augment_icu_record_with_dfa`` once per newly-added
+# activity. Augment can silently NOT run for an activity (sync error mid-
+# loop) or land in a non-sticky failure state (``fetch_failed`` /
+# ``timeout`` / missing). A separate retry pass walks every ICU ride and
+# attempts augment for any record whose status is not in the sticky set.
+#
+# Lazy compute path means even rides whose .fit ICU 404s now usually
+# succeed — ICU's /streams endpoint exposes an ``hrv`` channel that
+# contains the same RR data as the FIT's HrvMessage records.
+
+_dfa_backfill_tasks: dict[str, dict] = {}
+_dfa_backfill_thread_lock = threading.Lock()
+_dfa_backfill_lock = threading.Lock()  # single-flight gate
+_dfa_backfill_cancel: set[str] = set()  # task IDs the user asked to cancel
+
+
+def _run_dfa_backfill_job(task_id: str, force: bool = False) -> None:
+    """Background worker — iterate ICU rides + augment non-sticky records.
+
+    Updates ``_dfa_backfill_tasks[task_id]`` in place so the polling
+    endpoint can report progress without holding the worker lock.
+    Respects cancellation via ``_dfa_backfill_cancel``.
+    """
+    import json as _json
+    from datetime import datetime as _dt
+    started = time.time()
+    icu_dir = _user_data_dir / "rides" / "icu"
+    paths: list[Path] = []
+    try:
+        if icu_dir.exists():
+            paths = sorted(icu_dir.glob("*.json"))
+    except Exception:
+        paths = []
+    paths = [p for p in paths if not p.name.startswith(".")]
+    total = len(paths)
+    sticky = {"computed", "no_rr_data", "sanity_rejected", "icu_deleted"}
+    candidates: list[tuple[Path, str]] = []
+    for p in paths:
+        try:
+            rec = _json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        ext = rec.get("external_id") or rec.get("id") or p.stem
+        if not isinstance(ext, str) or not ext:
+            continue
+        status = rec.get("dfa_alpha1_status")
+        if not force and status in sticky:
+            continue
+        candidates.append((p, ext))
+
+    with _dfa_backfill_thread_lock:
+        entry = _dfa_backfill_tasks.get(task_id) or {}
+        entry.update({
+            "task_id": task_id,
+            "state": "running",
+            "total": total,
+            "candidates": len(candidates),
+            "augmented": 0,
+            "computed": 0,
+            "no_rr_data": 0,
+            "icu_deleted": 0,
+            "failed": 0,
+            "current": "",
+            "started_at": _dt.now().isoformat(),
+        })
+        _dfa_backfill_tasks[task_id] = entry
+
+    computed = 0
+    no_rr = 0
+    deleted = 0
+    failed = 0
+    augmented = 0
+    try:
+        for p, ext in candidates:
+            if task_id in _dfa_backfill_cancel:
+                with _dfa_backfill_thread_lock:
+                    e = dict(_dfa_backfill_tasks.get(task_id) or {})
+                    e["state"] = "cancelled"
+                    e["finished_at"] = _dt.now().isoformat()
+                    _dfa_backfill_tasks[task_id] = e
+                _dfa_backfill_cancel.discard(task_id)
+                return
+            with _dfa_backfill_thread_lock:
+                e = dict(_dfa_backfill_tasks.get(task_id) or {})
+                e["current"] = ext
+                _dfa_backfill_tasks[task_id] = e
+            try:
+                _augment_icu_record_with_dfa(p, ext, force=force)
+                # Re-read to count outcome.
+                try:
+                    rec2 = _json.loads(p.read_text(encoding="utf-8"))
+                    new_status = (rec2 or {}).get("dfa_alpha1_status")
+                except Exception:
+                    new_status = None
+                augmented += 1
+                if new_status == "computed":
+                    computed += 1
+                elif new_status == "no_rr_data":
+                    no_rr += 1
+                elif new_status == "icu_deleted":
+                    deleted += 1
+                else:
+                    failed += 1
+            except Exception as e:
+                _log.debug(f"_run_dfa_backfill_job augment({ext}) raised: {e}")
+                failed += 1
+            with _dfa_backfill_thread_lock:
+                e = dict(_dfa_backfill_tasks.get(task_id) or {})
+                e["augmented"] = augmented
+                e["computed"] = computed
+                e["no_rr_data"] = no_rr
+                e["icu_deleted"] = deleted
+                e["failed"] = failed
+                _dfa_backfill_tasks[task_id] = e
+    finally:
+        with _dfa_backfill_thread_lock:
+            e = dict(_dfa_backfill_tasks.get(task_id) or {})
+            e["state"] = e.get("state") or "done"
+            if e["state"] == "running":
+                e["state"] = "done"
+            e["finished_at"] = _dt.now().isoformat()
+            e["elapsed_s"] = round(time.time() - started, 2)
+            e["current"] = ""
+            _dfa_backfill_tasks[task_id] = e
+        # Release single-flight gate so the next backfill can start.
+        try:
+            _dfa_backfill_lock.release()
+        except RuntimeError:
+            pass
+
+
+@app.post("/api/profile/dfa-backfill")
+def api_profile_dfa_backfill(force: int = Query(0)):
+    """v1.8.10 — kick off a DFA α1 retry pass over all ICU rides.
+
+    Single-flight: a second concurrent POST returns
+    ``{"status": "already_running", "task_id": <existing>}``. With
+    ``?force=1`` even sticky statuses are re-attempted (used when the
+    user manually re-uploaded an activity that was previously
+    ``icu_deleted``).
+
+    Returns ``{"status": "started", "task_id": <uuid>}`` on accept.
+    Poll progress via ``/api/profile/dfa-backfill/status?task_id=X``.
+    """
+    acquired = _dfa_backfill_lock.acquire(blocking=False)
+    if not acquired:
+        with _dfa_backfill_thread_lock:
+            existing = None
+            for tid, t in _dfa_backfill_tasks.items():
+                if (t or {}).get("state") == "running":
+                    existing = tid
+                    break
+        return {"status": "already_running", "task_id": existing}
+    task_id = uuid.uuid4().hex
+    with _dfa_backfill_thread_lock:
+        _dfa_backfill_tasks[task_id] = {
+            "task_id": task_id,
+            "state": "running",
+            "augmented": 0, "computed": 0, "no_rr_data": 0,
+            "icu_deleted": 0, "failed": 0,
+        }
+    t = threading.Thread(
+        target=_run_dfa_backfill_job,
+        args=(task_id, bool(int(force or 0))),
+        daemon=True,
+    )
+    t.start()
+    return {"status": "started", "task_id": task_id}
+
+
+@app.get("/api/profile/dfa-backfill/status")
+def api_profile_dfa_backfill_status(task_id: str = Query(...)):
+    """v1.8.10 — poll DFA backfill task progress."""
+    if not isinstance(task_id, str) or not task_id:
+        return JSONResponse({"error": "task_id required"}, 400)
+    with _dfa_backfill_thread_lock:
+        entry = _dfa_backfill_tasks.get(task_id)
+    if entry is None:
+        return JSONResponse({"error": "unknown task_id"}, 404)
+    return entry
+
+
+@app.post("/api/profile/dfa-backfill/cancel")
+def api_profile_dfa_backfill_cancel(task_id: str = Query(...)):
+    """v1.8.10 — request cancellation of a running DFA backfill.
+
+    Cooperative: the worker checks this set between rides. The currently-
+    in-flight augment for one ride finishes (small window: ~1-3 s), then
+    the worker exits and reports ``state: "cancelled"``.
+    """
+    if not isinstance(task_id, str) or not task_id:
+        return JSONResponse({"error": "task_id required"}, 400)
+    with _dfa_backfill_thread_lock:
+        entry = _dfa_backfill_tasks.get(task_id)
+    if entry is None:
+        return JSONResponse({"error": "unknown task_id"}, 404)
+    _dfa_backfill_cancel.add(task_id)
+    return {"status": "cancel_requested", "task_id": task_id}
+
+
 @app.get("/api/profile/fatigue-resistance")
 def api_profile_fatigue_resistance(window_days: int = Query(365, ge=1, le=3650),
                                      kj_threshold: int = Query(1500),
@@ -1554,35 +1759,83 @@ def api_profile_dfa_alpha1():
     so the homepage snapshot card can render a readable line without
     a 404 dance.
 
+    v1.8.10 Bug B — also scans ``~/.domestique/rides/icu/*.json`` so ICU
+    rides with computed DFA aren't ignored (the previous version read
+    only ``~/.domestique/profiles/<id>/rides/`` via ride_storage.list_rides,
+    which misses every ICU-synced ride and therefore the entire DFA
+    history for any user with intervals.icu sync enabled).
+
     Returns 200 always:
 
       Has HRV data (≥1 ride with ``dfa_alpha1_avg``):
-        ``{"value": float, "n_rides": int,
-           "message": "DFA α1 X.XX over last N ride(s)"}``
+        ``{"value": float, "n_rides": int, "last_computed_at": str,
+           "n_recent_total": int, "n_no_rr_data": int,
+           "n_fetch_failed": int,
+           "message": "DFA α1 X.XX — last computed YYYY-MM-DD"}``
 
-      No HRV-tagged rides yet:
-        ``{"value": null, "n_rides": 0,
-           "message": "No HRV-tagged rides yet"}``
+      No HRV-tagged rides yet (some rides exist but none computed):
+        ``{"value": null, "n_rides": 0, "last_computed_at": null,
+           "n_recent_total": int, "n_no_rr_data": int,
+           "n_fetch_failed": int,
+           "message": "No recent HRV rides — <diagnostic>"}``
 
-    Locked field names per master §10.
+    Locked field names per master_v189 §10 + v1810 §2 extension.
     """
     try:
-        dfa_vals, _last_decoupling = _recent_dfa_and_decoupling()
+        info = _recent_dfa_diagnostic()
     except Exception as e:
         _log.debug(f"api_profile_dfa_alpha1 lookup failed: {e}")
-        dfa_vals = []
+        info = {
+            "values": [], "last_computed_at": None,
+            "n_recent_total": 0, "n_no_rr_data": 0,
+            "n_fetch_failed": 0,
+        }
+    dfa_vals = info.get("values") or []
     n = len(dfa_vals)
+    n_recent_total = int(info.get("n_recent_total") or 0)
+    n_no_rr_data = int(info.get("n_no_rr_data") or 0)
+    n_fetch_failed = int(info.get("n_fetch_failed") or 0)
+    last_computed_at = info.get("last_computed_at")
     if n == 0:
+        # Build a diagnostic message so the UI can show users WHY DFA is
+        # empty instead of the same flat "no HRV rides" string forever.
+        if n_recent_total == 0:
+            diag = "no rides indexed yet"
+        else:
+            parts = []
+            if n_no_rr_data > 0:
+                parts.append(
+                    f"{n_no_rr_data} had no RR data (head unit didn't record HRV)"
+                )
+            if n_fetch_failed > 0:
+                parts.append(
+                    f"{n_fetch_failed} ICU couldn't deliver the FIT"
+                )
+            diag = "; ".join(parts) if parts else "no DFA computed yet"
         return {
             "value": None,
             "n_rides": 0,
-            "message": "No HRV-tagged rides yet",
+            "last_computed_at": None,
+            "n_recent_total": n_recent_total,
+            "n_no_rr_data": n_no_rr_data,
+            "n_fetch_failed": n_fetch_failed,
+            "message": f"No recent HRV rides — {diag}",
         }
     avg = sum(dfa_vals) / float(n)
+    if last_computed_at:
+        msg = (f"DFA α1 {avg:.2f} — last computed "
+               f"{str(last_computed_at)[:10]}")
+    else:
+        msg = (f"DFA α1 {avg:.2f} over last {n} ride"
+               f"{'s' if n != 1 else ''}")
     return {
         "value": round(float(avg), 2),
         "n_rides": int(n),
-        "message": f"DFA α1 {avg:.2f} over last {n} ride{'s' if n != 1 else ''}",
+        "last_computed_at": last_computed_at,
+        "n_recent_total": n_recent_total,
+        "n_no_rr_data": n_no_rr_data,
+        "n_fetch_failed": n_fetch_failed,
+        "message": msg,
     }
 
 
@@ -1626,6 +1879,48 @@ def profile_setup_page(request: Request):
 # CORE APIs
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _iter_icu_dfa_rides() -> list[dict]:
+    """v1.8.10 Bug B — yield wrapped ICU ride records for DFA scanning.
+
+    ICU sync writes flat envelopes to ``~/.domestique/rides/icu/*.json``
+    (dfa_alpha1_avg, dfa_alpha1_status, rr_intervals_count at the top
+    level — no ``summary`` nesting). ``ride_storage.list_rides()`` reads
+    the FIT-import dir only, so any DFA scan based on it misses ICU
+    rides entirely. We wrap each ICU envelope to mimic the FIT shape
+    expected by callers: ``{id, started_at, summary{...}, ...}``.
+    """
+    import json as _json
+    out: list[dict] = []
+    try:
+        icu_dir = _user_data_dir / "rides" / "icu"
+        if not icu_dir.exists():
+            return out
+        for f in sorted(icu_dir.glob("*.json")):
+            if f.name.startswith("."):
+                continue
+            try:
+                d = _json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(d, dict):
+                continue
+            out.append({
+                "id": d.get("id") or f.stem,
+                "started_at": (d.get("started_at")
+                               or d.get("local_start_date")
+                               or ""),
+                "summary": {
+                    "dfa_alpha1_avg": d.get("dfa_alpha1_avg"),
+                    "decoupling_pct": d.get("decoupling_pct"),
+                },
+                "dfa_alpha1_status": d.get("dfa_alpha1_status"),
+                "rr_intervals_count": d.get("rr_intervals_count"),
+            })
+    except Exception:
+        pass
+    return out
+
+
 def _recent_dfa_and_decoupling() -> tuple[list[float], float | None]:
     """F1/F2 (v4.1.0) — pull last 3 rides' DFA α1 + most recent decoupling %
     from the local ride archive. Returns ([], None) gracefully when empty.
@@ -1633,15 +1928,40 @@ def _recent_dfa_and_decoupling() -> tuple[list[float], float | None]:
     Reads ``summary.dfa_alpha1_avg`` + ``summary.decoupling_pct`` written by
     ride_storage._build_summary_dict. Newest first. Missing/None values
     skipped; a ride with no HRM/HR stream just doesn't contribute a sample.
+
+    v1.8.10 Bug B — also pulls ICU-side records (flat envelope) so the
+    homepage card sees DFA from ICU-synced rides, not just FIT imports.
     """
+    rides: list[dict] = []
     try:
         import ride_storage
-        rides = ride_storage.list_rides()
+        rides.extend(ride_storage.list_rides())
     except Exception:
-        return [], None
+        pass
+    rides.extend(_iter_icu_dfa_rides())
+    # Dedup by id, prefer the entry with non-null dfa_alpha1_avg.
+    by_id: dict[str, dict] = {}
+    for r in rides:
+        rid = r.get("id") or ""
+        if not rid:
+            continue
+        existing = by_id.get(rid)
+        if existing is None:
+            by_id[rid] = r
+            continue
+        cur_alpha = (existing.get("summary") or {}).get("dfa_alpha1_avg")
+        new_alpha = (r.get("summary") or {}).get("dfa_alpha1_avg")
+        if not isinstance(cur_alpha, (int, float)) and \
+           isinstance(new_alpha, (int, float)):
+            by_id[rid] = r
+    merged = sorted(
+        by_id.values(),
+        key=lambda r: r.get("started_at") or "",
+        reverse=True,
+    )
     dfa_vals: list[float] = []
     last_dec: float | None = None
-    for r in rides:
+    for r in merged:
         summary = r.get("summary") or {}
         if last_dec is None:
             dec = summary.get("decoupling_pct")
@@ -1653,6 +1973,75 @@ def _recent_dfa_and_decoupling() -> tuple[list[float], float | None]:
         if len(dfa_vals) >= 3 and last_dec is not None:
             break
     return dfa_vals[:3], last_dec
+
+
+def _recent_dfa_diagnostic() -> dict:
+    """v1.8.10 Bug B — richer-than-list_floats view for the homepage DFA
+    card so the UI can show *why* there's no DFA value when the rider's
+    recent rides genuinely had no RR data or ICU 404'd the FIT.
+
+    Examines the top 5 newest rides (FIT + ICU merged, deduped) and
+    returns:
+
+      {
+        "values": list[float],         # dfa_alpha1_avg samples, newest first
+        "last_computed_at": str|None,  # started_at of newest contributing ride
+        "n_recent_total": int,         # rides considered (cap=5)
+        "n_no_rr_data": int,           # subset whose status == no_rr_data
+        "n_fetch_failed": int,         # subset whose status in
+                                       # {fetch_failed, timeout}
+      }
+    """
+    rides: list[dict] = []
+    try:
+        import ride_storage
+        rides.extend(ride_storage.list_rides())
+    except Exception:
+        pass
+    rides.extend(_iter_icu_dfa_rides())
+    by_id: dict[str, dict] = {}
+    for r in rides:
+        rid = r.get("id") or ""
+        if not rid:
+            continue
+        existing = by_id.get(rid)
+        if existing is None:
+            by_id[rid] = r
+            continue
+        cur_alpha = (existing.get("summary") or {}).get("dfa_alpha1_avg")
+        new_alpha = (r.get("summary") or {}).get("dfa_alpha1_avg")
+        if not isinstance(cur_alpha, (int, float)) and \
+           isinstance(new_alpha, (int, float)):
+            by_id[rid] = r
+    merged = sorted(
+        by_id.values(),
+        key=lambda r: r.get("started_at") or "",
+        reverse=True,
+    )
+    recent = merged[:5]
+    values: list[float] = []
+    last_computed_at: "str | None" = None
+    n_no_rr = 0
+    n_fetch_failed = 0
+    for r in recent:
+        alpha = (r.get("summary") or {}).get("dfa_alpha1_avg")
+        if isinstance(alpha, (int, float)):
+            values.append(float(alpha))
+            if last_computed_at is None:
+                last_computed_at = r.get("started_at") or None
+            continue
+        status = r.get("dfa_alpha1_status")
+        if status == "no_rr_data":
+            n_no_rr += 1
+        elif status in ("fetch_failed", "timeout"):
+            n_fetch_failed += 1
+    return {
+        "values": values[:3],
+        "last_computed_at": last_computed_at,
+        "n_recent_total": len(recent),
+        "n_no_rr_data": n_no_rr,
+        "n_fetch_failed": n_fetch_failed,
+    }
 
 
 def _readiness_revert_flag_path():
@@ -11810,7 +12199,8 @@ def _sync_icu_wellness(force: bool = False, days: int = 90) -> dict:
 _DFA_AUGMENT_TIMEOUT_S: float = 45.0
 
 
-def _augment_icu_record_with_dfa(rec_path: Path, external_id: str) -> None:
+def _augment_icu_record_with_dfa(rec_path: Path, external_id: str,
+                                   force: bool = False) -> None:
     """v1.0.7 — fetch raw FIT for an ICU activity, compute DFA α1, merge back.
 
     Skips work when the persisted record already has a final
@@ -11839,16 +12229,67 @@ def _augment_icu_record_with_dfa(rec_path: Path, external_id: str) -> None:
         return
 
     # Final-state statuses are sticky; only retry fetch_failed and timeout.
+    # v1.8.10 — ``icu_deleted`` is sticky too (no point hammering ICU for
+    # an activity it has deleted). Backfill endpoint can clear it via
+    # ``force=True`` if the user manually re-uploaded.
     existing_status = rec.get("dfa_alpha1_status")
-    if existing_status in ("computed", "no_rr_data", "sanity_rejected"):
+    if not force and existing_status in (
+        "computed", "no_rr_data", "sanity_rejected", "icu_deleted",
+    ):
         return
 
     import training as _training
 
     def _fetch_and_compute() -> "dict | None":
-        # Combined fetch + parse path. Returns the dfa dict on success, or
-        # None on any sub-step failure. Runs in a worker thread so the
-        # outer .result(timeout=_DFA_AUGMENT_TIMEOUT_S) can abandon it.
+        # v1.8.10 augment chain — try lazy paths before the heavyweight
+        # FIT fetch. Each step is gated so a fast path can succeed even
+        # when ICU has deleted the underlying activity.
+        #
+        # Order:
+        #   1. Cached streams.hrv on the local record  — zero network.
+        #   2. Live fetch of streams.hrv from ICU       — single GET, fast.
+        #   3. Live fetch of the raw FIT from ICU       — heavyweight fallback.
+        #
+        # Returns the dfa dict on the first successful path, or None when
+        # all three fail. Runs in a worker thread so the outer
+        # .result(timeout=_DFA_AUGMENT_TIMEOUT_S) can abandon it.
+        from analytics import (
+            compute_dfa_alpha1_from_hrv_stream as _dfa_from_stream,
+            compute_dfa_alpha1_for_fit as _dfa_from_fit,
+        )
+
+        # Step 1 — local cached streams.
+        try:
+            local_streams = rec.get("streams")
+            if isinstance(local_streams, dict):
+                hrv = local_streams.get("hrv")
+                if isinstance(hrv, list) and any(s for s in hrv):
+                    out = _dfa_from_stream(hrv)
+                    if isinstance(out, dict) and out.get("dfa_alpha1_status") == "computed":
+                        return out
+                    # If lazy stream path produced "no_rr_data" because the
+                    # cached blob was a power-only stream with hrv=[None,...],
+                    # fall through to fresh fetch.
+                    if isinstance(out, dict) and out.get("rr_intervals_count", 0) > 0:
+                        return out
+        except Exception as e:
+            _log.debug(f"_augment_icu_record_with_dfa({external_id}) local-stream path: {e}")
+
+        # Step 2 — fresh streams fetch.
+        try:
+            fresh = _training.fetch_activity_streams(external_id)
+            if isinstance(fresh, dict):
+                hrv = fresh.get("hrv")
+                if isinstance(hrv, list) and any(s for s in hrv):
+                    out = _dfa_from_stream(hrv)
+                    if isinstance(out, dict) and out.get("dfa_alpha1_status") == "computed":
+                        return out
+                    if isinstance(out, dict) and out.get("rr_intervals_count", 0) > 0:
+                        return out
+        except Exception as e:
+            _log.debug(f"_augment_icu_record_with_dfa({external_id}) fresh-stream path: {e}")
+
+        # Step 3 — FIT fallback.
         try:
             raw = _training.fetch_activity_fit_file(external_id)
         except Exception as e:
@@ -11861,8 +12302,7 @@ def _augment_icu_record_with_dfa(rec_path: Path, external_id: str) -> None:
             with _tempfile.NamedTemporaryFile(suffix=".fit", delete=False) as tf:
                 tf.write(raw)
                 tmp_path = tf.name
-            from analytics import compute_dfa_alpha1_for_fit
-            return compute_dfa_alpha1_for_fit(Path(tmp_path))
+            return _dfa_from_fit(Path(tmp_path))
         except Exception as e:
             _log.debug(f"_augment_icu_record_with_dfa({external_id}) compute: {e}")
             return None
@@ -11904,7 +12344,13 @@ def _augment_icu_record_with_dfa(rec_path: Path, external_id: str) -> None:
         rec.setdefault("dfa_alpha1_lt1_minutes", None)
         rec.setdefault("rr_intervals_count", 0)
     elif not isinstance(dfa, dict):
-        rec["dfa_alpha1_status"] = "fetch_failed"
+        # v1.8.10 — when ALL three augment paths failed (no local stream,
+        # ICU 404'd both /streams and /fit-file), the activity is gone from
+        # ICU and there's no way to recover the RR data. Mark sticky as
+        # ``icu_deleted`` so subsequent backfill passes skip it instead of
+        # hammering ICU forever. The DFA diagnostic on the homepage will
+        # surface the count to the user.
+        rec["dfa_alpha1_status"] = "icu_deleted"
         rec.setdefault("dfa_alpha1_avg", None)
         rec.setdefault("dfa_alpha1_series", [])
         rec.setdefault("dfa_alpha1_lt1_minutes", None)

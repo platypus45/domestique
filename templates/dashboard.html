@@ -5633,46 +5633,156 @@ async function loadReadinessComposite() {
   }
 }
 
-// v1.8.8 Bug 3 — homepage snapshot of the last ride's DFA α1. v1.8.9 Bug 7:
-// ALWAYS render the card. Iterates the activities list (newest-first) and
-// fetches per-ride detail until one has a non-null dfa_alpha1_avg. When no
-// activity has DFA data, the card surfaces a "no recent HRV-tagged rides"
-// message body instead of hiding (previously the row was display:none which
-// silently hid the panel from the homepage).
-async function loadHomeSnapshotDfa(activities) {
+// v1.8.10 Bug B — homepage snapshot of recent DFA α1. Calls the single
+// /api/profile/dfa-alpha1 endpoint (which scans FIT + ICU dirs server-
+// side) instead of looping per-ride detail fetches, AND renders the
+// diagnostic breakdown so users see WHY there's no value when the
+// recent rides genuinely had no RR-interval data.
+//
+// Endpoint shape (locked v1.8.10 master §2):
+//   { value, n_rides, last_computed_at, n_recent_total,
+//     n_no_rr_data, n_fetch_failed, message }
+//
+// v1.8.10 extension — auto-triggers /api/profile/dfa-backfill when
+// recent rides have non-sticky DFA status (sync race / pre-v1.8.10
+// records). The backfill runs the lazy compute_dfa_alpha1_from_hrv_stream
+// path so it usually finishes in <10 s even for 60+ rides.
+const _DFA_BACKFILL_THROTTLE_MS = 30 * 60 * 1000;  // 30 min
+const _DFA_BACKFILL_LS_KEY = 'dfa_backfill_last_run_at';
+
+async function _dfaBackfillIfStale(diag) {
+  // Stickiness check: if every "recent" ride is already in a sticky
+  // state (computed / no_rr_data / sanity_rejected / icu_deleted),
+  // there's literally nothing to retry — bail. n_no_rr_data + value
+  // contributors (n_rides) is our proxy because the diagnostic doesn't
+  // surface icu_deleted / sanity_rejected counts separately.
+  const recent = Number(diag.n_recent_total || 0);
+  if (recent === 0) return null;
+  // Throttle: don't run more than once per 30 min from this client.
+  try {
+    const last = Number(localStorage.getItem(_DFA_BACKFILL_LS_KEY) || 0);
+    if (Date.now() - last < _DFA_BACKFILL_THROTTLE_MS) return null;
+  } catch (_) {}
+  try {
+    const r = await fetch('/api/profile/dfa-backfill', { method: 'POST' });
+    if (!r.ok) return null;
+    const d = await r.json();
+    try { localStorage.setItem(_DFA_BACKFILL_LS_KEY, String(Date.now())); } catch (_) {}
+    return d && d.task_id ? d.task_id : null;
+  } catch (_) { return null; }
+}
+
+function _renderDfaProgress(host, status) {
+  if (!host || !status) return;
+  const aug = Number(status.augmented || 0);
+  const cand = Number(status.candidates || 0);
+  const computed = Number(status.computed || 0);
+  const curr = String(status.current || '').replace(/[<>]/g, '');
+  const pct = cand > 0 ? Math.round(100 * aug / cand) : 0;
+  host.innerHTML =
+    `<div style="display:flex;align-items:center;gap:8px;">
+       <span style="color:var(--text);">DFA α1 — re-scanning ${cand} ride${cand === 1 ? '' : 's'}…</span>
+       <span style="color:var(--text3);font-size:11px;">${aug}/${cand} (${pct}%${curr ? ', ' + esc(curr) : ''})</span>
+       <button onclick="_dfaCancelBackfill('${esc(status.task_id || '')}')"
+               style="font-size:11px;padding:2px 8px;border-radius:4px;background:rgba(239,68,68,0.1);border:1px solid #ef4444;color:inherit;cursor:pointer;"
+               title="Stop DFA backfill">Cancel</button>
+     </div>
+     <div style="margin-top:4px;color:var(--text3);font-size:11px;">
+       ${computed} new DFA value${computed === 1 ? '' : 's'} computed so far.
+     </div>`;
+}
+
+async function _dfaCancelBackfill(taskId) {
+  if (!taskId) return;
+  try {
+    await fetch('/api/profile/dfa-backfill/cancel?task_id=' + encodeURIComponent(taskId),
+                { method: 'POST' });
+  } catch (_) {}
+}
+
+async function _dfaPollBackfill(host, taskId, onDone) {
+  try {
+    let lastStateEmpty = 0;
+    for (let i = 0; i < 240; i++) {  // 240 * 750ms = 3 min cap
+      const r = await fetch('/api/profile/dfa-backfill/status?task_id=' + encodeURIComponent(taskId));
+      if (!r.ok) { break; }
+      const s = await r.json();
+      _renderDfaProgress(host, s);
+      const st = String(s.state || '');
+      if (st === 'done' || st === 'cancelled' || st === 'error') {
+        if (typeof onDone === 'function') onDone(s);
+        return;
+      }
+      // Tighten poll when state stays empty (worker just spawned).
+      const wait = (Number(s.augmented || 0) === 0 && i < 4) ? 250 : 750;
+      await new Promise(r2 => setTimeout(r2, wait));
+    }
+  } catch (_) {}
+  if (typeof onDone === 'function') onDone(null);
+}
+
+async function _renderDfaCard(host, d) {
+  if (d && d.value != null) {
+    const avg = Number(d.value).toFixed(2);
+    const when = (typeof d.last_computed_at === 'string' && d.last_computed_at)
+      ? String(d.last_computed_at).slice(0, 10)
+      : '';
+    const whenTxt = when ? ` <span style="color:var(--text3);">(last computed ${esc(when)})</span>` : '';
+    host.innerHTML = `<b style="color:var(--text);">Last ride DFA α1:</b> ${esc(avg)}${whenTxt}`;
+    return;
+  }
+  const recent = Number(d && d.n_recent_total || 0);
+  const noRR = Number(d && d.n_no_rr_data || 0);
+  const failed = Number(d && d.n_fetch_failed || 0);
+  let diag = '';
+  if (recent === 0) {
+    diag = 'no rides indexed yet';
+  } else {
+    const parts = [];
+    if (noRR > 0) parts.push(`${noRR} had no RR data (head-unit HRV off?)`);
+    if (failed > 0) parts.push(`${failed} ICU couldn't deliver the FIT`);
+    diag = parts.length ? parts.join('; ') : 'no DFA computed yet';
+  }
+  host.innerHTML = `<span style="color:var(--text3);">DFA α1 — no recent HRV rides <span style="color:var(--text3);font-size:11px;">(${esc(diag)})</span></span>`;
+}
+
+async function loadHomeSnapshotDfa(_activitiesUnused) {
   const host = document.getElementById('home-snapshot-dfa');
   if (!host) return;
-  // Always visible — fallback to "no data" message instead of display:none.
   host.style.display = 'block';
   host.innerHTML = '<span style="color:var(--text3);">DFA α1 — loading…</span>';
   try {
-    const list = Array.isArray(activities) ? activities : [];
-    // Try the first few rides; one of them might have DFA data even if the
-    // very latest doesn't (e.g. last ride was indoor-no-HRV). Uses
-    // _normalizeRideId() to handle bare integer / half-prefixed shapes.
-    let foundAvg = null;
-    let triedCount = 0;
-    const MAX_TRIES = 5;
-    for (const a of list) {
-      if (triedCount >= MAX_TRIES) break;
-      const rid = (typeof _normalizeRideId === 'function') ? _normalizeRideId(a) : String((a && a.id) || '');
-      if (!rid) continue;
-      triedCount++;
-      try {
-        const res = await fetch(`/api/ride/${encodeURIComponent(rid)}/detail`);
-        if (!res.ok) continue;
-        const d = await res.json();
-        if (d && d.dfa_alpha1_avg != null) {
-          foundAvg = Number(d.dfa_alpha1_avg).toFixed(2);
-          break;
-        }
-      } catch (_) { /* skip ride */ }
+    const r = await fetch('/api/profile/dfa-alpha1');
+    if (!r.ok) {
+      host.innerHTML = '<span style="color:var(--text3);">DFA α1 — unavailable</span>';
+      return;
     }
-    if (foundAvg != null) {
-      host.innerHTML = `<b style="color:var(--text);">Last ride DFA α1:</b> ${esc(foundAvg)}`;
-    } else {
-      host.innerHTML = '<span style="color:var(--text3);">DFA α1 — no recent HRV-tagged rides</span>';
-    }
+    const d = await r.json();
+    await _renderDfaCard(host, d);
+    // Always offer to retry rides with non-sticky DFA status. The
+    // server keeps its own single-flight gate so a duplicate POST is a
+    // no-op. _dfaBackfillIfStale() also throttles via localStorage.
+    const taskId = await _dfaBackfillIfStale(d || {});
+    if (!taskId) return;
+    // Render a progress block AND keep the just-rendered card content
+    // visible above it; we replace the card on completion.
+    const oldHtml = host.innerHTML;
+    _renderDfaProgress(host, { task_id: taskId, augmented: 0, candidates: 0 });
+    _dfaPollBackfill(host, taskId, async (final) => {
+      // Re-fetch the DFA card on completion to pick up newly-computed
+      // values. If cancellation or error, restore the previous card.
+      if (final && (final.computed || 0) > 0) {
+        try {
+          const r2 = await fetch('/api/profile/dfa-alpha1');
+          if (r2.ok) {
+            const d2 = await r2.json();
+            await _renderDfaCard(host, d2);
+            return;
+          }
+        } catch (_) {}
+      }
+      host.innerHTML = oldHtml;
+    });
   } catch (_) {
     host.innerHTML = '<span style="color:var(--text3);">DFA α1 — no recent HRV-tagged rides</span>';
   }

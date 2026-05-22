@@ -29,9 +29,19 @@ class TestBug7DfaAlpha1Endpoint(unittest.TestCase):
         self.client = TestClient(app_module.app)
 
     def test_no_hrv_rides_returns_200_with_null_value(self):
-        """No HRV-tagged rides → 200 + {value: null, n_rides: 0, message: ...}."""
-        with patch.object(app_module, "_recent_dfa_and_decoupling",
-                          return_value=([], None)):
+        """No HRV-tagged rides → 200 + {value: null, n_rides: 0, message: ...}.
+
+        v1.8.10 — endpoint now reads ``_recent_dfa_diagnostic`` (not
+        ``_recent_dfa_and_decoupling``) and adds diagnostic fields
+        (last_computed_at, n_recent_total, n_no_rr_data, n_fetch_failed).
+        Patch the diagnostic helper instead.
+        """
+        with patch.object(app_module, "_recent_dfa_diagnostic",
+                          return_value={
+                              "values": [], "last_computed_at": None,
+                              "n_recent_total": 0, "n_no_rr_data": 0,
+                              "n_fetch_failed": 0,
+                          }):
             r = self.client.get("/api/profile/dfa-alpha1")
         self.assertEqual(r.status_code, 200, r.text)
         data = r.json()
@@ -41,8 +51,13 @@ class TestBug7DfaAlpha1Endpoint(unittest.TestCase):
 
     def test_one_hrv_ride_returns_value(self):
         """One HRV ride → 200 + numeric value, n_rides=1."""
-        with patch.object(app_module, "_recent_dfa_and_decoupling",
-                          return_value=([0.88], 5.0)):
+        with patch.object(app_module, "_recent_dfa_diagnostic",
+                          return_value={
+                              "values": [0.88],
+                              "last_computed_at": "2026-05-21T10:00:00",
+                              "n_recent_total": 1, "n_no_rr_data": 0,
+                              "n_fetch_failed": 0,
+                          }):
             r = self.client.get("/api/profile/dfa-alpha1")
         self.assertEqual(r.status_code, 200)
         data = r.json()
@@ -52,8 +67,13 @@ class TestBug7DfaAlpha1Endpoint(unittest.TestCase):
 
     def test_three_hrv_rides_returns_average(self):
         """Three HRV rides → average value."""
-        with patch.object(app_module, "_recent_dfa_and_decoupling",
-                          return_value=([0.80, 0.90, 1.00], None)):
+        with patch.object(app_module, "_recent_dfa_diagnostic",
+                          return_value={
+                              "values": [0.80, 0.90, 1.00],
+                              "last_computed_at": "2026-05-21T10:00:00",
+                              "n_recent_total": 3, "n_no_rr_data": 0,
+                              "n_fetch_failed": 0,
+                          }):
             r = self.client.get("/api/profile/dfa-alpha1")
         self.assertEqual(r.status_code, 200)
         data = r.json()

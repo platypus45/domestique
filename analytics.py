@@ -468,6 +468,92 @@ def compute_dfa_alpha1(
     }
 
 
+def compute_dfa_alpha1_from_hrv_stream(hrv_stream) -> dict | None:
+    """v1.8.10 — compute DFA α1 from ICU's per-second HRV stream.
+
+    ICU's ``activity/i<id>/streams`` endpoint returns an ``hrv`` channel
+    that is a per-second list. Each non-null entry is itself a list of
+    RR intervals in **milliseconds** for the beats that occurred during
+    that second::
+
+        [None, [771], [689, 693], [700], [708, 731], ...]
+
+    This bypasses the FIT-file fetch entirely — useful when ICU 404s
+    the .fit (deleted activity, missing upload, etc.) but the streams
+    payload is still available, AND when the stream has already been
+    cached locally (no extra round-trip needed at all).
+
+    Returns the same shape as ``compute_dfa_alpha1_for_fit`` — locked
+    by master_v189 §7 + v1810 §C:
+
+        {
+            "dfa_alpha1_avg": float | None,
+            "dfa_alpha1_series": list[float],
+            "dfa_alpha1_lt1_minutes": float | None,
+            "dfa_alpha1_status": "computed" | "no_rr_data" | "sanity_rejected",
+            "rr_intervals_count": int,
+        }
+
+    Returns None only when ``hrv_stream`` itself is unusable
+    (wrong type), so the caller can distinguish "stream missing"
+    (None) from "stream present but no RR" (dict with status).
+    """
+    if not isinstance(hrv_stream, list):
+        return None
+    rr_s: list[float] = []
+    for slot in hrv_stream:
+        if slot is None:
+            continue
+        # Each populated slot is a list of RR ints in ms. Defensive: also
+        # accept a bare int/float (some flattened exports drop the list).
+        if isinstance(slot, (int, float)):
+            slot = [slot]
+        if not isinstance(slot, list):
+            continue
+        for rr_ms in slot:
+            if rr_ms is None:
+                continue
+            try:
+                rr_ms_f = float(rr_ms)
+            except (TypeError, ValueError):
+                continue
+            # Sanity gate identical to fit_activity.parse_rr_intervals:
+            # 0x0000 padding (0 ms) and 0xFFFF sentinel (65.535 s) are
+            # filtered. ICU sometimes emits 0 for missed beats.
+            if rr_ms_f <= 0 or rr_ms_f >= 65535:
+                continue
+            rr_s.append(rr_ms_f / 1000.0)
+
+    if not rr_s:
+        return {
+            "dfa_alpha1_avg": None,
+            "dfa_alpha1_series": [],
+            "dfa_alpha1_lt1_minutes": None,
+            "dfa_alpha1_status": "no_rr_data",
+            "rr_intervals_count": 0,
+        }
+    result = compute_dfa_alpha1(rr_s)
+    if result["avg"] is None:
+        if result["n_windows"] == 0:
+            status = "no_rr_data"
+        else:
+            status = "sanity_rejected"
+        return {
+            "dfa_alpha1_avg": None,
+            "dfa_alpha1_series": result["series"],
+            "dfa_alpha1_lt1_minutes": result["lt1_minutes"],
+            "dfa_alpha1_status": status,
+            "rr_intervals_count": len(rr_s),
+        }
+    return {
+        "dfa_alpha1_avg": result["avg"],
+        "dfa_alpha1_series": result["series"],
+        "dfa_alpha1_lt1_minutes": result["lt1_minutes"],
+        "dfa_alpha1_status": "computed",
+        "rr_intervals_count": len(rr_s),
+    }
+
+
 def compute_dfa_alpha1_for_fit(fit_path: Path) -> dict | None:
     """v1.0.7 — chain RR-extraction + sliding-window α1 for a FIT file.
 

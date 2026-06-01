@@ -1,23 +1,48 @@
 # Changelog
 
-## v1.8.11 — Update banner Download button now actually downloads (2026-05-22)
+## v1.8.12 — banner Download works + reshuffle modal refreshes + FIT base64 race (2026-05-22)
 
-Hot-fix. The update banner's Download button was inert inside the
-packaged pywebview app — clicking it did nothing. Root cause: the
-anchor had `download="<asset>"` but not `target="_blank"`, and macOS
-WKWebView (which pywebview wraps) silently ignores the HTML5 `download`
-attribute on cross-origin URLs AND blocks same-window navigation to
-external hosts like github.com. Result: click → app eats the event,
-nothing happens.
+Three desktop-app bugs. All UI-side, no server changes.
 
-Fix: add `target="_blank" rel="noopener noreferrer"` so the click is
-routed through launcher.py's new-window handler, which opens the URL
-in the user's default browser where GitHub's
-`content-disposition: attachment` triggers a normal save.
+### 1. Update-banner Download button was inert
 
-The "View on GitHub →" link inside the "What's new" panel already
-used `target="_blank"` and worked fine — that's how we know the route
-is correct. Same pattern, one line.
+The anchor had `download="<asset>"` but not `target="_blank"`, and
+macOS WKWebView (which pywebview wraps) silently ignores the HTML5
+`download` attribute on cross-origin URLs AND blocks same-window
+navigation to external hosts. Click → app ate the event, nothing
+happened. Added `target="_blank" rel="noopener noreferrer"` so the
+click routes through `launcher.py`'s new-window handler → default
+browser → GitHub's `content-disposition: attachment` → normal save.
+
+### 2. Reshuffle "accept" left the modal showing the OLD workout
+
+After accepting a re-drawn workout, the bottom "✓ Plan updated" block
+correctly showed the new session with its own Download buttons, but
+the modal's TOP block — title, duration, TSS, HR/W, SVG chart, and
+the top Download FIT/ZWO buttons — kept showing the previous
+workout's data. The top Download buttons even called `downloadFIT()`
+with the STALE ZWO filename. Confusing.
+
+Fix: after acceptRedraw success + calendar reload, re-call
+`calOpenDay(day)` so the entire modal re-renders from the refreshed
+`window._calData`. Single consistent view of the new workout.
+
+### 3. First "Download FIT" produced a base64-decode error; second worked
+
+`_saveViaPywebview()` did `bytes.subarray(...).String.fromCharCode.apply()
++ btoa()` in 32 KB chunks. On macOS WKWebView, the first call after a
+fresh page load sometimes emitted bytes that `btoa` then rejected (or
+re-encoded incorrectly), so `save_fit` on the Python side hit
+`base64 decode failed: <reason>`. Subsequent calls — even on the same
+file — worked.
+
+Fix: replaced the chunk loop with `FileReader.readAsDataURL(blob)`,
+which uses WebKit's native base64 path. No chunking needed, never
+exhibited the warm-up flake. Also catches the empty-blob case (server
+returned 200 with zero bytes) and surfaces it as a toast instead of
+silently saving 0-byte FITs.
+
+## v1.8.11 — (orphaned — superseded by v1.8.12 before macOS DMG was built)
 
 ## v1.8.10 — fatigue 0% unstuck + DFA self-heals via streams.hrv (lazy compute, backfill retry, ICU-deleted state) (2026-05-22)
 

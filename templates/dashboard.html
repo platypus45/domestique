@@ -13364,23 +13364,42 @@ async function _rematchAccept(day) {
   try { loadWeeklyCalendar(); } catch(_) {}
 
   paintProgress('done', n);
-  // Final state: stages complete + download buttons surfaced.
-  if (resultEl) {
-    setTimeout(() => {
-      resultEl.innerHTML = `<div style="border:1px solid var(--green);background:rgba(34,197,94,0.10);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--text);">
-        <strong style="color:var(--green);">✓ Plan updated</strong>
-        &middot; ${esc(String(c.zwo_name || c.zwo_file))}
-        &middot; ${n} session${n === 1 ? '' : 's'} reflowed
-        <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-sm" onclick="downloadZwoFile('${escJs(String(c.zwo_file || ''))}')">Download ZWO</button>
-          <button class="btn btn-sm" onclick="downloadFIT('${escJs(String(c.session_type || 'z2'))}', ${Number(c.duration_min || 0)}, '${escJs(String((c.zwo_file||'').replace(/\.zwo$/i, '') || 'workout'))}', '${escJs(String(c.zwo_file || ''))}')">Download FIT</button>
-        </div>
-      </div>`;
-    }, 600);
-  }
   // Clear per-day state so the next Rematch click starts fresh.
   delete window._rematchState[day];
   try { showToast('Plan updated · ' + n + ' session' + (n === 1 ? '' : 's') + ' reflowed', 3000); } catch(_) {}
+
+  // v1.8.12 BUG FIX — re-open the modal so the header/stats/SVG/top-button
+  // block refreshes to reflect the NEWLY accepted session. Previously the
+  // modal kept showing the OLD workout's title + duration + chart + top
+  // Download buttons (which would call downloadFIT() with the stale ZWO
+  // filename), while only the bottom "Plan updated" green block carried
+  // the new session data. Calling calOpenDay(day) re-renders the entire
+  // modal from window._calData (which loadCalendar() just refreshed) so
+  // the user sees ONE consistent view of the new workout.
+  //
+  // 600ms delay lets the "done" pipeline tick paint before the modal
+  // replaces — matches the original UX timing on the green confirmation.
+  setTimeout(() => {
+    try {
+      if (typeof calOpenDay === 'function') {
+        calOpenDay(day);
+      }
+    } catch (e) {
+      // Fall back to the green-block confirmation if the re-render fails
+      // (e.g. _calData not yet populated, day not found, modal closed).
+      if (resultEl) {
+        resultEl.innerHTML = `<div style="border:1px solid var(--green);background:rgba(34,197,94,0.10);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--text);">
+          <strong style="color:var(--green);">✓ Plan updated</strong>
+          &middot; ${esc(String(c.zwo_name || c.zwo_file))}
+          &middot; ${n} session${n === 1 ? '' : 's'} reflowed
+          <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-sm" onclick="downloadZwoFile('${escJs(String(c.zwo_file || ''))}')">Download ZWO</button>
+            <button class="btn btn-sm" onclick="downloadFIT('${escJs(String(c.session_type || 'z2'))}', ${Number(c.duration_min || 0)}, '${escJs(String((c.zwo_file||'').replace(/\.zwo$/i, '') || 'workout'))}', '${escJs(String(c.zwo_file || ''))}')">Download FIT</button>
+          </div>
+        </div>`;
+      }
+    }
+  }, 600);
 }
 
 function _rematchDecline(day) {
@@ -13724,16 +13743,37 @@ async function _saveViaPywebview(kind, filename, fetchUrl) {
     if (kind === 'zwo') {
       res = await window.pywebview.api.save_zwo(filename, await r.text());
     } else {
-      const buf = await r.arrayBuffer();
-      // Avoid String.fromCharCode(...new Uint8Array(buf)) call-stack blowup
-      // for large FIT files — chunk through a Uint8Array.
-      const bytes = new Uint8Array(buf);
-      let bin = '';
-      const CHUNK = 0x8000;
-      for (let i = 0; i < bytes.length; i += CHUNK) {
-        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+      // v1.8.12 BUG-FIX — base64-encode via FileReader.readAsDataURL()
+      // instead of the manual String.fromCharCode + btoa chunk loop.
+      //
+      // The old approach (bytes.subarray + String.fromCharCode.apply +
+      // btoa) was producing intermittent "base64 decode failed" errors
+      // on the Python side after the FIRST FIT download in a session —
+      // the second call worked. Most likely culprit: WKWebView's btoa
+      // implementation occasionally choked on a freshly-emitted binary
+      // string containing high-byte sequences before its encoding cache
+      // warmed up.
+      //
+      // FileReader.readAsDataURL() offloads base64 to a native code
+      // path that has never exhibited this issue. It also removes the
+      // 0x8000-byte chunking loop entirely; no risk of call-stack blow-
+      // up on multi-MB FIT files.
+      const blob = await r.blob();
+      const b64 = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => {
+          // result is "data:<mime>;base64,<...>" — strip prefix.
+          const s = String(fr.result || '');
+          const i = s.indexOf(',');
+          resolve(i >= 0 ? s.slice(i + 1) : '');
+        };
+        fr.onerror = () => reject(fr.error || new Error('FileReader failed'));
+        fr.readAsDataURL(blob);
+      });
+      if (!b64) {
+        try { showToast('FIT export error: empty body', 4000); } catch(_) {}
+        return true;
       }
-      const b64 = btoa(bin);
       res = await window.pywebview.api.save_fit(filename, b64);
     }
     if (res && res.ok) {

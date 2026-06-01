@@ -1288,6 +1288,7 @@ window.addEventListener('unhandledrejection', function(e) {
   <div class="tab" data-tab="library">Workout Library</div>
   <div class="tab" data-tab="courses">Routes & Climbs</div>
   <div class="tab" data-tab="plan">Training Plan</div>
+  <div class="tab" data-tab="dfa">DFA α1</div>
   <div class="tab" data-tab="settings">Settings</div>
 </div>
 
@@ -2430,6 +2431,33 @@ window.addEventListener('unhandledrejection', function(e) {
   </div>
 </div>
 
+<!-- ═══ DFA α1 ═════════════════════════════════════════════════════════════ -->
+<!-- v1.8.14 — HRV fractal-analysis tab. HRVT1 (α1=0.75, aerobic threshold) +
+     HRVT2 (α1=0.50, anaerobic threshold) HR/power zones, 3-zone intensity
+     distribution, per-ride α1 curve. Data from /api/profile/dfa-rides
+     (scan-on-read of stored ride envelopes; recompute via migrate backfill). -->
+<div class="section" id="sec-dfa">
+  <div class="card" style="margin-bottom:12px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+      <div>
+        <h3 style="margin:0;">DFA α1 — HRV fractal analysis
+          <span style="font-size:10px;background:rgba(234,179,8,0.15);border:1px solid #eab308;color:#a16207;border-radius:4px;padding:1px 6px;vertical-align:middle;">beta</span>
+        </h3>
+        <div style="font-size:11px;color:var(--text3);margin-top:2px;">
+          HR-variability thresholds + intensity distribution from beat-to-beat RR data.
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <button id="dfa-view-aggregate" class="btn" style="font-size:11px;padding:4px 10px;" onclick="setDfaView('aggregate')">Aggregate</button>
+        <button id="dfa-view-perride" class="btn" style="font-size:11px;padding:4px 10px;" onclick="setDfaView('perride')">Per-ride</button>
+      </div>
+    </div>
+    <div id="dfa-tab-status" style="margin-top:8px;"></div>
+  </div>
+  <div id="dfa-aggregate-host"></div>
+  <div id="dfa-perride-host" style="display:none;"></div>
+</div>
+
 <!-- ═══ SETTINGS ═══════════════════════════════════════════════════════════ -->
 <div class="section" id="sec-settings">
   <div class="grid g2">
@@ -2887,7 +2915,8 @@ document.querySelectorAll('.tab[data-tab]').forEach(t => {
                        loadCalendar();
                        loadCapabilityProjection();
                        loadMissedSuggestions();
-                     }, settings:()=>{loadSettings();loadIcuCredentials();}, library:loadWorkouts};
+                     }, settings:()=>{loadSettings();loadIcuCredentials();}, library:loadWorkouts,
+                     dfa:()=>{ if (typeof loadDfaTab === 'function') loadDfaTab(); }};
     if (loaders[tab]) loaders[tab]();
   });
 });
@@ -5792,6 +5821,264 @@ async function loadHomeSnapshotDfa(_activitiesUnused) {
   } catch (_) {
     host.innerHTML = '<span style="color:var(--text3);">DFA α1 — no recent HRV-tagged rides</span>';
   }
+}
+
+// ═══ v1.8.14 — DFA α1 TAB ════════════════════════════════════════════════
+// Per MASTER_DECISIONS_v1814 §10 (grilled). Reads /api/profile/dfa-rides
+// (scan-on-read, no stream re-fetch). Aggregate ↔ per-ride toggle; r²
+// shown + color-coded per channel cell; (i) tooltip; reuses
+// _dfaAlpha1ChartSvg for the per-ride curve. On stale-version records,
+// kicks a ONE-TIME migrate backfill (localStorage-throttled) that
+// recomputes computed-but-old rides into algo v3.
+let _dfaTabData = null;
+let _dfaView = 'aggregate';
+const _DFA_MIGRATE_LS_KEY = 'dfa_migrate_last_run_at';
+const _DFA_MIGRATE_THROTTLE_MS = 10 * 60 * 1000;  // 10 min
+
+// r² → confidence color (grill S5). Drives per-channel cell color.
+function _dfaR2Color(r2) {
+  if (r2 == null) return 'var(--text3)';
+  if (r2 >= 0.60) return '#22c55e';
+  if (r2 >= 0.45) return '#eab308';
+  return '#ef4444';
+}
+function _dfaR2Label(r2) {
+  if (r2 == null) return '';
+  if (r2 >= 0.60) return 'good';
+  if (r2 >= 0.45) return 'moderate';
+  return 'low';
+}
+// One reusable (i) tooltip explaining r².
+const _DFA_R2_TOOLTIP = "r² = how well α1 tracked this channel (HR or power) " +
+  "on this ride. 1.0 = perfect linear trend through the threshold; below 0.50 " +
+  "means the fit is noisy — treat the number as indicative, not exact. " +
+  "Low-r² rides are shown but excluded from the aggregate zones.";
+
+function setDfaView(v) {
+  _dfaView = v;
+  const agg = document.getElementById('dfa-aggregate-host');
+  const per = document.getElementById('dfa-perride-host');
+  const bAgg = document.getElementById('dfa-view-aggregate');
+  const bPer = document.getElementById('dfa-view-perride');
+  if (agg) agg.style.display = (v === 'aggregate') ? 'block' : 'none';
+  if (per) per.style.display = (v === 'perride') ? 'block' : 'none';
+  // Active-button styling.
+  [[bAgg, v === 'aggregate'], [bPer, v === 'perride']].forEach(([b, on]) => {
+    if (!b) return;
+    b.style.background = on ? '#3b82f6' : '';
+    b.style.color = on ? '#fff' : '';
+    b.style.borderColor = on ? '#3b82f6' : '';
+  });
+}
+
+async function loadDfaTab() {
+  const status = document.getElementById('dfa-tab-status');
+  const aggHost = document.getElementById('dfa-aggregate-host');
+  const perHost = document.getElementById('dfa-perride-host');
+  if (!aggHost || !perHost) return;
+  if (status) status.innerHTML = '<span style="color:var(--text3);font-size:12px;">Loading DFA data…</span>';
+  let d;
+  try {
+    const r = await fetch('/api/profile/dfa-rides');
+    if (!r.ok) { if (status) status.innerHTML = '<span style="color:var(--red);font-size:12px;">Failed to load DFA data ('+r.status+')</span>'; return; }
+    d = await r.json();
+  } catch (e) {
+    if (status) status.innerHTML = '<span style="color:var(--red);font-size:12px;">Network error loading DFA data</span>';
+    return;
+  }
+  _dfaTabData = d;
+  if (status) status.innerHTML = '';
+  _renderDfaAggregate(d);
+  _renderDfaPerRide(d);
+  setDfaView(_dfaView);
+
+  // One-time version migration: recompute computed-but-stale rides → v3.
+  if (Number(d.n_stale_version || 0) > 0) {
+    let throttled = false;
+    try {
+      const last = Number(localStorage.getItem(_DFA_MIGRATE_LS_KEY) || 0);
+      throttled = (Date.now() - last < _DFA_MIGRATE_THROTTLE_MS);
+    } catch (_) {}
+    if (!throttled) _dfaRunMigrate(d.n_stale_version);
+    else if (status) status.innerHTML = `<span style="color:var(--text3);font-size:11px;">${d.n_stale_version} ride(s) pending DFA upgrade — will retry shortly.</span>`;
+  }
+}
+
+async function _dfaRunMigrate(nStale) {
+  const status = document.getElementById('dfa-tab-status');
+  try {
+    const r = await fetch('/api/profile/dfa-backfill?migrate=1', { method: 'POST' });
+    if (!r.ok) return;
+    const j = await r.json();
+    try { localStorage.setItem(_DFA_MIGRATE_LS_KEY, String(Date.now())); } catch (_) {}
+    const tid = j && j.task_id;
+    if (!tid) return;
+    if (status) status.innerHTML = `<span style="color:var(--accent);font-size:11px;">Upgrading ${nStale} ride(s) to the corrected DFA algorithm…</span>`;
+    for (let i = 0; i < 240; i++) {
+      const rs = await fetch('/api/profile/dfa-backfill/status?task_id=' + encodeURIComponent(tid));
+      if (!rs.ok) break;
+      const s = await rs.json();
+      if (status) {
+        const a = Number(s.augmented || 0), c = Number(s.candidates || 0);
+        status.innerHTML = `<span style="color:var(--accent);font-size:11px;">Upgrading DFA: ${a}/${c}…</span>`;
+      }
+      if (['done', 'cancelled', 'error'].includes(String(s.state || ''))) break;
+      await new Promise(r2 => setTimeout(r2, 750));
+    }
+    // Refetch + re-render with healed data.
+    try {
+      const r2 = await fetch('/api/profile/dfa-rides');
+      if (r2.ok) {
+        _dfaTabData = await r2.json();
+        _renderDfaAggregate(_dfaTabData);
+        _renderDfaPerRide(_dfaTabData);
+        setDfaView(_dfaView);
+      }
+    } catch (_) {}
+    if (status) status.innerHTML = '';
+  } catch (_) {}
+}
+
+// Render one HRVT block (HR + power cells, each colored by its own r²).
+function _dfaThresholdCells(t) {
+  if (!t) return '<span style="color:var(--text3);">not detected</span>';
+  const cell = (load, unit, r2) => {
+    if (load == null) return `<span style="color:var(--text3);">—</span>`;
+    const col = _dfaR2Color(r2);
+    const lab = _dfaR2Label(r2);
+    return `<span style="color:${col};font-weight:600;">${esc(String(Math.round(load)))}${unit}</span>` +
+           (r2 != null ? `<span style="color:${col};font-size:10px;"> r²${r2.toFixed(2)} ${lab}</span>` : '');
+  };
+  return `HR ${cell(t.hr, '', t.r2_hr)} &nbsp;·&nbsp; Power ${cell(t.power, 'W', t.r2_power)}`;
+}
+
+function _dfaIcon() {
+  return `<span class="info-icon" tabindex="0" role="button" aria-label="What is r²?" ` +
+         `title="${esc(_DFA_R2_TOOLTIP)}" ` +
+         `style="cursor:help;display:inline-flex;align-items:center;justify-content:center;` +
+         `width:14px;height:14px;border-radius:50%;border:1px solid var(--text3);` +
+         `font-size:9px;color:var(--text3);">i</span>`;
+}
+
+function _renderDfaAggregate(d) {
+  const host = document.getElementById('dfa-aggregate-host');
+  if (!host) return;
+  const agg = d.aggregate || {};
+  const t1 = agg.hrvt1, t2 = agg.hrvt2;
+  const nComputed = Number(d.n_computed || 0);
+  if (!t1 && !t2) {
+    host.innerHTML = `<div class="card"><div style="font-size:13px;color:var(--text2);line-height:1.5;">
+      <b>No thresholds detected yet.</b> DFA threshold zones need a ride that
+      <b>sweeps through</b> the threshold — a progressive effort or a ramp where
+      α1 falls past 0.75 (aerobic) / 0.50 (anaerobic). Steady endurance rides
+      keep α1 above 0.75, so they never cross it. ${nComputed} ride(s) have α1
+      computed; do a progressive ride or a ramp test to unlock zone estimates.
+    </div></div>`;
+    return;
+  }
+  const span = (t) => (t && t.date_span) ? ` <span style="color:var(--text3);font-size:10px;">(${esc(t.date_span[0])}…${esc(t.date_span[1])})</span>` : '';
+  const row = (label, alpha, t, sublabel) => {
+    if (!t) return '';
+    const n = Math.max(Number(t.n_hr||0), Number(t.n_power||0));
+    return `<div style="padding:10px 0;border-bottom:1px solid var(--border);">
+      <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">
+        <b style="color:var(--text);">${label}</b>
+        <span style="color:var(--text3);font-size:11px;">α1=${alpha} · ${sublabel}</span>
+        <span style="color:var(--text3);font-size:10px;margin-left:auto;">based on ${n} ride${n===1?'':'s'}${span(t)}</span>
+      </div>
+      <div style="margin-top:4px;font-size:13px;">
+        HR ${t.hr!=null?`<b style="color:#22c55e;">${Math.round(t.hr)} bpm</b> <span style="color:var(--text3);font-size:10px;">r²${(t.r2_hr_median||0).toFixed(2)} · n${t.n_hr}</span>`:'<span style="color:var(--text3);">—</span>'}
+        &nbsp;·&nbsp;
+        Power ${t.power!=null?`<b style="color:#22c55e;">${Math.round(t.power)} W</b> <span style="color:var(--text3);font-size:10px;">r²${(t.r2_power_median||0).toFixed(2)} · n${t.n_power}</span>`:'<span style="color:var(--text3);">—</span>'}
+      </div>
+    </div>`;
+  };
+  host.innerHTML = `<div class="card">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+      <h3 style="margin:0;font-size:15px;">Estimated thresholds &amp; zones</h3>${_dfaIcon()}
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:6px;">
+      Median across recent threshold-crossing rides (r²≥${(agg.agg_min_r2||0.5)}). Power is the better-validated anchor in cycling.
+    </div>
+    ${row('Aerobic threshold (HRVT1)', '0.75', t1, 'top of Zone 2 / easy ceiling')}
+    ${row('Anaerobic threshold (HRVT2)', '0.50', t2, 'sustainable-hard ceiling')}
+    ${_dfaZoneModel(t1, t2)}
+  </div>`;
+}
+
+// 3-zone HR/power model derived from HRVT1/HRVT2 (display only — does NOT
+// overwrite the user's configured FTP/zones).
+function _dfaZoneModel(t1, t2) {
+  const p1 = t1 && t1.power, p2 = t2 && t2.power;
+  if (p1 == null && p2 == null) return '';
+  let rows = '';
+  const fmt = (v) => v != null ? Math.round(v) + ' W' : '—';
+  if (p1 != null) rows += `<tr><td style="padding:3px 10px;">Z1 Low (easy)</td><td style="padding:3px 10px;text-align:right;">&lt; ${fmt(p1)}</td></tr>`;
+  if (p1 != null && p2 != null) rows += `<tr><td style="padding:3px 10px;">Z2 Moderate</td><td style="padding:3px 10px;text-align:right;">${fmt(p1)} – ${fmt(p2)}</td></tr>`;
+  if (p2 != null) rows += `<tr><td style="padding:3px 10px;">Z3 High (hard)</td><td style="padding:3px 10px;text-align:right;">&gt; ${fmt(p2)}</td></tr>`;
+  return `<div style="margin-top:10px;font-size:12px;">
+    <div style="color:var(--text2);margin-bottom:4px;">DFA power-zone model (3-zone, Gronwald 2022):</div>
+    <table style="border-collapse:collapse;font-size:12px;">${rows}</table>
+  </div>`;
+}
+
+function _renderDfaPerRide(d) {
+  const host = document.getElementById('dfa-perride-host');
+  if (!host) return;
+  const rides = Array.isArray(d.rides) ? d.rides : [];
+  if (!rides.length) {
+    host.innerHTML = `<div class="card"><span style="color:var(--text3);font-size:13px;">No rides with HRV data yet.</span></div>`;
+    return;
+  }
+  const zbar = (z) => {
+    if (!z) return '';
+    const tot = (Number(z.z1||0) + Number(z.z2||0) + Number(z.z3||0)) || 1;
+    const pct = (v) => (100 * Number(v||0) / tot).toFixed(0);
+    return `<div style="display:flex;height:8px;border-radius:4px;overflow:hidden;width:120px;" title="Z1 ${z.z1}min / Z2 ${z.z2}min / Z3 ${z.z3}min (of ${tot.toFixed(0)}min analysed)">
+      <div style="width:${pct(z.z1)}%;background:#22c55e;"></div>
+      <div style="width:${pct(z.z2)}%;background:#eab308;"></div>
+      <div style="width:${pct(z.z3)}%;background:#ef4444;"></div>
+    </div>`;
+  };
+  const rows = rides.map(r => {
+    const a1 = (r.alpha1_avg != null) ? Number(r.alpha1_avg).toFixed(2) : '—';
+    const a1col = (r.alpha1_avg >= 0.75) ? '#22c55e' : (r.alpha1_avg >= 0.5 ? '#eab308' : '#ef4444');
+    // r.id is the bare envelope id (e.g. "i150847107"); the modal wants the
+    // "icu_"-prefixed form. Guard against an already-prefixed id just in case.
+    let rid = String(r.id || '');
+    if (!rid.startsWith('icu_')) rid = 'icu_' + rid;
+    const ridEnc = escJs(rid);
+    return `<tr style="border-bottom:1px solid var(--border);cursor:pointer;" onclick="openActivityModal('${ridEnc}')" title="Open ride to see the α1 curve">
+      <td style="padding:6px 10px;white-space:nowrap;">${esc(r.date||'')}</td>
+      <td style="padding:6px 10px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(r.name||'Ride')}</td>
+      <td style="padding:6px 10px;text-align:right;">${r.duration_min!=null?esc(String(r.duration_min)):'—'}</td>
+      <td style="padding:6px 10px;text-align:right;">${r.avg_hr!=null?esc(String(r.avg_hr)):'—'}</td>
+      <td style="padding:6px 10px;text-align:right;color:${a1col};font-weight:600;">${a1}</td>
+      <td style="padding:6px 10px;">${zbar(r.zone_minutes)}</td>
+      <td style="padding:6px 10px;font-size:11px;">${_dfaThresholdCells(r.hrvt1)}</td>
+      <td style="padding:6px 10px;font-size:11px;">${_dfaThresholdCells(r.hrvt2)}</td>
+    </tr>`;
+  }).join('');
+  host.innerHTML = `<div class="card">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+      <h3 style="margin:0;font-size:15px;">Per-ride DFA α1</h3>${_dfaIcon()}
+      <span style="font-size:11px;color:var(--text3);">click a row to see that ride's α1 curve</span>
+    </div>
+    <div style="overflow-x:auto;">
+    <table style="border-collapse:collapse;width:100%;font-size:12px;">
+      <thead><tr style="color:var(--text3);text-align:left;border-bottom:1px solid var(--border);">
+        <th style="padding:6px 10px;">Date</th><th style="padding:6px 10px;">Ride</th>
+        <th style="padding:6px 10px;text-align:right;">min</th><th style="padding:6px 10px;text-align:right;">avg HR</th>
+        <th style="padding:6px 10px;text-align:right;">α1</th><th style="padding:6px 10px;">Z1·Z2·Z3</th>
+        <th style="padding:6px 10px;">HRVT1 (aerobic)</th><th style="padding:6px 10px;">HRVT2 (anaerobic)</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <div style="font-size:10px;color:var(--text3);margin-top:6px;line-height:1.4;">
+      Zone bar = share of <i>analysed</i> time (valid α1 windows only, &lt; ride length).
+      HRVT only resolves on rides that cross the threshold; steady rides show α1 + zones only.
+    </div>
+  </div>`;
 }
 
 // v1.7.6 — Last week feedback panel. Renders planned-vs-actual TSS + zone
@@ -14762,12 +15049,38 @@ function renderActivityModal(p) {
   // v1.8.8 Bug 3 — DFA α1 single-ride summary. Backend's _attach_xss_summary
   // already emits dfa_alpha1_avg + dfa_alpha1_status on the detail payload.
   // Render whenever dfa_alpha1_avg is non-null, regardless of dfa_history.
+  // v1.8.14 — when the per-window series is present, draw the actual DFA α1
+  // -over-time chart (with the 0.75 LT1 + 0.5 anaerobic reference lines and
+  // a time-in-zone readout) instead of only the scalar average.
   if (p.dfa_alpha1_avg != null) {
     const dfaAvgFmt = Number(p.dfa_alpha1_avg).toFixed(2);
     const dfaStatus = String(p.dfa_alpha1_status || 'none');
-    html += `<div style="background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--text2);">
-      <b style="color:var(--text);">DFA α1 (HRV breakpoint):</b> ${esc(dfaAvgFmt)} &mdash; ${esc(dfaStatus)}
-    </div>`;
+    const series = Array.isArray(p.dfa_alpha1_series) ? p.dfa_alpha1_series : [];
+    const lt1Min = (p.dfa_alpha1_lt1_minutes != null) ? Number(p.dfa_alpha1_lt1_minutes) : null;
+    // Whole-ride zone band for the average (aerobic / threshold / hard).
+    const avgNum = Number(p.dfa_alpha1_avg);
+    const band = avgNum >= 0.75 ? ['Aerobic (mostly Z1–Z2)', '#22c55e']
+              : avgNum >= 0.5  ? ['Threshold / tempo', '#eab308']
+                               : ['High intensity (above AnT)', '#ef4444'];
+    let dfaHtml = `<div style="background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--text2);">
+      <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">
+        <b style="color:var(--text);">DFA α1 (HRV breakpoint):</b>
+        <span style="font-size:15px;font-weight:700;color:${band[1]};">${esc(dfaAvgFmt)}</span>
+        <span style="color:${band[1]};">${band[0]}</span>
+        ${lt1Min != null ? `<span style="color:var(--text3);">· ${esc(lt1Min.toFixed(0))} min below 0.75 (LT1)</span>` : ''}
+      </div>`;
+    if (series.length >= 2) {
+      dfaHtml += `<div style="margin-top:8px;">${_dfaAlpha1ChartSvg(series)}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:4px;line-height:1.4;">
+          Per-window α1 (120 s window, 30 s step, Rogers 2021). Crossing
+          <span style="color:#eab308;">0.75</span> marks the aerobic threshold (LT1);
+          dropping below <span style="color:#ef4444;">0.5</span> indicates high-intensity / above anaerobic threshold.
+        </div>`;
+    } else if (dfaStatus !== 'computed') {
+      dfaHtml += `<div style="font-size:10px;color:var(--text3);margin-top:4px;">status: ${esc(dfaStatus)}</div>`;
+    }
+    dfaHtml += `</div>`;
+    html += dfaHtml;
   }
 
   // Sparklines (power + HR overlay)
@@ -14973,6 +15286,47 @@ function renderActivityModal(p) {
   }
 
   content.innerHTML = html;
+}
+
+// v1.8.14 — DFA α1-over-time chart for the activity modal. Plots the
+// per-window α1 series (x = minutes into ride, y = α1 on a fixed 0.3–1.6
+// physiological axis) with the 0.75 LT1 line + 0.5 anaerobic floor, and
+// colours each point by zone (green ≥0.75 aerobic, amber 0.5–0.75
+// threshold, red <0.5 high-intensity). Pure inline SVG, no chart lib.
+function _dfaAlpha1ChartSvg(series) {
+  const W = 760, H = 200, pad = 34;
+  const ymin = 0.3, ymax = 1.6;
+  const xs = series.map(p => Number(p.min) || 0);
+  const ys = series.map(p => Number(p.alpha1) || 0);
+  const xmin = Math.min(...xs), xmax = Math.max(...xs);
+  const xspan = (xmax - xmin) || 1;
+  const X = v => pad + (v - xmin) / xspan * (W - 2 * pad);
+  const Y = v => H - pad - (Math.max(ymin, Math.min(ymax, v)) - ymin) / (ymax - ymin) * (H - 2 * pad);
+  // Reference lines.
+  const refs = [
+    [0.5, '#ef4444', '0.5 anaerobic'],
+    [0.75, '#eab308', '0.75 LT1'],
+    [1.0, '#3b3b3b', '1.0'],
+  ];
+  let grid = '';
+  for (const [yv, col, lab] of refs) {
+    const yy = Y(yv);
+    grid += `<line x1="${pad}" y1="${yy.toFixed(1)}" x2="${W - pad}" y2="${yy.toFixed(1)}" stroke="${col}" stroke-dasharray="4 3" stroke-width="1" opacity="0.7"/>` +
+            `<text x="${(W - pad + 3).toFixed(0)}" y="${(yy + 3).toFixed(0)}" font-size="9" fill="${col}">${lab}</text>`;
+  }
+  const poly = xs.map((x, i) => `${X(x).toFixed(1)},${Y(ys[i]).toFixed(1)}`).join(' ');
+  let dots = '';
+  for (let i = 0; i < xs.length; i++) {
+    const y = ys[i];
+    const c = y < 0.5 ? '#ef4444' : (y < 0.75 ? '#eab308' : '#22c55e');
+    dots += `<circle cx="${X(xs[i]).toFixed(1)}" cy="${Y(y).toFixed(1)}" r="1.6" fill="${c}"/>`;
+  }
+  // X-axis end labels (minutes).
+  const xlab = `<text x="${pad}" y="${H - 6}" font-size="9" fill="var(--text3)">0 min</text>` +
+               `<text x="${(W - pad - 30).toFixed(0)}" y="${H - 6}" font-size="9" fill="var(--text3)">${xmax.toFixed(0)} min</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" ` +
+         `style="background:rgba(0,0,0,0.18);border-radius:6px;">` +
+         `${grid}<polyline points="${poly}" fill="none" stroke="#3b82f6" stroke-width="1.3"/>${dots}${xlab}</svg>`;
 }
 
 // Power + HR overlaid SVG sparklines from decimated samples.

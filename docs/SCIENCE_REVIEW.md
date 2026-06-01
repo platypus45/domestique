@@ -188,6 +188,67 @@ Our LTHR-anchored zones align well with the Norwegian model when converted to %m
 
 ---
 
+## 6a. DFA α1 — Fractal-Correlation HRV Thresholds (in-ride)
+
+DFA α1 (detrended fluctuation analysis, short-term scaling exponent) is computed *post-ride* from beat-to-beat RR-intervals — a non-invasive autonomic-load signal that tracks the metabolic thresholds without blood lactate or a lab. Distinct from the resting/overnight rMSSD that feeds the morning readiness composite (§4). v1.8.14 adds (a) mandatory RR-artifact rejection before the DFA math, (b) HRVT1/HRVT2 threshold detection + a 3-zone intensity model, and (c) a stream-based acquisition fallback.
+
+### Algorithm + artifact rejection (the v1.8.14 correctness fix)
+
+DFA α1 is acutely sensitive to ectopic/misdetected beats — RR cleaning before the computation is mandatory in every DFA paper. Prior to v1.8.14 Domestique dropped only 0ms/65535ms sentinels; it now runs a **Malik 1996 20%-relative filter** (`analytics._filter_rr_artifacts`) before all DFA windows.
+
+- **Why it matters quantitatively** (Gronwald et al. 2022 update, PMC9124938): artifact level <3% = negligible bias on α1; ~6% still keeps the derived HRV threshold within ±1 bpm. Above that, the signal degrades fast.
+- **Observed failure mode**: on one real ride, ~1.3% uncorrected artifact beats dragged α1 from a correct 1.16 down to **0.573** (physiologically near-impossible for the effort) and broke **57 of 72** sliding windows via the R²-fit gate. The filter restores both the value and the window count.
+- Sanity range clamped to [0.30, 1.60] (Gronwald & Hoos 2020). Peng et al. 1995 is the original DFA algorithm (retained).
+
+### HRVT1 / HRVT2 threshold detection (new)
+
+α1 is regressed on HR and on power across a ride's 120s/30s windows; the crossings are interpolated to locate two thresholds, reported as both HR and power:
+
+| Threshold | α1 crossing | Physiological correlate | Origin |
+|-----------|-------------|------------------------|--------|
+| **HRVT1** | 0.75 | Aerobic threshold (VT1 / LT1) — Zone-2 ceiling | Rogers, Tikkanen et al. 2021 (PMC7845545) |
+| **HRVT2** | 0.50 | Anaerobic threshold (VT2 / LT2 / OBLA) | Schaffarczyk et al. 2022 (PMC9894976) |
+
+**3-zone intensity model** (Gronwald et al. 2022, PMC9124938): Z1 α1 > 0.75, Z2 0.50–0.75, Z3 < 0.50.
+
+### Validation statistics (cycling)
+
+| Comparison | Statistic | Source |
+|-----------|-----------|--------|
+| HRVT1 vs VT1/LT1 | ICC **0.77**, r **0.81** | Schaffarczyk et al. 2022 (PMC9894976, PMID 36269394) |
+| HRVT2 vs VT2 (HR-based) | ICC 0.84 — but HR-based HRVT2 is unreliable and routinely omitted | Schaffarczyk et al. 2022 |
+| HRVT2 **power output** vs VT2/OBLA | ICC **0.97**, r **0.92–0.93** | Reliability & validity study (PMC10875128) |
+
+The headline result is **power-specific**: HRVT2-as-power is the more reliable anchor (ICC 0.97). Domestique scopes the HRVT2 claim to power for exactly this reason and de-emphasises the HR-based HRVT2.
+
+### Lazy stream acquisition path (new)
+
+α1 + thresholds now compute from ICU's per-second `hrv` stream channel (RR-intervals in ms), not only the FIT `HrvMessage` records — so rides where ICU 404s the `.fit` still get DFA. Validated equivalence: stream-path α1 = **0.626** vs FIT-path **0.627** on the same ride (within rounding).
+
+### "Better than FTP" framing
+
+FTP anchors roughly one boundary (~LT2). DFA adds the **aerobic-threshold (LT1 / Zone-2 ceiling)** anchor that FTP alone cannot give, plus full HR-based zones for riders with no power meter — all non-invasive, no lab test, no lactate draw.
+
+### Limitations (why thresholds + zones ship as beta, display-only)
+
+- **Ramp requirement.** Thresholds only resolve on a ride that sweeps through them (progressive effort / ramp). Steady endurance rides keep α1 > 0.75 and never cross 0.75 or 0.50 — **"no threshold detected" is the common, expected outcome** on a Z2 ride, not an error.
+- **Single-ride noise.** Per-ride detection r² is moderate (**0.36–0.64**). The app colour-codes each ride's r² and only aggregates rides with r² >= 0.50.
+- **Hysteresis.** α1 lags intensity asymmetrically on up- vs down-ramps; a single linear fit pools both directions — a known, documented bias, uncorrected in v1.
+- **Day-to-day reproducibility unproven.** Cassirame et al. 2025 raise a methodological critique of HRV-threshold reproducibility (with a Gronwald reply); treat as an **ongoing debate**. Zones are display-only and never overwrite the configured FTP/zones.
+- **Fatigue biomarker context.** Rogers et al. (ultramarathon, PMC8295593) show α1 also tracks accumulating fatigue / durability over very long efforts — supportive of the fatigue-signal use but not yet a validated daily-readiness gate on its own.
+
+### Sources
+- [Rogers, Tikkanen et al. 2021](https://pmc.ncbi.nlm.nih.gov/articles/PMC7845545/) (PMID 33519504) — DFA α1 as a non-invasive aerobic-threshold (HRVT1 = 0.75) detector
+- [Schaffarczyk et al. 2022](https://pmc.ncbi.nlm.nih.gov/articles/PMC9894976/) (PMID 36269394) — cycling validation in women; HRVT1/HRVT2 vs VT1/VT2, ICC 0.77 / 0.84
+- [Reliability & validity study 2024](https://pmc.ncbi.nlm.nih.gov/articles/PMC10875128/) — HRVT2 power-output ICC 0.97, r 0.92–0.93 vs VT2/OBLA
+- [Gronwald et al. 2022](https://pmc.ncbi.nlm.nih.gov/articles/PMC9124938/) — fractal HRV for intensity distribution + training prescription (update): 3-zone model, artifact tolerance <3%/6%, durability
+- [Rogers et al. 2021 (ultramarathon)](https://pmc.ncbi.nlm.nih.gov/articles/PMC8295593/) — DFA α1 as a fatigue biomarker over ultra-distance
+- [Cassirame et al. 2025](https://pmc.ncbi.nlm.nih.gov/articles/PMC12423231/) + Gronwald comment — methodological critique; treat HRV thresholds as beta
+- [Peng et al. 1995](https://pubmed.ncbi.nlm.nih.gov/8809515/) — original DFA algorithm
+- [Malik 1996](https://pubmed.ncbi.nlm.nih.gov/8598068/) — RR-interval 20% artifact-rejection rule (the pre-DFA filter)
+
+---
+
 ## 7. Nutrition — IOC/ACSM/ISSN Evidence
 
 ### Protein
@@ -456,6 +517,18 @@ POL (80/0/20) improved **BOTH** peak power +8% AND lactate threshold +9%. In LES
 | Plews et al. | 2013 | [23771898](https://pubmed.ncbi.nlm.nih.gov/23771898/) | LnRMSSD, SWC ±0.5 SD |
 | Plews et al. | 2017 | [27477938](https://pubmed.ncbi.nlm.nih.gov/27477938/) | HRV-guided daily adjustment |
 
+### DFA α1 / Fractal-Correlation HRV Thresholds
+| Authors | Year | PMID/Source | Key Finding |
+|---------|------|-------------|-------------|
+| Peng et al. | 1995 | [8809515](https://pubmed.ncbi.nlm.nih.gov/8809515/) | Original DFA algorithm |
+| Malik | 1996 | [8598068](https://pubmed.ncbi.nlm.nih.gov/8598068/) | RR 20% artifact-rejection rule (pre-DFA filter) |
+| Rogers, Tikkanen et al. | 2021 | [PMC7845545](https://pmc.ncbi.nlm.nih.gov/articles/PMC7845545/) | DFA α1=0.75 detects aerobic threshold (HRVT1) |
+| Rogers et al. (ultra) | 2021 | [PMC8295593](https://pmc.ncbi.nlm.nih.gov/articles/PMC8295593/) | DFA α1 as fatigue biomarker over ultra-distance |
+| Schaffarczyk et al. | 2022 | [PMC9894976](https://pmc.ncbi.nlm.nih.gov/articles/PMC9894976/) | Cycling validation: HRVT1/HRVT2 ICC 0.77/0.84 |
+| Gronwald et al. | 2022 | [PMC9124938](https://pmc.ncbi.nlm.nih.gov/articles/PMC9124938/) | 3-zone model, artifact tolerance <3%/6%, durability |
+| Reliability & validity | 2024 | [PMC10875128](https://pmc.ncbi.nlm.nih.gov/articles/PMC10875128/) | HRVT2 power ICC 0.97, r 0.92–0.93 vs VT2/OBLA |
+| Cassirame et al. + Gronwald | 2025 | [PMC12423231](https://pmc.ncbi.nlm.nih.gov/articles/PMC12423231/) | Methodological critique — HRV thresholds are beta |
+
 ### Power & HR Zones
 | Authors | Year | PMID/Source | Key Finding |
 |---------|------|-------------|-------------|
@@ -519,4 +592,4 @@ POL (80/0/20) improved **BOTH** peak power +8% AND lactate threshold +9%. In LES
 
 ---
 
-*Review updated April 2026. 70+ papers indexed. PubMed screening conducted via 4 parallel research agents covering FTP protocols, VO2max protocols, hybrid FTP+VO2max training, and existing literature cross-referencing.*
+*Review updated April 2026; DFA α1 / fractal-HRV-threshold section (§6a) added June 2026 for v1.8.14. 70+ papers indexed. PubMed screening conducted via 4 parallel research agents covering FTP protocols, VO2max protocols, hybrid FTP+VO2max training, and existing literature cross-referencing.*

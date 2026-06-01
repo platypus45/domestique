@@ -1404,8 +1404,23 @@ _dfa_backfill_lock = threading.Lock()  # single-flight gate
 _dfa_backfill_cancel: set[str] = set()  # task IDs the user asked to cancel
 
 
-def _run_dfa_backfill_job(task_id: str, force: bool = False) -> None:
-    """Background worker — iterate ICU rides + augment non-sticky records.
+def _run_dfa_backfill_job(task_id: str, force: bool = False,
+                          migrate: bool = False) -> None:
+    """Background worker — iterate ICU rides + augment records.
+
+    Three candidate-selection modes:
+      - default: non-sticky records only (fetch_failed / timeout / missing).
+      - ``force``: every record (used after a manual re-upload).
+      - ``migrate`` (v1.8.14 grill B1): records that ARE ``computed`` but were
+        computed by an OLDER ``dfa_algo_version`` than the current one. This
+        heals the flagship case where the algorithm changed (e.g. the v3 HRVT
+        fields were added) but the rides are sticky-``computed`` so neither
+        sync (90-day window only) nor the default backfill would touch them.
+        Only ``computed`` rides qualify — they have HRV data, so recompute is
+        meaningful; ``no_rr_data`` (runs, no RR) + ``icu_deleted`` are skipped
+        (recompute is wasteful and the outcome won't change). Migrate calls
+        augment with ``force=True`` per record so the per-record sticky gate
+        doesn't re-block it.
 
     Updates ``_dfa_backfill_tasks[task_id]`` in place so the polling
     endpoint can report progress without holding the worker lock.
@@ -1436,7 +1451,14 @@ def _run_dfa_backfill_job(task_id: str, force: bool = False) -> None:
         if not isinstance(ext, str) or not ext:
             continue
         status = rec.get("dfa_alpha1_status")
-        if not force and status in sticky:
+        if migrate:
+            # Only stale-version COMPUTED rides (they have HRV → recompute
+            # meaningfully adds the v3 HRVT/zone fields or fixes a v1 α1).
+            if status != "computed":
+                continue
+            if int(rec.get("dfa_algo_version") or 0) >= _DFA_ALGO_VERSION:
+                continue
+        elif not force and status in sticky:
             continue
         candidates.append((p, ext))
 
@@ -1477,7 +1499,10 @@ def _run_dfa_backfill_job(task_id: str, force: bool = False) -> None:
                 e["current"] = ext
                 _dfa_backfill_tasks[task_id] = e
             try:
-                _augment_icu_record_with_dfa(p, ext, force=force)
+                # Migrate mode forces the per-record recompute (the record is
+                # sticky-``computed`` but stale-version, so the gate would
+                # otherwise skip it).
+                _augment_icu_record_with_dfa(p, ext, force=(force or migrate))
                 # Re-read to count outcome.
                 try:
                     rec2 = _json.loads(p.read_text(encoding="utf-8"))
@@ -1522,14 +1547,16 @@ def _run_dfa_backfill_job(task_id: str, force: bool = False) -> None:
 
 
 @app.post("/api/profile/dfa-backfill")
-def api_profile_dfa_backfill(force: int = Query(0)):
+def api_profile_dfa_backfill(force: int = Query(0), migrate: int = Query(0)):
     """v1.8.10 — kick off a DFA α1 retry pass over all ICU rides.
 
     Single-flight: a second concurrent POST returns
     ``{"status": "already_running", "task_id": <existing>}``. With
     ``?force=1`` even sticky statuses are re-attempted (used when the
     user manually re-uploaded an activity that was previously
-    ``icu_deleted``).
+    ``icu_deleted``). With ``?migrate=1`` (v1.8.14) only ``computed`` rides
+    stamped with an older ``dfa_algo_version`` are recomputed — the one-time
+    upgrade pass that backfills the v3 HRVT/zone fields onto existing rides.
 
     Returns ``{"status": "started", "task_id": <uuid>}`` on accept.
     Poll progress via ``/api/profile/dfa-backfill/status?task_id=X``.
@@ -1553,7 +1580,7 @@ def api_profile_dfa_backfill(force: int = Query(0)):
         }
     t = threading.Thread(
         target=_run_dfa_backfill_job,
-        args=(task_id, bool(int(force or 0))),
+        args=(task_id, bool(int(force or 0)), bool(int(migrate or 0))),
         daemon=True,
     )
     t.start()
@@ -1839,6 +1866,131 @@ def api_profile_dfa_alpha1():
     }
 
 
+@app.get("/api/profile/dfa-rides")
+def api_profile_dfa_rides():
+    """v1.8.14 — all HRV-bearing rides for the DFA α1 tab, plus a recent
+    median HRVT1/HRVT2 aggregate. Scan-on-read over stored envelopes; NO
+    stream re-fetch (grill D3). Per-ride rows carry the stored HRVT dicts
+    UNCHANGED (grill B2). Aggregate is per-channel, r²-gated, null-safe.
+
+    Locked shape (MASTER_DECISIONS_v1814 §4 + §10):
+      { rides:[{id,date,name,duration_min,avg_hr,alpha1_avg,lt1_minutes,
+                status,zone_minutes,hrvt1,hrvt2,algo_version}],
+        aggregate:{hrvt1:{hr,n_hr,r2_hr_median,power,n_power,r2_power_median,
+                          date_span}|null, hrvt2:{...}|null, n_window},
+        n_total, n_computed, n_stale_version }
+    """
+    import statistics as _stats
+    from datetime import datetime as _dt, timedelta as _td
+    try:
+        from analytics import DFA_AGG_MIN_R2 as _AGG_R2
+    except Exception:
+        _AGG_R2 = 0.50
+
+    try:
+        raw = _iter_icu_dfa_rides()
+    except Exception as e:
+        _log.debug(f"api_profile_dfa_rides scan failed: {e}")
+        raw = []
+
+    rides = []
+    n_computed = 0
+    n_stale = 0
+    for d in raw:
+        status = d.get("dfa_alpha1_status")
+        a1 = (d.get("summary") or {}).get("dfa_alpha1_avg")
+        if status == "computed":
+            n_computed += 1
+            if int(d.get("dfa_algo_version") or 0) < _DFA_ALGO_VERSION:
+                n_stale += 1
+        # Only surface rides that actually have an α1 value in the table.
+        if a1 is None:
+            continue
+        moving = d.get("moving_s") or d.get("duration_s") or 0
+        rides.append({
+            "id": d.get("id"),
+            "date": str(d.get("started_at") or "")[:10],  # naive ISO, no shift
+            "name": d.get("name"),
+            "duration_min": round(float(moving) / 60.0) if moving else None,
+            "avg_hr": d.get("avg_hr"),
+            "alpha1_avg": a1,
+            "lt1_minutes": d.get("dfa_alpha1_lt1_minutes"),
+            "status": status,
+            "zone_minutes": d.get("dfa_zone_minutes"),
+            "hrvt1": d.get("dfa_hrvt1"),   # stored dict, passed through unchanged
+            "hrvt2": d.get("dfa_hrvt2"),
+            "algo_version": d.get("dfa_algo_version"),
+        })
+
+    # Newest first (date string sorts lexically for ISO).
+    rides.sort(key=lambda r: r.get("date") or "", reverse=True)
+
+    # ── Aggregate: rides in the last 42 days that resolved a threshold;
+    #    fall back to the last 8 resolved if <3 in the window. r²-gated.
+    def _resolved(row, key, channel):
+        t = row.get(key)
+        if not isinstance(t, dict):
+            return None
+        load = t.get(channel)
+        r2 = t.get("r2_hr" if channel == "hr" else "r2_power")
+        if load is None or r2 is None or r2 < _AGG_R2:
+            return None
+        return (load, r2, row.get("date") or "")
+
+    def _aggregate(key):
+        # Collect resolved per channel from the date-windowed set.
+        try:
+            cutoff = (_dt.now() - _td(days=42)).date().isoformat()
+        except Exception:
+            cutoff = ""
+        recent = [r for r in rides if (r.get("date") or "") >= cutoff]
+        # Need ≥3 resolved (either channel) in window, else last-8 resolved.
+        def _has_any(row):
+            return _resolved(row, key, "hr") or _resolved(row, key, "power")
+        windowed = [r for r in recent if _has_any(r)]
+        if len(windowed) < 3:
+            windowed = [r for r in rides if _has_any(r)][:8]
+        if not windowed:
+            return None
+        out = {}
+        dates = []
+        for channel, n_k, med_k, r2_k in (
+            ("hr", "n_hr", "hr", "r2_hr_median"),
+            ("power", "n_power", "power", "r2_power_median"),
+        ):
+            vals, r2s = [], []
+            for row in windowed:
+                res = _resolved(row, key, channel)
+                if res:
+                    vals.append(res[0]); r2s.append(res[1]); dates.append(res[2])
+            if vals:
+                out[med_k] = round(_stats.median(vals), 1)
+                out[n_k] = len(vals)
+                out[("r2_hr_median" if channel == "hr" else "r2_power_median")] = round(_stats.median(r2s), 3)
+            else:
+                out[med_k] = None
+                out[n_k] = 0
+                out[("r2_hr_median" if channel == "hr" else "r2_power_median")] = None
+        if out.get("n_hr", 0) == 0 and out.get("n_power", 0) == 0:
+            return None
+        ds = sorted(d for d in dates if d)
+        out["date_span"] = [ds[0], ds[-1]] if ds else None
+        return out
+
+    return {
+        "rides": rides,
+        "aggregate": {
+            "hrvt1": _aggregate("hrvt1"),
+            "hrvt2": _aggregate("hrvt2"),
+            "n_window": 8,
+            "agg_min_r2": _AGG_R2,
+        },
+        "n_total": len(raw),
+        "n_computed": n_computed,
+        "n_stale_version": n_stale,
+    }
+
+
 @app.post("/api/activity/{activity_id}/race")
 def api_activity_set_race(activity_id: str, body: dict):
     """v1.0.7 IMPL-TAU-FIT-WIRING — toggle the is_race flag on an activity.
@@ -1915,6 +2067,17 @@ def _iter_icu_dfa_rides() -> list[dict]:
                 },
                 "dfa_alpha1_status": d.get("dfa_alpha1_status"),
                 "rr_intervals_count": d.get("rr_intervals_count"),
+                # v1.8.14 — fields for the DFA α1 tab (None on older records
+                # until the migrate backfill recomputes them under algo v3).
+                "name": d.get("name"),
+                "moving_s": d.get("moving_s"),
+                "duration_s": d.get("duration_s"),
+                "avg_hr": d.get("avg_hr"),
+                "dfa_alpha1_lt1_minutes": d.get("dfa_alpha1_lt1_minutes"),
+                "dfa_hrvt1": d.get("dfa_hrvt1"),
+                "dfa_hrvt2": d.get("dfa_hrvt2"),
+                "dfa_zone_minutes": d.get("dfa_zone_minutes"),
+                "dfa_algo_version": d.get("dfa_algo_version"),
             })
     except Exception:
         pass
@@ -12198,6 +12361,16 @@ def _sync_icu_wellness(force: bool = False, days: int = 90) -> dict:
 # while still bailing on truly pathological FITs.
 _DFA_AUGMENT_TIMEOUT_S: float = 45.0
 
+# v1.8.14 — DFA algorithm version. Bump whenever the DFA α1 maths changes in
+# a way that invalidates previously-stored values, so already-"computed"
+# records (normally sticky) get recomputed on the next sync/backfill instead
+# of keeping a stale value forever.
+#   v1: pre-v1.8.14, no RR-artifact rejection (systematically biased α1 low).
+#   v2: v1.8.14, Malik 20% artifact filter (analytics._filter_rr_artifacts).
+#   v3: v1.8.14, also stores HRVT1/HRVT2 (HR+power) + 3-zone intensity minutes
+#       (analytics.compute_dfa_threshold_analysis).
+_DFA_ALGO_VERSION: int = 3
+
 
 def _augment_icu_record_with_dfa(rec_path: Path, external_id: str,
                                    force: bool = False) -> None:
@@ -12232,10 +12405,20 @@ def _augment_icu_record_with_dfa(rec_path: Path, external_id: str,
     # v1.8.10 — ``icu_deleted`` is sticky too (no point hammering ICU for
     # an activity it has deleted). Backfill endpoint can clear it via
     # ``force=True`` if the user manually re-uploaded.
+    # v1.8.14 — a record is sticky ONLY if it was also computed by the CURRENT
+    # DFA algorithm version. After the artifact-filter fix the algo version
+    # bumped to 2, so every record stamped with an older (or absent) version
+    # falls through and recomputes on the next sync/backfill — auto-healing
+    # stale α1 values WITHOUT requiring the user to force a backfill. Records
+    # with genuinely no RR data (no_rr_data) still re-run once under v2 but
+    # land back on no_rr_data harmlessly; ``icu_deleted`` likewise re-checks
+    # once (the activity may have been re-uploaded since).
     existing_status = rec.get("dfa_alpha1_status")
-    if not force and existing_status in (
-        "computed", "no_rr_data", "sanity_rejected", "icu_deleted",
-    ):
+    _stamped_version = rec.get("dfa_algo_version")
+    if (not force
+            and existing_status in (
+                "computed", "no_rr_data", "sanity_rejected", "icu_deleted")
+            and _stamped_version == _DFA_ALGO_VERSION):
         return
 
     import training as _training
@@ -12256,7 +12439,25 @@ def _augment_icu_record_with_dfa(rec_path: Path, external_id: str,
         from analytics import (
             compute_dfa_alpha1_from_hrv_stream as _dfa_from_stream,
             compute_dfa_alpha1_for_fit as _dfa_from_fit,
+            compute_dfa_threshold_analysis as _dfa_thresholds,
         )
+
+        def _with_thresholds(out, streams):
+            # v1.8.14 — when α1 computed from a stream dict that ALSO carries
+            # heartrate + watts, attach HRVT1/HRVT2 (HR+power) + 3-zone minutes.
+            # Best-effort: any failure leaves the base α1 result intact.
+            if not (isinstance(out, dict) and out.get("dfa_alpha1_status") == "computed"):
+                return out
+            try:
+                ta = _dfa_thresholds(streams.get("hrv"),
+                                     streams.get("heartrate"),
+                                     streams.get("watts"))
+                out["dfa_hrvt1"] = ta.get("hrvt1")
+                out["dfa_hrvt2"] = ta.get("hrvt2")
+                out["dfa_zone_minutes"] = ta.get("zone_minutes")
+            except Exception as e:
+                _log.debug(f"_dfa_thresholds({external_id}) failed: {e}")
+            return out
 
         # Step 1 — local cached streams.
         try:
@@ -12266,7 +12467,7 @@ def _augment_icu_record_with_dfa(rec_path: Path, external_id: str,
                 if isinstance(hrv, list) and any(s for s in hrv):
                     out = _dfa_from_stream(hrv)
                     if isinstance(out, dict) and out.get("dfa_alpha1_status") == "computed":
-                        return out
+                        return _with_thresholds(out, local_streams)
                     # If lazy stream path produced "no_rr_data" because the
                     # cached blob was a power-only stream with hrv=[None,...],
                     # fall through to fresh fetch.
@@ -12283,7 +12484,7 @@ def _augment_icu_record_with_dfa(rec_path: Path, external_id: str,
                 if isinstance(hrv, list) and any(s for s in hrv):
                     out = _dfa_from_stream(hrv)
                     if isinstance(out, dict) and out.get("dfa_alpha1_status") == "computed":
-                        return out
+                        return _with_thresholds(out, fresh)
                     if isinstance(out, dict) and out.get("rr_intervals_count", 0) > 0:
                         return out
         except Exception as e:
@@ -12362,6 +12563,18 @@ def _augment_icu_record_with_dfa(rec_path: Path, external_id: str,
         rec["dfa_alpha1_lt1_minutes"] = dfa.get("dfa_alpha1_lt1_minutes")
         rec["dfa_alpha1_status"] = dfa.get("dfa_alpha1_status") or "no_rr_data"
         rec["rr_intervals_count"] = int(dfa.get("rr_intervals_count") or 0)
+        # v1.8.14 (algo v3) — HRVT1/HRVT2 + 3-zone intensity minutes, when the
+        # stream path produced them (None on the FIT-only fallback path).
+        rec["dfa_hrvt1"] = dfa.get("dfa_hrvt1")
+        rec["dfa_hrvt2"] = dfa.get("dfa_hrvt2")
+        rec["dfa_zone_minutes"] = dfa.get("dfa_zone_minutes")
+
+    # v1.8.14 — stamp the algorithm version on every write path (timeout,
+    # icu_deleted, and computed). The sticky-skip gate above compares this
+    # against _DFA_ALGO_VERSION so a future maths change auto-recomputes
+    # stale records. timeout is non-sticky regardless, but stamping it keeps
+    # the field present on every record for consistent diagnostics.
+    rec["dfa_algo_version"] = _DFA_ALGO_VERSION
 
     try:
         rec_path.write_text(_json.dumps(rec, indent=2), encoding="utf-8")
@@ -13109,6 +13322,12 @@ def api_ride_full_detail(ride_id: str, include: str = Query("")):
         # the keys (None when sensor didn't emit RR-intervals).
         summary.setdefault("dfa_alpha1_avg", rec_dict.get("dfa_alpha1_avg"))
         summary.setdefault("dfa_alpha1_status", rec_dict.get("dfa_alpha1_status"))
+        # v1.8.14 — also surface the per-window α1 series + LT1 minutes +
+        # raw beat count so the activity modal can draw the DFA α1-over-time
+        # chart (the actual visualisation, not just the scalar average).
+        summary.setdefault("dfa_alpha1_series", rec_dict.get("dfa_alpha1_series") or [])
+        summary.setdefault("dfa_alpha1_lt1_minutes", rec_dict.get("dfa_alpha1_lt1_minutes"))
+        summary.setdefault("rr_intervals_count", rec_dict.get("rr_intervals_count"))
 
         # v1.0.7 IMPL-TAU-FIT-WIRING: surface is_race + activity_id from the
         # SQLite activities table so the dashboard "🏁 Mark as race" checkbox

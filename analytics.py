@@ -265,6 +265,45 @@ def compute_polarization_block(time_in_zone: dict | None) -> dict | None:
 DFA_SANITY_MIN = 0.30   # Gronwald & Hoos 2020 physiological lower bound.
 DFA_SANITY_MAX = 1.60   # Gronwald & Hoos 2020 physiological upper bound.
 DFA_LT1_THRESHOLD = 0.75  # Rogers 2021 LT1 anchor.
+# v1.8.14 — Malik (1996) relative RR-artifact rejection threshold. A beat
+# whose RR differs from the last ACCEPTED beat by more than this fraction is
+# dropped as an ectopic / missed / inserted beat. 0.20 (the "20% rule") is
+# the de-facto standard: Kubios default, and the preprocessing Rogers 2021 /
+# Gronwald 2020 apply before DFA α1. MANDATORY for DFA — see _filter_rr_artifacts.
+DFA_ARTIFACT_REL_THRESHOLD = 0.20
+
+
+def _filter_rr_artifacts(rr_s: list[float],
+                          rel_thresh: float = DFA_ARTIFACT_REL_THRESHOLD,
+                          ) -> tuple[list[float], int]:
+    """Malik (1996) relative RR-artifact filter. Returns (filtered, n_dropped).
+
+    DFA α1 is acutely sensitive to ectopic / missed / inserted beats: even
+    ~1% corruption injects uncorrelated high-frequency variance that (a) drags
+    α1 toward the 0.5 white-noise floor and (b) breaks the log-log scaling
+    region so the per-window R² ≥ 0.95 gate then rejects most windows — which
+    silently destroys both the whole-ride average AND the per-window series /
+    LT1-minutes. Real example from validation (v1.8.14): a 63-min ride at
+    142 bpm avg computed α1 = 0.573 over only 15 valid windows UNFILTERED
+    (physiologically impossible — implies the whole ride sat above anaerobic
+    threshold); after this filter, α1 = 1.16 over 72 windows (correct: mostly
+    aerobic, dipping at hard efforts). Only 1.3 % of beats were dropped.
+
+    The "20% rule" drops any RR differing from the last ACCEPTED beat by more
+    than ``rel_thresh``. Comparing against the last accepted (not the raw
+    previous) beat prevents a single spurious spike from cascading rejections.
+    """
+    if not rr_s:
+        return [], 0
+    out = [rr_s[0]]
+    dropped = 0
+    for r in rr_s[1:]:
+        prev = out[-1]
+        if prev > 0 and abs(r - prev) / prev > rel_thresh:
+            dropped += 1
+            continue
+        out.append(r)
+    return out, dropped
 
 
 def _dfa_alpha1_window(rr_window: list[float]) -> float | None:
@@ -390,6 +429,18 @@ def compute_dfa_alpha1(
     if not rr_seconds:
         return out_empty
     rr = [float(x) for x in rr_seconds if x and x > 0]
+    if len(rr) < 16:
+        return out_empty
+
+    # v1.8.14 — MANDATORY artifact rejection before any DFA math. Without
+    # this, ectopic/missed beats (≈1 % of a typical ride) crater α1 toward
+    # the 0.5 white-noise floor and break the log-log scaling region. This is
+    # the single chokepoint both callers (compute_dfa_alpha1_for_fit and
+    # compute_dfa_alpha1_from_hrv_stream) route through, so filtering here
+    # fixes both the FIT path and the ICU-stream path at once. The wrappers
+    # keep reporting the RAW beat count (rr_intervals_count) for diagnostics;
+    # only the DFA windowing operates on the cleaned series.
+    rr, _n_artifacts = _filter_rr_artifacts(rr)
     if len(rr) < 16:
         return out_empty
 
@@ -552,6 +603,195 @@ def compute_dfa_alpha1_from_hrv_stream(hrv_stream) -> dict | None:
         "dfa_alpha1_status": "computed",
         "rr_intervals_count": len(rr_s),
     }
+
+
+# v1.8.14 — HRV-threshold (HRVT1/HRVT2) detection + intensity distribution.
+#
+# Literature anchors (all validated in cycling):
+#   - HRVT1: α1 = 0.75 → aerobic threshold (VT1 / LT1). Cycling ICC 0.77,
+#     r 0.81 (Schaffarczyk/Rogers/Gronwald 2022, PMC9894976).
+#   - HRVT2: α1 = 0.50 → anaerobic threshold (VT2 / LT2 / OBLA). Cycling
+#     power-output ICC 0.97, r 0.92–0.93 (reliability study PMC10875128) —
+#     HRVT2 is actually the MORE reliable of the two for power.
+#   - 3-zone intensity model (Gronwald Update review PMC9124938):
+#       Z1 low      α1 > 0.75
+#       Z2 moderate 0.50 ≤ α1 ≤ 0.75
+#       Z3 high     α1 < 0.50
+#
+# Detection only works on a ride that SWEEPS THROUGH the threshold (a
+# progressive / ramp effort), so α1 spans the target value. A steady Z2
+# ride never crosses 0.75 → no HRVT1 detectable (returns None, not a guess).
+DFA_HRVT1_ALPHA = 0.75
+DFA_HRVT2_ALPHA = 0.50
+# Minimum r² of the α1-vs-load regression for a threshold estimate to be
+# trusted. α1-vs-power is intrinsically noisy on a free ride; 0.30 keeps
+# only fits with a genuine monotonic trend through the threshold.
+_DFA_THRESHOLD_MIN_R2 = 0.30
+_DFA_THRESHOLD_MIN_WINDOWS = 8
+# v1.8.14 (grill S1) — a per-ride threshold with r² in [0.30, 0.50) is shown
+# in the table (colored red, "low confidence") but EXCLUDED from the
+# cross-ride aggregate, so a near-noise fit never votes on the zone numbers.
+DFA_AGG_MIN_R2 = 0.50
+
+
+def _per_second_mean(stream, lo_s: int, hi_s: int):
+    """Mean of a per-second numeric stream over [lo_s, hi_s), ignoring None/0."""
+    if not isinstance(stream, list):
+        return None
+    seg = stream[lo_s:hi_s]
+    vals = []
+    for v in seg:
+        if v is None:
+            continue
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        vals.append(f)
+    if not vals:
+        return None
+    return sum(vals) / len(vals)
+
+
+def _interp_load_at_alpha(windows, target_alpha, load_key):
+    """Linear-regress α1 (y) on a load channel (x = HR or power) across
+    windows, then solve for the load at ``target_alpha``.
+
+    Returns ``{load, r2, n}`` or None when the target isn't bracketed by the
+    observed α1 range (no extrapolation), too few windows, or the fit is too
+    weak (r² < _DFA_THRESHOLD_MIN_R2). Matches the literature's "linear
+    interpolation to the α1 = 0.75 / 0.50 crossing" method.
+    """
+    pts = [(w[load_key], w["alpha1"]) for w in windows
+           if w.get(load_key) is not None and w.get("alpha1") is not None]
+    if len(pts) < _DFA_THRESHOLD_MIN_WINDOWS:
+        return None
+    alphas = [a for _, a in pts]
+    # Target must be bracketed by observed α1 (interpolation, not extrapolation).
+    if not (min(alphas) <= target_alpha <= max(alphas)):
+        return None
+    xs = [x for x, _ in pts]
+    ys = alphas
+    n = len(pts)
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    sxx = sum((x - mx) ** 2 for x in xs)
+    sxy = sum((xs[i] - mx) * (ys[i] - my) for i in range(n))
+    if sxx <= 0:
+        return None
+    slope = sxy / sxx
+    if abs(slope) < 1e-9:
+        return None
+    intercept = my - slope * mx
+    # r² of the linear fit.
+    ss_tot = sum((y - my) ** 2 for y in ys)
+    ss_res = sum((ys[i] - (slope * xs[i] + intercept)) ** 2 for i in range(n))
+    r2 = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+    if r2 < _DFA_THRESHOLD_MIN_R2:
+        return None
+    load_at = (target_alpha - intercept) / slope
+    # Reject physiologically-impossible / out-of-observed-range solutions.
+    if load_at < min(xs) - 1e-6 or load_at > max(xs) + 1e-6 or load_at <= 0:
+        return None
+    return {"load": round(load_at, 1), "r2": round(r2, 3), "n": n}
+
+
+def compute_dfa_threshold_analysis(hrv_stream,
+                                    hr_stream=None,
+                                    power_stream=None,
+                                    window_s: int = 120,
+                                    step_s: int = 30) -> dict:
+    """v1.8.14 — per-window α1 aligned with HR + power on a wall-clock axis,
+    plus HRVT1/HRVT2 threshold detection and the 3-zone intensity split.
+
+    All three streams are ICU per-second channels aligned 1:1 (hrv slot i,
+    heartrate[i], watts[i] are the same second). For each rolling
+    ``window_s``-second window (advanced by ``step_s``) we compute α1 from the
+    window's RR beats (artifact-filtered) and the mean HR + power over the
+    same seconds, then regress α1 on each load channel to interpolate the
+    0.75 (HRVT1) and 0.50 (HRVT2) crossings.
+
+    Returns:
+        {
+          "windows": [{min, alpha1, hr, power}],   # per-window, for charting
+          "hrvt1": {hr, power, r2_hr, r2_power} | None,
+          "hrvt2": {hr, power, r2_hr, r2_power} | None,
+          "zone_minutes": {"z1": float, "z2": float, "z3": float},
+          "n_windows": int,
+        }
+
+    hrvtN.hr / hrvtN.power are None individually when that load channel didn't
+    yield a trustworthy fit (e.g. ride had no power meter, or α1 never reached
+    the target). The whole hrvtN block is None when neither channel resolved.
+    """
+    out = {"windows": [], "hrvt1": None, "hrvt2": None,
+           "zone_minutes": {"z1": 0.0, "z2": 0.0, "z3": 0.0}, "n_windows": 0}
+    if not isinstance(hrv_stream, list) or not hrv_stream:
+        return out
+
+    n_sec = len(hrv_stream)
+    windows = []
+    z_min = {"z1": 0.0, "z2": 0.0, "z3": 0.0}
+    step_min = step_s / 60.0
+    ws = 0
+    while ws + window_s <= n_sec:
+        # RR beats inside this wall-clock window.
+        rr = []
+        for slot in hrv_stream[ws:ws + window_s]:
+            if slot is None:
+                continue
+            if isinstance(slot, (int, float)):
+                slot = [slot]
+            if not isinstance(slot, list):
+                continue
+            for v in slot:
+                if v is None:
+                    continue
+                try:
+                    f = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if 0 < f < 65535:
+                    rr.append(f / 1000.0)
+        rr, _ = _filter_rr_artifacts(rr)
+        alpha = _dfa_alpha1_window(rr)
+        if alpha is not None and DFA_SANITY_MIN <= alpha <= DFA_SANITY_MAX:
+            a = round(alpha, 3)
+            hr = _per_second_mean(hr_stream, ws, ws + window_s)
+            pw = _per_second_mean(power_stream, ws, ws + window_s)
+            windows.append({
+                "min": round(ws / 60.0, 2),
+                "alpha1": a,
+                "hr": round(hr, 1) if hr is not None else None,
+                "power": round(pw, 1) if pw is not None else None,
+            })
+            if a > DFA_HRVT1_ALPHA:
+                z_min["z1"] += step_min
+            elif a >= DFA_HRVT2_ALPHA:
+                z_min["z2"] += step_min
+            else:
+                z_min["z3"] += step_min
+        ws += step_s
+
+    out["windows"] = windows
+    out["n_windows"] = len(windows)
+    out["zone_minutes"] = {k: round(v, 1) for k, v in z_min.items()}
+    if len(windows) < _DFA_THRESHOLD_MIN_WINDOWS:
+        return out
+
+    for key, alpha_t in (("hrvt1", DFA_HRVT1_ALPHA), ("hrvt2", DFA_HRVT2_ALPHA)):
+        hr_fit = _interp_load_at_alpha(windows, alpha_t, "hr")
+        pw_fit = _interp_load_at_alpha(windows, alpha_t, "power")
+        if hr_fit is None and pw_fit is None:
+            continue
+        out[key] = {
+            "alpha": alpha_t,
+            "hr": hr_fit["load"] if hr_fit else None,
+            "r2_hr": hr_fit["r2"] if hr_fit else None,
+            "power": pw_fit["load"] if pw_fit else None,
+            "r2_power": pw_fit["r2"] if pw_fit else None,
+        }
+    return out
 
 
 def compute_dfa_alpha1_for_fit(fit_path: Path) -> dict | None:

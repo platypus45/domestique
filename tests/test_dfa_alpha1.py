@@ -29,11 +29,16 @@ REPO_ROOT = HERE.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from analytics import (  # noqa: E402
+    DFA_HRVT1_ALPHA,
+    DFA_HRVT2_ALPHA,
     DFA_SANITY_MAX,
     DFA_SANITY_MIN,
     _dfa_alpha1_window,
+    _filter_rr_artifacts,
+    _interp_load_at_alpha,
     compute_dfa_alpha1,
     compute_dfa_alpha1_for_fit,
+    compute_dfa_threshold_analysis,
 )
 from fit_activity import parse_rr_intervals  # noqa: E402
 
@@ -269,6 +274,126 @@ class TestComputeDFAForFit(unittest.TestCase):
             self.assertLessEqual(entry["alpha1"], DFA_SANITY_MAX)
         finally:
             fit_path.unlink(missing_ok=True)
+
+
+class TestRRArtifactFilter(unittest.TestCase):
+    """v1.8.14 — Malik RR-artifact rejection.
+
+    DFA α1 is acutely artifact-sensitive: ~1% ectopic/missed beats drag α1
+    toward the 0.5 white-noise floor AND break the per-window R² gate so most
+    windows get rejected. These tests guard the fix that closes that bug
+    (validated on a real ride: 0.573 → 1.16 after filtering 1.3% of beats).
+    """
+
+    def test_filter_drops_spikes_keeps_clean(self):
+        # Clean ~1 Hz series (1000 ms RR) with two gross spikes injected.
+        rr = [1.0] * 200
+        rr[50] = 0.4   # +missed-beat halving (>20% from 1.0)
+        rr[120] = 1.8  # +inserted-beat (>20% from 1.0)
+        filtered, dropped = _filter_rr_artifacts(rr, rel_thresh=0.20)
+        self.assertEqual(dropped, 2)
+        self.assertEqual(len(filtered), 198)
+        # No retained beat deviates >20% from its predecessor.
+        for i in range(1, len(filtered)):
+            self.assertLessEqual(
+                abs(filtered[i] - filtered[i - 1]) / filtered[i - 1], 0.20)
+
+    def test_filter_empty_and_singleton(self):
+        self.assertEqual(_filter_rr_artifacts([]), ([], 0))
+        self.assertEqual(_filter_rr_artifacts([0.85]), ([0.85], 0))
+
+    def test_filter_no_cascade_from_single_spike(self):
+        # A lone spike must drop ONLY itself — comparison is against the last
+        # ACCEPTED beat, not the raw previous, so the series resumes cleanly.
+        rr = [0.9] * 10 + [5.0] + [0.9] * 10
+        filtered, dropped = _filter_rr_artifacts(rr, rel_thresh=0.20)
+        self.assertEqual(dropped, 1)
+        self.assertEqual(len(filtered), 20)
+
+    def test_artifacts_crater_alpha_then_filter_recovers(self):
+        # Build a clean pink-noise RR series (α1 ≈ 1.0), inject 1.5% spikes,
+        # and prove the END-TO-END compute (which now filters internally)
+        # stays in the aerobic band instead of collapsing toward 0.5.
+        rr = list(_seeded_pink_fft(4000, sd=0.04, seed=7))
+        clean = compute_dfa_alpha1(rr)
+        self.assertIsNotNone(clean["avg"])
+        # Inject artifacts: every ~66th beat becomes a gross ectopic.
+        corrupted = list(rr)
+        for i in range(30, len(corrupted), 66):
+            corrupted[i] = corrupted[i] * (1.6 if (i // 66) % 2 else 0.45)
+        filtered = compute_dfa_alpha1(corrupted)
+        self.assertIsNotNone(filtered["avg"],
+            "internal artifact filter should let a corrupted series still compute")
+        # Filtered result must stay near the clean α1 (within 0.20), NOT
+        # collapse toward the 0.5 white-noise floor.
+        self.assertAlmostEqual(filtered["avg"], clean["avg"], delta=0.20)
+        self.assertGreater(filtered["avg"], 0.7,
+            "filtered α1 must not collapse toward the white-noise floor")
+
+
+class TestThresholdDetection(unittest.TestCase):
+    """v1.8.14 — HRVT1/HRVT2 interpolation + intensity distribution."""
+
+    def test_interp_load_at_alpha_linear(self):
+        # Synthetic windows where α1 falls linearly 1.0 → 0.4 as power rises
+        # 150 → 330 W. α1 = 0.75 should land at power = 225 W.
+        windows = []
+        for i in range(20):
+            power = 150 + i * (180 / 19)          # 150..330
+            alpha = 1.0 - (power - 150) / 180 * 0.6  # 1.0..0.4
+            windows.append({"power": power, "hr": None, "alpha1": alpha})
+        fit = _interp_load_at_alpha(windows, 0.75, "power")
+        self.assertIsNotNone(fit)
+        self.assertAlmostEqual(fit["load"], 225.0, delta=5.0)
+        self.assertGreater(fit["r2"], 0.99)
+
+    def test_interp_returns_none_when_target_not_bracketed(self):
+        # All windows easy (α1 0.9–1.1): 0.5 is never reached → no HRVT2.
+        windows = [{"power": 100 + i, "hr": None, "alpha1": 0.9 + 0.01 * (i % 3)}
+                   for i in range(15)]
+        self.assertIsNone(_interp_load_at_alpha(windows, 0.50, "power"))
+
+    def test_threshold_analysis_zone_minutes_and_detection(self):
+        # Build a ramp: 40 one-second-ish "slots" won't do; synthesise a
+        # per-second hrv stream where RR shortens (HR rises) over 30 min so
+        # α1 sweeps 1.0 → 0.45, with aligned power 150 → 320 W.
+        import random
+        rng = random.Random(3)
+        dur_s = 1800
+        hrv, hr_s, pw_s = [], [], []
+        for sec in range(dur_s):
+            frac = sec / dur_s
+            # mean RR 1100 ms (easy) → 480 ms (hard); ~more beats/sec as HR rises
+            mean_rr = 1100 - frac * 620
+            # noise scales UP with intensity → α1 falls (less correlated)
+            sd = 8 + frac * 55
+            beats = max(1, int(round(1000.0 / mean_rr)))
+            slot = [max(250, int(rng.gauss(mean_rr, sd))) for _ in range(beats)]
+            hrv.append(slot)
+            hr_s.append(60000.0 / mean_rr)
+            pw_s.append(150 + frac * 170)
+        res = compute_dfa_threshold_analysis(hrv, hr_s, pw_s)
+        self.assertGreaterEqual(res["n_windows"], 8)
+        z = res["zone_minutes"]
+        # Ramp should spend time in at least the easy + hard zones.
+        self.assertGreater(z["z1"], 0)
+        self.assertGreater(z["z3"], 0)
+        # Zone minutes = VALID windows × step; rejected windows (poor R² fit
+        # at high intensity) don't count, so the sum is ≤ ride length, and
+        # equals n_windows × 0.5 min exactly.
+        total = z["z1"] + z["z2"] + z["z3"]
+        self.assertLessEqual(total, dur_s / 60.0 + 0.1)
+        self.assertAlmostEqual(total, res["n_windows"] * 0.5, delta=0.6)
+        # HRVT1 must resolve on a clean ramp; power should fall in the ramp range.
+        self.assertIsNotNone(res["hrvt1"])
+        if res["hrvt1"]["power"] is not None:
+            self.assertTrue(150 <= res["hrvt1"]["power"] <= 320)
+
+    def test_threshold_analysis_empty_stream(self):
+        res = compute_dfa_threshold_analysis([], [], [])
+        self.assertEqual(res["n_windows"], 0)
+        self.assertIsNone(res["hrvt1"])
+        self.assertIsNone(res["hrvt2"])
 
 
 class TestComputeDFAFromHRVStream(unittest.TestCase):

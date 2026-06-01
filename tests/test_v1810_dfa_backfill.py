@@ -40,7 +40,8 @@ import app as _app_mod
 
 
 def _seed_icu_ride(dir_: Path, ext_id: str, status: "str | None" = None,
-                    started_at: str = "2026-05-21T10:00:00") -> Path:
+                    started_at: str = "2026-05-21T10:00:00",
+                    algo_version: "int | None" = None) -> Path:
     p = dir_ / f"{ext_id}.json"
     rec = {
         "external_id": ext_id,
@@ -50,6 +51,11 @@ def _seed_icu_ride(dir_: Path, ext_id: str, status: "str | None" = None,
     if status is not None:
         rec["dfa_alpha1_status"] = status
         rec.setdefault("dfa_alpha1_avg", None)
+    # v1.8.14 — a record is sticky only when stamped with the CURRENT algo
+    # version. Default to the current version so "sticky status" tests behave
+    # as intended; pass an older version to exercise the auto-recompute path.
+    if algo_version is not None:
+        rec["dfa_algo_version"] = algo_version
     p.write_text(json.dumps(rec), encoding="utf-8")
     return p
 
@@ -73,7 +79,9 @@ class TestAugmentIcuDeletedSticky(unittest.TestCase):
         self.assertIsNone(rec["dfa_alpha1_avg"])
 
     def test_sticky_status_skips_without_force(self):
-        p = _seed_icu_ride(self._tmp, "iSTICKY", status="computed")
+        # Stamped with the CURRENT algo version → genuinely sticky.
+        p = _seed_icu_ride(self._tmp, "iSTICKY", status="computed",
+                            algo_version=_app_mod._DFA_ALGO_VERSION)
         # Streams fetcher would explode if called → asserts we don't call it.
         with patch("training.fetch_activity_streams",
                     side_effect=AssertionError("should not be called")), \
@@ -83,6 +91,20 @@ class TestAugmentIcuDeletedSticky(unittest.TestCase):
         rec = json.loads(p.read_text(encoding="utf-8"))
         # Untouched.
         self.assertEqual(rec["dfa_alpha1_status"], "computed")
+
+    def test_stale_algo_version_recomputes_without_force(self):
+        # v1.8.14 — a "computed" record stamped with an OLD algo version is
+        # NOT sticky: augment must re-run so the artifact-filter fix heals it.
+        # Patched fetchers return nothing → it lands on icu_deleted, proving
+        # the augment path executed despite status='computed'.
+        p = _seed_icu_ride(self._tmp, "iSTALE", status="computed",
+                            algo_version=_app_mod._DFA_ALGO_VERSION - 1)
+        with patch("training.fetch_activity_streams", return_value=None), \
+             patch("training.fetch_activity_fit_file", return_value=None):
+            _app_mod._augment_icu_record_with_dfa(p, "iSTALE")  # no force
+        rec = json.loads(p.read_text(encoding="utf-8"))
+        self.assertEqual(rec["dfa_alpha1_status"], "icu_deleted")
+        self.assertEqual(rec["dfa_algo_version"], _app_mod._DFA_ALGO_VERSION)
 
     def test_force_retries_even_sticky(self):
         p = _seed_icu_ride(self._tmp, "iFORCE", status="icu_deleted")
@@ -225,6 +247,94 @@ class TestDfaBackfillEndpoint(unittest.TestCase):
             "/api/profile/dfa-backfill/status?task_id=ZZZ_NONE"
         )
         self.assertEqual(rs.status_code, 404)
+
+
+def _seed_dfa_ride(dir_: Path, ext_id: str, *, date="2026-05-20T10:00:00",
+                   name="Ride", alpha=1.0, status="computed", version=3,
+                   hrvt1=None, hrvt2=None, zones=None, avg_hr=140, moving_s=3600):
+    """Seed an ICU envelope shaped like a real v3 DFA record."""
+    rec = {
+        "external_id": ext_id, "id": ext_id, "started_at": date, "name": name,
+        "avg_hr": avg_hr, "moving_s": moving_s, "duration_s": moving_s + 120,
+        "dfa_alpha1_avg": alpha, "dfa_alpha1_status": status,
+        "dfa_alpha1_lt1_minutes": 0.0, "rr_intervals_count": 5000,
+        "dfa_algo_version": version,
+        "dfa_hrvt1": hrvt1, "dfa_hrvt2": hrvt2,
+        "dfa_zone_minutes": zones or {"z1": 50.0, "z2": 5.0, "z3": 0.0},
+    }
+    (dir_ / f"{ext_id}.json").write_text(json.dumps(rec), encoding="utf-8")
+
+
+class TestDfaRidesEndpoint(unittest.TestCase):
+    """v1.8.14 — /api/profile/dfa-rides shape + per-channel aggregate."""
+
+    def setUp(self):
+        self._tmp = Path(tempfile.mkdtemp(prefix="dfa_rides_"))
+        self._patch = patch.object(_app_mod, "_user_data_dir", self._tmp)
+        self._patch.start()
+        self._icu = self._tmp / "rides" / "icu"
+        self._icu.mkdir(parents=True, exist_ok=True)
+        self._client = TestClient(_app_mod.app)
+
+    def tearDown(self):
+        self._patch.stop()
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_empty_archive(self):
+        r = self._client.get("/api/profile/dfa-rides").json()
+        self.assertEqual(r["rides"], [])
+        self.assertIsNone(r["aggregate"]["hrvt1"])
+        self.assertIsNone(r["aggregate"]["hrvt2"])
+        self.assertEqual(r["n_computed"], 0)
+
+    def test_passthrough_and_per_channel_aggregate(self):
+        # 3 rides: two with good-r² power HRVT1, one with low-r² HR only.
+        good1 = {"alpha": 0.75, "hr": 165.0, "r2_hr": 0.62,
+                 "power": 240.0, "r2_power": 0.60}
+        good2 = {"alpha": 0.75, "hr": 168.0, "r2_hr": 0.55,
+                 "power": 250.0, "r2_power": 0.58}
+        lowr2 = {"alpha": 0.75, "hr": 150.0, "r2_hr": 0.31,  # below 0.50 gate
+                 "power": None, "r2_power": None}
+        _seed_dfa_ride(self._icu, "iA", date="2026-05-20T10:00:00", hrvt1=good1)
+        _seed_dfa_ride(self._icu, "iB", date="2026-05-19T10:00:00", hrvt1=good2)
+        _seed_dfa_ride(self._icu, "iC", date="2026-05-18T10:00:00", hrvt1=lowr2)
+        r = self._client.get("/api/profile/dfa-rides").json()
+        # Pass-through: row hrvt1 equals the stored dict exactly.
+        row_a = next(x for x in r["rides"] if x["id"] == "iA")
+        self.assertEqual(row_a["hrvt1"], good1)
+        # Date is a server-side [:10] slice, no shift.
+        self.assertEqual(row_a["date"], "2026-05-20")
+        # duration from moving_s/60.
+        self.assertEqual(row_a["duration_min"], 60)
+        # Aggregate power median over the TWO good rides (240,250)=245; the
+        # low-r² ride (iC) is excluded from aggregate but present in rides.
+        agg = r["aggregate"]["hrvt1"]
+        self.assertEqual(agg["power"], 245.0)
+        self.assertEqual(agg["n_power"], 2)
+        # HR aggregate excludes iC's 0.31-r² HR → median of (165,168)=166.5.
+        self.assertEqual(agg["hr"], 166.5)
+        self.assertEqual(agg["n_hr"], 2)
+        self.assertEqual(len(r["rides"]), 3)
+
+    def test_steady_ride_no_threshold_is_not_error(self):
+        # Steady ride: α1 high, no HRVT resolved → row present, hrvt1 None,
+        # aggregate None. Must NOT error.
+        _seed_dfa_ride(self._icu, "iSteady", alpha=1.15, hrvt1=None, hrvt2=None)
+        r = self._client.get("/api/profile/dfa-rides").json()
+        self.assertEqual(len(r["rides"]), 1)
+        self.assertIsNone(r["rides"][0]["hrvt1"])
+        self.assertIsNone(r["aggregate"]["hrvt1"])
+
+    def test_stale_version_counted(self):
+        _seed_dfa_ride(self._icu, "iOld", version=2,
+                       hrvt1={"alpha": 0.75, "hr": 160.0, "r2_hr": 0.6,
+                              "power": 230.0, "r2_power": 0.6})
+        _seed_dfa_ride(self._icu, "iNew", version=_app_mod._DFA_ALGO_VERSION,
+                       hrvt1={"alpha": 0.75, "hr": 162.0, "r2_hr": 0.6,
+                              "power": 235.0, "r2_power": 0.6})
+        r = self._client.get("/api/profile/dfa-rides").json()
+        self.assertEqual(r["n_stale_version"], 1)
+        self.assertEqual(r["n_computed"], 2)
 
 
 if __name__ == "__main__":

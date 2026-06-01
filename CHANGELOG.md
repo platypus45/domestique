@@ -1,5 +1,114 @@
 # Changelog
 
+## v1.8.14 — DFA α1: artifact fix + HRVT1/HRVT2 zones + intensity distribution + DFA tab (2026-06-01)
+
+A validation pass on real ride data found the DFA α1 numbers were
+computed **incorrectly** (no artifact rejection). Fixed, then built the
+threshold/zone feature on top: HRVT1/HRVT2 (aerobic + anaerobic
+thresholds as HR + power), 3-zone intensity distribution, a dedicated
+**DFA α1 tab** (aggregate↔per-ride toggle, r²-graded), and the per-ride
+α1-over-time chart in the activity modal. Researched against primary
+literature (8 PMC/PMID papers, now in README + docs/SCIENCE_REVIEW.md).
+Shipped through the structured plan→grill→implement flow
+(`/tmp/MASTER_DECISIONS_v1814_dfa_indexing.md`); the grill caught a
+migration blocker + contract drift before they shipped.
+
+### HRVT1 / HRVT2 thresholds + DFA zones (new, beta)
+
+α1=0.75 → HRVT1 (aerobic threshold, VT1/LT1, top of Zone 2); α1=0.50 →
+HRVT2 (anaerobic threshold, VT2/LT2). Detected by regressing α1 on HR
+and power across a ride's 120 s/30 s windows and interpolating the
+crossing; aggregated as a recent median (r²≥0.50). Cycling validation:
+HRVT1 ICC 0.77 / r 0.81; **HRVT2 power ICC 0.97, r 0.92–0.93** (power is
+the better anchor — HR HRVT2 is unreliable and omitted). Complements
+FTP: FTP anchors ~LT2, DFA adds the LT1 / Zone-2 ceiling FTP can't give,
+HR-zones with no power meter. Thresholds only resolve on rides that
+**sweep through** them (ramp/progressive) — steady rides correctly show
+"no threshold crossed". Per-ride r² shown + color-graded; zones are
+display-only (never overwrite configured FTP/zones). Labelled beta
+(day-to-day reproducibility unproven; Cassirame 2025 critique; hysteresis
+not corrected).
+
+### 3-zone intensity distribution
+
+Per ride: minutes with α1>0.75 (Z1 easy) / 0.50–0.75 (Z2 moderate) /
+<0.50 (Z3 hard), over valid α1 windows. Shown as a per-ride bar
+(normalised to analysed time, not ride length).
+
+### DFA α1 tab
+
+Aggregate view (estimated HRVT1/HRVT2 HR+power zones + 3-zone model) ↔
+per-ride table (date, duration, HR, α1, Z1·Z2·Z3 bar, HRVT1/HRVT2 with
+per-channel r² color + (i) tooltip). Click a row → that ride's α1 curve.
+On first open after the algorithm bump, a one-time **version-migration
+backfill** recomputes existing `computed` rides into algo v3 (so the tab
+isn't empty); throttled, with progress UI.
+
+### Indexing
+
+DFA is computed once at ICU-sync augment time and stored per-ride
+(`dfa_alpha1_*`, `dfa_hrvt1/2`, `dfa_zone_minutes`, `dfa_algo_version=3`).
+The tab/aggregate scan stored envelopes on read — no stream re-fetch.
+`dfa_algo_version` gates recompute so an algorithm change self-heals via
+the migrate backfill instead of leaving stale values.
+
+### The bug: missing RR-artifact rejection
+
+DFA α1 is computed from beat-to-beat RR intervals and is acutely
+sensitive to artifacts (ectopic / missed / inserted beats). The pipeline
+filtered only 0-ms and 65535-ms sentinels — no ectopic rejection. On a
+real ride that meant ~1.3 % corrupt beats dragged α1 from a
+physiologically-correct **1.16** down to **0.573** (which would imply the
+rider spent a 63-min ride entirely above anaerobic threshold —
+impossible) AND silently rejected 57 of 72 windows via the R²-fit gate,
+wrecking the per-window series and the LT1-minutes count.
+
+Fix: a **Malik (1996) 20 % relative filter** (the Kubios / Rogers 2021 /
+Gronwald 2020 standard) at the single chokepoint both compute paths route
+through (`analytics.compute_dfa_alpha1`). Validated across 5–20 %
+thresholds — stable. Synthetic white/pink/Brownian golden tests still
+pass (the filter doesn't distort clean signals).
+
+Before → after on the maintainer's three HRV rides:
+
+| date | ride | avg HR | α1 before | α1 after | windows before→after |
+|---|---|---|---|---|---|
+| 2026-05-23 | Zwolle 63 min | 144 | 0.573 | **1.162** | 15 → 72 |
+| 2026-05-21 | Zwolle 219 min | 160 | (timeout) | **0.992** | — → 143 |
+| 2026-05-19 | Zwolle 98 min | 142 | 1.032 | **1.063** | 31 → 114 |
+
+### Auto-recompute of stale values
+
+Added a `dfa_algo_version` stamp (now `2`). Records computed by an older
+algorithm are no longer treated as sticky, so they recompute on the next
+sync / backfill — existing rides self-heal to the corrected values with
+no user action and no forced backfill.
+
+### HRV indexing — verified correct
+
+Confirmed the RR stream is parsed/aligned correctly against two
+independent ground truths: parsed beat count = 96.6–96.7 % of
+(avg HR × duration), and Σ(RR) = 97.6–98.2 % of wall-clock ride time.
+ICU `hrv`-stream slots align 1:1 with the time + HR channels. The two
+recent **runs** that showed "no HRV" genuinely have no RR channel from
+the device — correctly reported as `no_rr_data`, not a bug.
+
+### In-app DFA α1 chart
+
+The per-window α1 series was computed and stored but never charted — the
+app only showed the scalar average. The activity-detail modal now draws
+the **α1-over-time curve** on a fixed 0.3–1.6 axis with the 0.75 LT1 and
+0.5 anaerobic reference lines, points coloured by zone (green aerobic /
+amber threshold / red high-intensity), plus a "N min below 0.75 (LT1)"
+readout. Pure inline SVG, no chart library.
+
+### Tests
+
+`test_dfa_alpha1` +4 (artifact filter: spike-drop, no-cascade,
+empty/singleton, corrupt-series-recovers); `test_v1810_dfa_backfill` +1
+(stale-version recompute) and updated the sticky test for the version
+gate. Full DFA + backfill suites green.
+
 ## v1.8.13 — new activities auto-push to the calendars + explicit Refresh buttons (2026-06-01)
 
 New rides now appear on the calendars on their own, and there's a

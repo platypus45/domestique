@@ -102,6 +102,8 @@ Two separate signals, same hardware (chest strap recording RR-intervals).
 
 **DFA alpha1** is the autonomic-balance scaling exponent computed *post-ride* from beat-to-beat RR-intervals (Peng 1995 algorithm; sanity range [0.30, 1.60] per Gronwald & Hoos 2020). Rogers et al. 2021 (PMID 33519504) shows alpha1 < 0.75 marks the aerobic-threshold (LT1) drift and < 0.5 marks sustained sympathetic dominance — Domestique feeds it as a fatigue signal that downshifts tomorrow's intensity.
 
+**Artifact rejection is mandatory** (v1.8.14 correctness fix). DFA alpha1 is acutely sensitive to ectopic/misdetected beats — every DFA paper requires RR cleaning before the math, and skipping it silently corrupts the result. Domestique runs a Malik 1996 20%-relative filter (`analytics._filter_rr_artifacts`) before all DFA windows, not just the 0ms/65535ms sentinel drop it did before. The literature tolerance is tight: <3% artifact = negligible bias, ~6% still keeps the HRV threshold within ±1 bpm (Gronwald et al. 2022 update). In one real ride ~1.3% uncorrected artifact beats dragged alpha1 from a correct 1.16 down to a physiologically impossible 0.573 and broke 57 of 72 windows via the R²-fit gate.
+
 **Hardware requirement.** DFA alpha1 needs a sensor that emits RR-intervals over ANT+/BLE *and* a head unit that writes them to the FIT file as `HrvMessage` records.
 
 | Sensor | RR-intervals? | DFA alpha1 supported |
@@ -125,6 +127,31 @@ Two separate signals, same hardware (chest strap recording RR-intervals).
 Domestique detects the missing-HRV case automatically: when a synced ride has heart-rate data but no `HrvMessage` records, the app surfaces a one-time toast linking to this table. Pre-existing rides can't be backfilled; the strap polls itself, the head unit just has to write what arrives.
 
 **Acquisition path.** Domestique pulls the raw FIT from ICU's `/api/v1/activity/{id}/fit-file` endpoint, parses `HrvMessage` records with `fit_activity.parse_hrv_messages()`, runs a 120-s sliding-window DFA alpha1 (Rogers 2021 default), and writes the result to the ride summary. No live polling, no Garmin OAuth, no manual upload.
+
+Since v1.8.14 there's a **second acquisition path**: when ICU 404s the `.fit` (common for older or device-quirky rides) the app falls back to ICU's per-second `hrv` stream channel (RR-intervals in ms) and runs the same DFA pipeline off the stream. Validated equivalence — stream-path alpha1 = 0.626 vs FIT-path 0.627 on the same ride (within rounding) — so a ride gets DFA from whichever source is available.
+
+### HRVT1 / HRVT2 thresholds + DFA zones (beta)
+
+v1.8.14 adds threshold *detection* on top of the per-ride alpha1 signal. By regressing alpha1 on HR (and on power) across a ride's 120s/30s windows and interpolating the crossings, Domestique locates two metabolic thresholds non-invasively, with no lab test and no lactate draw:
+
+- **HRVT1** at alpha1 = 0.75 -> the aerobic threshold (VT1 / LT1), i.e. the Zone-2 ceiling. Origin: Rogers, Tikkanen et al. 2021 (PMC7845545).
+- **HRVT2** at alpha1 = 0.50 -> the anaerobic threshold (VT2 / LT2 / OBLA).
+
+Each is reported as both an HR and a power value, and they drive a **3-zone intensity model**: Z1 (alpha1 > 0.75), Z2 (0.50–0.75), Z3 (< 0.50). The per-ride table shows the Z1·Z2·Z3 split as a bar.
+
+**Cycling validation.** HRVT1 tracks VT1/LT1 with ICC 0.77, r 0.81 (Schaffarczyk et al. 2022, PMC9894976). For the anaerobic threshold the strong result is **power-specific**: HRVT2 power-output ICC **0.97**, r 0.92–0.93 vs VT2/OBLA (PMC10875128). We scope that claim to power deliberately — HR-based HRVT2 is unreliable and routinely omitted in the literature, so Domestique leans on the power value.
+
+**Complements FTP — it doesn't replace it.** FTP anchors roughly one boundary (~LT2). DFA thresholds add the *aerobic*-threshold (LT1 / Zone-2 ceiling) anchor that FTP alone can't give, plus full HR-based zones for riders with no power meter. The detected zones are **display-only**: they never overwrite your configured FTP/zones.
+
+**Caveats (why it's labelled beta):**
+- **Needs a ramp.** Thresholds only resolve on a ride that actually *sweeps through* them — a progressive effort or ramp. Steady endurance rides keep alpha1 > 0.75 and never cross 0.75/0.50, so "no threshold detected" is the **common, expected** outcome on a Z2 ride, not an error.
+- **Single-ride noise.** Per-ride detection r² is moderate (0.36–0.64). The app shows each ride's r² colour-coded and only folds rides with r² >= 0.50 into the aggregate.
+- **Hysteresis.** Alpha1 lags intensity differently on up- vs down-ramps; a single linear fit pools both directions — a known, documented bias, not corrected in v1.
+- **Day-to-day reproducibility unproven.** The day-to-day stability of HRV thresholds is still contested (Cassirame et al. 2025 methodological critique + Gronwald reply), hence the beta label.
+
+### DFA alpha1 tab
+
+A dedicated **"DFA alpha1" tab** surfaces all of the above: an aggregate↔per-ride toggle; a per-ride table (date, duration, avg HR, alpha1, the Z1·Z2·Z3 bar, and HRVT1/HRVT2 with r²-coloured confidence); click any row to see that ride's alpha1-over-time curve. The aggregate view shows recent-median HRVT1/HRVT2 HR and power zones across rides that cleared the r² gate.
 
 ### Hooper composite — the morning leg-check
 
@@ -159,6 +186,7 @@ Five additional signals that mutate the *next-day or next-week* plan rather than
 | Signal | Threshold | Action | Citation |
 |---|---|---|---|
 | **DFA alpha1** | mean over last 3 rides < 0.5 | tomorrow's threshold -> Z2 (revert button) | Rogers et al. 2021 (PMID 33519504) |
+| **DFA HRVT1/HRVT2** (beta) | alpha1 crosses 0.75 / 0.50 on a ramp ride | display-only LT1/LT2 HR+power anchors + 3-zone model (never overwrites FTP) | Rogers et al. 2021 (PMC7845545), Schaffarczyk et al. 2022 (PMC9894976) |
 | **Aerobic decoupling** (HR drift vs power) | > 5% on last ride | next-day "Z2 recommended" advisory banner | Coyle & Gonzalez-Alonso 2001 |
 | **Foster monotony** (weekly load SD/mean) | > 2.0 over 14 days | next week `tss_target x 0.85`, hit_per_week − 1 | Foster 1998 (PMID 9662690) |
 | **eFTP drift** (Intervals.icu) | > 3% above set FTP for 7+ consecutive days | FTP auto-applied with 48h revert toast | Allen & Coggan eFTP definition |
@@ -276,7 +304,8 @@ The peer-reviewed evidence supporting TSS as a *quantifier of training that was 
 | Z5+ accumulation ceiling | **G2 48 h Z5+ <= 25 min** | [Hulin et al. 2014 (BJSM)](https://bjsm.bmj.com/content/48/8/708) |
 | Subjective fatigue TSS misses | **G5/G6 Hooper composite** + peripheral fatigue cap | [Hooper & Mackinnon 1995](https://pubmed.ncbi.nlm.nih.gov/8531627/), [Cheung et al. 2003](https://pubmed.ncbi.nlm.nih.gov/12831711/) |
 | 80/20 polarisation target | **POL 80/0/20** distribution baked into `WORKOUT_MIX_PREFERENCE` | [Stoggl & Sperlich 2014](https://pubmed.ncbi.nlm.nih.gov/25309613/) |
-| Autonomic fatigue TSS can't see | **DFA alpha1 from RR-intervals** -> next-day intensity decision | [Rogers et al. 2021](https://pubmed.ncbi.nlm.nih.gov/34547011/) |
+| Autonomic fatigue TSS can't see | **DFA alpha1 from RR-intervals** (Malik 1996 artifact filter first) -> next-day intensity decision | [Rogers et al. 2021](https://pubmed.ncbi.nlm.nih.gov/34547011/), [Malik 1996](https://pubmed.ncbi.nlm.nih.gov/8598068/) |
+| Aerobic-threshold (LT1) anchor FTP can't give | **DFA HRVT1/HRVT2 detection** (alpha1 0.75/0.50) -> display-only LT1/LT2 HR+power + 3-zone model | [Rogers et al. 2021 (PMC7845545)](https://pmc.ncbi.nlm.nih.gov/articles/PMC7845545/), [Schaffarczyk et al. 2022 (PMC9894976)](https://pmc.ncbi.nlm.nih.gov/articles/PMC9894976/) |
 | Climb-specific record power profile | **Pinot & Grappe 2011 RPP gate** for capability projection | [Pinot & Grappe 2011](https://pubmed.ncbi.nlm.nih.gov/22090214/) |
 | CP-from-FTP approximation | `int(ftp x 1.03)` (was naive `CP = FTP`) | [McGrath et al. 2021](https://pubmed.ncbi.nlm.nih.gov/33999907/) |
 | FTP detection from real rides | Auto-eFTP from FIT archive + ICU eFTP cross-check | inline `fitness_estimation.py:220-263` |
@@ -465,7 +494,8 @@ for each PlannedWeek in plan:
 
 | Feature | Method | Reference |
 |---------|--------|-----------|
-| DFA Alpha1 | Detrended Fluctuation Analysis on RR-intervals, Peng 1995 algorithm | Rogers et al. 2021 (PMID 33519504) |
+| DFA Alpha1 | Detrended Fluctuation Analysis on RR-intervals, Peng 1995 algorithm; Malik 1996 20% artifact filter pre-DFA | Rogers et al. 2021 (PMID 33519504), Malik 1996 (PMID 8598068) |
+| DFA HRVT1 / HRVT2 (beta) | alpha1=0.75 -> LT1, alpha1=0.50 -> LT2; HR+power crossing per ramp ride; 3-zone model (display-only) | Rogers et al. 2021 (PMC7845545), Schaffarczyk et al. 2022 (PMC9894976), reliability (PMC10875128) |
 | Aerobic Decoupling | EF = NP/avgHR per half (TrainingPeaks canonical) | Friel (coaching heuristic) |
 | Foster Monotony / Strain | Weekly load SD-vs-mean ratio | Foster 1998 (PMID 9662690) |
 | CTL / ATL / TSB | 42-day / 7-day exponentially-weighted TSS | Coggan & Allen |

@@ -14113,7 +14113,16 @@ async function loadUpdateCheck() {
           '<div style="opacity:0.85;margin-top:2px;">Your rides, training plan, FTP history, wellness logs, and profile<br>' +
           'will all be preserved across this update.</div>' +
           '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">' +
+            // v1.8.11 — must include target="_blank" + rel="noopener noreferrer".
+            // pywebview's WKWebView ignores the HTML5 ``download`` attribute on
+            // cross-origin links AND silently blocks same-window navigation to
+            // github.com (the file would otherwise try to load inside the
+            // native window). target="_blank" routes the click through
+            // launcher.py's new-window handler which opens the URL in the
+            // user's default browser, where the GitHub release URL serves
+            // content-disposition: attachment and triggers a normal save.
             '<a href="' + safeDownload + '" download="' + safeAsset + '" ' +
+              'target="_blank" rel="noopener noreferrer" ' +
               'style="display:inline-block;padding:6px 12px;border-radius:6px;background:#3b82f6;' +
               'border:1px solid #3b82f6;color:#fff;text-decoration:none;font-size:12px;">Download</a>' +
           '</div>' +

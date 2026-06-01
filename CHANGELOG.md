@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.8.11 — Update banner Download button now actually downloads (2026-05-22)
+
+Hot-fix. The update banner's Download button was inert inside the
+packaged pywebview app — clicking it did nothing. Root cause: the
+anchor had `download="<asset>"` but not `target="_blank"`, and macOS
+WKWebView (which pywebview wraps) silently ignores the HTML5 `download`
+attribute on cross-origin URLs AND blocks same-window navigation to
+external hosts like github.com. Result: click → app eats the event,
+nothing happens.
+
+Fix: add `target="_blank" rel="noopener noreferrer"` so the click is
+routed through launcher.py's new-window handler, which opens the URL
+in the user's default browser where GitHub's
+`content-disposition: attachment` triggers a normal save.
+
+The "View on GitHub →" link inside the "What's new" panel already
+used `target="_blank"` and worked fine — that's how we know the route
+is correct. Same pattern, one line.
+
 ## v1.8.10 — fatigue 0% unstuck + DFA self-heals via streams.hrv (lazy compute, backfill retry, ICU-deleted state) (2026-05-22)
 
 Closes two persistent bugs the user hit twice across v1.8.8 + v1.8.9.

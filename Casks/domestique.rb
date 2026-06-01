@@ -20,8 +20,8 @@
 #     shasum -a 256 /tmp/D.dmg
 #     # Update version + sha256 below, then commit + push to the tap repo.
 cask "domestique" do
-  version "1.8.10"
-  sha256 "7455851ad2cbbed22ebe089112afa0c44b3531f0f834778bc4e29083c6400f00"
+  version "1.8.12"
+  sha256 "b6cb03600a6fb7bb8b2a11063b1bce1e8bc2043c2d39e06c58ce098276272798"
 
   url "https://github.com/platypus45/domestique/releases/download/v#{version}/Domestique-v#{version}.dmg"
   name "Domestique"

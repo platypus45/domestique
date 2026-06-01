@@ -1527,6 +1527,10 @@ window.addEventListener('unhandledrejection', function(e) {
         <!-- v4.5.0 IMPL-UI: Sync now — POSTs /api/rides/sync?force=1 (server commit 2fe34ba)
              then re-fetches /api/calendar so THIS WEEK + intensity bar reflect new actuals. -->
         <button id="syncNowBtn" class="btn" style="font-size:10px;padding:3px 8px;" onclick="syncNowAction()" title="Pull latest rides + wellness from intervals.icu now (bypasses 30-min throttle)">Sync now ⟳</button>
+        <!-- v1.8.13 — Refresh: re-render calendars + plan from already-synced
+             data (no forced ICU round-trip, no throttle wait). Distinct from
+             "Sync now" which force-pulls from intervals.icu. -->
+        <button id="refreshWeekBtn" class="btn" style="font-size:10px;padding:3px 8px;" onclick="refreshViews(this)" title="Refresh calendars + plan from synced data (no ICU round-trip)">Refresh ↻</button>
         <!-- fix26 §6.4 — Reconcile Week: previews status updates then user applies -->
         <button id="reconcile-week-btn" class="btn" style="font-size:10px;padding:3px 8px;" onclick="openReconcileWeek()" title="Match completed activities to planned sessions">Reconcile Week</button>
         <svg onclick="document.querySelector('.tab[data-tab=settings]').click()" style="cursor:pointer;opacity:0.5;transition:opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -2044,6 +2048,8 @@ window.addEventListener('unhandledrejection', function(e) {
              reopen the app and see stale actuals because the boot
              auto-sync had throttled. -->
         <button class="btn" id="syncNowBtnPlan" onclick="syncNowAction('syncNowBtnPlan')" style="font-size:11px;" title="Pull latest rides + wellness from intervals.icu now (bypasses 1h throttle)">Sync now &#x21bb;</button>
+        <!-- v1.8.13 — Refresh: re-render plan + calendars from synced data. -->
+        <button class="btn" id="refreshPlanBtn" onclick="refreshViews(this)" style="font-size:11px;" title="Refresh plan + calendars from synced data (no ICU round-trip)">Refresh &#x21bb;</button>
       </div>
       <div id="plan-status" style="font-size:12px;color:var(--text2);margin-top:8px;"></div>
     </div>
@@ -10195,6 +10201,25 @@ async function syncNowAction(btnId) {
   }
 }
 
+// v1.8.13 — lightweight re-render of the calendars + plan grid from
+// already-synced data. Unlike syncNowAction() this does NOT POST
+// /api/rides/sync (no forced ICU round-trip, no throttle wait). It
+// re-fetches /api/calendar (which still does a lazy sync-on-read for a
+// missing-today ride), /api/plan, and /api/weekly-plan, then repaints.
+// Wired to the "Refresh ↻" buttons in the This Week and Plan headers.
+async function refreshViews(btnEl) {
+  const orig = btnEl ? btnEl.textContent : '';
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Refreshing…'; }
+  try {
+    try { await loadCalendar(); } catch(_) {}
+    try { await loadPlan(); } catch(_) {}
+    try { loadWeeklyCalendar(); } catch(_) {}
+    try { showToast('Views refreshed', 2000); } catch(_) {}
+  } finally {
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = orig; }
+  }
+}
+
 function renderCalendarEmpty() {
   const rows = document.getElementById('cal-rows');
   if (!rows) return;
@@ -13992,17 +14017,58 @@ async function loadMetricHistory() {
 // Reads /api/sync/status every 60s; shows auth-disabled / degraded banner.
 // Dismissable per session — stored in sessionStorage so it re-appears on reload
 // but doesn't nag the user within a single browsing session.
+// v1.8.13 — module-scoped baseline for the auto-push. `activity_records` is
+// the row count in the activities table; when it rises between 60s polls a
+// new ride landed (boot auto-sync, lazy sync-on-read, or the 30-min
+// background sync) and we repaint the calendars so it appears with ZERO
+// clicks. null until the first poll seeds the baseline (so we don't false-
+// fire a "new activity" toast on initial load).
+let _lastActivityCount = null;
+
 async function loadSyncBanner() {
   const el = document.getElementById('icu-sync-banner');
+  // Fetch status ONCE; drive both the auto-push and the banner from it.
+  let s = null;
+  try {
+    const r = await fetch('/api/sync/status');
+    if (r.ok) s = await r.json();
+  } catch (_) { s = null; }
+
+  // ── Auto-push: detect newly-synced activities and repaint the calendars.
+  //    Runs regardless of banner-dismiss state — dismissing the ERROR
+  //    banner must never disable auto-refresh of new rides.
+  if (s) {
+    try {
+      const cnt = Number(s.activity_records);
+      if (Number.isFinite(cnt)) {
+        if (_lastActivityCount !== null && cnt > _lastActivityCount) {
+          const delta = cnt - _lastActivityCount;
+          try { await loadCalendar(); } catch(_) {}
+          try { loadWeeklyCalendar(); } catch(_) {}
+          // Only repaint the heavyweight plan grid when the Plan tab is
+          // actually visible — avoids a wasted /api/plan fetch on every
+          // background sync while the user is on another tab.
+          const planSec = document.getElementById('sec-plan');
+          if (planSec && planSec.classList.contains('active')) {
+            try { await loadPlan(); } catch(_) {}
+          }
+          try {
+            showToast(`${delta} new activit${delta === 1 ? 'y' : 'ies'} synced — calendar updated`, 3500);
+          } catch(_) {}
+        }
+        _lastActivityCount = cnt;
+      }
+    } catch(_) {}
+  }
+
+  // ── Banner display (respects the per-session dismiss flag).
   if (!el) return;
   if (sessionStorage.getItem('icu-banner-dismissed') === '1') {
     el.style.display = 'none';
     return;
   }
+  if (!s) { el.style.display = 'none'; return; }
   try {
-    const r = await fetch('/api/sync/status');
-    if (!r.ok) { el.style.display = 'none'; return; }
-    const s = await r.json();
     let html = '';
     let bg = '', border = '', fg = '';
     if (s.auth_disabled === true) {

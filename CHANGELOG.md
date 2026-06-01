@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.8.13 — new activities auto-push to the calendars + explicit Refresh buttons (2026-06-01)
+
+New rides now appear on the calendars on their own, and there's a
+dedicated Refresh button in both the This Week strip and the Plan tab.
+
+### Auto-push (no clicks)
+
+The 60-second sync-health poll already hit `/api/sync/status` (which
+reports `activity_records`, the row count in the activities table) —
+but it only painted the error banner. It never noticed when a NEW ride
+had landed server-side (boot auto-sync, lazy sync-on-read, or the
+30-min background sync), so the ride sat invisible until the user
+manually clicked Sync.
+
+Now the poll tracks `activity_records` across ticks. When the count
+rises, it repaints `loadCalendar()` + `loadWeeklyCalendar()` (and
+`loadPlan()` if the Plan tab is the active section) and shows a
+"N new activities synced — calendar updated" toast. First poll just
+seeds the baseline so there's no false toast on load. The auto-push
+runs even when the error banner is dismissed — dismissing the banner
+must never disable refresh.
+
+### Explicit Refresh button
+
+Added a **Refresh ↻** button next to the existing **Sync now ⟳** in
+both the This Week header and the Plan tab header. The distinction:
+
+- **Sync now** — force-pulls from intervals.icu (bypasses the throttle,
+  waits on the network round-trip).
+- **Refresh** — re-renders the calendars + plan grid from
+  already-synced data. `/api/calendar` still does its lazy
+  sync-on-read for a missing-today ride, so Refresh is the fast,
+  no-wait way to repaint after you know something changed.
+
+All UI-side; one file (`templates/dashboard.html`), no server changes.
+
 ## v1.8.12 — banner Download works + reshuffle modal refreshes + FIT base64 race (2026-05-22)
 
 Three desktop-app bugs. All UI-side, no server changes.

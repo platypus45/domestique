@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.8.15 — update banner no longer shows a phantom old version; readiness advisory names the real ride day (2026-06-03)
+
+### 1. "Update available — v1.8.9 → v1.8.14" on an already-updated app
+
+`/api/update/check` cached the **running app's own version** (`current`) for
+6 h alongside the GitHub `latest` lookup. After updating (e.g. 1.8.9 → 1.8.14)
+and relaunching, a cache hit within the TTL replayed the OLD `current`, so the
+banner claimed an update was still pending — the app looked like it hadn't
+updated even though the new binary was running.
+
+Fix (two layers):
+1. **Version-mismatch invalidation** — the cache stores `current` = the app
+   version that wrote it. `_cache_is_fresh` now returns False when that ≠ the
+   live `_VERSION`, so a cache written by a *prior install* is discarded and
+   the endpoint refetches everything (latest, release notes, the lot). This is
+   the "cache updates after a new installation" fix.
+2. **Live-current overlay** — as a belt-and-suspenders second layer, `current`
+   + `update_available` are also recomputed from the live `_VERSION` on every
+   served response (cache hit / miss / error fallback). Only GitHub-derived
+   fields (`latest`, `release_url`, `download_url`, `release_body`) are cached.
+
+### 2. Readiness advisory said "Yesterday's ride" when the ride was 2 days ago
+
+NOT a date-indexing error — the ride was correctly stored (e.g. 2026-06-01,
+2 days before today). The banner literally hardcoded the word "Yesterday's
+ride" with **zero date logic**. The trigger ride is the most recent *indexed*
+ride with a decoupling value — often 2+ days back when the prior day was a
+rest day. The endpoint now returns `decoupling_advisory_date` (the real
+source-ride date), and the banner computes "Today's ride" / "Yesterday's ride"
+/ "Your ride N days ago (Mon Jun 1)" accordingly.
+
+Also fixed: the session-type fallback produced "THE PLANNED HARD SESSION
+session" (double word, shouty placeholder). The fallback is now a single bare
+word so it reads "Today's HARD session has been auto-downgraded to Z2."
+
+
 ## v1.8.14 — DFA α1: artifact fix + HRVT1/HRVT2 zones + intensity distribution + DFA tab (2026-06-01)
 
 A validation pass on real ride data found the DFA α1 numbers were

@@ -77,10 +77,13 @@ class UpdateCheckBase(unittest.TestCase):
 
 class TestCacheHit(UpdateCheckBase):
     def test_fresh_cache_returns_without_calling_github(self):
-        """A cache file written < 6h ago is returned with cached=true."""
+        """A cache file written < 6h ago BY THE CURRENT VERSION is returned
+        with cached=true. v1.8.15: cache `current` must match the live
+        _VERSION or the cache is treated as a prior-install artifact and
+        refetched (see test_version_mismatch_invalidates)."""
         self._write_cache({
-            "current": "1.0.0",
-            "latest": "1.0.5",
+            "current": app_module._VERSION,   # written by THIS version → fresh
+            "latest": "999.0.5",
             "update_available": True,
             "release_url": "https://example.com/release",
             "download_url": "https://example.com/Domestique.dmg",
@@ -99,14 +102,45 @@ class TestCacheHit(UpdateCheckBase):
         self.assertEqual(r.status_code, 200, r.text)
         data = r.json()
         self.assertTrue(data["cached"])
-        self.assertEqual(data["latest"], "1.0.5")
+        self.assertEqual(data["latest"], "999.0.5")
         self.assertIsNone(data["error"])
         self.assertEqual(data["release_body"], "## Header\n- cached bullet")
+        # current is always the live version, never the cached scalar.
+        self.assertEqual(data["current"], app_module._VERSION)
         # Locked field set must be present (no extras dropped).
         for k in ("current", "latest", "update_available", "release_url",
                   "download_url", "asset_name", "platform", "checked_at",
                   "cached", "error", "release_body"):
             self.assertIn(k, data, f"missing locked field: {k}")
+
+    def test_version_mismatch_invalidates(self):
+        """v1.8.15 — a cache written by a PRIOR install (cached `current` !=
+        live _VERSION) is NOT served; the endpoint refetches from GitHub so a
+        just-updated app never shows a phantom old version / stale release."""
+        self._write_cache({
+            "current": "0.0.1-old",            # written by a prior install
+            "latest": "0.0.2",
+            "update_available": True,
+            "release_url": "https://example.com/old",
+            "download_url": "https://example.com/Old.dmg",
+            "asset_name": "Old.dmg",
+            "platform": "darwin",
+            "checked_at": "2026-05-01T00:00:00Z",
+            "error": None,
+            "release_body": "old body",
+        }, age_seconds=60)  # 1 min old → would be fresh BUT version mismatches
+
+        rel = _fake_release(tag=app_module._VERSION)  # GitHub says current==latest
+        with patch("httpx.get", return_value=_FakeResp(200, rel)):
+            r = self.client.get("/api/update/check")
+        self.assertEqual(r.status_code, 200, r.text)
+        data = r.json()
+        # Refetched (not the stale cache): current is live, latest from GitHub.
+        self.assertEqual(data["current"], app_module._VERSION)
+        self.assertFalse(data["cached"])
+        self.assertEqual(data["latest"], app_module._VERSION)
+        self.assertFalse(data["update_available"])
+        self.assertNotEqual(data["release_body"], "old body")
 
 
 class TestCacheMissApiSuccess(UpdateCheckBase):

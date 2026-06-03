@@ -2084,7 +2084,7 @@ def _iter_icu_dfa_rides() -> list[dict]:
     return out
 
 
-def _recent_dfa_and_decoupling() -> tuple[list[float], float | None]:
+def _recent_dfa_and_decoupling() -> tuple[list[float], float | None, str | None]:
     """F1/F2 (v4.1.0) — pull last 3 rides' DFA α1 + most recent decoupling %
     from the local ride archive. Returns ([], None) gracefully when empty.
 
@@ -2124,18 +2124,25 @@ def _recent_dfa_and_decoupling() -> tuple[list[float], float | None]:
     )
     dfa_vals: list[float] = []
     last_dec: float | None = None
+    last_dec_date: str | None = None  # started_at[:10] of the decoupling source ride
     for r in merged:
         summary = r.get("summary") or {}
         if last_dec is None:
             dec = summary.get("decoupling_pct")
             if isinstance(dec, (int, float)):
                 last_dec = float(dec)
+                # v1.8.15 — capture WHICH ride supplied the advisory so the
+                # readiness banner names the real day instead of hardcoding
+                # "Yesterday" (the source ride is often 2+ days old when the
+                # most recent day was a rest day / unindexed ride).
+                sa = r.get("started_at") or ""
+                last_dec_date = str(sa)[:10] if sa else None
         alpha = summary.get("dfa_alpha1_avg")
         if isinstance(alpha, (int, float)):
             dfa_vals.append(float(alpha))
         if len(dfa_vals) >= 3 and last_dec is not None:
             break
-    return dfa_vals[:3], last_dec
+    return dfa_vals[:3], last_dec, last_dec_date
 
 
 def _recent_dfa_diagnostic() -> dict:
@@ -2400,7 +2407,7 @@ def api_readiness(subjective: float = Query(None)):
             subjective = _get_soreness_subjective()
         except Exception:  # noqa: BLE001
             subjective = None
-    dfa_vals, last_dec = _recent_dfa_and_decoupling()
+    dfa_vals, last_dec, last_dec_date = _recent_dfa_and_decoupling()
     r = compute_readiness(
         ln_rmssd_7d=sleep.get("ln_rmssd_7d"),
         swc_lower=sleep.get("swc_lower"), swc_upper=sleep.get("swc_upper"),
@@ -2465,6 +2472,9 @@ def api_readiness(subjective: float = Query(None)):
         # FIX-CONTRACT C2: flattened booleans for U6 banner gating.
         "dfa_cap_applied": dfa_cap_applied,
         "decoupling_advisory": decoupling_advisory,
+        # v1.8.15 — date (YYYY-MM-DD) of the ride that triggered the advisory,
+        # so the banner can name the real day instead of hardcoding "Yesterday".
+        "decoupling_advisory_date": last_dec_date,
         # Keep the richer nested dicts available for detail tooltips.
         "dfa_cap": dfa_cap,
         "decoupling_advisory_detail": dec_adv,
@@ -6342,6 +6352,16 @@ def _write_update_check_cache(payload):
 def _cache_is_fresh(cache, now):
     if not cache:
         return False
+    # v1.8.15 — version-mismatch invalidation. The cache stores `current` =
+    # the app version that WROTE it. If the live bundled version differs, the
+    # app was updated/reinstalled since the cache was written, so the WHOLE
+    # cached payload (latest, release_url, release_body, the stale `current`)
+    # is from a prior install — treat it as not-fresh and force a full
+    # refetch. Without this, only the `current`/`update_available` overlay
+    # would be corrected while `release_body` etc. stayed stale for up to 6h
+    # after an update. This is the "cache updates after new installation" fix.
+    if cache.get("current") != _VERSION:
+        return False
     written = cache.get("cache_written_at")
     if not written:
         return False
@@ -6366,6 +6386,23 @@ def api_update_check():
     now = datetime.now(timezone.utc)
     cache = _read_update_check_cache()
 
+    def _overlay_live_current(out):
+        # v1.8.15 BUGFIX — ``current`` is the RUNNING app's own bundled
+        # version; it is known instantly from ``_VERSION`` and must NEVER be
+        # served from cache. Caching it meant a just-updated app (e.g. 1.8.9
+        # → 1.8.14) kept showing the OLD ``current`` for up to 6h, so the
+        # update banner read a phantom "v1.8.9 → v1.8.14" even though 1.8.14
+        # was already running. Always recompute current + update_available
+        # from the live version against the cached ``latest``.
+        out["current"] = _VERSION
+        try:
+            out["update_available"] = bool(
+                _vparse(_VERSION) < _vparse(out.get("latest") or "0")
+            )
+        except InvalidVersion:
+            out["update_available"] = False
+        return out
+
     if _cache_is_fresh(cache, now):
         out = {k: cache.get(k) for k in (
             "current", "latest", "update_available", "release_url",
@@ -6373,7 +6410,7 @@ def api_update_check():
             "release_body",
         )}
         out["cached"] = True
-        return out
+        return _overlay_live_current(out)
 
     try:
         resp = httpx.get(_GITHUB_RELEASES_LATEST_URL, timeout=10)
@@ -6419,7 +6456,7 @@ def api_update_check():
             )}
             out["cached"] = True
             out["error"] = str(e)
-            return out
+            return _overlay_live_current(out)
         return {
             "current": _VERSION,
             "latest": None,
@@ -7613,7 +7650,7 @@ def _api_today_session_impl():
     # Get readiness and HRV data
     sleep = cached("sleep", get_sleep_metrics)
     training = cached("training", get_today_metrics)
-    dfa_vals, last_dec = _recent_dfa_and_decoupling()
+    dfa_vals, last_dec, _last_dec_date = _recent_dfa_and_decoupling()
     r = compute_readiness(
         ln_rmssd_7d=sleep.get("ln_rmssd_7d"),
         swc_lower=sleep.get("swc_lower"), swc_upper=sleep.get("swc_upper"),

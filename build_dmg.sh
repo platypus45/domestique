@@ -245,6 +245,12 @@ else
     echo "⚠ fileicon not installed (npm install -g fileicon) — DMG will have generic icon"
 fi
 
+# v1.8.16 — reclaim the ~570 MB of intermediate staging this build created
+# (dmg_staging ~217M, _rw.dmg ~273M, .app.zip ~81M). Left uncleaned these
+# accumulated across releases and filled the disk mid-session. The final
+# compressed DMG at $DMG_PATH is all we keep; everything else is scratch.
+rm -rf "$STAGING" "$RW_DMG" "$APP_ZIP" 2>/dev/null || true
+
 SIZE=$(du -h "$DMG_PATH" | cut -f1)
 echo ""
 echo "=== Build complete ==="

@@ -34,7 +34,7 @@ class TestReadinessUnified(unittest.TestCase):
              patch.object(app_module, "_local_sleep_metrics", return_value={}), \
              patch.object(app_module, "_get_soreness_subjective", return_value=7.0), \
              patch.object(app_module, "_recent_dfa_and_decoupling",
-                          return_value=([], None)):
+                          return_value=([], None, None, None)):  # v1.8.16 4-tuple
             r = self.client.get("/api/readiness")
         self.assertEqual(r.status_code, 200, r.text)
         data = r.json()

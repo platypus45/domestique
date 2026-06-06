@@ -2084,7 +2084,7 @@ def _iter_icu_dfa_rides() -> list[dict]:
     return out
 
 
-def _recent_dfa_and_decoupling() -> tuple[list[float], float | None, str | None]:
+def _recent_dfa_and_decoupling() -> tuple[list[float], float | None, str | None, str | None]:
     """F1/F2 (v4.1.0) — pull last 3 rides' DFA α1 + most recent decoupling %
     from the local ride archive. Returns ([], None) gracefully when empty.
 
@@ -2124,7 +2124,8 @@ def _recent_dfa_and_decoupling() -> tuple[list[float], float | None, str | None]
     )
     dfa_vals: list[float] = []
     last_dec: float | None = None
-    last_dec_date: str | None = None  # started_at[:10] of the decoupling source ride
+    last_dec_date: str | None = None    # started_at[:10] of the decoupling source ride
+    newest_dfa_date: str | None = None  # started_at[:10] of the newest DFA-contributing ride
     for r in merged:
         summary = r.get("summary") or {}
         if last_dec is None:
@@ -2139,10 +2140,31 @@ def _recent_dfa_and_decoupling() -> tuple[list[float], float | None, str | None]
                 last_dec_date = str(sa)[:10] if sa else None
         alpha = summary.get("dfa_alpha1_avg")
         if isinstance(alpha, (int, float)):
+            # v1.8.16 (grill B1) — the DFA-cap recency gate needs the newest
+            # DFA-CONTRIBUTING ride's date, which is a DIFFERENT ride from the
+            # decoupling source. Capture it on the FIRST appended α1 (merged is
+            # newest-first), never reuse last_dec_date for the cap.
+            if newest_dfa_date is None:
+                sa = r.get("started_at") or ""
+                newest_dfa_date = str(sa)[:10] if sa else None
             dfa_vals.append(float(alpha))
         if len(dfa_vals) >= 3 and last_dec is not None:
             break
-    return dfa_vals[:3], last_dec, last_dec_date
+    return dfa_vals[:3], last_dec, last_dec_date, newest_dfa_date
+
+
+def _age_days_from_iso(d: "str | None") -> "int | None":
+    """v1.8.16 — whole-day age of a naive ``YYYY-MM-DD[...]`` date string vs
+    today, by integer DATE subtraction (grill: never datetime — a 23:00 ride
+    vs 01:00 'now' must not round to a different day). None when unparseable so
+    callers fail-safe per the recency policy."""
+    if not d:
+        return None
+    try:
+        from datetime import date as _date
+        return (_date.today() - _date.fromisoformat(str(d)[:10])).days
+    except (ValueError, TypeError):
+        return None
 
 
 def _recent_dfa_diagnostic() -> dict:
@@ -2407,13 +2429,15 @@ def api_readiness(subjective: float = Query(None)):
             subjective = _get_soreness_subjective()
         except Exception:  # noqa: BLE001
             subjective = None
-    dfa_vals, last_dec, last_dec_date = _recent_dfa_and_decoupling()
+    dfa_vals, last_dec, last_dec_date, newest_dfa_date = _recent_dfa_and_decoupling()
     r = compute_readiness(
         ln_rmssd_7d=sleep.get("ln_rmssd_7d"),
         swc_lower=sleep.get("swc_lower"), swc_upper=sleep.get("swc_upper"),
         tsb=training.get("tsb"), sleep_h=sleep.get("sleep_h"),
         rhr_delta=sleep.get("rhr_delta"), subjective=subjective,
         recent_dfa_alpha1=dfa_vals, last_decoupling_pct=last_dec,
+        last_decoupling_age_days=_age_days_from_iso(last_dec_date),
+        newest_dfa_age_days=_age_days_from_iso(newest_dfa_date),
     )
     # FIX-CONTRACT C2: flatten DFA cap + decoupling advisory as top-level
     # booleans so U6's banner can gate on them without knowing the nested
@@ -7650,7 +7674,7 @@ def _api_today_session_impl():
     # Get readiness and HRV data
     sleep = cached("sleep", get_sleep_metrics)
     training = cached("training", get_today_metrics)
-    dfa_vals, last_dec, _last_dec_date = _recent_dfa_and_decoupling()
+    dfa_vals, last_dec, _last_dec_date, _newest_dfa_date = _recent_dfa_and_decoupling()
     r = compute_readiness(
         ln_rmssd_7d=sleep.get("ln_rmssd_7d"),
         swc_lower=sleep.get("swc_lower"), swc_upper=sleep.get("swc_upper"),
@@ -7658,6 +7682,8 @@ def _api_today_session_impl():
         rhr_delta=sleep.get("rhr_delta"),
         subjective=_get_soreness_subjective(),  # auto-feed from morning leg check
         recent_dfa_alpha1=dfa_vals, last_decoupling_pct=last_dec,
+        last_decoupling_age_days=_age_days_from_iso(_last_dec_date),
+        newest_dfa_age_days=_age_days_from_iso(_newest_dfa_date),
     )
 
     # v4.4.2 §B6: unify the score-None default with /api/readiness via the

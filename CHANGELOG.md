@@ -1,5 +1,43 @@
 # Changelog
 
+## v1.8.16 — readiness downgrade rules respect recency + form; library duration slider UX (2026-06-06)
+
+### Auto-downgrade fired on a 5-day-old ride while the rider was fresh
+
+The home banner downgraded today's HARD session to Z2 citing "aerobic fatigue"
+from a ride **5 days ago**, while every other signal said FRESH: TSB **+17**,
+readiness **78/GOOD**, DFA α1 **healthy (1.126)**. Root causes + fixes (planned,
+adversarially grilled before code — this alters training prescription):
+
+1. **No recency gate.** `check_aerobic_decoupling` fired on the most-recent ride
+   that *had* a decoupling value — 5 days stale here (later rides had none). Now
+   gated to ≤2 days; known-stale readings are dropped.
+2. **No form cross-check.** The weak decoupling signal ignored the app's own load
+   model. Now vetoed when form is fresh (TSB ≥ +5 **or** readiness GOOD/EXCELLENT)
+   **AND** DFA independently corroborates freshness. Critically, when DFA is
+   *absent* (most rides have no RR), the advisory is **kept** — TSB lags acute
+   fatigue ~7 d, so a fresh TSB alone is not grounds to silence the only signal.
+3. **The STRONG DFA α1 cap is never form-vetoed** (acute autonomic stress can
+   coexist with a fresh TSB) — only recency-gated on the newest DFA ride (≤2 d),
+   and kept when the date is unknown (fail-safe). Regression test proves a
+   collapsing α1 still caps even at TSB +20 / EXCELLENT.
+4. **Banner truthfulness.** Decoupling is advisory-only in the planner (only the
+   DFA cap / injury gates actually swap the session). The banner now says
+   "Z2 recommended (advisory — not enforced)" for decoupling, and only
+   "auto-downgraded to Z2" when a real downgrade was applied.
+
+### Workout-library duration slider
+
+- Added typeable **min/max number fields** alongside the sliders.
+- Dragging a knob past the other now **clamps** at the boundary instead of
+  swapping the two values (the swap made the other slider's number jump).
+- The expensive library re-filter runs only on **release** (`change`); dragging
+  updates just the label + paired box live — no more per-pixel reloads / lag.
+
+13 new tests (downgrade gating + the no-veto-leak regression). Fixed two stale
+2-tuple `_recent_dfa_and_decoupling` mocks (now 4-tuple) that were red since the
+v1.8.15 signature change.
+
 ## v1.8.15 — update banner no longer shows a phantom old version; readiness advisory names the real ride day (2026-06-03)
 
 ### 1. "Update available — v1.8.9 → v1.8.14" on an already-updated app

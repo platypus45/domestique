@@ -95,7 +95,8 @@ def _stub_today_session_dependencies():
         ),
         patch.object(
             app_module, "_recent_dfa_and_decoupling",
-            return_value=([1.0, 1.0], None),
+            # v1.8.16 — 4-tuple: (dfa_vals, last_dec, last_dec_date, newest_dfa_date).
+            return_value=([1.0, 1.0], None, None, None),
         ),
         # Force readiness "fresh" so any downshift comes only from injury gates.
         patch.object(

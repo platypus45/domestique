@@ -12,7 +12,17 @@ def _normalize(value: float, low: float, high: float) -> float:
     return max(0.0, min(100.0, (value - low) / (high - low) * 100.0))
 
 
-def check_dfa_stress_cap(recent_dfa_alpha1: list[float] | None) -> dict:
+# v1.8.16 — recency windows for the autonomic-stress signals. A fatigue read
+# from days ago must not drive TODAY's session (the live bug: a 5-day-old
+# decoupling reading downgraded a hard session while TSB was +17 / fresh).
+_DFA_CAP_MAX_AGE_DAYS = 2          # newest DFA ride must be ≤ this old to cap
+_DECOUPLING_MAX_AGE_DAYS = 2       # source ride must be ≤ this old to advise
+# Form-freshness thresholds for the decoupling veto (weak signal only).
+_DECOUPLING_VETO_TSB = 5.0         # TSB ≥ this = peaked/fresh
+
+
+def check_dfa_stress_cap(recent_dfa_alpha1: list[float] | None,
+                         newest_age_days: int | None = None) -> dict:
     """F1 (v4.1.0) — DFA α1 aerobic-stress gate (Rogers 2021).
 
     If the mean of the last 3 rides' α1 values < 0.5, the athlete is sustained
@@ -21,9 +31,17 @@ def check_dfa_stress_cap(recent_dfa_alpha1: list[float] | None) -> dict:
     don't mutate the plan here — we return a structured dict so the caller
     can log and apply.
 
+    v1.8.16 — STRONG signal; NEVER vetoed by TSB/form (acute autonomic stress
+    can coexist with a paper-fresh TSB). Only sanity-gate on RECENCY:
+    ``newest_age_days`` is the age of the newest DFA-contributing ride. A cap
+    derived from week-old data is stale, so suppress when KNOWN > 2 days. Fail
+    SAFE: when ``newest_age_days`` is None (unknown), keep the cap — the strong
+    safety net must not be silenced by a missing date.
+
     Args:
-        recent_dfa_alpha1: list of dfa_alpha1_avg values from the 3 most
-            recent rides, newest first. Pass None or [] to skip the check.
+        recent_dfa_alpha1: dfa_alpha1_avg values from the 3 most recent DFA
+            rides, newest first. None / [] / <3 → no cap.
+        newest_age_days: age in days of the newest DFA ride (None = unknown).
 
     Returns:
         {"cap_applied": bool, "mean_alpha1": float|None, "reason": str}
@@ -36,8 +54,13 @@ def check_dfa_stress_cap(recent_dfa_alpha1: list[float] | None) -> dict:
                 "reason": "insufficient_dfa_rides"}
     mean = sum(vals) / len(vals)
     if mean < 0.5:
+        # Recency: suppress only when the newest DFA ride is KNOWN-stale.
+        if newest_age_days is not None and newest_age_days > _DFA_CAP_MAX_AGE_DAYS:
+            return {"cap_applied": False, "mean_alpha1": round(mean, 3),
+                    "reason": f"dfa_stale (newest DFA ride {newest_age_days}d old)"}
         _log.info(
-            f"EVENT=dfa_cap_applied mean_alpha1={mean:.3f} rides={len(vals)}"
+            f"EVENT=dfa_cap_applied mean_alpha1={mean:.3f} rides={len(vals)} "
+            f"newest_age_days={newest_age_days}"
         )
         return {
             "cap_applied": True,
@@ -47,12 +70,26 @@ def check_dfa_stress_cap(recent_dfa_alpha1: list[float] | None) -> dict:
     return {"cap_applied": False, "mean_alpha1": round(mean, 3), "reason": ""}
 
 
-def check_aerobic_decoupling(last_decoupling_pct: float | None) -> dict:
-    """F2 (v4.1.0) — aerobic-decoupling advisory.
+def check_aerobic_decoupling(last_decoupling_pct: float | None,
+                             source_age_days: int | None = None,
+                             tsb: float | None = None,
+                             readiness_status: str | None = None,
+                             dfa_present_and_healthy: bool = False) -> dict:
+    """F2 (v4.1.0) — aerobic-decoupling advisory. WEAK signal: advise, never
+    auto-swap — decoupling is less reliable than DFA α1 and is confounded by
+    ride duration, heat and fuelling.
 
-    If the most recent ride's Pa:Hr decoupling > 5%, flag tomorrow as
-    "Z2-only recommended". We advise rather than auto-swap — decoupling is
-    less reliable than DFA α1 as a day-to-day stress signal.
+    v1.8.16 gates (the live bug: a 5-day-old 9.9% reading advised Z2 while
+    TSB was +17, readiness GOOD, DFA healthy α1=1.126):
+
+      1. RECENCY — only advise if the source ride is ≤ 2 days old. KNOWN-stale
+         (>2d) → drop. Unknown age → keep (fail toward warning).
+      2. FORM VETO **gated on DFA corroboration** — suppress the advisory when
+         form is fresh (``tsb ≥ +5`` OR status ∈ {GOOD, EXCELLENT}) **AND** DFA
+         independently confirms freshness (``dfa_present_and_healthy``). When
+         DFA is ABSENT/insufficient — the common case, most rides have no RR —
+         decoupling is the ONLY acute signal and TSB lags acute fatigue ~7d, so
+         a fresh TSB alone is NOT grounds to silence it.
     """
     if last_decoupling_pct is None:
         return {"advisory": False, "decoupling_pct": None, "reason": ""}
@@ -60,13 +97,30 @@ def check_aerobic_decoupling(last_decoupling_pct: float | None) -> dict:
         pct = float(last_decoupling_pct)
     except (TypeError, ValueError):
         return {"advisory": False, "decoupling_pct": None, "reason": ""}
-    if pct > 5.0:
-        return {
-            "advisory": True,
-            "decoupling_pct": round(pct, 1),
-            "reason": f"Last ride Pa:Hr decoupling {pct:.1f}% > 5% — Z2-only recommended",
-        }
-    return {"advisory": False, "decoupling_pct": round(pct, 1), "reason": ""}
+    pct_r = round(pct, 1)
+    if pct <= 5.0:
+        return {"advisory": False, "decoupling_pct": pct_r, "reason": ""}
+
+    # Gate 1 — recency. KNOWN-stale source ride is not actionable for today.
+    if source_age_days is not None and source_age_days > _DECOUPLING_MAX_AGE_DAYS:
+        return {"advisory": False, "decoupling_pct": pct_r,
+                "reason": f"decoupling_stale (source ride {source_age_days}d old)"}
+
+    # Gate 2 — form veto, ONLY when DFA corroborates freshness.
+    form_fresh = (
+        (isinstance(tsb, (int, float)) and tsb >= _DECOUPLING_VETO_TSB)
+        or (str(readiness_status or "").upper() in ("GOOD", "EXCELLENT"))
+    )
+    if form_fresh and dfa_present_and_healthy:
+        return {"advisory": False, "decoupling_pct": pct_r,
+                "reason": ("decoupling_vetoed_by_form "
+                           f"(TSB/readiness fresh + DFA healthy; {pct_r}% noted)")}
+
+    return {
+        "advisory": True,
+        "decoupling_pct": pct_r,
+        "reason": f"Recent ride Pa:Hr decoupling {pct_r}% > 5% — Z2 recommended (advisory)",
+    }
 
 
 def compute_readiness(
@@ -79,6 +133,8 @@ def compute_readiness(
     subjective: float | None = None,   # 1-10 score
     recent_dfa_alpha1: list[float] | None = None,
     last_decoupling_pct: float | None = None,
+    last_decoupling_age_days: int | None = None,   # v1.8.16
+    newest_dfa_age_days: int | None = None,        # v1.8.16
 ) -> dict:
     """
     Returns:
@@ -190,8 +246,28 @@ def compute_readiness(
     # F1/F2 (v4.1.0): attach DFA + decoupling signals. These don't modify the
     # composite score (so historical test fixtures keep working) but live on
     # the readiness payload for the planner / today-session endpoint to act on.
-    dfa_info = check_dfa_stress_cap(recent_dfa_alpha1)
-    dec_info = check_aerobic_decoupling(last_decoupling_pct)
+    # v1.8.16 — recency gates + DFA-corroborated form veto on the weak
+    # decoupling signal. DFA cap (strong) is recency-gated but NEVER form-vetoed.
+    dfa_info = check_dfa_stress_cap(recent_dfa_alpha1,
+                                    newest_age_days=newest_dfa_age_days)
+    # DFA "present and healthy" = a real ≥3-ride mean that is NOT in the
+    # stress zone (so it independently confirms the athlete is fresh). Used
+    # to gate the decoupling veto — without DFA corroboration we keep the
+    # advisory even when TSB looks fresh (TSB lags acute fatigue ~7d).
+    _dfa_mean = dfa_info.get("mean_alpha1")
+    dfa_present_and_healthy = (
+        not dfa_info.get("cap_applied")
+        and dfa_info.get("reason") != "insufficient_dfa_rides"
+        and isinstance(_dfa_mean, (int, float))
+        and _dfa_mean >= 0.5
+    )
+    dec_info = check_aerobic_decoupling(
+        last_decoupling_pct,
+        source_age_days=last_decoupling_age_days,
+        tsb=tsb,
+        readiness_status=status,
+        dfa_present_and_healthy=dfa_present_and_healthy,
+    )
 
     return {
         "score": score,

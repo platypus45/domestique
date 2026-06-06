@@ -1814,11 +1814,25 @@ window.addEventListener('unhandledrejection', function(e) {
           <option value="neuromuscular">Neuromuscular</option>
           <option value="ftp_test">FTP Test</option>
         </select></div>
-      <!-- v4.2.0 IMPL-LIBRARY: duration range slider, 0-120 min default open. -->
+      <!-- v4.2.0 IMPL-LIBRARY: duration range slider, 0-120 min default open.
+           v1.8.16 — typeable min/max number fields + clamp-not-swap. Sliders
+           update the cheap label live (oninput) and the paired number box;
+           the expensive library re-filter (loadWorkouts) runs only on release
+           (onchange) and on number-box commit. Dragging one knob past the
+           other CLAMPS at the boundary instead of swapping the values. -->
       <div class="form-group"><label>Duration <span id="wk-duration-label" style="color:var(--text2);font-size:11px;">0–120 min</span></label>
         <div style="display:flex;gap:6px;align-items:center;padding-top:2px;">
-          <input type="range" id="wk-dur-min" min="0" max="120" value="0" step="5" onchange="onLibDurationChange()" oninput="onLibDurationChange()" style="width:70px;">
-          <input type="range" id="wk-dur-max" min="0" max="120" value="120" step="5" onchange="onLibDurationChange()" oninput="onLibDurationChange()" style="width:70px;">
+          <input type="number" id="wk-dur-min-num" min="0" max="120" value="0" step="5"
+                 onchange="onLibDurationNum('min')" aria-label="Min duration (min)"
+                 style="width:48px;">
+          <input type="range" id="wk-dur-min" min="0" max="120" value="0" step="5"
+                 onchange="onLibDurationChange()" oninput="onLibDurationSlide('min')" style="width:70px;">
+          <span style="color:var(--text3);">–</span>
+          <input type="range" id="wk-dur-max" min="0" max="120" value="120" step="5"
+                 onchange="onLibDurationChange()" oninput="onLibDurationSlide('max')" style="width:70px;">
+          <input type="number" id="wk-dur-max-num" min="0" max="120" value="120" step="5"
+                 onchange="onLibDurationNum('max')" aria-label="Max duration (min)"
+                 style="width:48px;">
         </div></div>
       <!-- v4.2.0 IMPL-LIBRARY: search-by-structure (debounced ≥300ms). -->
       <div class="form-group"><label>Search</label>
@@ -7385,14 +7399,74 @@ let _libDurMin = 0, _libDurMax = 120;
 let _libSelectedTags = new Set();
 let _libSearchTimer = null;
 
-function onLibDurationChange() {
-  const lo = $('wk-dur-min'), hi = $('wk-dur-max');
-  if (!lo || !hi) return;
-  let a = Number(lo.value) || 0, b = Number(hi.value) || 120;
-  if (a > b) { [a, b] = [b, a]; }
-  _libDurMin = a; _libDurMax = b;
+// v1.8.16 — duration filter: typeable min/max fields + two sliders, with
+// clamp-not-swap and split cheap/expensive events.
+//
+//  • EXPENSIVE re-filter (loadWorkouts → network + full re-render) runs ONLY
+//    on commit: slider `change` (pointer release) or number-box `change`.
+//    Previously the slider's `oninput` called loadWorkouts on every drag tick
+//    → dozens of reloads → janky lag.
+//  • CHEAP live feedback on slider `input`: update the paired number box + the
+//    text label only.
+//  • CLAMP, don't swap. Dragging min past max pins min AT max (and vice
+//    versa) instead of swapping the two values — the old swap made the OTHER
+//    slider's number jump around, which read as a bug.
+const _LIB_DUR_MIN = 0, _LIB_DUR_MAX = 120;
+
+function _libClampInt(v, lo, hi) {
+  v = Math.round((Number(v) || 0) / 5) * 5;        // snap to step=5
+  return Math.max(lo, Math.min(hi, v));
+}
+
+// Reconcile all four controls from an authoritative (which, value) edit,
+// clamping so min ≤ max without swapping. Updates the label. Returns [a,b].
+function _libDurationSync(which, rawValue) {
+  const minS = $('wk-dur-min'), maxS = $('wk-dur-max');
+  const minN = $('wk-dur-min-num'), maxN = $('wk-dur-max-num');
+  if (!minS || !maxS) return null;
+  let a = _libClampInt(minS.value, _LIB_DUR_MIN, _LIB_DUR_MAX);
+  let b = _libClampInt(maxS.value, _LIB_DUR_MIN, _LIB_DUR_MAX);
+  const v = _libClampInt(rawValue, _LIB_DUR_MIN, _LIB_DUR_MAX);
+  if (which === 'min') {
+    a = Math.min(v, b);          // min can't exceed max → pin at max
+  } else if (which === 'max') {
+    b = Math.max(v, a);          // max can't drop below min → pin at min
+  }
+  // Write back to every control so slider + number box stay in lockstep.
+  if (minS) minS.value = a;
+  if (maxS) maxS.value = b;
+  if (minN) minN.value = a;
+  if (maxN) maxN.value = b;
   const lbl = $('wk-duration-label');
   if (lbl) lbl.textContent = `${a}–${b} min`;
+  return [a, b];
+}
+
+// Live during slider drag (cheap): sync controls + label, NO filter.
+function onLibDurationSlide(which) {
+  const src = which === 'min' ? $('wk-dur-min') : $('wk-dur-max');
+  if (src) _libDurationSync(which, src.value);
+}
+
+// Slider released: commit + filter.
+function onLibDurationChange() {
+  const minS = $('wk-dur-min');
+  const r = _libDurationSync('min', minS ? minS.value : _LIB_DUR_MIN) ||
+            [_LIB_DUR_MIN, _LIB_DUR_MAX];
+  // Re-derive without forcing a which-edit so we keep whatever both sliders show.
+  const a = _libClampInt($('wk-dur-min').value, _LIB_DUR_MIN, _LIB_DUR_MAX);
+  const b = _libClampInt($('wk-dur-max').value, _LIB_DUR_MIN, _LIB_DUR_MAX);
+  _libDurMin = Math.min(a, b); _libDurMax = Math.max(a, b);
+  loadWorkouts();
+}
+
+// Number box typed + committed (Enter / blur): clamp, sync slider, filter.
+function onLibDurationNum(which) {
+  const box = which === 'min' ? $('wk-dur-min-num') : $('wk-dur-max-num');
+  if (!box) return;
+  const r = _libDurationSync(which, box.value);
+  if (!r) return;
+  _libDurMin = r[0]; _libDurMax = r[1];
   loadWorkouts();
 }
 
@@ -11840,10 +11914,15 @@ async function loadReadinessActionBanner() {
   // doesn't produce "THE PLANNED HARD SESSION session".
   const rawType = (r.original_session_type || r.planned_session_type || 'hard');
   const originalType = rawType.toString().toUpperCase().replace(/_/g, ' ');
+  // v1.8.16 — truthful action copy. Only the STRONG DFA α1 cap (and injury
+  // gates) actually swap the session in the planner; the WEAK decoupling
+  // signal is advisory-only. Don't claim "auto-downgraded" for an advisory.
+  const action = r.dfa_cap_applied
+    ? `Today's ${esc(originalType)} session has been <b>auto-downgraded to Z2</b>.`
+    : `<b>Z2 recommended</b> for today's ${esc(originalType)} session (advisory — not enforced).`;
   banner.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
     <div>
-      <b style="color:#eab308;">&#9888;</b> ${esc(rideRef)} showed <b>${esc(signal)}</b>.
-      Today's ${esc(originalType)} session has been auto-downgraded to <b>Z2</b>.
+      <b style="color:#eab308;">&#9888;</b> ${esc(rideRef)} showed <b>${esc(signal)}</b>. ${action}
     </div>
     <div style="display:flex;gap:8px;">
       <button class="btn btn-sm" onclick="revertReadinessCap('${esc(signalKey)}')" style="background:var(--accent);color:#fff;border-color:var(--accent);">Revert</button>

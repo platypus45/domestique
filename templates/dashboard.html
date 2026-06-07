@@ -1174,6 +1174,15 @@ details > summary::before { content: "\25B6"; position: absolute; left: 4px; tra
 details[open] > summary::before { transform: rotate(90deg); }
 details > summary::-webkit-details-marker { display: none; }
 details > summary::marker { content: ""; }
+/* v1.8.17 — the update-banner "What's new" summary uses display:inline-block,
+   which re-enables a native WebKit disclosure triangle that the rule above
+   (scoped to list-item summaries) misses — so it showed TWO arrows (the
+   native one + the manual chevron). Suppress the native marker explicitly on
+   this summary and rotate the single manual chevron on open. */
+.uc-whatsnew-summary::-webkit-details-marker { display: none; }
+.uc-whatsnew-summary { list-style: none; }
+.uc-whatsnew-arrow { display: inline-block; transition: transform .15s ease; }
+details[open] > .uc-whatsnew-summary .uc-whatsnew-arrow { transform: rotate(90deg); }
 details > summary:hover::before { color: var(--accent); }
 </style>
 <script src="/static/vendor/chart.umd.min.js"></script>
@@ -13479,7 +13488,15 @@ async function openDayWorkout(sessionIdx) {
       }
     } catch (e) { /* fall through to silhouette */ }
   }
+  // v1.8.17 — true when we WANTED the real ZWO shape (a file is matched) but
+  // couldn't load its segments — i.e. the plan references a missing/renamed
+  // file. The synthetic silhouette below is then only an APPROXIMATION and
+  // must be labelled so, or the user mistakes it for the real workout (the
+  // "same workout renders differently" bug: library shows the real diagonal
+  // shape, planner fell back to flat synthetic for the stale reference).
+  let approxPreview = false;
   if (!segmentChartSvg) {
+    approxPreview = !!session.zwo_file;
     const zd = session.zone_dist;
     const zdHasData = zd && Object.values(zd).some(v => Number(v) > 0);
     const sFlags = session.secondary_flags || null;
@@ -13507,9 +13524,15 @@ async function openDayWorkout(sessionIdx) {
     .replace(/\s+/g, ' ').trim();
   const sessionDur = Number(session.duration_min) || 0;
   const fileDur = Number(session.zwo_duration_min) || 0;
-  // Title duration = the session-planned duration (what the user is
-  // expected to ride), not the workout-file duration.
-  const heroTitle = `${titleClass} (${sessionDur}min)`;
+  // v1.8.17 — title duration reflects the MATCHED FILE (what the user
+  // actually downloads + rides), not the planner's target. Previously the
+  // title showed the planned duration (e.g. "(90min)") while the ZWO/FIT the
+  // user got was 61min — a direct contradiction the user flagged. When a
+  // library file is matched use its real duration; fall back to the planned
+  // duration only for a synthesised (file-less) session. The plan-vs-file
+  // gap is still surfaced by the showGap banner below.
+  const titleDur = (session.zwo_file && fileDur > 0) ? fileDur : sessionDur;
+  const heroTitle = `${titleClass} (${titleDur}min)`;
   // Mismatch label: when the matched ZWO file is >10% off the session
   // plan (in either direction) surface the gap explicitly so the user
   // knows whether to pace, extend, or repeat the file.
@@ -13536,8 +13559,10 @@ async function openDayWorkout(sessionIdx) {
   html += `<div style="font-size:13px;color:var(--text2);margin:8px 0;">${esc(fixZeroMin(session.description) || '')}</div>`;
 
   // Stats grid
+  // v1.8.17 — Duration stat reflects the MATCHED FILE (titleDur), same as the
+  // hero title, so a 25min workout in a 60min slot reads "25min" not "60min".
   html += '<div style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0;">';
-  html += `<div class="metric"><div class="mv">${session.duration_min}min</div><div class="ml">Duration</div></div>`;
+  html += `<div class="metric"><div class="mv">${titleDur}min</div><div class="ml">Duration</div></div>`;
   html += `<div class="metric"><div class="mv">${session.tss_estimate}</div><div class="ml">TSS</div></div>`;
   if (hr[0]) html += `<div class="metric"><div class="mv" style="color:var(--red);">${hr[0]}-${hr[1]}</div><div class="ml">HR (bpm)</div></div>`;
   if (pw[0]) html += `<div class="metric"><div class="mv" style="color:var(--accent);">${pw[0]}-${pw[1]}</div><div class="ml">Power (W)</div></div>`;
@@ -14588,9 +14613,9 @@ async function loadUpdateCheck() {
         '</div>';
       detailsBlock =
         '<details style="margin-top:8px;">' +
-          '<summary style="cursor:pointer;display:inline-block;padding:6px 12px;border-radius:6px;' +
+          '<summary class="uc-whatsnew-summary" style="cursor:pointer;display:inline-block;padding:6px 12px;border-radius:6px;' +
             'background:rgba(59,130,246,0.15);border:1px solid #3b82f6;color:inherit;font-size:12px;' +
-            'list-style:none;">&#9654; What&rsquo;s new</summary>' +
+            'list-style:none;"><span class="uc-whatsnew-arrow">&#9654;</span> What&rsquo;s new</summary>' +
           '<div style="margin-top:8px;padding:10px 12px;border-radius:6px;background:rgba(0,0,0,0.15);' +
             'border:1px solid rgba(255,255,255,0.08);font-size:12px;line-height:1.5;max-height:400px;' +
             'overflow-y:auto;">' +

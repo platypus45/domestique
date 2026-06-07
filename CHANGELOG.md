@@ -1,5 +1,44 @@
 # Changelog
 
+## v1.8.17 — FIT ramps no longer flatten (ZWO≡FIT), workout-duration honesty, single What's-new arrow (2026-06-07)
+
+### ZWO and FIT are now the same workout (ramp fix)
+
+A downloaded ZWO and FIT of the *same* workout looked completely different on
+the trainer: the ZWO showed diagonal sawtooth ramps, the FIT showed flat
+blocks. Verified against the user's two actual downloads
+(`neuromuscular_4x10s_61min.zwo`/`.fit`): both 61.0 min, identical sprints +
+tempo blocks — the *only* difference was the ZWO's six `<Ramp>` segments
+(0.65→1.05) collapsing to a single flat step at their **average** (0.85) in the
+FIT, because FIT workout steps have no native power ramp.
+
+Fix: `_build_fit_workout_from_zwo` now **staircases** every Warmup / Ramp /
+Cooldown into ~30 s sub-steps that step linearly from PowerLow to PowerHigh, so
+the FIT power profile matches the ZWO ramp shape. Total duration is conserved
+exactly. **83% of the 3054-workout library (2564 files) contain ramp/warmup/
+cooldown elements that were being flattened** — all fixed.
+
+### Workout duration shown is the matched file, not the planned slot
+
+The session modal titled a workout by the planner's *slot* duration (e.g.
+"(60min)") while the matched workout — and its chart — were 25 min. The hero
+title AND the big Duration stat now reflect the matched file's real duration;
+the plan-vs-file gap stays surfaced by the existing advisory banner.
+
+### Single "What's new" arrow
+
+The update-banner disclosure showed two arrows (a manual chevron + the native
+WebKit triangle that `display:inline-block` re-enabled). Now one chevron that
+rotates on open; the native marker is suppressed per-element.
+
+### Known follow-up (not in this release)
+
+Scan of the active plan found **125 of 147 sessions reference a `zwo_file` that
+doesn't exist** in the local `workouts/` dir (external Zwift/TR plan
+subdirectory names). Those sessions fall back to a synthetic generic shape
+(the "60min slot → 25min chart" case). Fixing plan→file reference integrity is
+a separate backend task.
+
 ## v1.8.16 — readiness downgrade rules respect recency + form; library duration slider UX (2026-06-06)
 
 ### Auto-downgrade fired on a 5-day-old ride while the rider was fresh

@@ -9175,22 +9175,35 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int) -> bytes:
             if tag == "SteadyState":
                 pw = float(el.get("Power", 0.65))
                 raw_steps.append(("active", dur, pw, pw))
-            elif tag == "Warmup":
+            elif tag in ("Warmup", "Ramp", "Cooldown"):
+                # v1.8.17 — FIT workout steps have no native power RAMP, so the
+                # pre-v1.8.17 code collapsed each Warmup/Ramp/Cooldown to ONE
+                # flat step at the average power. That made the FIT a visibly
+                # different workout from the ZWO: a 0.65→1.05 ramp (diagonal
+                # sawtooth in MyWhoosh/Zwift) became a flat 0.85 block on
+                # Garmin/Wahoo. Fix: STAIRCASE the ramp into ~30 s sub-steps
+                # that step linearly from PowerLow to PowerHigh, so the FIT
+                # power profile matches the ZWO ramp shape.
                 plo = float(el.get("PowerLow", 0.5))
                 phi = float(el.get("PowerHigh", 0.7))
-                avg = (plo + phi) / 2
-                raw_steps.append(("warmup", dur, avg, avg))
-            elif tag == "Ramp":
-                plo = float(el.get("PowerLow", 0.5))
-                phi = float(el.get("PowerHigh", 0.7))
-                avg = (plo + phi) / 2
-                raw_steps.append(("active", dur, avg, avg))
-            elif tag == "Cooldown":
-                plo = float(el.get("PowerLow", 0.5))
-                phi = float(el.get("PowerHigh", 0.7))
-                # Cooldown ends at min(low, high) per v4.6.8 visualiser fix.
-                end = min(plo, phi)
-                raw_steps.append(("cooldown", dur, end, end))
+                intensity = "warmup" if tag == "Warmup" else (
+                    "cooldown" if tag == "Cooldown" else "active")
+                if dur <= 0:
+                    pass
+                else:
+                    # 1 sub-step per ~30 s, capped 1..8 so short ramps stay
+                    # cheap and long ones still read as a smooth ramp.
+                    n_sub = max(1, min(8, round(dur / 30)))
+                    base = dur // n_sub
+                    rem = dur - base * n_sub
+                    for i in range(n_sub):
+                        sub_dur = base + (1 if i < rem else 0)
+                        if sub_dur <= 0:
+                            continue
+                        # Mid-point power of this sub-step along the ramp.
+                        frac = (i + 0.5) / n_sub
+                        p = plo + (phi - plo) * frac
+                        raw_steps.append((intensity, sub_dur, p, p))
             elif tag == "IntervalsT":
                 reps = int(el.get("Repeat", 1))
                 on_d = int(float(el.get("OnDuration", 0) or 0))

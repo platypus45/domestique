@@ -32,9 +32,10 @@ WORKOUTS_DIR = REPO_ROOT / "workouts"
 TEMPO_FILE = "tempo_steady_57min.zwo"
 
 
-def _zwo_step_count(zwo_path: Path) -> int:
-    """Count FIT steps the parser will emit. Mirrors the dispatch logic in
-    ``_build_fit_workout_from_zwo`` — keep them in lockstep."""
+def _zwo_element_min_steps(zwo_path: Path) -> int:
+    """Minimum FIT steps the parser emits, counting each element as ≥1.
+    v1.8.17: Warmup/Ramp/Cooldown now STAIRCASE into multiple sub-steps, so
+    the FIT step count is ≥ this floor (no longer an exact 1:1)."""
     tree = ET.parse(zwo_path)
     workout_el = tree.getroot().find("workout")
     if workout_el is None:
@@ -46,6 +47,24 @@ def _zwo_step_count(zwo_path: Path) -> int:
         elif el.tag == "IntervalsT":
             n += 2 * int(el.get("Repeat", 1))
     return n
+
+
+def _zwo_total_seconds(zwo_path: Path) -> int:
+    tree = ET.parse(zwo_path)
+    workout_el = tree.getroot().find("workout")
+    if workout_el is None:
+        return 0
+    t = 0
+    for el in workout_el:
+        d = int(float(el.get("Duration", 0) or 0))
+        if el.tag == "IntervalsT":
+            r = int(el.get("Repeat", 1))
+            on = int(float(el.get("OnDuration", 0) or 0))
+            off = int(float(el.get("OffDuration", 0) or 0))
+            t += r * (on + off)
+        else:
+            t += d
+    return t
 
 
 def _decode_workout_steps(fit_bytes: bytes):
@@ -64,43 +83,37 @@ class TestFitFromZwo(unittest.TestCase):
         if not self.zwo_path.exists():
             self.skipTest(f"library file {TEMPO_FILE} missing")
 
-    def test_step_count_matches_zwo_elements(self):
-        """The FIT should have exactly one step per parsed ZWO element
-        (with IntervalsT contributing 2*Repeat steps). Pre-fix, the generic
-        path produced a fixed Warmup/SteadyState/Cooldown 3-step regardless
-        of the ZWO contents."""
+    def test_step_count_at_least_one_per_zwo_element(self):
+        """The FIT must have ≥1 step per parsed ZWO element (IntervalsT → 2×
+        Repeat). v1.8.17: Warmup/Ramp/Cooldown STAIRCASE into sub-steps so the
+        count is ≥ the element floor, not exactly equal. Pre-fix the generic
+        path produced a fixed 3-step block regardless of ZWO contents."""
         r = self.client.get(
             f"/api/export/fit-workout?session_type=z2&duration_min=57&name=test&zwo_file={TEMPO_FILE}"
         )
         self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual(r.headers["content-type"], "application/octet-stream")
         steps = _decode_workout_steps(r.content)
-        expected = _zwo_step_count(self.zwo_path)
-        self.assertEqual(len(steps), expected,
-                         f"FIT has {len(steps)} steps, ZWO would emit {expected}")
-        # tempo_steady_57min.zwo currently has 1 Warmup + 20 SteadyState + 1
-        # Cooldown = 22 steps. The check above is the source of truth; assert
-        # >= 5 here as a smoke check that we're well past the 3-block generic.
+        floor = _zwo_element_min_steps(self.zwo_path)
+        self.assertGreaterEqual(len(steps), floor,
+                                f"FIT has {len(steps)} steps, ZWO floor is {floor}")
         self.assertGreaterEqual(len(steps), 5)
 
-    def test_first_and_last_step_duration_match_zwo_envelope(self):
-        """First step duration = ZWO's first element ``Duration`` (seconds);
-        last step duration = ZWO's last element ``Duration``."""
-        tree = ET.parse(self.zwo_path)
-        workout_el = tree.getroot().find("workout")
-        children = list(workout_el)
-        first_dur_s = int(float(children[0].get("Duration", 0) or 0))
-        last_dur_s = int(float(children[-1].get("Duration", 0) or 0))
-
+    def test_total_duration_preserved_through_staircase(self):
+        """v1.8.17 — the staircase of Warmup/Ramp/Cooldown into sub-steps MUST
+        conserve the workout's total duration exactly (the sub-step durations
+        sum back to the original element duration). This is the real
+        ZWO≡FIT invariant now that step count is no longer 1:1."""
         r = self.client.get(
             f"/api/export/fit-workout?session_type=z2&duration_min=57&name=test&zwo_file={TEMPO_FILE}"
         )
         self.assertEqual(r.status_code, 200)
         steps = _decode_workout_steps(r.content)
         self.assertGreaterEqual(len(steps), 2)
-        # FIT duration_value is milliseconds.
-        self.assertEqual(steps[0].duration_value, first_dur_s * 1000)
-        self.assertEqual(steps[-1].duration_value, last_dur_s * 1000)
+        fit_total_s = sum((s.duration_value or 0) for s in steps) / 1000.0
+        zwo_total_s = _zwo_total_seconds(self.zwo_path)
+        self.assertEqual(round(fit_total_s), zwo_total_s,
+                         f"FIT total {fit_total_s}s != ZWO total {zwo_total_s}s")
 
     def test_missing_zwo_file_returns_404_not_silent_fallback(self):
         """The pre-fix code silently used the generic block whenever the

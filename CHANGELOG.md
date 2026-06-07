@@ -1,5 +1,36 @@
 # Changelog
 
+## v1.8.19 — workout match honours the planned duration much more tightly (2026-06-07)
+
+Follow-up to v1.8.18. The plan matcher (`match_zwo`) used a loose flat duration
+gate (±40 min, ±60 for long rides) plus a gentle absolute proximity penalty, so
+an 82-min slot could resolve to a 120-min file and a 120-min slot to a 175-min
+file — and the score-weighted random pick still surfaced those far files.
+
+Two changes:
+- **Hard gate is now relative**: ±25% of the target (floor 15 min) instead of a
+  flat ±40/±60, bounding the worst-case mismatch to ~a quarter of the slot.
+- **Proximity penalty is now relative** (gap as a fraction of target × 14) so it
+  reliably outweighs the category bonus once the gap is large.
+
+Measured on representative slots: mean |planned − file| duration dropped from
+**18.6 → 10.7 min**, worst case **55 → 24 min**, with no empty matches and the
+v4.5.0 variety acceptance (≥150 distinct ZWOs, top-5 ≤15%) preserved. Applies to
+new generation + future heals; already-resolved sessions are left untouched (no
+churn). Planner diversification / utilization / interval-variety suites green.
+
+### Reforecast undershoot — investigated, NOT auto-changed (deliberate)
+
+Investigated whether missed/easier weeks auto-rebalance the future plan. Findings:
+big gaps (≥2 consecutive missed weeks or CTL drop >15) DO auto-regenerate on
+Plan-tab open via a **safe recovery ramp** (ACWR<1.3 cap, Z2 reconditioning);
+minor undershoot correctly self-absorbs via the CTL recompute. A proposed
+auto-escalation on ride-sync was designed, **adversarially grilled, and
+rejected**: it would have amplified a pre-existing data-loss bug (the auto-regen
+path silently drops `user_moved` / `status` / `dismissed_at` / the availability
+calendar) and run an undebounced full rebuild in the sync response. Tracked as a
+separate fix (repair regen field-preservation first, then escalation).
+
 ## v1.8.18 — plan zwo_file reference integrity (heal 77 ghost references; freeze training history) (2026-06-07)
 
 The active plan stored `zwo_file` values that don't exist in the local

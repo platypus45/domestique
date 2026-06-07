@@ -2606,7 +2606,15 @@ def match_zwo(
         # target to admit a 180-min workout but a 119-min target to reject
         # it — a jumpy discontinuity right at the base/long-ride transition.
         # Keeping `>=` for the 120+ bucket ensures inclusion at exactly 120.
-        max_diff = 60 if target_dur >= 120 else 40
+        # v1.8.18 follow-up — tighten the hard duration gate from a loose flat
+        # ±40/±60 min to ±25% of the target (floor 15 min for short slots).
+        # The flat gate let an 82-min slot admit a 120-min file and a 120-min
+        # slot a 175-min file; the score-weighted top-50 random pick then still
+        # surfaced those far files. A relative gate BOUNDS the worst-case
+        # mismatch to ~25% of the slot regardless of the random draw, while
+        # leaving ample candidates for common type+duration combos (the
+        # coverage fallback below handles any genuinely sparse band).
+        max_diff = max(15.0, target_dur * 0.25)
         if dur_diff > max_diff:
             continue
 
@@ -2630,7 +2638,15 @@ def match_zwo(
         else:
             continue  # skip non-matching categories
 
-        score -= dur_diff / 10  # prefer closer duration
+        # v1.8.18 follow-up — duration proximity penalty. The old absolute
+        # ``dur_diff / 10`` was too gentle vs the +5 category bonus: a 37-min
+        # gap cost only 3.7, so a wrong-duration primary-category file beat a
+        # closer fallback (e.g. an 82-min slot resolving to a 120-min file).
+        # Use a RELATIVE penalty (gap as a fraction of target) so it scales
+        # with slot length and reliably outweighs the category bonus once the
+        # gap is large. K=14: a 20% gap ≈ 2.8, a 45% gap ≈ 6.3 (> the +5
+        # primary bonus → a closer fallback wins). 5% gap ≈ 0.7 (negligible).
+        score -= (dur_diff / max(target_dur, 30.0)) * 14.0
         if w.get("Z3%", 0) > 40:
             score -= 3  # penalize heavy grey zone
 

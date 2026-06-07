@@ -405,38 +405,46 @@ class TestFixPlannerV411ClassifierPrefixes(unittest.TestCase):
 
 
 class TestFixPlannerV411SessionStaleDetection(unittest.TestCase):
-    """v4.1.1 FIX-PLANNER A: existing plans saved before the classifier fix
-    have session_type/zwo_file mismatches. _session_is_stale flags them so
-    the boot-time migration can re-match using the fixed classifier.
+    """v1.8.18 — staleness is now RESOLVES-ON-DISK, not session_type↔prefix.
+    The old prefix heuristic re-flagged match_zwo's legitimate fallback
+    resolutions (sweetspot→over_under, sprint→neuromuscular) forever → churn.
+    Existence is the only sound signal: a zwo_file is stale iff it has a path
+    separator (external scrape slug) OR its basename is not in the local
+    library. ``library_files`` must be supplied for the existence check.
     """
 
-    def test_tempo_session_with_vo2_zwo_is_stale(self):
+    def test_subdir_scrape_slug_is_stale(self):
         from training_planner import _session_is_stale
-        self.assertTrue(_session_is_stale("tempo", "vo2_3x5min_90min.zwo"))
+        lib = {"tempo_steady_57min.zwo"}
+        self.assertTrue(_session_is_stale("z2", "ftp-builder/week-6-day-3.zwo", lib))
 
-    def test_sweetspot_session_with_sprints_zwo_is_stale(self):
+    def test_basename_not_in_library_is_stale(self):
         from training_planner import _session_is_stale
-        self.assertTrue(_session_is_stale("sweetspot", "sprints_5x2min_53min.zwo"))
+        lib = {"tempo_steady_57min.zwo"}
+        self.assertTrue(_session_is_stale("z2", "z2_endurance_77min.zwo", lib))
 
-    def test_overunder_with_over_under_zwo_is_not_stale(self):
+    def test_resolved_file_is_not_stale_even_with_mismatched_prefix(self):
+        # match_zwo legitimately resolves sweetspot → over_under_* via fallback;
+        # if the file EXISTS it must NOT be flagged (idempotency).
         from training_planner import _session_is_stale
+        lib = {"over_under_2x1min_90min.zwo"}
         self.assertFalse(
-            _session_is_stale("overunder", "over_under_2x1min_90min.zwo")
+            _session_is_stale("sweetspot", "over_under_2x1min_90min.zwo", lib)
         )
 
-    def test_vo2max_session_with_vo2_zwo_is_not_stale(self):
-        # vo2_ is the short-form for vo2max — must be accepted.
+    def test_no_library_means_not_stale(self):
+        # Without the library set we can't check existence → don't touch.
         from training_planner import _session_is_stale
-        self.assertFalse(_session_is_stale("vo2max", "vo2_2x10min_60min.zwo"))
+        self.assertFalse(_session_is_stale("tempo", "vo2_3x5min_90min.zwo"))
 
     def test_rest_session_is_never_stale(self):
         from training_planner import _session_is_stale
-        self.assertFalse(_session_is_stale("rest", ""))
-        self.assertFalse(_session_is_stale("rest", "anything.zwo"))
+        self.assertFalse(_session_is_stale("rest", "", {"x.zwo"}))
+        self.assertFalse(_session_is_stale("rest", "anything.zwo", {"x.zwo"}))
 
     def test_session_without_zwo_is_never_stale(self):
         from training_planner import _session_is_stale
-        self.assertFalse(_session_is_stale("tempo", ""))
+        self.assertFalse(_session_is_stale("tempo", "", {"x.zwo"}))
 
 
 class TestFixPlannerV411BasePhaseSessionTypes(unittest.TestCase):

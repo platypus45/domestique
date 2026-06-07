@@ -345,16 +345,29 @@ _SESSION_TYPE_PREFIXES = {
 }
 
 
-def _session_is_stale(session_type: str, zwo_file: str) -> bool:
-    """Return True if this (session_type, zwo_file) pair is a classifier-era
-    mismatch that should be re-matched. rest / empty sessions are never stale.
+def _session_is_stale(session_type: str, zwo_file: str,
+                      library_files: "set[str] | None" = None) -> bool:
+    """Return True if this session's ``zwo_file`` must be re-matched.
+
+    v1.8.18 (grill B2) — the staleness test is now **resolves-on-disk**, NOT
+    the old session_type↔prefix heuristic. The prefix test was unreliable:
+    ``match_zwo`` legitimately resolves a sweetspot session to an
+    ``over_under_*`` file via its fallback categories, which FAILS a prefix
+    check and re-heals forever (infinite churn). Existence is the only sound
+    signal. A session is stale iff its ``zwo_file`` is non-empty / non-rest AND
+    either contains a path separator (an external scrape slug like
+    ``ftp-builder/week-6-day-3.zwo``) OR its basename is not in the local flat
+    library. When ``library_files`` is None we can't check existence → treat as
+    not-stale (don't touch).
     """
     if not zwo_file or session_type == "rest":
         return False
-    allowed = _SESSION_TYPE_PREFIXES.get(session_type)
-    if not allowed:
-        return False  # unknown session_type — don't touch
-    return not any(zwo_file.startswith(p) for p in allowed)
+    if library_files is None:
+        return False
+    if "/" in zwo_file or "\\" in zwo_file:
+        return True  # external subdir slug — never a local flat file
+    import os as _os
+    return _os.path.basename(zwo_file) not in library_files
 
 
 def rewrite_stale_plan_classifications(plan_path: "Path | str") -> int:
@@ -377,30 +390,59 @@ def rewrite_stale_plan_classifications(plan_path: "Path | str") -> int:
         library = load_workout_library()
         if not library:
             return 0
+        # v1.8.18 (grill B2) — set of real local library basenames for the
+        # resolves-on-disk staleness test.
+        library_files = {row.get("File") for row in library if row.get("File")}
+        # v1.8.18 (grill B1) — the seed anchor MUST be the plan's stable birth
+        # date so match_zwo is deterministic across launches. The live plan key
+        # is ``generated`` (the old code read ``generated_at`` → always fell to
+        # date.today() → the seed drifted daily → every re-matched session
+        # re-rolled to a different file on each launch). Read both keys.
         plan_start = None
-        try:
-            plan_start = date.fromisoformat(plan.get("generated_at", "")[:10])
-        except Exception:
+        for k in ("generated", "generated_at"):
+            v = plan.get(k)
+            if v:
+                try:
+                    plan_start = date.fromisoformat(str(v)[:10])
+                    break
+                except Exception:
+                    pass
+        if plan_start is None:
             plan_start = date.today()
+        # v1.8.18 (grill B7) — FREEZE THE PAST. Healing a session dated before
+        # today would silently rewrite the user's training history (what was
+        # planned/done on a past day). Only future sessions are re-matched.
+        today = date.today()
 
         rewritten = 0
-        # Rolling used_names window (last 6 weeks) — mirrors generate_plan's
-        # sliding-window dedupe so re-matches don't collide on a workout we
-        # already placed elsewhere in the plan.
+        # Rolling used_names window — mirrors generate_plan's sliding-window
+        # dedupe so re-matches don't collide on a workout already placed.
         used_names: set[str] = set()
+        wrote_backup = False
         for w_json in weeks:
             week_num = w_json.get("week_num", 1)
             for idx, s_json in enumerate(w_json.get("sessions", [])):
                 st = s_json.get("session_type") or ""
                 zwo = s_json.get("zwo_file") or ""
-                if not _session_is_stale(st, zwo):
+                # Seed dedupe from every session (incl. frozen past + already-
+                # valid) so future heals don't reuse an existing file's name.
+                if not _session_is_stale(st, zwo, library_files):
                     if s_json.get("zwo_name"):
                         used_names.add(s_json["zwo_name"])
                     continue
-                # Build a PlannedSession and re-match.
+                # Freeze the past: never mutate a session before today.
+                day_str = s_json.get("day") or ""
+                try:
+                    if day_str and date.fromisoformat(day_str[:10]) < today:
+                        if s_json.get("zwo_name"):
+                            used_names.add(s_json["zwo_name"])
+                        continue
+                except Exception:
+                    pass  # unparseable day → treat as future, allow heal
+                # Re-match this future, unresolvable session.
                 try:
                     ps = PlannedSession(
-                        day=date.fromisoformat(s_json.get("day", plan_start.isoformat())),
+                        day=date.fromisoformat(day_str[:10]) if day_str else plan_start,
                         day_name=s_json.get("day_name", ""),
                         session_type=st,
                         duration_min=int(s_json.get("duration_min") or 0),
@@ -414,14 +456,31 @@ def rewrite_stale_plan_classifications(plan_path: "Path | str") -> int:
                         plan_start_date=plan_start,
                     )
                     new_zwo = getattr(ps, "zwo_file", "") or ""
-                    if new_zwo and new_zwo != zwo:
+                    # One-time pre-migration snapshot before the FIRST mutation,
+                    # named so it survives the 7-deep .bak rotation (grill B5).
+                    if not wrote_backup:
+                        snap = p.with_suffix(p.suffix + ".premigration-v1818")
+                        if not snap.exists():
+                            try:
+                                import shutil as _sh
+                                _sh.copy2(p, snap)
+                            except Exception:
+                                log.debug("premigration snapshot failed", exc_info=True)
+                        wrote_backup = True
+                    if new_zwo and new_zwo in library_files and new_zwo != zwo:
                         s_json["zwo_file"] = new_zwo
                         s_json["zwo_name"] = getattr(ps, "zwo_name", "") or s_json.get("zwo_name", "")
                         if getattr(ps, "description", None):
                             s_json["description"] = ps.description
                         rewritten += 1
+                    elif not new_zwo:
+                        # No candidate found → clear the ghost to an honest empty
+                        # (a synthesised session) so it stops 404-ing + is no
+                        # longer stale (idempotent).
+                        if zwo:
+                            s_json["zwo_file"] = ""
+                            rewritten += 1
                 except Exception:
-                    # Per-session failures must not abort the whole pass.
                     log.debug("rewrite_stale: session skip", exc_info=True)
                 if s_json.get("zwo_name"):
                     used_names.add(s_json["zwo_name"])

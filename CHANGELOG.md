@@ -1,5 +1,43 @@
 # Changelog
 
+## v1.8.18 — plan zwo_file reference integrity (heal 77 ghost references; freeze training history) (2026-06-07)
+
+The active plan stored `zwo_file` values that don't exist in the local
+`workouts/` library — **124 of 147 sessions** (120 external Zwift/TR scrape
+slugs like `ftp-builder/week-6-day-3.zwo` + 4 flat-missing). Those sessions
+404'd on read and fell back to a synthetic generic chart — the root cause of
+the "60min slot → 25min chart" + the synthetic ZWO/FIT divergence.
+
+Investigated with two Wave-0 agents, planned, and **adversarially grilled
+before any write** (this rewrites a real training plan). The grill caught three
+data-corruption blockers the first design would have shipped:
+
+1. **Freeze the past.** 47 of the bad sessions are *past-dated* — healing them
+   would silently rewrite training *history*. The migration now skips any
+   session before today; only the 77 future sessions are re-resolved.
+2. **Deterministic anchor.** The healer read `plan["generated_at"]` but the key
+   is `generated`, so the `match_zwo` seed fell back to `date.today()` and
+   drifted daily → a re-matched session re-rolled to a different file on every
+   launch. Now reads the plan's stable `generated` date → no churn.
+3. **Resolves-on-disk staleness.** The old test was session_type↔filename
+   *prefix*, which re-flagged `match_zwo`'s legitimate fallback matches
+   (sweetspot→over_under) forever (infinite re-heal). Replaced with a pure
+   existence check: stale iff the path has a separator OR the basename isn't in
+   the library.
+
+The heal is idempotent (verified: pass 2 rewrites 0), writes a one-time
+`.premigration-v1818` snapshot before the first mutation, and clears any
+truly-unmatchable ghost to an honest empty (synthesised) rather than a 404.
+
+On the live plan: 77 future ghosts → real local files, 47 past frozen
+byte-identical, second pass a no-op. New `test_v1818_plan_zwo_integrity.py`
+(4 tests) + updated staleness tests; planner suites green.
+
+Note (separate follow-up): match_zwo's duration *tightness* (an 82min slot can
+still resolve to a 45min file within its ±40min gate) and the reforecast
+*undershoot* gap (missed/easier weeks don't auto-rebalance future days) are
+known and tracked separately — not in this release.
+
 ## v1.8.17 — FIT ramps no longer flatten (ZWO≡FIT), workout-duration honesty, single What's-new arrow (2026-06-07)
 
 ### ZWO and FIT are now the same workout (ramp fix)

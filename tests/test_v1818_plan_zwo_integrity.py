@@ -108,5 +108,35 @@ class TestPlanZwoIntegrity(unittest.TestCase):
         self.assertEqual(n, 0)
 
 
+class TestGenerationNeverEmitsGhost(unittest.TestCase):
+    """v1.8.18 invariant — the live matcher MUST only ever assign a zwo_file
+    that resolves to a real flat library file (or empty). The ghosts in the
+    field came from a pre-v4.x planner that copied scrape slugs; the current
+    match_zwo can only emit ``row["File"]`` (a basename) or "". This pins that
+    so a future change can't silently reintroduce subdir/ghost references."""
+
+    def test_match_zwo_only_emits_library_basename_or_empty(self):
+        from datetime import date
+        lib = tp.load_workout_library()
+        if not lib:
+            self.skipTest("no library")
+        libset = {r["File"] for r in lib if r.get("File")}
+        ghosts = []
+        types = ["z2", "long_z2", "recovery", "sweetspot", "threshold",
+                 "vo2max", "overunder", "tempo", "sprint"]
+        for st in types:
+            for dur in (30, 45, 60, 75, 90, 120, 150):
+                ps = tp.PlannedSession(day=date.today(), day_name="X",
+                                       session_type=st, duration_min=dur,
+                                       tss_estimate=dur, description="")
+                tp.match_zwo(ps, lib, week_num=1, day_idx=0,
+                             used_names=set(), plan_start_date=date(2026, 5, 1))
+                zf = getattr(ps, "zwo_file", "") or ""
+                if zf and ("/" in zf or "\\" in zf or zf not in libset):
+                    ghosts.append((st, dur, zf))
+        self.assertEqual(ghosts, [],
+                         f"match_zwo emitted unresolvable zwo_file(s): {ghosts}")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -4145,6 +4145,10 @@ def api_workouts(
             "content_class": content_class_val,
             "secondary_flags": secondary_flags,
             "confidence": content_confidence,
+            # v1.8.20 — canonical human title from the content classification.
+            # The library/picker UIs render this instead of the ZWO <name> tag,
+            # which disagrees with the real content type for ~50% of files.
+            "display_name": content_entry.get("display_name") or "",
         }
 
         if score < min_score:
@@ -4168,8 +4172,10 @@ def api_workouts(
             if not bool(secondary_flags.get(has_flag_key)):
                 continue
         # v4.2.0: search-by-structure substring match against Name + File.
+        # v1.8.20: also match display_name so typing the VISIBLE title (which is
+        # now display_name, not the <name> tag) returns hits.
         if search_lower:
-            hay = f"{name.lower()} {zwo_path.name.lower()}"
+            hay = f"{name.lower()} {zwo_path.name.lower()} {(content_entry.get('display_name') or '').lower()}"
             if search_lower not in hay:
                 continue
         workouts.append(row)
@@ -4290,8 +4296,16 @@ def api_workout_detail(category: str, filename: str):
             })
             cursor += dur
 
+    # v1.8.20 — canonical title for the library detail modal.
+    try:
+        _cc = tp._load_content_classifications() or {}
+        _display_name = (_cc.get(path.name) or {}).get("display_name") or ""
+    except Exception:
+        _display_name = ""
+
     return {
         "name": name, "description": desc,
+        "display_name": _display_name,
         "total_seconds": cursor,
         "segments": segments,
         "ftp": ftp,
@@ -8881,20 +8895,14 @@ async def api_plan_regenerate_dynamic(request: Request):
         if goal.longest_ride_h_90d is None:
             goal.longest_ride_h_90d = _longest_ride_h_90d()
 
-        # Reconstruct PlannedWeek list
+        # Reconstruct PlannedWeek list.
+        # v1.8.20 — round-trip ALL session fields (user_moved/status/dismissed_at/
+        # completion_matches/…) so regenerate_from_today's preservation logic sees
+        # the rider's edits and carries them; the old 8-field reconstruction
+        # zeroed them, so every edit was silently wiped.
         old_weeks = []
         for w in plan.get("weeks", []):
-            sessions = []
-            for s in w.get("sessions", []):
-                sessions.append(tp.PlannedSession(
-                    day=date.fromisoformat(s["day"]), day_name=s.get("day_name", ""),
-                    session_type=s.get("session_type", "rest"),
-                    duration_min=s.get("duration_min", 0),
-                    tss_estimate=s.get("tss_estimate", 0),
-                    description=s.get("description", ""),
-                    zwo_file=s.get("zwo_file", ""),
-                    zwo_name=s.get("zwo_name", ""),
-                ))
+            sessions = [_planned_session_from_json(s) for s in w.get("sessions", [])]
             old_weeks.append(tp.PlannedWeek(
                 week_num=w["week_num"], start=date.fromisoformat(w["start"]),
                 end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
@@ -8915,46 +8923,38 @@ async def api_plan_regenerate_dynamic(request: Request):
             seed_salt=seed_salt,
         )
 
-        # Build updated plan JSON
-        plan_dict = {
-            "goal": plan.get("goal", {}),
-            "phases": [
-                {
-                    "name": p.name, "weeks": p.weeks,
-                    "start": p.start.isoformat(), "end": p.end.isoformat(),
-                    "weekly_tss": p.weekly_tss_target, "focus": p.focus,
-                }
-                for p in new_phases
-            ],
-            "weeks": [
-                {
-                    "week_num": w.week_num,
-                    "start": w.start.isoformat(), "end": w.end.isoformat(),
-                    "phase": w.phase, "tss_target": w.tss_target,
-                    "is_stepback": w.is_stepback,
-                    "sessions": [
-                        {
-                            "day": s.day.isoformat(), "day_name": s.day_name,
-                            "session_type": s.session_type, "duration_min": s.duration_min,
-                            "tss_estimate": s.tss_estimate, "description": s.description,
-                            "zwo_file": getattr(s, "zwo_file", ""),
-                            "zwo_name": getattr(s, "zwo_name", ""),
-                        }
-                        for s in w.sessions
-                    ],
-                }
-                for w in all_weeks
-            ],
-            "unavailable_periods": unavailable,
-            "regenerated": datetime.now().isoformat(),
-            "regen_info": regen_info,
-            "generated": plan.get("generated", datetime.now().isoformat()),
-            # v4.3.0 B3: persist the per-regen entropy salt so external readers
-            # (UI, tests) can detect that a fresh regen happened. Two back-to-back
-            # POSTs MUST produce different last_regen_at values (time.time_ns is
-            # monotonic on every modern OS).
-            "last_regen_at": seed_salt,
-        }
+        # Build updated plan JSON.
+        # v1.8.20 — START from a shallow copy of the ORIGINAL plan so every
+        # top-level key survives (availability calendar, reforecast_date,
+        # last_reforecast_info, goal, …); the old fixed-key-set rebuild dropped
+        # availability + reforecast_date on every regen. Overlay ONLY the
+        # regenerated phases/weeks + regen markers (rebinding the list refs, not
+        # mutating the originals). Sessions serialize via the canonical helper
+        # (all 22 fields) so preserved edits round-trip intact.
+        plan_dict = dict(plan)
+        plan_dict["phases"] = [
+            {
+                "name": p.name, "weeks": p.weeks,
+                "start": p.start.isoformat(), "end": p.end.isoformat(),
+                "weekly_tss": p.weekly_tss_target, "focus": p.focus,
+            }
+            for p in new_phases
+        ]
+        plan_dict["weeks"] = [
+            {
+                "week_num": w.week_num,
+                "start": w.start.isoformat(), "end": w.end.isoformat(),
+                "phase": w.phase, "tss_target": w.tss_target,
+                "is_stepback": w.is_stepback,
+                "sessions": [_planned_session_to_json(s) for s in w.sessions],
+            }
+            for w in all_weeks
+        ]
+        plan_dict["regenerated"] = datetime.now().isoformat()
+        plan_dict["regen_info"] = regen_info
+        # v4.3.0 B3: persist the per-regen entropy salt so external readers
+        # (UI, tests) can detect that a fresh regen happened.
+        plan_dict["last_regen_at"] = seed_salt
 
         tp.atomic_write_plan(json_path, plan_dict)
 
@@ -9260,12 +9260,63 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int) -> bytes:
 # ROLLING PLAN AUTO-RECALCULATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# v1.8.20 — canonical PlannedSession ↔ JSON round-trip (single source of truth).
+# Pre-v1.8.20 several writers (notably /api/plan/regenerate) hand-listed ~8 of
+# the dataclass's 22 fields, silently DROPPING user_moved / status / moved_from /
+# completion_matches / dismissed_at / adapted / am_or_pm on every rebuild — so an
+# auto-regen wiped the rider's dragged + dismissed sessions. These helpers derive
+# the field list from ``dataclasses.fields`` so no field can ever silently
+# regress, and pass through the two JSON-only keys the dataclass doesn't carry
+# (``variation`` + ``adapted_reason``, written by accept-redraw — variation drives
+# redraw-seed reproducibility).
+import dataclasses as _dataclasses
+
+_PS_JSON_ONLY_KEYS = ("variation", "adapted_reason")
+
+
+def _planned_session_from_json(s: dict) -> "tp.PlannedSession":
+    """Reconstruct a PlannedSession from stored JSON, preserving ALL fields."""
+    kwargs = {}
+    for f in _dataclasses.fields(tp.PlannedSession):
+        if f.name == "day":
+            kwargs["day"] = date.fromisoformat(s["day"])
+            continue
+        if f.name in s:
+            kwargs[f.name] = s[f.name]
+    ps = tp.PlannedSession(**kwargs)
+    # Carry JSON-only keys (not dataclass fields) as dynamic attrs so they
+    # survive the round-trip on preserved sessions.
+    for k in _PS_JSON_ONLY_KEYS:
+        if k in s:
+            try:
+                setattr(ps, k, s[k])
+            except Exception:
+                pass
+    return ps
+
+
+def _planned_session_to_json(s: "tp.PlannedSession") -> dict:
+    """Serialize a PlannedSession to JSON, emitting ALL fields."""
+    out = {}
+    for f in _dataclasses.fields(tp.PlannedSession):
+        v = getattr(s, f.name, f.default)
+        if f.name == "day":
+            out["day"] = v.isoformat() if hasattr(v, "isoformat") else v
+        else:
+            out[f.name] = v
+    for k in _PS_JSON_ONLY_KEYS:
+        if hasattr(s, k):
+            out[k] = getattr(s, k)
+    return out
+
+
 def _load_current_week_dto(plan: dict, today: date):
     """Build a PlannedWeek DTO from plan JSON for the week containing `today`.
 
     Returns (planned_week, idx) or (None, -1) if no current week found.
     §6.12 hazard: the DTO MUST round-trip status/user_moved/moved_from/
     completion_matches/dismissed_at — otherwise regen/projection discards them.
+    v1.8.20: routes through ``_planned_session_from_json`` (all 22 fields).
     """
     weeks_data = plan.get("weeks", [])
     for i, w in enumerate(weeks_data):
@@ -9275,21 +9326,7 @@ def _load_current_week_dto(plan: dict, today: date):
         except (KeyError, ValueError):
             continue
         if w_start <= today <= w_end:
-            sessions = [
-                tp.PlannedSession(
-                    day=date.fromisoformat(s["day"]), day_name=s["day_name"],
-                    session_type=s["session_type"], duration_min=s["duration_min"],
-                    tss_estimate=s["tss_estimate"], description=s.get("description", ""),
-                    zwo_file=s.get("zwo_file", ""),
-                    zwo_name=s.get("zwo_name", ""),
-                    status=s.get("status", "pending"),
-                    user_moved=s.get("user_moved", False),
-                    moved_from=s.get("moved_from", ""),
-                    completion_matches=s.get("completion_matches") or None,
-                    dismissed_at=s.get("dismissed_at", ""),
-                )
-                for s in w.get("sessions", [])
-            ]
+            sessions = [_planned_session_from_json(s) for s in w.get("sessions", [])]
             pw = tp.PlannedWeek(
                 week_num=w["week_num"], start=w_start, end=w_end,
                 phase=w["phase"], tss_target=w["tss_target"],

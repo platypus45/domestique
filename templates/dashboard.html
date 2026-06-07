@@ -3446,7 +3446,7 @@ async function openWorkoutDetail(category, filename, meta) {
     const zoneHtml = meta ? `<div style="margin:12px 0;">${zoneBar(meta.z1||0,meta.z2||0,meta.z3||0,meta.z4||0,meta.z5||0,meta.z6||0)}</div>` : '';
 
     $('modal-content').innerHTML = `
-      <h2>${esc(d.name)}</h2>
+      <h2>${esc(d.display_name || d.name)}</h2>
       ${metaHtml}
       ${chart}
       ${zoneHtml}
@@ -6480,7 +6480,7 @@ async function runPicker() {
       h += `<div class="card" style="cursor:pointer;" data-zones='${zj}' data-duration="${w['Duration(min)']||0}"
         onclick="openWorkoutDetail('${escJs(w.Category)}','${escJs(w.File)}',window._pickerMeta[${idx}])">
         <div style="display:flex;justify-content:space-between;align-items:start;">
-        <div><div style="font-weight:600;">${esc(w.Name)}</div>
+        <div><div style="font-weight:600;">${esc(w.display_name || w.Name)}</div>
           <div style="font-size:12px;color:var(--text2);">${esc(w.Category)} &bull; ${w['Duration(min)']}min &bull; TSS ${w.TSS}</div>
           <div style="font-size:12px;color:var(--text2);margin-top:4px;">${esc(w.Protocol||'')}</div></div>
         ${scoreBadge(w.Score)}</div>
@@ -7629,7 +7629,7 @@ function renderLibrary(data) {
     const hoverTitle = _libHoverTitle(w);
     return `<tr style="${rowStyle}" title="${esc(hoverTitle)}" data-zones='${zj}' data-duration="${w['Duration(min)']||0}"
      onclick="openWorkoutDetail('${escJs(w.Category)}','${escJs(w.File)}',window._workoutMeta[${idx}])">
-     <td>${scoreBadge(w.Score)}</td><td style="font-weight:500;">${esc(w.Name)}${grvBadge}${ftpBadge}</td>
+     <td>${scoreBadge(w.Score)}</td><td style="font-weight:500;">${esc(w.display_name || w.Name)}${grvBadge}${ftpBadge}</td>
      <td style="color:var(--text2);font-size:12px;">${esc(w.Category)}</td>
      <td>${w['Duration(min)']}min</td><td>${w.TSS}</td>
      <td><div class="wk-lib-svg" data-cat="${esc(w.Category)}" data-file="${esc(w.File)}" style="width:140px;height:28px;background:var(--surface2);border-radius:3px;"></div></td>

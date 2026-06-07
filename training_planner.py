@@ -6242,9 +6242,17 @@ def regenerate_from_today(
     #   - past-week statuses     — done/missed etc
     #   - status != "pending"    — anything already classified stays
     # Only un-executed + future pending sessions are re-prescribed.
+    # v1.8.20 (grill B2) — gather preserved sessions from the CURRENT *and all
+    # FUTURE* weeks, not just the current week. Future weeks are rebuilt from
+    # scratch below, so a session the user DISMISSED on a future calendar cell
+    # (reachable: dismiss-session iterates all weeks, redraw allows future) was
+    # silently re-prescribed on every regen. Past weeks are kept verbatim
+    # separately, so we only need current + future here. The swap + skip-guards
+    # downstream already key on ``s.day`` and honour the same predicate, so
+    # populating this dict for future dates is sufficient.
     adapted_current_week: dict[date, PlannedSession] = {}
     for w in old_plan_weeks:
-        if w.start <= today <= w.end:
+        if w.end >= today:  # current + future weeks
             for s in w.sessions:
                 preserve = (
                     getattr(s, "adapted", False)
@@ -6255,7 +6263,6 @@ def regenerate_from_today(
                 )
                 if preserve:
                     adapted_current_week[s.day] = s
-            break
 
     # 2. Detect absence
     gaps = detect_plan_gaps(old_plan_weeks, activities or [], current_ctl)

@@ -1,5 +1,50 @@
 # Changelog
 
+## v1.8.20 — stop auto-regen wiping your edits + availability; library shows canonical names (2026-06-07)
+
+Two fixes, both planned and **adversarially grilled** (the grills caught a
+missed dataclass field, a future-week edge, and a search-vs-display mismatch
+before any code shipped).
+
+### A — `/api/plan/regenerate` no longer destroys user edits or the availability calendar (HIGH severity)
+
+This endpoint **auto-fires** (no click) when you fall ≥2 weeks behind and open
+the Plan tab. It was silently wiping data on every fire because it round-tripped
+only 8 of `PlannedSession`'s 22 fields and rebuilt the plan from a fixed key set
+— dropping `user_moved` / `status` / `moved_from` / `completion_matches` /
+`dismissed_at` / `adapted` / `am_or_pm`, AND the top-level **availability
+calendar** + `reforecast_date` + `last_reforecast_info`.
+
+Fixes:
+- New canonical `_planned_session_from_json` / `_planned_session_to_json` helpers
+  that derive the field list from `dataclasses.fields(PlannedSession)` (so no
+  field can ever silently regress) and pass through the two JSON-only keys
+  (`variation`, `adapted_reason`). `_load_current_week_dto` now routes through
+  them too — single source of truth.
+- The regenerate endpoint reconstructs + serializes via the helpers, and builds
+  the new plan by **copying the original** and overlaying only the regenerated
+  weeks/phases — so availability + every other top-level key survive.
+- `regenerate_from_today` now gathers preserved (dismissed / user-moved /
+  completed) sessions from the **current and all future weeks**, not just the
+  current week — a future-dated dismissal was being re-prescribed on every
+  regen. (A genuine ≥2-week absence still rebuilds the future via the recovery
+  ramp — that legitimately supersedes future edits; a routine regen preserves
+  them.)
+
+### B — Library + Workout-Shuffle titles show the canonical name, not the legacy ZWO `<name>` tag
+
+Every library/picker/detail title rendered the ZWO `<name>` tag, which disagrees
+with the content-classified `display_name` for **100% of 3054 files** — and
+names the WRONG protocol for ~50% (a file the planner calls "Over-Unders 63min"
+showed "Anaerobic 10s/10s 12x" in the library). `/api/workouts` and
+`/api/workout/<cat>/<file>` now emit `display_name`; the three title surfaces
+render `display_name` with a `|| Name` fallback; server-side search also matches
+`display_name` so typing the visible title returns hits. Power-profile charts +
+durations were already consistent (v1.8.17).
+
+New `test_v1820_regen_preserves.py` (endpoint top-level-key survival + a
+function-level gather-broadening proof). Plan/calendar/regen suites green.
+
 ## v1.8.19 — workout match honours the planned duration much more tightly (2026-06-07)
 
 Follow-up to v1.8.18. The plan matcher (`match_zwo`) used a loose flat duration

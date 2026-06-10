@@ -188,7 +188,14 @@ echo "[7/9] Creating DMG with custom Finder layout..."
 hdiutil create -volname "$DMG_NAME" -srcfolder "$STAGING" -ov -format UDRW "$RW_DMG" > /dev/null
 hdiutil attach "$RW_DMG" -readwrite -noverify > /dev/null 2>&1
 
-osascript <<EOF
+# v1.8.23 — the Finder icon-layout is COSMETIC (icon positions + window size).
+# It needs Automation (Apple-events→Finder) TCC permission, which a DETACHED /
+# background build process does not have → fails with "-1743 Not authorised to
+# send Apple events to Finder" and, when run with `set -e`, aborts the whole
+# build at [7/9] after the .app is already signed + stapled. Make it NON-FATAL:
+# if the layout can't be applied, the DMG still ships (just with default icon
+# arrangement). The functional content + notarization are unaffected.
+osascript <<EOF 2>/dev/null || echo "  ⚠ Finder layout skipped (no Automation permission — cosmetic only)"
 tell application "Finder"
     tell disk "${DMG_NAME}"
         open

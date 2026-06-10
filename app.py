@@ -8312,17 +8312,20 @@ async def api_plan_generate(request: Request):
         # /api/plan/reforecast pattern.
         json_path = _plan_dir() / "current_plan.json"
         availability_overrides: dict[str, float] = {}
+        old_availability_full: dict = {}  # v1.8.21 — keep type info for block-preserve
         if json_path.exists():
             try:
                 with open(json_path, encoding="utf-8") as f:
                     _existing_plan = json.load(f)
+                old_availability_full = _existing_plan.get("availability", {}) or {}
                 availability_overrides = {
                     day_iso: float(entry["hours"])
-                    for day_iso, entry in _existing_plan.get("availability", {}).items()
+                    for day_iso, entry in old_availability_full.items()
                     if isinstance(entry, dict) and "hours" in entry
                 }
             except (json.JSONDecodeError, OSError, KeyError, ValueError, TypeError):
                 availability_overrides = {}
+                old_availability_full = {}
 
         phases, weeks = tp.generate_plan(
             goal, seed_salt=seed_salt,
@@ -8393,16 +8396,43 @@ async def api_plan_generate(request: Request):
             "generated": datetime.now().isoformat(),
         }
 
-        # v1.3.2 — preserve persisted availability calendar across regeneration
-        # so the user's per-date calendar isn't wiped on every Generate Plan.
-        if availability_overrides or json_path.exists():
-            try:
-                with open(json_path, encoding="utf-8") as f:
-                    _prev = json.load(f)
-                if _prev.get("availability"):
-                    plan_dict["availability"] = _prev["availability"]
-            except (json.JSONDecodeError, OSError):
-                pass
+        # v1.8.21 — rebuild the per-day availability calendar from the NEWLY
+        # chosen weekly hours so it reflects them across the whole plan span.
+        # Pre-fix /api/plan/generate carried the OLD plan["availability"]
+        # verbatim (v1.3.2), so after changing weekday/weekend hours the
+        # calendar still showed the old per-day values: the calendar is DENSE,
+        # so the frontend's weekly-grid default-fill (loadAvailData, only fills
+        # days NOT already present) was skipped for every already-stored day →
+        # stale hours always won. Now: every day in the plan span is set to the
+        # new weekly default (goal.daily_max_hours per weekday, else
+        # max_weekday/weekend, rest_days → 0), EXCEPT days the user explicitly
+        # blocked (holiday / injury / illness / unavailable), which are kept.
+        _EXPLICIT_BLOCK = {"holiday", "injury", "illness", "unavailable"}
+        _daily = goal.daily_max_hours or {}
+
+        def _default_hours_for_weekday(wd: int) -> float:
+            if wd in (goal.rest_days or []):
+                return 0.0
+            if wd in _daily:
+                return float(_daily[wd])
+            return float(goal.max_weekend_hours if wd >= 5 else goal.max_weekday_hours)
+
+        if weeks:
+            _new_avail: dict = {}
+            _d = weeks[0].start
+            _end = weeks[-1].end
+            _one = timedelta(days=1)
+            while _d <= _end:
+                _key = _d.isoformat()
+                _old = old_availability_full.get(_key)
+                if isinstance(_old, dict) and _old.get("type") in _EXPLICIT_BLOCK:
+                    _new_avail[_key] = _old  # preserve explicit holiday/injury/illness
+                else:
+                    _h = _default_hours_for_weekday(_d.weekday())
+                    _new_avail[_key] = {"hours": _h,
+                                        "type": "available" if _h > 0 else "rest"}
+                _d += _one
+            plan_dict["availability"] = _new_avail
 
         tp.atomic_write_plan(json_path, plan_dict)
 

@@ -3857,6 +3857,20 @@ def sample_week_workouts(
             pick = feasible[pick_idx]
 
         sess = _make_session_from_row(pick, d, day_name, phase.name)
+        # v1.8.21 — HARD-clamp the session to the day's AVAILABLE minutes. The
+        # feasibility window above admits files up to ``max_min + 25`` purely
+        # for candidate-pool breadth, and ``_make_session_from_row`` copies the
+        # file's full duration — so a 90-min slot could surface a 99–115-min
+        # session, violating the rider's stated availability (the reported
+        # "90-min cap → 2.5h session" bug; the 2.5h case is a weekend slot
+        # whose own cap is max_weekend). The PLANNED duration must never exceed
+        # the day's cap; TSS scales down proportionally. The matched ZWO may be
+        # slightly longer and is paced/truncated on the trainer (the modal's
+        # existing showGap banner explains the difference).
+        if max_min > 0 and sess.duration_min > max_min:
+            _scale = max_min / float(sess.duration_min)
+            sess.tss_estimate = round(sess.tss_estimate * _scale)
+            sess.duration_min = max_min
         # v4.5.0 IMPL-PLANNER: pin endurance-slot session_type so a sampled
         # `sweetspot_long_*.zwo` (mixed-content with high Z2) doesn't carry
         # session_type='sweetspot' into a slot the sampler treated as
@@ -4523,6 +4537,33 @@ def generate_plan(
             "Check WORKOUT_DIR=%s and duration tolerances.",
             unmatched_count, WORKOUT_DIR,
         )
+
+    # v1.8.21 — AUTHORITATIVE per-day availability clamp. Session durations are
+    # set from matched ZWO files at FOUR sites (sampler + 3 utilization/
+    # re-match passes) plus match_zwo, several of which admit a file up to
+    # ~25min over the slot for pool breadth. The rider only has the day's
+    # available minutes, so the PLANNED duration must never exceed them. This
+    # single final pass caps every non-rest session to its effective cap
+    # (per-DATE availability override if the user set one, else the goal's
+    # per-weekday max), scaling TSS proportionally. Reported bug: a 90-min
+    # availability still produced 99–115min weekday sessions and 2.5h weekend
+    # sessions. The matched ZWO may be longer and is paced on the trainer
+    # (the modal's showGap banner explains the difference).
+    _avail = availability_overrides or {}
+    for w in weeks:
+        for s in w.sessions:
+            if s.session_type == "rest" or (s.duration_min or 0) <= 0:
+                continue
+            d_iso = s.day.isoformat() if hasattr(s.day, "isoformat") else str(s.day)
+            if d_iso in _avail:
+                cap_min = int(float(_avail[d_iso]) * 60)
+            else:
+                wd = s.day.weekday() if hasattr(s.day, "weekday") else 0
+                cap_min = int(goal.max_hours_for_day(wd) * 60)
+            if cap_min > 0 and s.duration_min > cap_min:
+                _scale = cap_min / float(s.duration_min)
+                s.tss_estimate = round((s.tss_estimate or 0) * _scale)
+                s.duration_min = cap_min
 
     return phases, weeks
 

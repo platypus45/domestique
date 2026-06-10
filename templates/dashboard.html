@@ -1833,7 +1833,7 @@ window.addEventListener('unhandledrejection', function(e) {
         <div style="display:flex;gap:6px;align-items:center;padding-top:2px;">
           <input type="number" id="wk-dur-min-num" min="0" max="120" value="0" step="5"
                  onchange="onLibDurationNum('min')" aria-label="Min duration (min)"
-                 style="width:48px;">
+                 style="width:64px;min-width:64px;">
           <input type="range" id="wk-dur-min" min="0" max="120" value="0" step="5"
                  onchange="onLibDurationChange()" oninput="onLibDurationSlide('min')" style="width:70px;">
           <span style="color:var(--text3);">–</span>
@@ -1841,7 +1841,7 @@ window.addEventListener('unhandledrejection', function(e) {
                  onchange="onLibDurationChange()" oninput="onLibDurationSlide('max')" style="width:70px;">
           <input type="number" id="wk-dur-max-num" min="0" max="120" value="120" step="5"
                  onchange="onLibDurationNum('max')" aria-label="Max duration (min)"
-                 style="width:48px;">
+                 style="width:64px;min-width:64px;">
         </div></div>
       <!-- v4.2.0 IMPL-LIBRARY: search-by-structure (debounced ≥300ms). -->
       <div class="form-group"><label>Search</label>

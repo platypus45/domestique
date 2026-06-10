@@ -1,5 +1,42 @@
 # Changelog
 
+## v1.8.21 — generating a plan with new hours now fills the availability calendar (2026-06-10)
+
+Generating a new plan with different weekday/weekend hours shaped the plan
+correctly but left the **availability calendar** showing the OLD per-day hours.
+
+Root cause: the availability calendar is dense (every day has an entry), and
+`/api/plan/generate` carried the previous `plan["availability"]` over verbatim
+(a v1.3.2 "don't wipe the calendar" guard). The frontend only fills weekly-grid
+defaults for days NOT already present — so with every day already present (stale),
+the new hours never reached the calendar.
+
+Fix: on generate, the per-day calendar is rebuilt from the newly chosen weekly
+hours (`daily_availability` per weekday, else max_weekday/weekend, rest days → 0)
+across the whole plan span, while **explicit user blocks (holiday / injury /
+illness / unavailable) are preserved**. So changing your hours now updates the
+whole month's calendar, and your marked holidays survive.
+
+Verified: weekday slots → new weekday hours, weekend → new weekend hours, holiday
+preserved, no stale entries remain. New regression test.
+
+### Sessions never exceed your available time (hard duration clamp)
+
+A 90-min availability still produced 99–115-min weekday sessions, and (when the
+weekend was left at the 3.5h default) 2.5h weekend sessions. The sampler's
+feasibility window admits a workout file up to ~25 min over the slot for pool
+breadth, and the file's full duration became the session duration. Added an
+authoritative final clamp in `generate_plan`: every non-rest session is capped
+to its day's effective availability (per-date calendar override if set, else the
+per-weekday max), TSS scaled proportionally. The matched ZWO may be slightly
+longer and is paced on the trainer (the modal's showGap banner explains it). To
+cap weekends too, set the weekend hours — the clamp is per-day.
+
+### Library duration filter — number fields widened
+
+The min/max number inputs in the Workout-Library duration filter were 48px and
+clipped "90" to "9". Widened to 64px with a min-width so 2–3 digit values fit.
+
 ## v1.8.20 — stop auto-regen wiping your edits + availability; library shows canonical names (2026-06-07)
 
 Two fixes, both planned and **adversarially grilled** (the grills caught a

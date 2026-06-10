@@ -59,6 +59,58 @@ def _emit_intervals(intended_label: str, reps: int, on_s: int, off_s: int,
     return _wrap(body)
 
 
+def _emit_blocks(reps: int, on_s: int, off_s: int, on_pw: float, off_pw: float,
+                 n_blocks: int, block_rec_s: int, total_min: int) -> "str | None":
+    """POLARIZED macro-block session (Rønnestad-style): warmup + N macro blocks
+    of [IntervalsT] separated by EASY (Z1/low-Z2) recovery + cooldown. The
+    between-rep recovery (off_pw) AND the between-block recovery are both EASY
+    (~50%), so the session is genuinely polarized — hard VO2 work, easy
+    everything else, NO tempo/threshold grey zone. Bookends sized to land
+    total_min round."""
+    block_work = reps * (on_s + off_s)
+    inner = n_blocks * block_work + (n_blocks - 1) * block_rec_s
+    bookend = total_min * 60 - inner
+    if not (600 <= bookend <= 1680):
+        return None
+    cd = max(300, min(900, int(round((bookend * 0.4) / 30) * 30)))
+    wu = bookend - cd
+    if not (300 <= wu <= 900):
+        return None
+    body = f'        <Warmup Duration="{wu}" PowerLow="0.50" PowerHigh="0.75" pace="0" />\n'
+    for b in range(n_blocks):
+        body += (f'        <IntervalsT Repeat="{reps}" OnDuration="{on_s}" '
+                 f'OffDuration="{off_s}" OnPower="{_fmt_pw(on_pw)}" '
+                 f'OffPower="{_fmt_pw(off_pw)}" pace="0" />\n')
+        if b < n_blocks - 1:
+            body += (f'        <SteadyState Duration="{block_rec_s}" '
+                     f'Power="{_fmt_pw(0.50)}" pace="0" />\n')  # easy between blocks
+    body += f'        <Cooldown Duration="{cd}" PowerLow="0.65" PowerHigh="0.45" pace="0" />\n'
+    return _wrap(body)
+
+
+def _polarized_candidates():
+    """Rønnestad / polarized VO2 macro-block specs. EASY (≈50%) recovery between
+    reps AND between blocks — no grey-zone filler. Accept the hard-aerobic
+    family (vo2max / vo2_short / anaerobic); reject if it lands grey-zone."""
+    HARD = {"vo2max", "vo2_short", "anaerobic"}
+    # (reps, on_s, off_s, on_pw, off_pw, n_blocks, block_rec_s)
+    specs = [
+        (13, 30, 15, 1.18, 0.50, 3, 180),   # classic Rønnestad 30/15 ×3 blocks
+        (13, 30, 15, 1.16, 0.50, 3, 180),
+        (10, 30, 15, 1.18, 0.50, 3, 180),
+        (8, 30, 30, 1.15, 0.50, 3, 240),    # 30/30 micro
+        (8, 40, 20, 1.15, 0.50, 3, 180),    # 40/20 ×3
+        (6, 40, 20, 1.18, 0.50, 4, 180),    # 40/20 ×4 blocks
+        (5, 60, 60, 1.15, 0.50, 3, 300),    # 1min on / 1min EASY ×3 (user's, polarized)
+        (4, 60, 60, 1.12, 0.50, 3, 300),    # 4×1min ×3 macro-blocks, easy recovery
+        (4, 60, 60, 1.15, 0.50, 4, 240),
+        (5, 120, 120, 1.12, 0.50, 3, 300),  # 2min on / 2min easy ×3
+        (4, 180, 180, 1.10, 0.50, 3, 300),  # 3min on / 3min easy ×3
+    ]
+    for reps, on_s, off_s, on_pw, off_pw, nb, brec in specs:
+        yield (HARD, reps, on_s, off_s, on_pw, off_pw, nb, brec)
+
+
 def _emit_steady(blocks: list[tuple[int, float]], total_min: int) -> "str | None":
     """Steady workout (endurance/tempo/recovery): warmup ramp + steady blocks +
     cooldown ramp, bookends sized to land total_min."""
@@ -179,8 +231,14 @@ def run() -> dict:
             feats = res.get("features") or {}
             dur_s = feats.get("duration_s") or 0
             total_min = round(dur_s / 60)
-            # classify-before-write gates:
-            if primary != intended:
+            # classify-before-write gates. ``intended`` may be a single class
+            # or a set of acceptable classes (polarized VO2 blocks legitimately
+            # land as vo2max OR vo2_short depending on rep length — both are the
+            # genuinely-hard polarized outcome we want; grey-zone results
+            # threshold/tempo/sweet_spot are still rejected).
+            ok = (primary in intended) if isinstance(intended, (set, tuple, frozenset)) \
+                else (primary == intended)
+            if not ok:
                 stats["rej_class"] += 1; return
             if total_min not in ROUND_TOTALS:
                 stats["rej_round"] += 1; return
@@ -218,6 +276,12 @@ def run() -> dict:
     for intended, blocks, total in _steady_candidates():
         zwo = _emit_steady(blocks, total)
         _try(intended, zwo)
+    # polarized macro-block candidates × round totals (Rønnestad VO2 + easy Z2)
+    for intended, reps, on_s, off_s, on_pw, off_pw, nb, brec in _polarized_candidates():
+        for total in ROUND_TOTALS:
+            zwo = _emit_blocks(reps, on_s, off_s, on_pw, off_pw, nb, brec, total)
+            if zwo:
+                _try(intended, zwo)
 
     return stats
 

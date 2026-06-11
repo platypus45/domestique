@@ -2506,6 +2506,7 @@ def match_zwo(
     plan_start_date: date | None = None,
     raise_on_empty: bool = False,
     seed_salt: int = 0,
+    exact_duration: bool = False,
 ) -> PlannedSession:
     """Find a ZWO workout matching this session, rotating for variety.
 
@@ -2532,6 +2533,15 @@ def match_zwo(
             each time. Defaults to 0 (deterministic mode for testing). When
             non-zero, also shuffles the top-50 score-weighted candidate pool
             so ranked-equal workouts don't always tie-break the same way.
+        exact_duration: v1.8.24 — reshuffle/rematch mode. When True the ±25%
+            hard duration gate is dropped and the scored candidate pool is
+            collapsed to the single CLOSEST-duration tier before the variety
+            pick, so the returned workout is the closest the library offers to
+            the slot (diff 0 when a same-duration file exists) — never a far
+            one. The category/type gate and Score≥3 filter still apply (we
+            widen duration only, never workout type). Default False keeps the
+            bulk-generation behaviour (±25% gate + score-weighted pick) and the
+            v4.5.0 variety/distribution contract byte-for-byte.
     """
     if session.session_type == "rest":
         return session
@@ -2615,7 +2625,11 @@ def match_zwo(
         # leaving ample candidates for common type+duration combos (the
         # coverage fallback below handles any genuinely sparse band).
         max_diff = max(15.0, target_dur * 0.25)
-        if dur_diff > max_diff:
+        # v1.8.24 — exact_duration (reshuffle) admits ALL durations here and
+        # collapses to the closest tier after scoring (see below). The ±25%
+        # hard gate is bulk-generation only; the reshuffle UI must return the
+        # closest-duration workout the library offers, never a far one.
+        if not exact_duration and dur_diff > max_diff:
             continue
 
         protocol = w.get("Protocol", "")
@@ -2664,6 +2678,21 @@ def match_zwo(
 
     candidates = list(seen_names.values())
 
+    # v1.8.24 — exact_duration (reshuffle): collapse the pool to the closest
+    # achievable duration tier BEFORE the variety pick. Without this the
+    # score-weighted random draw from the top-50 could surface a far-duration
+    # file (90-min slot → 45-min file) whenever it scored high on category +
+    # evidence. Keeping only the minimum-|Δduration| tier guarantees the pick
+    # is the closest the library offers (diff 0 when a same-duration file
+    # exists) while preserving variety AMONG equally-close files. The +0.5
+    # epsilon ties whole-minute-equal files (90.0 with 90.4) into one tier.
+    if exact_duration and candidates:
+        best_diff = min(abs(c[1]["Duration(min)"] - target_dur) for c in candidates)
+        candidates = [
+            c for c in candidates
+            if abs(c[1]["Duration(min)"] - target_dur) <= best_diff + 0.5
+        ]
+
     if not candidates:
         # v1.3.4 fix: when target_dur exceeds library coverage (e.g. a 222-min
         # vo2max slot from heavy weekend availability — library tops out at
@@ -2690,7 +2719,13 @@ def match_zwo(
             if want_test or cat == primary_cat or cat in fallback_cats:
                 coverage_pool.append(w)
         if coverage_pool:
-            coverage_pool.sort(key=lambda x: -float(x.get("Duration(min)", 0) or 0))
+            if exact_duration:
+                # v1.8.24 — reshuffle: closest-duration in-type, not longest.
+                coverage_pool.sort(
+                    key=lambda x: abs(float(x.get("Duration(min)", 0) or 0) - target_dur)
+                )
+            else:
+                coverage_pool.sort(key=lambda x: -float(x.get("Duration(min)", 0) or 0))
             picked = coverage_pool[0]
             session.zwo_file = picked.get("File", "") or ""
             session.zwo_name = picked.get("Name", "") or ""

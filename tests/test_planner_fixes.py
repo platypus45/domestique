@@ -275,19 +275,25 @@ class TestFix4AtomicWrites(unittest.TestCase):
     tmp_path.rename(json_path)`` pattern is replaced by a single helper
     call ``tp.atomic_write_plan(json_path, plan)`` that also rotates
     backups. The site count stays 12.
+
+    v1.7.0–v1.8.21 added redraw/accept-redraw/save-availability/generate
+    write paths (→15). v1.8.24 adds the consolidated ``/api/plan/update``
+    write path → 16. The invariant is "every plan write goes through the
+    helper (never inline tmp+rename)", asserted both by this exact-count
+    guard and by ``test_no_inline_tmp_rename_pattern`` below.
     """
 
     def test_all_sites_use_atomic_write_plan_helper(self):
         """Every plan-mutation endpoint must call ``tp.atomic_write_plan``
-        instead of inlining tmp+rename. Count must stay at 12."""
+        instead of inlining tmp+rename. Count must stay at 16 (v1.8.24)."""
         src = APP_PY.read_text()
         helper_calls = re.findall(
             r"tp\.atomic_write_plan\(\s*json_path\s*,\s*(plan|plan_dict)\s*\)",
             src,
         )
         self.assertEqual(
-            len(helper_calls), 12,
-            f"Expected 12 tp.atomic_write_plan() sites, found {len(helper_calls)}",
+            len(helper_calls), 16,
+            f"Expected 16 tp.atomic_write_plan() sites, found {len(helper_calls)}",
         )
 
     def test_no_inline_tmp_rename_pattern(self):

@@ -1967,7 +1967,7 @@ window.addEventListener('unhandledrejection', function(e) {
   <details class="plan-help-panel" style="margin-bottom:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;">
     <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--text);">How your plan updates</summary>
     <div style="margin-top:8px;font-size:12px;line-height:1.5;color:var(--text2);">
-      Your plan adapts in four ways. <strong>Reforecast</strong> keeps the structure but rebalances load to today's fitness, fatigue, and overshoot — use it weekly. <strong>Regenerate Plan</strong> rebuilds from scratch using today's CTL and your remaining weeks — use it after a goal change, a long break, or illness. The <strong>Availability Calendar</strong> edits which days you can train; click a day to set hours, right-click to mark unavailable. <strong>Press the pulsing UPDATE button to apply changes — the plan reflows on click.</strong> <strong>Rematch workout</strong> (in any day's detail view) re-rolls only that single workout if the suggestion doesn't fit. Don't manually edit unless something's clearly wrong — the planner already accounts for fatigue and load.
+      <strong>Update plan</strong> is the one button you need — it automatically does the right thing: rebalances load to today's fitness and fatigue, or, if you've missed enough training to fall behind, rebuilds with a safe recovery ramp (no catch-up spike). It also runs automatically after every ride sync, so your plan stays current on its own; the status line shows what changed. <strong>Rebuild from scratch</strong> is the advanced option that wipes and rebuilds the plan from today's CTL — use it after a goal or event-date change. The <strong>Availability Calendar</strong> edits which days you can train; click a day to set hours, right-click to mark unavailable, then press the pulsing UPDATE button to reflow. <strong>Rematch workout</strong> (in any day's detail view) re-rolls only that single workout at the same duration if the suggestion doesn't fit. Don't manually edit unless something's clearly wrong — the planner already accounts for fatigue and load.
     </div>
   </details>
 
@@ -1981,8 +1981,9 @@ window.addEventListener('unhandledrejection', function(e) {
 
   <!-- v1.0.3 IMPL-UI: hidden info-popovers for the four (i) icons. Class
        .info-popover toggles via .open from the delegated handler below. -->
-  <div class="info-popover" id="planpop-reforecast"><strong>Reforecast</strong> keeps your plan's structure but rebalances daily load to today's TSB (fatigue), ACWR (load ratio), and polarization compliance. Click weekly, after a hard ride, or when you've overshot. Doesn't touch phase splits or workout types.</div>
-  <div class="info-popover" id="planpop-regenerate"><strong>Regenerate Plan</strong> wipes the plan and rebuilds it from today's CTL, with phase splits derived from weeks-to-event. Use after a goal change, missed 2+ weeks, illness, or new event date. This is the nuclear option.</div>
+  <div class="info-popover" id="planpop-update"><strong>Update plan</strong> automatically picks the right adjustment: a structure-preserving <em>rebalance</em> to today's TSB (fatigue), ACWR (load ratio) and availability when you're on track, or a full <em>rebuild with a recovery ramp</em> when you've missed enough to fall behind (Gabbett-safe, never a catch-up spike). Runs automatically after each ride sync too. Won't re-roll past or completed sessions, and won't move a fixed event date.</div>
+  <div class="info-popover" id="planpop-reforecast"><strong>Reforecast</strong> keeps your plan's structure but rebalances daily load to today's TSB (fatigue), ACWR (load ratio), and polarization compliance. Now folded into <strong>Update plan</strong>.</div>
+  <div class="info-popover" id="planpop-regenerate"><strong>Rebuild from scratch</strong> wipes the plan and rebuilds it from today's CTL, with phase splits derived from weeks-to-event. Use after a goal change or new event date. This is the advanced/nuclear option — <strong>Update plan</strong> already rebuilds automatically when a training gap warrants it.</div>
   <div class="info-popover" id="planpop-availability"><strong>Edit availability</strong> sets per-day training time. Click a date to set hours; right-click to mark unavailable (holiday/injury). <strong>Press the pulsing UPDATE button to apply changes — the plan reflows on click.</strong></div>
   <div class="info-popover" id="planpop-rematch"><strong>Rematch workout</strong> re-rolls only this one day's ZWO file from the matching workout pool. Same intent (intervals, endurance, etc.) — different specific session. Use when the suggested workout doesn't fit your equipment or mood.</div>
 
@@ -1994,7 +1995,7 @@ window.addEventListener('unhandledrejection', function(e) {
         <div style="font-size:12px;color:var(--text2);" id="gap-alert-detail"></div>
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0;">
-        <button class="btn btn-primary" onclick="regeneratePlan()" style="font-size:11px;">Regenerate Plan</button><span class="info-icon" data-popover="planpop-regenerate" tabindex="0" role="button" aria-label="What does Regenerate Plan do?" title="Wipes and rebuilds the plan from today's CTL.">i</span>
+        <button class="btn btn-primary" onclick="updatePlan()" style="font-size:11px;">Update plan</button><span class="info-icon" data-popover="planpop-update" tabindex="0" role="button" aria-label="What does Update plan do?" title="Auto-adjusts your plan to today's fitness.">i</span>
         <button class="btn" onclick="showMarkUnavailable()" style="font-size:11px;">Mark Holiday/Injury</button>
         <button class="btn" onclick="$('plan-gap-alert').style.display='none'" style="font-size:11px;">Dismiss</button>
       </div>
@@ -2059,8 +2060,9 @@ window.addEventListener('unhandledrejection', function(e) {
       </div>
 
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-        <button class="btn btn-primary" onclick="generatePlan()">Generate Plan</button>
-        <button class="btn" onclick="reforecastPlan()">Reforecast</button><span class="info-icon" data-popover="planpop-reforecast" tabindex="0" role="button" aria-label="What does Reforecast do?" title="Keeps plan structure; rebalances daily load to today's fitness/fatigue.">i</span>
+        <button class="btn" onclick="generatePlan()">Generate Plan</button>
+        <button class="btn btn-primary" onclick="updatePlan()" id="btn-update-plan" title="Auto-adjusts your plan: rebalance, or rebuild with a recovery ramp if you're behind.">Update plan</button><span class="info-icon" data-popover="planpop-update" tabindex="0" role="button" aria-label="What does Update plan do?" title="Auto-adjusts your plan to today's fitness.">i</span>
+        <button class="btn" onclick="regeneratePlan()" id="btn-rebuild-scratch" title="Advanced: wipe and rebuild the whole plan from today's CTL.">Rebuild from scratch</button><span class="info-icon" data-popover="planpop-regenerate" tabindex="0" role="button" aria-label="What does Rebuild from scratch do?" title="Wipes and rebuilds the plan from today's CTL.">i</span>
         <!-- v4.6.7 IMPL-SUM: summary modal trigger BEGIN -->
         <button class="btn" onclick="showProgrammeSummary()" id="btn-programme-summary" title="End-of-plan literature-grounded recap">Programme summary</button>
         <!-- v4.6.7 IMPL-SUM: summary modal trigger END -->
@@ -11501,49 +11503,55 @@ async function triggerPlanAutoRecalc() {
   } catch(e) {}
 }
 
-async function checkPlanGaps() {
+// v1.8.24 — ONE adaptation path for the UI. POSTs /api/plan/update, which
+// tier-dispatches server-side (rebalance vs rebuild-with-recovery-ramp),
+// latch-debounced so it never double-reshuffles the same absence. Surfaces the
+// returned status so the auto-adjust is visible (no more silent regen).
+async function _doPlanUpdate({silent=false}={}) {
   try {
-    const res = await fetch('/api/plan/reforecast', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+    if (!silent) {
+      $('plan-status').textContent = 'Updating plan…';
+      $('plan-status').style.color = 'var(--accent)';
+    }
+    const res = await fetch('/api/plan/update', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
+    });
     const d = await res.json();
-    const gaps = d.gaps;
-
-    if (!gaps || !gaps.needs_regeneration) {
+    if (!d || !d.ok) {
+      if (!silent) { $('plan-status').textContent = 'Update failed' + (d && d.detail ? ': '+d.detail : ''); $('plan-status').style.color = 'var(--red)'; }
+      return d;
+    }
+    if (d.plan_json) await renderPlanJSON(d.plan_json);
+    const lui = (d.plan_json && d.plan_json.last_update_info) || {};
+    const behind = !!lui.behind_plan;
+    if (behind) {
+      // Event-taper window: we did NOT silently rebuild — let the rider decide.
+      $('plan-gap-alert').style.display = 'block';
+      $('gap-alert-title').textContent = 'Behind plan — your event is close';
+      $('gap-alert-detail').textContent = d.status_message || lui.message || '';
+      $('gap-alert-detail').style.color = 'var(--yellow)';
+    } else {
       $('plan-gap-alert').style.display = 'none';
-      // Still re-render with latest actual data overlay
-      if (d.plan_json) await renderPlanJSON(d.plan_json);
-      return;
     }
-
-    // Auto-regenerate if gaps detected (no manual click needed)
-    $('plan-gap-alert').style.display = 'block';
-    $('gap-alert-title').textContent = `Training gap detected — auto-adjusting plan`;
-    $('gap-alert-detail').innerHTML =
-      `${gaps.consecutive_missed} week${gaps.consecutive_missed > 1 ? 's' : ''} missed (CTL ${gaps.current_ctl}). Auto-regenerating...`;
-
-    // Trigger automatic regeneration
-    try {
-      const regenRes = await fetch('/api/plan/regenerate', {
-        method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
-      });
-      const regenD = await regenRes.json();
-      if (regenD.ok && regenD.plan_json) {
-        const info = regenD.regen_info || {};
-        $('gap-alert-title').textContent = 'Plan auto-adjusted';
-        $('gap-alert-detail').innerHTML =
-          `Recovery ramp: ${info.recovery_ramp_weeks || 0} weeks. ` +
-          `Target CTL: ${info.adjusted_target_ctl || '—'}` +
-          (info.taper_compressed ? ' · Taper compressed to 8 days' : '');
-        $('gap-alert-detail').style.color = 'var(--green)';
-        await renderPlanJSON(regenD.plan_json);
-      }
-    } catch(regenErr) {
-      // Fallback: show manual button
-      $('gap-alert-detail').innerHTML =
-        `CTL dropped from ~${gaps.expected_ctl} to ${gaps.current_ctl}. ` +
-        `<button class="btn btn-primary" onclick="regeneratePlan()" style="font-size:11px;margin-left:8px;">Regenerate manually</button>`;
+    // Show status on manual click always; on the silent tab-open path only when
+    // something notable changed (a rebuild or a behind-plan flag).
+    if (d.status_message && (!silent || d.action === 'rebuilt' || behind)) {
+      $('plan-status').textContent = d.status_message;
+      $('plan-status').style.color = (d.action === 'rebuilt') ? 'var(--green)'
+        : (behind ? 'var(--yellow)' : 'var(--text2)');
     }
-  } catch(e) {}
+    try { await loadCalendar(); } catch(_) {}
+    return d;
+  } catch(e) {
+    if (!silent) { $('plan-status').textContent = 'Update failed: ' + e.message; $('plan-status').style.color = 'var(--red)'; }
+  }
 }
+
+// Primary "Update plan" button — prominent status.
+async function updatePlan() { return _doPlanUpdate({silent:false}); }
+
+// Auto-trigger on Plan-tab open — silent unless a rebuild/behind-plan happened.
+async function checkPlanGaps() { return _doPlanUpdate({silent:true}); }
 
 async function regeneratePlan() {
   $('plan-status').textContent = 'Regenerating plan from current fitness...';

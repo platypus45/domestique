@@ -8459,14 +8459,19 @@ async def api_plan_generate(request: Request):
 
 
 def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
-    """v1.0.3 — best-effort auto-reforecast on ride sync / FIT import.
+    """v1.0.3 / v1.8.24 — best-effort auto-ADAPT on ride sync / FIT import.
 
-    Re-fires reforecast when ``new_rides > 0`` and >5 min since the last
-    one (debounced via ``plan["reforecast_date"]``). Always passes the
-    current ``plan["availability"]`` so day-level overrides land on disk.
+    When ``new_rides > 0`` this routes through the shared ``_apply_plan_update``
+    tier-dispatch: a NEW significant absence episode (missed weeks) silently
+    rebuilds via regenerate_from_today + recovery ramp (Mujika/Gabbett-safe,
+    never a catch-up spike), at most ONCE per absence episode (``gap_regen_latch``
+    latch); otherwise it reforecasts (structure-preserving), debounced >5 min.
+    The gap/latch decision runs BEFORE the reforecast time-debounce so a fresh
+    gap is never suppressed by a recent reforecast. Event-taper windows are
+    never silently rebuilt (the helper flags "behind plan" instead).
 
-    Wraps everything in try/except: logs warnings but never raises. Sync
-    / import responses must stay clean even if reforecast errors.
+    Wraps everything in try/except: logs warnings but never raises. Sync /
+    import responses must stay clean even if adaptation errors.
     """
     try:
         if new_rides <= 0:
@@ -8475,100 +8480,31 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
         if not json_path.exists():
             return
 
-        with open(json_path, encoding="utf-8") as f:
-            plan = json.load(f)
-
-        # Debounce: skip if last reforecast was <5 min ago.
-        last_iso = plan.get("reforecast_date") or ""
-        if last_iso:
-            try:
-                last_dt = datetime.fromisoformat(last_iso)
-                if (datetime.now() - last_dt).total_seconds() < 300:
-                    return
-            except (ValueError, TypeError):
-                # Malformed timestamp — treat as no debounce; fall through.
-                pass
-
         with tp.plan_write_lock():
-            # Re-read inside the lock so a concurrent /api/plan/reforecast
-            # didn't just write a fresher reforecast_date we should respect.
+            # Re-read inside the lock so a concurrent writer's fresher state
+            # (reforecast_date / gap_regen_latch) is respected — the latch +
+            # debounce are read-modify-write on the plan dict (grill risk 6).
             with open(json_path, encoding="utf-8") as f:
                 plan = json.load(f)
-            last_iso = plan.get("reforecast_date") or ""
-            if last_iso:
-                try:
-                    last_dt = datetime.fromisoformat(last_iso)
-                    if (datetime.now() - last_dt).total_seconds() < 300:
-                        return
-                except (ValueError, TypeError):
-                    pass
 
             activities = db.query_activities(days=120)
             training = cached("training", get_today_metrics)
-            current_tsb = training.get("tsb")
 
-            # ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ──────────
-            # Opportunistically extract 3D metrics from the training dict.
-            # When ANY are missing the planner falls back to TSS-only path
-            # (preserves all v1.0.4/v1.0.5 behaviour).
-            wprime_balance_24h_v106: float | None = None
-            w_prime_v106: float | None = None
-            wprime_acwr_v106: float | None = None
-            try:
-                wp_bal_raw = training.get("wprime_balance_24h")
-                if wp_bal_raw is not None:
-                    wprime_balance_24h_v106 = float(wp_bal_raw)
-                wp_raw = training.get("w_prime") or training.get("wprime")
-                if wp_raw is not None:
-                    w_prime_v106 = float(wp_raw)
-                wp_acwr_raw = training.get("wprime_acwr")
-                if wp_acwr_raw is not None:
-                    wprime_acwr_v106 = float(wp_acwr_raw)
-            except (TypeError, ValueError):
-                # Any malformed value → fall back to None (TSS-only path)
-                pass
-
-            # v1.5.0 — single-layer reforecast. tp.reforecast_dict builds
-            # the PlannedWeek list, runs reforecast(), and propagates the
-            # result back into `plan` in one call. Closes drift class A.
-            tsb_series = None
-            if current_tsb is not None:
-                # Flat projection across every day in every week — same as
-                # the pre-v1.5.0 inline construction. Keyed by `date` so
-                # reforecast()'s _tsb_at lookup hits.
-                tsb_series = {}
-                for w in plan.get("weeks", []) or []:
-                    try:
-                        ws = date.fromisoformat(w["start"])
-                    except (KeyError, ValueError, TypeError):
-                        continue
-                    for i in range(7):
-                        tsb_series[ws + timedelta(days=i)] = current_tsb
-
-            availability_overrides = {
-                day_iso: float(entry["hours"])
-                for day_iso, entry in plan.get("availability", {}).items()
-                if isinstance(entry, dict) and "hours" in entry
-            }
-
-            plan, _sessions_modified, reforecast_info = tp.reforecast_dict(
+            plan_dict, action, _info, _status = _apply_plan_update(
                 plan,
-                today_iso=date.today().isoformat(),
-                tsb_series=tsb_series,
-                recent_activities=activities,
-                availability_overrides=availability_overrides,
-                # v1.0.6 IMPL-3D-PLANNER additive 3D inputs (None ⇒ TSS-only)
-                wprime_balance_24h=wprime_balance_24h_v106,
-                w_prime=w_prime_v106,
-                wprime_acwr=wprime_acwr_v106,
+                training=training,
+                activities=activities,
+                today=date.today(),
+                allow_regen=True,
+                gap_debounce=True,
+                reforecast_min_interval_iso=plan.get("reforecast_date"),
             )
+            if action == "skipped":
+                return  # reforecast tier debounced (<5 min) — nothing to write
 
-            plan["reforecast_date"] = datetime.now().isoformat()
-            plan["last_reforecast_info"] = reforecast_info
-
-            tp.atomic_write_plan(json_path, plan)
+            tp.atomic_write_plan(json_path, plan_dict)
     except Exception as e:  # noqa: BLE001
-        _log.warning(f"auto-reforecast skipped: {e}")
+        _log.warning(f"auto-adapt skipped: {e}")
 
 
 @app.post("/api/plan/reforecast")
@@ -8869,6 +8805,322 @@ async def api_save_availability(request: Request):
         return JSONResponse({"detail": "Plan update failed"}, 500)
 
 
+def _regenerate_plan_dict(
+    plan: dict,
+    *,
+    current_ctl: float,
+    activities: "list[dict]",
+    seed_salt: int,
+) -> "tuple[dict, dict]":
+    """v1.8.24 — shared regenerate-from-today core (extracted from
+    /api/plan/regenerate so the manual endpoint AND the auto-on-sync path use
+    ONE regeneration code path).
+
+    Reconstructs the Goal + PlannedWeek list from ``plan`` (round-tripping ALL
+    session fields so regenerate_from_today's v1.8.20 preservation sees the
+    rider's edits), runs ``tp.regenerate_from_today`` with the supplied
+    ``seed_salt`` (nonzero ⇒ per-call ZWO/HIT variety), and overlays the
+    regenerated phases/weeks onto a shallow copy of the original plan so every
+    top-level key (availability, reforecast_date, goal, …) survives.
+
+    Returns ``(plan_dict, regen_info)``. Does NOT write to disk — the caller
+    persists via ``tp.atomic_write_plan`` so the latch/status writes land in
+    the same critical section.
+    """
+    # Reconstruct Goal
+    g = plan.get("goal", {})
+    target_date = date.fromisoformat(g["event_date"]) if g.get("event_date") else date.today() + timedelta(weeks=12)
+    goal = tp.Goal(
+        goal_type=g.get("type", "general"),
+        target_date=target_date,
+        event_name=g.get("event_name", ""),
+        event_km=g.get("event_km", 0),
+        event_climb_m=g.get("event_climb", 0),
+        event_type=g.get("event_type", "granfondo"),
+        hours_per_week=g.get("hours_per_week", 8),
+        max_weekday_hours=g.get("max_weekday_hours", 2.0),
+        max_weekend_hours=g.get("max_weekend_hours", 3.5),
+        rest_days=g.get("rest_days", [0]),
+        longest_ride_h_90d=g.get("longest_ride_h_90d"),
+        last_ftp_test_date=g.get("last_ftp_test_date"),
+    )
+    # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
+    if goal.longest_ride_h_90d is None:
+        goal.longest_ride_h_90d = _longest_ride_h_90d()
+
+    # Reconstruct PlannedWeek list.
+    # v1.8.20 — round-trip ALL session fields (user_moved/status/dismissed_at/
+    # completion_matches/…) so regenerate_from_today's preservation logic sees
+    # the rider's edits and carries them; the old 8-field reconstruction
+    # zeroed them, so every edit was silently wiped.
+    old_weeks = []
+    for w in plan.get("weeks", []):
+        sessions = [_planned_session_from_json(s) for s in w.get("sessions", [])]
+        old_weeks.append(tp.PlannedWeek(
+            week_num=w["week_num"], start=date.fromisoformat(w["start"]),
+            end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
+            tss_target=w.get("tss_target", 0), is_stepback=w.get("is_stepback", False),
+            sessions=sessions,
+        ))
+
+    unavailable = plan.get("unavailable_periods", [])
+
+    # Regenerate (seed_salt forces shuffle variance per call — B3)
+    new_phases, all_weeks, regen_info = tp.regenerate_from_today(
+        goal=goal, old_plan_weeks=old_weeks,
+        current_ctl=current_ctl,
+        unavailable_periods=unavailable,
+        activities=activities,
+        seed_salt=seed_salt,
+    )
+
+    # Build updated plan JSON.
+    # v1.8.20 — START from a shallow copy of the ORIGINAL plan so every
+    # top-level key survives (availability calendar, reforecast_date,
+    # last_reforecast_info, goal, …); the old fixed-key-set rebuild dropped
+    # availability + reforecast_date on every regen. Overlay ONLY the
+    # regenerated phases/weeks + regen markers (rebinding the list refs, not
+    # mutating the originals). Sessions serialize via the canonical helper
+    # (all 22 fields) so preserved edits round-trip intact.
+    plan_dict = dict(plan)
+    plan_dict["phases"] = [
+        {
+            "name": p.name, "weeks": p.weeks,
+            "start": p.start.isoformat(), "end": p.end.isoformat(),
+            "weekly_tss": p.weekly_tss_target, "focus": p.focus,
+        }
+        for p in new_phases
+    ]
+    plan_dict["weeks"] = [
+        {
+            "week_num": w.week_num,
+            "start": w.start.isoformat(), "end": w.end.isoformat(),
+            "phase": w.phase, "tss_target": w.tss_target,
+            "is_stepback": w.is_stepback,
+            "sessions": [_planned_session_to_json(s) for s in w.sessions],
+        }
+        for w in all_weeks
+    ]
+    plan_dict["regenerated"] = datetime.now().isoformat()
+    plan_dict["regen_info"] = regen_info
+    # v4.3.0 B3: persist the per-regen entropy salt so external readers
+    # (UI, tests) can detect that a fresh regen happened.
+    plan_dict["last_regen_at"] = seed_salt
+    return plan_dict, regen_info
+
+
+def _ramp_band(absence_days: int) -> str:
+    """v1.8.24 — recovery-ramp tier band (mirrors build_recovery_ramp's
+    duration buckets). Used in the auto-regen episode-latch key so the plan is
+    rebuilt only when the band CHANGES, not on every extra missed week."""
+    if absence_days <= 14:
+        return "s"   # 3-week ramp
+    if absence_days <= 28:
+        return "m"   # 5-week ramp
+    return "l"       # 6-week ramp
+
+
+def _current_absence_episode(old_weeks, gaps: dict, today: date):
+    """v1.8.24 — identify the CURRENT unbroken missed-week run anchored at the
+    most-recent COMPLETED plan week. Returns ``(first_week_num, last_week_num)``
+    or ``None`` when the most-recent completed week was trained normally (i.e.
+    any gap is historical, not current). This is the "recent-gap gate" that
+    stops an OLD recovered gap from triggering perpetual auto-regen.
+    """
+    completed = sorted(
+        (w for w in old_weeks if w.end < today), key=lambda w: w.week_num,
+    )
+    if not completed:
+        return None
+    gap_nums = {gw["week_num"] for gw in gaps.get("gap_weeks", [])}
+    last = completed[-1]
+    if last.week_num not in gap_nums:
+        return None  # recent week trained normally → no current episode
+    first = last.week_num
+    i = len(completed) - 1
+    while i - 1 >= 0 and completed[i - 1].week_num in gap_nums \
+            and completed[i - 1].week_num == completed[i].week_num - 1:
+        first = completed[i - 1].week_num
+        i -= 1
+    return (first, last.week_num)
+
+
+def _apply_plan_update(
+    plan: dict,
+    *,
+    training: dict,
+    activities: "list[dict]",
+    today: date,
+    allow_regen: bool = True,
+    gap_debounce: bool = True,
+    reforecast_min_interval_iso: "str | None" = None,
+) -> "tuple[dict, str, dict, str]":
+    """v1.8.24 — THE single plan-adaptation core. Tier-dispatches:
+
+      • significant CURRENT gap → regenerate_from_today (recovery ramp)
+      • otherwise               → reforecast_dict (structure-preserving rebalance)
+
+    Used by both the manual ``/api/plan/update`` button (gap_debounce=False —
+    always acts) and the ride-sync auto path (gap_debounce=True — at most one
+    silent rebuild per absence EPISODE via ``plan["gap_regen_latch"]``).
+
+    Guards (see /tmp/MASTER_DECISIONS_tasks12 §11):
+      • REPLACES reforecast — never regen-then-reforecast (mangles the ramp).
+      • RECENT-gap gate — an old recovered gap does not trigger a rebuild.
+      • EVENT-TAPER guard — inside max(21, taper) days of an event we never
+        silently recompute the taper; we reforecast + flag "behind plan".
+      • EPISODE latch — key = f"{first_missed_week}:{ramp_band}" so a rebuild
+        fires only on a NEW or band-deepened absence, not every sync.
+
+    Returns ``(plan_dict, action, info, status_message)`` where action is
+    "rebuilt" | "rebalanced". Does NOT persist — the caller writes inside its
+    own plan_write_lock so the latch/status writes are in the same critical
+    section.
+    """
+    now_iso = datetime.now().isoformat()
+    current_ctl = training.get("ctl") or 30
+    current_tsb = training.get("tsb")
+
+    # Reconstruct PlannedWeek list for gap detection (full-field round-trip so
+    # past statuses are visible to detect_plan_gaps' actual-TSS sum).
+    old_weeks = []
+    for w in plan.get("weeks", []):
+        try:
+            old_weeks.append(tp.PlannedWeek(
+                week_num=w["week_num"], start=date.fromisoformat(w["start"]),
+                end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
+                tss_target=w.get("tss_target", 0),
+                is_stepback=w.get("is_stepback", False),
+                sessions=[_planned_session_from_json(s) for s in w.get("sessions", [])],
+            ))
+        except (KeyError, ValueError, TypeError):
+            continue
+
+    gaps = tp.detect_plan_gaps(old_weeks, activities or [], current_ctl)
+    episode = _current_absence_episode(old_weeks, gaps, today)
+    ctl_gap = gaps.get("ctl_gap", 0) or 0
+    consecutive = gaps.get("consecutive_missed", 0) or 0
+
+    # needs_regen_now: the ctl-gap branch is inherently CURRENT; the
+    # consecutive-missed branch must additionally be a RECENT episode (gate
+    # against an old recovered gap nagging forever).
+    needs_regen_now = (ctl_gap > 15) or (consecutive >= 2 and episode is not None)
+
+    # EVENT-TAPER guard: never silently recompute an event taper from a
+    # background adaptation. Inside the taper window we reforecast + flag.
+    taper_blocks = False
+    g = plan.get("goal", {})
+    if g.get("type") == "event" and g.get("event_date"):
+        try:
+            days_to_event = (date.fromisoformat(g["event_date"]) - today).days
+            taper_window = max(21, int(getattr(tp, "TAPER_DAYS", 12)))
+            if 0 <= days_to_event <= taper_window:
+                taper_blocks = True
+        except (ValueError, TypeError):
+            pass
+
+    # Episode latch key (stable within an absence band; changes on a new/deeper
+    # absence). Falls back to a CTL bucket when the gap is ctl-driven only.
+    # The band is derived from the CURRENT episode's own span — NOT
+    # detect_plan_gaps' global ``absence_days`` (= the longest missed run
+    # ANYWHERE in history), which would mis-key the latch whenever an older,
+    # longer, already-recovered gap exists.
+    if episode is not None:
+        episode_weeks = episode[1] - episode[0] + 1
+        episode_key = f"{episode[0]}:{_ramp_band(episode_weeks * 7)}"
+    else:
+        episode_key = f"ctl:{round(ctl_gap / 5.0) * 5}"
+    latched = (plan.get("gap_regen_latch", {}) or {}).get("key") == episode_key
+
+    do_regen = (
+        needs_regen_now and allow_regen and not taper_blocks
+        and not (gap_debounce and latched)
+    )
+
+    if do_regen:
+        seed_salt = time.time_ns()
+        plan_dict, regen_info = _regenerate_plan_dict(
+            plan, current_ctl=current_ctl, activities=activities, seed_salt=seed_salt,
+        )
+        plan_dict["gap_regen_latch"] = {"key": episode_key, "at": now_iso}
+        ramp_weeks = regen_info.get("recovery_ramp_weeks", 0) if isinstance(regen_info, dict) else 0
+        if ramp_weeks:
+            status = (f"Plan rebuilt: {ramp_weeks}-week recovery ramp — "
+                      f"you missed {consecutive} week{'s' if consecutive != 1 else ''}.")
+        else:
+            status = "Plan rebuilt from your current fitness."
+        info = {"gaps": gaps, "regen_info": regen_info, "episode_key": episode_key}
+        plan_dict["last_update_info"] = {"action": "rebuilt", "message": status, "at": now_iso}
+        return plan_dict, "rebuilt", info, status
+
+    # ── reforecast tier (structure-preserving rebalance) ─────────────────────
+    # 5-min debounce applies to THIS tier only (the regen tier above always
+    # acts). Prevents reforecast churn on back-to-back ride syncs.
+    if reforecast_min_interval_iso:
+        try:
+            last_dt = datetime.fromisoformat(reforecast_min_interval_iso)
+            if (datetime.now() - last_dt).total_seconds() < 300:
+                return plan, "skipped", {"gaps": gaps}, ""
+        except (ValueError, TypeError):
+            pass
+
+    # v1.0.6 — opportunistic 3D inputs (W'bal / capacity / ACWR). None ⇒
+    # TSS-only path (preserves all prior behaviour); only advisory checks read
+    # them. Mirrors the pre-v1.8.24 inline extraction in _maybe_auto_reforecast.
+    wprime_balance_24h = w_prime = wprime_acwr = None
+    try:
+        if training.get("wprime_balance_24h") is not None:
+            wprime_balance_24h = float(training["wprime_balance_24h"])
+        _wp = training.get("w_prime") or training.get("wprime")
+        if _wp is not None:
+            w_prime = float(_wp)
+        if training.get("wprime_acwr") is not None:
+            wprime_acwr = float(training["wprime_acwr"])
+    except (TypeError, ValueError):
+        pass
+
+    tsb_series = None
+    if current_tsb is not None:
+        tsb_series = {}
+        for w in plan.get("weeks", []) or []:
+            try:
+                ws = date.fromisoformat(w["start"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            for i in range(7):
+                tsb_series[ws + timedelta(days=i)] = current_tsb
+    availability_overrides = {
+        day_iso: float(entry["hours"])
+        for day_iso, entry in plan.get("availability", {}).items()
+        if isinstance(entry, dict) and "hours" in entry
+    }
+    plan, _modified, reforecast_info = tp.reforecast_dict(
+        plan,
+        today_iso=today.isoformat(),
+        tsb_series=tsb_series,
+        recent_activities=activities,
+        availability_overrides=availability_overrides,
+        wprime_balance_24h=wprime_balance_24h,
+        w_prime=w_prime,
+        wprime_acwr=wprime_acwr,
+    )
+    plan["reforecast_date"] = now_iso
+    plan["last_reforecast_info"] = reforecast_info
+    if taper_blocks and needs_regen_now:
+        # Behind plan but inside the event taper — do NOT silently rebuild;
+        # surface a banner so the rider decides (manual Update plan still acts).
+        status = ("You're behind plan, but your event is close — review and "
+                  "rebuild manually if needed (auto-rebuild paused near events).")
+        plan["last_update_info"] = {"action": "behind_plan", "message": status,
+                                    "at": now_iso, "behind_plan": True}
+        info = {"gaps": gaps, "taper_blocked": True}
+        return plan, "rebalanced", info, status
+    status = "Plan rebalanced to today's fitness."
+    plan["last_update_info"] = {"action": "rebalanced", "message": status, "at": now_iso}
+    info = {"gaps": gaps, "reforecast_info": reforecast_info}
+    return plan, "rebalanced", info, status
+
+
 @app.post("/api/plan/regenerate")
 async def api_plan_regenerate_dynamic(request: Request):
     """Regenerate plan from today after missed training/injury/holiday.
@@ -8880,6 +9132,8 @@ async def api_plan_regenerate_dynamic(request: Request):
     ``regenerate_from_today`` → ``plan_week`` → ``_pick_session`` and
     ``match_zwo`` so consecutive regenerations produce visibly different
     HIT-variant + ZWO-pick distributions.
+
+    v1.8.24 — body delegates to the shared ``_regenerate_plan_dict`` core.
     """
     json_path = _plan_dir() / "current_plan.json"
     if not json_path.exists():
@@ -8890,101 +9144,20 @@ async def api_plan_regenerate_dynamic(request: Request):
         with open(json_path, encoding="utf-8") as f:
             plan = json.load(f)
 
-        body = await _get_json_body(request) if request.headers.get("content-type", "").startswith("application/json") else {}
-
         # v4.3.0 B3: per-regen entropy salt. time.time_ns() gives us a fresh
         # 19+ bit-of-entropy nonce per call — guaranteed different across two
-        # back-to-back POSTs on any modern OS clock. We persist it back into
-        # the plan JSON as ``last_regen_at`` so that any reader can verify
-        # the regen actually occurred AND so subsequent regen's seed_salt
-        # is by construction different from the prior one.
+        # back-to-back POSTs on any modern OS clock.
         seed_salt = time.time_ns()
 
         # Get current CTL
         training = cached("training", get_today_metrics)
         current_ctl = training.get("ctl") or 30
 
-        # Reconstruct Goal
-        g = plan.get("goal", {})
-        target_date = date.fromisoformat(g["event_date"]) if g.get("event_date") else date.today() + timedelta(weeks=12)
-        goal = tp.Goal(
-            goal_type=g.get("type", "general"),
-            target_date=target_date,
-            event_name=g.get("event_name", ""),
-            event_km=g.get("event_km", 0),
-            event_climb_m=g.get("event_climb", 0),
-            event_type=g.get("event_type", "granfondo"),
-            hours_per_week=g.get("hours_per_week", 8),
-            max_weekday_hours=g.get("max_weekday_hours", 2.0),
-            max_weekend_hours=g.get("max_weekend_hours", 3.5),
-            rest_days=g.get("rest_days", [0]),
-            longest_ride_h_90d=g.get("longest_ride_h_90d"),
-            last_ftp_test_date=g.get("last_ftp_test_date"),
-        )
-        # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
-        if goal.longest_ride_h_90d is None:
-            goal.longest_ride_h_90d = _longest_ride_h_90d()
-
-        # Reconstruct PlannedWeek list.
-        # v1.8.20 — round-trip ALL session fields (user_moved/status/dismissed_at/
-        # completion_matches/…) so regenerate_from_today's preservation logic sees
-        # the rider's edits and carries them; the old 8-field reconstruction
-        # zeroed them, so every edit was silently wiped.
-        old_weeks = []
-        for w in plan.get("weeks", []):
-            sessions = [_planned_session_from_json(s) for s in w.get("sessions", [])]
-            old_weeks.append(tp.PlannedWeek(
-                week_num=w["week_num"], start=date.fromisoformat(w["start"]),
-                end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
-                tss_target=w.get("tss_target", 0), is_stepback=w.get("is_stepback", False),
-                sessions=sessions,
-            ))
-
-        # Get activities for gap detection
         activities = db.query_activities(days=120)
-        unavailable = plan.get("unavailable_periods", [])
 
-        # Regenerate (seed_salt forces shuffle variance per call — B3)
-        new_phases, all_weeks, regen_info = tp.regenerate_from_today(
-            goal=goal, old_plan_weeks=old_weeks,
-            current_ctl=current_ctl,
-            unavailable_periods=unavailable,
-            activities=activities,
-            seed_salt=seed_salt,
+        plan_dict, regen_info = _regenerate_plan_dict(
+            plan, current_ctl=current_ctl, activities=activities, seed_salt=seed_salt,
         )
-
-        # Build updated plan JSON.
-        # v1.8.20 — START from a shallow copy of the ORIGINAL plan so every
-        # top-level key survives (availability calendar, reforecast_date,
-        # last_reforecast_info, goal, …); the old fixed-key-set rebuild dropped
-        # availability + reforecast_date on every regen. Overlay ONLY the
-        # regenerated phases/weeks + regen markers (rebinding the list refs, not
-        # mutating the originals). Sessions serialize via the canonical helper
-        # (all 22 fields) so preserved edits round-trip intact.
-        plan_dict = dict(plan)
-        plan_dict["phases"] = [
-            {
-                "name": p.name, "weeks": p.weeks,
-                "start": p.start.isoformat(), "end": p.end.isoformat(),
-                "weekly_tss": p.weekly_tss_target, "focus": p.focus,
-            }
-            for p in new_phases
-        ]
-        plan_dict["weeks"] = [
-            {
-                "week_num": w.week_num,
-                "start": w.start.isoformat(), "end": w.end.isoformat(),
-                "phase": w.phase, "tss_target": w.tss_target,
-                "is_stepback": w.is_stepback,
-                "sessions": [_planned_session_to_json(s) for s in w.sessions],
-            }
-            for w in all_weeks
-        ]
-        plan_dict["regenerated"] = datetime.now().isoformat()
-        plan_dict["regen_info"] = regen_info
-        # v4.3.0 B3: persist the per-regen entropy salt so external readers
-        # (UI, tests) can detect that a fresh regen happened.
-        plan_dict["last_regen_at"] = seed_salt
 
         tp.atomic_write_plan(json_path, plan_dict)
 
@@ -8994,6 +9167,48 @@ async def api_plan_regenerate_dynamic(request: Request):
         import traceback
         traceback.print_exc()
         return JSONResponse({"error": str(e)}, 500)
+
+
+@app.post("/api/plan/update")
+async def api_plan_update():
+    """v1.8.24 — the ONE primary "Update plan" action.
+
+    Tier-dispatches through the shared ``_apply_plan_update`` core: a current
+    significant absence → regenerate_from_today + recovery ramp; otherwise a
+    structure-preserving reforecast. Latch-debounced so re-clicking does not
+    reshuffle future workout picks for the same already-handled absence (the
+    advanced "Rebuild from scratch" → /api/plan/regenerate is the explicit
+    force-rebuild). Returns the new plan + a human status message.
+    """
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+    try:
+        with tp.plan_write_lock():
+            with open(json_path, encoding="utf-8") as f:
+                plan = json.load(f)
+            training = cached("training", get_today_metrics)
+            activities = db.query_activities(days=120)
+            plan_dict, action, info, status = _apply_plan_update(
+                plan,
+                training=training,
+                activities=activities,
+                today=date.today(),
+                allow_regen=True,
+                gap_debounce=True,
+            )
+            tp.atomic_write_plan(json_path, plan_dict)
+        try:
+            _enrich_plan_for_response(plan_dict, today_iso=date.today().isoformat())
+        except Exception:  # noqa: BLE001
+            pass
+        return {"ok": True, "action": action, "status_message": status,
+                "plan_json": plan_dict,
+                "gaps": (info or {}).get("gaps"),
+                "regen_info": (info or {}).get("regen_info")}
+    except Exception:
+        _log.exception("Plan update failed")
+        return JSONResponse({"detail": "Plan update failed"}, 500)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -11480,6 +11695,9 @@ def _pick_redraw_candidate(plan: dict, day_iso: str, exclude_extra: "list[str] |
         day_idx=day_idx,
         used_names=excluded,
         raise_on_empty=True,
+        # v1.8.24 — reshuffle returns the closest-duration workout the library
+        # offers (never a far one); user: "I want the exact duration".
+        exact_duration=True,
     )
     if not planned.zwo_file:
         raise tp.NoCandidateWorkoutError(
@@ -11750,6 +11968,8 @@ async def api_plan_rematch_day(day: str):
                 day_idx=day_idx,
                 used_names=excluded,
                 raise_on_empty=True,
+                # v1.8.24 — closest-duration match on reshuffle (see helper).
+                exact_duration=True,
             )
         except tp.NoCandidateWorkoutError:
             return {"ok": False, "action": "no_candidate", "day": day}

@@ -1,5 +1,49 @@
 # Changelog
 
+## v1.8.24 — smarter plan updates + exact-duration reshuffle (2026-06-11)
+
+Streamlined the training-plan controls and made the plan adapt to missed
+workouts on its own, plus a reshuffle that respects the slot's duration.
+
+### One "Update plan" button (was: Reforecast / Regenerate / two silent triggers)
+
+The plan tab had too many overlapping controls. Consolidated to a single
+primary **Update plan** action that automatically does the right thing:
+
+- on track → a structure-preserving **rebalance** to today's TSB (fatigue),
+  ACWR (load ratio) and availability;
+- behind plan → a full **rebuild with a recovery ramp** (Gabbett ACWR < 1.3,
+  Z2 reconditioning — never a catch-up load spike on a detrained rider).
+
+The old standalone "Reforecast" is folded into Update plan; "Regenerate" is now
+the advanced **Rebuild from scratch** (force-rebuild). Per-day **Rematch** and
+the availability **UPDATE** button are unchanged. Auto-adjustments are no longer
+silent — a status line shows what changed ("Plan rebuilt: 3-week recovery ramp —
+you missed 2 weeks" / "Plan rebalanced to today's fitness").
+
+### Auto-rebuild after missed workouts
+
+Missing training makes you *fresher* (higher TSB, lower CTL), so the old
+overshoot-only reforecast never reacted — the plan went stale after missed
+weeks. Now a ride sync that detects a significant **current** absence rebuilds
+automatically through the recovery ramp. Safeguards:
+
+- a **per-absence-episode latch** so it rebuilds **once** per gap, not on every
+  sync (no repeated future-workout reshuffles);
+- a **recent-gap gate** so an old, already-recovered gap never nags;
+- an **event-taper guard** — within ~3 weeks of an event it will not silently
+  recompute your taper; it flags "behind plan" and leaves the decision to you;
+- past/completed sessions are never re-rolled, and a fixed event date never
+  moves.
+
+### Reshuffle keeps the duration
+
+"Rematch/reshuffle" could return a workout far from the slot's length (a 90-min
+slot → a 45-min file) because the score-weighted pick could surface a
+far-duration file. Reshuffle now collapses to the **closest available duration**
+before picking, so a 90-min slot stays ~90 min (exact when the library has it)
+and never returns a wildly different length. Plan generation is unchanged.
+
 ## v1.8.23 — more polarized workouts + Rønnestad VO2 blocks + duration coverage (2026-06-10)
 
 Added **+227 clean canonical workouts** (library 3260 → 3487), all generated

@@ -9,9 +9,9 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.9+-blue" alt="Python">
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
-  <img src="https://img.shields.io/badge/Workouts-3054-orange" alt="Workouts">
+  <img src="https://img.shields.io/badge/Workouts-4178-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v1.8.5-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v1.8.24-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-1422%20passing-success" alt="Tests">
 </p>
 
@@ -265,11 +265,19 @@ See [docs/cycling_apps.md](docs/cycling_apps.md) for the full table.
 
 ## Releases
 
-Latest: **[v1.8.4 — Ad-hoc codesigned DMG (no more "damaged" dialog)](https://github.com/platypus45/domestique/releases/latest)** (2026-05-19).
+Latest: **[v1.8.24 — smarter plan updates + exact-duration reshuffle](https://github.com/platypus45/domestique/releases/latest)** (2026-06-11).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 
-See [CHANGELOG.md](CHANGELOG.md) for the full pre-1.0 development log and every shipped tag.
+**Highlights since v1.8.5** (see [CHANGELOG.md](CHANGELOG.md) for every shipped tag):
+
+- **One "Update plan" action** (v1.8.24) — the fragmented Reforecast / Regenerate / availability controls collapsed into a single primary button that auto-picks the right adjustment: a structure-preserving **rebalance** to today's TSB/ACWR/availability when you're on track, or a full **rebuild with a recovery ramp** (Gabbett ACWR < 1.3, Z2 reconditioning — never a catch-up spike) when you've fallen behind. "Regenerate" is now the advanced *Rebuild from scratch*; per-day *Rematch* stays.
+- **Plan auto-adapts after missed workouts** (v1.8.24) — a ride sync that detects a significant *current* absence rebuilds automatically through the recovery ramp, once per absence episode (latched, no churn), recent-gap-gated (an old recovered gap never nags), and never inside an event taper (it flags "behind plan" instead).
+- **Reshuffle honours the slot duration** (v1.8.19 ±25 % gate → v1.8.24 exact) — a 90-min slot returns a ~90-min workout, never a wildly different length.
+- **Bigger, cleaner workout library** (v1.8.22 / v1.8.23 / ongoing) — grown from ~3 050 to **4 178** clean, copyright-free canonical files via a classify-before-write pipeline (every file run through the live content classifier and kept only if its type + title + duration match): polarized Rønnestad VO2 macro-blocks, comprehensive Z2/endurance structure variety (steady, two-zone, progressive, surges), and long-aerobic / duration coverage across all classes.
+- **Plan integrity** (v1.8.18 / v1.8.20 / v1.8.21) — healed ghost `zwo_file` references and froze training history; regeneration preserves your edits (moved / dismissed / completed sessions) and the availability calendar; changing weekly hours repopulates the per-day calendar.
+- **DFA α1 + dual thresholds** (v1.8.14) — see the DFA / HRV sections above: mandatory Malik artifact rejection, HRVT1/HRVT2 detection, intensity distribution, and a dedicated DFA tab; FIT-stream fallback when ICU 404s the `.fit`.
+- **Notarized distribution** (v1.8.5+) — the macOS DMG opens with zero Gatekeeper prompts; new activities auto-push to the calendars.
 
 ---
 

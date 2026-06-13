@@ -540,11 +540,29 @@ def setup_defaults():
 
 @app.post("/api/setup/test-icu")
 def setup_test_icu(body: dict):
-    """Test Intervals.icu credentials and return athlete info."""
+    """Test Intervals.icu credentials and return athlete info.
+
+    v1.8.25 — athlete_id is OPTIONAL: when blank we auto-detect it from the API
+    key via training.discover_athlete_id (same helper /api/setup/save uses), so
+    the wizard only needs the API key. The detected id is returned so the UI can
+    stash it for save.
+    """
     athlete_id = body.get("athlete_id", "").strip()
     api_key = body.get("api_key", "").strip()
-    if not athlete_id or not api_key:
-        return {"ok": False, "error": "Both Athlete ID and API Key are required."}
+    if not api_key:
+        return {"ok": False, "error": "API Key is required."}
+    if not athlete_id:
+        try:
+            import training as _training
+            disc = _training.discover_athlete_id(api_key)
+            if disc and disc.get("id"):
+                athlete_id = str(disc["id"]).strip()
+        except Exception:
+            pass
+        if not athlete_id:
+            return {"ok": False, "error": "Couldn't detect your athlete from that "
+                    "API key. Double-check the key (intervals.icu → Settings → "
+                    "Developer Settings → API Key)."}
 
     import httpx
     try:
@@ -576,9 +594,73 @@ def setup_test_icu(body: dict):
         return {
             "ok": True,
             "name": data.get("name", ""),
+            "athlete_id": athlete_id,
             "eftp": eftp,
             "weight": round(weight, 1) if weight else None,
         }
+    except httpx.TimeoutException:
+        return {"ok": False, "error": "Connection timed out. Check your internet."}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/setup/check-activities")
+def setup_check_activities(body: dict):
+    """v1.8.25 — verify, during onboarding, that activities are actually flowing
+    into Intervals.icu (i.e. the Garmin Connect sync the user just enabled is
+    working). Counts ICU activities in the last 42 days and, when the activity
+    `source` field is present, how many are Garmin-sourced.
+
+    HONEST by design: we observe activities, not the connection itself, so we
+    report "N recent activities on Intervals.icu" and surface the Garmin-sourced
+    count separately — we never claim Garmin is linked from a manual upload.
+    Creds are passed explicitly (not yet saved at this point in setup) and used
+    only for this transient request, mirroring /api/setup/test-icu.
+    """
+    athlete_id = (body.get("athlete_id") or "").strip()
+    api_key = (body.get("api_key") or "").strip()
+    if not api_key:
+        return {"ok": False, "error": "Connect Intervals.icu first."}
+    if not athlete_id:
+        try:
+            import training as _training
+            disc = _training.discover_athlete_id(api_key)
+            if disc and disc.get("id"):
+                athlete_id = str(disc["id"]).strip()
+        except Exception:
+            pass
+    if not athlete_id:
+        return {"ok": False, "error": "Couldn't detect your athlete from that API key."}
+
+    import httpx
+    from datetime import timedelta as _td
+    today = date.today()
+    oldest = (today - _td(days=42)).isoformat()
+    newest = today.isoformat()
+    try:
+        url = (f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities"
+               f"?oldest={oldest}&newest={newest}")
+        resp = httpx.get(url, auth=("API_KEY", api_key), timeout=15)
+        if resp.status_code in (401, 403):
+            return {"ok": False, "error": "Authentication failed — check your API key."}
+        if resp.status_code != 200:
+            return {"ok": False, "error": f"Intervals.icu returned status {resp.status_code}."}
+        acts = resp.json() if resp.content else []
+        if not isinstance(acts, list):
+            acts = []
+        count = len(acts)
+        # Garmin-sourced detection: ICU tags the provider on `source` (e.g.
+        # "GARMIN_CONNECT") and/or device fields. Count conservatively — only
+        # what clearly reads as Garmin — so we never over-claim.
+        garmin = 0
+        for a in acts:
+            blob = " ".join(str(a.get(k) or "") for k in ("source", "device_name", "deviceName")).upper()
+            if "GARMIN" in blob:
+                garmin += 1
+        latest = ""
+        if acts:
+            latest = str(acts[0].get("start_date_local") or acts[0].get("start_date") or "")[:10]
+        return {"ok": True, "count": count, "garmin_count": garmin, "latest_date": latest}
     except httpx.TimeoutException:
         return {"ok": False, "error": "Connection timed out. Check your internet."}
     except Exception as e:

@@ -43,7 +43,7 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 ## Quick start
 
 1. **Install** — macOS users have two paths: `brew tap platypus45/tap && brew install --cask domestique` (no Gatekeeper prompts) OR grab `Domestique-vX.Y.Z.dmg` from the [latest release](https://github.com/platypus45/domestique/releases/latest) and right-click → Open on first launch. Windows users grab `Domestique-Windows.zip`, unzip, run `Domestique.exe`. See [Installing on macOS](#installing-on-macos) for details.
-2. **Connect Intervals.icu** — Settings -> Intervals.icu, paste Athlete ID + API key from [intervals.icu/settings](https://intervals.icu/settings). Optional; without ICU, Domestique falls back to local CTL from your imported FITs.
+2. **Connect Intervals.icu** — the first-run wizard walks you through it: paste your API key from [intervals.icu/settings](https://intervals.icu/settings) → Developer Settings (the athlete ID is auto-detected), then optionally enable Garmin Connect on Intervals.icu so rides sync automatically. No intervals.icu account? It's free and you can sign in with Garmin or Strava. Whole step is skippable — without ICU, Domestique falls back to local CTL from your imported FITs.
 3. **Generate a plan** — pick a goal type (event prep / FTP / VO2max / hybrid / general / endurance), target date, target CTL, hours/week. The planner sizes Base / Build1 / Build2 / Peak / (Taper or Consolidation) phases, draws 150 distinct ZWO files across a 24-week plan, and adapts daily to your readiness.
 
 After your first ride: drag the `.fit` onto the upload box (or let ICU sync). Domestique generates a post-ride report, detects FTP tests automatically, and the next-day session adapts to what the ride showed.

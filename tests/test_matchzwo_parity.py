@@ -57,6 +57,24 @@ def test_easy_slot_never_admits_greyzone(lib, session_type, slot, ceiling):
 
 # ── Fix 3: low-Score endurance unlocked, but stubs stay out ─────────────────
 
+def test_easy_slot_rejects_embedded_intensity(lib):
+    """v1.9.2 — a Z2-dominant file that EMBEDS structured FTP/VO2/sprint/OU work
+    (secondary flags) must not land on a z2/recovery slot, even if its z345% is
+    under the ceiling. Regression for 'endurance_6x2min_90min' (6×2min @ FTP +
+    VO2 microbursts, classed endurance, z345≈29%)."""
+    INT = ("has_threshold_work", "has_vo2_work", "has_sprints", "pattern_over_under")
+    for st, slot in [("z2", 90), ("z2", 60), ("recovery", 40), ("long_z2", 120)]:
+        for v in range(1, 21):
+            try:
+                w = _reshuffle(lib, st, slot, v)
+            except tp.NoCandidateWorkoutError:
+                continue
+            sf = w.get("SecondaryFlags") or {}
+            tripped = [k for k in INT if sf.get(k)]
+            assert not tripped, (
+                f"{st} {slot}min got {w.get('File')} with embedded intensity {tripped}")
+
+
 def test_low_score_endurance_now_selectable_for_z2(lib):
     picks = []
     for v in range(1, 41):

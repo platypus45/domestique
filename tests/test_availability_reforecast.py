@@ -127,12 +127,15 @@ class TestAvailabilityDayNotInOverridesKeptUntouched(unittest.TestCase):
 
 
 class TestAvailabilityScaleClampedAtTwo(unittest.TestCase):
-    """hours=10 against current 60 min must NOT inflate beyond 2× (clamp 2.0)."""
+    """v1.9.2 — availability applies the user's hours LITERALLY (v1.7.3,
+    bidirectional), but a 6h/session sanity cap (MAX_AVAIL_SESSION_MIN=360)
+    prevents a typo/extreme value from spawning an absurd session. The old 2×
+    clamp was intentionally removed; this asserts the cap, not the clamp."""
 
-    def test_scale_clamped_at_two(self):
+    def test_scale_capped_at_six_hours(self):
         mon = _next_monday()
-        # Current planned 60 min; user asks for 10h that day → raw_scale = 600/60 = 10.0.
-        # Clamp at 2.0 → max new duration = 120 min, NOT 600.
+        # Current planned 60 min; user asks for 10h that day. Literal would be
+        # 600 min — capped at 360 (6h), never higher.
         s = _mk_session(mon, session_type="z2", duration_min=60, tss=45.0)
         weeks = [_mk_week(mon, [s])]
         goal = tp.Goal(goal_type="general", hours_per_week=8.0)
@@ -142,11 +145,21 @@ class TestAvailabilityScaleClampedAtTwo(unittest.TestCase):
             goal, weeks, tsb_series=tsb_series,
             availability_overrides=overrides,
         )
-        # Hard cap: 60 * 2.0 = 120, never higher.
-        self.assertEqual(weeks[0].sessions[0].duration_min, 120)
-        self.assertLessEqual(weeks[0].sessions[0].duration_min, 60 * 2)
-        # tss = round(120/60 * 45) = 90
-        self.assertEqual(weeks[0].sessions[0].tss_estimate, 90)
+        self.assertEqual(weeks[0].sessions[0].duration_min, tp.MAX_AVAIL_SESSION_MIN)
+        self.assertLessEqual(weeks[0].sessions[0].duration_min, 360)
+
+    def test_realistic_hours_applied_literally(self):
+        # A realistic 2.5h on a 60-min session → 150 min (under the cap, literal).
+        mon = _next_monday()
+        s = _mk_session(mon, session_type="z2", duration_min=60, tss=45.0)
+        weeks = [_mk_week(mon, [s])]
+        goal = tp.Goal(goal_type="general", hours_per_week=8.0)
+        tsb_series = {mon + timedelta(days=i): 0.0 for i in range(7)}
+        tp.reforecast(goal, weeks, tsb_series=tsb_series,
+                      availability_overrides={mon.isoformat(): 2.5})
+        self.assertEqual(weeks[0].sessions[0].duration_min, 150)
+        # tss rescaled with duration: round(150/60 * 45) = 112
+        self.assertEqual(weeks[0].sessions[0].tss_estimate, 112)
 
 
 if __name__ == "__main__":

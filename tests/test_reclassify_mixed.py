@@ -116,7 +116,7 @@ def test_recovery_prefix_stays_safe():
 
 def test_ronnestad_30_15_detected_in_real_file():
     """A known Rønnestad-style 30/15 file in the spec band (95-115% FTP)."""
-    fn = WORKOUTS_DIR / "vo2_short_30s15s_10x_60min.zwo"
+    fn = WORKOUTS_DIR / "over_under_30s15s_10x_60min.zwo"
     if not fn.exists():
         pytest.skip(f"{fn.name} not in library")
     ronn = detect_ronnestad(fn)
@@ -181,8 +181,11 @@ def test_post_run_class_distribution(classifications):
 
 
 def test_post_run_total_unchanged(classifications):
-    """Reclassification only touches `primary`; total file count stays at 3054."""
-    assert len(classifications) == 3054
+    """Reclassification only touches `primary`; it never adds or removes files.
+    v1.10.0: assert the cache covers EXACTLY the library (1:1, no orphans/ghosts)
+    instead of a frozen 3054 count — stale since the library grew."""
+    n_files = len(list(WORKOUTS_DIR.glob("*.zwo")))
+    assert len(classifications) == n_files
 
 
 def test_ronnestad_files_tagged(classifications):

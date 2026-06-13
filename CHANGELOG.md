@@ -1,5 +1,43 @@
 # Changelog
 
+## v1.10.0 — evidence-based library overhaul, filter redesign, planner fixes (2026-06-13)
+
+A research-driven pass over the workout library plus a cleaner library browser
+and three planner-quality fixes.
+
+### Library — evidence-based interval work (PubMed)
+- **Added the canonical Rønnestad protocols** the library was missing: short
+  intervals (3 series × 13 × 30/15 s, 3 min between series), long intervals
+  (4–5 × 5 min, 2.5 min between), proper Wingate-style **SIT** (30 s all-out @
+  150–170% FTP with a full **4-min** recovery), and descending VO₂ ladders
+  (5-4-3-2-1 min). Every addition is classify-before-write + structure-deduped.
+- **Removed 18 under-rested anaerobic files** — all-out efforts (≥130% FTP,
+  20–60 s) with **under 2 min** recovery, which is the "rest is too short"
+  problem reported on the old library. The evidence (Buchheit & Laursen) is
+  ≥2 min for repeatable maximal quality; corrected versions now exist.
+- **Renamed 282 mis-named files** to match their actual content: a workout the
+  classifier reads as `threshold` is now named `threshold_*`, not `vo2max_*`.
+  (match_zwo already selected on content, so prescriptions were never wrong —
+  this fixes only the confusing filenames.) Net library change: 4178 → 4198.
+
+### Library browser — filter redesign
+- **One unified Type** filter (the 16-class content classifier, optgroup-grouped)
+  replaces the old duplicate Type + Content-class selects.
+- **Duration goes to 180 min** (the long endurance rides were previously
+  unreachable past 120), with live min/max sliders + number boxes.
+- **Min Score · Surface · Tags** moved into an **Advanced** disclosure, so the
+  default bar is just Type · Duration · Search · Sort.
+
+### Planner quality
+- **Easy slots stay easy**: Z2 / recovery / long-Z2 slots now reject workouts
+  with embedded threshold / VO₂ / sprint content (no more a "VO₂ 6×2 min"
+  landing in an endurance day).
+- **Reshuffle never gets stuck**: re-rolling a workout now hard-excludes prior
+  picks, persists the exclusion across reopen, and wraps when the pool is
+  exhausted (with a clear "start over" affordance).
+- **Availability is capped at 6 h/session** so a typo (e.g. 10 h) can't spawn an
+  absurd session; realistic hours still apply literally.
+
 ## v1.9.1 — FIT import: drag-and-drop + instant refresh (2026-06-13)
 
 - **Drag-and-drop a `.fit`**: drag a ride file from Finder anywhere onto the app

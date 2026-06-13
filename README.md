@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4178-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v1.9.1-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v1.10.0-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-1422%20passing-success" alt="Tests">
 </p>
 
@@ -265,12 +265,13 @@ See [docs/cycling_apps.md](docs/cycling_apps.md) for the full table.
 
 ## Releases
 
-Latest: **[v1.9.1 — FIT import: drag-and-drop + instant refresh](https://github.com/platypus45/domestique/releases/latest)** (2026-06-13).
+Latest: **[v1.10.0 — evidence-based library overhaul, filter redesign, planner fixes](https://github.com/platypus45/domestique/releases/latest)** (2026-06-13).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 
 **Highlights since v1.8.5** (see [CHANGELOG.md](CHANGELOG.md) for every shipped tag):
 
+- **Evidence-based library + cleaner browser** (v1.10.0) — added the canonical Rønnestad short/long intervals, proper Wingate SIT (4-min recovery) and descending VO₂ ladders from the PubMed literature, removed 18 under-rested anaerobic files (the "rest too short" ones), and renamed 282 files to match their real content type. The library filter is redesigned: one unified Type, a 0–180 min duration range, and an Advanced panel for Min Score / Surface / Tags.
 - **FIT import that just works** (v1.9.1) — drag a `.fit` from Finder anywhere onto the window (or click **Import FIT**); it imports, reconciles against your plan, adapts the next sessions, and the views refresh on the spot.
 - **Onboarding + "This Week" overhaul** (v1.9.0) — first-run wizard reworked (paste one API key, athlete ID auto-detected, Garmin sync verified, account guidance, skippable); reconciliation of completed rides → done/missed now happens automatically on every sync (the manual "Reconcile Week" button is gone); multi-ride days count correctly toward the week; workout selection brought in line with the planner; library grown to 4 178 clean workouts.
 

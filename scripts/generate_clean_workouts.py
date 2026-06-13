@@ -103,6 +103,28 @@ def _emit_blocks(reps: int, on_s: int, off_s: int, on_pw: float, off_pw: float,
     return _wrap(body)
 
 
+def _emit_pyramid(on_list: list, rec_s: int, on_pw: float, off_pw: float,
+                  total_min: int) -> "str | None":
+    """DECREASING-ladder VO2 session (Rønnestad/Billat decreasing intervals):
+    warmup + descending work bouts (e.g. 5-4-3-2-1 min) each @ on_pw separated by
+    EASY recovery + cooldown. Bookends sized to land total_min round."""
+    inner = sum(on_list) + (len(on_list) - 1) * rec_s
+    bookend = total_min * 60 - inner
+    if not (600 <= bookend <= 1680):
+        return None
+    cd = max(300, min(900, int(round((bookend * 0.4) / 30) * 30)))
+    wu = bookend - cd
+    if not (300 <= wu <= 900):
+        return None
+    body = f'        <Warmup Duration="{wu}" PowerLow="0.50" PowerHigh="0.75" pace="0" />\n'
+    for i, d in enumerate(on_list):
+        body += (f'        <SteadyState Duration="{d}" Power="{_fmt_pw(on_pw)}" pace="0" />\n')
+        if i < len(on_list) - 1:
+            body += (f'        <SteadyState Duration="{rec_s}" Power="{_fmt_pw(off_pw)}" pace="0" />\n')
+    body += f'        <Cooldown Duration="{cd}" PowerLow="0.65" PowerHigh="0.45" pace="0" />\n'
+    return _wrap(body)
+
+
 def _polarized_candidates():
     """Rønnestad / polarized VO2 macro-block specs. EASY (≈50%) recovery between
     reps AND between blocks — no grey-zone filler. Accept the hard-aerobic
@@ -121,6 +143,11 @@ def _polarized_candidates():
         (4, 60, 60, 1.15, 0.50, 4, 240),
         (5, 120, 120, 1.12, 0.50, 3, 300),  # 2min on / 2min easy ×3
         (4, 180, 180, 1.10, 0.50, 3, 300),  # 3min on / 3min easy ×3
+        # v1.10.0 — CANONICAL Rønnestad SI at literature intensity (~108-113%,
+        # effort-matched in the study; the 1.16-1.18 above are the hot end).
+        # 3 series × 13×30/15, 3 min (180s) between series (PubMed 31977120).
+        (13, 30, 15, 1.10, 0.50, 3, 180),
+        (13, 30, 15, 1.13, 0.50, 3, 180),
     ]
     for reps, on_s, off_s, on_pw, off_pw, nb, brec in specs:
         yield (HARD, reps, on_s, off_s, on_pw, off_pw, nb, brec)
@@ -182,12 +209,24 @@ def _interval_candidates():
         (4, 300, 1.10, 300), (5, 300, 1.10, 240), (8, 120, 1.10, 120),
     ]:
         yield ("vo2max", reps, on_s, off_s, pw, 0.55)
-    # anaerobic 130–150%, ≥3:1 recovery, capped reps
+    # v1.10.0 — CANONICAL Rønnestad LONG-interval: 4–5×5min, 2.5-min (150s)
+    # between (PubMed 31977120). Max-sustainable VO2 effort; easy recovery.
+    for reps in (4, 5):
+        for pw in (1.06, 1.08, 1.10):
+            yield ("vo2max", reps, 300, 150, pw, 0.50)
+    # anaerobic 130–150%, ≥2-min recovery (Buchheit/Laursen SIT: all-out ≥20s
+    # efforts need ≥2 min rest for quality — NO 1:1). capped reps.
+    # v1.10.0 — fixed the lone 1:3 (90s) spec to 120s to honour the ≥2-min rule.
     for reps, on_s, pw, off_s in [
-        (6, 30, 1.50, 120), (8, 30, 1.40, 90), (6, 45, 1.40, 180),
+        (6, 30, 1.50, 120), (8, 30, 1.40, 120), (6, 45, 1.40, 180),
         (8, 30, 1.50, 120), (6, 60, 1.30, 180), (8, 45, 1.35, 135),
     ]:
         yield ("anaerobic", reps, on_s, off_s, pw, 0.50)
+    # v1.10.0 — PROPER SIT (Wingate-style): 4–6×30s ALL-OUT @150–170%, FULL
+    # 4-min (240s) recovery (≈1:8) for repeatable maximal quality (PubMed 23832851).
+    for reps in (4, 5, 6):
+        for pw in (1.50, 1.60, 1.70):
+            yield ("anaerobic", reps, 30, 240, pw, 0.45)
     # neuromuscular 200% short sprints, long rec
     for reps, on_s, off_s in [(8, 15, 165), (10, 15, 165), (12, 10, 110),
                               (10, 20, 160), (8, 20, 220), (12, 15, 105)]:
@@ -393,6 +432,25 @@ def run() -> dict:
             zwo = _emit_blocks(reps, on_s, off_s, on_pw, off_pw, nb, brec, total)
             if zwo:
                 _try(intended, zwo)
+    # v1.10.0 — decreasing/pyramidal VO2 ladders (5-4-3-2-1 etc.) × round totals.
+    # 2.5-min easy recovery between bouts; classify-before-write keeps the ones
+    # that land vo2max (short tail bouts can pull primary elsewhere → rejected).
+    PYRAMIDS = [
+        [300, 240, 180, 120, 60],   # 5-4-3-2-1
+        [240, 180, 120, 60],        # 4-3-2-1
+        [300, 240, 180],            # 5-4-3
+        [240, 240, 180, 120],       # 4-4-3-2
+        [180, 180, 180, 120, 120],  # 3-3-3-2-2
+    ]
+    vcap = _cap("vo2max")
+    for on_list in PYRAMIDS:
+        for pw in (1.08, 1.10, 1.12):
+            for total in ROUND_TOTALS:
+                if total > vcap:
+                    continue
+                zwo = _emit_pyramid(on_list, 150, pw, 0.50, total)
+                if zwo:
+                    _try("vo2max", zwo)
 
     return stats
 

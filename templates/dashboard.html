@@ -1782,74 +1782,63 @@ window.addEventListener('unhandledrejection', function(e) {
 <!-- ═══ LIBRARY ════════════════════════════════════════════════════════════ -->
 <div class="section" id="sec-library" data-library-browser>
   <div class="card" style="margin-bottom:12px;">
-    <div class="form-row">
-      <div class="form-group"><label>Min Score <span class="hint" title="Good 7+, Medium 4-6, Low &lt;4. Quality score (1-10) = 60% TSS volume + 40% above-Z2 time + structure-variety bonus (0-2) + VO2 bonus (+1 if any segment &gt;105% FTP) + aerobic bonus (+0.5 for Z2 ≥50% and ≥75min)." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span></label>
-        <select id="wk-score" onchange="loadWorkouts()">
-          <option value="7">Good (7+)</option>
-          <option value="4">Medium (4+)</option>
-          <option value="0" selected>All</option>
+    <!-- v1.10.0 — redesigned library filter. ONE unified Type = the content
+         classifier (16 canonical classes, optgroup-grouped); the legacy
+         session_type select is gone (content class is the canonical type
+         match_zwo selects on). Duration goes to 180 (we now have 180-min
+         endurance). Min Score / Surface / Tags moved into an Advanced
+         disclosure so the default bar is just Type · Duration · Search · Sort. -->
+    <div class="form-row" style="align-items:flex-end;">
+      <div class="form-group" style="flex:1.3;min-width:170px;"><label>Type <span class="hint" title="Content-based primary type from the structure classifier (16 canonical classes). Matches the actual workout structure, not the filename." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span></label>
+        <select id="wk-content-class" onchange="loadWorkouts()" style="width:100%;">
+          <option value="" selected>All types</option>
+          <optgroup label="Aerobic">
+            <option value="recovery">Recovery</option>
+            <option value="endurance">Endurance</option>
+            <option value="endurance_intervals">Endurance + Strides</option>
+          </optgroup>
+          <optgroup label="Tempo / Sweet Spot">
+            <option value="tempo">Tempo</option>
+            <option value="tempo_intervals">Tempo Intervals</option>
+            <option value="tempo_ladder">Tempo Ladder</option>
+            <option value="sweet_spot">Sweet Spot</option>
+            <option value="sweet_spot_ladder">Sweet Spot Ladder</option>
+          </optgroup>
+          <optgroup label="Threshold">
+            <option value="threshold">Threshold</option>
+            <option value="threshold_ladder">Threshold Ladder</option>
+            <option value="over_under">Over-Under</option>
+          </optgroup>
+          <optgroup label="VO2 / Anaerobic">
+            <option value="vo2max">VO2max</option>
+            <option value="vo2_short">VO2 Short</option>
+            <option value="vo2_ladder">VO2 Ladder</option>
+            <option value="anaerobic">Anaerobic</option>
+            <option value="neuromuscular">Neuromuscular</option>
+          </optgroup>
+          <optgroup label="Tests">
+            <option value="ftp_test">FTP Test</option>
+          </optgroup>
         </select></div>
-      <div class="form-group"><label>Type</label>
-        <select id="wk-type" onchange="loadWorkouts()"><option value="">All</option>
-          <option value="Endurance">Endurance</option>
-          <option value="Sweet Spot">Sweet Spot</option>
-          <option value="Threshold">Threshold</option>
-          <option value="VO2max">VO2max</option>
-          <option value="Anaerobic">Anaerobic</option>
-          <option value="Sprint">Sprint</option>
-          <option value="Over-Unders">Over-Unders</option>
-          <option value="Tempo">Tempo</option>
-          <option value="Recovery">Recovery</option>
-          <!-- v4.1.0 U7: FTP Tests category filter (backend filters on ?tags=ftp_test) -->
-          <option value="__ftp_test__">FTP Tests</option></select></div>
-      <!-- v1.0.4 IMPL-DASHBOARD: content-class filter — 16 canonical classes
-           per MASTER_DECISIONS_v104 §1. `mixed` dropped (junk drawer routed
-           by zone-dominance). 6 NEW structural variants added. -->
-      <div class="form-group"><label>Content class <span class="hint" title="Content-based cascade primary type from /scripts/classify_library_content.py — 16 canonical classes (v1.0.4). Matches the actual workout structure, not the filename." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span></label>
-        <select id="wk-content-class" onchange="loadWorkouts()">
-          <option value="" selected>Any type</option>
-          <option value="recovery">Recovery</option>
-          <option value="endurance">Endurance</option>
-          <option value="endurance_intervals">Endurance + Strides</option>
-          <option value="tempo">Tempo</option>
-          <option value="tempo_intervals">Tempo Intervals</option>
-          <option value="tempo_ladder">Tempo Ladder</option>
-          <option value="sweet_spot">Sweet Spot</option>
-          <option value="sweet_spot_ladder">Sweet Spot Ladder</option>
-          <option value="threshold">Threshold</option>
-          <option value="threshold_ladder">Threshold Ladder</option>
-          <option value="over_under">Over-Under</option>
-          <option value="vo2max">VO2max</option>
-          <option value="vo2_short">VO2 Short</option>
-          <option value="vo2_ladder">VO2 Ladder</option>
-          <option value="anaerobic">Anaerobic</option>
-          <option value="neuromuscular">Neuromuscular</option>
-          <option value="ftp_test">FTP Test</option>
-        </select></div>
-      <!-- v4.2.0 IMPL-LIBRARY: duration range slider, 0-120 min default open.
-           v1.8.16 — typeable min/max number fields + clamp-not-swap. Sliders
-           update the cheap label live (oninput) and the paired number box;
-           the expensive library re-filter (loadWorkouts) runs only on release
-           (onchange) and on number-box commit. Dragging one knob past the
-           other CLAMPS at the boundary instead of swapping the values. -->
-      <div class="form-group"><label>Duration <span id="wk-duration-label" style="color:var(--text2);font-size:11px;">0–120 min</span></label>
+      <!-- Duration range, 0–180 (typeable min/max + clamp-not-swap sliders;
+           cheap label updates live, the re-filter runs only on release). -->
+      <div class="form-group" style="flex:1.8;min-width:240px;"><label>Duration <span id="wk-duration-label" style="color:var(--text2);font-size:11px;">0–180 min</span></label>
         <div style="display:flex;gap:6px;align-items:center;padding-top:2px;">
-          <input type="number" id="wk-dur-min-num" min="0" max="120" value="0" step="5"
+          <input type="number" id="wk-dur-min-num" min="0" max="180" value="0" step="5"
                  onchange="onLibDurationNum('min')" aria-label="Min duration (min)"
-                 style="width:64px;min-width:64px;">
-          <input type="range" id="wk-dur-min" min="0" max="120" value="0" step="5"
-                 onchange="onLibDurationChange()" oninput="onLibDurationSlide('min')" style="width:70px;">
+                 style="width:72px;min-width:72px;">
+          <input type="range" id="wk-dur-min" min="0" max="180" value="0" step="5"
+                 onchange="onLibDurationChange()" oninput="onLibDurationSlide('min')" style="flex:1;min-width:56px;">
           <span style="color:var(--text3);">–</span>
-          <input type="range" id="wk-dur-max" min="0" max="120" value="120" step="5"
-                 onchange="onLibDurationChange()" oninput="onLibDurationSlide('max')" style="width:70px;">
-          <input type="number" id="wk-dur-max-num" min="0" max="120" value="120" step="5"
+          <input type="range" id="wk-dur-max" min="0" max="180" value="180" step="5"
+                 onchange="onLibDurationChange()" oninput="onLibDurationSlide('max')" style="flex:1;min-width:56px;">
+          <input type="number" id="wk-dur-max-num" min="0" max="180" value="180" step="5"
                  onchange="onLibDurationNum('max')" aria-label="Max duration (min)"
-                 style="width:64px;min-width:64px;">
+                 style="width:72px;min-width:72px;">
         </div></div>
-      <!-- v4.2.0 IMPL-LIBRARY: search-by-structure (debounced ≥300ms). -->
-      <div class="form-group"><label>Search</label>
-        <input type="text" id="wk-search" placeholder="ramp, vo2, ftp_test…" oninput="onLibSearchInput()" style="width:160px;"></div>
-      <!-- v4.2.0 IMPL-LIBRARY: explicit sort dropdown (sync with table headers). -->
+      <!-- search-by-structure (debounced) -->
+      <div class="form-group" style="flex:1.3;min-width:140px;"><label>Search</label>
+        <input type="text" id="wk-search" placeholder="ramp, vo2, ftp_test…" oninput="onLibSearchInput()" style="width:100%;"></div>
       <div class="form-group"><label>Sort</label>
         <select id="wk-sort" onchange="loadWorkouts()">
           <option value="score_desc" selected>Score ▼</option>
@@ -1860,17 +1849,30 @@ window.addEventListener('unhandledrejection', function(e) {
           <option value="name_desc">Name Z→A</option>
         </select></div>
       <div class="form-group"><label>&nbsp;</label>
-        <button class="btn btn-primary" onclick="loadWorkouts()">Search</button></div>
-      <div class="form-group"><label>Surface</label>
-        <div style="display:flex;gap:4px;align-items:center;padding-top:2px;">
-          <button class="lib-surface-btn active" id="lib-surf-all" onclick="setLibSurfaceFilter('all',this)">All</button>
-          <button class="lib-surface-btn" id="lib-surf-gravel" onclick="setLibSurfaceFilter('gravel',this)">Gravel & Cobbles</button>
-        </div></div>
+        <button class="btn" id="wk-adv-toggle" aria-expanded="false" onclick="toggleLibAdvanced()">Advanced ▾</button></div>
+      <div class="form-group"><label>&nbsp;</label>
+        <button class="btn" onclick="clearLibFilters()">Clear</button></div>
     </div>
-    <!-- v4.2.0 IMPL-LIBRARY: tag chip-list (multi-select, OR-match). Hidden until populated by /api/workouts/tags. -->
-    <div id="wk-tags-row" style="display:none;margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">
-      <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:6px;">Tags <span style="color:var(--text3);">(click to toggle, OR-match)</span></label>
-      <div id="wk-tags-chips" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+    <!-- Advanced disclosure: Min Score + Surface + Tags (hidden by default). -->
+    <div id="wk-advanced" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
+      <div class="form-row" style="align-items:flex-end;">
+        <div class="form-group"><label>Min score <span class="hint" title="Good 7+, Medium 4-6, Low &lt;4. Quality score (1-10) = 60% TSS volume + 40% above-Z2 time + structure-variety bonus (0-2) + VO2 bonus (+1 if any segment &gt;105% FTP) + aerobic bonus (+0.5 for Z2 ≥50% and ≥75min)." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span></label>
+          <select id="wk-score" onchange="loadWorkouts()">
+            <option value="7">Good (7+)</option>
+            <option value="4">Medium (4+)</option>
+            <option value="0" selected>All</option>
+          </select></div>
+        <div class="form-group"><label>Surface</label>
+          <div style="display:flex;gap:4px;align-items:center;padding-top:2px;">
+            <button class="lib-surface-btn active" id="lib-surf-all" onclick="setLibSurfaceFilter('all',this)">All</button>
+            <button class="lib-surface-btn" id="lib-surf-gravel" onclick="setLibSurfaceFilter('gravel',this)">Gravel & Cobbles</button>
+          </div></div>
+      </div>
+      <!-- tag chip-list (multi-select, OR-match). Hidden until populated by /api/workouts/tags. -->
+      <div id="wk-tags-row" style="display:none;margin-top:10px;">
+        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:6px;">Tags <span style="color:var(--text3);">(click to toggle, OR-match)</span></label>
+        <div id="wk-tags-chips" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+      </div>
     </div>
   </div>
   <div class="card scroll-x">
@@ -7463,7 +7465,7 @@ async function setActivityRace(activityId, isRace, checkboxEl) {
 
 // v4.2.0 IMPL-LIBRARY: client-side state for the new filters (slider /
 // debounced search / tag chip selections). loadWorkouts() reads these.
-let _libDurMin = 0, _libDurMax = 120;
+let _libDurMin = 0, _libDurMax = 180;
 let _libSelectedTags = new Set();
 let _libSearchTimer = null;
 
@@ -7479,7 +7481,7 @@ let _libSearchTimer = null;
 //  • CLAMP, don't swap. Dragging min past max pins min AT max (and vice
 //    versa) instead of swapping the two values — the old swap made the OTHER
 //    slider's number jump around, which read as a bug.
-const _LIB_DUR_MIN = 0, _LIB_DUR_MAX = 120;
+const _LIB_DUR_MIN = 0, _LIB_DUR_MAX = 180;
 
 function _libClampInt(v, lo, hi) {
   v = Math.round((Number(v) || 0) / 5) * 5;        // snap to step=5
@@ -7577,20 +7579,33 @@ function toggleLibTag(el) {
 
 function clearLibFilters() {
   if ($('wk-score')) $('wk-score').value = '0';
-  if ($('wk-type')) $('wk-type').value = '';
   if ($('wk-content-class')) $('wk-content-class').value = '';
   if ($('wk-search')) $('wk-search').value = '';
   if ($('wk-sort')) $('wk-sort').value = 'score_desc';
   if ($('wk-dur-min')) $('wk-dur-min').value = '0';
-  if ($('wk-dur-max')) $('wk-dur-max').value = '120';
-  _libDurMin = 0; _libDurMax = 120;
+  if ($('wk-dur-max')) $('wk-dur-max').value = '180';
+  if ($('wk-dur-min-num')) $('wk-dur-min-num').value = '0';
+  if ($('wk-dur-max-num')) $('wk-dur-max-num').value = '180';
+  _libDurMin = 0; _libDurMax = 180;
   _libSelectedTags.clear();
   document.querySelectorAll('#wk-tags-chips .lib-tag-chip').forEach(c => {
     c.style.background = 'var(--surface2)';
     c.style.color = 'var(--text2)';
   });
-  const lbl = $('wk-duration-label'); if (lbl) lbl.textContent = '0–120 min';
+  const lbl = $('wk-duration-label'); if (lbl) lbl.textContent = '0–180 min';
   loadWorkouts();
+}
+
+// v1.10.0 — Advanced disclosure toggle (Min Score / Surface / Tags).
+function toggleLibAdvanced() {
+  const panel = $('wk-advanced'), btn = $('wk-adv-toggle');
+  if (!panel) return;
+  const open = panel.style.display === 'none';
+  panel.style.display = open ? '' : 'none';
+  if (btn) {
+    btn.setAttribute('aria-expanded', String(open));
+    btn.textContent = open ? 'Advanced ▴' : 'Advanced ▾';
+  }
 }
 
 async function loadWorkouts() {
@@ -7600,19 +7615,14 @@ async function loadWorkouts() {
       // First-load: populate distinct-tags chip list once.
       loadLibraryTags();
     }
-    const score=$('wk-score').value;
-    const type=$('wk-type').value;
+    const score=$('wk-score') ? $('wk-score').value : '0';
     const cclass=$('wk-content-class') ? $('wk-content-class').value : '';
     const sortV=$('wk-sort') ? $('wk-sort').value : 'score_desc';
     const search=$('wk-search') ? $('wk-search').value : '';
     let url=`/api/workouts?min_score=${score}&duration_min=${_libDurMin}&duration_max=${_libDurMax}&limit=3000&sort=${encodeURIComponent(sortV)}`;
-    // v4.1.0 U7: FTP-test pseudo-category routes through ?tags=ftp_test.
-    let urlTags = [..._libSelectedTags];
-    if (type === '__ftp_test__') {
-      if (!urlTags.includes('ftp_test')) urlTags.push('ftp_test');
-    } else if (type) {
-      url += '&session_type=' + encodeURIComponent(type);
-    }
+    // v1.10.0 — unified Type = content_class (FTP tests via content_class=ftp_test);
+    // the legacy session_type select was removed. Tags still OR-match if selected.
+    const urlTags = [..._libSelectedTags];
     if (urlTags.length) url += '&tags=' + encodeURIComponent(urlTags.join(','));
     if (cclass) url += '&content_class=' + encodeURIComponent(cclass);
     if (search && search.trim()) url += '&search=' + encodeURIComponent(search.trim());
@@ -7627,11 +7637,6 @@ async function loadWorkouts() {
       }
     }
     let out = [...seen.values()];
-    // v4.1.0 U7: If user picked FTP Tests and the server returned everything
-    // (i.e., ignored the tags= filter), narrow client-side by filename prefix.
-    if (type === '__ftp_test__') {
-      out = out.filter(w => /^ftp_test_/i.test(w.File || '') || /ftp\s*test/i.test(w.Name || ''));
-    }
     _libraryWorkouts = out;
     renderLibrary(_libraryWorkouts);
   } catch(e) { console.error('loadWorkouts failed:', e); $('wk-body').innerHTML = '<tr><td colspan="8" style="color:var(--red);padding:20px;">Failed to load workouts. Check server connection.</td></tr>'; }
@@ -13766,6 +13771,7 @@ function _renderRematchCandidate(day, candidate) {
     <div style="font-size:14px;font-weight:600;margin-bottom:4px;">${esc(String(name))}</div>
     <div style="font-size:11px;color:var(--text2);">${esc(String(cat))}${dur ? ' &middot; ' + dur + 'min' : ''}${tss ? ' &middot; ' + tss + ' TSS' : ''}</div>
     <div id="${chartHolderId}" style="margin-top:10px;min-height:140px;font-size:11px;color:var(--text3);">Loading workout preview&hellip;</div>
+    ${candidate.exhausted ? `<div style="font-size:11px;color:var(--yellow);margin-top:8px;">You&rsquo;ve seen every alternative for this ${dur || ''}min slot — Reshuffle will start repeating. <a href="#" style="color:var(--accent);" onclick="event.preventDefault();_rematchStartOver('${escJs(day)}')">Start over</a>.</div>` : ''}
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
       <button class="btn btn-primary" onclick="_rematchAccept('${escJs(day)}')" style="font-size:12px;">&#x2713; Accept &amp; reflow plan</button>
       <button class="btn" onclick="_rematchReshuffle('${escJs(day)}')" style="font-size:12px;">&#x21bb; Reshuffle (try another)</button>
@@ -13814,6 +13820,16 @@ async function _rematchReshuffle(day) {
   // Push the current pick onto the exclusion list so preview-redraw
   // doesn't hand us the same workout twice in a row.
   if (st.current.zwo_name) st.excluded.push(st.current.zwo_name);
+  st.current = null;
+  await _rematchPreview(day, st);
+}
+
+// v1.9.2 — clear the reject list so Reshuffle can offer the whole pool again
+// (shown via "Start over" once the candidates are exhausted).
+async function _rematchStartOver(day) {
+  const st = window._rematchState[day];
+  if (!st) return;
+  st.excluded = [];
   st.current = null;
   await _rematchPreview(day, st);
 }

@@ -199,7 +199,11 @@ def test_combo_duration_window_plus_search():
     for w in out:
         d = float(w["Duration(min)"])
         assert 30 <= d <= 60
-        hay = (w.get("Name", "") + " " + w.get("File", "")).lower()
+        # Search matches Name + File + display_name + content_class (server-side),
+        # so a content vo2_ladder with a "VO2 Ladder" display_name is a valid hit
+        # even when its (legacy) filename says otherwise. Mirror that here.
+        hay = (w.get("Name", "") + " " + w.get("File", "") + " "
+               + (w.get("display_name") or "") + " " + (w.get("content_class") or "")).lower()
         assert "vo2" in hay
 
 

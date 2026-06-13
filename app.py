@@ -11821,43 +11821,57 @@ def _pick_redraw_candidate(plan: dict, day_iso: str, exclude_extra: "list[str] |
     if target_session.get("session_type") == "rest":
         raise ValueError("rest_day")
 
-    excluded: set[str] = set()
+    # Same-week workout names — SOFT avoid (variety within the week).
+    same_week: set[str] = set()
     for s in target_week.get("sessions", []):
         nm = s.get("zwo_name") or ""
         if nm:
-            excluded.add(nm)
-    for nm in (exclude_extra or []):
-        if nm:
-            excluded.add(str(nm))
+            same_week.add(nm)
+    # User-rejected reshuffles this session — HARD exclude (must not reappear).
+    hard_exclude: set[str] = {str(nm) for nm in (exclude_extra or []) if nm}
 
-    planned = tp.PlannedSession(
-        day=date.fromisoformat(day_iso),
-        day_name=target_session.get("day_name", ""),
-        session_type=target_session.get("session_type", "z2"),
-        duration_min=int(target_session.get("duration_min", 0) or 0),
-        tss_estimate=float(target_session.get("tss_estimate", 0) or 0),
-        description=target_session.get("description", ""),
-    )
     library = tp.load_workout_library()
     week_num = target_week.get("week_num", 0)
     day_idx = (date.fromisoformat(day_iso) - date.fromisoformat(target_week["start"])).days
-    variation = int(target_session.get("variation", 0)) + 1
-    planned.profile_id = f"{variation}"
-    tp.match_zwo(
-        planned, library,
-        week_num=week_num + variation * 100,
-        day_idx=day_idx,
-        used_names=excluded,
-        raise_on_empty=True,
-        # v1.8.24 — reshuffle returns the closest-duration workout the library
-        # offers (never a far one); user: "I want the exact duration".
-        exact_duration=True,
-    )
-    if not planned.zwo_file:
-        raise tp.NoCandidateWorkoutError(
-            session=planned, available_count=0, primary_count=0,
-            coverage_count=0, reason="empty_match",
+    base_variation = int(target_session.get("variation", 0)) + 1
+
+    # v1.9.2 — HARD exclusion via retry loop. match_zwo's used_names is only a
+    # soft −15 penalty, so once the (small, exact-duration) candidate tier was
+    # cycled the same file kept winning → "Reshuffle did nothing". Retry with a
+    # bumped seed until the pick is genuinely NOT in hard_exclude; if every
+    # attempt lands on an already-rejected file the distinct pool is exhausted,
+    # so we surface ``exhausted`` and the UI tells the user they've seen them all.
+    planned = None
+    variation = base_variation
+    exhausted = False
+    for attempt in range(24):
+        cand = tp.PlannedSession(
+            day=date.fromisoformat(day_iso),
+            day_name=target_session.get("day_name", ""),
+            session_type=target_session.get("session_type", "z2"),
+            duration_min=int(target_session.get("duration_min", 0) or 0),
+            tss_estimate=float(target_session.get("tss_estimate", 0) or 0),
+            description=target_session.get("description", ""),
         )
+        variation = base_variation + attempt
+        cand.profile_id = f"{variation}"
+        tp.match_zwo(
+            cand, library,
+            week_num=week_num + variation * 100,
+            day_idx=day_idx,
+            used_names=same_week | hard_exclude,
+            raise_on_empty=True,
+            exact_duration=True,  # closest-duration tier (v1.8.24)
+        )
+        planned = cand
+        if cand.zwo_name and cand.zwo_name not in hard_exclude:
+            break  # genuinely new pick
+    else:
+        # Every attempt returned an already-rejected file → pool exhausted.
+        exhausted = True
+
+    if planned is None or not planned.zwo_file:
+        raise tp.NoCandidateWorkoutError("no candidate for reshuffle")
 
     # Library metadata gives us the REAL duration + TSS of the picked
     # workout — pre-v1.7.0 the rematch kept the planner's original
@@ -11878,6 +11892,10 @@ def _pick_redraw_candidate(plan: dict, day_iso: str, exclude_extra: "list[str] |
         "tss_estimate": round(float(lib_meta.get("TSS") or planned.tss_estimate or 0), 1),
         "if": float(lib_meta.get("IF") or 0),
         "Category": str(lib_meta.get("Category") or ""),
+        # v1.9.2 — True when every remaining candidate is already in the
+        # reject list: the UI shows "you've seen all options" instead of
+        # silently repeating a workout.
+        "exhausted": exhausted,
     }
 
 

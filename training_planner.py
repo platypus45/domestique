@@ -680,6 +680,11 @@ MIN_BUILD_WEEKS  = 4
 MIN_PEAK_WEEKS   = 2
 TAPER_DAYS       = 12    # Mujika 2003: 8-14 days optimal
 STEP_BACK_EVERY  = 4     # Rønnestad: 3 load + 1 recovery
+# v1.9.2 — sanity ceiling for an availability-driven single session. The
+# availability calendar applies the user's per-day hours literally (bidirectional),
+# but caps here so a typo/extreme value (e.g. 10h) can't create an absurd session
+# the workout library can't serve. 6h covers real long endurance / gran-fondo rides.
+MAX_AVAIL_SESSION_MIN = 360
 
 # CTL ramp rates (CTL points/week)
 RAMP_CONSERVATIVE = 3
@@ -2682,6 +2687,17 @@ def match_zwo(
             z345 = (float(w.get("Z3%", 0) or 0) + float(w.get("Z4%", 0) or 0)
                     + float(w.get("Z5%", 0) or 0) + float(w.get("Z6%", 0) or 0))
             if z345 >= _easy_z345_ceiling:
+                continue
+            # v1.9.2 — z345% alone misses Z2-DOMINANT files that EMBED structured
+            # intensity (e.g. an "endurance" 90-min ride with 6×2min @ FTP +
+            # VO2 microbursts reads ~29% above-Z2 but is NOT an easy day). The
+            # content classifier's secondary flags catch these precisely; reject
+            # any structured FTP / VO2 / sprint / over-under work on an easy
+            # slot. Brief AEROBIC surges (Z2+85-90%) don't set these flags, so
+            # genuine endurance-with-surges files are still admitted.
+            _sf = w.get("SecondaryFlags") or {}
+            if any(_sf.get(k) for k in
+                   ("has_threshold_work", "has_vo2_work", "has_sprints", "pattern_over_under")):
                 continue
 
         # v1.8.18 follow-up — duration proximity penalty. The old absolute
@@ -5570,7 +5586,7 @@ def reforecast(
                     # _pick_session's fallback) so the day actually trains.
                     # Use `hours * 60` literally because scale = available /
                     # current and current=0 makes the ratio undefined.
-                    new_dur = int(round(hours * 60))
+                    new_dur = min(int(round(hours * 60)), MAX_AVAIL_SESSION_MIN)
                     s.session_type = "z2"
                     s.duration_min = new_dur
                     tss_per_h = TSS_PER_HOUR.get("z2", 45)
@@ -5598,7 +5614,12 @@ def reforecast(
                     # makes it bidirectional and the diff at the caller
                     # side prevents clobbering planner choices on
                     # untouched days.
-                    target_min = int(round(hours * 60))
+                    # v1.9.2 — honor the user's hours literally BUT cap at a
+                    # 6h/session sanity ceiling so a typo/extreme availability
+                    # (e.g. 10h) can't spawn an absurd 600-min session the
+                    # library can't even serve. 6h covers real long endurance /
+                    # gran-fondo rides.
+                    target_min = min(int(round(hours * 60)), MAX_AVAIL_SESSION_MIN)
                     if target_min != s.duration_min:
                         old_dur = s.duration_min
                         s.duration_min = max(0, target_min)

@@ -298,10 +298,14 @@ class TestJSONIntegrity(unittest.TestCase):
         with CLASSIFICATION_PATH.open() as f:
             cls.cache = json.load(f)
 
-    def test_total_file_count_3054(self):
-        self.assertEqual(self.cache.get("count"), 3054,
-                         "total file count must remain 3054 post-v105c regen")
-        self.assertEqual(len(self.cache.get("classifications", {})), 3054)
+    def test_total_file_count_consistent(self):
+        # v1.10.0: the library grows over time, so assert the INVARIANT — the
+        # cache "count" field tracks the classifications dict — instead of a
+        # frozen snapshot. Was hardcoded 3054, stale since the library grew.
+        n = len(self.cache.get("classifications", {}))
+        self.assertGreater(n, 0)
+        self.assertEqual(self.cache.get("count"), n,
+                         "cache 'count' must equal the number of classifications")
 
     def test_no_empty_display_names(self):
         empty = [
@@ -365,20 +369,20 @@ class TestConfirmedBugsV105D(unittest.TestCase):
     # --- BUG-A: 105% FTP top-of-Z4 was binning to Z5 → vo2max instead of threshold
 
     def test_bug_a_vo2max_2min_7x_56min_now_threshold(self):
-        """vo2max_2min_7x_56min.zwo → threshold (BUG-A; was vo2max)."""
-        self.assertEqual(self._primary("vo2max_2min_7x_56min.zwo"), "threshold")
+        """threshold_2min_7x_56min.zwo → threshold (BUG-A; was vo2max)."""
+        self.assertEqual(self._primary("threshold_2min_7x_56min.zwo"), "threshold")
 
     def test_bug_a_vo2max_mixed_40min_now_threshold(self):
-        """vo2max_mixed_40min.zwo → threshold (BUG-A; was vo2max)."""
-        self.assertEqual(self._primary("vo2max_mixed_40min.zwo"), "threshold")
+        """threshold_mixed_40min_v2.zwo → threshold (BUG-A; was vo2max)."""
+        self.assertEqual(self._primary("threshold_mixed_40min_v2.zwo"), "threshold")
 
     def test_bug_a_vo2max_mixed_60min_now_threshold(self):
-        """vo2max_mixed_60min.zwo → threshold (BUG-A; was vo2max)."""
-        self.assertEqual(self._primary("vo2max_mixed_60min.zwo"), "threshold")
+        """threshold_mixed_60min_v2.zwo → threshold (BUG-A; was vo2max)."""
+        self.assertEqual(self._primary("threshold_mixed_60min_v2.zwo"), "threshold")
 
     def test_bug_a_vo2max_10x2min_70min_now_threshold(self):
-        """vo2max_10x2min_70min.zwo → threshold (BUG-A; was vo2max)."""
-        self.assertEqual(self._primary("vo2max_10x2min_70min.zwo"), "threshold")
+        """threshold_10x2min_70min.zwo → threshold (BUG-A; was vo2max)."""
+        self.assertEqual(self._primary("threshold_10x2min_70min.zwo"), "threshold")
 
     # --- BUG-B: z6 ≥60s floor in z1-dom fallback → mis-routing endurance to anaerobic
 

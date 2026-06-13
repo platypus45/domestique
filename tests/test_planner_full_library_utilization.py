@@ -257,17 +257,19 @@ def test_only_score_5_plus_files_picked():
     assert not bad, "Picked workouts below class-aware score floor:\n" + "\n".join(bad)
 
 
-def test_mixed_class_still_used_for_z2_slots():
-    """v4.5.4 regression: mixed-content_class workouts must still be
-    reachable for endurance slots (the z2 pool depends on Mixed entries
-    where Z1+Z2 ≥ 50% AND Z3+Z4+Z5 < 40%). Pre-overhaul, ~64 of 150
-    sessions go to mixed; post-overhaul this drops as files reclassify
-    out of mixed. Either way, ≥1 mixed pick proves the path is alive."""
+def test_endurance_pool_not_starved_for_z2_slots():
+    """v1.10.0 (was test_mixed_class_still_used_for_z2_slots): the endurance/Z2
+    slot pool must stay reachable. The original guarded the legacy "mixed"
+    content_class, but the classifier no longer emits "mixed" as a primary
+    (0 files carry it), so a ``mixed`` assertion can never pass. Same intent —
+    "the Z2 pool isn't starved" — now verified via the classes that actually
+    fill endurance slots: ``endurance`` (+ ``sweet_spot`` as the aerobic
+    neighbour the planner falls back to)."""
     phases, weeks = tp.generate_plan(_build_goal(24))
     by_cc = _per_class(_picked_files(weeks))
-    n_mixed = len(by_cc.get("mixed", []))
-    assert n_mixed >= 1, (
-        f"No mixed-class workouts picked — endurance pool is starved. "
+    n_aerobic = len(by_cc.get("endurance", [])) + len(by_cc.get("sweet_spot", []))
+    assert n_aerobic >= 1, (
+        f"Endurance/Z2 pool is starved — no endurance or sweet_spot picks. "
         f"Per-class breakdown: {dict((k, len(v)) for k, v in by_cc.items())}"
     )
 

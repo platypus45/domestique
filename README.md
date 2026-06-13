@@ -46,7 +46,7 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 2. **Connect Intervals.icu** — the first-run wizard walks you through it: paste your API key from [intervals.icu/settings](https://intervals.icu/settings) → Developer Settings (the athlete ID is auto-detected), then optionally enable Garmin Connect on Intervals.icu so rides sync automatically. No intervals.icu account? It's free and you can sign in with Garmin or Strava. Whole step is skippable — without ICU, Domestique falls back to local CTL from your imported FITs.
 3. **Generate a plan** — pick a goal type (event prep / FTP / VO2max / hybrid / general / endurance), target date, target CTL, hours/week. The planner sizes Base / Build1 / Build2 / Peak / (Taper or Consolidation) phases, draws 150 distinct ZWO files across a 24-week plan, and adapts daily to your readiness.
 
-After your first ride: drag the `.fit` onto the upload box (or let ICU sync). Domestique generates a post-ride report, detects FTP tests automatically, and the next-day session adapts to what the ride showed.
+After your first ride: click **Import FIT** in the header (or drag the `.fit` anywhere onto the window), or let ICU sync. Domestique imports it, reconciles it against your plan, adapts the next sessions, detects FTP tests automatically — and the views refresh on the spot.
 
 ### Installing on macOS
 

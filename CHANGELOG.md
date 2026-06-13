@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.9.1 — FIT import: drag-and-drop + instant refresh (2026-06-13)
+
+- **Drag-and-drop a `.fit`**: drag a ride file from Finder anywhere onto the app
+  window and a drop overlay appears — release to import. (The header
+  **Import FIT** button still works too.) Only file drags trigger it, so the
+  calendar's drag-to-move is untouched.
+- **Imports now refresh on the spot**: after an import the This Week card, plan
+  grid and home metrics repaint immediately, reflecting the ride and the plan
+  auto-adapt it triggers (reconcile + load adjustment). Previously the import
+  persisted silently and you had to reload to see anything.
+
 ## v1.9.0 — onboarding + "This Week" overhaul, automatic reconcile, bigger library (2026-06-13)
 
 A batch of UX + correctness work across first-run, the home "This Week" card,

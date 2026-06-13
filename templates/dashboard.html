@@ -1275,6 +1275,15 @@ window.addEventListener('unhandledrejection', function(e) {
   </div>
 </header>
 
+<!-- v1.9.1 — full-window FIT drag-drop overlay. Shown only while dragging a
+     file over the app; drop a .fit anywhere to import it. -->
+<div id="fit-drop-overlay" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.55);align-items:center;justify-content:center;pointer-events:none;">
+  <div style="border:3px dashed #fff;border-radius:16px;padding:48px 64px;color:#fff;font-size:20px;font-weight:700;text-align:center;background:rgba(0,0,0,0.25);">
+    &#x2b06;&#xfe0f; Drop your <code style="color:#fff;">.fit</code> ride to import
+    <div style="font-size:13px;font-weight:400;margin-top:8px;opacity:0.85;">It'll be added, reconciled, and your plan will adapt automatically.</div>
+  </div>
+</div>
+
 <!-- Intervals.icu sync-health banner (auto-hides when sync is healthy).
      Populated by loadSyncBanner() from /api/sync/status, polled every 60s.
      Dismissable per session via sessionStorage('icu-banner-dismissed'). -->
@@ -3148,6 +3157,17 @@ function openImportFitPicker() {
 
 async function handleImportFit(inputEl) {
   const file = inputEl && inputEl.files && inputEl.files[0];
+  try {
+    await _importFitFile(file);
+  } finally {
+    if (inputEl) inputEl.value = '';
+  }
+}
+
+// v1.9.1 — shared FIT import core, used by BOTH the "Import FIT" picker and the
+// window-wide drag-drop zone. Imports the file, then refreshes the home views
+// so the new ride + its automatic reconcile/adapt show immediately (no reload).
+async function _importFitFile(file) {
   if (!file) return;
   const nameLC = (file.name || '').toLowerCase();
   if (!nameLC.endsWith('.fit')) {
@@ -3168,28 +3188,66 @@ async function handleImportFit(inputEl) {
     const dur = ps.duration_sec ? Math.round(ps.duration_sec / 60) + ' min' : '';
     const tss = ps.tss ? ' · TSS ' + ps.tss : '';
     showToast('Imported ' + file.name + (dur ? ' (' + dur + tss + ')' : ''), 5000);
-    // v1.8.8 Bug 10 — Ride History tab + loadRideHistory() removed; nothing to refresh here.
+    // v1.9.1 — refresh the home views so the imported ride + the plan
+    // auto-adapt it just triggered (server-side _maybe_auto_reforecast →
+    // reconcile + adapt) are visible immediately. Pre-fix nothing repainted,
+    // so the import looked like it did nothing until a reload.
+    try { await loadCalendar(); } catch(_) {}
+    try { await loadPlan(); } catch(_) {}
+    try { if (typeof loadHome === 'function') loadHome(); } catch(_) {}
     // v4.1.0 U1: the freshly imported ride might be an FTP test — check and
-    // pop the modal if so. Non-fatal; runs async, doesn't block the tab switch.
+    // pop the modal if so. Non-fatal; runs async.
     try {
-      // Clear the sessionStorage dedup for any "recent" rides so the modal
-      // actually opens for this new import even if we already dismissed a
-      // prior ride's modal this session.
       if (data && data.ride_id) {
         try { sessionStorage.removeItem('ftp-modal-seen-' + data.ride_id); } catch(_) {}
       }
       setTimeout(() => { try { maybeShowFtpTestModal(); } catch(_) {} }, 400);
     } catch(_) {}
   } catch (e) {
-    // The backend endpoint may not exist yet during the staged roll-out (§8).
-    // Show a clear message so the user knows what's going on rather than a
-    // silent failure. IMPL-A ships the real /api/ride/import in the same tag.
-    showToast('Import failed: ' + (e.message || e) + ' — is the server up to v4.0.0-alpha?', 6000);
+    showToast('Import failed: ' + (e.message || e), 6000);
     console.error('FIT import error', e);
-  } finally {
-    inputEl.value = '';
   }
 }
+
+// v1.9.1 — window-wide FIT drag-drop import. Drag a .fit from Finder anywhere
+// onto the app → overlay appears → drop → _importFitFile. Only reacts to FILE
+// drags (dataTransfer "Files"), so the calendar's internal drag-to-move
+// (which carries text, not files, and stopPropagation's its own drop) is
+// untouched.
+(function setupFitDropZone() {
+  const overlay = () => document.getElementById('fit-drop-overlay');
+  let depth = 0;
+  const isFileDrag = (e) => {
+    try { return Array.from((e.dataTransfer && e.dataTransfer.types) || []).includes('Files'); }
+    catch (_) { return false; }
+  };
+  const show = () => { const o = overlay(); if (o) o.style.display = 'flex'; };
+  const hide = () => { const o = overlay(); if (o) o.style.display = 'none'; };
+  window.addEventListener('dragenter', (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault(); depth++; show();
+  });
+  window.addEventListener('dragover', (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();  // required so 'drop' fires
+  });
+  window.addEventListener('dragleave', (e) => {
+    if (!isFileDrag(e)) return;
+    depth = Math.max(0, depth - 1);
+    if (depth === 0) hide();
+  });
+  window.addEventListener('drop', (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault(); depth = 0; hide();
+    const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+    const fit = files.find((f) => (f.name || '').toLowerCase().endsWith('.fit'));
+    if (!fit) {
+      try { showToast('Drop a .fit ride file to import', 3500); } catch (_) {}
+      return;
+    }
+    _importFitFile(fit);
+  });
+})();
 
 // ═══ COURSE DETAIL ═════════════════════════════════════════════════════════
 function renderElevSvg(points) {

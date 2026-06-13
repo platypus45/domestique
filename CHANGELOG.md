@@ -1,5 +1,53 @@
 # Changelog
 
+## v1.9.0 — onboarding + "This Week" overhaul, automatic reconcile, bigger library (2026-06-13)
+
+A batch of UX + correctness work across first-run, the home "This Week" card,
+workout selection, and the library.
+
+### Onboarding — first-run wizard reworked
+- **Account guidance**: a true new user is no longer assumed to already have an
+  Intervals.icu account — the wizard now says it's free and you can sign in with
+  Garmin or Strava, with a direct signup link.
+- **One field, auto-detected**: paste your API key and the athlete ID is detected
+  for you (manual entry demoted to Advanced).
+- **Can't proceed on a bad key**: the connection is auto-tested on paste and
+  "Next" stays disabled until it's green (editing the key re-arms the gate).
+- **Garmin verify**: a "Check sync" button asks Intervals.icu whether your
+  activities are actually flowing (and how many are from Garmin) — honest, not a
+  blind "looks linked".
+- **Skippable** ("I'll import FIT files manually"), 5 steps → 4, precise API-key
+  directions, and wizard state survives a refresh (secrets never persisted).
+
+### "This Week" — accuracy fixes (it was quietly telling you you're behind)
+- **Every ride counts**: a second ride on a day (commute + trainer) now adds to
+  the week's actual load — previously only the longest ride counted, so any
+  2-ride day under-read the on-track bar, compliance band and completion %.
+- **Completed ≠ failed**: a finished ride that arrived without a TSS number no
+  longer renders a red "failed" cell — it's neutral (done, just no load value).
+- **Automatic reconcile**: matching completed rides to planned sessions
+  (done / missed / ambiguous) now happens automatically on every ride sync, as
+  part of the plan's auto-adapt — no manual step. The **Reconcile Week** button
+  is gone.
+- **"Catching up your plan"**: opening the Plan tab shows a visible checklist —
+  reads what was prescribed, reconciles what you did, checks recovery (Garmin
+  HRV), and adapts the plan — instead of doing it silently.
+- Removed the redundant **Refresh** button (Sync now already redraws).
+
+### Workout selection — match_zwo brought in line with the planner
+- z2 / recovery slots no longer pull a tempo/sweet-spot-finisher workout that
+  would over-cook an easy day (hard grey-zone gate).
+- Selection now buckets on the canonical content class (not the older protocol
+  zone-heuristic), and low-intensity endurance / recovery files are reachable on
+  reshuffle again (a duration-guarded score floor).
+
+### Library — bigger + cleaner
+- Grown to **4 178** clean, copyright-free canonical workouts via the
+  classify-before-write pipeline: comprehensive Z2/endurance structure variety
+  (steady, two-zone, progressive, surges), long-aerobic coverage to 3 h, and
+  finer duration granularity across all classes. Pruned 22 ramp-only files that
+  weren't real sessions.
+
 ## v1.8.24 — smarter plan updates + exact-duration reshuffle (2026-06-11)
 
 Streamlined the training-plan controls and made the plan adapt to missed

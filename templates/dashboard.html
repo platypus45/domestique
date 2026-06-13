@@ -1983,6 +1983,17 @@ window.addEventListener('unhandledrejection', function(e) {
   <div class="info-popover" id="planpop-availability"><strong>Edit availability</strong> sets per-day training time. Click a date to set hours; right-click to mark unavailable (holiday/injury). <strong>Press the pulsing UPDATE button to apply changes — the plan reflows on click.</strong></div>
   <div class="info-popover" id="planpop-rematch"><strong>Rematch workout</strong> re-rolls only this one day's ZWO file from the matching workout pool. Same intent (intervals, endurance, etc.) — different specific session. Use when the suggested workout doesn't fit your equipment or mood.</div>
 
+  <!-- v1.8.25 — "catching up your plan" overlay: greyed backdrop + stepped
+       checklist shown on Plan-tab open while runPlanOpenSequence() runs. Click
+       or Esc dismisses (safety — it also auto-dismisses on completion). -->
+  <div id="plan-catchup-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:2500;justify-content:center;align-items:center;" onclick="if(event.target===this)dismissPlanCatchup()">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 22px;max-width:420px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.4);">
+      <div style="font-size:11px;color:var(--accent);letter-spacing:0.5px;font-weight:700;margin-bottom:4px;">CATCHING UP YOUR PLAN</div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:12px;">Reconciling what you did and adapting your training…</div>
+      <div id="plan-catchup-steps"></div>
+    </div>
+  </div>
+
   <!-- Gap Alert Banner (shown when missed sessions detected) -->
   <div id="plan-gap-alert" style="display:none;margin-bottom:12px;padding:12px 16px;background:rgba(234,179,8,0.1);border:1px solid var(--yellow);border-radius:var(--radius);">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;">
@@ -2916,22 +2927,18 @@ document.querySelectorAll('.tab[data-tab]').forEach(t => {
                      },
                      picker:()=>{ if (typeof loadRoutePickerRegionChips === 'function') loadRoutePickerRegionChips(); },
                      plan:async()=>{
-                       // v1.6.4 fix: loadPlan() is async and sets window._planData
-                       // via renderPlanJSON() once /api/plan resolves. Pre-fix the
-                       // tab handler fired initAvailCalendar() synchronously BEFORE
-                       // loadPlan() had a chance to populate _planData, so
-                       // loadAvailData() saw an empty plan, fell back to defaults
-                       // from the weekly-hours grid, and clobbered every saved
-                       // availability override (holidays, illness days, custom
-                       // hours) the moment the user reopened the app. Await
-                       // loadPlan() so initAvailCalendar() reads the freshly-
-                       // loaded availability dict.
-                       triggerPlanAutoRecalc();
-                       await loadPlan();
+                       // v1.8.25 — ONE visible "catching up your plan" sequence on
+                       // open, behind a greyed overlay: reads prescribed → reconciles
+                       // actuals (sync + rematch) → checks recovery/HRV → adapts the
+                       // plan (the v1.8.24 tier-dispatch). It OWNS loadPlan +
+                       // loadCalendar and folds the old silent triggerPlanAutoRecalc
+                       // (now inside step 4) + checkPlanGaps into one visible flow.
+                       // Awaited so window._planData is populated
+                       // before initAvailCalendar reads the availability dict (the
+                       // v1.6.4 ordering requirement).
+                       await runPlanOpenSequence();
                        loadPlanMetrics();
-                       checkPlanGaps();
                        initAvailCalendar();
-                       loadCalendar();
                        loadCapabilityProjection();
                        loadMissedSuggestions();
                      }, settings:()=>{loadSettings();loadIcuCredentials();}, library:loadWorkouts,
@@ -2960,7 +2967,7 @@ function closeModal() {
     _missedSessionsKeyHandler = null;
   }
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeModal(); if (typeof dismissPlanCatchup === 'function') dismissPlanCatchup(); } });
 
 // ═══ TOAST ═════════════════════════════════════════════════════════════════
 function showToast(msg, duration=3000, kind=null) {
@@ -11478,6 +11485,134 @@ async function triggerPlanAutoRecalc() {
   } catch(e) {}
 }
 
+// v1.8.25 — "catching up your plan" sequence on Plan-tab open. A greyed overlay
+// runs 4 visible steps over EXISTING endpoints — read prescribed → reconcile
+// actuals (sync + rematch) → check recovery/HRV → adapt the plan (the v1.8.24
+// tier-dispatch). Mirrors the reshuffle pipeline's stepped checklist. Wrapped in
+// try/finally so the overlay ALWAYS dismisses (never strands the user on grey).
+let _planOpenSeqRunning = false;
+
+// Hide the overlay. Does NOT reset the running guard — only the sequence's own
+// finally does that, so a manual dismiss mid-run can't spawn a 2nd concurrent run.
+function dismissPlanCatchup() {
+  const ov = $('plan-catchup-overlay');
+  if (ov) ov.style.display = 'none';
+}
+
+function _summarizeReadiness(rd) {
+  if (!rd || typeof rd !== 'object') return 'checked';
+  const score = rd.readiness ?? rd.score ?? rd.composite ?? rd.readiness_score;
+  const st = rd.state || rd.status || rd.band || rd.recommendation || rd.label;
+  if (st && score != null) return `${st} · ${Math.round(Number(score))}`;
+  if (st) return String(st);
+  if (score != null) return `readiness ${Math.round(Number(score))}`;
+  return 'checked';
+}
+
+async function runPlanOpenSequence() {
+  if (_planOpenSeqRunning) return;
+  _planOpenSeqRunning = true;
+  const ov = $('plan-catchup-overlay');
+  const stepsEl = $('plan-catchup-steps');
+  const STEPS = [
+    {key: 'prescribed', label: 'Checking prescribed training'},
+    {key: 'actual',     label: 'Checking what you actually did'},
+    {key: 'recovery',   label: 'Checking recovery (Garmin HRV)'},
+    {key: 'regen',      label: 'Updating your training'},
+  ];
+  const state = {};  // key -> {status:'done'|'warn', detail}
+  const paint = (activeKey) => {
+    if (!stepsEl) return;
+    stepsEl.innerHTML = STEPS.map(s => {
+      const st = state[s.key];
+      let icon = '◯', color = 'var(--text3)';
+      if (st && st.status === 'done') { icon = '✓'; color = 'var(--green)'; }
+      else if (st && st.status === 'warn') { icon = '⚠'; color = 'var(--yellow)'; }
+      else if (s.key === activeKey) { icon = '⟳'; color = 'var(--accent)'; }
+      const detail = (st && st.detail) ? st.detail : '';
+      return `<div style="display:flex;align-items:center;gap:9px;padding:5px 0;font-size:13px;color:${color};">
+                <span style="width:16px;text-align:center;">${icon}</span>
+                <span style="font-weight:600;">${esc(s.label)}</span>
+                <span style="color:var(--text3);font-weight:400;font-size:11px;margin-left:auto;">${esc(detail)}</span>
+              </div>`;
+    }).join('');
+  };
+
+  try {
+    if (ov) ov.style.display = 'flex';
+    paint('prescribed');
+
+    // Step 1 — read the prescribed plan.
+    try { await loadPlan(); } catch (_) {}
+    const hasPlan = !!(window._planData && (window._planData.weeks || []).length);
+    if (!hasPlan) return;  // no active plan — nothing to reconcile/adapt (finally hides overlay)
+    state.prescribed = {status: 'done', detail: `${(window._planData.weeks || []).length} weeks`};
+    paint('actual');
+
+    // Step 2 — what you actually did: pull rides (throttled) + reconcile done/missed.
+    let syncAdded = 0, syncThrottled = false, syncOk = false;
+    try {
+      const sres = await fetch('/api/rides/sync', {method: 'POST'});  // no force=1 → respects throttle
+      const sj = await sres.json().catch(() => ({}));
+      syncThrottled = (sj.status === 'throttled');
+      syncAdded = Number(sj.added || 0);
+      syncOk = true;
+    } catch (_) {}
+    let reconciled = 0;
+    try {
+      const rres = await fetch('/api/plan/rematch?apply=1', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+      const rj = await rres.json().catch(() => ({}));
+      reconciled = Array.isArray(rj.matches) ? rj.matches.length : 0;
+    } catch (_) {}
+    const actualDetail = !syncOk ? 'sync offline — used local data'
+      : syncThrottled ? `up to date · ${reconciled} reconciled`
+      : `${syncAdded} new ride${syncAdded === 1 ? '' : 's'} · ${reconciled} reconciled`;
+    state.actual = {status: syncOk ? 'done' : 'warn', detail: actualDetail};
+    paint('recovery');
+
+    // Step 3 — recovery / Garmin HRV (readiness).
+    let recDetail = '';
+    try {
+      const rdres = await fetch('/api/readiness');
+      const rd = await rdres.json().catch(() => ({}));
+      recDetail = _summarizeReadiness(rd);
+    } catch (_) {}
+    state.recovery = {status: 'done', detail: recDetail || 'checked'};
+    paint('regen');
+
+    // Step 4 — adapt the plan. First the weekly fitness-progression recompute
+    // (triggerPlanAutoRecalc → /api/plan/auto-recalc, itself >7-day gated so it
+    // rarely fires) so the plan bumps difficulty as eFTP rises; then the
+    // gap/overshoot tier-dispatch. Sync already ran the tier-dispatch when it
+    // pulled NEW rides, so skip the explicit update then (avoids a double adapt);
+    // otherwise run the debounced update so rapid reopens are a cheap no-op.
+    let regenDetail = '';
+    try { await triggerPlanAutoRecalc(); } catch (_) {}
+    if (syncAdded > 0) {
+      regenDetail = 'adapted from your new ride(s)';
+      try { await loadPlan(); } catch (_) {}
+    } else {
+      try {
+        const ures = await fetch('/api/plan/update?debounce=1', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+        const uj = await ures.json().catch(() => ({}));
+        if (uj && uj.plan_json) { try { await renderPlanJSON(uj.plan_json); } catch (_) {} }
+        regenDetail = (uj && uj.status_message) ? uj.status_message
+          : (uj && uj.action === 'skipped') ? 'already up to date'
+          : 'rebalanced';
+      } catch (_) {}
+    }
+    state.regen = {status: 'done', detail: regenDetail};
+    paint(null);
+    await new Promise(r => setTimeout(r, 550));  // let the user see all-green before dismiss
+  } catch (_) {
+    // non-fatal — fall through to finally (overlay ALWAYS dismisses)
+  } finally {
+    try { await loadCalendar(); } catch (_) {}
+    dismissPlanCatchup();
+    _planOpenSeqRunning = false;
+  }
+}
+
 // v1.8.24 — ONE adaptation path for the UI. POSTs /api/plan/update, which
 // tier-dispatches server-side (rebalance vs rebuild-with-recovery-ramp),
 // latch-debounced so it never double-reshuffles the same absence. Surfaces the
@@ -11524,9 +11659,6 @@ async function _doPlanUpdate({silent=false}={}) {
 
 // Primary "Update plan" button — prominent status.
 async function updatePlan() { return _doPlanUpdate({silent:false}); }
-
-// Auto-trigger on Plan-tab open — silent unless a rebuild/behind-plan happened.
-async function checkPlanGaps() { return _doPlanUpdate({silent:true}); }
 
 async function regeneratePlan() {
   $('plan-status').textContent = 'Regenerating plan from current fitness...';

@@ -9170,7 +9170,7 @@ async def api_plan_regenerate_dynamic(request: Request):
 
 
 @app.post("/api/plan/update")
-async def api_plan_update():
+async def api_plan_update(debounce: int = Query(0)):
     """v1.8.24 — the ONE primary "Update plan" action.
 
     Tier-dispatches through the shared ``_apply_plan_update`` core: a current
@@ -9179,6 +9179,11 @@ async def api_plan_update():
     reshuffle future workout picks for the same already-handled absence (the
     advanced "Rebuild from scratch" → /api/plan/regenerate is the explicit
     force-rebuild). Returns the new plan + a human status message.
+
+    v1.8.25 — ``debounce=1`` (used by the auto Plan-open catch-up sequence) also
+    debounces the REFORECAST tier on ``reforecast_date`` (>5 min), so reopening
+    the tab repeatedly is a cheap no-op instead of re-running reforecast every
+    time. The manual "Update plan" button omits it (always acts).
     """
     json_path = _plan_dir() / "current_plan.json"
     if not json_path.exists():
@@ -9196,7 +9201,13 @@ async def api_plan_update():
                 today=date.today(),
                 allow_regen=True,
                 gap_debounce=True,
+                reforecast_min_interval_iso=(plan.get("reforecast_date") if debounce else None),
             )
+            if action == "skipped":
+                # reforecast tier debounced (<5 min) — nothing changed; return the
+                # plan as-is so the UI still renders, with a no-op action.
+                return {"ok": True, "action": "skipped", "status_message": "",
+                        "plan_json": plan, "gaps": (info or {}).get("gaps")}
             tp.atomic_write_plan(json_path, plan_dict)
         try:
             _enrich_plan_for_response(plan_dict, today_iso=date.today().isoformat())
@@ -11564,14 +11575,28 @@ async def api_plan_rematch(request: Request, apply: int = Query(0)):
                     existing = s_json.get("completion_matches") or []
                     if not isinstance(existing, list):
                         existing = []
-                    existing.append({
+                    entry = {
                         "activity_id": m["activity_id"],
                         "matched_axes": m["matched_axes"],
                         "score": m["score"],
                         "axes": m["axes"],
                         "details": m.get("details"),
                         "applied_at": datetime.now().isoformat(),
-                    })
+                    }
+                    # v1.8.25 — dedup by activity_id, UPDATE-in-place. rematch now
+                    # auto-runs on every Plan-tab open (the catch-up sequence), so a
+                    # blind append would duplicate the same match every open. Re-
+                    # classifying the SAME activity (e.g. ambiguous→done after an FTP
+                    # edit) refreshes its entry instead of stacking a second one.
+                    prior = next(
+                        (i for i, e in enumerate(existing)
+                         if isinstance(e, dict) and e.get("activity_id") == m["activity_id"]),
+                        None,
+                    )
+                    if prior is not None:
+                        existing[prior] = entry
+                    else:
+                        existing.append(entry)
                     s_json["completion_matches"] = existing
             sessions_out.append(s_json)
         weeks_data[week_idx]["sessions"] = sessions_out

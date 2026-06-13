@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4178-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v1.8.24-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v1.9.1-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-1422%20passing-success" alt="Tests">
 </p>
 
@@ -265,11 +265,14 @@ See [docs/cycling_apps.md](docs/cycling_apps.md) for the full table.
 
 ## Releases
 
-Latest: **[v1.8.24 — smarter plan updates + exact-duration reshuffle](https://github.com/platypus45/domestique/releases/latest)** (2026-06-11).
+Latest: **[v1.9.1 — FIT import: drag-and-drop + instant refresh](https://github.com/platypus45/domestique/releases/latest)** (2026-06-13).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 
 **Highlights since v1.8.5** (see [CHANGELOG.md](CHANGELOG.md) for every shipped tag):
+
+- **FIT import that just works** (v1.9.1) — drag a `.fit` from Finder anywhere onto the window (or click **Import FIT**); it imports, reconciles against your plan, adapts the next sessions, and the views refresh on the spot.
+- **Onboarding + "This Week" overhaul** (v1.9.0) — first-run wizard reworked (paste one API key, athlete ID auto-detected, Garmin sync verified, account guidance, skippable); reconciliation of completed rides → done/missed now happens automatically on every sync (the manual "Reconcile Week" button is gone); multi-ride days count correctly toward the week; workout selection brought in line with the planner; library grown to 4 178 clean workouts.
 
 - **One "Update plan" action** (v1.8.24) — the fragmented Reforecast / Regenerate / availability controls collapsed into a single primary button that auto-picks the right adjustment: a structure-preserving **rebalance** to today's TSB/ACWR/availability when you're on track, or a full **rebuild with a recovery ramp** (Gabbett ACWR < 1.3, Z2 reconditioning — never a catch-up spike) when you've fallen behind. "Regenerate" is now the advanced *Rebuild from scratch*; per-day *Rematch* stays.
 - **Plan auto-adapts after missed workouts** (v1.8.24) — a ride sync that detects a significant *current* absence rebuilds automatically through the recovery ramp, once per absence episode (latched, no churn), recent-gap-gated (an old recovered gap never nags), and never inside an event taper (it flags "behind plan" instead).

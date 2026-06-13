@@ -2549,39 +2549,46 @@ def match_zwo(
     if used_names is None:
         used_names = set()
 
-    # Map planner session_types → workout category keywords (from Protocol field)
-    # Protocol format: "Sweet Spot — 3×20min @ 88%" → starts with category name
+    # v1.8.25 — match on the canonical CONTENT class (content-based since v4.1.2),
+    # not the Protocol zone-heuristic string. The Protocol bucket and ContentClass
+    # disagree on hundreds of files (e.g. 280 Sprint-protocol files are content
+    # neuromuscular, 120 VO2max-protocol are vo2_short); bucketing on Protocol
+    # mis-scored those. `cat` is now `_content_class_for_row(w)` (ContentClass with
+    # filename fallback — never empty), aligning match_zwo with the v4.5 sampler.
+    # Map planner session_types → primary CONTENT class.
     type_to_category = {
-        "z2":         "Endurance",
-        "long_z2":    "Endurance",
-        "recovery":   "Recovery",
-        "sweetspot":  "Sweet Spot",
-        "threshold":  "Threshold",
-        "vo2max":     "VO2max",
-        "overunder":  "Over-Unders",
-        "tempo":      "Tempo",
-        "sprint":     "Sprint",
+        "z2":         "endurance",
+        "long_z2":    "endurance",
+        "recovery":   "recovery",
+        "sweetspot":  "sweet_spot",
+        "threshold":  "threshold",
+        "vo2max":     "vo2max",
+        "overunder":  "over_under",
+        "tempo":      "tempo",
+        "sprint":     "neuromuscular",
     }
-    # Fallback categories: if primary has too few matches, also accept these.
-    # v4.5.0 IMPL-PLANNER: add "Mixed" to z2 / long_z2 / tempo / vo2max / overunder
-    # / recovery — the Endurance protocol bucket has only 44 files (vs 1069
-    # Mixed), so without this the Z2 slot collapses onto ~5 ZWO files. Mixed
-    # workouts whose dominant zone IS Z2 (with a tempo/SS finisher) belong here;
-    # match_zwo's Score and duration filters keep the wrong ones out.
+    # Fallback content classes (incl. the matching *_ladder variants so ladder
+    # sessions stay reachable). The Score + duration filters + the easy-slot Z3
+    # gate (below) keep the wrong ones out.
     type_to_fallback = {
-        "z2":         ["Endurance", "Recovery", "Mixed"],
-        "long_z2":    ["Endurance", "Mixed"],
-        "recovery":   ["Recovery", "Endurance", "Mixed"],
-        "sweetspot":  ["Sweet Spot", "Threshold", "Mixed"],
-        "threshold":  ["Threshold", "Sweet Spot", "Over-Unders", "Mixed"],
-        "vo2max":     ["VO2max", "Anaerobic", "Mixed"],
-        "overunder":  ["Over-Unders", "Threshold", "Mixed"],
-        "tempo":      ["Tempo", "Sweet Spot", "Mixed"],
-        "sprint":     ["Sprint", "Anaerobic", "VO2max"],
+        "z2":         ["endurance", "recovery"],
+        "long_z2":    ["endurance"],
+        "recovery":   ["recovery", "endurance"],
+        "sweetspot":  ["sweet_spot", "sweet_spot_ladder", "threshold", "tempo"],
+        "threshold":  ["threshold", "threshold_ladder", "sweet_spot", "over_under"],
+        "vo2max":     ["vo2max", "vo2_short", "vo2_ladder", "anaerobic"],
+        "overunder":  ["over_under", "threshold"],
+        "tempo":      ["tempo", "tempo_intervals", "tempo_ladder", "sweet_spot"],
+        "sprint":     ["neuromuscular", "anaerobic", "sprint"],
     }
 
-    primary_cat = type_to_category.get(session.session_type, "Endurance")
+    primary_cat = type_to_category.get(session.session_type, "endurance")
     fallback_cats = type_to_fallback.get(session.session_type, [primary_cat])
+    # Easy-slot grey-zone ceiling (Z3+Z4+Z5+Z6 %): a z2/recovery slot must not
+    # pull a file with a tempo/SS finisher (over-cooks the easy day, breaks
+    # polarization). Mirrors the sampler's hard zone gate. None = no gate.
+    _easy_z345_ceiling = {"recovery": 25.0, "z2": 40.0, "long_z2": 40.0}.get(
+        session.session_type)
     target_dur = session.duration_min
 
     # Build scored candidate pool from ALL matching workouts
@@ -2595,7 +2602,19 @@ def match_zwo(
     want_test = session.session_type == "ftp_test"
     for w in library:
         try:
-            if w["Score"] < 3:
+            cc_row = _content_class_for_row(w)
+            # v1.8.25 — class-aware Score floor. Endurance/recovery are low
+            # intensity ⇒ low Score BY CONSTRUCTION (the rubric weights TSS +
+            # above-Z2 time), so the blanket Score≥3 gate hid ~475 of them from
+            # the reshuffle/fallback path. Admit them at Score≥1 BUT require
+            # Duration≥20min so the tiny steady stubs (8-18min, ~empty content,
+            # ContentClass-empty → filename fallback "endurance") stay excluded —
+            # else exact_duration's closest-tier collapse would prefer a 10-min
+            # stub on a short slot. All other classes keep the Score≥3 bar.
+            if cc_row in ("endurance", "recovery"):
+                if w["Score"] < 1 or (w["Duration(min)"] or 0) < 20:
+                    continue
+            elif w["Score"] < 3:
                 continue
             tags_lower = {t.lower() for t in (w.get("Tags") or [])}
             if "ftp_test" in tags_lower and not want_test:
@@ -2632,8 +2651,10 @@ def match_zwo(
         if not exact_duration and dur_diff > max_diff:
             continue
 
-        protocol = w.get("Protocol", "")
-        cat = protocol.split(" — ")[0] if " — " in protocol else protocol
+        # v1.8.25 — match on the content class computed above, not the Protocol
+        # zone-heuristic string (which disagreed with ContentClass on hundreds
+        # of files and mis-scored them).
+        cat = cc_row
 
         # Score: category match + evidence score + duration proximity
         score = float(w["Score"])
@@ -2651,6 +2672,17 @@ def match_zwo(
             score += 2  # fallback match
         else:
             continue  # skip non-matching categories
+
+        # v1.8.25 — easy-slot grey-zone HARD gate (mirrors the sampler). A
+        # z2/recovery slot must NOT admit a file with a tempo/SS finisher
+        # (z345 over the ceiling) — that over-cooks an easy day and breaks
+        # polarization. Replaces the toothless soft −3 for easy slots (the
+        # soft −3 below still applies to non-easy slots).
+        if _easy_z345_ceiling is not None and not want_test:
+            z345 = (float(w.get("Z3%", 0) or 0) + float(w.get("Z4%", 0) or 0)
+                    + float(w.get("Z5%", 0) or 0) + float(w.get("Z6%", 0) or 0))
+            if z345 >= _easy_z345_ceiling:
+                continue
 
         # v1.8.18 follow-up — duration proximity penalty. The old absolute
         # ``dur_diff / 10`` was too gentle vs the +5 category bonus: a 37-min
@@ -2705,17 +2737,23 @@ def match_zwo(
         # correct — only the duration is short.
         coverage_pool: list = []
         for w in library:
-            if w["Score"] < 3:
+            # v1.8.25 — same class-aware floor + ContentClass basis as the main
+            # loop, so the fallback doesn't re-introduce the Protocol drift / the
+            # endurance-recovery exclusion it was meant to bypass.
+            cc_row = _content_class_for_row(w)
+            if cc_row in ("endurance", "recovery"):
+                if w["Score"] < 1 or (w["Duration(min)"] or 0) < 20:
+                    continue
+            elif w["Score"] < 3:
                 continue
             tags_lower = {t.lower() for t in (w.get("Tags") or [])}
             if "ftp_test" in tags_lower and not want_test:
                 continue
             if want_test and "ftp_test" not in tags_lower:
                 continue
-            protocol = w.get("Protocol", "")
-            cat = protocol.split(" — ")[0] if " — " in protocol else protocol
-            # v1.3.4 fix: ftp_test bypasses the protocol-category gate (see
-            # the upstream comment); the tag filter alone identifies tests.
+            cat = cc_row
+            # v1.3.4 fix: ftp_test bypasses the category gate (the tag filter
+            # alone identifies tests).
             if want_test or cat == primary_cat or cat in fallback_cats:
                 coverage_pool.append(w)
         if coverage_pool:

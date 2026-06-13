@@ -16,9 +16,43 @@ from datetime import date, timedelta
 import pytest
 
 import app
+import training_planner as tp
 
 
 T = date.today()
+
+
+def test_auto_adapt_reconciles_current_week(monkeypatch):
+    """v1.8.25 — the auto-adapt path (ride-sync / Update plan) now marks the
+    current week's sessions done/missed from actuals BEFORE adapting, so a
+    completed ride is reconciled automatically (no manual "Reconcile Week").
+    """
+    monday = T - timedelta(days=T.weekday())
+    # current ISO week with a pending session today
+    today_iso = T.isoformat()
+    plan = _base_plan([{
+        "week_num": 1, "start": monday.isoformat(),
+        "end": (monday + timedelta(days=6)).isoformat(),
+        "phase": "build", "tss_target": 300, "is_stepback": False,
+        "sessions": [{
+            "day": today_iso, "day_name": "X", "session_type": "z2",
+            "duration_min": 60, "tss_estimate": 50, "status": "pending",
+            "zwo_file": "endurance_clean_60min.zwo", "zwo_name": "E60",
+            "description": "",
+        }],
+    }])
+    # stub the matcher: today's session matches a real activity → done
+    monkeypatch.setattr(app, "_collect_week_activities", lambda *a, **k: [{"id": 7}])
+    monkeypatch.setattr(tp, "rematch_week", lambda *a, **k: {"matches": [{
+        "session_date": today_iso, "new_status": "done", "activity_id": 7,
+        "matched_axes": ["tss", "duration", "if"], "score": 0.95,
+        "axes": {"tss": True}, "details": None,
+    }], "summary": {}})
+
+    pd, _action, _info, _status = _apply(plan, ctl=50, tsb=-5, activities=[{"id": 7}])
+    sess = pd["weeks"][0]["sessions"][0]
+    assert sess["status"] == "done", "auto-adapt did not reconcile the current week"
+    assert sess.get("completion_matches"), "completion_matches not recorded on auto-reconcile"
 
 
 def _mkweek(wn, start, tss,

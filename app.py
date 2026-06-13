@@ -9063,6 +9063,16 @@ def _apply_plan_update(
     current_ctl = training.get("ctl") or 30
     current_tsb = training.get("tsb")
 
+    # v1.8.25 — RECONCILE FIRST. Mark the current week's sessions done/missed
+    # from actual activities BEFORE adapting, so this happens automatically on
+    # every sync / Update-plan (no manual "Reconcile Week" click). Idempotent
+    # (dedup by activity_id). Runs before regen/reforecast so the regen path's
+    # v1.8.20 preservation carries the freshly-marked done/missed statuses.
+    try:
+        _reconcile_current_week(plan, today)
+    except Exception:  # noqa: BLE001 — reconcile is best-effort; never block adapt
+        _log.exception("auto-reconcile skipped")
+
     # Reconstruct PlannedWeek list for gap detection (full-field round-trip so
     # past statuses are visible to detect_plan_gaps' actual-TSS sum).
     old_weeks = []
@@ -11623,6 +11633,71 @@ def api_calendar():
         }
 
 
+def _apply_rematch_preview_to_plan(plan: dict, week_idx: int, preview: dict) -> int:
+    """Apply a rematch ``preview`` (from tp.rematch_week) onto the plan's
+    week ``week_idx`` sessions — set status + dedup'd completion_matches.
+    Mutates ``plan`` in place. Returns the count of sessions whose status
+    actually changed. Idempotent (dedup by activity_id) so it's safe to run on
+    every sync / Plan-tab open.
+    """
+    matches_by_date = {m["session_date"]: m for m in preview.get("matches", [])}
+    changed = 0
+    for s_json in plan["weeks"][week_idx]["sessions"]:
+        day = s_json.get("day")
+        m = matches_by_date.get(day)
+        if not m:
+            continue
+        new_status = m["new_status"]
+        if s_json.get("status") != new_status:
+            changed += 1
+        s_json["status"] = new_status
+        if m.get("activity_id") and new_status in ("done", "ambiguous", "done_partial"):
+            existing = s_json.get("completion_matches") or []
+            if not isinstance(existing, list):
+                existing = []
+            entry = {
+                "activity_id": m["activity_id"],
+                "matched_axes": m["matched_axes"],
+                "score": m["score"],
+                "axes": m["axes"],
+                "details": m.get("details"),
+                "applied_at": datetime.now().isoformat(),
+            }
+            # dedup by activity_id, UPDATE-in-place (auto-reconcile runs every
+            # sync now — a blind append would stack duplicates).
+            prior = next(
+                (i for i, e in enumerate(existing)
+                 if isinstance(e, dict) and e.get("activity_id") == m["activity_id"]),
+                None,
+            )
+            if prior is not None:
+                existing[prior] = entry
+            else:
+                existing.append(entry)
+            s_json["completion_matches"] = existing
+    return changed
+
+
+def _reconcile_current_week(plan: dict, today: date) -> "tuple[int, dict | None]":
+    """v1.8.25 — mark the CURRENT week's sessions done/missed/ambiguous from
+    actual activities (the /api/plan/rematch?apply=1 logic), idempotently.
+    Mutates ``plan`` in place; returns (sessions_changed, preview|None).
+
+    This is what makes reconciliation AUTOMATIC: the auto-adapt path
+    (_apply_plan_update, fired by ride-sync) calls it so completed rides are
+    matched to planned sessions on sync — no manual "Reconcile Week" click.
+    """
+    current_week, week_idx = _load_current_week_dto(plan, today)
+    if not current_week:
+        return 0, None
+    actual = _collect_week_activities(current_week, today, include_today=True)
+    preview = tp.rematch_week(current_week, actual, today)
+    n = _apply_rematch_preview_to_plan(plan, week_idx, preview)
+    if n:
+        plan["last_rematch"] = datetime.now().isoformat()
+    return n, preview
+
+
 @app.post("/api/plan/rematch")
 async def api_plan_rematch(request: Request, apply: int = Query(0)):
     """Rematch sessions to actual activities (fix26 §6.3, §6.9).
@@ -11654,46 +11729,8 @@ async def api_plan_rematch(request: Request, apply: int = Query(0)):
         if not apply:
             return {"ok": True, "apply": False, **preview}
 
-        matches_by_date = {m["session_date"]: m for m in preview["matches"]}
-        weeks_data = plan["weeks"]
-        sessions_out = []
-        for s_json in weeks_data[week_idx]["sessions"]:
-            day = s_json.get("day")
-            m = matches_by_date.get(day)
-            if m:
-                new_status = m["new_status"]
-                s_json["status"] = new_status
-                if m.get("activity_id") and new_status in ("done", "ambiguous", "done_partial"):
-                    existing = s_json.get("completion_matches") or []
-                    if not isinstance(existing, list):
-                        existing = []
-                    entry = {
-                        "activity_id": m["activity_id"],
-                        "matched_axes": m["matched_axes"],
-                        "score": m["score"],
-                        "axes": m["axes"],
-                        "details": m.get("details"),
-                        "applied_at": datetime.now().isoformat(),
-                    }
-                    # v1.8.25 — dedup by activity_id, UPDATE-in-place. rematch now
-                    # auto-runs on every Plan-tab open (the catch-up sequence), so a
-                    # blind append would duplicate the same match every open. Re-
-                    # classifying the SAME activity (e.g. ambiguous→done after an FTP
-                    # edit) refreshes its entry instead of stacking a second one.
-                    prior = next(
-                        (i for i, e in enumerate(existing)
-                         if isinstance(e, dict) and e.get("activity_id") == m["activity_id"]),
-                        None,
-                    )
-                    if prior is not None:
-                        existing[prior] = entry
-                    else:
-                        existing.append(entry)
-                    s_json["completion_matches"] = existing
-            sessions_out.append(s_json)
-        weeks_data[week_idx]["sessions"] = sessions_out
+        _apply_rematch_preview_to_plan(plan, week_idx, preview)
         plan["last_rematch"] = datetime.now().isoformat()
-
         tp.atomic_write_plan(json_path, plan)
 
         return {"ok": True, "apply": True, **preview}

@@ -1537,8 +1537,6 @@ window.addEventListener('unhandledrejection', function(e) {
         <!-- v4.5.0 IMPL-UI: Sync now — POSTs /api/rides/sync?force=1 (server commit 2fe34ba)
              then re-fetches /api/calendar so THIS WEEK + intensity bar reflect new actuals. -->
         <button id="syncNowBtn" class="btn" style="font-size:10px;padding:3px 8px;" onclick="syncNowAction()" title="Pull latest rides + wellness from intervals.icu now (bypasses 30-min throttle)">Sync now ⟳</button>
-        <!-- fix26 §6.4 — Reconcile Week: previews status updates then user applies -->
-        <button id="reconcile-week-btn" class="btn" style="font-size:10px;padding:3px 8px;" onclick="openReconcileWeek()" title="Match completed activities to planned sessions">Reconcile Week</button>
         <svg onclick="document.querySelector('.tab[data-tab=settings]').click()" style="cursor:pointer;opacity:0.5;transition:opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </div>
     </div>
@@ -13423,93 +13421,10 @@ async function onPlanDrop(e, dstDay) {
   }
 }
 
-async function openReconcileWeek() {
-  // §6.3/§6.4 — open Reconcile Week modal with preview, apply on user click.
-  let res, data;
-  try {
-    res = await fetch('/api/plan/rematch?apply=0', { method: 'POST' });
-    data = await res.json();
-  } catch(e) {
-    try { showToast('Reconcile failed: network error', 3000); } catch(_) {}
-    return;
-  }
-  if (!res.ok || data.action === 'no_plan' || data.action === 'no_current_week') {
-    try { showToast('No active plan to reconcile', 3000); } catch(_) {}
-    return;
-  }
-  const matches = (data.matches || []);
-  const summary = data.summary || {};
-  const tol = data.tolerances || {};
-  const BADGE = {
-    done:      { emoji: '✓',  color: '#22c55e' },
-    ambiguous: { emoji: '?',  color: '#eab308' },
-    missed:    { emoji: '⚠',  color: '#ef4444' },
-    pending:   { emoji: '⏳', color: 'var(--text3)' },
-    dismissed: { emoji: '✕',  color: '#6b7280' },
-    no_match:  { emoji: '—',  color: 'var(--text3)' },
-    done_partial: { emoji: '✓₂', color: '#86efac' },
-  };
-  let html = '<h2>Reconcile Week</h2>';
-  html += `<div style="font-size:11px;color:var(--text2);margin:6px 0;">Classifier locked to 3-of-3 axes: TSS ±${Math.round((tol.tss_pct||0.15)*100)}% AND duration ±${Math.round((tol.duration_pct||0.20)*100)}% AND IF-band match. 2/3 → Review. &lt;2 → no match.</div>`;
-  html += `<div style="font-size:12px;margin:8px 0;">Summary: `;
-  for (const k of ['done','done_partial','ambiguous','missed','pending','dismissed']) {
-    const cnt = summary[k] || 0;
-    if (cnt === 0) continue;
-    const b = BADGE[k] || BADGE.pending;
-    html += `<span style="margin-right:8px;color:${b.color};font-weight:700;">${b.emoji} ${cnt} ${k}</span>`;
-  }
-  html += `</div>`;
-
-  if (!matches.length) {
-    html += '<div style="font-size:12px;color:var(--text3);margin:12px 0;">No pending sessions to reconcile.</div>';
-  } else {
-    html += '<div style="max-height:50vh;overflow-y:auto;border:1px solid var(--surface2);border-radius:4px;">';
-    html += '<table style="width:100%;font-size:11px;border-collapse:collapse;">';
-    html += '<thead><tr style="background:var(--surface2);"><th style="text-align:left;padding:6px;">Date</th><th style="text-align:left;padding:6px;">Session</th><th style="text-align:center;padding:6px;">Axes</th><th style="text-align:left;padding:6px;">Result</th></tr></thead><tbody>';
-    for (const m of matches) {
-      const b = BADGE[m.new_status] || BADGE.pending;
-      const ax = m.axes || {};
-      const axBits = [
-        ax.tss_ok ? '<span style="color:#22c55e;">TSS</span>' : '<span style="color:var(--text3);">TSS</span>',
-        ax.duration_ok ? '<span style="color:#22c55e;">DUR</span>' : '<span style="color:var(--text3);">DUR</span>',
-        ax.if_band_ok ? '<span style="color:#22c55e;">IF</span>' : '<span style="color:var(--text3);">IF</span>',
-      ].join(' ');
-      let detailTxt = '';
-      if (m.details) {
-        detailTxt = ` <span style="color:var(--text3);font-size:10px;">(${m.details.planned_tss}→${m.details.actual_tss} TSS)</span>`;
-      }
-      html += `<tr style="border-top:1px solid var(--surface2);">
-        <td style="padding:6px;">${m.session_date}</td>
-        <td style="padding:6px;">${(m.session_type||'').toUpperCase()}</td>
-        <td style="text-align:center;padding:6px;font-family:monospace;">${axBits}</td>
-        <td style="padding:6px;color:${b.color};font-weight:700;">${b.emoji} ${m.new_status}${detailTxt}</td>
-      </tr>`;
-    }
-    html += '</tbody></table></div>';
-  }
-  html += `<div style="display:flex;gap:8px;margin-top:12px;">
-    <button class="btn" onclick="closeModal()">Cancel</button>
-    <button class="btn btn-primary" onclick="applyReconcileWeek()">Apply</button>
-  </div>`;
-  html += `<div style="font-size:10px;color:var(--text3);margin-top:8px;">Apply writes status updates to current_plan.json. "Missed" never auto-dismisses — use the ✕ button on a tile to dismiss later.</div>`;
-  openModal(html);
-}
-
-async function applyReconcileWeek() {
-  try {
-    const res = await fetch('/api/plan/rematch?apply=1', { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok || !data.ok) {
-      try { showToast(`Apply failed: ${data.detail || 'unknown'}`, 3000); } catch(_) {}
-      return;
-    }
-    closeModal();
-    try { showToast('Week reconciled', 2000); } catch(_) {}
-    loadWeeklyCalendar();
-  } catch(err) {
-    try { showToast('Apply failed: network error', 3000); } catch(_) {}
-  }
-}
+// v1.8.25 — the "Reconcile Week" button + modal were removed: reconciliation
+// (matching completed rides → done/missed status) now runs AUTOMATICALLY inside
+// the planner's auto-adapt on every ride sync (see app.py _reconcile_current_week
+// wired into _apply_plan_update). No manual button needed.
 
 async function undismissSession(day) {
   try {
@@ -15602,9 +15517,10 @@ function _actModalSparklines(samples) {
 }
 
 // fix26 §6.1 — daily-adapt demoted to PROJECTION-ONLY. Backend never mutates
-// current_plan.json on app load. Writes happen exclusively through explicit
-// UI actions (drag-to-move, Reconcile Week). We fetch the projection and
-// surface a non-intrusive hint only when something meaningful is computed.
+// current_plan.json on app load. Writes happen via drag-to-move or the
+// automatic adapt-on-sync (v1.8.24+ _apply_plan_update). We fetch the
+// projection and surface a non-intrusive hint only when something meaningful
+// is computed.
 document.addEventListener('DOMContentLoaded', () => {
   if (document.getElementById('fitness-chart')) {
     fetch('/api/plan/daily-adapt').then(r=>r.json()).then(d => {
@@ -15613,7 +15529,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const tsbCount = (d.tsb_deload_projected || []).length;
       if (d.action === 'projected' && (projCount > 0 || tsbCount > 0)) {
         const dir = (d.surplus || 0) > 0 ? 'easier (ahead of plan)' : 'harder (making up deficit)';
-        const hint = `Projection only: ${projCount} session(s) could scale ${dir}. Plan unchanged — use "Reconcile Week" to review.`;
+        const hint = `Projection only: ${projCount} session(s) could scale ${dir}. The plan adapts automatically on your next ride sync.`;
         try { showToast(hint, 4500); } catch(e) {}
       }
     }).catch(() => {});

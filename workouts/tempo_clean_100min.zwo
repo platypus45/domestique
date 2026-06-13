@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Tempo 100min — Z3</name>
+    <description>Generated structured workout.</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="720" PowerLow="0.45" PowerHigh="0.65" pace="0" />
+        <SteadyState Duration="4800" Power="0.78" pace="0" />
+        <Cooldown Duration="480" PowerLow="0.60" PowerHigh="0.40" pace="0" />
+    </workout>
+</workout_file>

@@ -1,0 +1,16 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>VO2 Short 50min — 10×30s/15s @ 118%</name>
+    <description>Generated structured workout.</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="780" PowerLow="0.50" PowerHigh="0.75" pace="0" />
+        <IntervalsT Repeat="10" OnDuration="30" OffDuration="15" OnPower="1.18" OffPower="0.5" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <IntervalsT Repeat="10" OnDuration="30" OffDuration="15" OnPower="1.18" OffPower="0.5" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <IntervalsT Repeat="10" OnDuration="30" OffDuration="15" OnPower="1.18" OffPower="0.5" pace="0" />
+        <Cooldown Duration="510" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+    </workout>
+</workout_file>

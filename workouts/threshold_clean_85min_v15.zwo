@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Threshold 85min — 4×12min/3min @ 100%</name>
+    <description>Generated structured workout.</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="900" PowerLow="0.50" PowerHigh="0.75" pace="0" />
+        <IntervalsT Repeat="4" OnDuration="720" OffDuration="180" OnPower="1" OffPower="0.55" pace="0" />
+        <Cooldown Duration="600" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+    </workout>
+</workout_file>

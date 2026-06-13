@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Anaerobic 45min — 8×45s/135s @ 135%</name>
+    <description>Generated structured workout.</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="750" PowerLow="0.50" PowerHigh="0.75" pace="0" />
+        <IntervalsT Repeat="8" OnDuration="45" OffDuration="135" OnPower="1.35" OffPower="0.5" pace="0" />
+        <Cooldown Duration="510" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+    </workout>
+</workout_file>

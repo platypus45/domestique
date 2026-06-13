@@ -29,7 +29,22 @@ from dedupe_zwo_library import structure_hash, load_index  # noqa: E402
 import classify_library_content as C  # noqa: E402
 
 WORKOUTS_DIR = Path(__file__).resolve().parent.parent / "workouts"
-ROUND_TOTALS = (30, 40, 45, 50, 60, 75, 90, 105, 120, 150, 180)
+# v1.8.25 — finer granularity for "maximum coverage": every ~5-10 min from 30
+# to 180. classify-before-write + structure-hash dedup keep only the files that
+# (a) classify as the intended type and (b) aren't structural duplicates, so the
+# wider grid fills real cells rather than spamming near-identical files.
+ROUND_TOTALS = (30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100,
+                105, 110, 120, 130, 135, 140, 150, 160, 170, 180)
+# Physiology caps: per content-class, the LONGEST total that is still sound.
+# Long aerobic (endurance) goes to 180; sustained high intensity does NOT —
+# 180-min threshold / VO2 / anaerobic is non-physiological, so cap them. Used to
+# skip emitting silly long high-intensity candidates (belt-and-braces; the
+# classifier + recovery ratios already make most of them fail).
+MAX_TOTAL = {
+    "endurance": 180, "recovery": 50, "tempo": 120, "tempo_intervals": 90,
+    "sweet_spot": 120, "threshold": 120, "over_under": 90,
+    "vo2max": 75, "vo2_short": 60, "anaerobic": 50, "neuromuscular": 60,
+}
 
 
 def _fmt_pw(p: float) -> str:
@@ -186,29 +201,113 @@ def _interval_candidates():
         # On = under (longer), Off = over — alternation drives the OU detector.
         yield ("over_under", reps, under_s, over_s, u_pw, o_pw)
 
+    # ── v1.8.25 edge + variety specs ─────────────────────────────────────────
+    # SHORT over-unders (fewer reps → land at 30–45 min, filling the <30/30-44 cells).
+    for reps, under_s, over_s in [(4, 120, 60), (5, 120, 60), (6, 90, 60),
+                                  (5, 90, 45), (4, 150, 60), (6, 120, 45)]:
+        yield ("over_under", reps, under_s, over_s, 0.90, 1.05)
+    # SHORT tempo-intervals (3×6, 4×5, 2×8 → 30-min cell, currently empty).
+    for reps, on_m in [(3, 6), (4, 5), (2, 8), (3, 5), (4, 6), (2, 10), (5, 5)]:
+        yield ("tempo_intervals", reps, on_m * 60, 180, 0.85, 0.55)
+    # MICRO-VO2 (30/15, 40/20, 20/40, 15/15) as plain interval sets → vo2_short at
+    # short totals (fills the <30 vo2_short cell); accept vo2_short OR vo2max.
+    VO2S = frozenset({"vo2_short", "vo2max"})
+    for reps, on_s, off_s, pw in [(8, 30, 15, 1.18), (10, 30, 15, 1.16),
+                                  (6, 40, 20, 1.18), (8, 40, 20, 1.15),
+                                  (10, 20, 40, 1.20), (12, 30, 30, 1.15),
+                                  (6, 30, 15, 1.18), (15, 30, 15, 1.16)]:
+        yield (VO2S, reps, on_s, off_s, pw, 0.50)
+    # MORE threshold variety (extra rep×duration combos for less repetition).
+    for reps, on_m in [(2, 12), (3, 6), (4, 6), (5, 6), (2, 18), (6, 8), (3, 18)]:
+        for pw in (0.97, 1.00):
+            yield ("threshold", reps, on_m * 60, 240, pw, 0.55)
+    # MORE sweet-spot variety.
+    for reps, on_m in [(2, 12), (3, 8), (5, 8), (2, 18), (4, 15), (6, 10), (3, 18)]:
+        yield ("sweet_spot", reps, on_m * 60, 240, 0.90, 0.55)
+    # MORE vo2max variety (4–6 min efforts, 1:1 rec).
+    for reps, on_s, pw in [(4, 240, 1.12), (5, 240, 1.08), (6, 240, 1.10),
+                           (4, 300, 1.08), (7, 180, 1.12), (6, 180, 1.13)]:
+        yield ("vo2max", reps, on_s, on_s, pw, 0.55)
+
 
 def _steady_candidates():
     """Yield (intended_class, [(dur_s, pw), ...]) for steady-type sessions.
     Note: bookend (warmup+cooldown) is sized in _emit_steady to land round, so
-    the steady block here is total*60 - a nominal bookend; emit adjusts."""
-    # endurance 65–72%, long (steady)
-    for pw in (0.65, 0.68, 0.72):
-        for total in (60, 75, 90, 105, 120, 150, 180):
-            yield ("endurance", [(total * 60 - 1500, pw)], total)
-    # endurance with surges (still Z2-dominant): main Z2 + N×1min @85
-    for total, n in [(75, 5), (90, 6), (120, 8), (105, 6), (150, 8)]:
-        main = total * 60 - 1500 - n * 120
-        blocks = [(main, 0.70)]
-        for _ in range(n):
-            blocks += [(60, 0.85), (60, 0.62)]
+    the steady block here is total*60 - a nominal bookend; emit adjusts.
+
+    v1.8.25 — comprehensive Z2/endurance structure variety (open training
+    science — steady, two-zone, progressive, surges). Every variant stays
+    Z2-DOMINANT so it classifies as endurance (Z1+Z2 ≥ 65%, Z3+ < 25%): the
+    second zone is kept small / aerobic so the classify-before-write gate
+    accepts it as endurance rather than bleeding to tempo/mixed.
+    """
+    BK = 1500  # nominal bookend (warmup+cooldown); _emit_steady re-sizes to land round
+    LONG = (60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 120, 130, 140, 150, 160, 170, 180)
+
+    # 1) PURE STEADY Z2 — flat, every Z2 power × every endurance duration.
+    for pw in (0.62, 0.65, 0.68, 0.70, 0.72, 0.74):
+        for total in LONG:
+            yield ("endurance", [(total * 60 - BK, pw)], total)
+
+    # 2) TWO-ZONE endurance — alternating low-Z2 / high-Z2 (purely aerobic, so it
+    #    stays endurance-classified). "z2 with 2 diff zones".
+    for total in LONG:
+        body = total * 60 - BK
+        seg = max(300, body // 6)
+        blocks, t, hi = [], 0, True
+        while t + seg <= body:
+            blocks.append((seg, 0.72 if hi else 0.60)); hi = not hi; t += seg
+        if body - t > 60:
+            blocks.append((body - t, 0.66))
         yield ("endurance", blocks, total)
-    # tempo steady 80%, moderate
-    for pw in (0.78, 0.80, 0.83):
-        for total in (45, 60, 75, 90):
+
+    # 3) PROGRESSIVE endurance — stepped Z2 ramp 60% → 75% across the ride.
+    for total in LONG:
+        body = total * 60 - BK
+        steps = [0.60, 0.63, 0.66, 0.69, 0.72, 0.75]
+        seg = body // len(steps)
+        blocks = [(seg, p) for p in steps]
+        rem = body - seg * len(steps)
+        if rem > 0:
+            blocks[-1] = (seg + rem, steps[-1])
+        yield ("endurance", blocks, total)
+
+    # 4) Z2 + AEROBIC SURGES — Z2 base + N short bursts (still Z2-dominant). Vary
+    #    burst length (30/45/60 s) and power (85/90/95%).
+    for total in (60, 70, 75, 80, 90, 100, 105, 120, 135, 150, 180):
+        for burst_s, burst_pw, n in [(60, 0.85, 6), (45, 0.90, 8), (30, 0.95, 10),
+                                     (60, 0.88, 5), (45, 0.85, 6)]:
+            surge = n * (burst_s + 60)
+            main = total * 60 - BK - surge
+            if main < 600:
+                continue
+            blocks = [(main, 0.68)]
+            for _ in range(n):
+                blocks += [(burst_s, burst_pw), (60, 0.60)]
+            yield ("endurance", blocks, total)
+
+    # 5) Z2 + small TEMPO blocks (endurance-dominant: tempo portion < 25%).
+    for total in (75, 90, 105, 120, 150):
+        for blk_m, n in [(8, 2), (10, 2), (6, 3)]:
+            tempo = n * blk_m * 60
+            if tempo > 0.22 * total * 60:   # keep endurance-dominant
+                continue
+            main = total * 60 - BK - tempo - (n * 300)
+            if main < 600:
+                continue
+            blocks = [(main, 0.66)]
+            for _ in range(n):
+                blocks += [(blk_m * 60, 0.80), (300, 0.60)]
+            yield ("endurance", blocks, total)
+
+    # 6) TEMPO steady 78–84%, extended duration range.
+    for pw in (0.78, 0.80, 0.82, 0.84):
+        for total in (40, 45, 50, 55, 60, 70, 75, 80, 90, 100, 110, 120):
             yield ("tempo", [(total * 60 - 1200, pw)], total)
-    # recovery 50–56%
-    for pw in (0.50, 0.52, 0.55):
-        for total in (20, 30, 40, 45):
+
+    # 7) RECOVERY 50–58% — short only (long recovery is non-physiological).
+    for pw in (0.50, 0.52, 0.55, 0.58):
+        for total in (20, 25, 30, 35, 40, 45, 50):
             yield ("recovery", [(total * 60 - 900, pw)], total)
 
 
@@ -266,9 +365,18 @@ def run() -> dict:
         finally:
             tmp.unlink(missing_ok=True)
 
-    # interval candidates × round totals
+    def _cap(intended) -> int:
+        """Longest sound total for this intended class (min over a set)."""
+        if isinstance(intended, (set, frozenset, tuple)):
+            return min(MAX_TOTAL.get(c, 180) for c in intended)
+        return MAX_TOTAL.get(intended, 180)
+
+    # interval candidates × round totals (skip totals past the physiology cap)
     for intended, reps, on_s, off_s, on_pw, off_pw in _interval_candidates():
+        cap = _cap(intended)
         for total in ROUND_TOTALS:
+            if total > cap:
+                continue
             zwo = _emit_intervals(intended, reps, on_s, off_s, on_pw, off_pw, total)
             if zwo:
                 _try(intended, zwo)
@@ -278,7 +386,10 @@ def run() -> dict:
         _try(intended, zwo)
     # polarized macro-block candidates × round totals (Rønnestad VO2 + easy Z2)
     for intended, reps, on_s, off_s, on_pw, off_pw, nb, brec in _polarized_candidates():
+        cap = _cap(intended)
         for total in ROUND_TOTALS:
+            if total > cap:
+                continue
             zwo = _emit_blocks(reps, on_s, off_s, on_pw, off_pw, nb, brec, total)
             if zwo:
                 _try(intended, zwo)

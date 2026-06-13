@@ -54,8 +54,14 @@ def test_min_score_filter():
 
 
 def test_min_score_zero_includes_low_scores():
-    """min_score=0 includes the LOW band rows."""
-    out = _get_workouts(min_score=0, limit=3000)
+    """min_score=0 includes the LOW band rows.
+
+    v1.8.25 — limit raised 3000 → 6000. The library grew past 4100 files with
+    >3500 scoring ≥3; the old 3000 limit (score-desc) cut the low-score tail off
+    page one, so min(scores) never reached the LOW band. Limit must exceed the
+    library size to prove min_score=0 surfaces low-band rows.
+    """
+    out = _get_workouts(min_score=0, limit=6000)
     scores = {int(w["Score"]) for w in out}
     # The library has at least one low-band workout.
     assert min(scores) <= 3

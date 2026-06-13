@@ -11383,7 +11383,17 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
                 # Secondary rides are extras (free rides on a planned day),
                 # never "the planned one" — pass None to keep them
                 # un-compared.
-                secondary_list.append(_summarize_ride_for_calendar(r, ftp))
+                _sec = _summarize_ride_for_calendar(r, ftp)
+                secondary_list.append(_sec)
+                # v1.8.25 FIX — secondary rides STILL count toward the week's
+                # actual load. Pre-fix only the primary (longest) ride fed
+                # actual_tss / zone minutes, so a day with 2+ rides (e.g.
+                # commute + trainer) under-counted the week → the on-track bar
+                # and completion% read falsely "behind".
+                actual_tss += float(_sec.get("tss") or 0)
+                actual_z12 += float(_sec.get("z1z2_min") or 0)
+                actual_z34 += float(_sec.get("z3z4_min") or 0)
+                actual_z5p += float(_sec.get("z5plus_min") or 0)
 
             planned_payload = None
             if sess and not sess.get("_synthetic_history"):

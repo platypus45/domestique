@@ -11234,11 +11234,16 @@ function renderThisWeekFromCalendar(data) {
     let tintCls = '';
     const pTssNum = (planned && Number(planned.tss)) || 0;
     const aTssNum = (actual && Number(actual.tss)) || 0;
-    if (planned && actual && pTssNum > 0) {
+    if (planned && actual && pTssNum > 0 && aTssNum > 0) {
       const ratio = aTssNum / pTssNum;
       if (ratio >= 0.90) tintCls = 'twk-tss-green';
       else if (ratio >= 0.70) tintCls = 'twk-tss-yellow';
       else tintCls = 'twk-tss-red';
+    } else if (planned && actual) {
+      // v1.8.25 FIX — a completed ride with no/zero TSS value (e.g. an ICU/FIT
+      // activity that arrived without a load number) is DONE, not failed.
+      // Leave it neutral rather than grading it red on a missing data point.
+      tintCls = '';
     } else if (planned && isPast && !actual && cs !== 'rest') {
       tintCls = 'twk-tss-red';
     }

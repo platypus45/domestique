@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4178-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v1.10.0-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v2.0.0-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-1422%20passing-success" alt="Tests">
 </p>
 
@@ -265,12 +265,13 @@ See [docs/cycling_apps.md](docs/cycling_apps.md) for the full table.
 
 ## Releases
 
-Latest: **[v1.10.0 — evidence-based library overhaul, filter redesign, planner fixes](https://github.com/platypus45/domestique/releases/latest)** (2026-06-13).
+Latest: **[v2.0.0 — goal-aware selection + event-driven planning](https://github.com/platypus45/domestique/releases/latest)** (2026-06-13).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 
 **Highlights since v1.8.5** (see [CHANGELOG.md](CHANGELOG.md) for every shipped tag):
 
+- **Goal-aware + event-driven planning** (v2.0.0) — the plan now adapts to what you're training for. An **FTP** focus schedules more threshold/sweet-spot work, a **VO2max** focus more VO2/30-15 work. For a **target event**, distance + elevation drive a real long-ride progression (toward ~0.8× event duration, capped by your weekend hours), a feasibility-bounded fitness target (auto-lowered if the date's too soon), and climbing specificity in build/peak — so a 100 km/500 m and a 175 km/2900 m fondo produce visibly different plans. Survives auto-sync.
 - **Evidence-based library + cleaner browser** (v1.10.0) — added the canonical Rønnestad short/long intervals, proper Wingate SIT (4-min recovery) and descending VO₂ ladders from the PubMed literature, removed 18 under-rested anaerobic files (the "rest too short" ones), and renamed 282 files to match their real content type. The library filter is redesigned: one unified Type, a 0–180 min duration range, and an Advanced panel for Min Score / Surface / Tags.
 - **FIT import that just works** (v1.9.1) — drag a `.fit` from Finder anywhere onto the window (or click **Import FIT**); it imports, reconciles against your plan, adapts the next sessions, and the views refresh on the spot.
 - **Onboarding + "This Week" overhaul** (v1.9.0) — first-run wizard reworked (paste one API key, athlete ID auto-detected, Garmin sync verified, account guidance, skippable); reconciliation of completed rides → done/missed now happens automatically on every sync (the manual "Reconcile Week" button is gone); multi-ride days count correctly toward the week; workout selection brought in line with the planner; library grown to 4 178 clean workouts.
@@ -452,6 +453,17 @@ When you set up a `goal_type=event_preparation` plan with `event_km` and `event_
 
 The dashboard renders three KPI tiles (Endurance Gap / Power Gap / Climb Readiness) plus a dual-axis chart of weeks-to-event vs your longest completed ride and your current sustained 30-min W/kg. `Goal.longest_ride_h_90d` auto-populates from your last 90 days of rides.
 
+**v2.0.0 — the demand model now drives the plan, not just a dashboard.** Until v2.0.0 the projection above was read-only. Now, for `goal_type=event`, those numbers shape the prescription:
+
+- **Long-ride progression (the lever):** the weekend long ride ramps from your current longest toward `0.8 × predicted_finish_h` (`+25 min/week`), capped by your `max_weekend_hours` and a 5 h ceiling, and stops ≥3 weeks out so the taper owns it. Distance + elevation therefore change the plan — a 100 km/500 m and a 175 km/2900 m fondo produce visibly different long-ride schedules. Long-ride *duration*, not a CTL number, is the event-specific signal (TrainingPeaks ATP; Friel; CTS "longest ride 0.7–1.0× event duration").
+- **Feasibility-bounded fitness target:** `target_CTL = band[event_type] × (0.94 + 0.12 × difficulty)`, `difficulty = clamp((finish_h − 2)/6, 0, 1)`, then capped by `max_achievable = current_CTL + ramp_rate × (weeks − 2)` — the goal is auto-lowered if the date is too soon rather than prescribing an impossible ramp. CTL is treated as a forecast/anchor, **not** derived from the event (`event_TSS / 7` is dimensionally meaningless and used by no platform — confirmed against TrainingPeaks / intervals.icu / WKO5 / Xert).
+- **Climbing specificity:** a route with `event_climb_m / event_km > 12` m/km biases build + peak toward sustained threshold / over-under / VO₂ and away from punchy sprints — phase-gated, because race-specific work belongs in build/peak (Seiler; Rønnestad).
+- Applied on initial generation **and** every regenerate / reconcile, so it survives the auto-sync.
+
+**Goal-aware selection (v2.0.0):** independent of any event, an `ftp` goal up-weights threshold + sweet-spot + over-under; a `vo2max` goal up-weights VO2max + Rønnestad-30/15; `ftp_vo2max` / `hybrid` blends both — so the evidence-based protocols come up *more often for the matching focus* (previously the mix was identical regardless of goal).
+
+Method triangulated across PubMed (Seiler 4×8 [21812820], Rønnestad 30/15 [31977120], durability [PMC11235642], MLSS/MCT1 [11683677]), established platform + coach practice (TrainingPeaks Performance-Manager/ATP, Friel CTL-ramp, intervals.icu, WKO5, Xert), and a four-agent adversarial design grill.
+
 ### 4. End-to-end planner pipeline
 
 What actually happens when you set a goal and click "Generate plan":
@@ -462,14 +474,20 @@ Goal(goal_type, target_date, target_ctl, hours_per_week,
      available_days, daily_max_hours)
    |
    v
-generate_phases(goal, current_ctl)
+_event_demand_targets(goal, athlete, fitness)   # v2.0.0: None for non-event
+   |  -> {difficulty, long_target_h, long_start_h, climbing_bias}
+   v
+generate_phases(goal, current_ctl, event_targets)
    |  applies CTL ramp safety (max +5/week from base CTL)
+   |  v2.0.0: event difficulty nudges target CTL ±6%, feasibility-capped
    |  splits into BASE -> BUILD1 -> BUILD2 -> PEAK -> TAPER per goal type
    |  each Phase carries weekly_tss_target, hit_count_min/max,
    |     polarisation target, rest_days_per_week
    v
 for each PlannedWeek in plan:
   - pick WORKOUT_MIX_PREFERENCE row for (phase, week_in_phase)
+       v2.0.0: goal-aware emphasis (ftp/vo2max/hybrid) + climbing
+       emphasis (event_climb, build2/peak only) tilt the HIT-class pick
        e.g. base W3+ -> {endurance: 0.20, tempo: 0.15, sweet_spot: 0.25,
                         threshold: 0.20, vo2max: 0.10, vo2_short: 0.05,
                         recovery: 0.05}
@@ -499,7 +517,7 @@ for each PlannedWeek in plan:
 
 **Re-forecast and regen:**
 - `reforecast()` — runs on demand from the UI button. TSB-based hard-session intensity downshift + ACWR weekly TSS scaling + polarisation breach drop.
-- `regenerate_from_today()` — full rebuild starting from today's CTL. Triggers when `detect_plan_gaps()` flags >=2 consecutive missed weeks OR `expected_ctl − current_ctl > 15`.
+- `regenerate_from_today()` — full rebuild starting from today's CTL. Triggers when `detect_plan_gaps()` flags >=2 consecutive missed weeks OR `expected_ctl − current_ctl > 15`. **v2.0.0:** carries the same event-demand targets (long-ride progression, feasibility CTL, climbing emphasis) as the initial build, so an event plan does not revert on auto-sync.
 - `auto_apply_eftp()` — fires when ICU eFTP > set FTP by >=3% for 7+ consecutive days; bumps FTP with a 48h revert toast.
 
 ### 5. The pre-1.0 science table (carried forward)

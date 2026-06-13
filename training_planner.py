@@ -1327,22 +1327,91 @@ def safe_ramp_rate(current_ctl: float) -> float:
     return round(min(7, max(3, 5 * (current_ctl / 80))), 1)
 
 
-def target_ctl_for_event(goal: Goal) -> float:
-    """Determine target CTL based on event profile."""
-    targets = EVENT_CTL_TARGETS.get(goal.event_type, EVENT_CTL_TARGETS["granfondo"])
-    # Adjust by event difficulty
-    base_target = targets["strong"]
-    if goal.event_climb_m > 3000:
-        base_target += 5
-    if goal.event_km > 180:
-        base_target += 5
-    return base_target
+def target_ctl_for_event(goal: Goal, difficulty: float | None = None) -> float:
+    """Determine target CTL for an event.
+
+    v1.11.0 IMPL-EVENT — research (RESEARCH_event_plan_method.md): no platform
+    derives CTL from the event. TrainingPeaks ATP sets the target from rider
+    history (best-ever × ~1.1) and FEASIBILITY-caps it by ramp rate; intervals.icu
+    /WKO5/Xert forecast CTL forward from prescribed load. Event SIZE drives
+    long-ride duration + specificity, NOT CTL. So the EVENT_CTL_TARGETS band stays
+    the anchor, the feasibility cap in generate_phases (``max_achievable``) IS the
+    ATP feasibility test, and we replace ONLY the two discrete +5 steps with a small
+    smooth duration nudge (±6%) so event size is continuous, not a step function.
+    ``difficulty`` is 0..1 from event DURATION (km+climb fold into finish_h).
+    """
+    base = EVENT_CTL_TARGETS.get(goal.event_type, EVENT_CTL_TARGETS["granfondo"])["strong"]
+    if difficulty is not None:
+        d = max(0.0, min(1.0, difficulty))
+        return base * (0.94 + 0.12 * d)   # ±6% — minor; the long ride is the lever
+    # Legacy fallback (no demand model available): keep the old discrete steps.
+    return base + (5 if goal.event_climb_m > 3000 else 0) + (5 if goal.event_km > 180 else 0)
+
+
+# v1.11.0 IMPL-EVENT — event demand → plan targets.
+LONG_RIDE_CAP_MIN = 300      # 5h ceiling (Friel/CTS 4-6h); don't match >5h events.
+LONG_RIDE_FLOOR_H = 1.5      # start the long-ride ramp from at least 1.5h.
+LONG_RIDE_STEP_MIN = 25      # +25 min/week absolute ("+10%/wk" is research-debunked).
+
+
+def _event_demand_targets(goal: "Goal", athlete: dict | None,
+                          fitness_state: dict | None) -> dict | None:
+    """Turn an event goal into plan-ready targets by wrapping the EXISTING
+    `_project_event_capability` (no Martin solver, no kJ — duration is the only
+    demand number the plan needs). Returns None for non-event goals OR on any
+    missing/absurd input, so every event-wiring site no-ops and non-event plans
+    stay byte-identical (the v1.11.0 invariant).
+
+    Returns: difficulty (0..1, from finish_h), long_target_h, long_start_h,
+    climbing_bias, + passthrough predicted_finish_h / predicted_tss / gap_endurance_h.
+    """
+    if getattr(goal, "goal_type", "") != "event":
+        return None
+    event_km = float(getattr(goal, "event_km", 0) or 0)
+    if not (1.0 <= event_km <= 1200.0):              # missing or absurd → legacy
+        return None
+    weight = float((athlete or {}).get("weight_kg", 0) or 0)
+    ftp = float((athlete or {}).get("ftp", 0) or 0)
+    if not (30.0 <= weight <= 200.0) or ftp <= 0:    # need real athlete for the demand model
+        return None
+    if goal.target_date and (goal.target_date - date.today()).days < 0:
+        return None                                  # event in the past → legacy
+    try:
+        cap = _project_event_capability(goal, athlete, fitness_state or {})
+    except Exception as e:                            # never let demand math break plan gen
+        log.debug(f"_event_demand_targets: capability failed ({e})")
+        return None
+    finish_h = float(cap.get("predicted_finish_h") or 0)
+    if finish_h <= 0:
+        return None
+    difficulty = max(0.0, min(1.0, (finish_h - 2.0) / 6.0))
+    long_target_h = min(0.8 * finish_h, LONG_RIDE_CAP_MIN / 60.0)   # weekend-hours cap applied in post-pass
+    _start = goal.longest_ride_h_90d
+    long_start_h = max(float(_start) if _start else LONG_RIDE_FLOOR_H, LONG_RIDE_FLOOR_H)
+    # Climbing specificity keys on the EVENT's climbing density (m gained per km),
+    # not a rider power-gap: a climby route warrants climbing-specific work
+    # regardless of rider strength. >12 m/km ≈ a hilly+ route (rolling is 5-15).
+    climb_density = float(getattr(goal, "event_climb_m", 0) or 0) / event_km
+    return {
+        "difficulty": difficulty,
+        "long_target_h": long_target_h,
+        "long_start_h": long_start_h,
+        "climbing_bias": climb_density > 12.0,
+        "predicted_finish_h": finish_h,
+        "predicted_tss": float(cap.get("predicted_tss") or 0),
+        "gap_endurance_h": float(cap.get("gap_endurance_h") or 0),
+    }
 
 
 # ── Phase generator (backwards periodization) ────────────────────────────────
 
-def generate_phases(goal: Goal, current_ctl: float) -> list[Phase]:
-    """Generate training phases working backwards from the target date."""
+def generate_phases(goal: Goal, current_ctl: float,
+                    event_targets: dict | None = None) -> list[Phase]:
+    """Generate training phases working backwards from the target date.
+
+    v1.11.0: ``event_targets`` (from `_event_demand_targets`, None for non-event)
+    feeds the event difficulty into the CTL band as a small ±6% nudge. Non-event
+    callers pass None → identical behavior."""
     total_weeks = goal.weeks_available()
     target_date = goal.target_date or (date.today() + timedelta(weeks=16))
 
@@ -1350,7 +1419,8 @@ def generate_phases(goal: Goal, current_ctl: float) -> list[Phase]:
     if goal.target_ctl:
         target = goal.target_ctl
     elif goal.goal_type == "event":
-        target = target_ctl_for_event(goal)
+        target = target_ctl_for_event(
+            goal, difficulty=(event_targets or {}).get("difficulty"))
     elif goal.goal_type == "ftp":
         # FTP improvement: moderate CTL increase, emphasis on quality not volume
         target = min(90, current_ctl + safe_ramp_rate(current_ctl) * min(total_weeks, 12))
@@ -3177,11 +3247,75 @@ def _content_class_for_row(w: dict) -> str:
     return "mixed"
 
 
+# v1.11.0 IMPL-GOAL-FOCUS — bias the per-phase class mix toward the workouts the
+# goal actually targets. Multipliers apply to HIT-slot classes only; the HIT row
+# is renormalized so the COUNT of HIT slots (set by the intensity budget) is
+# unchanged — only WHICH hard class fills them shifts. Grounded in the PubMed
+# FTP/LT review: threshold intervals (4×8 @100-105% FTP) are the #1 direct
+# driver of FTP/LT, then VO2 (Rønnestad 30/15, 4-6min @ vVO2max); sweet-spot +
+# over-under are support. Goals with no profile (event/general/endurance/ctl/
+# weight) are untouched — the event path gets its own demand-driven logic.
+GOAL_CLASS_EMPHASIS: dict[str, dict[str, float]] = {
+    # Raise FTP → threshold-led, sweet-spot + over-under support; VO2/anaerobic
+    # lightly SUPPRESSED so the gain comes at the off-target family's expense
+    # (boosting the on-target family alone only reshuffles within it). The
+    # variety floor still guarantees ≥1 interval session, so nothing is zeroed.
+    "ftp": {
+        "threshold": 2.6, "threshold_ladder": 2.2, "double_threshold": 2.0,
+        "sweet_spot": 1.9, "sweet_spot_ladder": 1.8, "over_under": 1.5,
+        "vo2max": 0.6, "vo2_ladder": 0.6, "vo2_short": 0.55, "anaerobic": 0.7,
+    },
+    # Raise VO2max → vo2max-led (Rønnestad 30/15, 4-6 min @ vVO2max); threshold/
+    # sweet-spot lightly suppressed.
+    "vo2max": {
+        "vo2max": 2.8, "vo2_ladder": 2.4, "vo2_short": 2.6, "anaerobic": 1.3,
+        "threshold": 0.6, "threshold_ladder": 0.6, "sweet_spot": 0.7,
+        "over_under": 0.8,
+    },
+    # Combined FTP + VO2 → both families up, no suppression (neither starves).
+    "ftp_vo2max": {
+        "threshold": 1.9, "threshold_ladder": 1.7, "sweet_spot": 1.6,
+        "over_under": 1.3, "vo2max": 2.0, "vo2_ladder": 1.8, "vo2_short": 1.9,
+    },
+}
+GOAL_CLASS_EMPHASIS["hybrid"] = GOAL_CLASS_EMPHASIS["ftp_vo2max"]  # alias
+# v1.11.0 IMPL-EVENT (P4) — climbing specificity for hilly events. Selected via a
+# SEPARATE emphasis_profile channel (NOT goal_type, which stays "event" so the
+# taper/consolidation branches don't break). Applied only in build2/peak.
+GOAL_CLASS_EMPHASIS["event_climb"] = {
+    # Sustained climbing power UP (long climbs = threshold / over-under / sweet
+    # spot), punchy + short-VO2 work DOWN. Must suppress the DOMINANT off-target
+    # (vo2max) to free allocation, else the boost just reshuffles (Change 1 lesson).
+    "threshold": 3.2, "threshold_ladder": 2.6, "over_under": 2.6, "sweet_spot": 2.2,
+    "vo2max": 0.55, "vo2_ladder": 0.55, "vo2_short": 0.45,
+    "neuromuscular": 0.45, "anaerobic": 0.5,
+}
+
+
+def _apply_goal_emphasis(row: dict[str, float], goal_type: str) -> dict[str, float]:
+    """Up-weight the goal's target classes within a mix row, renormalized to the
+    row's original total so phase intensity volume is unchanged (only the class
+    distribution shifts). No-op (returns the row unchanged) for goals without an
+    emphasis profile."""
+    emphasis = GOAL_CLASS_EMPHASIS.get(goal_type or "")
+    if not emphasis or not row:
+        return row
+    total = sum(row.values())
+    boosted = {cc: w * emphasis.get(cc, 1.0) for cc, w in row.items()}
+    new_total = sum(boosted.values()) or 1.0
+    scale = total / new_total
+    return {cc: w * scale for cc, w in boosted.items()}
+
+
 def _get_mix_preference(phase_name: str, week_in_phase: int) -> dict[str, float]:
     """Return the WORKOUT_MIX_PREFERENCE row for (phase, week_in_phase).
 
     week_in_phase is 0-indexed (W1 of the phase → 0). Rows recycle with modulo
     when the phase runs longer than the table.
+
+    NOTE: goal-focus emphasis (v1.11.0) is applied later, to ``hit_pref`` AFTER
+    the rotation penalty, so the goal bias is the final word on the hard-class
+    pick rather than being damped by anti-monotony rotation.
     """
     rows = WORKOUT_MIX_PREFERENCE.get(phase_name) or WORKOUT_MIX_PREFERENCE["base"]
     if not rows:
@@ -3605,6 +3739,8 @@ def sample_week_workouts(
     class_session_counts: dict[str, int] | None = None,
     class_distinct_files: dict[str, set] | None = None,
     plan_total_weeks: int = 0,
+    goal_type: str = "general",
+    emphasis_profile: str | None = None,
 ) -> list["PlannedSession"]:
     """Score-weighted per-week sampler driving the v4.5 diversification overhaul.
 
@@ -3724,6 +3860,11 @@ def sample_week_workouts(
         cc: w for cc, w in rot_window_post.items()
         if cc in _HIT_SLOT_CONTENT_CLASSES and w > 0
     }
+    # v1.11.0 IMPL-GOAL-FOCUS: tilt the HIT-class pick toward the goal's target
+    # work, applied AFTER the rotation penalty so the goal bias is the final word
+    # (anti-monotony still operates underneath). Endurance slots are untouched;
+    # no-op for goals without an emphasis profile (event/general/endurance/…).
+    hit_pref = _apply_goal_emphasis(hit_pref, emphasis_profile or goal_type)
     end_pref = {
         cc: w for cc, w in pref_row.items()
         if cc in _ENDURANCE_SLOT_CONTENT_CLASSES and w > 0
@@ -4306,11 +4447,49 @@ def sample_week_workouts(
 
 # ── Full plan generation ──────────────────────────────────────────────────────
 
+def _apply_long_ride_target(sessions: list, target_min: int, max_weekend_min: int,
+                            is_stepback: bool) -> None:
+    """v1.11.0 IMPL-EVENT (P1, the lever) — extend the weekend long ride toward the
+    event's endurance target, IN PLACE. A long Z2 ride is unstructured, so we grow
+    the already-sampled weekend endurance session's duration (the zwo is a guide;
+    riding easy longer IS the session) and rescale its TSS — which correctly raises
+    the week's load so the CTL forecast tracks the prescribed volume.
+
+    Capped by weekend availability AND the 5h ceiling (both in target_min/-_weekend
+    by the caller) and discounted ×0.72 on stepback weeks. No-op when there's no
+    weekend endurance slot or it's already long enough."""
+    cap = min(int(target_min or 0), int(max_weekend_min or 0))
+    if is_stepback:
+        cap = int(round(cap * 0.72))
+    if cap <= 0:
+        return
+    # Pick the longer weekend (Sat/Sun) endurance session — found by s.day.weekday()
+    # (the session list is NOT guaranteed Mon..Sun-indexed).
+    best = None
+    for s in sessions:
+        if s is None or s.session_type not in ("z2", "long_z2") or (s.duration_min or 0) <= 0:
+            continue
+        day = getattr(s, "day", None)
+        wd = day.weekday() if hasattr(day, "weekday") else None
+        if wd not in (5, 6):
+            continue
+        if best is None or s.duration_min > best.duration_min:
+            best = s
+    if best is None or best.duration_min >= cap:    # no weekend Z2 slot, or already long enough
+        return
+    tss_per_min = (best.tss_estimate / best.duration_min) if best.duration_min else 0.7
+    best.duration_min = cap
+    best.tss_estimate = round(tss_per_min * cap)
+    if cap >= 120:
+        best.session_type = "long_z2"
+
+
 def generate_plan(
     goal: Goal,
     unavailable_periods: "list[tuple[date, date]] | None" = None,
     seed_salt: int = 0,
     availability_overrides: "dict[str, float] | None" = None,
+    athlete: dict | None = None,
 ) -> tuple[list[Phase], list[PlannedWeek]]:
     """Generate the full training plan.
 
@@ -4350,8 +4529,13 @@ def generate_plan(
     if current_ctl is None:
         current_ctl = 37.0
 
+    # v1.11.0 IMPL-EVENT — event demand → plan targets (None for non-event goals
+    # or missing athlete → all event wiring no-ops, non-event plans unchanged).
+    event_targets = _event_demand_targets(
+        goal, athlete, {"current_ctl": current_ctl})
+
     try:
-        phases = generate_phases(goal, current_ctl)
+        phases = generate_phases(goal, current_ctl, event_targets)
     except Exception as _e:
         # v1.6.1 — phase derivation failed (bad goal inputs / target_date in past).
         # Re-raise after logging so the caller (app.py /api/plan/generate) can
@@ -4431,6 +4615,12 @@ def generate_plan(
                 # v4.5.0 IMPL-PLANNER: sampler-driven workout selection per week.
                 budget = get_budget_for_phase(phase.name)
                 phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
+                # v1.11.0 (P4) — climbing specificity ONLY in build2/peak (research:
+                # race-specific work belongs in build+peak, not base). None elsewhere.
+                _emph = ("event_climb"
+                         if (event_targets and event_targets.get("climbing_bias")
+                             and phase.name in ("build2", "peak"))
+                         else None)
                 sampled = sample_week_workouts(
                     phase=phase, budget=budget, library=library,
                     used_names=used_names_dict,
@@ -4450,7 +4640,11 @@ def generate_plan(
                     class_session_counts=class_session_counts,
                     class_distinct_files=class_distinct_files,
                     plan_total_weeks=plan_total_weeks,
+                    goal_type=getattr(goal, "goal_type", "general"),
+                    emphasis_profile=_emph,
                 )
+                # (v1.11.0 event long-ride progression is applied as a final pass
+                #  at the END of generate_plan — after all duration/re-match passes.)
                 # Trim rotation window to last 4 weeks worth of picks (≤3 HITs/wk
                 # × 4 weeks = 12 entries max). Anything older has no penalty.
                 if len(phase_rot) > 12:
@@ -4626,6 +4820,28 @@ def generate_plan(
             "Check WORKOUT_DIR=%s and duration tolerances.",
             unmatched_count, WORKOUT_DIR,
         )
+
+    # v1.11.0 IMPL-EVENT (P1, the lever) — event long-ride progression. Applied
+    # HERE: after the sampler + all utilization/re-match passes, and right BEFORE
+    # the authoritative availability clamp below (which then validates it stays
+    # within max_hours_for_day). Grows the weekend long ride toward 0.8× event
+    # duration (+25 min/wk from current longest), capped at 5h + weekend hours,
+    # ×0.72 on stepback, STOPPING ≥3 weeks out so the taper owns the long ride.
+    if event_targets is not None:
+        _mw_min = int(round((goal.max_weekend_hours or 0) * 60))
+        for _wi, _w in enumerate(weeks):
+            if getattr(_w, "phase", "") == "taper":
+                continue
+            _wstart = getattr(_w, "start", None)
+            if _wstart and goal.target_date and (goal.target_date - _wstart).days <= 21:
+                continue
+            _lr_h = min(event_targets["long_target_h"],
+                        event_targets["long_start_h"] + LONG_RIDE_STEP_MIN / 60.0 * _wi)
+            _apply_long_ride_target(
+                _w.sessions,
+                target_min=int(round(_lr_h * 60)),
+                max_weekend_min=_mw_min,
+                is_stepback=getattr(_w, "is_stepback", False))
 
     # v1.8.21 — AUTHORITATIVE per-day availability clamp. Session durations are
     # set from matched ZWO files at FOUR sites (sampler + 3 utilization/
@@ -6352,6 +6568,7 @@ def regenerate_from_today(
     unavailable_periods: list[dict] | None = None,
     activities: list[dict] | None = None,
     seed_salt: int = 0,
+    athlete: dict | None = None,
 ) -> tuple[list, list[PlannedWeek], dict]:
     """Regenerate plan from today, preserving past weeks.
 
@@ -6434,10 +6651,21 @@ def regenerate_from_today(
         for _ in range(7):
             post_recovery_ctl += (daily_tss - post_recovery_ctl) / 42.0
 
+    # v1.11.0 IMPL-EVENT — event demand → plan targets (None for non-event goals
+    # or missing athlete → all event wiring no-ops, non-event regen unchanged).
+    # Computed from the post-recovery CTL so it matches the phase generator below.
+    # Uses `goal` (not the not-yet-built adjusted_goal): the demand model only
+    # reads event_km/climb/type/target_date + athlete, which adjusted_goal copies
+    # verbatim (it differs from goal only in target_ctl).
+    event_targets = _event_demand_targets(
+        goal, athlete, {"current_ctl": post_recovery_ctl})
+
     build_weeks = post_recovery_weeks - max(1, adjusted_taper // 7)
     max_achievable = post_recovery_ctl + safe_ramp_rate(post_recovery_ctl) * build_weeks
 
-    original_target = target_ctl_for_event(goal) if goal.goal_type == "event" else None
+    original_target = target_ctl_for_event(
+        goal, difficulty=(event_targets or {}).get("difficulty")
+    ) if goal.goal_type == "event" else None
     adjusted_target = min(original_target, max_achievable) if original_target else max_achievable
 
     # 8. Build unavailable date set
@@ -6478,7 +6706,7 @@ def regenerate_from_today(
     phase_start_date = today + timedelta(days=recovery_days)
     # Temporarily adjust goal so phases start after recovery
     adjusted_goal._phase_start_override = phase_start_date
-    new_phases = generate_phases(adjusted_goal, post_recovery_ctl)
+    new_phases = generate_phases(adjusted_goal, post_recovery_ctl, event_targets)
     # Clamp all phase start dates to be after recovery
     for p in new_phases:
         if p.start < phase_start_date:
@@ -6547,6 +6775,12 @@ def regenerate_from_today(
             # v4.5.0 IMPL-PLANNER: sampler-driven workout selection per week.
             budget = get_budget_for_phase(phase.name)
             phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
+            # v1.11.0 (P4) — climbing specificity ONLY in build2/peak (mirrors
+            # generate_plan's _emph). None elsewhere / for non-event regens.
+            _emph = ("event_climb"
+                     if (event_targets and event_targets.get("climbing_bias")
+                         and phase.name in ("build2", "peak"))
+                     else None)
             sampled = sample_week_workouts(
                 phase=phase, budget=budget, library=library,
                 used_names=used_names_dict,
@@ -6566,6 +6800,8 @@ def regenerate_from_today(
                 class_session_counts=class_session_counts,
                 class_distinct_files=class_distinct_files,
                 plan_total_weeks=plan_total_weeks_rg,
+                goal_type=getattr(adjusted_goal, "goal_type", "general"),
+                emphasis_profile=_emph,
             )
             if len(phase_rot) > 12:
                 del phase_rot[: len(phase_rot) - 12]
@@ -6612,6 +6848,29 @@ def regenerate_from_today(
             cursor += timedelta(weeks=1)
             week_num += 1
             week_in_phase += 1
+
+    # v1.11.0 IMPL-EVENT (P1, the lever) — event long-ride progression over the
+    # rebuilt future weeks. Mirrors generate_plan's FINAL pass: grow the weekend
+    # long ride toward 0.8× event duration (+25 min/wk from current longest),
+    # capped at weekend hours, ×0.72 on stepback, STOPPING ≥3 weeks out so the
+    # taper owns the long ride. No-op for non-event regens (event_targets None).
+    # Applied AFTER all session-duration / re-match passes; regenerate_from_today
+    # has no authoritative availability clamp, so this runs just before assembly.
+    if event_targets is not None:
+        _mw_min = int(round((goal.max_weekend_hours or 0) * 60))
+        for _wi, _w in enumerate(new_weeks):
+            if getattr(_w, "phase", "") == "taper":
+                continue
+            _wstart = getattr(_w, "start", None)
+            if _wstart and goal.target_date and (goal.target_date - _wstart).days <= 21:
+                continue
+            _lr_h = min(event_targets["long_target_h"],
+                        event_targets["long_start_h"] + LONG_RIDE_STEP_MIN / 60.0 * _wi)
+            _apply_long_ride_target(
+                _w.sessions,
+                target_min=int(round(_lr_h * 60)),
+                max_weekend_min=_mw_min,
+                is_stepback=getattr(_w, "is_stepback", False))
 
     # Renumber recovery weeks
     for i, rw in enumerate(recovery_weeks):
@@ -6734,6 +6993,7 @@ def recalculate_plan(
     current_ctl: float,
     recent_activities: list[dict] | None = None,
     current_eftp: float | None = None,
+    athlete: dict | None = None,
 ) -> tuple[list, list[PlannedWeek], dict]:
     """Weekly rolling recalculation of the training plan.
 
@@ -6806,6 +7066,15 @@ def recalculate_plan(
         plan_weeks=goal.plan_weeks,
     )
 
+    # v1.11.0 IMPL-EVENT — event demand → plan targets so the event CTL nudge
+    # survives a rolling recalc (None for non-event goals or missing athlete →
+    # no-op, behavior identical to pre-v1.11.0). This legacy _pick_session path
+    # has no sampler/long-ride pass, so event_targets only flows into the phase
+    # generator (the CTL band). athlete is threaded from the caller; until the
+    # app layer passes it, event_targets stays None and nothing changes.
+    event_targets = _event_demand_targets(
+        goal, athlete, {"current_ctl": current_ctl})
+
     # If taper locked, force taper phase
     if taper_locked:
         taper_phase = Phase(
@@ -6819,7 +7088,7 @@ def recalculate_plan(
     else:
         # Regenerate phases starting AFTER current week (avoids double-cover)
         adjusted_goal._phase_start_override = regen_start
-        new_phases = generate_phases(adjusted_goal, current_ctl)
+        new_phases = generate_phases(adjusted_goal, current_ctl, event_targets)
 
     # 6. Generate new weeks
     library = load_workout_library()

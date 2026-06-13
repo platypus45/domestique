@@ -1,5 +1,40 @@
 # Changelog
 
+## v2.0.0 — goal-aware selection + event-driven planning (2026-06-13)
+
+The planner now adapts what it schedules to *what you're training for* — both the
+focus (raise FTP vs VO2max) and the target event (its distance + elevation).
+
+### Goal-aware workout selection
+- **FTP focus** schedules more threshold + sweet-spot + over-under work; **VO2max
+  focus** schedules more VO2max / Rønnestad-30-15 work; **hybrid** blends both. The
+  evidence-based protocols added in v1.10.0 now actually come up more often for the
+  matching goal (previously the mix was the same regardless of focus). Grounded in
+  the PubMed FTP/LT review (threshold 4×8 @100–105% is the #1 FTP driver, then VO2).
+
+### Event-driven training plan
+When your goal is a target event, the plan is now built from what the event
+*demands* instead of a generic curve:
+- **Demand model** (existing physics, now wired into the plan): distance + elevation
+  + your FTP/weight → predicted finish time, event TSS, climbing demand.
+- **Long-ride progression** — the headline: the weekend long ride grows from your
+  current longest toward ~0.8× event duration (+25 min/week), honestly capped by
+  your weekend hours and a 5 h ceiling, and stops ≥3 weeks out so the taper owns it.
+  A 100 km/500 m and a 175 km/2900 m fondo now produce visibly different plans.
+- **Feasibility-bounded fitness target** — the CTL target is the event-type band
+  nudged by event difficulty, then capped by what's reachable in the weeks you have
+  (TrainingPeaks-ATP-style): the goal is lowered automatically if the date is too
+  soon, rather than prescribing an impossible ramp.
+- **Climbing specificity** — a climby route (>12 m gained/km) biases build + peak
+  toward sustained threshold / over-under / sustained-VO₂ work, away from punchy
+  sprints. Phase-gated to build/peak only.
+- Survives auto-sync: the event targets are applied on initial generation **and** on
+  every regenerate/reconcile, so the plan doesn't revert.
+- Non-event and non-focus goals are unchanged.
+
+Method triangulated across PubMed (demand + durability), platform/coach practice
+(TrainingPeaks ATP, Friel, intervals.icu, WKO5/Xert), and an adversarial design grill.
+
 ## v1.10.0 — evidence-based library overhaul, filter redesign, planner fixes (2026-06-13)
 
 A research-driven pass over the workout library plus a cleaner library browser

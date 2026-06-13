@@ -8409,9 +8409,28 @@ async def api_plan_generate(request: Request):
                 availability_overrides = {}
                 old_availability_full = {}
 
+        # v1.11.0 — thread athlete (ftp + weight) so the event-demand planner
+        # can compute event targets. Mirrors /api/event/projection's assembly;
+        # only pass a real dict when ftp+weight are present, else athlete=None
+        # (training_planner no-ops on a missing/empty athlete for non-event
+        # goals and for events without a real ftp/weight).
+        athlete = None
+        try:
+            from profile_manager import ProfileManager
+            _pm = ProfileManager.get()
+            # pm.ftp / pm.weight_kg are default-backed (200 / 70.0), so probe the
+            # raw athlete store to tell a genuinely-set value from a fabricated
+            # default — a brand-new user with no ftp/weight must yield athlete=None.
+            _raw = getattr(_pm, "_athlete", {}) or {}
+            if "ftp" in _raw and "weight_kg" in _raw and _raw.get("ftp") and _raw.get("weight_kg"):
+                athlete = {"ftp": _pm.ftp, "weight_kg": _pm.weight_kg}
+        except Exception:
+            athlete = None
+
         phases, weeks = tp.generate_plan(
             goal, seed_salt=seed_salt,
             availability_overrides=availability_overrides or None,
+            athlete=athlete,
         )
         plan_path = tp.export_plan_md(goal, phases, weeks)
 
@@ -8947,14 +8966,42 @@ def _regenerate_plan_dict(
 
     unavailable = plan.get("unavailable_periods", [])
 
+    # v1.11.0 — thread athlete (ftp + weight) so the event-demand planner can
+    # compute event targets on regen too. No ProfileManager is in scope here
+    # (this core is shared by the auto-on-sync + manual regen paths), so
+    # assemble it the same way /api/event/projection does; only a real dict
+    # when ftp+weight are present, else athlete=None.
+    athlete = None
+    try:
+        from profile_manager import ProfileManager
+        _pm = ProfileManager.get()
+        # pm.ftp / pm.weight_kg are default-backed (200 / 70.0), so probe the raw
+        # athlete store to tell a genuinely-set value from a fabricated default —
+        # a brand-new user with no ftp/weight must yield athlete=None.
+        _raw = getattr(_pm, "_athlete", {}) or {}
+        if "ftp" in _raw and "weight_kg" in _raw and _raw.get("ftp") and _raw.get("weight_kg"):
+            athlete = {"ftp": _pm.ftp, "weight_kg": _pm.weight_kg}
+    except Exception:
+        athlete = None
+
     # Regenerate (seed_salt forces shuffle variance per call — B3)
-    new_phases, all_weeks, regen_info = tp.regenerate_from_today(
+    _regen_kwargs = dict(
         goal=goal, old_plan_weeks=old_weeks,
         current_ctl=current_ctl,
         unavailable_periods=unavailable,
         activities=activities,
         seed_salt=seed_salt,
     )
+    # Pass athlete only if regenerate_from_today accepts it (the kwarg is being
+    # added in training_planner concurrently — guard so a stale signature in a
+    # narrow build window can't crash the hot ride-sync regen path).
+    try:
+        import inspect as _inspect
+        if "athlete" in _inspect.signature(tp.regenerate_from_today).parameters:
+            _regen_kwargs["athlete"] = athlete
+    except (ValueError, TypeError):
+        pass
+    new_phases, all_weeks, regen_info = tp.regenerate_from_today(**_regen_kwargs)
 
     # Build updated plan JSON.
     # v1.8.20 — START from a shallow copy of the ORIGINAL plan so every

@@ -2,10 +2,27 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-  <true/>
-  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
-  <true/>
+  <!--
+    Hardened-runtime entitlements — kept to the MINIMUM a bundled-CPython
+    (PyInstaller) app actually needs, and no more.
+
+    cs.disable-library-validation — REQUIRED. The bundle ships C-extension
+    dylibs from pip wheels (numpy, scipy, lxml, pydantic_core, Pillow) that
+    are signed by THEIR authors, not this app's Team ID. Without this the
+    hardened runtime refuses to load them and the app will not launch.
+
+    Removed (were set true historically — cargo-culted to brute-force past
+    earlier notarization errors, NOT because anything requires them):
+      • cs.allow-unsigned-executable-memory — W^X / JIT memory. CPython +
+        numpy/scipy never request it. Safe to drop.
+      • cs.allow-dyld-environment-variables — modern PyInstaller resolves
+        bundled libs via @rpath/@loader_path, not DYLD_* env vars.
+
+    GATE: the v2.0.3 macOS DMG must be LAUNCH-tested (actually open the
+    notarized .app), not just VERSION-checked, before shipping. If it fails
+    to open, re-add allow-dyld-environment-variables first (the likelier of
+    the two), re-notarize, re-launch — never re-add blindly.
+  -->
   <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
 </dict>

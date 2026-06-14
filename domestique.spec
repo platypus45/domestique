@@ -145,7 +145,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,  # no terminal window
+    console=True,  # no terminal window
     icon="assets/icon.icns" if sys.platform == "darwin" else "assets/icon.ico",
 )
 

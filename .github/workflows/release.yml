@@ -273,8 +273,11 @@ jobs:
               # app's — print it for what it's worth, but the real traceback is in
               # exe_out.txt (dumped by Dump-Diagnostics below).
               Write-Host ("cmd wrapper EXITED EARLY with code: {0} (hex: 0x{1:X8})" -f $proc.ExitCode, $proc.ExitCode)
-              Write-Error "EXE exited before it could serve /api/version"
+              # Dump FIRST: GH Actions pwsh runs with $ErrorActionPreference=Stop,
+              # so Write-Error is TERMINATING and would jump to finally{} before
+              # the diagnostics ever print (this is why every prior dump was blank).
               Dump-Diagnostics
+              Write-Host "::error::EXE exited before it could serve /api/version"
               exit 1
             }
 
@@ -292,13 +295,13 @@ jobs:
               }
             }
             if ($null -eq $served) {
-              Write-Error "EXE never served /api/version within 90s"
               Dump-Diagnostics
+              Write-Host "::error::EXE never served /api/version within 90s"
               exit 1
             }
             if ($served.Trim() -ne $expected) {
-              Write-Error "Version mismatch: served '$served' != VERSION '$expected'"
               Dump-Diagnostics
+              Write-Host "::error::Version mismatch: served '$served' != VERSION '$expected'"
               exit 1
             }
             Write-Host "Smoke-test passed: EXE serves version $served"

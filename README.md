@@ -623,8 +623,19 @@ Copyright verdict: interval numbers + durations are uncopyrightable facts (Feist
 
 ### Security notes
 
-- **ICU API key** is stored plaintext in `~/.domestique/profiles/<id>/.env` with `chmod 0600`. Storage is per-profile and local-only (never uploaded, never synced). For extra safety on macOS you can manually move the key into Keychain after first run — an automated Keychain migration for ICU credentials is planned for a future release (Strava credentials already use Keychain on macOS). DO NOT commit your `.env` to any public location; it is excluded by `.gitignore` at the repo root.
-- **All network listeners** bind to `127.0.0.1` by default. Do not expose port 8080 publicly without adding your own authentication layer — Domestique's endpoints are designed for single-user localhost use.
+Domestique is a **single-user, local-first desktop app**. The security model follows from that: everything runs on your machine, and the only data that leaves it is what you choose to sync to your *own* intervals.icu / Strava account. There is no Domestique-operated server and no telemetry.
+
+**Network exposure — no remote access.** The bundled API server binds to `127.0.0.1` only — there is no `0.0.0.0` bind anywhere in the codebase, and the notarized macOS build ships no inbound-network (`com.apple.security.network.server`) entitlement, so nothing on your LAN or the internet can reach it. The local endpoints are **unauthenticated by design**: they trust the localhost boundary for single-user use. Do not manually rebind to `0.0.0.0` or expose port 8080 without adding your own authentication layer. Outbound connections are made only to **intervals.icu** (and **Strava**, if configured) over HTTPS, using your own credentials.
+
+**Credentials at rest.** Your intervals.icu API key is stored in `~/.domestique/profiles/<id>/.env`, written atomically with `chmod 0600` (owner-only) and with newline-injection rejected. It is **plaintext at rest** (not encrypted), but never uploaded, never synced, and excluded by `.gitignore`. On macOS you can move it into Keychain after first run; automated Keychain migration for ICU credentials is planned (Strava already uses Keychain on macOS). Do not commit your `.env` anywhere.
+
+**Code signing / distribution integrity.**
+- **macOS** — the DMG is signed with an Apple Developer ID and **notarized**; it opens with no Gatekeeper prompt, and the ticket is stapled to both the `.app` and the DMG. The DMG's `sha256` is recorded in the Homebrew cask (`Casks/domestique.rb`), so `brew install --cask` verifies it.
+- **Windows** — the EXE is currently **unsigned**. SmartScreen will show "unknown publisher" and you must confirm "Run anyway." Authenticode signing is on the roadmap (the release workflow has the `signtool` step stubbed). Until then, only download from the official [GitHub releases](https://github.com/platypus45/domestique/releases) page.
+
+**Known gaps (honest disclosure).** There is no automated security test suite yet (input-validation / path-traversal / SSRF coverage is planned); the local API has no authentication layer beyond the localhost bind; and credentials are not encrypted at rest. These are tracked, not overlooked.
+
+**Reporting a vulnerability.** Please open a private security advisory on the [repository](https://github.com/platypus45/domestique/security/advisories) rather than a public issue.
 
 ### Contributing
 

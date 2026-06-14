@@ -53,3 +53,6 @@ routes.json.surface_bak
 # Claude Code agent runtime artefacts
 .claude/scheduled_tasks.lock
 .claude/worktrees/
+
+# dev-only classifier audit transition logs (not runtime)
+workouts/.classification_audit_*.json

@@ -1391,11 +1391,32 @@ def classify_v104(features: dict, tags: list[str] | None = None,
             conf = _confidence_from_dose(features.get("ladder_set_count", 0), 2, 4)
             return ladder_class, conf, secondary
 
+    high_intensity_s = z5_s + z6_s + z7_s
+
+    # Over-under gate (Gate D) — MUST precede the peak-zone gate below. A
+    # genuine over-under holds ≥91% FTP contiguously through both legs (e.g. a
+    # 95%/105% alternation), so it satisfies the peak-zone Z4+ gate and used to
+    # be claimed as ``threshold`` before the over-under detector was consulted
+    # (l.1403 fired before l.1419). That under-detected over_under: of 158 real
+    # alternating bodies only 41 classified as over_under; 117 leaked to
+    # threshold/ladder/sweet_spot. ``is_over_under`` already requires ≥3
+    # above/below-threshold transitions with each leg ≥30s and an over-leg
+    # capped at 1.10 FTP (Z6 sprints excluded), so a workout that satisfies it
+    # is structurally an over-under, not a steady Z4 block. The
+    # ``high_intensity_s < DOSE_VO2_Z5_S`` guard keeps a genuine VO2max ride
+    # (≥8 min cumulative Z5+) on the vo2max branch even if its on/off legs
+    # happen to alternate through the 85-110% band.
+    band_s = z3_s + z4_s + min(z5_s, 60)
+    if (features["is_over_under"]
+            and band_s >= DOSE_OVERUNDER_BAND_S
+            and high_intensity_s < DOSE_VO2_Z5_S):
+        conf = _confidence_from_dose(features["ou_transitions"], DOSE_OVERUNDER_TRANSITIONS, 8)
+        return "over_under", conf, secondary
+
     # Peak-zone gate. Skip when the workout is a microinterval session that
     # hits ≥8 min cumulative Z5+ — those are vo2_short workouts whose Z4+
     # accumulators land >30% by virtue of brief on-cycles, not because the
     # workout is structurally a long Z4 block.
-    high_intensity_s = z5_s + z6_s + z7_s
     is_micro_vo2 = (features["is_microinterval"]
                     and high_intensity_s >= DOSE_VO2_Z5_S)
     longest_z4plus = features.get("longest_z4plus_block_s", 0)
@@ -1415,7 +1436,12 @@ def classify_v104(features: dict, tags: list[str] | None = None,
         if band == "z5":
             return "vo2max", 0.85, secondary
 
-    band_s = z3_s + z4_s + min(z5_s, 60)
+    # Over-under (original cascade position, retained). The guarded branch above
+    # only promotes the previously-stolen near-threshold over-unders ahead of
+    # the peak-zone gate; this branch keeps the pre-Gate-D behaviour for the
+    # rest (e.g. over-unders that also carry ≥8 min Z5+ and were classified
+    # over_under before — they stay over_under, never silently flipping to
+    # vo2max/vo2_short).
     if features["is_over_under"] and band_s >= DOSE_OVERUNDER_BAND_S:
         conf = _confidence_from_dose(features["ou_transitions"], DOSE_OVERUNDER_TRANSITIONS, 8)
         return "over_under", conf, secondary
@@ -1524,39 +1550,101 @@ def _detect_interval_signature(segments: list[dict]) -> tuple[int, int, int, flo
     pattern, or None."""
     iv_segs = [s for s in segments if s["kind"] == "intervals"]
     if iv_segs:
-        # v1.0.5: rank by total work-seconds (repeat × on_s) so the dominant
-        # interval block wins. Tie-break on on_power (higher = more salient).
-        # Old `max(..., key=repeat)` ignored on_s and let a 4×60s @ 98% block
-        # outrank a 2×720s @ 88% block (240s vs 1440s of work).
-        iv = max(
-            iv_segs,
-            key=lambda s: (
-                s.get("repeat", 1) * s.get("on_s", 0),  # total work seconds
-                s.get("on_power", 0.0),                  # tie-break: higher OnPower
+        # v1.0.6 (Gate A): SUM reps of identical interval shapes across
+        # recovery-separated blocks before choosing the dominant one. The
+        # library splits a long interval set into several ``IntervalsT`` blocks
+        # (often interleaved with a steady recovery), e.g.
+        # ``anaerobic_1min_15x_72min`` = three ``Repeat="5"`` blocks = 15 reps.
+        # The old code reported a single block's ``repeat`` (5), undercounting
+        # the true rep total (417 files). Group by the ON shape — ``on_s`` plus
+        # rounded ``on_power`` — so blocks that differ only in off-duration (a
+        # 60s vs 55s recovery in the last block) still merge. The dominant shape
+        # is the one with the most summed work-seconds; tie-break on ON power.
+        groups: dict[tuple[int, float], dict] = {}
+        for s in iv_segs:
+            on_s = s.get("on_s", 0)
+            key = (on_s, round(s.get("on_power", 0.0), 2))
+            g = groups.get(key)
+            reps = s.get("repeat", 1)
+            if g is None:
+                groups[key] = {
+                    "reps": reps,
+                    "on_s": on_s,
+                    "off_s": s.get("off_s", 0),
+                    "on_power": s.get("on_power", 0.0),
+                }
+            else:
+                g["reps"] += reps
+        best = max(
+            groups.values(),
+            key=lambda g: (
+                g["reps"] * g["on_s"],   # total summed work seconds
+                g["on_power"],           # tie-break: higher OnPower
             ),
         )
-        return iv["repeat"], iv["on_s"], iv["off_s"], iv["on_power"]
+        return best["reps"], best["on_s"], best["off_s"], best["on_power"]
 
-    pairs: dict[tuple, int] = {}
+    # v1.0.6 (steady-pair Gate A): group candidate on/off cycles by the ON
+    # SHAPE only — (on_s, rounded on_power) — and SUM reps, mirroring the
+    # IntervalsT branch above. The old code keyed on the full 4-tuple
+    # (on_power, off_power, on_s, off_s), so a workout whose off-power or
+    # off-duration drifts slightly between cycles (very common in the library)
+    # fragmented one real interval set into several keys and undercounted reps
+    # — e.g. five 180s@120% blocks reported as 4, and over-under bodies latching
+    # onto a minor sub-pattern instead of the dominant 10-cycle alternation.
+    # Tolerating off-side variation merges them back into one shape.
+    groups: dict[tuple[int, float], dict] = {}
     body = [s for s in segments if s["kind"] == "steady"]
     i = 0
     while i + 1 < len(body):
         on = body[i]
         off = body[i + 1]
-        if on["power"] >= 0.75 and off["power"] < 0.75:
-            key = (round(on["power"], 2), round(off["power"], 2),
-                   on["duration_s"], off["duration_s"])
-            pairs[key] = pairs.get(key, 0) + 1
+        # An interval cycle = a work block (>=0.75) followed by a LOWER block.
+        # The "off" leg is either a true recovery (<0.75) OR, for over-unders, an
+        # "under" leg that is still hard (0.75-0.95) sitting below a threshold+
+        # "over" leg (>=0.95). Without the OU clause the off<0.75 gate skips the
+        # whole over/under alternation (over 1.05 / under 0.81, both >0.75) and
+        # latches a minor incidental hard/recovery sub-pattern instead. The
+        # on>=0.95 guard keeps it from sweeping up sweet-spot/tempo wobbles.
+        if (
+            on["power"] >= 0.75
+            and off["power"] < on["power"]
+            and (off["power"] < 0.75 or on["power"] >= 0.95)
+        ):
+            on_s = on["duration_s"]
+            key = (on_s, round(on["power"], 2))
+            g = groups.get(key)
+            if g is None:
+                groups[key] = {
+                    "reps": 1,
+                    "on_s": on_s,
+                    "off_s": off["duration_s"],
+                    "on_power": on["power"],
+                }
+            else:
+                g["reps"] += 1
             i += 2
         else:
             i += 1
-    if not pairs:
+    # A trailing work block with NO recovery after it (the set ends on the final
+    # hard effort) is still a rep — count it if it matches an established on-shape.
+    # e.g. anaerobic_5x3min_55min has 5×180s@120% but only 4 recoveries; the 5th
+    # interval has no trailing off, so the on/off walk alone reports 4.
+    if groups and i < len(body):
+        tail = body[i]
+        if tail["power"] >= 0.75:
+            key = (tail["duration_s"], round(tail["power"], 2))
+            if key in groups:
+                groups[key]["reps"] += 1
+    if not groups:
         return None
-    best = max(pairs.items(), key=lambda kv: kv[1])
-    (on_p, off_p, on_s, off_s), reps = best
-    if reps < 2:
+    best = max(
+        groups.values(),
+        key=lambda g: (g["reps"] * g["on_s"], g["on_power"]),
+    )
+    if best["reps"] < 2:
         return None
-    return reps, on_s, off_s, on_p
+    return best["reps"], best["on_s"], best["off_s"], best["on_power"]
 
 
 def generate_display_name(primary: str, features: dict, segments: list[dict],
@@ -1915,38 +2003,9 @@ def main():
         write_cache(args.output, classifications, args.workout_dir)
         print(f"Wrote {len(classifications)} classifications → {args.output}", file=sys.stderr)
 
-        # Audit trail — write classification_audit_v104.json with class
-        # transitions for every file whose primary changed.
-        audit_path = args.output.parent / ".classification_audit_v104.json"
-        transitions: list[dict] = []
-        for fname, new_entry in classifications.items():
-            old = prior_classifications.get(fname, {})
-            old_primary = old.get("primary")
-            new_primary = new_entry.get("primary")
-            if old_primary != new_primary:
-                transitions.append({
-                    "file": fname,
-                    "old_primary": old_primary,
-                    "new_primary": new_primary,
-                    "reason": _audit_reason(old_primary, new_primary, new_entry),
-                })
-        from collections import Counter as _AC
-        with audit_path.open("w", encoding="utf-8") as f:
-            json.dump({
-                "schema_version": "v1.0.4",
-                "transitions": transitions,
-                "summary": {
-                    "total_files": len(classifications),
-                    "transitioned": len(transitions),
-                    "old_class_counts": dict(_AC(
-                        prior_classifications.get(fn, {}).get("primary")
-                        for fn in classifications)),
-                    "new_class_counts": dict(_AC(
-                        c.get("primary") for c in classifications.values())),
-                },
-            }, f, indent=2)
-        print(f"Wrote audit trail ({len(transitions)} transitions) → {audit_path}",
-              file=sys.stderr)
+        # v1.0.6: the per-run class-transition audit (.classification_audit_v*.json)
+        # was a dev-only artifact that leaked into the public repo and advertised
+        # churn. Removed — the canonical store is .content_classification.json.
 
         dist = Counter(c.get("primary") for c in classifications.values())
         print("\nPrimary distribution:")

@@ -1,8 +1,8 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Mixed (12min)</name>
-    <description>Warmup: 1min from 40% to 60% FTP | Steady: 20s @ 110% FTP | Steady: 1min @ 65% FTP | Steady: 20s @ 110% FTP | Steady: 2min @ 77% FTP | Steady: 1min @ 50% FTP | Steady: 50s @ 95% FTP | Steady: 1min @ 105% FTP | Steady: 30s @ 110% FTP | Steady: 20s @ 120% FTP | Steady: 20s @ 130% FTP | Cooldown: 3min from 40% to 75% FTP</description>
+    <name>Recovery (13min)</name>
+    <description>Warmup: 1min from 40% to 60% FTP | Steady: 20s @ 110% FTP | Steady: 1min @ 65% FTP | Steady: 20s @ 110% FTP | Steady: 2min @ 77% FTP | Steady: 1min @ 50% FTP | Steady: 50s @ 95% FTP | Steady: 1min @ 105% FTP | Steady: 30s @ 50% FTP | Steady: 30s @ 110% FTP | Steady: 30s @ 50% FTP | Steady: 20s @ 120% FTP | Steady: 30s @ 50% FTP | Steady: 20s @ 120% FTP | Cooldown: 3min from 65% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="60" PowerLow="0.4" PowerHigh="0.6" pace="0" />

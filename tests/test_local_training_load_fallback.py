@@ -77,8 +77,12 @@ class TestLocalTrainingLoadFallback(unittest.TestCase):
         when local rides exist, instead of raw None."""
         # No ICU wellness, no sleep — readiness will be INSUFFICIENT_DATA.
         # But local CTL exists → score should be promoted to neutral 50.
+        # Mock the v4.5.0 local-wellness fallback to empty too: otherwise a dev
+        # machine with ~/.domestique/wellness data trips the "local_wellness"
+        # data_status override and this scenario is no longer "no wellness".
         with patch.object(app_module, "get_today_metrics", return_value={}), \
              patch.object(app_module, "get_sleep_metrics", return_value={}), \
+             patch.object(app_module, "_local_sleep_metrics", return_value={}), \
              patch("ride_storage.compute_local_ctl", return_value=42.5), \
              patch.object(app_module, "_compute_local_atl", return_value=38.0):
             r = self.client.get("/api/readiness").json()

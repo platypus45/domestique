@@ -20,16 +20,18 @@
         <SteadyState Duration="180" Power="0.55" pace="0" />
         <SteadyState Duration="180" Power="1.0" pace="0" Cadence="90" />
         <SteadyState Duration="60" Power="1.05" pace="0" Cadence="105" />
-        <SteadyState Duration="15" Power="2.5" pace="0" Cadence="115" />
-        <SteadyState Duration="60" Power="0.9" pace="0" Cadence="90" />
-        <SteadyState Duration="15" Power="2.5" pace="0" Cadence="115" />
-        <SteadyState Duration="60" Power="0.9" pace="0" Cadence="90" />
-        <SteadyState Duration="15" Power="2.5" pace="0" Cadence="115" />
-        <SteadyState Duration="60" Power="0.9" pace="0" Cadence="90" />
+        <SteadyState Duration="15" Power="2" pace="0" Cadence="115" />
+        <SteadyState Duration="60" Power="0.55" pace="0" Cadence="90" />
+        <SteadyState Duration="15" Power="2" pace="0" Cadence="115" />
+        <SteadyState Duration="60" Power="0.55" pace="0" Cadence="90" />
+        <SteadyState Duration="15" Power="2" pace="0" Cadence="115" />
+        <SteadyState Duration="60" Power="0.55" pace="0" Cadence="90" />
         <SteadyState Duration="60" Power="1.0" pace="0" Cadence="90" />
         <SteadyState Duration="30" Power="1.25" pace="0" Cadence="115" />
-        <SteadyState Duration="10" Power="3.5" pace="0" Cadence="118" />
-        <SteadyState Duration="10" Power="3.0" pace="0" Cadence="105" />
+        <SteadyState Duration="30" Power="0.5" pace="0" />
+        <SteadyState Duration="10" Power="2" pace="0" Cadence="118" />
+        <SteadyState Duration="30" Power="0.5" pace="0" />
+        <SteadyState Duration="10" Power="2" pace="0" Cadence="105" />
         <SteadyState Duration="420" Power="0.5" pace="0" Cadence="85" />
     </workout>
 </workout_file>

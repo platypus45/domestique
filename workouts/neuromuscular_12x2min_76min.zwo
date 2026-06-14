@@ -6,21 +6,14 @@
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="300" PowerLow="0.39" PowerHigh="0.62" pace="0" Cadence="85" />
-        <SteadyState Duration="10" Power="2.78" pace="0" Cadence="105" />
-        <SteadyState Duration="60" Power="0.64" pace="0" Cadence="85" />
-        <SteadyState Duration="10" Power="2.78" pace="0" Cadence="105" />
-        <SteadyState Duration="60" Power="0.64" pace="0" Cadence="85" />
-        <SteadyState Duration="10" Power="2.78" pace="0" Cadence="105" />
-        <SteadyState Duration="180" Power="0.75" pace="0" Cadence="85" />
+        <SteadyState Duration="10" Power="2" pace="0" Cadence="105" />
+        <SteadyState Duration="60" Power="0.55" pace="0" Cadence="85" />
+        <SteadyState Duration="10" Power="2" pace="0" Cadence="105" />
+        <SteadyState Duration="60" Power="0.55" pace="0" Cadence="85" />
         <IntervalsT Repeat="4" OnDuration="180" OffDuration="120" OnPower="0.85" OffPower="0.85" pace="0" Cadence="95" CadenceResting="65" />
         <SteadyState Duration="300" Power="0.5" pace="0" Cadence="85" />
         <IntervalsT Repeat="6" OnDuration="120" OffDuration="20" OnPower="0.88" OffPower="1.4" pace="0" Cadence="95" CadenceResting="105" />
-        <SteadyState Duration="60" Power="1.1" pace="0" Cadence="95" />
-        <SteadyState Duration="300" Power="0.5" pace="0" Cadence="85" />
         <IntervalsT Repeat="6" OnDuration="120" OffDuration="20" OnPower="0.88" OffPower="1.4" pace="0" Cadence="95" CadenceResting="105" />
-        <SteadyState Duration="30" Power="1.1" pace="0" Cadence="95" />
-        <SteadyState Duration="20" Power="1.2" pace="0" Cadence="105" />
-        <SteadyState Duration="10" Power="1.5" pace="0" Cadence="120" />
         <Cooldown Duration="300" PowerLow="0.64" PowerHigh="0.25" pace="0" />
     </workout>
 </workout_file>

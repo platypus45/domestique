@@ -26,11 +26,11 @@
         <SteadyState Duration="120" Power="0.6" pace="0" />
         <SteadyState Duration="20" Power="1.2" pace="0" />
         <SteadyState Duration="60" Power="0.45" pace="0" />
-        <IntervalsT Repeat="12" OnDuration="30" OffDuration="300" OnPower="2.64" OffPower="0.6" pace="0" />
+        <IntervalsT Repeat="1" OnDuration="30" OffDuration="300" OnPower="1.5" OffPower="0.6" pace="0" />
         <SteadyState Duration="300" Power="0.55" pace="0" />
         <SteadyState Duration="330" Power="0.9" pace="0" />
         <SteadyState Duration="330" Power="0.8" pace="0" />
-        <SteadyState Duration="330" Power="0.7" pace="0" />
-        <SteadyState Duration="330" Power="0.6" pace="0" />
+        <SteadyState Duration="300" Power="0.7" pace="0" />
+        <SteadyState Duration="300" Power="0.6" pace="0" />
     </workout>
 </workout_file>

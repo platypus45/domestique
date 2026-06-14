@@ -7,19 +7,16 @@
     <workout>
         <Warmup Duration="600" PowerLow="0.25" PowerHigh="0.75" pace="0" />
         <SteadyState Duration="285" Power="0.9" pace="0" Cadence="80" />
-        <SteadyState Duration="30" Power="3.0" pace="0" />
+        <SteadyState Duration="30" Power="1.5" pace="0" />
         <SteadyState Duration="300" Power="0.55" pace="0" />
         <SteadyState Duration="285" Power="0.9" pace="0" Cadence="80" />
-        <SteadyState Duration="30" Power="3.0" pace="0" />
+        <SteadyState Duration="30" Power="1.5" pace="0" />
         <SteadyState Duration="300" Power="0.55" pace="0" />
         <SteadyState Duration="285" Power="0.9" pace="0" Cadence="80" />
-        <SteadyState Duration="30" Power="3.0" pace="0" />
+        <SteadyState Duration="30" Power="1.5" pace="0" />
         <SteadyState Duration="300" Power="0.55" pace="0" />
         <SteadyState Duration="285" Power="0.9" pace="0" Cadence="80" />
-        <SteadyState Duration="30" Power="3.0" pace="0" />
-        <SteadyState Duration="300" Power="0.55" pace="0" />
         <SteadyState Duration="285" Power="0.9" pace="0" Cadence="80" />
-        <SteadyState Duration="30" Power="3.0" pace="0" />
         <Cooldown Duration="300" PowerLow="0.75" PowerHigh="0.25" pace="0" />
     </workout>
 </workout_file>

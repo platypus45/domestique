@@ -5,12 +5,16 @@
     <description>Warmup: 10min from 28% to 88% FTP | Steady: 2min @ 130% FTP | Steady: 4min @ 120% FTP | Steady: 12min @ 110% FTP | Steady: 30s @ 250% FTP | Cooldown: 5min from 12% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
-        <Warmup Duration="600" PowerLow="0.28" PowerHigh="0.88" pace="0" />
-        <SteadyState Duration="120" Power="1.3" pace="0" />
+        <Warmup Duration="600" PowerLow="0.5" PowerHigh="0.75" pace="0" />
+        <SteadyState Duration="120" Power="1.2" pace="0" />
+        <SteadyState Duration="60" Power="0.5" pace="0" />
         <SteadyState Duration="240" Power="1.2" pace="0" />
+        <SteadyState Duration="120" Power="0.5" pace="0" />
         <SteadyState Duration="720" Power="1.1" pace="0" />
-        <SteadyState Duration="15" Power="2.5" pace="0" />
-        <SteadyState Duration="15" Power="2.5" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.12" PowerHigh="0.45" pace="0" />
+        <SteadyState Duration="360" Power="0.5" pace="0" />
+        <SteadyState Duration="15" Power="1.2" pace="0" />
+        <SteadyState Duration="30" Power="0.5" pace="0" />
+        <SteadyState Duration="15" Power="1.2" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.4" pace="0" />
     </workout>
 </workout_file>

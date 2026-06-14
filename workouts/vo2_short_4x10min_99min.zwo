@@ -5,51 +5,22 @@
     <description>Warmup: 12min from 50% to 90% FTP | Intervals: 4 x (10min @ 100% / 0s @ 55%) | Cooldown: 10min from 70% to 25% FTP</description>
     <sportType>bike</sportType>
     <workout>
-        <Warmup Duration="720" PowerLow="0.5" PowerHigh="0.9" pace="0" />
+        <Warmup Duration="720" PowerLow="0.5" PowerHigh="0.75" pace="0" />
         <SteadyState Duration="120" Power="0.5" pace="0" />
         <SteadyState Duration="600" Power="1.0" pace="0" />
-        <SteadyState Duration="20" Power="1.3" pace="0" />
+        <SteadyState Duration="20" Power="1.2" pace="0" />
         <SteadyState Duration="40" Power="0.3" pace="0" />
-        <SteadyState Duration="30" Power="1.3" pace="0" />
+        <SteadyState Duration="30" Power="1.2" pace="0" />
         <SteadyState Duration="30" Power="0.3" pace="0" />
-        <SteadyState Duration="40" Power="1.3" pace="0" />
+        <SteadyState Duration="40" Power="1.2" pace="0" />
         <SteadyState Duration="20" Power="0.3" pace="0" />
-        <SteadyState Duration="50" Power="1.3" pace="0" />
-        <SteadyState Duration="10" Power="0.3" pace="0" />
-        <SteadyState Duration="60" Power="1.3" pace="0" />
+        <SteadyState Duration="50" Power="1.2" pace="0" />
+        <SteadyState Duration="25" Power="0.3" pace="0" />
+        <SteadyState Duration="60" Power="1.2" pace="0" />
         <SteadyState Duration="300" Power="0.5" pace="0" />
         <SteadyState Duration="600" Power="1.0" pace="0" />
-        <SteadyState Duration="20" Power="1.3" pace="0" />
-        <SteadyState Duration="40" Power="0.3" pace="0" />
-        <SteadyState Duration="30" Power="1.3" pace="0" />
-        <SteadyState Duration="30" Power="0.3" pace="0" />
-        <SteadyState Duration="40" Power="1.3" pace="0" />
-        <SteadyState Duration="20" Power="0.3" pace="0" />
-        <SteadyState Duration="50" Power="1.3" pace="0" />
-        <SteadyState Duration="10" Power="0.3" pace="0" />
-        <SteadyState Duration="60" Power="1.3" pace="0" />
-        <SteadyState Duration="300" Power="0.5" pace="0" />
         <SteadyState Duration="600" Power="1.0" pace="0" />
-        <SteadyState Duration="20" Power="1.3" pace="0" />
-        <SteadyState Duration="40" Power="0.3" pace="0" />
-        <SteadyState Duration="30" Power="1.3" pace="0" />
-        <SteadyState Duration="30" Power="0.3" pace="0" />
-        <SteadyState Duration="40" Power="1.3" pace="0" />
-        <SteadyState Duration="20" Power="0.3" pace="0" />
-        <SteadyState Duration="50" Power="1.3" pace="0" />
-        <SteadyState Duration="10" Power="0.3" pace="0" />
-        <SteadyState Duration="60" Power="1.3" pace="0" />
-        <SteadyState Duration="300" Power="0.5" pace="0" />
         <SteadyState Duration="600" Power="1.0" pace="0" />
-        <SteadyState Duration="20" Power="1.3" pace="0" />
-        <SteadyState Duration="40" Power="0.3" pace="0" />
-        <SteadyState Duration="30" Power="1.3" pace="0" />
-        <SteadyState Duration="30" Power="0.3" pace="0" />
-        <SteadyState Duration="40" Power="1.3" pace="0" />
-        <SteadyState Duration="20" Power="0.3" pace="0" />
-        <SteadyState Duration="50" Power="1.3" pace="0" />
-        <SteadyState Duration="10" Power="0.3" pace="0" />
-        <SteadyState Duration="60" Power="1.3" pace="0" />
         <Cooldown Duration="600" PowerLow="0.7" PowerHigh="0.25" pace="0" />
     </workout>
 </workout_file>

@@ -6,27 +6,27 @@
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="600" PowerLow="0.25" PowerHigh="0.75" pace="0" />
-        <IntervalsT Repeat="3" OnDuration="30" OffDuration="30" OnPower="1.15" OffPower="0.5" pace="0" />
+        <IntervalsT Repeat="2" OnDuration="30" OffDuration="30" OnPower="1.15" OffPower="0.5" pace="0" />
         <FreeRide Duration="120" FlatRoad="0" />
-        <Ramp Duration="30" PowerLow="1.0" PowerHigh="3.0" pace="0" />
-        <SteadyState Duration="240" Power="0.65" pace="0" />
-        <Ramp Duration="30" PowerLow="1.0" PowerHigh="3.0" pace="0" />
-        <SteadyState Duration="240" Power="0.65" pace="0" />
-        <Ramp Duration="30" PowerLow="1.0" PowerHigh="3.0" pace="0" />
-        <SteadyState Duration="240" Power="0.65" pace="0" />
-        <Ramp Duration="30" PowerLow="1.0" PowerHigh="3.0" pace="0" />
-        <SteadyState Duration="240" Power="0.65" pace="0" />
-        <Ramp Duration="30" PowerLow="1.0" PowerHigh="3.0" pace="0" />
-        <SteadyState Duration="240" Power="0.65" pace="0" />
-        <Ramp Duration="30" PowerLow="1.0" PowerHigh="3.0" pace="0" />
-        <SteadyState Duration="240" Power="0.65" pace="0" />
-        <Ramp Duration="30" PowerLow="1.0" PowerHigh="3.0" pace="0" />
-        <SteadyState Duration="240" Power="0.65" pace="0" />
-        <Ramp Duration="30" PowerLow="1.0" PowerHigh="3.0" pace="0" />
-        <SteadyState Duration="240" Power="0.65" pace="0" />
-        <Ramp Duration="30" PowerLow="1.0" PowerHigh="3.0" pace="0" />
-        <SteadyState Duration="240" Power="0.65" pace="0" />
-        <Ramp Duration="30" PowerLow="1.0" PowerHigh="3.0" pace="0" />
+        <Ramp Duration="30" PowerLow="1.0" PowerHigh="1.5" pace="0" />
+        <SteadyState Duration="240" Power="0.55" pace="0" />
+        <Ramp Duration="30" PowerLow="1.0" PowerHigh="1.5" pace="0" />
+        <SteadyState Duration="240" Power="0.55" pace="0" />
+        <Ramp Duration="30" PowerLow="1.0" PowerHigh="1.5" pace="0" />
+        <SteadyState Duration="240" Power="0.55" pace="0" />
+        <Ramp Duration="30" PowerLow="1.0" PowerHigh="1.5" pace="0" />
+        <SteadyState Duration="240" Power="0.55" pace="0" />
+        <Ramp Duration="30" PowerLow="1.0" PowerHigh="1.5" pace="0" />
+        <SteadyState Duration="240" Power="0.55" pace="0" />
+        <Ramp Duration="30" PowerLow="1.0" PowerHigh="1.5" pace="0" />
+        <SteadyState Duration="240" Power="0.55" pace="0" />
+        <Ramp Duration="30" PowerLow="1.0" PowerHigh="1.5" pace="0" />
+        <SteadyState Duration="240" Power="0.55" pace="0" />
+        <Ramp Duration="30" PowerLow="1.0" PowerHigh="1.5" pace="0" />
+        <SteadyState Duration="240" Power="0.55" pace="0" />
+        <Ramp Duration="30" PowerLow="1.0" PowerHigh="1.5" pace="0" />
+        <SteadyState Duration="240" Power="0.55" pace="0" />
+        <Ramp Duration="30" PowerLow="1.0" PowerHigh="1.5" pace="0" />
         <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.25" pace="0" />
     </workout>
 </workout_file>

@@ -18,10 +18,10 @@
         <SteadyState Duration="180" Power="0.72" pace="0" />
         <SteadyState Duration="30" Power="1.14" pace="0" Cadence="90" />
         <SteadyState Duration="180" Power="0.72" pace="0" />
-        <SteadyState Duration="60" Power="1.6" pace="0" Cadence="90" />
-        <SteadyState Duration="180" Power="0.72" pace="0" />
-        <SteadyState Duration="90" Power="1.6" pace="0" Cadence="90" />
-        <SteadyState Duration="180" Power="0.72" pace="0" />
+        <SteadyState Duration="60" Power="1.2" pace="0" Cadence="90" />
+        <SteadyState Duration="180" Power="0.55" pace="0" />
+        <SteadyState Duration="90" Power="1.2" pace="0" Cadence="90" />
+        <SteadyState Duration="180" Power="0.55" pace="0" />
         <SteadyState Duration="120" Power="0.95" pace="0" Cadence="90" />
         <SteadyState Duration="180" Power="0.72" pace="0" />
         <SteadyState Duration="180" Power="0.95" pace="0" Cadence="90" />

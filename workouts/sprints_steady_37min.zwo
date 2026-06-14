@@ -10,35 +10,35 @@
         <SteadyState Duration="120" Power="0.55" pace="0" />
         <Ramp Duration="60" PowerLow="0.83" PowerHigh="0.93" pace="0" />
         <Ramp Duration="20" PowerLow="1.05" PowerHigh="1.2" pace="0" />
-        <SteadyState Duration="10" Power="1.5" pace="0" />
-        <Ramp Duration="60" PowerLow="0.83" PowerHigh="0.93" pace="0" />
+        <SteadyState Duration="10" Power="1.2" pace="0" />
+        <SteadyState Duration="60" Power="0.55" pace="0" />
         <Ramp Duration="20" PowerLow="1.05" PowerHigh="1.2" pace="0" />
-        <SteadyState Duration="10" Power="1.5" pace="0" />
-        <Ramp Duration="60" PowerLow="0.83" PowerHigh="0.93" pace="0" />
+        <SteadyState Duration="10" Power="1.2" pace="0" />
+        <SteadyState Duration="60" Power="0.55" pace="0" />
         <Ramp Duration="20" PowerLow="1.05" PowerHigh="1.2" pace="0" />
-        <SteadyState Duration="10" Power="1.5" pace="0" />
-        <Ramp Duration="60" PowerLow="0.83" PowerHigh="0.93" pace="0" />
+        <SteadyState Duration="10" Power="1.2" pace="0" />
+        <SteadyState Duration="60" Power="0.55" pace="0" />
         <Ramp Duration="20" PowerLow="1.05" PowerHigh="1.2" pace="0" />
-        <SteadyState Duration="10" Power="1.5" pace="0" />
-        <Ramp Duration="60" PowerLow="0.83" PowerHigh="0.93" pace="0" />
+        <SteadyState Duration="10" Power="1.2" pace="0" />
+        <SteadyState Duration="60" Power="0.55" pace="0" />
         <Ramp Duration="20" PowerLow="1.05" PowerHigh="1.2" pace="0" />
-        <SteadyState Duration="10" Power="1.5" pace="0" />
+        <SteadyState Duration="10" Power="1.2" pace="0" />
         <SteadyState Duration="300" Power="0.5" pace="0" />
         <Ramp Duration="60" PowerLow="0.83" PowerHigh="0.93" pace="0" />
         <Ramp Duration="20" PowerLow="1.05" PowerHigh="1.2" pace="0" />
-        <SteadyState Duration="10" Power="1.5" pace="0" />
-        <Ramp Duration="60" PowerLow="0.83" PowerHigh="0.93" pace="0" />
+        <SteadyState Duration="10" Power="1.2" pace="0" />
+        <SteadyState Duration="60" Power="0.55" pace="0" />
         <Ramp Duration="20" PowerLow="1.05" PowerHigh="1.2" pace="0" />
-        <SteadyState Duration="10" Power="1.5" pace="0" />
-        <Ramp Duration="60" PowerLow="0.83" PowerHigh="0.93" pace="0" />
+        <SteadyState Duration="10" Power="1.2" pace="0" />
+        <SteadyState Duration="60" Power="0.55" pace="0" />
         <Ramp Duration="20" PowerLow="1.05" PowerHigh="1.2" pace="0" />
-        <SteadyState Duration="10" Power="1.5" pace="0" />
-        <Ramp Duration="60" PowerLow="0.83" PowerHigh="0.93" pace="0" />
+        <SteadyState Duration="10" Power="1.2" pace="0" />
+        <SteadyState Duration="60" Power="0.55" pace="0" />
         <Ramp Duration="20" PowerLow="1.05" PowerHigh="1.2" pace="0" />
-        <SteadyState Duration="10" Power="1.5" pace="0" />
-        <Ramp Duration="60" PowerLow="0.83" PowerHigh="0.93" pace="0" />
+        <SteadyState Duration="10" Power="1.2" pace="0" />
+        <SteadyState Duration="60" Power="0.55" pace="0" />
         <Ramp Duration="20" PowerLow="1.05" PowerHigh="1.2" pace="0" />
-        <SteadyState Duration="10" Power="1.5" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.5" PowerHigh="0.65" pace="0" />
+        <SteadyState Duration="10" Power="1.2" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.4" pace="0" />
     </workout>
 </workout_file>

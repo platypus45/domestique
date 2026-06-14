@@ -17,12 +17,12 @@
   the frozen app's real traceback (OS-level `cmd` output redirect + an on-disk crash
   dump, and it dumps *before* failing the step) instead of coming back blank — this
   is how the one-character bug above was finally pinned.
-- **Zero macOS entitlements.** The hardened-runtime entitlement set dropped from three
-  to NONE. `build_dmg.sh` re-signs every bundled Mach-O with our Developer ID, so all
-  dylibs carry our Team ID and library validation passes on its own — making even
-  `disable-library-validation` redundant (alongside the never-needed
-  `allow-unsigned-executable-memory` and `allow-dyld-environment-variables`). Hardened
-  runtime stays on, with no relaxations.
+- **Leaner macOS entitlements (three → one).** Dropped `disable-library-validation`
+  (redundant — `build_dmg.sh` re-signs every bundled Mach-O with our Developer ID, so
+  all carry our Team ID and library validation passes on its own) and
+  `allow-dyld-environment-variables` (unused — PyInstaller resolves via `@rpath`). Only
+  `allow-unsigned-executable-memory` remains, and it's genuinely required: the embedded
+  WebKit/pyobjc GUI allocates executable memory under the hardened runtime.
 - **Planner: determinism + event-aware consistency + variety.**
   - *Deterministic generation* — a cold-cache read in the interval-floor pass desynced
     the per-week RNG on the first plan built in a process, so that plan differed from

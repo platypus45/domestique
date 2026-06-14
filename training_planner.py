@@ -790,6 +790,25 @@ TSS_PER_HOUR = {
     "double_threshold": 85,
 }
 
+# ── SAFETY: per-session-type duration ceiling (planner FIX-2) ──────────────────
+# A library file's full duration is clamped to the DAY's available minutes by
+# the sampler, but a 2 h weekday slot would still let a VO2max file render as a
+# 120-min session ("VO2 every day" safety bug). Each hard type has a
+# physiologically sane maximum total session length; the sampler clamps to
+# min(day_cap, ceiling) and scales TSS proportionally. Endurance types
+# (z2/long_z2/recovery) have no ceiling — they are intentionally day-capped.
+TYPE_CEILING = {
+    "vo2max":    75,
+    "vo2_short": 60,
+    "anaerobic": 50,
+    "neuromuscular": 45,
+    "sprint":    45,
+    "overunder": 90,
+    "threshold": 90,
+    "sweetspot": 120,
+    "tempo":     120,
+}
+
 # ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ──────────────────────
 # Parallel rough estimates for W'-load (kJ above CP) and Pmax-load (kJ PCr)
 # per hour, by session type. Values are advisory ONLY: when consumed they
@@ -4199,10 +4218,21 @@ def sample_week_workouts(
         # the day's cap; TSS scales down proportionally. The matched ZWO may be
         # slightly longer and is paced/truncated on the trainer (the modal's
         # existing showGap banner explains the difference).
-        if max_min > 0 and sess.duration_min > max_min:
-            _scale = max_min / float(sess.duration_min)
+        # FIX-2 (safety): clamp to min(day_cap, per-type ceiling) so a hard
+        # session can never run the full day (e.g. a 120-min VO2max on a 2 h
+        # weekday). Prefer the content_class ceiling (anaerobic / vo2_short /
+        # neuromuscular files map to session_type='vo2max', which would
+        # otherwise apply the looser 75-min VO2max cap). Endurance types have
+        # no entry in TYPE_CEILING → day-cap only.
+        _pick_cc_clamp = _content_class_for_row(pick)
+        _ceiling = TYPE_CEILING.get(_pick_cc_clamp) or TYPE_CEILING.get(sess.session_type)
+        _eff_cap = max_min
+        if _ceiling is not None:
+            _eff_cap = _ceiling if max_min <= 0 else min(max_min, _ceiling)
+        if _eff_cap > 0 and sess.duration_min > _eff_cap:
+            _scale = _eff_cap / float(sess.duration_min)
             sess.tss_estimate = round(sess.tss_estimate * _scale)
-            sess.duration_min = max_min
+            sess.duration_min = _eff_cap
         # v4.5.0 IMPL-PLANNER: pin endurance-slot session_type so a sampled
         # `sweetspot_long_*.zwo` (mixed-content with high Z2) doesn't carry
         # session_type='sweetspot' into a slot the sampler treated as
@@ -4856,6 +4886,12 @@ def generate_plan(
     # express the constraint — runs as a separate pass.
     _enforce_ronnestad_floor(weeks, pool_index, plan_pick_counts)
 
+    # FIX-1b (safety): FINAL guaranteed weekly HIT cap. Runs AFTER all floors
+    # (which target per-phase coverage and may overshoot a week's per-week
+    # budget). Demotes any excess HIT to a real endurance/tempo library file
+    # so no non-stepback week exceeds get_budget_for_phase(phase).hit_count_max.
+    _enforce_weekly_hit_cap(weeks, library)
+
     # ── v1.3.2 IMPL-AVAILABILITY-IN-GENERATE ──────────────────────────────
     # Apply persisted per-DATE availability overrides AFTER bulk planning so
     # a fresh /api/plan/generate honors the same calendar that reforecast()
@@ -4993,10 +5029,23 @@ def generate_plan(
             else:
                 wd = s.day.weekday() if hasattr(s.day, "weekday") else 0
                 cap_min = int(goal.max_hours_for_day(wd) * 60)
-            if cap_min > 0 and s.duration_min > cap_min:
-                _scale = cap_min / float(s.duration_min)
+            # FIX-2 (safety): final per-session-type duration ceiling. The
+            # inline sampler clamp (~line 4232) only covers sampler-picked
+            # slots — plan_week skeleton HITs, floor/Rønnestad swaps and the
+            # availability rescale above can all leave a hard session at the
+            # full day cap (the "VO2max every day at 120 min" bug). This last
+            # pass guarantees min(day_cap, per-type ceiling) for every session
+            # regardless of origin. Prefer the content_class ceiling (an
+            # anaerobic/vo2_short file maps to session_type='vo2max' but has a
+            # tighter cap); endurance types have no ceiling → day-cap only.
+            _cc = _content_class_for_zwo(getattr(s, "zwo_file", "") or "")
+            _ceil = TYPE_CEILING.get(_cc) or TYPE_CEILING.get(s.session_type)
+            _eff = cap_min if _ceil is None else (
+                _ceil if cap_min <= 0 else min(cap_min, _ceil))
+            if _eff > 0 and s.duration_min > _eff:
+                _scale = _eff / float(s.duration_min)
                 s.tss_estimate = round((s.tss_estimate or 0) * _scale)
-                s.duration_min = cap_min
+                s.duration_min = _eff
 
     return phases, weeks
 
@@ -5062,6 +5111,33 @@ def _inject_mid_cycle_ftp_tests(weeks: list, phases: list) -> None:
                 f"on the FIT-import path will suggest an FTP update."
             )
             break
+
+
+# ── SAFETY: weekly HIT-count cap (planner FIX-1) ──────────────────────────────
+# A session counts as HIT if EITHER its session_type is a hard type OR its
+# content_class is a HIT content class. The two axes disagree on many files
+# (anaerobic/neuromuscular files carry session_type='vo2max'; a sweetspot_long
+# file with high Z2 can carry session_type='tempo' but content 'sweet_spot'),
+# so the union is the only safe definition for the per-week cap.
+_HIT_SESSION_TYPES = frozenset({
+    "vo2max", "threshold", "overunder", "sweetspot", "sprint",
+    "double_threshold",
+})
+
+
+def _session_is_hit(sess) -> bool:
+    """True if this PlannedSession is a hard (HIT) session, by EITHER axis."""
+    if sess is None or getattr(sess, "session_type", "") == "rest":
+        return False
+    if sess.session_type in _HIT_SESSION_TYPES:
+        return True
+    cc = _content_class_for_zwo(getattr(sess, "zwo_file", "") or "")
+    return cc in _HIT_SLOT_CONTENT_CLASSES
+
+
+def _week_hit_count(week) -> int:
+    """Count HIT sessions in a PlannedWeek (union-of-axes definition)."""
+    return sum(1 for s in week.sessions if _session_is_hit(s))
 
 
 def _enforce_build2_peak_hard_floor(
@@ -5184,7 +5260,15 @@ def _enforce_build2_peak_hard_floor(
                     fl = ss.zwo_file or ""
                     if fl:
                         plan_file_freq[fl] = plan_file_freq.get(fl, 0) + 1
-            for w_target in phase_weeks:
+            # FIX-1a (safety SPREAD): fill the phase week with the FEWEST
+            # current HIT first, and only swap a *steady* slot into HIT when
+            # that week has room under its per-week budget.hit_count_max.
+            # Without this the floor piles all required hards onto whichever
+            # week it walked first, blowing past the weekly cap. Re-sort each
+            # outer pass so a swap that bumped one week's count reshuffles the
+            # order. Stepback weeks were already excluded from phase_weeks.
+            _phase_budget = get_budget_for_phase(phase_name)
+            for w_target in sorted(phase_weeks, key=_week_hit_count):
                 if deficit <= 0:
                     break
                 # Sort sessions in this week by swap priority. Skip slots that
@@ -5214,6 +5298,16 @@ def _enforce_build2_peak_hard_floor(
                 for i, s in sess_list:
                     if deficit <= 0:
                         break
+                    # FIX-1a: swapping a *steady* slot into a hard adds NET HIT.
+                    # Only do so when the week is under its hit_count_max. A
+                    # swap onto an already-HIT slot (e.g. a duplicate non-floor
+                    # vo2max/threshold slot) is net-neutral and always allowed —
+                    # so SKIP only this steady slot (continue), never the whole
+                    # week: a redundant-HIT slot later in the list can still
+                    # take the required class without breaching the cap.
+                    if (not _session_is_hit(s)
+                            and _week_hit_count(w_target) >= _phase_budget.hit_count_max):
+                        continue
                     # Pick first candidate that fits this slot's duration
                     slot_max = max(60, int(s.duration_min) + 35)
                     slot_min = 25
@@ -5266,6 +5360,96 @@ def _enforce_build2_peak_hard_floor(
                         if nm:
                             class_distinct_files.setdefault(cc_target, set()).add(nm)
                     deficit -= 1
+
+
+def _enforce_weekly_hit_cap(weeks: list, library: list[dict]) -> None:
+    """FIX-1b (safety) — FINAL guaranteed weekly HIT cap.
+
+    After ALL floor passes (build2/peak hard floor, Rønnestad), walk every
+    NON-stepback week and, if its HIT-typed session count exceeds
+    ``get_budget_for_phase(week.phase).hit_count_max``, DEMOTE the excess by
+    SWAPPING the offending slot for a real endurance/tempo LIBRARY workout
+    (matched via ``match_zwo`` for z2 / tempo). We NEVER relabel a hard .zwo
+    in place — that is the known mislabel bug (a vo2max file masquerading as
+    a "tempo" session). The most-redundant HIT class is demoted first so the
+    surviving sessions keep maximum variety.
+
+    The floors deliberately don't respect the per-week cap on their own (they
+    target per-PHASE coverage), and the sampler can also draw up to
+    hit_count_max BEFORE a floor adds more — so this pass is the single place
+    the weekly safety invariant is guaranteed regardless of seed / goal.
+    """
+    if not weeks or not library:
+        return
+
+    def _demote_slot(slot, new_type: str) -> "PlannedSession | None":
+        """Match a REAL endurance/tempo library file for this slot. Returns the
+        matched session only if its content is genuinely non-HIT (a tempo match
+        can fall back to a sweet_spot file, which still counts as HIT) — else
+        None so the caller can try a safer type or a clear empty marker."""
+        demoted = PlannedSession(
+            day=slot.day, day_name=slot.day_name,
+            session_type=new_type,
+            duration_min=slot.duration_min,
+            tss_estimate=round(slot.duration_min / 60
+                               * TSS_PER_HOUR.get(new_type, 45)),
+            description=f"{new_type} ({slot.duration_min}min) — "
+                        f"weekly-HIT-cap demotion",
+        )
+        matched = match_zwo(demoted, library)
+        if matched.zwo_file and not _session_is_hit(matched):
+            return matched
+        return None
+
+    for wk in weeks:
+        if getattr(wk, "is_stepback", False):
+            continue
+        cap = get_budget_for_phase(wk.phase).hit_count_max
+        # Recompute on each removal — demoting changes counts. The guard bounds
+        # the loop to the number of sessions so a pathological library (no
+        # non-HIT match for any slot) can't spin forever.
+        for _ in range(len(wk.sessions) + 1):
+            hit_slots = [
+                (i, s) for i, s in enumerate(wk.sessions) if _session_is_hit(s)
+            ]
+            if len(hit_slots) <= cap:
+                break
+            # Pick the most-redundant HIT class in this week (the class with
+            # the most sessions); demote one of its slots. Tie-break by
+            # preferring the longest-duration slot (highest fatigue) so we
+            # shed the heaviest redundant dose first.
+            class_counts: dict[str, int] = {}
+            for _, s in hit_slots:
+                cc = (_content_class_for_zwo(s.zwo_file or "")
+                      or s.session_type or "")
+                class_counts[cc] = class_counts.get(cc, 0) + 1
+            redundant_cc = max(class_counts, key=lambda c: class_counts[c])
+            demote_candidates = [
+                (i, s) for i, s in hit_slots
+                if (_content_class_for_zwo(s.zwo_file or "")
+                    or s.session_type or "") == redundant_cc
+            ]
+            i, slot = max(demote_candidates, key=lambda kv: kv[1].duration_min)
+            # Tempo keeps a touch of stimulus for longer slots; z2 is the safe
+            # fallback (its match pool is endurance/recovery only — never HIT
+            # content). Both paths are verified non-HIT by _demote_slot.
+            matched = None
+            if slot.duration_min >= 60:
+                matched = _demote_slot(slot, "tempo")
+            if matched is None:
+                matched = _demote_slot(slot, "z2")
+            if matched is not None:
+                wk.sessions[i] = matched
+            else:
+                # No non-HIT endurance/tempo file fit → leave a clear marker
+                # rather than relabeling a hard .zwo (the known mislabel bug).
+                wk.sessions[i] = PlannedSession(
+                    day=slot.day, day_name=slot.day_name, session_type="z2",
+                    duration_min=slot.duration_min,
+                    tss_estimate=round(slot.duration_min / 60 * TSS_PER_HOUR["z2"]),
+                    description="Easy endurance (no suitable workout)",
+                    zwo_file="", zwo_name="", matched=False,
+                )
 
 
 def _enforce_ronnestad_floor(

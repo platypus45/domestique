@@ -1,5 +1,28 @@
 # Changelog
 
+## v2.0.3 — Windows: the actual launch fix (2026-06-14)
+
+- **Windows: the app starts.** The previous release misdiagnosed the Windows launch
+  failure as a missing pywebview/CLR backend. The real cause was simpler and
+  unrelated: the launcher printed a status line containing a `→` character, which
+  can't encode to the Windows console's legacy cp1252 codepage (`UnicodeEncodeError`),
+  and in the windowed build `sys.stdout` is `None` so any `print()` raised regardless.
+  Either path killed the launcher with an unhandled exception *before the window
+  opened* — a silent "nothing happens" on Windows. The server itself was starting
+  fine the whole time (`[db] Background sync completed` in the captured logs). Fixed
+  by hardening stdout/stderr at startup — UTF-8 with `errors="replace"`, and `None`
+  streams routed to a discard — so no status line can ever crash the process. No-op
+  on macOS/Linux (already UTF-8).
+- **The CI smoke-test now actually names the cause.** The Windows boot test captures
+  the frozen app's real traceback (OS-level `cmd` output redirect + an on-disk crash
+  dump, and it dumps *before* failing the step) instead of coming back blank — this
+  is how the one-character bug above was finally pinned.
+- **Tighter macOS entitlements.** The hardened-runtime set dropped from three to one
+  (`disable-library-validation`, which is genuinely required for the bundled Python
+  C-extension dylibs). The broad `allow-unsigned-executable-memory` and
+  `allow-dyld-environment-variables` were removed — cargo-culted from past
+  notarization fixes, not needed.
+
 ## v2.0.2 — Windows launch fix, polarization label, CI smoke-test (2026-06-14)
 
 - **Windows: the app starts again.** The frozen Windows build couldn't initialise

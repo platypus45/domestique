@@ -20,6 +20,34 @@ import signal
 # Prevent PyInstaller frozen multiprocessing fork bomb
 multiprocessing.freeze_support()
 
+# WIN-ENCODING-FIX: make stdout/stderr bulletproof BEFORE any print(). Two
+# Windows-only failure modes this prevents — each crashes the launcher with an
+# unhandled exception → silent exit(1) → "the app doesn't start at all":
+#   1. Frozen *windowed* build (console=False): sys.stdout/err are None, so
+#      ANY print() raises AttributeError on None.write.
+#   2. Frozen *console* build: stdout is cp1252, so a non-ASCII glyph in a
+#      status line (we use → and — liberally) raises UnicodeEncodeError —
+#      this is the exact crash a Windows user hit at "Server ready → …".
+# Normalize both: None → a discarding stream; real streams → UTF-8 with
+# errors="replace" so an un-encodable glyph degrades to '?' instead of killing
+# the process. macOS/Linux already default to UTF-8, so this is a no-op there.
+def _harden_std_streams():
+    for _name in ("stdout", "stderr"):
+        _stream = getattr(sys, _name, None)
+        if _stream is None:
+            try:
+                setattr(sys, _name, open(os.devnull, "w", encoding="utf-8"))
+            except Exception:
+                pass
+            continue
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
+_harden_std_streams()
+
 # Port 8080 is PINNED for single-instance hygiene: the tray icon + existing
 # instance guard both assume localhost:8080. If we let uvicorn float the
 # port, the single-instance detection breaks and desktop shortcuts that

@@ -627,13 +627,17 @@ Domestique is a **single-user, local-first desktop app**. The security model fol
 
 **Network exposure — no remote access.** The bundled API server binds to `127.0.0.1` only — there is no `0.0.0.0` bind anywhere in the codebase, and the notarized macOS build ships no inbound-network (`com.apple.security.network.server`) entitlement, so nothing on your LAN or the internet can reach it. The local endpoints are **unauthenticated by design**: they trust the localhost boundary for single-user use. Do not manually rebind to `0.0.0.0` or expose port 8080 without adding your own authentication layer. Outbound connections are made only to **intervals.icu** (and **Strava**, if configured) over HTTPS, using your own credentials.
 
+**Input handling — path-traversal protection.** Every file-download endpoint (workouts, courses, GPX) routes the user-supplied path segments through a single `_safe_path()` guard: it resolves the full path and verifies it stays inside the intended base directory (`pathlib.Path.is_relative_to`), rejecting `../` climb-outs, an absolute-path segment, and symlink escapes. A request that tries to escape the base returns 404 — never the target file. This is covered by `tests/test_security.py` (see below).
+
 **Credentials at rest.** Your intervals.icu API key is stored in `~/.domestique/profiles/<id>/.env`, written atomically with `chmod 0600` (owner-only) and with newline-injection rejected. It is **plaintext at rest** (not encrypted), but never uploaded, never synced, and excluded by `.gitignore`. On macOS you can move it into Keychain after first run; automated Keychain migration for ICU credentials is planned (Strava already uses Keychain on macOS). Do not commit your `.env` anywhere.
 
 **Code signing / distribution integrity.**
 - **macOS** — the DMG is signed with an Apple Developer ID and **notarized**; it opens with no Gatekeeper prompt, and the ticket is stapled to both the `.app` and the DMG. The DMG's `sha256` is recorded in the Homebrew cask (`Casks/domestique.rb`), so `brew install --cask` verifies it.
 - **Windows** — the EXE is currently **unsigned**. SmartScreen will show "unknown publisher" and you must confirm "Run anyway." Authenticode signing is on the roadmap (the release workflow has the `signtool` step stubbed). Until then, only download from the official [GitHub releases](https://github.com/platypus45/domestique/releases) page.
 
-**Known gaps (honest disclosure).** There is no automated security test suite yet (input-validation / path-traversal / SSRF coverage is planned); the local API has no authentication layer beyond the localhost bind; and credentials are not encrypted at rest. These are tracked, not overlooked.
+**Tested.** A security regression suite (`tests/test_security.py`, 16 tests) covers the path-traversal guard (`../`, absolute segment, nested escape blocked; legit nested names allowed, no foreign-file leak from a download endpoint), the credential writer (`0600` + newline-injection rejection), and the localhost-only bind (no `0.0.0.0`, no inbound entitlement). It runs in CI on every change.
+
+**Known gaps (honest disclosure).** The local API has no authentication layer beyond the localhost bind; credentials are not encrypted at rest (macOS Keychain migration planned); and broader input-validation / SSRF coverage plus Windows code-signing are still on the roadmap. These are tracked, not overlooked.
 
 **Reporting a vulnerability.** Please open a private security advisory on the [repository](https://github.com/platypus45/domestique/security/advisories) rather than a public issue.
 

@@ -140,8 +140,12 @@ class TestPolarizationBlock(unittest.TestCase):
         self.assertAlmostEqual(block["z1z2_pct"], 47.9, places=1)
         self.assertAlmostEqual(block["z3z4_pct"], 34.2, places=1)
         self.assertAlmostEqual(block["z5plus_pct"], 17.9, places=1)
-        # Treff/FastFitness PI for this distribution rounds to 0.28.
-        self.assertAlmostEqual(block["polarization_index"], 0.28, places=2)
+        # v2.0.2: the displayed `polarization_index` is now the MULTIPLICATIVE
+        # Treff PI — the same value intervals.icu reports — not the additive
+        # variant. log10((47.9 × 17.9) / 34.2) = log10(25.07) ≈ 1.40.
+        # (Was 0.28 under the old additive display value, which diverged from
+        # ICU and was the divergence behind the classification-label bug.)
+        self.assertAlmostEqual(block["polarization_index"], 1.40, places=2)
         # v1.8.3: now matches ICU's pyramidal label.
         self.assertEqual(block["classification"], "pyramidal")
         # Confidence is surfaced in the block for the UI to render.

@@ -66,7 +66,7 @@ _BAND_PI_HALFWIDTH = {
 
 
 def polarization_index(z1z2_pct: float, z3z4_pct: float, z5plus_pct: float) -> float | None:
-    """Polarization index = log10((Z1+Z2 + Z5+) / Z3+Z4).
+    """Polarization index = log10((Z1+Z2 + Z5+) / Z3+Z4) — ADDITIVE form.
 
     >0  = polarized (high Z1+Z2 and Z5+, low Z3+Z4)
     ~0  = pyramidal
@@ -74,11 +74,43 @@ def polarization_index(z1z2_pct: float, z3z4_pct: float, z5plus_pct: float) -> f
 
     Returns None when Z3+Z4 is effectively zero (avoid div-by-zero).
     Inputs are percentages (0-100), not fractions.
+
+    NOTE (v2.0.2): this additive variant is the internal cascade primitive —
+    its `> 2.0` cutoff and the band centres in `_BAND_PI_CENTRES` are all
+    calibrated against THIS scale. The value shown in the UI (and the one
+    intervals.icu reports on the activity GET) is the *multiplicative* Treff
+    PI from `treff_polarization_index`. The two are intentionally distinct:
+    see `classify_distribution` for how both feed the polarized gate.
     """
     if z3z4_pct < 0.1:
         return None
     try:
         return round(math.log10((z1z2_pct + z5plus_pct) / z3z4_pct), 2)
+    except (ValueError, ZeroDivisionError):
+        return None
+
+
+def treff_polarization_index(z1z2_pct: float, z3z4_pct: float, z5plus_pct: float) -> float | None:
+    """Treff 2019 Polarization-Index = log10((Z1+Z2 × Z5+) / Z3+Z4) — MULTIPLICATIVE.
+
+    This is the exact form intervals.icu reports on the activity GET and the
+    single value Domestique renders in the polarization card, so it is the one
+    source of truth for the *displayed* PI. Treff 2019 fixes the polarized
+    cutoff at PI > 2.0 on this scale.
+
+    The multiplicative product rewards a genuine TWO-pole shape: a high PI here
+    needs BOTH a large easy pole (Z1+Z2) and a real hard pole (Z5+) over a
+    suppressed middle (Z3+Z4). (The additive variant can clear 2.0 on the easy
+    pole alone — e.g. 80/5/15 — which is why it is unsuitable as the polarized
+    gate. See `classify_distribution`.)
+
+    Returns None when Z3+Z4 is effectively zero (avoid div-by-zero).
+    Inputs are percentages (0-100), not fractions.
+    """
+    if z3z4_pct < 0.1:
+        return None
+    try:
+        return round(math.log10((z1z2_pct * z5plus_pct) / z3z4_pct), 2)
     except (ValueError, ZeroDivisionError):
         return None
 
@@ -106,7 +138,8 @@ def classify_distribution(
     Returns one of: 'polarized', 'pyramidal', 'threshold', 'hiit', 'base', 'unique'.
 
     Rules (first match wins):
-      1. PI > 2.0                                              → polarized
+      1a. additive PI > 2.0                                    → polarized
+      1b. Treff(mult) PI > 2.0 AND z5+ >= 20 AND z3z4 < z5+    → polarized
       2. z5+ > 40 AND z1z2 < 20                                → hiit
       3. z3z4 >= 30 AND z5+ <= 15 AND z1z2 <= 50               → threshold
       4. z3z4 >= 35 AND z3z4 > z5+ + 10                        → pyramidal (strict)
@@ -121,10 +154,28 @@ def classify_distribution(
     rule. v1.8.3 adds rule #6 (moderate pyramidal) to catch real-world
     endurance rides like 58.3/27.6/14.1 that ICU's FastFitness.Tips
     labels Pyramidaal but the strict z3z4>=35 rule misses.
+
+    v2.0.2 — rule 1b. The displayed PI (and ICU's) is the *multiplicative*
+    Treff PI (`treff_polarization_index`), but the legacy gate (rule 1a)
+    tests the *additive* `pi`. A Rønnestad ride 58.0/10.7/31.3 has additive
+    PI 0.92 (never fires 1a) yet Treff PI 2.23 — ICU labels it Polarized,
+    Domestique mislabelled it "unique". Rule 1b reconciles: it fires on the
+    SAME Treff PI the UI shows, gated by a real hard pole (z5+ >= 20) over a
+    suppressed middle (z3z4 < z5+) so it captures the genuine two-pole shape
+    WITHOUT pulling in easy base rides like 80/5/15 (Treff PI 2.38 but z5+
+    only 15) that the unguarded multiplicative cutoff would wrongly flag.
     """
     if pi is None:
         pi = polarization_index(z1z2_pct, z3z4_pct, z5plus_pct)
     if pi is not None and pi > 2.0:
+        return "polarized"
+    treff_pi = treff_polarization_index(z1z2_pct, z3z4_pct, z5plus_pct)
+    if (
+        treff_pi is not None
+        and treff_pi > 2.0
+        and z5plus_pct >= 20
+        and z3z4_pct < z5plus_pct
+    ):
         return "polarized"
     if z5plus_pct > 40 and z1z2_pct < 20:
         return "hiit"
@@ -206,12 +257,19 @@ def compute_polarization_block(time_in_zone: dict | None) -> dict | None:
     z1z2 = _pct(secs["z1"] + secs["z2"])
     z3z4 = _pct(secs["z3"] + secs["z4"])
     z5plus = _pct(secs["z5"] + secs["z6"] + secs["z7"])
+    # Additive PI drives the internal cascade + confidence (its `> 2.0`
+    # cutoff and band centres are calibrated to this scale).
     pi = polarization_index(z1z2, z3z4, z5plus)
+    # The DISPLAYED `polarization_index` is the multiplicative Treff PI — the
+    # same value intervals.icu reports — so the card, the classifier's Treff
+    # gate, and ICU never diverge (v2.0.2). `ride_storage` later overrides
+    # this with ICU's own number when present; both are the Treff form, so
+    # they now agree instead of one being additive and the other Treff.
     return {
         "z1z2_pct": z1z2,
         "z3z4_pct": z3z4,
         "z5plus_pct": z5plus,
-        "polarization_index": pi,
+        "polarization_index": treff_polarization_index(z1z2, z3z4, z5plus),
         "classification": classify_distribution(z1z2, z3z4, z5plus, pi),
         "confidence": classification_confidence(z1z2, z3z4, z5plus, pi),
     }

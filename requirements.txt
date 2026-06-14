@@ -45,6 +45,15 @@ scipy>=1.13,<2
 pystray>=0.19.0
 Pillow>=10.0.0
 pywebview>=5.0
+# v2.0.2 WIN-START-FIX: pywebview's Windows (EdgeChromium/WinForms) backend
+# drives the .NET CLR via pythonnet — without it `webview.start()` aborts and
+# the windowed EXE shows nothing. The `; sys_platform == "win32"` marker keeps
+# pip from ever pulling pythonnet on macOS/Linux, so the DMG build and any
+# `pip install -r requirements.txt` on a Mac are unaffected.
+# NOTE: pythonnet only supplies the CLR bridge. The Microsoft Edge WebView2
+# *runtime* is a separate OS prerequisite (the Evergreen redistributable; it
+# ships preinstalled on Windows 11 but must be installed on older Windows 10).
+pythonnet>=3.0; sys_platform == "win32"
 
 # Build (not needed at runtime)
 # pyinstaller>=6.0.0

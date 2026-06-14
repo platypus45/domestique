@@ -82,6 +82,18 @@ a = Analysis(
         "pystray",
         "PIL",
         "webview",
+        # v2.0.2 WIN-START-FIX: pywebview's Windows backend (EdgeChromium /
+        # WinForms) loads the .NET CLR through pythonnet at runtime. None of
+        # these are reachable by PyInstaller's static import scan from
+        # `webview` (they're imported lazily by `webview.start()` after a
+        # platform probe), so on a frozen windowed Windows EXE the backend
+        # failed to import and `webview.start()` died silently. Force them in
+        # — but ONLY on a Windows build, since `clr` / pythonnet do not exist
+        # on macOS and listing them there would break the (working) DMG
+        # build. A darwin PyInstaller run evaluates the guard to `[]`.
+        *(["clr", "clr_loader", "webview.platforms.edgechromium",
+           "webview.platforms.winforms", "proxy_tools"]
+          if sys.platform == "win32" else []),
         # v1.0.1: fit_tool is imported lazily inside try/except in app.py (FIT
         # workout export endpoint + .fit ride parser). PyInstaller's static
         # analyser misses imports inside try/except blocks, so the module was

@@ -128,6 +128,46 @@ jobs:
           call build_win.bat
           dir dist\Domestique
 
+      # Gate the build: a frozen EXE that won't start (or reports the wrong
+      # version) must fail CI here rather than ship. Runs the EXE headless via
+      # DOMESTIQUE_SERVER_ONLY=1 (no window/tray on the runner), polls the
+      # server, and asserts the served version matches the repo VERSION file.
+      - name: "Smoke-test: EXE starts + serves correct version"
+        shell: pwsh
+        run: |
+          $env:DOMESTIQUE_SERVER_ONLY = "1"
+          $expected = (Get-Content -Path VERSION -Raw).Trim()
+          Write-Host "Expected version from VERSION file: $expected"
+          $proc = Start-Process -FilePath "dist\Domestique\Domestique.exe" -PassThru
+          try {
+            $served = $null
+            $deadline = (Get-Date).AddSeconds(90)
+            while ((Get-Date) -lt $deadline) {
+              try {
+                $resp = Invoke-RestMethod -Uri "http://127.0.0.1:8080/api/version" -TimeoutSec 5
+                $served = $resp.version
+                Write-Host "Server responded; version=$served"
+                break
+              } catch {
+                Write-Host "Waiting for server to come up... ($($_.Exception.Message))"
+                Start-Sleep -Seconds 3
+              }
+            }
+            if ($null -eq $served) {
+              Write-Error "EXE never served /api/version within 90s"
+              exit 1
+            }
+            if ($served.Trim() -ne $expected) {
+              Write-Error "Version mismatch: served '$served' != VERSION '$expected'"
+              exit 1
+            }
+            Write-Host "Smoke-test passed: EXE serves version $served"
+          } finally {
+            if ($proc -and -not $proc.HasExited) {
+              Stop-Process -Id $proc.Id -Force
+            }
+          }
+
       - name: Package EXE as zip
         shell: pwsh
         run: |

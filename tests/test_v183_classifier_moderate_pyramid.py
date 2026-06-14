@@ -62,17 +62,22 @@ class TestModeratePyramidClassifier(unittest.TestCase):
             "base",
         )
 
-    def test_high_z5plus_low_z3z4_unaffected_by_new_rule(self):
+    def test_high_z5plus_low_z3z4_is_not_pyramidal(self):
         # (30.0, 10.0, 60.0): z3z4 (10) is below the moderate-pyramid
-        # threshold (20), so the new rule cannot pull this into
-        # pyramidal. The strict hiit rule needs z1z2 < 20 (30 fails),
-        # threshold needs z3z4 >= 30 (10 fails), strict pyramidal
-        # needs z3z4 >= 35 (10 fails), base needs z1z2 >= 70 (30 fails).
-        # Result: unique. The point of this test is to confirm the new
-        # rule does NOT incorrectly classify this as pyramidal.
+        # threshold (20), so the moderate-pyramid rule cannot pull this
+        # into pyramidal — the invariant this test guards.
+        #
+        # v2.0.2: the LABEL is now "polarized", not "unique". This shape is
+        # a genuine two-pole distribution — 30% easy + 60% hard over a
+        # strongly suppressed 10% middle — with Treff PI = log10((30×60)/10)
+        # = 2.26 (> 2.0, ICU's polarized cutoff) and a real hard pole
+        # (z5+=60 >= 20, z3z4=10 < z5+). It clears the new multiplicative
+        # polarized gate (rule 1b). The old "unique" expectation was a
+        # symptom of the additive-only gate (additive PI 0.95 fired nothing),
+        # the same divergence v2.0.2 fixes. The pyramidal invariant still holds.
         result = classify_distribution(30.0, 10.0, 60.0, 0.954)
         self.assertNotEqual(result, "pyramidal")
-        self.assertEqual(result, "unique")
+        self.assertEqual(result, "polarized")
 
 
 if __name__ == "__main__":

@@ -29,6 +29,37 @@ PORT = 8080
 URL = f"http://localhost:{PORT}"
 
 
+def _log():
+    """Best-effort launcher logger that writes to ~/.domestique/logs/.
+
+    v2.0.2 WIN-START-FIX: a frozen *windowed* build (console=False) has a
+    dead stdout, so every startup `print()` here vanishes. Mirroring the
+    diagnostics through log_config leaves a trace on disk
+    (~/.domestique/logs/domestique_<ts>.log) so a "nothing happened"
+    Windows launch is actually diagnosable. Returns None if log_config
+    can't be imported (e.g. partial bundle) — callers must tolerate that.
+    """
+    try:
+        import log_config
+        return log_config.get_logger("domestique.app")
+    except Exception:
+        return None
+
+
+def _is_server_only() -> bool:
+    """True when the launcher should run headless (server, no window/tray).
+
+    v2.0.2 WIN-CI-SMOKE: CI needs to confirm a frozen Windows build actually
+    boots and serves the right version, but a headless GitHub runner has no
+    display — calling webview.start() or run_with_tray() would block forever
+    waiting on a GUI/tray loop that can never appear. When DOMESTIQUE_SERVER_ONLY=1
+    (or --server-only is passed) we start the server via the normal path, wait
+    for it to come up, then keep-alive without ever touching pywebview/pystray.
+    The flag is opt-in: when it is unset every existing path is unchanged.
+    """
+    return os.environ.get("DOMESTIQUE_SERVER_ONLY") == "1" or "--server-only" in sys.argv
+
+
 def _ensure_port_free_or_die() -> None:
     """Refuse to start if another process is already bound to port 8080.
 
@@ -54,11 +85,17 @@ def _ensure_port_free_or_die() -> None:
     try:
         s.bind(("127.0.0.1", PORT))
     except OSError as e:
-        print(
-            f"\nFATAL: cannot bind 127.0.0.1:{PORT} ({e}).\n"
+        msg = (
+            f"FATAL: cannot bind 127.0.0.1:{PORT} ({e}). "
             f"Domestique requires port {PORT} for single-instance detection. "
-            f"Stop the conflicting process and try again.\n"
+            f"Stop the conflicting process and try again."
         )
+        print(f"\n{msg}\n")
+        # v2.0.2 WIN-START-FIX: a windowed build's stdout is dead, so this
+        # sys.exit(2) would otherwise be a silent death. Leave a trace.
+        log = _log()
+        if log is not None:
+            log.error(msg)
         sys.exit(2)
     finally:
         try:
@@ -322,6 +359,41 @@ class JsApi:
         )
 
 
+def _fallback_to_browser(reason: str) -> None:
+    """Open the dashboard in the default browser when the native window fails.
+
+    v2.0.2 WIN-START-FIX: the native pywebview window is the normal UI; this
+    is the degraded path. On a frozen *windowed* Windows build the user sees
+    no console, so silently opening a browser tab looked identical to "the
+    app didn't launch". Three things happen here:
+      1. The reason is mirrored to the on-disk log (windowed stdout is dead).
+      2. The browser is opened.
+      3. On Windows ONLY, a native MessageBox tells the user where the UI
+         went, so the launch never *looks* like a no-op. The message box is
+         best-effort (guarded by try/except) and is skipped on macOS/Linux,
+         whose paths are deliberately left unchanged.
+    """
+    print(f"({reason} — opening in browser)")
+    log = _log()
+    if log is not None:
+        log.error("native window unavailable (%s); opened browser at %s", reason, URL)
+    webbrowser.open(URL)
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                f"Domestique's built-in window could not start "
+                f"({reason}).\n\nIt has opened in your default web browser "
+                f"at {URL} instead.",
+                "Domestique",
+                0x40,  # MB_ICONINFORMATION
+            )
+        except Exception:
+            pass
+    run_with_tray()
+
+
 def main():
     # Single-instance guard: if another instance is already serving on our
     # port, activate its native window instead of opening a browser tab.
@@ -375,18 +447,51 @@ def main():
     if wait_for_server():
         print(f"Server ready → {URL}")
     else:
+        log = _log()
         if _server_error is not None:
-            print(
+            msg = (
                 f"Error: uvicorn thread crashed: "
                 f"{type(_server_error).__name__}: {_server_error}"
             )
+            print(msg)
             print("See ~/.domestique/logs/ for full traceback.")
+            # v2.0.2 WIN-START-FIX: mirror to disk for windowed builds.
+            if log is not None:
+                log.error(msg)
             sys.exit(1)
         print("Warning: Server may not have started (timeout).")
+        if log is not None:
+            log.warning("Server may not have started (timeout after wait_for_server).")
+
+    # v2.0.2 WIN-CI-SMOKE: headless server-only mode. The server is confirmed
+    # up above; a CI runner has no display, so opening the pywebview window or
+    # the tray would block on a GUI loop forever. Keep-alive instead so the
+    # smoke-test can poll /api/version, then kill the process.
+    if _is_server_only():
+        print(f"server-only mode — serving on http://127.0.0.1:{PORT}")
+        log = _log()
+        if log is not None:
+            log.info("server-only mode — serving on http://127.0.0.1:%s", PORT)
+        # Block until the process is killed (CI stops it after the poll).
+        # _shutdown_event is also flipped by the SIGINT handler, so Ctrl+C /
+        # SIGTERM still exits cleanly without a window or tray.
+        _shutdown_event.wait()
+        return
 
     # Try native window (pywebview), fall back to browser + tray
     try:
         import webview
+        # v2.0.2 WIN-START-FIX: proactively import the platform backend
+        # BEFORE webview.start(). On Windows the EdgeChromium/WinForms backend
+        # bootstraps the .NET CLR via pythonnet; if that's missing the CLR
+        # layer can hard-abort the process (not a catchable Python error),
+        # which on a windowed build is the silent "nothing happens" death.
+        # Importing the module here turns a missing backend into an ordinary
+        # ImportError we can catch, engaging the browser fallback below.
+        # macOS uses the Cocoa backend (no CLR), so its path is unchanged.
+        import importlib
+        if sys.platform == "win32":
+            importlib.import_module("webview.platforms.edgechromium")
         # pywebview requires the main thread — skip pystray (tray not needed
         # when the app has its own window; closing the window exits the app)
         window = webview.create_window(
@@ -407,14 +512,10 @@ def main():
         except Exception:
             pass
     except ImportError:
-        print("(pywebview not installed — opening in browser)")
-        webbrowser.open(URL)
-        run_with_tray()
+        _fallback_to_browser("pywebview/backend not available")
     except Exception as e:
         # WebView2 missing on Windows 10, or other pywebview error
-        print(f"(pywebview failed: {e} — opening in browser)")
-        webbrowser.open(URL)
-        run_with_tray()
+        _fallback_to_browser(f"pywebview failed: {e}")
 
 
 if __name__ == "__main__":

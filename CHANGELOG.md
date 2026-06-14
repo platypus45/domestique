@@ -1,5 +1,21 @@
 # Changelog
 
+## v2.0.2 — Windows launch fix, polarization label, CI smoke-test (2026-06-14)
+
+- **Windows: the app starts again.** The frozen Windows build couldn't initialise
+  its window — pywebview's EdgeChromium/WinForms backend and its `pythonnet`/`clr`
+  bridge were missing from the package, so it failed silently with no console.
+  Added the backend + `pythonnet` (Windows-only) to the build, made launch failures
+  visible (logged + a message box), and hardened the browser fallback.
+- **Polarization label now matches intervals.icu.** A ride could read "Unique" in
+  Domestique while intervals.icu called it "Polarized" — the classifier evaluated an
+  *additive* polarization index while the card displayed the *multiplicative* Treff
+  index. Both now use one Treff-PI source of truth, so a polarized ride is labelled
+  polarized (every documented reference distribution keeps its label).
+- **Windows CI smoke-test.** Every release now boots the built Windows `.exe`
+  headless and asserts it serves the correct version — a Windows-launch regression
+  fails the build instead of reaching users (mirrors the macOS version smoke-test).
+
 ## v2.0.1 — bugfixes: power curve, faster library load, catch-up hang (2026-06-14)
 
 - **Power curve renders again** on the home screen. It was blank for riders whose

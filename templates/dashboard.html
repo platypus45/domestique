@@ -193,6 +193,30 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
 /* Loading */
 .loading { color:var(--text3); font-style:italic; padding:20px; text-align:center; }
 
+/* Loading bars — replace spinners on the catch-up overlay + library load.
+   .lbar is the track; .lbar-fill is the determinate fill (width set inline
+   from step N/M). .lbar.indeterminate runs a striped sweep when % unknown. */
+.lbar { width:100%; height:8px; border-radius:4px; background:var(--surface2);
+  overflow:hidden; position:relative; }
+.lbar-fill { height:100%; width:0%; border-radius:4px; background:var(--accent);
+  transition:width 0.35s ease; }
+.lbar-fill.is-error { background:var(--red); }
+.lbar.indeterminate .lbar-fill {
+  width:40%; background:linear-gradient(90deg,
+    rgba(79,156,247,0) 0%, var(--accent) 50%, rgba(79,156,247,0) 100%);
+  animation:lbar-indet 1.1s ease-in-out infinite; }
+@keyframes lbar-indet {
+  0%   { transform:translateX(-120%); }
+  100% { transform:translateX(320%); }
+}
+/* Library-load striped variant — sits inside the table while /api/workouts
+   (4,198-file scan, ~3s) runs. Diagonal stripes animate to read as "working". */
+.lbar-striped { background-image:linear-gradient(45deg,
+    var(--accent) 25%, transparent 25%, transparent 50%,
+    var(--accent) 50%, var(--accent) 75%, transparent 75%, transparent);
+  background-size:22px 22px; animation:lbar-stripe 0.9s linear infinite; opacity:0.85; }
+@keyframes lbar-stripe { from { background-position:0 0; } to { background-position:22px 0; } }
+
 /* Tooltip */
 .tooltip { position:fixed; background:var(--surface); border:1px solid var(--accent); border-radius:6px;
   padding:8px 12px; font-size:12px; color:var(--text); pointer-events:none; z-index:1000;
@@ -1999,7 +2023,19 @@ window.addEventListener('unhandledrejection', function(e) {
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 22px;max-width:420px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.4);">
       <div style="font-size:11px;color:var(--accent);letter-spacing:0.5px;font-weight:700;margin-bottom:4px;">CATCHING UP YOUR PLAN</div>
       <div style="font-size:12px;color:var(--text3);margin-bottom:12px;">Reconciling what you did and adapting your training…</div>
+      <!-- v4.x — determinate loading bar (advances step N of M). Replaces the
+           per-step ⟳ spinner so progress is always visible. -->
+      <div class="lbar" style="margin-bottom:12px;"><div id="plan-catchup-bar" class="lbar-fill"></div></div>
       <div id="plan-catchup-steps"></div>
+      <!-- Error/timeout footer: hidden on the happy path; shown by the runner
+           when a step times out or errors so the overlay can never hang. -->
+      <div id="plan-catchup-footer" style="display:none;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
+        <div id="plan-catchup-error" style="font-size:12px;color:var(--red);margin-bottom:10px;"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <button class="btn" onclick="dismissPlanCatchup()" style="font-size:12px;">Close</button>
+          <button class="btn btn-primary" onclick="retryPlanCatchup()" style="font-size:12px;">Retry</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -7610,6 +7646,15 @@ function toggleLibAdvanced() {
 
 async function loadWorkouts() {
   try {
+    // v4.x — indeterminate striped loading BAR (not a spinner) while the library
+    // loads. /api/workouts scans the 4,198-file pool (~3s) so the exact % is
+    // unknown — an animated striped sweep reads as "working" without a fake %.
+    const wkBody = $('wk-body');
+    if (wkBody) wkBody.innerHTML =
+      '<tr><td colspan="8" style="padding:18px 12px;">' +
+        '<div style="font-size:12px;color:var(--text3);margin-bottom:8px;text-align:center;">Loading workout library…</div>' +
+        '<div class="lbar indeterminate"><div class="lbar-fill lbar-striped"></div></div>' +
+      '</td></tr>';
     await _ensureLibSurfaceData();
     if (!document.querySelector('#wk-tags-chips .lib-tag-chip')) {
       // First-load: populate distinct-tags chip list once.
@@ -11558,11 +11603,41 @@ async function triggerPlanAutoRecalc() {
 // try/finally so the overlay ALWAYS dismisses (never strands the user on grey).
 let _planOpenSeqRunning = false;
 
+// v4.x — every step's await runs through this so a hung backend fetch can NEVER
+// strand the overlay on a forever-spinning step. Races the work against a hard
+// timeout that REJECTS with a tagged TimeoutError; the caller try/catches it.
+// The 'actual' step hits /api/plan/rematch which loads the 4,198-file library
+// (~3s warm, slower cold) — hence the generous 40s ceiling, not a tight one.
+const PLAN_STEP_TIMEOUT_MS = 40000;
+function _planStepRace(promise, ms, label) {
+  let t;
+  const timeout = new Promise((_, reject) => {
+    t = setTimeout(() => {
+      const e = new Error((label || 'step') + ' timed out');
+      e.name = 'TimeoutError';
+      reject(e);
+    }, ms || PLAN_STEP_TIMEOUT_MS);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
+}
+
 // Hide the overlay. Does NOT reset the running guard — only the sequence's own
 // finally does that, so a manual dismiss mid-run can't spawn a 2nd concurrent run.
 function dismissPlanCatchup() {
   const ov = $('plan-catchup-overlay');
   if (ov) ov.style.display = 'none';
+  const ft = $('plan-catchup-footer');
+  if (ft) ft.style.display = 'none';
+}
+
+// Retry the catch-up flow after a timeout/error. The failed run already reset
+// the running guard, so this is a clean restart. Reset the bar + footer first.
+function retryPlanCatchup() {
+  const ft = $('plan-catchup-footer');
+  if (ft) ft.style.display = 'none';
+  const bar = $('plan-catchup-bar');
+  if (bar) { bar.classList.remove('is-error'); bar.style.width = '0%'; }
+  runPlanOpenSequence();
 }
 
 function _summarizeReadiness(rd) {
@@ -11580,13 +11655,27 @@ async function runPlanOpenSequence() {
   _planOpenSeqRunning = true;
   const ov = $('plan-catchup-overlay');
   const stepsEl = $('plan-catchup-steps');
+  const barEl = $('plan-catchup-bar');
+  const footerEl = $('plan-catchup-footer');
+  const errEl = $('plan-catchup-error');
+  if (footerEl) footerEl.style.display = 'none';
+  if (barEl) { barEl.classList.remove('is-error'); barEl.style.width = '0%'; }
   const STEPS = [
     {key: 'prescribed', label: 'Checking prescribed training'},
     {key: 'actual',     label: 'Checking what you actually did'},
     {key: 'recovery',   label: 'Checking recovery (Garmin HRV)'},
     {key: 'regen',      label: 'Updating your training'},
   ];
-  const state = {};  // key -> {status:'done'|'warn', detail}
+  const state = {};  // key -> {status:'done'|'warn'|'error', detail}
+  // v4.x — set on the FIRST step that times out / hard-errors. Non-null means
+  // the finally shows the error footer (Close/Retry) instead of auto-dismissing.
+  let seqError = null;
+  // Determinate bar: width tracks completed steps. Bumped as each step finishes.
+  const setBar = (frac, isErr) => {
+    if (!barEl) return;
+    barEl.style.width = Math.max(0, Math.min(100, Math.round(frac * 100))) + '%';
+    barEl.classList.toggle('is-error', !!isErr);
+  };
   const paint = (activeKey) => {
     if (!stepsEl) return;
     stepsEl.innerHTML = STEPS.map(s => {
@@ -11594,7 +11683,10 @@ async function runPlanOpenSequence() {
       let icon = '◯', color = 'var(--text3)';
       if (st && st.status === 'done') { icon = '✓'; color = 'var(--green)'; }
       else if (st && st.status === 'warn') { icon = '⚠'; color = 'var(--yellow)'; }
-      else if (s.key === activeKey) { icon = '⟳'; color = 'var(--accent)'; }
+      else if (st && st.status === 'error') { icon = '✕'; color = 'var(--red)'; }
+      // Active step no longer shows a spinner glyph — the top loading BAR is the
+      // single progress indicator now. A filled dot just marks "in progress".
+      else if (s.key === activeKey) { icon = '●'; color = 'var(--accent)'; }
       const detail = (st && st.detail) ? st.detail : '';
       return `<div style="display:flex;align-items:center;gap:9px;padding:5px 0;font-size:13px;color:${color};">
                 <span style="width:16px;text-align:center;">${icon}</span>
@@ -11606,44 +11698,58 @@ async function runPlanOpenSequence() {
 
   try {
     if (ov) ov.style.display = 'flex';
+    setBar(0.04);
     paint('prescribed');
 
     // Step 1 — read the prescribed plan.
-    try { await loadPlan(); } catch (_) {}
+    try { await _planStepRace(loadPlan(), PLAN_STEP_TIMEOUT_MS, 'prescribed'); }
+    catch (e) { if (e && e.name === 'TimeoutError') seqError = {key: 'prescribed', label: STEPS[0].label, e}; }
+    if (seqError) { state.prescribed = {status: 'error', detail: 'timed out'}; setBar(0.25, true); paint(null); return; }
     const hasPlan = !!(window._planData && (window._planData.weeks || []).length);
     if (!hasPlan) return;  // no active plan — nothing to reconcile/adapt (finally hides overlay)
     state.prescribed = {status: 'done', detail: `${(window._planData.weeks || []).length} weeks`};
+    setBar(0.25);
     paint('actual');
 
     // Step 2 — what you actually did: pull rides (throttled) + reconcile done/missed.
+    // Each network call is raced against a timeout. A plain offline/error still
+    // degrades to "used local data"; a genuine HANG (the reported stuck step —
+    // /api/plan/rematch blocking on the 4,198-file library load) trips seqError
+    // so the overlay surfaces Close/Retry instead of spinning forever.
     let syncAdded = 0, syncThrottled = false, syncOk = false;
     try {
-      const sres = await fetch('/api/rides/sync', {method: 'POST'});  // no force=1 → respects throttle
+      const sres = await _planStepRace(fetch('/api/rides/sync', {method: 'POST'}), PLAN_STEP_TIMEOUT_MS, 'sync');  // no force=1 → respects throttle
       const sj = await sres.json().catch(() => ({}));
       syncThrottled = (sj.status === 'throttled');
       syncAdded = Number(sj.added || 0);
       syncOk = true;
-    } catch (_) {}
+    } catch (e) { if (e && e.name === 'TimeoutError') seqError = {key: 'actual', label: STEPS[1].label, e}; }
     let reconciled = 0;
-    try {
-      const rres = await fetch('/api/plan/rematch?apply=1', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
-      const rj = await rres.json().catch(() => ({}));
-      reconciled = Array.isArray(rj.matches) ? rj.matches.length : 0;
-    } catch (_) {}
+    if (!seqError) {
+      try {
+        const rres = await _planStepRace(fetch('/api/plan/rematch?apply=1', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}), PLAN_STEP_TIMEOUT_MS, 'reconcile');
+        const rj = await rres.json().catch(() => ({}));
+        reconciled = Array.isArray(rj.matches) ? rj.matches.length : 0;
+      } catch (e) { if (e && e.name === 'TimeoutError') seqError = {key: 'actual', label: STEPS[1].label, e}; }
+    }
+    if (seqError) { state.actual = {status: 'error', detail: 'timed out'}; setBar(0.5, true); paint(null); return; }
     const actualDetail = !syncOk ? 'sync offline — used local data'
       : syncThrottled ? `up to date · ${reconciled} reconciled`
       : `${syncAdded} new ride${syncAdded === 1 ? '' : 's'} · ${reconciled} reconciled`;
     state.actual = {status: syncOk ? 'done' : 'warn', detail: actualDetail};
+    setBar(0.5);
     paint('recovery');
 
     // Step 3 — recovery / Garmin HRV (readiness).
     let recDetail = '';
     try {
-      const rdres = await fetch('/api/readiness');
+      const rdres = await _planStepRace(fetch('/api/readiness'), PLAN_STEP_TIMEOUT_MS, 'recovery');
       const rd = await rdres.json().catch(() => ({}));
       recDetail = _summarizeReadiness(rd);
-    } catch (_) {}
+    } catch (e) { if (e && e.name === 'TimeoutError') seqError = {key: 'recovery', label: STEPS[2].label, e}; }
+    if (seqError) { state.recovery = {status: 'error', detail: 'timed out'}; setBar(0.75, true); paint(null); return; }
     state.recovery = {status: 'done', detail: recDetail || 'checked'};
+    setBar(0.75);
     paint('regen');
 
     // Step 4 — adapt the plan. First the weekly fitness-progression recompute
@@ -11653,29 +11759,49 @@ async function runPlanOpenSequence() {
     // pulled NEW rides, so skip the explicit update then (avoids a double adapt);
     // otherwise run the debounced update so rapid reopens are a cheap no-op.
     let regenDetail = '';
-    try { await triggerPlanAutoRecalc(); } catch (_) {}
-    if (syncAdded > 0) {
+    try { await _planStepRace(triggerPlanAutoRecalc(), PLAN_STEP_TIMEOUT_MS, 'recalc'); }
+    catch (e) { if (e && e.name === 'TimeoutError') seqError = {key: 'regen', label: STEPS[3].label, e}; }
+    if (!seqError && syncAdded > 0) {
       regenDetail = 'adapted from your new ride(s)';
-      try { await loadPlan(); } catch (_) {}
-    } else {
+      try { await _planStepRace(loadPlan(), PLAN_STEP_TIMEOUT_MS, 'reload'); }
+      catch (e) { if (e && e.name === 'TimeoutError') seqError = {key: 'regen', label: STEPS[3].label, e}; }
+    } else if (!seqError) {
       try {
-        const ures = await fetch('/api/plan/update?debounce=1', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+        const ures = await _planStepRace(fetch('/api/plan/update?debounce=1', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}), PLAN_STEP_TIMEOUT_MS, 'update');
         const uj = await ures.json().catch(() => ({}));
         if (uj && uj.plan_json) { try { await renderPlanJSON(uj.plan_json); } catch (_) {} }
         regenDetail = (uj && uj.status_message) ? uj.status_message
           : (uj && uj.action === 'skipped') ? 'already up to date'
           : 'rebalanced';
-      } catch (_) {}
+      } catch (e) { if (e && e.name === 'TimeoutError') seqError = {key: 'regen', label: STEPS[3].label, e}; }
     }
+    if (seqError) { state.regen = {status: 'error', detail: 'timed out'}; setBar(1, true); paint(null); return; }
     state.regen = {status: 'done', detail: regenDetail};
+    setBar(1);
     paint(null);
     await new Promise(r => setTimeout(r, 550));  // let the user see all-green before dismiss
-  } catch (_) {
-    // non-fatal — fall through to finally (overlay ALWAYS dismisses)
+  } catch (e) {
+    // Any non-timeout throw lands here. Treat as a generic error so the overlay
+    // still surfaces Close/Retry rather than vanishing on a half-done run.
+    if (!seqError) seqError = {key: '?', label: 'Updating your plan', e};
   } finally {
-    try { await loadCalendar(); } catch (_) {}
-    dismissPlanCatchup();
+    // v4.x — the overlay can NEVER hang: on success we auto-dismiss as before;
+    // on timeout/error we KEEP it open, stop the bar (red), and show Close/Retry.
+    // The running guard is reset either way so Retry can launch a fresh run.
     _planOpenSeqRunning = false;
+    if (seqError) {
+      setBar(barEl ? (parseFloat(barEl.style.width) || 0) / 100 : 1, true);
+      if (errEl) errEl.textContent =
+        (seqError.e && seqError.e.name === 'TimeoutError')
+          ? `"${seqError.label}" is taking too long (over ${Math.round(PLAN_STEP_TIMEOUT_MS/1000)}s). The server may be busy loading your workout library. You can retry or close.`
+          : `Couldn't finish updating your plan: ${(seqError.e && seqError.e.message) || 'unknown error'}. You can retry or close.`;
+      if (footerEl) footerEl.style.display = 'block';
+      if (ov) ov.style.display = 'flex';  // ensure still visible
+      try { await loadCalendar(); } catch (_) {}  // best-effort repaint of whatever we have
+    } else {
+      try { await loadCalendar(); } catch (_) {}
+      dismissPlanCatchup();
+    }
   }
 }
 

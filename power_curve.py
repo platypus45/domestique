@@ -94,6 +94,35 @@ def _ride_started_iso_date(ride: dict) -> str:
     return s
 
 
+def _is_cycling_power_ride(ride: dict) -> bool:
+    """Return True iff ``ride`` carries genuine CYCLING power.
+
+    The rider mean-max curve is a cycling power-duration curve (the P&G 2011
+    overlay, FTP %, and W/kg are all bike references). ICU, however, also
+    records an *estimated* ``watts`` stream for runs (trail runs, tempo runs)
+    that the backfill happily turns into efforts — those running-power numbers
+    are physiologically incomparable to bike FTP (e.g. 400 W sustained for
+    20 min on a trail run) and badly inflate every endurance point on the
+    curve.
+
+    A power-meter cycling ride always has ICU's cycling power summaries
+    populated — ``np_w`` (normalized power), ``kj`` (work), and/or
+    ``ftp_at_ride`` (the cycling FTP in force that day). Runs/hikes/climbs/
+    strength sessions carry none of these. That summary triad is the
+    reliable bike-vs-not discriminator — far more robust than the free-text
+    activity name (which is multilingual: "loop"/"hike"/"trail run"/
+    "Indoorklimmen").
+    """
+    for key in ("np_w", "kj", "ftp_at_ride"):
+        v = ride.get(key)
+        try:
+            if v is not None and float(v) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
 def _load_cached_rides() -> list[dict]:
     """Read every cached ICU envelope from disk.
 
@@ -262,6 +291,11 @@ def aggregate_power_curve(profile_id: str = "default",
     for r in rides:
         efforts = r.get("efforts") or []
         if not isinstance(efforts, list):
+            continue
+        # Cycling-only: skip runs/hikes whose ICU `watts` stream is estimated
+        # running power, not bike power. Mixing them in inflates the curve's
+        # endurance points well past the rider's true cycling FTP.
+        if not _is_cycling_power_ride(r):
             continue
         ride_id = r.get("ride_id") or ""
         ride_date = _ride_started_iso_date(r)
@@ -789,6 +823,35 @@ def latest_ride_id_in_window(profile_id: str = "default",
         return ""
     rides.sort(key=lambda r: _ride_started_iso_date(r), reverse=True)
     return rides[0].get("ride_id") or ""
+
+
+def count_rides_missing_efforts(window_days: int = 90) -> tuple[int, int]:
+    """Return ``(n_cycling_rides_in_window, n_missing_efforts)``.
+
+    Counts only CYCLING power rides (``_is_cycling_power_ride``) — a library
+    full of runs/hikes must not perpetually signal "needs backfill" once
+    every bike ride is hydrated. A cycling ride "has efforts" iff its cached
+    envelope carries a non-empty ``efforts`` list; ``n_missing_efforts`` is
+    the count that the ICU-history backfill still needs to hydrate before
+    they can contribute to ``aggregate_power_curve``.
+
+    Used by the power-curve endpoint to detect the "bike rides exist but the
+    curve is empty because nothing was ever backfilled" state. The original
+    ``needs_backfill = (n_rides == 0)`` gate missed this entirely: 51 cached
+    summary-only rides all reported efforts==[] yet n_rides==51, so the
+    dashboard never offered a backfill and the curve stayed blank forever.
+    """
+    rides = _filter_rides_by_window(_load_cached_rides(), window_days)
+    n_cycling = 0
+    missing = 0
+    for r in rides:
+        if not _is_cycling_power_ride(r):
+            continue
+        n_cycling += 1
+        efforts = r.get("efforts")
+        if not (isinstance(efforts, list) and efforts):
+            missing += 1
+    return n_cycling, missing
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -62,6 +62,19 @@ done
 echo "[1/9] Building app with PyInstaller..."
 pyinstaller domestique.spec --clean --noconfirm 2>&1 | tail -3
 
+# 1b. Version smoke-test — the bundled app MUST ship its own VERSION file with the
+# right contents, else the running app reports "0.0.0" and the in-app updater shows
+# a perpetual "upgrade" prompt. Fail the build before notarize/upload if it regresses.
+REPO_VER="$(tr -d '[:space:]' < VERSION)"
+BUNDLED_VER_FILE="$(find dist/Domestique.app -name VERSION -path '*Resources*' 2>/dev/null | head -1)"
+[ -z "$BUNDLED_VER_FILE" ] && BUNDLED_VER_FILE="$(find dist/Domestique.app -name VERSION 2>/dev/null | head -1)"
+BUNDLED_VER="$(tr -d '[:space:]' < "$BUNDLED_VER_FILE" 2>/dev/null)"
+if [ -z "$BUNDLED_VER_FILE" ] || [ "$BUNDLED_VER" != "$REPO_VER" ]; then
+    echo "FATAL: bundled VERSION ('$BUNDLED_VER') != repo VERSION ('$REPO_VER') — app would misreport its version. Aborting build." >&2
+    exit 1
+fi
+echo "[1b/9] Version smoke-test OK — bundle reports $BUNDLED_VER"
+
 if [ "$NOTARIZE_MODE" = "notarize" ]; then
     # 2. Resolve signing identity.
     #

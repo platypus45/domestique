@@ -1358,23 +1358,75 @@ def api_profile_power_curve(window_days: int = Query(90, ge=1, le=3650),
             "wprime_j": None,
             "pmax_w": None,
         }
-    # v1.8.8 Bug 2/11 — surface `needs_backfill` so the dashboard can swap
-    # the "Loading…" placeholder for a "Run backfill" button when streams
-    # haven't been cached yet. True when n_rides==0 (nothing aggregated)
-    # — the legacy contract had no such field, so callers ignore it
-    # silently when absent. ADD-only, never rename/remove.
+    # Self-healing backfill: the curve comes back empty whenever the cached
+    # envelopes in the window have never been hydrated with `efforts`
+    # (summary-only ICU records carry efforts==[]). In that state n_rides
+    # can be large (e.g. 51) yet rider_curve is []. The async toast-driven
+    # backfill never fired here because it keyed on `icu_list_count`, a field
+    # the server never emitted — so the curve stayed blank forever. Detect
+    # the "rides present but none have efforts" case and run the one-shot
+    # ICU-history backfill inline (it holds the single-flight lock G3,
+    # fetches streams, derives STANDARD_DURATIONS efforts, and persists each
+    # envelope), then recompute ONCE. Bounded to a single pass; if the
+    # backfill can't acquire the lock (one already running) or hydrates
+    # nothing, we fall through with the empty curve + needs_backfill=True.
     try:
         n_rides = int(result.get("n_rides") or 0)
     except (TypeError, ValueError):
         n_rides = 0
-    result["needs_backfill"] = bool(n_rides == 0)
+    rider_curve_empty = not (result.get("rider_curve") or [])
+    if rider_curve_empty and n_rides > 0:
+        try:
+            _n_win, _n_missing = power_curve.count_rides_missing_efforts(int(window_days))
+        except Exception as e:
+            _log.debug(f"power_curve count_rides_missing_efforts failed: {e}")
+            _n_missing = 0
+        if _n_missing > 0:
+            acquired, _lock = power_curve.acquire_backfill_lock()
+            if acquired:
+                try:
+                    bf = power_curve.backfill_icu_history("default",
+                                                          max_per_second=1,
+                                                          _skip_lock=True)
+                    _log.info(
+                        "power-curve self-heal backfill: "
+                        f"backfilled={bf.get('backfilled')} "
+                        f"already_cached={bf.get('already_cached')} "
+                        f"failed={bf.get('failed')}"
+                    )
+                except Exception as e:
+                    _log.warning(f"power-curve self-heal backfill failed: {e}")
+                finally:
+                    power_curve.release_backfill_lock()
+                # Recompute once now that envelopes are hydrated.
+                try:
+                    result = power_curve.aggregate_power_curve(
+                        "default", window_days=int(window_days))
+                    try:
+                        n_rides = int(result.get("n_rides") or 0)
+                    except (TypeError, ValueError):
+                        n_rides = 0
+                except Exception as e:
+                    _log.warning(f"power-curve recompute after backfill failed: {e}")
+    # v1.8.8 Bug 2/11 — surface `needs_backfill` so the dashboard can swap
+    # the "Loading…" placeholder for a "Run backfill" button when streams
+    # haven't been cached yet. The legacy gate (n_rides==0) silently missed
+    # the common case where rides ARE cached but none carry efforts yet, so
+    # it's now True whenever the rider curve is still empty after the
+    # self-heal pass above. ADD-only field — callers ignore it when absent.
+    result["needs_backfill"] = bool(not (result.get("rider_curve") or []))
     # Lazy GC — prune stale power_curve_* entries with old latest_ride_ids.
     for k in list(_cache.keys()):
         if k.startswith(f"power_curve_default_{int(window_days)}_") and k != cache_key:
             _cache.pop(k, None)
             _cache_ts.pop(k, None)
-    _cache[cache_key] = result
-    _cache_ts[cache_key] = now
+    # Only cache a populated curve for 24h. When the curve is still empty
+    # (self-heal couldn't acquire the lock, or the backfill hydrated nothing
+    # this pass), skip the cache so the next request retries instead of
+    # serving a stale empty curve for a full day.
+    if not result.get("needs_backfill"):
+        _cache[cache_key] = result
+        _cache_ts[cache_key] = now
     return result
 
 

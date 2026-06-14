@@ -1732,6 +1732,41 @@ def load_cache(cache_path: Path) -> dict | None:
         return None
 
 
+def build_library_index(workout_dir: Path) -> int:
+    """v1.10.1 SPEED-INDEX: build workouts/.library_index.json.
+
+    Delegates to ``training_planner.load_workout_library()`` so the persisted
+    rows are byte-identical to what the planner builds at runtime (same fields,
+    same types, same values — equivalence by construction). That call's own
+    self-heal write emits ``.library_index.json`` next to the *.zwo files; we
+    just point training_planner at ``workout_dir`` and force a fresh parse.
+
+    Must run AFTER the content-classification cache is written, because each row
+    carries ContentClass/ContentConfidence/SecondaryFlags looked up from it.
+
+    Returns the number of rows written.
+    """
+    # When run as ``python3 scripts/classify_library_content.py``, sys.path[0]
+    # is scripts/, not the repo root where training_planner lives — make the
+    # import work regardless of how the script was invoked.
+    repo_root = Path(__file__).resolve().parent.parent
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    import training_planner as tp
+
+    # Honour an explicit --workout-dir that differs from the planner's default
+    # (e.g. a user-paths override). Resetting WORKOUT_DIR + the lazily-loaded
+    # caches makes the next load_workout_library() a clean full parse against
+    # this dir, which then self-heals the on-disk index.
+    tp.WORKOUT_DIR = workout_dir
+    tp._WORKOUT_LIB_CACHE.clear()
+    tp._WORKOUT_LIB_FAST_VALIDATOR.clear()
+    tp._CONTENT_CLASSIFICATION_CACHE = None  # re-read the freshly written cache
+
+    rows = tp.load_workout_library()
+    return len(rows)
+
+
 # ── Filename-based classifier (mirror of training_planner._classify_protocol) ──
 
 
@@ -1843,6 +1878,8 @@ def main():
                     help="Compare content classification to filename-prefix classification")
     ap.add_argument("--explain", action="store_true",
                     help="With --file, also print citation/rationale")
+    ap.add_argument("--no-index", action="store_true",
+                    help="With --all, skip rebuilding workouts/.library_index.json")
     args = ap.parse_args()
 
     if args.file:
@@ -1924,6 +1961,19 @@ def main():
             print(f"  {'(empty)':>22}  {empty:>5}  flagged, not classified")
         if free:
             print(f"  {'(free_ride)':>22}  {free:>5}  flagged, not classified")
+
+        # v1.10.1 SPEED-INDEX: rebuild the consolidated row index so the next
+        # cold load_workout_library() skips the per-file XML sweep. Built from
+        # the freshly written content cache (above), so ContentClass fields on
+        # each indexed row are current.
+        if not args.no_index:
+            try:
+                n_idx = build_library_index(args.workout_dir)
+                index_path = args.workout_dir / ".library_index.json"
+                print(f"Wrote library index ({n_idx} rows) → {index_path}",
+                      file=sys.stderr)
+            except Exception as e:  # never let index-build fail the classifier
+                print(f"WARNING: library index build skipped: {e}", file=sys.stderr)
         return 0
 
     if args.golden_eval:

@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.0.1 — bugfixes: power curve, faster library load, catch-up hang (2026-06-14)
+
+- **Power curve renders again** on the home screen. It was blank for riders whose
+  cached intervals.icu rides carried no power efforts and had no path to hydrate
+  them. The endpoint now self-heals (fetches the missing power streams on demand)
+  and excludes running activities, whose estimated watts were polluting the curve.
+- **Workout library loads ~16× faster** — a prebuilt `.library_index.json` cuts the
+  first plan/library load from ~3 s to ~0.2 s. No behaviour change: the indexed rows
+  are identical to the live ZWO parse, and the index self-heals if the library changes.
+- **"Catching up your plan" can no longer hang.** Each step now races a 40 s timeout;
+  on a stall it shows an error with Close / Retry instead of spinning forever.
+- **Loading bars** replace spinners on the catch-up overlay and the library load.
+- Release builds now run a version smoke-test (the bundled app must report its own
+  version) so a mis-bundled build can't ship.
+
 ## v2.0.0 — goal-aware selection + event-driven planning (2026-06-13)
 
 The planner now adapts what it schedules to *what you're training for* — both the

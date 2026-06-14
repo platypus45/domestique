@@ -129,6 +129,19 @@ PLAN_DIR = Path.home() / ".domestique" / "plans"
 # only belt-and-braces vs a persisted cache, but it documents the invalidation
 # intent unambiguously.
 _CLASSIFIER_VERSION = 3  # v4.1.2 IMPL-CLASSIFIER: content-based 12-rule cascade replaces filename heuristic
+# v1.10.1 SPEED-INDEX: consolidated on-disk row index (workouts/.library_index.json).
+# Stores every row load_workout_library() builds, so a cold call can skip the
+# 4,198-file XML sweep (~3s) and instead do one JSON read (~0.2s). The on-disk
+# header pins (schema_version, classifier_version, count, max_mtime) — the SAME
+# (count, max .zwo mtime) signal the in-process slow-path cache uses, which is
+# immune to the index file's own writes (a dotfile, not a *.zwo). The loader
+# trusts the index only when classifier_version + count + max_mtime all match the
+# live workouts dir, and falls back to the XML parse (self-healing: it rewrites
+# the index) on any mismatch. The builder lives in
+# scripts/classify_library_content.py (run via --all). Bump _INDEX_SCHEMA_VERSION
+# whenever the row shape changes so stale on-disk indexes are rejected.
+_INDEX_SCHEMA_VERSION = 1
+_LIBRARY_INDEX_FILENAME = ".library_index.json"
 _WORKOUT_LIB_CACHE: dict[str, tuple] = {}
 # v1.8.1 SPEED-A: fast hot-path validator keyed by str(WORKOUT_DIR).
 # Stores (dir_mtime, classifier_version) — a single os.stat(WORKOUT_DIR)
@@ -225,6 +238,76 @@ def _compute_workouts_dir_hash() -> str:
             mtime = 0
         h.update(f"{p.name}:{mtime}\n".encode())
     return h.hexdigest()
+
+
+def _read_library_index(count: int, max_mtime: float) -> list[dict] | None:
+    """v1.10.1 SPEED-INDEX: try the consolidated on-disk row index.
+
+    Returns the list of pre-parsed library rows iff
+    ``workouts/.library_index.json`` exists AND its header
+    (schema_version, classifier_version, count, max_mtime) matches the live
+    workouts dir. Returns ``None`` on any miss (absent / stale / malformed) so
+    the caller falls back to the XML-parse path. ``count`` (number of *.zwo)
+    and ``max_mtime`` (newest *.zwo mtime) are the SAME slow-path validators
+    ``load_workout_library`` already computes for its in-process cache, so the
+    on-disk index invalidates on exactly the same events (add/remove/rename/
+    in-place edit of any *.zwo bumps one of the two). Crucially this signal is
+    immune to writing the index file itself — it is a dotfile, not a *.zwo, so
+    self-healing the index never invalidates it.
+
+    The rows are returned verbatim from JSON. They are byte-identical in
+    content to the XML-parse path because the builder serializes that path's
+    own output; JSON round-trips every field cleanly (Tags=list[str],
+    SecondaryFlags=dict, all other fields str/int/float).
+    """
+    index_path = WORKOUT_DIR / _LIBRARY_INDEX_FILENAME
+    if not index_path.exists():
+        return None
+    try:
+        with index_path.open(encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        log.warning("library_index load failed (%s) — falling back to XML parse", e)
+        return None
+    if (
+        payload.get("schema_version") != _INDEX_SCHEMA_VERSION
+        or payload.get("classifier_version") != _CLASSIFIER_VERSION
+        or payload.get("count") != count
+        or payload.get("max_mtime") != max_mtime
+    ):
+        # Stale (library changed since the index was built) or wrong schema.
+        # Silent — the XML path will rebuild and self-heal the index.
+        return None
+    rows = payload.get("rows")
+    if not isinstance(rows, list):
+        return None
+    return rows
+
+
+def _write_library_index(rows: list[dict], count: int, max_mtime: float) -> None:
+    """v1.10.1 SPEED-INDEX: persist ``rows`` to workouts/.library_index.json.
+
+    Called after a full XML parse so the index self-heals when missing/stale.
+    Best-effort: a read-only workouts dir (e.g. inside the notarized app
+    bundle) just means the next cold call re-parses — never fatal. Written via
+    a tmp file + atomic rename so a concurrent reader never sees a half file.
+    """
+    index_path = WORKOUT_DIR / _LIBRARY_INDEX_FILENAME
+    payload = {
+        "schema_version": _INDEX_SCHEMA_VERSION,
+        "classifier_version": _CLASSIFIER_VERSION,
+        "count": count,
+        "max_mtime": max_mtime,
+        "rows": rows,
+    }
+    try:
+        tmp_path = index_path.with_suffix(".json.tmp")
+        with tmp_path.open("w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        tmp_path.replace(index_path)
+    except OSError as e:
+        log.debug("library_index write skipped (%s)", e)
+
 
 # ── Plan-write serialization (PL3) ───────────────────────────────────────────
 # Six FastAPI endpoints in app.py all write current_plan.json via the
@@ -2360,6 +2443,19 @@ def load_workout_library() -> list[dict]:
         _WORKOUT_LIB_FAST_VALIDATOR[cache_key] = fast_key
         return cached[1]
 
+    # v1.10.1 SPEED-INDEX: before the 4,198-file XML sweep (~3s cold), try the
+    # consolidated on-disk row index. One JSON read (~0.2s) yields rows that are
+    # byte-identical to the XML path (the builder serialized that path's own
+    # output). Validated against the SAME (count, max_mtime) signal as mtime_hash
+    # above, so a stale index can never feed the planner old rows — it just falls
+    # through to the parse below. Populate both caches on a hit so repeat calls
+    # stay at 0.000s exactly as before.
+    indexed_rows = _read_library_index(len(zwo_paths), max_mtime)
+    if indexed_rows is not None:
+        _WORKOUT_LIB_CACHE[cache_key] = (mtime_hash, indexed_rows)
+        _WORKOUT_LIB_FAST_VALIDATOR[cache_key] = fast_key
+        return indexed_rows
+
     workouts: list[dict] = []
     for zwo_path in zwo_paths:
         try:
@@ -2560,6 +2656,12 @@ def load_workout_library() -> list[dict]:
     # v1.8.1 SPEED-A: store the fast-path validator alongside the cache so
     # subsequent calls can short-circuit on a single dir-stat.
     _WORKOUT_LIB_FAST_VALIDATOR[cache_key] = fast_key
+    # v1.10.1 SPEED-INDEX: self-heal the on-disk index after a full parse so the
+    # NEXT cold process skips the XML sweep. Best-effort (read-only dir is fine).
+    # Keyed by the same (count, max_mtime) we just validated, so it stays fresh
+    # until a *.zwo actually changes. Writing this dotfile does NOT invalidate
+    # the index (the validator is over *.zwo, not the dir mtime).
+    _write_library_index(workouts, len(zwo_paths), max_mtime)
     return workouts
 
 

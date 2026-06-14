@@ -198,7 +198,11 @@ def test_apply_week_tier_down_no_candidate_continues(tmp_path, monkeypatch):
     """NoCandidateWorkoutError mid-walk → clear ZWO, mark rematched=False,
     don't abort."""
     _, plan = _seed_week_plan(tmp_path)
-    today_iso = date.today().isoformat()
+    # v2.0.3 F3: tier-down is TODAY-ONWARD, so anchor at the seeded week's Monday
+    # — its Mon/Wed/Fri hards then fall in the [anchor, sunday] window regardless
+    # of which weekday this test actually runs on (was date-fragile: on a late-
+    # week today the hards were all behind the window and no actions recorded).
+    week_start_iso = plan["weeks"][0]["start"]
 
     def _raise(session, library, **kwargs):
         raise tp.NoCandidateWorkoutError("no workout for this slot")
@@ -206,7 +210,7 @@ def test_apply_week_tier_down_no_candidate_continues(tmp_path, monkeypatch):
     monkeypatch.setattr(tp, "match_zwo", _raise)
     monkeypatch.setattr(tp, "load_workout_library", lambda: [])
 
-    result = tp.apply_week_tier_down(plan, today_iso, dry_run=True)
+    result = tp.apply_week_tier_down(plan, week_start_iso, dry_run=True)
     # Walk continues — at least one action recorded.
     assert result["actions"]
     for a in result["actions"]:

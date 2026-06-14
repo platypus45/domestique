@@ -4307,7 +4307,7 @@ def sample_week_workouts(
             zwo = (sess.zwo_file or "").strip()
             if not zwo:
                 return False
-            cache = _CONTENT_CLASSIFICATION_CACHE or {}
+            cache = _load_content_classifications()
             ent = cache.get(zwo)
             if ent is None and "/" in zwo:
                 ent = cache.get(zwo.split("/")[-1])
@@ -4364,6 +4364,14 @@ def sample_week_workouts(
                     w for w in source
                     if 35 <= float(w.get("Duration(min)", 0) or 0) <= max_min + 25
                     and _row_is_intvl(w)
+                    # v2.0.3 F2: only inject steady-slot interval variety from
+                    # classes that are honest at tempo intensity (sweet_spot /
+                    # tempo / mixed). The slot is then labeled "tempo" below — a
+                    # label the card classifier ACCEPTS for those zwo classes, so
+                    # no missing_workout card. Truly-hard classes (vo2max /
+                    # threshold / over_under / anaerobic) reach the plan via the
+                    # HIT slots + hard-floor, never relabeled-easy here.
+                    and _content_class_for_row(w) in ("sweet_spot", "tempo", "mixed")
                 ]
                 # For BASE phase, prefer sweet_spot first (gentler shapes) then
                 # threshold/over_under. For build/peak, weight by pref_row.
@@ -4417,9 +4425,27 @@ def sample_week_workouts(
                             pick_idx = i
                             break
                     pick = interval_feasible[pick_idx]
-                # Replace the slot. Use the picked workout's natural session_type
-                # (sweetspot/threshold/etc) since this is an interval slot now.
+                # Replace the slot with an interval-SHAPED pick, but this is a
+                # STEADY (non-HIT) slot — every steady_slots entry was filtered
+                # to off not in hit_slot_idxs above. v2.0.3 F2: count HIT by
+                # session_type (the hit-budget contract test_planner_fixes
+                # relies on), so demote a HIT-typed pick to tempo/z2 from its
+                # Z3% exactly like the main endurance-slot loop does (~tp:4214).
+                # _is_interval_shaped keys on the zwo_file content_class, NOT
+                # session_type, so the interval-variety floor still counts this
+                # slot — we keep the variety without spending a HIT slot.
                 new_sess = _make_session_from_row(pick, d, day_name, phase.name)
+                # v2.0.3 F2: steady slot, and the pool above is restricted to
+                # moderate interval classes (sweet_spot/tempo/mixed). Label any
+                # HIT-typed result ("sweetspot") "tempo" and recompute TSS so the
+                # card is coherent (the "tempo" card accepts a sweet_spot/tempo/
+                # mixed zwo) and the load matches the label — not the old hard-
+                # interval TSS on an easy-labeled session.
+                _hit_st_swap = {"vo2max", "threshold", "overunder", "sweetspot", "sprint"}
+                if new_sess.session_type in _hit_st_swap:
+                    new_sess.session_type = "tempo"
+                    new_sess.tss_estimate = round(
+                        new_sess.duration_min / 60 * TSS_PER_HOUR.get("tempo", 60), 1)
                 new_sess.nutrition_note = _nutrition_note(phase.name, new_sess.session_type)
                 # Free the old pick's name from week_picked (the original slot
                 # contributed to seen_cc_dur_tuples; we keep that — fine).
@@ -5066,8 +5092,13 @@ def _enforce_build2_peak_hard_floor(
         # rotation is visible in every build phase regardless of seed (the
         # strong novelty boost can salt-bias sweet_spot to zero in build1+
         # build2 if it happened to fill base-phase slots first).
-        "build1": {"vo2_short": 4, "neuromuscular": 2, "sweet_spot": 1},
-        "build2": {"anaerobic": 1, "neuromuscular": 1, "vo2_short": 3},
+        # v2.0.3 F1: over_under sits at mix weight ~0.09 → E[picks]≈1 → rounds
+        # to 0 in build, so it needs the SAME hard-floor as the other protected
+        # interval classes. ≥1 in build1 AND build2 completes the 4-shape
+        # rotation without crowding the other 3 hard types (each floor is
+        # filled by swapping the lowest-stimulus steady slots, not the hards).
+        "build1": {"vo2_short": 4, "neuromuscular": 2, "sweet_spot": 1, "over_under": 1},
+        "build2": {"anaerobic": 1, "neuromuscular": 1, "vo2_short": 3, "over_under": 1},
         "peak":   {"anaerobic": 1, "neuromuscular": 1, "vo2_short": 3},
     }
     if not weeks:
@@ -5407,10 +5438,12 @@ def apply_week_tier_down(
     window and tier-down each by one ladder step.
 
     Selection:
-      - session.day >= day_iso AND session.day <= sunday(day_iso) (strict
-        Mon-Sun, no wrap into next week).
+      - day_iso <= session.day <= sunday(day_iso) (TODAY-ONWARD, strict
+        Mon-Sun, no wrap into next week). The window starts at day_iso, not
+        the week's Monday — tier-down only touches the REMAINING hards; a hard
+        session earlier in the week the athlete already rode is never re-touched.
       - session.session_type in ``_HARD_SESSION_TYPES``.
-      - session.status != "completed".
+      - session.status is pending (done/done_partial/missed/dismissed skipped).
 
     Per-session: capture ``before`` snapshot, call ``_drop_intensity``,
     recompute ``tss_estimate`` from ``TSS_PER_HOUR[new_type]``, mark
@@ -5452,7 +5485,14 @@ def apply_week_tier_down(
                 continue
             if s_date < anchor or s_date > sunday:
                 continue
-            if sess.get("status") == "completed":
+            # v2.0.3 F3: skip sessions the athlete has already actioned. The old
+            # check was only `== "completed"`, a value production NEVER writes
+            # (real statuses: done/done_partial/missed/dismissed) — so a done hard
+            # could be tier-downed + reset to pending. Cover the real set AND keep
+            # "completed" for any legacy/card-state data that carries it.
+            if sess.get("status") in {
+                "completed", "done", "done_partial", "missed", "dismissed",
+            }:
                 continue
             old_type = sess.get("session_type", "") or ""
             if old_type not in _HARD_SESSION_TYPES:
@@ -6960,6 +7000,12 @@ def regenerate_from_today(
     # has no authoritative availability clamp, so this runs just before assembly.
     if event_targets is not None:
         _mw_min = int(round((goal.max_weekend_hours or 0) * 60))
+        # v2.0.3 F7: generate_plan ramps _wi over the FULL plan; here new_weeks
+        # is future-only, so offset _wi by the already-elapsed weeks (past +
+        # recovery, the same count week_num is seeded from above) — otherwise a
+        # mid-plan regen resets the long ride to long_start_h instead of
+        # continuing from where the athlete already is.
+        _elapsed_weeks = len(past_weeks) + len(recovery_weeks)
         for _wi, _w in enumerate(new_weeks):
             if getattr(_w, "phase", "") == "taper":
                 continue
@@ -6967,7 +7013,8 @@ def regenerate_from_today(
             if _wstart and goal.target_date and (goal.target_date - _wstart).days <= 21:
                 continue
             _lr_h = min(event_targets["long_target_h"],
-                        event_targets["long_start_h"] + LONG_RIDE_STEP_MIN / 60.0 * _wi)
+                        event_targets["long_start_h"]
+                        + LONG_RIDE_STEP_MIN / 60.0 * (_elapsed_weeks + _wi))
             _apply_long_ride_target(
                 _w.sessions,
                 target_min=int(round(_lr_h * 60)),
@@ -7194,10 +7241,27 @@ def recalculate_plan(
 
     # 6. Generate new weeks
     library = load_workout_library()
+    # v2.0.3 F6: route the weekly recalc through the content-aware sampler the
+    # same way generate_plan / regenerate_from_today do (was plan_week-only, a
+    # legacy skeleton with no mix-emphasis / no over_under floor — so a rolling
+    # recalc silently diverged the plan from first generation). Same seed_salt
+    # derivation (0, the default generate/regenerate use when the caller passes
+    # no salt), same emphasis_profile channel, same event_targets, same
+    # plan-wide bookkeeping so diversity caps / novelty carry across weeks.
+    pool_index = _build_pool_indexes(library)
+    seed_salt = 0
     new_weeks = []
     used_names = set()  # track used workouts for variety
     # Sliding window: track which week each workout was used (no full clear)
     used_in_week: dict[str, int] = {}
+    # v2.0.3 F6 sampler bookkeeping (mirrors generate_plan / regenerate).
+    used_names_dict: dict[str, int] = {}
+    recent_hit_by_phase: dict[str, list[str]] = {}
+    seen_cc_dur_tuples: set = set()
+    plan_pick_counts: dict[str, int] = {}
+    class_session_counts: dict[str, int] = {}
+    class_distinct_files: dict[str, set] = {}
+    plan_total_weeks_rc = sum(p.weeks for p in new_phases) if new_phases else 0
     week_num = len(past_weeks) + 1
     # Seed cross-week 48h HIT-gap (PL2) with the last past week's sessions.
     prev_week_sessions: list | None = past_weeks[-1].sessions if past_weeks else None
@@ -7205,6 +7269,7 @@ def recalculate_plan(
     for phase in new_phases:
         cursor = max(phase.start, regen_start)
         phase_week = 0
+        week_in_phase = 0  # v2.0.3 F6: 0-indexed within phase, drives the sampler
         while cursor <= phase.end:
             phase_week += 1
             is_stepback = (phase_week % STEP_BACK_EVERY == 0) and phase.name != "taper"
@@ -7214,9 +7279,11 @@ def recalculate_plan(
                             and not is_stepback)
 
             pw = plan_week(week_num, cursor, phase, adjusted_goal, is_stepback,
-                           prev_week_sessions=prev_week_sessions)
+                           prev_week_sessions=prev_week_sessions,
+                           seed_salt=seed_salt)
 
-            # Insert FTP test session if due
+            # Insert FTP test session if due. Runs BEFORE the sampler pass so the
+            # ftp_test slot is preserved by the session-replacement skip below.
             if ftp_test_week:
                 for s in pw.sessions:
                     if s.session_type in ("sweetspot", "threshold", "vo2max", "overunder"):
@@ -7230,26 +7297,115 @@ def recalculate_plan(
             for n in stale:
                 used_names.discard(n)
                 del used_in_week[n]
+            stale_d = [n for n, wk in used_names_dict.items()
+                       if week_num - wk >= _USED_NAMES_ROLLING_WEEKS]
+            for n in stale_d:
+                used_names_dict.pop(n, None)
 
-            # Match ZWO workouts — rotate for variety.
+            # v2.0.3 F6: sampler-driven workout selection (mirrors generate_plan
+            # / regenerate_from_today). Replaces the legacy plan_week-only
+            # skeleton so mix-emphasis + the over_under hard-floor reach a
+            # weekly recalc. Climbing specificity ONLY in build2/peak.
+            budget = get_budget_for_phase(phase.name)
+            phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
+            _emph = ("event_climb"
+                     if (event_targets and event_targets.get("climbing_bias")
+                         and phase.name in ("build2", "peak"))
+                     else None)
+            sampled = sample_week_workouts(
+                phase=phase, budget=budget, library=library,
+                used_names=used_names_dict,
+                week_num=week_num, seed_salt=seed_salt,
+                week_start=cursor,
+                available_days=adjusted_goal.available_days,
+                rest_days=adjusted_goal.rest_days,
+                daily_max_hours=adjusted_goal.daily_max_hours,
+                max_weekday_hours=adjusted_goal.max_weekday_hours,
+                max_weekend_hours=adjusted_goal.max_weekend_hours,
+                is_stepback=is_stepback,
+                pool_index=pool_index,
+                week_in_phase=week_in_phase,
+                recent_hit_types=phase_rot,
+                seen_cc_dur_tuples=seen_cc_dur_tuples,
+                plan_pick_counts=plan_pick_counts,
+                class_session_counts=class_session_counts,
+                class_distinct_files=class_distinct_files,
+                plan_total_weeks=plan_total_weeks_rc,
+                goal_type=getattr(adjusted_goal, "goal_type", "general"),
+                emphasis_profile=_emph,
+            )
+            if len(phase_rot) > 12:
+                del phase_rot[: len(phase_rot) - 12]
+            for nm in used_names_dict:
+                used_names.add(nm)
+
+            # Replace pw.sessions with the sampled set, PRESERVING ftp_test
+            # slots (sampler doesn't pick them) and any adapted / user_moved /
+            # non-pending session (§6.12 contract — a recalc must not rewrite a
+            # workout the athlete already moved or completed).
+            for off, legacy_s in enumerate(pw.sessions):
+                if getattr(legacy_s, "adapted", False) or getattr(legacy_s, "user_moved", False):
+                    continue
+                if getattr(legacy_s, "status", "pending") != "pending":
+                    continue
+                if getattr(legacy_s, "session_type", "") == "ftp_test":
+                    continue
+                if 0 <= off < len(sampled) and sampled[off] is not None:
+                    pw.sessions[off] = sampled[off]
+
+            # Fallback match_zwo for any slot the sampler left unfilled.
             # Anchor seed on the plan start (phase start or regen_start) so
             # re-running on a different day returns the same workout.
             _anchor = new_phases[0].start if new_phases else regen_start
             for day_idx, s in enumerate(pw.sessions):
-                if s.session_type not in ("rest", "recovery", "ftp_test"):
-                    before = len(used_names)
-                    match_zwo(s, library, week_num=week_num, day_idx=day_idx,
-                              used_names=used_names, plan_start_date=_anchor)
-                    # Track when each workout was assigned
-                    if len(used_names) > before:
-                        new_names = used_names - set(used_in_week.keys())
-                        for n in new_names:
-                            used_in_week[n] = week_num
+                if getattr(s, "adapted", False) or getattr(s, "user_moved", False):
+                    continue
+                if getattr(s, "status", "pending") != "pending":
+                    continue
+                if s.session_type in ("rest", "recovery", "ftp_test"):
+                    continue
+                if getattr(s, "zwo_file", ""):
+                    continue
+                before = len(used_names)
+                match_zwo(s, library, week_num=week_num, day_idx=day_idx,
+                          used_names=used_names, plan_start_date=_anchor,
+                          seed_salt=seed_salt)
+                # Track when each workout was assigned
+                if len(used_names) > before:
+                    new_names = used_names - set(used_in_week.keys())
+                    for n in new_names:
+                        used_in_week[n] = week_num
+                        used_names_dict[n] = week_num
 
             new_weeks.append(pw)
             prev_week_sessions = pw.sessions  # feed into next plan_week (PL2)
             cursor += timedelta(weeks=1)
             week_num += 1
+            week_in_phase += 1
+
+    # v2.0.3 F6/F7: event long-ride progression over the rebuilt future weeks,
+    # mirroring generate_plan / regenerate_from_today (no-op for non-event
+    # recalcs). new_weeks is future-only, so offset _wi by the already-elapsed
+    # weeks (past) so the ramp CONTINUES from where the athlete is rather than
+    # resetting to long_start_h. Stops ≥3 weeks out so the taper owns the long
+    # ride (the <= 21 gate matches both other sites).
+    if event_targets is not None:
+        _mw_min = int(round((goal.max_weekend_hours or 0) * 60))
+        _elapsed_weeks = len(past_weeks)
+        for _wi, _w in enumerate(new_weeks):
+            if getattr(_w, "phase", "") == "taper":
+                continue
+            _wstart = getattr(_w, "start", None)
+            if _wstart and goal.target_date and (goal.target_date - _wstart).days <= 21:
+                continue
+            _lr_h = min(event_targets["long_target_h"],
+                        event_targets["long_start_h"]
+                        + LONG_RIDE_STEP_MIN / 60.0 * (_elapsed_weeks + _wi))
+            _apply_long_ride_target(
+                _w.sessions,
+                target_min=int(round(_lr_h * 60)),
+                max_weekend_min=_mw_min,
+                is_stepback=getattr(_w, "is_stepback", False))
 
     all_weeks = past_weeks + new_weeks
 

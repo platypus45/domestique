@@ -12422,9 +12422,25 @@ def api_plan_auto_recalc():
                     eftp = round(si[0]["eftp"])
                     break
 
+        # v2.0.3 F5 — thread athlete (ftp + weight) so recalculate_plan can
+        # compute event targets, matching the generate + regenerate paths
+        # (without it, a weekly recalc reverted to the legacy +5/+5 CTL step).
+        # Assembled exactly like the regen caller: probe the raw athlete store
+        # so a brand-new user with default-backed ftp/weight yields None.
+        recalc_athlete = None
+        try:
+            from profile_manager import ProfileManager
+            _pm = ProfileManager.get()
+            _raw = getattr(_pm, "_athlete", {}) or {}
+            if "ftp" in _raw and "weight_kg" in _raw and _raw.get("ftp") and _raw.get("weight_kg"):
+                recalc_athlete = {"ftp": _pm.ftp, "weight_kg": _pm.weight_kg}
+        except Exception:
+            recalc_athlete = None
+
         new_phases, all_weeks, recalc_info = tp.recalculate_plan(
             goal=goal, current_plan_weeks=old_weeks,
             current_ctl=current_ctl, current_eftp=eftp,
+            athlete=recalc_athlete,
         )
 
         if recalc_info.get("action") == "no_change":

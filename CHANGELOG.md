@@ -17,11 +17,27 @@
   the frozen app's real traceback (OS-level `cmd` output redirect + an on-disk crash
   dump, and it dumps *before* failing the step) instead of coming back blank — this
   is how the one-character bug above was finally pinned.
-- **Tighter macOS entitlements.** The hardened-runtime set dropped from three to one
-  (`disable-library-validation`, which is genuinely required for the bundled Python
-  C-extension dylibs). The broad `allow-unsigned-executable-memory` and
-  `allow-dyld-environment-variables` were removed — cargo-culted from past
-  notarization fixes, not needed.
+- **Zero macOS entitlements.** The hardened-runtime entitlement set dropped from three
+  to NONE. `build_dmg.sh` re-signs every bundled Mach-O with our Developer ID, so all
+  dylibs carry our Team ID and library validation passes on its own — making even
+  `disable-library-validation` redundant (alongside the never-needed
+  `allow-unsigned-executable-memory` and `allow-dyld-environment-variables`). Hardened
+  runtime stays on, with no relaxations.
+- **Planner: determinism + event-aware consistency + variety.**
+  - *Deterministic generation* — a cold-cache read in the interval-floor pass desynced
+    the per-week RNG on the first plan built in a process, so that plan differed from
+    later ones (and a regenerate could drift). Plans are now byte-identical across calls
+    for a given seed.
+  - *Over-under sessions reliably appear* in the build phases — they had no hard-floor
+    and only a floor-level mix weight, so unlucky seeds dropped them entirely.
+  - *Event targets now reach `recalculate_plan`* (and route through the content-aware
+    sampler), so a weekly recalc for an event goal keeps the long-ride progression and
+    mix emphasis instead of reverting to a generic skeleton.
+  - *Weekly tier-down* only touches today-onward hards (never re-touches a session you
+    already rode), and the long-ride ramp no longer resets to the floor on a mid-plan
+    regenerate.
+  - *Steady-slot interval variety* is now drawn only from classes honest at tempo
+    intensity, so an easy day is never a hard interval wearing an "easy" label.
 
 ## v2.0.2 — Windows launch fix, polarization label, CI smoke-test (2026-06-14)
 

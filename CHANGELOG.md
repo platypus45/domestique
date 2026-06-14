@@ -1,5 +1,35 @@
 # Changelog
 
+## v2.0.4 — Planner safety + library injury cleanup (2026-06-15)
+
+Two safety fixes — to how the plan is built, and to what's in the workout library —
+plus workout names that finally tell the truth about the file.
+
+### What changes for users
+
+- **No more "VO2max every day."** The planner now guarantees two limits from the
+  training-overload literature that previously weren't enforced end-to-end: a weekly
+  cap on hard (HIT) sessions, and a per-type ceiling on how long a single hard session
+  can run. A 2-hour weekday slot can no longer surface a 120-minute VO2max session, and
+  no week exceeds its hard-session budget — regardless of goal or shuffle. The other
+  guardrails (progressive ramp rate, recovery weeks, acute:chronic workload, 48-hour
+  spacing between hard days) were already in place; these were the two gaps.
+- **51 unsafe library workouts repaired.** A content screen found a small dangerous
+  tail — corrupt power data (600% FTP ramps, 220% for 3 minutes), back-to-back max
+  efforts with no recovery, and inadequate rest. These were amended in place into safe,
+  functional workouts that keep their training intent (a sprint stays a sprint, just at
+  an achievable wattage). Ramp tests and FTP tests are left untouched — those are
+  legitimate maximal protocols, not hazards.
+- **Workout names tell the truth.** After a workout's structure was amended, its in-app
+  title, its in-file name/description, and its classification were all regenerated to
+  match what the workout actually does now.
+
+| Before | After |
+|---|---|
+| Up to a full week of VO2max; 120-min hard sessions | Within weekly HIT budget; each hard type duration-capped |
+| 51 workouts with impossible / unsafe power | 0 dangerous workouts (whole-library re-scan) |
+| "Anaerobic 5x2min (82min)" on a file holding 2×90s @ 150% | Name + description match the actual blocks |
+
 ## v2.0.3 — Windows: the actual launch fix (2026-06-14)
 
 - **Windows: the app starts.** The previous release misdiagnosed the Windows launch

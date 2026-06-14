@@ -1,28 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict>
-  <!--
-    ZERO hardened-runtime entitlements (v2.0.3).
-
-    The app is signed with `--options runtime` (hardened runtime ON) but grants
-    NONE of the usual relaxations. Why each was removed:
-
-    • cs.allow-unsigned-executable-memory — W^X / JIT memory. CPython + numpy/
-      scipy never request it. Never needed.
-    • cs.allow-dyld-environment-variables — modern PyInstaller resolves bundled
-      libs via @rpath/@loader_path, not DYLD_* env vars. Never needed.
-    • cs.disable-library-validation — would be needed only if the process loaded
-      a library NOT signed by our Team ID. It doesn't: build_dmg.sh re-signs
-      EVERY nested Mach-O (enumerated by content, not extension) with our
-      Developer ID, so every bundled dylib carries Team ID VB8TF5LQ8P — verified
-      on libssl/libcrypto/_pydantic_core. Library validation is satisfied by
-      same-Team-ID alone, so the entitlement is redundant. Dropped.
-
-    GATE: the v2.0.3 DMG MUST be launch-tested (open the notarized .app), not
-    just VERSION-checked. If it fails to open with a code-signing / library-load
-    error, re-add ONLY cs.disable-library-validation here, re-notarize, re-test.
-    Do not re-add the other two.
-  -->
-</dict>
+<dict/>
 </plist>

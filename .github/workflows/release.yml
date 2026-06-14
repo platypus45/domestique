@@ -139,43 +139,116 @@ jobs:
           $expected = (Get-Content -Path VERSION -Raw).Trim()
           Write-Host "Expected version from VERSION file: $expected"
 
+          $exePath = "dist\Domestique\Domestique.exe"
+
+          # --- Pre-flight: prove the EXE exists and show the build layout. -----
+          # A native PyInstaller crash exits pre-Python and writes nothing, so
+          # we record the layout up front to spot a missing/short EXE or a
+          # bootloader that failed to unpack its dependencies.
+          Write-Host "===== PRE-FLIGHT ====="
+          Write-Host "EXE present (Test-Path '$exePath'): $(Test-Path $exePath)"
+          Write-Host "----- dist\Domestique\ (top level) -----"
+          Get-ChildItem "dist\Domestique\" -ErrorAction SilentlyContinue |
+            Select-Object Name, Length | Format-Table -AutoSize | Out-String | Write-Host
+          # Anchor the Event Log query: we only want entries logged from now on.
+          $startTime = Get-Date
+          Write-Host "Smoke-test start time: $startTime"
+          Write-Host "===== END PRE-FLIGHT ====="
+
           # Capture anything the EXE emits. The build is console=False so the
           # windowed process has no console of its own; redirecting std streams
           # is the only way to recover a print()/traceback if it does write one.
-          $proc = Start-Process -FilePath "dist\Domestique\Domestique.exe" -PassThru `
+          $proc = Start-Process -FilePath $exePath -PassThru `
             -RedirectStandardOutput stdout.txt -RedirectStandardError stderr.txt
 
           # Dump every diagnostic we can find into the CI log so a silent
-          # startup failure becomes a readable traceback in the next run.
+          # startup failure becomes a readable traceback in the next run. Each
+          # piece runs in its own try/catch so one failing collector never
+          # suppresses the others.
           function Dump-Diagnostics {
             Write-Host "===== DIAGNOSTICS: EXE startup failure ====="
-            foreach ($f in @("stdout.txt", "stderr.txt")) {
-              if (Test-Path $f) {
-                Write-Host "===== $f ====="
-                Get-Content $f
+
+            # Process exit code — for a native (pre-Python) PyInstaller crash
+            # this is the single most valuable signal: e.g. 0xC0000135 (DLL not
+            # found), 0xC000007B (bad image / arch mismatch), 0xC0000409.
+            try {
+              if ($proc) {
+                Write-Host "proc.HasExited: $($proc.HasExited)"
+                if ($proc.HasExited) {
+                  Write-Host ("proc.ExitCode: {0} (hex: 0x{1:X8})" -f $proc.ExitCode, $proc.ExitCode)
+                } else {
+                  Write-Host "proc.ExitCode: (still running)"
+                }
+              } else {
+                Write-Host "proc: (null — never started)"
               }
-            }
+            } catch { Write-Host "[exit-code collector failed] $($_.Exception.Message)" }
+
+            # Redirected std streams.
+            try {
+              Write-Host "=== STDOUT ==="
+              if (Test-Path "stdout.txt") { Get-Content "stdout.txt" } else { Write-Host "(no stdout.txt)" }
+            } catch { Write-Host "[stdout collector failed] $($_.Exception.Message)" }
+            try {
+              Write-Host "=== STDERR ==="
+              if (Test-Path "stderr.txt") { Get-Content "stderr.txt" } else { Write-Host "(no stderr.txt)" }
+            } catch { Write-Host "[stderr collector failed] $($_.Exception.Message)" }
+
             # Launcher log(s): ~/.domestique/logs/domestique_<ts>.log — this is
             # where _log() mirrors the uvicorn/app-startup traceback.
-            $logDir = Join-Path $env:USERPROFILE ".domestique\logs"
-            if (Test-Path $logDir) {
-              Write-Host "===== Launcher logs ($logDir) ====="
-              Get-ChildItem $logDir -Recurse | ForEach-Object {
-                Write-Host "=== $($_.FullName) ==="
+            try {
+              $logDir = Join-Path $env:USERPROFILE ".domestique\logs"
+              if (Test-Path $logDir) {
+                Write-Host "===== Launcher logs ($logDir) ====="
+                Get-ChildItem $logDir -Recurse | ForEach-Object {
+                  Write-Host "=== $($_.FullName) ==="
+                  Get-Content $_.FullName
+                }
+              } else {
+                Write-Host "(no launcher log dir at $logDir)"
+              }
+            } catch { Write-Host "[launcher-log collector failed] $($_.Exception.Message)" }
+
+            # Any crash log the runtime may have left next to the EXE.
+            try {
+              Get-ChildItem -Path . -Recurse -Filter "*.log" -ErrorAction SilentlyContinue | ForEach-Object {
+                Write-Host "=== crash/runtime log: $($_.FullName) ==="
                 Get-Content $_.FullName
               }
-            } else {
-              Write-Host "(no launcher log dir at $logDir)"
-            }
-            # Any crash log the runtime may have left next to the EXE.
-            Get-ChildItem -Path . -Recurse -Filter "*.log" -ErrorAction SilentlyContinue | ForEach-Object {
-              Write-Host "=== crash/runtime log: $($_.FullName) ==="
-              Get-Content $_.FullName
-            }
+            } catch { Write-Host "[runtime-log collector failed] $($_.Exception.Message)" }
+
+            # Windows Application Event Log — the key signal for a native crash
+            # that left no file. Filter by start time, then surface Errors and
+            # anything mentioning the app/runtime/fault.
+            try {
+              Write-Host "=== Windows Application Event Log (errors + relevant since start) ==="
+              Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=$startTime} -ErrorAction SilentlyContinue |
+                Where-Object { $_.LevelDisplayName -eq 'Error' -or $_.Message -match 'Domestique|\.NET|Faulting|clr|0xc0000' } |
+                Select-Object -First 15 |
+                Format-List TimeCreated, ProviderName, Id, Message | Out-String | Write-Host
+            } catch { Write-Host "[event-log (by-message) collector failed] $($_.Exception.Message)" }
+
+            try {
+              Write-Host "=== Windows Application Event Log (by crash-reporting providers) ==="
+              Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=$startTime} -ErrorAction SilentlyContinue |
+                Where-Object { $_.ProviderName -match 'Application Error|.NET Runtime|Windows Error Reporting' } |
+                Select-Object -First 15 |
+                Format-List TimeCreated, ProviderName, Id, Message | Out-String | Write-Host
+            } catch { Write-Host "[event-log (by-provider) collector failed] $($_.Exception.Message)" }
+
             Write-Host "===== END DIAGNOSTICS ====="
           }
 
           try {
+            # Give the bootloader time to either crash natively or start serving.
+            Start-Sleep -Seconds 12
+            if ($proc.HasExited) {
+              Write-Host ("EXE EXITED EARLY with code: {0} (hex: 0x{1:X8})" -f $proc.ExitCode, $proc.ExitCode)
+              Write-Error "EXE exited before it could serve /api/version"
+              Dump-Diagnostics
+              exit 1
+            }
+
             $served = $null
             $deadline = (Get-Date).AddSeconds(90)
             while ((Get-Date) -lt $deadline) {

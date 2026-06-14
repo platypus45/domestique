@@ -110,6 +110,12 @@ _shutdown_event = threading.Event()
 # The main thread polls this after wait_for_server() fails so the user
 # sees the real traceback instead of a generic "server didn't start".
 _server_error: "Exception | None" = None
+# Holds the FULL formatted traceback (traceback.format_exc()) from the
+# uvicorn thread. str(_server_error) loses the stack; in a frozen windowed
+# build the uvicorn/app-startup traceback is the single most useful artifact
+# for diagnosing a silent "connection refused" startup death, so capture it
+# verbatim for the on-disk log and CI stdout.
+_server_traceback: "str | None" = None
 # CON5: handle to the running uvicorn Server so SIGTERM/SIGINT can flip
 # `should_exit = True` and let the FastAPI lifespan run to completion
 # instead of sys.exit() killing the process mid-shutdown.
@@ -135,7 +141,7 @@ def start_server():
     os.chdir(app_dir)
 
     def _run():
-        global _server_error, _uvicorn_server
+        global _server_error, _server_traceback, _uvicorn_server
         try:
             import uvicorn
             # Import the app module — this triggers all the FastAPI setup
@@ -150,11 +156,14 @@ def start_server():
             _uvicorn_server.run()
         except Exception as e:
             # Daemon threads swallow exceptions silently, producing a
-            # confusing "server didn't start" with no traceback. Log
-            # here and expose the error flag so the main thread can
-            # surface it.
+            # confusing "server didn't start" with no traceback. Capture
+            # the FULL traceback (not just str(e)) into _server_traceback
+            # and log here so the main thread can surface the real cause —
+            # in a frozen windowed build this on-disk traceback is the only
+            # window into a silent uvicorn/app-startup failure.
             import traceback
             _server_error = e
+            _server_traceback = traceback.format_exc()
             try:
                 import log_config
                 log_config.get_logger(__name__).exception(
@@ -444,7 +453,8 @@ def main():
     start_server()
 
     # Wait for server to respond, then open window
-    if wait_for_server():
+    server_up = wait_for_server()
+    if server_up:
         print(f"Server ready → {URL}")
     else:
         log = _log()
@@ -458,25 +468,78 @@ def main():
             # v2.0.2 WIN-START-FIX: mirror to disk for windowed builds.
             if log is not None:
                 log.error(msg)
+            # v2.0.2 WIN-START-FIX: also dump the FULL captured traceback so
+            # the cause is in the log file (and CI stdout), not just the type.
+            if _server_traceback:
+                print(_server_traceback)
+                if log is not None:
+                    log.error("uvicorn thread traceback:\n%s", _server_traceback)
             sys.exit(1)
         print("Warning: Server may not have started (timeout).")
         if log is not None:
             log.warning("Server may not have started (timeout after wait_for_server).")
 
-    # v2.0.2 WIN-CI-SMOKE: headless server-only mode. The server is confirmed
-    # up above; a CI runner has no display, so opening the pywebview window or
-    # the tray would block on a GUI loop forever. Keep-alive instead so the
-    # smoke-test can poll /api/version, then kill the process.
+    # v2.0.2 WIN-CI-SMOKE: headless server-only mode. A CI runner has no
+    # display, so opening the pywebview window or the tray would block on a
+    # GUI loop forever. Keep-alive instead so the smoke-test can poll
+    # /api/version, then kill the process.
+    #
+    # v2.0.2 WIN-START-FIX: this mode must FAIL FAST + LOUD, never block
+    # silently. The build is console=False, so a hung EXE looks identical to
+    # a crashed one ("connection actively refused" for the full poll window).
+    # BEFORE blocking we verify the server actually bound; if it did not
+    # (wait_for_server() returned False / _server_error set), we write the
+    # full traceback to the log AND print it, then sys.exit(1) so the EXE
+    # exits non-zero with the cause instead of hanging. The whole path is
+    # wrapped so ANY exception here is logged (full traceback) + printed +
+    # exits 1. Non-server-only behavior below is untouched.
     if _is_server_only():
-        print(f"server-only mode — serving on http://127.0.0.1:{PORT}")
         log = _log()
-        if log is not None:
-            log.info("server-only mode — serving on http://127.0.0.1:%s", PORT)
-        # Block until the process is killed (CI stops it after the poll).
-        # _shutdown_event is also flipped by the SIGINT handler, so Ctrl+C /
-        # SIGTERM still exits cleanly without a window or tray.
-        _shutdown_event.wait()
-        return
+        try:
+            if not server_up:
+                msg = (
+                    "FATAL: server-only mode — server never came up "
+                    f"(wait_for_server timed out / failed to bind {URL})."
+                )
+                print(msg)
+                if log is not None:
+                    log.error(msg)
+                if _server_error is not None:
+                    err = (
+                        f"uvicorn thread crashed: "
+                        f"{type(_server_error).__name__}: {_server_error}"
+                    )
+                    print(err)
+                    if log is not None:
+                        log.error(err)
+                if _server_traceback:
+                    print(_server_traceback)
+                    if log is not None:
+                        log.error("uvicorn thread traceback:\n%s", _server_traceback)
+                sys.exit(1)
+
+            print(f"server-only mode — serving on http://127.0.0.1:{PORT}")
+            if log is not None:
+                log.info("server-only mode — serving on http://127.0.0.1:%s", PORT)
+            # Server confirmed up. Block until the process is killed (CI stops
+            # it after the poll). _shutdown_event is also flipped by the SIGINT
+            # handler, so Ctrl+C / SIGTERM still exits cleanly without a window.
+            _shutdown_event.wait()
+            return
+        except SystemExit:
+            # sys.exit(1) above is intentional — let it propagate.
+            raise
+        except Exception as e:
+            # Any unexpected failure in the server-only path must surface
+            # with a full traceback (windowed stdout is dead) and exit 1,
+            # never leave the EXE hanging.
+            import traceback
+            tb = traceback.format_exc()
+            print(f"FATAL: server-only mode crashed: {type(e).__name__}: {e}")
+            print(tb)
+            if log is not None:
+                log.error("server-only mode crashed:\n%s", tb)
+            sys.exit(1)
 
     # Try native window (pywebview), fall back to browser + tray
     try:

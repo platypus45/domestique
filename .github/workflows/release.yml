@@ -156,10 +156,19 @@ jobs:
           Write-Host "===== END PRE-FLIGHT ====="
 
           # Capture anything the EXE emits. The build is console=False so the
-          # windowed process has no console of its own; redirecting std streams
-          # is the only way to recover a print()/traceback if it does write one.
-          $proc = Start-Process -FilePath $exePath -PassThru `
-            -RedirectStandardOutput stdout.txt -RedirectStandardError stderr.txt
+          # windowed process has no console of its own. Start-Process
+          # -RedirectStandard* does NOT reliably capture a PyInstaller onedir
+          # bootloader's child stdout/stderr (the files come back empty), so we
+          # launch through cmd.exe and use OS-level redirection (> ... 2>&1),
+          # which the bootloader's inherited handles DO get written to. The
+          # merged stream lands in exe_out.txt. DOMESTIQUE_SERVER_ONLY is set
+          # above and cmd inherits it.
+          # NOTE: $proc is the cmd.exe wrapper, not the EXE itself — so
+          # $proc.ExitCode is cmd's code, not the app's. We rely on the
+          # /api/version poll + exe_out.txt contents for the verdict.
+          $proc = Start-Process -FilePath "cmd.exe" `
+            -ArgumentList '/c','"dist\Domestique\Domestique.exe" > exe_out.txt 2>&1' `
+            -PassThru
 
           # Dump every diagnostic we can find into the CI log so a silent
           # startup failure becomes a readable traceback in the next run. Each
@@ -184,7 +193,24 @@ jobs:
               }
             } catch { Write-Host "[exit-code collector failed] $($_.Exception.Message)" }
 
-            # Redirected std streams.
+            # Merged stdout+stderr captured via cmd.exe OS-level redirection —
+            # this is the reliable source for the Python-level traceback.
+            try {
+              Write-Host "=== EXE OUTPUT (exe_out.txt) ==="
+              if (Test-Path exe_out.txt) { Get-Content exe_out.txt | Write-Host } else { Write-Host "(no exe_out.txt)" }
+            } catch { Write-Host "[exe-output collector failed] $($_.Exception.Message)" }
+
+            # WIN-DIAG: dead-simple crash dump written by start_server's except
+            # clause (launcher.py) — depends on neither log_config nor stdout
+            # capture, so it survives when both of those come back empty.
+            try {
+              $crash = Join-Path $env:USERPROFILE ".domestique\startup_crash.txt"
+              Write-Host "=== startup_crash.txt ($crash) ==="
+              if (Test-Path $crash) { Get-Content $crash | Write-Host } else { Write-Host "(no startup_crash.txt)" }
+            } catch { Write-Host "[crash-dump collector failed] $($_.Exception.Message)" }
+
+            # Legacy Start-Process redirect targets — usually empty for an
+            # onedir bootloader, kept in case anything lands there.
             try {
               Write-Host "=== STDOUT ==="
               if (Test-Path "stdout.txt") { Get-Content "stdout.txt" } else { Write-Host "(no stdout.txt)" }
@@ -243,7 +269,10 @@ jobs:
             # Give the bootloader time to either crash natively or start serving.
             Start-Sleep -Seconds 12
             if ($proc.HasExited) {
-              Write-Host ("EXE EXITED EARLY with code: {0} (hex: 0x{1:X8})" -f $proc.ExitCode, $proc.ExitCode)
+              # $proc is the cmd.exe wrapper, so this exit code is cmd's, not the
+              # app's — print it for what it's worth, but the real traceback is in
+              # exe_out.txt (dumped by Dump-Diagnostics below).
+              Write-Host ("cmd wrapper EXITED EARLY with code: {0} (hex: 0x{1:X8})" -f $proc.ExitCode, $proc.ExitCode)
               Write-Error "EXE exited before it could serve /api/version"
               Dump-Diagnostics
               exit 1
@@ -274,8 +303,11 @@ jobs:
             }
             Write-Host "Smoke-test passed: EXE serves version $served"
           } finally {
+            # $proc is the cmd.exe wrapper; the EXE is its child. Kill the whole
+            # tree (/T) so Domestique.exe doesn't outlive the wrapper.
             if ($proc -and -not $proc.HasExited) {
-              Stop-Process -Id $proc.Id -Force
+              taskkill /PID $proc.Id /T /F 2>$null
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
             }
           }
 

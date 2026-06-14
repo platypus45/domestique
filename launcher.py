@@ -164,6 +164,18 @@ def start_server():
             import traceback
             _server_error = e
             _server_traceback = traceback.format_exc()
+            # WIN-DIAG: dead-simple crash dump that depends on NOTHING —
+            # not log_config (may fail to init on Windows) and not stdout
+            # capture (CI's Start-Process redirect came back empty). Plain
+            # write_text to a fixed path so the cause is ALWAYS recoverable
+            # by CI and by users on a silent windowed build.
+            try:
+                from pathlib import Path as _P
+                _crash = _P.home() / ".domestique" / "startup_crash.txt"
+                _crash.parent.mkdir(parents=True, exist_ok=True)
+                _crash.write_text(_server_traceback, encoding="utf-8")
+            except Exception:
+                pass
             try:
                 import log_config
                 log_config.get_logger(__name__).exception(

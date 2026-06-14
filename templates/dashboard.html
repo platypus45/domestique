@@ -3516,7 +3516,7 @@ async function openWorkoutDetail(category, filename, meta) {
         <button class="btn btn-primary" onclick="downloadZwo('${escJs(category)}','${escJs(filename)}')">Open Workout File (.zwo)</button>
         <button class="btn" onclick="closeModal()">Close</button>
       </div>
-      <div style="margin-top:8px;font-size:11px;color:var(--text3);">Download the .zwo file and load it into MyWhoosh / Tacx / Zwift / Golden Cheetah. When you finish, use the Import FIT button (top right) to post-analyze your ride.</div>`;
+      <div style="margin-top:8px;font-size:11px;color:var(--text3);">Download the .zwo and load it into a trainer app (MyWhoosh / Tacx / Zwift / Golden Cheetah) or push it straight onto your Garmin / Wahoo / Hammerhead — it drives the trainer in ERG either way. When you finish, use the Import FIT button (top right) to post-analyze your ride.</div>`;
   } catch(e) {
     $('modal-content').innerHTML = `<p style="color:var(--red)">Failed to load workout</p>`;
   }

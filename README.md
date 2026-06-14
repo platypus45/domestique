@@ -9,17 +9,22 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.9+-blue" alt="Python">
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
-  <img src="https://img.shields.io/badge/Workouts-4178-orange" alt="Workouts">
+  <img src="https://img.shields.io/badge/Workouts-4198-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
   <img src="https://img.shields.io/badge/Version-v2.0.0-brightgreen" alt="Version">
-  <img src="https://img.shields.io/badge/Tests-1422%20passing-success" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-1636-success" alt="Tests">
+  <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
+
+---
+
+**Contents:** [TL;DR](#tldr) · [Why this exists](#why-this-exists) · [Quick start](#quick-start) · [Core mechanics](#core-mechanics) · [Architecture](#architecture-overview) · [How the planner thinks (science)](#how-the-planner-thinks-logic--science) · [Ride auto-matching](#auto-matching-your-rides-to-planned-sessions) · [Development](#development) · [Releases](#releases) · [Abbreviations](#abbreviations--terms) · [License](#license--attribution)
 
 ---
 
 ## TL;DR
 
-Domestique is a localhost-only cycling planner that ships 3,054 structured ZWO workouts and 622 virtual routes, imports your post-ride FITs, and mutates the next-day prescription from *every* signal the ride exposed — TSS overshoot, polarisation breach, DFA α1, aerobic decoupling, Foster monotony, eFTP drift, Hooper composite. Most "smart" planners stop at the dashboard. Domestique stops at the prescription. Hardware-agnostic: generate ZWO, ride in MyWhoosh / Tacx / Zwift / Hammerhead / outdoors, import the FIT back. Single rider, no telemetry, no cloud.
+Domestique is a localhost-only cycling planner that ships 4,198 structured ZWO workouts and 622 virtual routes, imports your post-ride FITs, and mutates the next-day prescription from *every* signal the ride exposed — TSS overshoot, polarisation breach, DFA α1, aerobic decoupling, Foster monotony, eFTP drift, Hooper composite. Most "smart" planners stop at the dashboard. Domestique stops at the prescription. Hardware-agnostic: generate ZWO, ride in MyWhoosh / Tacx / Zwift / Hammerhead / outdoors, import the FIT back. Single rider, no telemetry, no cloud.
 
 ## Why this exists
 
@@ -202,9 +207,9 @@ Separate from G1–G7, the TSB scalar itself has dashboard hooks: TSB < −10 su
 
 Pure Python, flat module layout — every `.py` at repo root is `import`ed by another root module. PyInstaller bundles them as-is (no `domestique/` package wrapper) so the spec, the DMG, and the EXE all stay simple.
 
-**Planner** (`training_planner.py` + `training.py`) sizes Base/Build1/Build2/Peak/(Taper|Consolidation) phases from CTL + target date, picks workouts from the 3,054-file library with a (mix_preference x variety_score x novelty_boost) sampler that forces ~1 pick per file across a plan, enforces minimum-floor counts of Ronnestad / anaerobic / neuromuscular sessions per phase, and runs the G1–G7 priority chain on every daily adapt. `regenerate_from_today()` rebuilds the plan when `detect_plan_gaps()` flags >=2 consecutive missed weeks; `reforecast()` runs the TSB / ACWR / polarisation adjustments on demand; `auto_apply_eftp()` fires when ICU eFTP > set FTP by >=3% for 7+ days.
+**Planner** (`training_planner.py` + `training.py`) sizes Base/Build1/Build2/Peak/(Taper|Consolidation) phases from CTL + target date, picks workouts from the 4,198-file library with a (mix_preference x variety_score x novelty_boost) sampler that forces ~1 pick per file across a plan, enforces minimum-floor counts of Ronnestad / anaerobic / neuromuscular sessions per phase, and runs the G1–G7 priority chain on every daily adapt. `regenerate_from_today()` rebuilds the plan when `detect_plan_gaps()` flags >=2 consecutive missed weeks; `reforecast()` runs the TSB / ACWR / polarisation adjustments on demand; `auto_apply_eftp()` fires when ICU eFTP > set FTP by >=3% for 7+ days.
 
-**Library** ships 3,054 structured ZWO workouts (content-classified into 11 classes — endurance / sweet spot / threshold / VO2max / sprint / over-under / pyramid / FTP tests etc.; tags-indexed for filter queries) and 622 real-world route courses (Alps, Dolomites, Pyrenees, Basque country, Flanders, Costa Blanca, Mallorca, Innsbruck 2018 Worlds, Alpe d'Huez, Mont Ventoux, Stelvio + 160 regional climbs; CRS or GPX export). No Zwift virtual worlds (Watopia / Yorkshire / etc. are Zwift-proprietary and not redistributable). A 24-week plan picks 150 distinct files (every session is a different workout). See [docs/workout_sources.md](docs/workout_sources.md) for provenance and licensing.
+**Library** ships 4,198 structured ZWO workouts (content-classified into 17 canonical classes — endurance / tempo / sweet spot / threshold / over-under / VO2max / VO2-short / anaerobic / neuromuscular / FTP test, plus ladder variants; tags-indexed for filter queries) and 622 real-world route courses (Alps, Dolomites, Pyrenees, Basque country, Flanders, Costa Blanca, Mallorca, Innsbruck 2018 Worlds, Alpe d'Huez, Mont Ventoux, Stelvio + 160 regional climbs; CRS or GPX export). No Zwift virtual worlds (Watopia / Yorkshire / etc. are Zwift-proprietary and not redistributable). A 24-week plan picks 150 distinct files (every session is a different workout). See [docs/workout_sources.md](docs/workout_sources.md) for provenance and licensing.
 
 **Post-ride viewer** (`ride_storage.py` + `fit_activity.py` + `analytics.py` + `ride_report_png.py`) parses the imported FIT via fitparse, computes NP/IF/TSS, time-in-zone, aerobic decoupling, Treff polarisation classification, DFA alpha1 (when `HrvMessage` records are present), Belastingscore (Kontro 2026 3D impulse-response decomposition into CP / W' / Pmax — additive lens alongside TSS, not a replacement), eFTP cross-check, FTP-test detection (Coggan-20 by power-profile shape; ramp halt by cadence-drop heuristic), and renders a Pillow PNG / browser-print PDF post-ride summary. A separate `programme_summary_png.py` renders the 12-metric finished-programme recap.
 
@@ -236,7 +241,7 @@ domestique/
 ├── tests/                    — pytest suite (~60 files; run pytest -q)
 ├── docs/                     — Architecture, science deep-dives, build guides
 ├── scripts/                  — One-off generators + scrapers (NOT imported)
-├── workouts/                 — 3,054 ZWO interval workouts
+├── workouts/                 — 4,198 ZWO interval workouts
 ├── courses/                  — Real-world climb library (CRS files)
 ├── static/, templates/       — FastAPI assets + Jinja2 templates
 ├── assets/                   — App icons
@@ -253,13 +258,13 @@ Domestique plans + analyses — you ride in a separate app. The free-forever pic
 
 | App | Free? | ZWO import | Notes |
 |---|---|---|---|
-| **Golden Cheetah** | open-source | yes (ZWO/ERG/MRC) | Best match for a planner+library+viewer app like this; drive the trainer via ANT+ FE-C; drop Domestique's library into GC's workout folder once, all 3,054 files appear in Train view |
+| **Golden Cheetah** | open-source | yes (ZWO/ERG/MRC) | Best match for a planner+library+viewer app like this; drive the trainer via ANT+ FE-C; drop Domestique's library into GC's workout folder once, all 4,198 files appear in Train view |
 | **MyWhoosh** | fully free | yes (via web builder) | Scenery + Zwift-style ride; full ERG on Neo 2T |
 | Tacx Training | free with Tacx HW | no (ZWO); GPX only | Native Tacx integration but no ZWO import |
 
 See [docs/cycling_apps.md](docs/cycling_apps.md) for the full table.
 
-**No laptop?** Both download formats — **ZWO** and **FIT** — drive a smart trainer in ERG, just through different middlemen. ZWO -> load into MyWhoosh / Tacx / Zwift / Golden Cheetah on a laptop or phone (which pairs to your trainer over ANT+ FE-C or Bluetooth FTMS). FIT -> push to a Garmin Edge / Hammerhead Karoo / Wahoo ELEMNT / Garmin watch with the Workouts feature -> the head unit pairs to the trainer over ANT+ FE-C / FTMS and steers power directly. No laptop, no virtual world, no subscription.
+**No laptop?** Both download formats — **ZWO** and **FIT** — drive a smart trainer in ERG. Load either into a trainer app (MyWhoosh / Tacx / Zwift / Golden Cheetah on a laptop or phone, which pairs to your trainer over ANT+ FE-C / Bluetooth FTMS) **or** push it straight onto a head unit — Garmin Edge / Garmin watch / Hammerhead Karoo / Wahoo ELEMNT — which steers the trainer's power directly over ANT+ FE-C / FTMS. Either format, either path; no virtual world, no subscription.
 
 ---
 
@@ -274,12 +279,12 @@ GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads
 - **Goal-aware + event-driven planning** (v2.0.0) — the plan now adapts to what you're training for. An **FTP** focus schedules more threshold/sweet-spot work, a **VO2max** focus more VO2/30-15 work. For a **target event**, distance + elevation drive a real long-ride progression (toward ~0.8× event duration, capped by your weekend hours), a feasibility-bounded fitness target (auto-lowered if the date's too soon), and climbing specificity in build/peak — so a 100 km/500 m and a 175 km/2900 m fondo produce visibly different plans. Survives auto-sync.
 - **Evidence-based library + cleaner browser** (v1.10.0) — added the canonical Rønnestad short/long intervals, proper Wingate SIT (4-min recovery) and descending VO₂ ladders from the PubMed literature, removed 18 under-rested anaerobic files (the "rest too short" ones), and renamed 282 files to match their real content type. The library filter is redesigned: one unified Type, a 0–180 min duration range, and an Advanced panel for Min Score / Surface / Tags.
 - **FIT import that just works** (v1.9.1) — drag a `.fit` from Finder anywhere onto the window (or click **Import FIT**); it imports, reconciles against your plan, adapts the next sessions, and the views refresh on the spot.
-- **Onboarding + "This Week" overhaul** (v1.9.0) — first-run wizard reworked (paste one API key, athlete ID auto-detected, Garmin sync verified, account guidance, skippable); reconciliation of completed rides → done/missed now happens automatically on every sync (the manual "Reconcile Week" button is gone); multi-ride days count correctly toward the week; workout selection brought in line with the planner; library grown to 4 178 clean workouts.
+- **Onboarding + "This Week" overhaul** (v1.9.0) — first-run wizard reworked (paste one API key, athlete ID auto-detected, Garmin sync verified, account guidance, skippable); reconciliation of completed rides → done/missed now happens automatically on every sync (the manual "Reconcile Week" button is gone); multi-ride days count correctly toward the week; workout selection brought in line with the planner; library grown to 4,198 clean workouts.
 
 - **One "Update plan" action** (v1.8.24) — the fragmented Reforecast / Regenerate / availability controls collapsed into a single primary button that auto-picks the right adjustment: a structure-preserving **rebalance** to today's TSB/ACWR/availability when you're on track, or a full **rebuild with a recovery ramp** (Gabbett ACWR < 1.3, Z2 reconditioning — never a catch-up spike) when you've fallen behind. "Regenerate" is now the advanced *Rebuild from scratch*; per-day *Rematch* stays.
 - **Plan auto-adapts after missed workouts** (v1.8.24) — a ride sync that detects a significant *current* absence rebuilds automatically through the recovery ramp, once per absence episode (latched, no churn), recent-gap-gated (an old recovered gap never nags), and never inside an event taper (it flags "behind plan" instead).
 - **Reshuffle honours the slot duration** (v1.8.19 ±25 % gate → v1.8.24 exact) — a 90-min slot returns a ~90-min workout, never a wildly different length.
-- **Bigger, cleaner workout library** (v1.8.22 / v1.8.23 / ongoing) — grown from ~3 050 to **4 178** clean, copyright-free canonical files via a classify-before-write pipeline (every file run through the live content classifier and kept only if its type + title + duration match): polarized Rønnestad VO2 macro-blocks, comprehensive Z2/endurance structure variety (steady, two-zone, progressive, surges), and long-aerobic / duration coverage across all classes.
+- **Bigger, cleaner workout library** (v1.8.22 / v1.8.23 / ongoing) — grown from ~3 050 to **4,198** clean, copyright-free canonical files via a classify-before-write pipeline (every file run through the live content classifier and kept only if its type + title + duration match): polarized Rønnestad VO2 macro-blocks, comprehensive Z2/endurance structure variety (steady, two-zone, progressive, surges), and long-aerobic / duration coverage across all classes.
 - **Plan integrity** (v1.8.18 / v1.8.20 / v1.8.21) — healed ghost `zwo_file` references and froze training history; regeneration preserves your edits (moved / dismissed / completed sessions) and the availability calendar; changing weekly hours repopulates the per-day calendar.
 - **DFA α1 + dual thresholds** (v1.8.14) — see the DFA / HRV sections above: mandatory Malik artifact rejection, HRVT1/HRVT2 detection, intensity distribution, and a dedicated DFA tab; FIT-stream fallback when ICU 404s the `.fit`.
 - **Notarized distribution** (v1.8.5+) — the macOS DMG opens with zero Gatekeeper prompts; new activities auto-push to the calendars.
@@ -606,7 +611,7 @@ GitHub Actions ([.github/workflows/release.yml](.github/workflows/release.yml)) 
 
 ### Workout library sources
 
-The 3,054 ZWO files have three provenance buckets (see [docs/workout_sources.md](docs/workout_sources.md) for full detail + licensing):
+The 4,198 ZWO files have three provenance buckets (see [docs/workout_sources.md](docs/workout_sources.md) for full detail + licensing):
 
 - **1797 pre-existing** (pre-v4 generated workouts) — untouched across the pivot.
 - **1105 whatsonzwift reconstructions** — facts-only inference from the public rendered interval graph; original names, descriptions, and coach cues stripped and regenerated from structure; never touches the site's ZWO download endpoint; `<author>Domestique Library</author>` on every file.
@@ -690,6 +695,6 @@ Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 Tacx, Wahoo, Garmin, Polar, MyWhoosh, Zwift, Golden Cheetah, Rouvy, and Intervals.icu are trademarks of their respective owners. See [TRADEMARKS.md](TRADEMARKS.md).
 
-*Built with PubMed research, 3,054 workouts, and a deep love for cycling.*
+*Built with PubMed research, 4,198 workouts, and a deep love for cycling.*
 
 Copyright (c) 2026 Domestique contributors.

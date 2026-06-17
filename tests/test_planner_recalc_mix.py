@@ -127,17 +127,37 @@ def test_recalc_over_under_floor_reaches_recalc(recalc_result):
 
 
 def test_recalc_shape_overlaps_first_generation(recalc_result):
-    """The recalc's interval-shape set substantially overlaps first
-    generation's — same content-aware shape, not a divergent skeleton."""
+    """The recalc's interval-shape set is itself broad (sampler-routed, not a
+    narrow legacy skeleton) AND shares first generation's polarized CORE.
+
+    v2.0.6 — the ramp zone-integration fix (load_workout_library now bins a
+    ramp's seconds across the zones it SWEEPS instead of one avg-power bucket)
+    gives accurate per-file zone data. That differentiates the library more, so
+    generation and recalc — which run the SAME sampler but at DIFFERENT CTL /
+    phase contexts — legitimately pick somewhat different HIT emphases (e.g.
+    vo2_short vs vo2max, neuromuscular vs threshold; recalc trends harder at the
+    higher recalc CTL, which is correct periodization). Pre-fix the buggy zones
+    made most files look ~Z2-uniform, so the sampler barely discriminated and
+    the two routes overlapped almost completely (an artifact, not a guarantee).
+    Routing-through-the-sampler is independently proven by
+    test_recalc_build_mix_is_content_aware (breadth) and
+    test_recalc_over_under_floor_reaches_recalc (the F1 floor); here we assert
+    recalc is broad in its OWN right and still shares the polarized core.
+    """
     goal, gen_weeks, _np, all_weeks, info = recalc_result
     if info.get("action") == "no_change":
         pytest.skip("recalc was a no-op for this CTL — nothing routed")
     gen_shapes = _build_shapes(gen_weeks)
     recalc_shapes = _build_shapes(all_weeks)
     assert gen_shapes, "first generation produced no build interval shapes"
+    # recalc must itself be a broad, content-aware mix (NOT a narrow skeleton).
+    assert len(recalc_shapes) >= 4, (
+        f"recalc build mix too narrow ({sorted(recalc_shapes)}) — sampler "
+        f"routing (F6) did not take effect"
+    )
+    # ...and still share first generation's polarized CORE shapes.
     overlap = gen_shapes & recalc_shapes
-    # Both routes are the SAME sampler now → the canonical hard shapes recur.
-    assert len(overlap) >= 4, (
+    assert len(overlap) >= 3, (
         f"recalc shapes {sorted(recalc_shapes)} barely overlap first-gen "
         f"{sorted(gen_shapes)} (overlap {sorted(overlap)}) — recalc not routed "
         f"through the sampler"

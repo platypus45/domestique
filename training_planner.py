@@ -140,7 +140,7 @@ _CLASSIFIER_VERSION = 3  # v4.1.2 IMPL-CLASSIFIER: content-based 12-rule cascade
 # the index) on any mismatch. The builder lives in
 # scripts/classify_library_content.py (run via --all). Bump _INDEX_SCHEMA_VERSION
 # whenever the row shape changes so stale on-disk indexes are rejected.
-_INDEX_SCHEMA_VERSION = 1
+_INDEX_SCHEMA_VERSION = 2  # v2.0.6: ramp zone-integration fix changed stored Z% data → invalidate cached indexes
 _LIBRARY_INDEX_FILENAME = ".library_index.json"
 _WORKOUT_LIB_CACHE: dict[str, tuple] = {}
 # v1.8.1 SPEED-A: fast hot-path validator keyed by str(WORKOUT_DIR).
@@ -783,7 +783,11 @@ TSS_PER_HOUR = {
     "threshold":  90,
     "vo2max":     75,
     "overunder":  85,
-    "sprint":    95,  # neuromuscular: short max efforts, high WP → high TSS/hr
+    "sprint":    57,  # v2.0.6: neuromuscular = max efforts with FULL recovery →
+                      # moderate aggregate load (IF ~0.75). Was 95 (≈IF 0.97),
+                      # which sized 90-min sprint slots at ~142 TSS — a target only
+                      # the IF>0.82-mislabeled "neuromuscular" files could hit. Now
+                      # matches what the _SPRINT_SLOT_IF_CEILING (0.82) pool delivers.
     # v1.1.0 IMPL-NORWEGIAN-HR: AM+PM sub-LT2 threshold pair. Per-half ~85
     # (slightly under threshold because the HR ceiling caps glycolytic load
     # — Stöggl & Sperlich 2014). Total day = 2× this when both halves run.
@@ -808,6 +812,19 @@ TYPE_CEILING = {
     "sweetspot": 120,
     "tempo":     120,
 }
+
+# ── v2.0.6: sprint/neuromuscular LOAD ceiling ─────────────────────────────────
+# The content classifier tags by STRUCTURE (many short max-effort segments, high
+# peak watts, micro-interval pattern) and ignores aggregate load — so ~29% of the
+# files it calls "neuromuscular" are really threshold/anaerobic by IF: short
+# recovery (16–30s) between efforts keeps average power near threshold (IF
+# 0.86–1.04). A genuine neuromuscular/sprint session is LOW-IF — maximal efforts
+# with FULL recovery so each rep is quality, not a sustained grind. Reject
+# over-cooked candidates from sprint slots so a 90-min slot can't render as a
+# ~140-TSS threshold day mislabeled "neuromuscular". Files at IF ≤ this stay
+# eligible (≈200 of 283 'neuromuscular' files); the ≈84 above it are excluded
+# from sprint slots (they remain available to their proper vo2/threshold slots).
+_SPRINT_SLOT_IF_CEILING = 0.82
 
 # ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ──────────────────────
 # Parallel rough estimates for W'-load (kJ above CP) and Pmax-load (kJ PCr)
@@ -2537,7 +2554,6 @@ def load_workout_library() -> list[dict]:
                 dur = int(float(seg.get("Duration", 0)))
                 plo = float(seg.get("PowerLow", 0.5))
                 phi = float(seg.get("PowerHigh", 0.7))
-                avg_p = (plo + phi) / 2
                 total_sec += dur
                 # TSS for a linear power ramp from a→b over duration T (hours):
                 #   TSS = (1/T) ∫₀ᵀ (a + (b-a)·t/T)² · 100 dt · T
@@ -2547,7 +2563,15 @@ def load_workout_library() -> list[dict]:
                 # mean²=0.49 but true integral 0.5033 → ~2.7% high on TSS).
                 tss_accum += (plo * plo + plo * phi + phi * phi) / 3 * (dur / 3600) * 100
                 max_power = max(max_power, plo, phi)
-                _acc_zone(avg_p * 100, dur)
+                # v2.0.6 — integrate the ramp across the zones it SWEEPS, not one
+                # avg-power bucket. Binning the whole duration at mean power dumped
+                # a 50%→100% ramp's Z3/Z4 time into Z2, so ramp-heavy workouts read
+                # ~95% easy — e.g. a 33%-Z3 file passed the recovery 25%-Z3 ceiling
+                # and landed on a recovery day. Slice the linear ramp; bin each
+                # slice at its local power so per-zone seconds reflect reality.
+                _RAMP_SLICES = 20
+                for _i in range(_RAMP_SLICES):
+                    _acc_zone((plo + (phi - plo) * (_i + 0.5) / _RAMP_SLICES) * 100, dur / _RAMP_SLICES)
                 # Warmup/Ramp peaks contribute to structure + VO2 detection
                 # (ramp-test workouts genuinely hit VO2 at the top step).
                 _acc_structure(phi * 100)
@@ -2799,6 +2823,10 @@ def match_zwo(
     for w in library:
         try:
             cc_row = _content_class_for_row(w)
+            # v2.0.6 — sprint/neuromuscular LOAD gate: keep threshold/anaerobic-
+            # load files (IF > ceiling) out of sprint slots. See _SPRINT_SLOT_IF_CEILING.
+            if session.session_type == "sprint" and float(w.get("IF") or 0) > _SPRINT_SLOT_IF_CEILING:
+                continue
             # v1.8.25 — class-aware Score floor. Endurance/recovery are low
             # intensity ⇒ low Score BY CONSTRUCTION (the rubric weights TSS +
             # above-Z2 time), so the blanket Score≥3 gate hid ~475 of them from
@@ -2948,6 +2976,10 @@ def match_zwo(
             # loop, so the fallback doesn't re-introduce the Protocol drift / the
             # endurance-recovery exclusion it was meant to bypass.
             cc_row = _content_class_for_row(w)
+            # v2.0.6 — same sprint/neuromuscular LOAD gate as the main loop, so the
+            # coverage fallback can't re-admit an over-cooked sprint candidate.
+            if session.session_type == "sprint" and float(w.get("IF") or 0) > _SPRINT_SLOT_IF_CEILING:
+                continue
             if cc_row in ("endurance", "recovery"):
                 if w["Score"] < 1 or (w["Duration(min)"] or 0) < 20:
                     continue
@@ -6161,7 +6193,20 @@ def reforecast(
                     # (e.g. 10h) can't spawn an absurd 600-min session the
                     # library can't even serve. 6h covers real long endurance /
                     # gran-fondo rides.
+                    # v2.0.6 — apply the per-type duration ceiling here too. The
+                    # availability reflow previously sized a session to the full
+                    # day (only the 6h MAX_AVAIL_SESSION_MIN sanity cap), so a
+                    # 90-min Tuesday made a 45-min-max sprint/neuromuscular slot
+                    # render as a 90-min ~140-TSS day — the same "regardless of
+                    # origin" gap the generate_plan final pass (~line 5063) closes
+                    # for the sampler. Mirror that clamp: cap at the content-class
+                    # (or session-type) ceiling. The >=15% re-match below then
+                    # refits the ZWO to the clamped duration.
+                    _cc_clamp = _content_class_for_zwo(getattr(s, "zwo_file", "") or "")
+                    _type_ceil = TYPE_CEILING.get(_cc_clamp) or TYPE_CEILING.get(s.session_type)
                     target_min = min(int(round(hours * 60)), MAX_AVAIL_SESSION_MIN)
+                    if _type_ceil:
+                        target_min = min(target_min, _type_ceil)
                     if target_min != s.duration_min:
                         old_dur = s.duration_min
                         s.duration_min = max(0, target_min)

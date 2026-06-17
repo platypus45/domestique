@@ -1,5 +1,49 @@
 # Changelog
 
+## v2.0.6 — Plan reliability + honest workout labels (2026-06-17)
+
+Five fixes to things that were quietly wrong: the plan freezing on open, hard
+workouts landing on easy days, and workout names/charts that didn't match the
+ride you'd actually do.
+
+### What changes for users
+
+- **Your plan no longer freezes while "catching up."** Opening the Plan tab runs
+  a quick sync; a single ride whose heart-rate data couldn't be processed could
+  block that sync for up to 45 seconds each — leaving the "catching up your plan"
+  overlay spinning and, worse, silently skipping the step that reconciles a
+  missed session. Sync can no longer stall the plan: that per-ride work is bounded
+  and retried in the background, so a missed session now reliably reconciles and
+  the rest of the week adapts.
+- **Sprint / neuromuscular days are the right intensity again.** Workouts were
+  typed by their *structure* (lots of short sprints) while ignoring total load, so
+  ~29% of "neuromuscular" workouts were really threshold/anaerobic by intensity
+  (IF 0.86–1.04) and landed on sprint days as ~140-TSS grinds. Sprint slots now
+  reject over-cooked workouts (IF > 0.82), the sprint day-target reflects a true
+  neuromuscular load instead of a near-threshold one, and the per-type duration
+  cap is enforced on the reflow path too.
+- **Recovery days stay easy.** A ramp from 50%→100% FTP was counted as if the
+  whole segment sat at its *average* power, so a workout that spends a third of
+  its time at threshold read as "95% easy" and could be placed on a recovery day.
+  Ramp time is now spread across the zones it actually sweeps, so easy/recovery
+  slots correctly screen hard workouts out.
+- **Workout names tell the truth — everywhere.** 26% of the library carried a
+  name whose type contradicted its content (a tempo workout labeled "Anaerobic",
+  a threshold workout labeled "Neuromuscular"). All 4,198 names were regenerated
+  from the actual workout, so the title is right in the app, in the downloaded
+  ZWO/FIT, and on your Garmin / Wahoo / Hammerhead.
+- **Power charts draw ramps the right way.** A descending ramp (e.g. 100%→50%)
+  was drawn ascending, so a "ramp up, then down" workout showed as two ramps up.
+  Charts now match the file and your head unit.
+
+| Before | After |
+|---|---|
+| Plan tab could hang on "catching up"; missed session not reconciled | Sync can't block the plan; missed session reconciles + week adapts |
+| ~29% of "neuromuscular" workouts were threshold-load (up to 142 TSS) | Sprint slots capped at IF ≤ 0.82 + true neuromuscular day-target |
+| Ramp time mis-counted → hard workouts on recovery days | Ramp zones integrated → easy slots screen hard workouts out |
+| 26% of names contradicted their content | 0% — every name matches the workout |
+| Descending ramps drawn ascending | Ramps drawn in the authored direction |
+
 ## v2.0.4 — Planner safety + library injury cleanup (2026-06-15)
 
 Two safety fixes — to how the plan is built, and to what's in the workout library —

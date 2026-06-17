@@ -3400,26 +3400,34 @@ function workoutProfileSVG(segments, ftp, totalSec) {
       rects += `<rect x="${x1}" y="${y}" width="${w}" height="${h}" fill="${z.color}" opacity="0.85" data-charttip="${esc(tip)}"></rect>`;
     } else if (s.type === 'Warmup' || s.type === 'Cooldown' || s.type === 'Ramp') {
       const x2 = xScale(s.start + s.duration);
-      // v4.6.8 F1-FIX — the v4.6.7 attempt assumed every Cooldown stores
-      // PowerLow=END / PowerHigh=START, but a library audit shows the ZWO
-      // ecosystem is split: 853 cooldowns use the numerical convention
-      // (PowerLow < PowerHigh) and 1399 use the start/end convention
-      // (PowerLow > PowerHigh). The v4.6.7 swap fixed the first group and
-      // broke the second. Value-based rule: Warmup/Ramp slope UP (start
-      // = min, end = max); Cooldown ALWAYS slopes DOWN (start = max,
-      // end = min) regardless of attribute ordering.
+      // v2.0.6 — ramp DIRECTION. Warmup/Cooldown are semantically directional
+      // (warmup ramps UP, cooldown DOWN), so we force their slope by TYPE —
+      // robust to the library's split PowerLow/PowerHigh ordering convention
+      // (853 files store min/max, 1399 store start/end). A generic <Ramp>,
+      // though, can go EITHER way and its direction IS the authored
+      // PowerLow→PowerHigh order (e.g. 1.0→0.5 is an intentional DOWN-ramp).
+      // The pre-v2.0.6 value-based rule forced Warmup AND Ramp to always slope
+      // up, so a descending <Ramp> rendered backwards vs the file (and vs how
+      // Garmin/Wahoo/Hammerhead read the same ZWO). Honor the authored order
+      // for Ramp; keep the type-forced slope for Warmup/Cooldown.
       const lo = Math.min(s.power_low, s.power_high);
       const hi = Math.max(s.power_low, s.power_high);
       const loPct = Math.min(s.pct_low, s.pct_high);
       const hiPct = Math.max(s.pct_low, s.pct_high);
-      const isCooldown = (s.type === 'Cooldown');
-      const yStart = yScale(isCooldown ? hi : lo);
-      const yEnd   = yScale(isCooldown ? lo : hi);
+      let startPower, endPower, pctStart, pctEnd;
+      if (s.type === 'Ramp') {
+        startPower = s.power_low; endPower = s.power_high;
+        pctStart = s.pct_low;     pctEnd = s.pct_high;
+      } else if (s.type === 'Cooldown') {
+        startPower = hi; endPower = lo; pctStart = hiPct; pctEnd = loPct;
+      } else { // Warmup — always ramps up
+        startPower = lo; endPower = hi; pctStart = loPct; pctEnd = hiPct;
+      }
+      const yStart = yScale(startPower);
+      const yEnd   = yScale(endPower);
       const yBot = yScale(0);
-      const zStart = powerToZone(isCooldown ? hiPct : loPct);
-      const zEnd   = powerToZone(isCooldown ? loPct : hiPct);
-      const pctStart = isCooldown ? hiPct : loPct;
-      const pctEnd   = isCooldown ? loPct : hiPct;
+      const zStart = powerToZone(pctStart);
+      const zEnd   = powerToZone(pctEnd);
       // Gradient def
       const gid = `grad-${s.start}`;
       rects += `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="1" y2="0">
@@ -3430,8 +3438,8 @@ function workoutProfileSVG(segments, ftp, totalSec) {
       // round(ftp * fraction) values; pick the start/end the same way the
       // ramp orientation logic above does so the tooltip reads in the
       // direction the bar visually slopes.
-      const wattsStart = Math.round(isCooldown ? Math.max(s.power_low, s.power_high) : Math.min(s.power_low, s.power_high));
-      const wattsEnd = Math.round(isCooldown ? Math.min(s.power_low, s.power_high) : Math.max(s.power_low, s.power_high));
+      const wattsStart = Math.round(startPower);
+      const wattsEnd = Math.round(endPower);
       const tip = `${TYPE}: ${formatDur(s.duration)} • ${wattsStart}→${wattsEnd} W (${Math.round(pctStart)}%→${Math.round(pctEnd)}% FTP)`;
       // v1.6.5: see SteadyState branch for the data-charttip / <title> rationale.
       rects += `<polygon points="${x1},${yStart} ${x2},${yEnd} ${x2},${yBot} ${x1},${yBot}" fill="url(#${gid})" opacity="0.85" data-charttip="${esc(tip)}"></polygon>`;
@@ -7823,8 +7831,17 @@ function _renderLibSvg(el, segments, ftp) {
       if (isRamp && seg.power_low != null && seg.power_high != null) {
         const loH = Math.max(2, (Math.min(seg.power_low,seg.power_high) / ftp / 1.3) * H);
         const hiH = Math.max(3, (Math.max(seg.power_low,seg.power_high) / ftp / 1.3) * H);
-        const lH = seg.type === 'Cooldown' ? hiH : loH;
-        const rH = seg.type === 'Cooldown' ? loH : hiH;
+        // v2.0.6 — <Ramp> honors authored PowerLow→PowerHigh direction (a
+        // descending ramp must render down); Warmup forced up, Cooldown down.
+        let lH, rH;
+        if (seg.type === 'Ramp') {
+          lH = Math.max(2, (seg.power_low / ftp / 1.3) * H);
+          rH = Math.max(2, (seg.power_high / ftp / 1.3) * H);
+        } else if (seg.type === 'Cooldown') {
+          lH = hiH; rH = loH;
+        } else { // Warmup
+          lH = loH; rH = hiH;
+        }
         svg += `<polygon points="${x},${H-lH} ${x+w},${H-rH} ${x+w},${H} ${x},${H}" fill="${_libZc(avgP, ftp)}" opacity="0.7"/>`;
       } else if (seg.type === 'FreeRide') {
         svg += `<rect x="${x}" y="${H-5}" width="${Math.max(1,w)}" height="5" fill="#64748b" rx="0.5" opacity="0.4" stroke-dasharray="1,1"/>`;
@@ -11116,6 +11133,13 @@ async function calOpenDay(dateStr) {
     tss_estimate: p.tss || day.tss || 0,
     zwo_file: p.zwo_file || '',
     zwo_name: p.name || '',
+    // v2.0.6 — pass through the canonical Layer-3 title + real file duration the
+    // calendar already computed (app.py merge_plan_with_rides). Without these the
+    // modal's title cascade (display_name || zwo_name || session_type) fell back
+    // to the stale in-file <name> — e.g. showing "Anaerobic 4x30s" for a file the
+    // content classifier reads as "Endurance 60min — Z2".
+    display_name: p.display_name || '',
+    zwo_duration_min: p.zwo_duration_min || 0,
     description: p.name || day.description || '',
     zone_dist: p.zone_dist || null,  // v4.4.2 B4: pass through for waveform
     score: p.score,
@@ -11712,28 +11736,31 @@ async function runPlanOpenSequence() {
     paint('actual');
 
     // Step 2 — what you actually did: pull rides (throttled) + reconcile done/missed.
-    // Each network call is raced against a timeout. A plain offline/error still
-    // degrades to "used local data"; a genuine HANG (the reported stuck step —
-    // /api/plan/rematch blocking on the 4,198-file library load) trips seqError
-    // so the overlay surfaces Close/Retry instead of spinning forever.
-    let syncAdded = 0, syncThrottled = false, syncOk = false;
+    // v2.0.5 — the ride SYNC is decoupled from the RECONCILE. Sync is slow,
+    // best-effort enrichment (ICU network + per-ride DFA augment); reconcile is
+    // fast and LOCAL (marks done/missed from already-stored activities) and is
+    // what makes a missed session propagate to the rest of the week. So a
+    // slow/offline sync must NEVER skip the reconcile — that was the bug: a
+    // stale sync timed out and the missed session was never reconciled, so the
+    // week never adapted. Sync failure is now soft; only a reconcile failure is
+    // fatal to this step.
+    let syncAdded = 0, syncThrottled = false, syncOk = false, syncSlow = false;
     try {
       const sres = await _planStepRace(fetch('/api/rides/sync', {method: 'POST'}), PLAN_STEP_TIMEOUT_MS, 'sync');  // no force=1 → respects throttle
       const sj = await sres.json().catch(() => ({}));
       syncThrottled = (sj.status === 'throttled');
       syncAdded = Number(sj.added || 0);
       syncOk = true;
-    } catch (e) { if (e && e.name === 'TimeoutError') seqError = {key: 'actual', label: STEPS[1].label, e}; }
+    } catch (e) { if (e && e.name === 'TimeoutError') syncSlow = true; }  // soft — reconcile still runs below
     let reconciled = 0;
-    if (!seqError) {
-      try {
-        const rres = await _planStepRace(fetch('/api/plan/rematch?apply=1', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}), PLAN_STEP_TIMEOUT_MS, 'reconcile');
-        const rj = await rres.json().catch(() => ({}));
-        reconciled = Array.isArray(rj.matches) ? rj.matches.length : 0;
-      } catch (e) { if (e && e.name === 'TimeoutError') seqError = {key: 'actual', label: STEPS[1].label, e}; }
-    }
-    if (seqError) { state.actual = {status: 'error', detail: 'timed out'}; setBar(0.5, true); paint(null); return; }
-    const actualDetail = !syncOk ? 'sync offline — used local data'
+    try {
+      const rres = await _planStepRace(fetch('/api/plan/rematch?apply=1', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}), PLAN_STEP_TIMEOUT_MS, 'reconcile');
+      const rj = await rres.json().catch(() => ({}));
+      reconciled = Array.isArray(rj.matches) ? rj.matches.length : 0;
+    } catch (e) { if (e && e.name === 'TimeoutError') seqError = {key: 'actual', label: STEPS[1].label, e}; }
+    if (seqError) { state.actual = {status: 'error', detail: 'reconcile timed out'}; setBar(0.5, true); paint(null); return; }
+    const actualDetail = syncSlow ? `sync slow — used local data · ${reconciled} reconciled`
+      : !syncOk ? `sync offline — used local data · ${reconciled} reconciled`
       : syncThrottled ? `up to date · ${reconciled} reconciled`
       : `${syncAdded} new ride${syncAdded === 1 ? '' : 's'} · ${reconciled} reconciled`;
     state.actual = {status: syncOk ? 'done' : 'warn', detail: actualDetail};

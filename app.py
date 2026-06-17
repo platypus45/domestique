@@ -13011,6 +13011,24 @@ def _sync_icu_wellness(force: bool = False, days: int = 90) -> dict:
 # while still bailing on truly pathological FITs.
 _DFA_AUGMENT_TIMEOUT_S: float = 45.0
 
+# v2.0.5 — the 45s cap above is safe ONLY for fresh records (heavy-FIT parse
+# headroom) and the explicit force=backfill path. The user-facing sync
+# (/api/rides/sync) runs this augment SYNCHRONOUSLY on the request thread — the
+# "background daemon" the comment above assumes is not the path the Plan-tab
+# catch-up overlay awaits. So a record that already failed once at 45s must NOT
+# burn another 45s on every subsequent sync: re-tries of a 'timeout' record use
+# a short cap, and after _DFA_MAX_TIMEOUT_RETRIES the 'timeout' status goes
+# sticky (skipped like icu_deleted) — these are rides with no recoverable RR
+# data that will never converge. Auto-heals on a _DFA_ALGO_VERSION bump.
+_DFA_AUGMENT_RETRY_TIMEOUT_S: float = 5.0
+_DFA_MAX_TIMEOUT_RETRIES: int = 2
+# Overall wall-clock budget for the augment loop inside ONE foreground sync.
+# Once exceeded, remaining records skip augment this call and are picked up on
+# the next sync (they keep a non-final status, so they stay retry-eligible).
+# Keeps the whole sync comfortably under the UI's 40s per-step ceiling even if
+# a batch of slow/fresh records lands at once (e.g. first sync after a break).
+_SYNC_AUGMENT_BUDGET_S: float = 25.0
+
 # v1.8.14 — DFA algorithm version. Bump whenever the DFA α1 maths changes in
 # a way that invalidates previously-stored values, so already-"computed"
 # records (normally sticky) get recomputed on the next sync/backfill instead
@@ -13065,11 +13083,15 @@ def _augment_icu_record_with_dfa(rec_path: Path, external_id: str,
     # once (the activity may have been re-uploaded since).
     existing_status = rec.get("dfa_alpha1_status")
     _stamped_version = rec.get("dfa_algo_version")
-    if (not force
-            and existing_status in (
-                "computed", "no_rr_data", "sanity_rejected", "icu_deleted")
-            and _stamped_version == _DFA_ALGO_VERSION):
-        return
+    _timeout_count = int(rec.get("dfa_timeout_count") or 0)
+    if not force and _stamped_version == _DFA_ALGO_VERSION:
+        if existing_status in (
+                "computed", "no_rr_data", "sanity_rejected", "icu_deleted"):
+            return
+        # v2.0.5 — a 'timeout' record retried _DFA_MAX_TIMEOUT_RETRIES times is
+        # sticky too: no recoverable RR data, only burns the sync budget.
+        if existing_status == "timeout" and _timeout_count >= _DFA_MAX_TIMEOUT_RETRIES:
+            return
 
     import training as _training
 
@@ -13166,6 +13188,12 @@ def _augment_icu_record_with_dfa(rec_path: Path, external_id: str,
 
     dfa: "dict | None" = None
     timed_out = False
+    # v2.0.5 — fresh records (and the explicit force=backfill path) get the full
+    # 45s for heavy-FIT parses; a record already stuck at 'timeout' failed once
+    # at 45s, so cap its retry short to keep the foreground sync responsive.
+    _cap = (_DFA_AUGMENT_RETRY_TIMEOUT_S
+            if (not force and existing_status == "timeout")
+            else _DFA_AUGMENT_TIMEOUT_S)
     # NOTE: do NOT use ``with ThreadPoolExecutor(...)`` — its ``__exit__``
     # calls ``shutdown(wait=True)`` which would block until the worker
     # finishes, defeating the timeout entirely. Construct with daemon-style
@@ -13177,19 +13205,23 @@ def _augment_icu_record_with_dfa(rec_path: Path, external_id: str,
     try:
         fut = _ex.submit(_fetch_and_compute)
         try:
-            dfa = fut.result(timeout=_DFA_AUGMENT_TIMEOUT_S)
+            dfa = fut.result(timeout=_cap)
         except _futures.TimeoutError:
             timed_out = True
             fut.cancel()
             _log.debug(
                 f"_augment_icu_record_with_dfa({external_id}) "
-                f"timed out after {_DFA_AUGMENT_TIMEOUT_S}s"
+                f"timed out after {_cap}s"
             )
     finally:
         _ex.shutdown(wait=False, cancel_futures=True)
 
     if timed_out:
         rec["dfa_alpha1_status"] = "timeout"
+        # v2.0.5 — count retries so the status goes sticky after
+        # _DFA_MAX_TIMEOUT_RETRIES (the skip-gate above), instead of being
+        # re-attempted on every sync forever.
+        rec["dfa_timeout_count"] = _timeout_count + 1
         rec.setdefault("dfa_alpha1_avg", None)
         rec.setdefault("dfa_alpha1_series", [])
         rec.setdefault("dfa_alpha1_lt1_minutes", None)
@@ -13283,6 +13315,13 @@ def _sync_icu_activities(force: bool = False) -> dict:
     updated = 0
     added_paths: list[Path] = []
     icu_dir = _rs._icu_rides_dir()
+    # v2.0.5 — bound the TOTAL augment time for this foreground sync. The augment
+    # runs synchronously on the request thread the Plan-tab catch-up overlay
+    # awaits; without a ceiling a batch of slow records (e.g. first sync after a
+    # break) blows past the UI's 40s step timeout and strands the overlay,
+    # skipping the reconcile that adapts the week.
+    _aug_deadline = time.monotonic() + _SYNC_AUGMENT_BUDGET_S
+    _aug_deferred = 0
     for a in activities or []:
         # Cycling-ish only — same filter the planner uses elsewhere. The
         # ICU activities feed includes runs/swims that we don't model.
@@ -13309,11 +13348,22 @@ def _sync_icu_activities(force: bool = False) -> dict:
         # per activity (skip when the persisted record already has a non-null
         # ``dfa_alpha1_status``). Failure is non-fatal — the record stays as
         # persisted, status='fetch_failed' so the dashboard can render copy.
-        try:
-            _augment_icu_record_with_dfa(path, str(ext))
-        except Exception as e:
-            _log.debug(f"_augment_icu_record_with_dfa({ext}) failed: {e}")
+        # v2.0.5 — past the per-sync augment budget, skip enrichment for the
+        # remaining records; they keep a non-final status and are augmented on
+        # the next sync (prevents the loop from blowing the UI's 40s ceiling).
+        if time.monotonic() < _aug_deadline:
+            try:
+                _augment_icu_record_with_dfa(path, str(ext))
+            except Exception as e:
+                _log.debug(f"_augment_icu_record_with_dfa({ext}) failed: {e}")
+        else:
+            _aug_deferred += 1
 
+    if _aug_deferred:
+        _log.info(
+            f"_sync_icu_activities: DFA augment budget ({_SYNC_AUGMENT_BUDGET_S}s) "
+            f"reached — deferred {_aug_deferred} record(s) to next sync"
+        )
     now = time.time()
     _write_last_sync_at(now)
     total = len(_load_all_rides_safe())

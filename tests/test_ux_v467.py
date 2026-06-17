@@ -181,29 +181,38 @@ class TestDashboardJsAndCss(unittest.TestCase):
         # swap fixed group 1 and broke group 2; v4.6.8 swaps based on
         # VALUE: start = max(power_low, power_high), end = min(...) for
         # cooldown; opposite for warmup/ramp.
-        self.assertIn("isCooldown", self._html,
-                      "F1: workoutProfileSVG must branch on isCooldown")
-        self.assertRegex(
-            self._html,
-            r"isCooldown\s*=\s*\(s\.type\s*===\s*'Cooldown'\)",
-            "F1: must compare s.type === 'Cooldown'",
-        )
-        # Value-based selection: hi/lo computed via Math.max/Math.min over
-        # the two power attributes; cooldown picks hi at start, lo at end.
+        # v2.0.6 — workoutProfileSVG now branches per-type: Warmup forced UP,
+        # Cooldown forced DOWN (value-based, robust to PowerLow/PowerHigh
+        # ordering), and a generic <Ramp> honors its AUTHORED PowerLow→PowerHigh
+        # direction (a descending ramp e.g. 1.0→0.5 must render DOWN — pre-v2.0.6
+        # it was forced up like a warmup, drawing the second leg of a low-high-low
+        # workout backwards). hi/lo are still the value-based max/min.
         self.assertRegex(
             self._html,
             r"const\s+hi\s*=\s*Math\.max\(s\.power_low,\s*s\.power_high\)",
-            "F1: must compute hi = max(power_low, power_high)",
+            "must compute hi = max(power_low, power_high)",
         )
         self.assertRegex(
             self._html,
             r"const\s+lo\s*=\s*Math\.min\(s\.power_low,\s*s\.power_high\)",
-            "F1: must compute lo = min(power_low, power_high)",
+            "must compute lo = min(power_low, power_high)",
+        )
+        # Cooldown slopes DOWN: starts at hi, ends at lo.
+        self.assertRegex(
+            self._html,
+            r"s\.type\s*===\s*'Cooldown'\s*\)\s*\{\s*startPower\s*=\s*hi;\s*endPower\s*=\s*lo;",
+            "F1: Cooldown must start hi / end lo (downslope)",
+        )
+        # Generic Ramp honors authored direction (start=power_low, end=power_high).
+        self.assertRegex(
+            self._html,
+            r"s\.type\s*===\s*'Ramp'\s*\)\s*\{\s*startPower\s*=\s*s\.power_low;\s*endPower\s*=\s*s\.power_high;",
+            "v2.0.6: Ramp must honor authored PowerLow->PowerHigh direction",
         )
         self.assertRegex(
             self._html,
-            r"yStart\s*=\s*yScale\(\s*isCooldown\s*\?\s*hi\s*:\s*lo\s*\)",
-            "F1: yStart = hi for Cooldown (slopes DOWN), lo for Warmup/Ramp (slopes UP)",
+            r"const\s+yStart\s*=\s*yScale\(startPower\)",
+            "yStart driven by per-type startPower",
         )
 
     def test_yellow_arrow_session_clickable(self):

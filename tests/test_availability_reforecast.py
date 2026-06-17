@@ -162,5 +162,34 @@ class TestAvailabilityScaleClampedAtTwo(unittest.TestCase):
         self.assertEqual(weeks[0].sessions[0].tss_estimate, 112)
 
 
+class TestAvailabilitySprintTypeCeiling(unittest.TestCase):
+    """v2.0.6 — the availability reflow must apply the per-type duration ceiling
+    (TYPE_CEILING['sprint']=45), so raising a sprint day to 1.5h can't render a
+    90-min ~140-TSS session. Previously only the generate_plan sampler clamped;
+    the reforecast availability path sized to the full day (6h sanity cap only)."""
+
+    def test_sprint_day_clamped_to_type_ceiling(self):
+        mon = _next_monday()
+        # Start at 30 min so the override genuinely changes duration (exercises
+        # the clamp + the >=15% re-match). Without the fix → 90; with it → 45.
+        s = _mk_session(mon, session_type="sprint", duration_min=30, tss=28.0)
+        weeks = [_mk_week(mon, [s])]
+        goal = tp.Goal(goal_type="general", hours_per_week=8.0)
+        overrides = {mon.isoformat(): 1.5}  # 90 min available
+        tsb_series = {mon + timedelta(days=i): 0.0 for i in range(7)}
+        tp.reforecast(goal, weeks, tsb_series=tsb_series,
+                      availability_overrides=overrides)
+        out = weeks[0].sessions[0]
+        self.assertLessEqual(out.duration_min, tp.TYPE_CEILING["sprint"])
+        self.assertLess(out.duration_min, 90)  # did NOT take the full availability
+
+    def test_sprint_tss_per_hour_is_neuromuscular_not_threshold(self):
+        # v2.0.6 — the sprint day-TARGET must reflect FULL-recovery neuromuscular
+        # load (IF ~0.75), not threshold. Below what the IF<=0.82 match guard can
+        # even deliver (0.82**2*100 ≈ 67) and well under the threshold target.
+        self.assertLessEqual(tp.TSS_PER_HOUR["sprint"], 67)
+        self.assertLess(tp.TSS_PER_HOUR["sprint"], tp.TSS_PER_HOUR["threshold"])
+
+
 if __name__ == "__main__":
     unittest.main()

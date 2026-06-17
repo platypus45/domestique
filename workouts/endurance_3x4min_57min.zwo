@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2max 3x4min (57min)</name>
+    <name>Endurance 3x4min (57min)</name>
     <description>Intervals: 3 x (4min @ 105% / 4min @ 65%) | Cooldown: 5min @ 50% FTP</description>
     <sportType>bike</sportType>
     <workout>

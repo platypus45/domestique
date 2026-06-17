@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Neuromuscular 2x30s (63min)</name>
+    <name>Recovery 2x30s (63min)</name>
     <description>Intervals: 2 x (30s @ 150% / 1min 30s @ 45%)</description>
     <sportType>bike</sportType>
     <workout>

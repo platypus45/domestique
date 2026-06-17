@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Mixed Ramp (18min)</name>
+    <name>Endurance Ramp (18min)</name>
     <description>Warmup: 5min from 40% to 70% FTP | Ramp: 10min from 82% to 95% FTP | Cooldown: 3min from 40% to 65% FTP</description>
     <sportType>bike</sportType>
     <workout>

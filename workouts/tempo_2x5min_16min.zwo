@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Mixed (16min)</name>
+    <name>Tempo (16min)</name>
     <description>Steady: 5min @ 80% FTP | Steady: 3min @ 50% FTP | Steady: 5min @ 80% FTP | Steady: 3min @ 50% FTP</description>
     <sportType>bike</sportType>
     <workout>

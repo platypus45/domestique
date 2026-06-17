@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Over-Under (56min)</name>
+    <name>Recovery (56min)</name>
     <description>Warmup: 6min from 45% to 75% FTP | Steady: 1min @ 50% FTP | Steady: 1min @ 109% FTP | Steady: 2min @ 50% FTP | Steady: 3min @ 67% FTP | Steady: 4min @ 85% FTP | Steady: 3min @ 50% FTP | Steady: 45s @ 105% FTP | Steady: 30s @ 50% FTP | Steady: 2min @ 63% FTP | Steady: 30s @ 50% FTP | Steady: 45s @ 105% FTP | Steady: 30s @ 50% FTP | Steady: 2min @ 63% FTP | Steady: 5min @ 50% FTP | Steady: 1min @ 98% FTP | Steady: 30s @ 50% FTP | Steady: 3min @ 64% FTP | Steady: 30s @ 50% FTP | Steady: 1min @ 98% FTP | Steady: 30s @ 50% FTP | Steady: 3min @ 63% FTP | Steady: 4min @ 50% FTP | Steady: 4min @ 63% FTP | Steady: 2min @ 50% FTP | Cooldown: 5min from 45% to 63% FTP</description>
     <sportType>bike</sportType>
     <workout>

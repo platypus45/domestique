@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Neuromuscular 30s/5min 8x (57min)</name>
+    <name>Threshold 30s/5min 8x (57min)</name>
     <description>Microintervals: 8 x (30s @ 150% / 5min @ 55%) | Cooldown: 10min @ 40% FTP</description>
     <sportType>bike</sportType>
     <workout>

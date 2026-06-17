@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Anaerobic 18x30s (18min)</name>
+    <name>Tempo 18x30s (18min)</name>
     <description>Warmup: 30s from 75% to 130% FTP | Intervals: 18 x (30s @ 102% / 0s @ 55%) | Cooldown: 30s from 75% to 130% FTP</description>
     <sportType>bike</sportType>
     <workout>

@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Tempo 3x10min (45min)</name>
+    <name>Mixed 3x10min (45min)</name>
     <description>Intervals: 3 x (10min @ 86% / 5min @ 84%)</description>
     <sportType>bike</sportType>
     <workout>

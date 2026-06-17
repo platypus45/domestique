@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Neuromuscular 8 cycles (65min)</name>
+    <name>Sweet Spot 8 cycles (65min)</name>
     <description>Warmup: 10min from 50% to 75% FTP | Over-Under: 8 cycles (alternating above/below threshold) | Cooldown: 10min from 75% to 50% FTP</description>
     <sportType>bike</sportType>
     <workout>

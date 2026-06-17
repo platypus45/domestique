@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Anaerobic 4x1min (60min)</name>
+    <name>VO2max 4x1min (60min)</name>
     <description>Warmup: 5min 30s from 50% to 74% FTP | Intervals: 4 x (1min @ 120% / 1min @ 65%) | Cooldown: 5min 30s from 75% to 50% FTP</description>
     <sportType>bike</sportType>
     <workout>

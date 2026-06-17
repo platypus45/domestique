@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Mixed 3 cycles (60min)</name>
+    <name>Sweet Spot 3 cycles (60min)</name>
     <description>Warmup: 15min @ 40% FTP | Over-Under: 3 cycles (alternating above/below threshold) | Cooldown: 20min from 55% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>

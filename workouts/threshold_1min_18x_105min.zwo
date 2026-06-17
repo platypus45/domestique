@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2max 1min/2min 18x (105min)</name>
+    <name>Threshold 1min/2min 18x (105min)</name>
     <description>Warmup: 10min from 25% to 75% FTP | Microintervals: 18 x (1min @ 105% / 2min @ 77%) | Cooldown: 5min from 60% to 25% FTP</description>
     <sportType>bike</sportType>
     <workout>

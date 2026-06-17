@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Neuromuscular 12s/4min 8x (49min)</name>
+    <name>Recovery 12s/4min 8x (49min)</name>
     <description>Warmup: 10min from 50% to 75% FTP | Microintervals: 8 x (12s @ 150% / 4min @ 50%) | Cooldown: 5min from 65% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>

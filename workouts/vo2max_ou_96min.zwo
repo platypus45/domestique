@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2max 30 cycles (96min)</name>
+    <name>Mixed 30 cycles (96min)</name>
     <description>Over-Under: 30 cycles (alternating above/below threshold)</description>
     <sportType>bike</sportType>
     <workout>

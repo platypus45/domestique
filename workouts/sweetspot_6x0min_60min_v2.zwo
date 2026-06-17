@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2 Short 18x40s (60min)</name>
+    <name>Threshold 18x40s (60min)</name>
     <description>Warmup: 20min from 25% to 50% FTP | Intervals: 18 x (40s @ 95% / 20s @ 50%)</description>
     <sportType>bike</sportType>
     <workout>

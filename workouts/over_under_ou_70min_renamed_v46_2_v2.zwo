@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2max 6 cycles (70min)</name>
+    <name>Over-Under 6 cycles (70min)</name>
     <description>Over-Under: 6 cycles (alternating above/below threshold) | Cooldown: 5min @ 55% FTP</description>
     <sportType>bike</sportType>
     <workout>

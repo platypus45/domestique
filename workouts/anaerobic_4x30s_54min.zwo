@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Anaerobic 4x30s (54min)</name>
+    <name>Mixed 4x30s (54min)</name>
     <description>Warmup: 7min @ 55% FTP | Intervals: 4 x (30s @ 120% / 1min @ 55%) | Cooldown: 8min from 55% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>

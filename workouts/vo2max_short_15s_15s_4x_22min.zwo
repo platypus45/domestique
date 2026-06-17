@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Anaerobic 4x15s (22min)</name>
+    <name>VO2max 4x15s (22min)</name>
     <description>Intervals: 4 x (15s @ 115% / 15s @ 50%)</description>
     <sportType>bike</sportType>
     <workout>

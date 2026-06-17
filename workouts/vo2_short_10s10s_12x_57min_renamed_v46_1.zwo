@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2 Short 10s/10s 12x (57min)</name>
+    <name>Mixed 10s/10s 12x (57min)</name>
     <description>Warmup: 7min from 35% to 55% FTP | Microintervals: 12 x (10s @ 110% / 10s @ 65%)</description>
     <sportType>bike</sportType>
     <workout>

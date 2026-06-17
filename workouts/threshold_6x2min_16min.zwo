@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2max 6x2min (16min)</name>
+    <name>Threshold 6x2min (16min)</name>
     <description>Intervals: 6 x (2min @ 105% / 1min @ 65%)</description>
     <sportType>bike</sportType>
     <workout>

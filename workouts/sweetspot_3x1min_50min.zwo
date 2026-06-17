@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Threshold 6x1min (50min)</name>
+    <name>Sweet Spot 6x1min (50min)</name>
     <description>Warmup: 8min from 35% to 95% FTP | Intervals: 6 x (1min @ 92% / 30s @ 102%) | Cooldown: 5min from 60% to 35% FTP</description>
     <sportType>bike</sportType>
     <workout>

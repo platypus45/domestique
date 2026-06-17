@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Endurance (39min)</name>
+    <name>Sweet Spot (39min)</name>
     <description>Warmup: 10min from 40% to 73% FTP | Steady: 5min @ 88% FTP | Steady: 4min @ 53% FTP | Steady: 5min @ 88% FTP | Steady: 10min @ 53% FTP | Cooldown: 5min from 40% to 53% FTP</description>
     <sportType>bike</sportType>
     <workout>

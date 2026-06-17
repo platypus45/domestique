@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Neuromuscular 15s/45s 18x (42min)</name>
+    <name>Anaerobic 15s/45s 18x (42min)</name>
     <description>Warmup: 5min from 50% to 60% FTP | Microintervals: 18 x (15s @ 150% / 45s @ 50%) | Cooldown: 5min from 65% to 50% FTP</description>
     <sportType>bike</sportType>
     <workout>

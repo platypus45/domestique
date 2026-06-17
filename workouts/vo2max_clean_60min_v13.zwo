@@ -1,8 +1,8 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2max 60min — 5×1min/1min @ 115%</name>
-    <description>Generated structured workout.</description>
+    <name>VO2max 1min/1min 15x (60min)</name>
+    <description>Warmup: 12min from 50% to 75% FTP | Microintervals: 15 x (1min @ 115% / 1min @ 50%) | Cooldown: 8min from 65% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="720" PowerLow="0.50" PowerHigh="0.75" pace="0" />

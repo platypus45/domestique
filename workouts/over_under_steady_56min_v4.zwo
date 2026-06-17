@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Over-Under 3x30s (56min)</name>
+    <name>Threshold 3x30s (56min)</name>
     <description>Warmup: 5min from 45% to 70% FTP | Intervals: 3 x (30s @ 140% / 0s @ 55%) | Cooldown: 5min @ 50% FTP</description>
     <sportType>bike</sportType>
     <workout>

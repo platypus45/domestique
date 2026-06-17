@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2 Short 15s/15s 10x (90min)</name>
+    <name>Sweet Spot 15s/15s 10x (90min)</name>
     <description>Warmup: 5min @ 50% FTP | Microintervals: 10 x (15s @ 125% / 15s @ 50%) | Cooldown: 8min 15s @ 50% FTP</description>
     <sportType>bike</sportType>
     <workout>

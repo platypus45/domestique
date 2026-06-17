@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Endurance 4x8s (20min)</name>
+    <name>Recovery 4x8s (20min)</name>
     <description>Warmup: 2min from 35% to 55% FTP | Intervals: 4 x (8s @ 140% / 1min 42s @ 55%)</description>
     <sportType>bike</sportType>
     <workout>

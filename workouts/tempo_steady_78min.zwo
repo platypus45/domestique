@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Tempo (78min)</name>
+    <name>Mixed (78min)</name>
     <description>Warmup: 15min from 24% to 70% FTP | Steady: 3min @ 80% FTP | Steady: 3min @ 87% FTP | Steady: 3min @ 94% FTP | Steady: 12min @ 55% FTP | Steady: 3min @ 80% FTP | Steady: 3min @ 87% FTP | Steady: 3min @ 94% FTP | Steady: 12min @ 55% FTP | Steady: 3min @ 80% FTP | Steady: 3min @ 87% FTP | Steady: 3min @ 94% FTP | Cooldown: 12min from 60% to 25% FTP</description>
     <sportType>bike</sportType>
     <workout>

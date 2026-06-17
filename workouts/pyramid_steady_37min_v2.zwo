@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Endurance 5x30s (37min)</name>
+    <name>Recovery 5x30s (37min)</name>
     <description>Intervals: 5 x (30s @ 95% / 55s @ 45%) | Cooldown: 15min from 45% to 55% FTP</description>
     <sportType>bike</sportType>
     <workout>

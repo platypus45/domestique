@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Mixed 15 cycles (32min)</name>
+    <name>Tempo 15 cycles (32min)</name>
     <description>Over-Under: 15 cycles (alternating above/below threshold)</description>
     <sportType>bike</sportType>
     <workout>

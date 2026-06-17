@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Anaerobic 10x2min (48min)</name>
+    <name>Sweet Spot 10x2min (48min)</name>
     <description>Warmup: 5min @ 50% FTP | Intervals: 10 x (2min 30s @ 92% / 30s @ 120%) | Cooldown: 5min @ 50% FTP</description>
     <sportType>bike</sportType>
     <workout>

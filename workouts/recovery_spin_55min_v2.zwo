@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Mixed (55min)</name>
+    <name>Neuromuscular (55min)</name>
     <description>Warmup: 5min from 45% to 75% FTP | Steady: 1min @ 55% FTP | Steady: 1min @ 80% FTP | Steady: 1min @ 55% FTP | Steady: 1min @ 95% FTP | Steady: 1min @ 55% FTP | Steady: 30s @ 110% FTP | Steady: 2min @ 55% FTP | Steady: 30s @ 125% FTP | Steady: 5min @ 55% FTP | Steady: 25s @ 160% FTP | Steady: 7min @ 55% FTP | Steady: 25s @ 170% FTP | Steady: 7min @ 55% FTP | Steady: 25s @ 180% FTP | Steady: 7min @ 55% FTP | Steady: 25s @ 65% FTP | Steady: 7min @ 55% FTP | Steady: 25s @ 65% FTP | Steady: 2min @ 55% FTP | Cooldown: 5min from 75% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>

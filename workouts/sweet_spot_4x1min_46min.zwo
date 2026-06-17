@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2max (46min)</name>
+    <name>Sweet Spot (46min)</name>
     <description>Steady: 5min @ 60% FTP | Intervals: 3 x (30s @ 110% / 30s @ 50%) | Steady: 2min @ 75% FTP | Steady: 2min @ 55% FTP | Steady: 8min @ 88% FTP | Steady: 3min @ 50% FTP | Steady: 8min @ 92% FTP | Steady: 3min @ 50% FTP | Steady: 2min @ 105% FTP | Steady: 1min @ 60% FTP | Steady: 2min @ 105% FTP | Steady: 1min @ 60% FTP | Steady: 2min @ 105% FTP | Cooldown: 3min from 40% to 60% FTP</description>
     <sportType>bike</sportType>
     <workout>

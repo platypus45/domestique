@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2max 4x1min (44min)</name>
+    <name>Threshold 4x1min (44min)</name>
     <description>Warmup: 7min from 49% to 74% FTP | Intervals: 4 x (1min @ 105% / 3min @ 59%) | Cooldown: 6min from 24% to 74% FTP</description>
     <sportType>bike</sportType>
     <workout>

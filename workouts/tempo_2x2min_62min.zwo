@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2 Short 18x30s (62min)</name>
+    <name>Sweet Spot 18x30s (62min)</name>
     <description>Warmup: 10min from 40% to 73% FTP | Intervals: 18 x (30s @ 100% / 30s @ 73%) | Cooldown: 5min from 53% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>

@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Over-Under 4x30s (32min)</name>
+    <name>Mixed 4x30s (32min)</name>
     <description>Intervals: 4 x (30s @ 121% / 1min @ 60%)</description>
     <sportType>bike</sportType>
     <workout>

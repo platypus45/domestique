@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2 Short 40s/20s 8x (60min)</name>
+    <name>Endurance 40s/20s 8x (60min)</name>
     <description>Warmup: 3min from 40% to 60% FTP | Microintervals: 8 x (40s @ 115% / 20s @ 60%) | Cooldown: 10min from 70% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>

@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Tempo 3x2min (65min)</name>
+    <name>FTP Test 3x2min (65min)</name>
     <description>Intervals: 3 x (2min @ 94% / 3min @ 86%) | Cooldown: 7min @ 40% FTP</description>
     <sportType>bike</sportType>
     <workout>

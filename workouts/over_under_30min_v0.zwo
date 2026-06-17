@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Over-Under 7 cycles (30min)</name>
+    <name>Tempo 7 cycles (30min)</name>
     <description>Warmup: 5min from 50% to 75% FTP | Over-Under: 7 cycles (alternating above/below threshold) | Cooldown: 3min from 65% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>

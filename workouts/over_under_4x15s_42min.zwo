@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Over-Under 4x15s (42min)</name>
+    <name>Tempo 4x15s (42min)</name>
     <description>Intervals: 4 x (15s @ 130% / 3min @ 58%) | Cooldown: 5min @ 55% FTP</description>
     <sportType>bike</sportType>
     <workout>

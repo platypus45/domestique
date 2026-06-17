@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2max (87min)</name>
+    <name>Mixed (87min)</name>
     <description>Steady: 1min @ 50% FTP | Steady: 1min @ 53% FTP | Steady: 1min @ 56% FTP | Steady: 1min @ 59% FTP | Steady: 1min @ 62% FTP | Steady: 1min @ 64% FTP | Steady: 1min @ 67% FTP | Steady: 1min @ 70% FTP | Steady: 1min @ 73% FTP | Steady: 1min @ 76% FTP | Steady: 40min @ 65% FTP | Steady: 3min @ 55% FTP | Steady: 3min @ 106% FTP | Steady: 3min @ 55% FTP | Steady: 3min @ 107% FTP | Steady: 3min @ 55% FTP | Steady: 3min @ 109% FTP | Steady: 3min @ 55% FTP | Steady: 3min @ 112% FTP | Steady: 3min @ 55% FTP | Steady: 1min @ 76% FTP | Steady: 1min @ 73% FTP | Steady: 1min @ 70% FTP | Steady: 1min @ 67% FTP | Steady: 1min @ 64% FTP | Steady: 1min @ 62% FTP | Steady: 1min @ 59% FTP | Steady: 1min @ 56% FTP | Steady: 1min @ 53% FTP | Steady: 1min @ 50% FTP</description>
     <sportType>bike</sportType>
     <workout>

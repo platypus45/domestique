@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Threshold Rønnestad-style 11x45/15s (90min)</name>
+    <name>Threshold 6x2min (90min)</name>
     <description>Warmup: 10min from 40% to 75% FTP | Intervals: 6 x (1min 30s @ 95% / 30s @ 70%) | Cooldown: 8min from 65% to 50% FTP</description>
     <sportType>bike</sportType>
     <workout>

@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2 Short Rønnestad-style 2x12x40/20s (60min)</name>
+    <name>VO2 Short 40s/24s 22x (60min)</name>
     <description>Warmup: 3min from 30% to 50% FTP | Microintervals: 22 x (40s @ 110% / 24s @ 50%) | Cooldown: 5min from 65% to 25% FTP</description>
     <sportType>bike</sportType>
     <workout>

@@ -1,8 +1,8 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Sweet Spot 75min — 2×20min/5min @ 90%</name>
-    <description>Generated structured workout.</description>
+    <name>Sweet Spot 2x20min (75min)</name>
+    <description>Warmup: 15min from 50% to 75% FTP | Intervals: 2 x (20min @ 90% / 5min @ 55%) | Cooldown: 10min from 65% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="900" PowerLow="0.50" PowerHigh="0.75" pace="0" />

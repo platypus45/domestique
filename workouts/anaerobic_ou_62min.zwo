@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Anaerobic 12 cycles (62min)</name>
+    <name>Mixed 12 cycles (62min)</name>
     <description>Warmup: 8min from 40% to 60% FTP | Over-Under: 12 cycles (alternating above/below threshold) | Cooldown: 8min from 70% to 50% FTP</description>
     <sportType>bike</sportType>
     <workout>

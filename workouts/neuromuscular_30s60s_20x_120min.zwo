@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Neuromuscular 30s/1min 20x (120min)</name>
+    <name>VO2 Short 30s/1min 20x (120min)</name>
     <description>Warmup: 15min from 30% to 90% FTP | Microintervals: 20 x (30s @ 150% / 1min @ 40%) | Cooldown: 5min from 65% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>

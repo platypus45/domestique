@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Endurance Ramp (13min)</name>
+    <name>Recovery Ramp (13min)</name>
     <description>Ramp: 7min from 60% to 90% FTP | Cooldown: 6min @ 50% FTP</description>
     <sportType>bike</sportType>
     <workout>

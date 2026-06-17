@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Over-Under (18min)</name>
+    <name>VO2max (18min)</name>
     <description>Warmup: 5min from 50% to 75% FTP | Steady: 30s @ 125% FTP | Steady: 1min @ 50% FTP | Steady: 1min @ 95% FTP | Steady: 15s @ 50% FTP | Steady: 1min @ 105% FTP | Steady: 15s @ 50% FTP | Steady: 1min @ 115% FTP | Steady: 2min 30s @ 50% FTP | Steady: 1min @ 95% FTP | Steady: 15s @ 50% FTP | Steady: 1min @ 105% FTP | Steady: 15s @ 50% FTP | Steady: 1min @ 115% FTP | Steady: 30s @ 50% FTP | Steady: 1min @ 30% FTP</description>
     <sportType>bike</sportType>
     <workout>

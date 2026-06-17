@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Over-Under 8s/45s 16x (60min)</name>
+    <name>Endurance 8s/45s 16x (60min)</name>
     <description>Warmup: 16min from 70% to 75% FTP | Microintervals: 16 x (8s @ 115% / 45s @ 73%) | Cooldown: 10min from 75% to 70% FTP</description>
     <sportType>bike</sportType>
     <workout>

@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2max 30s/3min 10x (111min)</name>
+    <name>Endurance 30s/3min 10x (111min)</name>
     <description>Microintervals: 10 x (30s @ 105% / 3min @ 75%)</description>
     <sportType>bike</sportType>
     <workout>

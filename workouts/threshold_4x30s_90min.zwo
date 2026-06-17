@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Anaerobic 4x30s (90min)</name>
+    <name>Threshold 4x30s (90min)</name>
     <description>Intervals: 4 x (30s @ 135% / 3min @ 95%)</description>
     <sportType>bike</sportType>
     <workout>

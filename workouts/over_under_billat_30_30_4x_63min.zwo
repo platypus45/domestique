@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2max 4x30s (63min)</name>
+    <name>Over-Under 4x30s (63min)</name>
     <description>Warmup: 6min from 50% to 80% FTP | Intervals: 4 x (30s @ 120% / 30s @ 50%)</description>
     <sportType>bike</sportType>
     <workout>

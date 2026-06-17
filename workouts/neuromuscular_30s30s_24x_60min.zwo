@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Neuromuscular Rønnestad-style 2x12x30/30s (60min)</name>
+    <name>Neuromuscular 30s/30s 24x (60min)</name>
     <description>Microintervals: 24 x (30s @ 115% / 30s @ 50%) | Cooldown: 5min from 70% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>

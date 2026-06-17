@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Anaerobic 30s/3min 6x (91min)</name>
+    <name>VO2max 30s/3min 6x (91min)</name>
     <description>Microintervals: 6 x (30s @ 125% / 3min @ 95%)</description>
     <sportType>bike</sportType>
     <workout>

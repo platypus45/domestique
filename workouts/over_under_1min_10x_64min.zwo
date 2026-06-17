@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2max 1min/1min 10x (64min)</name>
+    <name>Over-Under 1min/1min 10x (64min)</name>
     <description>Warmup: 12min from 25% to 95% FTP | Microintervals: 10 x (1min @ 105% / 1min @ 78%) | Cooldown: 7min from 75% to 25% FTP</description>
     <sportType>bike</sportType>
     <workout>

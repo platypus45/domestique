@@ -1,8 +1,8 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Anaerobic 40min — 8×45s/135s @ 135%</name>
-    <description>Generated structured workout.</description>
+    <name>Anaerobic 45s/2min 8x (40min)</name>
+    <description>Warmup: 9min 30s from 50% to 75% FTP | Microintervals: 8 x (45s @ 135% / 2min 15s @ 50%) | Cooldown: 6min 30s from 65% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="570" PowerLow="0.50" PowerHigh="0.75" pace="0" />

@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Recovery Rønnestad-style 10x30/30s (60min)</name>
+    <name>Recovery 10x30s (60min)</name>
     <description>Warmup: 20min from 25% to 50% FTP | Intervals: 10 x (30s @ 100% / 30s @ 50%)</description>
     <sportType>bike</sportType>
     <workout>

@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2 Short 4x25s (30min)</name>
+    <name>Recovery 4x25s (30min)</name>
     <description>Intervals: 4 x (25s @ 100% / 25s @ 55%)</description>
     <sportType>bike</sportType>
     <workout>

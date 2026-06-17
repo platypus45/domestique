@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Anaerobic 3x30s (55min)</name>
+    <name>Threshold 3x30s (55min)</name>
     <description>Intervals: 3 x (30s @ 94% / 1min @ 61%) | Cooldown: 5min from 75% to 50% FTP</description>
     <sportType>bike</sportType>
     <workout>

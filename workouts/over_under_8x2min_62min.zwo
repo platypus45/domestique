@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2 Short 8x2min (62min)</name>
+    <name>Over-Under 8x2min (62min)</name>
     <description>Warmup: 10min from 40% to 75% FTP | Intervals: 8 x (2min @ 88% / 30s @ 110%) | Cooldown: 2min from 50% to 25% FTP</description>
     <sportType>bike</sportType>
     <workout>

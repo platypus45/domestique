@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Recovery 3x5min (65min)</name>
+    <name>Sweet Spot 3x5min (65min)</name>
     <description>Warmup: 10min from 25% to 50% FTP | Intervals: 3 x (5min @ 90% / 10min @ 50%) | Cooldown: 10min from 50% to 25% FTP</description>
     <sportType>bike</sportType>
     <workout>

@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Neuromuscular 4x10s (53min)</name>
+    <name>Over-Under 4x10s (53min)</name>
     <description>Intervals: 4 x (10s @ 150% / 50s @ 50%) | Cooldown: 3min from 70% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>

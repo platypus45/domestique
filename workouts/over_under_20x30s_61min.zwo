@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Over-Under 20x30s (61min)</name>
+    <name>Sweet Spot 20x30s (61min)</name>
     <description>Warmup: 10min from 25% to 75% FTP | Intervals: 20 x (30s @ 100% / 30s @ 70%) | Cooldown: 6min 50s from 55% to 25% FTP</description>
     <sportType>bike</sportType>
     <workout>

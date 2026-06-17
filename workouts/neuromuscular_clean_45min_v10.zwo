@@ -1,8 +1,8 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Neuromuscular 45min — 10×20s/160s @ 200%</name>
-    <description>Generated structured workout.</description>
+    <name>Neuromuscular 20s/3min 10x (45min)</name>
+    <description>Warmup: 9min from 50% to 75% FTP | Microintervals: 10 x (20s @ 200% / 2min 40s @ 50%) | Cooldown: 6min from 65% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="540" PowerLow="0.50" PowerHigh="0.75" pace="0" />

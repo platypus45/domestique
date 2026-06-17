@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2max (62min)</name>
+    <name>Threshold (62min)</name>
     <description>Warmup: 10min from 50% to 75% FTP | Steady: 6min @ 105% FTP | Steady: 3min @ 55% FTP | Steady: 5min 30s @ 105% FTP | Steady: 3min @ 55% FTP | Steady: 5min @ 105% FTP | Steady: 3min @ 55% FTP | Steady: 4min 30s @ 105% FTP | Steady: 3min @ 55% FTP | Steady: 4min @ 105% FTP | Steady: 3min @ 55% FTP | Steady: 3min 30s @ 105% FTP | Steady: 3min @ 55% FTP | Cooldown: 5min from 75% to 50% FTP</description>
     <sportType>bike</sportType>
     <workout>

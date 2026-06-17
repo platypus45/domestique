@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Over-Under 1min/2min 6x (60min)</name>
+    <name>Mixed 1min/2min 6x (60min)</name>
     <description>Microintervals: 6 x (1min @ 110% / 2min @ 54%) | Cooldown: 5min @ 50% FTP</description>
     <sportType>bike</sportType>
     <workout>

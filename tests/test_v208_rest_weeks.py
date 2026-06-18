@@ -1,4 +1,4 @@
-"""v2.0.8 — F2: user reported "no rest weeks (only 1 rest day)". Investigation:
+"""v2.1.0 — F2: user reported "no rest weeks (only 1 rest day)". Investigation:
 the planner DOES insert step-back/unload weeks every STEP_BACK_EVERY (=4) weeks
 (Issurin 3:1; Z2/recovery only; ~28-60% TSS cut) — training_planner.py:4839
 sets is_stepback = global_week % STEP_BACK_EVERY == 0. The user's "no rest weeks"

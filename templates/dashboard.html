@@ -2072,7 +2072,7 @@ window.addEventListener('unhandledrejection', function(e) {
           <!-- v1.8.9 Bug 8 — oninput syncs to plan-edate via _syncPlanWeeksToDate(). -->
           <input type="number" id="plan-weeks" value="12" min="4" max="52" style="width:70px;" oninput="_syncPlanWeeksToDate();" onchange="refreshPlanPreview()"></div>
       </div>
-      <!-- J1 (v2.0.8): intensity-distribution is a user choice, not forced polarized. -->
+      <!-- J1 (v2.1.0): intensity-distribution is a user choice, not forced polarized. -->
       <div class="form-row">
         <div class="form-group"><label>Intensity Model</label>
           <select id="plan-distribution" onchange="refreshPlanPreview()"

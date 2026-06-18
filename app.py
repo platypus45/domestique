@@ -283,7 +283,7 @@ async def lifespan(app):
     # single-user migration operates against the new dir name.
     from migrate_profiles import migrate_to_profiles, migrate_to_v4, run_v102_migration_check
     from profile_manager import ProfileManager
-    # v2.0.8 — migrate BEFORE the first ProfileManager.get(). On a FRESH install
+    # v2.1.0 — migrate BEFORE the first ProfileManager.get(). On a FRESH install
     # the registry doesn't exist yet; migrate_to_profiles() must create the
     # `default` profile + profiles.json first. If get() ran first it rebuilt an
     # empty registry and migrate's `registry.exists()` guard then skipped
@@ -1384,7 +1384,7 @@ def api_profile_power_curve(window_days: int = Query(90, ge=1, le=3650),
     except (TypeError, ValueError):
         n_rides = 0
     rider_curve_empty = not (result.get("rider_curve") or [])
-    # v2.0.8 (C1): self-heal whenever in-window rides are MISSING EFFORTS — not
+    # v2.1.0 (C1): self-heal whenever in-window rides are MISSING EFFORTS — not
     # only when the curve is empty. A few stale rides at the window edge produce a
     # NON-empty but wrong/low curve (short-duration peaks ~half, CP/W' starved
     # of points), and the old `rider_curve_empty` gate then skipped the backfill
@@ -4056,7 +4056,7 @@ def _scan_zwo_for_library(zwo_path: Path) -> dict | None:
             total_sec += dur
             # Linear-ramp TSS integral (matches planner).
             tss_accum += (plo * plo + plo * phi + phi * phi) / 3 * (dur / 3600) * 100
-            # v2.0.8: slice the ramp across the zones it SWEEPS, mirroring the
+            # v2.1.0: slice the ramp across the zones it SWEEPS, mirroring the
             # planner's load_workout_library parse (training_planner.py, v2.0.6).
             # Binning the whole duration at mean power here (while the planner
             # sliced) drifted the two scanners' zone seconds → score_sync mismatch
@@ -8450,7 +8450,7 @@ async def api_plan_generate(request: Request):
             plan_weeks=plan_weeks,
             longest_ride_h_90d=body.get("longest_ride_h_90d"),
             last_ftp_test_date=body.get("last_ftp_test_date"),
-            # J1 (v2.0.8): intensity-distribution model is a user choice
+            # J1 (v2.1.0): intensity-distribution model is a user choice
             # (polarized default; pyramidal / threshold). Not hard-forced.
             distribution=body.get("distribution", _prefs.get("distribution", "polarized")),
         )
@@ -8504,7 +8504,7 @@ async def api_plan_generate(request: Request):
         except Exception:
             athlete = None
 
-        # v2.0.8 (F5 + E1) — thread the rider's ACTUAL starting fitness + recent
+        # v2.1.0 (F5 + E1) — thread the rider's ACTUAL starting fitness + recent
         # load into INITIAL generation. Pre-fix, generate_plan self-fetched CTL
         # and defaulted to 37.0 ("starts like post-winter"), and the volume
         # ceiling came from availability. Now we pass the real current_ctl (ICU
@@ -8558,7 +8558,7 @@ async def api_plan_generate(request: Request):
                 # v4.6.7 IMPL-CAP: persist capability-projection inputs.
                 "longest_ride_h_90d": goal.longest_ride_h_90d,
                 "last_ftp_test_date": goal.last_ftp_test_date,
-                # J1 (v2.0.8): persist the chosen distribution so recalc/refit
+                # J1 (v2.1.0): persist the chosen distribution so recalc/refit
                 # rebuild with the same model (else they'd revert to polarized).
                 "distribution": getattr(goal, "distribution", "polarized"),
             },
@@ -8789,7 +8789,7 @@ async def api_plan_reforecast():
                  if (w.get("start", "") or "") <= today_iso_str <= (w.get("end", "") or "")),
                 None,
             )
-            # J1 (v2.0.8): align the breach gate with the plan's chosen
+            # J1 (v2.1.0): align the breach gate with the plan's chosen
             # distribution model (also sets the active model for this recalc's
             # budget lookups) so a pyramidal/threshold plan isn't judged against
             # the polarized ceiling. Default polarized → unchanged.
@@ -9317,7 +9317,7 @@ def _apply_plan_update(
     current_ctl = training.get("ctl") or 30
     current_tsb = training.get("tsb")
 
-    # J1 (v2.0.8): pin the active intensity-distribution model to the plan's
+    # J1 (v2.1.0): pin the active intensity-distribution model to the plan's
     # persisted choice so every tier (rebuild / missed-hard refit / reforecast)
     # rebuilds with the same model rather than reverting to polarized.
     tp.set_active_distribution((plan.get("goal", {}) or {}).get("distribution", "polarized"))

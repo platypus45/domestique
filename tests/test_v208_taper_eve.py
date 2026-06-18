@@ -1,4 +1,4 @@
-"""v2.0.8 — F4: "it gives me VO2max intervals just before the race, which is
+"""v2.1.0 — F4: "it gives me VO2max intervals just before the race, which is
 stupid." A taper keeps some intensity earlier, but the final days before the A
 event must be easy openers. Fix: _enforce_event_taper_eve demotes any HIT within
 EVENT_EVE_EASY_DAYS of target_date to a short easy Z2 opener.

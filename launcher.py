@@ -49,7 +49,7 @@ def _harden_std_streams():
 _harden_std_streams()
 
 
-# WIN-TLS-FIX (v2.0.8): in a frozen Windows build urllib has no usable CA store,
+# WIN-TLS-FIX (v2.1.0): in a frozen Windows build urllib has no usable CA store,
 # so HTTPS to intervals.icu fails cert verification → URLError → "ICUNetworkError"
 # on every credential save / sync. (httpx works because it bundles certifi; urllib
 # uses the OS default SSL context, which is empty in a frozen Windows app.) Point
@@ -178,7 +178,7 @@ _uvicorn_server = None
 
 
 def _win_hard_exit(platform=None):
-    """WIN-RELAUNCH-FIX (v2.0.8): on Windows, force the process to die when the
+    """WIN-RELAUNCH-FIX (v2.1.0): on Windows, force the process to die when the
     window closes.
 
     webview's EdgeChromium/WinForms (CLR) backend leaves FOREGROUND native
@@ -671,7 +671,7 @@ def main():
             sleep_inhibit.disable()
         except Exception:
             pass
-        # WIN-RELAUNCH-FIX (v2.0.8): hard-exit on Windows so the lingering CLR
+        # WIN-RELAUNCH-FIX (v2.1.0): hard-exit on Windows so the lingering CLR
         # backend + bound :8080 can't block the next launch. No-op on macOS.
         _win_hard_exit()
     except ImportError:

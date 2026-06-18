@@ -763,12 +763,12 @@ MIN_BUILD_WEEKS  = 4
 MIN_PEAK_WEEKS   = 2
 TAPER_DAYS       = 12    # Mujika 2003: 8-14 days optimal
 STEP_BACK_EVERY  = 4     # Rønnestad: 3 load + 1 recovery
-# v2.0.8 (E1) — acute:chronic workload upper bound (Gabbett 2016: sweet spot
+# v2.1.0 (E1) — acute:chronic workload upper bound (Gabbett 2016: sweet spot
 # 0.8-1.3, >1.5 doubles injury risk). Caps the generation-time weekly volume
 # at ≤1.3× the rider's recent mean weekly TSS so a fresh plan ramps from real
 # recent load rather than from the sum of daily availability.
 ACWR_CEILING     = 1.3
-# v2.0.8 (F4) — no HARD session in the final N days before an A event. A taper
+# v2.1.0 (F4) — no HARD session in the final N days before an A event. A taper
 # keeps SOME intensity earlier (Mujika), but VO2max/threshold intervals on the
 # event eve leave the legs flat — the last days must be easy openers. The day-3+
 # sharpener is still allowed (only days within this window are demoted).
@@ -1150,7 +1150,7 @@ class Goal:
     rest_days: list = field(default_factory=lambda: [0])  # Monday
     daily_max_hours: dict = field(default_factory=dict)  # {0: 0, 1: 1.0, 2: 1.5, ...} per-day limits
     plan_weeks: int = 0
-    # J1 (v2.0.8): intensity-distribution model is a USER CHOICE, not forced.
+    # J1 (v2.1.0): intensity-distribution model is a USER CHOICE, not forced.
     # "polarized" (Seiler, default) | "pyramidal" | "threshold". Selects which
     # per-phase IntensityBudget table the planner uses (see BUDGETS_BY_MODEL).
     distribution: str = "polarized"
@@ -1368,7 +1368,7 @@ BUDGETS: dict[str, "IntensityBudget"] = {
 }
 
 
-# ── J1 (v2.0.8): selectable intensity-distribution model ──────────────────────
+# ── J1 (v2.1.0): selectable intensity-distribution model ──────────────────────
 # The complaint: polarized was FORCED. The model is now a user choice (default
 # polarized). pyramidal/threshold are derived from the polarized base by
 # redistributing only the HARD minutes (z3+z4+z5plus) of the work phases —
@@ -1614,7 +1614,7 @@ def generate_phases(goal: Goal, current_ctl: float,
     feeds the event difficulty into the CTL band as a small ±6% nudge. Non-event
     callers pass None → identical behavior.
 
-    v2.0.8 (E1): ``recent_weekly_tss`` (rider's recent mean weekly TSS from the
+    v2.1.0 (E1): ``recent_weekly_tss`` (rider's recent mean weekly TSS from the
     full ride archive) sets a LOAD-based weekly volume ceiling instead of the
     availability sum. None → fall back to the legacy ``hours_per_week×65`` cap."""
     total_weeks = goal.weeks_available()
@@ -1648,7 +1648,7 @@ def generate_phases(goal: Goal, current_ctl: float,
     # Weekly TSS at target CTL
     peak_weekly_tss = target * 7
 
-    # v2.0.8 (E1) — LOAD-based weekly ceiling. The old cap was the sum of daily
+    # v2.1.0 (E1) — LOAD-based weekly ceiling. The old cap was the sum of daily
     # availability (hours_per_week×65), so a rider with generous availability
     # got a ~24.5h/1592-TSS week regardless of what they'd actually been
     # training — "starts like post-winter". The authoritative volume is now
@@ -4802,16 +4802,16 @@ def generate_plan(
             (per-week clamp [0.4, 2.0]) and re-runs match_zwo so the picked
             workout fits the new duration. Mirrors the reforecast() availability
             block so first-time plan creation honors the persisted calendar.
-        current_ctl: v2.0.8 (F5) — rider's actual current CTL for the INITIAL
+        current_ctl: v2.1.0 (F5) — rider's actual current CTL for the INITIAL
             ramp. When None, falls back to the self-fetch (ICU wellness → local
             42-day EWMA → 37.0). The app passes the real value so a fresh plan
             no longer starts "post-winter".
-        recent_weekly_tss: v2.0.8 (E1) — rider's recent mean weekly TSS, used
+        recent_weekly_tss: v2.1.0 (E1) — rider's recent mean weekly TSS, used
             as the LOAD-based weekly volume ceiling (see generate_phases). When
             None, self-fetches from the local archive; if still None, the
             legacy availability cap (hours_per_week×65) applies.
     """
-    # J1 (v2.0.8): honor the goal's chosen intensity-distribution model for every
+    # J1 (v2.1.0): honor the goal's chosen intensity-distribution model for every
     # get_budget_for_phase lookup in this run (default "polarized" → unchanged).
     set_active_distribution(getattr(goal, "distribution", "polarized"))
     metrics = get_today_metrics()
@@ -4820,7 +4820,7 @@ def generate_plan(
     # a phantom fitness baseline wildly divergent from their actual recent
     # rides. Fall back to a 42-day EWMA over the local ride archive before
     # reverting to the constant.
-    # v2.0.8 (F5): an explicit current_ctl from the caller (app's
+    # v2.1.0 (F5): an explicit current_ctl from the caller (app's
     # /api/plan/generate) wins over the self-fetch — the app already has the
     # ICU/local value and threading it avoids a redundant fetch + guarantees
     # initial generation ramps from real fitness.
@@ -4838,7 +4838,7 @@ def generate_plan(
     if current_ctl is None:
         current_ctl = 37.0
 
-    # v2.0.8 (E1) — recent mean weekly TSS sets the load-based volume ceiling.
+    # v2.1.0 (E1) — recent mean weekly TSS sets the load-based volume ceiling.
     # Self-fetch from the full local archive when the caller didn't supply it
     # (best-effort; None → generate_phases keeps the legacy availability cap).
     if recent_weekly_tss is None:
@@ -5169,7 +5169,7 @@ def generate_plan(
                 max_weekend_min=_mw_min,
                 is_stepback=getattr(_w, "is_stepback", False))
 
-    # v2.0.8 (E1) — ENFORCE the load-based weekly volume ceiling. Until now the
+    # v2.1.0 (E1) — ENFORCE the load-based weekly volume ceiling. Until now the
     # plan's REAL weekly volume was one library workout per available day, each
     # clamped only to that day's availability — so generous availability gave a
     # ~24.5h week regardless of recent load. peak_weekly_tss (and thus each
@@ -5182,7 +5182,7 @@ def generate_plan(
     # before the authoritative per-day clamp.
     _enforce_weekly_volume_ceiling(weeks)
 
-    # v2.0.8 (F4) — no hard session in the final days before the A event (event
+    # v2.1.0 (F4) — no hard session in the final days before the A event (event
     # goals only). Demotes a taper-eve VO2max/threshold block to an easy opener.
     if goal.goal_type in ("event", "ctl") and goal.target_date:
         _enforce_event_taper_eve(weeks, goal.target_date)
@@ -5632,7 +5632,7 @@ def _enforce_weekly_hit_cap(weeks: list, library: list[dict]) -> None:
                 )
 
 
-# v2.0.8 (E1) — weekly volume-ceiling enforcement.
+# v2.1.0 (E1) — weekly volume-ceiling enforcement.
 # Easy (non-HIT) session types in SHRINK order — the type we trim/drop FIRST is
 # listed first. recovery has the least training value, then mid-week z2/tempo;
 # long_z2 (the weekend long ride / event-specificity lever) is preserved last.
@@ -5646,10 +5646,10 @@ _VOLUME_CEILING_TOLERANCE = 1.05
 
 
 def _enforce_weekly_volume_ceiling(weeks: list) -> None:
-    """v2.0.8 (E1) — cap each week's summed planned TSS at its load-based ceiling.
+    """v2.1.0 (E1) — cap each week's summed planned TSS at its load-based ceiling.
 
     The ceiling is the week's own ``tss_target`` (= the phase's
-    ``weekly_tss_target``, which v2.0.8 derives from the rider's recent load via
+    ``weekly_tss_target``, which v2.1.0 derives from the rider's recent load via
     the ACWR bound in ``generate_phases`` — already ×0.72 for stepback weeks).
     Before this pass the plan placed one library workout per available day,
     clamped only to per-day availability, so a generous calendar produced a
@@ -5746,7 +5746,7 @@ def _enforce_weekly_volume_ceiling(weeks: list) -> None:
 
 def _enforce_event_taper_eve(weeks: list, target_date, library=None,
                              eve_days: int = EVENT_EVE_EASY_DAYS) -> None:
-    """v2.0.8 (F4) — no HARD session in the final ``eve_days`` before the A event.
+    """v2.1.0 (F4) — no HARD session in the final ``eve_days`` before the A event.
 
     A taper deliberately keeps some intensity (Mujika), but a VO2max/threshold
     BLOCK on the event eve leaves the legs flat — the user's "it gives me VO2max
@@ -8742,7 +8742,7 @@ def check_and_auto_apply_eftp(wellness_series: list[dict]) -> dict | None:
     if not wellness_series or ATHLETE_FTP_W <= 0:
         return None
 
-    # I1 (v2.0.8): ICU's eFTP is unreliable; it must NOT silently rewrite the
+    # I1 (v2.1.0): ICU's eFTP is unreliable; it must NOT silently rewrite the
     # active FTP (and every FTP-derived zone) "without asking". Auto-apply is
     # now OPT-IN — drift is still detected and surfaced (banner + manual Accept
     # button) so the rider decides. Enable via user_prefs.json

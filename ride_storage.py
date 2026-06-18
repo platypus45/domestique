@@ -863,7 +863,7 @@ def recent_mean_weekly_tss(
     weeks: int = 6,
     extra_rides: list[dict] | None = None,
 ) -> float | None:
-    """E1 (v2.0.8) — rider's RECENT mean weekly TSS over the last ``weeks``.
+    """E1 (v2.1.0) — rider's RECENT mean weekly TSS over the last ``weeks``.
 
     Sums TSS per ISO-calendar-week from the full local ride archive (plus any
     ``extra_rides`` the caller passes, e.g. ICU activities in the app's shape)

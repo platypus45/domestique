@@ -250,7 +250,7 @@ def is_dangerous(blocks, klass, fn=""):
     if not blocks:
         return []
     # FTP / ramp TEST exempt — legitimate maximal protocol, never a hazard. Only
-    # genuine FTP tests (a real ramp test is named ftp_test_ramp*). v2.0.8 (D1):
+    # genuine FTP tests (a real ramp test is named ftp_test_ramp*). v2.1.0 (D1):
     # the old blanket `"ramp" in fn` exempted ANY filename with "ramp", incl. the
     # corrupt `anaerobic_ramp_*` staircases to 600% FTP (150s steps) — so an
     # impossible "45min @ Z7" workout shipped. A non-test "ramp" file is NOT exempt.

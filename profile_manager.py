@@ -285,7 +285,7 @@ class ProfileManager:
         pick it up as a phantom profile.
         """
         with self._switch_lock:
-            # v2.0.8 — ASCII-fold first. Python's str.isalnum() is True for
+            # v2.1.0 — ASCII-fold first. Python's str.isalnum() is True for
             # accented Unicode, so "Raphaël" slugged to "raphaël", which the
             # ASCII-only id validator (_PROFILE_ID_RE) + path boundary then
             # rejected → "invalid profile id" 400 on save/switch. NFKD-decompose
@@ -987,7 +987,7 @@ class ProfileManager:
                 "profiles": [],
             }
             self._active_id = None
-            # v2.0.8 — do NOT persist the empty registry. ProfileManager.get()
+            # v2.1.0 — do NOT persist the empty registry. ProfileManager.get()
             # runs BEFORE migrate_to_profiles() in the lifespan; writing an empty
             # profiles.json here makes migrate's `registry.exists()` guard fire and
             # skip creating the `default` profile. On a FRESH install that left no

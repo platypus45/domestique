@@ -1,4 +1,4 @@
-"""v2.0.8 — B1 (Windows app won't reopen after close). On Windows the webview
+"""v2.1.0 — B1 (Windows app won't reopen after close). On Windows the webview
 CLR/WinForms backend + the bound :8080 socket lingered after webview.start()
 returned, so the process didn't die; the next launch saw an orphan server with no
 window and opened a browser tab instead of reopening the app ("kill it in Task

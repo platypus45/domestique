@@ -1,4 +1,4 @@
-"""v2.0.8 — L1 (ICU TLS). In a frozen Windows build urllib had no CA store, so
+"""v2.1.0 — L1 (ICU TLS). In a frozen Windows build urllib had no CA store, so
 HTTPS to intervals.icu failed cert verification → URLError → "ICUNetworkError" on
 every credential save / sync. Fix: bundle certifi (domestique.spec) + point urllib
 at it via SSL_CERT_FILE on win32 (launcher.configure_tls_ca). macOS uses system

@@ -1,4 +1,4 @@
-"""v2.0.8 — J1: the intensity-distribution model was FORCED polarized. It is now
+"""v2.1.0 — J1: the intensity-distribution model was FORCED polarized. It is now
 a user choice (Goal.distribution; polarized default, plus pyramidal / threshold)
 that selects the per-phase IntensityBudget table via BUDGETS_BY_MODEL. These
 guard that (a) the default path is byte-for-byte unchanged so the model is never

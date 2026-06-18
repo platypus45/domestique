@@ -1,4 +1,4 @@
-"""v2.0.8 — D1: impossible workouts shipped in the library (the user's "45min @ Z7"
+"""v2.1.0 — D1: impossible workouts shipped in the library (the user's "45min @ Z7"
 — actually anaerobic_ramp_* staircases climbing to 600% FTP in 120-150s SteadyState
 steps). They got through because the dangerous-workout screen blanket-exempted ANY
 filename containing "ramp" (amend_unsafe_workouts.py). Fix: deleted the 2 garbage

@@ -1,4 +1,4 @@
-"""v2.0.8 (E1+F5) — load-based weekly volume ceiling.
+"""v2.1.0 (E1+F5) — load-based weekly volume ceiling.
 
 ROOT (pre-fix): a generated plan's REAL weekly volume was one library workout
 per available day, each clamped only to that day's availability. With generous

@@ -1,4 +1,4 @@
-"""v2.0.8 — Block A (Windows feedback): fresh-install profile persistence +
+"""v2.1.0 — Block A (Windows feedback): fresh-install profile persistence +
 accented-name id.
 
 - Fix A: `_rebuild_registry` must NOT persist an empty profiles.json (which made

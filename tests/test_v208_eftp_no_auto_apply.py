@@ -1,4 +1,4 @@
-"""v2.0.8 — I1: ICU's eFTP is unreliable; it must NOT silently rewrite the
+"""v2.1.0 — I1: ICU's eFTP is unreliable; it must NOT silently rewrite the
 athlete's FTP (and every FTP-derived zone). The 7-day sustained-drift
 auto-apply (check_and_auto_apply_eftp) is now OPT-IN via
 user_prefs.json {"eftp_auto_apply": true}; default off = detect + surface,

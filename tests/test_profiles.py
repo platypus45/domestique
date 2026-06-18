@@ -653,7 +653,7 @@ class TestMigrationFreshInstall(unittest.TestCase):
         # /setup. The empty registry is still persisted to disk.
         self.assertEqual(len(pm.list_profiles()), 0)
         self.assertFalse(pm.has_any_profile())
-        # v2.0.8: the empty registry is NO LONGER persisted on rebuild. Writing
+        # v2.1.0: the empty registry is NO LONGER persisted on rebuild. Writing
         # an empty profiles.json here made migrate_to_profiles' registry.exists()
         # guard skip creating `default` on a fresh install → no active profile →
         # FTP 200 / 70kg defaults + saves evaporating (the Windows "profile resets

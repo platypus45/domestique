@@ -1,4 +1,4 @@
-"""v2.0.8 — C1: PowerCurve was wrong (short-duration peaks ~half of intervals.icu;
+"""v2.1.0 — C1: PowerCurve was wrong (short-duration peaks ~half of intervals.icu;
 CP/W' shown as "—") because the self-heal backfill only ran when the rider curve
 was EMPTY. A couple of stale rides at the 90-day window edge made the curve
 non-empty (but low), so the ~24 real in-window rides were never hydrated with

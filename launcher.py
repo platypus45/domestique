@@ -177,6 +177,36 @@ _server_traceback: "str | None" = None
 _uvicorn_server = None
 
 
+def _win_hard_exit(platform=None):
+    """WIN-RELAUNCH-FIX (v2.0.8): on Windows, force the process to die when the
+    window closes.
+
+    webview's EdgeChromium/WinForms (CLR) backend leaves FOREGROUND native
+    threads + child msedgewebview2 processes after webview.start() returns, and
+    uvicorn's loop + the bound :8080 socket are never stopped — so the process
+    LINGERS after the window closes. The next launch then sees the orphan server
+    (is_already_running() True) but no window, and opens a browser tab instead of
+    reopening the app — the user's "kill it in Task Manager every single time".
+
+    Safe to hard-exit: every DB write already db.commit()s (write-through, no
+    buffer), and the only lifespan teardown is db.stop_sync(), which just joins a
+    daemon sync thread that os._exit reclaims anyway. should_exit is a best-effort
+    graceful signal first. Win32-only — macOS (Cocoa, no CLR) exits cleanly and is
+    left byte-for-byte unchanged (returns False so main() finishes normally).
+    """
+    plat = platform if platform is not None else sys.platform
+    if plat != "win32":
+        return False
+    try:
+        if _uvicorn_server is not None:
+            _uvicorn_server.should_exit = True
+    except Exception:
+        pass
+    os._exit(0)  # immediate; reclaims hung CLR threads + frees :8080. (Mocked in tests.)
+    return True  # unreachable in prod; preserves the contract under a mocked os._exit
+
+
+
 def get_app_dir():
     """Return the app directory — handles both dev and frozen (PyInstaller) mode."""
     if getattr(sys, "frozen", False):
@@ -641,6 +671,9 @@ def main():
             sleep_inhibit.disable()
         except Exception:
             pass
+        # WIN-RELAUNCH-FIX (v2.0.8): hard-exit on Windows so the lingering CLR
+        # backend + bound :8080 can't block the next launch. No-op on macOS.
+        _win_hard_exit()
     except ImportError:
         _fallback_to_browser("pywebview/backend not available")
     except Exception as e:

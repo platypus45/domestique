@@ -215,6 +215,38 @@ FLAG_VO2_S = 5 * 60            # has_vo2_work: Z5 ≥5 min
 FLAG_SPRINT_COUNT = 2          # has_sprints: ≥2 Z7 bursts
 FLAG_SWEETSPOT_S = 10 * 60     # has_sweet_spot_work: 88-94% ≥10 min
 
+# v2.2 (N3 / Option A) — objective coherence. A workout whose PRIMARY class is
+# easy/aerobic but which hides a hard secondary stimulus is INCOHERENT: the label
+# lies about what the rider actually does (the D2/D3 complaint — an "Endurance
+# Z2" that secretly carries a 5×VO2 set). We flag it and surface the hidden work
+# in the display name. NO routing floor and NO .zwo body is changed.
+_COHERENCE_CONTRADICTIONS = {
+    "endurance":         ("has_threshold_work", "has_vo2_work", "has_sprints"),
+    "recovery":          ("has_threshold_work", "has_vo2_work", "has_sprints"),
+    "tempo":             ("has_vo2_work", "has_sprints"),
+    "tempo_intervals":   ("has_vo2_work", "has_sprints"),
+    "tempo_ladder":      ("has_vo2_work", "has_sprints"),
+    "threshold":         ("has_sprints",),   # a single ramp's VO2 is tolerated
+    "threshold_ladder":  ("has_sprints",),
+    "sweet_spot":        ("has_sprints",),
+    "sweet_spot_ladder": ("has_sprints",),
+    # vo2max / vo2_short / vo2_ladder / anaerobic / neuromuscular / over_under /
+    # ftp_test are hard/structured BY DESIGN → always coherent.
+}
+_COHERENCE_SUFFIX = {
+    "has_threshold_work": "+threshold block",
+    "has_vo2_work": "+VO2 set",
+    "has_sprints": "+sprints",
+}
+
+
+def objective_coherence(primary, secondary: dict):
+    """(N3) Return (coherent: bool, [display-name suffixes]). A class is incoherent
+    when a CONTRADICTING secondary flag for that primary is set."""
+    fired = [f for f in _COHERENCE_CONTRADICTIONS.get(primary or "", ())
+             if secondary.get(f)]
+    return (not fired, [_COHERENCE_SUFFIX[f] for f in fired])
+
 
 # Citation table — per rule, source PMID/ISBN/URL. Used by --explain to emit
 # rationale alongside the classification.
@@ -1721,6 +1753,10 @@ def classify_zwo_v104(zwo_path: Path) -> dict:
     features = extract_features_v104(power, segments)
     primary, confidence, secondary = classify_v104(features, tags=tags, segments=segments)
     display_name = generate_display_name(primary, features, segments, meta=meta)
+    # N3 (Option A): flag incoherent files + surface the hidden stimulus honestly.
+    coherent, _coh_suffixes = objective_coherence(primary, secondary)
+    if not coherent:
+        display_name = f"{display_name} {' '.join(_coh_suffixes)}".rstrip()
 
     feat_out = {
         "duration_s": features["duration_s"],
@@ -1762,6 +1798,7 @@ def classify_zwo_v104(zwo_path: Path) -> dict:
         "display_name": display_name,
         "confidence": round(confidence, 3),
         "secondary_flags": secondary,
+        "objective_coherent": coherent,  # N3 (Option A)
         "features": feat_out,
         "tags": tags,
     }

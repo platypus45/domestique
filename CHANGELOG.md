@@ -2411,7 +2411,7 @@ Closes the README's "DFA α1 is computed post-ride if your FIT has them" gap tha
 
 - ICU exposes the raw FIT at `/api/v1/activity/{id}/fit-file` (verified live: 140,585-byte download for the user's most recent ride). `training.fetch_activity_fit_file()` pulls it post-sync.
 - `fit_activity.parse_rr_intervals()` walks `fit_tool.fit_file.FitFile` `HrvMessage` records (NOT `fitparse` per PATCH G3 — `fit_tool` is already in `requirements.txt` since v1.0.1).
-- `analytics.compute_dfa_alpha1()` ports the dormant DFA implementation from `training_live.py:823-942` into the post-ride path. Sliding window 120 s / 30 s step per [Rogers 2021](https://pubmed.ncbi.nlm.nih.gov/34547011/).
+- `analytics.compute_dfa_alpha1()` ports the dormant DFA implementation from `training_live.py:823-942` into the post-ride path. Sliding window 120 s / 30 s step per [Rogers 2021](https://pubmed.ncbi.nlm.nih.gov/33519504/).
 - New `dfa_alpha1_status` field per PATCH G8 with one of `computed` / `no_rr_data` / `fetch_failed` / `sanity_rejected` — distinguishes the four failure modes for the dashboard's actionable copy.
 - Hardware caveat documented in README: chest strap needed (HRM-Pro / Polar H10 / TICKR X / Verity Sense in HR mode), AND the head unit's "Log HRV" toggle enabled (Fēnix 8: `Watch Settings → System → Advanced → Data Recording → Log HRV` — verified against the official manual).
 

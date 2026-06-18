@@ -1384,7 +1384,14 @@ def api_profile_power_curve(window_days: int = Query(90, ge=1, le=3650),
     except (TypeError, ValueError):
         n_rides = 0
     rider_curve_empty = not (result.get("rider_curve") or [])
-    if rider_curve_empty and n_rides > 0:
+    # v2.0.8 (C1): self-heal whenever in-window rides are MISSING EFFORTS — not
+    # only when the curve is empty. A few stale rides at the window edge produce a
+    # NON-empty but wrong/low curve (short-duration peaks ~half, CP/W' starved
+    # of points), and the old `rider_curve_empty` gate then skipped the backfill
+    # forever — so the ~24 real in-window rides were never hydrated with efforts/
+    # streams. Trigger on n_missing>0 so those rides get backfilled and the curve
+    # recomputes with the true peaks. (`n_missing>0` below still guards the work.)
+    if n_rides > 0:
         try:
             _n_win, _n_missing = power_curve.count_rides_missing_efforts(int(window_days))
         except Exception as e:

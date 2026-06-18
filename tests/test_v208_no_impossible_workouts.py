@@ -44,6 +44,26 @@ class TestNoImpossibleWorkouts(unittest.TestCase):
         for f in ("anaerobic_ramp_58min.zwo", "anaerobic_ramp_38min.zwo"):
             self.assertFalse((WORKOUTS / f).exists(), f"{f} must be deleted (impossible)")
 
+    def test_no_whole_workout_if_over_1_05_except_tests(self):
+        # D2 guard: a workout whose WHOLE-workout IF > 1.05 implies sustained
+        # supra-FTP average — impossible (the user's "47min = 179 TSS"). Only
+        # genuine ramp/FTP TESTS (which ramp to max) legitimately exceed this.
+        import json
+        idx = json.loads((WORKOUTS / ".library_index.json").read_text())
+        rows = idx.get("workouts") or (idx if isinstance(idx, list) else [])
+        bad = []
+        for w in rows:
+            f = (w.get("File") or "")
+            if "ftp_test" in f or "ramp_test" in f:
+                continue
+            tss = float(w.get("TSS") or 0)
+            dur = float(w.get("Duration(min)") or 0)
+            if dur > 0 and tss > 0:
+                iff = (tss / (dur / 60) / 100) ** 0.5
+                if iff > 1.05:
+                    bad.append((f, round(iff, 2)))
+        self.assertEqual(bad, [], f"impossible whole-workout IF (>1.05): {bad}")
+
 
 if __name__ == "__main__":
     unittest.main()

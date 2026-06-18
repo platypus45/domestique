@@ -57,3 +57,4 @@ routes.json.surface_bak
 # dev-only classifier audit transition logs (not runtime)
 workouts/.classification_audit_*.json
 FEEDBACK_TRIAGE.md
+IP_*.md

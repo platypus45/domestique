@@ -1154,6 +1154,11 @@ class Goal:
     # "polarized" (Seiler, default) | "pyramidal" | "threshold". Selects which
     # per-phase IntensityBudget table the planner uses (see BUDGETS_BY_MODEL).
     distribution: str = "polarized"
+    # F1 (v2.2): OPT-IN block periodization (default OFF). When True the planner
+    # concentrates each build/peak phase on ONE focus quality per ≤4-week block
+    # (VO2 block → threshold block) instead of the weekly-mixed default. Default
+    # False = today's behaviour, byte-for-byte (the default-off-parity contract).
+    block_periodization: bool = False
 
     def max_hours_for_day(self, weekday: int) -> float:
         """Get max training hours for a specific weekday (0=Mon..6=Sun)."""

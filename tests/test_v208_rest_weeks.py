@@ -41,6 +41,27 @@ class TestRestWeeks(unittest.TestCase):
                 f"step-back week {w.week_num} (tss {w.tss_target}) not lighter "
                 f"than the ~{avg_norm:.0f} normal-week average")
 
+    def test_recovery_days_appear_even_with_all_7_days_available(self):
+        # F6 (resolved-by-E1): the user set every day available (no fixed rest
+        # day) and got no recovery days. Now the load-based volume ceiling +
+        # _enforce_weekly_volume_ceiling convert excess easy days to rest, so each
+        # non-taper week still gets >=1 rest day rather than 7 training days.
+        goal = tp.Goal(
+            goal_type="event", plan_weeks=10,
+            target_date=date.today() + timedelta(weeks=10),
+            event_km=160, event_climb_m=2000, event_type="gran_fondo",
+            hours_per_week=24.5, max_weekday_hours=3.5, max_weekend_hours=3.5,
+            available_days=[0, 1, 2, 3, 4, 5, 6], rest_days=[],
+        )
+        _phases, weeks = tp.generate_plan(
+            goal, athlete={"ftp": 250, "weight_kg": 70}, recent_weekly_tss=400)
+        offenders = [w.week_num for w in weeks
+                     if w.phase not in ("taper",)
+                     and sum(1 for s in w.sessions if s.session_type == "rest") == 0]
+        self.assertEqual(
+            offenders, [],
+            f"weeks with NO rest day despite a load ceiling: {offenders}")
+
 
 if __name__ == "__main__":
     unittest.main()

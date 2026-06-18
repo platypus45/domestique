@@ -34,14 +34,16 @@ WORKOUTS_DIR = Path(__file__).resolve().parent.parent / "workouts"
 # (a) classify as the intended type and (b) aren't structural duplicates, so the
 # wider grid fills real cells rather than spamming near-identical files.
 ROUND_TOTALS = (30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100,
-                105, 110, 120, 130, 135, 140, 150, 160, 170, 180)
+                105, 110, 120, 130, 135, 140, 150, 160, 170, 180,
+                # v2.2 (N2) — long pure-Z2 base rides for gran-fondo riders.
+                195, 210, 225, 240)
 # Physiology caps: per content-class, the LONGEST total that is still sound.
 # Long aerobic (endurance) goes to 180; sustained high intensity does NOT —
 # 180-min threshold / VO2 / anaerobic is non-physiological, so cap them. Used to
 # skip emitting silly long high-intensity candidates (belt-and-braces; the
 # classifier + recovery ratios already make most of them fail).
 MAX_TOTAL = {
-    "endurance": 180, "recovery": 50, "tempo": 120, "tempo_intervals": 90,
+    "endurance": 240, "recovery": 50, "tempo": 120, "tempo_intervals": 90,  # v2.2 (N2): long Z2 base
     "sweet_spot": 120, "threshold": 120, "over_under": 90,
     "vo2max": 75, "vo2_short": 60, "anaerobic": 50, "neuromuscular": 60,
 }
@@ -281,7 +283,8 @@ def _steady_candidates():
     accepts it as endurance rather than bleeding to tempo/mixed.
     """
     BK = 1500  # nominal bookend (warmup+cooldown); _emit_steady re-sizes to land round
-    LONG = (60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 120, 130, 140, 150, 160, 170, 180)
+    LONG = (60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 120, 130, 140, 150, 160, 170, 180,
+            195, 210, 225, 240)  # v2.2 (N2) — long pure-Z2 base rides
 
     # 1) PURE STEADY Z2 — flat, every Z2 power × every endurance duration.
     for pw in (0.62, 0.65, 0.68, 0.70, 0.72, 0.74):

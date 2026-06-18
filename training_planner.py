@@ -92,7 +92,7 @@ def _tp_log_error(code: str, exc: Exception | None = None, **context) -> None:
 
 
 from contextlib import contextmanager
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -1150,6 +1150,10 @@ class Goal:
     rest_days: list = field(default_factory=lambda: [0])  # Monday
     daily_max_hours: dict = field(default_factory=dict)  # {0: 0, 1: 1.0, 2: 1.5, ...} per-day limits
     plan_weeks: int = 0
+    # J1 (v2.0.8): intensity-distribution model is a USER CHOICE, not forced.
+    # "polarized" (Seiler, default) | "pyramidal" | "threshold". Selects which
+    # per-phase IntensityBudget table the planner uses (see BUDGETS_BY_MODEL).
+    distribution: str = "polarized"
 
     def max_hours_for_day(self, weekday: int) -> float:
         """Get max training hours for a specific weekday (0=Mon..6=Sun)."""
@@ -1364,9 +1368,76 @@ BUDGETS: dict[str, "IntensityBudget"] = {
 }
 
 
+# ── J1 (v2.0.8): selectable intensity-distribution model ──────────────────────
+# The complaint: polarized was FORCED. The model is now a user choice (default
+# polarized). pyramidal/threshold are derived from the polarized base by
+# redistributing only the HARD minutes (z3+z4+z5plus) of the work phases —
+# total load, TSS, HIT count, rest days and easy (z1z2) volume are preserved, so
+# only the *kind* of intensity changes, never the dose. base/taper/consolidation/
+# history stay polarized (foundation, recovery and taper are model-agnostic).
+def _reallocate_hard(b: "IntensityBudget", z3w: float, z4w: float, z5w: float) -> "IntensityBudget":
+    hard = b.z3_minutes_per_week + b.z4_minutes_per_week + b.z5plus_minutes_per_week
+    tot = (z3w + z4w + z5w) or 1.0
+    z3 = round(hard * z3w / tot)
+    z4 = round(hard * z4w / tot)
+    z5 = max(0, hard - z3 - z4)  # remainder keeps the sum exact
+    wk = (b.z1z2_minutes_per_week + hard) or 1
+    tgt = {
+        "z1z2_pct": round(100 * b.z1z2_minutes_per_week / wk),
+        "z3_pct": round(100 * z3 / wk),
+        "z4plus_pct": round(100 * (z4 + z5) / wk),
+    }
+    return replace(b, z3_minutes_per_week=z3, z4_minutes_per_week=z4,
+                   z5plus_minutes_per_week=z5, polarized_target=tgt)
+
+
+def _model_budgets(z3w: float, z4w: float, z5w: float) -> "dict[str, IntensityBudget]":
+    d = dict(BUDGETS)  # reuse polarized objects for the model-agnostic phases
+    for ph in ("build1", "build2", "peak"):
+        d[ph] = _reallocate_hard(BUDGETS[ph], z3w, z4w, z5w)
+    return d
+
+
+BUDGETS_BY_MODEL: dict[str, "dict[str, IntensityBudget]"] = {
+    "polarized": BUDGETS,                       # Seiler — easy + very-hard, little threshold
+    "pyramidal": _model_budgets(60, 28, 12),    # threshold-led, descending z3>z4>z5
+    "threshold": _model_budgets(78, 16, 6),     # sweet-spot/at-FTP, minimal VO2/anaerobic
+}
+
+_ACTIVE_DISTRIBUTION = "polarized"
+
+
+def set_active_distribution(model: "str | None") -> str:
+    """Set the active intensity-distribution model for budget lookups (J1).
+
+    Called at plan generation + recalc from ``goal.distribution``. Unknown or
+    None falls back to ``polarized`` so the default path is byte-for-byte
+    unchanged and the model is never hard-forced.
+    """
+    global _ACTIVE_DISTRIBUTION
+    _ACTIVE_DISTRIBUTION = model if model in BUDGETS_BY_MODEL else "polarized"
+    return _ACTIVE_DISTRIBUTION
+
+
+def get_active_distribution() -> str:
+    return _ACTIVE_DISTRIBUTION
+
+
+def get_active_polarized_targets() -> "dict[str, dict]":
+    """Per-phase polarization targets for the ACTIVE model (J1) so the recalc
+    breach gate judges a non-polarized plan against its own target, not the
+    polarized ceiling."""
+    return {ph: b.polarized_target
+            for ph, b in BUDGETS_BY_MODEL[_ACTIVE_DISTRIBUTION].items()}
+
+
 def get_budget_for_phase(phase_name: str) -> "IntensityBudget":
-    """Return the IntensityBudget for a phase, defaulting to ``base``."""
-    return BUDGETS.get(phase_name, BUDGETS["base"])
+    """Return the IntensityBudget for a phase, defaulting to ``base``.
+
+    Honors the active distribution model (J1; default polarized → unchanged).
+    """
+    table = BUDGETS_BY_MODEL.get(_ACTIVE_DISTRIBUTION, BUDGETS)
+    return table.get(phase_name, table["base"])
 
 
 # ── v4.4.0 — composite "on-track" score helpers (CONCEPT-SCI §6) ──────────────
@@ -4740,6 +4811,9 @@ def generate_plan(
             None, self-fetches from the local archive; if still None, the
             legacy availability cap (hours_per_week×65) applies.
     """
+    # J1 (v2.0.8): honor the goal's chosen intensity-distribution model for every
+    # get_budget_for_phase lookup in this run (default "polarized" → unchanged).
+    set_active_distribution(getattr(goal, "distribution", "polarized"))
     metrics = get_today_metrics()
     # F4 (v4.1.0) — local CTL fallback. Previously this path hardcoded 37.0
     # when ICU was unreachable; any user whose wellness sync was broken got

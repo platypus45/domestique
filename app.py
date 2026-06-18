@@ -8444,6 +8444,9 @@ async def api_plan_generate(request: Request):
             plan_weeks=plan_weeks,
             longest_ride_h_90d=body.get("longest_ride_h_90d"),
             last_ftp_test_date=body.get("last_ftp_test_date"),
+            # J1 (v2.0.8): intensity-distribution model is a user choice
+            # (polarized default; pyramidal / threshold). Not hard-forced.
+            distribution=body.get("distribution", _prefs.get("distribution", "polarized")),
         )
         # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
         if goal.longest_ride_h_90d is None:
@@ -8549,6 +8552,9 @@ async def api_plan_generate(request: Request):
                 # v4.6.7 IMPL-CAP: persist capability-projection inputs.
                 "longest_ride_h_90d": goal.longest_ride_h_90d,
                 "last_ftp_test_date": goal.last_ftp_test_date,
+                # J1 (v2.0.8): persist the chosen distribution so recalc/refit
+                # rebuild with the same model (else they'd revert to polarized).
+                "distribution": getattr(goal, "distribution", "polarized"),
             },
             "phases": [
                 {
@@ -8777,10 +8783,15 @@ async def api_plan_reforecast():
                  if (w.get("start", "") or "") <= today_iso_str <= (w.get("end", "") or "")),
                 None,
             )
-            target_pol_kwarg = tp.PHASE_POLARIZED_TARGETS.get(
-                (cur_phase or "").lower(),
-                tp.PHASE_POLARIZED_TARGETS.get("history"),
-            )
+            # J1 (v2.0.8): align the breach gate with the plan's chosen
+            # distribution model (also sets the active model for this recalc's
+            # budget lookups) so a pyramidal/threshold plan isn't judged against
+            # the polarized ceiling. Default polarized → unchanged.
+            tp.set_active_distribution(
+                (plan.get("goal", {}) or {}).get("distribution", "polarized"))
+            _model_targets = tp.get_active_polarized_targets()
+            target_pol_kwarg = _model_targets.get(
+                (cur_phase or "").lower(), _model_targets.get("history"))
         except Exception:  # noqa: BLE001
             target_pol_kwarg = None
 
@@ -9195,6 +9206,7 @@ def _goal_from_plan_dict(g: dict) -> "tp.Goal":
         available_days=available_days_val,
         daily_max_hours=daily_max_val,
         plan_weeks=g.get("plan_weeks", 0),
+        distribution=g.get("distribution", "polarized"),  # J1
     )
 
 
@@ -9298,6 +9310,11 @@ def _apply_plan_update(
     now_iso = datetime.now().isoformat()
     current_ctl = training.get("ctl") or 30
     current_tsb = training.get("tsb")
+
+    # J1 (v2.0.8): pin the active intensity-distribution model to the plan's
+    # persisted choice so every tier (rebuild / missed-hard refit / reforecast)
+    # rebuilds with the same model rather than reverting to polarized.
+    tp.set_active_distribution((plan.get("goal", {}) or {}).get("distribution", "polarized"))
 
     # v1.8.25 — RECONCILE FIRST. Mark the current week's sessions done/missed
     # from actual activities BEFORE adapting, so this happens automatically on

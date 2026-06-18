@@ -2072,6 +2072,17 @@ window.addEventListener('unhandledrejection', function(e) {
           <!-- v1.8.9 Bug 8 — oninput syncs to plan-edate via _syncPlanWeeksToDate(). -->
           <input type="number" id="plan-weeks" value="12" min="4" max="52" style="width:70px;" oninput="_syncPlanWeeksToDate();" onchange="refreshPlanPreview()"></div>
       </div>
+      <!-- J1 (v2.0.8): intensity-distribution is a user choice, not forced polarized. -->
+      <div class="form-row">
+        <div class="form-group"><label>Intensity Model</label>
+          <select id="plan-distribution" onchange="refreshPlanPreview()"
+                  title="How hard sessions are spread across zones. Polarized (default): mostly easy + a little very-hard (needs volume). Pyramidal: more threshold than VO2. Threshold: sweet-spot / at-FTP focus.">
+            <option value="polarized" selected>Polarized (default)</option>
+            <option value="pyramidal">Pyramidal</option>
+            <option value="threshold">Threshold / Sweet-spot</option>
+          </select>
+        </div>
+      </div>
       <div id="plan-event-fields">
         <div class="form-row">
           <!-- v1.8.9 Bug 8 — oninput syncs to plan-weeks via _syncPlanDateToWeeks(). -->
@@ -9810,6 +9821,7 @@ async function generatePlan() {
     plan_weeks: parseInt($('plan-weeks').value) || 12,
     rest_days: restDays,
     daily_availability: dailyHours,
+    distribution: ($('plan-distribution') || {}).value || 'polarized',  // J1
   };
   if (body.goal === 'event') {
     body.event_date = $('plan-edate').value || null;

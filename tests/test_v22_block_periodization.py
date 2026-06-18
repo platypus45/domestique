@@ -60,5 +60,27 @@ class TestBlockPeriodizationOptIn(unittest.TestCase):
                 self.assertEqual(seen[p], "threshold", f"{p} = threshold block")
 
 
+class TestRotationPenaltyBlockExempt(unittest.TestCase):
+    """B3: the rotation penalty exempts the focus class in a block (unit-level,
+    deterministic — no planner non-determinism)."""
+
+    def test_focus_class_exempt_when_block_on(self):
+        weights = {"vo2max": 1.0, "threshold": 1.0, "sweet_spot": 1.0}
+        recent = ["vo2max", "vo2max", "threshold"]  # vo2max + threshold in last_5
+        # default (no block): vo2max penalized like always
+        self.assertEqual(tp._apply_rotation_penalty(weights, recent)["vo2max"], 0.4)
+        # block on, focus vo2max: vo2max EXEMPT; threshold still penalized
+        out = tp._apply_rotation_penalty(weights, recent, block_focus="vo2max")
+        self.assertEqual(out["vo2max"], 1.0, "focus class must not be penalized")
+        self.assertEqual(out["threshold"], 0.4, "non-focus class still rotates")
+
+    def test_parity_when_no_block_focus(self):
+        weights = {"vo2max": 1.0, "threshold": 1.0}
+        recent = ["vo2max", "threshold"]
+        self.assertEqual(
+            tp._apply_rotation_penalty(weights, recent),
+            tp._apply_rotation_penalty(weights, recent, block_focus=None))
+
+
 if __name__ == "__main__":
     unittest.main()

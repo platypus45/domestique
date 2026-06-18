@@ -3590,6 +3590,7 @@ def _get_mix_preference(phase_name: str, week_in_phase: int) -> dict[str, float]
 def _apply_rotation_penalty(
     weights_by_cc: dict[str, float],
     recent_hit_types: list[str],
+    block_focus: "str | None" = None,
 ) -> dict[str, float]:
     """v4.5.0 IMPL-PLANNER Layer 3 — rolling-window type rotation penalty.
 
@@ -3612,7 +3613,13 @@ def _apply_rotation_penalty(
     weeks_back = set(recent_hit_types[-12:-5])
     out = {}
     for cc, w in weights_by_cc.items():
-        if cc in last_5:
+        # F1 (v2.2/B3): in a block, the FOCUS class is exempt from the cross-week
+        # rotation penalty — a VO2 block deliberately repeats vo2max week-to-week
+        # (the opposite of the default "don't pick vo2max 4 weeks running"). None
+        # ⇒ default behaviour (parity).
+        if block_focus and cc == block_focus:
+            out[cc] = w
+        elif cc in last_5:
             out[cc] = w * 0.4
         elif cc in weeks_back:
             out[cc] = w * 0.7
@@ -4121,7 +4128,7 @@ def sample_week_workouts(
     # spanning the prior 4 weeks, we append our HIT picks for next week.
     pref_row = _get_mix_preference(phase.name, week_in_phase)
     rot_window = list(recent_hit_types or [])
-    rot_window_post = _apply_rotation_penalty(pref_row, rot_window)
+    rot_window_post = _apply_rotation_penalty(pref_row, rot_window, block_focus=block_focus)
 
     # Pre-compute eligible weights for the two slot kinds. The HIT row keeps
     # only HIT-eligible classes; endurance row keeps only endurance-eligible.

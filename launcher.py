@@ -48,6 +48,33 @@ def _harden_std_streams():
 
 _harden_std_streams()
 
+
+# WIN-TLS-FIX (v2.0.8): in a frozen Windows build urllib has no usable CA store,
+# so HTTPS to intervals.icu fails cert verification → URLError → "ICUNetworkError"
+# on every credential save / sync. (httpx works because it bundles certifi; urllib
+# uses the OS default SSL context, which is empty in a frozen Windows app.) Point
+# urllib's default context at certifi's bundled CA file via SSL_CERT_FILE. Win32-only
+# so the working macOS build (system certs) stays byte-identical. Must run before
+# any HTTPS call (i.e. before start_server) — top-level here guarantees that.
+def configure_tls_ca(platform=None):
+    """Set SSL_CERT_FILE/SSL_CERT_DIR to certifi's CA bundle on Windows so urllib
+    can verify HTTPS. Returns the CA path set, or None when not applicable.
+    Uses setdefault so a user-provided SSL_CERT_FILE is respected."""
+    plat = platform if platform is not None else sys.platform
+    if plat != "win32":
+        return None
+    try:
+        import certifi
+        ca = certifi.where()
+    except Exception:
+        return None
+    os.environ.setdefault("SSL_CERT_FILE", ca)
+    os.environ.setdefault("SSL_CERT_DIR", os.path.dirname(ca))
+    return ca
+
+
+configure_tls_ca()
+
 # Port 8080 is PINNED for single-instance hygiene: the tray icon + existing
 # instance guard both assume localhost:8080. If we let uvicorn float the
 # port, the single-instance detection breaks and desktop shortcuts that

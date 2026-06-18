@@ -41,6 +41,14 @@ datas = [
     ("VERSION", "."),
 ]
 
+# v2.0.8 WIN-TLS-FIX: bundle certifi's CA bundle so urllib (all ICU HTTPS in
+# training.py/db.py) can verify certs in the frozen Windows build. Without it
+# urllib has no CA store → cert-verify fails → "ICUNetworkError" on every
+# credential save / sync. httpx ships certifi; urllib needs the file on disk +
+# SSL_CERT_FILE (set in launcher.configure_tls_ca).
+from PyInstaller.utils.hooks import collect_data_files
+datas += collect_data_files("certifi")
+
 # Add profiles directory if it exists (per-user data, optional)
 if os.path.exists("profiles"):
     datas.append(("profiles", "profiles"))
@@ -61,6 +69,7 @@ a = Analysis(
     binaries=[],
     datas=datas,
     hiddenimports=[
+        "certifi",  # v2.0.8 WIN-TLS-FIX — urllib CA bundle (see datas + launcher)
         # v4.0.0-alpha: BLE/ANT+ runtime is gone with the trainer rip;
         # WebSocket bits are no longer imported because the /ws/training
         # endpoint was deleted. Keep only the HTTP + lifespan minimum.

@@ -1241,6 +1241,11 @@ class PlannedWeek:
     # Optional W'/Pmax weekly mirrors. None ⇒ TSS-only path.
     wprime_target: float | None = None
     pmax_target: float | None = None
+    # ── F1 (v2.2) block periodization ──────────────────────────────────────
+    # The concentrated focus content_class for this week's block (e.g. "vo2max"),
+    # or None for the default weekly-mixed plan. Set ONLY when
+    # goal.block_periodization is on; None keeps the block plug-ins dormant.
+    block_focus: "str | None" = None
 
 
 @dataclass
@@ -4000,8 +4005,13 @@ def sample_week_workouts(
     plan_total_weeks: int = 0,
     goal_type: str = "general",
     emphasis_profile: str | None = None,
+    block_focus: "str | None" = None,
 ) -> list["PlannedSession"]:
     """Score-weighted per-week sampler driving the v4.5 diversification overhaul.
+
+    ``block_focus`` (F1, v2.2): when set (opt-in block periodization), the week
+    concentrates its HIT slots on that content_class. None = default weekly-mixed
+    behaviour (the picker plug-ins read it; None keeps them dormant).
 
     Returns a 7-element list of PlannedSession (one per weekday Mon..Sun);
     rest-day slots come back as session_type='rest'. The caller (generate_plan
@@ -4780,6 +4790,20 @@ def _apply_long_ride_target(sessions: list, target_min: int, max_weekend_min: in
         best.session_type = "long_z2"
 
 
+# F1 (v2.2) — block focus per build/peak phase. Evidence-grounded order
+# (IP_F1_research.md / Rønnestad): VO2max block first, then a threshold/race-
+# specific block toward the event. base/taper/consolidation/history have no
+# focus. Returns None unless opt-in block periodization is on (default-off parity)
+# or the week is a stepback (unload weeks stay easy, no concentrated focus).
+_BLOCK_FOCUS_BY_PHASE = {"build1": "vo2max", "build2": "threshold", "peak": "threshold"}
+
+
+def _block_focus_for(phase_name: str, goal: "Goal", is_stepback: bool) -> "str | None":
+    if is_stepback or not getattr(goal, "block_periodization", False):
+        return None
+    return _BLOCK_FOCUS_BY_PHASE.get(phase_name)
+
+
 def generate_plan(
     goal: Goal,
     unavailable_periods: "list[tuple[date, date]] | None" = None,
@@ -4955,6 +4979,9 @@ def generate_plan(
                          if (event_targets and event_targets.get("climbing_bias")
                              and phase.name in ("build2", "peak"))
                          else None)
+                # F1 (v2.2/B2): block focus for this week (None unless opt-in).
+                block_focus = _block_focus_for(phase.name, goal, is_stepback)
+                pw.block_focus = block_focus
                 sampled = sample_week_workouts(
                     phase=phase, budget=budget, library=library,
                     used_names=used_names_dict,
@@ -4976,6 +5003,7 @@ def generate_plan(
                     plan_total_weeks=plan_total_weeks,
                     goal_type=getattr(goal, "goal_type", "general"),
                     emphasis_profile=_emph,
+                    block_focus=block_focus,
                 )
                 # (v1.11.0 event long-ride progression is applied as a final pass
                 #  at the END of generate_plan — after all duration/re-match passes.)

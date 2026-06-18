@@ -38,6 +38,27 @@ class TestBlockPeriodizationOptIn(unittest.TestCase):
             self.assertIsNone(getattr(w, "block_focus", None),
                               f"block off but week {w.week_num} has block_focus")
 
+    def test_block_on_stamps_focus_on_build_peak_only(self):
+        # B2: block on → build/peak (non-stepback) weeks carry a focus; VO2 block
+        # first (build1) → threshold block (build2/peak). base/taper/stepback None.
+        _ph, weeks = tp.generate_plan(
+            _goal(block=True), athlete={"ftp": 250, "weight_kg": 70},
+            recent_weekly_tss=500)
+        seen = {}
+        for w in weeks:
+            if getattr(w, "is_stepback", False):
+                self.assertIsNone(w.block_focus, "stepback weeks take no focus")
+                continue
+            if w.phase in ("build1", "build2", "peak"):
+                seen[w.phase] = w.block_focus
+            else:
+                self.assertIsNone(w.block_focus,
+                                  f"{w.phase} should carry no block_focus")
+        self.assertEqual(seen.get("build1"), "vo2max", "build1 = VO2 block")
+        for p in ("build2", "peak"):
+            if p in seen:
+                self.assertEqual(seen[p], "threshold", f"{p} = threshold block")
+
 
 if __name__ == "__main__":
     unittest.main()

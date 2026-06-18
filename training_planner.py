@@ -763,6 +763,11 @@ MIN_BUILD_WEEKS  = 4
 MIN_PEAK_WEEKS   = 2
 TAPER_DAYS       = 12    # Mujika 2003: 8-14 days optimal
 STEP_BACK_EVERY  = 4     # Rønnestad: 3 load + 1 recovery
+# v2.0.8 (E1) — acute:chronic workload upper bound (Gabbett 2016: sweet spot
+# 0.8-1.3, >1.5 doubles injury risk). Caps the generation-time weekly volume
+# at ≤1.3× the rider's recent mean weekly TSS so a fresh plan ramps from real
+# recent load rather than from the sum of daily availability.
+ACWR_CEILING     = 1.3
 # v1.9.2 — sanity ceiling for an availability-driven single session. The
 # availability calendar applies the user's per-day hours literally (bidirectional),
 # but caps here so a typo/extreme value (e.g. 10h) can't create an absurd session
@@ -1525,12 +1530,17 @@ def _event_demand_targets(goal: "Goal", athlete: dict | None,
 # ── Phase generator (backwards periodization) ────────────────────────────────
 
 def generate_phases(goal: Goal, current_ctl: float,
-                    event_targets: dict | None = None) -> list[Phase]:
+                    event_targets: dict | None = None,
+                    recent_weekly_tss: float | None = None) -> list[Phase]:
     """Generate training phases working backwards from the target date.
 
     v1.11.0: ``event_targets`` (from `_event_demand_targets`, None for non-event)
     feeds the event difficulty into the CTL band as a small ±6% nudge. Non-event
-    callers pass None → identical behavior."""
+    callers pass None → identical behavior.
+
+    v2.0.8 (E1): ``recent_weekly_tss`` (rider's recent mean weekly TSS from the
+    full ride archive) sets a LOAD-based weekly volume ceiling instead of the
+    availability sum. None → fall back to the legacy ``hours_per_week×65`` cap."""
     total_weeks = goal.weeks_available()
     target_date = goal.target_date or (date.today() + timedelta(weeks=16))
 
@@ -1562,9 +1572,24 @@ def generate_phases(goal: Goal, current_ctl: float,
     # Weekly TSS at target CTL
     peak_weekly_tss = target * 7
 
-    # Cap by time budget (TSS/hour at mixed intensity ≈ 60)
-    max_tss_from_hours = goal.hours_per_week * 65
-    peak_weekly_tss = min(peak_weekly_tss, max_tss_from_hours)
+    # v2.0.8 (E1) — LOAD-based weekly ceiling. The old cap was the sum of daily
+    # availability (hours_per_week×65), so a rider with generous availability
+    # got a ~24.5h/1592-TSS week regardless of what they'd actually been
+    # training — "starts like post-winter". The authoritative volume is now
+    # what's SMART after recent load: bounded by an ACWR-safe ramp over the
+    # rider's recent mean weekly TSS (Gabbett 2016: acute:chronic ≤~1.3 keeps
+    # injury risk low). target×7 stays the maintenance/aspiration cap.
+    # Availability remains a per-DAY session-length ceiling only (the
+    # authoritative per-day clamp at the end of _build_weeks) — it no longer
+    # drives the weekly TOTAL. When there's no ride history (recent_weekly_tss
+    # is None) we fall back to the legacy availability cap so existing
+    # flows/tests are unchanged.
+    if recent_weekly_tss and recent_weekly_tss > 0:
+        gabbett_safe = recent_weekly_tss * ACWR_CEILING
+        peak_weekly_tss = min(peak_weekly_tss, gabbett_safe)
+    else:
+        max_tss_from_hours = goal.hours_per_week * 65
+        peak_weekly_tss = min(peak_weekly_tss, max_tss_from_hours)
 
     # ── Allocate phases backwards from target date ────────────────────────
 
@@ -4680,6 +4705,8 @@ def generate_plan(
     seed_salt: int = 0,
     availability_overrides: "dict[str, float] | None" = None,
     athlete: dict | None = None,
+    current_ctl: float | None = None,
+    recent_weekly_tss: float | None = None,
 ) -> tuple[list[Phase], list[PlannedWeek]]:
     """Generate the full training plan.
 
@@ -4699,6 +4726,14 @@ def generate_plan(
             (per-week clamp [0.4, 2.0]) and re-runs match_zwo so the picked
             workout fits the new duration. Mirrors the reforecast() availability
             block so first-time plan creation honors the persisted calendar.
+        current_ctl: v2.0.8 (F5) — rider's actual current CTL for the INITIAL
+            ramp. When None, falls back to the self-fetch (ICU wellness → local
+            42-day EWMA → 37.0). The app passes the real value so a fresh plan
+            no longer starts "post-winter".
+        recent_weekly_tss: v2.0.8 (E1) — rider's recent mean weekly TSS, used
+            as the LOAD-based weekly volume ceiling (see generate_phases). When
+            None, self-fetches from the local archive; if still None, the
+            legacy availability cap (hours_per_week×65) applies.
     """
     metrics = get_today_metrics()
     # F4 (v4.1.0) — local CTL fallback. Previously this path hardcoded 37.0
@@ -4706,7 +4741,12 @@ def generate_plan(
     # a phantom fitness baseline wildly divergent from their actual recent
     # rides. Fall back to a 42-day EWMA over the local ride archive before
     # reverting to the constant.
-    current_ctl = metrics.get("ctl")
+    # v2.0.8 (F5): an explicit current_ctl from the caller (app's
+    # /api/plan/generate) wins over the self-fetch — the app already has the
+    # ICU/local value and threading it avoids a redundant fetch + guarantees
+    # initial generation ramps from real fitness.
+    if current_ctl is None:
+        current_ctl = metrics.get("ctl")
     if current_ctl is None:
         try:
             import ride_storage as _rs
@@ -4719,13 +4759,24 @@ def generate_plan(
     if current_ctl is None:
         current_ctl = 37.0
 
+    # v2.0.8 (E1) — recent mean weekly TSS sets the load-based volume ceiling.
+    # Self-fetch from the full local archive when the caller didn't supply it
+    # (best-effort; None → generate_phases keeps the legacy availability cap).
+    if recent_weekly_tss is None:
+        try:
+            import ride_storage as _rs
+            recent_weekly_tss = _rs.recent_mean_weekly_tss()
+        except Exception as _e:
+            log.debug(f"recent_mean_weekly_tss fetch failed: {_e}")
+
     # v1.11.0 IMPL-EVENT — event demand → plan targets (None for non-event goals
     # or missing athlete → all event wiring no-ops, non-event plans unchanged).
     event_targets = _event_demand_targets(
         goal, athlete, {"current_ctl": current_ctl})
 
     try:
-        phases = generate_phases(goal, current_ctl, event_targets)
+        phases = generate_phases(goal, current_ctl, event_targets,
+                                 recent_weekly_tss=recent_weekly_tss)
     except Exception as _e:
         # v1.6.1 — phase derivation failed (bad goal inputs / target_date in past).
         # Re-raise after logging so the caller (app.py /api/plan/generate) can
@@ -5038,6 +5089,19 @@ def generate_plan(
                 target_min=int(round(_lr_h * 60)),
                 max_weekend_min=_mw_min,
                 is_stepback=getattr(_w, "is_stepback", False))
+
+    # v2.0.8 (E1) — ENFORCE the load-based weekly volume ceiling. Until now the
+    # plan's REAL weekly volume was one library workout per available day, each
+    # clamped only to that day's availability — so generous availability gave a
+    # ~24.5h week regardless of recent load. peak_weekly_tss (and thus each
+    # week's tss_target) now carries the load-based ceiling, but nothing trimmed
+    # the summed week down to it. This pass does: it shrinks the EASIEST
+    # sessions first and converts the lowest-priority days to rest until the
+    # week's summed planned TSS sits at its tss_target, never touching HIT
+    # sessions and keeping ≥1 rest day + the polarized shape. Runs after the
+    # event long-ride growth (so the long ride is preserved last) and right
+    # before the authoritative per-day clamp.
+    _enforce_weekly_volume_ceiling(weeks)
 
     # v1.8.21 — AUTHORITATIVE per-day availability clamp. Session durations are
     # set from matched ZWO files at FOUR sites (sampler + 3 utilization/
@@ -5482,6 +5546,118 @@ def _enforce_weekly_hit_cap(weeks: list, library: list[dict]) -> None:
                     description="Easy endurance (no suitable workout)",
                     zwo_file="", zwo_name="", matched=False,
                 )
+
+
+# v2.0.8 (E1) — weekly volume-ceiling enforcement.
+# Easy (non-HIT) session types in SHRINK order — the type we trim/drop FIRST is
+# listed first. recovery has the least training value, then mid-week z2/tempo;
+# long_z2 (the weekend long ride / event-specificity lever) is preserved last.
+_VOLUME_SHRINK_ORDER = ("recovery", "tempo", "z2", "long_z2")
+# Don't shrink a session below this — a 25-min "endurance" slot is noise. Once a
+# session would fall under the floor we convert the whole day to rest instead.
+_VOLUME_MIN_SESSION_MIN = 30
+# Only act when the week overshoots its ceiling by more than this fraction —
+# avoids churning sessions for a handful of TSS the per-day clamp will absorb.
+_VOLUME_CEILING_TOLERANCE = 1.05
+
+
+def _enforce_weekly_volume_ceiling(weeks: list) -> None:
+    """v2.0.8 (E1) — cap each week's summed planned TSS at its load-based ceiling.
+
+    The ceiling is the week's own ``tss_target`` (= the phase's
+    ``weekly_tss_target``, which v2.0.8 derives from the rider's recent load via
+    the ACWR bound in ``generate_phases`` — already ×0.72 for stepback weeks).
+    Before this pass the plan placed one library workout per available day,
+    clamped only to per-day availability, so a generous calendar produced a
+    ~24.5h / ~1592-TSS week no matter how little the rider had recently been
+    training. Here we bring the summed week down to the ceiling by, in order:
+
+      1. SHRINKING the easiest sessions first (recovery → tempo → z2 → long_z2),
+         proportionally, down to a ``_VOLUME_MIN_SESSION_MIN`` floor;
+      2. then converting the lowest-value remaining easy day to REST when a
+         session would fall under the floor.
+
+    Invariants held: HIT (key intensity) sessions are never shrunk or dropped;
+    the polarized distribution is preserved (only easy volume is shed); at least
+    one rest day always remains (converting easy days to rest only adds rest);
+    and the last non-rest day is never removed (we stop before emptying the
+    week). Taper weeks are skipped — their reduced volume is deliberate and
+    owned by the taper logic. Bounded loop (≤ number of sessions per week).
+    """
+    if not weeks:
+        return
+    for wk in weeks:
+        if getattr(wk, "phase", "") == "taper":
+            continue
+        ceiling = getattr(wk, "tss_target", 0) or 0
+        if ceiling <= 0:
+            continue
+        budget = ceiling * _VOLUME_CEILING_TOLERANCE
+
+        def _easy_slots():
+            """(index, session) for non-HIT, non-rest, shrinkable slots, ordered
+            easiest-first then longest-first (shed the heaviest easy dose first
+            within a type)."""
+            out = []
+            for idx, s in enumerate(wk.sessions):
+                if s is None or s.session_type == "rest":
+                    continue
+                if (s.duration_min or 0) <= 0:
+                    continue
+                if _session_is_hit(s):
+                    continue
+                out.append((idx, s))
+            out.sort(key=lambda kv: (
+                _VOLUME_SHRINK_ORDER.index(kv[1].session_type)
+                if kv[1].session_type in _VOLUME_SHRINK_ORDER else 99,
+                -(kv[1].duration_min or 0),
+            ))
+            return out
+
+        # Bound the loop to the session count — each iteration either shrinks
+        # one slot to absorb the whole overage (and breaks) or rests one slot.
+        for _ in range(len(wk.sessions) + 1):
+            total = sum(s.tss_estimate or 0 for s in wk.sessions
+                        if s and s.session_type != "rest")
+            if total <= budget:
+                break
+            overage = total - ceiling
+            easy = _easy_slots()
+            if not easy:
+                # Only HIT (+ rest) left — never trim key intensity. The per-day
+                # clamp still caps each session; the week stays HIT-heavy by
+                # design (a polarized week with little easy volume).
+                break
+            # Keep at least one non-rest day overall.
+            non_rest = sum(1 for s in wk.sessions
+                           if s and s.session_type != "rest")
+            idx, slot = easy[0]
+            tss_per_min = ((slot.tss_estimate or 0) / slot.duration_min
+                           if slot.duration_min else 0.7)
+            # How much can this slot shed before hitting the floor?
+            sheddable_min = slot.duration_min - _VOLUME_MIN_SESSION_MIN
+            sheddable_tss = sheddable_min * tss_per_min if sheddable_min > 0 else 0
+            if sheddable_tss >= overage and sheddable_min > 0:
+                # This slot alone can absorb the remaining overage → shrink it.
+                cut_min = int(round(overage / tss_per_min)) if tss_per_min else 0
+                new_dur = max(_VOLUME_MIN_SESSION_MIN, slot.duration_min - cut_min)
+                slot.tss_estimate = round(tss_per_min * new_dur)
+                slot.duration_min = new_dur
+                break
+            # Slot can't absorb it all. If shrinking to the floor still leaves us
+            # over, drop the whole day to rest (unless it's the last non-rest
+            # day — then shrink to floor and stop touching it).
+            if non_rest <= 1:
+                if sheddable_min > 0:
+                    slot.duration_min = _VOLUME_MIN_SESSION_MIN
+                    slot.tss_estimate = round(tss_per_min * _VOLUME_MIN_SESSION_MIN)
+                break
+            slot.session_type = "rest"
+            slot.duration_min = 0
+            slot.tss_estimate = 0
+            slot.description = "Rest — weekly volume ceiling (recent load)"
+            slot.zwo_file = ""
+            slot.zwo_name = ""
 
 
 def _enforce_ronnestad_floor(

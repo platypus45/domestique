@@ -8495,10 +8495,33 @@ async def api_plan_generate(request: Request):
         except Exception:
             athlete = None
 
+        # v2.0.8 (F5 + E1) — thread the rider's ACTUAL starting fitness + recent
+        # load into INITIAL generation. Pre-fix, generate_plan self-fetched CTL
+        # and defaulted to 37.0 ("starts like post-winter"), and the volume
+        # ceiling came from availability. Now we pass the real current_ctl (ICU
+        # wellness; generate_plan still falls back to local-CTL→37 when None,
+        # preserving F4) and the recent mean weekly TSS from the full local
+        # archive (sets the load-based weekly ceiling). Mirrors the adaptation
+        # path's `cached("training", get_today_metrics)` + current_ctl read.
+        current_ctl = None
+        recent_weekly_tss = None
+        try:
+            training = cached("training", get_today_metrics)
+            current_ctl = training.get("ctl")
+        except Exception:
+            current_ctl = None
+        try:
+            import ride_storage as _rs
+            recent_weekly_tss = _rs.recent_mean_weekly_tss()
+        except Exception:
+            recent_weekly_tss = None
+
         phases, weeks = tp.generate_plan(
             goal, seed_salt=seed_salt,
             availability_overrides=availability_overrides or None,
             athlete=athlete,
+            current_ctl=current_ctl,
+            recent_weekly_tss=recent_weekly_tss,
         )
         plan_path = tp.export_plan_md(goal, phases, weeks)
 

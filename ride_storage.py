@@ -859,6 +859,60 @@ def compute_local_ctl(
     return round(ctl, 1)
 
 
+def recent_mean_weekly_tss(
+    weeks: int = 6,
+    extra_rides: list[dict] | None = None,
+) -> float | None:
+    """E1 (v2.0.8) — rider's RECENT mean weekly TSS over the last ``weeks``.
+
+    Sums TSS per ISO-calendar-week from the full local ride archive (plus any
+    ``extra_rides`` the caller passes, e.g. ICU activities in the app's shape)
+    over the trailing ``weeks`` window, then averages across the weeks that
+    actually contain a ride. The mean-over-active-weeks (not over all N weeks)
+    avoids a few rest weeks from deflating the ceiling for a rider who trains
+    in blocks.
+
+    This is the load anchor for the generation-time weekly volume ceiling
+    (training_planner.generate_phases): the plan should ramp from what the
+    rider has recently been doing, not from the sum of daily availability.
+
+    Best-effort: returns None when there is no usable TSS in the window, so the
+    caller falls back to the legacy availability-driven cap (hours_per_week×65).
+    """
+    import datetime as _dt
+    rides = list_rides()
+    if extra_rides:
+        rides = rides + list(extra_rides)
+    if not rides:
+        return None
+    today = _dt.date.today()
+    cutoff = today - _dt.timedelta(weeks=max(1, weeks))
+    cutoff_iso = cutoff.isoformat()
+    per_week: dict[tuple[int, int], float] = {}
+    for r in rides:
+        started = (r.get("started_at") or "")[:10]
+        if not started or started < cutoff_iso:
+            continue
+        summary = r.get("summary") or {}
+        # Accept both list_rides() shape (summary.tss) and load_all_rides()
+        # shape (top-level tss) — mirrors compute_local_atl's dual read.
+        tss = r.get("tss")
+        if tss is None:
+            tss = summary.get("tss") or 0
+        if not tss:
+            continue
+        try:
+            d = _dt.date.fromisoformat(started)
+            iso_year, iso_week, _ = d.isocalendar()
+            per_week[(iso_year, iso_week)] = (
+                per_week.get((iso_year, iso_week), 0.0) + float(tss))
+        except (TypeError, ValueError):
+            continue
+    if not per_week:
+        return None
+    return round(sum(per_week.values()) / len(per_week), 1)
+
+
 def persist_wellness(record: dict) -> Path | None:
     """v4.5.0 — write a single ICU wellness record to ``~/.domestique/wellness/``.
 

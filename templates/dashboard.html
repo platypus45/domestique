@@ -1892,6 +1892,17 @@ window.addEventListener('unhandledrejection', function(e) {
             <button class="lib-surface-btn" id="lib-surf-gravel" onclick="setLibSurfaceFilter('gravel',this)">Gravel & Cobbles</button>
           </div></div>
       </div>
+      <!-- G1 (v2.2): Outdoor variant — downloaded .zwo gets an off-plan transit warm-up + spin home. -->
+      <div class="form-row" style="align-items:flex-end;margin-top:10px;">
+        <div class="form-group"><label>
+          <input type="checkbox" id="lib-outdoor" style="vertical-align:middle;"> Outdoor variant
+          <span class="hint" title="Wraps the downloaded .zwo with a flat transit warm-up to the climb and an easy spin home. These minutes are OFF-PLAN — added easy riding, NOT counted in your planned weekly TSS." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span>
+        </label></div>
+        <div class="form-group"><label>Transit min</label>
+          <input type="number" id="lib-outdoor-transit" value="10" min="0" max="120" style="width:72px;"></div>
+        <div class="form-group"><label>Spin-home min</label>
+          <input type="number" id="lib-outdoor-spin" value="20" min="0" max="180" style="width:72px;"></div>
+      </div>
       <!-- tag chip-list (multi-select, OR-match). Hidden until populated by /api/workouts/tags. -->
       <div id="wk-tags-row" style="display:none;margin-top:10px;">
         <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:6px;">Tags <span style="color:var(--text3);">(click to toggle, OR-match)</span></label>
@@ -7773,8 +7784,17 @@ async function downloadZwo(cat, file) {
   // white screen in Times New Roman instead of a save dialog. Mirror the
   // downloadFIT() / downloadZwoFile() pattern: pywebview bridge first, then
   // fetch() + Blob to force save-as regardless of MIME type.
-  const url = `/api/download/zwo/${encodeURIComponent(cat)}/${encodeURIComponent(file)}`;
-  if (await _saveViaPywebview('zwo', file, url)) return;
+  let url = `/api/download/zwo/${encodeURIComponent(cat)}/${encodeURIComponent(file)}`;
+  let saveName = file;
+  // G1 (v2.2): outdoor variant — wrap with off-plan transit warm-up + spin home.
+  const _od = document.getElementById('lib-outdoor');
+  if (_od && _od.checked) {
+    const t = parseInt((document.getElementById('lib-outdoor-transit') || {}).value) || 10;
+    const s = parseInt((document.getElementById('lib-outdoor-spin') || {}).value) || 20;
+    url += `?outdoor=1&transit_min=${t}&spin_min=${s}`;
+    saveName = file.replace(/\.zwo$/i, '') + '_outdoor.zwo';
+  }
+  if (await _saveViaPywebview('zwo', saveName, url)) return;
   try {
     const r = await fetch(url);
     if (!r.ok) {
@@ -7789,7 +7809,7 @@ async function downloadZwo(cat, file) {
     const blob = await r.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = file;
+    a.download = saveName;
     document.body.appendChild(a);
     a.click();
     setTimeout(() => {

@@ -6225,8 +6225,51 @@ def _safe_path(base: Path, *parts: str) -> Path | None:
         return None
 
 
+def _wrap_zwo_outdoor(xml_text: str, transit_min: int, spin_min: int) -> str:
+    """G1 (v2.2) — frame a prescribed indoor block inside a real OUTDOOR ride:
+    prepend a flat transit warmup and append a spin-home cooldown. The prescribed
+    body is passed through UNCHANGED (string-level insert, not re-serialized, so
+    the middle is byte-identical). Export-only: this is the download path, so it
+    never touches the planner's accounted/weekly TSS — the transit + spin-home are
+    OFF-PLAN additional easy minutes by construction."""
+    t_s = max(0, int(transit_min)) * 60
+    s_s = max(0, int(spin_min)) * 60
+    out = xml_text
+    if t_s and "<workout>" in out:
+        out = out.replace(
+            "<workout>",
+            f'<workout>\n        <Warmup Duration="{t_s}" PowerLow="0.40" '
+            f'PowerHigh="0.60"/>  <!-- G1 transit to climb (off-plan) -->', 1)
+    if s_s and "</workout>" in out:
+        out = out.replace(
+            "</workout>",
+            f'        <Cooldown Duration="{s_s}" PowerLow="0.50" PowerHigh="0.40"/>'
+            f'  <!-- G1 spin home (off-plan) -->\n    </workout>', 1)
+    return out
+
+
+def _zwo_download_response(path, filename: str, outdoor: int,
+                          transit_min: int, spin_min: int):
+    """Shared ZWO download: plain FileResponse, or (G1) an outdoor-wrapped copy."""
+    plain = FileResponse(
+        path, filename=filename, media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    if not outdoor:
+        return plain
+    try:
+        wrapped = _wrap_zwo_outdoor(path.read_text(encoding="utf-8"),
+                                    transit_min, spin_min)
+    except Exception:
+        return plain
+    out_name = filename.rsplit(".", 1)[0] + "_outdoor.zwo"
+    return Response(
+        wrapped, media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{out_name}"'})
+
+
 @app.get("/api/download/zwo/{filename}")
-def download_zwo_flat(filename: str):
+def download_zwo_flat(filename: str, outdoor: int = Query(0),
+                      transit_min: int = Query(10), spin_min: int = Query(20)):
     """Single-segment path used by the dashboard's planner-modal "Download ZWO"
     button. v1.0.0 fix: pre-fix the dashboard called /api/download/zwo/<file>
     (one segment) but the only registered route was /api/download/zwo/{category}
@@ -6238,33 +6281,28 @@ def download_zwo_flat(filename: str):
     the Disposition header for octet-stream but renders application/xml inline,
     which was the "white screen with Times New Roman text" the user reported when
     clicking Download ZWO in the Library tab.
+
+    G1 (v2.2): ``outdoor=1`` wraps the block with an off-plan transit warmup +
+    spin-home cooldown (transit_min / spin_min minutes).
     """
     path = _safe_path(WORKOUT_DIR, filename)
     if not path or not path.exists():
         return JSONResponse({"error": "not found"}, 404)
-    return FileResponse(
-        path,
-        filename=filename,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    return _zwo_download_response(path, filename, outdoor, transit_min, spin_min)
 
 
 @app.get("/api/download/zwo/{category}/{filename}")
-def download_zwo(category: str, filename: str):
-    """v1.6.4: see download_zwo_flat docstring for media-type + Disposition change."""
+def download_zwo(category: str, filename: str, outdoor: int = Query(0),
+                 transit_min: int = Query(10), spin_min: int = Query(20)):
+    """v1.6.4: see download_zwo_flat docstring for media-type + Disposition change.
+    G1 (v2.2): ``outdoor=1`` adds an off-plan transit warmup + spin-home cooldown."""
     # Flat layout first, legacy category/file fallback
     path = _safe_path(WORKOUT_DIR, filename)
     if not path or not path.exists():
         path = _safe_path(WORKOUT_DIR, category, filename)
     if not path or not path.exists():
         return JSONResponse({"error": "not found"}, 404)
-    return FileResponse(
-        path,
-        filename=filename,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    return _zwo_download_response(path, filename, outdoor, transit_min, spin_min)
 
 
 @app.get("/api/climb-zwo/{region}/{filename}")

@@ -59,7 +59,10 @@ data/scoring inconsistencies are gone.
   load-based ceiling: the lower of your target fitness (CTL) and your recent
   6-week average weekly TSS × 1.3 (a standard safe ramp). Your daily availability
   is now just a per-session *ceiling*, not a target to fill. Example: a rider
-  averaging ~400 TSS/week now gets ~540 TSS (~10 h), not 24.5 h.
+  averaging ~400 TSS/week now gets ~540 TSS (~10 h), not 24.5 h. This holds
+  whether your rides live on intervals.icu or as local files: if you have no
+  recent ride history yet (fresh install / ICU-only), the ceiling anchors on your
+  current fitness (CTL × 7) instead of falling back to the old availability cap.
 - **The plan starts from your actual fitness.** It used to begin every plan from a
   hardcoded "post-winter" baseline, ignoring the racing and training you'd just
   done. It now reads your real current CTL (from intervals.icu, or computed from
@@ -87,6 +90,20 @@ data/scoring inconsistencies are gone.
 | Rarely a rest day; hard to see unload weeks | ≥1 rest day per normal week; unload weeks visible |
 | VO2max intervals on race eve | Final 2 days before the event are easy openers |
 | Polarized forced | Choose polarized / pyramidal / threshold |
+
+### The plan stays correct when it auto-adjusts
+
+Domestique re-optimizes your plan after you miss a session or sync new rides. Two
+fixes make those automatic adjustments trustworthy:
+
+- **Your event is never forgotten.** When the plan rebuilt or rebalanced itself it
+  used to lose your event date and details — which silently disabled the race-day
+  protections below. Your goal event now survives every auto-adjustment.
+- **No hard session sneaks back onto race week.** The "no VO2max before your event"
+  rule previously applied only when you first *generated* the plan; a later
+  auto-adjustment could quietly put intensity back on the final days. The guard now
+  re-applies on every rebuild, reforecast, and missed-session re-fit — so once your
+  taper is set, it stays a taper.
 
 ### FTP / eFTP
 

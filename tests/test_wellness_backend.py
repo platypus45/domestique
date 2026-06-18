@@ -23,8 +23,17 @@ def client(monkeypatch, tmp_path):
     db.set_db_path(dbfile)
     db.close_all_connections()
     db.init_db()
-    # Stub the ICU fetch so /api/wellness uses the SQLite fallback branch.
+    # Force /api/wellness down to the SQLite fallback branch by emptying BOTH
+    # higher-priority sources: the live ICU fetch AND the local file store.
+    # Without the local-store stub, ride_storage.load_recent_wellness reads the
+    # dev machine's real wellness archive (DATA_DIR, not the tmp DB), so the
+    # endpoint returns real rows and the seeded SQLite row is never reached —
+    # the test then sees a real TSB (e.g. 5.1) instead of the seeded value.
+    # Passes on a clean CI (no archive) but fails on a populated box.
     monkeypatch.setattr("app.fetch_wellness", lambda days: [])
+    import ride_storage as _rs
+    monkeypatch.setattr(_rs, "load_recent_wellness", lambda *a, **k: [])
+    monkeypatch.setattr("app._icu_credentials_present", lambda: False)
     # Drop the in-process cache from any prior test.
     am.clear_cache()
     return TestClient(am.app)

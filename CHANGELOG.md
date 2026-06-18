@@ -1,5 +1,151 @@
 # Changelog
 
+## v2.1.0 — Windows reliability + a plan that respects your real training (2026-06-18)
+
+A large round of fixes driven by detailed Windows-user feedback. Three buckets:
+**(1)** Windows stopped fighting you — your profile, API key, and the app window
+now survive a restart. **(2)** The training plan now builds from your *actual*
+fitness and a sane weekly load instead of blindly filling every available hour,
+adds real rest, keeps hard intervals away from race day, and lets you choose your
+intensity distribution instead of forcing polarized. **(3)** eFTP can no longer
+silently rewrite your FTP and zones, the power curve self-heals, and a couple of
+data/scoring inconsistencies are gone.
+
+### Windows: your settings actually persist now
+
+- **Your profile no longer resets on reopen.** Weight, FTP, zones, and athlete
+  details stuck at defaults (e.g. weight snapping to 70 kg, FTP to 200 W) every
+  time you reopened the app, and saves to the profile silently evaporated. Root
+  cause: the profile registry was being written *empty* before the first-run
+  migration could create your default profile, so the app booted with no active
+  profile and fell back to built-in defaults. Fixed — your profile is created and
+  loaded correctly, and edits persist.
+- **You can change your API key / athlete ID and have it stick.** Same root cause
+  — with no active profile, credential saves had nowhere to land. Now they save to
+  the active profile and survive a restart.
+- **Names with accents no longer break saving.** A profile name like "Raphaël"
+  produced an "invalid profile id" / "Save failed: 400" because the accented
+  character slipped past the ID validator. Names are now folded to a safe ASCII id
+  (e.g. `raphael`), so any name saves cleanly.
+- **The app reopens after you close it.** On Windows the close button left the
+  background server running and the port bound, so relaunching just popped a blank
+  browser tab (and you had to kill it from Task Manager). The window-close path now
+  fully shuts the server down and exits, so the next launch starts fresh.
+
+| Before (Windows) | After |
+|---|---|
+| Reopen → weight 70 / FTP 200, edits lost | Profile + edits persist across restarts |
+| API key won't save / "invalid profile id" | Credentials and accented names save cleanly |
+| Close → won't reopen, kill via Task Manager | Clean shutdown; relaunch works |
+| "ICU rejected credentials: ICUNetworkError" | TLS certificates bundled — ICU connects |
+
+> Note: the three Windows-specific fixes (clean exit, certificate bundling, port
+> release) are verified in code but need confirming on an actual Windows build.
+
+### Connecting to intervals.icu (TLS)
+
+- **"Saved, but ICU rejected the new credentials: failed: ICUNetworkError" is
+  fixed.** The frozen Windows build shipped without a certificate authority store,
+  so every HTTPS call to intervals.icu failed verification. The app now bundles
+  the `certifi` CA store and points Windows at it, so credential checks and syncs
+  succeed. (This is the recurring issue reported on GitHub.)
+
+### Your training plan got a lot smarter
+
+- **Weekly volume is based on training load, not the sum of your free time.**
+  Before, the plan put one workout on every available day and stretched each to
+  your per-day time limit — if you said you *could* train 24 hours a week, it
+  scheduled ~24 hours, which is how you'd get hurt. Now the week is capped by a
+  load-based ceiling: the lower of your target fitness (CTL) and your recent
+  6-week average weekly TSS × 1.3 (a standard safe ramp). Your daily availability
+  is now just a per-session *ceiling*, not a target to fill. Example: a rider
+  averaging ~400 TSS/week now gets ~540 TSS (~10 h), not 24.5 h.
+- **The plan starts from your actual fitness.** It used to begin every plan from a
+  hardcoded "post-winter" baseline, ignoring the racing and training you'd just
+  done. It now reads your real current CTL (from intervals.icu, or computed from
+  your local ride history) so the ramp starts where you actually are.
+- **Real rest weeks and rest days.** With sane volume, the planner's unload weeks
+  (every 4th week, lighter load) are visible again, and excess easy days are
+  converted to genuine rest days — so a normal week gets at least one day off
+  instead of seven days of training. (The "no recovery days" complaint was a
+  side-effect of the over-scheduling above.)
+- **No VO2max the day before your A event.** The taper kept prescribing hard
+  intervals right up to race day. Now any hard session within the final 2 days
+  before your target event is demoted to a short, easy opener. A pre-race sharpener
+  is still allowed a few days out — just not a smashfest on the eve.
+- **You choose your intensity distribution.** Polarized was forced on every plan.
+  You can now pick **Polarized** (default — mostly easy + a little very hard),
+  **Pyramidal** (more threshold work), or **Threshold / Sweet-spot** from the plan
+  form. Switching models changes only the *kind* of hard work (where your intensity
+  minutes go), not the total load, hard-session count, or easy volume — and your
+  choice is remembered and respected when the plan auto-adjusts.
+
+| Before (plan) | After |
+|---|---|
+| Volume = sum of your available hours (up to ~24 h/wk) | Volume capped by real load (target CTL / recent TSS × 1.3) |
+| Every plan starts from a fixed post-winter baseline | Starts from your actual current CTL |
+| Rarely a rest day; hard to see unload weeks | ≥1 rest day per normal week; unload weeks visible |
+| VO2max intervals on race eve | Final 2 days before the event are easy openers |
+| Polarized forced | Choose polarized / pyramidal / threshold |
+
+### FTP / eFTP
+
+- **eFTP can no longer silently rewrite your FTP and all your zones.** After 7
+  days of sustained upward eFTP drift the app used to overwrite your FTP
+  automatically — "applied it without asking", as the code itself put it — which
+  cascaded into every power zone. Many riders find intervals.icu's eFTP unreliable,
+  so this is now **off by default**. The drift is still detected and shown (with a
+  banner and a manual "Accept" button), so you decide whether to apply it. If you
+  *want* the old automatic behavior, opt in with `eftp_auto_apply: true` in your
+  user preferences.
+
+### Power & data
+
+- **The power curve self-heals when efforts are missing.** Your peak power could
+  read far too low (e.g. Pmax 693 W vs 1229 W on intervals.icu, with CP/W′ showing
+  "—") because the backfill that pulls best-effort data only ran when the curve was
+  completely empty — a few stale edge rides were enough to block it forever. It now
+  triggers whenever in-window rides are missing their effort data, so the curve
+  fills in correctly. (Full effect needs a working ICU connection — see TLS above.)
+
+### Workout library
+
+- **Removed an impossible "45 min in Z7" workout.** Two `anaerobic_ramp` files
+  were corrupt staircases ramping to ~600% FTP. They slipped past the
+  dangerous-workout screen because it treated anything with "ramp" in the name as a
+  legitimate ramp *test*. The bad files are gone and the exemption is tightened to
+  genuine FTP/ramp tests, so nothing physically impossible can be scheduled.
+- **Workout scores are consistent everywhere.** The workout library and the
+  `/api/workouts` view computed a workout's difficulty score from slightly
+  different zone math for ramp segments, so the same file could score 5 in one
+  place and 6 in another. Both now use identical ramp-aware zone accounting.
+
+### Under the hood
+
+- Added focused regression tests for every fix above (profiles, TLS, app relaunch,
+  power-curve backfill, impossible-workout guard, volume ceiling, rest weeks, taper
+  eve, eFTP opt-in, distribution choice, score consistency).
+- Fixed a wellness test that depended on the developer's local data instead of
+  isolating its fixture (no app behavior change — the TSB calculation was already
+  correct).
+
+### Still on the list (not in this release)
+
+All reported **bugs** are fixed. The following feedback items are **design /
+feature requests** that are deliberately deferred — each has a written
+implementation proposal and most belong together in one periodization project
+rather than piecemeal patches:
+
+- **Block periodization** — focused 4–6 week blocks instead of all intensity types
+  every week.
+- **Intensity frequency scaled to volume** — fewer hard days on low-volume weeks.
+- **B and C races** — supporting events with their own mini-tapers around an A goal.
+- **More workout variety** — repeatability, sprints, strength-endurance.
+- **A library that mixes zones with clear objectives** / a progression-based plan
+  creator rather than a static 420-workout library.
+- **Outdoor realism** — accounting for travel-to-climb and the ride home.
+- **DFA α1 reliability** — better artifact rejection for HRV-based thresholds.
+
 ## v2.0.7 — Automatic week re-fit when you miss a hard session (2026-06-17)
 
 When you skip a hard workout, the planner now automatically re-optimizes the rest

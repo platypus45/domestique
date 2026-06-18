@@ -653,9 +653,13 @@ class TestMigrationFreshInstall(unittest.TestCase):
         # /setup. The empty registry is still persisted to disk.
         self.assertEqual(len(pm.list_profiles()), 0)
         self.assertFalse(pm.has_any_profile())
-        # Registry file should still be persisted (empty profiles list)
+        # v2.0.8: the empty registry is NO LONGER persisted on rebuild. Writing
+        # an empty profiles.json here made migrate_to_profiles' registry.exists()
+        # guard skip creating `default` on a fresh install → no active profile →
+        # FTP 200 / 70kg defaults + saves evaporating (the Windows "profile resets
+        # every launch" bug). Leaving the file absent lets migrate create default.
         reg_path = Path(self.tmp) / ".domestique" / "profiles.json"
-        self.assertTrue(reg_path.exists())
+        self.assertFalse(reg_path.exists())
 
         # After explicitly creating a profile, has_any_profile() becomes True
         pm.create_profile("Rider")

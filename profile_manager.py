@@ -285,7 +285,16 @@ class ProfileManager:
         pick it up as a phantom profile.
         """
         with self._switch_lock:
-            slug = name.lower().replace(" ", "-")
+            # v2.0.8 — ASCII-fold first. Python's str.isalnum() is True for
+            # accented Unicode, so "Raphaël" slugged to "raphaël", which the
+            # ASCII-only id validator (_PROFILE_ID_RE) + path boundary then
+            # rejected → "invalid profile id" 400 on save/switch. NFKD-decompose
+            # and drop non-ASCII so "Raphaël" → "raphael"; the accented original
+            # is preserved as the display `name` in the registry.
+            import unicodedata
+            ascii_name = (unicodedata.normalize("NFKD", name)
+                          .encode("ascii", "ignore").decode("ascii"))
+            slug = ascii_name.lower().replace(" ", "-")
             slug = "".join(c for c in slug if c.isalnum() or c == "-")[:32]
             if not slug:
                 slug = f"profile-{len(self.list_profiles()) + 1}"
@@ -978,8 +987,15 @@ class ProfileManager:
                 "profiles": [],
             }
             self._active_id = None
-            # Persist the empty registry so subsequent boots don't re-scan.
-            self._save_registry()
+            # v2.0.8 — do NOT persist the empty registry. ProfileManager.get()
+            # runs BEFORE migrate_to_profiles() in the lifespan; writing an empty
+            # profiles.json here makes migrate's `registry.exists()` guard fire and
+            # skip creating the `default` profile. On a FRESH install that left no
+            # active profile → every property fell back to defaults (FTP 200 /
+            # 70kg) and saves wrote to the profiles ROOT and evaporated on reopen
+            # (the Windows tester's "profile resets every launch"). Leaving the
+            # file ABSENT lets migrate create `default` as designed. The in-memory
+            # empty state above still routes a no-profile session to /setup.
             return
 
         self._registry = {

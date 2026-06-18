@@ -283,8 +283,16 @@ async def lifespan(app):
     # single-user migration operates against the new dir name.
     from migrate_profiles import migrate_to_profiles, migrate_to_v4, run_v102_migration_check
     from profile_manager import ProfileManager
-    pm = ProfileManager.get()
+    # v2.0.8 — migrate BEFORE the first ProfileManager.get(). On a FRESH install
+    # the registry doesn't exist yet; migrate_to_profiles() must create the
+    # `default` profile + profiles.json first. If get() ran first it rebuilt an
+    # empty registry and migrate's `registry.exists()` guard then skipped
+    # creation, leaving NO active profile → every property fell back to defaults
+    # (FTP 200 / 70kg) and saves evaporated on reopen (the Windows "profile
+    # resets every launch" bug). Paired with the non-destructive empty-rebuild
+    # fix in profile_manager._rebuild_registry.
     migrate_to_profiles()
+    pm = ProfileManager.get()
 
     # v1.0.2 IMPL-MIGRATION: startup version-aware self-check. Detects an
     # upgrade by comparing ~/.domestique/last_run_version.txt to _VERSION;

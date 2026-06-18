@@ -7652,6 +7652,371 @@ def recalculate_plan(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# MISSED-HARD WEEK RE-FIT (v2.0.7) — IP_missed_hard_refit.md, decision (b)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _refit_session_frozen(s, today: date) -> bool:
+    """True if a session in the current week must NOT be re-fitted.
+
+    Mirrors regenerate_from_today's §6.12 preservation predicate so the refit
+    never touches the same things a regen wouldn't: past days, days the user
+    moved/edited, anything already classified (done/done_partial/missed/
+    dismissed/ambiguous), or sessions with a dismiss timestamp / completion
+    matches. A day is "remaining trainable" iff it is NOT frozen, NOT a rest
+    slot, and lies on/after ``today``.
+    """
+    if getattr(s, "day", None) is None or s.day < today:
+        return True
+    if getattr(s, "adapted", False) or getattr(s, "user_moved", False):
+        return True
+    if getattr(s, "status", "pending") != "pending":
+        return True
+    if getattr(s, "dismissed_at", ""):
+        return True
+    if getattr(s, "completion_matches", None):
+        return True
+    return False
+
+
+def refit_remaining_week(
+    goal: Goal,
+    current_plan_weeks: list[PlannedWeek],
+    today: date,
+    *,
+    seed_salt: int = 0,
+    athlete: dict | None = None,
+) -> tuple[list[PlannedWeek], dict]:
+    """v2.0.7 — re-fit the REMAINING trainable days of the CURRENT week after a
+    HARD session was missed, redistributing the missed stimulus within the
+    existing safety guards (no catch-up spike). Decision (b) full re-fit.
+
+    Approach (IP §Design): re-sample the WHOLE current week through the shared
+    ``sample_week_workouts`` path (so every guard runs — TYPE_CEILING, the
+    sprint IF≤0.82 ceiling, the easy-Z345 ceiling, 48h hard-day spacing, the
+    per-phase ``hit_count_max`` cap, polarization, availability), then KEEP
+    ONLY the picks for remaining trainable days and splice them over the frozen
+    past/done/pinned days. Three INLINE safety passes then run on the spliced
+    week (no separate ``_enforce_weekly_hit_cap`` call):
+      1. 48h hard-day spacing — MISSED hards are excluded (they imposed no
+         load), so they neither create nor block a violation; the shorter
+         REMAINING member of any too-close pair is demoted (frozen↔frozen pairs
+         are left untouched).
+      2. weekly HIT cap, counted with missed hards EXCLUDED so a missed hard
+         FREES its slot rather than consuming it; only remaining slots demote.
+      3. REDISTRIBUTION (promote) — re-owe each freed missed-hard stimulus onto
+         the best SAFE remaining day (one that keeps 48h spacing and stays under
+         the cap). When no safe slot remains the stimulus is legitimately
+         dropped — never forced into a <48h or over-cap placement (no spike).
+
+    Anti-churn: a remaining day is overwritten ONLY when its session_type OR
+    duration actually changes; otherwise the existing session (and its already-
+    matched zwo_file) is kept verbatim.
+
+    Determinism: ``seed_salt`` is forwarded into the sampler; the caller derives
+    it from (plan_start, week_num, sorted missed dates) so the refit is stable
+    and the app-layer latch prevents re-rolling.
+
+    Returns ``(all_weeks, refit_info)``. ``all_weeks`` is the SAME list object
+    passed in (the current week's PlannedWeek is mutated in place); refit_info
+    carries ``{action, week_num, refit_days, missed_dates}``.
+    """
+    # Locate the current week (the one containing today).
+    cur_idx = next(
+        (i for i, w in enumerate(current_plan_weeks)
+         if w.start <= today <= w.end),
+        None,
+    )
+    no_op = {"action": "no_change", "refit_days": [], "missed_dates": []}
+    if cur_idx is None:
+        return current_plan_weeks, no_op
+    week = current_plan_weeks[cur_idx]
+
+    # Newly-missed HARD sessions in THIS week (union-of-axes hard definition).
+    missed_hard = [
+        s for s in week.sessions
+        if getattr(s, "status", "") == "missed" and _session_is_hit(s)
+    ]
+    missed_dates = sorted(
+        s.day.isoformat() for s in missed_hard if getattr(s, "day", None)
+    )
+    if not missed_hard:
+        return current_plan_weeks, no_op
+
+    # Remaining trainable days (on/after today, not rest, not frozen). If none,
+    # the week is bounded out — no-op (never spill into next week).
+    remaining_offsets = [
+        off for off in range(7)
+        if (d := week.start + timedelta(days=off)) >= today
+        and off < len(week.sessions)
+        and getattr(week.sessions[off], "session_type", "") != "rest"
+        and not _refit_session_frozen(week.sessions[off], today)
+    ]
+    if not remaining_offsets:
+        return current_plan_weeks, {**no_op, "missed_dates": missed_dates}
+
+    # Reconstruct the rolling-diversity context the sampler needs from the
+    # PRIOR weeks (mirrors recalculate_plan's bookkeeping: used_names by week,
+    # the rolling HIT-type window for this phase, and the plan-wide novelty /
+    # pick / class counters). Past weeks feed variety; we only re-sample one.
+    library = load_workout_library()
+    pool_index = _build_pool_indexes(library)
+    used_names_dict: dict[str, int] = {}
+    recent_hit_by_phase: dict[str, list[str]] = {}
+    seen_cc_dur_tuples: set = set()
+    plan_pick_counts: dict[str, int] = {}
+    class_session_counts: dict[str, int] = {}
+    class_distinct_files: dict[str, set] = {}
+    for w in current_plan_weeks[:cur_idx]:
+        for s in w.sessions:
+            nm = getattr(s, "zwo_name", "") or ""
+            if nm:
+                used_names_dict[nm] = w.week_num
+                plan_pick_counts[nm] = plan_pick_counts.get(nm, 0) + 1
+            cc = (_content_class_for_zwo(getattr(s, "zwo_file", "") or "")
+                  or getattr(s, "session_type", "") or "")
+            if cc and cc not in ("rest", "recovery"):
+                class_session_counts[cc] = class_session_counts.get(cc, 0) + 1
+                fn = getattr(s, "zwo_file", "") or ""
+                if fn:
+                    class_distinct_files.setdefault(cc, set()).add(fn)
+            if _session_is_hit(s) and w.phase == week.phase:
+                hcc = _content_class_for_zwo(getattr(s, "zwo_file", "") or "")
+                if hcc:
+                    recent_hit_by_phase.setdefault(week.phase, []).append(hcc)
+    # Evict names older than the rolling window so they're re-eligible.
+    stale = [n for n, wk in used_names_dict.items()
+             if week.week_num - wk >= _USED_NAMES_ROLLING_WEEKS]
+    for n in stale:
+        used_names_dict.pop(n, None)
+    phase_rot = recent_hit_by_phase.setdefault(week.phase, [])
+    if len(phase_rot) > 12:
+        del phase_rot[: len(phase_rot) - 12]
+
+    # Re-sample the FULL week (the sampler only operates Mon..Sun; we splice the
+    # remaining days below). Budget is the unmodified per-phase budget: a missed
+    # hard day frees its HIT slot, so the sampler re-owes the stimulus into the
+    # remaining slots up to hit_count_max — the "credit the stimulus back" lever.
+    budget = get_budget_for_phase(week.phase)
+    sampled = sample_week_workouts(
+        phase=Phase(
+            name=week.phase, start=week.start, end=week.end,
+            weeks=1, focus="", weekly_tss_target=week.tss_target,
+            z2_pct=budget.polarized_target.get("z1z2_pct", 80),
+            hit_per_week=budget.hit_count_max,
+            session_types=[],
+        ),
+        budget=budget, library=library,
+        used_names=used_names_dict,
+        week_num=week.week_num, seed_salt=seed_salt,
+        week_start=week.start,
+        available_days=goal.available_days,
+        rest_days=goal.rest_days,
+        daily_max_hours=goal.daily_max_hours,
+        max_weekday_hours=goal.max_weekday_hours,
+        max_weekend_hours=goal.max_weekend_hours,
+        is_stepback=week.is_stepback,
+        pool_index=pool_index,
+        week_in_phase=0,
+        recent_hit_types=phase_rot,
+        seen_cc_dur_tuples=seen_cc_dur_tuples,
+        plan_pick_counts=plan_pick_counts,
+        class_session_counts=class_session_counts,
+        class_distinct_files=class_distinct_files,
+        plan_total_weeks=len(current_plan_weeks),
+        goal_type=getattr(goal, "goal_type", "general"),
+    )
+
+    # Splice ONLY remaining trainable days, ANTI-CHURN: overwrite a day solely
+    # when its session_type OR duration changed (keep the existing zwo_file
+    # otherwise so the user doesn't see a workout they already saw shuffle).
+    refit_days: list[str] = []
+    for off in remaining_offsets:
+        new_s = sampled[off] if 0 <= off < len(sampled) else None
+        if new_s is None or getattr(new_s, "session_type", "") == "rest":
+            continue
+        old_s = week.sessions[off]
+        if (new_s.session_type == old_s.session_type
+                and int(new_s.duration_min) == int(old_s.duration_min)):
+            continue  # unchanged → keep existing session + matched file
+        week.sessions[off] = new_s
+        refit_days.append(new_s.day.isoformat())
+
+    if not refit_days:
+        return current_plan_weeks, {**no_op, "missed_dates": missed_dates}
+
+    # FINAL safety passes — guarantee the no-catch-up-spike invariants on the
+    # whole (now spliced) week regardless of seed. Frozen past / done / pinned
+    # slots are sacrosanct, so BOTH passes may only ever demote a REMAINING
+    # trainable day; a demoted slot is swapped for a real endurance/tempo
+    # LIBRARY file (mirrors _enforce_weekly_hit_cap's _demote_slot — never
+    # relabel a hard .zwo in place). When the only offending hard slots left are
+    # frozen, the week stays as-is (some missed stimulus is legitimately dropped,
+    # never forced onto / removed from a frozen day).
+    remaining_set = set(remaining_offsets)
+    cap = get_budget_for_phase(week.phase).hit_count_max
+
+    # A MISSED hard day imposed NO training load (the athlete rested it), so for
+    # BOTH 48h spacing AND the weekly HIT cap it must be treated as NOT-hard.
+    # DONE and PENDING/remaining hards both count (they impose/intend real load).
+    def _eff_hard(s) -> bool:
+        return _session_is_hit(s) and getattr(s, "status", "pending") != "missed"
+
+    def _demote_off(off: int) -> None:
+        slot = week.sessions[off]
+        def _try(new_type: str):
+            cand = PlannedSession(
+                day=slot.day, day_name=slot.day_name, session_type=new_type,
+                duration_min=slot.duration_min,
+                tss_estimate=round(slot.duration_min / 60
+                                   * TSS_PER_HOUR.get(new_type, 45)),
+                description=f"{new_type} ({slot.duration_min}min) — refit demotion",
+            )
+            m = match_zwo(cand, library)
+            return m if (m.zwo_file and not _session_is_hit(m)) else None
+        demoted = (_try("tempo") if slot.duration_min >= 60 else None) or _try("z2")
+        week.sessions[off] = demoted if demoted is not None else PlannedSession(
+            day=slot.day, day_name=slot.day_name, session_type="z2",
+            duration_min=slot.duration_min,
+            tss_estimate=round(slot.duration_min / 60 * TSS_PER_HOUR["z2"]),
+            description="Easy endurance (no suitable workout)",
+            zwo_file="", zwo_name="", matched=False,
+        )
+        iso = slot.day.isoformat()
+        if iso not in refit_days:
+            refit_days.append(iso)
+
+    # Pass 1 — 48h hard-day spacing across the WHOLE week (the sampler only
+    # spaces its OWN picks; splicing them next to a frozen hard day — e.g. a
+    # pinned hard — can leave two hard days <48h apart). MISSED hards are
+    # excluded (_eff_hard): they imposed no load, so they neither create nor
+    # block a spacing violation. SCAN every adjacent pair for the first
+    # too-close pair with ≥1 REMAINING (demotable) member and demote the shorter
+    # such member; skip frozen↔frozen pairs (pre-existing user state, left
+    # untouched) and keep scanning past them so a LATER frozen↔remaining
+    # violation is still repaired.
+    for _ in range(len(remaining_set) + 1):
+        hard_offs = sorted(o for o in range(len(week.sessions))
+                           if _eff_hard(week.sessions[o]))
+        repaired = False
+        for a, b in zip(hard_offs, hard_offs[1:]):
+            if b - a >= 2:
+                continue
+            # Pick the REMAINING member to demote; if both are remaining, drop
+            # the shorter. Two frozen hard days <48h (a pre-existing user state)
+            # have no remaining member — skip the pair and keep scanning.
+            cands = [o for o in (a, b) if o in remaining_set]
+            if not cands:
+                continue
+            _demote_off(min(cands, key=lambda o: week.sessions[o].duration_min))
+            repaired = True
+            break
+        if not repaired:
+            break
+
+    # Pass 2 — weekly HIT cap, counted with _eff_hard so a MISSED hard FREES its
+    # slot (no load imposed) instead of consuming it. Shed the heaviest (longest)
+    # remaining effective-hard slot first until eff-hard ≤ cap. Frozen DONE/
+    # PENDING hards still COUNT; only remaining slots are demotable.
+    def _eff_hard_count() -> int:
+        return sum(1 for s in week.sessions if _eff_hard(s))
+
+    for _ in range(len(remaining_set) + 1):
+        if _eff_hard_count() <= cap:
+            break
+        demotable = [off for off in remaining_set
+                     if _eff_hard(week.sessions[off])]
+        if not demotable:
+            break  # only frozen hard slots remain — leave them
+        _demote_off(max(demotable, key=lambda o: week.sessions[o].duration_min))
+
+    # Pass 3 — REDISTRIBUTION (promote). A missed hard freed its slot; the user
+    # is fresh, so re-owe that stimulus onto a SAFE remaining day rather than
+    # dropping it — but only where it keeps 48h spacing AND stays under the cap
+    # (never a catch-up spike). While there's headroom under the cap and an
+    # un-replaced missed-hard TYPE remains, promote the best remaining trainable
+    # non-hard day to that type. "Best" = the remaining slot maximizing the min
+    # gap to every existing _eff_hard day (most-spaced, deterministic tie-break
+    # on offset). Bounded by len(remaining_set); when no safe slot remains the
+    # stimulus is legitimately dropped.
+    # Missed hard TYPES, highest-priority first (vo2/threshold heaviest).
+    _PROMOTE_PRIORITY = {
+        "vo2max": 0, "double_threshold": 1, "threshold": 2, "overunder": 3,
+        "sweetspot": 4, "sprint": 5,
+    }
+    missed_types = sorted(
+        {getattr(s, "session_type", "") for s in missed_hard
+         if getattr(s, "session_type", "") in _PROMOTE_PRIORITY},
+        key=lambda t: _PROMOTE_PRIORITY.get(t, 99),
+    )
+    # One promotion per missed hard (don't manufacture more stimulus than was
+    # lost). The cap-headroom check in the loop bounds it further.
+    promotions_owed = len(missed_hard) if missed_types else 0
+    for _ in range(len(remaining_set) + 1):
+        if promotions_owed <= 0 or _eff_hard_count() >= cap or not missed_types:
+            break
+        eff_hard_offs = [o for o in range(len(week.sessions))
+                         if _eff_hard(week.sessions[o])]
+        # Remaining trainable non-hard slots that keep 48h spacing from every
+        # existing effective-hard day if promoted.
+        candidates = [
+            o for o in remaining_set
+            if not _eff_hard(week.sessions[o])
+            and getattr(week.sessions[o], "session_type", "") not in ("rest", "ftp_test")
+            and all(abs(o - h) >= 2 for h in eff_hard_offs)
+        ]
+        if not candidates:
+            break  # no safe slot — drop the remaining stimulus (no spike)
+        best = max(candidates,
+                   key=lambda o: (min((abs(o - h) for h in eff_hard_offs),
+                                      default=7), -o))
+        slot = week.sessions[best]
+        new_type = missed_types[0]
+        ceil = TYPE_CEILING.get(new_type)
+        dur = min(slot.duration_min, ceil) if ceil else slot.duration_min
+        cand = PlannedSession(
+            day=slot.day, day_name=slot.day_name, session_type=new_type,
+            duration_min=dur,
+            tss_estimate=round(dur / 60 * TSS_PER_HOUR.get(new_type, 75)),
+            description=f"{new_type} ({dur}min) — refit redistribution",
+        )
+        promoted = match_zwo(cand, library, seed_salt=seed_salt)
+        if not (promoted.zwo_file and _session_is_hit(promoted)):
+            # The pool can't supply a hard file for this type/duration (e.g. the
+            # sprint IF≤0.82 ceiling rejected every candidate) — drop, don't fake.
+            break
+        week.sessions[best] = promoted
+        iso = slot.day.isoformat()
+        if iso not in refit_days:
+            refit_days.append(iso)
+        promotions_owed -= 1
+
+    # Re-match a real library workout for any refitted day that lost its file in
+    # the demotion (or never carried one). Anchor the seed on the plan start so
+    # re-running the same refit returns the same workout.
+    anchor = current_plan_weeks[0].start if current_plan_weeks else week.start
+    used_names_set = set(used_names_dict)
+    for off in remaining_offsets:
+        s = week.sessions[off]
+        if s.day.isoformat() not in refit_days:
+            continue
+        if s.session_type in ("rest", "recovery", "ftp_test"):
+            continue
+        if getattr(s, "zwo_file", ""):
+            continue
+        match_zwo(s, library, week_num=week.week_num, day_idx=off,
+                  used_names=used_names_set, plan_start_date=anchor,
+                  seed_salt=seed_salt)
+
+    refit_info = {
+        "action": "refitted",
+        "week_num": week.week_num,
+        "refit_days": refit_days,
+        "missed_dates": missed_dates,
+    }
+    return current_plan_weeks, refit_info
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # DAILY PLAN ADAPTATION (Xert-style TSS Pacer + cross-sport load)
 # ══════════════════════════════════════════════════════════════════════════════
 #

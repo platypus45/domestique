@@ -1,5 +1,34 @@
 # Changelog
 
+## v2.0.7 — Automatic week re-fit when you miss a hard session (2026-06-17)
+
+When you skip a hard workout, the planner now automatically re-optimizes the rest
+of that week instead of leaving stale easy days on the schedule. You skipped the
+hard one, so you're fresher — the remaining days re-fit to make the most of it,
+within the same injury-safety limits (never a "catch-up" pile-on).
+
+### What changes for users
+
+- **Miss a hard session → the rest of the week re-fits itself.** Before, a skipped
+  hard day left the following recovery/easy days exactly as planned, and the missed
+  work was only offered as a manual reschedule banner you had to accept. Now, on the
+  next ride-sync or Plan-tab open, the planner re-optimizes every remaining *future*
+  day of the current week and redistributes the missed stimulus where it fits.
+- **Always within your safety limits.** The re-fit obeys the same guards as normal
+  planning: no two hard days within 48h, the weekly hard-session cap, your
+  availability, the polarized intensity mix, and per-type duration caps. If there's
+  no safe room, the missed load is simply dropped — never crammed in as a
+  back-to-back "catch-up" spike.
+- **Only what changed moves.** A remaining day keeps its existing workout (and file)
+  unless its type or duration actually changes — no surprise reshuffle of a session
+  you already saw. Past days, completed rides, and anything you manually pinned are
+  never touched. It runs once per missed-session episode, not on every sync.
+
+| Before | After |
+|---|---|
+| Skip a hard day → rest of week unchanged; missed work only a manual banner | Skip a hard day → remaining week auto-re-fits, missed stimulus redistributed safely |
+| Recovery day stays recovery even when you're fresh from skipping | A remaining day can absorb the work — bounded by 48h spacing / weekly HIT cap / ACWR |
+
 ## v2.0.6 — Plan reliability + honest workout labels (2026-06-17)
 
 Five fixes to things that were quietly wrong: the plan freezing on open, hard

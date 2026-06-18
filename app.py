@@ -9,6 +9,7 @@ Pure HTML + CSS + vanilla JS. No npm, no frameworks.
 
 import collections
 import functools
+import hashlib
 import json
 import os
 import re
@@ -9126,6 +9127,102 @@ def _current_absence_episode(old_weeks, gaps: dict, today: date):
     return (first, last.week_num)
 
 
+def _goal_from_plan_dict(g: dict) -> "tp.Goal":
+    """Reconstruct a full scheduling Goal from a persisted plan's ``goal`` block.
+
+    Mirrors the P5 (v4.1.0) reconstruction in api_plan_generate: restores
+    available_days / rest_days / daily_max_hours / max_*_hours so the sampler
+    sees the rider's real weekly shape (not Goal defaults). Used by the
+    missed-hard refit tier (the sampler reads all of these).
+    """
+    rest_days_val = g.get("rest_days", [0])
+    raw_available = g.get("available_days")
+    if raw_available is not None:
+        available_days_val = list(raw_available)
+    else:
+        available_days_val = [d for d in range(7) if d not in rest_days_val]
+    raw_daily = g.get("daily_max_hours") or {}
+    daily_max_val: dict = {}
+    for k, v in raw_daily.items():
+        try:
+            daily_max_val[int(k)] = float(v)
+        except (TypeError, ValueError):
+            continue
+    return tp.Goal(
+        goal_type=g.get("type", g.get("goal_type", "general")),
+        hours_per_week=g.get("hours_per_week", 8.0),
+        max_weekday_hours=g.get("max_weekday_hours", 2.0),
+        max_weekend_hours=g.get("max_weekend_hours", 3.5),
+        rest_days=rest_days_val,
+        available_days=available_days_val,
+        daily_max_hours=daily_max_val,
+        plan_weeks=g.get("plan_weeks", 0),
+    )
+
+
+def _apply_refit_to_plan(plan: dict, today: date) -> "dict | None":
+    """v2.0.7 — run the missed-hard week-refit on ``plan`` in place.
+
+    Round-trips the plan's weeks into PlannedWeek DTOs (all session fields, so
+    the §6.12 preservation predicate sees the rider's edits), calls
+    ``tp.refit_remaining_week`` with a deterministic seed derived from
+    (plan_start, week_num, sorted missed dates), and writes the refitted
+    remaining-day sessions back into the matching plan-dict week by date.
+
+    Returns the ``refit_info`` dict when at least one day changed, else None
+    (caller falls through to the reforecast tier unchanged).
+    """
+    weeks_json = plan.get("weeks", [])
+    if not weeks_json:
+        return None
+    goal = _goal_from_plan_dict(plan.get("goal", {}) or {})
+    dto_weeks: list = []
+    for w in weeks_json:
+        try:
+            dto_weeks.append(tp.PlannedWeek(
+                week_num=w["week_num"], start=date.fromisoformat(w["start"]),
+                end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
+                tss_target=w.get("tss_target", 0),
+                is_stepback=w.get("is_stepback", False),
+                sessions=[_planned_session_from_json(s) for s in w.get("sessions", [])],
+            ))
+        except (KeyError, ValueError, TypeError):
+            return None
+
+    cur = next((w for w in dto_weeks if w.start <= today <= w.end), None)
+    if cur is None:
+        return None
+    missed_dates = sorted(
+        s.day.isoformat() for s in cur.sessions
+        if getattr(s, "status", "") == "missed" and tp._session_is_hit(s)
+        and getattr(s, "day", None)
+    )
+    # Deterministic seed: stable for a given absence so the latch + seed both
+    # keep the refit from re-rolling on repeat syncs (planner is otherwise
+    # non-deterministic — see planner-test-nondeterminism memory).
+    seed_basis = f"{dto_weeks[0].start.isoformat()}:{cur.week_num}:{','.join(missed_dates)}"
+    seed_salt = int(hashlib.sha1(seed_basis.encode()).hexdigest()[:12], 16)
+
+    _, refit_info = tp.refit_remaining_week(
+        goal, dto_weeks, today, seed_salt=seed_salt,
+    )
+    if refit_info.get("action") != "refitted" or not refit_info.get("refit_days"):
+        return None
+
+    # Write the changed remaining-day sessions back into the plan dict (match by
+    # date within the current week). Only refit_days were mutated.
+    changed = set(refit_info["refit_days"])
+    by_date = {s.day.isoformat(): s for s in cur.sessions}
+    for wj in weeks_json:
+        if wj.get("week_num") != cur.week_num:
+            continue
+        for i, sj in enumerate(wj.get("sessions", [])):
+            if sj.get("day") in changed:
+                wj["sessions"][i] = _planned_session_to_json(by_date[sj["day"]])
+        break
+    return refit_info
+
+
 def _apply_plan_update(
     plan: dict,
     *,
@@ -9141,9 +9238,11 @@ def _apply_plan_update(
       • significant CURRENT gap → regenerate_from_today (recovery ramp)
       • otherwise               → reforecast_dict (structure-preserving rebalance)
 
-    Used by both the manual ``/api/plan/update`` button (gap_debounce=False —
-    always acts) and the ride-sync auto path (gap_debounce=True — at most one
-    silent rebuild per absence EPISODE via ``plan["gap_regen_latch"]``).
+    Used by both the manual ``/api/plan/update`` button and the ride-sync auto
+    path; BOTH pass ``gap_debounce=True`` (see the route at ~9533), so refits are
+    latch-gated — at most one silent rebuild per absence EPISODE via
+    ``plan["gap_regen_latch"]`` (and the missed-hard tier via
+    ``plan["missed_refit_latch"]``).
 
     Guards (see /tmp/MASTER_DECISIONS_tasks12 §11):
       • REPLACES reforecast — never regen-then-reforecast (mangles the ramp).
@@ -9243,6 +9342,48 @@ def _apply_plan_update(
         info = {"gaps": gaps, "regen_info": regen_info, "episode_key": episode_key}
         plan_dict["last_update_info"] = {"action": "rebuilt", "message": status, "at": now_iso}
         return plan_dict, "rebuilt", info, status
+
+    # ── missed-hard week-refit tier (v2.0.7, IP_missed_hard_refit.md) ─────────
+    # Between the rebuild tier and the plain reforecast: when a HARD session was
+    # missed in the CURRENT week and ≥1 remaining trainable day is left, re-fit
+    # the remaining days so the missed stimulus is redistributed within the
+    # safety guards (no catch-up spike). Latched per absence (key = the sorted
+    # missed-date set) so it fires once, not on every sync. A missed EASY
+    # session does NOT trigger this — only hard. Falls through to reforecast
+    # when no hard miss, no remaining day, already latched, or nothing changed.
+    cur_week_dto, _cur_idx = _load_current_week_dto(plan, today)
+    if cur_week_dto is not None:
+        missed_hard = sorted(
+            s.day.isoformat() for s in cur_week_dto.sessions
+            if getattr(s, "status", "") == "missed" and tp._session_is_hit(s)
+            and getattr(s, "day", None)
+        )
+        has_remaining = any(
+            (s.day >= today
+             and getattr(s, "session_type", "") != "rest"
+             and not tp._refit_session_frozen(s, today))
+            for s in cur_week_dto.sessions if getattr(s, "day", None)
+        )
+        refit_key = "|".join(missed_hard)
+        refit_latched = (plan.get("missed_refit_latch", {}) or {}).get("key") == refit_key
+        if missed_hard and has_remaining and not refit_latched:
+            try:
+                refit_info = _apply_refit_to_plan(plan, today)
+            except Exception:  # noqa: BLE001 — refit is best-effort; fall through
+                _log.exception("missed-hard refit skipped")
+                refit_info = None
+            if refit_info:
+                plan["missed_refit_latch"] = {"key": refit_key, "at": now_iso}
+                miss_n = len(refit_info["missed_dates"])
+                day_n = len(refit_info["refit_days"])
+                status = (
+                    f"Missed {miss_n} hard session{'s' if miss_n != 1 else ''} — "
+                    f"refit {day_n} remaining day{'s' if day_n != 1 else ''} this "
+                    f"week (within your safety limits).")
+                plan["last_update_info"] = {"action": "refitted", "message": status,
+                                            "at": now_iso}
+                info = {"gaps": gaps, "refit_info": refit_info}
+                return plan, "refitted", info, status
 
     # ── reforecast tier (structure-preserving rebalance) ─────────────────────
     # 5-min debounce applies to THIS tier only (the regen tier above always

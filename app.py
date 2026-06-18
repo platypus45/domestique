@@ -9203,8 +9203,24 @@ def _goal_from_plan_dict(g: dict) -> "tp.Goal":
             daily_max_val[int(k)] = float(v)
         except (TypeError, ValueError):
             continue
+    # B1 (v2.1.0): the saved goal block persists the event, but this
+    # reconstruction used to DROP target_date + every event_* field, so any
+    # recalc/refit/reforecast lost the event entirely — which also starved the
+    # F4 race-eve taper guard (it keys on goal.target_date). Restore them.
+    ev = g.get("event_date")
+    target_date_val = None
+    if ev:
+        try:
+            target_date_val = date.fromisoformat(ev)
+        except (TypeError, ValueError):
+            target_date_val = None
     return tp.Goal(
         goal_type=g.get("type", g.get("goal_type", "general")),
+        target_date=target_date_val,
+        event_name=g.get("event_name", ""),
+        event_km=g.get("event_km", 0),
+        event_climb_m=g.get("event_climb", 0),  # persisted as "event_climb"
+        event_type=g.get("event_type", "granfondo"),
         hours_per_week=g.get("hours_per_week", 8.0),
         max_weekday_hours=g.get("max_weekday_hours", 2.0),
         max_weekend_hours=g.get("max_weekend_hours", 3.5),
@@ -9212,6 +9228,8 @@ def _goal_from_plan_dict(g: dict) -> "tp.Goal":
         available_days=available_days_val,
         daily_max_hours=daily_max_val,
         plan_weeks=g.get("plan_weeks", 0),
+        longest_ride_h_90d=g.get("longest_ride_h_90d"),
+        last_ftp_test_date=g.get("last_ftp_test_date"),
         distribution=g.get("distribution", "polarized"),  # J1
     )
 

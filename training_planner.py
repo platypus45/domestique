@@ -4848,6 +4848,15 @@ def generate_plan(
         except Exception as _e:
             log.debug(f"recent_mean_weekly_tss fetch failed: {_e}")
 
+    # B3 (v2.1.0): ICU-only / fresh-install riders have no local FIT archive, so
+    # recent_mean_weekly_tss() returns None and the plan would fall back to the
+    # legacy availability-driven cap — the 24.5h over-scheduling E1 set out to
+    # fix, and the exact symptom the original reporter had (ICU-primary). CTL is
+    # the chronic daily-load EWMA, so CTL×7 is a sound recent-weekly-TSS proxy;
+    # anchor on it so the LOAD-based ceiling still applies rather than availability.
+    if recent_weekly_tss is None and current_ctl and current_ctl > 0:
+        recent_weekly_tss = round(current_ctl * 7)
+
     # v1.11.0 IMPL-EVENT — event demand → plan targets (None for non-event goals
     # or missing athlete → all event wiring no-ops, non-event plans unchanged).
     event_targets = _event_demand_targets(
@@ -6784,6 +6793,9 @@ def reforecast(
     action = "reforecasted" if (
         downshifts or acwr_scaled_week is not None or g3_dropped_days or touched
     ) else "no_change"
+    # B2 (v2.1.0): keep hard sessions off the event eve on the reforecast path
+    # too (see regenerate_from_today). No-op for non-event goals.
+    _enforce_event_taper_eve(plan_weeks, goal.target_date)
     return plan_weeks, {
         "action": action,
         "downshifts": len(downshifts),
@@ -7564,6 +7576,11 @@ def regenerate_from_today(
         "gaps": gaps,
     }
 
+    # B2 (v2.1.0): re-assert the F4 event-eve taper on this adaptation path too —
+    # generate_plan applies it at first build, but regenerate/reforecast/refit
+    # did not, so a hard session could resurface within EVENT_EVE_EASY_DAYS of
+    # the event after a recalc. No-op for non-event goals (target_date None).
+    _enforce_event_taper_eve(all_weeks, goal.target_date)
     return new_phases, all_weeks, regen_info
 
 
@@ -8308,6 +8325,10 @@ def refit_remaining_week(
         "refit_days": refit_days,
         "missed_dates": missed_dates,
     }
+    # B2 (v2.1.0): the missed-hard refit can land a hard session in the current
+    # week; keep it off the event eve (see regenerate_from_today). No-op for
+    # non-event goals.
+    _enforce_event_taper_eve(current_plan_weeks, goal.target_date)
     return current_plan_weeks, refit_info
 
 

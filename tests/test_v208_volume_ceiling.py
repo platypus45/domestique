@@ -109,12 +109,14 @@ def test_peak_week_bounded_by_recent_load_not_availability(seed_salt):
 # ── 2. no-history → legacy availability cap (backward-safe) ───────────────────
 
 @pytest.mark.parametrize("seed_salt", [0, 7])
-def test_no_history_falls_back_to_legacy_hours_cap(seed_salt):
-    """With NO ride history (recent_weekly_tss=None + empty archive), the peak
-    phase target falls back to the legacy min(target×7, hours_per_week×65) cap —
-    the load-based ceiling is NOT applied (no regression for historyless users)."""
+def test_no_history_uses_ctl_load_ceiling_not_availability(seed_salt):
+    """B3 (v2.1.0): with NO ride history (recent_weekly_tss=None + empty archive)
+    but a known CTL, the weekly ceiling now anchors on CTL×7 (a recent-load
+    proxy) instead of the legacy availability sum — so an ICU-only / fresh-install
+    rider is no longer over-scheduled toward the ~24.5h/1592-TSS availability cap.
+    Pre-B3 this fell back to hours_per_week×65."""
     goal = _generous_goal()
-    legacy_cap = goal.hours_per_week * 65  # 1592.5
+    legacy_avail_cap = goal.hours_per_week * 65  # 1592.5 — must NOT bind anymore
 
     # Empty the archive so the self-fetch returns None (hermetic, ignores the
     # dev machine's real rides).
@@ -125,20 +127,16 @@ def test_no_history_falls_back_to_legacy_hours_cap(seed_salt):
         )
 
     peak_target = max(p.weekly_tss_target for p in phases if p.name != "taper")
-    # In the legacy path the peak target == min(target×7, hours×65). With ctl=55
-    # target×7 (~671) binds well under hours×65 (1592) — the point is that the
-    # ACWR×recent ceiling did NOT clamp it lower (520 would have, in the
-    # load-based path). So the legacy target must be strictly above the
-    # would-be load ceiling for a comparable recent load.
-    would_be_load_ceiling = 400.0 * tp.ACWR_CEILING  # 520
-    assert peak_target > would_be_load_ceiling, (
-        f"seed={seed_salt}: no-history peak target {peak_target:.0f} was clamped "
-        f"to/below the load ceiling {would_be_load_ceiling:.0f} — fallback to the "
-        f"legacy availability cap did not happen"
+    # ceiling = min(target×7, (CTL×7)×ACWR). With CTL=55 → CTL×7=385,
+    # ×1.3 = 500.5; whichever binds, the peak must sit at/under that load ceiling.
+    ctl_load_ceiling = 55.0 * 7 * tp.ACWR_CEILING  # 500.5
+    assert peak_target <= ctl_load_ceiling + 1, (
+        f"seed={seed_salt}: no-history peak {peak_target:.0f} exceeds the "
+        f"CTL-derived load ceiling {ctl_load_ceiling:.0f} — B3 anchor not applied"
     )
-    assert peak_target <= legacy_cap + 1, (
-        f"seed={seed_salt}: no-history peak target {peak_target:.0f} exceeds the "
-        f"legacy hours×65 cap {legacy_cap:.0f}"
+    assert peak_target < legacy_avail_cap * 0.5, (
+        f"seed={seed_salt}: no-history peak {peak_target:.0f} is near the old "
+        f"availability cap {legacy_avail_cap:.0f} — B3 must keep it load-based"
     )
 
 

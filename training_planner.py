@@ -768,6 +768,11 @@ STEP_BACK_EVERY  = 4     # Rønnestad: 3 load + 1 recovery
 # at ≤1.3× the rider's recent mean weekly TSS so a fresh plan ramps from real
 # recent load rather than from the sum of daily availability.
 ACWR_CEILING     = 1.3
+# v2.0.8 (F4) — no HARD session in the final N days before an A event. A taper
+# keeps SOME intensity earlier (Mujika), but VO2max/threshold intervals on the
+# event eve leave the legs flat — the last days must be easy openers. The day-3+
+# sharpener is still allowed (only days within this window are demoted).
+EVENT_EVE_EASY_DAYS = 2
 # v1.9.2 — sanity ceiling for an availability-driven single session. The
 # availability calendar applies the user's per-day hours literally (bidirectional),
 # but caps here so a typo/extreme value (e.g. 10h) can't create an absurd session
@@ -5103,6 +5108,11 @@ def generate_plan(
     # before the authoritative per-day clamp.
     _enforce_weekly_volume_ceiling(weeks)
 
+    # v2.0.8 (F4) — no hard session in the final days before the A event (event
+    # goals only). Demotes a taper-eve VO2max/threshold block to an easy opener.
+    if goal.goal_type in ("event", "ctl") and goal.target_date:
+        _enforce_event_taper_eve(weeks, goal.target_date)
+
     # v1.8.21 — AUTHORITATIVE per-day availability clamp. Session durations are
     # set from matched ZWO files at FOUR sites (sampler + 3 utilization/
     # re-match passes) plus match_zwo, several of which admit a file up to
@@ -5658,6 +5668,41 @@ def _enforce_weekly_volume_ceiling(weeks: list) -> None:
             slot.description = "Rest — weekly volume ceiling (recent load)"
             slot.zwo_file = ""
             slot.zwo_name = ""
+
+
+def _enforce_event_taper_eve(weeks: list, target_date, library=None,
+                             eve_days: int = EVENT_EVE_EASY_DAYS) -> None:
+    """v2.0.8 (F4) — no HARD session in the final ``eve_days`` before the A event.
+
+    A taper deliberately keeps some intensity (Mujika), but a VO2max/threshold
+    BLOCK on the event eve leaves the legs flat — the user's "it gives me VO2max
+    intervals just before the race, which is stupid." Any HIT session whose day
+    is within ``eve_days`` of ``target_date`` (i.e. the event day + the last
+    eve_days before it) is demoted to a short easy Z2 opener so the rider arrives
+    fresh; a sharpener at day-(eve_days+1) or earlier is untouched. No-op for
+    non-event goals (target_date None).
+    """
+    if not target_date:
+        return
+    lib = library if library is not None else load_workout_library()
+    OPENER_MAX_MIN = 45
+    for w in weeks:
+        for off, s in enumerate(w.sessions):
+            d = getattr(s, "day", None)
+            if d is None or s.session_type == "rest":
+                continue
+            delta = (target_date - d).days
+            if 0 <= delta <= eve_days and _session_is_hit(s):
+                dur = min(s.duration_min or OPENER_MAX_MIN, OPENER_MAX_MIN)
+                cand = PlannedSession(
+                    day=s.day, day_name=s.day_name, session_type="z2",
+                    duration_min=dur,
+                    tss_estimate=round(dur / 60 * TSS_PER_HOUR["z2"]),
+                    description=("Opener — easy spin; no hard session in the final "
+                                 "days before the event (arrive fresh)."),
+                )
+                m = match_zwo(cand, lib)
+                w.sessions[off] = m if (m and getattr(m, "zwo_file", "")) else cand
 
 
 def _enforce_ronnestad_floor(

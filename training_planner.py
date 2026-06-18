@@ -8668,6 +8668,18 @@ def check_and_auto_apply_eftp(wellness_series: list[dict]) -> dict | None:
     if not wellness_series or ATHLETE_FTP_W <= 0:
         return None
 
+    # I1 (v2.0.8): ICU's eFTP is unreliable; it must NOT silently rewrite the
+    # active FTP (and every FTP-derived zone) "without asking". Auto-apply is
+    # now OPT-IN — drift is still detected and surfaced (banner + manual Accept
+    # button) so the rider decides. Enable via user_prefs.json
+    # {"eftp_auto_apply": true}; default off.
+    try:
+        from profile_manager import ProfileManager
+        if not ProfileManager.get().prefs.get("eftp_auto_apply", False):
+            return None
+    except Exception:
+        return None
+
     # Newest first; build a chronological trailing series of eFTP drift
     # vs the current tested FTP.
     sorted_recs = sorted(wellness_series, key=lambda r: r.get("id", ""))

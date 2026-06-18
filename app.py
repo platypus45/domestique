@@ -4053,11 +4053,17 @@ def _scan_zwo_for_library(zwo_path: Path) -> dict | None:
             dur = int(float(seg.get("Duration", 0)))
             plo = float(seg.get("PowerLow", 0.5))
             phi = float(seg.get("PowerHigh", 0.7))
-            avg_p = (plo + phi) / 2
             total_sec += dur
             # Linear-ramp TSS integral (matches planner).
             tss_accum += (plo * plo + plo * phi + phi * phi) / 3 * (dur / 3600) * 100
-            _acc_zone(avg_p * 100, dur)
+            # v2.0.8: slice the ramp across the zones it SWEEPS, mirroring the
+            # planner's load_workout_library parse (training_planner.py, v2.0.6).
+            # Binning the whole duration at mean power here (while the planner
+            # sliced) drifted the two scanners' zone seconds → score_sync mismatch
+            # (e.g. neuromuscular_30s120s_9x_52min.zwo scored 5 vs 6).
+            _RAMP_SLICES = 20
+            for _i in range(_RAMP_SLICES):
+                _acc_zone((plo + (phi - plo) * (_i + 0.5) / _RAMP_SLICES) * 100, dur / _RAMP_SLICES)
             _acc_structure(phi * 100)
         elif tag == "SteadyState":
             dur = int(float(seg.get("Duration", 0)))

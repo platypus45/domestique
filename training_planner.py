@@ -5329,31 +5329,6 @@ def _week_hit_count(week) -> int:
     return sum(1 for s in week.sessions if _session_is_hit(s))
 
 
-# F3 (v2.2) — scale the weekly HARD-session ceiling to the week's LOAD so a
-# low-volume week isn't ~100% intensity (the E1 follow-up: E1 caps total volume
-# but never reduced HIT, so a tiny week converged to fixed-HIT-count × tiny-easy =
-# intensity-dominated). A hard session is ~_F3_TYP_HARD_TSS whole-session TSS;
-# hard work should not exceed _F3_HARD_TSS_SHARE of the week's TSS ceiling. The
-# cap may fall BELOW phase.hit_count_min on a small week (the load ceiling
-# outranks the per-phase floor — that is the whole point) but is bounded above by
-# phase.hit_count_max, so healthy-volume weeks reach the same max as before (no
-# regression). A flat share (not z4+%/whole-TSS) keeps it model-agnostic: J1
-# preserves the hard-minute total across distributions, so the share is stable.
-_F3_TYP_HARD_TSS = 75       # whole-session TSS of a typical ~55-60min vo2/threshold
-_F3_HARD_TSS_SHARE = 0.45   # max fraction of weekly TSS spent in hard sessions
-_F3_HARD_FLOOR_MIN = 1      # keep >=1 quality session when the phase wants intensity
-
-
-def _effective_hit_max(week) -> int:
-    """F3 volume-aware HIT ceiling for one PlannedWeek. Bounded
-    [_F3_HARD_FLOOR_MIN, phase.hit_count_max]; may sit below phase.hit_count_min
-    on a low-load week by design."""
-    budget = get_budget_for_phase(getattr(week, "phase", "base"))
-    ceiling = getattr(week, "tss_target", 0) or budget.tss_per_week
-    eff = int((ceiling * _F3_HARD_TSS_SHARE) // _F3_TYP_HARD_TSS)
-    return max(_F3_HARD_FLOOR_MIN, min(eff, budget.hit_count_max))
-
-
 def _enforce_build2_peak_hard_floor(
     weeks: list,
     pool_index: dict,
@@ -5618,7 +5593,7 @@ def _enforce_weekly_hit_cap(weeks: list, library: list[dict]) -> None:
     for wk in weeks:
         if getattr(wk, "is_stepback", False):
             continue
-        cap = _effective_hit_max(wk)  # F3: volume-aware (was a flat hit_count_max)
+        cap = get_budget_for_phase(wk.phase).hit_count_max
         # Recompute on each removal — demoting changes counts. The guard bounds
         # the loop to the number of sessions so a pathological library (no
         # non-HIT match for any slot) can't spin forever.
@@ -8139,7 +8114,7 @@ def refit_remaining_week(
             name=week.phase, start=week.start, end=week.end,
             weeks=1, focus="", weekly_tss_target=week.tss_target,
             z2_pct=budget.polarized_target.get("z1z2_pct", 80),
-            hit_per_week=min(budget.hit_count_max, _effective_hit_max(week)),  # F3
+            hit_per_week=budget.hit_count_max,
             session_types=[],
         ),
         budget=budget, library=library,
@@ -8190,7 +8165,7 @@ def refit_remaining_week(
     # frozen, the week stays as-is (some missed stimulus is legitimately dropped,
     # never forced onto / removed from a frozen day).
     remaining_set = set(remaining_offsets)
-    cap = _effective_hit_max(week)  # F3: volume-aware (was a flat hit_count_max)
+    cap = get_budget_for_phase(week.phase).hit_count_max
 
     # A MISSED hard day imposed NO training load (the athlete rested it), so for
     # BOTH 48h spacing AND the weekly HIT cap it must be treated as NOT-hard.

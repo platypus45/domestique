@@ -14449,15 +14449,24 @@ def _build_fit_normalized(fit_path: Path, ride_id: str) -> dict:
     dfa_series: list = []
     dfa_lt1_min = None
     dfa_status = "no_rr_data"
+    dfa_confidence = "low"  # K1
     rr_count = 0
     try:
         from analytics import compute_dfa_alpha1_for_fit
-        dfa = compute_dfa_alpha1_for_fit(fit_path)
+        # K1: gate by the SOURCE sport — a running .fit caps DFA confidence at
+        # medium (footstrike RR jitter), never disabled. Read once, best-effort.
+        try:
+            from fit_activity import read_session_sport
+            _src_sport = read_session_sport(fit_path)
+        except Exception:
+            _src_sport = None
+        dfa = compute_dfa_alpha1_for_fit(fit_path, sport=_src_sport)
         if isinstance(dfa, dict):
             dfa_avg = dfa.get("dfa_alpha1_avg")
             dfa_series = dfa.get("dfa_alpha1_series") or []
             dfa_lt1_min = dfa.get("dfa_alpha1_lt1_minutes")
             dfa_status = dfa.get("dfa_alpha1_status") or "no_rr_data"
+            dfa_confidence = dfa.get("dfa_alpha1_confidence") or "low"
             rr_count = int(dfa.get("rr_intervals_count") or 0)
     except Exception as e:
         _log.debug(f"_build_fit_normalized DFA α1 compute failed: {e}")
@@ -14506,6 +14515,7 @@ def _build_fit_normalized(fit_path: Path, ride_id: str) -> dict:
         "dfa_alpha1_series": dfa_series,
         "dfa_alpha1_lt1_minutes": dfa_lt1_min,
         "dfa_alpha1_status": dfa_status,
+        "dfa_alpha1_confidence": dfa_confidence,  # K1
         "rr_intervals_count": rr_count,
         # v1.0.7 IMPL-HRV-PROMPT — device fields used by the
         # /api/wellness/hrv-recording-status endpoint to name the rider's

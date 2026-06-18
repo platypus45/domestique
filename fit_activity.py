@@ -237,6 +237,49 @@ def parse_rr_intervals(fit_path: Path) -> list[float]:
     return rrs
 
 
+# K1 (v2.2) — FIT Sport enum → lowercase name (subset we care about for DFA gating).
+_FIT_SPORT_NAMES = {0: "generic", 1: "running", 2: "cycling", 5: "swimming",
+                    11: "walking", 17: "hiking"}
+
+
+def read_session_sport(fit_path: Path) -> "str | None":
+    """K1 — read the SOURCE FIT's session sport (lowercase name) so DFA α1 can
+    gate by activity type. Reads the original file's ``SessionMessage.sport``, NOT
+    Domestique's own CYCLING export stamp. Returns None when unreadable."""
+    try:
+        from fit_tool.fit_file import FitFile
+    except Exception:
+        return None
+    try:
+        ff = FitFile.from_file(str(fit_path))
+    except Exception:
+        return None
+    try:
+        for rec in ff.records:
+            msg = rec.message
+            if type(msg).__name__ != "SessionMessage":
+                continue
+            sp = None
+            try:
+                sp = msg.sport
+            except Exception:
+                try:
+                    sp = msg.get_value("sport")
+                except Exception:
+                    sp = None
+            if sp is None:
+                continue
+            if isinstance(sp, str):
+                return sp.lower()
+            try:
+                return _FIT_SPORT_NAMES.get(int(sp), str(int(sp)))
+            except (TypeError, ValueError):
+                return str(sp).lower()
+    except Exception:
+        return None
+    return None
+
+
 def _serial_for_profile(profile_id: str) -> int:
     """Stable 32-bit serial derived from profile_id (deterministic)."""
     h = hashlib.sha256(profile_id.encode("utf-8")).digest()

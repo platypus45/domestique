@@ -320,8 +320,15 @@ def compute_polarization_block(time_in_zone: dict | None) -> dict | None:
 #     (Rogers 2021 §3: α1 crossing 0.75 ± 0.05 anchors the first ventilatory
 #     threshold / aerobic threshold in trained endurance athletes.)
 
-DFA_SANITY_MIN = 0.30   # Gronwald & Hoos 2020 physiological lower bound.
+DFA_SANITY_MIN = 0.30   # Gronwald & Hoos 2020 physiological lower bound (whole-ride MEAN).
 DFA_SANITY_MAX = 1.60   # Gronwald & Hoos 2020 physiological upper bound.
+# K1 (v2.2) — PER-WINDOW floor is lower than the whole-ride-mean floor: α1
+# genuinely collapses toward ~0.2 in hard intervals (a Gimenez set), and the
+# app's own HRVT2 marker is 0.50 (Z3 high = α1 < 0.50). Gating per-window values
+# at 0.30 silently DISCARDED legitimate hard-effort windows (the "drops <0.3"
+# complaint surfaced as a gap, not a low value). Keep the MEAN floored at 0.30
+# (a mean that low implies corruption); let per-window drop to 0.20.
+DFA_WINDOW_SANITY_MIN = 0.20
 DFA_LT1_THRESHOLD = 0.75  # Rogers 2021 LT1 anchor.
 # v1.8.14 — Malik (1996) relative RR-artifact rejection threshold. A beat
 # whose RR differs from the last ACCEPTED beat by more than this fraction is
@@ -498,6 +505,7 @@ def compute_dfa_alpha1(
     # fixes both the FIT path and the ICU-stream path at once. The wrappers
     # keep reporting the RAW beat count (rr_intervals_count) for diagnostics;
     # only the DFA windowing operates on the cleaned series.
+    _raw_n = len(rr)  # K1: raw beats before rejection (confidence input)
     rr, _n_artifacts = _filter_rr_artifacts(rr)
     if len(rr) < 16:
         return out_empty
@@ -517,10 +525,12 @@ def compute_dfa_alpha1(
     series: list[dict] = []
     valid_alphas: list[float] = []
     lt1_minutes_acc = 0.0
+    windows_attempted = 0  # K1: denominator for window-yield confidence signal
 
     next_start = 0.0
     end_time = cum_t[-1] - window_s
     while next_start <= end_time + 1e-6:
+        windows_attempted += 1
         # Find indexes of beats whose elapsed time falls in [next_start, next_start + window_s].
         # Linear scan is fine — typical ride is O(10000) beats.
         win_lo = next_start
@@ -539,7 +549,7 @@ def compute_dfa_alpha1(
 
         rr_window = rr[i_lo:i_hi]
         alpha = _dfa_alpha1_window(rr_window)
-        if alpha is not None and DFA_SANITY_MIN <= alpha <= DFA_SANITY_MAX:
+        if alpha is not None and DFA_WINDOW_SANITY_MIN <= alpha <= DFA_SANITY_MAX:  # K1: per-window floor
             alpha_r = round(alpha, 3)
             valid_alphas.append(alpha_r)
             series.append({
@@ -556,6 +566,9 @@ def compute_dfa_alpha1(
 
     avg = sum(valid_alphas) / len(valid_alphas)
     avg_r = round(avg, 3)
+    # K1: confidence inputs — artifact fraction of raw beats + window yield.
+    artifact_pct = round(100.0 * _n_artifacts / max(_raw_n, 1), 2)
+    window_yield = round(len(valid_alphas) / max(windows_attempted, 1), 3)
     if not (DFA_SANITY_MIN <= avg_r <= DFA_SANITY_MAX):
         # Caller is expected to surface this as ``sanity_rejected``.
         return {
@@ -565,6 +578,8 @@ def compute_dfa_alpha1(
             "window_s": window_s,
             "step_s": step_s,
             "n_windows": len(valid_alphas),
+            "artifact_pct": artifact_pct,
+            "window_yield": window_yield,
         }
 
     return {
@@ -574,6 +589,8 @@ def compute_dfa_alpha1(
         "window_s": window_s,
         "step_s": step_s,
         "n_windows": len(valid_alphas),
+        "artifact_pct": artifact_pct,
+        "window_yield": window_yield,
     }
 
 
@@ -639,6 +656,7 @@ def compute_dfa_alpha1_from_hrv_stream(hrv_stream) -> dict | None:
             "dfa_alpha1_series": [],
             "dfa_alpha1_lt1_minutes": None,
             "dfa_alpha1_status": "no_rr_data",
+            "dfa_alpha1_confidence": "low",
             "rr_intervals_count": 0,
         }
     result = compute_dfa_alpha1(rr_s)
@@ -652,6 +670,7 @@ def compute_dfa_alpha1_from_hrv_stream(hrv_stream) -> dict | None:
             "dfa_alpha1_series": result["series"],
             "dfa_alpha1_lt1_minutes": result["lt1_minutes"],
             "dfa_alpha1_status": status,
+            "dfa_alpha1_confidence": "low",
             "rr_intervals_count": len(rr_s),
         }
     return {
@@ -659,6 +678,9 @@ def compute_dfa_alpha1_from_hrv_stream(hrv_stream) -> dict | None:
         "dfa_alpha1_series": result["series"],
         "dfa_alpha1_lt1_minutes": result["lt1_minutes"],
         "dfa_alpha1_status": "computed",
+        # K1: ICU stream has no source sport → artifact/yield signals only.
+        "dfa_alpha1_confidence": _dfa_confidence(
+            result.get("artifact_pct"), result.get("window_yield")),
         "rr_intervals_count": len(rr_s),
     }
 
@@ -852,7 +874,27 @@ def compute_dfa_threshold_analysis(hrv_stream,
     return out
 
 
-def compute_dfa_alpha1_for_fit(fit_path: Path) -> dict | None:
+_DFA_CONF_RANK = {"low": 0, "medium": 1, "high": 2}
+# K1 (v2.2): sports whose RR-based DFA is well-validated (cycling-like). Others
+# (running) cap confidence at MEDIUM until calibrated on real running RR — the
+# footstrike-coupled RR jitter the 20% Malik rule lets through. We LABEL low
+# confidence, never disable (DFA/HRVT is a published runner feature too).
+_DFA_CYCLING_SPORTS = {"cycling", "virtual_activity", "e_biking", "ebiking", ""}
+
+
+def _dfa_confidence(artifact_pct, window_yield, sport=None) -> str:
+    """K1 — confidence {high, medium, low} as the WORST of three already-available
+    signals (drop-% alone is necessary but not sufficient: a clean-looking but
+    garbage run reading would otherwise mark high)."""
+    levels = ["low" if (artifact_pct or 0) > 5.0 else "high"]  # Malik 5% (mirrors live abort)
+    wy = 1.0 if window_yield is None else window_yield
+    levels.append("low" if wy < 0.5 else ("medium" if wy < 0.75 else "high"))
+    if sport and str(sport).lower() not in _DFA_CYCLING_SPORTS:
+        levels.append("medium")
+    return min(levels, key=lambda lvl: _DFA_CONF_RANK[lvl])
+
+
+def compute_dfa_alpha1_for_fit(fit_path: Path, sport: "str | None" = None) -> dict | None:
     """v1.0.7 — chain RR-extraction + sliding-window α1 for a FIT file.
 
     Returns a dict with these fields ALWAYS set (None values when no RR data
@@ -862,9 +904,9 @@ def compute_dfa_alpha1_for_fit(fit_path: Path) -> dict | None:
       - ``'no_rr_data'``      : FIT had no HrvMessage records / parse returned [].
       - ``'sanity_rejected'`` : RR present but DFA produced out-of-range α1.
 
-    Returns None only on a hard failure (e.g. fit_path missing / unreadable),
-    so callers can distinguish "no DFA available" (None) from "DFA pipeline
-    ran, here's the status" (dict).
+    ``dfa_alpha1_confidence`` (K1) is {high, medium, low} from artifact-%, window
+    yield, and ``sport`` (running caps at medium). Returns None only on a hard
+    failure (fit_path missing/unreadable).
     """
     try:
         from fit_activity import parse_rr_intervals
@@ -879,10 +921,12 @@ def compute_dfa_alpha1_for_fit(fit_path: Path) -> dict | None:
             "dfa_alpha1_series": [],
             "dfa_alpha1_lt1_minutes": None,
             "dfa_alpha1_status": "no_rr_data",
+            "dfa_alpha1_confidence": "low",
             "rr_intervals_count": 0,
         }
 
     result = compute_dfa_alpha1(rr)
+    conf = _dfa_confidence(result.get("artifact_pct"), result.get("window_yield"), sport)
     if result["avg"] is None:
         # Distinguish: no valid windows at all (n_windows == 0) → no_rr_data
         # (insufficient data even though parse returned beats); vs. valid
@@ -896,6 +940,7 @@ def compute_dfa_alpha1_for_fit(fit_path: Path) -> dict | None:
             "dfa_alpha1_series": result["series"],
             "dfa_alpha1_lt1_minutes": result["lt1_minutes"],
             "dfa_alpha1_status": status,
+            "dfa_alpha1_confidence": "low",
             "rr_intervals_count": len(rr),
         }
 
@@ -904,6 +949,7 @@ def compute_dfa_alpha1_for_fit(fit_path: Path) -> dict | None:
         "dfa_alpha1_series": result["series"],
         "dfa_alpha1_lt1_minutes": result["lt1_minutes"],
         "dfa_alpha1_status": "computed",
+        "dfa_alpha1_confidence": conf,
         "rr_intervals_count": len(rr),
     }
 

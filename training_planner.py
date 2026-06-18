@@ -4221,6 +4221,11 @@ def sample_week_workouts(
                 # Penalize already-picked HIT types this week so the second
                 # HIT slot rotates to a different class.
                 for cc in week_hit_picks:
+                    # F1 (v2.2/B4): in a block, the FOCUS class is exempt — two
+                    # HIT slots in a VO2 block may BOTH be vo2max (concentration).
+                    # None ⇒ default de-dup (parity).
+                    if block_focus and cc == block_focus:
+                        continue
                     if cc in slot_pref:
                         slot_pref[cc] *= 0.4
         else:

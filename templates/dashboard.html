@@ -6053,6 +6053,16 @@ async function loadDfaTab() {
   const perHost = document.getElementById('dfa-perride-host');
   if (!aggHost || !perHost) return;
   if (status) status.innerHTML = '<span style="color:var(--text3);font-size:12px;">Loading DFA data…</span>';
+  // v2.1.1 — paint a real loading screen into the tab body immediately (the
+  // fetch + any server-side DFA compute can take a moment), so opening the DFA
+  // tab never shows a blank/stale panel. The fetch runs in the background and
+  // the spinner is replaced when it lands.
+  const _dfaSpinner = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:48px 16px;color:var(--text3);">
+      <span style="width:26px;height:26px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:pg-redraw-spin 0.8s linear infinite;"></span>
+      <span style="font-size:13px;">Loading DFA α1 analysis…</span>
+    </div>`;
+  aggHost.innerHTML = _dfaSpinner;
+  perHost.innerHTML = '';
   let d;
   try {
     const r = await fetch('/api/profile/dfa-rides');
@@ -11869,6 +11879,13 @@ async function runPlanOpenSequence() {
     _planStepRace(fetch('/api/rides/sync', {method: 'POST'}), PLAN_STEP_TIMEOUT_MS, 'sync')  // no force=1 → respects throttle
       .then(r => r.json()).then(j => { syncResult = j || null; })
       .catch(() => { syncResult = null; });
+    // v2.1.1 SPEED — recovery/HRV (step 3) is an independent READ, so start it
+    // HERE, concurrently with the reconcile below, instead of after it. By the
+    // time the reconcile finishes, readiness is usually already done → the
+    // DFA/recovery step is near-instant and the plan opens faster. Never rejects
+    // (a timeout is surfaced as {timeout:true} and handled in step 3).
+    const recoveryP = _planStepRace(fetch('/api/readiness'), PLAN_STEP_TIMEOUT_MS, 'recovery')
+      .then(r => r.json()).then(rd => ({rd})).catch(e => ({timeout: !!(e && e.name === 'TimeoutError')}));
     let reconciled = 0;
     try {
       const rres = await _planStepRace(fetch('/api/plan/rematch?apply=1', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}), PLAN_STEP_TIMEOUT_MS, 'reconcile');
@@ -11880,13 +11897,11 @@ async function runPlanOpenSequence() {
     setBar(0.5);
     paint('recovery');
 
-    // Step 3 — recovery / Garmin HRV (readiness).
+    // Step 3 — recovery / Garmin HRV (readiness). Already in flight from step 2.
     let recDetail = '';
-    try {
-      const rdres = await _planStepRace(fetch('/api/readiness'), PLAN_STEP_TIMEOUT_MS, 'recovery');
-      const rd = await rdres.json().catch(() => ({}));
-      recDetail = _summarizeReadiness(rd);
-    } catch (e) { if (e && e.name === 'TimeoutError') seqError = {key: 'recovery', label: STEPS[2].label, e}; }
+    const recRes = await recoveryP;
+    if (recRes.timeout) { seqError = {key: 'recovery', label: STEPS[2].label, e: {name: 'TimeoutError'}}; }
+    else { try { recDetail = _summarizeReadiness(recRes.rd || {}); } catch (_) {} }
     if (seqError) { state.recovery = {status: 'error', detail: 'timed out'}; setBar(0.75, true); paint(null); return; }
     state.recovery = {status: 'done', detail: recDetail || 'checked'};
     setBar(0.75);

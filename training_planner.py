@@ -5251,7 +5251,7 @@ def generate_plan(
     # sessions and keeping ≥1 rest day + the polarized shape. Runs after the
     # event long-ride growth (so the long ride is preserved last) and right
     # before the authoritative per-day clamp.
-    _enforce_weekly_volume_ceiling(weeks)
+    _enforce_weekly_volume_ceiling(weeks, recent_weekly_tss=recent_weekly_tss, goal=goal)
 
     # v2.1.0 (F4) — no hard session in the final days before the A event (event
     # goals only). Demotes a taper-eve VO2max/threshold block to an easy opener.
@@ -5743,7 +5743,7 @@ _VOLUME_MIN_SESSION_MIN = 30
 _VOLUME_CEILING_TOLERANCE = 1.05
 
 
-def _enforce_weekly_volume_ceiling(weeks: list) -> None:
+def _enforce_weekly_volume_ceiling(weeks: list, recent_weekly_tss=None, goal=None) -> None:
     """v2.1.0 (E1) — cap each week's summed planned TSS at its load-based ceiling.
 
     The ceiling is the week's own ``tss_target`` (= the phase's
@@ -5768,12 +5768,27 @@ def _enforce_weekly_volume_ceiling(weeks: list) -> None:
     """
     if not weeks:
         return
+    # v2.1.1 — POLARIZED BASE FILL. For an endurance goal (event/ctl), let the
+    # easy aerobic volume fill available days up to the rider's ACWR-safe ceiling
+    # (recent × 1.3) instead of the lower per-phase ramp target — so an event-prep
+    # build week is a polarized HIT + Z2 mix, not "a few VO2 sessions + rest days".
+    # Bounded by Gabbett's ACWR so it never spikes load; no-op without a known
+    # recent load (the no-history coverage tests are unaffected).
+    _acwr_safe = (recent_weekly_tss * ACWR_CEILING) if (recent_weekly_tss and recent_weekly_tss > 0) else 0
+    _endurance_goal = getattr(goal, "goal_type", "") in ("event", "ctl") if goal is not None else False
     for wk in weeks:
         if getattr(wk, "phase", "") == "taper":
             continue
         ceiling = getattr(wk, "tss_target", 0) or 0
         if ceiling <= 0:
             continue
+        # Raise the trim ceiling to the ACWR-safe volume for endurance build/base/
+        # peak weeks (only RAISES — a week already higher is untouched). Stepback
+        # (deload) + taper weeks keep their reduced target so unloading is preserved.
+        if (_acwr_safe > ceiling and _endurance_goal
+                and not getattr(wk, "is_stepback", False)
+                and getattr(wk, "phase", "") in ("base", "build1", "build2", "peak")):
+            ceiling = _acwr_safe
         budget = ceiling * _VOLUME_CEILING_TOLERANCE
 
         def _easy_slots():

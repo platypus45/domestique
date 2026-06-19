@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4220-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v2.1.1-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v2.1.2-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-1943-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -380,7 +380,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v2.1.1 — faster plan open, polarized event-prep, citation fixes (on top of the v2.1.0 feature release)](https://github.com/platypus45/domestique/releases/latest)** (2026-06-19).
+Latest: **[v2.1.2 — DFA recovery + reliable update banner (patch on the v2.1.1 / v2.1.0 release)](https://github.com/platypus45/domestique/releases/latest)** (2026-06-19).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

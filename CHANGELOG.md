@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.1.2 — DFA recovery + a reliable "update available" banner (2026-06-19)
+
+A small patch on top of v2.1.1, fixing two bugs found in testing.
+
+- **DFA thresholds come back.** Rides could get stuck on "no thresholds detected"
+  even with valid HRV data. intervals.icu's RR-interval (`hrv`) stream lags the
+  initial sync, so a ride was transiently flagged `no_rr_data` — and that flag was
+  *permanent*, so the ride never recomputed once the data arrived (a flagged ride
+  actually had 29k RR-intervals available on a re-fetch). It's no longer permanent:
+  such rides automatically re-check and recover their α1 + HRVT1/HRVT2.
+- **The "update available" banner actually appears.** The update check cached
+  GitHub's latest release for 6 h, so a new release published while the app was
+  closed stayed invisible until the cache expired. The app now forces a fresh check
+  on startup and re-checks every few hours, so a new version shows up on the next
+  launch instead of up to 6 h later.
+
+Everything from **v2.1.1** (faster plan open, polarized event-prep for all goal
+types, non-cycling activities kept out of the plan, citation fixes) and the big
+**v2.1.0** feature release is below.
+
 ## v2.1.1 — Faster plan open, polarized event-prep, citation fixes (2026-06-19)
 
 A fast-follow patch on top of **v2.1.0** — whose full feature set (block

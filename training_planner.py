@@ -5768,14 +5768,17 @@ def _enforce_weekly_volume_ceiling(weeks: list, recent_weekly_tss=None, goal=Non
     """
     if not weeks:
         return
-    # v2.1.1 — POLARIZED BASE FILL. For an endurance goal (event/ctl), let the
-    # easy aerobic volume fill available days up to the rider's ACWR-safe ceiling
-    # (recent × 1.3) instead of the lower per-phase ramp target — so an event-prep
-    # build week is a polarized HIT + Z2 mix, not "a few VO2 sessions + rest days".
-    # Bounded by Gabbett's ACWR so it never spikes load; no-op without a known
-    # recent load (the no-history coverage tests are unaffected).
+    # v2.1.1 — POLARIZED BASE FILL. For ANY training goal (event, ctl, ftp,
+    # vo2max, ftp_vo2max, hybrid, general, endurance, weight), let the easy aerobic
+    # volume fill available days up to the rider's ACWR-safe ceiling (recent × 1.3)
+    # instead of the lower per-phase ramp target — so a build week is a polarized
+    # HIT + Z2 mix, not "a few hard sessions + rest days". Every cycling goal wants
+    # a Z2 aerobic base (polarized 80/20 raises FTP and VO2max too — Stöggl 2014;
+    # Rønnestad's VO2 blocks sit on a big Z2 base). Bounded by Gabbett's ACWR so it
+    # never spikes load; no-op without a known recent load (so the no-history
+    # coverage tests are unaffected) and on stepback/taper weeks (deload preserved).
     _acwr_safe = (recent_weekly_tss * ACWR_CEILING) if (recent_weekly_tss and recent_weekly_tss > 0) else 0
-    _endurance_goal = getattr(goal, "goal_type", "") in ("event", "ctl") if goal is not None else False
+    _base_fill_goal = goal is not None
     for wk in weeks:
         if getattr(wk, "phase", "") == "taper":
             continue
@@ -5785,7 +5788,7 @@ def _enforce_weekly_volume_ceiling(weeks: list, recent_weekly_tss=None, goal=Non
         # Raise the trim ceiling to the ACWR-safe volume for endurance build/base/
         # peak weeks (only RAISES — a week already higher is untouched). Stepback
         # (deload) + taper weeks keep their reduced target so unloading is preserved.
-        if (_acwr_safe > ceiling and _endurance_goal
+        if (_acwr_safe > ceiling and _base_fill_goal
                 and not getattr(wk, "is_stepback", False)
                 and getattr(wk, "phase", "") in ("base", "build1", "build2", "peak")):
             ceiling = _acwr_safe

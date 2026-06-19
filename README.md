@@ -9,10 +9,10 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.9+-blue" alt="Python">
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
-  <img src="https://img.shields.io/badge/Workouts-4198-orange" alt="Workouts">
+  <img src="https://img.shields.io/badge/Workouts-4220-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v2.0.0-brightgreen" alt="Version">
-  <img src="https://img.shields.io/badge/Tests-1636-success" alt="Tests">
+  <img src="https://img.shields.io/badge/Version-v2.1.0-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Tests-1943-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
 
@@ -45,17 +45,23 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 
 ---
 
-## What's new in v2.2 (with the v2.1 round)
+## What's new in v2.1.0
 
-A training-science layer on top of the guardrails above. Full detail in
-[CHANGELOG.md](CHANGELOG.md); the new user-facing capabilities:
+The biggest release yet — a training-science layer plus a large reliability
+round. Full detail in [CHANGELOG.md](CHANGELOG.md); the new user-facing
+capabilities:
 
-**v2.2**
+**Training & races**
 - **Block periodization (opt-in, default OFF)** — a plan-form toggle reorganizes
   build/peak into ~3–4 week focus blocks (a VO2max block, then a threshold block
   toward the event) instead of mixing every hard type weekly, keeping one
   complementary session per block. Grounded in a verified PubMed screen
-  (Rønnestad block-VO2 RCTs, Issurin, 2019 meta-analysis); survives auto-recalc.
+  ([Rønnestad 2014](https://pubmed.ncbi.nlm.nih.gov/22646668/) / [2020](https://pubmed.ncbi.nlm.nih.gov/31977120/) block-VO2 cycling RCTs, [Issurin 2008](https://pubmed.ncbi.nlm.nih.gov/18212712/), [Mølmen 2019 review](https://pubmed.ncbi.nlm.nih.gov/31802956/)) — but the edge is mixed for amateurs ([Almquist 2022](https://pubmed.ncbi.nlm.nih.gov/35299664/) found none), which is why it's **off by default**. Survives auto-recalc.
+- **B and C races (opt-in)** — add intermediate events alongside your A goal; each
+  gets a right-sized **mini-taper** (B: a 2-day volume trim that *keeps* intensity,
+  C: a single easy/opener day), skipped inside the A taper or an unload week, and
+  color-coded by priority on the calendar. Grounded in a verified taper screen
+  ([Mujika & Padilla 2003](https://pubmed.ncbi.nlm.nih.gov/12840640/), [Bosquet 2007](https://pubmed.ncbi.nlm.nih.gov/17762369/), [Rønnestad 2017](https://pubmed.ncbi.nlm.nih.gov/27476525/)). A single-A plan is unchanged.
 - **Honest workout labels** — an objective-coherence check surfaces a workout's
   hidden hard work in its display name (e.g. *"Endurance 120min — Z2 +VO2 set"*).
   No `.zwo` files are mutated; only the labels become honest.
@@ -68,9 +74,11 @@ A training-science layer on top of the guardrails above. Full detail in
 - **Outdoor-variant export** — wrap any downloaded workout with an *off-plan*
   transit warm-up to the climb + an easy spin home (doesn't touch planned TSS).
 
-**v2.1** (the Windows-feedback round)
-- **Windows:** profile + credential persistence across restarts, ICU TLS via a
-  bundled CA store, clean app relaunch (no orphaned server).
+**Reliability & a smarter plan** (the Windows-feedback round)
+- **Windows:** profile + credential persistence across restarts, clean app
+  relaunch (no orphaned server), accented profile names save cleanly.
+- **intervals.icu TLS** via a bundled CA store — now on **both Windows and macOS**
+  (fixes the `ICUNetworkError` reported on the Mac mini / MacBook Air too).
 - **Plan:** weekly volume is load-based (not the sum of free hours), starts from
   your real current CTL, restores real rest weeks/days, and keeps VO2max off race
   eve — and all of this now holds through automatic re-fits.
@@ -80,9 +88,11 @@ A training-science layer on top of the guardrails above. Full detail in
 - **PowerCurve** self-heals missing efforts; an impossible 600%-FTP "Z7" workout
   was removed and the dangerous-workout screen tightened.
 
-**Not yet shipped (deferred):** volume-scaled hard-day count (F3 — conflicts with
-the hard-type coverage rules at realistic volumes; needs volume-aware floors) and
-B/C-race support (F7 — a focused follow-up).
+**Not yet shipped (deferred):** volume-scaled hard-day count (F3) — capping hard
+sessions on low-volume weeks conflicts with the planner's hard-type coverage rules
+at realistic volumes (a typical build week's load supports ~2 hard sessions, the
+rules want 3); needs the coverage rules made volume-aware, or the cap scoped to
+genuinely low-volume weeks.
 
 ---
 
@@ -248,9 +258,9 @@ Separate from G1–G7, the TSB scalar itself has dashboard hooks: TSB < −10 su
 
 Pure Python, flat module layout — every `.py` at repo root is `import`ed by another root module. PyInstaller bundles them as-is (no `domestique/` package wrapper) so the spec, the DMG, and the EXE all stay simple.
 
-**Planner** (`training_planner.py` + `training.py`) sizes Base/Build1/Build2/Peak/(Taper|Consolidation) phases from CTL + target date, picks workouts from the 4,198-file library with a (mix_preference x variety_score x novelty_boost) sampler that forces ~1 pick per file across a plan, enforces minimum-floor counts of Ronnestad / anaerobic / neuromuscular sessions per phase, and runs the G1–G7 priority chain on every daily adapt. `regenerate_from_today()` rebuilds the plan when `detect_plan_gaps()` flags >=2 consecutive missed weeks; `reforecast()` runs the TSB / ACWR / polarisation adjustments on demand; `auto_apply_eftp()` fires when ICU eFTP > set FTP by >=3% for 7+ days.
+**Planner** (`training_planner.py` + `training.py`) sizes Base/Build1/Build2/Peak/(Taper|Consolidation) phases from CTL + target date, picks workouts from the 4,220-file library with a (mix_preference x variety_score x novelty_boost) sampler that forces ~1 pick per file across a plan, enforces minimum-floor counts of Ronnestad / anaerobic / neuromuscular sessions per phase, and runs the G1–G7 priority chain on every daily adapt. `regenerate_from_today()` rebuilds the plan when `detect_plan_gaps()` flags >=2 consecutive missed weeks; `reforecast()` runs the TSB / ACWR / polarisation adjustments on demand; `auto_apply_eftp()` fires when ICU eFTP > set FTP by >=3% for 7+ days.
 
-**Library** ships 4,198 structured ZWO workouts (content-classified into 17 canonical classes — endurance / tempo / sweet spot / threshold / over-under / VO2max / VO2-short / anaerobic / neuromuscular / FTP test, plus ladder variants; tags-indexed for filter queries) and 622 real-world route courses (Alps, Dolomites, Pyrenees, Basque country, Flanders, Costa Blanca, Mallorca, Innsbruck 2018 Worlds, Alpe d'Huez, Mont Ventoux, Stelvio + 160 regional climbs; CRS or GPX export). No Zwift virtual worlds (Watopia / Yorkshire / etc. are Zwift-proprietary and not redistributable). A 24-week plan picks 150 distinct files (every session is a different workout). See [docs/workout_sources.md](docs/workout_sources.md) for provenance and licensing.
+**Library** ships 4,220 structured ZWO workouts (content-classified into 17 canonical classes — endurance / tempo / sweet spot / threshold / over-under / VO2max / VO2-short / anaerobic / neuromuscular / FTP test, plus ladder variants; tags-indexed for filter queries) and 622 real-world route courses (Alps, Dolomites, Pyrenees, Basque country, Flanders, Costa Blanca, Mallorca, Innsbruck 2018 Worlds, Alpe d'Huez, Mont Ventoux, Stelvio + 160 regional climbs; CRS or GPX export). No Zwift virtual worlds (Watopia / Yorkshire / etc. are Zwift-proprietary and not redistributable). A 24-week plan picks 150 distinct files (every session is a different workout). See [docs/workout_sources.md](docs/workout_sources.md) for provenance and licensing.
 
 **Post-ride viewer** (`ride_storage.py` + `fit_activity.py` + `analytics.py` + `ride_report_png.py`) parses the imported FIT via fitparse, computes NP/IF/TSS, time-in-zone, aerobic decoupling, Treff polarisation classification, DFA alpha1 (when `HrvMessage` records are present), Belastingscore (Kontro 2026 3D impulse-response decomposition into CP / W' / Pmax — additive lens alongside TSS, not a replacement), eFTP cross-check, FTP-test detection (Coggan-20 by power-profile shape; ramp halt by cadence-drop heuristic), and renders a Pillow PNG / browser-print PDF post-ride summary. A separate `programme_summary_png.py` renders the 12-metric finished-programme recap.
 
@@ -282,7 +292,7 @@ domestique/
 ├── tests/                    — pytest suite (~60 files; run pytest -q)
 ├── docs/                     — Architecture, science deep-dives, build guides
 ├── scripts/                  — One-off generators + scrapers (NOT imported)
-├── workouts/                 — 4,198 ZWO interval workouts
+├── workouts/                 — 4,220 ZWO interval workouts
 ├── courses/                  — Real-world climb library (CRS files)
 ├── static/, templates/       — FastAPI assets + Jinja2 templates
 ├── assets/                   — App icons
@@ -299,7 +309,7 @@ Domestique plans + analyses — you ride in a separate app. The free-forever pic
 
 | App | Free? | ZWO import | Notes |
 |---|---|---|---|
-| **Golden Cheetah** | open-source | yes (ZWO/ERG/MRC) | Best match for a planner+library+viewer app like this; drive the trainer via ANT+ FE-C; drop Domestique's library into GC's workout folder once, all 4,198 files appear in Train view |
+| **Golden Cheetah** | open-source | yes (ZWO/ERG/MRC) | Best match for a planner+library+viewer app like this; drive the trainer via ANT+ FE-C; drop Domestique's library into GC's workout folder once, all 4,220 files appear in Train view |
 | **MyWhoosh** | fully free | yes (via web builder) | Scenery + Zwift-style ride; full ERG on Neo 2T |
 | Tacx Training | free with Tacx HW | no (ZWO); GPX only | Native Tacx integration but no ZWO import |
 
@@ -311,12 +321,13 @@ See [docs/cycling_apps.md](docs/cycling_apps.md) for the full table.
 
 ## Releases
 
-Latest: **[v2.0.0 — goal-aware selection + event-driven planning](https://github.com/platypus45/domestique/releases/latest)** (2026-06-13).
+Latest: **[v2.1.0 — block periodization, B/C races, a smarter plan, and Windows/Mac reliability](https://github.com/platypus45/domestique/releases/latest)** (2026-06-19).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 
 **Highlights since v1.8.5** (see [CHANGELOG.md](CHANGELOG.md) for every shipped tag):
 
+- **Block periodization, B/C races & a plan that respects your real training** (v2.1.0) — the biggest release yet. An opt-in **block-periodization** mode concentrates each build phase on one quality (a VO2 block, then a threshold block); **B and C races** ride alongside your A goal, each with an evidence-based mini-taper (trim volume, keep intensity) and color-coded on the calendar. The plan now builds weekly volume from a **load-based ceiling** (target CTL / recent TSS, not the sum of your free hours) starting from your **real current fitness**, with genuine rest weeks, no hard intervals on race eve, and a **polarized / pyramidal / threshold** distribution of your choosing. Plus: a **library that stops hiding hard sets** (objective-coherence labels), long pure-Z2 base rides, a **trustworthy DFA α1** readout (per-window lows + confidence flag), an **outdoor-variant** export, and Windows/Mac reliability fixes — profiles & API keys that persist, clean app relaunch, and the **intervals.icu TLS fix on both platforms**. eFTP no longer silently rewrites your zones.
 - **Goal-aware + event-driven planning** (v2.0.0) — the plan now adapts to what you're training for. An **FTP** focus schedules more threshold/sweet-spot work, a **VO2max** focus more VO2/30-15 work. For a **target event**, distance + elevation drive a real long-ride progression (toward ~0.8× event duration, capped by your weekend hours), a feasibility-bounded fitness target (auto-lowered if the date's too soon), and climbing specificity in build/peak — so a 100 km/500 m and a 175 km/2900 m fondo produce visibly different plans. Survives auto-sync.
 - **Evidence-based library + cleaner browser** (v1.10.0) — added the canonical Rønnestad short/long intervals, proper Wingate SIT (4-min recovery) and descending VO₂ ladders from the PubMed literature, removed 18 under-rested anaerobic files (the "rest too short" ones), and renamed 282 files to match their real content type. The library filter is redesigned: one unified Type, a 0–180 min duration range, and an Advanced panel for Min Score / Surface / Tags.
 - **FIT import that just works** (v1.9.1) — drag a `.fit` from Finder anywhere onto the window (or click **Import FIT**); it imports, reconciles against your plan, adapts the next sessions, and the views refresh on the spot.
@@ -367,6 +378,8 @@ The peer-reviewed evidence supporting TSS as a *quantifier of training that was 
 | Aerobic-threshold (LT1) anchor FTP can't give | **DFA HRVT1/HRVT2 detection** (alpha1 0.75/0.50) -> display-only LT1/LT2 HR+power + 3-zone model | [Rogers et al. 2021 (PMC7845545)](https://pmc.ncbi.nlm.nih.gov/articles/PMC7845545/), [Schaffarczyk et al. 2022 (PMC9894976)](https://pmc.ncbi.nlm.nih.gov/articles/PMC9894976/) |
 | Climb-specific record power profile | **Pinot & Grappe 2011 RPP gate** for capability projection | [Pinot & Grappe 2011](https://pubmed.ncbi.nlm.nih.gov/22052032/) |
 | CP-from-FTP approximation | `int(ftp x 1.03)` (was naive `CP = FTP`) | [McGrath et al. 2021](https://pubmed.ncbi.nlm.nih.gov/34055164/) |
+| Between-race freshening (B/C events around an A goal) | **B/C mini-taper** — trim volume, keep intensity (B: 2-day window, C: 1-day opener); skipped inside the A taper / unload weeks | [Mujika & Padilla 2003 (PMID 12840640)](https://pubmed.ncbi.nlm.nih.gov/12840640/), [Bosquet 2007 (PMID 17762369)](https://pubmed.ncbi.nlm.nih.gov/17762369/), [Rønnestad 2017 (PMID 27476525)](https://pubmed.ncbi.nlm.nih.gov/27476525/) |
+| Concentrated vs. mixed build stimulus | **Block periodization** (opt-in) — focus blocks + 1 complementary session | [Rønnestad 2014 (PMID 22646668)](https://pubmed.ncbi.nlm.nih.gov/22646668/), [Mølmen 2019 (PMID 31802956)](https://pubmed.ncbi.nlm.nih.gov/31802956/), [Almquist 2022 (PMID 35299664)](https://pubmed.ncbi.nlm.nih.gov/35299664/) |
 | FTP detection from real rides | Auto-eFTP from FIT archive + ICU eFTP cross-check | inline `fitness_estimation.py:220-263` |
 | W' / Pmax energy-system decomposition (v1.0.6) | **Belastingscore quartet** (Aerobe / Glycolytisch / PCr) — secondary lens to TSS | [Kontro et al. 2026 (PLOS ONE)](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0341721) |
 

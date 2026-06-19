@@ -1,16 +1,18 @@
 # Changelog
 
-## v2.2.0 — Block periodization, honest workouts, and a smarter DFA (2026-06-19)
+## v2.1.0 — Block periodization, B/C races, a smarter plan, and Windows/Mac reliability (2026-06-19)
 
-The biggest release yet. It bundles everything from v2.1.0 (the Windows-feedback
-round — see below) **plus** a new training-science layer: an opt-in block-
-periodization engine, a workout library that stops lying about what it contains,
-long base rides for gran-fondo riders, a trustworthy DFA α1 readout, and an
-outdoor-ready workout export.
+The biggest release yet — and the first upload since v2.0.7. It bundles a large
+Windows-feedback reliability round, a training plan that builds from your *real*
+fitness, and a new training-science layer: an opt-in block-periodization engine,
+support for **B and C races** with their own mini-tapers, a workout library that
+stops lying about what it contains, long base rides for gran-fondo riders, a
+trustworthy DFA α1 readout, an outdoor-ready workout export, and the intervals.icu
+TLS fix — now on **both Windows and macOS**.
 
 Everything new here is **additive or opt-in** — if you change nothing, your plans
-look exactly as they did. Two requested items (volume-scaled hard-day count, and
-B/C races) are **not** in this release; see "Still on the list."
+look exactly as they did. One requested item (volume-scaled hard-day count) is
+**not** in this release; see "Still on the list."
 
 ### Block periodization (opt-in, new)
 
@@ -33,6 +35,25 @@ B/C races) are **not** in this release; see "Still on the list."
 |---|---|
 | Every build week mixes VO2 + threshold + sweet-spot + over-under | Build1 = a VO2 block, build2/peak = a threshold block |
 | Variety every week | One concentrated focus per block + 1 complementary session |
+
+### B and C races (opt-in, new)
+
+- **Plan around your whole season, not just one event.** Alongside your A goal you
+  can now add **B and C races** — the plan form takes a repeatable list of events,
+  each with a priority. Add a local crit in the middle of your fondo build and the
+  plan accounts for it instead of ignoring it.
+- **Each gets a right-sized mini-taper.** A **B race** gets a short 2-day freshen
+  (trim volume, *keep* intensity — a pre-race opener is fine, not a smashfest); a
+  **C race** gets a single easy/opener day and is otherwise ridden through. Neither
+  is a full taper — your A event still owns the real peak.
+- **No double-deloads.** A B/C event that falls inside your A taper, or on an
+  existing unload week, is left alone — no stacking easy on easy.
+- **Grounded in the evidence.** The mini-taper window and magnitude come from a
+  PubMed taper screen (Mujika & Padilla, Bosquet's meta-analysis, Rønnestad's
+  between-races peaking — every citation verified): maintain intensity, cut volume,
+  keep the window short.
+- **See them on the calendar.** Event days are color-coded by priority (A / B / C).
+  A plan with only an A event behaves exactly as before.
 
 ### Your workout library got honest
 
@@ -76,17 +97,7 @@ B/C races) are **not** in this release; see "Still on the list."
 - Focused regression tests for every feature above; the planner's known
   non-deterministic coverage tests are unchanged.
 
-### Still on the list (not in this release)
-
-- **Volume-scaled hard-day count (F3)** — capping hard sessions on low-volume weeks
-  so they aren't intensity-dominated. It was built and tested, but at realistic
-  event volumes it conflicts with the planner's hard-type coverage rules; doing it
-  right needs those rules made volume-aware, so it's deferred to the periodization
-  project rather than shipped half-working.
-- **B and C races (F7)** — supporting events with their own mini-tapers around your
-  A goal. Spec is ready; it's a standalone feature for a focused follow-up.
-
-## v2.1.0 — Windows reliability + a plan that respects your real training (2026-06-18)
+### Windows reliability + a plan that respects your real training
 
 A large round of fixes driven by detailed Windows-user feedback. Three buckets:
 **(1)** Windows stopped fighting you — your profile, API key, and the app window
@@ -128,13 +139,15 @@ data/scoring inconsistencies are gone.
 > Note: the three Windows-specific fixes (clean exit, certificate bundling, port
 > release) are verified in code but need confirming on an actual Windows build.
 
-### Connecting to intervals.icu (TLS)
+### Connecting to intervals.icu (TLS) — Windows and macOS
 
 - **"Saved, but ICU rejected the new credentials: failed: ICUNetworkError" is
-  fixed.** The frozen Windows build shipped without a certificate authority store,
-  so every HTTPS call to intervals.icu failed verification. The app now bundles
-  the `certifi` CA store and points Windows at it, so credential checks and syncs
-  succeed. (This is the recurring issue reported on GitHub.)
+  fixed.** The frozen Windows build *and* the notarized macOS app shipped without a
+  certificate-authority store, so every HTTPS call to intervals.icu failed
+  verification — the "ICUNetworkError" reported on Windows, and the same failure on
+  the Mac mini / MacBook Air. The app now bundles the `certifi` CA store and points
+  both platforms at it, so credential checks and syncs succeed. (This is the
+  recurring issue reported on GitHub.)
 
 ### Your training plan got a lot smarter
 
@@ -234,20 +247,18 @@ fixes make those automatic adjustments trustworthy:
 
 ### Still on the list (not in this release)
 
-All reported **bugs** are fixed. The following feedback items are **design /
-feature requests** that are deliberately deferred — each has a written
-implementation proposal and most belong together in one periodization project
-rather than piecemeal patches:
+All reported **bugs** are fixed, and most of the original feedback (block
+periodization, B/C races, honest zone-mixing library, outdoor realism, DFA α1
+reliability, more variety) shipped above. Two items remain deliberately deferred:
 
-- **Block periodization** — focused 4–6 week blocks instead of all intensity types
-  every week.
-- **Intensity frequency scaled to volume** — fewer hard days on low-volume weeks.
-- **B and C races** — supporting events with their own mini-tapers around an A goal.
-- **More workout variety** — repeatability, sprints, strength-endurance.
-- **A library that mixes zones with clear objectives** / a progression-based plan
-  creator rather than a static 420-workout library.
-- **Outdoor realism** — accounting for travel-to-climb and the ride home.
-- **DFA α1 reliability** — better artifact rejection for HRV-based thresholds.
+- **Volume-scaled hard-day count** — capping hard sessions on low-volume weeks so
+  they aren't intensity-dominated. Built and tested, but at realistic event volumes
+  it conflicts with the planner's hard-type coverage rules: a typical build week's
+  load only supports ~2 hard sessions, while the coverage rules want 3. Doing it
+  right needs those rules made volume-aware (or the cap scoped to only genuinely
+  low-volume weeks), so it's parked rather than shipped half-working.
+- **Progression-based plan creator** — generating workouts from a progression model
+  rather than picking from a fixed library. A larger project for a later release.
 
 ## v2.0.7 — Automatic week re-fit when you miss a hard session (2026-06-17)
 

@@ -82,5 +82,49 @@ class TestRotationPenaltyBlockExempt(unittest.TestCase):
             tp._apply_rotation_penalty(weights, recent, block_focus=None))
 
 
+class TestBlockConcentration(unittest.TestCase):
+    """B5: block-on build/peak phases concentrate on the focus class (focus is the
+    dominant HIT quality) while retaining ≥1 complementary shape. The swap floor is
+    best-effort (~55-66% focus, not a hard ≥70% — see IP note), so the invariant is
+    'focus dominant + complementary present', asserted over a few seeds."""
+
+    def _block_goal(self):
+        from datetime import date, timedelta
+        return tp.Goal(
+            goal_type="event", plan_weeks=14,
+            target_date=date.today() + timedelta(weeks=14),
+            event_km=160, event_climb_m=2000, event_type="gran_fondo",
+            hours_per_week=12.0, max_weekday_hours=2.5, max_weekend_hours=4.0,
+            available_days=[0, 1, 2, 3, 4, 5, 6], rest_days=[],
+            block_periodization=True)
+
+    def test_focus_dominant_with_complementary(self):
+        import collections
+        for seed in (0, 7, 42):
+            _ph, weeks = tp.generate_plan(
+                self._block_goal(), athlete={"ftp": 250, "weight_kg": 70},
+                recent_weekly_tss=600, seed_salt=seed)
+            for pn, focus in (("build1", "vo2max"), ("build2", "threshold"),
+                              ("peak", "threshold")):
+                pw = [w for w in weeks if w.phase == pn and not w.is_stepback]
+                if not pw:
+                    continue
+                cc = collections.Counter()
+                for w in pw:
+                    for s in w.sessions:
+                        if tp._session_is_hit(s):
+                            cc[tp._content_class_for_zwo(s.zwo_file or "")] += 1
+                H = sum(cc.values())
+                if H < 2:
+                    continue
+                self.assertEqual(
+                    cc[focus], max(cc.values()),
+                    f"seed{seed} {pn}: focus {focus} not the dominant HIT class: {dict(cc)}")
+                self.assertGreaterEqual(
+                    cc[focus] / H, 0.45, f"seed{seed} {pn}: weak focus share {dict(cc)}")
+                self.assertGreater(
+                    H - cc[focus], 0, f"seed{seed} {pn}: no complementary shape {dict(cc)}")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5411,6 +5411,32 @@ def _enforce_build2_peak_hard_floor(
         "build2": {"anaerobic": 1, "neuromuscular": 1, "vo2_short": 3, "over_under": 1},
         "peak":   {"anaerobic": 1, "neuromuscular": 1, "vo2_short": 3},
     }
+    # F1 (v2.2/B5): when opt-in block periodization is on, REPLACE the flat
+    # forced-4-shape floor with a BLOCK-AWARE floor — concentrate ~≥70% of each
+    # phase-block's HIT on its focus class and RETAIN ≥1 complementary quality
+    # (Issurin). Reuses the swap mechanism below (only the targets change). When
+    # block is off (no week carries a block_focus) this is skipped entirely →
+    # default-off parity, the flat floor is unchanged.
+    _block_on = any(getattr(w, "block_focus", None) for w in weeks)
+    if _block_on:
+        _COMP = {"vo2max": "threshold", "threshold": "vo2_short"}
+        block_floors: dict[str, dict[str, int]] = {}
+        for _pn in ("build1", "build2", "peak"):
+            _pw = [w for w in weeks if w.phase == _pn and not w.is_stepback]
+            _focus = next((getattr(w, "block_focus", None) for w in _pw
+                           if getattr(w, "block_focus", None)), None)
+            if not _focus:
+                continue
+            _H = sum(_week_hit_count(w) for w in _pw)
+            if _H <= 0:
+                continue
+            _fmin = max(1, (7 * _H + 9) // 10)  # ceil(0.70 * H)
+            if _H >= 2:
+                _fmin = min(_fmin, _H - 1)       # leave room for ≥1 complementary
+                block_floors[_pn] = {_focus: _fmin, _COMP.get(_focus, "over_under"): 1}
+            else:
+                block_floors[_pn] = {_focus: _fmin}
+        phase_floors = block_floors
     if not weeks:
         return
     by_class = pool_index.get("by_class") or {}

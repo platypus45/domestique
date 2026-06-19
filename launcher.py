@@ -49,7 +49,7 @@ def _harden_std_streams():
 _harden_std_streams()
 
 
-# WIN-TLS-FIX (v2.1.0) + MAC-TLS-FIX (v2.3.0): a frozen build's bundled Python has
+# WIN-TLS-FIX (v2.1.0) + MAC-TLS-FIX (v2.1.0): a frozen build's bundled Python has
 # no usable CA store for urllib's default SSL context, so HTTPS to intervals.icu
 # fails cert verification → URLError → "ICUNetworkError" on every credential save /
 # sync. (httpx works because it bundles certifi; urllib uses the empty default.)

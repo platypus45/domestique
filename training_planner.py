@@ -1111,7 +1111,7 @@ def _project_event_capability(
 
 @dataclass
 class TargetEvent:
-    """F7 (v2.3) — one event in a multi-event Goal. The A event mirrors the Goal's
+    """F7 (v2.1) — one event in a multi-event Goal. The A event mirrors the Goal's
     canonical target_date + event_* scalars; B/C are intermediate races that get a
     proportionate mini-taper (never a full taper). priority ∈ {"A","B","C"}."""
     date: date
@@ -1167,12 +1167,12 @@ class Goal:
     # "polarized" (Seiler, default) | "pyramidal" | "threshold". Selects which
     # per-phase IntensityBudget table the planner uses (see BUDGETS_BY_MODEL).
     distribution: str = "polarized"
-    # F1 (v2.2): OPT-IN block periodization (default OFF). When True the planner
+    # F1 (v2.1): OPT-IN block periodization (default OFF). When True the planner
     # concentrates each build/peak phase on ONE focus quality per ≤4-week block
     # (VO2 block → threshold block) instead of the weekly-mixed default. Default
     # False = today's behaviour, byte-for-byte (the default-off-parity contract).
     block_periodization: bool = False
-    # F7 (v2.3): intermediate B/C races (additive). The A event stays the canonical
+    # F7 (v2.1): intermediate B/C races (additive). The A event stays the canonical
     # target_date + event_* scalars; B/C entries here get a proportionate mini-taper.
     # Empty = today's single-A behaviour, unchanged.
     events: list = field(default_factory=list)
@@ -1258,7 +1258,7 @@ class PlannedWeek:
     # Optional W'/Pmax weekly mirrors. None ⇒ TSS-only path.
     wprime_target: float | None = None
     pmax_target: float | None = None
-    # ── F1 (v2.2) block periodization ──────────────────────────────────────
+    # ── F1 (v2.1) block periodization ──────────────────────────────────────
     # The concentrated focus content_class for this week's block (e.g. "vo2max"),
     # or None for the default weekly-mixed plan. Set ONLY when
     # goal.block_periodization is on; None keeps the block plug-ins dormant.
@@ -3630,7 +3630,7 @@ def _apply_rotation_penalty(
     weeks_back = set(recent_hit_types[-12:-5])
     out = {}
     for cc, w in weights_by_cc.items():
-        # F1 (v2.2/B3): in a block, the FOCUS class is exempt from the cross-week
+        # F1 (v2.1/B3): in a block, the FOCUS class is exempt from the cross-week
         # rotation penalty — a VO2 block deliberately repeats vo2max week-to-week
         # (the opposite of the default "don't pick vo2max 4 weeks running"). None
         # ⇒ default behaviour (parity).
@@ -4033,7 +4033,7 @@ def sample_week_workouts(
 ) -> list["PlannedSession"]:
     """Score-weighted per-week sampler driving the v4.5 diversification overhaul.
 
-    ``block_focus`` (F1, v2.2): when set (opt-in block periodization), the week
+    ``block_focus`` (F1, v2.1): when set (opt-in block periodization), the week
     concentrates its HIT slots on that content_class. None = default weekly-mixed
     behaviour (the picker plug-ins read it; None keeps them dormant).
 
@@ -4238,7 +4238,7 @@ def sample_week_workouts(
                 # Penalize already-picked HIT types this week so the second
                 # HIT slot rotates to a different class.
                 for cc in week_hit_picks:
-                    # F1 (v2.2/B4): in a block, the FOCUS class is exempt — two
+                    # F1 (v2.1/B4): in a block, the FOCUS class is exempt — two
                     # HIT slots in a VO2 block may BOTH be vo2max (concentration).
                     # None ⇒ default de-dup (parity).
                     if block_focus and cc == block_focus:
@@ -4819,7 +4819,7 @@ def _apply_long_ride_target(sessions: list, target_min: int, max_weekend_min: in
         best.session_type = "long_z2"
 
 
-# F1 (v2.2) — block focus per build/peak phase. Evidence-grounded order
+# F1 (v2.1) — block focus per build/peak phase. Evidence-grounded order
 # (IP_F1_research.md / Rønnestad): VO2max block first, then a threshold/race-
 # specific block toward the event. base/taper/consolidation/history have no
 # focus. Returns None unless opt-in block periodization is on (default-off parity)
@@ -5008,7 +5008,7 @@ def generate_plan(
                          if (event_targets and event_targets.get("climbing_bias")
                              and phase.name in ("build2", "peak"))
                          else None)
-                # F1 (v2.2/B2): block focus for this week (None unless opt-in).
+                # F1 (v2.1/B2): block focus for this week (None unless opt-in).
                 block_focus = _block_focus_for(phase.name, goal, is_stepback)
                 pw.block_focus = block_focus
                 sampled = sample_week_workouts(
@@ -5429,7 +5429,7 @@ def _enforce_build2_peak_hard_floor(
         "build2": {"anaerobic": 1, "neuromuscular": 1, "vo2_short": 3, "over_under": 1},
         "peak":   {"anaerobic": 1, "neuromuscular": 1, "vo2_short": 3},
     }
-    # F1 (v2.2/B5): when opt-in block periodization is on, REPLACE the flat
+    # F1 (v2.1/B5): when opt-in block periodization is on, REPLACE the flat
     # forced-4-shape floor with a BLOCK-AWARE floor — concentrate ~≥70% of each
     # phase-block's HIT on its focus class and RETAIN ≥1 complementary quality
     # (Issurin). Reuses the swap mechanism below (only the targets change). When
@@ -5844,7 +5844,7 @@ def _enforce_weekly_volume_ceiling(weeks: list) -> None:
 
 def _demote_hit_window(weeks: list, center_date, days: int, library=None,
                        desc: "str | None" = None) -> None:
-    """F7 (v2.3) — demote any HIT session within ``days`` before ``center_date``
+    """F7 (v2.1) — demote any HIT session within ``days`` before ``center_date``
     (inclusive of the day itself) to a short easy Z2 opener. The shared primitive
     behind the A event eve-guard (F4) and the B/C mini-tapers (F7): trim the hard
     work in the window, leave everything else (intensity preserved elsewhere, per
@@ -5881,14 +5881,14 @@ def _enforce_event_taper_eve(weeks: list, target_date, library=None,
     _demote_hit_window(weeks, target_date, eve_days, library)
 
 
-# F7 (v2.3): per-priority mini-taper window (IP_F7_research.md — short, intensity
+# F7 (v2.1): per-priority mini-taper window (IP_F7_research.md — short, intensity
 # preserved). B = 2 easy days before the race, C = 1. The A event is owned by the
 # macro taper + _enforce_event_taper_eve, never here.
 _EVENT_TAPER_DAYS = {"B": 2, "C": 1}
 
 
 def _apply_secondary_event_tapers(weeks: list, goal, library=None) -> None:
-    """F7 (v2.3) — proportionate mini-taper before each B/C event in goal.events.
+    """F7 (v2.1) — proportionate mini-taper before each B/C event in goal.events.
     Composition guards (no double-deload): SKIP an event inside the A macro-taper
     span (already deloading) and apply only the eve opener (not the multi-day dip)
     when the event lands on a step-back week (already unloaded). Reuses
@@ -7506,7 +7506,7 @@ def regenerate_from_today(
         rest_days=goal.rest_days,
         daily_max_hours=goal.daily_max_hours,
         plan_weeks=goal.plan_weeks,
-        # F1 (v2.2/B6): carry the user's intensity choices through recalc so a
+        # F1 (v2.1/B6): carry the user's intensity choices through recalc so a
         # block / non-polarized plan doesn't silently revert on adaptation.
         distribution=goal.distribution,
         block_periodization=goal.block_periodization,
@@ -7592,7 +7592,7 @@ def regenerate_from_today(
                      if (event_targets and event_targets.get("climbing_bias")
                          and phase.name in ("build2", "peak"))
                      else None)
-            # F1 (v2.2/B6): keep blocks on the recalc path — recompute focus from
+            # F1 (v2.1/B6): keep blocks on the recalc path — recompute focus from
             # the (adjusted) goal + phase so a recalc'd block plan stays blocked.
             # None unless goal.block_periodization is on (default-off parity).
             block_focus = _block_focus_for(phase.name, adjusted_goal, is_stepback)
@@ -7894,7 +7894,7 @@ def recalculate_plan(
         rest_days=goal.rest_days,
         daily_max_hours=goal.daily_max_hours,
         plan_weeks=goal.plan_weeks,
-        # F1 (v2.2/B6): carry the user's intensity choices through recalc so a
+        # F1 (v2.1/B6): carry the user's intensity choices through recalc so a
         # block / non-polarized plan doesn't silently revert on adaptation.
         distribution=goal.distribution,
         block_periodization=goal.block_periodization,
@@ -7998,7 +7998,7 @@ def recalculate_plan(
                      if (event_targets and event_targets.get("climbing_bias")
                          and phase.name in ("build2", "peak"))
                      else None)
-            # F1 (v2.2/B6): keep blocks on the recalc path — recompute focus from
+            # F1 (v2.1/B6): keep blocks on the recalc path — recompute focus from
             # the (adjusted) goal + phase so a recalc'd block plan stays blocked.
             # None unless goal.block_periodization is on (default-off parity).
             block_focus = _block_focus_for(phase.name, adjusted_goal, is_stepback)

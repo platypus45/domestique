@@ -6226,7 +6226,7 @@ def _safe_path(base: Path, *parts: str) -> Path | None:
 
 
 def _wrap_zwo_outdoor(xml_text: str, transit_min: int, spin_min: int) -> str:
-    """G1 (v2.2) — frame a prescribed indoor block inside a real OUTDOOR ride:
+    """G1 (v2.1) — frame a prescribed indoor block inside a real OUTDOOR ride:
     prepend a flat transit warmup and append a spin-home cooldown. The prescribed
     body is passed through UNCHANGED (string-level insert, not re-serialized, so
     the middle is byte-identical). Export-only: this is the download path, so it
@@ -6282,7 +6282,7 @@ def download_zwo_flat(filename: str, outdoor: int = Query(0),
     which was the "white screen with Times New Roman text" the user reported when
     clicking Download ZWO in the Library tab.
 
-    G1 (v2.2): ``outdoor=1`` wraps the block with an off-plan transit warmup +
+    G1 (v2.1): ``outdoor=1`` wraps the block with an off-plan transit warmup +
     spin-home cooldown (transit_min / spin_min minutes).
     """
     path = _safe_path(WORKOUT_DIR, filename)
@@ -6295,7 +6295,7 @@ def download_zwo_flat(filename: str, outdoor: int = Query(0),
 def download_zwo(category: str, filename: str, outdoor: int = Query(0),
                  transit_min: int = Query(10), spin_min: int = Query(20)):
     """v1.6.4: see download_zwo_flat docstring for media-type + Disposition change.
-    G1 (v2.2): ``outdoor=1`` adds an off-plan transit warmup + spin-home cooldown."""
+    G1 (v2.1): ``outdoor=1`` adds an off-plan transit warmup + spin-home cooldown."""
     # Flat layout first, legacy category/file fallback
     path = _safe_path(WORKOUT_DIR, filename)
     if not path or not path.exists():
@@ -8491,7 +8491,7 @@ async def api_plan_generate(request: Request):
             # J1 (v2.1.0): intensity-distribution model is a user choice
             # (polarized default; pyramidal / threshold). Not hard-forced.
             distribution=body.get("distribution", _prefs.get("distribution", "polarized")),
-            # F1 (v2.2): opt-in block periodization (default off).
+            # F1 (v2.1): opt-in block periodization (default off).
             block_periodization=bool(body.get("block_periodization", _prefs.get("block_periodization", False))),
             events=_events_from_dicts(body.get("events")),  # F7 (A + optional B/C)
         )
@@ -9226,7 +9226,7 @@ def _current_absence_episode(old_weeks, gaps: dict, today: date):
 
 
 def _events_to_dicts(events) -> list:
-    """F7 (v2.3): serialize Goal.events (TargetEvent list) into the saved goal block."""
+    """F7 (v2.1): serialize Goal.events (TargetEvent list) into the saved goal block."""
     out = []
     for e in events or []:
         d = getattr(e, "date", None)
@@ -9242,7 +9242,7 @@ def _events_to_dicts(events) -> list:
 
 
 def _events_from_dicts(raw) -> list:
-    """F7 (v2.3): rebuild Goal.events (TargetEvent list) from the saved goal block
+    """F7 (v2.1): rebuild Goal.events (TargetEvent list) from the saved goal block
     or the plan-form POST. Skips entries without a parseable date."""
     out = []
     for e in raw or []:

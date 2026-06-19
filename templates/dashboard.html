@@ -542,6 +542,18 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
   box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.3);
   background: rgba(34, 197, 94, 0.06);
 }
+/* F7c (v2.3) — intermediate B/C races, color-coded by priority. A keeps the
+   green event border above; B = amber, C = slate. */
+.cal-day.cal-event-b {
+  border: 2px solid var(--amber, #f59e0b);
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.06);
+}
+.cal-day.cal-event-c {
+  border: 2px solid var(--text2, #94a3b8);
+  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.25);
+  background: rgba(148, 163, 184, 0.05);
+}
 .cal-day.cal-completed { background: rgba(34,197,94,0.05); }
 .cal-day.cal-missing  { background: rgba(239,68,68,0.06); }
 
@@ -2116,6 +2128,13 @@ window.addEventListener('unhandledrejection', function(e) {
               <option value="ultra">Ultra</option><option value="crit">Crit</option><option value="sportive">Sportive</option>
             </select>
           </div>
+        </div>
+        <!-- F7c (v2.3) — optional intermediate B/C races. Empty by default →
+             a single-A plan POSTs no events[] and behaves exactly as before. -->
+        <div id="plan-bc-races" style="margin-top:4px;">
+          <div style="font-size:11px;color:var(--text2);font-weight:500;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Intermediate races (B / C) — optional</div>
+          <div id="plan-bc-rows"></div>
+          <button type="button" class="btn btn-sm" onclick="addBcRaceRow()">+ Add race</button>
         </div>
       </div>
       <div id="plan-target-fields" style="display:none;">
@@ -9821,6 +9840,44 @@ async function loadPlanMetrics() {
   } catch(e) {}
 }
 
+// F7c (v2.3) — repeatable intermediate B/C race rows. Each row → one events[]
+// entry on generate. No rows = no events[] = unchanged single-A plan.
+function addBcRaceRow(ev) {
+  ev = ev || {};
+  const wrap = document.getElementById('plan-bc-rows');
+  if (!wrap) return;
+  const row = document.createElement('div');
+  row.className = 'form-row plan-bc-row';
+  row.style.marginBottom = '8px';
+  row.innerHTML =
+    '<div class="form-group"><label>Date</label><input type="date" class="bc-date"></div>' +
+    '<div class="form-group"><label>Priority</label><select class="bc-prio">' +
+      '<option value="B">B</option><option value="C">C</option></select></div>' +
+    '<div class="form-group"><label>Name</label><input type="text" class="bc-name" placeholder="e.g. Local crit" style="width:140px;"></div>' +
+    '<div class="form-group"><label>Distance (km)</label><input type="number" class="bc-km" style="width:70px;"></div>' +
+    '<div class="form-group"><button type="button" class="btn btn-sm" title="Remove" ' +
+      'onclick="this.closest(\'.plan-bc-row\').remove();">✕</button></div>';
+  if (ev.date) row.querySelector('.bc-date').value = ev.date;
+  if (ev.priority === 'C') row.querySelector('.bc-prio').value = 'C';
+  if (ev.name) row.querySelector('.bc-name').value = ev.name;
+  if (ev.event_km) row.querySelector('.bc-km').value = ev.event_km;
+  wrap.appendChild(row);
+}
+function readBcRaces() {
+  const out = [];
+  document.querySelectorAll('#plan-bc-rows .plan-bc-row').forEach(function (r) {
+    const dt = (r.querySelector('.bc-date') || {}).value;
+    if (!dt) return;  // dateless rows are dropped (backend skips them too)
+    out.push({
+      date: dt,
+      priority: (r.querySelector('.bc-prio') || {}).value || 'B',
+      name: (r.querySelector('.bc-name') || {}).value || '',
+      event_km: parseFloat((r.querySelector('.bc-km') || {}).value) || 0,
+    });
+  });
+  return out;
+}
+
 async function generatePlan() {
   $('plan-status').textContent = 'Generating plan...';
   $('plan-status').style.color = 'var(--accent)';
@@ -9857,6 +9914,17 @@ async function generatePlan() {
     body.event_km = parseFloat($('plan-ekm').value) || null;
     body.event_climb = parseFloat($('plan-eclimb').value) || null;
     body.event_type = $('plan-etype').value;
+    // F7c (v2.3) — only attach events[] when intermediate B/C races exist. The
+    // A event is included so the backend has the full calendar (it skips A for
+    // mini-tapers). No B/C rows → no events[] → byte-for-byte the old plan.
+    const _bc = readBcRaces();
+    if (_bc.length && body.event_date) {
+      body.events = [{
+        date: body.event_date, priority: 'A', name: body.event_name || '',
+        event_km: body.event_km || 0, event_climb_m: body.event_climb || 0,
+        event_type: body.event_type,
+      }].concat(_bc);
+    }
   } else if (['ctl', 'ftp', 'vo2max', 'ftp_vo2max'].includes(body.goal)) {
     // No target — just maximize over the plan period
     body.event_date = $('plan-tdate').value || null;
@@ -11002,6 +11070,11 @@ function renderCalDay(d, wi, di, phaseKey, today) {
     }
   }
   if (isEventDay && !isToday) stateCls += ' cal-event-day';
+  // F7c (v2.3) — paint intermediate B/C race days (A handled above; today wins).
+  if (!isToday && !isEventDay && _goal && Array.isArray(_goal.events)) {
+    const _ev = _goal.events.find(e => e && e.date === d.date && e.priority !== 'A');
+    if (_ev) stateCls += (_ev.priority === 'C') ? ' cal-event-c' : ' cal-event-b';
+  }
   if (isToday) stateCls += ' cal-today';
   // v1.4.1 — append v2 class so CSS can paint state-specific tints.
   stateCls += v2Cls;

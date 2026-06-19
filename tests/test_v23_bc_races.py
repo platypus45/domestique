@@ -48,6 +48,24 @@ class TestEventsRoundTrip(unittest.TestCase):
         self.assertEqual(e.priority, "B")
         self.assertEqual(e.event_km, 0)
 
+    def test_ui_post_shape_roundtrips(self):
+        # F7c: the exact events[] the plan form POSTs — the A event (with climb)
+        # plus a B/C row from readBcRaces() (date + priority + name + event_km,
+        # no climb, no type) — round-trips into valid TargetEvents with sane
+        # defaults (climb→0, type→granfondo).
+        td = (date.today() + timedelta(weeks=12)).isoformat()
+        cd = (date.today() + timedelta(weeks=4)).isoformat()
+        evs = app._events_from_dicts([
+            {"date": td, "priority": "A", "name": "Goal GF",
+             "event_km": 160, "event_climb_m": 3000, "event_type": "granfondo"},
+            {"date": cd, "priority": "C", "name": "Local crit", "event_km": 40},
+        ])
+        self.assertEqual([e.priority for e in evs], ["A", "C"])
+        c = evs[1]
+        self.assertEqual(c.event_km, 40)
+        self.assertEqual(c.event_climb_m, 0)        # B/C row omits climb → 0
+        self.assertEqual(c.event_type, "granfondo")  # omitted → default
+
 
 class TestSecondaryEventTapers(unittest.TestCase):
     """F7b: a B/C event gets a short mini-taper (no HIT in its window); a single-A

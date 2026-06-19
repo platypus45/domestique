@@ -148,7 +148,7 @@ Every threshold cited below is inline in the code. Deep-dive section [How the pl
 
 ### TSS / CTL / ATL / TSB — the training-load model
 
-Canonical Banister 1975 impulse-response + Coggan/Allen refinement. **TSS** = `(duration_s x NP x IF) / (FTP x 3600) x 100` — 1h at FTP = 100 TSS by definition. **CTL** ("fitness") is a 42-day EWMA of daily TSS; **ATL** ("fatigue") is the 7-day EWMA; **TSB** ("form") = CTL − ATL. Time constants 42/7 are the conventional defaults — Domestique acknowledges they aren't validated per-athlete and ships them only because every commercial platform does the same; per-athlete tau fitting is on the v1.0.7 roadmap ([Hellard et al. 2017](https://pubmed.ncbi.nlm.nih.gov/29059038/), Kontro 2026). When ICU is unreachable Domestique recomputes CTL from your local FIT archive with the same EWMA.
+Canonical Banister 1975 impulse-response + Coggan/Allen refinement. **TSS** = `(duration_s x NP x IF) / (FTP x 3600) x 100` — 1h at FTP = 100 TSS by definition. **CTL** ("fitness") is a 42-day EWMA of daily TSS; **ATL** ("fatigue") is the 7-day EWMA; **TSB** ("form") = CTL − ATL. Time constants 42/7 are the conventional defaults — Domestique acknowledges they aren't validated per-athlete and ships them only because every commercial platform does the same; per-athlete tau fitting is on the v1.0.7 roadmap ([Hellard et al. 2017](https://pubmed.ncbi.nlm.nih.gov/28651061/), Kontro 2026). When ICU is unreachable Domestique recomputes CTL from your local FIT archive with the same EWMA.
 
 ### HRV — resting (morning) vs DFA alpha1 (in-ride)
 
@@ -156,7 +156,7 @@ Two separate signals, same hardware (chest strap recording RR-intervals).
 
 **Resting HRV (rMSSD overnight)** lands automatically via the ICU wellness sync if Garmin Connect is linked to ICU — `wellness.hrv` is the input for the readiness composite (HRV 40% / TSB 20% / Hooper 20% / sleep 10% / RHR 10%).
 
-**DFA alpha1** is the autonomic-balance scaling exponent computed *post-ride* from beat-to-beat RR-intervals (Peng 1995 algorithm; sanity range [0.30, 1.60] per Gronwald & Hoos 2020). Rogers et al. 2021 (PMID 33519504) shows alpha1 < 0.75 marks the aerobic-threshold (LT1) drift and < 0.5 marks sustained sympathetic dominance — Domestique feeds it as a fatigue signal that downshifts tomorrow's intensity.
+**DFA alpha1** is the autonomic-balance scaling exponent computed *post-ride* from beat-to-beat RR-intervals ([Peng 1995](https://pubmed.ncbi.nlm.nih.gov/11538314/) algorithm; sanity range [0.30, 1.60] per Gronwald & Hoos 2020). [Rogers et al. 2021](https://pubmed.ncbi.nlm.nih.gov/33519504/) shows alpha1 < 0.75 marks the aerobic-threshold (LT1) drift and < 0.5 marks sustained sympathetic dominance — Domestique feeds it as a fatigue signal that downshifts tomorrow's intensity.
 
 **Artifact rejection is mandatory** (v1.8.14 correctness fix). DFA alpha1 is acutely sensitive to ectopic/misdetected beats — every DFA paper requires RR cleaning before the math, and skipping it silently corrupts the result. Domestique runs a Malik 1996 20%-relative filter (`analytics._filter_rr_artifacts`) before all DFA windows, not just the 0ms/65535ms sentinel drop it did before. The literature tolerance is tight: <3% artifact = negligible bias, ~6% still keeps the HRV threshold within ±1 bpm (Gronwald et al. 2022 update). In one real ride ~1.3% uncorrected artifact beats dragged alpha1 from a correct 1.16 down to a physiologically impossible 0.573 and broke 57 of 72 windows via the R²-fit gate.
 
@@ -225,13 +225,13 @@ Pre-v4.6.6 the planner detected fatigue/overload/soreness signals but never muta
 
 | # | Gate | Trigger | Action | Citation |
 |---|------|---------|--------|----------|
-| **G1** | Yesterday-was-hard floor | `yesterday_tss / max(yesterday_planned, phase_daily_avg) > 1.5` | force today -> Z2 | Foster 1998 *Med Sci Sports Exerc* 30:1164 |
-| **G2** | 48h Z5+ ceiling | rolling 48h `Sum z5–z7 >= 25 min` | force today -> Z2 | Hulin 2014 *Br J Sports Med* 48:708 |
-| **G3** | Polarisation breach | week `z4plus_pct > target+8` OR `z1z2_pct < target−10` | drop next 1–2 hard sessions one tier | Seiler 2010 / Stoggl 2014 / Treff 2019 |
-| **G4** | ACWR weekly scaling | last week `actual_tss / planned_tss > 1.5` | `next_week.tss_target x 0.85`, hit_per_week − 1 | Gabbett 2016 *Br J Sports Med* 50:273 |
-| **G5** | Soreness peripheral cap | `daily_log.soreness >= 6` | force today -> recovery (overrides HRV/TSB) | Hooper 1995 + Cheung 2003 |
-| **G6** | Hooper composite gate | `sleep + fatigue + stress + soreness >= 18` | force today -> Z2 | Hooper & Mackinnon 1995 |
-| **G7** | 3-day mean RPE drops HIT | `mean(feel, last 3d) >= 7` AND today is HIT | drop today one tier | Foster 1998 session-RPE |
+| **G1** | Yesterday-was-hard floor | `yesterday_tss / max(yesterday_planned, phase_daily_avg) > 1.5` | force today -> Z2 | [Foster 1998](https://pubmed.ncbi.nlm.nih.gov/9662690/) |
+| **G2** | 48h Z5+ ceiling | rolling 48h `Sum z5–z7 >= 25 min` | force today -> Z2 | [Hulin 2014](https://pubmed.ncbi.nlm.nih.gov/23962877/) |
+| **G3** | Polarisation breach | week `z4plus_pct > target+8` OR `z1z2_pct < target−10` | drop next 1–2 hard sessions one tier | [Seiler 2010](https://pubmed.ncbi.nlm.nih.gov/20861519/) / [Stöggl 2014](https://pubmed.ncbi.nlm.nih.gov/24550842/) / [Treff 2019](https://pmc.ncbi.nlm.nih.gov/articles/PMC6582670/) |
+| **G4** | ACWR weekly scaling | last week `actual_tss / planned_tss > 1.5` | `next_week.tss_target x 0.85`, hit_per_week − 1 | [Gabbett 2016](https://pubmed.ncbi.nlm.nih.gov/26758673/) |
+| **G5** | Soreness peripheral cap | `daily_log.soreness >= 6` | force today -> recovery (overrides HRV/TSB) | [Hooper 1995](https://pubmed.ncbi.nlm.nih.gov/7898325/) + [Cheung 2003](https://pubmed.ncbi.nlm.nih.gov/12617692/) |
+| **G6** | Hooper composite gate | `sleep + fatigue + stress + soreness >= 18` | force today -> Z2 | [Hooper & Mackinnon 1995](https://pubmed.ncbi.nlm.nih.gov/7898325/) |
+| **G7** | 3-day mean RPE drops HIT | `mean(feel, last 3d) >= 7` AND today is HIT | drop today one tier | [Foster 1998](https://pubmed.ncbi.nlm.nih.gov/9662690/) session-RPE |
 
 Each fired gate sets `s.adapted = True` and writes its citation into the session description so the rider sees *why* the prescription changed.
 
@@ -241,10 +241,10 @@ Five additional signals that mutate the *next-day or next-week* plan rather than
 
 | Signal | Threshold | Action | Citation |
 |---|---|---|---|
-| **DFA alpha1** | mean over last 3 rides < 0.5 | tomorrow's threshold -> Z2 (revert button) | Rogers et al. 2021 (PMID 33519504) |
-| **DFA HRVT1/HRVT2** (beta) | alpha1 crosses 0.75 / 0.50 on a ramp ride | display-only LT1/LT2 HR+power anchors + 3-zone model (never overwrites FTP) | Rogers et al. 2021 (LT1: PMC7845545; LT2: PMID 33925974), Schaffarczyk et al. 2022 (PMC9894976) |
-| **Aerobic decoupling** (HR drift vs power) | > 5% on last ride | next-day "Z2 recommended" advisory banner | Coyle & Gonzalez-Alonso 2001 |
-| **Foster monotony** (weekly load SD/mean) | > 2.0 over 14 days | next week `tss_target x 0.85`, hit_per_week − 1 | Foster 1998 (PMID 9662690) |
+| **DFA alpha1** | mean over last 3 rides < 0.5 | tomorrow's threshold -> Z2 (revert button) | [Rogers et al. 2021](https://pubmed.ncbi.nlm.nih.gov/33519504/) |
+| **DFA HRVT1/HRVT2** (beta) | alpha1 crosses 0.75 / 0.50 on a ramp ride | display-only LT1/LT2 HR+power anchors + 3-zone model (never overwrites FTP) | [Rogers 2021 — LT1](https://pmc.ncbi.nlm.nih.gov/articles/PMC7845545/) + [LT2](https://pubmed.ncbi.nlm.nih.gov/33925974/), [Schaffarczyk et al. 2022](https://pmc.ncbi.nlm.nih.gov/articles/PMC9894976/) |
+| **Aerobic decoupling** (HR drift vs power) | > 5% on last ride | next-day "Z2 recommended" advisory banner | [Coyle & González-Alonso 2001](https://pubmed.ncbi.nlm.nih.gov/11337829/) |
+| **Foster monotony** (weekly load SD/mean) | > 2.0 over 14 days | next week `tss_target x 0.85`, hit_per_week − 1 | [Foster 1998](https://pubmed.ncbi.nlm.nih.gov/9662690/) |
 | **eFTP drift** (Intervals.icu) | > 3% above set FTP for 7+ consecutive days | FTP auto-applied with 48h revert toast | Allen & Coggan eFTP definition |
 | **Local CTL fallback** | ICU unreachable | 42-day EWMA over imported FIT rides | Coggan/Allen tau=42 |
 
@@ -353,9 +353,9 @@ The peer-reviewed evidence supporting TSS as a *quantifier of training that was 
 
 | Study | n | finding |
 |---|---|---|
-| [Sanders et al. 2017](https://pubmed.ncbi.nlm.nih.gov/28095100/) | road cyclists, season-long | TSS correlated **r ~ 0.75–0.79** with sub-maximal lactate-threshold power changes |
-| [Wallace et al. 2014](https://pubmed.ncbi.nlm.nih.gov/24766776/) | runners | TSS vs. 1500 m time **r ~ 0.70**, slightly better than TRIMP (r ~ 0.65) and session-RPE (r ~ 0.60) |
-| [Vermeire et al. 2021](https://pubmed.ncbi.nlm.nih.gov/34107251/) | 11 recreational cyclists, 12 weeks | **inconsistent** associations between TSS, multiple TRIMP variants, and 3 km TT performance. Different training types produce different adaptations despite identical TSS — "the relationship to performance will always be distorted." |
+| [Sanders et al. 2017](https://pubmed.ncbi.nlm.nih.gov/28095061/) | road cyclists, season-long | TSS correlated **r ~ 0.75–0.79** with sub-maximal lactate-threshold power changes |
+| [Wallace et al. 2014](https://pubmed.ncbi.nlm.nih.gov/24662229/) | runners | TSS vs. 1500 m time **r ~ 0.70**, slightly better than TRIMP (r ~ 0.65) and session-RPE (r ~ 0.60) |
+| [Vermeire et al. 2021](https://pubmed.ncbi.nlm.nih.gov/31498226/) | 11 recreational cyclists, 12 weeks | **inconsistent** associations between TSS, multiple TRIMP variants, and 3 km TT performance. Different training types produce different adaptations despite identical TSS — "the relationship to performance will always be distorted." |
 
 **Where TSS works:** as a workout descriptor for steady-state efforts; as a cumulative dose tracker when training is homogeneous; as a rough heuristic for taper/race timing.
 
@@ -579,30 +579,41 @@ for each PlannedWeek in plan:
 - `regenerate_from_today()` — full rebuild starting from today's CTL. Triggers when `detect_plan_gaps()` flags >=2 consecutive missed weeks OR `expected_ctl − current_ctl > 15`. **v2.0.0:** carries the same event-demand targets (long-ride progression, feasibility CTL, climbing emphasis) as the initial build, so an event plan does not revert on auto-sync.
 - `auto_apply_eftp()` — fires when ICU eFTP > set FTP by >=3% for 7+ consecutive days; bumps FTP with a 48h revert toast.
 
-### 5. The pre-1.0 science table (carried forward)
+### 5. Complete scientific reference
+
+Every peer-reviewed study the planner relies on, each linked to PubMed/PMC. The
+tables above (§0a–§0c, the G1–G7 guardrails, the feedback loops) show *how* each
+is applied; this is the consolidated source list. Textbook / coaching references
+(Allen & Coggan, Friel, British Cycling) have no PubMed entry and are marked as such.
 
 | Feature | Method | Reference |
 |---------|--------|-----------|
-| DFA Alpha1 | Detrended Fluctuation Analysis on RR-intervals, Peng 1995 algorithm; Malik 1996 20% artifact filter pre-DFA | Rogers et al. 2021 (PMID 33519504), Malik 1996 (PMID 8598068) |
-| DFA HRVT1 / HRVT2 (beta) | alpha1=0.75 -> LT1, alpha1=0.50 -> LT2; HR+power crossing per ramp ride; 3-zone model (display-only) | Rogers et al. 2021 (LT1: PMC7845545; LT2: PMID 33925974), Schaffarczyk et al. 2022 (PMC9894976), reliability (PMC10875128) |
+| DFA Alpha1 | Detrended Fluctuation Analysis on RR-intervals, Peng 1995 algorithm; Malik 1996 20% artifact filter pre-DFA | [Rogers et al. 2021](https://pubmed.ncbi.nlm.nih.gov/33519504/), [Malik 1996](https://pubmed.ncbi.nlm.nih.gov/8598068/), [Peng 1995](https://pubmed.ncbi.nlm.nih.gov/11538314/) |
+| DFA HRVT1 / HRVT2 (beta) | alpha1=0.75 -> LT1, alpha1=0.50 -> LT2; HR+power crossing per ramp ride; 3-zone model (display-only) | [Rogers 2021 — LT1](https://pmc.ncbi.nlm.nih.gov/articles/PMC7845545/) + [LT2](https://pubmed.ncbi.nlm.nih.gov/33925974/), [Schaffarczyk et al. 2022](https://pmc.ncbi.nlm.nih.gov/articles/PMC9894976/), [reliability](https://pmc.ncbi.nlm.nih.gov/articles/PMC10875128/) |
 | Aerobic Decoupling | EF = NP/avgHR per half (TrainingPeaks canonical) | Friel (coaching heuristic) |
-| Foster Monotony / Strain | Weekly load SD-vs-mean ratio | Foster 1998 (PMID 9662690) |
-| CTL / ATL / TSB | 42-day / 7-day exponentially-weighted TSS | Coggan & Allen |
+| Cardiac Drift | HR-driven SV decline mechanism | [Coyle & González-Alonso 2001](https://pubmed.ncbi.nlm.nih.gov/11337829/) |
+| Foster Monotony / Strain | Weekly load SD-vs-mean ratio | [Foster 1998](https://pubmed.ncbi.nlm.nih.gov/9662690/) |
+| CTL / ATL / TSB | 42-day / 7-day exponentially-weighted TSS | Allen & Coggan (textbook) |
 | Local CTL fallback | 42-day EWMA over imported FIT rides | n/a — standard impedance-matching |
-| Daily Adaptation | TSS pacer with cross-sport load, DFA alpha1 cap | Kiviniemi 2007, Javaloyes 2019 |
-| Periodisation | Base / Build / Peak / Taper phases | Coggan & Allen, Friel |
-| FTP — Coggan 20-min | 0.95 x avg 20-min power | Allen & Coggan 2019 |
-| FTP — Ramp | 0.75 x best 1-min power | Ric Stern (British Cycling) |
-| W'bal | Skiba 2015 differential + GoldenCheetah tau | Skiba et al. 2015 |
-| Cardiac Drift | HR-driven SV decline mechanism | Coyle & Gonzalez-Alonso 2001 |
-| Nutrition | Duration-gated carb targets | Jeukendrup 2014, ACSM 2016 |
-| Polarisation Index (Treff PI) | log10((Z1+Z2)/Z3 x Z5+/Z3) | Treff et al. 2019 *Front Physiol* |
-| Ronnestad microintervals | 30/15 + 40/20 detection by cycle period | Ronnestad et al. 2015 *Scand J Med Sci Sports* 25:143 |
-| ACWR (acute:chronic workload ratio) | 7d:28d sweet spot 0.8–1.3 | Gabbett 2016 *Br J Sports Med* 50:273 |
-| 48h cumulative Z5+ guard | Z5+Z6+Z7 >= 25min | Hulin et al. 2014 *Br J Sports Med* 48:708 |
-| Hooper composite | Sum(sleep, fatigue, stress, soreness) >= 18 | Hooper & Mackinnon 1995 *J Sci Med Sport* |
-| Subjective wellness > wearables | self-report responsiveness | Saw et al. 2016 *Br J Sports Med* |
-| DOMS protective downshift | peripheral fatigue 24–72h post-eccentric | Cheung et al. 2003 *Sports Med* 33:145 |
+| Daily Adaptation | TSS pacer with cross-sport load, DFA alpha1 cap | [Kiviniemi 2007](https://pubmed.ncbi.nlm.nih.gov/17849143/), [Javaloyes 2020](https://pubmed.ncbi.nlm.nih.gov/31490431/) |
+| Periodisation | Base / Build / Peak / Taper phases | Allen & Coggan, Friel (textbooks) |
+| Polarised distribution | 80/0/20 hard:easy; avoid the Z3 "trap" | [Seiler 2010](https://pubmed.ncbi.nlm.nih.gov/20861519/), [Stöggl & Sperlich 2014](https://pubmed.ncbi.nlm.nih.gov/24550842/) |
+| Polarisation Index (Treff PI) | log10((Z1+Z2)/Z3 x Z5+/Z3) | [Treff et al. 2019](https://pmc.ncbi.nlm.nih.gov/articles/PMC6582670/) |
+| Block periodization (opt-in) | Focus blocks + 1 complementary; evidence mixed for amateurs | [Rønnestad 2014](https://pubmed.ncbi.nlm.nih.gov/22646668/) / [2020](https://pubmed.ncbi.nlm.nih.gov/31977120/), [Issurin 2008](https://pubmed.ncbi.nlm.nih.gov/18212712/), [Mølmen 2019](https://pubmed.ncbi.nlm.nih.gov/31802956/), [Almquist 2022](https://pubmed.ncbi.nlm.nih.gov/35299664/) |
+| Taper / B-C race mini-taper | Cut volume, keep intensity, short window | [Mujika & Padilla 2003](https://pubmed.ncbi.nlm.nih.gov/12840640/), [Bosquet 2007](https://pubmed.ncbi.nlm.nih.gov/17762369/), [Rønnestad 2017](https://pubmed.ncbi.nlm.nih.gov/27476525/), [Mujika 2010](https://pubmed.ncbi.nlm.nih.gov/20840559/) |
+| Rønnestad microintervals | 30/15 + 40/20 detection by cycle period | [Rønnestad et al. 2015](https://pubmed.ncbi.nlm.nih.gov/24382021/) |
+| FTP — Coggan 20-min | 0.95 x avg 20-min power | Allen & Coggan 2019 (textbook) |
+| FTP — Ramp | 0.75 x best 1-min power | Ric Stern, British Cycling (heuristic) |
+| W'bal | Skiba 2015 differential + GoldenCheetah tau | [Skiba et al. 2015](https://pubmed.ncbi.nlm.nih.gov/25425258/), [Skiba 2012](https://pubmed.ncbi.nlm.nih.gov/22382171/) |
+| Record power profile / CP | RPP capability gate; CP ≈ FTP × 1.03 | [Pinot & Grappe 2011](https://pubmed.ncbi.nlm.nih.gov/22052032/), [McGrath et al. 2021](https://pubmed.ncbi.nlm.nih.gov/34055164/) |
+| Per-athlete CTL/ATL tau | model fitting (roadmap) | [Hellard et al. 2017](https://pubmed.ncbi.nlm.nih.gov/28651061/) |
+| ACWR (acute:chronic workload ratio) | 7d:28d sweet spot 0.8–1.3 | [Gabbett 2016](https://pubmed.ncbi.nlm.nih.gov/26758673/) |
+| 48h cumulative Z5+ guard | Z5+Z6+Z7 >= 25min | [Hulin et al. 2014](https://pubmed.ncbi.nlm.nih.gov/23962877/) |
+| Hooper composite | Sum(sleep, fatigue, stress, soreness) >= 18 | [Hooper & Mackinnon 1995](https://pubmed.ncbi.nlm.nih.gov/7898325/) |
+| Subjective wellness > wearables | self-report responsiveness | [Saw et al. 2016](https://pubmed.ncbi.nlm.nih.gov/26423706/) |
+| DOMS protective downshift | peripheral fatigue 24–72h post-eccentric | [Cheung et al. 2003](https://pubmed.ncbi.nlm.nih.gov/12617692/) |
+| TSS ↔ performance evidence | correlational, mixed (see §0a) | [Sanders 2017](https://pubmed.ncbi.nlm.nih.gov/28095061/), [Wallace 2014](https://pubmed.ncbi.nlm.nih.gov/24662229/), [Vermeire 2021](https://pubmed.ncbi.nlm.nih.gov/31498226/) |
+| Nutrition | Duration-gated carb targets | Jeukendrup 2014, ACSM 2016 (position stand) |
 
 ---
 

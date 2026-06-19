@@ -10091,11 +10091,36 @@ def _load_current_week_dto(plan: dict, today: date):
     return None, -1
 
 
+_NON_CYCLING_HINTS = ("run", "swim", "walk", "hike", "row", "climb", "ski",
+                      "skat", "yoga", "weight", "strength", "workout", "elliptical",
+                      "kayak", "canoe", "surf", "golf", "tennis", "soccer", "football")
+
+
+def _is_cycling_sport(sport) -> bool:
+    """True if an activity should reconcile against a planned (cycling) session.
+
+    Cycling sport_type values (Strava/ICU): Ride, VirtualRide, GravelRide,
+    MountainBikeRide, EBikeRide, Handcycle, Velomobile, … — anything with
+    ride/bike/cycl. Empty/unknown sport is treated as cycling (local FIT rides
+    often carry no sport tag, and Domestique is a cycling app). A clearly
+    non-cycling activity (RockClimbing, Run, Swim, …) returns False so it is
+    NOT matched to a cycling session — it never pollutes the plan.
+    """
+    s = (sport or "").strip().lower()
+    if not s:
+        return True
+    if any(k in s for k in ("ride", "bike", "cycl", "velomobile", "handcycle")):
+        return True
+    return not any(k in s for k in _NON_CYCLING_HINTS)
+
+
 def _collect_week_activities(current_week, today: date, include_today: bool = False):
     """Gather actual activities within [week_start, today) (or today+1 if include_today).
 
     Dedups by (date, rounded TSS / 5). Returns dicts rich enough for the
     rematch classifier (intensity_factor, duration_min, id passed through).
+    Non-cycling activities (rock climbing, runs, …) are excluded so they never
+    match a planned cycling session.
     """
     week_start_iso = current_week.start.isoformat()
     upper_iso = (today + timedelta(days=1)).isoformat() if include_today else today.isoformat()
@@ -10103,6 +10128,8 @@ def _collect_week_activities(current_week, today: date, include_today: bool = Fa
     seen_keys = set()
 
     def _add(a: dict):
+        if not _is_cycling_sport(a.get("sport", "")):
+            return  # non-cycling (rock climbing, run, …) — don't reconcile as a ride
         d = (a.get("date") or a.get("start_date_local", "") or "")[:10]
         if not (week_start_iso <= d < upper_iso):
             return

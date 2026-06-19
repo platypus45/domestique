@@ -24,7 +24,7 @@
 
 ## TL;DR
 
-Domestique is a localhost-only cycling planner that ships 4,198 structured ZWO workouts and 622 virtual routes, imports your post-ride FITs, and mutates the next-day prescription from *every* signal the ride exposed — TSS overshoot, polarisation breach, DFA α1, aerobic decoupling, Foster monotony, eFTP drift, Hooper composite. Most "smart" planners stop at the dashboard. Domestique stops at the prescription. Hardware-agnostic: generate ZWO, ride in MyWhoosh / Tacx / Zwift / Hammerhead / outdoors, import the FIT back. Single rider, no telemetry, no cloud.
+Domestique is a localhost-only cycling planner that ships 4,220 structured ZWO workouts and 622 virtual routes, imports your post-ride FITs, and mutates the next-day prescription from *every* signal the ride exposed — TSS overshoot, polarisation breach, DFA α1, aerobic decoupling, Foster monotony, eFTP drift, Hooper composite. Most "smart" planners stop at the dashboard. Domestique stops at the prescription. Hardware-agnostic: generate ZWO, ride in MyWhoosh / Tacx / Zwift / Hammerhead / outdoors, import the FIT back. Single rider, no telemetry, no cloud.
 
 ## Why this exists
 
@@ -42,6 +42,47 @@ Domestique is neither. Every signal that touches the dashboard also has a code-p
 - **Mid-cycle FTP recalibration** at the build1->build2 boundary auto-tests your FTP so the next 4 weeks of TSS targets aren't computed against a stale baseline (Allen & Coggan, *Training and Racing with a Power Meter* 3rd ed.).
 
 Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus a 1-week consolidation phase at the end of every non-event cycle so people don't ride straight from a peak into a fresh build with elevated fatigue (Mujika 2010).
+
+---
+
+## What's new in v2.2 (with the v2.1 round)
+
+A training-science layer on top of the guardrails above. Full detail in
+[CHANGELOG.md](CHANGELOG.md); the new user-facing capabilities:
+
+**v2.2**
+- **Block periodization (opt-in, default OFF)** — a plan-form toggle reorganizes
+  build/peak into ~3–4 week focus blocks (a VO2max block, then a threshold block
+  toward the event) instead of mixing every hard type weekly, keeping one
+  complementary session per block. Grounded in a verified PubMed screen
+  (Rønnestad block-VO2 RCTs, Issurin, 2019 meta-analysis); survives auto-recalc.
+- **Honest workout labels** — an objective-coherence check surfaces a workout's
+  hidden hard work in its display name (e.g. *"Endurance 120min — Z2 +VO2 set"*).
+  No `.zwo` files are mutated; only the labels become honest.
+- **Long pure-Z2 base rides** — 24 clean steady-endurance rides from 195–240 min
+  for gran-fondo base (library is now **4,220** workouts).
+- **Trustworthy DFA α1** — a high/medium/low **confidence flag** (artifact rate +
+  window yield + sport), per-window α1 allowed down to 0.20 so hard-interval drops
+  are shown instead of discarded, and running readings flagged low-confidence
+  (the feature stays available for runners, just labelled).
+- **Outdoor-variant export** — wrap any downloaded workout with an *off-plan*
+  transit warm-up to the climb + an easy spin home (doesn't touch planned TSS).
+
+**v2.1** (the Windows-feedback round)
+- **Windows:** profile + credential persistence across restarts, ICU TLS via a
+  bundled CA store, clean app relaunch (no orphaned server).
+- **Plan:** weekly volume is load-based (not the sum of free hours), starts from
+  your real current CTL, restores real rest weeks/days, and keeps VO2max off race
+  eve — and all of this now holds through automatic re-fits.
+- **FTP:** eFTP no longer silently rewrites your zones (opt-in).
+- **Intensity distribution** is a user choice — polarized (default) / pyramidal /
+  threshold.
+- **PowerCurve** self-heals missing efforts; an impossible 600%-FTP "Z7" workout
+  was removed and the dangerous-workout screen tightened.
+
+**Not yet shipped (deferred):** volume-scaled hard-day count (F3 — conflicts with
+the hard-type coverage rules at realistic volumes; needs volume-aware floors) and
+B/C-race support (F7 — a focused follow-up).
 
 ---
 

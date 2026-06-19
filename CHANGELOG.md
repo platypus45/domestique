@@ -1,5 +1,91 @@
 # Changelog
 
+## v2.2.0 — Block periodization, honest workouts, and a smarter DFA (2026-06-19)
+
+The biggest release yet. It bundles everything from v2.1.0 (the Windows-feedback
+round — see below) **plus** a new training-science layer: an opt-in block-
+periodization engine, a workout library that stops lying about what it contains,
+long base rides for gran-fondo riders, a trustworthy DFA α1 readout, and an
+outdoor-ready workout export.
+
+Everything new here is **additive or opt-in** — if you change nothing, your plans
+look exactly as they did. Two requested items (volume-scaled hard-day count, and
+B/C races) are **not** in this release; see "Still on the list."
+
+### Block periodization (opt-in, new)
+
+- **Focus your build on one quality at a time.** A new **"Block periodization"**
+  checkbox on the plan form reorganizes your build/peak phases into ~3–4 week
+  **blocks**, each concentrating one quality — a **VO2max block** first, then a
+  **threshold block** toward your event — instead of mixing every hard type every
+  week. Each block keeps one complementary session so you don't lose the other
+  qualities entirely (the Issurin "accentuated load" model).
+- **Grounded in the evidence.** The block template is built from a PubMed screen
+  (Rønnestad's block-VO2 cycling RCTs, Issurin, a 2019 meta-analysis — every
+  citation verified). The honest version: block periodization shows a VO2max/power
+  edge in *trained* cyclists but the evidence is mixed and not proven for
+  time-crunched amateurs — so it's **off by default**, offered for those who want
+  to try it, not forced on anyone.
+- **It sticks.** Your block choice is saved with the plan and survives every
+  automatic re-fit/recalc, so an adapted plan stays a block plan.
+
+| Default plan (unchanged) | With "Block periodization" on |
+|---|---|
+| Every build week mixes VO2 + threshold + sweet-spot + over-under | Build1 = a VO2 block, build2/peak = a threshold block |
+| Variety every week | One concentrated focus per block + 1 complementary session |
+
+### Your workout library got honest
+
+- **Workouts stop hiding hard sets.** The library labels a workout by its dominant
+  zone, so an "Endurance — Z2" file could secretly contain a VO2 set. Each workout
+  now carries an **objective-coherence** check, and incoherent files get the hidden
+  work surfaced in their name — e.g. **"Endurance 120min — Z2 +VO2 set"** — so what
+  you see is what you'll ride. (No files were changed; only the labels got honest.)
+- **Long pure-Z2 base rides for gran-fondo riders.** Added 24 clean steady
+  endurance rides from 195 up to 240 minutes (the library capped at 180 before), so
+  long-base weeks have proper options. Every new file passed the
+  classify-before-write gate. Library is now 4,220 workouts.
+
+### A DFA α1 readout you can trust
+
+- **Hard-interval drops are no longer hidden.** α1 genuinely collapses below 0.30
+  during hard intervals (a Gimenez set), but the app used to discard those readings
+  as "unphysiological," so you saw a gap instead of a low value. Per-window α1 can
+  now read down to 0.20 (the whole-ride average is still sanity-floored), so a hard
+  effort shows up as a hard effort.
+- **A confidence flag.** Each DFA result now reports **high / medium / low**
+  confidence from the artifact rate, the window yield, and the activity's sport —
+  so a noisy reading is *labelled*, not silently trusted.
+- **Running is flagged, not trusted blindly.** Optical/RR jitter on runs produced
+  unreliable α1; running activities are now capped at "medium" confidence (the
+  feature stays available for runners — it's labelled, not disabled).
+
+### Outdoor-ready workouts
+
+- **Ride a structured session as a real outdoor ride.** An opt-in **"Outdoor
+  variant"** on the Library download wraps any workout with a flat transit warm-up
+  to the climb and an easy spin home. Those extra minutes are **off-plan** (easy
+  riding that is *not* counted against your planned weekly load), so your plan's
+  numbers stay clean.
+
+### Under the hood
+
+- The block engine is gated behind the toggle with a "default-off parity" guard, so
+  the default plan is byte-for-byte unchanged; fixed a latent bug where a
+  pyramidal/threshold distribution choice reverted to polarized on a recalc.
+- Focused regression tests for every feature above; the planner's known
+  non-deterministic coverage tests are unchanged.
+
+### Still on the list (not in this release)
+
+- **Volume-scaled hard-day count (F3)** — capping hard sessions on low-volume weeks
+  so they aren't intensity-dominated. It was built and tested, but at realistic
+  event volumes it conflicts with the planner's hard-type coverage rules; doing it
+  right needs those rules made volume-aware, so it's deferred to the periodization
+  project rather than shipped half-working.
+- **B and C races (F7)** — supporting events with their own mini-tapers around your
+  A goal. Spec is ready; it's a standalone feature for a focused follow-up.
+
 ## v2.1.0 — Windows reliability + a plan that respects your real training (2026-06-18)
 
 A large round of fixes driven by detailed Windows-user feedback. Three buckets:

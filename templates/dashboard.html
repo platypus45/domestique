@@ -15896,9 +15896,13 @@ document.addEventListener('DOMContentLoaded', () => {
   // Sync banner: poll once on load, then every 60s.
   loadSyncBanner();
   setInterval(loadSyncBanner, 60000);
-  // v1.0.2 IMPL-BANNER: update-check banner. Server caches 6h, so a single
-  // call per page-load is plenty (no setInterval needed).
+  // v2.1.2 — update-check banner. Force a fresh GitHub poll on startup (bypasses
+  // the 6h cache so a release published while the app was closed appears on the
+  // next launch), then re-poll (forced) every 3h so a long-running session also
+  // catches a new release without a restart. ~8 calls/day — well under GitHub's
+  // unauthenticated rate limit.
   try { loadUpdateCheck(true); } catch (_) {}
+  setInterval(() => { try { loadUpdateCheck(true); } catch (_) {} }, 3 * 60 * 60 * 1000);
   // v4.1.0 U1: auto-open FTP-test modal for recent imported FITs.
   try { maybeShowFtpTestModal(); } catch(_) {}
   // v4.1.0 U6: DFA / decoupling action banner.

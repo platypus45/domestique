@@ -1588,7 +1588,15 @@ def _run_dfa_backfill_job(task_id: str, force: bool = False,
         paths = []
     paths = [p for p in paths if not p.name.startswith(".")]
     total = len(paths)
-    sticky = {"computed", "no_rr_data", "sanity_rejected", "icu_deleted"}
+    # v2.1.2 DFA-FIX — `no_rr_data` is NO LONGER sticky. ICU's /streams `hrv`
+    # channel often lags the initial sync (it's added after ICU finishes
+    # processing the upload), and the per-ride augment can also time out — both
+    # transiently mark a ride `no_rr_data` even though the RR-intervals ARE there
+    # (confirmed: rides flagged no_rr_data return 29k RR-intervals on a later
+    # fetch). Keeping it sticky meant those rides NEVER recomputed, so DFA
+    # silently went blank. Now the retry pass re-augments them; a genuinely
+    # RR-less ride (optical-HR run) just re-fails on one fast streams GET.
+    sticky = {"computed", "sanity_rejected", "icu_deleted"}
     candidates: list[tuple[Path, str]] = []
     for p in paths:
         try:
@@ -6605,11 +6613,16 @@ def _cache_is_fresh(cache, now):
 
 
 @app.get("/api/update/check")
-def api_update_check():
+def api_update_check(force: int = Query(0)):
     """Live GitHub-Releases poll with 6h cache + platform-specific asset.
 
     Always returns 200; on upstream failure, populates `error` and returns
     the last-good cache so the dashboard banner can still render.
+
+    ``force=1`` bypasses the 6h cache and re-polls GitHub. The dashboard sends
+    it once on startup so a release published while the app was closed surfaces
+    on the very next launch instead of waiting up to 6h for the cache to expire
+    (the cache held a stale ``latest`` and the banner never appeared).
     """
     import httpx
     from packaging.version import parse as _vparse, InvalidVersion
@@ -6635,7 +6648,7 @@ def api_update_check():
             out["update_available"] = False
         return out
 
-    if _cache_is_fresh(cache, now):
+    if not force and _cache_is_fresh(cache, now):
         out = {k: cache.get(k) for k in (
             "current", "latest", "update_available", "release_url",
             "download_url", "asset_name", "platform", "checked_at", "error",

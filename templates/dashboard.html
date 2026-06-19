@@ -14972,11 +14972,14 @@ function renderReleaseNotesMarkdown(raw, releaseUrl) {
   return s;
 }
 
-async function loadUpdateCheck() {
+async function loadUpdateCheck(force) {
   const el = document.getElementById('update-banner');
   if (!el) return;
   try {
-    const r = await fetch('/api/update/check');
+    // v2.1.2 — startup call passes force=1 to bypass the 6h cache, so a release
+    // published while the app was closed shows its banner on the next launch
+    // (the stale cached `latest` used to suppress it for up to 6h).
+    const r = await fetch('/api/update/check' + (force ? '?force=1' : ''));
     if (!r.ok) { el.style.display = 'none'; return; }
     const u = await r.json();
     if (!u || !u.update_available || !u.latest) { el.style.display = 'none'; return; }
@@ -15895,7 +15898,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(loadSyncBanner, 60000);
   // v1.0.2 IMPL-BANNER: update-check banner. Server caches 6h, so a single
   // call per page-load is plenty (no setInterval needed).
-  try { loadUpdateCheck(); } catch (_) {}
+  try { loadUpdateCheck(true); } catch (_) {}
   // v4.1.0 U1: auto-open FTP-test modal for recent imported FITs.
   try { maybeShowFtpTestModal(); } catch(_) {}
   // v4.1.0 U6: DFA / decoupling action banner.

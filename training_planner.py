@@ -7449,6 +7449,10 @@ def regenerate_from_today(
         rest_days=goal.rest_days,
         daily_max_hours=goal.daily_max_hours,
         plan_weeks=goal.plan_weeks,
+        # F1 (v2.2/B6): carry the user's intensity choices through recalc so a
+        # block / non-polarized plan doesn't silently revert on adaptation.
+        distribution=goal.distribution,
+        block_periodization=goal.block_periodization,
     )
 
     # 10. Generate new phases — offset start by recovery duration to avoid overlap
@@ -7530,6 +7534,11 @@ def regenerate_from_today(
                      if (event_targets and event_targets.get("climbing_bias")
                          and phase.name in ("build2", "peak"))
                      else None)
+            # F1 (v2.2/B6): keep blocks on the recalc path — recompute focus from
+            # the (adjusted) goal + phase so a recalc'd block plan stays blocked.
+            # None unless goal.block_periodization is on (default-off parity).
+            block_focus = _block_focus_for(phase.name, adjusted_goal, is_stepback)
+            pw.block_focus = block_focus
             sampled = sample_week_workouts(
                 phase=phase, budget=budget, library=library,
                 used_names=used_names_dict,
@@ -7551,6 +7560,7 @@ def regenerate_from_today(
                 plan_total_weeks=plan_total_weeks_rg,
                 goal_type=getattr(adjusted_goal, "goal_type", "general"),
                 emphasis_profile=_emph,
+                block_focus=block_focus,
             )
             if len(phase_rot) > 12:
                 del phase_rot[: len(phase_rot) - 12]
@@ -7825,6 +7835,10 @@ def recalculate_plan(
         rest_days=goal.rest_days,
         daily_max_hours=goal.daily_max_hours,
         plan_weeks=goal.plan_weeks,
+        # F1 (v2.2/B6): carry the user's intensity choices through recalc so a
+        # block / non-polarized plan doesn't silently revert on adaptation.
+        distribution=goal.distribution,
+        block_periodization=goal.block_periodization,
     )
 
     # v1.11.0 IMPL-EVENT — event demand → plan targets so the event CTL nudge
@@ -7924,6 +7938,11 @@ def recalculate_plan(
                      if (event_targets and event_targets.get("climbing_bias")
                          and phase.name in ("build2", "peak"))
                      else None)
+            # F1 (v2.2/B6): keep blocks on the recalc path — recompute focus from
+            # the (adjusted) goal + phase so a recalc'd block plan stays blocked.
+            # None unless goal.block_periodization is on (default-off parity).
+            block_focus = _block_focus_for(phase.name, adjusted_goal, is_stepback)
+            pw.block_focus = block_focus
             sampled = sample_week_workouts(
                 phase=phase, budget=budget, library=library,
                 used_names=used_names_dict,
@@ -7945,6 +7964,7 @@ def recalculate_plan(
                 plan_total_weeks=plan_total_weeks_rc,
                 goal_type=getattr(adjusted_goal, "goal_type", "general"),
                 emphasis_profile=_emph,
+                block_focus=block_focus,
             )
             if len(phase_rot) > 12:
                 del phase_rot[: len(phase_rot) - 12]
@@ -8207,6 +8227,7 @@ def refit_remaining_week(
         class_distinct_files=class_distinct_files,
         plan_total_weeks=len(current_plan_weeks),
         goal_type=getattr(goal, "goal_type", "general"),
+        block_focus=_block_focus_for(week.phase, goal, week.is_stepback),  # F1/B6
     )
 
     # Splice ONLY remaining trainable days, ANTI-CHURN: overwrite a day solely

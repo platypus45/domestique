@@ -126,5 +126,43 @@ class TestBlockConcentration(unittest.TestCase):
                     H - cc[focus], 0, f"seed{seed} {pn}: no complementary shape {dict(cc)}")
 
 
+class TestBlockSurvivesRecalc(unittest.TestCase):
+    """B6: a block plan stays blocked after adaptation — the recalc/regenerate
+    sampler paths recompute block_focus from the goal (default-off parity holds)."""
+
+    def _block_goal(self):
+        from datetime import date, timedelta
+        return tp.Goal(
+            goal_type="event", plan_weeks=14,
+            target_date=date.today() + timedelta(weeks=14),
+            event_km=160, event_climb_m=2000, event_type="gran_fondo",
+            hours_per_week=12.0, max_weekday_hours=2.5, max_weekend_hours=4.0,
+            available_days=[0, 1, 2, 3, 4, 5, 6], rest_days=[],
+            block_periodization=True)
+
+    def test_regenerate_keeps_block_focus(self):
+        ath = {"ftp": 250, "weight_kg": 70}
+        goal = self._block_goal()
+        _ph, weeks = tp.generate_plan(goal, athlete=ath, recent_weekly_tss=600)
+        _np, new_weeks, _info = tp.regenerate_from_today(goal, weeks, 50.0, athlete=ath)
+        focus = [w.block_focus for w in new_weeks
+                 if w.phase in ("build1", "build2", "peak")
+                 and not getattr(w, "is_stepback", False)]
+        self.assertTrue(any(f for f in focus),
+                        "recalc dropped block_focus on all build/peak weeks")
+
+    def test_regenerate_default_off_stays_unblocked(self):
+        # PARITY: a non-block plan regenerated stays unblocked (no focus leaks in)
+        ath = {"ftp": 250, "weight_kg": 70}
+        goal = tp.Goal(
+            goal_type="event", plan_weeks=14,
+            target_date=__import__("datetime").date.today() + __import__("datetime").timedelta(weeks=14),
+            event_km=160, event_climb_m=2000, event_type="gran_fondo",
+            hours_per_week=12.0, available_days=[0, 1, 2, 3, 4, 5, 6], rest_days=[])
+        _ph, weeks = tp.generate_plan(goal, athlete=ath, recent_weekly_tss=600)
+        _np, new_weeks, _info = tp.regenerate_from_today(goal, weeks, 50.0, athlete=ath)
+        self.assertTrue(all(getattr(w, "block_focus", None) is None for w in new_weeks))
+
+
 if __name__ == "__main__":
     unittest.main()

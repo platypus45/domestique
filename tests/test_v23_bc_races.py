@@ -49,5 +49,44 @@ class TestEventsRoundTrip(unittest.TestCase):
         self.assertEqual(e.event_km, 0)
 
 
+class TestSecondaryEventTapers(unittest.TestCase):
+    """F7b: a B/C event gets a short mini-taper (no HIT in its window); a single-A
+    plan is unchanged (the mini-taper is a no-op without B/C events)."""
+
+    def _goal(self, events=None):
+        A = date.today() + timedelta(weeks=12)
+        kw = dict(goal_type="event", plan_weeks=12, target_date=A,
+                  event_km=160, event_climb_m=2000, event_type="gran_fondo",
+                  hours_per_week=12.0, max_weekday_hours=2.5, max_weekend_hours=4.0,
+                  available_days=[0, 1, 2, 3, 4, 5, 6], rest_days=[])
+        if events is not None:
+            kw["events"] = events
+        return tp.Goal(**kw)
+
+    def test_b_event_window_has_no_hit(self):
+        A = date.today() + timedelta(weeks=12)
+        B = date.today() + timedelta(weeks=6)  # mid-plan build, well before the A taper
+        goal = self._goal(events=[
+            tp.TargetEvent(date=A, priority="A"),
+            tp.TargetEvent(date=B, priority="B"),
+        ])
+        _ph, weeks = tp.generate_plan(goal, athlete={"ftp": 250, "weight_kg": 70},
+                                      recent_weekly_tss=500)
+        for w in weeks:
+            for s in w.sessions:
+                d = getattr(s, "day", None)
+                if d and s.session_type != "rest" and 0 <= (B - d).days <= 2:
+                    self.assertFalse(tp._session_is_hit(s),
+                                     f"HIT inside the B-race mini-taper window: {d}")
+
+    def test_single_a_plan_keeps_its_hit(self):
+        # No events[] → _apply_secondary_event_tapers is a no-op → a normal plan
+        # (still has hard sessions; the mini-taper didn't strip the build).
+        _ph, weeks = tp.generate_plan(self._goal(), athlete={"ftp": 250, "weight_kg": 70},
+                                      recent_weekly_tss=500)
+        self.assertTrue(any(tp._session_is_hit(s) for w in weeks for s in w.sessions),
+                        "single-A plan should still contain HIT sessions")
+
+
 if __name__ == "__main__":
     unittest.main()

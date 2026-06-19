@@ -5257,6 +5257,7 @@ def generate_plan(
     # goals only). Demotes a taper-eve VO2max/threshold block to an easy opener.
     if goal.goal_type in ("event", "ctl") and goal.target_date:
         _enforce_event_taper_eve(weeks, goal.target_date)
+        _apply_secondary_event_tapers(weeks, goal)  # F7: B/C mini-tapers
 
     # v1.8.21 — AUTHORITATIVE per-day availability clamp. Session durations are
     # set from matched ZWO files at FOUR sites (sampler + 3 utilization/
@@ -5841,39 +5842,77 @@ def _enforce_weekly_volume_ceiling(weeks: list) -> None:
             slot.zwo_name = ""
 
 
-def _enforce_event_taper_eve(weeks: list, target_date, library=None,
-                             eve_days: int = EVENT_EVE_EASY_DAYS) -> None:
-    """v2.1.0 (F4) — no HARD session in the final ``eve_days`` before the A event.
-
-    A taper deliberately keeps some intensity (Mujika), but a VO2max/threshold
-    BLOCK on the event eve leaves the legs flat — the user's "it gives me VO2max
-    intervals just before the race, which is stupid." Any HIT session whose day
-    is within ``eve_days`` of ``target_date`` (i.e. the event day + the last
-    eve_days before it) is demoted to a short easy Z2 opener so the rider arrives
-    fresh; a sharpener at day-(eve_days+1) or earlier is untouched. No-op for
-    non-event goals (target_date None).
-    """
-    if not target_date:
+def _demote_hit_window(weeks: list, center_date, days: int, library=None,
+                       desc: "str | None" = None) -> None:
+    """F7 (v2.3) — demote any HIT session within ``days`` before ``center_date``
+    (inclusive of the day itself) to a short easy Z2 opener. The shared primitive
+    behind the A event eve-guard (F4) and the B/C mini-tapers (F7): trim the hard
+    work in the window, leave everything else (intensity preserved elsewhere, per
+    the taper literature). No-op when center_date is None."""
+    if not center_date:
         return
     lib = library if library is not None else load_workout_library()
     OPENER_MAX_MIN = 45
+    note = desc or ("Opener — easy spin; no hard session in the final days before "
+                    "the event (arrive fresh).")
     for w in weeks:
         for off, s in enumerate(w.sessions):
             d = getattr(s, "day", None)
             if d is None or s.session_type == "rest":
                 continue
-            delta = (target_date - d).days
-            if 0 <= delta <= eve_days and _session_is_hit(s):
+            delta = (center_date - d).days
+            if 0 <= delta <= days and _session_is_hit(s):
                 dur = min(s.duration_min or OPENER_MAX_MIN, OPENER_MAX_MIN)
                 cand = PlannedSession(
                     day=s.day, day_name=s.day_name, session_type="z2",
                     duration_min=dur,
                     tss_estimate=round(dur / 60 * TSS_PER_HOUR["z2"]),
-                    description=("Opener — easy spin; no hard session in the final "
-                                 "days before the event (arrive fresh)."),
+                    description=note,
                 )
                 m = match_zwo(cand, lib)
                 w.sessions[off] = m if (m and getattr(m, "zwo_file", "")) else cand
+
+
+def _enforce_event_taper_eve(weeks: list, target_date, library=None,
+                             eve_days: int = EVENT_EVE_EASY_DAYS) -> None:
+    """v2.1.0 (F4) — no HARD session in the final ``eve_days`` before the A event.
+    A taper keeps some intensity (Mujika) but a VO2max/threshold BLOCK on the event
+    eve leaves the legs flat. Thin wrapper over the shared ``_demote_hit_window``."""
+    _demote_hit_window(weeks, target_date, eve_days, library)
+
+
+# F7 (v2.3): per-priority mini-taper window (IP_F7_research.md — short, intensity
+# preserved). B = 2 easy days before the race, C = 1. The A event is owned by the
+# macro taper + _enforce_event_taper_eve, never here.
+_EVENT_TAPER_DAYS = {"B": 2, "C": 1}
+
+
+def _apply_secondary_event_tapers(weeks: list, goal, library=None) -> None:
+    """F7 (v2.3) — proportionate mini-taper before each B/C event in goal.events.
+    Composition guards (no double-deload): SKIP an event inside the A macro-taper
+    span (already deloading) and apply only the eve opener (not the multi-day dip)
+    when the event lands on a step-back week (already unloaded). Reuses
+    ``_demote_hit_window`` — trim volume, keep intensity. No-op without B/C events."""
+    events = getattr(goal, "events", None) or []
+    if not events:
+        return
+    lib = library if library is not None else load_workout_library()
+    a_date = getattr(goal, "target_date", None)
+    taper_start = (a_date - timedelta(days=TAPER_DAYS)) if a_date else None
+    for ev in events:
+        prio = getattr(ev, "priority", "B")
+        ed = getattr(ev, "date", None)
+        if prio == "A" or not ed:
+            continue
+        if taper_start and ed >= taper_start:
+            continue  # inside the A macro-taper span — already deloading
+        wk = next((w for w in weeks if w.start <= ed <= w.end), None)
+        if wk is not None and getattr(wk, "is_stepback", False):
+            _demote_hit_window(weeks, ed, 1, lib,
+                               desc=f"Opener before your {prio} race (easy spin).")
+            continue
+        _demote_hit_window(weeks, ed, _EVENT_TAPER_DAYS.get(prio, 1), lib,
+                           desc=f"Mini-taper for your {prio} race — easy; keeps you fresh.")
 
 
 def _enforce_ronnestad_floor(
@@ -6884,6 +6923,7 @@ def reforecast(
     # B2 (v2.1.0): keep hard sessions off the event eve on the reforecast path
     # too (see regenerate_from_today). No-op for non-event goals.
     _enforce_event_taper_eve(plan_weeks, goal.target_date)
+    _apply_secondary_event_tapers(plan_weeks, goal)  # F7: B/C mini-tapers
     return plan_weeks, {
         "action": action,
         "downshifts": len(downshifts),
@@ -7680,6 +7720,7 @@ def regenerate_from_today(
     # did not, so a hard session could resurface within EVENT_EVE_EASY_DAYS of
     # the event after a recalc. No-op for non-event goals (target_date None).
     _enforce_event_taper_eve(all_weeks, goal.target_date)
+    _apply_secondary_event_tapers(all_weeks, goal)  # F7: B/C mini-tapers
     return new_phases, all_weeks, regen_info
 
 
@@ -8440,6 +8481,7 @@ def refit_remaining_week(
     # week; keep it off the event eve (see regenerate_from_today). No-op for
     # non-event goals.
     _enforce_event_taper_eve(current_plan_weeks, goal.target_date)
+    _apply_secondary_event_tapers(current_plan_weeks, goal)  # F7: B/C mini-tapers
     return current_plan_weeks, refit_info
 
 

@@ -8,14 +8,15 @@ at the end of this entry and detailed in the v2.1.0 section below. Nothing from
 v2.1.0 is replaced; this adds fixes on top.
 
 ### Training plan
-- **Event-prep plans are now properly polarized.** Build/peak weeks were coming
-  out as a few hard VO2 sessions + rest days — the weekly volume ceiling was
-  trimming the easy Z2 endurance days to rest. Now, for event/CTL goals, the easy
-  aerobic base fills the available days up to your **ACWR-safe load** (recent
-  weekly TSS × 1.3, Gabbett) instead of resting them, so a build week is a
-  polarized **HIT + Z2** mix, not "VO2 + rest". Stepback (deload) and taper weeks
-  keep their reduced volume. Evidence that high low-intensity volume builds the
-  aerobic base: [Seiler & Kjerland 2006](https://pubmed.ncbi.nlm.nih.gov/16430681/),
+- **Plans are now properly polarized (all goal types).** Build/peak weeks were
+  coming out as a few hard sessions + rest days — the weekly volume ceiling was
+  trimming the easy Z2 endurance days to rest. Now, for **every goal** (event,
+  FTP, VO2max, hybrid, general, endurance, …), the easy aerobic base fills the
+  available days up to your **ACWR-safe load** (recent weekly TSS × 1.3, Gabbett)
+  instead of resting them, so a build week is a polarized **HIT + Z2** mix, not
+  "hard + rest". Stepback (deload) and taper weeks keep their reduced volume.
+  Evidence that high low-intensity volume builds the aerobic base:
+  [Seiler & Kjerland 2006](https://pubmed.ncbi.nlm.nih.gov/16430681/),
   [Stöggl & Sperlich 2015](https://pubmed.ncbi.nlm.nih.gov/26578968/),
   [Rosenblat 2019](https://pubmed.ncbi.nlm.nih.gov/29863593/) /
   [2025](https://pubmed.ncbi.nlm.nih.gov/39888556/).
@@ -42,13 +43,39 @@ v2.1.0 is replaced; this adds fixes on top.
   science tables, consolidated one complete scientific-reference table, and
   corrected the DFA HRVT2 citation (was reusing the LT1 paper).
 
-### Plus everything from v2.1.0 (the release this builds on)
-Block periodization (opt-in), **B and C races** with evidence-based mini-tapers, a
-plan that builds from your **real fitness** with load-based weekly volume, real
-rest weeks, no hard intervals on race eve, a polarized/pyramidal/threshold choice,
-a workout library that stops hiding hard sets, long Z2 base rides, a trustworthy
-**DFA α1** readout, an outdoor-variant export, and **Windows + macOS** reliability
-fixes including the intervals.icu **TLS fix on both platforms**. Full detail ↓.
+### Plus everything from v2.1.0 (the feature release this builds on)
+v2.1.1 is a patch — the headline features all shipped in **v2.1.0**, recapped here
+so they aren't buried (full detail in the v2.1.0 entry below):
+
+- **Block periodization (opt-in, default off)** — reorganizes build/peak into ~3–4
+  week focus blocks (a VO2max block, then a threshold block toward your event),
+  each keeping one complementary session (Issurin "accentuated load"). Saved with
+  the plan and survives every auto re-fit. Grounded in a verified PubMed screen,
+  and honest that the evidence is mixed for amateurs — hence off by default.
+- **B and C races** — add intermediate events alongside your A goal, each with a
+  right-sized, evidence-based **mini-taper** (B: a 2-day volume trim that keeps
+  intensity; C: a single easy/opener day), skipped inside the A taper or a deload
+  week, and color-coded by priority on the calendar. A single-A plan is unchanged.
+- **A plan that respects your real training** — weekly volume is **load-based**
+  (the lower of target CTL and recent 6-week TSS × 1.3, not the sum of your free
+  hours), starts from your **real current CTL**, restores real **rest weeks/days**,
+  keeps **VO2max off race eve**, and lets you choose **polarized / pyramidal /
+  threshold** — all of which now hold through automatic re-fits.
+- **An honest workout library** — an objective-coherence check surfaces a workout's
+  hidden hard work in its name (e.g. *"Endurance 120min — Z2 +VO2 set"*); added 24
+  long pure-Z2 base rides for gran-fondo base (library now 4,220 workouts).
+- **A trustworthy DFA α1 readout** — per-window α1 can read down to 0.20 (hard-
+  interval drops shown, not hidden), each result carries a **high/medium/low
+  confidence** flag, and running activities are flagged not-fully-trusted.
+- **Outdoor-ready workouts** — an opt-in export wraps any workout with an *off-plan*
+  transit warm-up + easy spin home (doesn't touch your planned load).
+- **Windows + macOS reliability** — profile, API-key and accented-name persistence,
+  clean app relaunch (no orphaned server), and the recurring intervals.icu
+  **TLS fix — now on both platforms** (the ICUNetworkError on Windows *and* the
+  Mac mini / MacBook Air).
+- **FTP / power / safety** — eFTP no longer silently rewrites your zones (opt-in);
+  the power curve self-heals missing efforts; an impossible 600%-FTP "ramp" workout
+  was removed and the dangerous-workout screen tightened.
 
 ## v2.1.0 — Block periodization, B/C races, a smarter plan, and Windows/Mac reliability (2026-06-19)
 

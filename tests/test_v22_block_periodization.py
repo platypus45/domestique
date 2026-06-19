@@ -164,5 +164,21 @@ class TestBlockSurvivesRecalc(unittest.TestCase):
         self.assertTrue(all(getattr(w, "block_focus", None) is None for w in new_weeks))
 
 
+class TestBlockPersistence(unittest.TestCase):
+    """B7: block_periodization round-trips through the saved plan goal block so a
+    block plan stays a block plan when the app reconstructs the goal for recalc."""
+
+    def test_goal_from_plan_dict_restores_block_flag(self):
+        import app
+        g = {"type": "event", "block_periodization": True, "distribution": "pyramidal"}
+        goal = app._goal_from_plan_dict(g)
+        self.assertTrue(goal.block_periodization)
+        self.assertEqual(goal.distribution, "pyramidal")
+
+    def test_goal_from_plan_dict_defaults_block_off(self):
+        import app
+        self.assertFalse(app._goal_from_plan_dict({"type": "event"}).block_periodization)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2094,6 +2094,13 @@ window.addEventListener('unhandledrejection', function(e) {
           </select>
         </div>
       </div>
+      <!-- F1 (v2.2): opt-in block periodization (default off). -->
+      <div class="form-row">
+        <div class="form-group"><label>
+          <input type="checkbox" id="plan-block-periodization" onchange="refreshPlanPreview()" style="vertical-align:middle;"> Block periodization
+          <span class="hint" title="Concentrate each build/peak phase on ONE quality per ~3-4 week block (VO2 block then threshold block toward your event) instead of mixing every hard type weekly. Evidence is strongest for trained cyclists with adequate volume; default OFF." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span>
+        </label></div>
+      </div>
       <div id="plan-event-fields">
         <div class="form-row">
           <!-- v1.8.9 Bug 8 — oninput syncs to plan-weeks via _syncPlanDateToWeeks(). -->
@@ -9842,6 +9849,7 @@ async function generatePlan() {
     rest_days: restDays,
     daily_availability: dailyHours,
     distribution: ($('plan-distribution') || {}).value || 'polarized',  // J1
+    block_periodization: (($('plan-block-periodization') || {}).checked) || false,  // F1
   };
   if (body.goal === 'event') {
     body.event_date = $('plan-edate').value || null;

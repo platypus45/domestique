@@ -1,5 +1,55 @@
 # Changelog
 
+## v2.1.1 — Faster plan open, polarized event-prep, citation fixes (2026-06-19)
+
+A fast-follow patch on top of **v2.1.0** — whose full feature set (block
+periodization, B/C races, the smarter plan, Windows/Mac reliability) is recapped
+at the end of this entry and detailed in the v2.1.0 section below. Nothing from
+v2.1.0 is replaced; this adds fixes on top.
+
+### Training plan
+- **Event-prep plans are now properly polarized.** Build/peak weeks were coming
+  out as a few hard VO2 sessions + rest days — the weekly volume ceiling was
+  trimming the easy Z2 endurance days to rest. Now, for event/CTL goals, the easy
+  aerobic base fills the available days up to your **ACWR-safe load** (recent
+  weekly TSS × 1.3, Gabbett) instead of resting them, so a build week is a
+  polarized **HIT + Z2** mix, not "VO2 + rest". Stepback (deload) and taper weeks
+  keep their reduced volume. Evidence that high low-intensity volume builds the
+  aerobic base: [Seiler & Kjerland 2006](https://pubmed.ncbi.nlm.nih.gov/16430681/),
+  [Stöggl & Sperlich 2015](https://pubmed.ncbi.nlm.nih.gov/26578968/),
+  [Rosenblat 2019](https://pubmed.ncbi.nlm.nih.gov/29863593/) /
+  [2025](https://pubmed.ncbi.nlm.nih.gov/39888556/).
+- **Opening the training plan is fast again.** It stalled ~30s on "Checking what
+  you actually did" because it waited for the slow, best-effort ride **sync**
+  before the local reconcile. The sync now runs in the **background**, and the
+  recovery/HRV read runs in **parallel** with the reconcile — the plan opens at
+  reconcile speed.
+- **Non-cycling activities no longer pollute the plan.** A Strava rock-climb (or
+  run / swim / hike) was being matched to planned cycling sessions. Non-cycling
+  activities are now excluded from reconciliation.
+- **Clearer reshuffle message.** Accepting a workout reshuffle now reads "Today's
+  training changed · N future sessions reflowed" instead of an ambiguous "0
+  sessions reflowed".
+
+### DFA / interface
+- **DFA α1 tab shows a loading screen.** Opening the tab paints a spinner
+  immediately while the analysis loads in the background, instead of a blank or
+  stale panel.
+
+### Docs
+- **Fixed 4 wrong PubMed links** that pointed to unrelated medical papers
+  (Sanders / Wallace / Vermeire / Hellard), linked every study in the guardrail +
+  science tables, consolidated one complete scientific-reference table, and
+  corrected the DFA HRVT2 citation (was reusing the LT1 paper).
+
+### Plus everything from v2.1.0 (the release this builds on)
+Block periodization (opt-in), **B and C races** with evidence-based mini-tapers, a
+plan that builds from your **real fitness** with load-based weekly volume, real
+rest weeks, no hard intervals on race eve, a polarized/pyramidal/threshold choice,
+a workout library that stops hiding hard sets, long Z2 base rides, a trustworthy
+**DFA α1** readout, an outdoor-variant export, and **Windows + macOS** reliability
+fixes including the intervals.icu **TLS fix on both platforms**. Full detail ↓.
+
 ## v2.1.0 — Block periodization, B/C races, a smarter plan, and Windows/Mac reliability (2026-06-19)
 
 The biggest release yet — and the first upload since v2.0.7. It bundles a large

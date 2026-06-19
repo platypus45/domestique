@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4220-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v2.1.0-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v2.1.1-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-1943-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -45,11 +45,13 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 
 ---
 
-## What's new in v2.1.0
+## What's new in v2.1.0 / v2.1.1
 
 The biggest release yet — a training-science layer plus a large reliability
-round. Full detail in [CHANGELOG.md](CHANGELOG.md); the new user-facing
-capabilities:
+round. **v2.1.1** adds a fast-follow patch on top: properly polarized event-prep
+plans (easy Z2 fills the days, not rest), a much faster plan-open, non-cycling
+activities kept out of the plan, and PubMed-citation fixes. Full detail in
+[CHANGELOG.md](CHANGELOG.md); the v2.1.0 user-facing capabilities:
 
 **Training & races**
 - **Block periodization (opt-in, default OFF)** — a plan-form toggle reorganizes
@@ -321,7 +323,7 @@ See [docs/cycling_apps.md](docs/cycling_apps.md) for the full table.
 
 ## Releases
 
-Latest: **[v2.1.0 — block periodization, B/C races, a smarter plan, and Windows/Mac reliability](https://github.com/platypus45/domestique/releases/latest)** (2026-06-19).
+Latest: **[v2.1.1 — faster plan open, polarized event-prep, citation fixes (on top of the v2.1.0 feature release)](https://github.com/platypus45/domestique/releases/latest)** (2026-06-19).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 
@@ -598,6 +600,7 @@ is applied; this is the consolidated source list. Textbook / coaching references
 | Daily Adaptation | TSS pacer with cross-sport load, DFA alpha1 cap | [Kiviniemi 2007](https://pubmed.ncbi.nlm.nih.gov/17849143/), [Javaloyes 2020](https://pubmed.ncbi.nlm.nih.gov/31490431/) |
 | Periodisation | Base / Build / Peak / Taper phases | Allen & Coggan, Friel (textbooks) |
 | Polarised distribution | 80/0/20 hard:easy; avoid the Z3 "trap" | [Seiler 2010](https://pubmed.ncbi.nlm.nih.gov/20861519/), [Stöggl & Sperlich 2014](https://pubmed.ncbi.nlm.nih.gov/24550842/) |
+| Aerobic base / Z2 volume (event-prep base-fill) | ~80% low-intensity Z2 builds the aerobic base; fill available days with easy volume up to the ACWR-safe load rather than resting them | [Seiler & Kjerland 2006](https://pubmed.ncbi.nlm.nih.gov/16430681/), [Stöggl & Sperlich 2015](https://pubmed.ncbi.nlm.nih.gov/26578968/), [Rosenblat 2019](https://pubmed.ncbi.nlm.nih.gov/29863593/) / [2025](https://pubmed.ncbi.nlm.nih.gov/39888556/) |
 | Polarisation Index (Treff PI) | log10((Z1+Z2)/Z3 x Z5+/Z3) | [Treff et al. 2019](https://pmc.ncbi.nlm.nih.gov/articles/PMC6582670/) |
 | Block periodization (opt-in) | Focus blocks + 1 complementary; evidence mixed for amateurs | [Rønnestad 2014](https://pubmed.ncbi.nlm.nih.gov/22646668/) / [2020](https://pubmed.ncbi.nlm.nih.gov/31977120/), [Issurin 2008](https://pubmed.ncbi.nlm.nih.gov/18212712/), [Mølmen 2019](https://pubmed.ncbi.nlm.nih.gov/31802956/), [Almquist 2022](https://pubmed.ncbi.nlm.nih.gov/35299664/) |
 | Taper / B-C race mini-taper | Cut volume, keep intensity, short window | [Mujika & Padilla 2003](https://pubmed.ncbi.nlm.nih.gov/12840640/), [Bosquet 2007](https://pubmed.ncbi.nlm.nih.gov/17762369/), [Rønnestad 2017](https://pubmed.ncbi.nlm.nih.gov/27476525/), [Mujika 2010](https://pubmed.ncbi.nlm.nih.gov/20840559/) |

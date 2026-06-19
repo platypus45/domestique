@@ -1,12 +1,11 @@
-"""v2.1.0 — L1 (ICU TLS). In a frozen Windows build urllib had no CA store, so
-HTTPS to intervals.icu failed cert verification → URLError → "ICUNetworkError" on
-every credential save / sync. Fix: bundle certifi (domestique.spec) + point urllib
-at it via SSL_CERT_FILE on win32 (launcher.configure_tls_ca). macOS uses system
-certs and is left unchanged.
-
-Windows-only runtime path can't be exercised on macOS CI; these assert the two
-mechanisms of the fix (a valid CA bundle is present; the win32 hook sets the env
-and the macOS path is a no-op).
+"""v2.1.0 L1 + v2.3.0 MAC-TLS-FIX (ICU TLS). A frozen build's bundled Python has no
+CA store for urllib, so HTTPS to intervals.icu fails cert verification → URLError →
+"ICUNetworkError" on every credential save / sync. Fix: bundle certifi
+(domestique.spec) + point urllib at it via SSL_CERT_FILE in launcher.configure_tls_ca.
+v2.1.0 did this on win32 only, assuming macOS used system certs — WRONG: the
+notarized .app hit the same error (reported on Mac mini + MacBook Air). v2.3.0
+extends it to the frozen macOS .app (frozen darwin); dev macOS/Linux keep the system
+store. The darwin-frozen path IS exercisable here (unlike the win32 runtime).
 """
 import os
 import unittest
@@ -42,11 +41,38 @@ class TestIcuTlsCaBundle(unittest.TestCase):
             # setdefault must NOT clobber a user-provided bundle.
             self.assertEqual(os.environ["SSL_CERT_FILE"], "/custom/ca.pem")
 
-    def test_macos_is_unchanged(self):
+    def test_macos_dev_is_unchanged(self):
+        # DEV macOS (not frozen) keeps the system store — no-op.
         from launcher import configure_tls_ca
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("SSL_CERT_FILE", None)
-            self.assertIsNone(configure_tls_ca(platform="darwin"))
+            self.assertIsNone(configure_tls_ca(platform="darwin", frozen=False))
+            self.assertNotIn("SSL_CERT_FILE", os.environ)
+
+    def test_macos_frozen_app_points_urllib_at_certifi(self):
+        # v2.3.0 MAC-TLS-FIX: the notarized .app (frozen darwin) DOES get the CA —
+        # this is the fix for the "ICUNetworkError on Mac mini + MacBook Air" report.
+        from launcher import configure_tls_ca
+        import certifi
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SSL_CERT_FILE", None)
+            os.environ.pop("SSL_CERT_DIR", None)
+            ca = configure_tls_ca(platform="darwin", frozen=True)
+            self.assertEqual(ca, certifi.where())
+            self.assertEqual(os.environ.get("SSL_CERT_FILE"), certifi.where())
+            self.assertTrue(os.path.isfile(os.environ["SSL_CERT_FILE"]))
+
+    def test_macos_frozen_respects_user_override(self):
+        from launcher import configure_tls_ca
+        with patch.dict(os.environ, {"SSL_CERT_FILE": "/custom/ca.pem"}, clear=False):
+            configure_tls_ca(platform="darwin", frozen=True)
+            self.assertEqual(os.environ["SSL_CERT_FILE"], "/custom/ca.pem")
+
+    def test_linux_is_never_patched(self):
+        from launcher import configure_tls_ca
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SSL_CERT_FILE", None)
+            self.assertIsNone(configure_tls_ca(platform="linux", frozen=True))
             self.assertNotIn("SSL_CERT_FILE", os.environ)
 
 

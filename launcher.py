@@ -49,19 +49,24 @@ def _harden_std_streams():
 _harden_std_streams()
 
 
-# WIN-TLS-FIX (v2.1.0): in a frozen Windows build urllib has no usable CA store,
-# so HTTPS to intervals.icu fails cert verification → URLError → "ICUNetworkError"
-# on every credential save / sync. (httpx works because it bundles certifi; urllib
-# uses the OS default SSL context, which is empty in a frozen Windows app.) Point
-# urllib's default context at certifi's bundled CA file via SSL_CERT_FILE. Win32-only
-# so the working macOS build (system certs) stays byte-identical. Must run before
-# any HTTPS call (i.e. before start_server) — top-level here guarantees that.
-def configure_tls_ca(platform=None):
-    """Set SSL_CERT_FILE/SSL_CERT_DIR to certifi's CA bundle on Windows so urllib
-    can verify HTTPS. Returns the CA path set, or None when not applicable.
-    Uses setdefault so a user-provided SSL_CERT_FILE is respected."""
+# WIN-TLS-FIX (v2.1.0) + MAC-TLS-FIX (v2.3.0): a frozen build's bundled Python has
+# no usable CA store for urllib's default SSL context, so HTTPS to intervals.icu
+# fails cert verification → URLError → "ICUNetworkError" on every credential save /
+# sync. (httpx works because it bundles certifi; urllib uses the empty default.)
+# This was assumed Windows-only, but the NOTARIZED macOS .app hits it too (reported
+# on Mac mini + MacBook Air): the frozen .app ships its own Python with no Keychain
+# bridge for urllib. Point urllib's default context at certifi's bundled CA via
+# SSL_CERT_FILE on frozen Windows AND frozen macOS; dev macOS/Linux keep the system
+# store. Must run before any HTTPS call (before start_server) — top-level guarantees it.
+def configure_tls_ca(platform=None, frozen=None):
+    """Set SSL_CERT_FILE/SSL_CERT_DIR to certifi's CA bundle on frozen Windows /
+    frozen macOS builds so urllib can verify HTTPS. Returns the CA path set, or
+    None when not applicable. setdefault respects a user-provided SSL_CERT_FILE."""
     plat = platform if platform is not None else sys.platform
-    if plat != "win32":
+    froz = frozen if frozen is not None else getattr(sys, "frozen", False)
+    # win32: patch always (frozen + dev — harmless). darwin: only the frozen
+    # .app (dev macOS has the system store). Linux: never (system store works).
+    if not (plat == "win32" or (plat == "darwin" and froz)):
         return None
     try:
         import certifi

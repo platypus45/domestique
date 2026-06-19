@@ -199,7 +199,7 @@ v1.8.14 adds threshold *detection* on top of the per-ride alpha1 signal. By regr
 
 Each is reported as both an HR and a power value, and they drive a **3-zone intensity model**: Z1 (alpha1 > 0.75), Z2 (0.50–0.75), Z3 (< 0.50). The per-ride table shows the Z1·Z2·Z3 split as a bar.
 
-**Cycling validation.** HRVT1 tracks VT1/LT1 with ICC 0.77, r 0.81 (Schaffarczyk et al. 2022, PMC9894976). For the anaerobic threshold the strong result is **power-specific**: HRVT2 power-output ICC **0.97**, r 0.92–0.93 vs VT2/OBLA (PMC10875128). We scope that claim to power deliberately — HR-based HRVT2 is unreliable and routinely omitted in the literature, so Domestique leans on the power value.
+**Cycling validation.** HRVT1 tracks VT1/LT1 with ICC 0.77, r 0.81 ([Schaffarczyk et al. 2022](https://pmc.ncbi.nlm.nih.gov/articles/PMC9894976/)). For the anaerobic threshold the strong result is **power-specific**: HRVT2 power-output ICC **0.97**, r 0.92–0.93 vs VT2/OBLA ([PMC10875128](https://pmc.ncbi.nlm.nih.gov/articles/PMC10875128/)). We scope that claim to power deliberately — HR-based HRVT2 is unreliable and routinely omitted in the literature, so Domestique leans on the power value.
 
 **Complements FTP — it doesn't replace it.** FTP anchors roughly one boundary (~LT2). DFA thresholds add the *aerobic*-threshold (LT1 / Zone-2 ceiling) anchor that FTP alone can't give, plus full HR-based zones for riders with no power meter. The detected zones are **display-only**: they never overwrite your configured FTP/zones.
 
@@ -215,7 +215,7 @@ A dedicated **"DFA alpha1" tab** surfaces all of the above: an aggregate↔per-r
 
 ### Hooper composite — the morning leg-check
 
-Four 5-button questions on the home page: **sleep / energy / stress / soreness**, each 1–5. Hooper & Mackinnon 1995 (*J Sci Med Sport*) showed the *composite* (4-field sum, range 4–28) predicts overtraining better than any single component — a rider can have crushed legs but score "fine" on subjective fatigue; a sleep-deprived rider can have fresh legs. Saw et al. 2016 (*Br J Sports Med*) is the modern reinforcement: subjective wellness questionnaires correlate *better* with training response than any wearable HRV/RHR/sleep-score metric.
+Four 5-button questions on the home page: **sleep / energy / stress / soreness**, each 1–5. [Hooper & Mackinnon 1995](https://pubmed.ncbi.nlm.nih.gov/7898325/) (*J Sci Med Sport*) showed the *composite* (4-field sum, range 4–28) predicts overtraining better than any single component — a rider can have crushed legs but score "fine" on subjective fatigue; a sleep-deprived rider can have fresh legs. [Saw et al. 2016](https://pubmed.ncbi.nlm.nih.gov/26423706/) (*Br J Sports Med*) is the modern reinforcement: subjective wellness questionnaires correlate *better* with training response than any wearable HRV/RHR/sleep-score metric.
 
 Wires into the planner at three points: 20% weight in `readiness_score`; **G5** hard gate (`soreness >= 6` forces recovery, bypassing the composite — peripheral fatigue is real even when central HRV looks fine, Cheung 2003); **G6** hard gate (`sleep + fatigue + stress + soreness >= 18` forces Z2). Form pre-defaults each field to "3 — Normal" so a user who only taps soreness still posts a sane composite (~6s tap time).
 
@@ -319,7 +319,12 @@ Domestique plans + analyses — you ride in a separate app. The free-forever pic
 
 See [docs/cycling_apps.md](docs/cycling_apps.md) for the full table.
 
-**No laptop?** Both download formats — **ZWO** and **FIT** — drive a smart trainer in ERG. Load either into a trainer app (MyWhoosh / Tacx / Zwift / Golden Cheetah on a laptop or phone, which pairs to your trainer over ANT+ FE-C / Bluetooth FTMS) **or** push it straight onto a head unit — Garmin Edge / Garmin watch / Hammerhead Karoo / Wahoo ELEMNT — which steers the trainer's power directly over ANT+ FE-C / FTMS. Either format, either path; no virtual world, no subscription.
+**No laptop? No trainer app needed.** Both download formats — **ZWO** and **FIT** — drive a smart trainer in ERG. Two ways to ride them:
+
+- **On a head unit (simplest).** Copy the **ZWO/FIT straight onto your Garmin (Edge / watch), Wahoo ELEMNT, or Hammerhead Karoo**, then **pair your Tacx — or any smart trainer — to the head unit as a "sensor"** (exactly like adding an HR strap or power meter). The head unit runs the structured workout and controls the trainer's power directly over **ANT+ FE-C / Bluetooth FTMS**. No computer, no app, no subscription.
+- **In a trainer app.** Load either format into MyWhoosh / Tacx / Zwift / Golden Cheetah on a laptop or phone, which pairs to your trainer over ANT+ FE-C / Bluetooth FTMS — if you want scenery.
+
+Either format, either path; no virtual world required.
 
 ---
 

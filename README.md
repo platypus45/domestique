@@ -190,8 +190,8 @@ Since v1.8.14 there's a **second acquisition path**: when ICU 404s the `.fit` (c
 
 v1.8.14 adds threshold *detection* on top of the per-ride alpha1 signal. By regressing alpha1 on HR (and on power) across a ride's 120s/30s windows and interpolating the crossings, Domestique locates two metabolic thresholds non-invasively, with no lab test and no lactate draw:
 
-- **HRVT1** at alpha1 = 0.75 -> the aerobic threshold (VT1 / LT1), i.e. the Zone-2 ceiling. Origin: Rogers, Tikkanen et al. 2021 (PMC7845545).
-- **HRVT2** at alpha1 = 0.50 -> the anaerobic threshold (VT2 / LT2 / OBLA).
+- **HRVT1** at alpha1 = 0.75 -> the aerobic threshold (VT1 / LT1), i.e. the Zone-2 ceiling. Origin: Rogers et al. 2021 (PMC7845545 — the aerobic-threshold paper).
+- **HRVT2** at alpha1 = 0.50 -> the anaerobic threshold (VT2 / LT2 / OBLA). Origin: Rogers et al. 2021 ([PMID 33925974](https://pubmed.ncbi.nlm.nih.gov/33925974/) — the *anaerobic*-threshold paper, distinct from the LT1 one above).
 
 Each is reported as both an HR and a power value, and they drive a **3-zone intensity model**: Z1 (alpha1 > 0.75), Z2 (0.50–0.75), Z3 (< 0.50). The per-ride table shows the Z1·Z2·Z3 split as a bar.
 
@@ -242,7 +242,7 @@ Five additional signals that mutate the *next-day or next-week* plan rather than
 | Signal | Threshold | Action | Citation |
 |---|---|---|---|
 | **DFA alpha1** | mean over last 3 rides < 0.5 | tomorrow's threshold -> Z2 (revert button) | Rogers et al. 2021 (PMID 33519504) |
-| **DFA HRVT1/HRVT2** (beta) | alpha1 crosses 0.75 / 0.50 on a ramp ride | display-only LT1/LT2 HR+power anchors + 3-zone model (never overwrites FTP) | Rogers et al. 2021 (PMC7845545), Schaffarczyk et al. 2022 (PMC9894976) |
+| **DFA HRVT1/HRVT2** (beta) | alpha1 crosses 0.75 / 0.50 on a ramp ride | display-only LT1/LT2 HR+power anchors + 3-zone model (never overwrites FTP) | Rogers et al. 2021 (LT1: PMC7845545; LT2: PMID 33925974), Schaffarczyk et al. 2022 (PMC9894976) |
 | **Aerobic decoupling** (HR drift vs power) | > 5% on last ride | next-day "Z2 recommended" advisory banner | Coyle & Gonzalez-Alonso 2001 |
 | **Foster monotony** (weekly load SD/mean) | > 2.0 over 14 days | next week `tss_target x 0.85`, hit_per_week − 1 | Foster 1998 (PMID 9662690) |
 | **eFTP drift** (Intervals.icu) | > 3% above set FTP for 7+ consecutive days | FTP auto-applied with 48h revert toast | Allen & Coggan eFTP definition |
@@ -375,7 +375,7 @@ The peer-reviewed evidence supporting TSS as a *quantifier of training that was 
 | Subjective fatigue TSS misses | **G5/G6 Hooper composite** + peripheral fatigue cap | [Hooper & Mackinnon 1995](https://pubmed.ncbi.nlm.nih.gov/7898325/), [Cheung et al. 2003](https://pubmed.ncbi.nlm.nih.gov/12617692/) |
 | 80/20 polarisation target | **POL 80/0/20** distribution baked into `WORKOUT_MIX_PREFERENCE` | [Stoggl & Sperlich 2014](https://pubmed.ncbi.nlm.nih.gov/24550842/) |
 | Autonomic fatigue TSS can't see | **DFA alpha1 from RR-intervals** (Malik 1996 artifact filter first) -> next-day intensity decision | [Rogers et al. 2021](https://pubmed.ncbi.nlm.nih.gov/33519504/), [Malik 1996](https://pubmed.ncbi.nlm.nih.gov/8598068/) |
-| Aerobic-threshold (LT1) anchor FTP can't give | **DFA HRVT1/HRVT2 detection** (alpha1 0.75/0.50) -> display-only LT1/LT2 HR+power + 3-zone model | [Rogers et al. 2021 (PMC7845545)](https://pmc.ncbi.nlm.nih.gov/articles/PMC7845545/), [Schaffarczyk et al. 2022 (PMC9894976)](https://pmc.ncbi.nlm.nih.gov/articles/PMC9894976/) |
+| Aerobic-threshold (LT1) anchor FTP can't give | **DFA HRVT1/HRVT2 detection** (alpha1 0.75/0.50) -> display-only LT1/LT2 HR+power + 3-zone model | [Rogers 2021 — LT1 (PMC7845545)](https://pmc.ncbi.nlm.nih.gov/articles/PMC7845545/) + [LT2 (PMID 33925974)](https://pubmed.ncbi.nlm.nih.gov/33925974/), [Schaffarczyk et al. 2022 (PMC9894976)](https://pmc.ncbi.nlm.nih.gov/articles/PMC9894976/) |
 | Climb-specific record power profile | **Pinot & Grappe 2011 RPP gate** for capability projection | [Pinot & Grappe 2011](https://pubmed.ncbi.nlm.nih.gov/22052032/) |
 | CP-from-FTP approximation | `int(ftp x 1.03)` (was naive `CP = FTP`) | [McGrath et al. 2021](https://pubmed.ncbi.nlm.nih.gov/34055164/) |
 | Between-race freshening (B/C events around an A goal) | **B/C mini-taper** — trim volume, keep intensity (B: 2-day window, C: 1-day opener); skipped inside the A taper / unload weeks | [Mujika & Padilla 2003 (PMID 12840640)](https://pubmed.ncbi.nlm.nih.gov/12840640/), [Bosquet 2007 (PMID 17762369)](https://pubmed.ncbi.nlm.nih.gov/17762369/), [Rønnestad 2017 (PMID 27476525)](https://pubmed.ncbi.nlm.nih.gov/27476525/) |
@@ -584,7 +584,7 @@ for each PlannedWeek in plan:
 | Feature | Method | Reference |
 |---------|--------|-----------|
 | DFA Alpha1 | Detrended Fluctuation Analysis on RR-intervals, Peng 1995 algorithm; Malik 1996 20% artifact filter pre-DFA | Rogers et al. 2021 (PMID 33519504), Malik 1996 (PMID 8598068) |
-| DFA HRVT1 / HRVT2 (beta) | alpha1=0.75 -> LT1, alpha1=0.50 -> LT2; HR+power crossing per ramp ride; 3-zone model (display-only) | Rogers et al. 2021 (PMC7845545), Schaffarczyk et al. 2022 (PMC9894976), reliability (PMC10875128) |
+| DFA HRVT1 / HRVT2 (beta) | alpha1=0.75 -> LT1, alpha1=0.50 -> LT2; HR+power crossing per ramp ride; 3-zone model (display-only) | Rogers et al. 2021 (LT1: PMC7845545; LT2: PMID 33925974), Schaffarczyk et al. 2022 (PMC9894976), reliability (PMC10875128) |
 | Aerobic Decoupling | EF = NP/avgHR per half (TrainingPeaks canonical) | Friel (coaching heuristic) |
 | Foster Monotony / Strain | Weekly load SD-vs-mean ratio | Foster 1998 (PMID 9662690) |
 | CTL / ATL / TSB | 42-day / 7-day exponentially-weighted TSS | Coggan & Allen |

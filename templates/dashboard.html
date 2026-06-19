@@ -11857,14 +11857,18 @@ async function runPlanOpenSequence() {
     // stale sync timed out and the missed session was never reconciled, so the
     // week never adapted. Sync failure is now soft; only a reconcile failure is
     // fatal to this step.
-    let syncAdded = 0, syncThrottled = false, syncOk = false, syncSlow = false;
-    try {
-      const sres = await _planStepRace(fetch('/api/rides/sync', {method: 'POST'}), PLAN_STEP_TIMEOUT_MS, 'sync');  // no force=1 → respects throttle
-      const sj = await sres.json().catch(() => ({}));
-      syncThrottled = (sj.status === 'throttled');
-      syncAdded = Number(sj.added || 0);
-      syncOk = true;
-    } catch (e) { if (e && e.name === 'TimeoutError') syncSlow = true; }  // soft — reconcile still runs below
+    // v2.1.1 SPEED — the ride SYNC (ICU network + per-ride DFA augment) can take
+    // ~30s on a big/first pull. It used to be AWAITED here, blocking the whole
+    // load behind it. Now it runs in the BACKGROUND and the step is gated only on
+    // the fast, LOCAL reconcile (marks done/missed from already-stored activities
+    // — exactly what ran on the old "sync slow → used local data" branch). The
+    // sync still completes server-side to enrich data; any new rides are
+    // reconciled on the next open. Step 4 reads syncResult opportunistically
+    // (whatever has landed by then) for the new-ride fast-path.
+    let syncResult = null;
+    _planStepRace(fetch('/api/rides/sync', {method: 'POST'}), PLAN_STEP_TIMEOUT_MS, 'sync')  // no force=1 → respects throttle
+      .then(r => r.json()).then(j => { syncResult = j || null; })
+      .catch(() => { syncResult = null; });
     let reconciled = 0;
     try {
       const rres = await _planStepRace(fetch('/api/plan/rematch?apply=1', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}), PLAN_STEP_TIMEOUT_MS, 'reconcile');
@@ -11872,11 +11876,7 @@ async function runPlanOpenSequence() {
       reconciled = Array.isArray(rj.matches) ? rj.matches.length : 0;
     } catch (e) { if (e && e.name === 'TimeoutError') seqError = {key: 'actual', label: STEPS[1].label, e}; }
     if (seqError) { state.actual = {status: 'error', detail: 'reconcile timed out'}; setBar(0.5, true); paint(null); return; }
-    const actualDetail = syncSlow ? `sync slow — used local data · ${reconciled} reconciled`
-      : !syncOk ? `sync offline — used local data · ${reconciled} reconciled`
-      : syncThrottled ? `up to date · ${reconciled} reconciled`
-      : `${syncAdded} new ride${syncAdded === 1 ? '' : 's'} · ${reconciled} reconciled`;
-    state.actual = {status: syncOk ? 'done' : 'warn', detail: actualDetail};
+    state.actual = {status: 'done', detail: `${reconciled} reconciled · syncing in background`};
     setBar(0.5);
     paint('recovery');
 
@@ -11901,7 +11901,7 @@ async function runPlanOpenSequence() {
     let regenDetail = '';
     try { await _planStepRace(triggerPlanAutoRecalc(), PLAN_STEP_TIMEOUT_MS, 'recalc'); }
     catch (e) { if (e && e.name === 'TimeoutError') seqError = {key: 'regen', label: STEPS[3].label, e}; }
-    if (!seqError && syncAdded > 0) {
+    if (!seqError && syncResult && Number(syncResult.added || 0) > 0) {
       regenDetail = 'adapted from your new ride(s)';
       try { await _planStepRace(loadPlan(), PLAN_STEP_TIMEOUT_MS, 'reload'); }
       catch (e) { if (e && e.name === 'TimeoutError') seqError = {key: 'regen', label: STEPS[3].label, e}; }

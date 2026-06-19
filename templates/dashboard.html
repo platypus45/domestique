@@ -14127,7 +14127,7 @@ async function _rematchAccept(day) {
       if (idx < curIdx) { icon = '✓'; color = 'var(--green)'; }
       else if (idx === curIdx) { icon = (s.key === 'done' ? '✓' : '⟳'); color = (s.key === 'done' ? 'var(--green)' : 'var(--accent)'); }
       const detail = (s.key === 'reflow' && sessionsModified != null && idx <= curIdx)
-        ? `${sessionsModified} session${sessionsModified === 1 ? '' : 's'} reflowed.`
+        ? `Today's training changed · ${sessionsModified} future session${sessionsModified === 1 ? '' : 's'} reflowed.`
         : s.detail;
       return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px;color:${color};">
                 <span style="width:14px;text-align:center;">${icon}</span>

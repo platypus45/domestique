@@ -1110,6 +1110,19 @@ def _project_event_capability(
 # ── Goal types ────────────────────────────────────────────────────────────────
 
 @dataclass
+class TargetEvent:
+    """F7 (v2.3) — one event in a multi-event Goal. The A event mirrors the Goal's
+    canonical target_date + event_* scalars; B/C are intermediate races that get a
+    proportionate mini-taper (never a full taper). priority ∈ {"A","B","C"}."""
+    date: date
+    priority: str = "B"
+    name: str = ""
+    event_type: str = "granfondo"
+    event_km: float = 0
+    event_climb_m: float = 0
+
+
+@dataclass
 class Goal:
     goal_type: str       # event, ftp, ctl, endurance, general, weight, vo2max, ftp_vo2max
     target_date: date | None = None
@@ -1159,6 +1172,10 @@ class Goal:
     # (VO2 block → threshold block) instead of the weekly-mixed default. Default
     # False = today's behaviour, byte-for-byte (the default-off-parity contract).
     block_periodization: bool = False
+    # F7 (v2.3): intermediate B/C races (additive). The A event stays the canonical
+    # target_date + event_* scalars; B/C entries here get a proportionate mini-taper.
+    # Empty = today's single-A behaviour, unchanged.
+    events: list = field(default_factory=list)
 
     def max_hours_for_day(self, weekday: int) -> float:
         """Get max training hours for a specific weekday (0=Mon..6=Sun)."""
@@ -7453,6 +7470,7 @@ def regenerate_from_today(
         # block / non-polarized plan doesn't silently revert on adaptation.
         distribution=goal.distribution,
         block_periodization=goal.block_periodization,
+        events=goal.events,  # F7: carry B/C events through recalc
     )
 
     # 10. Generate new phases — offset start by recovery duration to avoid overlap
@@ -7839,6 +7857,7 @@ def recalculate_plan(
         # block / non-polarized plan doesn't silently revert on adaptation.
         distribution=goal.distribution,
         block_periodization=goal.block_periodization,
+        events=goal.events,  # F7: carry B/C events through recalc
     )
 
     # v1.11.0 IMPL-EVENT — event demand → plan targets so the event CTL nudge

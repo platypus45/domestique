@@ -8493,6 +8493,7 @@ async def api_plan_generate(request: Request):
             distribution=body.get("distribution", _prefs.get("distribution", "polarized")),
             # F1 (v2.2): opt-in block periodization (default off).
             block_periodization=bool(body.get("block_periodization", _prefs.get("block_periodization", False))),
+            events=_events_from_dicts(body.get("events")),  # F7 (A + optional B/C)
         )
         # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
         if goal.longest_ride_h_90d is None:
@@ -8602,6 +8603,7 @@ async def api_plan_generate(request: Request):
                 # rebuild with the same model (else they'd revert to polarized).
                 "distribution": getattr(goal, "distribution", "polarized"),
                 "block_periodization": getattr(goal, "block_periodization", False),  # F1
+                "events": _events_to_dicts(getattr(goal, "events", [])),  # F7
             },
             "phases": [
                 {
@@ -9223,6 +9225,48 @@ def _current_absence_episode(old_weeks, gaps: dict, today: date):
     return (first, last.week_num)
 
 
+def _events_to_dicts(events) -> list:
+    """F7 (v2.3): serialize Goal.events (TargetEvent list) into the saved goal block."""
+    out = []
+    for e in events or []:
+        d = getattr(e, "date", None)
+        out.append({
+            "date": d.isoformat() if hasattr(d, "isoformat") else (d or None),
+            "priority": getattr(e, "priority", "B"),
+            "name": getattr(e, "name", ""),
+            "event_type": getattr(e, "event_type", "granfondo"),
+            "event_km": getattr(e, "event_km", 0),
+            "event_climb_m": getattr(e, "event_climb_m", 0),
+        })
+    return out
+
+
+def _events_from_dicts(raw) -> list:
+    """F7 (v2.3): rebuild Goal.events (TargetEvent list) from the saved goal block
+    or the plan-form POST. Skips entries without a parseable date."""
+    out = []
+    for e in raw or []:
+        ds = e.get("date")
+        if not ds:
+            continue
+        try:
+            d = date.fromisoformat(ds) if isinstance(ds, str) else ds
+        except (TypeError, ValueError):
+            continue
+        climb = e.get("event_climb_m")
+        if climb is None:
+            climb = e.get("event_climb")
+        out.append(tp.TargetEvent(
+            date=d,
+            priority=e.get("priority", "B"),
+            name=e.get("name", "") or "",
+            event_type=e.get("event_type", "granfondo"),
+            event_km=e.get("event_km", 0) or 0,
+            event_climb_m=climb or 0,
+        ))
+    return out
+
+
 def _goal_from_plan_dict(g: dict) -> "tp.Goal":
     """Reconstruct a full scheduling Goal from a persisted plan's ``goal`` block.
 
@@ -9273,6 +9317,7 @@ def _goal_from_plan_dict(g: dict) -> "tp.Goal":
         last_ftp_test_date=g.get("last_ftp_test_date"),
         distribution=g.get("distribution", "polarized"),  # J1
         block_periodization=bool(g.get("block_periodization", False)),  # F1
+        events=_events_from_dicts(g.get("events")),  # F7
     )
 
 

@@ -836,6 +836,16 @@ TYPE_CEILING = {
 # from sprint slots (they remain available to their proper vo2/threshold slots).
 _SPRINT_SLOT_IF_CEILING = 0.82
 
+# ── B5: easy-slot LOAD ceiling ────────────────────────────────────────────────
+# The content classifier (and the filename fallback) tag by STRUCTURE, so an
+# interval-structured file named "Endurance 20s/2min 6x" lands in the endurance
+# class despite short max-effort bursts that push its IF to 0.81–0.84. The
+# easy-slot Z3-6 TIME-% gate misses these (spiky efforts raise IF, not zone
+# time), so a Z2/recovery slot could match a 196-TSS interval file (the tester's
+# bug). Genuine easy files cap at IF ≈ 0.71; reject anything above this ceiling
+# from z2 / long_z2 / recovery slots. Mirrors _SPRINT_SLOT_IF_CEILING.
+_EASY_SLOT_IF_CEILING = 0.78
+
 # ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ──────────────────────
 # Parallel rough estimates for W'-load (kJ above CP) and Pmax-load (kJ PCr)
 # per hour, by session type. Values are advisory ONLY: when consumed they
@@ -2956,6 +2966,13 @@ def match_zwo(
             # v2.0.6 — sprint/neuromuscular LOAD gate: keep threshold/anaerobic-
             # load files (IF > ceiling) out of sprint slots. See _SPRINT_SLOT_IF_CEILING.
             if session.session_type == "sprint" and float(w.get("IF") or 0) > _SPRINT_SLOT_IF_CEILING:
+                continue
+            # B5 — easy-slot LOAD gate: keep interval-structured files (IF above
+            # the easy ceiling, e.g. an "Endurance 20s/2min 6x") out of
+            # z2/long_z2/recovery slots even when the classifier filed them as
+            # endurance. The Z3-6 time-% gate below misses spiky efforts.
+            if (session.session_type in ("z2", "long_z2", "recovery")
+                    and float(w.get("IF") or 0) > _EASY_SLOT_IF_CEILING):
                 continue
             # v1.8.25 — class-aware Score floor. Endurance/recovery are low
             # intensity ⇒ low Score BY CONSTRUCTION (the rubric weights TSS +
@@ -5309,6 +5326,11 @@ def generate_plan(
                 s.tss_estimate = round((s.tss_estimate or 0) * _scale)
                 s.duration_min = _eff
 
+    # B5 — re-route any easy slot that the sampler/match left holding a too-hard
+    # (interval-structured) file to a genuine easy file, and recompute its TSS.
+    # Runs after the per-day clamp so the re-match targets the final duration.
+    _enforce_easy_slot_content(weeks, library, plan_start_date, seed_salt)
+
     # B3 — guarantee each step-back week is the lightest in its block. Runs LAST,
     # after the per-day clamp above could have trimmed a build week below the
     # deload (e.g. a pre-taper peak week), which would invert the 3-up-1-down
@@ -5927,6 +5949,49 @@ def _enforce_stepback_is_lightest(weeks: list) -> None:
             new_dur = max(_VOLUME_MIN_SESSION_MIN, slot.duration_min - max(1, cut_min))
             slot.duration_min = new_dur
             slot.tss_estimate = round(tss_per_min * new_dur)
+
+
+def _enforce_easy_slot_content(weeks: list, library: list, plan_start_date,
+                               seed_salt: int = 0) -> None:
+    """B5 — an easy slot must carry an EASY file.
+
+    The sampler is the primary picker and buckets by content_class, so an
+    interval-structured file the classifier filed as "endurance" (high IF) — or
+    a sweet-spot/over-under file — can land on a z2/long_z2/recovery slot (the
+    prescription↔file decoupling: the tester saw a Z2 60-min slot matched to a
+    196-TSS interval file). match_zwo now enforces _EASY_SLOT_IF_CEILING, so we
+    re-match any easy slot whose matched file is too hard and recompute the
+    slot's TSS from its (easy) type + final duration. Runs LAST, after the
+    per-day clamp set final durations. Bounded (one pass over the slots).
+    """
+    if not library:
+        return
+    if_by_file = {}
+    for w in library:
+        f = (w.get("File") or "").strip()
+        if f:
+            if_by_file[f] = float(w.get("IF") or 0)
+    easy_tss_hr = {"z2": TSS_PER_HOUR["z2"], "long_z2": TSS_PER_HOUR["z2"],
+                   "recovery": TSS_PER_HOUR["recovery"]}
+    for wk in weeks:
+        for s in wk.sessions:
+            if s is None or s.session_type not in easy_tss_hr:
+                continue
+            f = (getattr(s, "zwo_file", "") or "").strip()
+            if not f or if_by_file.get(f, 0.0) <= _EASY_SLOT_IF_CEILING:
+                continue
+            # Too-hard file on an easy slot — re-match to the closest easy file.
+            s.zwo_file = ""
+            s.zwo_name = ""
+            try:
+                match_zwo(s, library, week_num=getattr(wk, "week_num", 0),
+                          plan_start_date=plan_start_date, seed_salt=seed_salt,
+                          exact_duration=True)
+            except Exception:  # noqa: BLE001
+                log.debug("B5 easy-slot re-match failed", exc_info=True)
+            # Recompute the slot's TSS from its easy type + final duration so the
+            # detail modal's TSS reflects the SLOT, not a leftover file value.
+            s.tss_estimate = round((s.duration_min or 0) / 60 * easy_tss_hr[s.session_type])
 
 
 def _demote_hit_window(weeks: list, center_date, days: int, library=None,

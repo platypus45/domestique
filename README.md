@@ -47,6 +47,23 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 
 ---
 
+## What's new in v2.2.0
+
+- **Sign in with intervals.icu (OAuth)** — link your account in one click instead
+  of pasting an API key. An explicit, retryable step shows **“✓ Linked as
+  <name>”**; existing API-key users are prompted to switch; your FTP / weight /
+  LTHR are prefilled from your account; Settings has **“Copy from intervals.icu.”**
+- **Plan styles** — choose **Automatic (varied)**, **Fixed-core (repeatable)** (one
+  quality type/phase, reps progress, constant Z2 base), or a **Template**
+  (Polarized Base / FTP Builder).
+- **Customizable zones** — an **Edit** button on Power and HR zones (prefilled,
+  editable, reset-to-auto; honored across display + analysis).
+- **First-sync visibility** — a top-bar **“Syncing activities X of Y (NN%)”** while
+  your history indexes; an **FTP-rise** banner when your FTP actually looks higher.
+- **Reliability** — the day-detail popup reads one coherent story, easy days stay
+  easy, recovery weeks truly deload, B/C races work on any plan, and logs no longer
+  balloon. Full detail in [CHANGELOG.md](CHANGELOG.md).
+
 ## What's new in v2.1.0 / v2.1.1
 
 The biggest release yet — a training-science layer plus a large reliability

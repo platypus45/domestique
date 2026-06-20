@@ -1,5 +1,61 @@
 # Changelog
 
+## v2.2.0 — Sign in with intervals.icu, plan styles, customizable zones (2026-06-20)
+
+A feature release on top of v2.1.2. Headline: **sign in with intervals.icu**
+(OAuth — no more API keys), a choice of **plan styles**, **customizable training
+zones**, and a batch of reliability + first-run polish. Everything from the
+v2.1.x line is unchanged and listed below.
+
+### Sign in with intervals.icu (OAuth)
+- **One-click sign-in instead of API keys.** Linking your account is now an
+  explicit, **retryable** step: click **Sign in to intervals.icu**, log in + approve
+  in your browser, and it links that account to the profile — the setup screen
+  then shows **“✓ Linked as <name>”**. Per profile, so multi-rider setups each
+  link their own account.
+- **Existing API-key users get prompted to switch.** A banner offers a one-click
+  move to sign-in (your key keeps working until you do).
+- **Athlete numbers prefill from intervals.icu.** After linking, the setup’s
+  FTP / weight / LTHR / max-HR are filled in from your account (still editable).
+- **Settings → “Copy from intervals.icu”** pulls your real (e)FTP so the plan’s
+  % targets use true numbers.
+
+### Plan styles — choose how the plan is built
+A **Plan style** selector (default unchanged):
+- **Automatic (varied)** — today’s behaviour (full-library sampler).
+- **Fixed-core (repeatable)** — one quality session type per phase that progresses
+  by reps on a constant Z2 base; deterministic, doesn’t reshuffle on update.
+- **Template** — a ready-made fixed-core blueprint (**Polarized Base**, **FTP
+  Builder**).
+
+### Customizable training zones
+- **Edit** button on Power Zones **and** HR Zones in Settings — boundaries are
+  prefilled (auto from FTP/LTHR) but fully editable, with **Reset to auto**. Custom
+  zones are honored everywhere (display + ride time-in-zone analysis).
+
+### Reliability fixes (from a tester’s report)
+- **Day-detail popup tells one story** — titles by the planned slot (type /
+  duration / TSS); the matched library file is one calm secondary line with a
+  plain “ride N min of it / add easy Z2” note instead of an alarming mismatch.
+- **Easy days stay easy** — a Z2/recovery slot can’t pull an interval-structured
+  file; it re-matches to a genuine endurance file and recomputes TSS.
+- **Recovery weeks recover** — a deload is the lightest week in its block, carries
+  no hard intervals, and caps the long ride at 2.5 h.
+- **Reversible whole-plan overview**, and the opaque **`O/U`** label is now
+  **Over-Under**.
+- **B/C races on any plan** — intermediate races (with mini-tapers) work on FTP /
+  VO2max / general plans, not just event-prep.
+
+### First-run & quality-of-life
+- **First-sync is visible** — a top-bar **“Syncing activities X of Y (NN%)”** with
+  a spinner while your history indexes from intervals.icu (was a bare “Loading…”).
+- **FTP-rise prompt** — a prominent top banner appears only when your FTP actually
+  looks **higher** than set, with one click to raise it + update zones.
+- **Logs no longer balloon** — Domestique now keeps a single small capped log
+  (~3 MB) and auto-cleans the old per-launch logs (some installs had grown to
+  multiple GB).
+- Fixed a **“readiness NaN”** flash on the plan-open checklist for new accounts.
+
 ## v2.1.2 — DFA recovery + a reliable "update available" banner (2026-06-19)
 
 A small patch on top of v2.1.1, fixing two bugs found in testing.

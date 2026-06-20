@@ -39,34 +39,26 @@ def _read_dashboard() -> str:
 class TestUIv104TitleSource(unittest.TestCase):
     """v1.0.4 modal title + calendar cell + library filter contracts."""
 
-    def test_modal_title_uses_display_name_cascade(self):
-        """`openDayWorkout` modal title must read `session.display_name`
-        first, then `session.zwo_name`, then `session.session_type`.
-
-        Asserts the literal cascade expression appears in the rendered
-        HTML so a future refactor can't silently regress to the old
-        content_class-only path.
+    def test_modal_title_is_slot_centric(self):
+        """SUPERSEDED v1.0.4 → B1 (2026-06-20): the day-detail modal title is now
+        SLOT-centric, not file-centric. A slot whose sampled .zwo was a different
+        workout used to read as the wrong session (display_name titled the modal).
+        B1 titles from the SLOT — CAL_CONTENT_LABEL[content_class] →
+        CAL_SESSION_LABEL[session_type] — plus the slot duration, and shows the
+        matched file as ONE secondary line. Locks the new contract so a refactor
+        can't silently revert to file-titling.
         """
         html = _read_dashboard()
-        # The cascade must mention all three sources in order.
-        self.assertIn("session.display_name", html)
-        self.assertIn("session.zwo_name", html)
-        self.assertIn("session.session_type", html)
-        # The locked cascade structure: display_name OR zwo_name OR session_type.
-        # Use a non-greedy regex so whitespace / parens / .trim() don't break it.
-        cascade_re = re.compile(
-            r"session\.display_name[^|]*\|\|[^|]*session\.zwo_name[^|]*\|\|[^|]*session\.session_type",
-            re.DOTALL,
-        )
+        self.assertIn("const slotLabel", html)
+        self.assertIn("CAL_CONTENT_LABEL[session.content_class]", html)
+        self.assertIn("CAL_SESSION_LABEL[session.session_type]", html)
         self.assertRegex(
             html,
-            cascade_re,
-            "Modal title cascade `display_name || zwo_name || session_type` not found",
+            r"const\s+heroTitle\s*=\s*`\$\{slotLabel\}\s*\(\$\{sessionDur\}min\)`",
+            "modal hero title must be `${slotLabel} (${sessionDur}min)` (B1 slot-centric)",
         )
-        # The actualDur fallback must also appear — title must reflect the
-        # picked file's duration (zwo_duration_min) when present, not the
-        # plan slot's duration_min alone.
-        self.assertIn("session.zwo_duration_min", html)
+        # Matched file is a SECONDARY line now, not the title source.
+        self.assertIn("Matched library file:", html)
 
     def test_calendar_cell_uses_display_name_cascade(self):
         """`calCardTitle(planned)` (used by the weekly calendar cell label

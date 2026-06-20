@@ -2530,6 +2530,7 @@ window.addEventListener('unhandledrejection', function(e) {
       <h3>Plan grid</h3>
       <div class="cal-tab" id="cal-tab-overlay-g" data-view="overlay" onclick="calSwitchView('overlay')">Calendar</div>
       <div class="cal-tab active" id="cal-tab-grid-g" data-view="grid" onclick="calSwitchView('grid')">Grid</div>
+      <button id="vol-unit-toggle" class="btn cal-jump-btn" style="margin-left:auto;" onclick="toggleVolUnit()" title="Show planned weekly volume in hours or minutes">Volume: hours</button>
     </div>
     <!-- v4.2.0 IMPL-WEEKLY: plan progress header (item 8) + export button (item 10) -->
     <div id="pg-progress-header" class="pg-progress-header" style="display:none;">
@@ -9994,10 +9995,31 @@ async function reforecastPlan() {
   }
 }
 
+// F2 — weekly-volume unit toggle. Default hours (the tester's ask); flips to
+// minutes; choice persisted in localStorage so it survives reloads.
+window._volUnit = (() => { try { return localStorage.getItem('domestiqueVolUnit') || 'h'; } catch(_) { return 'h'; } })();
+function volFmt(min) {
+  const m = Math.round(Number(min) || 0);
+  if (window._volUnit === 'min') return `${m}m`;
+  return `${Math.round(m / 60 * 10) / 10}h`;  // 1 dp, e.g. 9.5h
+}
+function _syncVolUnitBtn() {
+  const b = document.getElementById('vol-unit-toggle');
+  if (b) b.textContent = window._volUnit === 'h' ? 'Volume: hours' : 'Volume: minutes';
+}
+function toggleVolUnit() {
+  window._volUnit = (window._volUnit === 'h') ? 'min' : 'h';
+  try { localStorage.setItem('domestiqueVolUnit', window._volUnit); } catch(_) {}
+  _syncVolUnitBtn();
+  try { if (window._planData) renderPlanJSON(window._planData); } catch(_) {}
+  try { loadWeeklyCalendar(); } catch(_) {}
+}
+
 async function renderPlanJSON(plan) {
   if (!plan) return;
   // Store plan globally for click handlers
   window._planData = plan;
+  _syncVolUnitBtn();
 
   // Fetch actual activities for overlay
   let actualByDate = {};
@@ -10290,9 +10312,12 @@ async function renderPlanJSON(plan) {
       const actualCls = met ? 'pg-tss-actual-met' : (actualTss < weekTss ? 'pg-tss-actual-miss' : '');
       actualHtml = `<div class="pg-tss-actual-label">Actual</div><div class="pg-tss-actual-val ${actualCls}">${Math.round(actualTss)}</div>`;
     }
+    // F2 — planned weekly VOLUME (time), unit per the hours/minutes toggle.
+    const weekVolMin = (w.sessions || []).reduce((s, sess) => s + (sess.duration_min || 0), 0);
     cal += `<div class="pg-week-tss">
       <div class="pg-tss-actual-label">Planned</div>
       <div class="pg-tss-planned">${Math.round(weekTss)}</div>
+      <div class="pg-week-vol" style="font-size:10px;color:var(--text3);margin-top:2px;" title="Planned weekly volume (toggle hours/minutes above)">${volFmt(weekVolMin)}</div>
       ${actualHtml}
     </div>`;
 
@@ -13060,7 +13085,7 @@ async function loadWeeklyCalendar() {
         body = `
           ${planGhost}
           <div class="wc-type${_polCls}" style="background:${expo.color}22;color:${expo.color};border:1px solid ${expo.color};${_polBorder}font-weight:700;">${sportIcons} ${expo.label}</div>
-          <div class="wc-meta">${agg.total_min}m · ${agg.total_tss} TSS</div>
+          <div class="wc-meta">${volFmt(agg.total_min)} · ${agg.total_tss} TSS</div>
           ${adhTxt}
         `;
       } else if (isPast && !hasActual && s.session_type !== 'rest' && !isDismissed) {

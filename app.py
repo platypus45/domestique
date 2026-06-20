@@ -6793,6 +6793,59 @@ def api_icu_connection():
     }
 
 
+@app.get("/api/icu/athlete-numbers")
+def api_icu_athlete_numbers():
+    """Pull FTP / weight / LTHR / max-HR from the linked intervals.icu athlete so
+    the setup wizard can prefill 'Athlete Numbers'. Best-effort: any field ICU
+    doesn't have comes back null. Uses the active profile's OAuth token (or legacy
+    API key) via training._get / _auth_header. eFTP (from wellness) backstops a
+    missing configured FTP."""
+    out = {"ok": False, "ftp": None, "weight": None, "lthr": None, "max_hr": None}
+    token = getattr(config, "ICU_ACCESS_TOKEN", "") or ""
+    key = getattr(config, "ICU_API_KEY", "") or ""
+    if not (token or key):
+        return out
+    try:
+        import training as _training
+        a = _training._get("athlete/0")
+        if isinstance(a, dict):
+            out["weight"] = a.get("weight")
+            out["max_hr"] = a.get("max_hr")
+            # The cycling sport's FTP/LTHR/maxHR live in sportSettings[]; pick the
+            # Ride-typed entry (fall back to the first).
+            ss = a.get("sportSettings") or []
+            ride = None
+            for s in ss:
+                if not isinstance(s, dict):
+                    continue
+                types = s.get("types") or []
+                if any(t in ("Ride", "VirtualRide", "GravelRide", "MountainBikeRide")
+                       for t in types):
+                    ride = s
+                    break
+            ride = ride or (ss[0] if ss and isinstance(ss[0], dict) else {})
+            out["ftp"] = ride.get("ftp") or out["ftp"]
+            out["lthr"] = ride.get("lthr") or out["lthr"]
+            out["max_hr"] = ride.get("max_hr") or out["max_hr"]
+            out["ok"] = True
+    except Exception:
+        _log.debug("athlete-numbers: /athlete/0 fetch failed", exc_info=True)
+    # eFTP fallback when no configured FTP on the account.
+    if not out["ftp"]:
+        try:
+            wellness = cached("wellness_7", lambda: fetch_wellness(7))
+            if wellness:
+                for w in reversed(wellness):
+                    si = w.get("sportInfo", [])
+                    if si and si[0].get("eftp"):
+                        out["ftp"] = round(si[0]["eftp"])
+                        out["ok"] = True
+                        break
+        except Exception:
+            pass
+    return out
+
+
 @app.get("/api/update/check")
 def api_update_check(force: int = Query(0)):
     """Live GitHub-Releases poll with 6h cache + platform-specific asset.

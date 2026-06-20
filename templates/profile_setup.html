@@ -98,13 +98,13 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,156,247
     <h2>Connect Intervals.icu</h2>
     <p class="info">
       Syncs your training data (CTL, ATL, TSB, HRV). You'll need a free
-      <a href="https://intervals.icu/" target="_blank" rel="noopener noreferrer">intervals.icu</a>
+      <a href="https://intervals.icu/" target="_blank" rel="noopener noreferrer" class="help-link">intervals.icu</a>
       account — sign in there with Garmin or Strava (no new password).
     </p>
     <div class="info" style="background:rgba(59,130,246,0.08);border:1px solid #3b82f6;border-radius:8px;padding:10px 12px;margin:8px 0;">
-      <b>No keys to copy.</b> Click <b>Sign in to intervals.icu</b> — it opens in your browser,
-      you log in and approve once, and we link <b>that account</b> to this profile. You can do it
-      now or skip and connect later in <b>Settings</b>.
+      Click <b>Sign in to intervals.icu</b> — it opens in your browser, you log in and approve
+      once, and we link <b>that account</b> to this profile. Do it now, or skip and connect later
+      in <b>Settings</b>.
     </div>
     <!-- Link status: shows "✓ Linked as <name>" after a successful OAuth round-trip,
          or an error + retry. Populated by refreshLinkStatus() on return. -->
@@ -229,6 +229,31 @@ function goStep(n) {
     if (i < n - 1) d.classList.add('done');
     else if (i === n - 1) d.classList.add('active');
   });
+  // Entering Athlete Numbers: pull FTP/weight/LTHR/maxHR from intervals.icu when
+  // linked (prefill, still editable). Also refreshes the zone preview.
+  if (n === 3) { try { maybePrefillAthleteFromIcu(); } catch (_) {} }
+}
+
+let _icuPrefilled = false;
+async function maybePrefillAthleteFromIcu() {
+  if (_icuPrefilled) return;
+  try {
+    const c = await (await fetch('/api/icu/connection')).json();
+    if (!c || !c.connected) return;
+    const a = await (await fetch('/api/icu/athlete-numbers')).json();
+    if (!a || !a.ok) return;
+    const set = (id, v) => {
+      if (v != null && v !== '') { const el = document.getElementById(id); if (el) el.value = v; }
+    };
+    set('ftp', a.ftp); set('weight', a.weight); set('lthr', a.lthr); set('max-hr', a.max_hr);
+    _icuPrefilled = true;
+    const st = document.getElementById('step3-status');
+    if (st && (a.ftp || a.weight || a.lthr || a.max_hr)) {
+      st.textContent = 'Prefilled from intervals.icu — edit anything that looks off.';
+      st.className = 'status ok';
+    }
+    if (typeof renderZonePreview === 'function') renderZonePreview();
+  } catch (_) {}
 }
 
 function showStatus(id, msg, ok) {

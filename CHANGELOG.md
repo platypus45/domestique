@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.2.1 — Fix the "Raise FTP" button + logs that capture sign-in & sync (2026-06-20)
+
+A fast patch on **v2.2.0**.
+
+- **“Raise FTP” works.** The new FTP-rise banner’s button errored with “Could not
+  raise FTP” (it sent an unsupported test method); it now applies the estimate and
+  recomputes your zones.
+- **Logs capture sign-in + sync.** `Settings → Copy logs` now records the
+  intervals.icu sign-in (start / connected / denied) and each sync (with
+  wellness + activity counts), so a bug report is actually actionable. (v2.2.0
+  already switched to a single small capped log file that the viewer reads.)
+
 ## v2.2.0 — Sign in with intervals.icu, plan styles, customizable zones (2026-06-20)
 
 A feature release on top of v2.1.2. Headline: **sign in with intervals.icu**

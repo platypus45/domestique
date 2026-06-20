@@ -13914,7 +13914,16 @@ async function openDayWorkout(sessionIdx) {
 
   let html = `<h2>${session.day_name} — ${esc(heroTitle)}</h2>`;
   if (session.zwo_file && matchedFile) {
-    const durNote = showGap ? ` · ${fileDur}min file — pace/extend to ${sessionDur}min` : '';
+    // B7 — direction-aware, non-alarming gap note. The matched .zwo is a guide;
+    // a longer file means ride the structure and stop at the slot target, a
+    // shorter one means add easy Z2 to reach it. (Was "pace/extend to Nmin",
+    // which read backwards when the file was the longer of the two.)
+    let durNote = '';
+    if (showGap) {
+      durNote = fileDur > sessionDur
+        ? ` · file is ${fileDur}min — ride ${sessionDur}min of it`
+        : ` · file is ${fileDur}min — add easy Z2 to reach ${sessionDur}min`;
+    }
     html += `<div style="font-size:11px;color:var(--text3);margin:-4px 0 8px;font-style:italic;">Matched library file: ${esc(matchedFile)}${durNote}</div>`;
   }
   html += `<div style="font-size:13px;color:var(--text2);margin:8px 0;">${esc(fixZeroMin(session.description) || '')}</div>`;

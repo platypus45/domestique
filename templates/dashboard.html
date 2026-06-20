@@ -1285,6 +1285,13 @@ window.addEventListener('unhandledrejection', function(e) {
 </svg>
 
 <div class="container">
+<!-- First-sync indicator — full-width strip at the very top with a spinner so a
+     freshly-linked rider SEES "Syncing activities XXX of YYY (NN%)". Driven by
+     the backfill poll; hidden when there's nothing syncing. -->
+<div id="sync-topbar" style="display:none;align-items:center;justify-content:center;gap:10px;padding:6px 14px;background:var(--accent);color:#fff;font-size:13px;font-weight:600;letter-spacing:0.02em;">
+  <span style="width:14px;height:14px;border:2px solid rgba(255,255,255,0.55);border-top-color:#fff;border-radius:50%;animation:pg-redraw-spin 0.8s linear infinite;display:inline-block;"></span>
+  <span id="sync-topbar-text">Syncing activities…</span>
+</div>
 <header>
   <div style="display:flex;align-items:center;gap:14px;">
     <div>
@@ -1335,6 +1342,10 @@ window.addEventListener('unhandledrejection', function(e) {
 
 <!-- v4.1.0 U5: eFTP auto-apply revert banner (fires when ftp_source=eftp_auto within 24h) -->
 <div id="eftp-auto-banner" style="display:none;margin:8px 0 12px;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.4;background:rgba(59,130,246,0.12);border:1px solid #3b82f6;color:var(--text);"></div>
+<!-- FTP-rise prompt — TOP placement so it's seen. Fires ONLY when the rider's
+     FTP looks HIGHER than set (intervals.icu estimate above current FTP); drops/
+     noise don't fire. Populated by loadWeeklyCalendar's eftp_drift handling. -->
+<div id="ftp-rise-banner" style="display:none;margin:8px 0 12px;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.4;background:rgba(234,179,8,0.12);border:1px solid var(--yellow);color:var(--text);"></div>
 <!-- FS1/OAuth migration prompt — fires (per launch) for any profile not yet on
      OAuth sign-in, so existing API-key users are nudged to the new flow. -->
 <div id="icu-migrate-banner" style="display:none;margin:8px 0 12px;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.5;background:rgba(59,130,246,0.12);border:1px solid #3b82f6;color:var(--text);">
@@ -4301,11 +4312,13 @@ async function loadPowerCurve(force=false) {
       if (nRides === 0 || needsBackfill) {
         placeholder.classList.remove('loading');
         placeholder.innerHTML = '<div style="font-size:12px;color:var(--text3);line-height:1.5;padding:8px 0;">'
-          + 'No cached power-curve data yet — your rides need a backfill before the curve can render.'
+          + 'No power data cached yet — syncing your rides from intervals.icu. The curve appears once they’re indexed.'
           + '<div style="margin-top:8px;">'
           + '<button class="btn" style="font-size:11px;padding:4px 10px;" '
-          + 'onclick="loadPowerCurve(true)">Refresh / backfill now</button>'
+          + 'onclick="loadPowerCurve(true)">Sync / refresh now</button>'
           + '</div></div>';
+        // Never leave a bare indefinite "Loading…" — say what's happening.
+        if (meta) meta.textContent = 'Syncing rides from intervals.icu…';
       } else {
         // Data is present — hide the duplicate card (legacy host) so the
         // primary canvas above is the only Power Curve surface visible.
@@ -4496,13 +4509,32 @@ function renderPowerCurve() {
     meta.textContent = `Window: ${winLbl} · ${n} rides · weight ${wkg} kg · CP ${cp} · W' ${wp} · Pmax ${pmax}`;
   }
 }
+// Top-of-page first-sync strip: spinner + "Syncing activities XXX of YYY (NN%)".
+function _setSyncTopbar(done, total, finished) {
+  const bar = document.getElementById('sync-topbar');
+  const txt = document.getElementById('sync-topbar-text');
+  if (!bar) return;
+  if (finished) { bar.style.display = 'none'; return; }
+  done = Number(done) || 0; total = Number(total) || 0;
+  const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  if (txt) {
+    txt.textContent = total > 0
+      ? `Syncing activities ${done} of ${total} (${pct}%)`
+      : 'Syncing activities from intervals.icu…';
+  }
+  bar.style.display = 'flex';
+}
+
 async function maybeKickBackfill(data) {
   if (_powerCurveBackfillSeen) return;
   if (!data || Number(data.n_rides || 0) >= 30) return;
   // Probe ICU list count vs cached count via the locked endpoint contract.
   const icuListN = Number(data.icu_list_count || 0);
   const cachedN = Number(data.n_rides || 0);
-  if (icuListN <= cachedN) return;
+  // Kick when the backend says a backfill is needed (fresh account) OR ICU has
+  // more activities than we've cached. Without the needs_backfill branch a
+  // freshly-linked rider (icu_list_count not yet populated) saw only "Loading…".
+  if (data.needs_backfill !== true && icuListN <= cachedN) return;
   // v1.8.9 Bug 3 — once-per-session-per-day guard. Prevents the toast from
   // re-firing on every page refresh (the backfill is idempotent on the
   // server but the toast noise is annoying).
@@ -4519,13 +4551,16 @@ async function maybeKickBackfill(data) {
   const bar = document.getElementById('power-curve-backfill-bar');
   if (!toast || !msg || !bar) return;
   toast.style.display = '';
-  const eta = Math.max(1, Math.round((icuListN - cachedN) / 60));
-  msg.textContent = `Backfilling ${icuListN - cachedN} rides from ICU history… ETA ${eta} min.`;
+  const remaining = Math.max(icuListN - cachedN, 0);
+  msg.textContent = remaining > 0
+    ? `Syncing ${remaining} activities from intervals.icu…`
+    : 'Syncing activities from intervals.icu…';
+  _setSyncTopbar(0, remaining || icuListN || 0, false);
   try {
     const r = await fetch('/api/profile/backfill-history', { method: 'POST' });
     const j = await r.json();
     const taskId = j && (j.task_id || (j.lock && j.lock.task_id));
-    if (!taskId) return;
+    if (!taskId) { _setSyncTopbar(0, 0, true); return; }
     const poll = async () => {
       try {
         const sr = await fetch('/api/profile/backfill-history/status?task_id=' + encodeURIComponent(taskId));
@@ -4537,16 +4572,19 @@ async function maybeKickBackfill(data) {
         const finished = sj.status === 'complete' || sj.state === 'done' || sj.state === 'error';
         if (finished || pct >= 100) {
           msg.textContent = `Synced ${done} of ${total} activities · done.`;
+          _setSyncTopbar(done, total, true);
           setTimeout(() => { toast.style.display = 'none'; loadPowerCurve(true); }, 2000);
           return;
         }
         msg.textContent = `Syncing activities — ${done} of ${total}…`;
+        _setSyncTopbar(done, total, false);
       } catch (_) {}
       setTimeout(poll, 5000);
     };
     setTimeout(poll, 3000);
   } catch (_) {
     msg.textContent = 'Backfill unavailable in this build.';
+    _setSyncTopbar(0, 0, true);
   }
 }
 
@@ -11852,11 +11890,14 @@ function retryPlanCatchup() {
 
 function _summarizeReadiness(rd) {
   if (!rd || typeof rd !== 'object') return 'checked';
-  const score = rd.readiness ?? rd.score ?? rd.composite ?? rd.readiness_score;
+  // Guard NaN: a new account has no readiness yet, so the raw value can be
+  // undefined / "" / NaN — `!= null` let those through into Math.round → "NaN".
+  const _n = Number(rd.readiness ?? rd.score ?? rd.composite ?? rd.readiness_score);
+  const score = Number.isFinite(_n) ? Math.round(_n) : null;
   const st = rd.state || rd.status || rd.band || rd.recommendation || rd.label;
-  if (st && score != null) return `${st} · ${Math.round(Number(score))}`;
+  if (st && score != null) return `${st} · ${score}`;
   if (st) return String(st);
-  if (score != null) return `readiness ${Math.round(Number(score))}`;
+  if (score != null) return `readiness ${score}`;
   return 'checked';
 }
 
@@ -12736,6 +12777,24 @@ function acceptEftp() {
   }
 }
 
+// Apply an FTP rise straight from the top banner (no dependency on the Settings
+// DOM). Persists via /api/profile/update-ftp so zones recompute everywhere.
+async function raiseFtp(val) {
+  val = parseInt(val, 10);
+  if (!val || val <= 0) { try { showToast('No FTP value to apply', 3000, 'warning'); } catch(_) {} return; }
+  try {
+    const r = await fetch('/api/profile/update-ftp', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ftp: val, method: 'eftp', source: 'eftp_icu', applied: true }),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    try { showToast(`FTP raised to ${val}W — zones updated.`, 4000, 'success'); } catch(_) {}
+    const b = document.getElementById('ftp-rise-banner'); if (b) b.style.display = 'none';
+    try { if (typeof loadSettings === 'function') loadSettings(); } catch(_) {}
+    try { if (typeof loadWeeklyCalendar === 'function') loadWeeklyCalendar(); } catch(_) {}
+  } catch (e) { try { showToast('Could not update FTP', 4000, 'error'); } catch(_) {} }
+}
+
 // v1.1.0 IMPL-HRV-RECOVERY — HRV4Training CSV upload + manual HRV entry.
 // POSTs the file to /api/wellness/import-hrv4training (multipart). Server
 // parses columns date, rmssd, hrv_baseline, recovery_points and skips rows
@@ -13317,21 +13376,24 @@ async function loadWeeklyCalendar() {
       ec.style.display = 'none';
     }
 
-    // eFTP drift notification
+    // FTP-rise prompt — render into the TOP banner so it's seen, and ONLY when
+    // the rider's FTP looks HIGHER than set (detected estimate above current FTP,
+    // i.e. diff_watts > 0). Drops / eFTP noise don't fire. Framed around FTP.
     const drift = week.eftp_drift;
-    if (drift && drift.should_update) {
-      const driftEl = document.getElementById('eftp-drift-alert');
-      if (!driftEl) {
-        ec?.insertAdjacentHTML('afterend',
-          `<div id="eftp-drift-alert" class="card" style="margin-bottom:12px;border-color:var(--yellow);padding:10px 14px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-              <div style="font-size:12px;">
-                eFTP changed: <b>${drift.detected_eftp}W</b> (${drift.diff_watts > 0 ? '+' : ''}${drift.diff_watts}W, ${drift.diff_pct}%)
-                <span style="color:var(--text3);"> — current FTP set to ${drift.current_ftp}W</span>
-              </div>
-              <button class="btn btn-primary" style="font-size:11px;" onclick="acceptEftp()">Update Zones</button>
-            </div>
-          </div>`);
+    const riseBanner = document.getElementById('ftp-rise-banner');
+    if (riseBanner) {
+      if (drift && drift.should_update && Number(drift.diff_watts) > 0) {
+        riseBanner.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+            <div><b>Your FTP looks higher 📈</b> — recent rides suggest about
+              <b>${drift.detected_eftp}W</b> (+${drift.diff_watts}W, ${drift.diff_pct}%) vs your
+              current <b>${drift.current_ftp}W</b>. Raising it updates your training zones.</div>
+            <button class="btn btn-primary" style="font-size:11px;white-space:nowrap;"
+              onclick="raiseFtp(${Number(drift.detected_eftp) || 0})">Raise FTP to ${drift.detected_eftp}W</button>
+          </div>`;
+        riseBanner.style.display = 'block';
+      } else {
+        riseBanner.style.display = 'none';
       }
     }
 

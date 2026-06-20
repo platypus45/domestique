@@ -2603,10 +2603,10 @@ window.addEventListener('unhandledrejection', function(e) {
           <label>FTP (watts) <span id="set-ftp-source-badge" style="display:none;font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;margin-left:6px;background:var(--surface2);color:var(--text2);border:1px solid var(--border);vertical-align:middle;"></span></label>
           <input type="number" id="set-ftp">
         </div>
-        <div class="form-group"><label>eFTP (Intervals.icu)</label>
+        <div class="form-group"><label>Your FTP on intervals.icu (eFTP)</label>
           <div style="display:flex;gap:8px;align-items:center;">
             <span id="set-eftp" style="font-size:18px;font-weight:700;">—</span>
-            <button class="btn btn-sm" onclick="acceptEftp()">Accept</button>
+            <button class="btn btn-sm" onclick="acceptEftp()" title="Copy your real FTP from intervals.icu into the FTP field — you can still edit it by hand.">Copy from intervals.icu →</button>
           </div>
         </div>
       </div>
@@ -12587,9 +12587,19 @@ async function saveIcuCredentials() {
 }
 
 function acceptEftp() {
+  // F1 — "Copy from intervals.icu": pull the rider's real (e)FTP from ICU into
+  // the editable FTP field so the planner's % targets use true numbers. The FTP
+  // field stays a manual override. Give clear feedback either way (was a silent
+  // no-op when ICU hadn't synced an eFTP yet).
   const txt = $('set-eftp').textContent;
   const val = parseInt(txt);
-  if (val > 0) { $('set-ftp').value = val; saveSettings(); }
+  if (val > 0) {
+    $('set-ftp').value = val;
+    saveSettings();
+    try { showToast(`FTP set to ${val}W from intervals.icu — edit it by hand any time.`, 4000, 'success'); } catch(_) {}
+  } else {
+    try { showToast('No eFTP from intervals.icu yet (needs a recent sync). Enter your FTP manually for now.', 5000, 'warning'); } catch(_) {}
+  }
 }
 
 // v1.1.0 IMPL-HRV-RECOVERY — HRV4Training CSV upload + manual HRV entry.

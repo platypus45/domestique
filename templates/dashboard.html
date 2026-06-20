@@ -13894,54 +13894,37 @@ async function openDayWorkout(sessionIdx) {
   // duration (e.g. "Tempo 45min — 4×8min @ 91%" or planner-emitted
   // "Tempo (45min)"). Stripping any embedded "(Nmin)" / "Nmin" so we
   // append exactly ONE canonical session-planned duration suffix.
-  const titleRaw = (session.display_name && session.display_name.trim())
-                 || (session.zwo_name && session.zwo_name.trim())
-                 || session.session_type;
-  const titleClass = String(titleRaw)
-    .replace(/\s*\(\s*\d+\s*min\s*\)\s*/gi, ' ')   // drop "(45min)"
-    .replace(/(?:^|\s)\d+\s*min(?=\s|$|—|-)/gi, ' ') // drop bare "45min"
-    .replace(/\s+/g, ' ').trim();
+  // v2.1.x B1 — SLOT-centric detail. Title/duration/TSS describe the PLANNED
+  // session (what the plan prescribes), NOT the matched library file. Titling by
+  // the file's display_name + duration made an O/U slot whose matched file was a
+  // Z2 read as a totally different session ("wrong session" + 3-4 conflicting
+  // durations). The matched file is now ONE secondary line; B5 makes the file
+  // actually fit the slot so the two agree (and the gap note disappears).
   const sessionDur = Number(session.duration_min) || 0;
   const fileDur = Number(session.zwo_duration_min) || 0;
-  // v1.8.17 — title duration reflects the MATCHED FILE (what the user
-  // actually downloads + rides), not the planner's target. Previously the
-  // title showed the planned duration (e.g. "(90min)") while the ZWO/FIT the
-  // user got was 61min — a direct contradiction the user flagged. When a
-  // library file is matched use its real duration; fall back to the planned
-  // duration only for a synthesised (file-less) session. The plan-vs-file
-  // gap is still surfaced by the showGap banner below.
-  const titleDur = (session.zwo_file && fileDur > 0) ? fileDur : sessionDur;
-  const heroTitle = `${titleClass} (${titleDur}min)`;
-  // Mismatch label: when the matched ZWO file is >10% off the session
-  // plan (in either direction) surface the gap explicitly so the user
-  // knows whether to pace, extend, or repeat the file.
+  const slotLabel = CAL_CONTENT_LABEL[session.content_class]
+                 || CAL_SESSION_LABEL[session.session_type]
+                 || String(session.session_type || 'Session').toUpperCase();
+  const heroTitle = `${slotLabel} (${sessionDur}min)`;
   const gapPct = (sessionDur > 0 && fileDur > 0)
     ? Math.abs(fileDur - sessionDur) / sessionDur
     : 0;
   const showGap = gapPct > 0.10;
-  const filenameDerived = (session.zwo_name || '').trim();
-  // Show "sampled from library" provenance subtitle when a library file
-  // is matched and its display_name differs from the bare zwo_name.
-  const displayNameStr = (session.display_name || '').trim();
-  const showProvenance = !!session.zwo_file
-    && displayNameStr
-    && filenameDerived
-    && filenameDerived.toLowerCase() !== displayNameStr.toLowerCase();
+  const matchedFile = (session.zwo_name || '').trim();
 
   let html = `<h2>${session.day_name} — ${esc(heroTitle)}</h2>`;
-  if (showGap) {
-    html += `<div style="font-size:11px;color:var(--orange);margin:-4px 0 8px;">Workout file is ${fileDur}min, session planned for ${sessionDur}min. Pace/extend on trainer.</div>`;
-  }
-  if (showProvenance) {
-    html += `<div style="font-size:11px;color:var(--text3);margin:-4px 0 8px;font-style:italic;">Source file: ${esc(filenameDerived)}</div>`;
+  if (session.zwo_file && matchedFile) {
+    const durNote = showGap ? ` · ${fileDur}min file — pace/extend to ${sessionDur}min` : '';
+    html += `<div style="font-size:11px;color:var(--text3);margin:-4px 0 8px;font-style:italic;">Matched library file: ${esc(matchedFile)}${durNote}</div>`;
   }
   html += `<div style="font-size:13px;color:var(--text2);margin:8px 0;">${esc(fixZeroMin(session.description) || '')}</div>`;
 
   // Stats grid
-  // v1.8.17 — Duration stat reflects the MATCHED FILE (titleDur), same as the
-  // hero title, so a 25min workout in a 60min slot reads "25min" not "60min".
+  // v2.1.x B1 — Duration stat reflects the PLANNED SLOT (sessionDur), same as the
+  // hero title; the matched file's own length is shown on the "Matched library
+  // file" line above when it differs.
   html += '<div style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0;">';
-  html += `<div class="metric"><div class="mv">${titleDur}min</div><div class="ml">Duration</div></div>`;
+  html += `<div class="metric"><div class="mv">${sessionDur}min</div><div class="ml">Duration</div></div>`;
   html += `<div class="metric"><div class="mv">${session.tss_estimate}</div><div class="ml">TSS</div></div>`;
   if (hr[0]) html += `<div class="metric"><div class="mv" style="color:var(--red);">${hr[0]}-${hr[1]}</div><div class="ml">HR (bpm)</div></div>`;
   if (pw[0]) html += `<div class="metric"><div class="mv" style="color:var(--accent);">${pw[0]}-${pw[1]}</div><div class="ml">Power (W)</div></div>`;

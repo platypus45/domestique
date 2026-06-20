@@ -1660,10 +1660,10 @@ window.addEventListener('unhandledrejection', function(e) {
        Renamed to a unique placeholder id so renderPowerCurve() targets
        only the canvas, and loadPowerCurve() can replace this placeholder
        once the response lands (or with a backfill prompt when n_rides==0). -->
-  <div class="card" style="margin-top:12px;">
-    <h3>Power Duration Curve</h3>
-    <div id="power-curve-loading-placeholder" class="loading">Loading...</div>
-  </div>
+  <!-- Legacy duplicate "Power Duration Curve" card removed: it was a redundant
+       second surface that showed a "Loading…" block then vanished once the real
+       Power Curve canvas (#power-curve-chart, above) rendered — confusing phantom.
+       loadPowerCurve() null-guards the old #power-curve-loading-placeholder. -->
 </div>
 
 <!-- v1.8.8 Bug 10 — Ride History section removed (homepage activity list +
@@ -4586,6 +4586,44 @@ async function maybeKickBackfill(data) {
     msg.textContent = 'Backfill unavailable in this build.';
     _setSyncTopbar(0, 0, true);
   }
+}
+
+// Reliable first-sync top-bar driver — runs on EVERY dashboard load (unlike
+// maybeKickBackfill, which bails at n_rides>=30 and is guarded once-per-day).
+// Shows the top strip whenever there's genuinely something to sync (the backend
+// reports live done/total), so a freshly-linked rider always sees the progress
+// even on reload. No-op for fully-synced accounts.
+async function pollFirstSyncTopbar() {
+  try {
+    const c = await (await fetch('/api/icu/connection')).json();
+    if (!c || !c.connected) return;
+    let pc;
+    try { pc = await (await fetch('/api/profile/power-curve?window_days=90')).json(); }
+    catch (_) { return; }
+    const need = pc && (pc.needs_backfill === true ||
+                        Number(pc.icu_list_count || 0) > Number(pc.n_rides || 0));
+    if (!need) return;  // nothing to sync → no strip
+    let j;
+    try { j = await (await fetch('/api/profile/backfill-history', { method: 'POST' })).json(); }
+    catch (_) { return; }
+    const taskId = j && (j.task_id || (j.lock && j.lock.task_id));
+    if (!taskId) return;
+    _setSyncTopbar(0, 0, false);  // show immediately (indeterminate until totals land)
+    const poll = async () => {
+      let sj;
+      try { sj = await (await fetch('/api/profile/backfill-history/status?task_id=' + encodeURIComponent(taskId))).json(); }
+      catch (_) { setTimeout(poll, 2500); return; }
+      const done = Number(sj.done || sj.backfilled || 0), total = Number(sj.total || 0);
+      if (sj.state === 'done' || sj.status === 'complete' || sj.state === 'error') {
+        _setSyncTopbar(done, total, true);  // hide
+        try { loadPowerCurve(true); } catch (_) {}
+        return;
+      }
+      _setSyncTopbar(done, total, false);
+      setTimeout(poll, 2500);
+    };
+    poll();
+  } catch (_) {}
 }
 
 // v1.3.0 IMPL-DASHBOARD — Fatigue Resistance panel.
@@ -16113,6 +16151,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // ICU OAuth: toast the callback bounce + refresh connection status on load.
   try { handleIcuOauthReturn(); } catch (_) {}
   try { maybePromptIcuMigration(); } catch (_) {}
+  // First-sync progress strip — reliable on every load (not gated like the
+  // power-curve card's maybeKickBackfill), so a fresh rider sees "Syncing X of Y".
+  try { pollFirstSyncTopbar(); } catch (_) {}
   try { loadIcuConnection(); } catch (_) {}
   // v4.1.0 U1: auto-open FTP-test modal for recent imported FITs.
   try { maybeShowFtpTestModal(); } catch(_) {}

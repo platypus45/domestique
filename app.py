@@ -6612,6 +6612,140 @@ def _cache_is_fresh(cache, now):
     return (now - ts).total_seconds() < _UPDATE_CHECK_CACHE_TTL_S
 
 
+# ───────────────────────────────────────────────────────────────────────────
+# intervals.icu OAuth — per-profile "Connect" (see IP_ICU_OAUTH.md). Additive:
+# the only change to the existing data path is training._auth_header() preferring
+# a Bearer token. client_id/secret are blank until ICU provisions them → /start
+# bounces with ?icu=unavailable and nothing about the API-key path changes.
+# ───────────────────────────────────────────────────────────────────────────
+_icu_oauth_states: dict = {}        # state -> {"profile_id": str, "ts": float}
+_ICU_OAUTH_STATE_TTL_S = 600        # 10 min (ICU's auth CODE itself expires in 2)
+
+
+def _icu_oauth_prune(now: float) -> None:
+    for _s, _v in list(_icu_oauth_states.items()):
+        if now - _v.get("ts", 0) > _ICU_OAUTH_STATE_TTL_S:
+            _icu_oauth_states.pop(_s, None)
+
+
+def _icu_oauth_reset_throttle() -> None:
+    """Mirror the API-key save: let the next sync run immediately on fresh creds."""
+    try:
+        _write_last_sync_at(0)
+    except Exception:
+        pass
+    try:
+        import db as _db
+        _db._auth_disabled = False
+        _db._consecutive_failures = 0
+        _db._last_sync_error = None
+    except Exception:
+        pass
+
+
+@app.get("/oauth/icu/start")
+def api_oauth_icu_start():
+    """Begin the ICU OAuth flow: mint a CSRF state, 302 to ICU's authorize page.
+    Blank client_id (not yet provisioned) → bounce back with ?icu=unavailable."""
+    from fastapi.responses import RedirectResponse
+    from profile_manager import ProfileManager
+    import secrets as _secrets
+    from urllib.parse import urlencode
+    if not getattr(config, "ICU_OAUTH_CLIENT_ID", ""):
+        return RedirectResponse(url="/?icu=unavailable")
+    now = time.time()
+    _icu_oauth_prune(now)
+    try:
+        profile_id = ProfileManager.get().active_id or ""
+    except Exception:
+        profile_id = ""
+    state = _secrets.token_urlsafe(32)
+    _icu_oauth_states[state] = {"profile_id": profile_id, "ts": now}
+    params = urlencode({
+        "client_id": config.ICU_OAUTH_CLIENT_ID,
+        "redirect_uri": config.ICU_OAUTH_REDIRECT_URI,
+        "scope": config.ICU_OAUTH_SCOPES,
+        "state": state,
+    })
+    return RedirectResponse(url=f"{config.ICU_OAUTH_AUTHORIZE_URL}?{params}")
+
+
+@app.get("/oauth/icu/callback")
+def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
+                           error: str = Query("")):
+    """ICU redirects here after the user authorizes. Verify the state (CSRF,
+    single-use, 10-min TTL), exchange the code for a bearer token within ICU's
+    2-min window, persist it to the active profile, then bounce to the app.
+    Never echoes the code/secret into a redirect."""
+    from fastapi.responses import RedirectResponse
+    from profile_manager import ProfileManager
+    now = time.time()
+    _icu_oauth_prune(now)
+    st = _icu_oauth_states.pop(state, None)        # single-use
+    if error:
+        return RedirectResponse(url="/?icu=error&reason=denied")
+    if not st or not code:
+        return RedirectResponse(url="/?icu=error&reason=state")
+    try:
+        import httpx
+        resp = httpx.post(config.ICU_OAUTH_TOKEN_URL, data={
+            "client_id": config.ICU_OAUTH_CLIENT_ID,
+            "client_secret": config.ICU_OAUTH_CLIENT_SECRET,
+            "code": code,
+        }, timeout=15)
+        if resp.status_code != 200:
+            raise RuntimeError(f"token endpoint returned {resp.status_code}")
+        tok = resp.json()
+        access_token = tok.get("access_token")
+        athlete = tok.get("athlete") or {}
+        athlete_id = str(athlete.get("id") or "")
+        if not access_token:
+            raise RuntimeError("no access_token in token response")
+        ProfileManager.get().save_icu_token(access_token, athlete_id or None)
+        # Unshadow stale module-level config.ICU_* so the proxy re-resolves to the
+        # freshly-saved token immediately (same fix as the API-key save path).
+        for _attr in ("ICU_ATHLETE_ID", "ICU_API_KEY", "ICU_ACCESS_TOKEN"):
+            try:
+                delattr(config, _attr)
+            except AttributeError:
+                pass
+        _icu_oauth_reset_throttle()
+        return RedirectResponse(url="/?icu=connected")
+    except Exception:
+        _log.exception("ICU OAuth token exchange failed")
+        return RedirectResponse(url="/?icu=error&reason=exchange")
+
+
+@app.post("/api/icu/disconnect")
+def api_icu_disconnect():
+    """Clear the OAuth token for the active profile (revert to API-key / none)."""
+    from profile_manager import ProfileManager
+    try:
+        ProfileManager.get().save_icu_token("", None)
+        try:
+            delattr(config, "ICU_ACCESS_TOKEN")
+        except AttributeError:
+            pass
+        return {"ok": True}
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.get("/api/icu/connection")
+def api_icu_connection():
+    """Connection state for the UI: method = oauth / apikey / none."""
+    token = getattr(config, "ICU_ACCESS_TOKEN", "") or ""
+    key = getattr(config, "ICU_API_KEY", "") or ""
+    aid = getattr(config, "ICU_ATHLETE_ID", "") or ""
+    method = "oauth" if token else ("apikey" if key else "none")
+    return {
+        "connected": bool(token or key),
+        "method": method,
+        "athlete_id": aid,
+        "oauth_available": bool(getattr(config, "ICU_OAUTH_CLIENT_ID", "")),
+    }
+
+
 @app.get("/api/update/check")
 def api_update_check(force: int = Query(0)):
     """Live GitHub-Releases poll with 6h cache + platform-specific asset.

@@ -5299,6 +5299,12 @@ def generate_plan(
                 s.tss_estimate = round((s.tss_estimate or 0) * _scale)
                 s.duration_min = _eff
 
+    # B3 — guarantee each step-back week is the lightest in its block. Runs LAST,
+    # after the per-day clamp above could have trimmed a build week below the
+    # deload (e.g. a pre-taper peak week), which would invert the 3-up-1-down
+    # rhythm. Only shrinks easy volume in the deload; never touches build weeks.
+    _enforce_stepback_is_lightest(weeks)
+
     return phases, weeks
 
 
@@ -5858,6 +5864,59 @@ def _enforce_weekly_volume_ceiling(weeks: list, recent_weekly_tss=None, goal=Non
             slot.description = "Rest — weekly volume ceiling (recent load)"
             slot.zwo_file = ""
             slot.zwo_name = ""
+
+
+def _enforce_stepback_is_lightest(weeks: list) -> None:
+    """B3 — a step-back (deload) week must be the lightest in its block.
+
+    plan_week gives step-back weeks FIXED easy durations (recovery / Z2 /
+    long_Z2) while build weeks scale with the load-based ceiling, so a light
+    build week — typically a peak week just before the taper — can occasionally
+    end up BELOW the deload, inverting the 3-up-1-down rhythm (tester saw
+    W4>W3, W8>W6). After every other volume pass (incl. the authoritative
+    per-day clamp), shrink each step-back week's easy aerobic sessions until its
+    summed TSS sits clearly (~10%) below the lightest build week that precedes
+    it in the same block. Only easy volume is touched — never HIT, never adds
+    load; bounded loop (≤ sessions per week, stops once all easy slots hit the
+    floor).
+    """
+    def _wk_tss(w):
+        return sum((s.tss_estimate or 0) for s in w.sessions
+                   if s and s.session_type != "rest")
+    for i, wk in enumerate(weeks):
+        if not getattr(wk, "is_stepback", False):
+            continue
+        if getattr(wk, "phase", "") == "taper":
+            continue
+        # Block = the consecutive preceding non-stepback, non-taper weeks (back
+        # to the previous step-back or the plan start).
+        builds = []
+        j = i - 1
+        while j >= 0 and not getattr(weeks[j], "is_stepback", False):
+            if getattr(weeks[j], "phase", "") != "taper":
+                builds.append(weeks[j])
+            j -= 1
+        if not builds:
+            continue
+        target = min(_wk_tss(b) for b in builds) * 0.90
+        for _ in range(len(wk.sessions) + 1):
+            if _wk_tss(wk) <= target:
+                break
+            easy = [(idx, s) for idx, s in enumerate(wk.sessions)
+                    if s and s.session_type != "rest"
+                    and (s.duration_min or 0) > _VOLUME_MIN_SESSION_MIN
+                    and not _session_is_hit(s)]
+            if not easy:
+                break  # every easy slot already at/under the floor
+            easy.sort(key=lambda kv: -(kv[1].duration_min or 0))
+            _, slot = easy[0]
+            tss_per_min = ((slot.tss_estimate or 0) / slot.duration_min
+                           if slot.duration_min else 0.7)
+            overage = _wk_tss(wk) - target
+            cut_min = int(round(overage / tss_per_min)) if tss_per_min else 0
+            new_dur = max(_VOLUME_MIN_SESSION_MIN, slot.duration_min - max(1, cut_min))
+            slot.duration_min = new_dur
+            slot.tss_estimate = round(tss_per_min * new_dur)
 
 
 def _demote_hit_window(weeks: list, center_date, days: int, library=None,

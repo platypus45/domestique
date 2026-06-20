@@ -1186,6 +1186,13 @@ class Goal:
     # target_date + event_* scalars; B/C entries here get a proportionate mini-taper.
     # Empty = today's single-A behaviour, unchanged.
     events: list = field(default_factory=list)
+    # FS1 (IP_PLANNER_MODES): plan CONSTRUCTION mode.
+    #   "auto"       — the score-weighted content sampler (default, unchanged).
+    #   "fixed_core" — blueprint engine: 1 HIT type/week, reps progress, Z2 core scales.
+    #   "template"   — blueprint loaded from a shipped preset (see PLANNER_TEMPLATES).
+    # "auto" everywhere it isn't set keeps every existing plan byte-for-byte.
+    plan_mode: str = "auto"
+    template_id: str = ""   # only when plan_mode == "template"
 
     def max_hours_for_day(self, weekday: int) -> float:
         """Get max training hours for a specific weekday (0=Mon..6=Sun)."""
@@ -4024,6 +4031,142 @@ def _make_session_from_row(row: dict, day: date, day_name: str, phase_name: str)
     return sess
 
 
+# ── FS1 (IP_PLANNER_MODES): blueprint engine for fixed_core / template modes ───
+#
+# Instead of sampling a fresh workout per slot (the `auto` path), the blueprint
+# engine expands a REPEATABLE week: exactly one HIT session of a fixed type per
+# build week (reps progress by week_in_phase), a constant Z2 endurance core that
+# scales with availability + an ascending B6 ramp, and no HIT on deload weeks.
+# It returns the SAME 7-element Mon..Sun PlannedSession list the sampler does, so
+# every downstream pass (fallback match_zwo + B1/B3/B5/tapers/clamp) is reused
+# unchanged. Files are still chosen by match_zwo (B5 gates apply); the blueprint
+# fixes the TYPE + progression, not the file.
+
+# Default per-phase HIT quality for fixed_core (mirrors the block-focus order:
+# VO2 block in build1, threshold toward the event). reps progress start→max.
+_BLUEPRINT_DEFAULT_HIT: dict[str, dict] = {
+    "base":   {"session_type": "sweetspot", "progression": {"kind": "reps", "start": 2, "step": 1, "max": 4}},
+    "build1": {"session_type": "vo2max",    "progression": {"kind": "reps", "start": 4, "step": 1, "max": 6}},
+    "build2": {"session_type": "threshold", "progression": {"kind": "reps", "start": 3, "step": 1, "max": 5}},
+    "peak":   {"session_type": "threshold", "progression": {"kind": "reps", "start": 3, "step": 1, "max": 5}},
+    "taper":  {"session_type": "vo2max",    "progression": {"kind": "reps", "start": 2, "step": 0, "max": 2}},
+}
+
+# Shipped templates (D6). Each is a per-phase HIT blueprint; phases not named here
+# fall back to _BLUEPRINT_DEFAULT_HIT. content-based types only (no filenames).
+PLANNER_TEMPLATES: dict[str, dict] = {
+    "polarized_base": {
+        "name": "Polarized Base",
+        "phases": {
+            "base":   {"session_type": "vo2max",    "progression": {"kind": "reps", "start": 3, "step": 1, "max": 5}},
+            "build1": {"session_type": "vo2max",    "progression": {"kind": "reps", "start": 4, "step": 1, "max": 6}},
+            "build2": {"session_type": "threshold", "progression": {"kind": "reps", "start": 3, "step": 1, "max": 5}},
+        },
+    },
+    "ftp_builder": {
+        "name": "FTP Builder",
+        "phases": {
+            "base":   {"session_type": "sweetspot", "progression": {"kind": "reps", "start": 2, "step": 1, "max": 4}},
+            "build1": {"session_type": "sweetspot", "progression": {"kind": "reps", "start": 3, "step": 1, "max": 5}},
+            "build2": {"session_type": "threshold", "progression": {"kind": "reps", "start": 2, "step": 1, "max": 4}},
+            "peak":   {"session_type": "threshold", "progression": {"kind": "reps", "start": 3, "step": 1, "max": 4}},
+        },
+    },
+}
+
+
+def _blueprint_hit_for(goal, phase_name: str) -> dict:
+    """Resolve the HIT blueprint for a phase: template preset → default."""
+    if getattr(goal, "plan_mode", "auto") == "template":
+        tmpl = PLANNER_TEMPLATES.get(getattr(goal, "template_id", "") or "")
+        if tmpl and phase_name in tmpl.get("phases", {}):
+            return tmpl["phases"][phase_name]
+    return _BLUEPRINT_DEFAULT_HIT.get(phase_name, _BLUEPRINT_DEFAULT_HIT["build1"])
+
+
+def _blueprint_progress(prog: dict, week_in_phase: int) -> "tuple[int, int]":
+    """(reps, target_session_min) for this week. reps grow start→max, clamped.
+    Duration is a coarse target (warm-up/cool-down + work) so match_zwo can find
+    a sane file; exact structure is the file's, the slot fixes type + length."""
+    start = int(prog.get("start", 4)); step = int(prog.get("step", 1))
+    mx = int(prog.get("max", start)); kind = prog.get("kind", "reps")
+    reps = min(mx, start + step * max(0, week_in_phase))
+    dur = 40 + reps * (5 if kind == "duration" else 4)
+    return reps, dur
+
+
+def expand_blueprint_week(
+    phase: "Phase", budget: "IntensityBudget", week_num: int, week_start: date,
+    available_days: list, rest_days: list, daily_max_hours: dict | None,
+    max_weekday_hours: float, max_weekend_hours: float, is_stepback: bool,
+    week_in_phase: int, goal,
+) -> list["PlannedSession"]:
+    """fixed_core / template week → 7-element Mon..Sun PlannedSession list."""
+    def _cap_min(weekday: int) -> int:
+        if daily_max_hours and weekday in daily_max_hours:
+            return int(daily_max_hours[weekday] * 60)
+        return int((max_weekend_hours if weekday >= 5 else max_weekday_hours) * 60)
+
+    bp_hit = _blueprint_hit_for(goal, phase.name)
+    # Lay rest vs train by offset from week_start (matches plan_week + the caller).
+    slots: list = []
+    for off in range(7):
+        d = week_start + timedelta(days=off)
+        wd = d.weekday()
+        if wd in rest_days or wd not in available_days:
+            slots.append(PlannedSession(
+                day=d, day_name=d.strftime("%a"), session_type="rest",
+                duration_min=0, tss_estimate=0,
+                description="Rest — recovery takes priority"))
+        else:
+            slots.append((d, wd))  # training placeholder
+
+    train_i = [i for i, s in enumerate(slots) if isinstance(s, tuple)]
+    # One HIT per build week (D2); none on a deload (B3/B4 keep deloads easy).
+    hit_i = None
+    if not is_stepback and budget.hit_count_max > 0 and train_i:
+        weekday_train = [i for i in train_i if slots[i][1] < 5] or train_i
+        hit_i = weekday_train[len(weekday_train) // 2]
+
+    for i in train_i:
+        d, wd = slots[i]
+        cap = _cap_min(wd)
+        is_weekend = wd >= 5
+        if i == hit_i:
+            st = bp_hit["session_type"]
+            reps, dur = _blueprint_progress(bp_hit.get("progression", {}), week_in_phase)
+            ceil = TYPE_CEILING.get(st)
+            eff = min(cap, dur) if ceil is None else min(cap, dur, ceil)
+            eff = max(eff, 30)
+            slots[i] = PlannedSession(
+                day=d, day_name=d.strftime("%a"), session_type=st,
+                duration_min=eff, tss_estimate=round(eff / 60 * TSS_PER_HOUR.get(st, 75)),
+                description=f"{CAL_SESSION_LABEL_SAFE(st)} — {reps} reps (fixed-core; progresses weekly)")
+        else:
+            st = "long_z2" if is_weekend else "z2"
+            if is_stepback:
+                dur = min(cap, 90 if is_weekend else 50)
+            else:
+                # B6: ascend the Z2 core across the phase's build weeks.
+                base = 150 if is_weekend else 75
+                dur = min(cap, base + max(0, week_in_phase) * 10)
+            dur = max(dur, 30)
+            slots[i] = PlannedSession(
+                day=d, day_name=d.strftime("%a"), session_type=st,
+                duration_min=dur, tss_estimate=round(dur / 60 * TSS_PER_HOUR["z2"]),
+                description=f"{'Long ' if is_weekend else ''}Z2 endurance (fixed-core base)")
+    return slots
+
+
+def CAL_SESSION_LABEL_SAFE(st: str) -> str:
+    """Readable label for a session_type (server-side mirror of the UI map)."""
+    return {
+        "vo2max": "VO2max", "threshold": "Threshold", "sweetspot": "Sweet Spot",
+        "overunder": "Over-Under", "sprint": "Sprints", "tempo": "Tempo",
+        "z2": "Z2", "long_z2": "Long Z2", "recovery": "Recovery",
+    }.get(st, st.upper())
+
+
 def sample_week_workouts(
     phase: "Phase",
     budget: "IntensityBudget",
@@ -5028,31 +5171,50 @@ def generate_plan(
                              and phase.name in ("build2", "peak"))
                          else None)
                 # F1 (v2.1/B2): block focus for this week (None unless opt-in).
-                block_focus = _block_focus_for(phase.name, goal, is_stepback)
+                # FS1 (D4): a blueprint mode owns its own per-phase focus → no
+                # block-periodization concentration on top.
+                _plan_mode = getattr(goal, "plan_mode", "auto")
+                block_focus = (None if _plan_mode in ("fixed_core", "template")
+                               else _block_focus_for(phase.name, goal, is_stepback))
                 pw.block_focus = block_focus
-                sampled = sample_week_workouts(
-                    phase=phase, budget=budget, library=library,
-                    used_names=used_names_dict,
-                    week_num=week_num, seed_salt=seed_salt,
-                    week_start=cursor,
-                    available_days=goal.available_days,
-                    rest_days=goal.rest_days,
-                    daily_max_hours=goal.daily_max_hours,
-                    max_weekday_hours=goal.max_weekday_hours,
-                    max_weekend_hours=goal.max_weekend_hours,
-                    is_stepback=is_stepback,
-                    pool_index=pool_index,
-                    week_in_phase=week_in_phase,
-                    recent_hit_types=phase_rot,
-                    seen_cc_dur_tuples=seen_cc_dur_tuples,
-                    plan_pick_counts=plan_pick_counts,
-                    class_session_counts=class_session_counts,
-                    class_distinct_files=class_distinct_files,
-                    plan_total_weeks=plan_total_weeks,
-                    goal_type=getattr(goal, "goal_type", "general"),
-                    emphasis_profile=_emph,
-                    block_focus=block_focus,
-                )
+                if _plan_mode in ("fixed_core", "template"):
+                    # FS1 — blueprint engine (deterministic repeatable week). Same
+                    # 7-slot shape as the sampler; downstream passes are reused.
+                    sampled = expand_blueprint_week(
+                        phase=phase, budget=budget, week_num=week_num,
+                        week_start=cursor,
+                        available_days=goal.available_days,
+                        rest_days=goal.rest_days,
+                        daily_max_hours=goal.daily_max_hours,
+                        max_weekday_hours=goal.max_weekday_hours,
+                        max_weekend_hours=goal.max_weekend_hours,
+                        is_stepback=is_stepback,
+                        week_in_phase=week_in_phase, goal=goal,
+                    )
+                else:
+                    sampled = sample_week_workouts(
+                        phase=phase, budget=budget, library=library,
+                        used_names=used_names_dict,
+                        week_num=week_num, seed_salt=seed_salt,
+                        week_start=cursor,
+                        available_days=goal.available_days,
+                        rest_days=goal.rest_days,
+                        daily_max_hours=goal.daily_max_hours,
+                        max_weekday_hours=goal.max_weekday_hours,
+                        max_weekend_hours=goal.max_weekend_hours,
+                        is_stepback=is_stepback,
+                        pool_index=pool_index,
+                        week_in_phase=week_in_phase,
+                        recent_hit_types=phase_rot,
+                        seen_cc_dur_tuples=seen_cc_dur_tuples,
+                        plan_pick_counts=plan_pick_counts,
+                        class_session_counts=class_session_counts,
+                        class_distinct_files=class_distinct_files,
+                        plan_total_weeks=plan_total_weeks,
+                        goal_type=getattr(goal, "goal_type", "general"),
+                        emphasis_profile=_emph,
+                        block_focus=block_focus,
+                    )
                 # (v1.11.0 event long-ride progression is applied as a final pass
                 #  at the END of generate_plan — after all duration/re-match passes.)
                 # Trim rotation window to last 4 weeks worth of picks (≤3 HITs/wk
@@ -5128,15 +5290,20 @@ def generate_plan(
     # v4.6.1 PLANNER-VARIETY+RONNESTAD: hard floor for build2 and peak phases
     # — each must include ≥1 anaerobic AND ≥1 neuromuscular AND ≥2 vo2_short
     # workouts across the phase. Post-sampling check + swap if floor not met.
-    _enforce_build2_peak_hard_floor(weeks, pool_index, plan_pick_counts,
-                                    class_session_counts, class_distinct_files,
-                                    used_names_dict, used_names_set)
+    # FS1: these diversification floors are the AUTO sampler's variety contract;
+    # they INJECT extra HIT types and would break fixed_core/template's "one HIT
+    # type per week" promise. Skip them for blueprint modes (the blueprint owns
+    # the HIT structure). _enforce_weekly_hit_cap below still runs (a no-op at 1).
+    if getattr(goal, "plan_mode", "auto") == "auto":
+        _enforce_build2_peak_hard_floor(weeks, pool_index, plan_pick_counts,
+                                        class_session_counts, class_distinct_files,
+                                        used_names_dict, used_names_set)
 
-    # v4.6.3 RONNESTAD-FIX: hard floor of ≥1 Rønnestad-tagged file per build1
-    # / build2 / peak. Rønnestad spans multiple content_classes (vo2_short,
-    # neuromuscular, threshold, recovery) so the per-class floor above can't
-    # express the constraint — runs as a separate pass.
-    _enforce_ronnestad_floor(weeks, pool_index, plan_pick_counts)
+        # v4.6.3 RONNESTAD-FIX: hard floor of ≥1 Rønnestad-tagged file per build1
+        # / build2 / peak. Rønnestad spans multiple content_classes (vo2_short,
+        # neuromuscular, threshold, recovery) so the per-class floor above can't
+        # express the constraint — runs as a separate pass.
+        _enforce_ronnestad_floor(weeks, pool_index, plan_pick_counts)
 
     # FIX-1b (safety): FINAL guaranteed weekly HIT cap. Runs AFTER all floors
     # (which target per-phase coverage and may overshoot a week's per-week
@@ -7751,31 +7918,47 @@ def regenerate_from_today(
             # F1 (v2.1/B6): keep blocks on the recalc path — recompute focus from
             # the (adjusted) goal + phase so a recalc'd block plan stays blocked.
             # None unless goal.block_periodization is on (default-off parity).
-            block_focus = _block_focus_for(phase.name, adjusted_goal, is_stepback)
+            # FS1 — keep a fixed plan FIXED on "update plan": blueprint modes
+            # re-expand deterministically here too (else regenerate would reshuffle
+            # via the sampler). auto path unchanged.
+            _bp_mode = getattr(adjusted_goal, "plan_mode", "auto") in ("fixed_core", "template")
+            block_focus = None if _bp_mode else _block_focus_for(phase.name, adjusted_goal, is_stepback)
             pw.block_focus = block_focus
-            sampled = sample_week_workouts(
-                phase=phase, budget=budget, library=library,
-                used_names=used_names_dict,
-                week_num=week_num, seed_salt=seed_salt,
-                week_start=cursor,
-                available_days=adjusted_goal.available_days,
-                rest_days=adjusted_goal.rest_days,
-                daily_max_hours=adjusted_goal.daily_max_hours,
-                max_weekday_hours=adjusted_goal.max_weekday_hours,
-                max_weekend_hours=adjusted_goal.max_weekend_hours,
-                is_stepback=is_stepback,
-                pool_index=pool_index,
-                week_in_phase=week_in_phase,
-                recent_hit_types=phase_rot,
-                seen_cc_dur_tuples=seen_cc_dur_tuples,
-                plan_pick_counts=plan_pick_counts,
-                class_session_counts=class_session_counts,
-                class_distinct_files=class_distinct_files,
-                plan_total_weeks=plan_total_weeks_rg,
-                goal_type=getattr(adjusted_goal, "goal_type", "general"),
-                emphasis_profile=_emph,
-                block_focus=block_focus,
-            )
+            if _bp_mode:
+                sampled = expand_blueprint_week(
+                    phase=phase, budget=budget, week_num=week_num, week_start=cursor,
+                    available_days=adjusted_goal.available_days,
+                    rest_days=adjusted_goal.rest_days,
+                    daily_max_hours=adjusted_goal.daily_max_hours,
+                    max_weekday_hours=adjusted_goal.max_weekday_hours,
+                    max_weekend_hours=adjusted_goal.max_weekend_hours,
+                    is_stepback=is_stepback, week_in_phase=week_in_phase,
+                    goal=adjusted_goal,
+                )
+            else:
+                sampled = sample_week_workouts(
+                    phase=phase, budget=budget, library=library,
+                    used_names=used_names_dict,
+                    week_num=week_num, seed_salt=seed_salt,
+                    week_start=cursor,
+                    available_days=adjusted_goal.available_days,
+                    rest_days=adjusted_goal.rest_days,
+                    daily_max_hours=adjusted_goal.daily_max_hours,
+                    max_weekday_hours=adjusted_goal.max_weekday_hours,
+                    max_weekend_hours=adjusted_goal.max_weekend_hours,
+                    is_stepback=is_stepback,
+                    pool_index=pool_index,
+                    week_in_phase=week_in_phase,
+                    recent_hit_types=phase_rot,
+                    seen_cc_dur_tuples=seen_cc_dur_tuples,
+                    plan_pick_counts=plan_pick_counts,
+                    class_session_counts=class_session_counts,
+                    class_distinct_files=class_distinct_files,
+                    plan_total_weeks=plan_total_weeks_rg,
+                    goal_type=getattr(adjusted_goal, "goal_type", "general"),
+                    emphasis_profile=_emph,
+                    block_focus=block_focus,
+                )
             if len(phase_rot) > 12:
                 del phase_rot[: len(phase_rot) - 12]
             for nm in used_names_dict:
@@ -8157,9 +8340,24 @@ def recalculate_plan(
             # F1 (v2.1/B6): keep blocks on the recalc path — recompute focus from
             # the (adjusted) goal + phase so a recalc'd block plan stays blocked.
             # None unless goal.block_periodization is on (default-off parity).
-            block_focus = _block_focus_for(phase.name, adjusted_goal, is_stepback)
+            # FS1 — blueprint modes re-expand deterministically on reforecast too
+            # (a fixed plan must not reshuffle when the plan is recalc'd).
+            _bp_mode = getattr(adjusted_goal, "plan_mode", "auto") in ("fixed_core", "template")
+            block_focus = None if _bp_mode else _block_focus_for(phase.name, adjusted_goal, is_stepback)
             pw.block_focus = block_focus
-            sampled = sample_week_workouts(
+            if _bp_mode:
+                sampled = expand_blueprint_week(
+                    phase=phase, budget=budget, week_num=week_num, week_start=cursor,
+                    available_days=adjusted_goal.available_days,
+                    rest_days=adjusted_goal.rest_days,
+                    daily_max_hours=adjusted_goal.daily_max_hours,
+                    max_weekday_hours=adjusted_goal.max_weekday_hours,
+                    max_weekend_hours=adjusted_goal.max_weekend_hours,
+                    is_stepback=is_stepback, week_in_phase=week_in_phase,
+                    goal=adjusted_goal,
+                )
+            else:
+                sampled = sample_week_workouts(
                 phase=phase, budget=budget, library=library,
                 used_names=used_names_dict,
                 week_num=week_num, seed_salt=seed_salt,

@@ -2113,6 +2113,23 @@ window.addEventListener('unhandledrejection', function(e) {
           <span class="hint" title="Concentrate each build/peak phase on ONE quality per ~3-4 week block (VO2 block then threshold block toward your event) instead of mixing every hard type weekly. Evidence is strongest for trained cyclists with adequate volume; default OFF." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span>
         </label></div>
       </div>
+      <!-- FS1 (IP_PLANNER_MODES): plan construction mode. -->
+      <div class="form-row">
+        <div class="form-group"><label>Plan style
+          <span class="hint" title="Automatic: a varied, auto-adapting plan drawn from the full library. Fixed-core (repeatable): the same weekly shape — one hard session type per phase that progresses by reps, with a Z2 base that scales to your time. Template: a ready-made fixed-core blueprint." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span></label>
+          <select id="plan-mode" onchange="onPlanModeChange()">
+            <option value="auto" selected>Automatic (varied)</option>
+            <option value="fixed_core">Fixed-core (repeatable)</option>
+            <option value="template">Template (preset)</option>
+          </select>
+        </div>
+        <div class="form-group" id="plan-template-group" style="display:none;"><label>Template</label>
+          <select id="plan-template" onchange="refreshPlanPreview()">
+            <option value="polarized_base">Polarized Base</option>
+            <option value="ftp_builder">FTP Builder</option>
+          </select>
+        </div>
+      </div>
       <div id="plan-event-fields">
         <div class="form-row">
           <!-- v1.8.9 Bug 8 — oninput syncs to plan-weeks via _syncPlanDateToWeeks(). -->
@@ -9443,6 +9460,14 @@ function togglePlanFields() {
   refreshPlanPreview();
 }
 
+// FS1 — show the template picker only for plan_mode=template.
+function onPlanModeChange() {
+  const mode = ($('plan-mode') || {}).value || 'auto';
+  const grp = $('plan-template-group');
+  if (grp) grp.style.display = (mode === 'template') ? '' : 'none';
+  refreshPlanPreview();
+}
+
 // v4.6.0 B2: live phase preview — call /api/plan/preview so the right
 // panel uses the SAME derive_phases() logic as /api/plan/generate.
 // v1.8.8 Bug 6 — weeks↔event-date single source of truth. Earlier the
@@ -9927,6 +9952,9 @@ async function generatePlan() {
     daily_availability: dailyHours,
     distribution: ($('plan-distribution') || {}).value || 'polarized',  // J1
     block_periodization: (($('plan-block-periodization') || {}).checked) || false,  // F1
+    plan_mode: ($('plan-mode') || {}).value || 'auto',  // FS1
+    template_id: (($('plan-mode') || {}).value === 'template')
+      ? (($('plan-template') || {}).value || '') : '',  // FS1
   };
   if (body.goal === 'event') {
     body.event_date = $('plan-edate').value || null;

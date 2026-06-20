@@ -2651,31 +2651,6 @@ window.addEventListener('unhandledrejection', function(e) {
         <button class="btn btn-sm" id="icu-disconnect-btn" style="display:none;" onclick="icuDisconnect()">Disconnect</button>
         <div style="font-size:11px;color:var(--text3);margin-top:6px;">Log in at intervals.icu and authorize Domestique — no copy-pasting keys.</div>
       </div>
-      <!-- ADVANCED / fallback: manual API key (also used if OAuth is unavailable). -->
-      <div style="margin-bottom:6px;">
-        <a href="#" id="icu-apikey-toggle" style="font-size:12px;color:var(--text2);text-decoration:underline;" onclick="event.preventDefault();const r=$('icu-apikey-block');r.style.display=r.style.display==='none'?'block':'none';">Advanced: paste an API key instead</a>
-      </div>
-      <div id="icu-apikey-block" style="display:none;">
-        <div class="form-row">
-          <div class="form-group" style="flex:1;"><label>API Key</label>
-            <div style="display:flex;gap:6px;align-items:center;">
-              <input type="password" id="set-icu-api-key" placeholder="Paste your API key" style="flex:1;">
-              <button class="btn btn-sm" onclick="const inp=$('set-icu-api-key');inp.type=inp.type==='password'?'text':'password';this.textContent=inp.type==='password'?'Show':'Hide';">Show</button>
-            </div>
-          </div>
-        </div>
-        <!-- v4.5.3: athlete ID is auto-detected from API key via /api/v1/athlete/0. -->
-        <div id="icu-athlete-id-detected" style="display:none;font-size:12px;color:var(--green);margin-bottom:8px;padding:6px 10px;background:rgba(76,175,80,0.08);border-radius:4px;"></div>
-        <div style="margin-bottom:8px;">
-          <a href="#" id="icu-advanced-toggle" style="font-size:12px;color:var(--text2);text-decoration:underline;" onclick="event.preventDefault();const r=$('icu-athlete-id-row');r.style.display=r.style.display==='none'?'block':'none';this.textContent=r.style.display==='none'?'Advanced: enter athlete ID manually':'Hide advanced';">Advanced: enter athlete ID manually</a>
-        </div>
-        <div class="form-row" id="icu-athlete-id-row" style="display:none;">
-          <div class="form-group" style="flex:1;"><label>Athlete ID (optional)</label>
-            <input type="text" id="set-icu-athlete-id" placeholder="(auto-detected from API key)"></div>
-        </div>
-        <button class="btn btn-primary" onclick="saveIcuCredentials()">Save ICU Credentials</button>
-        <span id="icu-saved" style="color:var(--green);font-size:12px;margin-left:8px;display:none;">Saved</span>
-      </div>
     </div>
 
     <!-- v1.1.0 IMPL-HRV-RECOVERY — HRV4Training CSV import + manual HRV entry.
@@ -3046,7 +3021,7 @@ document.querySelectorAll('.tab[data-tab]').forEach(t => {
                        initAvailCalendar();
                        loadCapabilityProjection();
                        loadMissedSuggestions();
-                     }, settings:()=>{loadSettings();loadIcuCredentials();loadIcuConnection();}, library:loadWorkouts,
+                     }, settings:()=>{loadSettings();loadIcuConnection();}, library:loadWorkouts,
                      dfa:()=>{ if (typeof loadDfaTab === 'function') loadDfaTab(); }};
     if (loaders[tab]) loaders[tab]();
   });
@@ -12540,21 +12515,8 @@ async function saveSettings() {
   }
 }
 
-async function loadIcuCredentials() {
-  try {
-    const d = await (await fetch('/api/setup/defaults')).json();
-    const id = d.icu_id || '';
-    $('set-icu-athlete-id').value = id;
-    // v4.5.3: if an athlete ID is already saved, show it as a badge (read-only feel)
-    if (id) {
-      const badge = $('icu-athlete-id-detected');
-      badge.textContent = 'Saved athlete: ' + id;
-      badge.style.display = 'block';
-    }
-  } catch(e) { /* ignore */ }
-}
-
 // v2.1.x ICU OAuth — connection status + disconnect + callback-return handling.
+// (Manual API-key entry was removed — OAuth is the only setup path.)
 async function loadIcuConnection() {
   const statusEl = $('icu-conn-status');
   try {
@@ -12566,9 +12528,9 @@ async function loadIcuConnection() {
         : c.method === 'apikey' ? 'Connected via API key' : 'Not connected';
       statusEl.style.color = c.connected ? 'var(--green)' : 'var(--text3)';
     }
-    // OAuth not provisioned yet → hide Connect, surface the API-key fallback.
-    if (oauthBlk) oauthBlk.style.display = c.oauth_available ? 'block' : 'none';
-    if (!c.oauth_available) { const b = $('icu-apikey-block'); if (b) b.style.display = 'block'; }
+    // OAuth is the only setup path. If the client isn't provisioned yet the
+    // Connect button still shows but bounces with an "unavailable" toast.
+    if (oauthBlk) oauthBlk.style.display = 'block';
     if (connBtn) connBtn.textContent = (c.method === 'oauth') ? 'Reconnect intervals.icu' : 'Connect intervals.icu';
     if (disBtn) disBtn.style.display = (c.method === 'oauth') ? 'inline-flex' : 'none';
   } catch (e) { if (statusEl) statusEl.textContent = ''; }
@@ -12590,7 +12552,7 @@ function handleIcuOauthReturn() {
     const icu = p.get('icu');
     if (!icu) return;
     if (icu === 'connected') showToast('intervals.icu connected ✓', 4000, 'success');
-    else if (icu === 'unavailable') showToast("intervals.icu OAuth isn't enabled yet — use Advanced → API key.", 6000, 'warning');
+    else if (icu === 'unavailable') showToast("intervals.icu connect isn't enabled in this build yet — coming soon.", 6000, 'warning');
     else if (icu === 'error') showToast('intervals.icu connection failed — ' + (p.get('reason') || 'try again') + '.', 6000, 'error');
     p.delete('icu'); p.delete('reason');
     const qs = p.toString();
@@ -12598,42 +12560,8 @@ function handleIcuOauthReturn() {
   } catch (e) { /* ignore */ }
 }
 
-async function saveIcuCredentials() {
-  const body = {
-    icu_athlete_id: $('set-icu-athlete-id').value.trim(),
-    icu_api_key: $('set-icu-api-key').value.trim(),
-  };
-  try {
-    const res = await fetch('/api/setup/save', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
-    if (!res.ok) {
-      const errText = await res.text().catch(() => 'unknown');
-      throw new Error(`${res.status}: ${errText}`);
-    }
-    // v4.5.2: surface creds_test so user knows immediately if ICU rejected the key.
-    let payload = {};
-    try { payload = await res.json(); } catch (_) {}
-    if (payload.creds_test && String(payload.creds_test).startsWith('failed')) {
-      alert('Saved, but ICU rejected the new credentials: ' + payload.creds_test);
-    }
-    // v4.5.3: surface auto-detected athlete ID + warning if user override mismatched.
-    if (payload.athlete_id_detected) {
-      const badge = $('icu-athlete-id-detected');
-      const nm = payload.athlete_name ? ' — ' + payload.athlete_name : '';
-      badge.textContent = 'Auto-detected: ' + payload.athlete_id_detected + nm;
-      badge.style.display = 'block';
-      $('set-icu-athlete-id').value = payload.athlete_id_detected;
-    }
-    if (payload.warning) {
-      alert(payload.warning);
-    }
-    $('icu-saved').style.display = 'inline';
-    setTimeout(() => $('icu-saved').style.display = 'none', 2000);
-    $('set-icu-api-key').value = '';
-    $('set-icu-api-key').placeholder = 'Key saved (hidden)';
-  } catch(e) {
-    alert('Failed to save ICU credentials: ' + e.message);
-  }
-}
+// saveIcuCredentials() removed — manual API-key entry is gone; OAuth is the only
+// setup path (Connect button → /oauth/icu/start).
 
 function acceptEftp() {
   const txt = $('set-eftp').textContent;

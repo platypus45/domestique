@@ -102,39 +102,20 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,108,247
       </div>
     </div>
 
+    <h3 class="sub">2 · Connect — one click, no keys</h3>
     <div class="callout" style="background:rgba(59,130,246,0.08);border:1px solid #3b82f6;">
       <div style="font-size:13px;line-height:1.6;">
-        ✨ <b>Easiest: finish setup, then click “Connect intervals.icu” in Settings</b> — one login,
-        no keys to copy. Prefer to do it now? Paste an API key below (you can switch to one-click
-        connect any time).
+        ✨ Finish setup, then open <b>Settings → Connect intervals.icu</b> and log in once —
+        Domestique attaches it to your profile automatically, no API keys to copy. Until then,
+        fitness (CTL/ATL/TSB) is computed from any FIT files you import.
       </div>
     </div>
-
-    <h3 class="sub">2 · Or paste your API key (manual)</h3>
-    <div class="callout">
-      <ol>
-        <li>Sign in at <a href="https://intervals.icu/settings" target="_blank" rel="noopener noreferrer" class="help-link">intervals.icu/settings</a></li>
-        <li>Scroll to the <b>Developer Settings</b> section (near the bottom)</li>
-        <li>Copy the <b>API Key</b> and paste it below</li>
-      </ol>
-    </div>
-    <div class="form-row">
-      <label>Intervals.icu API Key</label>
-      <input type="password" id="icu-key" placeholder="Paste your API key — we detect the rest" autocomplete="off"
-             oninput="onIcuKeyInput()" onblur="maybeAutoTest()">
-    </div>
-    <button type="button" class="btn btn-secondary" onclick="testIcu(false)" id="test-btn">Test Connection</button>
-    <div class="status" id="icu-status"></div>
-
-    <div class="form-row" style="margin-top:10px;">
-      <a href="#" class="muted-link" id="icu-advanced-toggle"
-         onclick="event.preventDefault();var r=document.getElementById('icu-adv');r.style.display=r.style.display==='none'?'block':'none';">Advanced: enter Athlete ID manually</a>
-      <div id="icu-adv" style="display:none;margin-top:8px;">
-        <label>Athlete ID (optional — auto-detected from your key)</label>
-        <input type="text" id="icu-id" placeholder="e.g. i12345" autocomplete="off">
-      </div>
-    </div>
+    <!-- Manual API-key entry removed (OAuth is the only setup path). Hidden empty
+         stubs keep the legacy skip/test/finish JS null-safe — they always read "". -->
+    <input type="hidden" id="icu-key" value="">
+    <input type="hidden" id="icu-id" value="">
     <input type="hidden" id="icu-id-hidden">
+    <div class="status" id="icu-status" style="display:none;"></div>
 
     <!-- Garmin sub-step, revealed once ICU is connected -->
     <div id="garmin-block" style="display:none;">
@@ -158,8 +139,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,108,247
     </div>
 
     <div class="actions">
-      <span class="skip-link" onclick="skipIcu()" id="skip-icu" title="Use Domestique without Intervals.icu — fitness is computed from FIT files you import.">Skip — I'll import FIT files manually</span>
-      <button type="button" class="btn btn-primary" onclick="nextStep(2)" id="step1-next" disabled>Next</button>
+      <button type="button" class="btn btn-primary" onclick="nextStep(2)" id="step1-next">Continue</button>
     </div>
   </div>
 
@@ -334,8 +314,10 @@ function nextStep(n) {
 }
 
 function updateStep1Gate() {
+  // OAuth-only: nothing to gate at this step (you connect in Settings after
+  // setup), so Continue is always enabled.
   const btn = document.getElementById('step1-next');
-  if (btn) btn.disabled = !(_icuOk || _skipIcu);
+  if (btn) btn.disabled = false;
 }
 
 // Day toggles

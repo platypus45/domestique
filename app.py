@@ -7074,22 +7074,83 @@ def update_settings(request_body: dict):
     return {"ok": True, "updated": updates, "settings": api_settings()}
 
 
+def _custom_zones(athlete_key: str):
+    """Return the active profile's CUSTOM zones for ``athlete_key``
+    ('power_zones_custom' / 'hr_zones_custom') when the rider edited them, else
+    None. Shape: list of {zone,name,low,high}. This is the single chokepoint —
+    honoring custom zones here means display AND ride time-in-zone analysis use
+    them automatically. Stored as None to mean 'reset to auto'."""
+    try:
+        from profile_manager import ProfileManager
+        z = ProfileManager.get()._athlete.get(athlete_key)
+        if isinstance(z, list) and z and all(
+            isinstance(x, dict) and x.get("low") is not None and x.get("high") is not None
+            for x in z
+        ):
+            return [
+                {"zone": x.get("zone") or f"Z{i + 1}", "name": x.get("name") or "",
+                 "low": int(x["low"]), "high": int(x["high"])}
+                for i, x in enumerate(z)
+            ]
+    except Exception:
+        pass
+    return None
+
+
 def _power_zones(ftp):
-    # Delegates to zones.power_zones (Coggan/Allen 7-zone model).
+    # Custom (rider-edited) zones win; else the Coggan/Allen 7-zone model.
     # Adapts Zone(low, high, name) → dict shape required by clients
     # (dashboard.html / training.html expect zone, name, low, high).
+    custom = _custom_zones("power_zones_custom")
+    if custom:
+        return custom
     return [
         {"zone": f"Z{i + 1}", "name": z.name, "low": z.low, "high": z.high}
         for i, z in enumerate(_zones_mod.power_zones(ftp))
     ]
 
 def _hr_zones(lthr, max_hr):
-    # Delegates to zones.hr_zones (LTHR-anchored hybrid model).
+    # Custom (rider-edited) zones win; else the LTHR-anchored hybrid model.
     # Adapts Zone(low, high, name) → dict shape required by clients.
+    custom = _custom_zones("hr_zones_custom")
+    if custom:
+        return custom
     return [
         {"zone": f"Z{i + 1}", "name": z.name, "low": z.low, "high": z.high}
         for i, z in enumerate(_zones_mod.hr_zones(lthr, max_hr))
     ]
+
+
+@app.post("/api/settings/zones")
+def update_custom_zones(body: dict):
+    """Save or reset CUSTOM power/HR zones for the active profile.
+
+    body = {"kind": "power"|"hr", "zones": [{"low":int,"high":int,"name":str?}] | null}
+    A null/empty ``zones`` resets to auto (FTP/LTHR-derived). Each band needs
+    0 ≤ low < high; honored app-wide via _power_zones / _hr_zones."""
+    from profile_manager import ProfileManager
+    pm = ProfileManager.get()
+    kind = (body or {}).get("kind")
+    key = {"power": "power_zones_custom", "hr": "hr_zones_custom"}.get(kind)
+    if not key:
+        return JSONResponse({"error": "kind must be 'power' or 'hr'"}, status_code=400)
+    zones = (body or {}).get("zones")
+    if not zones:
+        pm.save_athlete({key: None})   # reset → auto
+        return {"ok": True, "reset": True}
+    clean = []
+    try:
+        for i, z in enumerate(zones):
+            lo, hi = int(z["low"]), int(z["high"])
+            if lo < 0 or hi <= lo or hi > 3000:
+                return JSONResponse(
+                    {"error": f"zone {i + 1}: need 0 ≤ low < high ≤ 3000"}, status_code=400)
+            clean.append({"zone": z.get("zone") or f"Z{i + 1}",
+                          "name": z.get("name") or "", "low": lo, "high": hi})
+    except (KeyError, TypeError, ValueError):
+        return JSONResponse({"error": "each zone needs integer low/high"}, status_code=400)
+    pm.save_athlete({key: clean})
+    return {"ok": True, "zones": clean}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

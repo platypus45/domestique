@@ -2658,9 +2658,11 @@ window.addEventListener('unhandledrejection', function(e) {
       <span id="settings-saved" style="color:var(--green);font-size:12px;margin-left:8px;display:none;">Saved</span>
     </div>
     <div class="card">
-      <h3>Power Zones (auto-calculated from FTP)</h3>
+      <h3 style="display:flex;align-items:center;gap:10px;">Power Zones
+        <button class="btn btn-sm" id="power-zones-edit" onclick="editZones('power')">Edit</button></h3>
       <div id="power-zones"></div>
-      <h3 style="margin-top:16px;">HR Zones</h3>
+      <h3 style="margin-top:16px;display:flex;align-items:center;gap:10px;">HR Zones
+        <button class="btn btn-sm" id="hr-zones-edit" onclick="editZones('hr')">Edit</button></h3>
       <div id="hr-zones"></div>
       <h3 style="margin-top:16px;">Data Sync</h3>
       <div id="sync-status" style="font-size:12px;color:var(--text2);margin-bottom:8px;">Loading...</div>
@@ -12207,6 +12209,8 @@ async function loadSettings() {
     if (!zoneKey) return '';
     return `<tr><td><span class="badge" style="background:var(--z${zoneKey});color:#fff;">${esc(z.zone)}</span></td><td>${esc(z.name)}</td><td>${z.low}–${z.high}${unit}</td></tr>`;
   };
+  // Stash for the Edit mode (customizable zones).
+  window._zonesData = { power: d.power_zones || [], hr: d.hr_zones || [] };
   $('power-zones').innerHTML = '<table><thead><tr><th>Zone</th><th>Name</th><th>Range</th></tr></thead><tbody>' +
     d.power_zones.map(z => _zoneRow(z, 'W')).join('') +
     '</tbody></table>';
@@ -12217,6 +12221,60 @@ async function loadSettings() {
   // Sync status + blood markers + metric history
   loadSyncStatus();
   loadMetricHistory();
+}
+
+// ── Customizable zones (Edit button on Power/HR Zones) ───────────────────
+// Prefilled from the current zones (auto from FTP/LTHR, or already-custom);
+// edited boundaries POST to /api/settings/zones and are honored app-wide via
+// _power_zones / _hr_zones. "Reset to auto" clears the custom override.
+function editZones(kind) {
+  const data = (window._zonesData && window._zonesData[kind]) || [];
+  const unit = kind === 'power' ? 'W' : 'bpm';
+  const host = $(kind === 'power' ? 'power-zones' : 'hr-zones');
+  if (!host || !data.length) return;
+  const rows = data.map((z, i) => {
+    const k = String(z.zone || ('Z' + (i + 1)))[1] || (i + 1);
+    return `<tr>
+      <td><span class="badge" style="background:var(--z${k});color:#fff;">${esc(z.zone || ('Z' + (i + 1)))}</span></td>
+      <td>${esc(z.name || '')}</td>
+      <td><input type="number" class="zone-edit" data-i="${i}" data-f="low" value="${z.low}" style="width:62px;"> –
+          <input type="number" class="zone-edit" data-i="${i}" data-f="high" value="${z.high}" style="width:62px;"> ${unit}</td>
+    </tr>`;
+  }).join('');
+  host.innerHTML = `<table><thead><tr><th>Zone</th><th>Name</th><th>Range (${unit})</th></tr></thead><tbody>${rows}</tbody></table>
+    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn-sm btn-primary" onclick="saveZones('${kind}')">Save zones</button>
+      <button class="btn btn-sm" onclick="loadSettings()">Cancel</button>
+      <button class="btn btn-sm" onclick="resetZones('${kind}')" title="Restore the auto values from FTP/LTHR">Reset to auto</button>
+    </div>`;
+}
+async function saveZones(kind) {
+  const host = $(kind === 'power' ? 'power-zones' : 'hr-zones');
+  const base = ((window._zonesData && window._zonesData[kind]) || []).map(z => ({ ...z }));
+  host.querySelectorAll('input.zone-edit').forEach(inp => {
+    const i = +inp.dataset.i, f = inp.dataset.f, v = parseInt(inp.value, 10);
+    if (base[i] && !isNaN(v)) base[i][f] = v;
+  });
+  try {
+    const r = await fetch('/api/settings/zones', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, zones: base }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { showToast(d.error || 'Could not save zones', 4500, 'error'); return; }
+    showToast('Zones saved', 2500, 'success');
+    loadSettings();
+  } catch (e) { showToast('Could not save zones', 4500, 'error'); }
+}
+async function resetZones(kind) {
+  try {
+    await fetch('/api/settings/zones', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, zones: null }),
+    });
+    showToast('Zones reset to auto', 2500);
+    loadSettings();
+  } catch (e) { showToast('Reset failed', 4000, 'error'); }
 }
 
 // v4.1.0 U3: FTP source badge. Accepts strings like "tested_coggan_20min",

@@ -1,5 +1,16 @@
 # Changelog
 
+## v2.2.2 — Windows OAuth fix (bundle the client secret in CI)
+
+- **Fixed: "intervals.icu connection failed — exchange" on Windows.** The OAuth
+  client_secret lives in a gitignored `.oauth.env`, so the CI checkout that builds
+  the Windows EXE never had it — the frozen build shipped an EMPTY secret and ICU
+  rejected the token exchange. CI now writes `.oauth.env` from a repo secret
+  (`ICU_OAUTH_CLIENT_SECRET`) before the build, failing loudly if it's unset.
+  macOS was unaffected (its DMG is built locally where the secret exists).
+- OAuth diagnostics: the token-exchange path now logs the HTTP status + body and a
+  missing-secret warning, so a build-config regression shows up in "Copy logs".
+
 ## v2.2.1 — Fix the "Raise FTP" button + logs that capture sign-in & sync (2026-06-20)
 
 A fast patch on **v2.2.0**.

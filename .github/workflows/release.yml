@@ -116,6 +116,24 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      # The OAuth client_secret lives in the gitignored .oauth.env (never in the
+      # repo), so the CI checkout doesn't have it — without this the spec skips
+      # bundling it and the Windows EXE ships an empty secret, making the
+      # intervals.icu token exchange fail ("exchange" error). Write it from a
+      # repo secret so the frozen build carries it. Fail loud if it's unset.
+      - name: Write OAuth client secret (.oauth.env)
+        shell: bash
+        env:
+          ICU_OAUTH_CLIENT_ID: ${{ secrets.ICU_OAUTH_CLIENT_ID }}
+          ICU_OAUTH_CLIENT_SECRET: ${{ secrets.ICU_OAUTH_CLIENT_SECRET }}
+        run: |
+          if [ -z "${ICU_OAUTH_CLIENT_SECRET}" ]; then
+            echo "::error::ICU_OAUTH_CLIENT_SECRET repo secret is not set — OAuth would ship broken."; exit 1
+          fi
+          printf 'ICU_OAUTH_CLIENT_ID=%s\nICU_OAUTH_CLIENT_SECRET=%s\n' \
+            "${ICU_OAUTH_CLIENT_ID:-511}" "${ICU_OAUTH_CLIENT_SECRET}" > .oauth.env
+          echo "wrote .oauth.env ($(wc -c < .oauth.env) bytes)"
+
       # TODO: signtool codesign. Requires a Windows Authenticode certificate
       # (EV or OV). Without signing, SmartScreen shows the "Unknown publisher"
       # warning — end users must click "More info → Run anyway".

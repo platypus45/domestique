@@ -6719,12 +6719,20 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
         return _back("icu=error&reason=state")
     try:
         import httpx
+        # Diagnostic: a build that didn't bundle .oauth.env ships an empty secret
+        # → ICU rejects the exchange. Log it explicitly (the symptom on Windows CI
+        # builds before the secret was wired into release.yml).
+        if not getattr(config, "ICU_OAUTH_CLIENT_SECRET", ""):
+            _log.error("EVENT=icu_oauth_no_secret — client_secret missing from this "
+                       "build (.oauth.env not bundled); token exchange will fail")
         resp = httpx.post(config.ICU_OAUTH_TOKEN_URL, data={
             "client_id": config.ICU_OAUTH_CLIENT_ID,
             "client_secret": config.ICU_OAUTH_CLIENT_SECRET,
             "code": code,
         }, timeout=15)
         if resp.status_code != 200:
+            _log.warning("EVENT=icu_oauth_exchange_http status=%s body=%s",
+                         resp.status_code, (resp.text or "")[:200])
             raise RuntimeError(f"token endpoint returned {resp.status_code}")
         tok = resp.json()
         access_token = tok.get("access_token")

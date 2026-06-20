@@ -1579,6 +1579,8 @@ def target_ctl_for_event(goal: Goal, difficulty: float | None = None) -> float:
 LONG_RIDE_CAP_MIN = 300      # 5h ceiling (Friel/CTS 4-6h); don't match >5h events.
 LONG_RIDE_FLOOR_H = 1.5      # start the long-ride ramp from at least 1.5h.
 LONG_RIDE_STEP_MIN = 25      # +25 min/week absolute ("+10%/wk" is research-debunked).
+STEPBACK_LONG_RIDE_CAP_MIN = 150  # B4: a deload's long ride stays ≤2.5h (matches the
+                                  # step-back picker's own weekend min(max_min, 150)).
 
 
 def _event_demand_targets(goal: "Goal", athlete: dict | None,
@@ -5294,6 +5296,14 @@ def generate_plan(
             _ceil = TYPE_CEILING.get(_cc) or TYPE_CEILING.get(s.session_type)
             _eff = cap_min if _ceil is None else (
                 _ceil if cap_min <= 0 else min(cap_min, _ceil))
+            # B4: on a step-back week the long ride must stay short (≤2.5h). The
+            # sampler/match can set a weekend endurance slot to the matched file's
+            # full length (the prescription↔file decoupling), so a deload picked up
+            # a 205-min "long ride". Endurance types have no TYPE_CEILING, so clamp
+            # them here (this is the authoritative duration pass).
+            if (getattr(w, "is_stepback", False)
+                    and (_eff <= 0 or _eff > STEPBACK_LONG_RIDE_CAP_MIN)):
+                _eff = STEPBACK_LONG_RIDE_CAP_MIN
             if _eff > 0 and s.duration_min > _eff:
                 _scale = _eff / float(s.duration_min)
                 s.tss_estimate = round((s.tss_estimate or 0) * _scale)

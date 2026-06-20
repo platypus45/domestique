@@ -105,10 +105,10 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,108,247
     <h3 class="sub">2 · Connect — one click, no keys</h3>
     <div class="callout" style="background:rgba(59,130,246,0.08);border:1px solid #3b82f6;">
       <div style="font-size:13px;line-height:1.6;">
-        ✨ Finish setup, then open <b>Settings → Connect intervals.icu</b>. Your browser opens
-        intervals.icu — log in and approve once, and Domestique links <b>that account</b> to this
-        profile automatically (no API keys to copy). Until then, fitness (CTL/ATL/TSB) is computed
-        from any FIT files you import.
+        ✨ When you finish setup, Domestique opens <b>intervals.icu</b> in your browser — sign in
+        and approve once to link <b>your account</b> (no API keys to copy). Prefer to wait? You can
+        connect anytime later in <b>Settings</b>; until then, fitness (CTL/ATL/TSB) is computed from
+        any FIT files you import.
       </div>
     </div>
     <!-- Manual API-key entry removed (OAuth is the only setup path). Hidden empty
@@ -532,9 +532,12 @@ async function saveAll() {
     }
     if (data.ok) {
       st.className = 'status ok';
-      st.textContent = 'Setup complete! Redirecting to dashboard...';
+      st.textContent = 'Setup complete! Opening intervals.icu to sign in…';
       try { localStorage.removeItem(SETUP_LS_KEY); } catch(e) {}
-      setTimeout(() => window.location.href = '/', 1500);
+      // Open the intervals.icu OAuth sign-in as the final step (an active profile
+      // exists after /api/setup/save, so /oauth/icu/start binds to it; the
+      // callback returns to the dashboard connected).
+      setTimeout(() => window.location.href = '/oauth/icu/start', 1500);
     } else {
       st.className = 'status err'; st.textContent = data.error || 'Save failed.';
     }

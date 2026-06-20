@@ -97,15 +97,15 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,156,247
   <div class="step-panel" id="step-2">
     <h2>Connect Intervals.icu</h2>
     <p class="info">
-      Syncs your training data (CTL, ATL, TSB, HRV). Needs a free
+      Syncs your training data (CTL, ATL, TSB, HRV). You'll need a free
       <a href="https://intervals.icu/" target="_blank" rel="noopener noreferrer">intervals.icu</a>
-      account (sign in with Garmin or Strava — no new password).
+      account — sign in there with Garmin or Strava (no new password).
     </p>
     <div class="info" style="background:rgba(59,130,246,0.08);border:1px solid #3b82f6;border-radius:8px;padding:10px 12px;margin:8px 0;">
-      ✨ <b>One click — no keys to copy.</b> Once you finish setup, open
-      <b>Settings → Connect intervals.icu</b>: your browser opens intervals.icu, you log in and
-      approve once, and we link <b>that account</b> to this profile automatically. (Connecting
-      happens after the profile exists, so it's a single click when you're set up.)
+      <b>No keys to copy.</b> When you press <b>Finish</b> on the next step, Domestique opens
+      <b>intervals.icu</b> in your browser — sign in and approve once, and it links
+      <b>that account</b> to this profile. You can connect or change it anytime later in
+      <b>Settings</b>.
     </div>
     <div class="status" id="step2-status"></div>
     <div class="actions">
@@ -171,8 +171,8 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,156,247
     </div>
     <div class="status" id="step3-status"></div>
     <div class="actions">
-      <span></span>
-      <button type="button" class="btn btn-primary" onclick="saveAthlete()" id="save-athlete-btn">Finish</button>
+      <button type="button" class="skip-link" onclick="saveAthlete(false)">Finish without connecting</button>
+      <button type="button" class="btn btn-primary" onclick="saveAthlete(true)" id="save-athlete-btn">Finish &amp; sign in to intervals.icu</button>
     </div>
   </div>
 </div>
@@ -255,7 +255,7 @@ async function saveIcu() {
 }
 
 let _savingAthlete = false;
-async function saveAthlete() {
+async function saveAthlete(connect) {
   if (_savingAthlete) return;
   const ftp = parseInt(document.getElementById('ftp').value) || 200;
   const weight = parseFloat(document.getElementById('weight').value) || 70;
@@ -298,7 +298,11 @@ async function saveAthlete() {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ftp, weight, lthr, max_hr, ...extras})
     });
-    window.location.href = '/';
+    // connect !== false → open the intervals.icu OAuth sign-in as the final step
+    // (the new profile is already active, so /oauth/icu/start binds to it and the
+    // callback returns to the dashboard connected). "Finish without connecting"
+    // passes connect=false and just lands on the dashboard.
+    window.location.href = (connect === false) ? '/' : '/oauth/icu/start';
   } finally {
     _savingAthlete = false;
     if (btn) { btn.disabled = false; }

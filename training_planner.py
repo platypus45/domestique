@@ -5276,7 +5276,11 @@ def generate_plan(
     # goals only). Demotes a taper-eve VO2max/threshold block to an easy opener.
     if goal.goal_type in ("event", "ctl") and goal.target_date:
         _enforce_event_taper_eve(weeks, goal.target_date)
-        _apply_secondary_event_tapers(weeks, goal)  # F7: B/C mini-tapers
+    # F3 — B/C mini-tapers apply on ANY goal that carries intermediate races, not
+    # just event/ctl: a rider on an FTP / VO2max / general block can still target
+    # a B/C race. Safe + a no-op without B/C events (the helper skips priority-A
+    # and, when there's no A target_date, simply has no macro-taper span to dodge).
+    _apply_secondary_event_tapers(weeks, goal)  # F7: B/C mini-tapers
 
     # v1.8.21 — AUTHORITATIVE per-day availability clamp. Session durations are
     # set from matched ZWO files at FOUR sites (sampler + 3 utilization/

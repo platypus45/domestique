@@ -2129,19 +2129,20 @@ window.addEventListener('unhandledrejection', function(e) {
             </select>
           </div>
         </div>
-        <!-- F7c (v2.1) — optional intermediate B/C races. Empty by default →
-             a single-A plan POSTs no events[] and behaves exactly as before. -->
-        <div id="plan-bc-races" style="margin-top:4px;">
-          <div style="font-size:11px;color:var(--text2);font-weight:500;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Intermediate races (B / C) — optional</div>
-          <div id="plan-bc-rows"></div>
-          <button type="button" class="btn btn-sm" onclick="addBcRaceRow()">+ Add race</button>
-        </div>
       </div>
       <div id="plan-target-fields" style="display:none;">
         <div class="form-row">
           <div class="form-group"><label>End Date (optional)</label><input type="date" id="plan-tdate"></div>
         </div>
         <div style="font-size:10px;color:var(--text3);margin-top:4px;">No target needed — the planner maximizes improvement over the plan period.</div>
+      </div>
+      <!-- F7c (v2.1) / F3 — optional intermediate B/C races. Moved OUT of the
+           event-only fields so FTP / VO2max / general plans can target a B/C race
+           too. Empty by default → no events[] → unchanged plan. -->
+      <div id="plan-bc-races" style="margin-top:4px;">
+        <div style="font-size:11px;color:var(--text2);font-weight:500;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Intermediate races (B / C) — optional</div>
+        <div id="plan-bc-rows"></div>
+        <button type="button" class="btn btn-sm" onclick="addBcRaceRow()">+ Add race</button>
       </div>
 
       <!-- Per-Day Availability Grid -->
@@ -9947,6 +9948,10 @@ async function generatePlan() {
   } else if (['ctl', 'ftp', 'vo2max', 'ftp_vo2max'].includes(body.goal)) {
     // No target — just maximize over the plan period
     body.event_date = $('plan-tdate').value || null;
+    // F3 — a non-event plan can still target intermediate B/C races. Attach them
+    // as events[] (no A event); the backend applies the B/C mini-tapers.
+    const _bc = readBcRaces();
+    if (_bc.length) body.events = _bc;
   }
   try {
     const res = await fetch('/api/plan/generate', {

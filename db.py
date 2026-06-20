@@ -514,7 +514,12 @@ def run_sync(days: int = 90) -> dict:
     (sync_log row recorded with status=error and exception message).
     """
     import config
+    log.info("EVENT=sync_start days=%s", days)
     if not getattr(config, "ICU_ATHLETE_ID", None):
+        # Auth header is Bearer (OAuth) or Basic (key), but the wellness/activity
+        # URLs need the athlete id in the path — surface WHY we skipped.
+        has_token = bool(getattr(config, "ICU_ACCESS_TOKEN", None))
+        log.info("EVENT=sync_skipped reason=no_athlete_id oauth_token=%s", has_token)
         return {"timestamp": datetime.now().isoformat(), "wellness": 0,
                 "activities": 0, "status": "skipped", "error": "No ICU credentials"}
     db = get_db()
@@ -554,7 +559,10 @@ def run_sync(days: int = 90) -> dict:
 
     if sync_exc is not None:
         # Re-raise so callers / background loop can react (e.g. backoff on 401).
+        log.info("EVENT=sync_done status=error wellness=%d activities=%d err=%s",
+                 w_count, a_count, str(sync_exc)[:120])
         raise sync_exc
+    log.info("EVENT=sync_done status=%s wellness=%d activities=%d", status, w_count, a_count)
     return {"timestamp": ts, "wellness": w_count, "activities": a_count, "status": status, "error": error}
 
 

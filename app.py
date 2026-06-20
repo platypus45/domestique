@@ -6682,6 +6682,7 @@ def api_oauth_icu_start(return_to: str = Query("/")):
     state = _secrets.token_urlsafe(32)
     _icu_oauth_states[state] = {"profile_id": profile_id, "ts": now,
                                 "return_to": _icu_oauth_safe_return(return_to)}
+    _log.info("EVENT=icu_oauth_start profile=%s", profile_id or "?")
     params = urlencode({
         "client_id": config.ICU_OAUTH_CLIENT_ID,
         "redirect_uri": config.ICU_OAUTH_REDIRECT_URI,
@@ -6710,8 +6711,11 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
         return RedirectResponse(url=f"{return_to}{_sep}{suffix}")
 
     if error:
+        _log.info("EVENT=icu_oauth_denied error=%s", error)
         return _back("icu=error&reason=denied")
     if not st or not code:
+        _log.warning("EVENT=icu_oauth_bad_state has_state=%s has_code=%s",
+                     bool(st), bool(code))
         return _back("icu=error&reason=state")
     try:
         import httpx
@@ -6753,6 +6757,8 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
             except AttributeError:
                 pass
         _icu_oauth_reset_throttle()
+        _log.info("EVENT=icu_oauth_connected athlete_id=%s name=%r",
+                  athlete_id or "?", athlete_name or "")
         return _back("icu=connected")
     except Exception:
         _log.exception("ICU OAuth token exchange failed")

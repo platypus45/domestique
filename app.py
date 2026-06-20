@@ -1456,14 +1456,23 @@ def _run_backfill_job(task_id: str) -> None:
     ICU workers.
     """
     import power_curve
+
+    def _progress(done, total):
+        # Live "xx of yy" for the UI poll (backfill-history/status).
+        with _backfill_thread_lock:
+            e = _backfill_tasks.get(task_id) or {"task_id": task_id}
+            e.update({"state": "running", "done": int(done), "total": int(total)})
+            _backfill_tasks[task_id] = e
+
     try:
         result = power_curve.backfill_icu_history(
-            "default", max_per_second=1, _skip_lock=True
+            "default", max_per_second=1, _skip_lock=True, progress_cb=_progress
         )
         with _backfill_thread_lock:
             _backfill_tasks[task_id] = {
                 "task_id": task_id,
                 "state": "done",
+                "status": "complete",  # the UI poll checks this
                 **result,
             }
     except Exception as e:

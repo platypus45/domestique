@@ -675,7 +675,8 @@ def release_backfill_lock() -> None:
 
 def backfill_icu_history(profile_id: str = "default",
                           max_per_second: int = 1,
-                          _skip_lock: bool = False) -> dict:
+                          _skip_lock: bool = False,
+                          progress_cb=None) -> dict:
     """One-shot detail+streams pull for cached-list rides missing efforts.
 
     For each ride file in ``~/.domestique/rides/icu/`` that fails the G15
@@ -736,9 +737,18 @@ def backfill_icu_history(profile_id: str = "default",
         delay = 1.0 / max(1, int(max_per_second))
         last_call = 0.0
 
-        for ride_path in sorted(_icu_rides_dir().glob("*.json")):
-            if ride_path.name.startswith("."):
-                continue
+        # Pre-list the ride files so we know the TOTAL up-front and can report
+        # live "done / total" progress (powers the UI's "xx of yy synced" bar).
+        _ride_files = [p for p in sorted(_icu_rides_dir().glob("*.json"))
+                       if not p.name.startswith(".")]
+        _total = len(_ride_files)
+        if progress_cb:
+            try: progress_cb(0, _total)
+            except Exception: pass
+        for ride_path in _ride_files:
+            if progress_cb:
+                try: progress_cb(backfilled + already_cached + failed, _total)
+                except Exception: pass
             if not _needs_refetch(ride_path):
                 already_cached += 1
                 continue
@@ -793,6 +803,9 @@ def backfill_icu_history(profile_id: str = "default",
                 failed += 1
                 continue
             backfilled += 1
+        if progress_cb:
+            try: progress_cb(backfilled + already_cached + failed, _total)
+            except Exception: pass
     finally:
         # GRILL-WAVE2A W2A-G2: when caller passed _skip_lock=True the worker
         # thread owns the lock and releases in its own finally. Don't double-
@@ -800,12 +813,15 @@ def backfill_icu_history(profile_id: str = "default",
         if not _skip_lock:
             release_backfill_lock()
 
+    _done = backfilled + already_cached + failed
     return {
         "status": "ok",
         "task_id": task_id,
         "backfilled": backfilled,
         "already_cached": already_cached,
         "failed": failed,
+        "done": _done,
+        "total": _done,
         "elapsed_s": round(time.time() - started_at, 2),
     }
 

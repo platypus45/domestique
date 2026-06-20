@@ -12783,9 +12783,11 @@ async function raiseFtp(val) {
   val = parseInt(val, 10);
   if (!val || val <= 0) { try { showToast('No FTP value to apply', 3000, 'warning'); } catch(_) {} return; }
   try {
+    // method must be one of coggan_20min|ramp|manual (record_ftp_test validates);
+    // an accepted eFTP estimate is a 'manual' apply, with eftp_icu as provenance.
     const r = await fetch('/api/profile/update-ftp', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ftp: val, method: 'eftp', source: 'eftp_icu', applied: true }),
+      body: JSON.stringify({ ftp: val, method: 'manual', source: 'eftp_icu', applied: true }),
     });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     try { showToast(`FTP raised to ${val}W — zones updated.`, 4000, 'success'); } catch(_) {}

@@ -10079,7 +10079,7 @@ async function renderPlanJSON(plan) {
 
   const SESSION_SHORT = {
     rest:'REST', recovery:'REC', z2:'Z2', long_z2:'LONG', tempo:'TEMPO',
-    sweetspot:'SS', threshold:'FTP', vo2max:'VO2', overunder:'O/U',
+    sweetspot:'SS', threshold:'FTP', vo2max:'VO2', overunder:'Over-Under',
   };
   const SESSION_CSS = {
     rest:'wc-rest-type', recovery:'wc-z2', z2:'wc-z2', long_z2:'wc-long',
@@ -12964,7 +12964,7 @@ async function loadWeeklyCalendar() {
     };
     const SESSION_SHORT = {
       rest: 'REST', recovery: 'REC', z2: 'Z2', long_z2: 'LONG', tempo: 'TEMPO',
-      sweetspot: 'SS', threshold: 'FTP', vo2max: 'VO2', overunder: 'O/U',
+      sweetspot: 'SS', threshold: 'FTP', vo2max: 'VO2', overunder: 'Over-Under',
     };
     // Exposure palette — green (low) → red (anaerobic), mixed = purple.
     // Aligned with the Library category heat-ramp so users learn one palette.
@@ -13502,7 +13502,7 @@ function openMissedSessionsModal() {
   const list = window._weeklyMissedSessions || [];
   const SESSION_SHORT = {
     rest: 'REST', recovery: 'REC', z2: 'Z2', long_z2: 'LONG', tempo: 'TEMPO',
-    sweetspot: 'SS', threshold: 'FTP', vo2max: 'VO2', overunder: 'O/U',
+    sweetspot: 'SS', threshold: 'FTP', vo2max: 'VO2', overunder: 'Over-Under',
   };
   const SESSION_LONG = {
     recovery: 'Recovery', z2: 'Zone 2', long_z2: 'Long Z2', tempo: 'Tempo',

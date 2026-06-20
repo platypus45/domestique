@@ -9113,6 +9113,12 @@ def _regenerate_plan_dict(
         rest_days=g.get("rest_days", [0]),
         longest_ride_h_90d=g.get("longest_ride_h_90d"),
         last_ftp_test_date=g.get("last_ftp_test_date"),
+        # FS1: carry the construction mode so /api/plan/regenerate keeps a
+        # fixed_core/template plan FIXED (this inline reconstruction omits it,
+        # so without this the goal defaults to "auto" and the build weeks get
+        # reshuffled back to mixed HIT by the sampler).
+        plan_mode=g.get("plan_mode", "auto"),
+        template_id=g.get("template_id", "") or "",
     )
     # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
     if goal.longest_ride_h_90d is None:

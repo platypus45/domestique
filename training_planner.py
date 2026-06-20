@@ -7834,6 +7834,11 @@ def regenerate_from_today(
         distribution=goal.distribution,
         block_periodization=goal.block_periodization,
         events=goal.events,  # F7: carry B/C events through recalc
+        # FS1: carry the construction mode so a fixed_core/template plan stays
+        # fixed on regenerate (else adjusted_goal defaults to "auto" and the
+        # sampler reshuffles the build weeks back to mixed HIT).
+        plan_mode=getattr(goal, "plan_mode", "auto"),
+        template_id=getattr(goal, "template_id", "") or "",
     )
 
     # 10. Generate new phases — offset start by recovery duration to avoid overlap
@@ -8238,6 +8243,10 @@ def recalculate_plan(
         distribution=goal.distribution,
         block_periodization=goal.block_periodization,
         events=goal.events,  # F7: carry B/C events through recalc
+        # FS1: carry the construction mode so a fixed_core/template plan stays
+        # fixed on reforecast (else it defaults to "auto" and reshuffles).
+        plan_mode=getattr(goal, "plan_mode", "auto"),
+        template_id=getattr(goal, "template_id", "") or "",
     )
 
     # v1.11.0 IMPL-EVENT — event demand → plan targets so the event CTL nudge

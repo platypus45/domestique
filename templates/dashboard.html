@@ -1335,6 +1335,13 @@ window.addEventListener('unhandledrejection', function(e) {
 
 <!-- v4.1.0 U5: eFTP auto-apply revert banner (fires when ftp_source=eftp_auto within 24h) -->
 <div id="eftp-auto-banner" style="display:none;margin:8px 0 12px;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.4;background:rgba(59,130,246,0.12);border:1px solid #3b82f6;color:var(--text);"></div>
+<!-- FS1/OAuth migration prompt — fires (per launch) for any profile not yet on
+     OAuth sign-in, so existing API-key users are nudged to the new flow. -->
+<div id="icu-migrate-banner" style="display:none;margin:8px 0 12px;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.5;background:rgba(59,130,246,0.12);border:1px solid #3b82f6;color:var(--text);">
+  <b>Sign in with intervals.icu.</b> <span id="icu-migrate-msg"></span>
+  <button class="btn btn-sm" style="margin-left:8px;" onclick="window.location='/oauth/icu/start'">Connect</button>
+  <button class="btn btn-sm" style="margin-left:4px;" onclick="dismissIcuMigrate()">Later</button>
+</div>
 
 <div class="tabs" id="tabs">
   <div class="tab active" data-tab="home">Home</div>
@@ -12589,8 +12596,8 @@ async function loadIcuConnection() {
     const connBtn = $('icu-connect-btn'), disBtn = $('icu-disconnect-btn'), oauthBlk = $('icu-oauth-block');
     if (statusEl) {
       statusEl.textContent = c.method === 'oauth'
-          ? ('Connected via OAuth' + (c.athlete_id ? ' (athlete ' + esc(c.athlete_id) + ')' : ''))
-        : c.method === 'apikey' ? 'Connected via API key' : 'Not connected';
+          ? ('Signed in' + (c.name ? ' as ' + esc(c.name) : (c.athlete_id ? ' (athlete ' + esc(c.athlete_id) + ')' : '')))
+        : c.method === 'apikey' ? 'Connected via API key (legacy)' : 'Not connected';
       statusEl.style.color = c.connected ? 'var(--green)' : 'var(--text3)';
     }
     // OAuth is the only setup path. If the client isn't provisioned yet the
@@ -12623,6 +12630,31 @@ function handleIcuOauthReturn() {
     const qs = p.toString();
     window.history.replaceState({}, '', window.location.pathname + (qs ? '?' + qs : ''));
   } catch (e) { /* ignore */ }
+}
+
+// OAuth migration nudge: if the active profile isn't on OAuth sign-in yet
+// (legacy API key, or never connected), prompt once per app launch. Dismiss is
+// per-session (sessionStorage) so it re-fires next launch until they connect —
+// matching "on reinstall a prompt fires for OAuth". Hidden the moment a profile
+// is OAuth-connected (method === 'oauth').
+async function maybePromptIcuMigration() {
+  try {
+    if (sessionStorage.getItem('icuMigrateDismissed') === '1') return;
+    const c = await (await fetch('/api/icu/connection')).json();
+    if (!c || !c.oauth_available || c.method === 'oauth') return;
+    const banner = document.getElementById('icu-migrate-banner');
+    const msg = document.getElementById('icu-migrate-msg');
+    if (!banner) return;
+    if (msg) msg.textContent = (c.method === 'apikey')
+      ? "You're on a legacy API key — reconnect with one-click sign-in to keep syncing reliably."
+      : 'Connect your intervals.icu account to sync your training data.';
+    banner.style.display = 'block';
+  } catch (_) {}
+}
+function dismissIcuMigrate() {
+  try { sessionStorage.setItem('icuMigrateDismissed', '1'); } catch (_) {}
+  const b = document.getElementById('icu-migrate-banner');
+  if (b) b.style.display = 'none';
 }
 
 // saveIcuCredentials() removed — manual API-key entry is gone; OAuth is the only
@@ -15956,6 +15988,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(() => { try { loadUpdateCheck(true); } catch (_) {} }, 3 * 60 * 60 * 1000);
   // ICU OAuth: toast the callback bounce + refresh connection status on load.
   try { handleIcuOauthReturn(); } catch (_) {}
+  try { maybePromptIcuMigration(); } catch (_) {}
   try { loadIcuConnection(); } catch (_) {}
   // v4.1.0 U1: auto-open FTP-test modal for recent imported FITs.
   try { maybeShowFtpTestModal(); } catch(_) {}

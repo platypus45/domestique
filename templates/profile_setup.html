@@ -102,14 +102,17 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,156,247
       account — sign in there with Garmin or Strava (no new password).
     </p>
     <div class="info" style="background:rgba(59,130,246,0.08);border:1px solid #3b82f6;border-radius:8px;padding:10px 12px;margin:8px 0;">
-      <b>No keys to copy.</b> When you press <b>Finish</b> on the next step, Domestique opens
-      <b>intervals.icu</b> in your browser — sign in and approve once, and it links
-      <b>that account</b> to this profile. You can connect or change it anytime later in
-      <b>Settings</b>.
+      <b>No keys to copy.</b> Click <b>Sign in to intervals.icu</b> — it opens in your browser,
+      you log in and approve once, and we link <b>that account</b> to this profile. You can do it
+      now or skip and connect later in <b>Settings</b>.
     </div>
+    <!-- Link status: shows "✓ Linked as <name>" after a successful OAuth round-trip,
+         or an error + retry. Populated by refreshLinkStatus() on return. -->
+    <div id="link-status" style="font-size:13px;margin:8px 0;min-height:18px;"></div>
     <div class="status" id="step2-status"></div>
     <div class="actions">
-      <button type="button" class="btn btn-primary" id="save-icu-btn" onclick="goStep(3)">Continue</button>
+      <button type="button" class="btn btn-primary" id="connect-icu-btn" onclick="connectIcu()">Sign in to intervals.icu</button>
+      <button type="button" class="skip-link" id="step2-continue" onclick="goStep(3)">Skip for now →</button>
     </div>
   </div>
 
@@ -171,8 +174,8 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,156,247
     </div>
     <div class="status" id="step3-status"></div>
     <div class="actions">
-      <button type="button" class="skip-link" onclick="saveAthlete(false)">Finish without connecting</button>
-      <button type="button" class="btn btn-primary" onclick="saveAthlete(true)" id="save-athlete-btn">Finish &amp; sign in to intervals.icu</button>
+      <span></span>
+      <button type="button" class="btn btn-primary" onclick="saveAthlete()" id="save-athlete-btn">Finish</button>
     </div>
   </div>
 </div>
@@ -197,6 +200,24 @@ let currentStep = 1;
     };
     grid.appendChild(sw);
   });
+})();
+
+// On load: if we're returning from the intervals.icu OAuth round-trip, resume
+// the wizard at the link step (the page reloaded, so JS state was lost) and
+// render the linked-account status. goStep / refreshLinkStatus are hoisted.
+(function initIcuReturn() {
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem('ps_wizard') || 'null'); } catch (_) {}
+  const icu = new URLSearchParams(location.search).get('icu');
+  if (saved && saved.createdId) {
+    createdId = saved.createdId;
+    goStep(saved.step || 2);
+  }
+  if (icu) {
+    try { sessionStorage.removeItem('ps_wizard'); } catch (_) {}
+    try { history.replaceState({}, '', '/profile-setup'); } catch (_) {}
+    refreshLinkStatus(icu);
+  }
 })();
 
 function goStep(n) {
@@ -254,8 +275,47 @@ async function saveIcu() {
   goStep(3);
 }
 
+// ── Explicit, retryable intervals.icu link step ──────────────────────────
+// The new profile is already active (createProfile -> /api/profiles/switch),
+// so /oauth/icu/start binds the OAuth state to it. We stash the wizard position
+// in sessionStorage because the OAuth round-trip reloads this page; on return
+// (?icu=...) we restore step 2 and show the linked account.
+function connectIcu() {
+  try {
+    sessionStorage.setItem('ps_wizard', JSON.stringify({
+      createdId: createdId, step: currentStep || 2,
+    }));
+  } catch (_) {}
+  window.location.href = '/oauth/icu/start?return_to=' +
+    encodeURIComponent('/profile-setup');
+}
+
+async function refreshLinkStatus(icuParam) {
+  const el = document.getElementById('link-status');
+  const btn = document.getElementById('connect-icu-btn');
+  const cont = document.getElementById('step2-continue');
+  if (!el) return;
+  if (icuParam === 'error' || icuParam === 'unavailable') {
+    el.innerHTML = '<span style="color:var(--red);">Couldn’t link your account — please try again.</span>';
+    if (btn) btn.textContent = 'Retry — sign in to intervals.icu';
+    return;
+  }
+  try {
+    const c = await (await fetch('/api/icu/connection')).json();
+    if (c && c.method === 'oauth') {
+      const who = c.name || (c.athlete_id ? ('athlete ' + c.athlete_id) : 'your account');
+      el.innerHTML = '✓ Linked as <b>' + (who.replace(/</g, '&lt;')) + '</b>';
+      el.style.color = 'var(--green)';
+      if (btn) btn.textContent = 'Re-link a different account';
+      if (cont) cont.textContent = 'Continue →';
+    } else {
+      el.textContent = '';
+    }
+  } catch (_) {}
+}
+
 let _savingAthlete = false;
-async function saveAthlete(connect) {
+async function saveAthlete() {
   if (_savingAthlete) return;
   const ftp = parseInt(document.getElementById('ftp').value) || 200;
   const weight = parseFloat(document.getElementById('weight').value) || 70;
@@ -298,11 +358,7 @@ async function saveAthlete(connect) {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ftp, weight, lthr, max_hr, ...extras})
     });
-    // connect !== false → open the intervals.icu OAuth sign-in as the final step
-    // (the new profile is already active, so /oauth/icu/start binds to it and the
-    // callback returns to the dashboard connected). "Finish without connecting"
-    // passes connect=false and just lands on the dashboard.
-    window.location.href = (connect === false) ? '/' : '/oauth/icu/start';
+    window.location.href = '/';
   } finally {
     _savingAthlete = false;
     if (btn) { btn.disabled = false; }

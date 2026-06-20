@@ -114,10 +114,11 @@ class TestRoutes(unittest.TestCase):
         pm = _PM.get()
         with mock.patch("httpx.post", return_value=_Resp()), \
              mock.patch.object(pm, "save_icu_token",
-                               side_effect=lambda t, a=None: captured.update(token=t, athlete=a)):
+                               side_effect=lambda t, a=None, n=None: captured.update(token=t, athlete=a, name=n)):
             r = self.client.get("/oauth/icu/callback?code=C&state=S1", follow_redirects=False)
         self.assertEqual(captured.get("token"), "ATOK")
         self.assertEqual(captured.get("athlete"), "i999")
+        self.assertEqual(captured.get("name"), "Z")  # name captured from token response
         self.assertIn("icu=connected", r.headers["location"])
         self.assertNotIn("S1", app_module._icu_oauth_states)  # consumed
 

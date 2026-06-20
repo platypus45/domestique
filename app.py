@@ -6643,10 +6643,21 @@ def _icu_oauth_reset_throttle() -> None:
         pass
 
 
+def _icu_oauth_safe_return(return_to: str) -> str:
+    """Allow only same-app local paths as the post-OAuth return target (no open
+    redirect). Anything that isn't a single-slash-rooted path falls back to '/'."""
+    rt = (return_to or "/").strip()
+    if not rt.startswith("/") or rt.startswith("//") or "\\" in rt:
+        return "/"
+    return rt
+
+
 @app.get("/oauth/icu/start")
-def api_oauth_icu_start():
+def api_oauth_icu_start(return_to: str = Query("/")):
     """Begin the ICU OAuth flow: mint a CSRF state, 302 to ICU's authorize page.
-    Blank client_id (not yet provisioned) → bounce back with ?icu=unavailable."""
+    Blank client_id (not yet provisioned) → bounce back with ?icu=unavailable.
+    ``return_to`` (validated local path) is where the callback bounces afterward
+    so the setup wizard can resume on its own step and show the linked account."""
     from fastapi.responses import RedirectResponse
     from profile_manager import ProfileManager
     import secrets as _secrets
@@ -6660,7 +6671,8 @@ def api_oauth_icu_start():
     except Exception:
         profile_id = ""
     state = _secrets.token_urlsafe(32)
-    _icu_oauth_states[state] = {"profile_id": profile_id, "ts": now}
+    _icu_oauth_states[state] = {"profile_id": profile_id, "ts": now,
+                                "return_to": _icu_oauth_safe_return(return_to)}
     params = urlencode({
         "client_id": config.ICU_OAUTH_CLIENT_ID,
         "redirect_uri": config.ICU_OAUTH_REDIRECT_URI,
@@ -6682,10 +6694,16 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
     now = time.time()
     _icu_oauth_prune(now)
     st = _icu_oauth_states.pop(state, None)        # single-use
+    return_to = _icu_oauth_safe_return((st or {}).get("return_to") or "/")
+    _sep = "&" if "?" in return_to else "?"
+
+    def _back(suffix: str):
+        return RedirectResponse(url=f"{return_to}{_sep}{suffix}")
+
     if error:
-        return RedirectResponse(url="/?icu=error&reason=denied")
+        return _back("icu=error&reason=denied")
     if not st or not code:
-        return RedirectResponse(url="/?icu=error&reason=state")
+        return _back("icu=error&reason=state")
     try:
         import httpx
         resp = httpx.post(config.ICU_OAUTH_TOKEN_URL, data={
@@ -6699,9 +6717,25 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
         access_token = tok.get("access_token")
         athlete = tok.get("athlete") or {}
         athlete_id = str(athlete.get("id") or "")
+        athlete_name = (athlete.get("name") or "").strip()
         if not access_token:
             raise RuntimeError("no access_token in token response")
-        ProfileManager.get().save_icu_token(access_token, athlete_id or None)
+        # Capture the athlete's display name for the "Linked as <name>" UI. The
+        # token response usually carries it; if not, one lightweight /athlete/0
+        # fetch with the fresh token fills it (also backstops a missing id).
+        if not athlete_name or not athlete_id:
+            try:
+                r2 = httpx.get("https://intervals.icu/api/v1/athlete/0",
+                               headers={"Authorization": f"Bearer {access_token}"},
+                               timeout=10)
+                if r2.status_code == 200:
+                    a2 = r2.json() or {}
+                    athlete_name = athlete_name or (a2.get("name") or "").strip()
+                    athlete_id = athlete_id or str(a2.get("id") or "")
+            except Exception:
+                pass
+        ProfileManager.get().save_icu_token(
+            access_token, athlete_id or None, athlete_name or None)
         # Unshadow stale module-level config.ICU_* so the proxy re-resolves to the
         # freshly-saved token immediately (same fix as the API-key save path).
         for _attr in ("ICU_ATHLETE_ID", "ICU_API_KEY", "ICU_ACCESS_TOKEN"):
@@ -6710,10 +6744,10 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
             except AttributeError:
                 pass
         _icu_oauth_reset_throttle()
-        return RedirectResponse(url="/?icu=connected")
+        return _back("icu=connected")
     except Exception:
         _log.exception("ICU OAuth token exchange failed")
-        return RedirectResponse(url="/?icu=error&reason=exchange")
+        return _back("icu=error&reason=exchange")
 
 
 @app.post("/api/icu/disconnect")
@@ -6733,15 +6767,28 @@ def api_icu_disconnect():
 
 @app.get("/api/icu/connection")
 def api_icu_connection():
-    """Connection state for the UI: method = oauth / apikey / none."""
+    """Connection state for the UI: method = oauth / apikey / none.
+
+    ``name`` is the linked intervals.icu athlete's display name (OAuth) so the
+    UI can show 'Linked as <name>'. ``needs_oauth_migration`` flags a profile
+    still on a legacy API key (no OAuth token) so the dashboard can prompt the
+    one-click sign-in upgrade."""
     token = getattr(config, "ICU_ACCESS_TOKEN", "") or ""
     key = getattr(config, "ICU_API_KEY", "") or ""
     aid = getattr(config, "ICU_ATHLETE_ID", "") or ""
     method = "oauth" if token else ("apikey" if key else "none")
+    name = ""
+    try:
+        from profile_manager import ProfileManager
+        name = ProfileManager.get().icu_name or ""
+    except Exception:
+        name = ""
     return {
         "connected": bool(token or key),
         "method": method,
         "athlete_id": aid,
+        "name": name,
+        "needs_oauth_migration": bool(key and not token),
         "oauth_available": bool(getattr(config, "ICU_OAUTH_CLIENT_ID", "")),
     }
 

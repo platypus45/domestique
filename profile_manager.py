@@ -224,6 +224,12 @@ class ProfileManager:
         return self._env.get("ICU_ACCESS_TOKEN", "")
 
     @property
+    def icu_name(self) -> str:
+        """Display name of the linked intervals.icu athlete (OAuth). Empty until
+        a 'Connect' captured it; used by the UI to show 'Linked as <name>'."""
+        return self._athlete.get("icu_athlete_name", "")
+
+    @property
     def db_path(self) -> Path:
         return self.active_dir / "health_tracker.db"
 
@@ -925,11 +931,17 @@ class ProfileManager:
         os.environ["ICU_API_KEY"] = icu_api_key
         os.environ["ICU_ACCESS_TOKEN"] = icu_access_token
 
-    def save_icu_token(self, access_token: str, icu_athlete_id: "str | None" = None) -> None:
-        """Persist an OAuth bearer token (+ athlete id) to the active profile,
-        keeping the existing API key. Pass access_token="" to disconnect."""
+    def save_icu_token(self, access_token: str, icu_athlete_id: "str | None" = None,
+                       icu_athlete_name: "str | None" = None) -> None:
+        """Persist an OAuth bearer token (+ athlete id / display name) to the
+        active profile, keeping the existing API key. Pass access_token="" to
+        disconnect. ``icu_athlete_name`` (when given) is stored in athlete.json
+        so the UI can show 'Linked as <name>'."""
         self.save_env(icu_athlete_id if icu_athlete_id is not None else self.icu_athlete_id,
                       self.icu_api_key, access_token)
+        if icu_athlete_name is not None:
+            self._athlete["icu_athlete_name"] = icu_athlete_name
+            self._write_json(self.active_dir / "athlete.json", self._athlete)
 
     def save_prefs(self, prefs: dict) -> None:
         """Save training preferences to active profile's user_prefs.json."""

@@ -105,11 +105,13 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,108,247
     <h3 class="sub">2 · Connect — one click, no keys</h3>
     <div class="callout" style="background:rgba(59,130,246,0.08);border:1px solid #3b82f6;">
       <div style="font-size:13px;line-height:1.6;">
-        ✨ When you finish setup, Domestique opens <b>intervals.icu</b> in your browser — sign in
-        and approve once to link <b>your account</b> (no API keys to copy). Prefer to wait? You can
-        connect anytime later in <b>Settings</b>; until then, fitness (CTL/ATL/TSB) is computed from
+        ✨ <b>Sign in to intervals.icu</b> — it opens in your browser, you log in and approve
+        once, and we link <b>that account</b> here (no API keys to copy). Optional now; you can
+        also connect later in <b>Settings</b>. Until then, fitness (CTL/ATL/TSB) is computed from
         any FIT files you import.
       </div>
+      <div id="setup-link-status" style="font-size:13px;margin-top:8px;min-height:18px;"></div>
+      <button type="button" class="btn" id="setup-connect-btn" style="margin-top:8px;" onclick="connectIcu()">Sign in to intervals.icu</button>
     </div>
     <!-- Manual API-key entry removed (OAuth is the only setup path). Hidden empty
          stubs keep the legacy skip/test/finish JS null-safe — they always read "". -->
@@ -532,12 +534,9 @@ async function saveAll() {
     }
     if (data.ok) {
       st.className = 'status ok';
-      st.textContent = 'Setup complete! Opening intervals.icu to sign in…';
+      st.textContent = 'Setup complete! Redirecting to dashboard...';
       try { localStorage.removeItem(SETUP_LS_KEY); } catch(e) {}
-      // Open the intervals.icu OAuth sign-in as the final step (an active profile
-      // exists after /api/setup/save, so /oauth/icu/start binds to it; the
-      // callback returns to the dashboard connected).
-      setTimeout(() => window.location.href = '/oauth/icu/start', 1500);
+      setTimeout(() => window.location.href = '/', 1500);
     } else {
       st.className = 'status err'; st.textContent = data.error || 'Save failed.';
     }
@@ -714,6 +713,33 @@ PERSIST_IDS.forEach(id => {
   if (el) el.addEventListener('input', persistState);
 });
 
+// ── Explicit, retryable intervals.icu link (mirrors profile_setup) ───────
+// persistState() before leaving so the OAuth round-trip restores the wizard
+// fields; the callback returns to /setup?icu=... where we render the status.
+function connectIcu() {
+  try { persistState(); } catch (_) {}
+  window.location.href = '/oauth/icu/start?return_to=' + encodeURIComponent('/setup');
+}
+async function refreshLinkStatus(icuParam) {
+  const el = document.getElementById('setup-link-status');
+  const btn = document.getElementById('setup-connect-btn');
+  if (!el) return;
+  if (icuParam === 'error' || icuParam === 'unavailable') {
+    el.innerHTML = '<span style="color:var(--red);">Couldn’t link your account — please try again.</span>';
+    if (btn) btn.textContent = 'Retry — sign in to intervals.icu';
+    return;
+  }
+  try {
+    const c = await (await fetch('/api/icu/connection')).json();
+    if (c && c.method === 'oauth') {
+      const who = c.name || (c.athlete_id ? ('athlete ' + c.athlete_id) : 'your account');
+      el.innerHTML = '✓ Linked as <b>' + who.replace(/</g, '&lt;') + '</b>';
+      el.style.color = 'var(--green)';
+      if (btn) btn.textContent = 'Re-link a different account';
+    }
+  } catch (_) {}
+}
+
 // Auto-detect paths + restore on load. Order matters (grill): restore LAST so
 // the user's previously-typed values win over /api/setup/defaults; the ICU green
 // (later, user-triggered) overrides both.
@@ -739,6 +765,15 @@ PERSIST_IDS.forEach(id => {
   }
   // restore user-entered values (takes precedence over server defaults)
   restoreState();
+  // returning from the intervals.icu OAuth round-trip → render the link status;
+  // otherwise reflect any existing connection.
+  const _icuRet = new URLSearchParams(location.search).get('icu');
+  if (_icuRet) {
+    try { history.replaceState({}, '', '/setup'); } catch (_) {}
+    refreshLinkStatus(_icuRet);
+  } else {
+    refreshLinkStatus('');
+  }
 })();
 </script>
 </body>

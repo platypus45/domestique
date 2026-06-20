@@ -836,6 +836,16 @@ TYPE_CEILING = {
 # from sprint slots (they remain available to their proper vo2/threshold slots).
 _SPRINT_SLOT_IF_CEILING = 0.82
 
+# ── B5: easy-slot LOAD ceiling ────────────────────────────────────────────────
+# The content classifier (and the filename fallback) tag by STRUCTURE, so an
+# interval-structured file named "Endurance 20s/2min 6x" lands in the endurance
+# class despite short max-effort bursts that push its IF to 0.81–0.84. The
+# easy-slot Z3-6 TIME-% gate misses these (spiky efforts raise IF, not zone
+# time), so a Z2/recovery slot could match a 196-TSS interval file (the tester's
+# bug). Genuine easy files cap at IF ≈ 0.71; reject anything above this ceiling
+# from z2 / long_z2 / recovery slots. Mirrors _SPRINT_SLOT_IF_CEILING.
+_EASY_SLOT_IF_CEILING = 0.78
+
 # ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ──────────────────────
 # Parallel rough estimates for W'-load (kJ above CP) and Pmax-load (kJ PCr)
 # per hour, by session type. Values are advisory ONLY: when consumed they
@@ -1176,6 +1186,13 @@ class Goal:
     # target_date + event_* scalars; B/C entries here get a proportionate mini-taper.
     # Empty = today's single-A behaviour, unchanged.
     events: list = field(default_factory=list)
+    # FS1 (IP_PLANNER_MODES): plan CONSTRUCTION mode.
+    #   "auto"       — the score-weighted content sampler (default, unchanged).
+    #   "fixed_core" — blueprint engine: 1 HIT type/week, reps progress, Z2 core scales.
+    #   "template"   — blueprint loaded from a shipped preset (see PLANNER_TEMPLATES).
+    # "auto" everywhere it isn't set keeps every existing plan byte-for-byte.
+    plan_mode: str = "auto"
+    template_id: str = ""   # only when plan_mode == "template"
 
     def max_hours_for_day(self, weekday: int) -> float:
         """Get max training hours for a specific weekday (0=Mon..6=Sun)."""
@@ -1579,6 +1596,8 @@ def target_ctl_for_event(goal: Goal, difficulty: float | None = None) -> float:
 LONG_RIDE_CAP_MIN = 300      # 5h ceiling (Friel/CTS 4-6h); don't match >5h events.
 LONG_RIDE_FLOOR_H = 1.5      # start the long-ride ramp from at least 1.5h.
 LONG_RIDE_STEP_MIN = 25      # +25 min/week absolute ("+10%/wk" is research-debunked).
+STEPBACK_LONG_RIDE_CAP_MIN = 150  # B4: a deload's long ride stays ≤2.5h (matches the
+                                  # step-back picker's own weekend min(max_min, 150)).
 
 
 def _event_demand_targets(goal: "Goal", athlete: dict | None,
@@ -2955,6 +2974,13 @@ def match_zwo(
             # load files (IF > ceiling) out of sprint slots. See _SPRINT_SLOT_IF_CEILING.
             if session.session_type == "sprint" and float(w.get("IF") or 0) > _SPRINT_SLOT_IF_CEILING:
                 continue
+            # B5 — easy-slot LOAD gate: keep interval-structured files (IF above
+            # the easy ceiling, e.g. an "Endurance 20s/2min 6x") out of
+            # z2/long_z2/recovery slots even when the classifier filed them as
+            # endurance. The Z3-6 time-% gate below misses spiky efforts.
+            if (session.session_type in ("z2", "long_z2", "recovery")
+                    and float(w.get("IF") or 0) > _EASY_SLOT_IF_CEILING):
+                continue
             # v1.8.25 — class-aware Score floor. Endurance/recovery are low
             # intensity ⇒ low Score BY CONSTRUCTION (the rubric weights TSS +
             # above-Z2 time), so the blanket Score≥3 gate hid ~475 of them from
@@ -4005,6 +4031,142 @@ def _make_session_from_row(row: dict, day: date, day_name: str, phase_name: str)
     return sess
 
 
+# ── FS1 (IP_PLANNER_MODES): blueprint engine for fixed_core / template modes ───
+#
+# Instead of sampling a fresh workout per slot (the `auto` path), the blueprint
+# engine expands a REPEATABLE week: exactly one HIT session of a fixed type per
+# build week (reps progress by week_in_phase), a constant Z2 endurance core that
+# scales with availability + an ascending B6 ramp, and no HIT on deload weeks.
+# It returns the SAME 7-element Mon..Sun PlannedSession list the sampler does, so
+# every downstream pass (fallback match_zwo + B1/B3/B5/tapers/clamp) is reused
+# unchanged. Files are still chosen by match_zwo (B5 gates apply); the blueprint
+# fixes the TYPE + progression, not the file.
+
+# Default per-phase HIT quality for fixed_core (mirrors the block-focus order:
+# VO2 block in build1, threshold toward the event). reps progress start→max.
+_BLUEPRINT_DEFAULT_HIT: dict[str, dict] = {
+    "base":   {"session_type": "sweetspot", "progression": {"kind": "reps", "start": 2, "step": 1, "max": 4}},
+    "build1": {"session_type": "vo2max",    "progression": {"kind": "reps", "start": 4, "step": 1, "max": 6}},
+    "build2": {"session_type": "threshold", "progression": {"kind": "reps", "start": 3, "step": 1, "max": 5}},
+    "peak":   {"session_type": "threshold", "progression": {"kind": "reps", "start": 3, "step": 1, "max": 5}},
+    "taper":  {"session_type": "vo2max",    "progression": {"kind": "reps", "start": 2, "step": 0, "max": 2}},
+}
+
+# Shipped templates (D6). Each is a per-phase HIT blueprint; phases not named here
+# fall back to _BLUEPRINT_DEFAULT_HIT. content-based types only (no filenames).
+PLANNER_TEMPLATES: dict[str, dict] = {
+    "polarized_base": {
+        "name": "Polarized Base",
+        "phases": {
+            "base":   {"session_type": "vo2max",    "progression": {"kind": "reps", "start": 3, "step": 1, "max": 5}},
+            "build1": {"session_type": "vo2max",    "progression": {"kind": "reps", "start": 4, "step": 1, "max": 6}},
+            "build2": {"session_type": "threshold", "progression": {"kind": "reps", "start": 3, "step": 1, "max": 5}},
+        },
+    },
+    "ftp_builder": {
+        "name": "FTP Builder",
+        "phases": {
+            "base":   {"session_type": "sweetspot", "progression": {"kind": "reps", "start": 2, "step": 1, "max": 4}},
+            "build1": {"session_type": "sweetspot", "progression": {"kind": "reps", "start": 3, "step": 1, "max": 5}},
+            "build2": {"session_type": "threshold", "progression": {"kind": "reps", "start": 2, "step": 1, "max": 4}},
+            "peak":   {"session_type": "threshold", "progression": {"kind": "reps", "start": 3, "step": 1, "max": 4}},
+        },
+    },
+}
+
+
+def _blueprint_hit_for(goal, phase_name: str) -> dict:
+    """Resolve the HIT blueprint for a phase: template preset → default."""
+    if getattr(goal, "plan_mode", "auto") == "template":
+        tmpl = PLANNER_TEMPLATES.get(getattr(goal, "template_id", "") or "")
+        if tmpl and phase_name in tmpl.get("phases", {}):
+            return tmpl["phases"][phase_name]
+    return _BLUEPRINT_DEFAULT_HIT.get(phase_name, _BLUEPRINT_DEFAULT_HIT["build1"])
+
+
+def _blueprint_progress(prog: dict, week_in_phase: int) -> "tuple[int, int]":
+    """(reps, target_session_min) for this week. reps grow start→max, clamped.
+    Duration is a coarse target (warm-up/cool-down + work) so match_zwo can find
+    a sane file; exact structure is the file's, the slot fixes type + length."""
+    start = int(prog.get("start", 4)); step = int(prog.get("step", 1))
+    mx = int(prog.get("max", start)); kind = prog.get("kind", "reps")
+    reps = min(mx, start + step * max(0, week_in_phase))
+    dur = 40 + reps * (5 if kind == "duration" else 4)
+    return reps, dur
+
+
+def expand_blueprint_week(
+    phase: "Phase", budget: "IntensityBudget", week_num: int, week_start: date,
+    available_days: list, rest_days: list, daily_max_hours: dict | None,
+    max_weekday_hours: float, max_weekend_hours: float, is_stepback: bool,
+    week_in_phase: int, goal,
+) -> list["PlannedSession"]:
+    """fixed_core / template week → 7-element Mon..Sun PlannedSession list."""
+    def _cap_min(weekday: int) -> int:
+        if daily_max_hours and weekday in daily_max_hours:
+            return int(daily_max_hours[weekday] * 60)
+        return int((max_weekend_hours if weekday >= 5 else max_weekday_hours) * 60)
+
+    bp_hit = _blueprint_hit_for(goal, phase.name)
+    # Lay rest vs train by offset from week_start (matches plan_week + the caller).
+    slots: list = []
+    for off in range(7):
+        d = week_start + timedelta(days=off)
+        wd = d.weekday()
+        if wd in rest_days or wd not in available_days:
+            slots.append(PlannedSession(
+                day=d, day_name=d.strftime("%a"), session_type="rest",
+                duration_min=0, tss_estimate=0,
+                description="Rest — recovery takes priority"))
+        else:
+            slots.append((d, wd))  # training placeholder
+
+    train_i = [i for i, s in enumerate(slots) if isinstance(s, tuple)]
+    # One HIT per build week (D2); none on a deload (B3/B4 keep deloads easy).
+    hit_i = None
+    if not is_stepback and budget.hit_count_max > 0 and train_i:
+        weekday_train = [i for i in train_i if slots[i][1] < 5] or train_i
+        hit_i = weekday_train[len(weekday_train) // 2]
+
+    for i in train_i:
+        d, wd = slots[i]
+        cap = _cap_min(wd)
+        is_weekend = wd >= 5
+        if i == hit_i:
+            st = bp_hit["session_type"]
+            reps, dur = _blueprint_progress(bp_hit.get("progression", {}), week_in_phase)
+            ceil = TYPE_CEILING.get(st)
+            eff = min(cap, dur) if ceil is None else min(cap, dur, ceil)
+            eff = max(eff, 30)
+            slots[i] = PlannedSession(
+                day=d, day_name=d.strftime("%a"), session_type=st,
+                duration_min=eff, tss_estimate=round(eff / 60 * TSS_PER_HOUR.get(st, 75)),
+                description=f"{CAL_SESSION_LABEL_SAFE(st)} — {reps} reps (fixed-core; progresses weekly)")
+        else:
+            st = "long_z2" if is_weekend else "z2"
+            if is_stepback:
+                dur = min(cap, 90 if is_weekend else 50)
+            else:
+                # B6: ascend the Z2 core across the phase's build weeks.
+                base = 150 if is_weekend else 75
+                dur = min(cap, base + max(0, week_in_phase) * 10)
+            dur = max(dur, 30)
+            slots[i] = PlannedSession(
+                day=d, day_name=d.strftime("%a"), session_type=st,
+                duration_min=dur, tss_estimate=round(dur / 60 * TSS_PER_HOUR["z2"]),
+                description=f"{'Long ' if is_weekend else ''}Z2 endurance (fixed-core base)")
+    return slots
+
+
+def CAL_SESSION_LABEL_SAFE(st: str) -> str:
+    """Readable label for a session_type (server-side mirror of the UI map)."""
+    return {
+        "vo2max": "VO2max", "threshold": "Threshold", "sweetspot": "Sweet Spot",
+        "overunder": "Over-Under", "sprint": "Sprints", "tempo": "Tempo",
+        "z2": "Z2", "long_z2": "Long Z2", "recovery": "Recovery",
+    }.get(st, st.upper())
+
+
 def sample_week_workouts(
     phase: "Phase",
     budget: "IntensityBudget",
@@ -5009,31 +5171,50 @@ def generate_plan(
                              and phase.name in ("build2", "peak"))
                          else None)
                 # F1 (v2.1/B2): block focus for this week (None unless opt-in).
-                block_focus = _block_focus_for(phase.name, goal, is_stepback)
+                # FS1 (D4): a blueprint mode owns its own per-phase focus → no
+                # block-periodization concentration on top.
+                _plan_mode = getattr(goal, "plan_mode", "auto")
+                block_focus = (None if _plan_mode in ("fixed_core", "template")
+                               else _block_focus_for(phase.name, goal, is_stepback))
                 pw.block_focus = block_focus
-                sampled = sample_week_workouts(
-                    phase=phase, budget=budget, library=library,
-                    used_names=used_names_dict,
-                    week_num=week_num, seed_salt=seed_salt,
-                    week_start=cursor,
-                    available_days=goal.available_days,
-                    rest_days=goal.rest_days,
-                    daily_max_hours=goal.daily_max_hours,
-                    max_weekday_hours=goal.max_weekday_hours,
-                    max_weekend_hours=goal.max_weekend_hours,
-                    is_stepback=is_stepback,
-                    pool_index=pool_index,
-                    week_in_phase=week_in_phase,
-                    recent_hit_types=phase_rot,
-                    seen_cc_dur_tuples=seen_cc_dur_tuples,
-                    plan_pick_counts=plan_pick_counts,
-                    class_session_counts=class_session_counts,
-                    class_distinct_files=class_distinct_files,
-                    plan_total_weeks=plan_total_weeks,
-                    goal_type=getattr(goal, "goal_type", "general"),
-                    emphasis_profile=_emph,
-                    block_focus=block_focus,
-                )
+                if _plan_mode in ("fixed_core", "template"):
+                    # FS1 — blueprint engine (deterministic repeatable week). Same
+                    # 7-slot shape as the sampler; downstream passes are reused.
+                    sampled = expand_blueprint_week(
+                        phase=phase, budget=budget, week_num=week_num,
+                        week_start=cursor,
+                        available_days=goal.available_days,
+                        rest_days=goal.rest_days,
+                        daily_max_hours=goal.daily_max_hours,
+                        max_weekday_hours=goal.max_weekday_hours,
+                        max_weekend_hours=goal.max_weekend_hours,
+                        is_stepback=is_stepback,
+                        week_in_phase=week_in_phase, goal=goal,
+                    )
+                else:
+                    sampled = sample_week_workouts(
+                        phase=phase, budget=budget, library=library,
+                        used_names=used_names_dict,
+                        week_num=week_num, seed_salt=seed_salt,
+                        week_start=cursor,
+                        available_days=goal.available_days,
+                        rest_days=goal.rest_days,
+                        daily_max_hours=goal.daily_max_hours,
+                        max_weekday_hours=goal.max_weekday_hours,
+                        max_weekend_hours=goal.max_weekend_hours,
+                        is_stepback=is_stepback,
+                        pool_index=pool_index,
+                        week_in_phase=week_in_phase,
+                        recent_hit_types=phase_rot,
+                        seen_cc_dur_tuples=seen_cc_dur_tuples,
+                        plan_pick_counts=plan_pick_counts,
+                        class_session_counts=class_session_counts,
+                        class_distinct_files=class_distinct_files,
+                        plan_total_weeks=plan_total_weeks,
+                        goal_type=getattr(goal, "goal_type", "general"),
+                        emphasis_profile=_emph,
+                        block_focus=block_focus,
+                    )
                 # (v1.11.0 event long-ride progression is applied as a final pass
                 #  at the END of generate_plan — after all duration/re-match passes.)
                 # Trim rotation window to last 4 weeks worth of picks (≤3 HITs/wk
@@ -5109,15 +5290,20 @@ def generate_plan(
     # v4.6.1 PLANNER-VARIETY+RONNESTAD: hard floor for build2 and peak phases
     # — each must include ≥1 anaerobic AND ≥1 neuromuscular AND ≥2 vo2_short
     # workouts across the phase. Post-sampling check + swap if floor not met.
-    _enforce_build2_peak_hard_floor(weeks, pool_index, plan_pick_counts,
-                                    class_session_counts, class_distinct_files,
-                                    used_names_dict, used_names_set)
+    # FS1: these diversification floors are the AUTO sampler's variety contract;
+    # they INJECT extra HIT types and would break fixed_core/template's "one HIT
+    # type per week" promise. Skip them for blueprint modes (the blueprint owns
+    # the HIT structure). _enforce_weekly_hit_cap below still runs (a no-op at 1).
+    if getattr(goal, "plan_mode", "auto") == "auto":
+        _enforce_build2_peak_hard_floor(weeks, pool_index, plan_pick_counts,
+                                        class_session_counts, class_distinct_files,
+                                        used_names_dict, used_names_set)
 
-    # v4.6.3 RONNESTAD-FIX: hard floor of ≥1 Rønnestad-tagged file per build1
-    # / build2 / peak. Rønnestad spans multiple content_classes (vo2_short,
-    # neuromuscular, threshold, recovery) so the per-class floor above can't
-    # express the constraint — runs as a separate pass.
-    _enforce_ronnestad_floor(weeks, pool_index, plan_pick_counts)
+        # v4.6.3 RONNESTAD-FIX: hard floor of ≥1 Rønnestad-tagged file per build1
+        # / build2 / peak. Rønnestad spans multiple content_classes (vo2_short,
+        # neuromuscular, threshold, recovery) so the per-class floor above can't
+        # express the constraint — runs as a separate pass.
+        _enforce_ronnestad_floor(weeks, pool_index, plan_pick_counts)
 
     # FIX-1b (safety): FINAL guaranteed weekly HIT cap. Runs AFTER all floors
     # (which target per-phase coverage and may overshoot a week's per-week
@@ -5257,7 +5443,11 @@ def generate_plan(
     # goals only). Demotes a taper-eve VO2max/threshold block to an easy opener.
     if goal.goal_type in ("event", "ctl") and goal.target_date:
         _enforce_event_taper_eve(weeks, goal.target_date)
-        _apply_secondary_event_tapers(weeks, goal)  # F7: B/C mini-tapers
+    # F3 — B/C mini-tapers apply on ANY goal that carries intermediate races, not
+    # just event/ctl: a rider on an FTP / VO2max / general block can still target
+    # a B/C race. Safe + a no-op without B/C events (the helper skips priority-A
+    # and, when there's no A target_date, simply has no macro-taper span to dodge).
+    _apply_secondary_event_tapers(weeks, goal)  # F7: B/C mini-tapers
 
     # v1.8.21 — AUTHORITATIVE per-day availability clamp. Session durations are
     # set from matched ZWO files at FOUR sites (sampler + 3 utilization/
@@ -5294,10 +5484,29 @@ def generate_plan(
             _ceil = TYPE_CEILING.get(_cc) or TYPE_CEILING.get(s.session_type)
             _eff = cap_min if _ceil is None else (
                 _ceil if cap_min <= 0 else min(cap_min, _ceil))
+            # B4: on a step-back week the long ride must stay short (≤2.5h). The
+            # sampler/match can set a weekend endurance slot to the matched file's
+            # full length (the prescription↔file decoupling), so a deload picked up
+            # a 205-min "long ride". Endurance types have no TYPE_CEILING, so clamp
+            # them here (this is the authoritative duration pass).
+            if (getattr(w, "is_stepback", False)
+                    and (_eff <= 0 or _eff > STEPBACK_LONG_RIDE_CAP_MIN)):
+                _eff = STEPBACK_LONG_RIDE_CAP_MIN
             if _eff > 0 and s.duration_min > _eff:
                 _scale = _eff / float(s.duration_min)
                 s.tss_estimate = round((s.tss_estimate or 0) * _scale)
                 s.duration_min = _eff
+
+    # B5 — re-route any easy slot that the sampler/match left holding a too-hard
+    # (interval-structured) file to a genuine easy file, and recompute its TSS.
+    # Runs after the per-day clamp so the re-match targets the final duration.
+    _enforce_easy_slot_content(weeks, library, plan_start_date, seed_salt)
+
+    # B3 — guarantee each step-back week is the lightest in its block. Runs LAST,
+    # after the per-day clamp above could have trimmed a build week below the
+    # deload (e.g. a pre-taper peak week), which would invert the 3-up-1-down
+    # rhythm. Only shrinks easy volume in the deload; never touches build weeks.
+    _enforce_stepback_is_lightest(weeks)
 
     return phases, weeks
 
@@ -5858,6 +6067,102 @@ def _enforce_weekly_volume_ceiling(weeks: list, recent_weekly_tss=None, goal=Non
             slot.description = "Rest — weekly volume ceiling (recent load)"
             slot.zwo_file = ""
             slot.zwo_name = ""
+
+
+def _enforce_stepback_is_lightest(weeks: list) -> None:
+    """B3 — a step-back (deload) week must be the lightest in its block.
+
+    plan_week gives step-back weeks FIXED easy durations (recovery / Z2 /
+    long_Z2) while build weeks scale with the load-based ceiling, so a light
+    build week — typically a peak week just before the taper — can occasionally
+    end up BELOW the deload, inverting the 3-up-1-down rhythm (tester saw
+    W4>W3, W8>W6). After every other volume pass (incl. the authoritative
+    per-day clamp), shrink each step-back week's easy aerobic sessions until its
+    summed TSS sits clearly (~10%) below the lightest build week that precedes
+    it in the same block. Only easy volume is touched — never HIT, never adds
+    load; bounded loop (≤ sessions per week, stops once all easy slots hit the
+    floor).
+    """
+    def _wk_tss(w):
+        return sum((s.tss_estimate or 0) for s in w.sessions
+                   if s and s.session_type != "rest")
+    for i, wk in enumerate(weeks):
+        if not getattr(wk, "is_stepback", False):
+            continue
+        if getattr(wk, "phase", "") == "taper":
+            continue
+        # Block = the consecutive preceding non-stepback, non-taper weeks (back
+        # to the previous step-back or the plan start).
+        builds = []
+        j = i - 1
+        while j >= 0 and not getattr(weeks[j], "is_stepback", False):
+            if getattr(weeks[j], "phase", "") != "taper":
+                builds.append(weeks[j])
+            j -= 1
+        if not builds:
+            continue
+        target = min(_wk_tss(b) for b in builds) * 0.90
+        for _ in range(len(wk.sessions) + 1):
+            if _wk_tss(wk) <= target:
+                break
+            easy = [(idx, s) for idx, s in enumerate(wk.sessions)
+                    if s and s.session_type != "rest"
+                    and (s.duration_min or 0) > _VOLUME_MIN_SESSION_MIN
+                    and not _session_is_hit(s)]
+            if not easy:
+                break  # every easy slot already at/under the floor
+            easy.sort(key=lambda kv: -(kv[1].duration_min or 0))
+            _, slot = easy[0]
+            tss_per_min = ((slot.tss_estimate or 0) / slot.duration_min
+                           if slot.duration_min else 0.7)
+            overage = _wk_tss(wk) - target
+            cut_min = int(round(overage / tss_per_min)) if tss_per_min else 0
+            new_dur = max(_VOLUME_MIN_SESSION_MIN, slot.duration_min - max(1, cut_min))
+            slot.duration_min = new_dur
+            slot.tss_estimate = round(tss_per_min * new_dur)
+
+
+def _enforce_easy_slot_content(weeks: list, library: list, plan_start_date,
+                               seed_salt: int = 0) -> None:
+    """B5 — an easy slot must carry an EASY file.
+
+    The sampler is the primary picker and buckets by content_class, so an
+    interval-structured file the classifier filed as "endurance" (high IF) — or
+    a sweet-spot/over-under file — can land on a z2/long_z2/recovery slot (the
+    prescription↔file decoupling: the tester saw a Z2 60-min slot matched to a
+    196-TSS interval file). match_zwo now enforces _EASY_SLOT_IF_CEILING, so we
+    re-match any easy slot whose matched file is too hard and recompute the
+    slot's TSS from its (easy) type + final duration. Runs LAST, after the
+    per-day clamp set final durations. Bounded (one pass over the slots).
+    """
+    if not library:
+        return
+    if_by_file = {}
+    for w in library:
+        f = (w.get("File") or "").strip()
+        if f:
+            if_by_file[f] = float(w.get("IF") or 0)
+    easy_tss_hr = {"z2": TSS_PER_HOUR["z2"], "long_z2": TSS_PER_HOUR["z2"],
+                   "recovery": TSS_PER_HOUR["recovery"]}
+    for wk in weeks:
+        for s in wk.sessions:
+            if s is None or s.session_type not in easy_tss_hr:
+                continue
+            f = (getattr(s, "zwo_file", "") or "").strip()
+            if not f or if_by_file.get(f, 0.0) <= _EASY_SLOT_IF_CEILING:
+                continue
+            # Too-hard file on an easy slot — re-match to the closest easy file.
+            s.zwo_file = ""
+            s.zwo_name = ""
+            try:
+                match_zwo(s, library, week_num=getattr(wk, "week_num", 0),
+                          plan_start_date=plan_start_date, seed_salt=seed_salt,
+                          exact_duration=True)
+            except Exception:  # noqa: BLE001
+                log.debug("B5 easy-slot re-match failed", exc_info=True)
+            # Recompute the slot's TSS from its easy type + final duration so the
+            # detail modal's TSS reflects the SLOT, not a leftover file value.
+            s.tss_estimate = round((s.duration_min or 0) / 60 * easy_tss_hr[s.session_type])
 
 
 def _demote_hit_window(weeks: list, center_date, days: int, library=None,
@@ -7529,6 +7834,11 @@ def regenerate_from_today(
         distribution=goal.distribution,
         block_periodization=goal.block_periodization,
         events=goal.events,  # F7: carry B/C events through recalc
+        # FS1: carry the construction mode so a fixed_core/template plan stays
+        # fixed on regenerate (else adjusted_goal defaults to "auto" and the
+        # sampler reshuffles the build weeks back to mixed HIT).
+        plan_mode=getattr(goal, "plan_mode", "auto"),
+        template_id=getattr(goal, "template_id", "") or "",
     )
 
     # 10. Generate new phases — offset start by recovery duration to avoid overlap
@@ -7613,31 +7923,47 @@ def regenerate_from_today(
             # F1 (v2.1/B6): keep blocks on the recalc path — recompute focus from
             # the (adjusted) goal + phase so a recalc'd block plan stays blocked.
             # None unless goal.block_periodization is on (default-off parity).
-            block_focus = _block_focus_for(phase.name, adjusted_goal, is_stepback)
+            # FS1 — keep a fixed plan FIXED on "update plan": blueprint modes
+            # re-expand deterministically here too (else regenerate would reshuffle
+            # via the sampler). auto path unchanged.
+            _bp_mode = getattr(adjusted_goal, "plan_mode", "auto") in ("fixed_core", "template")
+            block_focus = None if _bp_mode else _block_focus_for(phase.name, adjusted_goal, is_stepback)
             pw.block_focus = block_focus
-            sampled = sample_week_workouts(
-                phase=phase, budget=budget, library=library,
-                used_names=used_names_dict,
-                week_num=week_num, seed_salt=seed_salt,
-                week_start=cursor,
-                available_days=adjusted_goal.available_days,
-                rest_days=adjusted_goal.rest_days,
-                daily_max_hours=adjusted_goal.daily_max_hours,
-                max_weekday_hours=adjusted_goal.max_weekday_hours,
-                max_weekend_hours=adjusted_goal.max_weekend_hours,
-                is_stepback=is_stepback,
-                pool_index=pool_index,
-                week_in_phase=week_in_phase,
-                recent_hit_types=phase_rot,
-                seen_cc_dur_tuples=seen_cc_dur_tuples,
-                plan_pick_counts=plan_pick_counts,
-                class_session_counts=class_session_counts,
-                class_distinct_files=class_distinct_files,
-                plan_total_weeks=plan_total_weeks_rg,
-                goal_type=getattr(adjusted_goal, "goal_type", "general"),
-                emphasis_profile=_emph,
-                block_focus=block_focus,
-            )
+            if _bp_mode:
+                sampled = expand_blueprint_week(
+                    phase=phase, budget=budget, week_num=week_num, week_start=cursor,
+                    available_days=adjusted_goal.available_days,
+                    rest_days=adjusted_goal.rest_days,
+                    daily_max_hours=adjusted_goal.daily_max_hours,
+                    max_weekday_hours=adjusted_goal.max_weekday_hours,
+                    max_weekend_hours=adjusted_goal.max_weekend_hours,
+                    is_stepback=is_stepback, week_in_phase=week_in_phase,
+                    goal=adjusted_goal,
+                )
+            else:
+                sampled = sample_week_workouts(
+                    phase=phase, budget=budget, library=library,
+                    used_names=used_names_dict,
+                    week_num=week_num, seed_salt=seed_salt,
+                    week_start=cursor,
+                    available_days=adjusted_goal.available_days,
+                    rest_days=adjusted_goal.rest_days,
+                    daily_max_hours=adjusted_goal.daily_max_hours,
+                    max_weekday_hours=adjusted_goal.max_weekday_hours,
+                    max_weekend_hours=adjusted_goal.max_weekend_hours,
+                    is_stepback=is_stepback,
+                    pool_index=pool_index,
+                    week_in_phase=week_in_phase,
+                    recent_hit_types=phase_rot,
+                    seen_cc_dur_tuples=seen_cc_dur_tuples,
+                    plan_pick_counts=plan_pick_counts,
+                    class_session_counts=class_session_counts,
+                    class_distinct_files=class_distinct_files,
+                    plan_total_weeks=plan_total_weeks_rg,
+                    goal_type=getattr(adjusted_goal, "goal_type", "general"),
+                    emphasis_profile=_emph,
+                    block_focus=block_focus,
+                )
             if len(phase_rot) > 12:
                 del phase_rot[: len(phase_rot) - 12]
             for nm in used_names_dict:
@@ -7917,6 +8243,10 @@ def recalculate_plan(
         distribution=goal.distribution,
         block_periodization=goal.block_periodization,
         events=goal.events,  # F7: carry B/C events through recalc
+        # FS1: carry the construction mode so a fixed_core/template plan stays
+        # fixed on reforecast (else it defaults to "auto" and reshuffles).
+        plan_mode=getattr(goal, "plan_mode", "auto"),
+        template_id=getattr(goal, "template_id", "") or "",
     )
 
     # v1.11.0 IMPL-EVENT — event demand → plan targets so the event CTL nudge
@@ -8019,9 +8349,24 @@ def recalculate_plan(
             # F1 (v2.1/B6): keep blocks on the recalc path — recompute focus from
             # the (adjusted) goal + phase so a recalc'd block plan stays blocked.
             # None unless goal.block_periodization is on (default-off parity).
-            block_focus = _block_focus_for(phase.name, adjusted_goal, is_stepback)
+            # FS1 — blueprint modes re-expand deterministically on reforecast too
+            # (a fixed plan must not reshuffle when the plan is recalc'd).
+            _bp_mode = getattr(adjusted_goal, "plan_mode", "auto") in ("fixed_core", "template")
+            block_focus = None if _bp_mode else _block_focus_for(phase.name, adjusted_goal, is_stepback)
             pw.block_focus = block_focus
-            sampled = sample_week_workouts(
+            if _bp_mode:
+                sampled = expand_blueprint_week(
+                    phase=phase, budget=budget, week_num=week_num, week_start=cursor,
+                    available_days=adjusted_goal.available_days,
+                    rest_days=adjusted_goal.rest_days,
+                    daily_max_hours=adjusted_goal.daily_max_hours,
+                    max_weekday_hours=adjusted_goal.max_weekday_hours,
+                    max_weekend_hours=adjusted_goal.max_weekend_hours,
+                    is_stepback=is_stepback, week_in_phase=week_in_phase,
+                    goal=adjusted_goal,
+                )
+            else:
+                sampled = sample_week_workouts(
                 phase=phase, budget=budget, library=library,
                 used_names=used_names_dict,
                 week_num=week_num, seed_salt=seed_salt,

@@ -2113,6 +2113,23 @@ window.addEventListener('unhandledrejection', function(e) {
           <span class="hint" title="Concentrate each build/peak phase on ONE quality per ~3-4 week block (VO2 block then threshold block toward your event) instead of mixing every hard type weekly. Evidence is strongest for trained cyclists with adequate volume; default OFF." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span>
         </label></div>
       </div>
+      <!-- FS1 (IP_PLANNER_MODES): plan construction mode. -->
+      <div class="form-row">
+        <div class="form-group"><label>Plan style
+          <span class="hint" title="Automatic: a varied, auto-adapting plan drawn from the full library. Fixed-core (repeatable): the same weekly shape — one hard session type per phase that progresses by reps, with a Z2 base that scales to your time. Template: a ready-made fixed-core blueprint." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span></label>
+          <select id="plan-mode" onchange="onPlanModeChange()">
+            <option value="auto" selected>Automatic (varied)</option>
+            <option value="fixed_core">Fixed-core (repeatable)</option>
+            <option value="template">Template (preset)</option>
+          </select>
+        </div>
+        <div class="form-group" id="plan-template-group" style="display:none;"><label>Template</label>
+          <select id="plan-template" onchange="refreshPlanPreview()">
+            <option value="polarized_base">Polarized Base</option>
+            <option value="ftp_builder">FTP Builder</option>
+          </select>
+        </div>
+      </div>
       <div id="plan-event-fields">
         <div class="form-row">
           <!-- v1.8.9 Bug 8 — oninput syncs to plan-weeks via _syncPlanDateToWeeks(). -->
@@ -2129,19 +2146,20 @@ window.addEventListener('unhandledrejection', function(e) {
             </select>
           </div>
         </div>
-        <!-- F7c (v2.1) — optional intermediate B/C races. Empty by default →
-             a single-A plan POSTs no events[] and behaves exactly as before. -->
-        <div id="plan-bc-races" style="margin-top:4px;">
-          <div style="font-size:11px;color:var(--text2);font-weight:500;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Intermediate races (B / C) — optional</div>
-          <div id="plan-bc-rows"></div>
-          <button type="button" class="btn btn-sm" onclick="addBcRaceRow()">+ Add race</button>
-        </div>
       </div>
       <div id="plan-target-fields" style="display:none;">
         <div class="form-row">
           <div class="form-group"><label>End Date (optional)</label><input type="date" id="plan-tdate"></div>
         </div>
         <div style="font-size:10px;color:var(--text3);margin-top:4px;">No target needed — the planner maximizes improvement over the plan period.</div>
+      </div>
+      <!-- F7c (v2.1) / F3 — optional intermediate B/C races. Moved OUT of the
+           event-only fields so FTP / VO2max / general plans can target a B/C race
+           too. Empty by default → no events[] → unchanged plan. -->
+      <div id="plan-bc-races" style="margin-top:4px;">
+        <div style="font-size:11px;color:var(--text2);font-weight:500;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Intermediate races (B / C) — optional</div>
+        <div id="plan-bc-rows"></div>
+        <button type="button" class="btn btn-sm" onclick="addBcRaceRow()">+ Add race</button>
       </div>
 
       <!-- Per-Day Availability Grid -->
@@ -2503,8 +2521,8 @@ window.addEventListener('unhandledrejection', function(e) {
   <div id="cal-overlay" class="cal-wrap">
     <div class="cal-toolbar">
       <h3>Calendar</h3>
-      <div class="cal-tab active" id="cal-tab-overlay" onclick="calSwitchView('overlay')">Calendar</div>
-      <div class="cal-tab" id="cal-tab-grid" onclick="calSwitchView('grid')">Grid</div>
+      <div class="cal-tab active" id="cal-tab-overlay" data-view="overlay" onclick="calSwitchView('overlay')">Calendar</div>
+      <div class="cal-tab" id="cal-tab-grid" data-view="grid" onclick="calSwitchView('grid')">Grid</div>
       <button class="cal-jump-btn" onclick="calJumpToToday()">Jump to today</button>
     </div>
     <div id="cal-body" class="cal-scroll">
@@ -2523,6 +2541,15 @@ window.addEventListener('unhandledrejection', function(e) {
 
   <!-- Legacy weekly plan grid (still functional; toggled via the Grid tab) -->
   <div id="legacy-plan-grid" style="display:none;">
+    <!-- B8 — the Calendar/Grid tabs live in #cal-overlay, which is hidden when
+         the Grid view is shown; without this toolbar the overview was a one-way
+         trip with no way back. Mirror the tabs here so the view is reversible. -->
+    <div class="cal-toolbar">
+      <h3>Plan grid</h3>
+      <div class="cal-tab" id="cal-tab-overlay-g" data-view="overlay" onclick="calSwitchView('overlay')">Calendar</div>
+      <div class="cal-tab active" id="cal-tab-grid-g" data-view="grid" onclick="calSwitchView('grid')">Grid</div>
+      <button id="vol-unit-toggle" class="btn cal-jump-btn" style="margin-left:auto;" onclick="toggleVolUnit()" title="Show planned weekly volume in hours or minutes">Volume: hours</button>
+    </div>
     <!-- v4.2.0 IMPL-WEEKLY: plan progress header (item 8) + export button (item 10) -->
     <div id="pg-progress-header" class="pg-progress-header" style="display:none;">
       <span class="pg-progress-phase" id="pg-progress-phase">—</span>
@@ -2595,10 +2622,10 @@ window.addEventListener('unhandledrejection', function(e) {
           <label>FTP (watts) <span id="set-ftp-source-badge" style="display:none;font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;margin-left:6px;background:var(--surface2);color:var(--text2);border:1px solid var(--border);vertical-align:middle;"></span></label>
           <input type="number" id="set-ftp">
         </div>
-        <div class="form-group"><label>eFTP (Intervals.icu)</label>
+        <div class="form-group"><label>Your FTP on intervals.icu (eFTP)</label>
           <div style="display:flex;gap:8px;align-items:center;">
             <span id="set-eftp" style="font-size:18px;font-weight:700;">—</span>
-            <button class="btn btn-sm" onclick="acceptEftp()">Accept</button>
+            <button class="btn btn-sm" onclick="acceptEftp()" title="Copy your real FTP from intervals.icu into the FTP field — you can still edit it by hand.">Copy from intervals.icu →</button>
           </div>
         </div>
       </div>
@@ -9433,6 +9460,14 @@ function togglePlanFields() {
   refreshPlanPreview();
 }
 
+// FS1 — show the template picker only for plan_mode=template.
+function onPlanModeChange() {
+  const mode = ($('plan-mode') || {}).value || 'auto';
+  const grp = $('plan-template-group');
+  if (grp) grp.style.display = (mode === 'template') ? '' : 'none';
+  refreshPlanPreview();
+}
+
 // v4.6.0 B2: live phase preview — call /api/plan/preview so the right
 // panel uses the SAME derive_phases() logic as /api/plan/generate.
 // v1.8.8 Bug 6 — weeks↔event-date single source of truth. Earlier the
@@ -9917,6 +9952,9 @@ async function generatePlan() {
     daily_availability: dailyHours,
     distribution: ($('plan-distribution') || {}).value || 'polarized',  // J1
     block_periodization: (($('plan-block-periodization') || {}).checked) || false,  // F1
+    plan_mode: ($('plan-mode') || {}).value || 'auto',  // FS1
+    template_id: (($('plan-mode') || {}).value === 'template')
+      ? (($('plan-template') || {}).value || '') : '',  // FS1
   };
   if (body.goal === 'event') {
     body.event_date = $('plan-edate').value || null;
@@ -9938,6 +9976,10 @@ async function generatePlan() {
   } else if (['ctl', 'ftp', 'vo2max', 'ftp_vo2max'].includes(body.goal)) {
     // No target — just maximize over the plan period
     body.event_date = $('plan-tdate').value || null;
+    // F3 — a non-event plan can still target intermediate B/C races. Attach them
+    // as events[] (no A event); the backend applies the B/C mini-tapers.
+    const _bc = readBcRaces();
+    if (_bc.length) body.events = _bc;
   }
   try {
     const res = await fetch('/api/plan/generate', {
@@ -9986,10 +10028,31 @@ async function reforecastPlan() {
   }
 }
 
+// F2 — weekly-volume unit toggle. Default hours (the tester's ask); flips to
+// minutes; choice persisted in localStorage so it survives reloads.
+window._volUnit = (() => { try { return localStorage.getItem('domestiqueVolUnit') || 'h'; } catch(_) { return 'h'; } })();
+function volFmt(min) {
+  const m = Math.round(Number(min) || 0);
+  if (window._volUnit === 'min') return `${m}m`;
+  return `${Math.round(m / 60 * 10) / 10}h`;  // 1 dp, e.g. 9.5h
+}
+function _syncVolUnitBtn() {
+  const b = document.getElementById('vol-unit-toggle');
+  if (b) b.textContent = window._volUnit === 'h' ? 'Volume: hours' : 'Volume: minutes';
+}
+function toggleVolUnit() {
+  window._volUnit = (window._volUnit === 'h') ? 'min' : 'h';
+  try { localStorage.setItem('domestiqueVolUnit', window._volUnit); } catch(_) {}
+  _syncVolUnitBtn();
+  try { if (window._planData) renderPlanJSON(window._planData); } catch(_) {}
+  try { loadWeeklyCalendar(); } catch(_) {}
+}
+
 async function renderPlanJSON(plan) {
   if (!plan) return;
   // Store plan globally for click handlers
   window._planData = plan;
+  _syncVolUnitBtn();
 
   // Fetch actual activities for overlay
   let actualByDate = {};
@@ -10071,7 +10134,7 @@ async function renderPlanJSON(plan) {
 
   const SESSION_SHORT = {
     rest:'REST', recovery:'REC', z2:'Z2', long_z2:'LONG', tempo:'TEMPO',
-    sweetspot:'SS', threshold:'FTP', vo2max:'VO2', overunder:'O/U',
+    sweetspot:'SS', threshold:'FTP', vo2max:'VO2', overunder:'Over-Under',
   };
   const SESSION_CSS = {
     rest:'wc-rest-type', recovery:'wc-z2', z2:'wc-z2', long_z2:'wc-long',
@@ -10282,9 +10345,12 @@ async function renderPlanJSON(plan) {
       const actualCls = met ? 'pg-tss-actual-met' : (actualTss < weekTss ? 'pg-tss-actual-miss' : '');
       actualHtml = `<div class="pg-tss-actual-label">Actual</div><div class="pg-tss-actual-val ${actualCls}">${Math.round(actualTss)}</div>`;
     }
+    // F2 — planned weekly VOLUME (time), unit per the hours/minutes toggle.
+    const weekVolMin = (w.sessions || []).reduce((s, sess) => s + (sess.duration_min || 0), 0);
     cal += `<div class="pg-week-tss">
       <div class="pg-tss-actual-label">Planned</div>
       <div class="pg-tss-planned">${Math.round(weekTss)}</div>
+      <div class="pg-week-vol" style="font-size:10px;color:var(--text3);margin-top:2px;" title="Planned weekly volume (toggle hours/minutes above)">${volFmt(weekVolMin)}</div>
       ${actualHtml}
     </div>`;
 
@@ -11124,19 +11190,18 @@ function renderCalDay(d, wi, di, phaseKey, today) {
 function calSwitchView(view) {
   const overlay = document.getElementById('cal-overlay');
   const grid = document.getElementById('legacy-plan-grid');
-  const tabO = document.getElementById('cal-tab-overlay');
-  const tabG = document.getElementById('cal-tab-grid');
   if (view === 'grid') {
     if (overlay) overlay.style.display = 'none';
     if (grid) grid.style.display = 'block';
-    if (tabO) tabO.classList.remove('active');
-    if (tabG) tabG.classList.add('active');
   } else {
     if (overlay) overlay.style.display = 'block';
     if (grid) grid.style.display = 'none';
-    if (tabO) tabO.classList.add('active');
-    if (tabG) tabG.classList.remove('active');
   }
+  // B8 — both views carry a tab bar (the grid's was added so the overview is
+  // reversible). Sync active state across every .cal-tab by its data-view.
+  document.querySelectorAll('.cal-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.view === view);
+  });
 }
 
 function calJumpToToday() {
@@ -12580,9 +12645,19 @@ async function saveIcuCredentials() {
 }
 
 function acceptEftp() {
+  // F1 — "Copy from intervals.icu": pull the rider's real (e)FTP from ICU into
+  // the editable FTP field so the planner's % targets use true numbers. The FTP
+  // field stays a manual override. Give clear feedback either way (was a silent
+  // no-op when ICU hadn't synced an eFTP yet).
   const txt = $('set-eftp').textContent;
   const val = parseInt(txt);
-  if (val > 0) { $('set-ftp').value = val; saveSettings(); }
+  if (val > 0) {
+    $('set-ftp').value = val;
+    saveSettings();
+    try { showToast(`FTP set to ${val}W from intervals.icu — edit it by hand any time.`, 4000, 'success'); } catch(_) {}
+  } else {
+    try { showToast('No eFTP from intervals.icu yet (needs a recent sync). Enter your FTP manually for now.', 5000, 'warning'); } catch(_) {}
+  }
 }
 
 // v1.1.0 IMPL-HRV-RECOVERY — HRV4Training CSV upload + manual HRV entry.
@@ -12957,7 +13032,7 @@ async function loadWeeklyCalendar() {
     };
     const SESSION_SHORT = {
       rest: 'REST', recovery: 'REC', z2: 'Z2', long_z2: 'LONG', tempo: 'TEMPO',
-      sweetspot: 'SS', threshold: 'FTP', vo2max: 'VO2', overunder: 'O/U',
+      sweetspot: 'SS', threshold: 'FTP', vo2max: 'VO2', overunder: 'Over-Under',
     };
     // Exposure palette — green (low) → red (anaerobic), mixed = purple.
     // Aligned with the Library category heat-ramp so users learn one palette.
@@ -13043,7 +13118,7 @@ async function loadWeeklyCalendar() {
         body = `
           ${planGhost}
           <div class="wc-type${_polCls}" style="background:${expo.color}22;color:${expo.color};border:1px solid ${expo.color};${_polBorder}font-weight:700;">${sportIcons} ${expo.label}</div>
-          <div class="wc-meta">${agg.total_min}m · ${agg.total_tss} TSS</div>
+          <div class="wc-meta">${volFmt(agg.total_min)} · ${agg.total_tss} TSS</div>
           ${adhTxt}
         `;
       } else if (isPast && !hasActual && s.session_type !== 'rest' && !isDismissed) {
@@ -13495,7 +13570,7 @@ function openMissedSessionsModal() {
   const list = window._weeklyMissedSessions || [];
   const SESSION_SHORT = {
     rest: 'REST', recovery: 'REC', z2: 'Z2', long_z2: 'LONG', tempo: 'TEMPO',
-    sweetspot: 'SS', threshold: 'FTP', vo2max: 'VO2', overunder: 'O/U',
+    sweetspot: 'SS', threshold: 'FTP', vo2max: 'VO2', overunder: 'Over-Under',
   };
   const SESSION_LONG = {
     recovery: 'Recovery', z2: 'Zone 2', long_z2: 'Long Z2', tempo: 'Tempo',
@@ -13894,54 +13969,46 @@ async function openDayWorkout(sessionIdx) {
   // duration (e.g. "Tempo 45min — 4×8min @ 91%" or planner-emitted
   // "Tempo (45min)"). Stripping any embedded "(Nmin)" / "Nmin" so we
   // append exactly ONE canonical session-planned duration suffix.
-  const titleRaw = (session.display_name && session.display_name.trim())
-                 || (session.zwo_name && session.zwo_name.trim())
-                 || session.session_type;
-  const titleClass = String(titleRaw)
-    .replace(/\s*\(\s*\d+\s*min\s*\)\s*/gi, ' ')   // drop "(45min)"
-    .replace(/(?:^|\s)\d+\s*min(?=\s|$|—|-)/gi, ' ') // drop bare "45min"
-    .replace(/\s+/g, ' ').trim();
+  // v2.1.x B1 — SLOT-centric detail. Title/duration/TSS describe the PLANNED
+  // session (what the plan prescribes), NOT the matched library file. Titling by
+  // the file's display_name + duration made an O/U slot whose matched file was a
+  // Z2 read as a totally different session ("wrong session" + 3-4 conflicting
+  // durations). The matched file is now ONE secondary line; B5 makes the file
+  // actually fit the slot so the two agree (and the gap note disappears).
   const sessionDur = Number(session.duration_min) || 0;
   const fileDur = Number(session.zwo_duration_min) || 0;
-  // v1.8.17 — title duration reflects the MATCHED FILE (what the user
-  // actually downloads + rides), not the planner's target. Previously the
-  // title showed the planned duration (e.g. "(90min)") while the ZWO/FIT the
-  // user got was 61min — a direct contradiction the user flagged. When a
-  // library file is matched use its real duration; fall back to the planned
-  // duration only for a synthesised (file-less) session. The plan-vs-file
-  // gap is still surfaced by the showGap banner below.
-  const titleDur = (session.zwo_file && fileDur > 0) ? fileDur : sessionDur;
-  const heroTitle = `${titleClass} (${titleDur}min)`;
-  // Mismatch label: when the matched ZWO file is >10% off the session
-  // plan (in either direction) surface the gap explicitly so the user
-  // knows whether to pace, extend, or repeat the file.
+  const slotLabel = CAL_CONTENT_LABEL[session.content_class]
+                 || CAL_SESSION_LABEL[session.session_type]
+                 || String(session.session_type || 'Session').toUpperCase();
+  const heroTitle = `${slotLabel} (${sessionDur}min)`;
   const gapPct = (sessionDur > 0 && fileDur > 0)
     ? Math.abs(fileDur - sessionDur) / sessionDur
     : 0;
   const showGap = gapPct > 0.10;
-  const filenameDerived = (session.zwo_name || '').trim();
-  // Show "sampled from library" provenance subtitle when a library file
-  // is matched and its display_name differs from the bare zwo_name.
-  const displayNameStr = (session.display_name || '').trim();
-  const showProvenance = !!session.zwo_file
-    && displayNameStr
-    && filenameDerived
-    && filenameDerived.toLowerCase() !== displayNameStr.toLowerCase();
+  const matchedFile = (session.zwo_name || '').trim();
 
   let html = `<h2>${session.day_name} — ${esc(heroTitle)}</h2>`;
-  if (showGap) {
-    html += `<div style="font-size:11px;color:var(--orange);margin:-4px 0 8px;">Workout file is ${fileDur}min, session planned for ${sessionDur}min. Pace/extend on trainer.</div>`;
-  }
-  if (showProvenance) {
-    html += `<div style="font-size:11px;color:var(--text3);margin:-4px 0 8px;font-style:italic;">Source file: ${esc(filenameDerived)}</div>`;
+  if (session.zwo_file && matchedFile) {
+    // B7 — direction-aware, non-alarming gap note. The matched .zwo is a guide;
+    // a longer file means ride the structure and stop at the slot target, a
+    // shorter one means add easy Z2 to reach it. (Was "pace/extend to Nmin",
+    // which read backwards when the file was the longer of the two.)
+    let durNote = '';
+    if (showGap) {
+      durNote = fileDur > sessionDur
+        ? ` · file is ${fileDur}min — ride ${sessionDur}min of it`
+        : ` · file is ${fileDur}min — add easy Z2 to reach ${sessionDur}min`;
+    }
+    html += `<div style="font-size:11px;color:var(--text3);margin:-4px 0 8px;font-style:italic;">Matched library file: ${esc(matchedFile)}${durNote}</div>`;
   }
   html += `<div style="font-size:13px;color:var(--text2);margin:8px 0;">${esc(fixZeroMin(session.description) || '')}</div>`;
 
   // Stats grid
-  // v1.8.17 — Duration stat reflects the MATCHED FILE (titleDur), same as the
-  // hero title, so a 25min workout in a 60min slot reads "25min" not "60min".
+  // v2.1.x B1 — Duration stat reflects the PLANNED SLOT (sessionDur), same as the
+  // hero title; the matched file's own length is shown on the "Matched library
+  // file" line above when it differs.
   html += '<div style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0;">';
-  html += `<div class="metric"><div class="mv">${titleDur}min</div><div class="ml">Duration</div></div>`;
+  html += `<div class="metric"><div class="mv">${sessionDur}min</div><div class="ml">Duration</div></div>`;
   html += `<div class="metric"><div class="mv">${session.tss_estimate}</div><div class="ml">TSS</div></div>`;
   if (hr[0]) html += `<div class="metric"><div class="mv" style="color:var(--red);">${hr[0]}-${hr[1]}</div><div class="ml">HR (bpm)</div></div>`;
   if (pw[0]) html += `<div class="metric"><div class="mv" style="color:var(--accent);">${pw[0]}-${pw[1]}</div><div class="ml">Power (W)</div></div>`;

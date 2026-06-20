@@ -47,79 +47,62 @@ class TestV132SessionDurationDisplay(unittest.TestCase):
     """v1.3.2 — single duration in session-detail modal title."""
 
     def test_title_interpolates_one_duration_only(self):
-        """The h2 title template literal must interpolate exactly ONE
-        duration suffix — the cleaned titleClass + a single `(Nmin)`.
-        Regresses if any future refactor reintroduces the duplicated
-        `(${actualDur}min)` after a title that already embeds duration.
+        """Still ONE duration in the title — but B1 (2026-06-20) makes it the
+        SLOT duration. heroTitle = `${slotLabel} (${sessionDur}min)`: exactly one
+        `(Nmin)` suffix, no second file-duration appended (the v1.3.2 double-
+        duration bug stays fixed, now via the slot-centric rewrite).
         """
         body = _open_day_workout_body(_read_dashboard())
-        # Locate the heroTitle assignment.
         m = re.search(r"const\s+heroTitle\s*=\s*`([^`]+)`", body)
         self.assertIsNotNone(m, "heroTitle template literal not found")
         tmpl = m.group(1)
-        # Count "(...min)" patterns inside the literal — must be exactly 1.
         suffixes = re.findall(r"\(\s*\$\{[^}]+\}\s*min\s*\)", tmpl)
         self.assertEqual(
             len(suffixes), 1,
             f"heroTitle must contain exactly ONE `(${{...}}min)` suffix, "
             f"got {len(suffixes)} in {tmpl!r}",
         )
-        # The titleClass token used must be the cleaned variant — i.e.
-        # the code must reference titleClass, and titleClass must be
-        # built from a string-replace that strips "(Nmin)" / "Nmin".
-        self.assertIn("titleClass", tmpl)
-        # Verify the strip exists.
-        self.assertRegex(
-            body,
-            r"\.replace\(\s*/\\s\*\\\(\\s\*\\d\+\\s\*min\\s\*\\\)\\s\*/",
-            "titleClass must strip embedded `(Nmin)` from display_name/zwo_name",
-        )
+        # The single suffix is the SLOT duration; the label is the slot label.
+        self.assertIn("sessionDur", tmpl)
+        self.assertIn("slotLabel", tmpl)
 
     def test_duration_mismatch_label_appears_when_gap_over_10pct(self):
-        """When workout-file duration is >10% off session-planned
-        duration, surface a "Workout file is N min, session planned
-        for M min" label so the user knows to pace or extend.
+        """When the matched .zwo duration is >10% off the slot duration, B1/B7
+        surface a CALM, direction-aware note on the secondary 'Matched library
+        file' line (no alarm). gap calc + 10% threshold unchanged; wording is
+        'ride N of it' (file longer) / 'add easy Z2 to reach N' (file shorter).
         """
         body = _open_day_workout_body(_read_dashboard())
-        # The gap calc must be present.
-        self.assertRegex(
-            body,
-            r"const\s+gapPct\s*=",
-            "openDayWorkout must compute a duration-mismatch gap percentage",
-        )
-        # The 10% threshold must be the trigger.
-        self.assertRegex(
-            body,
-            r"gapPct\s*>\s*0\.10",
-            "Mismatch label must fire when gap > 10% of session duration",
-        )
-        # The label text must mention both durations and a pacing hint.
-        self.assertIn("Workout file is", body)
-        self.assertIn("session planned for", body)
-        self.assertIn("Pace/extend", body)
+        self.assertRegex(body, r"const\s+gapPct\s*=",
+                         "openDayWorkout must compute a duration-mismatch gap percentage")
+        self.assertRegex(body, r"gapPct\s*>\s*0\.10",
+                         "Mismatch note must fire when gap > 10% of slot duration")
+        # New B1/B7 copy on the secondary matched-file line.
+        self.assertIn("Matched library file:", body)
+        self.assertIn("add easy Z2 to reach", body)
+        self.assertRegex(body, r"ride\s*\$\{sessionDur\}min of it",
+                         "file-longer case must say 'ride ${sessionDur}min of it'")
 
-    def test_v104_title_cascade_not_regressed(self):
-        """Pre-existing v1.0.4 contract: title cascade is still
-        `display_name || zwo_name || session_type` and zwo_duration_min
-        is still consulted (now for the gap label, not the title suffix).
+    def test_title_is_slot_centric_not_file_cascade(self):
+        """SUPERSEDES the v1.0.4 cascade in the MODAL: B1 sources the title from
+        the SLOT (CAL_CONTENT_LABEL → CAL_SESSION_LABEL), not display_name. The
+        matched file's zwo_name moves to the secondary line; zwo_duration_min is
+        still consulted for the gap note. (The calendar-CELL cascade in
+        calCardTitle is unchanged — see test_ui_v104_title_source.)
         """
-        html = _read_dashboard()
-        body = _open_day_workout_body(html)
-        # All three cascade sources must still appear in the modal builder.
-        self.assertIn("session.display_name", body)
-        self.assertIn("session.zwo_name", body)
-        self.assertIn("session.session_type", body)
-        # Cascade order: display_name OR zwo_name OR session_type.
+        body = _open_day_workout_body(_read_dashboard())
+        self.assertIn("const slotLabel", body)
+        self.assertIn("CAL_CONTENT_LABEL[session.content_class]", body)
+        self.assertIn("CAL_SESSION_LABEL[session.session_type]", body)
+        # The modal must NOT title from the old display_name||zwo_name||type cascade.
         cascade_re = re.compile(
             r"session\.display_name[^|]*\|\|[^|]*session\.zwo_name[^|]*\|\|[^|]*session\.session_type",
             re.DOTALL,
         )
-        self.assertRegex(
+        self.assertNotRegex(
             body, cascade_re,
-            "v1.0.4 title cascade `display_name || zwo_name || session_type` "
-            "must still be present",
-        )
-        # zwo_duration_min must still be consumed (now feeds the gap label).
+            "modal must no longer title from the display_name cascade (B1 slot-centric)")
+        # zwo_duration_min is still consumed (feeds the gap note).
         self.assertIn("session.zwo_duration_min", body)
 
 

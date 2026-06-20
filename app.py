@@ -8507,6 +8507,9 @@ async def api_plan_generate(request: Request):
             # F1 (v2.1): opt-in block periodization (default off).
             block_periodization=bool(body.get("block_periodization", _prefs.get("block_periodization", False))),
             events=_events_from_dicts(body.get("events")),  # F7 (A + optional B/C)
+            # FS1 — plan construction mode (auto | fixed_core | template).
+            plan_mode=str(body.get("plan_mode", _prefs.get("plan_mode", "auto")) or "auto"),
+            template_id=str(body.get("template_id", "") or ""),
         )
         # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
         if goal.longest_ride_h_90d is None:
@@ -8617,6 +8620,8 @@ async def api_plan_generate(request: Request):
                 "distribution": getattr(goal, "distribution", "polarized"),
                 "block_periodization": getattr(goal, "block_periodization", False),  # F1
                 "events": _events_to_dicts(getattr(goal, "events", [])),  # F7
+                "plan_mode": getattr(goal, "plan_mode", "auto"),  # FS1
+                "template_id": getattr(goal, "template_id", "") or "",  # FS1
             },
             "phases": [
                 {
@@ -9108,6 +9113,12 @@ def _regenerate_plan_dict(
         rest_days=g.get("rest_days", [0]),
         longest_ride_h_90d=g.get("longest_ride_h_90d"),
         last_ftp_test_date=g.get("last_ftp_test_date"),
+        # FS1: carry the construction mode so /api/plan/regenerate keeps a
+        # fixed_core/template plan FIXED (this inline reconstruction omits it,
+        # so without this the goal defaults to "auto" and the build weeks get
+        # reshuffled back to mixed HIT by the sampler).
+        plan_mode=g.get("plan_mode", "auto"),
+        template_id=g.get("template_id", "") or "",
     )
     # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
     if goal.longest_ride_h_90d is None:
@@ -9331,6 +9342,8 @@ def _goal_from_plan_dict(g: dict) -> "tp.Goal":
         distribution=g.get("distribution", "polarized"),  # J1
         block_periodization=bool(g.get("block_periodization", False)),  # F1
         events=_events_from_dicts(g.get("events")),  # F7
+        plan_mode=g.get("plan_mode", "auto"),  # FS1 — keep fixed plans fixed on refit/reforecast
+        template_id=g.get("template_id", "") or "",
     )
 
 

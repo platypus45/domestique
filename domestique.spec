@@ -57,6 +57,12 @@ if os.path.exists("profiles"):
 if os.path.exists("gpx"):
     datas.append(("gpx", "gpx"))
 
+# v2.1.x ICU OAuth — bundle the gitignored .oauth.env (client_secret) so the
+# frozen app carries it while the PUBLIC repo never does (see config._load_oauth_env).
+# The secret necessarily ships in the binary (installed-app OAuth, no PKCE).
+if os.path.exists(".oauth.env"):
+    datas.append((".oauth.env", "."))
+
 # Previously we enumerated top-level `.py` modules explicitly and added them
 # as `datas`. PyInstaller's Analysis pass already picks them up via its
 # static-import scan from `launcher.py` → `app.py` → the rest of the tree,

@@ -219,6 +219,11 @@ class ProfileManager:
         return self._env.get("ICU_API_KEY", "")
 
     @property
+    def icu_access_token(self) -> str:
+        """ICU OAuth bearer token (empty unless the rider used 'Connect')."""
+        return self._env.get("ICU_ACCESS_TOKEN", "")
+
+    @property
     def db_path(self) -> Path:
         return self.active_dir / "health_tracker.db"
 
@@ -461,6 +466,7 @@ class ProfileManager:
             # Update os.environ (NOT setdefault — must overwrite)
             os.environ["ICU_ATHLETE_ID"] = self.icu_athlete_id
             os.environ["ICU_API_KEY"] = self.icu_api_key
+            os.environ["ICU_ACCESS_TOKEN"] = self.icu_access_token
 
             # Repoint DB. Order matters: set_db_path BEFORE close_all_connections
             # so that when worker threads re-open their connections (triggered
@@ -888,24 +894,42 @@ class ProfileManager:
                 return str(entry["date"])
         return None
 
-    def save_env(self, icu_athlete_id: str, icu_api_key: str) -> None:
+    def save_env(self, icu_athlete_id: str, icu_api_key: str,
+                 icu_access_token: "str | None" = None) -> None:
         """Save Intervals.icu credentials to active profile's .env.
 
         Strips leading/trailing whitespace and rejects embedded newlines
         (which would otherwise inject arbitrary KEY=VALUE lines into .env).
         Writes atomically and sets 0600 so credentials aren't world-readable.
+
+        ``icu_access_token`` is the OAuth bearer token. When None the existing
+        stored token is preserved (so the API-key save path doesn't clobber an
+        OAuth connection); pass "" to explicitly clear it (disconnect).
         """
         icu_athlete_id = (icu_athlete_id or "").strip()
         icu_api_key = (icu_api_key or "").strip()
-        if any(c in (icu_athlete_id + icu_api_key) for c in "\n\r"):
+        if icu_access_token is None:
+            icu_access_token = self._env.get("ICU_ACCESS_TOKEN", "")
+        icu_access_token = (icu_access_token or "").strip()
+        if any(c in (icu_athlete_id + icu_api_key + icu_access_token) for c in "\n\r"):
             raise ValueError("credentials may not contain newlines")
 
         self._env["ICU_ATHLETE_ID"] = icu_athlete_id
         self._env["ICU_API_KEY"] = icu_api_key
-        content = f"ICU_ATHLETE_ID={icu_athlete_id}\nICU_API_KEY={icu_api_key}\n"
+        self._env["ICU_ACCESS_TOKEN"] = icu_access_token
+        content = (f"ICU_ATHLETE_ID={icu_athlete_id}\n"
+                   f"ICU_API_KEY={icu_api_key}\n"
+                   f"ICU_ACCESS_TOKEN={icu_access_token}\n")
         self._write_env_atomic(self.active_dir / ".env", content)
         os.environ["ICU_ATHLETE_ID"] = icu_athlete_id
         os.environ["ICU_API_KEY"] = icu_api_key
+        os.environ["ICU_ACCESS_TOKEN"] = icu_access_token
+
+    def save_icu_token(self, access_token: str, icu_athlete_id: "str | None" = None) -> None:
+        """Persist an OAuth bearer token (+ athlete id) to the active profile,
+        keeping the existing API key. Pass access_token="" to disconnect."""
+        self.save_env(icu_athlete_id if icu_athlete_id is not None else self.icu_athlete_id,
+                      self.icu_api_key, access_token)
 
     def save_prefs(self, prefs: dict) -> None:
         """Save training preferences to active profile's user_prefs.json."""

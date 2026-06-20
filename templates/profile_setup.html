@@ -97,23 +97,17 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,156,247
   <div class="step-panel" id="step-2">
     <h2>Connect Intervals.icu</h2>
     <p class="info">
-      Optional. Syncs your training data (CTL, ATL, TSB, HRV).
-      <br>Find credentials at
-      <a href="https://intervals.icu/settings" target="_blank" class="help-link">intervals.icu/settings</a>
-      &rarr; Developer Settings.
+      Syncs your training data (CTL, ATL, TSB, HRV).
     </p>
-    <div class="form-row">
-      <label>Athlete ID</label>
-      <input type="text" id="icu-id" placeholder="e.g. i12345" autocomplete="off">
-    </div>
-    <div class="form-row">
-      <label>API Key</label>
-      <input type="password" id="icu-key" placeholder="Your API key" autocomplete="off">
+    <div class="info" style="background:rgba(59,130,246,0.08);border:1px solid #3b82f6;border-radius:8px;padding:10px 12px;margin:8px 0;">
+      ✨ <b>One click — no keys to copy.</b> Once you finish setup, open
+      <b>Settings → Connect intervals.icu</b> and log in once; we attach it to this
+      profile automatically. (Connecting happens after the profile exists, so it's a
+      single click when you're set up.)
     </div>
     <div class="status" id="step2-status"></div>
     <div class="actions">
-      <button type="button" class="skip-link" onclick="goStep(3)">Skip for now</button>
-      <button type="button" class="btn btn-primary" onclick="saveIcu()" id="save-icu-btn">Next</button>
+      <button type="button" class="btn btn-primary" id="save-icu-btn" onclick="goStep(3)">Continue</button>
     </div>
   </div>
 
@@ -253,39 +247,9 @@ async function createProfile() {
 
 let _savingIcu = false;
 async function saveIcu() {
-  if (_savingIcu) return;
-  const id = document.getElementById('icu-id').value.trim();
-  const key = document.getElementById('icu-key').value.trim();
-  if (!id || !key) { showStatus('step2-status', 'Both fields are required, or click Skip.', false); return; }
-  const btn = document.getElementById('save-icu-btn');
-  _savingIcu = true;
-  if (btn) { btn.disabled = true; }
-  try {
-    // Test connection first
-    const test = await fetch('/api/setup/test-icu', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({athlete_id: id, api_key: key})
-    });
-    if (!test.ok) {
-      showStatus('step2-status', 'Connection failed: HTTP ' + test.status, false);
-      return;
-    }
-    let testData;
-    try { testData = await test.json(); } catch (e) { testData = {}; }
-    if (!testData.ok) { showStatus('step2-status', testData.error || 'Connection failed.', false); return; }
-    // Save to profile
-    await fetch('/api/setup/save', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({icu_athlete_id: id, icu_api_key: key})
-    });
-    showStatus('step2-status', 'Connected!', true);
-    setTimeout(() => goStep(3), 500);
-  } finally {
-    _savingIcu = false;
-    if (btn) { btn.disabled = false; }
-  }
+  // Manual API-key entry removed — connect via Settings → "Connect intervals.icu"
+  // after setup (OAuth attaches to the active profile). Safe no-op for any legacy caller.
+  goStep(3);
 }
 
 let _savingAthlete = false;

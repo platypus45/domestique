@@ -79,17 +79,30 @@ class ICUNetworkError(Exception):
 
 
 def _require_credentials() -> None:
-    """Raise ICUCredentialsMissing if either credential is empty/None."""
+    """Raise ICUCredentialsMissing unless usable creds exist.
+
+    Valid if an OAuth access token is present (the athlete id is stored with it),
+    OR the legacy athlete_id + api_key pair is configured. OAuth is the per-profile
+    "Connect" path; the API key stays as the manual fallback.
+    """
+    access_token = getattr(config, "ICU_ACCESS_TOKEN", None)
+    if access_token:
+        return
     athlete_id = getattr(config, "ICU_ATHLETE_ID", None)
     api_key = getattr(config, "ICU_API_KEY", None)
     if not athlete_id or not api_key:
         raise ICUCredentialsMissing(
-            "ICU_ATHLETE_ID and ICU_API_KEY must be configured"
+            "Connect intervals.icu (OAuth) or set ICU_ATHLETE_ID + ICU_API_KEY"
         )
 
 
 def _auth_header() -> dict:
+    """Prefer the OAuth bearer token; fall back to legacy API-key Basic auth.
+    Byte-identical to the previous Basic header when no token is configured."""
     _require_credentials()
+    access_token = getattr(config, "ICU_ACCESS_TOKEN", None)
+    if access_token:
+        return {"Authorization": f"Bearer {access_token}"}
     token = base64.b64encode(f"API_KEY:{config.ICU_API_KEY}".encode()).decode()
     return {"Authorization": f"Basic {token}"}
 

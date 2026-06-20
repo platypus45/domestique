@@ -10,6 +10,13 @@
   macOS was unaffected (its DMG is built locally where the secret exists).
 - OAuth diagnostics: the token-exchange path now logs the HTTP status + body and a
   missing-secret warning, so a build-config regression shows up in "Copy logs".
+- **Fixed: Windows "built-in window could not start" dialog on first launch.** Files
+  extracted from the downloaded zip carry Mark-of-the-Web (Internet-zone), which made
+  .NET refuse to resolve types from the bundled managed `Python.Runtime.dll` (pywebview's
+  pythonnet/EdgeChromium backend) on the cold start — it self-healed on reopen. The launcher
+  now strips the `Zone.Identifier` ADS from the bundled pythonnet assemblies before loading
+  the CLR (root fix, no code-signing needed), with a short in-process retry as a safety net.
+  Installing via an installer (vs running the raw zip from Downloads) also avoids this.
 
 ## v2.2.1 — Fix the "Raise FTP" button + logs that capture sign-in & sync (2026-06-20)
 

@@ -182,6 +182,40 @@ _server_traceback: "str | None" = None
 _uvicorn_server = None
 
 
+def _win_strip_motw():
+    """v2.2.x WIN-CLR-MOTW (structural fix): clear the Mark-of-the-Web from the
+    bundled pythonnet managed assemblies so the native window starts first-try.
+
+    Files extracted from an internet-downloaded zip inherit a ``Zone.Identifier``
+    alternate-data-stream tagging them "Internet zone". When pywebview's
+    EdgeChromium backend has pythonnet reflect into the MANAGED ``Python.Runtime.dll``,
+    .NET restricts the load of an untrusted-zone assembly → "Failed to resolve
+    Python.Runtime.Loader.Initialize" on the first launch (it self-heals on a later
+    run once Defender/SmartScreen settle). Deleting the Zone.Identifier ADS removes
+    that block at the root — no code-signing or installer required.
+
+    Windows-only, best-effort, idempotent: a no-op when there's no ADS (already
+    unblocked, or installed to Program Files where the installer stripped it)."""
+    if sys.platform != "win32":
+        return
+    base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(sys.executable))
+    try:
+        for root, _dirs, files in os.walk(base):
+            _low_root = root.lower()
+            for fn in files:
+                _low = fn.lower()
+                # Target the .NET managed assemblies pythonnet reflects into —
+                # the named culprit + anything under a pythonnet dir.
+                if _low.endswith(".dll") and (
+                    _low.startswith("python.runtime") or "pythonnet" in _low_root):
+                    try:
+                        os.remove(os.path.join(root, fn) + ":Zone.Identifier")
+                    except OSError:
+                        pass  # no ADS (already clean) / no perms — fine
+    except Exception:
+        pass  # never let unblocking break startup
+
+
 def _win_hard_exit(platform=None):
     """WIN-RELAUNCH-FIX (v2.1.0): on Windows, force the process to die when the
     window closes.
@@ -506,6 +540,11 @@ def _fallback_to_browser(reason: str) -> None:
 
 
 def main():
+    # v2.2.x: clear the Mark-of-the-Web from bundled pythonnet assemblies BEFORE
+    # anything loads the CLR, so the native window starts first-try on a fresh
+    # download (root cause of the "Failed to resolve Loader.Initialize" dialog).
+    _win_strip_motw()
+
     # Single-instance guard: if another instance is already serving on our
     # port, activate its native window instead of opening a browser tab.
     # Opening Chrome/Safari defeats the whole point of the pywebview app.
@@ -643,23 +682,19 @@ def main():
                 log.error("server-only mode crashed:\n%s", tb)
             sys.exit(1)
 
-    # Try native window (pywebview), fall back to browser + tray
-    try:
-        import webview
-        # v2.0.2 WIN-START-FIX: proactively import the platform backend
-        # BEFORE webview.start(). On Windows the EdgeChromium/WinForms backend
-        # bootstraps the .NET CLR via pythonnet; if that's missing the CLR
-        # layer can hard-abort the process (not a catchable Python error),
-        # which on a windowed build is the silent "nothing happens" death.
-        # Importing the module here turns a missing backend into an ordinary
-        # ImportError we can catch, engaging the browser fallback below.
-        # macOS uses the Cocoa backend (no CLR), so its path is unchanged.
-        import importlib
+    # Try native window (pywebview), fall back to browser + tray.
+    def _start_native_window():
+        import webview, importlib
+        # v2.0.2 WIN-START-FIX: proactively import the platform backend BEFORE
+        # webview.start(). On Windows the EdgeChromium/WinForms backend bootstraps
+        # the .NET CLR via pythonnet; importing it here turns a backend problem
+        # into a catchable error instead of a silent process death. macOS uses the
+        # Cocoa backend (no CLR), so its path is unchanged.
         if sys.platform == "win32":
             importlib.import_module("webview.platforms.edgechromium")
-        # pywebview requires the main thread — skip pystray (tray not needed
-        # when the app has its own window; closing the window exits the app)
-        window = webview.create_window(
+        # pywebview requires the main thread — skip pystray (tray not needed when
+        # the app has its own window; closing the window exits the app).
+        webview.create_window(
             "Domestique", URL,
             width=1400, height=900,
             min_size=(1000, 600),
@@ -667,23 +702,53 @@ def main():
             js_api=JsApi(),  # WKWebView ignores <a download>; JS calls
                              # window.pywebview.api.save_zwo/save_fit instead.
         )
-        webview.start()
-        print("Window closed — shutting down.")
-        _shutdown_event.set()
-        # FIX26 (§7): release OS sleep inhibit on normal window-close exit.
+        webview.start()  # blocks until the window closes
+
+    # v2.2.x WIN-CLR-COLDSTART: on a COLD first Windows launch the pythonnet CLR
+    # can fail to resolve ("Failed to resolve Python.Runtime.Loader.Initialize
+    # from …Python.Runtime.dll") and then self-heal on the next attempt — which
+    # surfaced the alarming "built-in window could not start" dialog + a browser
+    # fallback even though the app works fine on relaunch. Retry the init a few
+    # times with a short backoff BEFORE falling back, so the transient cold-start
+    # no longer shows the dialog. macOS does a single attempt (no CLR).
+    import time as _time
+    _native_attempts = 3 if sys.platform == "win32" else 1
+    for _attempt in range(_native_attempts):
         try:
-            import sleep_inhibit
-            sleep_inhibit.disable()
-        except Exception:
-            pass
-        # WIN-RELAUNCH-FIX (v2.1.0): hard-exit on Windows so the lingering CLR
-        # backend + bound :8080 can't block the next launch. No-op on macOS.
-        _win_hard_exit()
-    except ImportError:
-        _fallback_to_browser("pywebview/backend not available")
-    except Exception as e:
-        # WebView2 missing on Windows 10, or other pywebview error
-        _fallback_to_browser(f"pywebview failed: {e}")
+            _start_native_window()
+            print("Window closed — shutting down.")
+            _shutdown_event.set()
+            # FIX26 (§7): release OS sleep inhibit on normal window-close exit.
+            try:
+                import sleep_inhibit
+                sleep_inhibit.disable()
+            except Exception:
+                pass
+            # WIN-RELAUNCH-FIX (v2.1.0): hard-exit on Windows so the lingering CLR
+            # backend + bound :8080 can't block the next launch. No-op on macOS.
+            _win_hard_exit()
+            break
+        except ImportError:
+            _fallback_to_browser("pywebview/backend not available")
+            break
+        except Exception as e:
+            # Retry the Windows CLR cold-start (it self-heals); only fall back to
+            # the browser (with the dialog) once the retries are exhausted.
+            _transient = (sys.platform == "win32"
+                          and "Python.Runtime" in str(e)
+                          and _attempt < _native_attempts - 1)
+            if _transient:
+                print(f"native window CLR cold-start failed "
+                      f"(attempt {_attempt + 1}/{_native_attempts}), retrying: {e}")
+                try:
+                    import webview
+                    webview.windows.clear()  # drop any half-registered window
+                except Exception:
+                    pass
+                _time.sleep(1.0 + _attempt)  # short backoff (1s, 2s) — keep worst-case delay low
+                continue
+            _fallback_to_browser(f"pywebview failed: {e}")
+            break
 
 
 if __name__ == "__main__":

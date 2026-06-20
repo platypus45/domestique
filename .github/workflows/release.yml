@@ -146,6 +146,19 @@ jobs:
           call build_win.bat
           dir dist\Domestique
 
+      # Watertight gate for the OAuth fix: prove the client_secret actually made
+      # it into the frozen bundle (not just that we wrote .oauth.env pre-build).
+      # A bundling regression fails CI here instead of shipping broken sign-in.
+      - name: "Verify OAuth secret bundled into the EXE"
+        shell: pwsh
+        run: |
+          $f = Get-ChildItem -Path dist\Domestique -Recurse -Filter '.oauth.env' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $f) { Write-Error "::error::.oauth.env not bundled in the EXE — OAuth sign-in would fail"; exit 1 }
+          if ((Get-Content $f.FullName -Raw) -notmatch 'ICU_OAUTH_CLIENT_SECRET=\S') {
+            Write-Error "::error::bundled .oauth.env has an empty ICU_OAUTH_CLIENT_SECRET"; exit 1
+          }
+          Write-Host "OK: .oauth.env bundled with a non-empty secret at $($f.FullName)"
+
       # Gate the build: a frozen EXE that won't start (or reports the wrong
       # version) must fail CI here rather than ship. Runs the EXE headless via
       # DOMESTIQUE_SERVER_ONLY=1 (no window/tray on the runner), polls the

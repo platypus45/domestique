@@ -2503,8 +2503,8 @@ window.addEventListener('unhandledrejection', function(e) {
   <div id="cal-overlay" class="cal-wrap">
     <div class="cal-toolbar">
       <h3>Calendar</h3>
-      <div class="cal-tab active" id="cal-tab-overlay" onclick="calSwitchView('overlay')">Calendar</div>
-      <div class="cal-tab" id="cal-tab-grid" onclick="calSwitchView('grid')">Grid</div>
+      <div class="cal-tab active" id="cal-tab-overlay" data-view="overlay" onclick="calSwitchView('overlay')">Calendar</div>
+      <div class="cal-tab" id="cal-tab-grid" data-view="grid" onclick="calSwitchView('grid')">Grid</div>
       <button class="cal-jump-btn" onclick="calJumpToToday()">Jump to today</button>
     </div>
     <div id="cal-body" class="cal-scroll">
@@ -2523,6 +2523,14 @@ window.addEventListener('unhandledrejection', function(e) {
 
   <!-- Legacy weekly plan grid (still functional; toggled via the Grid tab) -->
   <div id="legacy-plan-grid" style="display:none;">
+    <!-- B8 — the Calendar/Grid tabs live in #cal-overlay, which is hidden when
+         the Grid view is shown; without this toolbar the overview was a one-way
+         trip with no way back. Mirror the tabs here so the view is reversible. -->
+    <div class="cal-toolbar">
+      <h3>Plan grid</h3>
+      <div class="cal-tab" id="cal-tab-overlay-g" data-view="overlay" onclick="calSwitchView('overlay')">Calendar</div>
+      <div class="cal-tab active" id="cal-tab-grid-g" data-view="grid" onclick="calSwitchView('grid')">Grid</div>
+    </div>
     <!-- v4.2.0 IMPL-WEEKLY: plan progress header (item 8) + export button (item 10) -->
     <div id="pg-progress-header" class="pg-progress-header" style="display:none;">
       <span class="pg-progress-phase" id="pg-progress-phase">—</span>
@@ -11124,19 +11132,18 @@ function renderCalDay(d, wi, di, phaseKey, today) {
 function calSwitchView(view) {
   const overlay = document.getElementById('cal-overlay');
   const grid = document.getElementById('legacy-plan-grid');
-  const tabO = document.getElementById('cal-tab-overlay');
-  const tabG = document.getElementById('cal-tab-grid');
   if (view === 'grid') {
     if (overlay) overlay.style.display = 'none';
     if (grid) grid.style.display = 'block';
-    if (tabO) tabO.classList.remove('active');
-    if (tabG) tabG.classList.add('active');
   } else {
     if (overlay) overlay.style.display = 'block';
     if (grid) grid.style.display = 'none';
-    if (tabO) tabO.classList.add('active');
-    if (tabG) tabG.classList.remove('active');
   }
+  // B8 — both views carry a tab bar (the grid's was added so the overview is
+  // reversible). Sync active state across every .cal-tab by its data-view.
+  document.querySelectorAll('.cal-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.view === view);
+  });
 }
 
 function calJumpToToday() {

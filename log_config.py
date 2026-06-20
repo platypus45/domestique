@@ -71,9 +71,13 @@ LOG_DIR = Path.home() / ".domestique" / "logs"
 # per-session logs (``app_<ts>_<sid>.log``) which share ``LOG_DIR``.
 LOG_FILE: "Path | None" = None
 
-_DEFAULT_MAX_BYTES = 5 * 1024 * 1024
-_DEFAULT_BACKUP_COUNT = 20
-_DEFAULT_RIDE_LOG_KEEP = 20
+# v2.2.0 — MINIMAL logging. The old per-boot timestamped logs + per-session
+# app/ride logs accumulated unbounded (multi-GB) because the prune missed the
+# rotation backups and a new file family spawned every launch. Now: ONE small
+# capped ``domestique.log`` (≈3 MB total, forever), no per-boot/per-session files.
+_DEFAULT_MAX_BYTES = 1 * 1024 * 1024   # 1 MB per file
+_DEFAULT_BACKUP_COUNT = 2              # domestique.log + .1 + .2  → ~3 MB ceiling
+_DEFAULT_RIDE_LOG_KEEP = 0            # per-session app logs disabled (see start_session_log)
 
 _configured = False
 
@@ -186,20 +190,20 @@ def setup_logging(level: int | None = None) -> None:
             backup_count = _resolve_log_env_int(
                 "DOMESTIQUE_LOG_BACKUP_COUNT", "CC_LOG_BACKUP_COUNT", _DEFAULT_BACKUP_COUNT,
             )
-            # v4.0.0-alpha (FIX-SERVER, MASTER §2): per-boot ISO-stamped
-            # filename ``domestique_<iso>.log`` replaces the former static
-            # ``domestique.log``. Before opening the new file prune older
-            # ones beyond backup_count so disk doesn't grow unbounded.
-            _prune_old_boot_logs(backup_count - 1)
-            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            log_path = LOG_DIR / f"domestique_{ts}.log"
+            # v2.2.0 — single small capped ``domestique.log``. First sweep away
+            # the legacy bloat (old per-boot ``domestique_<ts>.log`` families +
+            # their rotation backups, per-session ``app_*``/``ride_*`` logs,
+            # legacy ``chickencycling*``) so existing installs shrink to a few
+            # MB, THEN open the one rotating log we keep from now on.
+            _cleanup_legacy_logs(backup_count)
+            log_path = LOG_DIR / "domestique.log"
             global LOG_FILE
             LOG_FILE = log_path
             fh = logging.handlers.RotatingFileHandler(
                 log_path, maxBytes=max_bytes, backupCount=backup_count,
                 encoding="utf-8",
             )
-            fh.setLevel(logging.DEBUG)
+            fh.setLevel(logging.INFO)   # was DEBUG — keep the file lean
             fh.setFormatter(fmt)
             root.addHandler(fh)
         except OSError as e:
@@ -307,40 +311,31 @@ def get_levels() -> "dict[str, str]":
 # ── per-session file sink ───────────────────────────────────────────────
 
 
-def _prune_old_app_logs(keep: int) -> None:
-    try:
-        files = sorted(
-            LOG_DIR.glob("app_*.log"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-        for stale in files[keep:]:
-            try:
-                stale.unlink()
-            except OSError:
-                pass
-    except OSError:
-        pass
+def _cleanup_legacy_logs(backup_count: int) -> None:
+    """v2.2.0 — delete every legacy/bloat log file, keeping only the single
+    capped ``domestique.log`` (+ its ``.1..`` rotation backups).
 
-
-def _prune_old_boot_logs(keep: int) -> None:
-    """Trim boot-time ``domestique_<iso>.log`` files beyond ``keep`` newest.
-
-    v4.0.0-alpha (FIX-SERVER): separate glob from ``_prune_old_app_logs``
-    (which handles per-session ``app_*.log`` files) so the two prune paths
-    stay isolated.
+    The pre-v2.2.0 setup wrote a NEW ``domestique_<ts>.log`` family every launch
+    (each up to ~100 MB across its rotation backups) plus per-session ``app_*`` /
+    ``ride_*`` logs, and the prune missed the ``.N`` rotation suffixes — so the
+    logs dir grew to multiple GB. This runs once at startup so existing installs
+    shrink to a few MB. Best-effort: any unlink failure is ignored.
     """
     try:
-        files = sorted(
-            LOG_DIR.glob("domestique_*.log"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-        for stale in files[keep:]:
-            try:
-                stale.unlink()
-            except OSError:
-                pass
+        keep = {"domestique.log"} | {
+            f"domestique.log.{i}" for i in range(1, max(backup_count, 0) + 1)
+        }
+        for p in LOG_DIR.iterdir():
+            if not p.is_file() or p.name in keep:
+                continue
+            n = p.name
+            if (n.startswith("domestique_") or n.startswith("app_")
+                    or n.startswith("ride_") or n.startswith("chickencycling")
+                    or ".log" in n):
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
     except OSError:
         pass
 
@@ -360,79 +355,22 @@ class _SessionContextFilter(logging.Filter):
 
 
 def start_session_log(session_id: str | None = None) -> str:
-    """Open a dedicated log file for this app session.
-
-    Creates ``~/.domestique/logs/app_<iso_timestamp>_<sid>.log``, attaches
-    it to the root logger at INFO, and prunes oldest session logs beyond
-    ``DOMESTIQUE_RIDE_LOG_KEEP`` (default 20).
-
-    v4.0.0-alpha: the file pattern moved from ``ride_<iso>_<sid>.log`` to
-    ``app_<iso>_<sid>.log`` because there is no ride-session concept in
-    the post-pivot app -- just per-app-boot log rotation.
-    """
+    """v2.2.0 — NO-OP. Per-session ``app_*.log`` files were removed (they were
+    part of the unbounded log bloat); everything now goes to the single capped
+    ``domestique.log``. Kept as a no-op returning an id so legacy callers stay
+    safe."""
     setup_logging()
-    if not session_id:
-        session_id = uuid.uuid4().hex[:8]
-
-    keep = _env_int("DOMESTIQUE_RIDE_LOG_KEEP", _DEFAULT_RIDE_LOG_KEEP)
-    _prune_old_app_logs(keep - 1)
-
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    path = LOG_DIR / f"app_{ts}_{session_id}.log"
-
-    try:
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
-        fh = logging.FileHandler(path, encoding="utf-8")
-    except OSError as e:
-        logging.getLogger().warning(
-            "log_config: cannot open app log %s (%s); per-session logging disabled.",
-            path, e,
-        )
-        return session_id
-
-    fh.setLevel(logging.INFO)
-    fh.setFormatter(logging.Formatter(
-        "%(asctime)s %(levelname)-5s [%(name)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    ))
-    fh.addFilter(_SessionContextFilter(session_id))
-
-    root = logging.getLogger()
-    root.addHandler(fh)
-
-    with _session_lock:
-        _session_handlers[session_id] = fh
-        _session_paths[session_id] = path
-
-    root.info("session_log_started session_id=%s path=%s", session_id, path)
-    return session_id
+    return session_id or uuid.uuid4().hex[:8]
 
 
 def get_active_log_path(session_id: str | None = None) -> str | None:
-    """Return the absolute path of the currently-open per-session log file."""
-    with _session_lock:
-        if session_id is not None:
-            p = _session_paths.get(session_id)
-            return str(p) if p else None
-        if len(_session_paths) == 1:
-            return str(next(iter(_session_paths.values())))
-        return None
+    """v2.2.0 — the one capped log file (no per-session files anymore)."""
+    return str(LOG_FILE) if LOG_FILE else None
 
 
 def stop_session_log(session_id: str) -> None:
-    """Close and detach the per-session log handler. Safe if already closed."""
-    with _session_lock:
-        fh = _session_handlers.pop(session_id, None)
-        _session_paths.pop(session_id, None)
-    if fh is None:
-        return
-    try:
-        logging.getLogger().info("session_log_stopped session_id=%s", session_id)
-        fh.flush()
-        logging.getLogger().removeHandler(fh)
-        fh.close()
-    except Exception as e:
-        logging.getLogger().debug("stop_session_log(%s) tidy failed: %s", session_id, e)
+    """v2.2.0 — no-op (per-session logs removed)."""
+    return None
 
 
 def flush_all() -> None:

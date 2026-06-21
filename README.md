@@ -7,12 +7,12 @@
 <p align="center"><b>An adaptive cycling training planner that closes the loop between what you planned and what you actually did.</b></p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.9+-blue" alt="Python">
+  <img src="https://img.shields.io/badge/Python-3.12-blue" alt="Python">
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4220-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v2.1.2-brightgreen" alt="Version">
-  <img src="https://img.shields.io/badge/Tests-1943-success" alt="Tests">
+  <img src="https://img.shields.io/badge/Version-v2.2.3-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Tests-1967-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
 

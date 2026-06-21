@@ -242,10 +242,28 @@ def _get(path: str, params: dict | None = None) -> list | dict | None:
                     _log.warning(f"ICU JSON decode error on {path}: {e}")
                     raise ICUServerError(f"Invalid JSON from {path}: {e}") from e
         except urllib.error.HTTPError as e:
-            # 401/403: auth failure — bubble immediately, no retry.
-            if e.code in (401, 403):
-                _log.warning(f"ICU HTTP {e.code} on {path}: {e.reason}")
-                raise ICUAuthError(f"HTTP {e.code} on {path}: {e.reason}") from e
+            # 401 = dead/invalid credential → auth failure (triggers the
+            # "reconnect intervals.icu" path). No retry.
+            if e.code == 401:
+                _log.warning(f"ICU HTTP 401 on {path}: {e.reason}")
+                raise ICUAuthError(f"HTTP 401 on {path}: {e.reason}") from e
+            # 403 = forbidden. A MISSING-SCOPE 403 (valid token, but the endpoint
+            # needs a scope we didn't request — e.g. SETTINGS:READ on /athlete/0)
+            # is NOT a dead credential; treating it as one wrongly disabled a
+            # working OAuth connection and nagged the rider to reconnect. Classify
+            # scope / access-denied 403s as a non-fatal server error so the
+            # connection survives; only a non-scope 403 stays an auth failure.
+            if e.code == 403:
+                _body = ""
+                try:
+                    _body = (e.read() or b"").decode("utf-8", "replace")[:200]
+                except Exception:
+                    _body = ""
+                if "scope" in _body.lower() or "access denied" in _body.lower():
+                    _log.warning(f"ICU 403 missing-scope on {path}: {_body}")
+                    raise ICUServerError(f"HTTP 403 (scope) on {path}") from e
+                _log.warning(f"ICU HTTP 403 on {path}: {e.reason}")
+                raise ICUAuthError(f"HTTP 403 on {path}: {e.reason}") from e
             # 429: rate-limited. If Retry-After header set and we have budget, sleep + retry.
             if e.code == 429:
                 retry_after_raw = e.headers.get("Retry-After", "0") if e.headers else "0"

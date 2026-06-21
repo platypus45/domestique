@@ -2701,11 +2701,13 @@ window.addEventListener('unhandledrejection', function(e) {
         <strong style="font-size:14px;">Intervals.icu</strong>
         <span id="icu-conn-status" style="font-size:12px;color:var(--text3);margin-left:auto;">checking…</span>
       </div>
-      <!-- PRIMARY: one-click OAuth connect (per profile). -->
+      <!-- PRIMARY: one-click OAuth connect (per profile). Button label + status
+           are set by loadIcuConnection(): connected → "Switch account" (subtle) +
+           prominent "Logged in as X"; disconnected → "Reconnect" (primary). -->
       <div id="icu-oauth-block" style="margin-bottom:10px;">
         <button class="btn btn-primary" id="icu-connect-btn" onclick="window.location='/oauth/icu/start'">Connect intervals.icu</button>
         <button class="btn btn-sm" id="icu-disconnect-btn" style="display:none;" onclick="icuDisconnect()">Disconnect</button>
-        <div style="font-size:11px;color:var(--text3);margin-top:6px;">Log in at intervals.icu and authorize Domestique — no copy-pasting keys.</div>
+        <div id="icu-conn-help" style="font-size:11px;color:var(--text3);margin-top:6px;">Log in at intervals.icu and authorize Domestique — no copy-pasting keys.</div>
       </div>
     </div>
 
@@ -12755,18 +12757,34 @@ async function loadIcuConnection() {
   const statusEl = $('icu-conn-status');
   try {
     const c = await (await fetch('/api/icu/connection')).json();
-    const connBtn = $('icu-connect-btn'), disBtn = $('icu-disconnect-btn'), oauthBlk = $('icu-oauth-block');
+    const connBtn = $('icu-connect-btn'), disBtn = $('icu-disconnect-btn'),
+          oauthBlk = $('icu-oauth-block'), help = $('icu-conn-help');
+    const oauth = c.method === 'oauth';
     if (statusEl) {
-      statusEl.textContent = c.method === 'oauth'
-          ? ('Signed in' + (c.name ? ' as ' + esc(c.name) : (c.athlete_id ? ' (athlete ' + esc(c.athlete_id) + ')' : '')))
-        : c.method === 'apikey' ? 'Connected via API key (legacy)' : 'Not connected';
-      statusEl.style.color = c.connected ? 'var(--green)' : 'var(--text3)';
+      if (oauth) {
+        const who = c.name ? esc(c.name) : (c.athlete_id ? 'athlete ' + esc(c.athlete_id) : 'your account');
+        statusEl.innerHTML = '✓ Logged in as <b>' + who + '</b>';
+        statusEl.style.color = 'var(--green)';
+      } else if (c.method === 'apikey') {
+        statusEl.textContent = 'Connected via API key (legacy)';
+        statusEl.style.color = 'var(--yellow)';
+      } else {
+        statusEl.textContent = 'Not connected';
+        statusEl.style.color = 'var(--text3)';
+      }
+      statusEl.style.fontSize = '13px';
+      statusEl.style.fontWeight = '600';
     }
-    // OAuth is the only setup path. If the client isn't provisioned yet the
-    // Connect button still shows but bounces with an "unavailable" toast.
     if (oauthBlk) oauthBlk.style.display = 'block';
-    if (connBtn) connBtn.textContent = (c.method === 'oauth') ? 'Reconnect intervals.icu' : 'Connect intervals.icu';
-    if (disBtn) disBtn.style.display = (c.method === 'oauth') ? 'inline-flex' : 'none';
+    // Connected → subtle "Switch account" (NOT alarming "Reconnect"); legacy key →
+    // "Switch to sign-in"; disconnected → "Reconnect" (primary).
+    if (connBtn) {
+      if (oauth) { connBtn.textContent = 'Switch account'; connBtn.className = 'btn btn-sm'; }
+      else if (c.method === 'apikey') { connBtn.textContent = 'Switch to sign-in'; connBtn.className = 'btn btn-primary'; }
+      else { connBtn.textContent = 'Reconnect intervals.icu'; connBtn.className = 'btn btn-primary'; }
+    }
+    if (disBtn) disBtn.style.display = oauth ? 'inline-flex' : 'none';
+    if (help) help.style.display = oauth ? 'none' : 'block';
   } catch (e) { if (statusEl) statusEl.textContent = ''; }
 }
 

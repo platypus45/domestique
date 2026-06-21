@@ -2211,6 +2211,9 @@ window.addEventListener('unhandledrejection', function(e) {
         <!-- v4.6.7 IMPL-SUM: summary modal trigger BEGIN -->
         <button class="btn" onclick="showProgrammeSummary()" id="btn-programme-summary" title="End-of-plan literature-grounded recap">Programme summary</button>
         <!-- v4.6.7 IMPL-SUM: summary modal trigger END -->
+        <!-- IP-1: add a B/C race to the EXISTING plan → reschedules around it
+             (taper in, recovery after) without a full regenerate. -->
+        <button class="btn" onclick="openAddRaceModal()" id="btn-add-race" title="Add a B/C race to your current plan — it reschedules around it (easy taper in, recovery after); your event date and plan length stay the same.">+ Add race</button>
         <!-- v1.7.4 — Sync now exposed on the plan tab too. Same handler
              as the home-page button (syncNowAction posts to
              /api/rides/sync?force=1 → bypasses the 1h throttle). Without
@@ -11861,6 +11864,100 @@ function openPlanDayWorkout(weekIdx, dayIdx) {
   openDayWorkout(sIdx);
 }
 
+// IP-2: round-trip the SAVED plan config back into the form. Previously the
+// form had no populate path, so Plan style / Intensity model / Block
+// periodization / availability always reset to defaults on revisit — a
+// fixed-core plan showed "Automatic" ("I didn't see the toggle"). Now the form
+// mirrors what the current plan actually uses.
+function populatePlanFormFromGoal(goal) {
+  if (!goal) return;
+  const setVal = (id, v) => { const el = $(id); if (el && v != null && v !== '') el.value = v; };
+  setVal('plan-distribution', goal.distribution || 'polarized');
+  const bp = $('plan-block-periodization'); if (bp) bp.checked = !!goal.block_periodization;
+  setVal('plan-mode', goal.plan_mode || 'auto');
+  if (goal.template_id) setVal('plan-template', goal.template_id);
+  try { onPlanModeChange(); } catch (_) {}   // un-hide the template picker if mode=template
+  setVal('plan-edate', goal.event_date || '');
+  setVal('plan-ename', goal.event_name || '');
+  if (goal.event_km) setVal('plan-ekm', goal.event_km);
+  if (goal.event_climb != null && goal.event_climb !== '') setVal('plan-eclimb', goal.event_climb);
+  setVal('plan-etype', goal.event_type || 'granfondo');
+  if (goal.plan_weeks) setVal('plan-weeks', goal.plan_weeks);
+  // Custom calendar — per-day availability (daily_max_hours {weekday: hours} → minutes).
+  const daily = goal.daily_max_hours || {};
+  document.querySelectorAll('.plan-day-mins').forEach(el => {
+    const k = String(el.dataset.day);
+    if (daily[k] != null) el.value = Math.round(Number(daily[k]) * 60);
+  });
+  // B/C race rows (addBcRaceRow accepts a race object).
+  const wrap = $('plan-bc-rows'); if (wrap) wrap.innerHTML = '';
+  (goal.events || []).forEach(e => { if (e && e.priority && e.priority !== 'A') addBcRaceRow(e); });
+  try { refreshPlanPreview(); } catch (_) {}
+}
+
+// IP-1: add a B/C race to the EXISTING plan (reschedule around it).
+function openAddRaceModal() {
+  const today = new Date().toISOString().slice(0, 10);
+  const ov = document.createElement('div');
+  ov.id = 'add-race-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:1000;display:flex;align-items:center;justify-content:center;';
+  ov.onclick = () => ov.remove();
+  ov.innerHTML = `
+    <div class="card" style="max-width:440px;width:90%;margin:0;" onclick="event.stopPropagation()">
+      <h3 style="margin-top:0;">Add a race</h3>
+      <p style="font-size:12px;color:var(--text2);line-height:1.5;">Reshapes your plan around the race — an easy taper into it and recovery after. Your A-event date and plan length don't change.</p>
+      <div class="form-row">
+        <div class="form-group"><label>Date</label><input type="date" id="ar-date" min="${today}" value="${today}"></div>
+        <div class="form-group"><label>Priority</label><select id="ar-prio"><option value="B">B (mini-taper)</option><option value="C">C (light)</option></select></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Name</label><input type="text" id="ar-name" placeholder="e.g. Local crit" style="width:170px;"></div>
+        <div class="form-group"><label>Type</label><select id="ar-type"><option value="crit">Crit</option><option value="granfondo">Gran Fondo</option><option value="sportive">Sportive</option><option value="century">Century</option></select></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Distance (km)</label><input type="number" id="ar-km" style="width:90px;"></div>
+        <div class="form-group"><label>Climb (m)</label><input type="number" id="ar-climb" style="width:90px;"></div>
+      </div>
+      <div id="ar-status" style="font-size:12px;margin:8px 0 0;min-height:16px;"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+        <button class="btn" onclick="document.getElementById('add-race-overlay').remove()">Cancel</button>
+        <button class="btn btn-primary" id="ar-submit" onclick="submitAddRace()">Add race &amp; reschedule</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+}
+async function submitAddRace() {
+  const st = $('ar-status'), btn = $('ar-submit');
+  const payload = {
+    date: ($('ar-date') || {}).value,
+    priority: ($('ar-prio') || {}).value,
+    name: ($('ar-name') || {}).value,
+    type: ($('ar-type') || {}).value,
+    km: parseFloat(($('ar-km') || {}).value) || 0,
+    climb: parseFloat(($('ar-climb') || {}).value) || 0,
+  };
+  if (!payload.date) { if (st) { st.textContent = 'Pick a date.'; st.style.color = 'var(--red)'; } return; }
+  if (btn) btn.disabled = true;
+  if (st) { st.textContent = 'Rescheduling your plan…'; st.style.color = 'var(--accent)'; }
+  try {
+    const r = await fetch('/api/plan/add-race', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) {
+      if (st) { st.textContent = (d && d.error) || ('Failed (HTTP ' + r.status + ')'); st.style.color = 'var(--red)'; }
+      if (btn) btn.disabled = false;
+      return;
+    }
+    if (d.plan_json) { await renderPlanJSON(d.plan_json); try { populatePlanFormFromGoal(d.plan_json.goal); } catch (_) {} }
+    const ov = $('add-race-overlay'); if (ov) ov.remove();
+    try { showToast(`Added ${payload.name || 'race'} on ${payload.date} — plan rescheduled (taper in, recovery after).`, 5000, 'success'); } catch (_) {}
+  } catch (e) {
+    if (st) { st.textContent = 'Failed: ' + e.message; st.style.color = 'var(--red)'; }
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function loadPlan() {
   let d;
   try {
@@ -11873,6 +11970,7 @@ async function loadPlan() {
   }
   if (d.plan_json) {
     await renderPlanJSON(d.plan_json);
+    try { populatePlanFormFromGoal(d.plan_json.goal); } catch (_) {}
   }
   if (d.plan) {
     // Also render markdown below as fallback/reference

@@ -10011,6 +10011,65 @@ async def api_plan_regenerate_dynamic(request: Request):
         return JSONResponse({"error": str(e)}, 500)
 
 
+@app.post("/api/plan/add-race")
+async def api_plan_add_race(request: Request):
+    """IP-1 — add a B/C race to the EXISTING plan and re-periodize forward.
+
+    Appends the race to the plan's ``goal.events`` then runs the shared regenerate
+    core (``regenerate_from_today``), which re-applies the B/C mini-taper (trim
+    volume, keep intensity) + recovery around the race and preserves past weeks.
+    RESHAPES existing weeks — does NOT change the plan length or the A-event date.
+    """
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    ev_date = str((body or {}).get("date") or "").strip()
+    if not ev_date:
+        return JSONResponse({"error": "date required (YYYY-MM-DD)"}, status_code=400)
+    try:
+        d = date.fromisoformat(ev_date)
+    except ValueError:
+        return JSONResponse({"error": "date must be YYYY-MM-DD"}, status_code=400)
+    if d < date.today():
+        return JSONResponse({"error": "race date is in the past"}, status_code=400)
+    prio = str((body or {}).get("priority") or "B").upper()
+    if prio not in ("B", "C"):
+        prio = "B"
+    new_event = {
+        "date": ev_date,
+        "priority": prio,
+        "name": str((body or {}).get("name") or "").strip(),
+        "event_km": (body or {}).get("km") or (body or {}).get("event_km") or 0,
+        "event_climb": (body or {}).get("climb") or (body or {}).get("event_climb") or 0,
+        "event_type": str((body or {}).get("type") or (body or {}).get("event_type") or "crit"),
+    }
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+        goal = plan.setdefault("goal", {})
+        events = [e for e in (goal.get("events") or []) if (e or {}).get("date") != ev_date]
+        events.append(new_event)
+        goal["events"] = events
+
+        seed_salt = time.time_ns()
+        training = cached("training", get_today_metrics)
+        current_ctl = training.get("ctl") or 30
+        activities = db.query_activities(days=120)
+        plan_dict, regen_info = _regenerate_plan_dict(
+            plan, current_ctl=current_ctl, activities=activities, seed_salt=seed_salt,
+        )
+        tp.atomic_write_plan(json_path, plan_dict)
+        return {"ok": True, "plan_json": plan_dict, "regen_info": regen_info, "added": new_event}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.post("/api/plan/update")
 async def api_plan_update(debounce: int = Query(0)):
     """v1.8.24 — the ONE primary "Update plan" action.

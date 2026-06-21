@@ -2118,6 +2118,10 @@ window.addEventListener('unhandledrejection', function(e) {
           <!-- v1.8.9 Bug 8 — oninput syncs to plan-edate via _syncPlanWeeksToDate(). -->
           <input type="number" id="plan-weeks" value="12" min="4" max="52" style="width:70px;" oninput="_syncPlanWeeksToDate();" onchange="refreshPlanPreview()"></div>
       </div>
+      <!-- Plan configuration — Plan style / periodization / intensity model,
+           grouped + labelled so they're discoverable (they round-trip from the
+           saved plan via populatePlanFormFromGoal). -->
+      <div style="font-size:11px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin:14px 0 6px;border-top:1px solid var(--border);padding-top:10px;">Plan configuration</div>
       <!-- J1 (v2.1.0): intensity-distribution is a user choice, not forced polarized. -->
       <div class="form-row">
         <div class="form-group"><label>Intensity Model</label>
@@ -2224,6 +2228,8 @@ window.addEventListener('unhandledrejection', function(e) {
         <button class="btn" id="syncNowBtnPlan" onclick="syncNowAction('syncNowBtnPlan')" style="font-size:11px;" title="Pull latest rides + wellness from intervals.icu now (bypasses 1h throttle)">Sync now &#x21bb;</button>
       </div>
       <div id="plan-status" style="font-size:12px;color:var(--text2);margin-top:8px;"></div>
+      <!-- Active-config summary of the CURRENT plan (populatePlanFormFromGoal). -->
+      <div id="plan-active-config" style="font-size:11px;color:var(--text3);margin-top:6px;"></div>
     </div>
     <div class="card">
       <h3>Plan Overview</h3>
@@ -11892,6 +11898,19 @@ function populatePlanFormFromGoal(goal) {
   // B/C race rows (addBcRaceRow accepts a race object).
   const wrap = $('plan-bc-rows'); if (wrap) wrap.innerHTML = '';
   (goal.events || []).forEach(e => { if (e && e.priority && e.priority !== 'A') addBcRaceRow(e); });
+  // One-line active-config summary so the rider sees what the plan actually uses.
+  const cfgEl = $('plan-active-config');
+  if (cfgEl) {
+    const modeLbl = { auto: 'Automatic', fixed_core: 'Fixed-core', template: 'Template' }[goal.plan_mode || 'auto'] || 'Automatic';
+    const distLbl = { polarized: 'Polarized', pyramidal: 'Pyramidal', threshold: 'Threshold' }[goal.distribution || 'polarized'] || 'Polarized';
+    const parts = [distLbl, modeLbl];
+    if (goal.hours_per_week) parts.push(goal.hours_per_week + 'h/wk');
+    if (goal.block_periodization) parts.push('Block periodization');
+    if (goal.plan_mode === 'template' && goal.template_id) parts.push(String(goal.template_id).replace(/_/g, ' '));
+    const races = (goal.events || []).filter(e => e && e.priority && e.priority !== 'A').length;
+    if (races) parts.push(races + ' race' + (races > 1 ? 's' : ''));
+    cfgEl.textContent = '⚙ ' + parts.join(' · ');
+  }
   try { refreshPlanPreview(); } catch (_) {}
 }
 

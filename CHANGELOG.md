@@ -1,5 +1,29 @@
 # Changelog
 
+## v2.2.4 — Add races to a live plan, clearer plan setup, sign-in reliability
+
+### Planning
+- **Add a B/C race to an existing plan** (`POST /api/plan/add-race`, "+ Add race" on the plan):
+  appends it and re-periodizes forward — an easy taper into the race + recovery after — preserving
+  past weeks, completions, your A-event date and plan length (reshape, not a rebuild).
+- **Plan configuration round-trips.** The form (Plan style · Intensity model · Block periodization ·
+  per-day availability · B/C races) now mirrors the saved plan on load — it previously always reset
+  to defaults, so a fixed-core plan read as "Automatic." Grouped under a "Plan configuration"
+  heading with a one-line active-config summary on the plan.
+
+### intervals.icu reliability
+- **A missing-scope 403 is no longer treated as a dead token.** `/athlete/0` (athlete-number
+  prefill) needs `SETTINGS:READ`, which we don't request → 403; that was conflated with a 401 and
+  wrongly nagged a connected rider to reconnect. Only a 401 now triggers reconnect.
+- **Settings connection UI** reads "✓ Logged in as <name>" when connected; the reconnect button
+  shows only when actually disconnected.
+
+### Carried from v2.2.1–v2.2.3 (now one stable build)
+- One-button planning (single Generate Plan + auto-update after sync / on tab-open); header sync
+  chip + version label; first-sync progress strip; phantom power-duration card removed.
+- Windows: OAuth "exchange" fixed (CI bundles the client_secret + asserts it); native window starts
+  first-try (Mark-of-the-Web strip); sign-in/sync events logged.
+
 ## v2.2.3 — One-button planning, header sync chip + version, first-sync progress
 
 - **Plan tab simplified to ONE button.** Removed the redundant *Update plan* and

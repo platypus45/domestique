@@ -2037,7 +2037,7 @@ window.addEventListener('unhandledrejection', function(e) {
   <details class="plan-help-panel" style="margin-bottom:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;">
     <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--text);">How your plan updates</summary>
     <div style="margin-top:8px;font-size:12px;line-height:1.5;color:var(--text2);">
-      <strong>Update plan</strong> is the one button you need — it automatically does the right thing: rebalances load to today's fitness and fatigue, or, if you've missed enough training to fall behind, rebuilds with a safe recovery ramp (no catch-up spike). It also runs automatically after every ride sync, so your plan stays current on its own; the status line shows what changed. <strong>Rebuild from scratch</strong> is the advanced option that wipes and rebuilds the plan from today's CTL — use it after a goal or event-date change. The <strong>Availability Calendar</strong> edits which days you can train; click a day to set hours, right-click to mark unavailable, then press the pulsing UPDATE button to reflow. <strong>Rematch workout</strong> (in any day's detail view) re-rolls only that single workout at the same duration if the suggestion doesn't fit. Don't manually edit unless something's clearly wrong — the planner already accounts for fatigue and load.
+      <strong>Generate Plan</strong> is the one button — it builds your plan, and rebuilds it from your current settings + fitness if one already exists (use it after a goal, event-date, or big training-time change). After that your plan <strong>updates itself</strong>: automatically after every ride sync and each time you open this tab. It rebalances load to today's fitness and fatigue, or — if you've missed enough training to fall behind — rebuilds with a safe recovery ramp (no catch-up spike); the status line shows what changed. The <strong>Availability Calendar</strong> edits which days you can train; click a day to set hours, right-click to mark unavailable, then press the pulsing UPDATE button to reflow. <strong>Rematch workout</strong> (in any day's detail view) re-rolls only that single workout at the same duration if the suggestion doesn't fit. Don't manually edit unless something's clearly wrong — the planner already accounts for fatigue and load.
     </div>
   </details>
 
@@ -2052,8 +2052,6 @@ window.addEventListener('unhandledrejection', function(e) {
   <!-- v1.0.3 IMPL-UI: hidden info-popovers for the four (i) icons. Class
        .info-popover toggles via .open from the delegated handler below. -->
   <div class="info-popover" id="planpop-update"><strong>Update plan</strong> automatically picks the right adjustment: a structure-preserving <em>rebalance</em> to today's TSB (fatigue), ACWR (load ratio) and availability when you're on track, or a full <em>rebuild with a recovery ramp</em> when you've missed enough to fall behind (Gabbett-safe, never a catch-up spike). Runs automatically after each ride sync too. Won't re-roll past or completed sessions, and won't move a fixed event date.</div>
-  <div class="info-popover" id="planpop-reforecast"><strong>Reforecast</strong> keeps your plan's structure but rebalances daily load to today's TSB (fatigue), ACWR (load ratio), and polarization compliance. Now folded into <strong>Update plan</strong>.</div>
-  <div class="info-popover" id="planpop-regenerate"><strong>Rebuild from scratch</strong> wipes the plan and rebuilds it from today's CTL, with phase splits derived from weeks-to-event. Use after a goal change or new event date. This is the advanced/nuclear option — <strong>Update plan</strong> already rebuilds automatically when a training gap warrants it.</div>
   <div class="info-popover" id="planpop-availability"><strong>Edit availability</strong> sets per-day training time. Click a date to set hours; right-click to mark unavailable (holiday/injury). <strong>Press the pulsing UPDATE button to apply changes — the plan reflows on click.</strong></div>
   <div class="info-popover" id="planpop-rematch"><strong>Rematch workout</strong> re-rolls only this one day's ZWO file from the matching workout pool. Same intent (intervals, endurance, etc.) — different specific session. Use when the suggested workout doesn't fit your equipment or mood.</div>
 
@@ -2196,9 +2194,13 @@ window.addEventListener('unhandledrejection', function(e) {
       </div>
 
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-        <button class="btn" onclick="generatePlan()">Generate Plan</button>
-        <button class="btn btn-primary" onclick="updatePlan()" id="btn-update-plan" title="Auto-adjusts your plan: rebalance, or rebuild with a recovery ramp if you're behind.">Update plan</button><span class="info-icon" data-popover="planpop-update" tabindex="0" role="button" aria-label="What does Update plan do?" title="Auto-adjusts your plan to today's fitness.">i</span>
-        <button class="btn" onclick="regeneratePlan()" id="btn-rebuild-scratch" title="Advanced: wipe and rebuild the whole plan from today's CTL.">Rebuild from scratch</button><span class="info-icon" data-popover="planpop-regenerate" tabindex="0" role="button" aria-label="What does Rebuild from scratch do?" title="Wipes and rebuilds the plan from today's CTL.">i</span>
+        <!-- ONE build button. It creates the plan, or rebuilds it from current
+             settings + fitness when one exists (subsumes the old "Update plan"
+             and "Rebuild from scratch"). After that the plan updates itself:
+             automatically after each ride sync and on every plan-tab open
+             (runPlanOpenSequence → /api/plan/update). -->
+        <button class="btn btn-primary" onclick="generatePlan()" id="btn-generate-plan" title="Create your plan — or rebuild it from your current settings + fitness. After that it updates itself automatically after each ride sync and whenever you open this tab.">Generate Plan</button>
+        <span id="plan-autoupdate-note" style="font-size:11px;color:var(--text3);">↻ Auto-updates after each sync &amp; when you open this tab.</span>
         <!-- v4.6.7 IMPL-SUM: summary modal trigger BEGIN -->
         <button class="btn" onclick="showProgrammeSummary()" id="btn-programme-summary" title="End-of-plan literature-grounded recap">Programme summary</button>
         <!-- v4.6.7 IMPL-SUM: summary modal trigger END -->
@@ -9998,6 +10000,12 @@ function readBcRaces() {
 }
 
 async function generatePlan() {
+  // One build button: when a plan already exists, Generate REBUILDS it (subsumes
+  // the old "Rebuild from scratch"). Confirm so a deliberate rebuild can't wipe
+  // an adapted plan by accident — the plan otherwise updates itself.
+  if (window._planData && (window._planData.weeks || []).length) {
+    if (!confirm('Rebuild your plan from your current settings and fitness?\n\nThis replaces the current plan. (Your plan already updates itself automatically after each sync and when you open this tab — you only need this after a goal, event-date, or availability change.)')) return;
+  }
   $('plan-status').textContent = 'Generating plan...';
   $('plan-status').style.color = 'var(--accent)';
 

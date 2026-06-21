@@ -1,5 +1,21 @@
 # Changelog
 
+## v2.2.3 — One-button planning, header sync chip + version, first-sync progress
+
+- **Plan tab simplified to ONE button.** Removed the redundant *Update plan* and
+  *Rebuild from scratch* buttons. **Generate Plan** creates the plan, or rebuilds it
+  from current settings + fitness when one already exists (confirm-first so it can't
+  wipe an adapted plan). The plan then updates itself automatically after every ride
+  sync and on every plan-tab open (runPlanOpenSequence → /api/plan/update). The
+  contextual gap-alert "Update plan" (only when behind in an event taper) and the
+  per-day Rematch stay; the mark-unavailable "Save & Regenerate" is unchanged.
+- **Header sync chip + version label.** A spinner + "Updating activities X/Y" sits next
+  to the logo while a sync/backfill runs; the version number shows beside the title.
+- **Reliable first-sync progress.** pollFirstSyncTopbar runs on every dashboard load
+  (not gated like the old power-curve path) so a freshly-linked rider sees the
+  "Syncing activities X of Y (NN%)" strip. Removed the legacy duplicate "Power
+  Duration Curve" card that showed a loading block then vanished.
+
 ## v2.2.2 — Windows OAuth fix (bundle the client secret in CI)
 
 - **Fixed: "intervals.icu connection failed — exchange" on Windows.** The OAuth

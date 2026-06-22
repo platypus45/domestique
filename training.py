@@ -280,7 +280,12 @@ def _get(path: str, params: dict | None = None) -> list | dict | None:
             if e.code in (500, 502, 503, 504) and attempt < 2:
                 time.sleep(2 ** attempt + random.random())
                 continue
-            _log.warning(f"ICU HTTP {e.code} on {path}: {e.reason}")
+            # 422 on /streams is the expected "no Strava streams" case — DEBUG,
+            # not WARNING, so it doesn't flood the log on every Strava ride.
+            if e.code == 422:
+                _log.debug(f"ICU HTTP 422 on {path}: {e.reason}")
+            else:
+                _log.warning(f"ICU HTTP {e.code} on {path}: {e.reason}")
             raise ICUServerError(f"HTTP {e.code} on {path}: {e.reason}") from e
         except urllib.error.URLError as e:
             last_network_exc = e
@@ -544,7 +549,14 @@ def fetch_activity_streams(activity_id: str) -> dict | None:
         return None
     try:
         data = _get(f"activity/{activity_id}/streams")
-    except (ICUAuthError, ICURateLimitError, ICUServerError, ICUNetworkError) as e:
+    except ICUServerError as e:
+        # 422 on /streams is EXPECTED for Strava-origin activities (numeric ids):
+        # ICU won't re-share Strava's 1 Hz streams (Strava API terms). It's not an
+        # error — we fall back to the activity summary. Log at DEBUG so it doesn't
+        # spam the log on every Strava ride.
+        _log.debug(f"fetch_activity_streams({activity_id}) — no streams: {e}")
+        return None
+    except (ICUAuthError, ICURateLimitError, ICUNetworkError) as e:
         _log.warning(f"fetch_activity_streams({activity_id}) failed: {e}")
         return None
     # ICU returns a list of {type, data, ...}; normalize to a dict by type.

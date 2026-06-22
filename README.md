@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4220-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v2.2.5-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v2.2.6-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-1967-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -46,6 +46,16 @@ Domestique is neither. Every signal that touches the dashboard also has a code-p
 Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus a 1-week consolidation phase at the end of every non-event cycle so people don't ride straight from a peak into a fresh build with elevated fatigue (Mujika 2010).
 
 ---
+
+## What's new in v2.2.6
+
+- **One "Today" card.** The home page used to show several "today/readiness" surfaces
+  on two different scales (e.g. 3.8/10 vs 66/100) with scattered buttons — they read as
+  contradictions. Now there's a single **Today** card: one readiness number, one state
+  (Ready / Ease off / Rest), one action. When your leg-check overrides a high physiological
+  score it now *explains* it ("78/100 · Rest advised · from your leg-check") instead of
+  contradicting itself. Finishes issue
+  [#3](https://github.com/platypus45/domestique/issues/3) (Request 2).
 
 ## What's new in v2.2.5
 
@@ -411,7 +421,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v2.2.5 — Strava-ride clarity, lighter recovery weeks, sane tier-down](https://github.com/platypus45/domestique/releases/latest)** (2026-06-22).
+Latest: **[v2.2.6 — one unified "Today" card](https://github.com/platypus45/domestique/releases/latest)** (2026-06-22).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

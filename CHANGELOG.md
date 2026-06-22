@@ -1,6 +1,19 @@
 # Changelog
 
-## v2.2.5 — Strava-ride clarity, lighter recovery weeks, one unified "Today" card (issues #2/#3/#4)
+## v2.2.6 — One unified "Today" card (issue #3 Request 2)
+
+- **#3 Request 2 — one readiness recommendation.** The home page showed up to five
+  "today/readiness" surfaces (Leg Check, "Readiness today" 0–10, "Today's Recommendation" with a
+  0–100 number, the 0–100 gauge, plus the DFA banner) using TWO different readiness models, so a
+  rider saw e.g. "3.8/10 → rest" next to "THRESHOLD, 66/100" and read it as a contradiction. They
+  are merged into a single **Today** card: one 0–100 number, one state (Ready / Ease off / Rest)
+  and one action. The number now comes from one canonical source, so every surface agrees — and
+  when your leg-check (subjective soreness) overrides a high physiological score the card
+  *explains* it ("78/100 · Rest advised · from your leg-check") instead of looking like a
+  contradiction. The lower card is now a clearly-labelled "Readiness — factors & trend" analytic.
+  Completes the half of issue #3 deferred from v2.2.5 (the tier-down fix shipped there).
+
+## v2.2.5 — Strava-ride clarity, lighter recovery weeks, sane tier-down (issues #2/#3/#4)
 
 - **#2 — blank Strava rides + log spam.** intervals.icu's API can't read Strava-synced
   activities at all (summary, streams, fit-file all return 422 "Cannot read Strava activities
@@ -11,19 +24,11 @@
 - **#4 — recovery weeks are now visibly light.** A deload could end up with MORE hours + the same
   single rest day as its build weeks (low TSS via easy Z2). It now also gets more rest days +
   fewer hours than every build week in its block — unmistakably a recovery week.
-- **#3 — sane tier-down + ONE "today" recommendation.** Two parts, both fixed:
-  - *Tier-down never increases load.* A "tier-down" vo2max → threshold raised TSS at the same
-    duration (90/h > 75/h; rider saw 64 → 76.5). The duration is now capped so a tier-down never
-    raises load; and on a severe day (high soreness → forced recovery) "auto-adjust" drops hard
-    sessions all the way to easy in one pass instead of one tier at a time.
-  - *One recommendation (Request 2).* The home page showed up to five "today/readiness" surfaces
-    with two different scales (e.g. 3.8/10 vs 66/100) and scattered action buttons, which read as
-    contradictions. They're merged into a single **Today** card: one 0–100 number, one state
-    (Ready / Ease off / Rest) and one action. The number now comes from one canonical source, so
-    every surface agrees — and when your leg-check (subjective soreness) overrides a high
-    physiological score the card *explains* it ("78/100 · Rest advised · from your leg-check")
-    instead of looking like a contradiction. The lower card is now a clearly-labelled
-    "Readiness — factors & trend" analytic.
+- **#3 — readiness tier-down no longer increases load.** A "tier-down" vo2max → threshold raised
+  TSS at the same duration (90/h > 75/h; rider saw 64 → 76.5). The duration is now capped so a
+  tier-down never raises load. On a severe day (high soreness → forced recovery) "auto-adjust"
+  drops hard sessions all the way to easy in one pass instead of one tier at a time. (The visual
+  merge of the three "today" cards — issue #3 Request 2 — is a follow-up.)
 
 ## v2.2.4 — Add races to a live plan, clearer plan setup, sign-in reliability
 

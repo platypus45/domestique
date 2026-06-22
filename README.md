@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4220-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v2.2.6-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v2.2.7-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-1967-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -46,6 +46,17 @@ Domestique is neither. Every signal that touches the dashboard also has a code-p
 Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus a 1-week consolidation phase at the end of every non-event cycle so people don't ride straight from a peak into a fresh build with elevated fatigue (Mujika 2010).
 
 ---
+
+## What's new in v2.2.7
+
+- **Workout downloads fixed.** ZWO/FIT downloads could save as empty files on
+  macOS — they now always write the real workout (or report a clear error),
+  never a 0-byte file. Fixes issue
+  [#5](https://github.com/platypus45/domestique/issues/5).
+- **Your goal sticks.** The training goal (e.g. Hybrid FTP + VO2max) no longer
+  reverts to "Event" after a restart. Fixes issue
+  [#6](https://github.com/platypus45/domestique/issues/6).
+- **Faster home page** on large ride histories.
 
 ## What's new in v2.2.6
 
@@ -421,7 +432,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v2.2.6 — one unified "Today" card](https://github.com/platypus45/domestique/releases/latest)** (2026-06-22).
+Latest: **[v2.2.7 — workout downloads + goal persistence](https://github.com/platypus45/domestique/releases/latest)** (2026-06-22).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

@@ -1,5 +1,24 @@
 # Changelog
 
+## v2.2.7 — Workout downloads + goal persistence (issues #5/#6)
+
+- **#5 — ZWO/FIT downloads no longer save empty files.** On macOS the desktop
+  window (WKWebView) could hand the save bridge an empty response body, so the
+  downloaded `.zwo` / `.fit` was 0 bytes (intermittently — some downloads worked,
+  some didn't). The app runs the server in-process, so it now produces the file
+  bytes directly when that happens — reading the workout (ZWO) or regenerating it
+  (FIT) instead of writing an empty file — and refuses to save an empty file at
+  all. A workout that can't produce real steps now reports a clear error rather
+  than a useless empty file.
+- **#6 — your training goal sticks after a restart.** Selecting e.g. "Hybrid FTP
+  + VO2max" then reopening the app showed "Event" again — the plan form restored
+  every field except the goal selector itself. It now restores the goal too (the
+  underlying plan was always saved correctly; only the displayed selection
+  reset).
+- **Faster home page.** The "Today" + readiness cards memoise two ride-archive
+  scans that previously re-ran on every load, so the home page paints noticeably
+  faster on large histories.
+
 ## v2.2.6 — One unified "Today" card (issue #3 Request 2)
 
 - **#3 Request 2 — one readiness recommendation.** The home page showed up to five

@@ -7047,8 +7047,8 @@ async function openRideDetail(rideId) {
       && !((ride.samples && ride.samples.power && ride.samples.power.length > 10));
     if (_streamless) {
       html += `<div style="margin-bottom:14px;padding:10px 12px;border-radius:8px;background:rgba(59,130,246,0.10);border:1px solid #3b82f6;font-size:12px;line-height:1.55;color:var(--text2);">
-        <b>Limited detail for this ride.</b> This often happens with <b>Strava-synced</b> rides — Strava restricts sharing the per-second power/HR streams, so charts &amp; time-in-zone aren't available.
-        <b>Garmin doesn't restrict this:</b> connect Garmin → intervals.icu and future rides upload with full detail automatically.
+        <b>No detail available for this ride.</b> This usually means it reached intervals.icu via <b>Strava</b> — intervals.icu <b>can't read Strava activities through its API</b> (Strava's terms), so power/HR/distance and charts are unavailable here, even though the ride shows on the intervals.icu site.
+        <b>Garmin doesn't restrict this:</b> connect <b>Garmin Connect → intervals.icu</b> and future rides sync with full detail automatically.
         To bring in past rides, <a href="https://www.garmin.com/account/datamanagement/exportdata/" target="_blank" rel="noopener noreferrer" class="help-link">export all your Garmin data →</a> and drop the FIT files onto the window (Import FIT).
       </div>`;
     }

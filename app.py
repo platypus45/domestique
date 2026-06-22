@@ -2820,8 +2820,16 @@ async def api_readiness_apply_tier_down(request: Request):
         old_duration = int(target.get("duration_min", 0) or 0)
         old_tss = float(target.get("tss_estimate", 0) or 0)
         tss_per_h = tp.TSS_PER_HOUR.get(new_type, 45)
+        new_duration = old_duration
         new_tss = round(old_duration / 60 * tss_per_h, 1)
+        # issue #3: a tier-DOWN must never INCREASE load. The Seiler ladder can
+        # step to a higher-TSS/h type (vo2max 75 → threshold 90); cap the duration
+        # so the new TSS <= the original (rider saw 64 → 76.5).
+        if old_tss > 0 and new_tss > old_tss:
+            new_duration = max(20, int(round(old_tss / tss_per_h * 60)))
+            new_tss = round(new_duration / 60 * tss_per_h, 1)
         target["session_type"] = new_type
+        target["duration_min"] = new_duration
         target["tss_estimate"] = new_tss
         target["adapted"] = True
         target["adapted_reason"] = f"Tier-down: {old_type} → {new_type} (readiness)"
@@ -2834,7 +2842,7 @@ async def api_readiness_apply_tier_down(request: Request):
                 day=date.fromisoformat(day_iso),
                 day_name=target.get("day_name", ""),
                 session_type=new_type,
-                duration_min=old_duration,
+                duration_min=new_duration,
                 tss_estimate=new_tss,
                 description=target.get("description", ""),
             )
@@ -3127,7 +3135,13 @@ async def api_plan_auto_adjust(request: Request):
                     })
         else:  # scope == "week"
             try:
-                wk_result = tp.apply_week_tier_down(working, today_iso, dry_run=dry_run)
+                # issue #3: on a SEVERE day (severity "rest" — e.g. high soreness
+                # forcing recovery) drop hard sessions ALL the way to easy in one
+                # pass, instead of one ladder step the rider has to repeat. A soft
+                # "tier_down" day still drops a single tier.
+                _to_floor = (severity == "rest")
+                wk_result = tp.apply_week_tier_down(
+                    working, today_iso, dry_run=dry_run, to_floor=_to_floor)
                 actions = wk_result.get("actions", [])
                 if wk_result.get("note"):
                     note = wk_result["note"]

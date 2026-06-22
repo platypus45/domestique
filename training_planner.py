@@ -6427,10 +6427,15 @@ _HARD_SESSION_TYPES = frozenset({
 
 
 def apply_week_tier_down(
-    plan: dict, day_iso: str, dry_run: bool = False,
+    plan: dict, day_iso: str, dry_run: bool = False, to_floor: bool = False,
 ) -> dict:
     """v1.8.0 §F1 — walk remaining hard sessions in the current Mon-Sun
     window and tier-down each by one ladder step.
+
+    issue #3: ``to_floor=True`` drops each hard session ALL the way to the easy
+    floor (z2/endurance) in one call, instead of one ladder step — so a very low
+    readiness day doesn't need the rider to click "auto-adjust" repeatedly. The
+    caller (/api/plan/auto-adjust) sets it when the readiness severity is high.
 
     Selection:
       - day_iso <= session.day <= sunday(day_iso) (TODAY-ONWARD, strict
@@ -6493,18 +6498,39 @@ def apply_week_tier_down(
             if old_type not in _HARD_SESSION_TYPES:
                 continue
             new_type = _drop_intensity(old_type)
+            if to_floor and new_type:
+                # Drop ALL the way to the easy floor (first non-hard type) in one
+                # pass. _drop_intensity is a single ladder step; iterate until it
+                # bottoms out of the hard types (→ z2 / endurance).
+                _guard = 0
+                while new_type in _HARD_SESSION_TYPES and _guard < 10:
+                    _nxt = _drop_intensity(new_type)
+                    if not _nxt or _nxt == new_type:
+                        break
+                    new_type = _nxt
+                    _guard += 1
             if not new_type or new_type == old_type:
                 continue
 
             old_duration = int(sess.get("duration_min", 0) or 0)
             old_tss = float(sess.get("tss_estimate", 0) or 0)
             tss_per_h = TSS_PER_HOUR.get(new_type, 45)
+            new_duration = old_duration
             new_tss = round(old_duration / 60 * tss_per_h, 1)
+            # issue #3: a tier-DOWN must never INCREASE load. The Seiler ladder can
+            # step to a type with higher TSS/h (vo2max 75 → threshold 90), so at the
+            # same duration TSS would RISE (rider saw 64 → 76.5, +13). Cap the
+            # duration so the adjusted session's TSS is <= the original.
+            if old_tss > 0 and new_tss > old_tss:
+                new_duration = max(_VOLUME_MIN_SESSION_MIN,
+                                   int(round(old_tss / tss_per_h * 60)))
+                new_tss = round(new_duration / 60 * tss_per_h, 1)
 
             before = {"type": old_type, "duration_min": old_duration,
                       "tss": old_tss}
 
             sess["session_type"] = new_type
+            sess["duration_min"] = new_duration
             sess["tss_estimate"] = new_tss
             sess["adapted"] = True
             sess["adapted_reason"] = (
@@ -6520,7 +6546,7 @@ def apply_week_tier_down(
                     day=s_date,
                     day_name=sess.get("day_name", ""),
                     session_type=new_type,
-                    duration_min=old_duration,
+                    duration_min=new_duration,
                     tss_estimate=new_tss,
                     description=sess.get("description", ""),
                 )

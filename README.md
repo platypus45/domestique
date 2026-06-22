@@ -397,7 +397,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v2.2.4 — add races to a live plan, clearer plan setup, sign-in reliability](https://github.com/platypus45/domestique/releases/latest)** (2026-06-21).
+Latest: **[v2.2.5 — Strava-ride clarity, lighter recovery weeks, sane tier-down](https://github.com/platypus45/domestique/releases/latest)** (2026-06-22).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

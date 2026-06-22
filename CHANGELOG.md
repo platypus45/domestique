@@ -1,5 +1,22 @@
 # Changelog
 
+## v2.2.5 — Strava-ride clarity, lighter recovery weeks, sane tier-down (issues #2/#3/#4)
+
+- **#2 — blank Strava rides + log spam.** intervals.icu's API can't read Strava-synced
+  activities at all (summary, streams, fit-file all return 422 "Cannot read Strava activities
+  via the API" — Strava's terms), so the ride detail was blank and the log filled with 422
+  warnings. Now: 422-on-streams is DEBUG (no spam), the detail renders whatever's available, and
+  a clear note explains it — Garmin doesn't restrict this, so connect Garmin → intervals.icu for
+  automatic full detail, with a direct link to export your Garmin history.
+- **#4 — recovery weeks are now visibly light.** A deload could end up with MORE hours + the same
+  single rest day as its build weeks (low TSS via easy Z2). It now also gets more rest days +
+  fewer hours than every build week in its block — unmistakably a recovery week.
+- **#3 — readiness tier-down no longer increases load.** A "tier-down" vo2max → threshold raised
+  TSS at the same duration (90/h > 75/h; rider saw 64 → 76.5). The duration is now capped so a
+  tier-down never raises load. On a severe day (high soreness → forced recovery) "auto-adjust"
+  drops hard sessions all the way to easy in one pass instead of one tier at a time. (The visual
+  merge of the three "today" cards — issue #3 Request 2 — is a follow-up.)
+
 ## v2.2.4 — Add races to a live plan, clearer plan setup, sign-in reliability
 
 ### Planning

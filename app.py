@@ -2252,6 +2252,18 @@ def _iter_icu_dfa_rides() -> list[dict]:
 
 
 def _recent_dfa_and_decoupling() -> tuple[list[float], float | None, str | None, str | None]:
+    """v2.2.6 perf — memoised wrapper around the archive scan below.
+
+    The scan walks the FIT + ICU ride archives (~500ms on a large data dir) and
+    runs on EVERY /api/readiness AND /api/today-session. Cache it in the shared
+    5-min store (cleared by clear_cache() on sync / FIT import) so a warm
+    home-page load doesn't pay it once per endpoint. The inner fn never raises
+    (returns the empty 4-tuple), so cached()'s dict error-path can't fire.
+    """
+    return cached("recent_dfa_decoupling", _recent_dfa_and_decoupling_uncached)
+
+
+def _recent_dfa_and_decoupling_uncached() -> tuple[list[float], float | None, str | None, str | None]:
     """F1/F2 (v4.1.0) — pull last 3 rides' DFA α1 + most recent decoupling %
     from the local ride archive. Returns ([], None) gracefully when empty.
 
@@ -2268,7 +2280,10 @@ def _recent_dfa_and_decoupling() -> tuple[list[float], float | None, str | None,
         rides.extend(ride_storage.list_rides())
     except Exception:
         pass
-    rides.extend(_iter_icu_dfa_rides())
+    try:
+        rides.extend(_iter_icu_dfa_rides())
+    except Exception:
+        pass
     # Dedup by id, prefer the entry with non-null dfa_alpha1_avg.
     by_id: dict[str, dict] = {}
     for r in rides:
@@ -14137,6 +14152,12 @@ def _sync_icu_activities(force: bool = False) -> dict:
         )
     now = time.time()
     _write_last_sync_at(now)
+    # v2.2.6 perf — new/updated rides were just written to disk; drop the
+    # memoised archive caches (cached("all_rides") + cached("recent_dfa_
+    # decoupling")) so the `total` below — and every downstream reader on this
+    # and the lazy-sync path — sees them immediately, not after the 5-min TTL.
+    if added or updated:
+        clear_cache()
     total = len(_load_all_rides_safe())
     # v1.0.3 — best-effort auto-reforecast on new rides. Helper swallows
     # all exceptions so the sync result stays clean.
@@ -14175,7 +14196,18 @@ def _sync_icu_rides_and_wellness(force: bool = False) -> dict:
 
 
 def _load_all_rides_safe() -> list[dict]:
-    """Defensive wrapper around ride_storage.load_all_rides()."""
+    """Defensive wrapper around ride_storage.load_all_rides().
+
+    v2.2.6 perf — load_all_rides() parses the whole ride archive (~500ms on a
+    large data dir) and has many callers across the home path. Memoise via the
+    shared 5-min cache (cleared by clear_cache() on sync / FIT import) so a
+    home-page load pays it once, not once per card. Callers treat the returned
+    list as read-only (the one caller that sorts already copies it first).
+    """
+    return cached("all_rides", _load_all_rides_uncached)
+
+
+def _load_all_rides_uncached() -> list[dict]:
     try:
         import ride_storage as _rs
         return _rs.load_all_rides()
@@ -14602,6 +14634,8 @@ def api_rides_sync(force: int = Query(0)):
         result = _sync_icu_rides_and_wellness(force=True)
     else:
         result = _sync_icu_activities(force=False)
+    # Cache invalidation on new rides happens inside _sync_icu_activities (one
+    # source of truth, so the lazy-sync path is covered too — v2.2.6).
     # Always compute the alert post-sync so the dashboard can toast even
     # when the throttle returned status="throttled" (a recently-finished
     # ride still posts via a separate ICU push).

@@ -1558,25 +1558,31 @@ window.addEventListener('unhandledrejection', function(e) {
   <!-- v4.6.7 IMPL-CAP capability widget MOVED to Plan tab in v1.0.0 — see #plan-content insertion in renderPlanWidgets() and the empty placeholder below for the home page (rendered hidden, kept for any code that still queries #cap-projection by id). -->
   <div id="cap-projection" style="display:none;"></div>
 
-  <!-- Morning Check-In -->
-  <div class="card" style="margin-bottom:12px;" id="morning-log-card">
-    <h3>Leg Check</h3>
-    <div id="morning-log-content"></div>
-  </div>
-
-  <!-- v1.1.0 IMPL-HRV-RECOVERY — Readiness today (Bayesian composite, 0-10).
-       Separate card from the existing 0-100 Readiness card lower down.
-       Reads /api/readiness/composite. When status='insufficient_data', shows
-       a "≥30 days of wellness sync needed" hint instead of a score. -->
-  <div class="card" style="margin-bottom:12px;" id="readiness-composite-card">
-    <h3>Readiness today</h3>
-    <div id="readiness-composite-content" style="display:flex;gap:16px;align-items:center;">
-      <div id="readiness-composite-loading" style="font-size:12px;color:var(--text3);">Loading…</div>
+  <!-- v2.2.5 issue #3 R2 — unified "Today" card. Replaces the 3 separate
+       surfaces (Leg Check / Readiness today / Today's Recommendation) that used
+       two scales + three action voices and read as contradictions. Now ONE
+       story, top→bottom: VERDICT (0-100 + state + why, keyed to severity) →
+       PRESCRIPTION (today's planned session) → leg-check INPUT (self-collapses
+       to a one-line summary once logged) → collapsed recovery details.
+       Verdict + action read the canonical /api/readiness (severity chained on
+       in v2.2.5); the deprecated /api/readiness/composite is no longer used. -->
+  <div class="card" style="margin-bottom:12px;" id="today-card">
+    <h3>Today</h3>
+    <div id="today-verdict" style="margin-top:8px;">
+      <div style="font-size:12px;color:var(--text3);">Loading…</div>
     </div>
-    <!-- v1.8.8 Bug 3 — last ride DFA α1 snapshot line. v1.8.9 Bug 7: always
-         visible; renders "no recent HRV-tagged rides" message instead of
-         hiding when value is null. -->
-    <div id="home-snapshot-dfa" style="margin-top:8px;font-size:12px;color:var(--text2);"></div>
+    <!-- Prescription: today's planned session. loadTodaySession() owns this;
+         click → openTodaySessionDetail(). -->
+    <div id="home-recommendation" class="loading" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">Loading...</div>
+    <!-- Leg-check INPUT. loadMorningLog() renders a compact emoji + "Hooper
+         N/28 · Change" once logged, or the 4-question form when nothing is
+         logged yet — so the big form only appears when it's needed. -->
+    <div id="morning-log-content" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;"></div>
+    <details style="margin-top:10px;">
+      <summary style="cursor:pointer;font-size:11px;color:var(--text2);">Recovery details</summary>
+      <!-- v1.8.8 Bug 3 — last ride DFA α1 snapshot. loadHomeSnapshotDfa(). -->
+      <div id="home-snapshot-dfa" style="margin-top:8px;font-size:12px;color:var(--text2);"></div>
+    </details>
   </div>
 
   <!-- v1.7.6 — Last week feedback panel. Reads /api/week-summary?week_offset=-1
@@ -1618,7 +1624,7 @@ window.addEventListener('unhandledrejection', function(e) {
   <div class="grid g2">
     <!-- Left: Readiness -->
     <div class="card">
-      <h3>Readiness</h3>
+      <h3>Readiness — factors &amp; trend</h3>
       <div style="display:flex;gap:20px;align-items:center;">
         <div class="gauge" id="gauge"></div>
         <div style="flex:1;">
@@ -1647,10 +1653,6 @@ window.addEventListener('unhandledrejection', function(e) {
     <div class="card">
       <h3>Body &amp; Performance</h3>
       <div id="body-perf-card" class="loading">Loading...</div>
-    </div>
-    <div class="card">
-      <h3>Today's Recommendation</h3>
-      <div id="home-recommendation" class="loading">Loading...</div>
     </div>
   </div>
 
@@ -5648,8 +5650,10 @@ async function loadHome() {
       $('gauge').innerHTML = gaugeArc(gaugeScore);
       $('gauge-status').textContent = r.status || '';
 
-      // Advice
-      $('readiness-advice').textContent = r.advice || '';
+      // v2.2.5 issue #3 R2 — this card is now the analytic (gauge + factor
+      // bars + the same 0-100 number as the Today verdict). The training
+      // directive lives ONLY in the Today card so there's one recommendation.
+      $('readiness-advice').innerHTML = '<span style="color:var(--text3);">Component factors below. Today\'s recommendation is in the <b>Today</b> card at the top.</span>';
 
       // Component bars
       const comp = r.components || {};
@@ -5828,148 +5832,88 @@ async function loadHome() {
   }
 }
 
-// v1.1.0 IMPL-HRV-RECOVERY — Bayesian-composite readiness card.
-// Reads /api/readiness/composite (5-min server-side cache). Renders a
-// coloured circle + 1-line advice + collapsed component breakdown. When
-// status='insufficient_data', renders a "Need ≥30 days of wellness sync"
-// hint instead of a score (no circle).
+// v2.2.5 issue #3 R2 — the unified "Today" verdict. Reads the CANONICAL
+// /api/readiness (no longer the deprecated /composite): one 0-100 number, the
+// severity-driven state word + colour, and the WHY (source + reason) so a
+// Hooper override reads as an explanation ("78/100, but you logged high
+// soreness → rest"), not a contradiction. The single action is gated on
+// severity; button ids are preserved so applyReadinessTierDown /
+// applyWeekAutoAdjust stay untouched. Kept the function name so all existing
+// callers (loadHome, HRV upload, post-auto-adjust) keep working.
 async function loadReadinessComposite() {
-  const host = document.getElementById('readiness-composite-content');
+  const host = document.getElementById('today-verdict');
   if (!host) return;
   try {
-    const res = await fetch('/api/readiness/composite');
+    const res = await fetch('/api/readiness');
     if (!res.ok) {
-      host.innerHTML = '<div style="font-size:12px;color:var(--text3);">Composite readiness unavailable.</div>';
+      host.innerHTML = '<div style="font-size:12px;color:var(--text3);">Readiness unavailable.</div>';
       return;
     }
     const d = await res.json();
-    // v1.8.0 — source pill describes whether severity comes from Hooper
-    // override, TSB+HRV composite, or insufficient signal. Rendered next
-    // to the score circle (or inline when no score).
-    const sourceKey = d.source || 'insufficient';
-    const sourceLabel = sourceKey === 'hooper' ? 'From Hooper override'
-                      : sourceKey === 'tsb_hrv_auto' ? 'From HRV+TSB'
-                      : 'Insufficient signal';
-    const sourceColor = sourceKey === 'hooper' ? 'var(--green)'
-                      : sourceKey === 'tsb_hrv_auto' ? 'var(--accent)'
-                      : 'var(--text3)';
-    const sourcePill = `<span class="readiness-source-pill" data-source="${esc(sourceKey)}"
-        style="display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;
-               background:${sourceColor}22;color:${sourceColor};border:1px solid ${sourceColor};
-               vertical-align:middle;margin-left:8px;letter-spacing:0.02em;">${esc(sourceLabel)}</span>`;
-    // v1.8.8 Bug 8 — consume the canonical score_0_10 field. Backend
-    // Wave 2A returns both score_0_10 and score_0_100 on /api/readiness
-    // AND mirrors them onto /api/readiness/composite. Fall back to the
-    // legacy `score` field while older builds are still in flight.
-    if (d.score_0_10 != null && d.score == null) d.score = d.score_0_10;
-    if (d.status === 'insufficient_data' || d.score === null || d.score === undefined) {
-      // v1.8.0 — even without a composite score, the backend may emit a
-      // Hooper-override severity. Render the pill + auto-adjust button
-      // when severity is actionable so the user isn't stuck.
-      const sev = d.severity || 'normal';
-      // v1.8.8 Bug 7 — stash severity so the auto-adjust commit can pass
-      // scope='day' for the rest-day branch.
-      window._readinessSeverity = sev;
-      const showAuto = (sev === 'tier_down' || sev === 'rest');
-      const autoBtnLabel = (sev === 'rest') ? '🛏 Apply rest day' : '🩹 Auto-adjust this week';
-      const autoHtml = showAuto
-        ? `<div style="margin-top:8px;">
-             <button class="btn btn-primary" id="apply-week-tier-down-btn"
-                     onclick="applyWeekAutoAdjust()"
-                     style="font-size:11px;padding:4px 10px;">
-               ${autoBtnLabel}
-             </button>
-             <div id="apply-week-tier-down-status" style="font-size:11px;color:var(--text2);margin-top:6px;"></div>
-           </div>`
-        : `<div style="font-size:11px;color:var(--text3);margin-top:6px;">No actionable signal.</div>`;
-      host.innerHTML = `
-        <div style="font-size:12px;color:var(--text2);padding:8px 0;">
-          ${esc(d.advice || 'Need ≥30 days of wellness sync to enable readiness scoring.')}
-          ${sourcePill}
-          ${autoHtml}
-        </div>`;
-      return;
-    }
-    const s = Number(d.score);
-    let color = 'var(--red)';
-    if (s >= 8.0) color = 'var(--green)';
-    else if (s >= 5.0) color = 'var(--yellow)';
-    else if (s >= 3.0) color = '#f59e0b'; // orange
-    const circle = `
-      <div style="width:84px;height:84px;border-radius:50%;border:6px solid ${color};display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;flex-shrink:0;">
-        ${s.toFixed(1)}<span style="font-size:10px;font-weight:400;color:var(--text3);margin-left:2px;">/10</span>
-      </div>`;
-    const statusLabel = d.status === 'dynamic_weights' ? 'dynamic weights'
-                       : d.status === 'static_weights' ? 'static weights' : d.status;
-    const conf = (d.confidence !== undefined && d.confidence !== null)
-      ? ` &middot; confidence ${(Number(d.confidence)*100).toFixed(0)}%` : '';
-    const comp = d.components || {};
-    const weights = d.weights || {};
-    const compRows = Object.entries(weights).map(([k, w]) => {
-      const v = comp[k];
-      const display = (v === null || v === undefined) ? '—' : Number(v).toFixed(2);
-      return `<tr><td style="padding:2px 8px 2px 0;color:var(--text2);">${esc(k)}</td>
-              <td style="padding:2px 8px;text-align:right;">${display}</td>
-              <td style="padding:2px 0;text-align:right;color:var(--text3);">${(Number(w)*100).toFixed(0)}%</td></tr>`;
-    }).join('');
-    // v1.8.0 — severity gate (replaces v1.7.5 score-range gate so Hooper
-    // override with score===null still surfaces actions). Tier-down button
-    // remains the v1.7.5 single-day flow; a new "Auto-adjust this week"
-    // button covers the multi-session walk via dry-run preview.
+    const s100 = (d.score_0_100 != null) ? Number(d.score_0_100) : null;
     const sev = d.severity || 'normal';
-    // v1.8.8 Bug 7 — stash severity so the auto-adjust commit can pass
-    // scope='day' for the rest-day branch.
+    // Stash severity so applyWeekAutoAdjust can POST scope='day' for rest.
     window._readinessSeverity = sev;
-    const showTierDownBtn = (sev === 'tier_down');
-    const tierDownHtml = showTierDownBtn
-      ? `<div style="margin-top:8px;">
-           <button class="btn btn-primary" id="apply-tier-down-btn"
-                   onclick="applyReadinessTierDown()"
-                   style="font-size:11px;padding:4px 10px;">
-             &#x21e3; Apply tier-down to today
-           </button>
-           <span style="font-size:10px;color:var(--text3);margin-left:8px;">
-             Drops one step on the Seiler ladder + recomputes TSS + re-matches ZWO.
-           </span>
-           <div id="apply-tier-down-status" style="font-size:11px;color:var(--text2);margin-top:6px;"></div>
-         </div>`
+    const source = d.source || null;
+    const reasons = Array.isArray(d.severity_reasons) ? d.severity_reasons : [];
+    const advice = (d.readiness && d.readiness.advice) || '';
+
+    // State word + colour keyed to the ACTION (severity) so the number, the
+    // colour and the button always agree.
+    const STATE = {
+      normal:    { word: 'Ready to train', color: 'var(--green)' },
+      tier_down: { word: 'Ease off today', color: 'var(--yellow)' },
+      rest:      { word: 'Rest advised',   color: 'var(--red)' },
+    };
+    const st = STATE[sev] || { word: 'Train as planned', color: 'var(--text2)' };
+
+    // Source pill names WHY — the key fix for "66/100 but rest?!".
+    const srcLabel = source === 'hooper' ? 'From your leg-check'
+                   : source === 'tsb_hrv_auto' ? 'From HRV + form'
+                   : source === 'insufficient' ? 'Limited data' : '';
+    const srcPill = srcLabel
+      ? `<span style="display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:var(--surface2);color:var(--text2);margin-left:8px;vertical-align:middle;">${esc(srcLabel)}</span>`
       : '';
-    // v1.8.0 — auto-adjust whole week / rest button. When severity=rest,
-    // ONLY this button shows ("Apply rest day"); when severity=tier_down it
-    // shows IN ADDITION to the single-day v1.7.5 button.
-    const showAutoBtn = (sev === 'tier_down' || sev === 'rest');
-    const autoBtnLabel = (sev === 'rest') ? '🛏 Apply rest day' : '🩹 Auto-adjust this week';
-    const autoBtnHtml = showAutoBtn
-      ? `<div style="margin-top:8px;">
-           <button class="btn btn-primary" id="apply-week-tier-down-btn"
-                   onclick="applyWeekAutoAdjust()"
-                   style="font-size:11px;padding:4px 10px;">
-             ${autoBtnLabel}
-           </button>
-           <span style="font-size:10px;color:var(--text3);margin-left:8px;">
-             Preview every change first; nothing is saved until you click Apply.
-           </span>
-           <div id="apply-week-tier-down-status" style="font-size:11px;color:var(--text2);margin-top:6px;"></div>
-         </div>`
-      : '';
-    host.innerHTML = `
-      ${circle}
-      <div style="flex:1;">
-        <div style="font-size:13px;color:var(--text);margin-bottom:6px;">${esc(d.advice || '')}${sourcePill}</div>
-        <div style="font-size:10px;color:var(--text3);">${statusLabel}${conf}</div>
-        ${tierDownHtml}
-        ${autoBtnHtml}
-        <details style="margin-top:8px;">
-          <summary style="cursor:pointer;font-size:11px;color:var(--text2);">Component breakdown</summary>
-          <table style="margin-top:6px;font-size:11px;">
-            <thead><tr style="color:var(--text3);"><th style="text-align:left;">component</th><th style="text-align:right;">z</th><th style="text-align:right;">w</th></tr></thead>
-            <tbody>${compRows}</tbody>
-          </table>
-        </details>
+
+    const numTxt = (s100 != null) ? Math.round(s100) : '—';
+    const circle = `
+      <div style="width:72px;height:72px;border-radius:50%;border:6px solid ${st.color};display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;flex-shrink:0;">
+        ${numTxt}<span style="font-size:9px;font-weight:400;color:var(--text3);margin-left:1px;">/100</span>
       </div>`;
+
+    const why = reasons.length ? reasons[0] : advice;
+
+    // Single action, gated on severity. ids preserved for the handlers.
+    let actionHtml = '';
+    if (sev === 'rest') {
+      actionHtml = `
+        <div style="margin-top:10px;">
+          <button class="btn btn-primary" id="apply-week-tier-down-btn" onclick="applyWeekAutoAdjust()" style="font-size:11px;padding:5px 12px;">🛏 Apply rest day</button>
+          <span style="font-size:10px;color:var(--text3);margin-left:8px;">Preview first — nothing is saved until you confirm.</span>
+          <div id="apply-week-tier-down-status" style="font-size:11px;color:var(--text2);margin-top:6px;"></div>
+        </div>`;
+    } else if (sev === 'tier_down') {
+      actionHtml = `
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-primary" id="apply-tier-down-btn" onclick="applyReadinessTierDown()" style="font-size:11px;padding:5px 12px;">⇣ Ease today's session</button>
+          <button class="btn" id="apply-week-tier-down-btn" onclick="applyWeekAutoAdjust()" style="font-size:11px;padding:5px 12px;">Auto-adjust this week</button>
+        </div>
+        <div id="apply-tier-down-status" style="font-size:11px;color:var(--text2);margin-top:6px;"></div>
+        <div id="apply-week-tier-down-status" style="font-size:11px;color:var(--text2);margin-top:2px;"></div>`;
+    }
+
+    host.innerHTML = `
+      <div style="display:flex;gap:16px;align-items:center;">
+        ${circle}
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:15px;font-weight:700;color:${st.color};">${esc(st.word)}${srcPill}</div>
+          ${why ? `<div style="font-size:12px;color:var(--text2);margin-top:3px;">${esc(why)}</div>` : ''}
+        </div>
+      </div>
+      ${actionHtml}`;
   } catch (e) {
-    console.error('readiness-composite load failed', e);
-    host.innerHTML = '<div style="font-size:12px;color:var(--text3);">Composite readiness unavailable.</div>';
+    console.error('today verdict load failed', e);
+    host.innerHTML = '<div style="font-size:12px;color:var(--text3);">Readiness unavailable.</div>';
   }
 }
 
@@ -13264,6 +13208,9 @@ async function submitHooper() {
     loadMorningLog();
     // Refresh today's session (Hooper composite now feeds into readiness)
     loadTodaySession();
+    // v2.2.5 issue #3 R2 — Hooper drives the severity, so refresh the Today
+    // verdict too (it was going stale on a soreness change).
+    loadReadinessComposite();
     loadWeeklyCalendar();
   } catch(e) {
     alert('Failed to save morning log: ' + e.message);
@@ -13282,6 +13229,7 @@ async function submitSoreness(level) {
     if (!res.ok) throw new Error(`${res.status}`);
     loadMorningLog();
     loadTodaySession();
+    loadReadinessComposite();  // v2.2.5 issue #3 R2 — keep the verdict in sync
     loadWeeklyCalendar();
   } catch(e) {
     alert('Failed to save morning log: ' + e.message);
@@ -14039,7 +13987,10 @@ async function loadTodaySession() {
     // Hero: ORIGINAL plan content (Type / Duration / TSS).
     let html = `<div style="font-size:20px;font-weight:700;margin-bottom:4px;">${planType}</div>`;
     html += `<div style="font-size:13px;color:var(--text2);margin-bottom:6px;">${esc(fixZeroMin(d.planned.description) || '')}</div>`;
-    html += `<div style="font-size:12px;color:var(--text3);margin-bottom:8px;">${d.planned.duration_min}min · ${d.planned.tss_estimate} TSS · Readiness ${d.readiness ? Math.round(d.readiness) : '—'}/100</div>`;
+    // v2.2.5 issue #3 R2 — the readiness number now lives ONLY in the Today
+    // verdict above; the prescription line shows just the plan (no /100) so the
+    // two never read as competing scores.
+    html += `<div style="font-size:12px;color:var(--text3);margin-bottom:8px;">${d.planned.duration_min}min · ${d.planned.tss_estimate} TSS</div>`;
 
     // Adjustment chip — only when actually adjusted.
     if (mod) {

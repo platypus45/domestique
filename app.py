@@ -2643,11 +2643,31 @@ def api_readiness(subjective: float = Query(None)):
     except (TypeError, ValueError):
         s100 = None
     s10 = round(s100 / 10.0, 1) if s100 is not None else None
+    # v2.2.5 issue #3 R2 — chain the Hooper/composite severity onto the
+    # canonical readiness payload so the unified "Today" card reads ONE
+    # (non-deprecated) endpoint for both the 0-100 number AND the action.
+    # Same tolerant pattern as /api/readiness/composite; absence = normal.
+    severity = source = None
+    severity_reasons: list = []
+    try:
+        from datetime import date as _date_cls
+        from readiness_composite import compute_training_severity as _cts
+        sev = _cts("default", _date_cls.today().isoformat()) or {}
+        if isinstance(sev, dict):
+            severity = sev.get("severity")
+            source = sev.get("source")
+            severity_reasons = sev.get("reasons") or []
+    except Exception:
+        pass
     return {
         "readiness": r,
         # v1.8.8 Bug 8 — top-level unified score fields.
         "score_0_10": s10,
         "score_0_100": s100,
+        # v2.2.5 issue #3 R2 — severity/source/reasons for the unified card.
+        "severity": severity,
+        "source": source,
+        "severity_reasons": severity_reasons,
         "training": merged_load,
         "sleep": {
             "sleep_h": sleep.get("sleep_h"), "sleep_score": sleep.get("sleep_score"),

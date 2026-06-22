@@ -10176,6 +10176,68 @@ async def api_plan_update(debounce: int = Query(0)):
 # FIT WORKOUT EXPORT (Garmin/Wahoo) — uses Garmin FIT SDK
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def build_fit_workout_bytes(session_type: str, duration_min: int,
+                            name: str, zwo_file: str | None = None) -> bytes:
+    """Generate FIT workout bytes. Shared by ``/api/export/fit-workout`` AND
+    ``launcher.JsApi.save_fit`` (issue #5) so the desktop native-save path can
+    produce the bytes IN-PROCESS, with no WKWebView ``fetch()`` that can resolve
+    with an empty body.
+
+    v1.0.1: session_type normalised so the planner form ("sweetspot") and the
+    dashboard <select> values ("sweet_spot") route to the same branch.
+    v1.0.3: when ``zwo_file`` is supplied, transcode that exact ZWO into FIT so
+    the FIT body matches what the rider sees in MyWhoosh / Tacx / Zwift.
+
+    Raises ImportError if fit_tool is missing, FileNotFoundError if ``zwo_file``
+    is named but absent, ValueError if the result has zero workout steps.
+    """
+    from fit_tool.fit_file_builder import FitFileBuilder  # noqa: F401 (availability check)
+
+    ftp = config.ATHLETE_FTP_W
+    if zwo_file:
+        zwo_path = _safe_path(WORKOUT_DIR, zwo_file)
+        if not zwo_path or not zwo_path.exists():
+            raise FileNotFoundError(f"ZWO file not found: {zwo_file}")
+        fit_data = _build_fit_workout_from_zwo(name, zwo_path, ftp)
+    else:
+        st_norm = (session_type or "").lower().replace("_", "").replace("-", "")
+        blocks = []
+        warmup = min(10, duration_min // 8)
+        cooldown = min(5, duration_min // 12)
+        main_min = duration_min - warmup - cooldown
+        blocks.append({"name": "Warmup", "min": warmup, "pctLow": 45, "pctHigh": 65, "intensity": "warmup"})
+        if st_norm == "vo2max":
+            reps = min(5, max(3, main_min // 7))
+            for i in range(reps):
+                blocks.append({"name": f"VO2 {i+1}", "min": 4, "pctLow": 106, "pctHigh": 115, "intensity": "active"})
+                if i < reps - 1:
+                    blocks.append({"name": "Rest", "min": 3, "pctLow": 40, "pctHigh": 40, "intensity": "rest"})
+        elif st_norm == "threshold":
+            blocks.append({"name": "FTP 1", "min": 20, "pctLow": 95, "pctHigh": 100, "intensity": "active"})
+            blocks.append({"name": "Rest", "min": 5, "pctLow": 50, "pctHigh": 50, "intensity": "rest"})
+            blocks.append({"name": "FTP 2", "min": 20, "pctLow": 95, "pctHigh": 100, "intensity": "active"})
+        elif st_norm == "sweetspot":
+            for i in range(3):
+                blocks.append({"name": f"SS {i+1}", "min": 15, "pctLow": 88, "pctHigh": 93, "intensity": "active"})
+                if i < 2:
+                    blocks.append({"name": "Rest", "min": 5, "pctLow": 55, "pctHigh": 55, "intensity": "rest"})
+        elif st_norm == "overunder":
+            for i in range(3):
+                for j in range(4):
+                    blocks.append({"name": "Over", "min": 2, "pctLow": 105, "pctHigh": 105, "intensity": "active"})
+                    blocks.append({"name": "Under", "min": 1, "pctLow": 90, "pctHigh": 90, "intensity": "active"})
+                if i < 2:
+                    blocks.append({"name": "Rest", "min": 5, "pctLow": 50, "pctHigh": 50, "intensity": "rest"})
+        else:
+            blocks.append({"name": session_type, "min": main_min, "pctLow": 56, "pctHigh": 75, "intensity": "active"})
+        blocks.append({"name": "Cooldown", "min": cooldown, "pctLow": 60, "pctHigh": 40, "intensity": "cooldown"})
+        fit_data = _build_fit_workout(name, blocks, ftp)
+
+    if not fit_data:
+        raise ValueError("FIT generation produced no data")
+    return fit_data
+
+
 @app.get("/api/export/fit-workout")
 def api_export_fit_workout(
     session_type: str = Query("z2"),
@@ -10183,97 +10245,33 @@ def api_export_fit_workout(
     name: str = Query("Workout"),
     zwo_file: str | None = Query(None),
 ):
-    """Generate a FIT binary workout file for Garmin Edge / Wahoo ELEMNT / Hammerhead Karoo.
+    """Generate a FIT binary workout file for Garmin Edge / Wahoo ELEMNT / Karoo.
 
-    v1.0.1 fix: session_type is normalised before dispatch — both the planner's
-    canonical form ("sweetspot", "overunder") AND the dashboard <select> values
-    ("sweet_spot", "over_under") now route to the same elif branch. Pre-fix,
-    the snake_case forms fell through to the else branch (a generic Z2 block),
-    which silently produced a wrong workout instead of the requested intervals.
-
-    v1.0.3 fix-forward(workout-detail UX): when ``zwo_file`` is supplied, the
-    server parses that exact ZWO file out of WORKOUT_DIR and transcodes its
-    blocks into FIT workout steps — so the FIT body matches the ZWO content
-    (was previously a generic block keyed only on session_type+duration). If
-    the named file is missing the route 404s loudly rather than silently
-    falling back to a wrong workout. When ``zwo_file`` is None or empty, the
-    pre-existing generic generator path is preserved (used by the no-library
-    fallback at L10185 in dashboard.html).
+    Thin wrapper around build_fit_workout_bytes() (issue #5 extracted the
+    generation so the desktop native-save bridge can reuse it in-process).
     """
+    from fastapi.responses import Response
     try:
-        from fit_tool.fit_file_builder import FitFileBuilder  # verify fit_tool is available
-
-        ftp = config.ATHLETE_FTP_W
-
-        if zwo_file:
-            # v1.0.3 fix-forward: ZWO-content path — mirror exactly what the
-            # rider sees in MyWhoosh / Tacx / Zwift.
-            zwo_path = _safe_path(WORKOUT_DIR, zwo_file)
-            if not zwo_path or not zwo_path.exists():
-                return JSONResponse({"error": f"ZWO file not found: {zwo_file}"}, 404)
-            fit_data = _build_fit_workout_from_zwo(name, zwo_path, ftp)
-        else:
-            # v1.0.1: normalise to lowercase + strip "_" / "-" so "sweet_spot",
-            # "Sweet-Spot", and "sweetspot" all map to the same key.
-            st_norm = (session_type or "").lower().replace("_", "").replace("-", "")
-
-            # Build power blocks (reuse existing logic)
-            blocks = []
-            warmup = min(10, duration_min // 8)
-            cooldown = min(5, duration_min // 12)
-            main_min = duration_min - warmup - cooldown
-
-            blocks.append({"name": "Warmup", "min": warmup, "pctLow": 45, "pctHigh": 65, "intensity": "warmup"})
-
-            if st_norm == "vo2max":
-                reps = min(5, max(3, main_min // 7))
-                for i in range(reps):
-                    blocks.append({"name": f"VO2 {i+1}", "min": 4, "pctLow": 106, "pctHigh": 115, "intensity": "active"})
-                    if i < reps - 1:
-                        blocks.append({"name": "Rest", "min": 3, "pctLow": 40, "pctHigh": 40, "intensity": "rest"})
-            elif st_norm == "threshold":
-                blocks.append({"name": "FTP 1", "min": 20, "pctLow": 95, "pctHigh": 100, "intensity": "active"})
-                blocks.append({"name": "Rest", "min": 5, "pctLow": 50, "pctHigh": 50, "intensity": "rest"})
-                blocks.append({"name": "FTP 2", "min": 20, "pctLow": 95, "pctHigh": 100, "intensity": "active"})
-            elif st_norm == "sweetspot":
-                for i in range(3):
-                    blocks.append({"name": f"SS {i+1}", "min": 15, "pctLow": 88, "pctHigh": 93, "intensity": "active"})
-                    if i < 2:
-                        blocks.append({"name": "Rest", "min": 5, "pctLow": 55, "pctHigh": 55, "intensity": "rest"})
-            elif st_norm == "overunder":
-                for i in range(3):
-                    for j in range(4):
-                        blocks.append({"name": "Over", "min": 2, "pctLow": 105, "pctHigh": 105, "intensity": "active"})
-                        blocks.append({"name": "Under", "min": 1, "pctLow": 90, "pctHigh": 90, "intensity": "active"})
-                    if i < 2:
-                        blocks.append({"name": "Rest", "min": 5, "pctLow": 50, "pctHigh": 50, "intensity": "rest"})
-            else:
-                blocks.append({"name": session_type, "min": main_min, "pctLow": 56, "pctHigh": 75, "intensity": "active"})
-
-            blocks.append({"name": "Cooldown", "min": cooldown, "pctLow": 60, "pctHigh": 40, "intensity": "cooldown"})
-
-            # Build FIT file manually (lightweight binary format)
-            # FIT header + data records + CRC
-            # For compatibility, generate a minimal FIT workout that Garmin can read
-            fit_data = _build_fit_workout(name, blocks, ftp)
-
-        from fastapi.responses import Response
-        # Sanitize aggressively — any char outside [A-Za-z0-9_.-] becomes '_'.
-        # The prior quote-only escape accepted CR/LF, which would let a user
-        # inject extra Content-Disposition headers into the response.
-        safe_name = re.sub(r'[^\w.\-]', '_', name) or "workout"
-        return Response(
-            content=fit_data,
-            media_type="application/octet-stream",
-            headers={"Content-Disposition": f'attachment; filename="{safe_name}.fit"'},
-        )
-
+        fit_data = build_fit_workout_bytes(session_type, duration_min, name, zwo_file)
     except ImportError as ie:
         return JSONResponse({"error": f"fit_tool not installed. Run: pip install fit_tool. Detail: {ie}"}, 500)
+    except FileNotFoundError as fe:
+        return JSONResponse({"error": str(fe)}, 404)
+    except ValueError as ve:
+        return JSONResponse({"error": str(ve)}, 422)
     except Exception as e:
         import traceback
         traceback.print_exc()
         return JSONResponse({"error": str(e)}, 500)
+    # Sanitize aggressively — any char outside [A-Za-z0-9_.-] becomes '_'.
+    # The prior quote-only escape accepted CR/LF, which would let a user inject
+    # extra Content-Disposition headers into the response.
+    safe_name = re.sub(r'[^\w.\-]', '_', name) or "workout"
+    return Response(
+        content=fit_data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}.fit"'},
+    )
 
 
 def _build_fit_workout(name: str, blocks: list[dict], ftp: int) -> bytes:
@@ -10430,6 +10428,12 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int) -> bytes:
         "warmup": Intensity.WARMUP,
         "cooldown": Intensity.COOLDOWN,
     }
+
+    # issue #5 — a ZWO with no recognized workout elements would otherwise yield
+    # a header-only FIT (num_valid_steps=0) that a head unit silently rejects.
+    # Fail loudly so callers return an error instead of a useless 0-step file.
+    if not raw_steps:
+        raise ValueError(f"ZWO produced no workout steps: {zwo_path.name}")
 
     builder = FitFileBuilder()
     file_id = FileIdMessage()

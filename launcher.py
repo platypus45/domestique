@@ -461,6 +461,10 @@ class JsApi:
     """
 
     def _save(self, filename: str, data: bytes, file_types) -> dict:
+        # issue #5 — never pop a save dialog for an empty payload; a 0-byte file
+        # is worse than a clear error (the reported symptom was empty downloads).
+        if not data:
+            return {"ok": False, "error": "empty content (nothing to save)"}
         try:
             import webview
 
@@ -485,21 +489,74 @@ class JsApi:
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    def save_zwo(self, filename: str, content: str) -> dict:
+    def _read_zwo_serverside(self, filename: str) -> bytes:
+        """issue #5 — read the ZWO straight off disk. We run IN-PROCESS with the
+        FastAPI app (launcher imports it), so when the JS-side bridge fetch()
+        hands us an empty body (the WKWebView download-interception failure mode)
+        we can still produce the real bytes instead of saving 0 bytes."""
+        try:
+            import app
+            p = app._safe_path(app.WORKOUT_DIR, filename)
+            if p and p.exists():
+                return p.read_bytes()
+        except Exception as e:
+            log = _log()
+            if log is not None:
+                log.warning("save_zwo server-side read failed: %s", e)
+        return b""
+
+    def _build_fit_serverside(self, session_type, duration_min,
+                              name, zwo_file) -> bytes:
+        """issue #5 — generate the FIT in-process when the JS bridge handed us an
+        empty body. Mirrors /api/export/fit-workout via the shared helper."""
+        try:
+            import app
+            if not (name and (zwo_file or (session_type and duration_min))):
+                return b""
+            return app.build_fit_workout_bytes(
+                session_type or "z2", int(duration_min or 0), name, zwo_file) or b""
+        except Exception as e:
+            log = _log()
+            if log is not None:
+                log.warning("save_fit server-side build failed: %s", e)
+        return b""
+
+    def save_zwo(self, filename: str, content: str = "",
+                 source_file: str = "") -> dict:
+        # filename = suggested save name (may be "<x>_outdoor.zwo"); source_file
+        # = the real library filename for the server-side fallback read.
+        data = (content or "").encode("utf-8")
+        if not data:
+            data = self._read_zwo_serverside(source_file or filename)
+        if not data:
+            return {"ok": False, "error": "empty workout (could not read file)"}
         return self._save(
-            filename,
-            content.encode("utf-8"),
+            filename, data,
             ("ZWO Workout (*.zwo)", "All files (*.*)"),
         )
 
-    def save_fit(self, filename: str, content_b64: str) -> dict:
-        try:
-            data = base64.b64decode(content_b64, validate=True)
-        except Exception as e:
-            return {"ok": False, "error": f"base64 decode failed: {e}"}
+    def save_fit(self, filename: str, content_b64: str = "",
+                 session_type: str = "", duration_min: int = 0,
+                 name: str = "", zwo_file: str = "") -> dict:
+        data = b""
+        b64_err = None
+        if content_b64:
+            try:
+                data = base64.b64decode(content_b64, validate=True)
+            except Exception as e:
+                b64_err = str(e)
+                data = b""
+        if not data:
+            data = self._build_fit_serverside(
+                session_type, duration_min, name or filename, zwo_file or None)
+        if not data:
+            # If the JS body was malformed base64 AND we couldn't regenerate
+            # server-side, surface the specific decode error (more useful).
+            if b64_err is not None:
+                return {"ok": False, "error": f"base64 decode failed: {b64_err}"}
+            return {"ok": False, "error": "empty FIT (could not generate)"}
         return self._save(
-            filename,
-            data,
+            filename, data,
             ("FIT Workout (*.fit)", "All files (*.*)"),
         )
 

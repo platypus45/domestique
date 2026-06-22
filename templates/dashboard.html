@@ -7924,7 +7924,7 @@ async function downloadZwo(cat, file) {
     url += `?outdoor=1&transit_min=${t}&spin_min=${s}`;
     saveName = file.replace(/\.zwo$/i, '') + '_outdoor.zwo';
   }
-  if (await _saveViaPywebview('zwo', saveName, url)) return;
+  if (await _saveViaPywebview('zwo', saveName, url, {zwo_file: file})) return;
   try {
     const r = await fetch(url);
     if (!r.ok) {
@@ -11843,6 +11843,16 @@ function openPlanDayWorkout(weekIdx, dayIdx) {
 function populatePlanFormFromGoal(goal) {
   if (!goal) return;
   const setVal = (id, v) => { const el = $(id); if (el && v != null && v !== '') el.value = v; };
+  // issue #6 — restore the GOAL selector itself + sync goal-dependent field
+  // visibility. Pre-fix this function restored ~12 fields but never the goal,
+  // so it snapped back to the hardcoded <option value="event" selected> on every
+  // restart. Must run BEFORE plan-edate / plan-weeks are restored below:
+  // togglePlanFields() recomputes plan-weeks from the event date for event
+  // goals, and edate is still empty here so that recompute is a no-op (running
+  // it AFTER the restore would clobber the restored weeks). The final
+  // refreshPlanPreview() at the end repaints with everything restored.
+  setVal('plan-goal', goal.type);
+  try { togglePlanFields(); } catch (_) {}
   setVal('plan-distribution', goal.distribution || 'polarized');
   const bp = $('plan-block-periodization'); if (bp) bp.checked = !!goal.block_periodization;
   setVal('plan-mode', goal.plan_mode || 'auto');
@@ -14927,7 +14937,12 @@ async function downloadGeneratedZwo(type, durationMin, name) {
 // hand the payload to Python via window.pywebview.api which pops a real
 // native save dialog. In a regular browser there's no pywebview, so this
 // helper returns false and the caller falls back to the browser path.
-async function _saveViaPywebview(kind, filename, fetchUrl) {
+async function _saveViaPywebview(kind, filename, fetchUrl, meta) {
+  // meta carries what the Python side needs to REGENERATE the bytes in-process
+  // if the fetch() below comes back empty (issue #5 — WKWebView occasionally
+  // resolves a download-disposition fetch with an empty body). For zwo:
+  // {zwo_file}; for fit: {session_type, duration_min, name, zwo_file}.
+  meta = meta || {};
   if (!window.pywebview || !window.pywebview.api) return false;
   try {
     const r = await fetch(fetchUrl);
@@ -14942,7 +14957,7 @@ async function _saveViaPywebview(kind, filename, fetchUrl) {
     }
     let res;
     if (kind === 'zwo') {
-      res = await window.pywebview.api.save_zwo(filename, await r.text());
+      res = await window.pywebview.api.save_zwo(filename, await r.text(), meta.zwo_file || filename);
     } else {
       // v1.8.12 BUG-FIX — base64-encode via FileReader.readAsDataURL()
       // instead of the manual String.fromCharCode + btoa chunk loop.
@@ -14975,7 +14990,7 @@ async function _saveViaPywebview(kind, filename, fetchUrl) {
         try { showToast('FIT export error: empty body', 4000); } catch(_) {}
         return true;
       }
-      res = await window.pywebview.api.save_fit(filename, b64);
+      res = await window.pywebview.api.save_fit(filename, b64, meta.session_type || '', meta.duration_min || 0, meta.name || '', meta.zwo_file || '');
     }
     if (res && res.ok) {
       try { showToast(`Saved to ${res.path}`, 4000); } catch(_) {}
@@ -15001,7 +15016,7 @@ async function downloadZwoFile(filename) {
   // synthetic anchor click. The blob URL forces the browser into save mode
   // regardless of the response's MIME type.
   const url = `/api/download/zwo/${encodeURIComponent(filename)}`;
-  if (await _saveViaPywebview('zwo', filename, url)) return;
+  if (await _saveViaPywebview('zwo', filename, url, {zwo_file: filename})) return;
   try {
     const r = await fetch(url);
     if (!r.ok) {
@@ -15039,7 +15054,7 @@ async function downloadFIT(type, durationMin, name, zwoFile = null) {
   let url = `/api/export/fit-workout?session_type=${encodeURIComponent(type)}&duration_min=${durationMin}&name=${encodeURIComponent(name)}`;
   if (zwoFile) url += `&zwo_file=${encodeURIComponent(zwoFile)}`;
   const fitName = name.replace(/[^a-zA-Z0-9]/g, '_') + '.fit';
-  if (await _saveViaPywebview('fit', fitName, url)) return;
+  if (await _saveViaPywebview('fit', fitName, url, {session_type: type, duration_min: durationMin, name: name, zwo_file: zwoFile || ''})) return;
   try {
     const r = await fetch(url);
     if (!r.ok) {

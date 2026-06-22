@@ -7043,11 +7043,18 @@ async function openRideDetail(rideId) {
     // (intervals.icu returns 422; Strava's API terms restrict re-sharing), so the
     // detail comes back blank. Tell the rider Garmin does NOT restrict this and how
     // to switch + bring in history. Shown only when there's no per-second detail.
-    const _streamless = ((ride.source === 'icu') || !ride.source)
-      && !((ride.samples && ride.samples.power && ride.samples.power.length > 10));
-    if (_streamless) {
+    // Data-driven: render whatever exists (stat grid below always shows present
+    // fields). Show the banner ONLY when detail is incomplete — full Garmin rides
+    // (streams present) show no banner. Two severities: "partial" (summary but no
+    // per-second charts) vs "none" (Strava — ICU's API serves nothing).
+    const _hasStreams = !!(ride.samples && ride.samples.power && ride.samples.power.length > 10);
+    const _hasSummary = !!(s && (s.tss || s.weighted_power || s.normalized_power || (s.duration_sec || 0) > 60));
+    if (!_hasStreams) {
+      const _lead = _hasSummary
+        ? `<b>Per-second charts &amp; time-in-zone aren't available for this ride.</b> The summary below is what intervals.icu serves; the full ride data isn't accessible (this is typical of <b>Strava-synced</b> rides).`
+        : `<b>No detail available for this ride.</b> It reached intervals.icu via <b>Strava</b>, and intervals.icu <b>can't read Strava activities through its API</b> (Strava's terms) — power/HR/distance and charts are all unavailable here, even though the ride shows on the intervals.icu website.`;
       html += `<div style="margin-bottom:14px;padding:10px 12px;border-radius:8px;background:rgba(59,130,246,0.10);border:1px solid #3b82f6;font-size:12px;line-height:1.55;color:var(--text2);">
-        <b>No detail available for this ride.</b> This usually means it reached intervals.icu via <b>Strava</b> — intervals.icu <b>can't read Strava activities through its API</b> (Strava's terms), so power/HR/distance and charts are unavailable here, even though the ride shows on the intervals.icu site.
+        ${_lead}
         <b>Garmin doesn't restrict this:</b> connect <b>Garmin Connect → intervals.icu</b> and future rides sync with full detail automatically.
         To bring in past rides, <a href="https://www.garmin.com/account/datamanagement/exportdata/" target="_blank" rel="noopener noreferrer" class="help-link">export all your Garmin data →</a> and drop the FIT files onto the window (Import FIT).
       </div>`;

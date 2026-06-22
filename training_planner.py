@@ -6121,6 +6121,31 @@ def _enforce_stepback_is_lightest(weeks: list) -> None:
             slot.duration_min = new_dur
             slot.tss_estimate = round(tss_per_min * new_dur)
 
+        # issue #4 — a deload must be VISIBLY light: MORE rest days + fewer hours
+        # than its build weeks, not just lower TSS via easy Z2 (riders saw a
+        # "Recovery" week with MORE hours + the same single rest day as a build
+        # week). Convert the shortest easy spins to rest until the deload has more
+        # rest days than any build week in the block — but keep ≥1 easy spin (a
+        # recovery week is light riding, not total rest).
+        def _rest_count(w):
+            return sum(1 for s in w.sessions if s and s.session_type == "rest")
+        build_max_rest = max((_rest_count(b) for b in builds), default=0)
+        for _ in range(len(wk.sessions)):
+            if _rest_count(wk) > build_max_rest:
+                break
+            easy = [(idx, s) for idx, s in enumerate(wk.sessions)
+                    if s and s.session_type != "rest" and not _session_is_hit(s)]
+            if len(easy) <= 1:
+                break  # keep at least one easy recovery spin
+            easy.sort(key=lambda kv: (kv[1].duration_min or 0))  # drop the shortest first
+            _, slot = easy[0]
+            slot.session_type = "rest"
+            slot.duration_min = 0
+            slot.tss_estimate = 0
+            slot.description = "Rest — recovery week"
+            slot.zwo_file = ""
+            slot.zwo_name = ""
+
 
 def _enforce_easy_slot_content(weeks: list, library: list, plan_start_date,
                                seed_salt: int = 0) -> None:

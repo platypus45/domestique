@@ -62,6 +62,29 @@ class TestDeloadLongRideCap(unittest.TestCase):
                             any(s.session_type in _HIT for s in w.sessions),
                             f"deload W{w.week_num} contains a HIT session")
 
+    def test_deload_has_more_rest_days_than_its_build_weeks(self):
+        """Issue #4 — a deload must be VISIBLY light: more rest days than every
+        build week in its block (a rider saw a 'Recovery' week with the SAME
+        single rest day + MORE hours than the build weeks)."""
+        def rests(w):
+            return sum(1 for s in w.sessions if s.session_type == "rest")
+        for wknd, hpw in ((4.5, 12.0), (4.0, 10.0)):
+            with self.subTest(wknd=wknd, hpw=hpw):
+                _ph, weeks = tp.generate_plan(_egoal(16, wknd, hpw), recent_weekly_tss=600)
+                for i, w in enumerate(weeks):
+                    if not getattr(w, "is_stepback", False) or w.phase == "taper":
+                        continue
+                    builds, j = [], i - 1
+                    while j >= 0 and not getattr(weeks[j], "is_stepback", False):
+                        if weeks[j].phase != "taper":
+                            builds.append(weeks[j])
+                        j -= 1
+                    if not builds:
+                        continue
+                    self.assertGreater(
+                        rests(w), max(rests(b) for b in builds),
+                        f"deload W{w.week_num} rests={rests(w)} not > build weeks")
+
 
 if __name__ == "__main__":
     unittest.main()

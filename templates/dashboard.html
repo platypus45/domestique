@@ -727,6 +727,15 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
 .twk-day.twk-state-rest { opacity: 0.45; cursor: default; }
 .twk-day.twk-state-completed { background: rgba(34,197,94,0.08); }
 .twk-day.twk-state-missing  { background: rgba(239,68,68,0.06); }
+/* v2.2.11 — TODAY made unmistakable (badge + ring, distinct from the green
+   "completed" tint) + explicit did-I-train badges. */
+.twk-day.twk-is-today { border: 2px solid var(--accent); box-shadow: 0 0 0 2px rgba(59,130,246,0.22); padding: 3px; }
+.twk-day .twk-today-badge {
+  align-self: center; background: var(--accent); color: #fff; font-size: 8px;
+  font-weight: 700; letter-spacing: 0.06em; padding: 1px 7px; border-radius: 8px; margin-bottom: 1px;
+}
+.twk-day .twk-done-badge { color: var(--green); font-weight: 700; font-size: 9px; }
+.twk-day .twk-missed-badge { color: var(--red); font-weight: 700; font-size: 9px; }
 
 /* v4.5.0 IMPL-UI Pillar C — full-cell tint based on TSS achievement
    (actual.tss / planned.tss). Layered on top of state classes so a
@@ -1610,9 +1619,8 @@ window.addEventListener('unhandledrejection', function(e) {
       <h3>This Week</h3>
       <div style="display:flex;align-items:center;gap:8px;">
         <div id="week-phase-badge" style="font-size:10px;"></div>
-        <!-- v4.5.0 IMPL-UI: Sync now — POSTs /api/rides/sync?force=1 (server commit 2fe34ba)
-             then re-fetches /api/calendar so THIS WEEK + intensity bar reflect new actuals. -->
-        <button id="syncNowBtn" class="btn" style="font-size:10px;padding:3px 8px;" onclick="syncNowAction()" title="Pull latest rides + wellness from intervals.icu now (bypasses 30-min throttle)">Sync now ⟳</button>
+        <!-- v2.2.11 — "Sync now" removed: the app auto-syncs on startup (lazy ICU
+             sync on home load). The Plan tab keeps its own Sync-now for manual pulls. -->
         <svg onclick="document.querySelector('.tab[data-tab=settings]').click()" style="cursor:pointer;opacity:0.5;transition:opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </div>
     </div>
@@ -4565,16 +4573,25 @@ function _setSyncTopbar(done, total, finished, added) {
 // just after page load before giving up.
 let _syncProgressTimer = null;
 let _syncProgressSawWork = false;
+let _syncProgressLastDone = 0;
+let _syncProgressLastTotal = 0;
 async function _syncProgressTick(idleTicks) {
   let p;
   try { p = await (await fetch('/api/sync/progress')).json(); }
-  catch (_) { _setSyncTopbar(0, 0, true); _syncProgressTimer = null; _syncProgressSawWork = false; return; }
+  catch (_) { _setSyncTopbar(0, 0, true); _syncProgressTimer = null; _syncProgressSawWork = false; _syncProgressLastDone = 0; _syncProgressLastTotal = 0; return; }
   if (p && p.state === 'running') {
     if ((Number(p.total) || 0) > 0) _syncProgressSawWork = true;
-    _setSyncTopbar(p.done, p.total, false, p.added);
+    // v2.2.11 — monotonic clamp (defense-in-depth on top of backend sync
+    // serialization): never let `done` jump backwards for the same total.
+    let done = Number(p.done) || 0;
+    const total = Number(p.total) || 0;
+    if (total === _syncProgressLastTotal && done < _syncProgressLastDone) done = _syncProgressLastDone;
+    _syncProgressLastDone = done; _syncProgressLastTotal = total;
+    _setSyncTopbar(done, total, false, p.added);
     _syncProgressTimer = setTimeout(() => _syncProgressTick(0), 1200);
     return;
   }
+  _syncProgressLastDone = 0; _syncProgressLastTotal = 0;
   // Not running (done / idle / stale).
   if (_syncProgressSawWork && p && p.state === 'done') {
     const txt = document.getElementById('sync-topbar-text');
@@ -11816,10 +11833,18 @@ function renderThisWeekFromCalendar(data) {
     // v4.5.1 FIX-UI variety — per-cell tooltip (filename + content_class + score).
     const cellTipTW = calCellTooltip(planned, actual);
     const tipAttrTW = cellTipTW ? ` title="${esc(cellTipTW)}"` : '';
-    html += `<div class="twk-day ${stateCls}${tintCls ? ' ' + tintCls : ''}${isToday ? ' wc-today' : ''}"
+    // v2.2.11 — make TODAY unmistakable (a badge, not just a thin border that
+    // got lost next to green "completed" tints), and add an explicit
+    // did-I-train badge so completion is clear at a glance (not only by colour).
+    const todayBadge = isToday ? '<div class="twk-today-badge">TODAY</div>' : '';
+    let doneBadge = '';
+    if (actual) doneBadge = '<span class="twk-done-badge">✓ done</span>';
+    else if (planned && isPast && cs !== 'rest') doneBadge = '<span class="twk-missed-badge">✕ missed</span>';
+    html += `<div class="twk-day ${stateCls}${tintCls ? ' ' + tintCls : ''}${isToday ? ' wc-today twk-is-today' : ''}"
       data-cs="${cs}" data-date="${d.date}" style="${cursorRule}"${tipAttrTW}
       onclick="calOpenDay('${d.date}')">
-      <div class="twk-name">${dayName}</div>
+      ${todayBadge}
+      <div class="twk-name">${dayName} ${doneBadge}</div>
       <div class="twk-date">${dateLabel}</div>
       ${plannedHtml}
       ${actualHtml}
@@ -14148,7 +14173,7 @@ async function loadTodaySession() {
     try {
       el.innerHTML = html;
       el.style.cursor = 'pointer';
-      el.onclick = () => openTodaySessionDetail();
+      el.onclick = () => openTodayRich();
     } catch (eR) {
       try { window._diagFrontendError('E_FRONTEND_TODAY_SESSION_RENDER', {msg: String(eR && eR.message || eR)}); } catch(_) {}
       throw eR;
@@ -14156,6 +14181,21 @@ async function loadTodaySession() {
   } catch(e) {
     $('home-recommendation').innerHTML = '<div style="color:var(--text3);font-size:12px;">Session unavailable</div>';
   }
+}
+
+// v2.2.11 — clicking today's session on the home page opens the SAME rich modal
+// the planner uses (power chart + Download ZWO / Download FIT + Rematch /
+// Dismiss), via calOpenDay() which reads window._calData (populated on the home
+// tab by loadCalendar). Falls back to the compact today-session modal if the
+// calendar isn't ready or today can't be opened (e.g. a planned rest day). The
+// readiness adjustment stays visible on the home card itself.
+function openTodayRich() {
+  const cal = window._calData;
+  const today = (cal && typeof cal.today === 'string') ? cal.today.slice(0, 10) : null;
+  if (today && typeof calOpenDay === 'function') {
+    try { calOpenDay(today); return; } catch (_) {}
+  }
+  try { openTodaySessionDetail(); } catch (_) {}
 }
 
 // v4.6.0 IMPL-HOMEPAGE-CONSISTENCY §3 Pillar D: jump to the Training Plan

@@ -13877,6 +13877,15 @@ def _set_sync_progress(**kw) -> None:
         _icu_sync_progress.update(kw)
         _icu_sync_progress["ts"] = time.time()
 
+# v2.2.11 — serialize the progress-owning activity sync. The lazy kick is
+# single-flight (_icu_sync_in_progress), but the FORCED path (/api/rides/sync)
+# never shared that guard, so a lazy + a forced sync could run _sync_icu_activities
+# concurrently and interleave writes to the single _icu_sync_progress global —
+# the home banner then bounced ("11 of 49 → 30 → 16…"). This lock lets only ONE
+# activity sync run at a time; a second concurrent call returns "already_running"
+# without resetting progress.
+_sync_exec_lock = threading.Lock()
+
 # v1.8.14 — DFA algorithm version. Bump whenever the DFA α1 maths changes in
 # a way that invalidates previously-stored values, so already-"computed"
 # records (normally sticky) get recomputed on the next sync/backfill instead
@@ -14113,6 +14122,26 @@ def _augment_icu_record_with_dfa(rec_path: Path, external_id: str,
 
 
 def _sync_icu_activities(force: bool = False) -> dict:
+    """v2.2.11 — serialized wrapper. Only one activity sync runs at a time so the
+    shared progress global isn't clobbered by an overlapping run (lazy + forced).
+    A second concurrent call returns ``already_running`` with the current ride
+    count instead of resetting progress. A genuine "Sync now" still runs whenever
+    nothing else is mid-flight (the common case)."""
+    if not _sync_exec_lock.acquire(blocking=False):
+        return {
+            "added": 0, "updated": 0,
+            "total": len(_load_all_rides_safe()),
+            "status": "already_running",
+            "skipped": "already_running",
+            "last_sync_at": _read_last_sync_at(),
+        }
+    try:
+        return _sync_icu_activities_locked(force=force)
+    finally:
+        _sync_exec_lock.release()
+
+
+def _sync_icu_activities_locked(force: bool = False) -> dict:
     """v4.4.0 — pull recent ICU activities + persist normalized records.
 
     Returns ``{added, updated, total, status, last_sync_at}`` counters. The

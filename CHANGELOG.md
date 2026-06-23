@@ -1,5 +1,18 @@
 # Changelog
 
+## v2.2.11 — Clearer "This Week", full today's-session, steadier sync bar
+
+- **Today's session opens the full workout.** Clicking today's session on the home page now opens
+  the same detailed card as the plan — power profile + Download ZWO / FIT + rematch — instead of a
+  stripped-down summary.
+- **"This Week" makes today obvious and shows what you did.** Today now has a clear TODAY badge (no
+  longer mistaken for a green "completed" day), each day shows a ✓ done / ✕ missed marker, and
+  clicking a day opens how it went.
+- **The sync banner no longer jumps around.** It was bouncing ("11 of 49 → 30 → 16…") when two syncs
+  overlapped; syncs are now serialized so the count climbs smoothly.
+- **Removed the redundant "Sync now" button** from This Week — the app already syncs automatically
+  when it opens.
+
 ## v2.2.10 — DFA α1 thresholds fixed + live update progress
 
 - **Your DFA thresholds are back.** The DFA tab had started showing "No thresholds

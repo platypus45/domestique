@@ -1,5 +1,22 @@
 # Changelog
 
+## v2.2.10 — DFA α1 thresholds restored + live update progress
+
+- **Your DFA α1 + HR-variability thresholds come back.** The DFA panel had collapsed to
+  "0 rides have α1 computed / No thresholds detected yet." The RR-interval artifact filter
+  compared each beat to the *last accepted* beat, so a normal warm-up heart-rate trend (RR
+  gliding smoothly down as HR rises) made the reference stick and **~99% of beats were wrongly
+  discarded** → no valid DFA windows → blank panel. Switched to a **median-of-surrounding-beats**
+  reference (Lipponen & Tarvainen 2019 / Kubios — the current HRV-preprocessing standard): the
+  cascade is gone, and HRVT1/HRVT2 resolve again. Verified on a real ride: `no_rr_data` → α1 1.09,
+  thresholds back.
+  *An earlier candidate fix (compare to the previous beat) was rejected during review because it
+  over-rejected high-intensity beats and stopped the thresholds from resolving — the median is the
+  literature-correct reference and passes the threshold tests.*
+- **The DFA tab shows live update progress.** While rides are (re)computing it now shows
+  "Indexing eligible rides → {N} eligible → Updating {x} of {y} ({%})" with a progress bar + a
+  computed / no-HRV / failed tally, and refreshes the threshold panel the moment it finishes.
+
 ## v2.2.9 — Sync progress, sticky FTP, and DFA thresholds that survive a re-sync
 
 Three fixes from testing feedback, all on the home screen.

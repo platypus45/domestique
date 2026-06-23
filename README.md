@@ -49,6 +49,9 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 
 ## What's new in v2.2.9
 
+- **Manual FTP sticks.** Saving your FTP no longer appears to revert to the
+  (lower) eFTP in the top bar and Settings — the live value now refreshes on save
+  instead of only after an app restart.
 - **Sync banner shows real progress.** "Syncing X of Y activities · N new" with a
   live %, instead of an indeterminate strip that could look stuck.
 - **DFA α1 thresholds stay put.** Re-syncing a ride no longer wipes the locally
@@ -447,7 +450,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v2.2.9 — sync progress banner + DFA threshold fix](https://github.com/platypus45/domestique/releases/latest)** (2026-06-23).
+Latest: **[v2.2.9 — sync progress banner, DFA threshold fix, manual-FTP fix](https://github.com/platypus45/domestique/releases/latest)** (2026-06-23).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

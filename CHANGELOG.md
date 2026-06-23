@@ -1,7 +1,12 @@
 # Changelog
 
-## v2.2.9 — Sync progress banner + DFA threshold fix
+## v2.2.9 — Sync progress banner, DFA threshold fix, manual-FTP fix
 
+- **Manual FTP no longer reverts to eFTP in the UI.** Saving your FTP wrote it to
+  disk and the FTP graph, but the top bar and the Settings field kept showing the
+  old value (often the lower eFTP) until an app restart — the dedicated FTP-save
+  path updated the stored value without refreshing the live in-memory copy the UI
+  reads. It now updates immediately on save.
 - **The sync banner now shows real counts + progress.** It previously read
   "Syncing activities from intervals.icu…" with no numbers and could look stuck —
   because it was driven by the power-curve backfill, not the activity sync that

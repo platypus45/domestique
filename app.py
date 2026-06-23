@@ -1227,6 +1227,14 @@ def api_profile_update_ftp(body: dict):
         pm.record_ftp_test(method=method, ftp=new_ftp, source=source, applied=applied)
         if applied:
             pm.update_ftp(new_ftp, source=ftp_source_tag)
+            # v2.2.9 FIX — mirror onto the LIVE config so the topbar, settings
+            # field and readiness reflect the new FTP immediately. update_ftp
+            # writes athlete.json, but the running process keeps the
+            # ATHLETE_FTP_W it cached at startup; without this refresh the saved
+            # FTP appears to "revert" to the old value (e.g. an eFTP) in the UI
+            # until the app restarts — even though athlete.json + the graph are
+            # correct. Matches what the general /api/settings save already does.
+            config.ATHLETE_FTP_W = new_ftp
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return {"ok": True, "ftp": pm.ftp,

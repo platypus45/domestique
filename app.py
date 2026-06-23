@@ -1544,6 +1544,23 @@ def api_profile_backfill_history_status(task_id: str = Query(...)):
     return entry
 
 
+@app.get("/api/sync/progress")
+def api_sync_progress():
+    """v2.2.9 — live progress of the ICU activity sync for the homepage banner.
+
+    Returns ``{state, total, done, added, updated, ts}``. ``state`` is
+    ``running`` while ``_sync_icu_activities`` is processing the ICU feed,
+    ``done`` when it finished, ``idle`` before any sync this session. A
+    ``running`` entry whose ``ts`` is older than 120 s is reported as ``stale``
+    so a crashed/killed sync can't pin the banner open forever.
+    """
+    with _sync_progress_lock:
+        snap = dict(_icu_sync_progress)
+    if snap.get("state") == "running" and (time.time() - float(snap.get("ts") or 0)) > 120:
+        snap["state"] = "stale"
+    return snap
+
+
 # ───────────────────────────────────────────────────────────────────────────
 # v1.8.10 — DFA α1 backfill (retry pass)
 # ───────────────────────────────────────────────────────────────────────────
@@ -13830,6 +13847,28 @@ _DFA_MAX_TIMEOUT_RETRIES: int = 2
 # a batch of slow/fresh records lands at once (e.g. first sync after a break).
 _SYNC_AUGMENT_BUDGET_S: float = 25.0
 
+# v2.2.9 — live activity-sync progress so the dashboard banner can show
+# "Syncing X of Y activities · N new" + a real % instead of an indeterminate
+# "Syncing activities…" that never reported counts (and looked stuck). Written
+# by _sync_icu_activities as it processes the ICU feed; read by
+# /api/sync/progress. Plain dict guarded by a lock (single-flight sync, but the
+# poller reads concurrently from the request thread).
+_sync_progress_lock = threading.Lock()
+_icu_sync_progress: dict = {
+    "state": "idle",   # idle | running | done
+    "total": 0,        # activities fetched this sync
+    "done": 0,         # activities processed so far
+    "added": 0,        # NEW activities persisted
+    "updated": 0,
+    "ts": 0.0,         # last-update epoch (for stale detection)
+}
+
+
+def _set_sync_progress(**kw) -> None:
+    with _sync_progress_lock:
+        _icu_sync_progress.update(kw)
+        _icu_sync_progress["ts"] = time.time()
+
 # v1.8.14 — DFA algorithm version. Bump whenever the DFA α1 maths changes in
 # a way that invalidates previously-stored values, so already-"computed"
 # records (normally sticky) get recomputed on the next sync/backfill instead
@@ -14116,6 +14155,10 @@ def _sync_icu_activities(force: bool = False) -> dict:
     updated = 0
     added_paths: list[Path] = []
     icu_dir = _rs._icu_rides_dir()
+    # v2.2.9 — publish live progress so the dashboard banner shows real counts
+    # ("Syncing X of Y activities · N new") instead of an indeterminate strip.
+    _activities = activities or []
+    _set_sync_progress(state="running", total=len(_activities), done=0, added=0, updated=0)
     # v2.0.5 — bound the TOTAL augment time for this foreground sync. The augment
     # runs synchronously on the request thread the Plan-tab catch-up overlay
     # awaits; without a ceiling a batch of slow records (e.g. first sync after a
@@ -14123,7 +14166,7 @@ def _sync_icu_activities(force: bool = False) -> dict:
     # skipping the reconcile that adapts the week.
     _aug_deadline = time.monotonic() + _SYNC_AUGMENT_BUDGET_S
     _aug_deferred = 0
-    for a in activities or []:
+    for _idx, a in enumerate(_activities, 1):
         # Cycling-ish only — same filter the planner uses elsewhere. The
         # ICU activities feed includes runs/swims that we don't model.
         sport = (a.get("type") or a.get("sport_type") or "").lower()
@@ -14134,16 +14177,19 @@ def _sync_icu_activities(force: bool = False) -> dict:
             pass
         ext = a.get("id") or a.get("activity_id")
         if not ext:
+            _set_sync_progress(done=_idx, added=added, updated=updated)
             continue
         existed = (icu_dir / f"{ext}.json").exists()
         path = _rs.persist_icu_activity(a)
         if path is None:
+            _set_sync_progress(done=_idx, added=added, updated=updated)
             continue
         if existed:
             updated += 1
         else:
             added += 1
             added_paths.append(path)
+        _set_sync_progress(done=_idx, added=added, updated=updated)
         # v1.0.7 — augment the persisted ICU record with DFA α1 from the raw
         # FIT (when ICU's payload didn't carry it). We only fetch the FIT once
         # per activity (skip when the persisted record already has a non-null
@@ -14160,6 +14206,7 @@ def _sync_icu_activities(force: bool = False) -> dict:
         else:
             _aug_deferred += 1
 
+    _set_sync_progress(state="done", done=len(_activities), added=added, updated=updated)
     if _aug_deferred:
         _log.info(
             f"_sync_icu_activities: DFA augment budget ({_SYNC_AUGMENT_BUDGET_S}s) "

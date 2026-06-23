@@ -4532,7 +4532,7 @@ function renderPowerCurve() {
   }
 }
 // Top-of-page first-sync strip: spinner + "Syncing activities XXX of YYY (NN%)".
-function _setSyncTopbar(done, total, finished) {
+function _setSyncTopbar(done, total, finished, added) {
   const bar = document.getElementById('sync-topbar');
   const txt = document.getElementById('sync-topbar-text');
   const hbar = document.getElementById('header-sync');     // compact chip by the logo
@@ -4543,16 +4543,59 @@ function _setSyncTopbar(done, total, finished) {
     return;
   }
   done = Number(done) || 0; total = Number(total) || 0;
+  const newN = Number(added) || 0;
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  // v2.2.9 — show real counts: "Syncing X of Y activities · N new (Z%)".
+  const newTxt = newN > 0 ? ` · ${newN} new` : '';
   if (txt) {
     txt.textContent = total > 0
-      ? `Syncing activities ${done} of ${total} (${pct}%)`
+      ? `Syncing ${done} of ${total} activities${newTxt} (${pct}%)`
       : 'Syncing activities from intervals.icu…';
   }
   if (bar) bar.style.display = 'flex';
   // Compact header chip next to the logo.
-  if (htxt) htxt.textContent = total > 0 ? `Updating ${done}/${total}…` : 'Updating activities…';
+  if (htxt) htxt.textContent = total > 0 ? `Updating ${done}/${total}${newN>0?(' · '+newN+' new'):''}…` : 'Updating activities…';
   if (hbar) hbar.style.display = 'flex';
+}
+
+// v2.2.9 — drive the top-bar from the live ICU activity-sync progress
+// (/api/sync/progress) instead of the power-curve backfill, so the banner
+// shows real "X of Y · N new" counts and reliably terminates (state flips to
+// done/idle/stale). idleTicks lets it wait briefly for a lazy sync that starts
+// just after page load before giving up.
+let _syncProgressTimer = null;
+let _syncProgressSawWork = false;
+async function _syncProgressTick(idleTicks) {
+  let p;
+  try { p = await (await fetch('/api/sync/progress')).json(); }
+  catch (_) { _setSyncTopbar(0, 0, true); _syncProgressTimer = null; _syncProgressSawWork = false; return; }
+  if (p && p.state === 'running') {
+    if ((Number(p.total) || 0) > 0) _syncProgressSawWork = true;
+    _setSyncTopbar(p.done, p.total, false, p.added);
+    _syncProgressTimer = setTimeout(() => _syncProgressTick(0), 1200);
+    return;
+  }
+  // Not running (done / idle / stale).
+  if (_syncProgressSawWork && p && p.state === 'done') {
+    const txt = document.getElementById('sync-topbar-text');
+    const n = Number(p.added) || 0;
+    if (txt) txt.textContent = n > 0
+      ? `Synced ${n} new activit${n === 1 ? 'y' : 'ies'} · done`
+      : 'Sync complete · up to date';
+    setTimeout(() => _setSyncTopbar(0, 0, true), 2500);
+    _syncProgressTimer = null; _syncProgressSawWork = false;
+    return;
+  }
+  if (idleTicks > 0) {  // sync may not have started yet — keep watching a bit
+    _syncProgressTimer = setTimeout(() => _syncProgressTick(idleTicks - 1), 1500);
+    return;
+  }
+  _setSyncTopbar(0, 0, true);
+  _syncProgressTimer = null; _syncProgressSawWork = false;
+}
+function startSyncProgressWatch(idleTicks) {
+  if (_syncProgressTimer) return;  // already watching
+  _syncProgressTick(typeof idleTicks === 'number' ? idleTicks : 6);
 }
 
 async function maybeKickBackfill(data) {
@@ -10897,6 +10940,9 @@ async function syncNowAction(btnId) {
   const origLabel = btn.textContent;
   btn.disabled = true;
   btn.textContent = 'Syncing…';
+  // v2.2.9 — show live "X of Y · N new" progress while the (blocking) force
+  // sync runs server-side; the watcher polls /api/sync/progress concurrently.
+  startSyncProgressWatch(3);
   try {
     const res = await fetch('/api/rides/sync?force=1', { method: 'POST' });
     if (!res.ok) {
@@ -16296,9 +16342,12 @@ document.addEventListener('DOMContentLoaded', () => {
   // ICU OAuth: toast the callback bounce + refresh connection status on load.
   try { handleIcuOauthReturn(); } catch (_) {}
   try { maybePromptIcuMigration(); } catch (_) {}
-  // First-sync progress strip — reliable on every load (not gated like the
-  // power-curve card's maybeKickBackfill), so a fresh rider sees "Syncing X of Y".
-  try { pollFirstSyncTopbar(); } catch (_) {}
+  // v2.2.9 — activity-sync progress strip, driven by the live /api/sync/progress
+  // counts (replaces the power-curve-backfill driver that showed an
+  // indeterminate, never-terminating "Syncing activities…"). Shows real
+  // "X of Y · N new" and waits a few ticks for a lazy sync that starts just
+  // after load.
+  try { startSyncProgressWatch(6); } catch (_) {}
   // Small version label next to the logo.
   try {
     fetch('/api/version').then(r => r.json()).then(v => {

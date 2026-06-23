@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import math
+import statistics
 from pathlib import Path
 
 _log_dfa = logging.getLogger("domestique.analytics.dfa")
@@ -354,20 +355,43 @@ def _filter_rr_artifacts(rr_s: list[float],
     threshold); after this filter, α1 = 1.16 over 72 windows (correct: mostly
     aerobic, dipping at hard efforts). Only 1.3 % of beats were dropped.
 
-    The "20% rule" drops any RR differing from the last ACCEPTED beat by more
-    than ``rel_thresh``. Comparing against the last accepted (not the raw
-    previous) beat prevents a single spurious spike from cascading rejections.
+    Drops any RR differing from the median of its ±2 surrounding beats by more
+    than ``rel_thresh``. This is the Lipponen & Tarvainen (2019) / Kubios
+    "median-filtered local reference" method — the current HRV-preprocessing
+    standard.
+
+    v2.2.10 FIX — history of two earlier, wrong reference choices:
+      * **last-ACCEPTED beat** (the bug this replaces): cascades catastrophically.
+        A single bad early beat (sentinel/dropout) or even a stitched step in the
+        stream makes the accepted reference stick far from the signal, so every
+        following beat reads >20% off it → up to ~99% of beats dropped → 0 DFA
+        windows → a bogus "no_rr_data" and a blank DFA panel.
+      * **previous beat** (Malik 1996 successive-difference): kills the cascade but
+        (a) over-rejects at high intensity — short RR + large relative jitter — which
+        drops the α1-vs-load fit r² below the threshold gate so HRVT1/HRVT2 stop
+        resolving, and (b) drops the clean recovery beat after an ectopic (the
+        compensatory pause shifts the reference), ~3 drops per ectopic doublet.
+    A local MEDIAN is robust to the outlier under test, to a smooth HR trend, and
+    to the post-ectopic recovery beat: no cascade, ~half the high-intensity
+    over-rejection, and exactly 1 drop per isolated ectopic.
     """
-    if not rr_s:
+    n = len(rr_s)
+    if n == 0:
         return [], 0
-    out = [rr_s[0]]
+    out: list[float] = []
     dropped = 0
-    for r in rr_s[1:]:
-        prev = out[-1]
-        if prev > 0 and abs(r - prev) / prev > rel_thresh:
+    for i in range(n):
+        lo = max(0, i - 2)
+        hi = min(n, i + 3)
+        neighbours = [rr_s[j] for j in range(lo, hi) if j != i]
+        if not neighbours:
+            out.append(rr_s[i])
+            continue
+        ref = statistics.median(neighbours)
+        if ref > 0 and abs(rr_s[i] - ref) / ref > rel_thresh:
             dropped += 1
             continue
-        out.append(r)
+        out.append(rr_s[i])
     return out, dropped
 
 

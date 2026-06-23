@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.2.9 — Sync progress banner + DFA threshold fix
+
+- **The sync banner now shows real counts + progress.** It previously read
+  "Syncing activities from intervals.icu…" with no numbers and could look stuck —
+  because it was driven by the power-curve backfill, not the activity sync that
+  actually pulls your rides. It now shows **"Syncing X of Y activities · N new (Z%)"**
+  from a live progress feed (`GET /api/sync/progress`) and reliably disappears when
+  the sync finishes (with a stale-guard so a crashed sync can't pin it open).
+- **DFA α1 thresholds no longer vanish after a sync.** intervals.icu doesn't send
+  DFA data — Domestique computes α1 + the HRVT1/HRVT2 thresholds locally from each
+  ride's FIT. Re-syncing a ride overwrote the record with the DFA-less payload,
+  wiping those values; with the per-sync compute budget only redoing a few rides,
+  the threshold panel collapsed to "No thresholds detected yet." The local DFA is
+  now carried forward across re-syncs, so it stays put.
+
 ## v2.2.8 — Fix intervals.icu sync for OAuth accounts (recent rides not indexed)
 
 - **Recent rides weren't syncing for OAuth-connected accounts.** The sync gate only

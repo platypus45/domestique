@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4220-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v2.2.8-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v2.2.9-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-1967-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -46,6 +46,14 @@ Domestique is neither. Every signal that touches the dashboard also has a code-p
 Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus a 1-week consolidation phase at the end of every non-event cycle so people don't ride straight from a peak into a fresh build with elevated fatigue (Mujika 2010).
 
 ---
+
+## What's new in v2.2.9
+
+- **Sync banner shows real progress.** "Syncing X of Y activities · N new" with a
+  live %, instead of an indeterminate strip that could look stuck.
+- **DFA α1 thresholds stay put.** Re-syncing a ride no longer wipes the locally
+  computed α1 / HRVT thresholds, so the DFA panel stops blanking to "no thresholds
+  detected" after a sync.
 
 ## What's new in v2.2.8
 
@@ -439,7 +447,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v2.2.8 — ICU sync fix for OAuth accounts](https://github.com/platypus45/domestique/releases/latest)** (2026-06-23).
+Latest: **[v2.2.9 — sync progress banner + DFA threshold fix](https://github.com/platypus45/domestique/releases/latest)** (2026-06-23).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

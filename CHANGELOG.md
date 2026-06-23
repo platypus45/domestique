@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.2.8 — Fix intervals.icu sync for OAuth accounts (recent rides not indexed)
+
+- **Recent rides weren't syncing for OAuth-connected accounts.** The sync gate only
+  recognised the legacy API-key login (`ICU_API_KEY`), so anyone who connected with
+  "Sign in with intervals.icu" (OAuth — which has no API key, just a Bearer token)
+  silently stopped syncing: new rides never got indexed in the planner even though the
+  connection was valid and `training.py` authenticated fine. The gate now also accepts
+  the OAuth access token, mirroring how requests already authenticate. If you were
+  affected, your rides catch up automatically on the next open (or hit "Sync now").
+
 ## v2.2.7 — Workout downloads + goal persistence (issues #5/#6)
 
 - **#5 — ZWO/FIT downloads no longer save empty files.** On macOS the desktop

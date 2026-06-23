@@ -15,6 +15,17 @@ from typing import Optional
 
 log = logging.getLogger("domestique.rides")
 
+# v2.2.9 — locally-computed DFA augmentation keys (written by app.py's
+# _augment_icu_record_with_dfa from the raw FIT, NOT present in the ICU
+# payload). persist_icu_activity carries these forward on re-persist so a
+# re-sync never wipes them. Mirror the augment's full write set.
+_DFA_CARRY_KEYS = (
+    "dfa_alpha1", "dfa_alpha1_avg", "dfa_alpha1_series",
+    "dfa_alpha1_lt1_minutes", "dfa_alpha1_status", "rr_intervals_count",
+    "dfa_hrvt1", "dfa_hrvt2", "dfa_zone_minutes",
+    "dfa_algo_version", "dfa_timeout_count",
+)
+
 
 def _rides_dir() -> Path:
     """Get the rides directory for the active profile."""
@@ -340,16 +351,32 @@ def persist_icu_activity(activity: dict) -> Path | None:
     # W2B-G9 fix: read prior `prs[]` (if any) BEFORE we overwrite, so a
     # subsequent compute_ride_prs failure doesn't silently drop the
     # existing PR list. We carry it forward into the fresh `norm`.
+    # v2.2.9 fix: ALSO carry forward locally-computed DFA augmentation. The ICU
+    # payload has no DFA α1 / HRVT thresholds — those are computed locally from
+    # the FIT by _augment_icu_record_with_dfa. Re-persisting on a re-sync
+    # (status="updated") used to overwrite the file with the DFA-less ICU
+    # payload, wiping dfa_alpha1_avg / dfa_hrvt1 / dfa_hrvt2; the per-sync
+    # augment budget then only recomputed a few, collapsing the DFA threshold
+    # aggregate to "no thresholds detected". Carrying them forward keeps the
+    # augment's sticky-skip working too (already-computed rides stay fast).
     prior_prs = None
+    prior_dfa: dict = {}
     if path.exists():
         try:
             prior = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(prior, dict) and isinstance(prior.get("prs"), list):
-                prior_prs = prior["prs"]
+            if isinstance(prior, dict):
+                if isinstance(prior.get("prs"), list):
+                    prior_prs = prior["prs"]
+                for k in _DFA_CARRY_KEYS:
+                    if prior.get(k) is not None:
+                        prior_dfa[k] = prior[k]
         except (json.JSONDecodeError, OSError) as e:
-            log.debug(f"persist_icu_activity({icu_id}) prior-prs read: {e}")
+            log.debug(f"persist_icu_activity({icu_id}) prior read: {e}")
     if prior_prs is not None:
         norm["prs"] = prior_prs
+    # Only fill DFA keys the fresh ICU payload didn't already provide.
+    for k, v in prior_dfa.items():
+        norm.setdefault(k, v)
     try:
         path.write_text(json.dumps(norm, indent=2), encoding="utf-8")
     except OSError as e:

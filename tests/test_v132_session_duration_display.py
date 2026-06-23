@@ -47,10 +47,11 @@ class TestV132SessionDurationDisplay(unittest.TestCase):
     """v1.3.2 — single duration in session-detail modal title."""
 
     def test_title_interpolates_one_duration_only(self):
-        """Still ONE duration in the title — but B1 (2026-06-20) makes it the
-        SLOT duration. heroTitle = `${slotLabel} (${sessionDur}min)`: exactly one
-        `(Nmin)` suffix, no second file-duration appended (the v1.3.2 double-
-        duration bug stays fixed, now via the slot-centric rewrite).
+        """Still ONE duration in the title. v2.2.12 makes it the matched FILE's
+        real length (dispDur = fileDur || sessionDur) so the title agrees with the
+        Duration stat + the power chart + the downloaded file. heroTitle =
+        `${slotLabel} (${dispDur}min)`: exactly one `(Nmin)` suffix, no second
+        duration appended (the v1.3.2 double-duration bug stays fixed).
         """
         body = _open_day_workout_body(_read_dashboard())
         m = re.search(r"const\s+heroTitle\s*=\s*`([^`]+)`", body)
@@ -62,26 +63,29 @@ class TestV132SessionDurationDisplay(unittest.TestCase):
             f"heroTitle must contain exactly ONE `(${{...}}min)` suffix, "
             f"got {len(suffixes)} in {tmpl!r}",
         )
-        # The single suffix is the SLOT duration; the label is the slot label.
-        self.assertIn("sessionDur", tmpl)
+        # The single suffix is the displayed (file) duration; label is slot-centric.
+        self.assertIn("dispDur", tmpl)
         self.assertIn("slotLabel", tmpl)
 
     def test_duration_mismatch_label_appears_when_gap_over_10pct(self):
-        """When the matched .zwo duration is >10% off the slot duration, B1/B7
-        surface a CALM, direction-aware note on the secondary 'Matched library
-        file' line (no alarm). gap calc + 10% threshold unchanged; wording is
-        'ride N of it' (file longer) / 'add easy Z2 to reach N' (file shorter).
+        """v2.2.12 — the Duration stat + hero now show the matched FILE's real
+        length (dispDur), matching the power chart + the downloaded file (a 45min
+        slot matched to a 57min file used to show 45 next to a 57min chart). When
+        the file differs from the slot by >10%, the planner's slot target is
+        surfaced as a calm 'plan target Nmin' note on the secondary
+        'Matched library file' line. gap calc + 10% threshold unchanged.
         """
         body = _open_day_workout_body(_read_dashboard())
         self.assertRegex(body, r"const\s+gapPct\s*=",
                          "openDayWorkout must compute a duration-mismatch gap percentage")
         self.assertRegex(body, r"gapPct\s*>\s*0\.10",
                          "Mismatch note must fire when gap > 10% of slot duration")
-        # New B1/B7 copy on the secondary matched-file line.
         self.assertIn("Matched library file:", body)
-        self.assertIn("add easy Z2 to reach", body)
-        self.assertRegex(body, r"ride\s*\$\{sessionDur\}min of it",
-                         "file-longer case must say 'ride ${sessionDur}min of it'")
+        # Duration now reflects the file (dispDur = fileDur || sessionDur).
+        self.assertRegex(body, r"const\s+dispDur\s*=\s*fileDur\s*>\s*0\s*\?\s*fileDur\s*:\s*sessionDur",
+                         "Duration must show the matched file's real length")
+        self.assertRegex(body, r"plan target\s*\$\{sessionDur\}min",
+                         "the >10% note must surface the planner's slot target")
 
     def test_title_is_slot_centric_not_file_cascade(self):
         """SUPERSEDES the v1.0.4 cascade in the MODAL: B1 sources the title from

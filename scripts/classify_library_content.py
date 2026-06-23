@@ -1371,6 +1371,30 @@ def _zone_dominance_class(z_seconds: dict) -> str:
     return "recovery"
 
 
+def _sustained_mid_block_s(segments: list[dict] | None) -> int:
+    """Longest CONTIGUOUS run (seconds) of steady/ramp work in the tempo–
+    threshold band (0.76–1.06 FTP).
+
+    v2.2.12 — keyed on a *contiguous* block, NOT total z3+z4 time: genuine
+    sprint/VO2 interval sessions accumulate z3/z4 across recovery valleys but
+    have no long *steady* mid block, so this stays ~0 for them. A few short
+    sprints bolted onto a real tempo/SS/threshold block (the mislabel we fix —
+    e.g. 4×10s @ 400W then ~50 min of threshold) scores high here. Interval/
+    sprint blocks and easy segments break the run.
+    """
+    if not segments:
+        return 0
+    best = cur = 0
+    for s in segments:
+        p = s.get("power", 0.0) or 0.0
+        if s.get("kind") in ("steady", "ramp") and 0.76 <= p < 1.06:
+            cur += int(s.get("duration_s", 0) or 0)
+            best = max(best, cur)
+        else:
+            cur = 0
+    return best
+
+
 def classify_v104(features: dict, tags: list[str] | None = None,
                   segments: list[dict] | None = None) -> tuple[str, float, dict]:
     """v1.0.4 cascade — emits one of :data:`CANONICAL_TYPES_V104`."""
@@ -1408,8 +1432,20 @@ def classify_v104(features: dict, tags: list[str] | None = None,
         return "ftp_test", 0.9, secondary
 
     if features["sprint_segment_count"] >= DOSE_NM_MIN_SPRINTS and z7_s >= 20:
-        conf = _confidence_from_dose(features["sprint_segment_count"], DOSE_NM_MIN_SPRINTS, 8)
-        return "neuromuscular", conf, secondary
+        # v2.2.12 — token-sprint guard. A handful of short sprints (e.g. 4×10s @
+        # 400W) bolted onto a big sustained tempo/SS/threshold block is NOT a
+        # neuromuscular session — it's threshold/SS with a sprint primer, and was
+        # being matched to pure-sprint plan slots. Keep the neuromuscular label
+        # only when the sprint stimulus is a real dose (≥90s of Z7) OR isn't
+        # dwarfed by a sustained ≥10-min mid block (≥2× the sprint time); else
+        # fall through and classify by dominant content. Tight by design
+        # (z7<90 + contiguous block) so genuine sprint sets — which have ≥90s of
+        # sprint work and no long steady mid block — are untouched.
+        _mid_block_s = _sustained_mid_block_s(segments)
+        _token = z7_s < 90 and _mid_block_s >= 600 and _mid_block_s >= 2 * z7_s
+        if not _token:
+            conf = _confidence_from_dose(features["sprint_segment_count"], DOSE_NM_MIN_SPRINTS, 8)
+            return "neuromuscular", conf, secondary
 
     if features.get("is_ladder", False):
         peak_zone = features.get("ladder_peak_zone", "")

@@ -3114,20 +3114,36 @@ def match_zwo(
 
     candidates = list(seen_names.values())
 
-    # v1.8.24 — exact_duration (reshuffle): collapse the pool to the closest
-    # achievable duration tier BEFORE the variety pick. Without this the
-    # score-weighted random draw from the top-50 could surface a far-duration
-    # file (90-min slot → 45-min file) whenever it scored high on category +
-    # evidence. Keeping only the minimum-|Δduration| tier guarantees the pick
-    # is the closest the library offers (diff 0 when a same-duration file
-    # exists) while preserving variety AMONG equally-close files. The +0.5
-    # epsilon ties whole-minute-equal files (90.0 with 90.4) into one tier.
-    if exact_duration and candidates:
-        best_diff = min(abs(c[1]["Duration(min)"] - target_dur) for c in candidates)
-        candidates = [
+    # v2.2.13 — STRUCTURAL duration match (applies to BULK generation, not just
+    # reshuffle). Previously the closest-duration collapse below was gated on
+    # `exact_duration`, so bulk plan generation skipped it: the score-weighted
+    # top-50 random draw could surface a far-duration file inside the ±25% gate
+    # (a 45-min sprint slot resolving to a 57-min file), which made the title,
+    # the Duration stat and the power chart disagree. We now ALWAYS restrict the
+    # variety pool to files whose duration genuinely matches the slot, so the
+    # matched file ≈ the slot and the prescription/file decoupling disappears at
+    # the source (no display band-aids needed):
+    #   1. prefer files within ~8% of the slot duration (keeps variety among
+    #      genuinely-close files);
+    #   2. if none that close, fall back to the single closest-duration tier
+    #      (+0.5 min epsilon to tie whole-minute-equal files).
+    # exact_duration's only remaining job is widening the hard ±25% gate above
+    # (line ~3029) so reshuffle can reach further when the band is sparse; the
+    # collapse itself is now unconditional.
+    if candidates:
+        _tight = max(target_dur * 0.08, 3.0)
+        _near = [
             c for c in candidates
-            if abs(c[1]["Duration(min)"] - target_dur) <= best_diff + 0.5
+            if abs(c[1]["Duration(min)"] - target_dur) <= _tight
         ]
+        if _near:
+            candidates = _near
+        else:
+            best_diff = min(abs(c[1]["Duration(min)"] - target_dur) for c in candidates)
+            candidates = [
+                c for c in candidates
+                if abs(c[1]["Duration(min)"] - target_dur) <= best_diff + 0.5
+            ]
 
     if not candidates:
         # v1.3.4 fix: when target_dur exceeds library coverage (e.g. a 222-min

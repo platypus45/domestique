@@ -333,6 +333,24 @@ def gen_neuro_sprints() -> list[tuple[str, str, list[dict], list[str]]]:
         (10, 8,  240, 1.65, 600, 300),
         (8,  12, 240, 1.50, 600, 300),
         (12, 10, 150, 1.55, 600, 300),
+        # v2.2.12 — TRUE max-effort neuromuscular sprints (ATP-PC). The library
+        # topped out ~180% FTP; evidence (Coggan NP zone; SIT/neuromuscular
+        # reviews) puts real max sprints at 200-300% FTP with LONG recovery to
+        # preserve peak power. All keep reps*on_d >= 90s of sprint so they stay
+        # genuinely neuromuscular (not a token-sprint primer). ~270% ≈ 700W @
+        # FTP 258 (the requested dose). Recovery scales up with power.
+        (10, 10, 180, 2.50, 600, 300),   # 10x10s @ 250% / 3min  (≈ 2x5x10s)
+        (10, 10, 240, 2.70, 600, 300),   # 10x10s @ 270% / 4min  (max power)
+        (12, 10, 180, 2.40, 600, 300),   # 12x10s @ 240% / 3min
+        (10, 12, 210, 2.30, 600, 300),   # 10x12s @ 230% / 3.5min
+        (8,  15, 240, 2.20, 600, 300),   # 8x15s  @ 220% / 4min
+        (6,  15, 240, 2.60, 600, 300),   # 6x15s  @ 260% / 4min
+        (12, 8,  150, 2.80, 600, 300),   # 12x8s  @ 280% / 2.5min (true max)
+        (9,  10, 180, 2.55, 600, 300),   # 9x10s  @ 255% / 3min
+        (10, 15, 210, 2.25, 600, 300),   # 10x15s @ 225% / 3.5min
+        (8,  12, 240, 2.65, 600, 300),   # 8x12s  @ 265% / 4min
+        (10, 10, 300, 2.90, 720, 360),   # 10x10s @ 290% / 5min (peak power, full rec)
+        (15, 8,  150, 2.30, 600, 300),   # 15x8s  @ 230% / 2.5min
     ]
     for reps, on_d, off_d, on_p, wu, cd in variants:
         blocks = [{"kind": "Warmup", "dur": wu, "lo": 0.50, "hi": 0.75}]

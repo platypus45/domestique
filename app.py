@@ -13696,7 +13696,18 @@ def _icu_wellness_sync_state_path() -> Path:
 
 
 def _icu_credentials_present() -> bool:
-    """True iff ICU_ATHLETE_ID + ICU_API_KEY are both set in config."""
+    """True iff ICU is configured — OAuth OR legacy Basic auth.
+
+    v2.2.8 FIX: OAuth-only setups carry an ``ICU_ACCESS_TOKEN`` (Bearer) and an
+    EMPTY ``ICU_API_KEY``. This gate previously required ICU_API_KEY, so every
+    sync path that checks it (``_sync_icu_activities``, the lazy-sync hook, etc.)
+    early-returned ``no_credentials`` for OAuth users — recent rides silently
+    never synced even though ``training.py`` authenticates fine via the Bearer
+    token. Mirror training.py's auth precedence: access token first, Basic pair
+    as the fallback.
+    """
+    if getattr(config, "ICU_ACCESS_TOKEN", None):
+        return True
     return bool(
         getattr(config, "ICU_ATHLETE_ID", None)
         and getattr(config, "ICU_API_KEY", None)

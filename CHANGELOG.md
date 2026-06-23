@@ -1,52 +1,29 @@
 # Changelog
 
-## v2.2.10 — DFA α1 thresholds restored + live update progress
+## v2.2.10 — DFA α1 thresholds fixed + live update progress
 
-- **Your DFA α1 + HR-variability thresholds come back.** The DFA panel had collapsed to
-  "0 rides have α1 computed / No thresholds detected yet." The RR-interval artifact filter
-  compared each beat to the *last accepted* beat, so a normal warm-up heart-rate trend (RR
-  gliding smoothly down as HR rises) made the reference stick and **~99% of beats were wrongly
-  discarded** → no valid DFA windows → blank panel. Switched to a **median-of-surrounding-beats**
-  reference (Lipponen & Tarvainen 2019 / Kubios — the current HRV-preprocessing standard): the
-  cascade is gone, and HRVT1/HRVT2 resolve again. Verified on a real ride: `no_rr_data` → α1 1.09,
-  thresholds back.
-  *An earlier candidate fix (compare to the previous beat) was rejected during review because it
-  over-rejected high-intensity beats and stopped the thresholds from resolving — the median is the
-  literature-correct reference and passes the threshold tests.*
-- **The DFA tab shows live update progress.** While rides are (re)computing it now shows
-  "Indexing eligible rides → {N} eligible → Updating {x} of {y} ({%})" with a progress bar + a
-  computed / no-HRV / failed tally, and refreshes the threshold panel the moment it finishes.
+- **Your DFA thresholds are back.** The DFA tab had started showing "No thresholds
+  detected yet" with no rides computed. The step that cleans up heart-rate-variability
+  data was throwing away almost every beat on any ride with a normal warm-up, so there
+  was nothing left to analyse. Fixed — your aerobic and anaerobic thresholds (HRVT1 /
+  HRVT2) compute again.
+- **The DFA tab shows progress while it updates.** When rides are computing you now see
+  how many are eligible and how far along it is ("Updating 4 of 9"), with a progress bar,
+  and the panel refreshes itself when it's done.
 
-## v2.2.9 — Sync progress, sticky FTP, and DFA thresholds that survive a re-sync
+## v2.2.9 — Sticky FTP, real sync progress, DFA that survives a re-sync
 
-Three fixes from testing feedback, all on the home screen.
+- **Your FTP stays where you set it.** Saving a manual FTP used to appear to snap back to
+  the lower estimated FTP in the top bar and Settings until you restarted the app. It now
+  updates everywhere the moment you save.
+- **The sync banner shows real progress.** Instead of a vague "Syncing activities…" that
+  could sit there with no numbers, it now shows how many activities are syncing and how
+  many are new ("Syncing 3 of 20 · 2 new"), and clears itself when it's done.
+- **DFA thresholds survive a re-sync.** Re-syncing a ride could wipe its computed DFA
+  values and blank the threshold panel. Those values are now kept across syncs.
 
-- **Your FTP stays where you set it.** Saving a manual FTP updated the value on
-  disk and in the FTP history graph, but the top bar and the Settings field kept
-  showing the old number — usually the lower eFTP — until you restarted the app.
-  The save now refreshes the live value the UI reads, so your FTP appears the
-  moment you save it.
-  *Cause: the dedicated FTP-save path wrote `athlete.json` but not the in-memory
-  `config.ATHLETE_FTP_W` the top bar/Settings render from.*
-
-- **The "syncing activities" banner shows real progress — and clears itself.** It
-  used to read a vague "Syncing activities from intervals.icu…" with no numbers and
-  could sit there indefinitely. It now reports **"Syncing X of Y activities · N new
-  (Z%)"** and disappears the moment the sync finishes, with a safety timeout so an
-  interrupted sync can't leave it stuck on screen.
-  *Cause: the banner was wired to the power-curve backfill, not the activity sync
-  that pulls your rides; it now reads a live feed (`GET /api/sync/progress`).*
-
-- **DFA α1 thresholds no longer disappear after a sync.** Once a ride has HRVT1/
-  HRVT2 thresholds they now stay put across future syncs, instead of the panel
-  collapsing to "No thresholds detected yet."
-  *Cause: intervals.icu doesn't send DFA data — Domestique computes α1 + the
-  thresholds locally from each ride's FIT. Re-syncing overwrote the record with the
-  threshold-free intervals.icu copy, and the per-sync recompute budget only
-  restored a few. Locally-computed DFA is now carried forward on re-persist.*
-
-*Follows v2.2.8, which restored syncing for OAuth-connected accounts that had
-silently stopped pulling new rides.*
+*Follows v2.2.8, which restored syncing for accounts signed in with intervals.icu that
+had silently stopped pulling new rides.*
 
 ## v2.2.8 — Fix intervals.icu sync for OAuth accounts (recent rides not indexed)
 

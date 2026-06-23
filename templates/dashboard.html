@@ -5999,24 +5999,51 @@ async function _dfaBackfillIfStale(diag) {
   } catch (_) { return null; }
 }
 
+// v2.2.10 — DFA "updating" strip. Three phases the user asked for:
+//   1. indexing eligible rides (worker spawned, count not known yet)
+//   2. {N} rides eligible
+//   3. updating {done} of {N} ({pct}%)  + computed/no-HRV/failed sub-line
+// Styled like the home sync banner, with a thin .lbar progress bar. Renders
+// nothing for a terminal state with no eligible rides (no false/flashing strip).
 function _renderDfaProgress(host, status) {
   if (!host || !status) return;
+  const st = String(status.state || '');
   const aug = Number(status.augmented || 0);
   const cand = Number(status.candidates || 0);
   const computed = Number(status.computed || 0);
+  const noRR = Number(status.no_rr_data || 0);
+  const failed = Number(status.failed || 0);
   const curr = String(status.current || '').replace(/[<>]/g, '');
-  const pct = cand > 0 ? Math.round(100 * aug / cand) : 0;
-  host.innerHTML =
-    `<div style="display:flex;align-items:center;gap:8px;">
-       <span style="color:var(--text);">DFA α1 — re-scanning ${cand} ride${cand === 1 ? '' : 's'}…</span>
-       <span style="color:var(--text3);font-size:11px;">${aug}/${cand} (${pct}%${curr ? ', ' + esc(curr) : ''})</span>
-       <button onclick="_dfaCancelBackfill('${esc(status.task_id || '')}')"
+  const terminal = (st === 'done' || st === 'cancelled' || st === 'error');
+  if (terminal && cand === 0) { host.innerHTML = ''; return; }  // nothing to show
+
+  let headline, pct = 0, indeterminate = false;
+  if (st === 'running' && cand === 0) {
+    headline = 'Indexing eligible rides…'; indeterminate = true;
+  } else if (terminal) {
+    pct = 100;
+    headline = computed > 0
+      ? `Updated ${computed} of ${cand} ride${cand === 1 ? '' : 's'}`
+      : 'No new HRV rides to update';
+  } else if (aug === 0) {
+    headline = `${cand} ride${cand === 1 ? '' : 's'} eligible`;
+  } else {
+    pct = cand > 0 ? Math.round(100 * aug / cand) : 0;
+    headline = `Updating ${aug} of ${cand} ride${cand === 1 ? '' : 's'} (${pct}%)`;
+  }
+  const bar = `<div class="lbar" style="margin-top:6px;"><div class="lbar-fill" style="width:${indeterminate ? 100 : pct}%;${indeterminate ? 'opacity:0.4;' : ''}"></div></div>`;
+  const sub = (aug > 0 || terminal)
+    ? `<div style="margin-top:4px;color:var(--text3);font-size:11px;">${computed} computed · ${noRR} no-HRV · ${failed} failed${curr ? ' · ' + esc(curr) : ''}</div>`
+    : '';
+  const cancel = (st === 'running')
+    ? `<button onclick="_dfaCancelBackfill('${esc(status.task_id || '')}')"
                style="font-size:11px;padding:2px 8px;border-radius:4px;background:rgba(239,68,68,0.1);border:1px solid #ef4444;color:inherit;cursor:pointer;"
-               title="Stop DFA backfill">Cancel</button>
-     </div>
-     <div style="margin-top:4px;color:var(--text3);font-size:11px;">
-       ${computed} new DFA value${computed === 1 ? '' : 's'} computed so far.
-     </div>`;
+               title="Stop DFA backfill">Cancel</button>`
+    : '';
+  host.innerHTML =
+    `<div style="display:flex;align-items:center;gap:8px;justify-content:space-between;">
+       <span style="color:var(--text);font-size:12px;">${esc(headline)}</span>${cancel}
+     </div>${bar}${sub}`;
 }
 
 async function _dfaCancelBackfill(taskId) {
@@ -6203,7 +6230,47 @@ async function loadDfaTab() {
     } catch (_) {}
     if (!throttled) _dfaRunMigrate(d.n_stale_version);
     else if (status) status.innerHTML = `<span style="color:var(--text3);font-size:11px;">${d.n_stale_version} ride(s) pending DFA upgrade — will retry shortly.</span>`;
+  } else {
+    // v2.2.10 — otherwise kick a backfill for rides still missing DFA and show
+    // the live "Updating yy of zz" strip; refresh the panel when it finishes.
+    _dfaTabUpdateProgress();
   }
+}
+
+// v2.2.10 — DFA-tab "updating" progress strip (the user's ask): indexing →
+// N eligible → yy of zz updated. Throttled (shares the home snapshot's key so
+// the two don't double-kick); renders via the shared _renderDfaProgress strip
+// into #dfa-tab-status and reloads the aggregate when new values land.
+async function _dfaTabUpdateProgress() {
+  const host = document.getElementById('dfa-tab-status');
+  try {
+    const last = Number(localStorage.getItem(_DFA_BACKFILL_LS_KEY) || 0);
+    if (Date.now() - last < _DFA_BACKFILL_THROTTLE_MS) return;
+  } catch (_) {}
+  let taskId = null;
+  try {
+    const r = await fetch('/api/profile/dfa-backfill', { method: 'POST' });
+    if (!r.ok) return;
+    const j = await r.json();
+    taskId = j && j.task_id;
+    try { localStorage.setItem(_DFA_BACKFILL_LS_KEY, String(Date.now())); } catch (_) {}
+  } catch (_) { return; }
+  if (!taskId) return;
+  _dfaPollBackfill(host, taskId, async (final) => {
+    if (final && Number(final.computed || 0) > 0) {
+      try {
+        const r2 = await fetch('/api/profile/dfa-rides');
+        if (r2.ok) {
+          _dfaTabData = await r2.json();
+          _renderDfaAggregate(_dfaTabData);
+          _renderDfaPerRide(_dfaTabData);
+          setDfaView(_dfaView);
+        }
+      } catch (_) {}
+    }
+    // Leave the terminal "Updated N…" strip visible briefly, then clear.
+    setTimeout(() => { if (host) host.innerHTML = ''; }, 2500);
+  });
 }
 
 async function _dfaRunMigrate(nStale) {

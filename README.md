@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4220-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v2.2.12-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v2.2.13-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-1967-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -47,12 +47,13 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 
 ---
 
-## What's new in v2.2.12
+## What's new in v2.2.13
 
-- **Smarter sprint / VO2 matching** — those days now prefer genuinely high-intensity workouts
-  instead of mislabeled tempo-heavy ones.
-- **Cleaner workout titles** — the day's title no longer shows a file length that contradicts the
-  planned duration.
+- **Workouts that match the day** — each day now picks a workout whose type *and* length fit the
+  plan, so a sprint day gets a real sprint session at the planned length (no more 57-minute
+  mostly-threshold file on a 45-minute sprint slot). Title, duration, and chart all agree.
+- **Mislabelled sprint files reclassified** + **more true max-effort sprint sessions** added, so
+  sprint days have genuine options at every length.
 
 ## What's new in v2.2.11
 
@@ -474,7 +475,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v2.2.12 — better workout matching for sprint / VO2 days](https://github.com/platypus45/domestique/releases/latest)** (2026-06-23).
+Latest: **[v2.2.13 — workouts that actually match the plan](https://github.com/platypus45/domestique/releases/latest)** (2026-06-23).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

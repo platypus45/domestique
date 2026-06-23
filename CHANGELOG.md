@@ -37,35 +37,24 @@ had silently stopped pulling new rides.*
 
 ## v2.2.7 — Workout downloads + goal persistence (issues #5/#6)
 
-- **#5 — ZWO/FIT downloads no longer save empty files.** On macOS the desktop
-  window (WKWebView) could hand the save bridge an empty response body, so the
-  downloaded `.zwo` / `.fit` was 0 bytes (intermittently — some downloads worked,
-  some didn't). The app runs the server in-process, so it now produces the file
-  bytes directly when that happens — reading the workout (ZWO) or regenerating it
-  (FIT) instead of writing an empty file — and refuses to save an empty file at
-  all. A workout that can't produce real steps now reports a clear error rather
-  than a useless empty file.
-- **#6 — your training goal sticks after a restart.** Selecting e.g. "Hybrid FTP
-  + VO2max" then reopening the app showed "Event" again — the plan form restored
-  every field except the goal selector itself. It now restores the goal too (the
-  underlying plan was always saved correctly; only the displayed selection
-  reset).
-- **Faster home page.** The "Today" + readiness cards memoise two ride-archive
-  scans that previously re-ran on every load, so the home page paints noticeably
-  faster on large histories.
+- **Workout downloads no longer save empty files.** On macOS, ZWO and FIT workout
+  downloads could occasionally save as empty (0-byte) files. They now always save the
+  real workout — and if one genuinely can't be produced, you get a clear error instead
+  of a useless empty file.
+- **Your training goal sticks after a restart.** Picking a goal like "Hybrid FTP +
+  VO2max" and reopening the app used to reset the shown goal back to "Event". The goal
+  you chose now stays selected.
+- **Faster home page** on large ride histories.
 
-## v2.2.6 — One unified "Today" card (issue #3 Request 2)
+## v2.2.6 — One "Today" card (issue #3)
 
-- **#3 Request 2 — one readiness recommendation.** The home page showed up to five
-  "today/readiness" surfaces (Leg Check, "Readiness today" 0–10, "Today's Recommendation" with a
-  0–100 number, the 0–100 gauge, plus the DFA banner) using TWO different readiness models, so a
-  rider saw e.g. "3.8/10 → rest" next to "THRESHOLD, 66/100" and read it as a contradiction. They
-  are merged into a single **Today** card: one 0–100 number, one state (Ready / Ease off / Rest)
-  and one action. The number now comes from one canonical source, so every surface agrees — and
-  when your leg-check (subjective soreness) overrides a high physiological score the card
-  *explains* it ("78/100 · Rest advised · from your leg-check") instead of looking like a
-  contradiction. The lower card is now a clearly-labelled "Readiness — factors & trend" analytic.
-  Completes the half of issue #3 deferred from v2.2.5 (the tier-down fix shipped there).
+- **One readiness recommendation, not five.** The home page had several overlapping
+  "how ready am I today" panels on two different scales, so you could see "rest" on one
+  and "you're fine" on another at the same time. They're now a single **Today** card: one
+  readiness score, one state (Ready / Ease off / Rest), and one suggested action. When your
+  morning leg-check overrides the score, the card explains why ("Rest advised — from your
+  leg-check") instead of contradicting itself, and the separate gauge is now clearly
+  labelled as a trend/analytics view.
 
 ## v2.2.5 — Strava-ride clarity, lighter recovery weeks, sane tier-down (issues #2/#3/#4)
 

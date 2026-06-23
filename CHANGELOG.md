@@ -1,24 +1,35 @@
 # Changelog
 
-## v2.2.9 — Sync progress banner, DFA threshold fix, manual-FTP fix
+## v2.2.9 — Sync progress, sticky FTP, and DFA thresholds that survive a re-sync
 
-- **Manual FTP no longer reverts to eFTP in the UI.** Saving your FTP wrote it to
-  disk and the FTP graph, but the top bar and the Settings field kept showing the
-  old value (often the lower eFTP) until an app restart — the dedicated FTP-save
-  path updated the stored value without refreshing the live in-memory copy the UI
-  reads. It now updates immediately on save.
-- **The sync banner now shows real counts + progress.** It previously read
-  "Syncing activities from intervals.icu…" with no numbers and could look stuck —
-  because it was driven by the power-curve backfill, not the activity sync that
-  actually pulls your rides. It now shows **"Syncing X of Y activities · N new (Z%)"**
-  from a live progress feed (`GET /api/sync/progress`) and reliably disappears when
-  the sync finishes (with a stale-guard so a crashed sync can't pin it open).
-- **DFA α1 thresholds no longer vanish after a sync.** intervals.icu doesn't send
-  DFA data — Domestique computes α1 + the HRVT1/HRVT2 thresholds locally from each
-  ride's FIT. Re-syncing a ride overwrote the record with the DFA-less payload,
-  wiping those values; with the per-sync compute budget only redoing a few rides,
-  the threshold panel collapsed to "No thresholds detected yet." The local DFA is
-  now carried forward across re-syncs, so it stays put.
+Three fixes from testing feedback, all on the home screen.
+
+- **Your FTP stays where you set it.** Saving a manual FTP updated the value on
+  disk and in the FTP history graph, but the top bar and the Settings field kept
+  showing the old number — usually the lower eFTP — until you restarted the app.
+  The save now refreshes the live value the UI reads, so your FTP appears the
+  moment you save it.
+  *Cause: the dedicated FTP-save path wrote `athlete.json` but not the in-memory
+  `config.ATHLETE_FTP_W` the top bar/Settings render from.*
+
+- **The "syncing activities" banner shows real progress — and clears itself.** It
+  used to read a vague "Syncing activities from intervals.icu…" with no numbers and
+  could sit there indefinitely. It now reports **"Syncing X of Y activities · N new
+  (Z%)"** and disappears the moment the sync finishes, with a safety timeout so an
+  interrupted sync can't leave it stuck on screen.
+  *Cause: the banner was wired to the power-curve backfill, not the activity sync
+  that pulls your rides; it now reads a live feed (`GET /api/sync/progress`).*
+
+- **DFA α1 thresholds no longer disappear after a sync.** Once a ride has HRVT1/
+  HRVT2 thresholds they now stay put across future syncs, instead of the panel
+  collapsing to "No thresholds detected yet."
+  *Cause: intervals.icu doesn't send DFA data — Domestique computes α1 + the
+  thresholds locally from each ride's FIT. Re-syncing overwrote the record with the
+  threshold-free intervals.icu copy, and the per-sync recompute budget only
+  restored a few. Locally-computed DFA is now carried forward on re-persist.*
+
+*Follows v2.2.8, which restored syncing for OAuth-connected accounts that had
+silently stopped pulling new rides.*
 
 ## v2.2.8 — Fix intervals.icu sync for OAuth accounts (recent rides not indexed)
 

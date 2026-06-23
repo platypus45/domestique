@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.2.12 — Better workout matching for sprint / VO2 days
+
+- **Sprint and VO2 days pick a workout that actually fits.** Some library files carry a hard label
+  but are mostly tempo/threshold — they could win a sprint or VO2 slot over a genuinely
+  high-intensity session. Those days now prefer real high-intensity workouts.
+- **The title no longer shows a length that contradicts the planned duration.** A 45-minute slot
+  matched to a 57-minute file used to show "57min" in the title next to a "45m" badge; the title no
+  longer carries the file's own length (the day-detail still explains "ride 45min of the 57min file").
+
 ## v2.2.11 — Clearer "This Week", full today's-session, steadier sync bar
 
 - **Today's session opens the full workout.** Clicking today's session on the home page now opens

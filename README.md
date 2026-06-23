@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4220-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v2.2.11-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v2.2.12-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-1967-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -46,6 +46,13 @@ Domestique is neither. Every signal that touches the dashboard also has a code-p
 Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus a 1-week consolidation phase at the end of every non-event cycle so people don't ride straight from a peak into a fresh build with elevated fatigue (Mujika 2010).
 
 ---
+
+## What's new in v2.2.12
+
+- **Smarter sprint / VO2 matching** — those days now prefer genuinely high-intensity workouts
+  instead of mislabeled tempo-heavy ones.
+- **Cleaner workout titles** — the day's title no longer shows a file length that contradicts the
+  planned duration.
 
 ## What's new in v2.2.11
 
@@ -467,7 +474,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v2.2.11 — clearer "This Week", full today's-session, steadier sync bar](https://github.com/platypus45/domestique/releases/latest)** (2026-06-23).
+Latest: **[v2.2.12 — better workout matching for sprint / VO2 days](https://github.com/platypus45/domestique/releases/latest)** (2026-06-23).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

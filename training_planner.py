@@ -3051,6 +3051,21 @@ def match_zwo(
         else:
             continue  # skip non-matching categories
 
+        # v2.2.12 — content-fit penalty for PURE high-intensity slots
+        # (sprint / VO2max). Some library files carry a hard label but are
+        # mostly tempo/threshold with little top-end — e.g. a "neuromuscular
+        # 4×10s" file that's 40s of sprint over ~50min of sweet-spot — and were
+        # winning sprint slots over genuine high-intensity files. SOFT penalty,
+        # not exclusion: a cleaner hard file (real Z5/Z6 content, or not
+        # mid-dominated) outranks it, but if it's the only candidate that fits
+        # the duration the slot still fills. Threshold/SS/tempo/over-under slots
+        # are untouched — mid IS the point there.
+        if session.session_type in ("sprint", "vo2max") and not want_test:
+            _mid_pct = float(w.get("Z3%", 0) or 0) + float(w.get("Z4%", 0) or 0)
+            _top_pct = float(w.get("Z5%", 0) or 0) + float(w.get("Z6%", 0) or 0)
+            if _mid_pct >= 40 and _top_pct < 10:
+                score -= 5  # mid-dominated, low top-end → poor fit for a hard slot
+
         # v1.8.25 — easy-slot grey-zone HARD gate (mirrors the sampler). A
         # z2/recovery slot must NOT admit a file with a tempo/SS finisher
         # (z345 over the ceiling) — that over-cooks an easy day and breaks

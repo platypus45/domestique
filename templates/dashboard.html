@@ -10858,7 +10858,12 @@ function calCardTitle(planned) {
   // icon (rendered by the cell builder) still flags session_type vs content
   // disagreement — that's a UX feature, not a bug.
   if (!planned) return '';
-  const dn = (planned.display_name || '').trim();
+  // v2.2.12 — strip the file's own embedded "Nmin" from the title so it can't
+  // contradict the slot-duration badge rendered beside it (a 45min sprint slot
+  // matched to a 57min file showed "Neuromuscular 57min …" next to a "45m"
+  // badge). The slot duration stays the authoritative badge; the file's real
+  // length still shows in the day-detail modal ("file is 57min — ride 45min").
+  const dn = (planned.display_name || '').replace(/\s*\b\d+\s*min\b/i, '').replace(/\s+—\s*$/, '').trim();
   if (dn) return dn;
   const zn = (planned.zwo_name || '').trim();
   if (zn) return zn;

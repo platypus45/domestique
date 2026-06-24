@@ -62,3 +62,4 @@ IP_*.md
 
 # OAuth client secret — NEVER commit (public repo)
 .oauth.env
+.venv-build/

@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.2.15 — Runs on macOS Monterey (12) and Big Sur (11)
+
+- **The Mac app now launches on macOS Monterey (12) and Big Sur (11).** Recent builds were
+  accidentally compiled against newer macOS, so on Monterey they failed to open — silently, even from
+  the DMG. The app is now built to run on macOS 11 and up. No features changed.
+
 ## v2.2.14 — Races show on the calendar + a longer pre-race taper
 
 - **Your races now show on the calendar.** Adding a race (your main event or a B/C race) used to

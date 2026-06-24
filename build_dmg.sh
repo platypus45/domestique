@@ -26,6 +26,24 @@
 set -e
 cd "$(dirname "$0")"
 
+# v2.2.15 — Monterey (macOS 12) compatibility (see IP_MONTEREY_COMPAT.md):
+#   * MACOSX_DEPLOYMENT_TARGET=11.0 so anything PyInstaller compiles targets 11.
+#   * Build from the isolated .venv-build (OpenBLAS numpy/scipy — NOT the system
+#     Homebrew Python's Accelerate build, which links $NEWLAPACK = macOS 13.3+).
+#   * Step [3a] re-stamps every bundled Mach-O's min-OS to 11.0 + a proof gate
+#     ABORTS before signing if anything still needs > macOS 12.
+export MACOSX_DEPLOYMENT_TARGET=11.0
+MACOS_MIN="11.0"
+PYINSTALLER="pyinstaller"
+if [ ! -x ".venv-build/bin/pyinstaller" ]; then
+    echo "  Build venv missing — creating it (OpenBLAS numpy/scipy)..."
+    bash scripts/setup_build_venv.sh
+fi
+if [ -x ".venv-build/bin/pyinstaller" ]; then
+    PYINSTALLER=".venv-build/bin/pyinstaller"
+    echo "  Using isolated build venv (.venv-build) for OpenBLAS numpy/scipy"
+fi
+
 DMG_NAME="Domestique"
 DMG_PATH="$HOME/Desktop/${DMG_NAME}.dmg"
 STAGING="/tmp/dmg_staging"
@@ -60,7 +78,7 @@ done
 
 # 1. Build with PyInstaller
 echo "[1/9] Building app with PyInstaller..."
-pyinstaller domestique.spec --clean --noconfirm 2>&1 | tail -3
+"$PYINSTALLER" domestique.spec --clean --noconfirm 2>&1 | tail -3
 
 # 1b. Version smoke-test — the bundled app MUST ship its own VERSION file with the
 # right contents, else the running app reports "0.0.0" and the in-app updater shows
@@ -137,6 +155,40 @@ if [ "$NOTARIZE_MODE" = "notarize" ]; then
     done
     MACHO_COUNT=$(wc -l < "$MACHO_LIST_FILE" | tr -d ' ')
     echo "  Found $MACHO_COUNT Mach-O binaries"
+
+    # [3a/9] v2.2.15 — re-stamp every bundled Mach-O's minimum-OS to 11.0 so dyld
+    # loads them on macOS 11/12. Homebrew Python/openssl + some wheels stamp the
+    # BUILD host's OS (14/15/26) as the minimum even though the code uses only
+    # macOS-11-available symbols (verified: IP_MONTEREY_COMPAT.md). Done BEFORE
+    # signing — it invalidates signatures, which the [4/9] resign repairs.
+    echo "[3a/9] Re-stamping min-OS -> ${MACOS_MIN} on all Mach-O..."
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        sdk=$(vtool -show-build "$f" 2>/dev/null | awk '/sdk/{print $2; exit}')
+        vtool -set-build-version macos "$MACOS_MIN" "${sdk:-$MACOS_MIN}" \
+            -replace -output "$f" "$f" >/dev/null 2>&1 || true
+    done < "$MACHO_LIST_FILE"
+
+    # PROOF GATE — abort before signing/notarizing if anything still needs
+    # > macOS 12, or any $NEWLAPACK (macOS-13.3 Accelerate) symbol slipped in
+    # (i.e. numpy/scipy not on the OpenBLAS wheels).
+    echo "[3a/9] Verifying Monterey compatibility..."
+    BAD_MINOS=$(while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        mo=$(vtool -show-build "$f" 2>/dev/null | awk '/minos/{print $2; exit}')
+        case "$mo" in ""|10.*|11.*|12.*) ;; *) echo "$mo  $f" ;; esac
+    done < "$MACHO_LIST_FILE")
+    NEWLAPACK=$(while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        nm -mu "$f" 2>/dev/null | grep -c NEWLAPACK
+    done < "$MACHO_LIST_FILE" | awk '{s+=$1} END{print s+0}')
+    if [ -n "$BAD_MINOS" ]; then
+        echo "  ✗ FAIL — binaries still require > macOS 12:"; echo "$BAD_MINOS" | head; exit 1
+    fi
+    if [ "$NEWLAPACK" -ne 0 ]; then
+        echo "  ✗ FAIL — $NEWLAPACK \$NEWLAPACK (macOS-13.3) symbol refs remain; numpy/scipy not on OpenBLAS"; exit 1
+    fi
+    echo "  ✓ all Mach-O minos <= 12 and zero \$NEWLAPACK — Monterey-compatible"
 
     echo "[3b/9] Stripping PyInstaller's ad-hoc inner signatures..."
     while IFS= read -r f; do

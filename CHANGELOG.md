@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.2.14 — Races show on the calendar + a longer pre-race taper
+
+- **Your races now show on the calendar.** Adding a race (your main event or a B/C race) used to
+  re-plan around it but still showed a training session on race day — e.g. a 6-hour Z2 on Marmotte
+  day. The race day now shows the **race itself** (🏁 with name + distance + climb): on the calendar,
+  in "This Week" when it's race week, and on the home Today card on the day.
+- **A longer, evidence-based pre-race taper.** The final easy days before your main race went from 2
+  to 3 (B-race mini-tapers likewise) — light spins and openers, not complete rest, so you arrive
+  fresh without losing sharpness.
+
 ## v2.2.13 — Workouts that actually match the plan
 
 - **The workout you get matches the day.** A "sprint" day could pull a 57-minute session that was

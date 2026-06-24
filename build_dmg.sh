@@ -176,7 +176,9 @@ if [ "$NOTARIZE_MODE" = "notarize" ]; then
     BAD_MINOS=$(while IFS= read -r f; do
         [ -n "$f" ] || continue
         mo=$(vtool -show-build "$f" 2>/dev/null | awk '/minos/{print $2; exit}')
-        case "$mo" in ""|10.*|11.*|12.*) ;; *) echo "$mo  $f" ;; esac
+        [ -z "$mo" ] && continue
+        major=${mo%%.*}
+        if [ "${major:-0}" -gt 12 ] 2>/dev/null; then echo "$mo  $f"; fi
     done < "$MACHO_LIST_FILE")
     NEWLAPACK=$(while IFS= read -r f; do
         [ -n "$f" ] || continue

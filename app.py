@@ -7734,6 +7734,9 @@ def api_weekly_plan(week_offset: int = Query(0)):
             "moved_from": stored.get("moved_from", ""),
             "completion_matches": stored.get("completion_matches") or None,
             "dismissed_at": stored.get("dismissed_at", ""),
+            # issue #7 — race day flag + meta (name/km/climb/type/priority).
+            "is_race": stored.get("is_race", getattr(s, "is_race", False)),
+            "race": stored.get("race") or getattr(s, "race", None),
         }
         # v4.1.1 FIX-PLANNER B: per-session zone_dist from the ACTUAL ZWO.
         meta = _lib_by_file.get(zwo_file) if zwo_file else None
@@ -8428,6 +8431,9 @@ def _api_today_session_impl():
             "tss_estimate": adjusted.tss_estimate,
             "description": adjusted.description,
         },
+        # issue #7 — surface a race on the home "Today" card when today IS a race.
+        "is_race": bool(planned_data.get("is_race")),
+        "race": planned_data.get("race"),
         "reason": reason,
         "adjustment_reason": adjustment_reason,
         "readiness": r.get("score"),
@@ -12340,6 +12346,8 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
                     "tss": sess.get("tss_estimate") or 0,
                     "score": sess.get("score"),
                     "zwo_file": _zwo,
+                    "is_race": bool(sess.get("is_race")),
+                    "race": sess.get("race"),
                 }
                 pz12, pz34, pz5p = _planned_zone_split_minutes(sess)
                 planned_z12 += pz12
@@ -12369,6 +12377,9 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
                 "planned": planned_payload,
                 "actual": actual_payload,
                 "card_state": card_state,
+                # issue #7 — race day (A or B/C); top-level so This Week + grid
+                # render it distinctly without reaching into `planned`.
+                "race": (sess.get("race") if sess and sess.get("is_race") else None),
             }
             # v1.3.1 HIGH fix — emit availability_hours / availability_type
             # so the UI can render an UNAVAILABLE badge for user-blocked days.

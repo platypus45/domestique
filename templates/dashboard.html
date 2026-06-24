@@ -736,6 +736,12 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
 }
 .twk-day .twk-done-badge { color: var(--green); font-weight: 700; font-size: 9px; }
 .twk-day .twk-missed-badge { color: var(--red); font-weight: 700; font-size: 9px; }
+/* issue #7 — race day, distinct amber/gold (A) / slate (C), separate from the
+   blue TODAY ring + green completed tint. */
+.twk-planned.twk-race { background: rgba(245,158,11,0.12); border-left: 3px solid var(--amber,#f59e0b); border-radius: 4px; padding: 2px 4px; }
+.twk-planned.twk-race-c { background: rgba(148,163,184,0.12); border-left-color: var(--text2,#94a3b8); }
+.twk-race .twk-race-tag { font-size: 9px; font-weight: 800; letter-spacing: 0.04em; color: var(--amber,#f59e0b); }
+.twk-race-c .twk-race-tag { color: var(--text2,#94a3b8); }
 
 /* v4.5.0 IMPL-UI Pillar C — full-cell tint based on TSS achievement
    (actual.tss / planned.tss). Layered on top of state classes so a
@@ -11782,7 +11788,20 @@ function renderThisWeekFromCalendar(data) {
 
     // Planned half
     let plannedHtml = '';
-    if (isUserBlocked && !actual) {
+    // issue #7 — a race day (A target or B/C) is the cell headline, distinct from
+    // training (🏁 + name + km/climb + est. duration), so race week is obvious here.
+    const _race = d.race || (planned && planned.is_race ? planned.race : null) || null;
+    if (_race) {
+      const _km = _race.km ? Math.round(_race.km) + 'km' : '';
+      const _cl = _race.climb_m ? ' · ' + Math.round(_race.climb_m) + 'm' : '';
+      const _eh = _race.est_duration_min ? (' · ~' + (Math.round(_race.est_duration_min / 60 * 10) / 10) + 'h') : '';
+      const _pr = String(_race.priority || 'A').toUpperCase();
+      plannedHtml = `<div class="twk-planned twk-race twk-race-${_pr.toLowerCase()}">
+        <div class="wc-type twk-race-tag">🏁 ${esc(_pr)} RACE</div>
+        <div class="wc-meta" style="font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(_race.name || 'Race')}</div>
+        <div class="wc-meta">${_km}${_cl}${_eh}</div>
+      </div>`;
+    } else if (isUserBlocked && !actual) {
       plannedHtml = `<div class="twk-planned"><div class="wc-type" style="font-size:10px;color:var(--red);opacity:0.75;letter-spacing:0.05em;">UNAVAILABLE</div></div>`;
     } else if (planned) {
       const phaseKey = (cur.phase || 'history').toLowerCase();
@@ -14123,6 +14142,22 @@ async function loadTodaySession() {
     if (!d.planned) return;
 
     const el = $('home-recommendation');
+    // issue #7 — today IS a race: show the race (name/distance/climb), not a
+    // training prescription. Click still opens the day detail.
+    if (d.is_race && d.race) {
+      const r = d.race;
+      const km = r.km ? Math.round(r.km) + 'km' : '';
+      const cl = r.climb_m ? ' · ' + Math.round(r.climb_m) + 'm climb' : '';
+      const eh = r.est_duration_min ? ' · ~' + (Math.round(r.est_duration_min / 60 * 10) / 10) + 'h' : '';
+      el.innerHTML =
+        `<div style="font-size:20px;font-weight:800;margin-bottom:4px;color:var(--amber,#f59e0b);">🏁 ${esc(String(r.priority || 'A'))} RACE</div>
+         <div style="font-size:15px;font-weight:700;margin-bottom:4px;">${esc(r.name || 'Race')}</div>
+         <div style="font-size:12px;color:var(--text2);">${km}${cl}${eh}</div>
+         <div style="font-size:11px;color:var(--text3);margin-top:8px;">Race day — taper's done. Go ride it.</div>`;
+      el.style.cursor = 'pointer';
+      el.onclick = () => openTodayRich();
+      return;
+    }
     const adj = d.adjusted || d.planned;
     const mod = d.was_modified;
     // v4.6.0 IMPL-HOMEPAGE-CONSISTENCY §3 Pillar D: hero shows the ORIGINAL

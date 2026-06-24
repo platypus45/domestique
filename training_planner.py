@@ -772,7 +772,12 @@ ACWR_CEILING     = 1.3
 # keeps SOME intensity earlier (Mujika), but VO2max/threshold intervals on the
 # event eve leave the legs flat — the last days must be easy openers. The day-3+
 # sharpener is still allowed (only days within this window are demoted).
-EVENT_EVE_EASY_DAYS = 2
+# v2.2.14 — final light/opener days before the A race. Bumped 2→3: the 12-day
+# taper phase already cuts volume (intensity kept, Mujika/Bosquet), and the
+# evidence (PLOS 2023 review; Mujika) is that the last ~2-3 days should be LIGHT
+# (short easy + openers), never complete rest — so the legs are fresh but not
+# detrained. _demote_hit_window keeps these days easy without zeroing them.
+EVENT_EVE_EASY_DAYS = 3
 # v1.9.2 — sanity ceiling for an availability-driven single session. The
 # availability calendar applies the user's per-day hours literally (bidirectional),
 # but caps here so a typo/extreme value (e.g. 10h) can't create an absurd session
@@ -1325,6 +1330,12 @@ class PlannedSession:
     is_double_threshold_pair: bool = False
     double_threshold_partner_id: str | None = None
     am_or_pm: str | None = None                      # "am" or "pm"
+    # v2.2.14 (issue #7) — this day IS a race (A target event or a B/C event).
+    # Set by _mark_race_days() AFTER taper passes: the day's training slot is
+    # replaced by the race itself (no stray endurance ride on race day), and the
+    # UI renders it distinctly. `race` carries {name, km, climb_m, type, priority}.
+    is_race: bool = False
+    race: dict | None = None
 
 
 # ── v4.4.0 — phase targets (CONCEPT-SCI §1, §5) ───────────────────────────────
@@ -5479,6 +5490,7 @@ def generate_plan(
     # a B/C race. Safe + a no-op without B/C events (the helper skips priority-A
     # and, when there's no A target_date, simply has no macro-taper span to dodge).
     _apply_secondary_event_tapers(weeks, goal)  # F7: B/C mini-tapers
+    _mark_race_days(weeks, goal)  # issue #7: race day shows the race, not a session
 
     # v1.8.21 — AUTHORITATIVE per-day availability clamp. Session durations are
     # set from matched ZWO files at FOUR sites (sampler + 3 utilization/
@@ -6263,7 +6275,7 @@ def _enforce_event_taper_eve(weeks: list, target_date, library=None,
 # F7 (v2.1): per-priority mini-taper window (IP_F7_research.md — short, intensity
 # preserved). B = 2 easy days before the race, C = 1. The A event is owned by the
 # macro taper + _enforce_event_taper_eve, never here.
-_EVENT_TAPER_DAYS = {"B": 2, "C": 1}
+_EVENT_TAPER_DAYS = {"B": 3, "C": 1}
 
 
 def _apply_secondary_event_tapers(weeks: list, goal, library=None) -> None:
@@ -6292,6 +6304,88 @@ def _apply_secondary_event_tapers(weeks: list, goal, library=None) -> None:
             continue
         _demote_hit_window(weeks, ed, _EVENT_TAPER_DAYS.get(prio, 1), lib,
                            desc=f"Mini-taper for your {prio} race — easy; keeps you fresh.")
+
+
+def _estimate_race_load(km: float, climb_m: float, event_type: str) -> tuple[int, int]:
+    """Rough duration (min) + TSS for a race day, so the calendar shows a sensible
+    number instead of 0. Flat-equivalent km / a type-typical speed → hours; TSS =
+    hours · IF² · 100 with the event-type IF ceiling. Estimate only — the real
+    load is recorded from the actual ride after the race."""
+    km = float(km or 0)
+    climb_m = float(climb_m or 0)
+    if km <= 0:
+        return 0, 0
+    flat_eq = km + (climb_m / 100.0) * CLIMB_TO_FLAT_KM_PER_100M
+    speed = {"crit": 38.0, "granfondo": 27.0, "sportive": 27.0, "century": 26.0,
+             "ultra": 22.0}.get((event_type or "granfondo").lower(), 26.0)
+    hours = flat_eq / speed
+    iff = EVENT_TYPE_IF.get((event_type or "granfondo").lower(), 0.74)
+    return int(round(hours * 60)), int(round(hours * iff * iff * 100))
+
+
+def _mark_race_days(weeks: list, goal) -> None:
+    """v2.2.14 (issue #7) — replace the training slot on every race date with the
+    RACE itself, so the calendar/This-Week/today show the race (not a stray 6h Z2)
+    and the rider can see it. Covers the A target event AND every B/C event in
+    goal.events — one pass, all add-race scenarios. Runs AFTER the taper passes so
+    it overrides whatever slot the taper left on the day. No-op when there are no
+    race dates in the plan window."""
+    races: dict = {}  # date -> meta
+    # A event — only when this is genuinely a race goal (has a date + a distance).
+    a_date = getattr(goal, "target_date", None)
+    a_km = float(getattr(goal, "event_km", 0) or 0)
+    if a_date and (getattr(goal, "goal_type", "") == "event" or a_km > 0):
+        races[a_date] = {
+            "name": getattr(goal, "event_name", "") or "Race",
+            "km": a_km,
+            "climb_m": float(getattr(goal, "event_climb_m", 0) or 0),
+            "type": getattr(goal, "event_type", "granfondo") or "granfondo",
+            "priority": "A",
+        }
+    # B/C events (TargetEvent objects or plain dicts — handle both).
+    for ev in (getattr(goal, "events", None) or []):
+        def _g(key, default=None):
+            return getattr(ev, key, None) if not isinstance(ev, dict) else ev.get(key, default)
+        ed = _g("date")
+        if isinstance(ed, str):
+            try:
+                ed = date.fromisoformat(ed[:10])
+            except ValueError:
+                ed = None
+        prio = (_g("priority", "B") or "B").upper()
+        if not ed or prio == "A":
+            continue
+        races.setdefault(ed, {
+            "name": _g("name", "") or f"{prio} race",
+            "km": float(_g("event_km", 0) or _g("km", 0) or 0),
+            "climb_m": float(_g("event_climb_m", 0) or _g("event_climb", 0) or 0),
+            "type": _g("event_type", "granfondo") or _g("type", "granfondo") or "granfondo",
+            "priority": prio,
+        })
+    if not races:
+        return
+    for wk in weeks:
+        for s in wk.sessions:
+            meta = races.get(s.day)
+            if not meta:
+                continue
+            dur, tss = _estimate_race_load(meta["km"], meta["climb_m"], meta["type"])
+            # Carry the race's own estimated duration/TSS in the meta so the UI
+            # shows the true race length (~9h for a 175km gran fondo) even though
+            # the day's session_type/duration gets clamped by the per-day hour cap.
+            meta = {**meta, "est_duration_min": dur, "est_tss": tss}
+            s.is_race = True
+            s.race = meta
+            s.session_type = "recovery"  # keep a known type; UI keys on is_race
+            s.zwo_file = ""
+            s.zwo_name = ""
+            s.matched = True
+            km_txt = f" — {int(meta['km'])}km" if meta["km"] else ""
+            climb_txt = f" / {int(meta['climb_m'])}m" if meta["climb_m"] else ""
+            s.description = f"🏁 {meta['priority']} RACE: {meta['name']}{km_txt}{climb_txt}"
+            if dur:
+                s.duration_min = dur
+                s.tss_estimate = tss
 
 
 def _enforce_ronnestad_floor(
@@ -7329,6 +7423,7 @@ def reforecast(
     # too (see regenerate_from_today). No-op for non-event goals.
     _enforce_event_taper_eve(plan_weeks, goal.target_date)
     _apply_secondary_event_tapers(plan_weeks, goal)  # F7: B/C mini-tapers
+    _mark_race_days(plan_weeks, goal)  # issue #7: race day shows the race, not a session
     return plan_weeks, {
         "action": action,
         "downshifts": len(downshifts),
@@ -8147,6 +8242,7 @@ def regenerate_from_today(
     # the event after a recalc. No-op for non-event goals (target_date None).
     _enforce_event_taper_eve(all_weeks, goal.target_date)
     _apply_secondary_event_tapers(all_weeks, goal)  # F7: B/C mini-tapers
+    _mark_race_days(all_weeks, goal)  # issue #7: race day shows the race, not a session
     return new_phases, all_weeks, regen_info
 
 
@@ -8927,6 +9023,7 @@ def refit_remaining_week(
     # non-event goals.
     _enforce_event_taper_eve(current_plan_weeks, goal.target_date)
     _apply_secondary_event_tapers(current_plan_weeks, goal)  # F7: B/C mini-tapers
+    _mark_race_days(current_plan_weeks, goal)  # issue #7: race day shows the race, not a session
     return current_plan_weeks, refit_info
 
 

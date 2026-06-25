@@ -184,13 +184,26 @@ if [ "$NOTARIZE_MODE" = "notarize" ]; then
         [ -n "$f" ] || continue
         nm -mu "$f" 2>/dev/null | grep -c NEWLAPACK
     done < "$MACHO_LIST_FILE" | awk '{s+=$1} END{print s+0}')
+    # STRONG (non-weak) refs to macOS-13 symbols = a hard dlopen failure on
+    # Monterey (this was the _mkfifoat bug). Weak refs are fine (bind to NULL +
+    # guarded at runtime). Catches a Homebrew-built Python/extension slipping in.
+    STRONG13=$(while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        # nm -mu = UNDEFINED imports only (skip defined _probe_* fns). A macOS-13
+        # symbol must be a 'weak' import; a strong (non-weak) one fails on 12.
+        nm -mu "$f" 2>/dev/null | grep -E "_mkfifoat|_mknodat" | grep -v "weak" \
+            | sed "s#\$#  ${f}#"
+    done < "$MACHO_LIST_FILE")
     if [ -n "$BAD_MINOS" ]; then
         echo "  ✗ FAIL — binaries still require > macOS 12:"; echo "$BAD_MINOS" | head; exit 1
     fi
     if [ "$NEWLAPACK" -ne 0 ]; then
         echo "  ✗ FAIL — $NEWLAPACK \$NEWLAPACK (macOS-13.3) symbol refs remain; numpy/scipy not on OpenBLAS"; exit 1
     fi
-    echo "  ✓ all Mach-O minos <= 12 and zero \$NEWLAPACK — Monterey-compatible"
+    if [ -n "$STRONG13" ]; then
+        echo "  ✗ FAIL — STRONG refs to macOS-13 symbols (won't load on Monterey):"; echo "$STRONG13" | head; exit 1
+    fi
+    echo "  ✓ all Mach-O minos <= 12, zero \$NEWLAPACK, no strong macOS-13 refs — Monterey-compatible"
 
     echo "[3b/9] Stripping PyInstaller's ad-hoc inner signatures..."
     while IFS= read -r f; do

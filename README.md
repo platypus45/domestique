@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4220-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v2.2.15-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v2.2.16-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-1967-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -46,6 +46,12 @@ Domestique is neither. Every signal that touches the dashboard also has a code-p
 Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus a 1-week consolidation phase at the end of every non-event cycle so people don't ride straight from a peak into a fresh build with elevated fatigue (Mujika 2010).
 
 ---
+
+## What's new in v2.2.16
+
+- **Really runs on macOS Monterey (12) / Big Sur (11) now** — v2.2.15's fix was incomplete (the
+  embedded Python was still built for newer macOS); the app's Python is now built for older macOS.
+  Same version, same features.
 
 ## What's new in v2.2.15
 
@@ -488,7 +494,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v2.2.15 — runs on macOS Monterey (12) / Big Sur (11)](https://github.com/platypus45/domestique/releases/latest)** (2026-06-24).
+Latest: **[v2.2.16 — macOS Monterey (12) / Big Sur (11) compatibility](https://github.com/platypus45/domestique/releases/latest)** (2026-06-24).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

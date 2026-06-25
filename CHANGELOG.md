@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.2.16 — macOS Monterey (12) / Big Sur (11): really fixed this time
+
+- **The Mac app now launches on Monterey (12) and Big Sur (11).** v2.2.15's fix was incomplete — the
+  embedded Python itself was still built for newer macOS and called system functions that don't exist
+  on Monterey, so it failed to open. The app's Python is now built for older macOS. Same Python
+  version, same features — it just runs where it should now.
+
 ## v2.2.15 — Runs on macOS Monterey (12) and Big Sur (11)
 
 - **The Mac app now launches on macOS Monterey (12) and Big Sur (11).** Recent builds were

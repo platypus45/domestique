@@ -5334,10 +5334,18 @@ def _route_summary(r: dict) -> dict:
         est_duration_min_z2 = int(round(km / 23.0 * 60))
     else:
         est_duration_min_z2 = stored
+    # Disk-accurate open locator derived from crs_path (the single source of
+    # truth). The logical `region` above is unreliable for opening — 21 routes
+    # are tagged netherlands_gravel/gravel/etc. but physically live in
+    # courses/gravel_europe/ — so the frontend opens via crs_region + file.
+    # crs_path itself stays out of the list shape (kept lightweight).
+    _crs = r.get("crs_path") or ""
     return {
         "id": r.get("id"),
         "name": r.get("name"),
         "region": r.get("region"),
+        "crs_region": (os.path.basename(os.path.dirname(_crs)) if _crs else None),
+        "file": os.path.basename(_crs) or None,
         "source": r.get("source"),
         "distance_km": r.get("distance_km"),
         "climb_m": r.get("climb_m"),
@@ -5987,10 +5995,13 @@ def api_virtual_routes(world: str = Query(None)):
     shaped = []
     for r in virt:
         reg = r.get("region", "")
+        _crs = r.get("crs_path") or ""
         shaped.append({
             **r,
             "world": REGION_TITLES.get(reg, reg),
             "world_slug": reg,
+            "crs_region": (os.path.basename(os.path.dirname(_crs)) if _crs else None),
+            "file": os.path.basename(_crs) or None,
             "slug": (r.get("id", "").split("/", 1)[1] if "/" in r.get("id", "") else r.get("id", "")),
             "url": r.get("id", ""),
             "km": r.get("distance_km", 0),

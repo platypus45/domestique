@@ -8458,8 +8458,11 @@ function renderVirtualRoutes(routes) {
     } else {
       elevHtml = '';
     }
-    // Click opens course detail using the course (CRS) endpoint — region is world_slug, file is r.file
-    h += `<div class="card course-card" style="cursor:pointer;" onclick="openCourseDetail('${escJs(worldSlug)}','${escJs(safeFile)}')">
+    // Click opens course detail using the course (CRS) endpoint. Open via the
+    // disk-accurate crs_region (some routes are tagged in a logical region that
+    // differs from their on-disk folder); fall back to world_slug.
+    const crsRegion = r.crs_region || worldSlug;
+    h += `<div class="card course-card" style="cursor:pointer;" onclick="openCourseDetail('${escJs(crsRegion)}','${escJs(safeFile)}')">
       <div class="course-header">
         <div class="course-name">${esc(r.name)}</div>
         <div style="display:flex;gap:4px;">${diffBadge(cat)}<span style="font-size:10px;color:var(--text2);padding:4px;">${diff}</span></div>

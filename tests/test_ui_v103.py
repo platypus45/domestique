@@ -54,10 +54,14 @@ class TestUIv103Smoke(unittest.TestCase):
         # Lead phrase from §6 locked copy verifies we wired the right block.
         self.assertIn("How your plan updates", html)
 
-    def test_load_missed_suggestions_function_defined(self):
-        """The new loadMissedSuggestions JS function must be defined."""
+    def test_missed_sessions_auto_rescheduled_no_banner(self):
+        """v2.3.0 — the manual "Reschedule missed sessions?" banner + its
+        loadMissedSuggestions() loader were removed; missed sessions are now
+        rescheduled automatically server-side. Lock the removal so the manual
+        prompt can't silently come back."""
         html = _read_dashboard()
-        self.assertIn("async function loadMissedSuggestions", html)
+        self.assertNotIn("async function loadMissedSuggestions", html)
+        self.assertNotIn('id="plan-missed-banner"', html)
 
 
 if __name__ == "__main__":

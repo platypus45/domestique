@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4220-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v2.2.16-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v2.3.0-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-1967-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -46,6 +46,23 @@ Domestique is neither. Every signal that touches the dashboard also has a code-p
 Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus a 1-week consolidation phase at the end of every non-event cycle so people don't ride straight from a peak into a fresh build with elevated fatigue (Mujika 2010).
 
 ---
+
+## What's new in v2.3.0
+
+- **Choose your own intensity mix.** The intensity model adds a **Custom** option: set how your
+  hard training splits across Tempo/Sweet-Spot, Threshold, VO2max and Sprint. The built-in models
+  (Polarized Base / FTP Builder) show their typical mix when you pick them, and after a plan is
+  generated it shows the **actual** training-type breakdown it produced — so what you ask for is
+  what you get.
+- **Swap any day to a different training type.** A new **Swap type** button in the day view lets you
+  pick a different workout type (VO2max, threshold, sprint, …) and duration — so you can do a VO2max
+  when you feel like it, even mid-Base. The rest of the plan re-balances automatically around it, and
+  the day stays put (it won't get auto-reverted). You can still **Rematch** for a different workout
+  of that type afterwards.
+- **Missed sessions reschedule themselves.** No more "reschedule missed sessions?" prompt — when you
+  miss a workout the plan now moves or re-fits it automatically.
+- **Open any climb again.** Fixed a "profile load failed" error when opening routes from the All
+  Routes and Virtual tabs.
 
 ## What's new in v2.2.16
 
@@ -480,8 +497,9 @@ When you finish a workout — outside, indoors, in any app — Domestique automa
 
 ### Manual override
 
-Two buttons in every workout-detail modal:
-- **Rematch workout** — forces a re-evaluation with current tolerances.
+Three buttons in every workout-detail modal:
+- **Rematch workout** — re-rolls a different workout of the *same* type with current tolerances.
+- **Swap type** — change the day to a *different* training type + duration; the day is pinned and the rest of the plan re-balances around it.
 - **Dismiss this session** — marks `status: dismissed` (stays visible greyed out, doesn't count toward missed).
 
 The week-level Plan settings panel has a "Rematch all this week" action that runs `rematch_week(week, activities, today)` and shows a preview before applying.
@@ -494,7 +512,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v2.2.16 — macOS Monterey (12) / Big Sur (11) compatibility](https://github.com/platypus45/domestique/releases/latest)** (2026-06-24).
+Latest: **[v2.3.0 — Custom intensity mix, swap any day's training type, automatic rescheduling](https://github.com/platypus45/domestique/releases/latest)** (2026-06-28).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

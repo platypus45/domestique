@@ -9872,6 +9872,17 @@ def _apply_plan_update(
     except Exception:  # noqa: BLE001 — reconcile is best-effort; never block adapt
         _log.exception("auto-reconcile skipped")
 
+    # v2.3.0 — AUTO-RESCHEDULE missed sessions (replaces the manual "reschedule
+    # missed sessions?" banner). Runs AFTER reconcile (misses are marked) and
+    # BEFORE gap/refit (those tiers see the already-relocated plan). A relocated
+    # session becomes pending, so the missed-hard refit tier won't also
+    # redistribute it; misses with no free in-week slot stay missed and fall
+    # through to the refit tier as before.
+    try:
+        _auto_apply_missed_moves(plan, today)
+    except Exception:  # noqa: BLE001 — best-effort; never block adapt
+        _log.exception("auto-reschedule skipped")
+
     # Reconstruct PlannedWeek list for gap detection (full-field round-trip so
     # past statuses are visible to detect_plan_gaps' actual-TSS sum).
     old_weeks = []
@@ -10701,6 +10712,271 @@ def api_plan_daily_adapt():
         return {"action": "error", "detail": "Plan projection failed", "projection_only": True}
 
 
+def _apply_move_session(
+    plan: dict, src_iso: str, dst_iso: str, reset_status_to_pending: bool = False
+) -> dict | None:
+    """Relocate the session at ``src_iso`` to ``dst_iso`` within ``plan['weeks']``
+    (in place). Same-ISO-week move only. Returns the moved-session payload, or
+    None if the move is invalid / the source session isn't found. Does NOT
+    persist — the caller writes the plan. Mirrors the /api/plan/move-session
+    mutation so both the endpoint and the auto-reschedule path share one impl.
+
+    ``reset_status_to_pending`` forces the relocated session to ``pending`` (used
+    by the auto-reschedule path: a rescheduled session is no longer "missed", so
+    the missed-hard refit tier won't also redistribute it).
+    """
+    try:
+        src_d = date.fromisoformat(src_iso)
+        dst_d = date.fromisoformat(dst_iso)
+    except ValueError:
+        return None
+    if src_iso == dst_iso:
+        return None
+    if src_d.isocalendar()[:2] != dst_d.isocalendar()[:2]:
+        return None
+
+    weeks_data = plan.get("weeks", [])
+
+    def _find_week_idx(target: date) -> int | None:
+        for i, w in enumerate(weeks_data):
+            try:
+                w_start = date.fromisoformat(w["start"])
+                w_end = date.fromisoformat(w["end"])
+            except (KeyError, ValueError):
+                continue
+            if w_start <= target <= w_end:
+                return i
+        return None
+
+    src_week_idx = _find_week_idx(src_d)
+    dst_week_idx = _find_week_idx(dst_d)
+    if src_week_idx is None or dst_week_idx is None:
+        return None
+
+    src_week = weeks_data[src_week_idx]
+    dst_week = weeks_data[dst_week_idx]
+    src_sessions = src_week.get("sessions", [])
+    dst_sessions = dst_week.get("sessions", [])
+    src_session = next((s for s in src_sessions if s.get("day") == src_iso), None)
+    if not src_session:
+        return None
+    dst_session = next((s for s in dst_sessions if s.get("day") == dst_iso), None)
+
+    moved_payload = {k: v for k, v in src_session.items()}
+    moved_payload["day"] = dst_iso
+    moved_payload["day_name"] = (
+        dst_session["day_name"] if dst_session else dst_d.strftime("%a")
+    )
+    moved_payload["user_moved"] = True
+    moved_payload["moved_from"] = src_iso
+    if reset_status_to_pending or moved_payload.get("status", "pending") == "pending":
+        moved_payload["status"] = "pending"
+
+    new_src = []
+    for s in src_sessions:
+        if s.get("day") == src_iso:
+            new_src.append({
+                "day": src_iso, "day_name": src_session["day_name"],
+                "session_type": "rest", "duration_min": 0,
+                "tss_estimate": 0, "description": f"Moved to {dst_iso}",
+                "zwo_file": "", "zwo_name": "",
+                "status": f"moved_from:{dst_iso}",
+                "user_moved": False, "moved_from": "",
+                "completion_matches": None, "dismissed_at": "",
+            })
+        elif src_week_idx == dst_week_idx and s.get("day") == dst_iso:
+            new_src.append(moved_payload)
+        else:
+            new_src.append(s)
+    if src_week_idx == dst_week_idx:
+        if not any(s.get("day") == dst_iso for s in new_src):
+            new_src.append(moved_payload)
+        src_week["sessions"] = new_src
+    else:
+        src_week["sessions"] = new_src
+        new_dst = []
+        placed = False
+        for s in dst_sessions:
+            if s.get("day") == dst_iso:
+                new_dst.append(moved_payload)
+                placed = True
+            else:
+                new_dst.append(s)
+        if not placed:
+            new_dst.append(moved_payload)
+        dst_week["sessions"] = new_dst
+
+    plan["last_move"] = {"date": src_iso, "new_date": dst_iso, "at": datetime.now().isoformat()}
+    return moved_payload
+
+
+def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
+    """Propose same-ISO-week reschedule slots for missed sessions (the six-rule
+    first-fit from MASTER §1). Pure over the given plan dict; shared by the
+    /api/plan/missed-suggestions endpoint and the auto-reschedule path."""
+    goal = plan.get("goal", {}) or {}
+    rest_days_idx = set(int(d) for d in goal.get("rest_days", []) or [])
+    avail_days_raw = goal.get("available_days")
+    if avail_days_raw is None:
+        avail_days_idx = set(d for d in range(7) if d not in rest_days_idx)
+    else:
+        avail_days_idx = set(int(d) for d in avail_days_raw)
+    availability = plan.get("availability", {}) or {}
+
+    try:
+        classifications = tp._load_content_classifications() or {}
+    except Exception:
+        classifications = {}
+    _missed_lib_by_file: dict[str, dict] = {}
+    try:
+        for _w in tp.load_workout_library():
+            _fname = _w.get("File")
+            if _fname:
+                _missed_lib_by_file[_fname] = _w
+    except Exception:
+        _missed_lib_by_file = {}
+
+    sess_by_day: dict[str, dict] = {}
+    for w in plan.get("weeks", []) or []:
+        for s in w.get("sessions", []) or []:
+            day_iso = s.get("day", "")
+            if day_iso:
+                sess_by_day[day_iso] = s
+
+    def _is_available_slot(d_iso: str, missed_iso: str) -> bool:
+        try:
+            d = date.fromisoformat(d_iso)
+        except ValueError:
+            return False
+        if d < today:
+            return False
+        if d_iso == missed_iso:
+            return False
+        try:
+            missed_d = date.fromisoformat(missed_iso)
+        except ValueError:
+            return False
+        if d.isocalendar()[:2] != missed_d.isocalendar()[:2]:
+            return False
+        wd = d.weekday()
+        if wd not in avail_days_idx:
+            return False
+        if wd in rest_days_idx:
+            return False
+        entry = availability.get(d_iso)
+        if isinstance(entry, dict) and entry.get("type") == "unavailable":
+            return False
+        sess = sess_by_day.get(d_iso)
+        if sess is None:
+            return False
+        if sess.get("session_type") != "rest":
+            return False
+        stat = (sess.get("status") or "")
+        if stat in ("done", "done_partial", "ambiguous"):
+            return False
+        if stat.startswith("moved_from:"):
+            return False
+        if sess.get("user_moved") is True:
+            return False
+        if sess.get("dismissed_at"):
+            return False
+        return True
+
+    misses: list[dict] = []
+    for w in plan.get("weeks", []) or []:
+        for s in w.get("sessions", []) or []:
+            if (s.get("status") or "") != "missed":
+                continue
+            if not s.get("day", ""):
+                continue
+            misses.append(s)
+    misses.sort(key=lambda s: s.get("day", ""))
+
+    used: set[str] = set()
+    suggestions: list[dict] = []
+    for miss in misses:
+        missed_iso = miss.get("day", "")
+        try:
+            missed_d = date.fromisoformat(missed_iso)
+        except ValueError:
+            continue
+        iso_year, iso_week = missed_d.isocalendar()[:2]
+        same_week_dates: list[str] = []
+        for d_iso in sess_by_day.keys():
+            try:
+                dd = date.fromisoformat(d_iso)
+            except ValueError:
+                continue
+            if dd.isocalendar()[:2] == (iso_year, iso_week):
+                same_week_dates.append(d_iso)
+        same_week_dates.sort()
+
+        chosen: str | None = None
+        chosen_reason: str = ""
+        for cand_iso in same_week_dates:
+            if cand_iso in used:
+                continue
+            if not _is_available_slot(cand_iso, missed_iso):
+                continue
+            chosen = cand_iso
+            cand_sess = sess_by_day.get(cand_iso, {})
+            chosen_reason = "rest_slot" if cand_sess.get("session_type") == "rest" else "unfilled_available_day"
+            break
+        if chosen is None:
+            continue
+
+        used.add(chosen)
+        try:
+            suggested_day_name = date.fromisoformat(chosen).strftime("%a")
+        except ValueError:
+            suggested_day_name = ""
+        sess_type = miss.get("session_type", "")
+        dur = int(miss.get("duration_min", 0) or 0)
+        summary_bits = []
+        if sess_type:
+            summary_bits.append(sess_type)
+        if dur:
+            summary_bits.append(f"{dur}min")
+        summary = ", ".join(summary_bits) if summary_bits else (miss.get("description") or "")
+        _missed_dn, _missed_zdur = _session_naming_lookup(
+            miss.get("zwo_file") or "", classifications, _missed_lib_by_file,
+        )
+        suggestions.append({
+            "missed_date": missed_iso,
+            "missed_session_type": sess_type,
+            "missed_summary": summary,
+            "missed_display_name": _missed_dn,
+            "missed_zwo_duration_min": _missed_zdur,
+            "suggested_date": chosen,
+            "suggested_day_name": suggested_day_name,
+            "reason": chosen_reason,
+        })
+    return suggestions
+
+
+def _auto_apply_missed_moves(plan: dict, today: date) -> list[dict]:
+    """Automatically relocate missed sessions to their suggested same-week slots
+    (replaces the old manual "reschedule missed sessions?" banner). Self-limiting:
+    a relocated session becomes ``pending`` and its origin a rest stub, so a
+    re-run finds nothing to move; a genuinely new miss (re-marked by reconcile)
+    is the only thing that triggers another move. Returns the applied moves."""
+    try:
+        suggestions = _compute_missed_suggestions(plan, today)
+    except Exception:
+        _log.exception("auto-reschedule: suggestion compute failed")
+        return []
+    applied: list[dict] = []
+    for s in suggestions:
+        src = s.get("missed_date")
+        dst = s.get("suggested_date")
+        if not src or not dst:
+            continue
+        moved = _apply_move_session(plan, src, dst, reset_status_to_pending=True)
+        if moved:
+            applied.append({"from": src, "to": dst})
+    return applied
+
+
 @app.post("/api/plan/move-session")
 async def api_plan_move_session(request: Request):
     """Move a session from one date to another (fix26 §6.2).
@@ -10805,68 +11081,13 @@ async def api_plan_move_session(request: Request):
                 {"error": "target_week_not_found", "date": dst_iso}, 422
             )
 
-        src_week = weeks_data[src_week_idx]
-        dst_week = weeks_data[dst_week_idx]
-        src_sessions = src_week.get("sessions", [])
-        dst_sessions = dst_week.get("sessions", [])
-        src_session = next((s for s in src_sessions if s.get("day") == src_iso), None)
-        dst_session = next((s for s in dst_sessions if s.get("day") == dst_iso), None)
-        if not src_session:
-            # v4.3.0 B1 — same 422 contract as the missing-week case so the
-            # frontend toast handler has a single error code to react on.
+        # Mutation is shared with the auto-reschedule path (_apply_move_session)
+        # so both apply the identical same-week relocation + rest-stub rewrite.
+        moved_payload = _apply_move_session(plan, src_iso, dst_iso)
+        if moved_payload is None:
             return JSONResponse(
                 {"error": "source_session_not_found", "date": src_iso}, 422
             )
-
-        moved_payload = {k: v for k, v in src_session.items()}
-        moved_payload["day"] = dst_iso
-        moved_payload["day_name"] = (
-            dst_session["day_name"] if dst_session else dst_d.strftime("%a")
-        )
-        moved_payload["user_moved"] = True
-        moved_payload["moved_from"] = src_iso
-        if moved_payload.get("status", "pending") == "pending":
-            moved_payload["status"] = "pending"
-
-        # Rewrite source week: replace src slot with a rest stub.
-        new_src = []
-        for s in src_sessions:
-            if s.get("day") == src_iso:
-                new_src.append({
-                    "day": src_iso, "day_name": src_session["day_name"],
-                    "session_type": "rest", "duration_min": 0,
-                    "tss_estimate": 0, "description": f"Moved to {dst_iso}",
-                    "zwo_file": "", "zwo_name": "",
-                    "status": f"moved_from:{dst_iso}",
-                    "user_moved": False, "moved_from": "",
-                    "completion_matches": None, "dismissed_at": "",
-                })
-            elif src_week_idx == dst_week_idx and s.get("day") == dst_iso:
-                # Same stored week — dst slot overwritten with moved payload.
-                new_src.append(moved_payload)
-            else:
-                new_src.append(s)
-        if src_week_idx == dst_week_idx:
-            # Dst was in same week; ensure it's actually present.
-            if not any(s.get("day") == dst_iso for s in new_src):
-                new_src.append(moved_payload)
-            src_week["sessions"] = new_src
-        else:
-            src_week["sessions"] = new_src
-            # Rewrite dst week separately.
-            new_dst = []
-            placed = False
-            for s in dst_sessions:
-                if s.get("day") == dst_iso:
-                    new_dst.append(moved_payload)
-                    placed = True
-                else:
-                    new_dst.append(s)
-            if not placed:
-                new_dst.append(moved_payload)
-            dst_week["sessions"] = new_dst
-
-        plan["last_move"] = {"date": src_iso, "new_date": dst_iso, "at": datetime.now().isoformat()}
 
         tp.atomic_write_plan(json_path, plan)
 
@@ -10898,168 +11119,9 @@ def api_plan_missed_suggestions():
         with open(json_path, encoding="utf-8") as f:
             plan = json.load(f)
 
-        goal = plan.get("goal", {}) or {}
-        rest_days_idx = set(int(d) for d in goal.get("rest_days", []) or [])
-        avail_days_raw = goal.get("available_days")
-        if avail_days_raw is None:
-            avail_days_idx = set(d for d in range(7) if d not in rest_days_idx)
-        else:
-            avail_days_idx = set(int(d) for d in avail_days_raw)
-        availability = plan.get("availability", {}) or {}
-
-        # v1.0.4 IMPL-WIRING — surface display_name + zwo_duration_min on each
-        # suggestion so the missed-session reschedule banner can render the
-        # canonical title (Layer 3) instead of the planner's session_type.
-        try:
-            classifications = tp._load_content_classifications() or {}
-        except Exception:
-            classifications = {}
-        _missed_lib_by_file: dict[str, dict] = {}
-        try:
-            for _w in tp.load_workout_library():
-                _fname = _w.get("File")
-                if _fname:
-                    _missed_lib_by_file[_fname] = _w
-        except Exception:
-            _missed_lib_by_file = {}
-
-        today = date.today()
-
-        # Index every session by ISO date for the rule §2 check.
-        sess_by_day: dict[str, dict] = {}
-        for w in plan.get("weeks", []) or []:
-            for s in w.get("sessions", []) or []:
-                day_iso = s.get("day", "")
-                if day_iso:
-                    sess_by_day[day_iso] = s
-
-        def _is_available_slot(d_iso: str, missed_iso: str) -> bool:
-            """Apply the locked six-rule "available slot" predicate."""
-            try:
-                d = date.fromisoformat(d_iso)
-            except ValueError:
-                return False
-            # Rule 1: D >= today
-            if d < today:
-                return False
-            # Rule 5: D is not the missed_date itself
-            if d_iso == missed_iso:
-                return False
-            # Rule 6: same ISO Mon-Sun week
-            try:
-                missed_d = date.fromisoformat(missed_iso)
-            except ValueError:
-                return False
-            if d.isocalendar()[:2] != missed_d.isocalendar()[:2]:
-                return False
-            # Rule 3: weekday in available_days AND not in rest_days
-            wd = d.weekday()
-            if wd not in avail_days_idx:
-                return False
-            if wd in rest_days_idx:
-                return False
-            # Rule 4: availability entry not "unavailable"
-            entry = availability.get(d_iso)
-            if isinstance(entry, dict) and entry.get("type") == "unavailable":
-                return False
-            # Rule 2: stored session at D must be rest + clean status
-            sess = sess_by_day.get(d_iso)
-            if sess is None:
-                return False
-            if sess.get("session_type") != "rest":
-                return False
-            stat = (sess.get("status") or "")
-            if stat in ("done", "done_partial", "ambiguous"):
-                return False
-            if stat.startswith("moved_from:"):
-                return False
-            if sess.get("user_moved") is True:
-                return False
-            if sess.get("dismissed_at"):
-                return False
-            return True
-
-        # Collect missed sessions with date metadata, sorted ascending
-        # by missed_date for greedy first-fit.
-        misses: list[dict] = []
-        for w in plan.get("weeks", []) or []:
-            for s in w.get("sessions", []) or []:
-                if (s.get("status") or "") != "missed":
-                    continue
-                d_iso = s.get("day", "")
-                if not d_iso:
-                    continue
-                misses.append(s)
-        misses.sort(key=lambda s: s.get("day", ""))
-
-        used: set[str] = set()
-        suggestions: list[dict] = []
-
-        for miss in misses:
-            missed_iso = miss.get("day", "")
-            try:
-                missed_d = date.fromisoformat(missed_iso)
-            except ValueError:
-                continue
-            iso_year, iso_week = missed_d.isocalendar()[:2]
-
-            # Walk all sessions in the same ISO week, ordered by date.
-            same_week_dates: list[str] = []
-            for d_iso in sess_by_day.keys():
-                try:
-                    dd = date.fromisoformat(d_iso)
-                except ValueError:
-                    continue
-                if dd.isocalendar()[:2] == (iso_year, iso_week):
-                    same_week_dates.append(d_iso)
-            same_week_dates.sort()
-
-            chosen: str | None = None
-            chosen_reason: str = ""
-            for cand_iso in same_week_dates:
-                if cand_iso in used:
-                    continue
-                if not _is_available_slot(cand_iso, missed_iso):
-                    continue
-                chosen = cand_iso
-                cand_sess = sess_by_day.get(cand_iso, {})
-                chosen_reason = "rest_slot" if cand_sess.get("session_type") == "rest" else "unfilled_available_day"
-                break
-
-            if chosen is None:
-                continue
-
-            used.add(chosen)
-            try:
-                suggested_d = date.fromisoformat(chosen)
-                suggested_day_name = suggested_d.strftime("%a")
-            except ValueError:
-                suggested_day_name = ""
-            sess_type = miss.get("session_type", "")
-            dur = int(miss.get("duration_min", 0) or 0)
-            summary_bits = []
-            if sess_type:
-                summary_bits.append(sess_type)
-            if dur:
-                summary_bits.append(f"{dur}min")
-            summary = ", ".join(summary_bits) if summary_bits else (miss.get("description") or "")
-            # v1.0.4 IMPL-WIRING — pull canonical title for the missed session.
-            _missed_dn, _missed_zdur = _session_naming_lookup(
-                miss.get("zwo_file") or "", classifications, _missed_lib_by_file,
-            )
-
-            suggestions.append({
-                "missed_date": missed_iso,
-                "missed_session_type": sess_type,
-                "missed_summary": summary,
-                "missed_display_name": _missed_dn,
-                "missed_zwo_duration_min": _missed_zdur,
-                "suggested_date": chosen,
-                "suggested_day_name": suggested_day_name,
-                "reason": chosen_reason,
-            })
-
-        return {"suggestions": suggestions}
+        # Delegates to the shared suggestion builder (also used by the
+        # auto-reschedule path in _apply_plan_update).
+        return {"suggestions": _compute_missed_suggestions(plan, date.today())}
 
     except Exception:
         _log.exception("missed-suggestions failed")

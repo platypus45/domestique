@@ -2064,13 +2064,8 @@ window.addEventListener('unhandledrejection', function(e) {
     </div>
   </details>
 
-  <!-- v1.0.3 IMPL-UI: missed-session reschedule banner — populated by
-       loadMissedSuggestions() from GET /api/plan/missed-suggestions. Hidden
-       until at least one suggestion fetched. Cloned from #plan-gap-alert. -->
-  <div id="plan-missed-banner" style="display:none;margin-bottom:12px;padding:12px 16px;background:rgba(234,179,8,0.1);border:1px solid var(--yellow);border-radius:var(--radius);">
-    <div style="font-weight:700;color:var(--yellow);margin-bottom:6px;font-size:13px;">Reschedule missed sessions?</div>
-    <div id="plan-missed-chips" style="display:flex;flex-direction:column;gap:6px;"></div>
-  </div>
+  <!-- v2.3.0 — the manual "Reschedule missed sessions?" banner was removed;
+       missed sessions are now auto-rescheduled server-side. -->
 
   <!-- v1.0.3 IMPL-UI: hidden info-popovers for the four (i) icons. Class
        .info-popover toggles via .open from the delegated handler below. -->
@@ -3103,7 +3098,6 @@ document.querySelectorAll('.tab[data-tab]').forEach(t => {
                        loadPlanMetrics();
                        initAvailCalendar();
                        loadCapabilityProjection();
-                       loadMissedSuggestions();
                      }, settings:()=>{loadSettings();loadIcuConnection();}, library:loadWorkouts,
                      dfa:()=>{ if (typeof loadDfaTab === 'function') loadDfaTab(); }};
     if (loaders[tab]) loaders[tab]();
@@ -3212,92 +3206,10 @@ function showToast(msg, duration=3000, kind=null) {
   });
 })();
 
-// ═══ v1.0.3 IMPL-UI: missed-session reschedule banner ═════════════════════
-// Fetches GET /api/plan/missed-suggestions on Plan-tab init (and on home init
-// for early discoverability). Renders chip-style "Move missed X to Y?" rows
-// above the calendar; [Move] POSTs /api/plan/move-session, [Dismiss] sets a
-// localStorage flag scoped to the missed_date.
-async function loadMissedSuggestions() {
-  const banner = document.getElementById('plan-missed-banner');
-  const chips = document.getElementById('plan-missed-chips');
-  if (!banner || !chips) return;
-  // Reset visibility first; if anything errors below, banner stays hidden.
-  banner.style.display = 'none';
-  chips.innerHTML = '';
-  let data = null;
-  try {
-    const res = await fetch('/api/plan/missed-suggestions');
-    if (!res.ok) return;
-    data = await res.json();
-  } catch (_) { return; }
-  const all = (data && Array.isArray(data.suggestions)) ? data.suggestions : [];
-  if (!all.length) return;
-  // Filter out per-missed_date dismissals stored in localStorage.
-  const visible = all.filter(s => {
-    try { return localStorage.getItem('missed-dismissed-' + s.missed_date) !== 'true'; }
-    catch (_) { return true; }
-  });
-  if (!visible.length) return;
-  const top3 = visible.slice(0, 3);
-  const more = visible.length - top3.length;
-  top3.forEach(s => {
-    const chip = document.createElement('div');
-    chip.className = 'missed-chip';
-    chip.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;color:var(--text);background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 10px;';
-    const dur = s.missed_summary || `${s.missed_session_type || 'session'}`;
-    const missedDay = s.missed_day_name || (s.missed_date || '').slice(5);
-    const sugDay = s.suggested_day_name || (s.suggested_date || '').slice(5);
-    chip.innerHTML = `<span>&#x1F501; Move missed <strong>${missedDay} ${s.missed_date}</strong> [${dur}] to <strong>${sugDay} ${s.suggested_date}</strong>?</span>
-      <span style="display:flex;gap:6px;">
-        <button class="btn btn-primary" style="font-size:11px;padding:3px 10px;" data-msug-act="move">Move</button>
-        <button class="btn" style="font-size:11px;padding:3px 10px;" data-msug-act="dismiss">Dismiss</button>
-      </span>`;
-    const moveBtn = chip.querySelector('[data-msug-act="move"]');
-    const dismissBtn = chip.querySelector('[data-msug-act="dismiss"]');
-    moveBtn.addEventListener('click', async () => {
-      moveBtn.disabled = true; dismissBtn.disabled = true;
-      try {
-        const res = await fetch('/api/plan/move-session', {
-          method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({date: s.missed_date, new_date: s.suggested_date}),
-        });
-        const ok = res.ok;
-        if (ok) {
-          try { showToast(`Moved to ${sugDay} ${s.suggested_date}`, 3000); } catch (_) {}
-          chip.remove();
-          if (!chips.children.length) banner.style.display = 'none';
-          try { await loadCalendar(); } catch (_) {}
-        } else {
-          let msg = 'Move failed';
-          try { const d = await res.json(); if (d && (d.error || d.detail)) msg = `Move failed: ${d.error || d.detail}`; } catch (_) {}
-          try { showToast(msg, 4000); } catch (_) {}
-          moveBtn.disabled = false; dismissBtn.disabled = false;
-        }
-      } catch (e) {
-        try { showToast('Move failed: network error', 3000); } catch (_) {}
-        moveBtn.disabled = false; dismissBtn.disabled = false;
-      }
-    });
-    dismissBtn.addEventListener('click', () => {
-      try { localStorage.setItem('missed-dismissed-' + s.missed_date, 'true'); } catch (_) {}
-      chip.remove();
-      if (!chips.children.length) banner.style.display = 'none';
-    });
-    chips.appendChild(chip);
-  });
-  if (more > 0) {
-    const moreEl = document.createElement('a');
-    moreEl.href = '#';
-    moreEl.textContent = `+${more} more`;
-    moreEl.style.cssText = 'font-size:11px;color:var(--text2);text-decoration:underline;cursor:pointer;align-self:flex-start;';
-    moreEl.addEventListener('click', (e) => {
-      e.preventDefault();
-      try { openMissedSessionsModal(); } catch (_) {}
-    });
-    chips.appendChild(moreEl);
-  }
-  banner.style.display = 'block';
-}
+// ═══ v2.3.0: missed-session auto-reschedule ════════════════════════════════
+// The old manual "Reschedule missed sessions?" banner + loadMissedSuggestions()
+// were removed. Missed sessions are now relocated automatically server-side by
+// _auto_apply_missed_moves (app.py), invoked on every plan-open / ride sync.
 
 // ═══ IMPORT FIT (v4.0.0-alpha) ════════════════════════════════════════════
 // The live-ride page is gone. Users ride in their own trainer app (MyWhoosh /

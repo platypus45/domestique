@@ -28,6 +28,14 @@ Before implementing:
 
 Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
 
+**The ladder (ponytail).** Before writing code, stop at the first rung that holds: (1) does it need to exist? (YAGNI) → (2) already in this codebase? reuse it → (3) stdlib does it? → (4) native platform feature? → (5) already-installed dependency? → (6) one line? → (7) only then the minimum that works. Run it *after* understanding the problem, never instead of — read the code the change touches and trace the real flow first.
+
+**Bug fix = root cause, not symptom.** A report names a symptom. Grep every caller of the function you touch and fix the shared function once, rather than patching only the path the ticket names (which leaves sibling callers broken).
+
+**Mark deliberate shortcuts** with a `ponytail:` comment that names the ceiling and upgrade path — e.g. `# ponytail: global lock, per-account if throughput matters`.
+
+Never lazy about: understanding the problem, validation at trust boundaries, error handling that prevents data loss, security, accessibility, or anything explicitly requested. For deeper enforcement on a given task, invoke the `/ponytail` skill (lite/full/ultra) — full text in `.claude/skills/ponytail/SKILL.md`.
+
 ## 3. Surgical Changes
 
 **Touch only what you must. Clean up only your own mess.**

@@ -1321,6 +1321,10 @@ class PlannedSession:
     status: str = "pending"
     user_moved: bool = False  # True if user dragged this session — never auto-repositioned by regen
     moved_from: str = ""      # ISO date string of original slot, set when user_moved=True
+    # v2.3.0: True if the user manually swapped this day to a different training
+    # TYPE (Swap-type button). Pins type+duration: reforecast/refit must NOT
+    # re-sample or auto-downshift it (the user's deliberate choice wins).
+    user_swapped: bool = False
     completion_matches: list = None  # list of {activity_id, tss, duration_min, match_score, match_axes}
     dismissed_at: str = ""    # ISO timestamp when user dismissed this prescription
     # ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ──────────────────
@@ -7312,6 +7316,8 @@ def reforecast(
                     continue  # today + past already handled by daily_adapt_plan
                 if s.session_type not in _HARD_SESSION_TYPES:
                     continue
+                if getattr(s, "user_swapped", False):
+                    continue  # v2.3.0: user's manual type-swap is pinned
                 tsb = _tsb_at(s.day)
                 if tsb is None:
                     continue
@@ -7384,6 +7390,8 @@ def reforecast(
                     continue
                 if s.adapted:
                     continue  # already touched by TSB loop above
+                if getattr(s, "user_swapped", False):
+                    continue  # v2.3.0: user's manual type-swap is pinned
                 new_type = _drop_intensity(s.session_type)
                 if new_type == s.session_type:
                     continue
@@ -7626,6 +7634,8 @@ def _plan_dict_to_planned_weeks(plan_dict: dict) -> list[PlannedWeek]:
                 zwo_file=s_json.get("zwo_file", "") or "",
                 zwo_name=s_json.get("zwo_name", "") or "",
                 status=s_json.get("status", "pending"),
+                # v2.3.0: carry the swap pin so reforecast won't re-sample/demote it.
+                user_swapped=bool(s_json.get("user_swapped", False)),
             ))
         pw_list.append(PlannedWeek(
             week_num=w.get("week_num", 0), start=ws, end=we,
@@ -8806,6 +8816,8 @@ def _refit_session_frozen(s, today: date) -> bool:
         return True
     if getattr(s, "adapted", False) or getattr(s, "user_moved", False):
         return True
+    if getattr(s, "user_swapped", False):
+        return True  # v2.3.0: pinned manual type-swap
     if getattr(s, "status", "pending") != "pending":
         return True
     if getattr(s, "dismissed_at", ""):

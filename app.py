@@ -13090,6 +13090,155 @@ async def api_plan_accept_redraw(request: Request):
         return JSONResponse({"detail": "accept-redraw failed"}, 500)
 
 
+# v2.3.0 — valid Swap-type targets (user-facing training types → engine keys).
+_SWAP_TYPES = {"recovery", "z2", "tempo", "sweetspot", "threshold",
+               "overunder", "vo2max", "sprint"}
+
+
+def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: int) -> dict:
+    """Mutate the session at ``day_iso`` to ``new_type`` + ``new_dur``, pin it
+    (user_swapped → reforecast/refit won't demote it), match a workout for the
+    new type, then reforecast the rest of the plan so downstream load rebalances.
+    Caller persists via ``tp.atomic_write_plan``."""
+    target = None
+    target_week = None
+    for w in plan.get("weeks", []):
+        for s in w.get("sessions", []):
+            if s.get("day") == day_iso:
+                target, target_week = s, w
+                break
+        if target:
+            break
+    if not target:
+        raise ValueError(f"No session at {day_iso}")
+
+    tss_per_h = tp.TSS_PER_HOUR.get(new_type, 60)
+    target["session_type"] = new_type
+    target["duration_min"] = int(new_dur)
+    target["tss_estimate"] = round(new_dur / 60 * tss_per_h)
+    target["status"] = "pending"
+    target["user_swapped"] = True   # pin: the user's deliberate choice wins
+    target["adapted"] = False
+    target["zwo_file"] = ""
+    target["zwo_name"] = ""
+
+    # Match a workout for the NEW type so the day shows a real session (the user
+    # can Rematch afterward). Best-effort — a missing match leaves the type set.
+    try:
+        excluded = {s.get("zwo_name") for s in (target_week.get("sessions", []) if target_week else []) if s.get("zwo_name")}
+        planned = tp.PlannedSession(
+            day=date.fromisoformat(day_iso), day_name=target.get("day_name", ""),
+            session_type=new_type, duration_min=int(new_dur),
+            tss_estimate=float(target["tss_estimate"]), description="",
+        )
+        library = tp.load_workout_library()
+        week_num = target_week.get("week_num", 0) if target_week else 0
+        try:
+            day_idx = (date.fromisoformat(day_iso) - date.fromisoformat(target_week["start"])).days
+        except Exception:
+            day_idx = 0
+        tp.match_zwo(planned, library, week_num=week_num, day_idx=day_idx,
+                     used_names=excluded, raise_on_empty=False)
+        if planned.zwo_file:
+            target["zwo_file"] = planned.zwo_file
+            target["zwo_name"] = planned.zwo_name
+            if getattr(planned, "duration_min", None):
+                target["duration_min"] = int(planned.duration_min)
+            if getattr(planned, "tss_estimate", None):
+                target["tss_estimate"] = round(float(planned.tss_estimate))
+    except Exception:
+        _log.exception("swap-type match_zwo skipped")
+
+    plan["last_swap_day"] = {"date": day_iso, "at": datetime.now().isoformat(),
+                             "new_type": new_type}
+
+    # Reforecast the rest (mirror accept-redraw). The pinned swapped day is
+    # protected by the user_swapped guards in reforecast + refit.
+    sessions_modified = 0
+    try:
+        try:
+            activities = db.query_activities(days=120)
+        except Exception:
+            activities = []
+        try:
+            training = cached("training", get_today_metrics)
+        except Exception:
+            training = {}
+        current_tsb = training.get("tsb")
+        tsb_series = None
+        if current_tsb is not None:
+            tsb_series = {}
+            for w in plan.get("weeks", []) or []:
+                try:
+                    ws = date.fromisoformat(w["start"])
+                except (KeyError, ValueError, TypeError):
+                    continue
+                for i in range(7):
+                    tsb_series[ws + timedelta(days=i)] = current_tsb
+        availability_overrides = {
+            d2: float(entry["hours"])
+            for d2, entry in plan.get("availability", {}).items()
+            if isinstance(entry, dict) and "hours" in entry
+        }
+        plan, sessions_modified, _ri = tp.reforecast_dict(
+            plan, today_iso=date.today().isoformat(),
+            tsb_series=tsb_series, recent_activities=activities,
+            availability_overrides=availability_overrides,
+        )
+    except Exception:
+        _log.exception("swap-type reforecast skipped")
+
+    return {"ok": True, "day": day_iso, "session_type": new_type,
+            "duration_min": target["duration_min"], "tss_estimate": target["tss_estimate"],
+            "zwo_file": target.get("zwo_file", ""), "zwo_name": target.get("zwo_name", ""),
+            "sessions_modified": sessions_modified}
+
+
+@app.post("/api/plan/swap-type")
+async def api_plan_swap_type(request: Request):
+    """v2.3.0 — swap a single day to a DIFFERENT training type + duration, then
+    reforecast the rest. The swapped day is pinned; Rematch still works after.
+
+    Body: ``{"date":"YYYY-MM-DD", "session_type":"vo2max", "duration_min": 60}``
+    """
+    body = await _get_json_body(request)
+    day_iso = str(body.get("date") or "").strip()
+    new_type = str(body.get("session_type") or "").strip()
+    try:
+        new_dur = int(body.get("duration_min") or 0)
+    except (TypeError, ValueError):
+        new_dur = 0
+    if not day_iso or not new_type:
+        return JSONResponse({"error": "date + session_type required"}, 400)
+    try:
+        date.fromisoformat(day_iso)
+    except ValueError:
+        return JSONResponse({"error": "Invalid date format"}, 400)
+    if new_type not in _SWAP_TYPES:
+        return JSONResponse({"error": f"Unknown session_type: {new_type}"}, 400)
+    # Clamp duration to the type ceiling (e.g. vo2max ≤75, sprint ≤45); floor 30.
+    ceil = tp.TYPE_CEILING.get(new_type)
+    new_dur = new_dur or 60
+    if ceil:
+        new_dur = min(new_dur, ceil)
+    new_dur = max(new_dur, 30)
+
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+        result = _swap_session_type_apply(plan, day_iso, new_type, new_dur)
+        tp.atomic_write_plan(json_path, plan)
+        return result
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, 400)
+    except Exception:
+        _log.exception("Plan swap-type failed")
+        return JSONResponse({"detail": "swap-type failed"}, 500)
+
+
 @app.post("/api/plan/rematch/{day}")
 async def api_plan_rematch_day(day: str):
     """P6 (v4.1.0) — re-draw a single day's workout.

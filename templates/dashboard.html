@@ -14548,8 +14548,10 @@ async function openDayWorkout(sessionIdx) {
   // (FIX-SERVER P6) and animates the new workout inline; falls back to the
   // week-level classifier rematch if re-draw isn't available yet.
   html += `<div id="rematch-result-${session.day}" style="margin-top:16px;"></div>`;
+  html += `<div id="swap-result-${session.day}" style="margin-top:8px;"></div>`;
   html += `<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
     <button class="btn" onclick="rematchDaySession('${session.day}')" style="font-size:12px;">&#x21bb; Rematch workout</button><span class="info-icon" data-popover="planpop-rematch" tabindex="0" role="button" aria-label="What does Rematch workout do?" title="Re-rolls only this one day's ZWO from the matching workout pool.">i</span>
+    <button class="btn" onclick="swapTypeOpen('${session.day}')" style="font-size:12px;">&#x21c4; Swap type</button><span class="info-icon" tabindex="0" role="button" aria-label="What does Swap type do?" title="Change this day to a different training type (e.g. a VO2max in a base week) — matches a workout and rebalances the rest of the plan. Rematch still works after.">i</span>
   </div>`;
 
   // fix26 §6.8 — Dismiss / Un-dismiss action surfaces in the day modal
@@ -14561,6 +14563,51 @@ async function openDayWorkout(sessionIdx) {
   }
 
   openModal(html);
+}
+
+// ═══ v2.3.0: Swap training type ════════════════════════════════════════════
+// "Swap type" lets the user change a day to a DIFFERENT training type + duration
+// (e.g. a VO2max while in a base block). The backend pins the day, matches a
+// workout, and rebalances the rest of the plan; Rematch still works afterward.
+function swapTypeOpen(day) {
+  const el = document.getElementById('swap-result-' + day);
+  if (!el) return;
+  const types = [['recovery','Recovery'],['z2','Endurance (Z2)'],['tempo','Tempo'],
+    ['sweetspot','Sweet Spot'],['threshold','Threshold'],['overunder','Over/Under'],
+    ['vo2max','VO2max'],['sprint','Sprint']];
+  const durs = [30,45,60,90,120];
+  el.innerHTML = `<div style="padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);">
+    <div style="font-size:12px;font-weight:600;margin-bottom:6px;">Swap to a different training type</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+      <select id="swap-type-${day}" style="font-size:12px;">${types.map(t=>`<option value="${t[0]}">${t[1]}</option>`).join('')}</select>
+      <select id="swap-dur-${day}" style="font-size:12px;">${durs.map(d=>`<option value="${d}"${d===60?' selected':''}>${d} min</option>`).join('')}</select>
+      <button class="btn btn-primary" style="font-size:12px;" onclick="swapTypeApply('${day}')">Apply</button>
+      <button class="btn" style="font-size:12px;" onclick="document.getElementById('swap-result-${day}').innerHTML=''">Cancel</button>
+    </div>
+    <div style="font-size:10px;color:var(--text3);">Matches a workout for the new type and rebalances the rest of your plan. Long durations are capped to what each type allows.</div>
+  </div>`;
+}
+async function swapTypeApply(day) {
+  const t = (document.getElementById('swap-type-' + day) || {}).value;
+  const d = parseInt((document.getElementById('swap-dur-' + day) || {}).value) || 60;
+  const el = document.getElementById('swap-result-' + day);
+  if (el) el.innerHTML = '<div style="font-size:12px;color:var(--text2);padding:8px;">Swapping + rebalancing…</div>';
+  try {
+    const res = await fetch('/api/plan/swap-type', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({date: day, session_type: t, duration_min: d}),
+    });
+    const j = await res.json();
+    if (!res.ok || j.error) {
+      if (el) el.innerHTML = `<div style="font-size:12px;color:var(--red);padding:8px;">Swap failed: ${esc(j.error || ('HTTP ' + res.status))}</div>`;
+      return;
+    }
+    try { showToast(`Swapped to ${t} (${j.duration_min}min)`, 3000); } catch(_) {}
+    closeModal();
+    try { await loadCalendar(); } catch(_) {}
+  } catch(e) {
+    if (el) el.innerHTML = `<div style="font-size:12px;color:var(--red);padding:8px;">Swap failed: ${esc(e.message)}</div>`;
+  }
 }
 
 // v1.7.0 — Per-session rematch with Accept / Decline / Reshuffle UX.

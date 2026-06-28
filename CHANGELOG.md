@@ -1,5 +1,21 @@
 # Changelog
 
+## v2.3.0 — Custom intensity mix, swap any day's training type, automatic rescheduling
+
+- **Choose your own intensity mix.** The intensity model now has a **Custom** option: set how
+  your hard training is split across Tempo/Sweet-Spot, Threshold, VO2max and Sprint. The built-in
+  models show their typical mix when you pick them, and after you generate a plan it shows the
+  **actual** training-type breakdown it produced — so what you ask for is what you get.
+- **Swap a day's training type.** Every day's detail view has a new **Swap type** button: pick a
+  different type — even a VO2max in the middle of a base block — and a duration, and that day
+  changes, gets a matching workout, and the rest of your plan rebalances around it. You can still
+  re-roll the workout afterwards.
+- **Missed sessions reschedule themselves.** The "Reschedule missed sessions?" prompt is gone.
+  Miss a session and the plan now moves it to a free day that same week automatically — nothing to
+  click.
+- **Climbs open from every tab again.** Opening a climb from the All Routes or Virtual tabs failed
+  with a "profile load failed" error. Routes now open correctly from all tabs.
+
 ## v2.2.16 — macOS Monterey (12) / Big Sur (11): really fixed this time
 
 - **The Mac app now launches on Monterey (12) and Big Sur (11).** v2.2.15's fix was incomplete — the

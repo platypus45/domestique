@@ -2136,33 +2136,13 @@ window.addEventListener('unhandledrejection', function(e) {
       <!-- J1 (v2.1.0): intensity-distribution is a user choice, not forced polarized. -->
       <div class="form-row">
         <div class="form-group"><label>Intensity Model</label>
-          <select id="plan-distribution" onchange="onDistributionChange()"
-                  title="How hard sessions are spread across zones. Polarized (default): mostly easy + a little very-hard (needs volume). Pyramidal: more threshold than VO2. Threshold: sweet-spot / at-FTP focus. Custom: set your own intensity split.">
+          <select id="plan-distribution" onchange="refreshPlanPreview()"
+                  title="How hard sessions are spread across zones. Polarized (default): mostly easy + a little very-hard (needs volume). Pyramidal: more threshold than VO2. Threshold: sweet-spot / at-FTP focus. (For a fully custom split, pick Plan style → Template → Custom.)">
             <option value="polarized" selected>Polarized (default)</option>
             <option value="pyramidal">Pyramidal</option>
             <option value="threshold">Threshold / Sweet-spot</option>
-            <option value="custom">Custom (set %)</option>
           </select>
         </div>
-      </div>
-      <!-- v2.3.0: % distribution readout (typical for presets; realized after
-           generating) + editable split when Custom is chosen. -->
-      <div id="plan-dist-readout" style="font-size:11px;color:var(--text2);margin:-2px 0 8px;"></div>
-      <div id="plan-custom-bands" style="display:none;margin:0 0 10px;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);">
-        <div style="font-size:12px;font-weight:600;margin-bottom:6px;">Custom intensity split
-          <span style="font-weight:400;color:var(--text2);">— how to distribute your hard/intensity work (easy/Z2 volume stays science-based). These are targets; the realized mix shows after you generate.</span>
-        </div>
-        <div class="form-row" style="gap:8px;flex-wrap:wrap;">
-          <div class="form-group"><label style="font-size:11px;">Tempo / Sweet-Spot %</label>
-            <input type="number" id="cb-tempo_ss" min="0" max="100" value="40" oninput="onCustomBandsInput()" style="width:64px;"></div>
-          <div class="form-group"><label style="font-size:11px;">Threshold %</label>
-            <input type="number" id="cb-threshold" min="0" max="100" value="30" oninput="onCustomBandsInput()" style="width:64px;"></div>
-          <div class="form-group"><label style="font-size:11px;">VO2max %</label>
-            <input type="number" id="cb-vo2" min="0" max="100" value="20" oninput="onCustomBandsInput()" style="width:64px;"></div>
-          <div class="form-group"><label style="font-size:11px;">Sprint %</label>
-            <input type="number" id="cb-sprint" min="0" max="100" value="10" oninput="onCustomBandsInput()" style="width:64px;"></div>
-        </div>
-        <div id="cb-sum" style="font-size:11px;color:var(--text2);"></div>
       </div>
       <!-- F1 (v2.1): opt-in block periodization (default off). -->
       <div class="form-row">
@@ -2182,11 +2162,32 @@ window.addEventListener('unhandledrejection', function(e) {
           </select>
         </div>
         <div class="form-group" id="plan-template-group" style="display:none;"><label>Template</label>
-          <select id="plan-template" onchange="refreshPlanPreview()">
+          <select id="plan-template" onchange="onTemplateChange()">
             <option value="polarized_base">Polarized Base</option>
             <option value="ftp_builder">FTP Builder</option>
+            <option value="custom">Custom (set %)</option>
           </select>
         </div>
+      </div>
+      <!-- v2.3.0: intensity mix for the selected template — typical % for the
+           presets, an editable split for Custom; the realized mix replaces it
+           after you generate. Shown only when Plan style = Template. -->
+      <div id="plan-dist-readout" style="font-size:11px;color:var(--text2);margin:-2px 0 8px;"></div>
+      <div id="plan-custom-bands" style="display:none;margin:0 0 10px;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);">
+        <div style="font-size:12px;font-weight:600;margin-bottom:6px;">Custom intensity split
+          <span style="font-weight:400;color:var(--text2);">— how to split your hard/intensity work (easy/Z2 volume stays science-based). Targets; the realized mix shows after you generate.</span>
+        </div>
+        <div class="form-row" style="gap:8px;flex-wrap:wrap;">
+          <div class="form-group"><label style="font-size:11px;">Tempo / Sweet-Spot %</label>
+            <input type="number" id="cb-tempo_ss" min="0" max="100" value="40" oninput="onCustomBandsInput()" style="width:64px;"></div>
+          <div class="form-group"><label style="font-size:11px;">Threshold %</label>
+            <input type="number" id="cb-threshold" min="0" max="100" value="30" oninput="onCustomBandsInput()" style="width:64px;"></div>
+          <div class="form-group"><label style="font-size:11px;">VO2max %</label>
+            <input type="number" id="cb-vo2" min="0" max="100" value="20" oninput="onCustomBandsInput()" style="width:64px;"></div>
+          <div class="form-group"><label style="font-size:11px;">Sprint %</label>
+            <input type="number" id="cb-sprint" min="0" max="100" value="10" oninput="onCustomBandsInput()" style="width:64px;"></div>
+        </div>
+        <div id="cb-sum" style="font-size:11px;color:var(--text2);"></div>
       </div>
       <div id="plan-event-fields">
         <div class="form-row">
@@ -9600,7 +9601,7 @@ function onPlanModeChange() {
   const mode = ($('plan-mode') || {}).value || 'auto';
   const grp = $('plan-template-group');
   if (grp) grp.style.display = (mode === 'template') ? '' : 'none';
-  refreshPlanPreview();
+  onTemplateChange();  // readout + custom editor follow mode+template (also refreshes the preview)
 }
 
 // v4.6.0 B2: live phase preview — call /api/plan/preview so the right
@@ -10058,11 +10059,12 @@ function readBcRaces() {
   return out;
 }
 
-// ═══ v2.3.0: intensity-distribution % readout + custom split ════════════════
-const PRESET_TYPICAL_BANDS = {
-  polarized: {easy:80, tempo_ss:4, threshold:6, vo2:8, sprint:2},
-  pyramidal: {easy:78, tempo_ss:13, threshold:6, vo2:3, sprint:0},
-  threshold: {easy:78, tempo_ss:16, threshold:5, vo2:1, sprint:0},
+// ═══ v2.3.0: template intensity-mix % readout + custom split ════════════════
+// Typical % shown when a Template preset is picked (display only — the realized
+// mix is computed from the generated plan and replaces this after Generate).
+const TEMPLATE_TYPICAL_BANDS = {
+  polarized_base: {easy:80, tempo_ss:3, threshold:5, vo2:10, sprint:2},
+  ftp_builder:    {easy:72, tempo_ss:18, threshold:8, vo2:2, sprint:0},
 };
 const _BAND_LABELS = {easy:'Easy', tempo_ss:'Tempo/SS', threshold:'Thr', vo2:'VO2', sprint:'Sprint'};
 function _fmtBands(b, prefix) {
@@ -10084,14 +10086,19 @@ function onCustomBandsInput() {
     el.style.color = off ? 'var(--yellow)' : 'var(--text2)';
   }
 }
-function onDistributionChange() {
-  const model = ($('plan-distribution')||{}).value || 'polarized';
+// Drives the % readout + custom editor off the TEMPLATE selector (only when
+// Plan style = Template). Custom → editable split; presets → typical mix.
+function onTemplateChange() {
+  const mode = ($('plan-mode')||{}).value || 'auto';
+  const tmpl = ($('plan-template')||{}).value || '';
+  const isTemplate = (mode === 'template');
   const custom = $('plan-custom-bands');
-  if (custom) custom.style.display = (model === 'custom') ? 'block' : 'none';
+  if (custom) custom.style.display = (isTemplate && tmpl === 'custom') ? 'block' : 'none';
   const ro = $('plan-dist-readout');
   if (ro) {
-    if (model === 'custom') { ro.textContent = ''; onCustomBandsInput(); }
-    else ro.textContent = _fmtBands(PRESET_TYPICAL_BANDS[model], 'Typical mix: ');
+    if (!isTemplate) ro.textContent = '';
+    else if (tmpl === 'custom') { ro.textContent = ''; onCustomBandsInput(); }
+    else ro.textContent = _fmtBands(TEMPLATE_TYPICAL_BANDS[tmpl], 'Typical mix: ');
   }
   if (typeof refreshPlanPreview === 'function') refreshPlanPreview();
 }
@@ -10134,9 +10141,10 @@ async function generatePlan() {
     plan_mode: ($('plan-mode') || {}).value || 'auto',  // FS1
     template_id: (($('plan-mode') || {}).value === 'template')
       ? (($('plan-template') || {}).value || '') : '',  // FS1
-    // v2.3.0: send the custom split only when the Custom intensity model is
-    // selected; the backend then drives the dynamic custom blueprint.
-    custom_bands: ((($('plan-distribution')||{}).value) === 'custom') ? getCustomBands() : undefined,
+    // v2.3.0: send the custom split only when the Custom TEMPLATE is selected;
+    // a non-empty custom_bands makes the backend drive template_id=custom.
+    custom_bands: ((($('plan-mode')||{}).value === 'template') && (($('plan-template')||{}).value === 'custom'))
+      ? getCustomBands() : undefined,
   };
   if (body.goal === 'event') {
     body.event_date = $('plan-edate').value || null;
@@ -11997,21 +12005,24 @@ function populatePlanFormFromGoal(goal) {
   // refreshPlanPreview() at the end repaints with everything restored.
   setVal('plan-goal', goal.type);
   try { togglePlanFields(); } catch (_) {}
-  setVal('plan-distribution', goal.distribution || 'polarized');
+  // Intensity Model no longer carries "custom" (that moved to the Template
+  // picker); a saved custom plan persists distribution="custom", so show the
+  // model as polarized and restore the real custom split under the template.
+  setVal('plan-distribution', (goal.distribution === 'custom') ? 'polarized' : (goal.distribution || 'polarized'));
   const bp = $('plan-block-periodization'); if (bp) bp.checked = !!goal.block_periodization;
   setVal('plan-mode', goal.plan_mode || 'auto');
   if (goal.template_id) setVal('plan-template', goal.template_id);
-  // v2.3.0: custom distribution is driven by the intensity-model selector, not
-  // the template picker — present it that way on reload + restore the split.
-  if ((goal.distribution || '') === 'custom') {
-    setVal('plan-mode', 'auto');
+  // v2.3.0: a custom plan round-trips as template_id=custom — present it as
+  // Plan style → Template → Custom and restore the split.
+  if ((goal.template_id || '') === 'custom' || (goal.distribution || '') === 'custom') {
+    setVal('plan-mode', 'template');
+    setVal('plan-template', 'custom');
     const _cb = goal.custom_bands || {};
     const _sv = (id, v) => { const e = $(id); if (e && v != null) e.value = Math.round(v); };
     _sv('cb-tempo_ss', _cb.tempo_ss); _sv('cb-threshold', _cb.threshold);
     _sv('cb-vo2', _cb.vo2); _sv('cb-sprint', _cb.sprint);
   }
-  try { onPlanModeChange(); } catch (_) {}   // un-hide the template picker if mode=template
-  try { onDistributionChange(); } catch (_) {}   // v2.3.0 show custom editor + % readout
+  try { onPlanModeChange(); } catch (_) {}   // un-hide template picker + populate readout/custom editor
   setVal('plan-edate', goal.event_date || '');
   setVal('plan-ename', goal.event_name || '');
   if (goal.event_km) setVal('plan-ekm', goal.event_km);

@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.3.1 — Custom intensity mix moved onto the Template picker (2026-06-28)
+
+A fix for v2.3.0: the intensity-mix percentages and the editable custom split were attached to the wrong control, so the built-in templates showed no percentages and there was no place to enter your own. They now live on the plan Template picker, where you'd expect them.
+
+### What changes for users
+
+- Pick **Plan style → Template** and the template's typical training-type mix now shows (e.g. Polarized Base ≈ 80% easy with a VO2max lean; FTP Builder ≈ 72% easy with a sweet-spot lean).
+- Choose the new **Custom** template to set your own split across Tempo/Sweet-Spot, Threshold, VO2max and Sprint, with a live check that it totals 100%.
+- After you generate a plan, the readout switches to the **actual** training-type mix it produced.
+
 ## v2.3.0 — Custom intensity mix, swap any day's training type, automatic rescheduling
 
 - **Choose your own intensity mix.** The intensity model now has a **Custom** option: set how

@@ -8912,13 +8912,21 @@ async def api_plan_generate(request: Request):
             last_ftp_test_date=body.get("last_ftp_test_date"),
             # J1 (v2.1.0): intensity-distribution model is a user choice
             # (polarized default; pyramidal / threshold). Not hard-forced.
-            distribution=body.get("distribution", _prefs.get("distribution", "polarized")),
+            # v2.3.0: a non-empty custom_bands payload selects the "custom" model.
+            distribution=("custom" if _parse_custom_bands(body.get("custom_bands"))
+                          else body.get("distribution", _prefs.get("distribution", "polarized"))),
             # F1 (v2.1): opt-in block periodization (default off).
             block_periodization=bool(body.get("block_periodization", _prefs.get("block_periodization", False))),
             events=_events_from_dicts(body.get("events")),  # F7 (A + optional B/C)
             # FS1 — plan construction mode (auto | fixed_core | template).
-            plan_mode=str(body.get("plan_mode", _prefs.get("plan_mode", "auto")) or "auto"),
-            template_id=str(body.get("template_id", "") or ""),
+            # v2.3.0: a custom-bands payload drives the dynamic custom blueprint,
+            # so force plan_mode=template + template_id=custom (the deterministic
+            # HIT-type path that actually realizes the requested training mix).
+            plan_mode=("template" if _parse_custom_bands(body.get("custom_bands"))
+                       else str(body.get("plan_mode", _prefs.get("plan_mode", "auto")) or "auto")),
+            template_id=("custom" if _parse_custom_bands(body.get("custom_bands"))
+                         else str(body.get("template_id", "") or "")),
+            custom_bands=_parse_custom_bands(body.get("custom_bands")),  # v2.3.0
         )
         # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
         if goal.longest_ride_h_90d is None:
@@ -9031,6 +9039,7 @@ async def api_plan_generate(request: Request):
                 "events": _events_to_dicts(getattr(goal, "events", [])),  # F7
                 "plan_mode": getattr(goal, "plan_mode", "auto"),  # FS1
                 "template_id": getattr(goal, "template_id", "") or "",  # FS1
+                "custom_bands": getattr(goal, "custom_bands", {}) or {},  # v2.3.0
             },
             "phases": [
                 {
@@ -9107,6 +9116,10 @@ async def api_plan_generate(request: Request):
                                         "type": "available" if _h > 0 else "rest"}
                 _d += _one
             plan_dict["availability"] = _new_avail
+
+        # v2.3.0 — realized training-type distribution (honest, computed from the
+        # generated sessions) for the UI's "% distribution" readout.
+        plan_dict["realized_bands"] = tp.realized_band_distribution(plan_dict)
 
         tp.atomic_write_plan(json_path, plan_dict)
 
@@ -9264,7 +9277,8 @@ async def api_plan_reforecast():
             # budget lookups) so a pyramidal/threshold plan isn't judged against
             # the polarized ceiling. Default polarized → unchanged.
             tp.set_active_distribution(
-                (plan.get("goal", {}) or {}).get("distribution", "polarized"))
+                (plan.get("goal", {}) or {}).get("distribution", "polarized"),
+                (plan.get("goal", {}) or {}).get("custom_bands"))
             _model_targets = tp.get_active_polarized_targets()
             target_pol_kwarg = _model_targets.get(
                 (cur_phase or "").lower(), _model_targets.get("history"))
@@ -9753,7 +9767,24 @@ def _goal_from_plan_dict(g: dict) -> "tp.Goal":
         events=_events_from_dicts(g.get("events")),  # F7
         plan_mode=g.get("plan_mode", "auto"),  # FS1 — keep fixed plans fixed on refit/reforecast
         template_id=g.get("template_id", "") or "",
+        custom_bands=g.get("custom_bands", {}) or {},  # v2.3.0 custom distribution
     )
+
+
+def _parse_custom_bands(raw) -> dict:
+    """Validate a custom intensity-distribution payload (v2.3.0). Keeps only the
+    four hard-band keys with non-negative numeric values; returns {} when empty
+    or invalid so the plan falls back to its named distribution."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict = {}
+    for k in ("tempo_ss", "threshold", "vo2", "sprint"):
+        try:
+            v = float(raw.get(k, 0) or 0)
+        except (TypeError, ValueError):
+            v = 0.0
+        out[k] = max(0.0, v)
+    return out if sum(out.values()) > 0 else {}
 
 
 def _apply_refit_to_plan(plan: dict, today: date) -> "dict | None":
@@ -9860,7 +9891,8 @@ def _apply_plan_update(
     # J1 (v2.1.0): pin the active intensity-distribution model to the plan's
     # persisted choice so every tier (rebuild / missed-hard refit / reforecast)
     # rebuilds with the same model rather than reverting to polarized.
-    tp.set_active_distribution((plan.get("goal", {}) or {}).get("distribution", "polarized"))
+    tp.set_active_distribution((plan.get("goal", {}) or {}).get("distribution", "polarized"),
+                               (plan.get("goal", {}) or {}).get("custom_bands"))
 
     # v1.8.25 — RECONCILE FIRST. Mark the current week's sessions done/missed
     # from actual activities BEFORE adapting, so this happens automatically on

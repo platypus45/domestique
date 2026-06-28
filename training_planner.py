@@ -1198,6 +1198,13 @@ class Goal:
     # "auto" everywhere it isn't set keeps every existing plan byte-for-byte.
     plan_mode: str = "auto"
     template_id: str = ""   # only when plan_mode == "template"
+    # v2.3.0: CUSTOM intensity distribution. When distribution == "custom" this
+    # holds the user's hard-work split as percentages summing to ~100:
+    # {"tempo_ss": int, "threshold": int, "vo2": int, "sprint": int}. vo2+sprint
+    # both map to the engine's z5plus zone (Z5/Z6); the easy/Z1-Z2 volume stays at
+    # the science baseline (parity with polarized/pyramidal/threshold). Empty ⇒
+    # not a custom plan.
+    custom_bands: dict = field(default_factory=dict)
 
     def max_hours_for_day(self, weekday: int) -> float:
         """Get max training hours for a specific weekday (0=Mon..6=Sun)."""
@@ -1460,16 +1467,44 @@ BUDGETS_BY_MODEL: dict[str, "dict[str, IntensityBudget]"] = {
 }
 
 _ACTIVE_DISTRIBUTION = "polarized"
+# v2.3.0: per-phase budget table for the "custom" distribution, built on demand
+# by set_active_distribution from goal.custom_bands. None ⇒ no custom plan active.
+_ACTIVE_CUSTOM_BUDGETS: "dict[str, IntensityBudget] | None" = None
 
 
-def set_active_distribution(model: "str | None") -> str:
+def _custom_model_budgets(bands: dict) -> "dict[str, IntensityBudget]":
+    """Build a per-phase budget table from a user hard-work split (v2.3.0).
+
+    ``bands`` percentages (need not be normalized): tempo_ss→Z3, threshold→Z4,
+    vo2+sprint→Z5+. Reuses _model_budgets/_reallocate_hard so easy volume, total
+    hard minutes, TSS, HIT count and rest days are preserved exactly as in the
+    polarized base — only the *kind* of hard work changes (parity with the
+    pyramidal/threshold models)."""
+    z3w = float(bands.get("tempo_ss", 0) or 0)
+    z4w = float(bands.get("threshold", 0) or 0)
+    z5w = float(bands.get("vo2", 0) or 0) + float(bands.get("sprint", 0) or 0)
+    if (z3w + z4w + z5w) <= 0:
+        z3w, z4w, z5w = 34.0, 33.0, 33.0  # safe default if the user zeroed it
+    return _model_budgets(z3w, z4w, z5w)
+
+
+def set_active_distribution(model: "str | None", custom_bands: "dict | None" = None) -> str:
     """Set the active intensity-distribution model for budget lookups (J1).
 
     Called at plan generation + recalc from ``goal.distribution``. Unknown or
     None falls back to ``polarized`` so the default path is byte-for-byte
-    unchanged and the model is never hard-forced.
+    unchanged and the model is never hard-forced. ``model == "custom"`` with a
+    non-empty ``custom_bands`` builds an on-demand budget table (v2.3.0).
     """
-    global _ACTIVE_DISTRIBUTION
+    global _ACTIVE_DISTRIBUTION, _ACTIVE_CUSTOM_BUDGETS
+    if model == "custom" and custom_bands:
+        try:
+            _ACTIVE_CUSTOM_BUDGETS = _custom_model_budgets(custom_bands)
+            _ACTIVE_DISTRIBUTION = "custom"
+            return "custom"
+        except Exception:
+            _ACTIVE_CUSTOM_BUDGETS = None  # fall through to polarized on bad input
+    _ACTIVE_CUSTOM_BUDGETS = None
     _ACTIVE_DISTRIBUTION = model if model in BUDGETS_BY_MODEL else "polarized"
     return _ACTIVE_DISTRIBUTION
 
@@ -1478,21 +1513,75 @@ def get_active_distribution() -> str:
     return _ACTIVE_DISTRIBUTION
 
 
+def _active_budget_table() -> "dict[str, IntensityBudget]":
+    if _ACTIVE_DISTRIBUTION == "custom" and _ACTIVE_CUSTOM_BUDGETS:
+        return _ACTIVE_CUSTOM_BUDGETS
+    return BUDGETS_BY_MODEL.get(_ACTIVE_DISTRIBUTION, BUDGETS)
+
+
 def get_active_polarized_targets() -> "dict[str, dict]":
     """Per-phase polarization targets for the ACTIVE model (J1) so the recalc
     breach gate judges a non-polarized plan against its own target, not the
     polarized ceiling."""
-    return {ph: b.polarized_target
-            for ph, b in BUDGETS_BY_MODEL[_ACTIVE_DISTRIBUTION].items()}
+    return {ph: b.polarized_target for ph, b in _active_budget_table().items()}
 
 
 def get_budget_for_phase(phase_name: str) -> "IntensityBudget":
     """Return the IntensityBudget for a phase, defaulting to ``base``.
 
-    Honors the active distribution model (J1; default polarized → unchanged).
+    Honors the active distribution model (J1; default polarized → unchanged;
+    v2.3.0 custom supported).
     """
-    table = BUDGETS_BY_MODEL.get(_ACTIVE_DISTRIBUTION, BUDGETS)
+    table = _active_budget_table()
     return table.get(phase_name, table["base"])
+
+
+# v2.3.0: map a session_type → one of the 5 user-facing intensity bands, for
+# computing/displaying the realized training-type distribution of a plan.
+_SESSION_TYPE_TO_BAND: dict[str, str] = {
+    "recovery": "easy", "z2": "easy", "long_z2": "easy", "endurance": "easy",
+    "endurance_intervals": "easy",
+    "tempo": "tempo_ss", "tempo_intervals": "tempo_ss", "tempo_ladder": "tempo_ss",
+    "sweetspot": "tempo_ss", "sweet_spot": "tempo_ss", "sweet_spot_ladder": "tempo_ss",
+    "threshold": "threshold", "threshold_ladder": "threshold",
+    "overunder": "threshold", "over_under": "threshold",
+    "vo2max": "vo2", "vo2_short": "vo2", "vo2_ladder": "vo2", "anaerobic": "vo2",
+    "sprint": "sprint", "neuromuscular": "sprint",
+}
+
+# Band order for stable display (easy → hardest).
+BAND_ORDER: tuple = ("easy", "tempo_ss", "threshold", "vo2", "sprint")
+
+# Typical realized distribution per intensity-distribution model (v2.3.0). Shown
+# as a pre-generation hint; labelled "typical" because the realized split depends
+# on phase mix + library availability. The post-generation readout computes the
+# ACTUAL split via realized_band_distribution.
+PRESET_TYPICAL_BANDS: dict[str, dict] = {
+    "polarized": {"easy": 80, "tempo_ss": 4, "threshold": 6, "vo2": 8, "sprint": 2},
+    "pyramidal": {"easy": 78, "tempo_ss": 13, "threshold": 6, "vo2": 3, "sprint": 0},
+    "threshold": {"easy": 78, "tempo_ss": 16, "threshold": 5, "vo2": 1, "sprint": 0},
+}
+
+
+def realized_band_distribution(plan: dict) -> dict:
+    """Compute the ACTUAL training-type distribution of a generated plan as %
+    of total non-rest session minutes across the 5 bands (v2.3.0). Honest
+    (computed, not hard-coded) — used to show the user what they actually got."""
+    mins = {b: 0.0 for b in BAND_ORDER}
+    for w in (plan.get("weeks") or []):
+        for s in (w.get("sessions") or []):
+            st = (s.get("session_type") or "").strip()
+            if st in ("", "rest", "ftp_test"):
+                continue
+            band = _SESSION_TYPE_TO_BAND.get(st)
+            if not band:
+                continue
+            try:
+                mins[band] += float(s.get("duration_min") or 0)
+            except (TypeError, ValueError):
+                continue
+    total = sum(mins.values()) or 1.0
+    return {b: round(100 * mins[b] / total) for b in BAND_ORDER}
 
 
 # ── v4.4.0 — composite "on-track" score helpers (CONCEPT-SCI §6) ──────────────
@@ -4117,10 +4206,51 @@ PLANNER_TEMPLATES: dict[str, dict] = {
 }
 
 
-def _blueprint_hit_for(goal, phase_name: str) -> dict:
-    """Resolve the HIT blueprint for a phase: template preset → default."""
+# v2.3.0 — custom distribution as a dynamic blueprint: the per-week HIT type is
+# drawn from the user's band weights so the realized hard-work mix tracks the
+# request across the plan (1 HIT/week in blueprint mode ⇒ the HIT-type sequence
+# IS the hard distribution). The easy/Z2 core is unchanged.
+_BAND_TO_HIT_TYPE: dict[str, str] = {
+    "tempo_ss": "sweetspot", "threshold": "threshold", "vo2": "vo2max", "sprint": "sprint",
+}
+_CUSTOM_HIT_PROGRESSION: dict[str, dict] = {
+    "sweetspot": {"kind": "reps", "start": 3, "step": 1, "max": 5},
+    "threshold": {"kind": "reps", "start": 3, "step": 1, "max": 5},
+    "vo2max":    {"kind": "reps", "start": 4, "step": 1, "max": 6},
+    "sprint":    {"kind": "reps", "start": 4, "step": 1, "max": 8},
+}
+
+
+def _custom_hit_sequence(bands: dict) -> list:
+    """Deterministic HIT-type sequence whose composition is proportional to the
+    user's band weights (length ~10), interleaved so consecutive weeks vary.
+    Falls back to a balanced hard mix when bands are empty/zero."""
+    weights = {t: max(0.0, float(bands.get(b, 0) or 0))
+               for b, t in _BAND_TO_HIT_TYPE.items()}
+    total = sum(weights.values())
+    if total <= 0:
+        return ["vo2max", "threshold", "sweetspot"]
+    remaining = {t: int(round(10 * w / total)) for t, w in weights.items()}
+    seq: list = []
+    while sum(remaining.values()) > 0:
+        t = max(remaining, key=lambda k: remaining[k])  # emit largest-remaining → spread
+        seq.append(t)
+        remaining[t] -= 1
+    return seq or ["threshold"]
+
+
+def _blueprint_hit_for(goal, phase_name: str, week_num: int = 0) -> dict:
+    """Resolve the HIT blueprint for a phase: custom bands → template preset →
+    default. For the custom template the type is drawn per-week from the band
+    weights (week_num indexes the proportional sequence)."""
     if getattr(goal, "plan_mode", "auto") == "template":
-        tmpl = PLANNER_TEMPLATES.get(getattr(goal, "template_id", "") or "")
+        tid = getattr(goal, "template_id", "") or ""
+        if tid == "custom":
+            seq = _custom_hit_sequence(getattr(goal, "custom_bands", {}) or {})
+            st = seq[week_num % len(seq)] if seq else "threshold"
+            return {"session_type": st,
+                    "progression": _CUSTOM_HIT_PROGRESSION.get(st, _CUSTOM_HIT_PROGRESSION["threshold"])}
+        tmpl = PLANNER_TEMPLATES.get(tid)
         if tmpl and phase_name in tmpl.get("phases", {}):
             return tmpl["phases"][phase_name]
     return _BLUEPRINT_DEFAULT_HIT.get(phase_name, _BLUEPRINT_DEFAULT_HIT["build1"])
@@ -4149,7 +4279,7 @@ def expand_blueprint_week(
             return int(daily_max_hours[weekday] * 60)
         return int((max_weekend_hours if weekday >= 5 else max_weekday_hours) * 60)
 
-    bp_hit = _blueprint_hit_for(goal, phase.name)
+    bp_hit = _blueprint_hit_for(goal, phase.name, week_num)
     # Lay rest vs train by offset from week_start (matches plan_week + the caller).
     slots: list = []
     for off in range(7):
@@ -5075,7 +5205,8 @@ def generate_plan(
     """
     # J1 (v2.1.0): honor the goal's chosen intensity-distribution model for every
     # get_budget_for_phase lookup in this run (default "polarized" → unchanged).
-    set_active_distribution(getattr(goal, "distribution", "polarized"))
+    set_active_distribution(getattr(goal, "distribution", "polarized"),
+                            getattr(goal, "custom_bands", None))
     metrics = get_today_metrics()
     # F4 (v4.1.0) — local CTL fallback. Previously this path hardcoded 37.0
     # when ICU was unreachable; any user whose wellness sync was broken got
@@ -8009,6 +8140,7 @@ def regenerate_from_today(
         # F1 (v2.1/B6): carry the user's intensity choices through recalc so a
         # block / non-polarized plan doesn't silently revert on adaptation.
         distribution=goal.distribution,
+        custom_bands=goal.custom_bands,  # v2.3.0: carry custom split through recalc
         block_periodization=goal.block_periodization,
         events=goal.events,  # F7: carry B/C events through recalc
         # FS1: carry the construction mode so a fixed_core/template plan stays
@@ -8419,6 +8551,7 @@ def recalculate_plan(
         # F1 (v2.1/B6): carry the user's intensity choices through recalc so a
         # block / non-polarized plan doesn't silently revert on adaptation.
         distribution=goal.distribution,
+        custom_bands=goal.custom_bands,  # v2.3.0: carry custom split through recalc
         block_periodization=goal.block_periodization,
         events=goal.events,  # F7: carry B/C events through recalc
         # FS1: carry the construction mode so a fixed_core/template plan stays

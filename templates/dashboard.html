@@ -2136,13 +2136,33 @@ window.addEventListener('unhandledrejection', function(e) {
       <!-- J1 (v2.1.0): intensity-distribution is a user choice, not forced polarized. -->
       <div class="form-row">
         <div class="form-group"><label>Intensity Model</label>
-          <select id="plan-distribution" onchange="refreshPlanPreview()"
-                  title="How hard sessions are spread across zones. Polarized (default): mostly easy + a little very-hard (needs volume). Pyramidal: more threshold than VO2. Threshold: sweet-spot / at-FTP focus.">
+          <select id="plan-distribution" onchange="onDistributionChange()"
+                  title="How hard sessions are spread across zones. Polarized (default): mostly easy + a little very-hard (needs volume). Pyramidal: more threshold than VO2. Threshold: sweet-spot / at-FTP focus. Custom: set your own intensity split.">
             <option value="polarized" selected>Polarized (default)</option>
             <option value="pyramidal">Pyramidal</option>
             <option value="threshold">Threshold / Sweet-spot</option>
+            <option value="custom">Custom (set %)</option>
           </select>
         </div>
+      </div>
+      <!-- v2.3.0: % distribution readout (typical for presets; realized after
+           generating) + editable split when Custom is chosen. -->
+      <div id="plan-dist-readout" style="font-size:11px;color:var(--text2);margin:-2px 0 8px;"></div>
+      <div id="plan-custom-bands" style="display:none;margin:0 0 10px;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);">
+        <div style="font-size:12px;font-weight:600;margin-bottom:6px;">Custom intensity split
+          <span style="font-weight:400;color:var(--text2);">— how to distribute your hard/intensity work (easy/Z2 volume stays science-based). These are targets; the realized mix shows after you generate.</span>
+        </div>
+        <div class="form-row" style="gap:8px;flex-wrap:wrap;">
+          <div class="form-group"><label style="font-size:11px;">Tempo / Sweet-Spot %</label>
+            <input type="number" id="cb-tempo_ss" min="0" max="100" value="40" oninput="onCustomBandsInput()" style="width:64px;"></div>
+          <div class="form-group"><label style="font-size:11px;">Threshold %</label>
+            <input type="number" id="cb-threshold" min="0" max="100" value="30" oninput="onCustomBandsInput()" style="width:64px;"></div>
+          <div class="form-group"><label style="font-size:11px;">VO2max %</label>
+            <input type="number" id="cb-vo2" min="0" max="100" value="20" oninput="onCustomBandsInput()" style="width:64px;"></div>
+          <div class="form-group"><label style="font-size:11px;">Sprint %</label>
+            <input type="number" id="cb-sprint" min="0" max="100" value="10" oninput="onCustomBandsInput()" style="width:64px;"></div>
+        </div>
+        <div id="cb-sum" style="font-size:11px;color:var(--text2);"></div>
       </div>
       <!-- F1 (v2.1): opt-in block periodization (default off). -->
       <div class="form-row">
@@ -10038,6 +10058,44 @@ function readBcRaces() {
   return out;
 }
 
+// ═══ v2.3.0: intensity-distribution % readout + custom split ════════════════
+const PRESET_TYPICAL_BANDS = {
+  polarized: {easy:80, tempo_ss:4, threshold:6, vo2:8, sprint:2},
+  pyramidal: {easy:78, tempo_ss:13, threshold:6, vo2:3, sprint:0},
+  threshold: {easy:78, tempo_ss:16, threshold:5, vo2:1, sprint:0},
+};
+const _BAND_LABELS = {easy:'Easy', tempo_ss:'Tempo/SS', threshold:'Thr', vo2:'VO2', sprint:'Sprint'};
+function _fmtBands(b, prefix) {
+  if (!b) return '';
+  const order = ['easy','tempo_ss','threshold','vo2','sprint'];
+  return (prefix||'') + order.filter(k => b[k] != null).map(k => `${_BAND_LABELS[k]} ${Math.round(b[k])}%`).join(' · ');
+}
+function getCustomBands() {
+  const g = id => Math.max(0, parseFloat(($(id)||{}).value) || 0);
+  return {tempo_ss:g('cb-tempo_ss'), threshold:g('cb-threshold'), vo2:g('cb-vo2'), sprint:g('cb-sprint')};
+}
+function onCustomBandsInput() {
+  const b = getCustomBands();
+  const sum = b.tempo_ss + b.threshold + b.vo2 + b.sprint;
+  const el = $('cb-sum');
+  if (el) {
+    const off = Math.abs(sum - 100) > 0.5;
+    el.textContent = `Total: ${Math.round(sum)}% of hard work` + (off ? ' — should sum to 100' : ' ✓');
+    el.style.color = off ? 'var(--yellow)' : 'var(--text2)';
+  }
+}
+function onDistributionChange() {
+  const model = ($('plan-distribution')||{}).value || 'polarized';
+  const custom = $('plan-custom-bands');
+  if (custom) custom.style.display = (model === 'custom') ? 'block' : 'none';
+  const ro = $('plan-dist-readout');
+  if (ro) {
+    if (model === 'custom') { ro.textContent = ''; onCustomBandsInput(); }
+    else ro.textContent = _fmtBands(PRESET_TYPICAL_BANDS[model], 'Typical mix: ');
+  }
+  if (typeof refreshPlanPreview === 'function') refreshPlanPreview();
+}
+
 async function generatePlan() {
   // One build button: when a plan already exists, Generate REBUILDS it (subsumes
   // the old "Rebuild from scratch"). Confirm so a deliberate rebuild can't wipe
@@ -10076,6 +10134,9 @@ async function generatePlan() {
     plan_mode: ($('plan-mode') || {}).value || 'auto',  // FS1
     template_id: (($('plan-mode') || {}).value === 'template')
       ? (($('plan-template') || {}).value || '') : '',  // FS1
+    // v2.3.0: send the custom split only when the Custom intensity model is
+    // selected; the backend then drives the dynamic custom blueprint.
+    custom_bands: ((($('plan-distribution')||{}).value) === 'custom') ? getCustomBands() : undefined,
   };
   if (body.goal === 'event') {
     body.event_date = $('plan-edate').value || null;
@@ -10115,6 +10176,12 @@ async function generatePlan() {
     $('plan-status').textContent = 'Plan generated!';
     $('plan-status').style.color = 'var(--green)';
     await renderPlanJSON(d.plan_json);
+    // v2.3.0: show the realized training-type distribution of the new plan.
+    try {
+      const ro = $('plan-dist-readout');
+      if (ro && d.plan_json && d.plan_json.realized_bands)
+        ro.textContent = _fmtBands(d.plan_json.realized_bands, 'Realized mix: ');
+    } catch(_) {}
     // v1.4.0 — mandatory loadCalendar() after every plan mutation
     // (CALENDAR_REDESIGN §8.4). Single canonical refresh path keeps
     // top cards / right panel / bottom calendar in sync.
@@ -11934,7 +12001,17 @@ function populatePlanFormFromGoal(goal) {
   const bp = $('plan-block-periodization'); if (bp) bp.checked = !!goal.block_periodization;
   setVal('plan-mode', goal.plan_mode || 'auto');
   if (goal.template_id) setVal('plan-template', goal.template_id);
+  // v2.3.0: custom distribution is driven by the intensity-model selector, not
+  // the template picker — present it that way on reload + restore the split.
+  if ((goal.distribution || '') === 'custom') {
+    setVal('plan-mode', 'auto');
+    const _cb = goal.custom_bands || {};
+    const _sv = (id, v) => { const e = $(id); if (e && v != null) e.value = Math.round(v); };
+    _sv('cb-tempo_ss', _cb.tempo_ss); _sv('cb-threshold', _cb.threshold);
+    _sv('cb-vo2', _cb.vo2); _sv('cb-sprint', _cb.sprint);
+  }
   try { onPlanModeChange(); } catch (_) {}   // un-hide the template picker if mode=template
+  try { onDistributionChange(); } catch (_) {}   // v2.3.0 show custom editor + % readout
   setVal('plan-edate', goal.event_date || '');
   setVal('plan-ename', goal.event_name || '');
   if (goal.event_km) setVal('plan-ekm', goal.event_km);

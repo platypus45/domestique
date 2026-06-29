@@ -1259,8 +1259,8 @@ def _tpl_rl_gentle_undulations(total_km: float, seed: int) -> list[Section]:
                      "period_km": _jit_abs(seed, 3, 2.0, 3.2)})]
 
 
-def _tpl_rl_watopia_waterfront(total_km: float, seed: int) -> list[Section]:
-    """RL_WATOPIA_WATERFRONT — cluster of modest hills in mid-route."""
+def _tpl_rl_midroute_cluster(total_km: float, seed: int) -> list[Section]:
+    """RL_MIDROUTE_CLUSTER — cluster of modest hills in mid-route."""
     intro = _jit_abs(seed, 1, 1.5, 2.5)
     cluster_km = _jit_abs(seed, 2, total_km * 0.30, total_km * 0.45)
     tail = total_km - intro - cluster_km
@@ -1303,7 +1303,7 @@ def _tpl_rl_ascending_difficulty(total_km: float, seed: int) -> list[Section]:
 
 _ROLLING_EASY_TEMPLATES = [
     _tpl_rl_surrey_hills, _tpl_rl_hilly_radio_lite,
-    _tpl_rl_gentle_undulations, _tpl_rl_watopia_waterfront,
+    _tpl_rl_gentle_undulations, _tpl_rl_midroute_cluster,
     _tpl_rl_ascending_difficulty,
 ]
 
@@ -1317,10 +1317,10 @@ def rolling_easy(total_km: float, seed: int) -> ArchetypeOutput:
                      f"rolling_easy_T{t}")
 
 
-# --- rolling_punchy (Watopia Hilly / Front / Back / Scattered / Alternating /
+# --- rolling_punchy (Hilly / Front / Back / Scattered / Alternating /
 #                     Innsbruck KOM repeats) ---
 
-def _tpl_rl_watopia_hilly(total_km: float, seed: int) -> list[Section]:
+def _tpl_rl_hilly_route(total_km: float, seed: int) -> list[Section]:
     """RL_HILLY_ROUTE — single climb in first 15%, rolling rest."""
     intro = _jit_abs(seed, 1, 0.4, 0.7)
     climb = _jit_abs(seed, 2, 0.8, 1.1)
@@ -1442,7 +1442,7 @@ def _tpl_rl_innsbruck_kom_repeats(total_km: float, seed: int) -> list[Section]:
 
 
 _ROLLING_PUNCHY_TEMPLATES = [
-    _tpl_rl_watopia_hilly, _tpl_rl_front_loaded, _tpl_rl_back_loaded,
+    _tpl_rl_hilly_route, _tpl_rl_front_loaded, _tpl_rl_back_loaded,
     _tpl_rl_scattered_kickers, _tpl_rl_alternating_flats,
     _tpl_rl_innsbruck_kom_repeats,
 ]
@@ -1532,7 +1532,7 @@ def figure_8(total_km: float, seed: int) -> ArchetypeOutput:
                      f"figure_8_T{t}")
 
 
-# --- rolling_with_climb_finish (HILLY ROUTE / WATOPIA MOUNTAIN KOM /
+# --- rolling_with_climb_finish (HILLY ROUTE / MOUNTAIN KOM /
 #                                 BOX HILL LITE) ---
 
 def _tpl_rl_hilly_climb_finish(total_km: float, seed: int) -> list[Section]:
@@ -3528,7 +3528,7 @@ def lap_flat_tt(total_km: float, seed: int) -> ArchetypeOutput:
     )
 
 
-# ── lap_rolling: LP_HILLY_LAP / LP_WATOPIA_SHORT_LAP ──
+# ── lap_rolling: LP_HILLY_LAP / LP_SHORT_ROLLING_LAP ──
 
 def _tpl_lpr_hilly(base_km: float, seed: int) -> list[Section]:
     """Hill + descent + flat."""
@@ -3541,7 +3541,7 @@ def _tpl_lpr_hilly(base_km: float, seed: int) -> list[Section]:
     ]
 
 
-def _tpl_lpr_watopia_short(base_km: float, seed: int) -> list[Section]:
+def _tpl_lpr_short_rolling(base_km: float, seed: int) -> list[Section]:
     """Rolling lap with asymmetric feature spacing."""
     return [Section("rolling", base_km,
                     {"baseline": _jit_abs(seed, 1, -0.1, 0.3),
@@ -3579,7 +3579,7 @@ def _tpl_lpr_mostly_flat(base_km: float, seed: int) -> list[Section]:
 
 
 _LAP_ROLLING_TEMPLATES = [
-    _tpl_lpr_hilly, _tpl_lpr_watopia_short, _tpl_lpr_updown,
+    _tpl_lpr_hilly, _tpl_lpr_short_rolling, _tpl_lpr_updown,
     _tpl_lpr_mostly_flat,
 ]
 

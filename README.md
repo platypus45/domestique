@@ -395,7 +395,7 @@ Pure Python, flat module layout — every `.py` at repo root is `import`ed by an
 
 **Planner** (`training_planner.py` + `training.py`) sizes Base/Build1/Build2/Peak/(Taper|Consolidation) phases from CTL + target date, picks workouts from the 4,220-file library with a (mix_preference x variety_score x novelty_boost) sampler that forces ~1 pick per file across a plan, enforces minimum-floor counts of Ronnestad / anaerobic / neuromuscular sessions per phase, and runs the G1–G7 priority chain on every daily adapt. `regenerate_from_today()` rebuilds the plan when `detect_plan_gaps()` flags >=2 consecutive missed weeks; `reforecast()` runs the TSB / ACWR / polarisation adjustments on demand; `auto_apply_eftp()` fires when ICU eFTP > set FTP by >=3% for 7+ days.
 
-**Library** ships 4,220 structured ZWO workouts (content-classified into 17 canonical classes — endurance / tempo / sweet spot / threshold / over-under / VO2max / VO2-short / anaerobic / neuromuscular / FTP test, plus ladder variants; tags-indexed for filter queries) and 622 real-world route courses (Alps, Dolomites, Pyrenees, Basque country, Flanders, Costa Blanca, Mallorca, Innsbruck 2018 Worlds, Alpe d'Huez, Mont Ventoux, Stelvio + 160 regional climbs; CRS or GPX export). No Zwift virtual worlds (Watopia / Yorkshire / etc. are Zwift-proprietary and not redistributable). A 24-week plan picks 150 distinct files (every session is a different workout). See [docs/workout_sources.md](docs/workout_sources.md) for provenance and licensing.
+**Library** ships 4,232 structured ZWO workouts (content-classified into 17 canonical classes — endurance / tempo / sweet spot / threshold / over-under / VO2max / VO2-short / anaerobic / neuromuscular / FTP test, plus ladder variants; tags-indexed for filter queries) and 622 real-world route courses (Alps, Dolomites, Pyrenees, Basque country, Flanders, Costa Blanca, Mallorca, Innsbruck 2018 Worlds, Alpe d'Huez, Mont Ventoux, Stelvio + 160 regional climbs; CRS or GPX export). No Zwift virtual worlds (Watopia / Yorkshire / etc. are Zwift-proprietary and not redistributable). A 24-week plan picks 150 distinct files (every session is a different workout).
 
 **Post-ride viewer** (`ride_storage.py` + `fit_activity.py` + `analytics.py` + `ride_report_png.py`) parses the imported FIT via fitparse, computes NP/IF/TSS, time-in-zone, aerobic decoupling, Treff polarisation classification, DFA alpha1 (when `HrvMessage` records are present), Belastingscore (Kontro 2026 3D impulse-response decomposition into CP / W' / Pmax — additive lens alongside TSS, not a replacement), eFTP cross-check, FTP-test detection (Coggan-20 by power-profile shape; ramp halt by cadence-drop heuristic), and renders a Pillow PNG / browser-print PDF post-ride summary. A separate `programme_summary_png.py` renders the 12-metric finished-programme recap.
 
@@ -426,7 +426,7 @@ domestique/
 │   route_profiles.json       — Heavy data shipped via PyInstaller datas=
 ├── tests/                    — pytest suite (~60 files; run pytest -q)
 ├── docs/                     — Architecture, science deep-dives, build guides
-├── scripts/                  — One-off generators + scrapers (NOT imported)
+├── scripts/                  — One-off workout/route generators (NOT imported)
 ├── workouts/                 — 4,220 ZWO interval workouts
 ├── courses/                  — Real-world climb library (CRS files)
 ├── static/, templates/       — FastAPI assets + Jinja2 templates
@@ -530,7 +530,7 @@ GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads
 - **One "Update plan" action** (v1.8.24) — the fragmented Reforecast / Regenerate / availability controls collapsed into a single primary button that auto-picks the right adjustment: a structure-preserving **rebalance** to today's TSB/ACWR/availability when you're on track, or a full **rebuild with a recovery ramp** (Gabbett ACWR < 1.3, Z2 reconditioning — never a catch-up spike) when you've fallen behind. "Regenerate" was the advanced *Rebuild from scratch*; per-day *Rematch* stays. (Further simplified in v2.2.3: one **Generate Plan** button + automatic updates — see the top entry.)
 - **Plan auto-adapts after missed workouts** (v1.8.24) — a ride sync that detects a significant *current* absence rebuilds automatically through the recovery ramp, once per absence episode (latched, no churn), recent-gap-gated (an old recovered gap never nags), and never inside an event taper (it flags "behind plan" instead).
 - **Reshuffle honours the slot duration** (v1.8.19 ±25 % gate → v1.8.24 exact) — a 90-min slot returns a ~90-min workout, never a wildly different length.
-- **Bigger, cleaner workout library** (v1.8.22 / v1.8.23 / ongoing) — grown from ~3 050 to **4,198** clean, copyright-free canonical files via a classify-before-write pipeline (every file run through the live content classifier and kept only if its type + title + duration match): polarized Rønnestad VO2 macro-blocks, comprehensive Z2/endurance structure variety (steady, two-zone, progressive, surges), and long-aerobic / duration coverage across all classes.
+- **Bigger, cleaner workout library** (v1.8.22 / v1.8.23 / ongoing) — grown from ~3 050 to **4,198** clean, original canonical files via a classify-before-write pipeline (every file run through the live content classifier and kept only if its type + title + duration match): polarized Rønnestad VO2 macro-blocks, comprehensive Z2/endurance structure variety (steady, two-zone, progressive, surges), and long-aerobic / duration coverage across all classes.
 - **Plan integrity** (v1.8.18 / v1.8.20 / v1.8.21) — healed ghost `zwo_file` references and froze training history; regeneration preserves your edits (moved / dismissed / completed sessions) and the availability calendar; changing weekly hours repopulates the per-day calendar.
 - **DFA α1 + dual thresholds** (v1.8.14) — see the DFA / HRV sections above: mandatory Malik artifact rejection, HRVT1/HRVT2 detection, intensity distribution, and a dedicated DFA tab; FIT-stream fallback when ICU 404s the `.fit`.
 - **Notarized distribution** (v1.8.5+) — the macOS DMG opens with zero Gatekeeper prompts; new activities auto-push to the calendars.
@@ -556,17 +556,13 @@ build_win.bat                        # Windows — writes dist\Domestique\Domest
 
 GitHub Actions ([.github/workflows/release.yml](.github/workflows/release.yml)) builds both on every tagged release.
 
-### Workout library sources
+### Workout library
 
-The 4,198 ZWO files have three provenance buckets (see [docs/workout_sources.md](docs/workout_sources.md) for full detail + licensing):
+The 4,232 ZWO files are original, structured workouts — every one authored `Domestique Library`. The bulk are **procedurally generated** from training-science templates (polarized Rønnestad VO2 blocks, sweet-spot and threshold progressions, endurance variety, over-unders, neuromuscular sprints, FTP-test protocols, and ladder variants across all canonical classes). Each file is run through the content classifier and kept only if its structure, title, and duration agree.
 
-- **1797 pre-existing** (pre-v4 generated workouts) — untouched across the pivot.
-- **1105 whatsonzwift reconstructions** — facts-only inference from the public rendered interval graph; original names, descriptions, and coach cues stripped and regenerated from structure; never touches the site's ZWO download endpoint; `<author>Domestique Library</author>` on every file.
-- **24 GitHub MIT/Unlicense imports** (`macgrrl/zwift-workouts` Unlicense, `michaelahlers/michaelahlers-zwift-workouts` MIT) — provenance tracked in `workouts/.github_imports_manifest.json`.
-- **124 procedural gap-fillers** (pyramids, short VO2, short threshold, over-unders with varied ratios, neuromuscular sprints, short sweet spot — categories that were under-represented).
-- **4 FTP test protocols** scraped from `whatsonzwift.com/workouts/ftp-tests` and tagged with `<tag name="ftp_test"/>`.
+The only third-party content is **24 openly-licensed community workouts** from MIT / Unlicense GitHub repos (`macgrrl/zwift-workouts` Unlicense, `michaelahlers/michaelahlers-zwift-workouts` MIT), tracked in `workouts/.github_imports_manifest.json`.
 
-Copyright verdict: interval numbers + durations are uncopyrightable facts (Feist v Rural Telephone); names + descriptions are copyrightable — those are stripped and regenerated on every scraped file. For open-source redistribution safety, fork the procgen + GitHub subset only.
+Nothing is scraped or reconstructed from any third-party workout site.
 
 ### Security notes
 
@@ -596,7 +592,7 @@ See also:
 - [COURSES_LICENSE.md](COURSES_LICENSE.md) — route and elevation data provenance.
 - [TRADEMARKS.md](TRADEMARKS.md) — trademark policy.
 - [docs/cycling_apps.md](docs/cycling_apps.md) — comparison of free cycling apps accepting ZWO/FIT.
-- [docs/workout_sources.md](docs/workout_sources.md) — workout library provenance + legal stance.
+- [docs/workout_sources.md](docs/workout_sources.md) — workout library provenance.
 - [docs/windows_build.md](docs/windows_build.md) — path to a signed-style Windows `.exe` build.
 - [NOTICE](NOTICE) — Open Food Facts ODbL 1.0 attribution for the nutrition database.
 

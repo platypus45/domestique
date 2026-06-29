@@ -64,3 +64,9 @@ IP_*.md
 .oauth.env
 .venv-build/
 .python-build/
+
+# Scrape tooling + artifacts — kept locally, not distributed (provenance is the
+# regenerated, original "Domestique Library" output, not the fetch process).
+scripts/scrape_*.py
+workouts/.scrape_progress.json
+workouts/.ftp_tests_manifest.json

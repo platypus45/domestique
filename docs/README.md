@@ -11,7 +11,7 @@ planning artefacts.
 | `SCIENCE_REVIEW.md` | Science & research | Citation-by-citation review of the seven injury guardrails and the periodisation model. |
 | `RESEARCH_TRAINING_PLANNER.md` | Science & research | Source notes for the planner: Seiler / Mujika / Stoggl / Coggan / Friel / Allen. |
 | `windows_build.md` | Build / packaging | Path to a Windows `.exe` (PyInstaller `--onedir` + Inno Setup + GitHub Actions on `windows-latest`, ~4 days). |
-| `workout_sources.md` | Library provenance | Provenance + licensing for the 3,054 ZWO files (procgen / scraped / GitHub imports). |
+| `workout_sources.md` | Library provenance | Where the workout library comes from (procedurally generated + permissively-licensed GitHub imports). |
 | `cycling_apps.md` | Library provenance | Comparison of free cycling apps that accept ZWO/FIT (Golden Cheetah, MyWhoosh, Tacx Training). |
 | `TRAINING_SCREEN_PLAN.md` | Planning artefacts | Wireframe + decisions that produced the Plan tab in v4.6+. |
 | `workout_analysis.md` | Planning artefacts | Original library audit: which categories were over- vs under-represented before procgen filled the gaps. |

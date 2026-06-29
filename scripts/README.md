@@ -1,6 +1,6 @@
 # scripts/
 
-One-off generators, scrapers, and library-maintenance tools. None of
+One-off generators and library-maintenance tools. None of
 these are imported by `app.py` / `launcher.py` — they run by hand,
 typically once per release, to (re)build the workout library or
 audit it.
@@ -31,12 +31,10 @@ rest read defaults at the top of the file.
 | `generate_route_profiles.py` | Per-route elevation profile JSONs consumed by the dashboard route picker. |
 | `generate_gap_workouts.py` | Fills under-represented categories (pyramids, short VO2, short threshold, over-unders, neuromuscular sprints, short sweet spot). |
 
-### Scrapers / importers
+### Importers
 
 | Script | Purpose |
 |---|---|
-| `scrape_whatsonzwift.py` | Reconstructs publicly-viewable workout structure from whatsonzwift.com via visual-graph inference (interval numbers only — uncopyrightable facts under Feist v. Rural). Re-authors every file with `<author>Domestique Library</author>`. |
-| `scrape_woz_ftp_tests.py` | Same approach for the FTP-test index. |
 | `import_github_workouts.py` | Imports from `macgrrl/zwift-workouts` (Unlicense) and `michaelahlers/michaelahlers-zwift-workouts` (MIT). Tracks provenance in `workouts/.github_imports_manifest.json`. |
 
 ### Library maintenance / audits

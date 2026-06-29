@@ -1157,7 +1157,7 @@ separate fix (repair regen field-preservation first, then escalation).
 ## v1.8.18 — plan zwo_file reference integrity (heal 77 ghost references; freeze training history) (2026-06-07)
 
 The active plan stored `zwo_file` values that don't exist in the local
-`workouts/` library — **124 of 147 sessions** (120 external Zwift/TR scrape
+`workouts/` library — **124 of 147 sessions** (120 external Zwift/TR plan
 slugs like `ftp-builder/week-6-day-3.zwo` + 4 flat-missing). Those sessions
 404'd on read and fell back to a synthetic generic chart — the root cause of
 the "60min slot → 25min chart" + the synthetic ZWO/FIT divergence.
@@ -3566,7 +3566,7 @@ Pre-v4.6.6 the planner *detected* TSS/intensity/soreness signals in three indepe
 - Ramp auto-halt: cadence<50 + power<85% target for 3s → halt step recorded
 - Post-import modal: Update/Keep/Custom buttons; formula auto-fills suggested FTP
 - /api/profile/ftp-history endpoint + Settings sparkline chart + FTP source badge
-- 4 new FTP tests indexed from whatsonzwift.com/workouts/ftp-tests (visual-graph inference, tagged ftp_test)
+- 4 new FTP-test protocols added to the library (tagged ftp_test)
 - ZWO <tags> now indexed; /api/workouts?tags=ftp_test filter works
 - FTP Tests category tab in Library with yellow-border distinct styling
 
@@ -3604,7 +3604,7 @@ Pre-v4.6.6 the planner *detected* TSS/intensity/soreness signals in three indepe
 - Existing plural-name endpoints retained: /api/rides, /api/profiles, /api/workouts, /api/weekly-plan (not renamed to singular despite earlier aspirational naming in MASTER §6).
 - Ride history list on dashboard with click-to-open post-ride report
 - Import FIT button on dashboard header
-- 1253 new workouts in library: 1105 whatsonzwift reconstructions (visual-graph inference, never hit their download endpoint — strip names/descriptions/coach-cues, regenerate from structure) + 24 GitHub MIT/Unlicense imports (macgrrl, michaelahlers) + 124 procedural gap-fillers (pyramids, short VO2/threshold/sweet-spot, over-unders with varied ratios, neuromuscular sprints). Total library: 1797 → 3050. All new files authored `<author>Domestique Library</author>`.
+- 1253 new workouts in library: original procedurally-generated structures (pyramids, short VO2/threshold/sweet-spot, over-unders with varied ratios, neuromuscular sprints, and broad category coverage) + 24 GitHub MIT/Unlicense imports (macgrrl, michaelahlers). Total library: 1797 → 3050. All new files authored `<author>Domestique Library</author>`.
 - docs/cycling_apps.md — comparison of free cycling apps accepting ZWO/FIT
 - docs/workout_sources.md — library source docs + legal stance
 

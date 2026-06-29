@@ -12,8 +12,7 @@ CLI: python3 scripts/dedupe_zwo_library.py --index workouts/
      hash -> first-file-seen.
 
 Also exposes `structure_hash(zwo_path) -> str` for import by
-`scrape_whatsonzwift.py`, `import_github_workouts.py`, and
-`generate_gap_workouts.py`.
+`import_github_workouts.py` and `generate_gap_workouts.py`.
 """
 from __future__ import annotations
 

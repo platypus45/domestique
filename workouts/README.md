@@ -25,35 +25,23 @@ Counts are approximate (regenerate with `ls workouts/<type>_*.zwo | wc -l`):
 
 ## Sources
 
-Three sources contribute to the library; all files are interchangeable
-at the file level (they all conform to the standard Zwift ZWO schema).
+Two sources contribute to the library; all files conform to the standard
+Zwift ZWO schema and are interchangeable at the file level.
 
-1. **Domestique Library generated** — `<author>Domestique Library</author>`.
-   Produced by scripts in `scripts/`:
-     - `scripts/generate_gap_workouts.py` — fills thin categories
-       (pyramids, short VO2, short threshold, over-unders, neuromuscular
-       sprints, short sweet spot). Structure chosen from published
-       exercise-physiology protocols.
-     - `generate_ftp_workouts.py` (repo root, older) — base FTP suite.
+1. **Domestique Library generated** — `<author>Domestique Library</author>`,
+   the primary source. Produced by the generator scripts: structures are
+   chosen from published exercise-physiology protocols (recovery, endurance,
+   tempo, sweet-spot, threshold, VO2, anaerobic, sprints, over-unders,
+   pyramids) and emitted from templates with original prose.
 
-2. **Scraped and re-authored** — reconstructions of publicly-viewable
-   workout structures on whatsonzwift.com. The scraper
-   (`scripts/scrape_whatsonzwift.py`) infers interval data from the
-   rendered visual graph only; it never hits any download/`.zwo`
-   endpoint. Only the factual interval numbers (unprotectable under
-   Feist v. Rural) are read. Every scraped file is re-authored: `<name>`
-   and `<description>` are regenerated from structure, `<author>` is
-   set to `Domestique Library`, and all `<textevent>`, `<TextNotification>`,
-   `<image>`, `<video>` children are stripped. See
-   `workouts/.scrape_progress.json` for the list of URLs processed.
-
-3. **Imported from permissive GitHub repos** —
-   `scripts/import_github_workouts.py` imports from:
+2. **Imported from permissive GitHub repos** —
      - `macgrrl/zwift-workouts` (Unlicense / public domain)
      - `michaelahlers/michaelahlers-zwift-workouts` (MIT)
-   All imports are re-authored using the same strip rules as scraped
-   files. Provenance (source repo, original filename, license) is
-   recorded in `workouts/.github_imports_manifest.json`.
+   Imports are re-authored to `<author>Domestique Library</author>` with
+   regenerated names/descriptions. Provenance (source repo, original
+   filename, license) is recorded in `workouts/.github_imports_manifest.json`.
+
+Nothing is scraped or reconstructed from any third-party workout site.
 
 ## Filename convention
 
@@ -75,21 +63,15 @@ structure hash are never both written (dedupe via
 
 ## How to add new workouts
 
-Option A — run a generator script:
-```sh
-python3 scripts/generate_gap_workouts.py
-python3 scripts/scrape_whatsonzwift.py --max-duration 60
-python3 scripts/import_github_workouts.py
-```
-Each script is idempotent: it writes only new structure hashes and
-updates `workouts/.structure_index.json` in place.
-
-Option B — drop a hand-authored `.zwo` into `workouts/` matching the
-filename convention above. After dropping a file, run:
+Option A — run a generator script, then refresh the index:
 ```sh
 python3 scripts/dedupe_zwo_library.py --index workouts/
 ```
-to refresh the structure index.
+Generators are idempotent: they write only new structure hashes and
+update `workouts/.structure_index.json` in place.
+
+Option B — drop a hand-authored `.zwo` into `workouts/` matching the
+filename convention above, then run the dedupe/index command above.
 
 ## Hard rules for new files
 
@@ -103,8 +85,6 @@ to refresh the structure index.
 
 ## License
 
-Workout *interval structures* are uncopyrightable facts (Feist v. Rural
-Telephone, 499 U.S. 340, 1991). Original `<name>` and `<description>`
-prose authored by Domestique Library is released under Apache-2.0.
-Imported GitHub content is retained under its original license (see
-manifest).
+Original `<name>` and `<description>` prose authored by Domestique Library
+is released under Apache-2.0. Imported GitHub content is retained under its
+original license (see the imports manifest).

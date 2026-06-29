@@ -4252,6 +4252,26 @@ def api_workouts_tags():
     return {"tags": _get_library_tags_cached()}
 
 
+# Type-aware library search: when the whole query names a content type, filter
+# by that class exactly instead of a Name substring. Fixes "sprint" returning
+# every workout whose title merely mentions a sprint (threshold/sweet-spot with
+# sprint finishes) while the real Sprint workouts — classed "neuromuscular",
+# titled differently — never showed. Variants (ladders/short/intervals) stay
+# reachable via the Type dropdown.
+_SEARCH_TYPE_ALIASES = {
+    "sprint": "neuromuscular", "sprints": "neuromuscular", "neuromuscular": "neuromuscular",
+    "recovery": "recovery",
+    "endurance": "endurance", "z2": "endurance",
+    "tempo": "tempo",
+    "sweetspot": "sweet_spot", "sweet spot": "sweet_spot", "sweet-spot": "sweet_spot",
+    "threshold": "threshold",
+    "overunder": "over_under", "over under": "over_under", "over-under": "over_under",
+    "vo2max": "vo2max", "vo2 max": "vo2max", "vo2": "vo2max",
+    "anaerobic": "anaerobic",
+    "ftp test": "ftp_test", "ftp_test": "ftp_test",
+}
+
+
 @app.get("/api/workouts")
 def api_workouts(
     min_score: int = Query(0), session_type: str = Query(None),
@@ -4307,6 +4327,9 @@ def api_workouts(
     eff_max_dur = duration_max if duration_max is not None else max_duration
 
     search_lower = (search or "").strip().lower()
+    # If the whole search term names a type, match that content class exactly
+    # (type-aware) instead of a Name/title substring.
+    search_class = _SEARCH_TYPE_ALIASES.get(search_lower) if search_lower else None
     has_flag_key = (has_flag or "").strip()
     content_class_lower = (content_class or "").strip().lower()
 
@@ -4422,9 +4445,13 @@ def api_workouts(
         # v1.8.20: also match display_name so typing the VISIBLE title (which is
         # now display_name, not the <name> tag) returns hits.
         if search_lower:
-            hay = f"{name.lower()} {zwo_path.name.lower()} {(content_entry.get('display_name') or '').lower()}"
-            if search_lower not in hay:
-                continue
+            if search_class:
+                if (content_class_val or "").lower() != search_class:
+                    continue
+            else:
+                hay = f"{name.lower()} {zwo_path.name.lower()} {(content_entry.get('display_name') or '').lower()}"
+                if search_lower not in hay:
+                    continue
         workouts.append(row)
 
     # v4.2.0 IMPL-LIBRARY: explicit sort enum. Legacy ``score`` / ``duration``

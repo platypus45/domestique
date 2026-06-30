@@ -1,8 +1,8 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version='1.0' encoding='UTF-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Endurance 3x10s (7min)</name>
-    <description>Warmup: 2min from 65% to 80% FTP | Intervals: 3 x (10s @ 125% / 50s @ 72%) | Cooldown: 50s from 65% to 70% FTP</description>
+    <name>Endurance 3x10s (9min)</name>
+    <description>Warmup: 2min from 65% to 80% FTP | Intervals: 3 x (10s @ 125% / 50s @ 72%) | Cooldown: 2min ramp from 70% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="120" PowerLow="0.65" PowerHigh="0.8" pace="0" />
@@ -13,6 +13,5 @@
         <SteadyState Duration="10" Power="1.25" pace="0" />
         <SteadyState Duration="50" Power="0.72" pace="0" />
         <SteadyState Duration="10" Power="1.25" pace="0" />
-        <Cooldown Duration="50" PowerLow="0.65" PowerHigh="0.7" pace="0" />
-    </workout>
+        <Cooldown Duration="170" PowerLow="0.7" PowerHigh="0.4" /></workout>
 </workout_file>

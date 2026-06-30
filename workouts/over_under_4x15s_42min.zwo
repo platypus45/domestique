@@ -1,13 +1,11 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version='1.0' encoding='UTF-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Tempo 4x15s (42min)</name>
+    <name>Tempo 4x15s (46min)</name>
     <description>Intervals: 4 x (15s @ 130% / 3min @ 58%) | Cooldown: 5min @ 55% FTP</description>
     <sportType>bike</sportType>
     <workout>
-        <SteadyState Duration="120" Power="0.6" pace="0" />
-        <SteadyState Duration="120" Power="0.7" pace="0" />
-        <SteadyState Duration="120" Power="0.8" pace="0" />
+        <Warmup Duration="480" PowerLow="0.5" PowerHigh="0.75" /><SteadyState Duration="120" Power="0.8" pace="0" />
         <SteadyState Duration="120" Power="0.9" pace="0" />
         <SteadyState Duration="60" Power="0.5" pace="0" />
         <SteadyState Duration="180" Power="0.58" pace="0" />

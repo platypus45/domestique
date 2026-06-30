@@ -1,12 +1,11 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version='1.0' encoding='UTF-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Over-Under 6 cycles (76min)</name>
-    <description>Warmup: 5min @ 49% FTP | Over-Under: 6 cycles (alternating above/below threshold) | Cooldown: 5min @ 50% FTP</description>
+    <name>Over-Under 6 cycles (81min)</name>
+    <description>Warmup: 10min ramp from 50% to 75% FTP | Over-Under: 6 cycles (alternating above/below threshold) | Cooldown: 5min @ 50% FTP</description>
     <sportType>bike</sportType>
     <workout>
-        <SteadyState Duration="300" Power="0.49" pace="0" Cadence="85" />
-        <SteadyState Duration="30" Power="1.2" pace="0" Cadence="125" />
+        <Warmup Duration="620" PowerLow="0.5" PowerHigh="0.75" /><SteadyState Duration="30" Power="1.2" pace="0" Cadence="125" />
         <SteadyState Duration="90" Power="0.55" pace="0" />
         <SteadyState Duration="30" Power="1.2" pace="0" Cadence="125" />
         <SteadyState Duration="90" Power="0.55" pace="0" />

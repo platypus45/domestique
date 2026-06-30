@@ -1,8 +1,8 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version='1.0' encoding='UTF-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>FTP Test (26min)</name>
-    <description>Steady: 2min @ 60% FTP | Steady: 2min @ 70% FTP | Steady: 3min @ 80% FTP | Steady: 3min @ 90% FTP | Steady: 45s @ 120% FTP | Steady: 4min @ 45% FTP | Steady: 2min @ 60% FTP | Steady: 2min @ 75% FTP | Steady: 3min @ 85% FTP | Steady: 3min @ 95% FTP | Cooldown: 1min from 35% to 55% FTP</description>
+    <name>FTP Test (27min)</name>
+    <description>Steady: 2min @ 60% FTP | Steady: 2min @ 70% FTP | Steady: 3min @ 80% FTP | Steady: 3min @ 90% FTP | Steady: 45s @ 120% FTP | Steady: 4min @ 45% FTP | Steady: 2min @ 60% FTP | Steady: 2min @ 75% FTP | Steady: 3min @ 85% FTP | Steady: 3min @ 95% FTP | Cooldown: 2min ramp from 70% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <SteadyState Duration="120" Power="0.6" pace="0" />
@@ -15,6 +15,5 @@
         <SteadyState Duration="120" Power="0.75" pace="0" />
         <SteadyState Duration="180" Power="0.85" pace="0" />
         <SteadyState Duration="180" Power="0.95" pace="0" />
-        <Cooldown Duration="60" PowerLow="0.35" PowerHigh="0.55" pace="0" />
-    </workout>
+        <Cooldown Duration="135" PowerLow="0.7" PowerHigh="0.4" /></workout>
 </workout_file>

@@ -1,13 +1,11 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version='1.0' encoding='UTF-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2max 30s/1min 8x (50min)</name>
-    <description>Warmup: 7min from 50% to 75% FTP | Microintervals: 8 x (30s @ 120% / 1min @ 55%) | Cooldown: 5min from 35% to 55% FTP</description>
+    <name>VO2max 30s/1min 8x (52min)</name>
+    <description>Warmup: 10min ramp from 50% to 75% FTP | Microintervals: 8 x (30s @ 120% / 1min @ 55%) | Cooldown: 5min from 35% to 55% FTP</description>
     <sportType>bike</sportType>
     <workout>
-        <Warmup Duration="420" PowerLow="0.5" PowerHigh="0.75" pace="0" />
-        <SteadyState Duration="60" Power="0.55" pace="0" />
-        <SteadyState Duration="20" Power="1.5" pace="0" />
+        <Warmup Duration="628" PowerLow="0.5" PowerHigh="0.75" /><SteadyState Duration="20" Power="1.5" pace="0" />
         <SteadyState Duration="10" Power="1.3" pace="0" />
         <SteadyState Duration="30" Power="0.55" pace="0" />
         <SteadyState Duration="120" Power="1.2" pace="0" />

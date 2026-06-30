@@ -1,15 +1,11 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version='1.0' encoding='UTF-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2max 30s/3min 6x (91min)</name>
+    <name>VO2max 30s/3min 6x (96min)</name>
     <description>Microintervals: 6 x (30s @ 125% / 3min @ 95%)</description>
     <sportType>bike</sportType>
     <workout>
-        <SteadyState Duration="120" Power="0.6" pace="0" />
-        <SteadyState Duration="20" Power="0.7" pace="0" />
-        <SteadyState Duration="60" Power="0.45" pace="0" />
-        <SteadyState Duration="120" Power="0.6" pace="0" />
-        <SteadyState Duration="20" Power="0.8" pace="0" />
+        <Warmup Duration="600" PowerLow="0.5" PowerHigh="0.75" /><SteadyState Duration="20" Power="0.8" pace="0" />
         <SteadyState Duration="60" Power="0.45" pace="0" />
         <SteadyState Duration="120" Power="0.6" pace="0" />
         <SteadyState Duration="20" Power="0.9" pace="0" />

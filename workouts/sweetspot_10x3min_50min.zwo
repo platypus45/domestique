@@ -1,12 +1,11 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version='1.0' encoding='UTF-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Sweet Spot 10x3min (50min)</name>
-    <description>Warmup: 7min from 50% to 90% FTP | Intervals: 10 x (3min @ 90% / 1min @ 55%) | Cooldown: 3min from 45% to 25% FTP</description>
+    <name>Sweet Spot 10x3min (51min)</name>
+    <description>Warmup: 8min ramp from 50% to 75% FTP | Intervals: 10 x (3min @ 90% / 1min @ 55%) | Cooldown: 3min from 45% to 25% FTP</description>
     <sportType>bike</sportType>
     <workout>
-        <Warmup Duration="420" PowerLow="0.5" PowerHigh="0.9" pace="0" />
-        <IntervalsT Repeat="10" OnDuration="180" OffDuration="60" OnPower="0.9" OffPower="0.55" pace="0" />
+        <Warmup Duration="480" PowerLow="0.5" PowerHigh="0.75" /><IntervalsT Repeat="10" OnDuration="180" OffDuration="60" OnPower="0.9" OffPower="0.55" pace="0" />
         <Cooldown Duration="180" PowerLow="0.45" PowerHigh="0.25" pace="0" />
     </workout>
 </workout_file>

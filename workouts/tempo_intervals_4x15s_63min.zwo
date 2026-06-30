@@ -1,12 +1,11 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version='1.0' encoding='UTF-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Mixed 4x15s (63min)</name>
-    <description>Warmup: 5min from 45% to 75% FTP | Intervals: 4 x (15s @ 150% / 5min @ 76%) | Cooldown: 5min from 75% to 45% FTP</description>
+    <name>Mixed 4x15s (66min)</name>
+    <description>Warmup: 8min ramp from 50% to 65% FTP | Intervals: 4 x (15s @ 150% / 5min @ 76%) | Cooldown: 5min from 75% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
-        <Warmup Duration="300" PowerLow="0.45" PowerHigh="0.75" pace="0" />
-        <IntervalsT Repeat="5" OnDuration="30" OffDuration="30" OnPower="0.65" OffPower="0.89" pace="0" />
+        <Warmup Duration="480" PowerLow="0.5" PowerHigh="0.65" /><IntervalsT Repeat="5" OnDuration="30" OffDuration="30" OnPower="0.65" OffPower="0.89" pace="0" />
         <SteadyState Duration="180" Power="0.5" pace="0" />
         <SteadyState Duration="30" Power="1.25" pace="0" />
         <Ramp Duration="600" PowerLow="0.55" PowerHigh="0.75" pace="0" />

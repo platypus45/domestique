@@ -1,14 +1,11 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version='1.0' encoding='UTF-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Neuromuscular (33min)</name>
+    <name>Neuromuscular (45min)</name>
     <description>Steady: 30s @ 55% FTP | Steady: 1min @ 65% FTP | Steady: 30s @ 75% FTP | Steady: 30s @ 85% FTP | Steady: 30s @ 95% FTP | Steady: 1min @ 50% FTP | Steady: 10s @ 151% FTP | Steady: 20s @ 50% FTP | Steady: 15s @ 151% FTP | Steady: 30s @ 50% FTP | Steady: 20s @ 151% FTP | Steady: 40s @ 50% FTP | Steady: 30s @ 145% FTP | Steady: 1min @ 50% FTP | Steady: 40s @ 130% FTP | Steady: 1min @ 50% FTP | Steady: 45s @ 121% FTP | Steady: 1min @ 50% FTP | Steady: 1min @ 110% FTP | Steady: 2min @ 50% FTP | Steady: 2min @ 107% FTP | Steady: 3min @ 48% FTP | Steady: 10s @ 151% FTP | Steady: 20s @ 50% FTP | Steady: 15s @ 151% FTP | Steady: 30s @ 50% FTP | Steady: 20s @ 151% FTP | Steady: 40s @ 50% FTP | Steady: 30s @ 145% FTP | Steady: 1min @ 50% FTP | Steady: 40s @ 130% FTP | Steady: 1min @ 50% FTP | Steady: 45s @ 121% FTP | Steady: 1min @ 50% FTP | Steady: 1min @ 110% FTP | Steady: 2min @ 50% FTP | Steady: 2min @ 107% FTP | Steady: 2min @ 50% FTP</description>
     <sportType>bike</sportType>
     <workout>
-        <SteadyState Duration="30" Power="0.55" pace="0" />
-        <SteadyState Duration="60" Power="0.65" pace="0" />
-        <SteadyState Duration="30" Power="0.75" pace="0" />
-        <SteadyState Duration="30" Power="0.85" pace="0" />
+        <Warmup Duration="600" PowerLow="0.5" PowerHigh="0.75" /><SteadyState Duration="30" Power="0.85" pace="0" />
         <SteadyState Duration="30" Power="0.95" pace="0" />
         <SteadyState Duration="60" Power="0.5" pace="0" />
         <SteadyState Duration="10" Power="1.51" pace="0" />
@@ -42,6 +39,5 @@
         <SteadyState Duration="60" Power="1.1" pace="0" />
         <SteadyState Duration="120" Power="0.5" pace="0" />
         <SteadyState Duration="120" Power="1.07" pace="0" />
-        <SteadyState Duration="120" Power="0.5" pace="0" />
-    </workout>
+        <Cooldown Duration="340" PowerLow="0.75" PowerHigh="0.4" /></workout>
 </workout_file>

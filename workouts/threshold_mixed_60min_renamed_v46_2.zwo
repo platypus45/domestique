@@ -1,8 +1,8 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version='1.0' encoding='UTF-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Threshold (60min)</name>
-    <description>Warmup: 5min from 40% to 65% FTP | Steady: 5min @ 65% FTP | Steady: 3min @ 75% FTP | Steady: 2min @ 55% FTP | Steady: 5min @ 100% FTP | Steady: 2min @ 55% FTP | Steady: 6min @ 98% FTP | Steady: 2min @ 55% FTP | Steady: 7min @ 96% FTP | Steady: 2min @ 55% FTP | Steady: 8min @ 94% FTP | Steady: 2min @ 55% FTP | Steady: 9min @ 92% FTP | Cooldown: 2min from 65% to 40% FTP</description>
+    <name>Threshold (63min)</name>
+    <description>Warmup: 5min from 40% to 65% FTP | Steady: 5min @ 65% FTP | Steady: 3min @ 75% FTP | Steady: 2min @ 55% FTP | Steady: 5min @ 100% FTP | Steady: 2min @ 55% FTP | Steady: 6min @ 98% FTP | Steady: 2min @ 55% FTP | Steady: 7min @ 96% FTP | Steady: 2min @ 55% FTP | Steady: 8min @ 94% FTP | Steady: 2min @ 55% FTP | Steady: 9min @ 92% FTP | Cooldown: 5min ramp from 75% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="300" PowerLow="0.4" PowerHigh="0.65" pace="0" />
@@ -18,6 +18,5 @@
         <SteadyState Duration="480" Power="0.94" pace="0" Cadence="70" />
         <SteadyState Duration="120" Power="0.55" pace="0" Cadence="85" />
         <SteadyState Duration="540" Power="0.92" pace="0" Cadence="60" />
-        <Cooldown Duration="120" PowerLow="0.65" PowerHigh="0.4" pace="0" />
-    </workout>
+        <Cooldown Duration="300" PowerLow="0.75" PowerHigh="0.4" /></workout>
 </workout_file>

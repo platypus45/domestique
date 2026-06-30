@@ -1,7 +1,7 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version='1.0' encoding='UTF-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>VO2max Ramp (20min)</name>
+    <name>VO2max Ramp (25min)</name>
     <description>Warmup: 5min from 25% to 65% FTP | Ramp: 15min from 65% to 125% FTP</description>
     <sportType>bike</sportType>
     <workout>
@@ -11,5 +11,5 @@
         <SteadyState Duration="180" Power="0.95" pace="0" />
         <SteadyState Duration="120" Power="1.09" pace="0" />
         <SteadyState Duration="60" Power="1.25" pace="0" />
-    </workout>
+    <Cooldown Duration="300" PowerLow="0.75" PowerHigh="0.4" /></workout>
 </workout_file>

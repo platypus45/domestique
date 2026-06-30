@@ -1,11 +1,11 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version='1.0' encoding='UTF-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Threshold 6x2min (16min)</name>
+    <name>Threshold 6x2min (31min)</name>
     <description>Intervals: 6 x (2min @ 105% / 1min @ 65%)</description>
     <sportType>bike</sportType>
     <workout>
-        <SteadyState Duration="120" Power="1.05" pace="0" />
+        <Warmup Duration="600" PowerLow="0.5" PowerHigh="0.75" /><SteadyState Duration="120" Power="1.05" pace="0" />
         <SteadyState Duration="60" Power="0.65" pace="0" />
         <SteadyState Duration="120" Power="1.05" pace="0" />
         <SteadyState Duration="60" Power="0.65" pace="0" />
@@ -15,5 +15,5 @@
         <SteadyState Duration="60" Power="0.65" pace="0" />
         <SteadyState Duration="120" Power="1.05" pace="0" />
         <SteadyState Duration="120" Power="1.05" pace="0" />
-    </workout>
+    <Cooldown Duration="300" PowerLow="0.75" PowerHigh="0.4" /></workout>
 </workout_file>

@@ -1,14 +1,11 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version='1.0' encoding='UTF-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Threshold 20s/0s 6x (58min)</name>
-    <description>Warmup: 3min from 45% to 60% FTP | Microintervals: 6 x (20s @ 125% / 0s @ 55%) | Cooldown: 5min from 70% to 45% FTP</description>
+    <name>Threshold 20s/0s 6x (63min)</name>
+    <description>Warmup: 10min ramp from 50% to 75% FTP | Microintervals: 6 x (20s @ 125% / 0s @ 55%) | Cooldown: 5min from 70% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
-        <Warmup Duration="180" PowerLow="0.45" PowerHigh="0.6" pace="0" />
-        <SteadyState Duration="60" Power="0.6" pace="0" />
-        <SteadyState Duration="60" Power="0.65" pace="0" />
-        <SteadyState Duration="60" Power="0.81" pace="0" />
+        <Warmup Duration="615" PowerLow="0.5" PowerHigh="0.75" /><SteadyState Duration="60" Power="0.81" pace="0" />
         <SteadyState Duration="60" Power="1.09" pace="0" />
         <SteadyState Duration="120" Power="0.5" pace="0" />
         <SteadyState Duration="240" Power="0.9" pace="0" />

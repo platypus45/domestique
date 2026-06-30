@@ -1,13 +1,11 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version='1.0' encoding='UTF-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Neuromuscular (55min)</name>
-    <description>Warmup: 5min from 45% to 75% FTP | Steady: 1min @ 55% FTP | Steady: 1min @ 80% FTP | Steady: 1min @ 55% FTP | Steady: 1min @ 95% FTP | Steady: 1min @ 55% FTP | Steady: 30s @ 110% FTP | Steady: 2min @ 55% FTP | Steady: 30s @ 125% FTP | Steady: 5min @ 55% FTP | Steady: 25s @ 160% FTP | Steady: 7min @ 55% FTP | Steady: 25s @ 170% FTP | Steady: 7min @ 55% FTP | Steady: 25s @ 180% FTP | Steady: 7min @ 55% FTP | Steady: 25s @ 65% FTP | Steady: 7min @ 55% FTP | Steady: 25s @ 65% FTP | Steady: 2min @ 55% FTP | Cooldown: 5min from 75% to 45% FTP</description>
+    <name>Neuromuscular (60min)</name>
+    <description>Warmup: 10min ramp from 50% to 75% FTP | Steady: 1min @ 55% FTP | Steady: 1min @ 80% FTP | Steady: 1min @ 55% FTP | Steady: 1min @ 95% FTP | Steady: 1min @ 55% FTP | Steady: 30s @ 110% FTP | Steady: 2min @ 55% FTP | Steady: 30s @ 125% FTP | Steady: 5min @ 55% FTP | Steady: 25s @ 160% FTP | Steady: 7min @ 55% FTP | Steady: 25s @ 170% FTP | Steady: 7min @ 55% FTP | Steady: 25s @ 180% FTP | Steady: 7min @ 55% FTP | Steady: 25s @ 65% FTP | Steady: 7min @ 55% FTP | Steady: 25s @ 65% FTP | Steady: 2min @ 55% FTP | Cooldown: 5min from 75% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
-        <Warmup Duration="300" PowerLow="0.45" PowerHigh="0.75" pace="0" />
-        <SteadyState Duration="60" Power="0.55" pace="0" />
-        <SteadyState Duration="60" Power="0.8" pace="0" />
+        <Warmup Duration="655" PowerLow="0.5" PowerHigh="0.75" /><SteadyState Duration="60" Power="0.8" pace="0" />
         <SteadyState Duration="60" Power="0.55" pace="0" />
         <SteadyState Duration="60" Power="0.95" pace="0" />
         <SteadyState Duration="60" Power="0.55" pace="0" />

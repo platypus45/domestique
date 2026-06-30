@@ -1,12 +1,11 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version='1.0' encoding='UTF-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Neuromuscular (50min)</name>
-    <description>Warmup: 5min @ 50% FTP | Steady: 30s @ 65% FTP | Steady: 30s @ 80% FTP | Steady: 30s @ 65% FTP | Steady: 30s @ 80% FTP | Steady: 30s @ 65% FTP | Steady: 30s @ 80% FTP | Steady: 30s @ 65% FTP | Steady: 30s @ 80% FTP | Steady: 30s @ 65% FTP | Steady: 30s @ 80% FTP | Steady: 3min @ 50% FTP | Steady: 10min @ 81% FTP | Steady: 1min @ 150% FTP | Steady: 1min @ 50% FTP | Steady: 30s @ 170% FTP | Steady: 30s @ 50% FTP | Steady: 15s @ 200% FTP | Steady: 45s @ 50% FTP | Steady: 10s @ 200% FTP | Steady: 5min @ 50% FTP | Steady: 10min @ 81% FTP | Steady: 1min @ 150% FTP | Steady: 1min @ 50% FTP | Steady: 30s @ 170% FTP | Steady: 30s @ 50% FTP | Steady: 15s @ 200% FTP | Steady: 45s @ 50% FTP | Steady: 10s @ 200% FTP | Cooldown: 3min 40s from 50% to 35% FTP</description>
+    <name>Neuromuscular (57min)</name>
+    <description>Warmup: 10min ramp from 50% to 65% FTP | Steady: 30s @ 65% FTP | Steady: 30s @ 80% FTP | Steady: 30s @ 65% FTP | Steady: 30s @ 80% FTP | Steady: 30s @ 65% FTP | Steady: 30s @ 80% FTP | Steady: 30s @ 65% FTP | Steady: 30s @ 80% FTP | Steady: 30s @ 65% FTP | Steady: 30s @ 80% FTP | Steady: 3min @ 50% FTP | Steady: 10min @ 81% FTP | Steady: 1min @ 150% FTP | Steady: 1min @ 50% FTP | Steady: 30s @ 170% FTP | Steady: 30s @ 50% FTP | Steady: 15s @ 200% FTP | Steady: 45s @ 50% FTP | Steady: 10s @ 200% FTP | Steady: 5min @ 50% FTP | Steady: 10min @ 81% FTP | Steady: 1min @ 150% FTP | Steady: 1min @ 50% FTP | Steady: 30s @ 170% FTP | Steady: 30s @ 50% FTP | Steady: 15s @ 200% FTP | Steady: 45s @ 50% FTP | Steady: 10s @ 200% FTP | Cooldown: 5min ramp from 75% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>
-        <SteadyState Duration="300" Power="0.5" pace="0" />
-        <IntervalsT Repeat="5" OnDuration="30" OffDuration="30" OnPower="0.65" OffPower="0.8" pace="0" Cadence="80" CadenceResting="95" />
+        <Warmup Duration="600" PowerLow="0.5" PowerHigh="0.65" /><IntervalsT Repeat="5" OnDuration="30" OffDuration="30" OnPower="0.65" OffPower="0.8" pace="0" Cadence="80" CadenceResting="95" />
         <SteadyState Duration="180" Power="0.5" pace="0" Cadence="85" />
         <SteadyState Duration="600" Power="0.81" pace="0" />
         <SteadyState Duration="60" Power="1.5" pace="0" Cadence="100" />
@@ -25,6 +24,5 @@
         <SteadyState Duration="15" Power="2.0" pace="0" Cadence="110" />
         <SteadyState Duration="45" Power="0.5" pace="0" Cadence="85" />
         <SteadyState Duration="10" Power="2.0" pace="0" Cadence="110" />
-        <Cooldown Duration="220" PowerLow="0.5" PowerHigh="0.35" pace="0" />
-    </workout>
+        <Cooldown Duration="340" PowerLow="0.75" PowerHigh="0.4" /></workout>
 </workout_file>

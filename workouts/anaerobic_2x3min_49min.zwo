@@ -1,12 +1,11 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version='1.0' encoding='UTF-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Mixed 2x3min (49min)</name>
-    <description>Warmup: 3min from 45% to 55% FTP | Intervals: 2 x (3min @ 101% / 3min @ 35%) | Cooldown: 3min from 50% to 30% FTP</description>
+    <name>Mixed 2x3min (58min)</name>
+    <description>Warmup: 10min ramp from 50% to 75% FTP | Intervals: 2 x (3min @ 101% / 3min @ 35%) | Cooldown: 5min ramp from 75% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>
-        <Warmup Duration="180" PowerLow="0.45" PowerHigh="0.55" pace="0" Cadence="85" />
-        <SteadyState Duration="20" Power="1.25" pace="0" Cadence="100" />
+        <Warmup Duration="600" PowerLow="0.5" PowerHigh="0.75" /><SteadyState Duration="20" Power="1.25" pace="0" Cadence="100" />
         <Ramp Duration="180" PowerLow="0.56" PowerHigh="0.65" pace="0" Cadence="85" />
         <SteadyState Duration="20" Power="1.25" pace="0" Cadence="100" />
         <Ramp Duration="180" PowerLow="0.66" PowerHigh="0.75" pace="0" Cadence="85" />
@@ -19,6 +18,5 @@
         <IntervalsT Repeat="1" OnDuration="180" OffDuration="180" OnPower="1.01" OffPower="0.35" pace="0" />
         <IntervalsT Repeat="1" OnDuration="180" OffDuration="180" OnPower="1.11" OffPower="0.35" pace="0" />
         <SteadyState Duration="120" Power="1.21" pace="0" />
-        <Cooldown Duration="180" PowerLow="0.5" PowerHigh="0.3" pace="0" Cadence="85" />
-    </workout>
+        <Cooldown Duration="300" PowerLow="0.75" PowerHigh="0.4" /></workout>
 </workout_file>

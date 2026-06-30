@@ -1,14 +1,11 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version='1.0' encoding='UTF-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Neuromuscular 4x25s (45min)</name>
+    <name>Neuromuscular 4x25s (53min)</name>
     <description>Intervals: 4 x (25s @ 150% / 45s @ 50%)</description>
     <sportType>bike</sportType>
     <workout>
-        <SteadyState Duration="120" Power="0.55" pace="0" />
-        <SteadyState Duration="90" Power="0.65" pace="0" />
-        <SteadyState Duration="60" Power="0.75" pace="0" />
-        <SteadyState Duration="60" Power="0.85" pace="0" />
+        <Warmup Duration="600" PowerLow="0.5" PowerHigh="0.75" /><SteadyState Duration="60" Power="0.85" pace="0" />
         <SteadyState Duration="60" Power="0.95" pace="0" />
         <SteadyState Duration="30" Power="0.5" pace="0" />
         <SteadyState Duration="30" Power="1.1" pace="0" />
@@ -36,6 +33,5 @@
         <SteadyState Duration="120" Power="0.5" pace="0" />
         <IntervalsT Repeat="4" OnDuration="25" OffDuration="45" OnPower="1.5" OffPower="0.5" pace="0" />
         <SteadyState Duration="25" Power="1.6" pace="0" />
-        <SteadyState Duration="180" Power="0.5" pace="0" />
-    </workout>
+        <Cooldown Duration="325" PowerLow="0.75" PowerHigh="0.4" /></workout>
 </workout_file>

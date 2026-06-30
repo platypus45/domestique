@@ -3626,7 +3626,7 @@ async function openWorkoutDetail(category, filename, meta) {
         <button class="btn btn-primary" onclick="downloadZwo('${escJs(category)}','${escJs(filename)}')">Open Workout File (.zwo)</button>
         <button class="btn" onclick="closeModal()">Close</button>
       </div>
-      <div style="margin-top:8px;font-size:11px;color:var(--text3);">Download the .zwo and load it into a trainer app (MyWhoosh / Tacx / Zwift / Golden Cheetah) or push it straight onto your Garmin / Wahoo / Hammerhead — it drives the trainer in ERG either way. When you finish, use the Import FIT button (top right) to post-analyze your ride.</div>`;
+      <div style="margin-top:8px;font-size:11px;color:var(--text3);">Load the .zwo into an indoor trainer app (MyWhoosh / Zwift / Tacx / Golden Cheetah) — it drives ERG with smooth power ramps. Some bike computers (e.g. Hammerhead) read ZWO directly too; for a planned day you can also export a FIT (for TrainingPeaks / Vekta / head units). When you finish, use Import FIT (top right) to post-analyze your ride.</div>`;
   } catch(e) {
     $('modal-content').innerHTML = `<p style="color:var(--red)">Failed to load workout</p>`;
   }
@@ -14647,9 +14647,9 @@ async function openDayWorkout(sessionIdx) {
     // Generate ZWO on-the-fly only when no matched library file is available.
     html += `<button class="btn btn-primary" onclick="downloadGeneratedZwo('${escJs(type)}', ${session.duration_min}, '${escJs(session.day_name)} ${escJs(typeUpper)}')">Download ZWO (Virtual Trainer)</button>`;
   }
-  html += `<button class="btn" onclick="downloadFIT('${escJs(type)}', ${session.duration_min}, '${escJs(fitName)}', ${session.zwo_file ? `'${escJs(session.zwo_file)}'` : 'null'})">Download FIT (Garmin / Wahoo / Karoo)</button>`;
+  html += `<button class="btn" onclick="downloadFIT('${escJs(type)}', ${session.duration_min}, '${escJs(fitName)}', ${session.zwo_file ? `'${escJs(session.zwo_file)}'` : 'null'})">Download FIT</button>`;
   html += '</div>';
-  html += '<div style="font-size:10px;color:var(--text3);margin-top:8px;">ZWO = Virtual trainers (MyWhoosh / Tacx / Zwift / Hammerhead Karoo — ERG mode, power targets). FIT = Garmin Edge + Wahoo ELEMNT. Ride in your chosen app, then use Import FIT to analyze.</div>';
+  html += '<div style="font-size:10px;color:var(--text3);margin-top:8px;">Same workout, two formats — pick whichever your tool reads. <b>ZWO</b> is the structured-workout file for indoor trainer apps (MyWhoosh / Zwift / Tacx / Golden Cheetah); it drives ERG with smooth power ramps. <b>FIT</b> is the structured-workout file for bike computers and workout platforms (TrainingPeaks, Vekta, and head units). Many devices read either (a Hammerhead takes both). Ride it, then Import FIT to analyze.</div>';
 
   // v4.1.0 U8: per-session rematch button. Calls /api/plan/re-draw first
   // (FIX-SERVER P6) and animates the new workout inline; falls back to the

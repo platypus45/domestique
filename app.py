@@ -10481,6 +10481,10 @@ def _build_fit_workout(name: str, blocks: list[dict], ftp: int) -> bytes:
         step.duration_value = b["min"] * 60 * 1000  # milliseconds
         step.target_type = WorkoutStepTarget.POWER
         step.intensity = INTENSITY_MAP.get(b.get("intensity", "active"), Intensity.ACTIVE)
+        # v2.4.2 — every step needs a name. Garmin's own canonical workout files
+        # (and TrainingPeaks / Vekta) expect wkt_step_name on each step; without it
+        # strict importers report "no workout in this file". Cap to 15 chars.
+        step.workout_step_name =(str(b.get("name") or "Step"))[:15]
 
         # Power targets in watts (FIT uses absolute watts + 1000 offset for custom targets)
         power_low = round(ftp * b["pctLow"] / 100) + 1000
@@ -10621,6 +10625,12 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int) -> bytes:
         step.duration_value = dur_s * 1000  # milliseconds
         step.target_type = WorkoutStepTarget.POWER
         step.intensity = INTENSITY_MAP.get(intensity_kind, Intensity.ACTIVE)
+        # v2.4.2 — name every step (Garmin canonical / TrainingPeaks / Vekta expect
+        # wkt_step_name; missing names → "no workout in this file" on import).
+        step.workout_step_name ={
+            "warmup": "Warm up", "cooldown": "Cool down",
+            "rest": "Recovery", "active": "Work",
+        }.get(intensity_kind, "Work")
         # FIT uses absolute watts + 1000 offset for custom targets.
         step.custom_target_power_low = round(ftp * p_lo) + 1000
         step.custom_target_power_high = round(ftp * p_hi) + 1000

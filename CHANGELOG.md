@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.3.2 — FIT workout downloads now import into TrainingPeaks / Vekta (2026-06-30)
+
+Downloaded FIT workouts were opening empty in TrainingPeaks, Vekta and Garmin Connect. The file was actually complete — every interval, power target and warm-up/cool-down ramp was there — but it lacked the creation-date stamp those apps require, so they filed it as empty. Every exported FIT now carries that stamp.
+
+### What changes for users
+
+- Download FIT (from the workout library or a plan day) and it imports correctly into TrainingPeaks / Vekta / Garmin — warm-up and cool-down ramps intact.
+- ZWO downloads are unchanged (they already worked).
+
 ## v2.3.1 — Custom intensity mix moved onto the Template picker (2026-06-28)
 
 A fix for v2.3.0: the intensity-mix percentages and the editable custom split were attached to the wrong control, so the built-in templates showed no percentages and there was no place to enter your own. They now live on the plan Template picker, where you'd expect them.

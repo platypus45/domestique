@@ -1,23 +1,14 @@
 # Changelog
 
-## v2.3.3 — Multiple activities on one day now all show and count (2026-06-30)
+## v2.4.0 — Proper warm-ups & cool-downs, multi-activity days, FIT imports (2026-06-30)
 
-If you did more than one ride in a day — say a commute plus your main session — the planner showed only one of them and counted only its training load. Now every cycling activity on a day appears, and their TSS adds up, so the plan's on-track tracking and adaptation see your real load. Non-cycling activities (runs, swims) are no longer mistaken for a planned ride.
+A bundled release pulling together the warm-up overhaul plus the recent activity and FIT fixes.
 
-### What changes for users
+**Every workout now has a proper warm-up and cool-down.** Hard sessions get a longer ramp, easy rides a shorter one — scaled to the session. Your plan is unaffected: a 90-minute slot is still 90 minutes (warm-up included, not bolted on top), and the day view now shows the warm-up / main-set / cool-down split so you can see exactly how the time breaks down.
 
-- A day with two or more rides shows them all, with a combined-load total; click the day to see each one.
-- The day's training load is the sum of that day's rides — feeding the on-track bar and the recovery-ramp logic correctly.
-- A run or swim on a planned day no longer masks a missed ride or inflates the week.
+**Multiple activities on one day all show and count.** Did a commute plus your main session? Both now appear, with a combined-load total — and the day's TSS adds up so on-track tracking and plan adaptation see your real load. A run or swim on a planned day no longer masks a missed ride or inflates the week.
 
-## v2.3.2 — FIT workout downloads now import into TrainingPeaks / Vekta (2026-06-30)
-
-Downloaded FIT workouts were opening empty in TrainingPeaks, Vekta and Garmin Connect. The file was actually complete — every interval, power target and warm-up/cool-down ramp was there — but it lacked the creation-date stamp those apps require, so they filed it as empty. Every exported FIT now carries that stamp.
-
-### What changes for users
-
-- Download FIT (from the workout library or a plan day) and it imports correctly into TrainingPeaks / Vekta / Garmin — warm-up and cool-down ramps intact.
-- ZWO downloads are unchanged (they already worked).
+**FIT workout downloads import into TrainingPeaks / Vekta / Garmin.** They were opening empty (the file was missing a creation-date stamp those apps require) — now fixed, with warm-up and cool-down ramps intact.
 
 ## v2.3.1 — Custom intensity mix moved onto the Template picker (2026-06-28)
 

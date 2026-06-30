@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.4.2 — FIT workouts import into TrainingPeaks / Vekta (2026-06-30)
+
+Downloaded FIT workouts were rejected with "no workout in this file" by TrainingPeaks and Vekta. The file was valid, but its steps had no names — which those apps require. Every step is now named, matching Garmin's own workout-file format.
+
+### What changes for users
+
+- **FIT workout downloads import correctly** into TrainingPeaks, Vekta, and other structured-workout tools — each warm-up / interval / cool-down step is now named.
+- **Clearer ZWO vs FIT guidance** on the download: same workout, two formats — pick whichever your app reads (many devices read either; e.g. a Hammerhead takes both). ZWO drives indoor trainer apps; FIT is for bike computers and workout platforms.
+
 ## v2.4.1 — Sharper DFA threshold estimate + instant help tooltips (2026-06-30)
 
 The DFA aerobic/anaerobic threshold estimate now leans on your cleaner rides and ignores ones where your heart rate drifted (which skew the result), so it reflects your true thresholds better. Plus the "?" help bubbles pop up instantly instead of after a delay.

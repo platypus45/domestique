@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.3.3 — Multiple activities on one day now all show and count (2026-06-30)
+
+If you did more than one ride in a day — say a commute plus your main session — the planner showed only one of them and counted only its training load. Now every cycling activity on a day appears, and their TSS adds up, so the plan's on-track tracking and adaptation see your real load. Non-cycling activities (runs, swims) are no longer mistaken for a planned ride.
+
+### What changes for users
+
+- A day with two or more rides shows them all, with a combined-load total; click the day to see each one.
+- The day's training load is the sum of that day's rides — feeding the on-track bar and the recovery-ramp logic correctly.
+- A run or swim on a planned day no longer masks a missed ride or inflates the week.
+
 ## v2.3.2 — FIT workout downloads now import into TrainingPeaks / Vekta (2026-06-30)
 
 Downloaded FIT workouts were opening empty in TrainingPeaks, Vekta and Garmin Connect. The file was actually complete — every interval, power target and warm-up/cool-down ramp was there — but it lacked the creation-date stamp those apps require, so they filed it as empty. Every exported FIT now carries that stamp.

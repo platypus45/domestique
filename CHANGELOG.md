@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.4.1 — Sharper DFA threshold estimate + instant help tooltips (2026-06-30)
+
+The DFA aerobic/anaerobic threshold estimate now leans on your cleaner rides and ignores ones where your heart rate drifted (which skew the result), so it reflects your true thresholds better. Plus the "?" help bubbles pop up instantly instead of after a delay.
+
+### What changes for users
+
+- **Better threshold estimate.** HRVT1/HRVT2 is now a confidence-weighted average of your recent, well-measured, low-drift rides — fatigued/drifting rides are left out (they push the threshold artificially low). The panel shows how many rides were excluded and why.
+- **Instant help tooltips.** Hovering the "?" icons (e.g. Block periodization) shows the explanation immediately instead of after a ~1-second delay.
+
 ## v2.4.0 — Proper warm-ups & cool-downs, multi-activity days, FIT imports (2026-06-30)
 
 A bundled release pulling together the warm-up overhaul plus the recent activity and FIT fixes.

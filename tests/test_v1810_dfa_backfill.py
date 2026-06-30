@@ -306,13 +306,15 @@ class TestDfaRidesEndpoint(unittest.TestCase):
         self.assertEqual(row_a["date"], "2026-05-20")
         # duration from moving_s/60.
         self.assertEqual(row_a["duration_min"], 60)
-        # Aggregate power median over the TWO good rides (240,250)=245; the
-        # low-r² ride (iC) is excluded from aggregate but present in rides.
+        # v2.4.1 — aggregate is now an r²-CONFIDENCE-WEIGHTED median over the two
+        # good rides (was a plain median). good1 (240 W / 165 bpm) has higher r²
+        # than good2 (250 W / 168 bpm), so the weighted median lands on good1's
+        # values, NOT the plain median (245 / 166.5). The low-r² ride (iC) is
+        # excluded from the aggregate but present in rides.
         agg = r["aggregate"]["hrvt1"]
-        self.assertEqual(agg["power"], 245.0)
+        self.assertEqual(agg["power"], 240.0)
         self.assertEqual(agg["n_power"], 2)
-        # HR aggregate excludes iC's 0.31-r² HR → median of (165,168)=166.5.
-        self.assertEqual(agg["hr"], 166.5)
+        self.assertEqual(agg["hr"], 165.0)
         self.assertEqual(agg["n_hr"], 2)
         self.assertEqual(len(r["rides"]), 3)
 

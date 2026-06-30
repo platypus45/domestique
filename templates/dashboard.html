@@ -1235,6 +1235,21 @@ details > summary::marker { content: ""; }
 .uc-whatsnew-arrow { display: inline-block; transition: transform .15s ease; }
 details[open] > .uc-whatsnew-summary .uc-whatsnew-arrow { transform: rotate(90deg); }
 details > summary:hover::before { color: var(--accent); }
+
+/* v2.4.1 — fast tooltip for the "?" help glyphs. Native title= has a fixed
+   ~1s browser delay; this CSS tooltip shows instantly on hover/focus. The
+   text is moved from title= to data-tip= on load (see initHintTooltips) so the
+   native tooltip doesn't also fire. */
+.hint { position: relative; }
+.hint[data-tip]:hover::after, .hint[data-tip]:focus::after {
+  content: attr(data-tip);
+  position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%);
+  background: var(--card); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 7px 10px; font-size: 11px; font-weight: 400;
+  line-height: 1.4; width: max-content; max-width: 300px; white-space: normal;
+  text-align: left; z-index: 10000; box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+  pointer-events: none;
+}
 </style>
 <script src="/static/vendor/chart.umd.min.js"></script>
 </head>
@@ -6323,7 +6338,7 @@ function _renderDfaAggregate(d) {
       <h3 style="margin:0;font-size:15px;">Estimated thresholds &amp; zones</h3>${_dfaIcon()}
     </div>
     <div style="font-size:11px;color:var(--text3);margin-bottom:6px;">
-      Median across recent threshold-crossing rides (r²≥${(agg.agg_min_r2||0.5)}). Power is the better-validated anchor in cycling.
+      Confidence-weighted (r²) median across recent threshold-crossing rides (r²≥${(agg.agg_min_r2||0.5)}); drifting / high-decoupling rides are excluded${Number(agg.n_excluded_decoupling||0) ? ` (${Number(agg.n_excluded_decoupling)} dropped)` : ''} because fatigue lowers α1 and biases the threshold. Power is the better-validated anchor in cycling.
     </div>
     ${row('Aerobic threshold (HRVT1)', '0.75', t1, 'top of Zone 2 / easy ceiling')}
     ${row('Anaerobic threshold (HRVT2)', '0.50', t2, 'sustainable-hard ceiling')}
@@ -16702,6 +16717,18 @@ async function openDiagnosticsModal() {
     body.innerHTML = '<div style="color:var(--red);">Could not load diagnostics: ' + String(e && e.message || e) + '</div>';
   }
 }
+
+// v2.4.1 — move every "?" hint's native title= onto data-tip= so the fast CSS
+// tooltip fires instead of the slow (~1s) native browser tooltip. Runs on load;
+// re-runnable for any hints added later.
+function initHintTooltips() {
+  document.querySelectorAll('.hint[title]').forEach(el => {
+    if (!el.getAttribute('data-tip')) el.setAttribute('data-tip', el.getAttribute('title'));
+    el.removeAttribute('title');
+    if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+  });
+}
+document.addEventListener('DOMContentLoaded', initHintTooltips);
 
 // Footer link injection — runs once on DOMContentLoaded so it always exists.
 document.addEventListener('DOMContentLoaded', function() {

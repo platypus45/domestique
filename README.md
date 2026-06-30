@@ -337,6 +337,7 @@ Each is reported as both an HR and a power value, and they drive a **3-zone inte
 **Caveats (why it's labelled beta):**
 - **Needs a ramp.** Thresholds only resolve on a ride that actually *sweeps through* them — a progressive effort or ramp. Steady endurance rides keep alpha1 > 0.75 and never cross 0.75/0.50, so "no threshold detected" is the **common, expected** outcome on a Z2 ride, not an error.
 - **Single-ride noise.** Per-ride detection r² is moderate (0.36–0.64). The app shows each ride's r² colour-coded and only folds rides with r² >= 0.50 into the aggregate.
+- **The aggregate is quality-weighted, not a flat average.** alpha1 is a fatigue/durability marker — a fatigued or drifting ride suppresses alpha1 and biases its threshold *low* ([Rogers & Gronwald 2022](https://pubmed.ncbi.nlm.nih.gov/35615679/), [Rogers 2025 durability](https://pubmed.ncbi.nlm.nih.gov/39904800/)). So the 42-day aggregate **excludes high-decoupling rides (> 10%)** and takes a **confidence (r²)-weighted median** of the rest — clean, well-fit rides count more; drifting rides don't drag the threshold down. Pooling every ride equally would not be valid.
 - **Hysteresis.** Alpha1 lags intensity differently on up- vs down-ramps; a single linear fit pools both directions — a known, documented bias, not corrected in v1.
 - **Day-to-day reproducibility unproven.** The day-to-day stability of HRV thresholds is still contested (Cassirame et al. 2025 methodological critique + Gronwald reply), hence the beta label.
 

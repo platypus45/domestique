@@ -2078,6 +2078,12 @@ def api_profile_dfa_rides():
         from analytics import DFA_AGG_MIN_R2 as _AGG_R2
     except Exception:
         _AGG_R2 = 0.50
+    # v2.4.1 — exclude clearly-drifting rides from the HRVT aggregate. DFA α1 is
+    # a fatigue/durability marker (Rogers 2022 PMID 35615679; 2025 PMID 39904800):
+    # a ride with high aerobic decoupling has a non-stationary α1, so its HRVT is
+    # biased low. Well-coupled is <5% (Friel); 10% is a conservative "drifting" cut
+    # (only applied when decoupling_pct is present — missing data is kept).
+    _AGG_MAX_DECOUPLING = 10.0
 
     try:
         raw = _iter_icu_dfa_rides()
@@ -2112,6 +2118,10 @@ def api_profile_dfa_rides():
             "hrvt1": d.get("dfa_hrvt1"),   # stored dict, passed through unchanged
             "hrvt2": d.get("dfa_hrvt2"),
             "algo_version": d.get("dfa_algo_version"),
+            # v2.4.1 — whole-ride aerobic decoupling; high drift means a
+            # non-stationary α1, so such rides are dropped from the HRVT
+            # aggregate (Rogers 2025 durability, PMID 39904800).
+            "decoupling_pct": d.get("decoupling_pct"),
         })
 
     # Newest first (date string sorts lexically for ISO).
@@ -2120,6 +2130,9 @@ def api_profile_dfa_rides():
     # ── Aggregate: rides in the last 42 days that resolved a threshold;
     #    fall back to the last 8 resolved if <3 in the window. r²-gated.
     def _resolved(row, key, channel):
+        dc = row.get("decoupling_pct")
+        if dc is not None and dc > _AGG_MAX_DECOUPLING:
+            return None  # drifting ride — α1 non-stationary, HRVT biased low
         t = row.get(key)
         if not isinstance(t, dict):
             return None
@@ -2128,6 +2141,20 @@ def api_profile_dfa_rides():
         if load is None or r2 is None or r2 < _AGG_R2:
             return None
         return (load, r2, row.get("date") or "")
+
+    def _weighted_median(pairs):
+        """Median weighted by fit confidence (r²): higher-r² rides pull more,
+        while staying robust to outliers at small n. pairs = [(value, weight)]."""
+        pairs = sorted((p for p in pairs if p[1] and p[1] > 0), key=lambda p: p[0])
+        if not pairs:
+            return None
+        half = sum(w for _, w in pairs) / 2.0
+        acc = 0.0
+        for v, w in pairs:
+            acc += w
+            if acc >= half:
+                return v
+        return pairs[-1][0]
 
     def _aggregate(key):
         # Collect resolved per channel from the date-windowed set.
@@ -2156,7 +2183,8 @@ def api_profile_dfa_rides():
                 if res:
                     vals.append(res[0]); r2s.append(res[1]); dates.append(res[2])
             if vals:
-                out[med_k] = round(_stats.median(vals), 1)
+                wm = _weighted_median(list(zip(vals, r2s)))
+                out[med_k] = round(wm if wm is not None else _stats.median(vals), 1)
                 out[n_k] = len(vals)
                 out[("r2_hr_median" if channel == "hr" else "r2_power_median")] = round(_stats.median(r2s), 3)
             else:
@@ -2169,6 +2197,12 @@ def api_profile_dfa_rides():
         out["date_span"] = [ds[0], ds[-1]] if ds else None
         return out
 
+    n_excl_dc = sum(
+        1 for r in rides
+        if (r.get("decoupling_pct") is not None
+            and r["decoupling_pct"] > _AGG_MAX_DECOUPLING)
+        and (isinstance(r.get("hrvt1"), dict) or isinstance(r.get("hrvt2"), dict))
+    )
     return {
         "rides": rides,
         "aggregate": {
@@ -2176,6 +2210,8 @@ def api_profile_dfa_rides():
             "hrvt2": _aggregate("hrvt2"),
             "n_window": 8,
             "agg_min_r2": _AGG_R2,
+            "agg_max_decoupling": _AGG_MAX_DECOUPLING,
+            "n_excluded_decoupling": n_excl_dc,
         },
         "n_total": len(raw),
         "n_computed": n_computed,

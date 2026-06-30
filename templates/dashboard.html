@@ -14508,6 +14508,7 @@ async function openDayWorkout(sessionIdx) {
   // chart that didn't match the file the user would actually download.
   let blocksSvg = '';
   let segmentChartSvg = '';
+  let wuMin = 0, mainMin = 0, cdMin = 0, haveBreakdown = false;
   if (session.zwo_file) {
     try {
       const segRes = await fetch(`/api/workout/all/${encodeURIComponent(session.zwo_file)}`);
@@ -14515,6 +14516,20 @@ async function openDayWorkout(sessionIdx) {
         const segData = await segRes.json();
         if (segData && segData.segments && segData.segments.length > 0) {
           segmentChartSvg = workoutProfileSVG(segData.segments, segData.ftp || settingsFtp, segData.total_seconds);
+          // v2.4.0 — explicit warmup budgeting: surface the warmup / main /
+          // cooldown split so "slot = warmup + main" is visible (the planner
+          // already budgets total time; this makes the breakdown explicit).
+          const f = segData.ftp || settingsFtp;
+          const segs = segData.segments;
+          const sdur = s => s.type === 'IntervalsT' ? (s.repeats || 1) * ((s.on_duration || 0) + (s.off_duration || 0)) : (s.duration || 0);
+          const easyLead = s => s.type === 'Warmup' || s.type === 'Ramp' || s.type === 'FreeRide' || (s.type === 'SteadyState' && (s.power || 0) < 0.80 * f);
+          const easyTail = s => s.type === 'Cooldown' || s.type === 'FreeRide' || (s.type === 'SteadyState' && (s.power || 0) < 0.70 * f);
+          let total = segs.reduce((a, s) => a + sdur(s), 0), wu = 0, cd = 0, i = 0, j = segs.length - 1;
+          while (i < segs.length && easyLead(segs[i])) { wu += sdur(segs[i]); i++; }
+          while (j >= i && easyTail(segs[j])) { cd += sdur(segs[j]); j--; }
+          wuMin = Math.round(wu / 60); cdMin = Math.round(cd / 60);
+          mainMin = Math.max(0, Math.round(total / 60) - wuMin - cdMin);
+          haveBreakdown = (wuMin + cdMin) > 0;
         }
       }
     } catch (e) { /* fall through to silhouette */ }
@@ -14590,6 +14605,9 @@ async function openDayWorkout(sessionIdx) {
   html += '<div style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0;">';
   html += `<div class="metric"><div class="mv">${dispDur}min</div><div class="ml">Duration</div></div>`;
   html += `<div class="metric"><div class="mv">${session.tss_estimate}</div><div class="ml">TSS</div></div>`;
+  if (haveBreakdown) {
+    html += `<div class="metric" title="Warmup + main set + cooldown — the planner budgets the warmup inside the slot"><div class="mv" style="font-size:14px;">${wuMin}·${mainMin}·${cdMin}</div><div class="ml">Warm·Main·Cool</div></div>`;
+  }
   if (hr[0]) html += `<div class="metric"><div class="mv" style="color:var(--red);">${hr[0]}-${hr[1]}</div><div class="ml">HR (bpm)</div></div>`;
   if (pw[0]) html += `<div class="metric"><div class="mv" style="color:var(--accent);">${pw[0]}-${pw[1]}</div><div class="ml">Power (W)</div></div>`;
   html += '</div>';

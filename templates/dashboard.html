@@ -11437,6 +11437,34 @@ function calJumpToToday() {
 // B2 + B6: click handler that respects card_state and uses content_class
 // to title and verify the workout. Shows an inline mismatch banner if the
 // content_class doesn't agree with the session_type.
+// v2.4.0 — day with 2+ rides: list every same-day activity + the combined load,
+// each row opening its own activity detail. Fixes "only 1 activity shows".
+function _calOpenMultiRideDay(day, sec) {
+  const rides = [day.actual].concat(sec).filter(Boolean);
+  const totalTss = rides.reduce((s, r) => s + (Number(r.tss) || 0), 0);
+  const totalDur = rides.reduce((s, r) => s + (Number(r.duration_min) || 0), 0);
+  const plannedTss = (day.planned && Number(day.planned.tss)) || 0;
+  const rows = rides.map(r => {
+    const nm = esc(r.name || 'Activity');
+    const dur = r.duration_min ? Math.round(r.duration_min) + 'min' : '';
+    const tss = r.tss ? 'TSS ' + Math.round(r.tss) : '';
+    const meta = dur + (dur && tss ? ' · ' : '') + tss;
+    const rid = r.ride_id || '';
+    const click = rid ? ` onclick="closeModal();(window.openActivityModal||window.openRideDetail||function(){})('${escJs(rid)}')" style="cursor:pointer;"` : '';
+    return `<div class="card"${click} style="display:flex;justify-content:space-between;gap:12px;padding:10px 12px;margin:6px 0;">
+      <span style="font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${nm}</span>
+      <span style="color:var(--text2);white-space:nowrap;">${meta}</span>
+    </div>`;
+  }).join('');
+  const dlabel = new Date(day.date + 'T12:00:00').toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'short'});
+  openModal(`<div class="modal-body">
+    <h2>${esc(dlabel)} — ${rides.length} activities</h2>
+    <div style="font-size:13px;color:var(--text2);margin:6px 0 10px;">Total: <b style="color:var(--text);">${Math.round(totalDur)} min · TSS ${Math.round(totalTss)}</b>${plannedTss ? ` &middot; planned TSS ${Math.round(plannedTss)}` : ''}</div>
+    ${rows}
+    <div style="margin-top:12px;"><button onclick="closeModal()" class="btn">Close</button></div>
+  </div>`);
+}
+
 async function calOpenDay(dateStr) {
   if (!dateStr) return;
   const data = window._calData;
@@ -11451,6 +11479,14 @@ async function calOpenDay(dateStr) {
   }
   if (!day) return;
   const cs = day.card_state || 'rest';
+
+  // v2.4.0 — multiple same-day rides: show ALL of them (primary + extras) with
+  // the day's combined TSS, each openable, instead of silently opening only the
+  // longest/primary. Single-ride days keep the direct-open behaviour below.
+  const _secRides = Array.isArray(day.actual_secondary) ? day.actual_secondary : [];
+  if (day.actual && _secRides.length) {
+    try { _calOpenMultiRideDay(day, _secRides); return; } catch (_) {}
+  }
 
   // v4.5.1 FIX-UI B3 — if an actual ride exists, ALWAYS open the activity
   // modal regardless of card_state. This unblocks rest+actual cells (server
@@ -11755,7 +11791,12 @@ function renderThisWeekFromCalendar(data) {
     //   NEUTRAL if future day or rest day
     let tintCls = '';
     const pTssNum = (planned && Number(planned.tss)) || 0;
-    const aTssNum = (actual && Number(actual.tss)) || 0;
+    // v2.4.0 — DAY total = primary + every same-day secondary (extra) ride. The
+    // week total is already summed server-side; this is the per-day rollup the
+    // cell tint + label use, so a commute+main-ride day grades on combined load.
+    const secList = Array.isArray(d.actual_secondary) ? d.actual_secondary : [];
+    const secTssSum = secList.reduce((s, r) => s + (Number(r && r.tss) || 0), 0);
+    const aTssNum = (actual ? (Number(actual.tss) || 0) : 0) + secTssSum;
     if (planned && actual && pTssNum > 0 && aTssNum > 0) {
       const ratio = aTssNum / pTssNum;
       if (ratio >= 0.90) tintCls = 'twk-tss-green';
@@ -11833,9 +11874,17 @@ function renderThisWeekFromCalendar(data) {
       }
       if (actual.decoupling_pct != null) tipParts.push('Decoupling ' + Number(actual.decoupling_pct).toFixed(1) + '%');
       actualTitle = tipParts.join(' · ');
+      // v2.4.0 — roll up ALL same-day rides: combined duration + total TSS + a
+      // "+N" tag so the cell reflects every activity, not just the primary.
+      const secDurSum = secList.reduce((s, r) => s + (Number(r && r.duration_min) || 0), 0);
+      const dayDurTotal = (Number(actual.duration_min) || 0) + secDurSum;
+      const moreTag = secList.length
+        ? ` <span style="color:var(--text3);font-weight:600;">+${secList.length}</span>` : '';
+      const durLabel = dayDurTotal > 0 ? Math.round(dayDurTotal) + 'min' : '';
+      const tssLabel = aTssNum > 0 ? ' · TSS ' + Math.round(aTssNum) : '';
       actualHtml = `<div class="twk-actual ${aCls}"${actualTitle ? ` title="${esc(actualTitle)}"` : ''}>
-        <div style="font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(name) || 'Activity'}</div>
-        <div style="color:var(--text2);">${actual.duration_min ? Math.round(actual.duration_min) + 'min' : ''}${actual.tss ? ' · TSS ' + Math.round(actual.tss) : ''}</div>
+        <div style="font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(name) || 'Activity'}${moreTag}</div>
+        <div style="color:var(--text2);">${durLabel}${tssLabel}</div>
       </div>`;
     } else if (planned && isPast && cs !== 'rest') {
       actualHtml = `<div class="twk-actual twk-act-red"><div style="color:var(--red);font-style:italic;">missed</div></div>`;

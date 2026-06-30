@@ -9344,7 +9344,13 @@ async def api_plan_reforecast():
         # pw_list from the (now-mutated) plan dict — the previous local
         # pw_list was inlined into tp.reforecast_dict.
         gaps_pw_list = tp._plan_dict_to_planned_weeks(plan)
-        gaps = tp.detect_plan_gaps(gaps_pw_list, activities, current_ctl)
+        # v2.4.0 — gap math counts CYCLING load only; a run/swim must not inflate
+        # the week and suppress the recovery ramp.
+        gaps = tp.detect_plan_gaps(
+            gaps_pw_list,
+            [a for a in (activities or []) if _is_cycling_sport(a.get("sport", ""))],
+            current_ctl,
+        )
         plan["gaps"] = gaps
 
         return {
@@ -9957,7 +9963,12 @@ def _apply_plan_update(
         except (KeyError, ValueError, TypeError):
             continue
 
-    gaps = tp.detect_plan_gaps(old_weeks, activities or [], current_ctl)
+    # v2.4.0 — cycling-only gap math (a run/swim must not mask a real cycling gap).
+    gaps = tp.detect_plan_gaps(
+        old_weeks,
+        [a for a in (activities or []) if _is_cycling_sport(a.get("sport", ""))],
+        current_ctl,
+    )
     episode = _current_absence_episode(old_weeks, gaps, today)
     ctl_gap = gaps.get("ctl_gap", 0) or 0
     consecutive = gaps.get("consecutive_missed", 0) or 0
@@ -10710,14 +10721,19 @@ def _collect_week_activities(current_week, today: date, include_today: bool = Fa
         tss = float(a.get("tss") or a.get("icu_training_load") or 0)
         if tss <= 0:
             return
-        key = (d, round(tss / 5) * 5)
+        dur_min = float(a.get("duration_min") or (a.get("moving_time", 0) or 0) / 60 or 0)
+        # v2.4.0 — dedup key includes DURATION so two genuinely-different same-day
+        # rides (e.g. a short hard session + a long commute) with near-equal TSS
+        # are NOT collapsed; cross-source copies of the SAME ride share
+        # date+tss+duration and still dedup.
+        key = (d, round(tss / 5) * 5, round(dur_min / 5) * 5)
         if key in seen_keys:
             return
         seen_keys.add(key)
         actual.append({
             "date": d,
             "tss": tss,
-            "duration_min": float(a.get("duration_min") or (a.get("moving_time", 0) or 0) / 60 or 0),
+            "duration_min": dur_min,
             "intensity_factor": a.get("intensity_factor") or a.get("icu_intensity"),
             "id": a.get("id") or a.get("icu_id"),
             "sport": a.get("sport", ""),
@@ -12231,6 +12247,11 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
     # ── Index rides by local-TZ date for O(N) merge ─────────────────────────
     rides_by_date: dict[str, list[dict]] = {}
     for r in rides:
+        # v2.4.0 — cycling only: a run/swim on a planned day must not become the
+        # day's "actual" ride or count toward cycling load. (Empty/unknown sport
+        # counts as cycling, so untagged local FIT rides still show.)
+        if not _is_cycling_sport(r.get("sport", "")):
+            continue
         d = _ride_started_local_iso_date(r)
         if not d:
             continue

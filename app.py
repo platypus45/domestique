@@ -10406,7 +10406,10 @@ def _build_fit_workout(name: str, blocks: list[dict], ftp: int) -> bytes:
     file_id.manufacturer = Manufacturer.DEVELOPMENT.value
     file_id.product = 0
     file_id.serial_number = 12345
-    # time_created is optional for workout files — skip to avoid epoch issues
+    # time_created is REQUIRED by TrainingPeaks / Vekta / Garmin Connect — a
+    # workout FIT without it imports as EMPTY (the reported bug). Value is ms
+    # since the Unix epoch; fit_tool converts to the FIT epoch on encode.
+    file_id.time_created = int(datetime.now().timestamp() * 1000)
     builder.add(file_id)
 
     # Workout header
@@ -10553,6 +10556,9 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int) -> bytes:
     file_id.manufacturer = Manufacturer.DEVELOPMENT.value
     file_id.product = 0
     file_id.serial_number = 12345
+    # REQUIRED by TrainingPeaks / Vekta — without time_created the workout
+    # imports as empty. ms since Unix epoch; fit_tool converts to FIT epoch.
+    file_id.time_created = int(datetime.now().timestamp() * 1000)
     builder.add(file_id)
 
     workout = WorkoutMessage()

@@ -144,5 +144,49 @@ class TestFitGenericPathStillWorks(unittest.TestCase):
         self.assertGreaterEqual(len(steps), 3)
 
 
+def _decode_file_id(fit_bytes: bytes):
+    from fit_tool.fit_file import FitFile
+    from fit_tool.profile.messages.file_id_message import FileIdMessage
+
+    ff = FitFile.from_bytes(fit_bytes)
+    ids = [r.message for r in ff.records if isinstance(r.message, FileIdMessage)]
+    return ids[0] if ids else None
+
+
+class TestFitHasTimeCreated(unittest.TestCase):
+    """Regression — TrainingPeaks / Vekta / Garmin Connect REQUIRE
+    file_id.time_created; a workout FIT without it imports as EMPTY. Both export
+    paths (ZWO transcode + generic block builder) previously omitted it."""
+
+    def setUp(self):
+        self.client = TestClient(app_module.app)
+
+    def _time_created(self, url: str) -> int:
+        r = self.client.get(url)
+        self.assertEqual(r.status_code, 200, r.content)
+        fid = _decode_file_id(r.content)
+        self.assertIsNotNone(fid, "FIT has no FileIdMessage")
+        tc = next((f.get_value() for f in fid.fields if f.name == "time_created"), None)
+        return tc
+
+    def test_generic_path_sets_time_created(self):
+        tc = self._time_created(
+            "/api/export/fit-workout?session_type=vo2max&duration_min=60&name=T"
+        )
+        self.assertIsNotNone(tc, "generic FIT missing file_id.time_created")
+        # Sane: a positive epoch-ms within the modern era (after 2020-01-01).
+        self.assertGreater(tc, 1_577_836_800_000)
+
+    def test_zwo_path_sets_time_created(self):
+        zwo = WORKOUTS_DIR / TEMPO_FILE
+        if not zwo.exists():
+            self.skipTest(f"library file {TEMPO_FILE} missing")
+        tc = self._time_created(
+            f"/api/export/fit-workout?session_type=z2&duration_min=57&name=T&zwo_file={TEMPO_FILE}"
+        )
+        self.assertIsNotNone(tc, "ZWO-transcoded FIT missing file_id.time_created")
+        self.assertGreater(tc, 1_577_836_800_000)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10244,6 +10244,17 @@ function toggleVolUnit() {
   try { loadWeeklyCalendar(); } catch(_) {}
 }
 
+// v2.4.0 — cycling-sport check mirroring the backend _is_cycling_sport: empty/
+// unknown sport counts as cycling (untagged local FIT rides), an explicit run/
+// swim/etc. does not. Used so the plan calendar's actual-overlay + weekly-actual
+// TSS count CYCLING rides only — consistent with the This Week strip + gap math.
+function _isCyclingSport(sport) {
+  const s = String(sport || '').toLowerCase();
+  if (!s) return true;
+  if (/ride|bike|cycl|velomobile|handcycle/.test(s)) return true;
+  return !/run|swim|walk|hike|row|climb|ski|skate|elliptical|yoga|strength|weight|workout|paddle/.test(s);
+}
+
 async function renderPlanJSON(plan) {
   if (!plan) return;
   // Store plan globally for click handlers
@@ -10256,6 +10267,9 @@ async function renderPlanJSON(plan) {
     const actRes = await fetch('/api/activities');
     const activities = await actRes.json();
     for (const a of (activities || [])) {
+      // Cycling plan view: a run/swim must not appear in the overlay or count
+      // toward the week's actual TSS (consistent with /api/calendar + gap math).
+      if (!_isCyclingSport(a.sport)) continue;
       const d = a.date || '';
       if (!actualByDate[d]) actualByDate[d] = [];
       actualByDate[d].push(a);

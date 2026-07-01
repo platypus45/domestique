@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.4.4 — "Z2" workouts with hard bursts reclassified (2026-07-01)
+
+### What changes for users
+
+- **Endurance/Z2 workouts that actually contain repeated hard bursts (≥95% FTP) are now labelled "Endurance + Strides", not Zone 2.** 215 library workouts were mislabelled — e.g. a "Z2" file with 6× 20-second VO2 pops. They're still available and nice to ride; they just no longer get scheduled as pure Zone-2 days.
+
 ## v2.4.3 — FIT workout targets as %FTP + full-calendar day view (2026-07-01)
 
 ### What changes for users

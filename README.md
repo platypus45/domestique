@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4220-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v2.4.3-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v2.4.4-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-1967-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -513,7 +513,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v2.4.3 — %FTP FIT targets + full-calendar day view](https://github.com/platypus45/domestique/releases/latest)** (2026-07-01).
+Latest: **[v2.4.4 — "Z2"-with-bursts workouts reclassified as Endurance + Strides](https://github.com/platypus45/domestique/releases/latest)** (2026-07-01).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

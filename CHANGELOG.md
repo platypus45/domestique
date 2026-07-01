@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.4.5 — Clearer workout charts (2026-07-01)
+
+### What changes for users
+
+- **Anaerobic efforts (≥121% FTP) in the workout chart are now purple, not red** — so a 150% spike is distinct from threshold/VO2 work at a glance.
+- **The Z7 (neuromuscular) row in a ride's zone breakdown is now high-contrast** instead of a near-invisible dark grey.
+
 ## v2.4.4 — Workout library re-classified so hard sessions aren't hidden as easy (2026-07-01)
 
 ### What changes for users

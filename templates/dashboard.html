@@ -11,7 +11,7 @@
   --bg: #0a0e14; --surface: #131a24; --surface2: #1a2332; --border: #2d3f52;
   --text: #e6edf3; --text2: #b8c8d8; --text3: #8a9bb0;
   --accent: #4f9cf7; --accent2: #6366f1;
-  --green: #22c55e; --yellow: #eab308; --orange: #f97316; --red: #ef4444;
+  --green: #22c55e; --yellow: #eab308; --orange: #f97316; --red: #ef4444; --purple: #a855f7;
   --z1: #64748b; --z2: #3b82f6; --z3: #22c55e; --z4: #eab308; --z5: #f97316; --z6: #ef4444;
   --radius: 10px;
 }
@@ -19,7 +19,7 @@
   --bg: #f1f5f9; --surface: #ffffff; --surface2: #f8fafc; --border: #e2e8f0;
   --text: #1e293b; --text2: #475569; --text3: #64748b;
   --accent: #2563eb; --accent2: #4f46e5;
-  --green: #16a34a; --yellow: #ca8a04; --orange: #ea580c; --red: #dc2626;
+  --green: #16a34a; --yellow: #ca8a04; --orange: #ea580c; --red: #dc2626; --purple: #9333ea;
   --z1: #94a3b8; --z2: #3b82f6; --z3: #16a34a; --z4: #ca8a04; --z5: #ea580c; --z6: #dc2626;
 }
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -15223,7 +15223,7 @@ function renderPowerBlocksSVG(blocks, ftp) {
     if (pct < 91) return 'var(--z3)';
     if (pct < 106) return 'var(--z4)';
     if (pct < 121) return 'var(--z5)';
-    return 'var(--z6)';
+    return 'var(--purple)';  // anaerobic (≥121% FTP, e.g. 150%) — purple, not red
   };
 
   let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;">`;

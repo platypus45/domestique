@@ -85,3 +85,64 @@ def test_strides_example_intact(classifications):
     genuinely short pops on an aerobic base — the correct half of the fix)."""
     e = classifications.get("endurance_20s129s_6x_60min.zwo", {})
     assert e.get("primary") == "endurance_intervals"
+
+
+# ── v2.4.5 root-cause guard: the CLASSIFIER CODE, not just the patched cache ───
+# The tests above lock the surgical cache correction. These lock the classify_v104
+# hard-salvage fix so a future full re-classification REPRODUCES the correction
+# instead of reintroducing the endurance/recovery mislabels (the two must not
+# silently diverge).
+
+@pytest.fixture(scope="module")
+def _classifier():
+    import sys
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import classify_library_content as clc
+    return clc
+
+
+def test_classifier_code_no_longer_routes_corrected_files_to_easy(_classifier, labels):
+    """LIVE classify_zwo_v104 must route every corrected file to a HARD class —
+    never back to endurance/recovery/None. This is the root-cause guard: if the
+    hard-salvage stage is removed, these fall back to easy and this fails."""
+    bad = []
+    for fn in labels:
+        live = _classifier.classify_zwo_v104(WK / fn).get("primary")
+        if live in EASY or live is None:
+            bad.append(f"{fn}: live={live}")
+    assert not bad, "classify_v104 still routes corrected files to easy:\n" + "\n".join(bad)
+
+
+def test_classifier_code_keeps_short_strides_as_intervals(_classifier):
+    """The salvage must NOT pull genuine short strides (all hard efforts <30 s on
+    an aerobic base) into a hard band — they route to endurance_intervals."""
+    live = _classifier.classify_zwo_v104(WK / "endurance_20s129s_6x_60min.zwo").get("primary")
+    assert live == "endurance_intervals", f"strides example live={live}"
+
+
+def test_classifier_code_emits_no_mixed_on_corrected_files(_classifier, labels):
+    """The salvage never emits the forbidden ``mixed`` class."""
+    offenders = [fn for fn in labels
+                 if _classifier.classify_zwo_v104(WK / fn).get("primary") == "mixed"]
+    assert offenders == [], f"mixed emitted for: {offenders}"
+
+
+def test_classifier_no_sweetspot_or_tempo_promoted_to_threshold(_classifier):
+    """C15 (grill D2) — a sweet-spot / tempo ride whose Z4 time is mostly 91-94%
+    (little ≥95% FTP) must NOT salvage to threshold; the threshold rung gates on
+    true-threshold (z4_upper) only, matching the main cascade."""
+    for fn in ("tempo_steady_45min_v3.zwo", "tempo_progression_42min_v3.zwo"):
+        if not (WK / fn).exists():
+            continue
+        live = _classifier.classify_zwo_v104(WK / fn).get("primary")
+        assert live != "threshold", f"{fn} over-claimed threshold (live={live})"
+
+
+def test_classifier_ramp_not_counted_as_tempo_block(_classifier):
+    """C16 (grill D3) — a warm-up/ramp whose AVERAGE power lands in the tempo band
+    must not count as a sustained tempo block (the salvage tempo fallback is
+    steady-only). over_under_2x10s_26min_v2 is 3 sprints on a long ramp."""
+    fn = "over_under_2x10s_26min_v2.zwo"
+    if (WK / fn).exists():
+        live = _classifier.classify_zwo_v104(WK / fn).get("primary")
+        assert live != "tempo", f"ramp-average mislabelled tempo (live={live})"

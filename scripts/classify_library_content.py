@@ -1395,6 +1395,121 @@ def _sustained_mid_block_s(segments: list[dict] | None) -> int:
     return best
 
 
+# ── v2.4.5 hard-salvage floors ────────────────────────────────────────────────
+# A workout whose hard main-set lands JUST under every strict single-gate dose
+# floor (VO2 ≥8 min Z5, threshold ≥15 min Z4-upper, over-under ≥18 min band,
+# anaerobic ≥3 min Z6+Z7) has no home in the dose cascade and drops to an easy
+# exit (endurance / recovery / zone-dominance). Those exits read only the single
+# dominant zone and ignore cumulative/structural hard work, so a 6×2 min
+# threshold set inside a Z2 ride, a Billat 30/30, or a 3×3 min block gets
+# labelled endurance/recovery and can be served on easy days. (These were the
+# v2.4.4 mislabels corrected surgically in scripts/reclassify_sustained.py; this
+# is the root-cause fix so a future re-classification reproduces the correction.)
+# The floors are ~half the strict single-gate doses — enough cumulative hard work
+# to be a genuine session — calibrated against that reconciled correction set.
+SALVAGE_HI_S = 2 * 60          # ≥2 min cumulative Z5+ is a real high-intensity dose
+SALVAGE_CUM_HARD_S = 210       # OR ≥3.5 min cumulative Z4+ (a genuine hard main-set)
+SALVAGE_BAND_S = 2 * 60        # a band must carry ≥2 min to be named the dominant one
+SALVAGE_VO2_RATIO = 0.75       # Z5 ≥ 0.75× Z4-upper → VO2-dominant, else threshold
+SALVAGE_MID_BLOCK_S = 10 * 60  # OR ≥10 min sustained tempo–threshold block → tempo
+SALVAGE_STRIDE_REP_S = 30      # every hard effort <30 s = strides, not intervals
+                               # (VO2 intervals begin at 30 s; ≤~20-30 s is a stride)
+SALVAGE_MIN_BLOCK_S = 50       # the CUMULATIVE-Z4 branch also needs a SUSTAINED
+                               # block ≥50 s — else a long endurance ride whose Z4
+                               # is scattered 30 s surges/ramps (cum ≥3.5 min but no
+                               # real block) would wrongly salvage to threshold.
+                               # Calibrated: genuine salvaged sets block ≥60 s, the
+                               # scattered false-positives block ≤40 s. Z5+ work
+                               # (VO2/anaerobic/strides-with-pops) still enters via
+                               # the high_intensity branch regardless of block.
+
+
+def _salvage_hard(features: dict, segments: list[dict] | None) -> str | None:
+    """Rescue a sustained/structured hard workout that would otherwise take an
+    easy exit because it missed every strict single-gate dose floor. Returns the
+    dominant hard band (or ``tempo`` for a sustained sub-threshold block), or
+    ``None`` to leave the cascade's easy routing untouched.
+
+    Guarded to ONLY override an easy natural outcome: a workout the cascade
+    already routes to a hard/moderate class is left alone (surgical — the
+    salvage never churns an existing hard label).
+    """
+    z = features["z_seconds"]
+    z1_s, z2_s, z3_s = z["z1"], z["z2"], z["z3"]
+    z4_s, z5_s, z6_s, z7_s = z["z4"], z["z5"], z["z6"], z["z7"]
+    valid_dur = features["valid_dur_s"]
+
+    # Guard: would the un-salvaged cascade route this to an easy class? Mirror
+    # the endurance-dose / recovery-dose / zone-dominance conditions that follow
+    # this call. Salvage only when they would yield endurance/recovery.
+    no_long_burst = (z3_s + z4_s + z5_s + z6_s + z7_s) == 0 \
+        or features["longest_hard_segment_s"] < DOSE_RECOVERY_BURST_S
+    natural_endurance = z2_s >= DOSE_ENDURANCE_DUR_S and valid_dur >= 60 * 60
+    natural_recovery = (valid_dur >= DOSE_RECOVERY_DUR_S
+                        and z1_s / max(valid_dur, 1) >= DOSE_RECOVERY_Z1_FRAC
+                        and no_long_burst)
+    if not (natural_endurance or natural_recovery
+            or _zone_dominance_class(z) in ("endurance", "recovery")):
+        return None
+
+    z4_upper_s = features.get("z4_upper_s", z4_s)
+    sweet_spot_s = features.get("sweet_spot_s", 0)
+    high_intensity_s = z5_s + z6_s + z7_s      # Z5+ (VO2 / anaerobic / sprint)
+    anaerobic_s = z6_s + z7_s
+    cum_hard_s = z4_s + z5_s + z6_s + z7_s      # cumulative Z4+ true-hard time
+
+    # Meaningful cumulative/structural hard stimulus → route to its dominant
+    # hard band, mirroring the cascade's own structural precedence. The cumulative
+    # branch additionally requires a sustained block (see SALVAGE_MIN_BLOCK_S) so
+    # scattered Z4 surges on a long endurance ride don't masquerade as threshold.
+    longest_z4plus_s = features.get("longest_z4plus_block_s", 0)
+    if (high_intensity_s >= SALVAGE_HI_S
+            or (cum_hard_s >= SALVAGE_CUM_HARD_S and longest_z4plus_s >= SALVAGE_MIN_BLOCK_S)):
+        # Genuine short strides — every hard effort is a brief pop (<30 s) on an
+        # aerobic base (the guard above guarantees the base) — are strides, not
+        # a VO2/threshold session. Route to endurance_intervals, not a hard band.
+        if features.get("longest_z4plus_block_s", 0) < SALVAGE_STRIDE_REP_S:
+            return "endurance_intervals"
+        # Anaerobic — repeated Z6/Z7 surges are the defining stimulus (they
+        # dominate the VO2 time and are not dwarfed by a sustained Z4 block).
+        if (anaerobic_s >= SALVAGE_BAND_S and anaerobic_s > z5_s
+                and anaerobic_s * 3 >= z4_upper_s):
+            return "anaerobic"
+        # VO2max — Z5 carries a (near-)dominant share of the hard work.
+        if z5_s >= SALVAGE_BAND_S and z5_s >= SALVAGE_VO2_RATIO * z4_upper_s:
+            return "vo2max"
+        # Sweet spot — the 88-94% band carries STRICTLY more time than TRUE
+        # threshold (≥95%) AND there's no meaningful Z5+ work. Must precede
+        # threshold (a sweet-spot session brushes Z4 but is sub-threshold) but must
+        # NOT poach a real threshold+VO2 session where SS merely ties the Z4-upper
+        # time (that's threshold with a sweet-spot warmup, not a sweet-spot ride).
+        if (sweet_spot_s >= SALVAGE_BAND_S and sweet_spot_s > z4_upper_s
+                and high_intensity_s < SALVAGE_BAND_S):
+            return "sweet_spot"
+        # Threshold — TRUE threshold (≥95% FTP) is the dominant hard band. Gate on
+        # z4_upper_s ONLY; 91-94% is sweet-spot territory (handled above), matching
+        # the main cascade's threshold rule (which never counts raw z4).
+        if z4_upper_s >= SALVAGE_BAND_S:
+            return "threshold"
+        return "tempo"
+
+    # No true-hard dose, but a long sustained STEADY tempo–threshold block that
+    # missed the ≥20 min Z3 tempo gate → tempo (not plain endurance). STEADY-only:
+    # a warm-up/ramp whose average power lands in 0.76-1.06 is not a tempo block
+    # (that was the ramp-average false-positive), so ramps are excluded here.
+    steady_mid_s = cur_run = 0
+    for s in (segments or []):
+        p = s.get("power", 0.0) or 0.0
+        if s.get("kind") == "steady" and 0.76 <= p < 1.06:
+            cur_run += int(s.get("duration_s", 0) or 0)
+            steady_mid_s = max(steady_mid_s, cur_run)
+        else:
+            cur_run = 0
+    if steady_mid_s >= SALVAGE_MID_BLOCK_S:
+        return "tempo"
+    return None
+
+
 def classify_v104(features: dict, tags: list[str] | None = None,
                   segments: list[dict] | None = None) -> tuple[str, float, dict]:
     """v1.0.4 cascade — emits one of :data:`CANONICAL_TYPES_V104`."""
@@ -1583,6 +1698,14 @@ def classify_v104(features: dict, tags: list[str] | None = None,
                 is_intervals = True
         conf = _confidence_from_dose(z3_s, DOSE_TEMPO_Z3_S, 40 * 60)
         return ("tempo_intervals" if is_intervals else "tempo"), conf, secondary
+
+    # Hard-salvage (v2.4.5) — before the easy exits below. A workout with a
+    # meaningful cumulative/structural hard dose that missed every strict
+    # single-gate floor must route to its dominant hard band, not endurance/
+    # recovery. Self-guarded to fire only when the easy exits below would win.
+    salvaged = _salvage_hard(features, segments)
+    if salvaged is not None:
+        return salvaged, 0.6, secondary
 
     if z2_s >= DOSE_ENDURANCE_DUR_S and valid_dur >= 60 * 60:
         has_strides = (

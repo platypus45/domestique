@@ -10450,6 +10450,11 @@ def _build_fit_workout(name: str, blocks: list[dict], ftp: int) -> bytes:
     # File ID
     file_id = FileIdMessage()
     file_id.type = FileType.WORKOUT
+    # DEVELOPMENT (255) is the honest, spec-correct manufacturer id for an
+    # unregistered third-party app like Domestique. Using a real brand's id
+    # (garmin/zwift/peaksware) would be spoofing. If it turns out an importer
+    # truly rejects development-stamped workouts, the correct fix is to register
+    # a manufacturer id with Garmin FIT — not to impersonate another product.
     file_id.manufacturer = Manufacturer.DEVELOPMENT.value
     file_id.product = 0
     file_id.serial_number = 12345
@@ -10486,11 +10491,13 @@ def _build_fit_workout(name: str, blocks: list[dict], ftp: int) -> bytes:
         # strict importers report "no workout in this file". Cap to 15 chars.
         step.workout_step_name =(str(b.get("name") or "Step"))[:15]
 
-        # Power targets in watts (FIT uses absolute watts + 1000 offset for custom targets)
-        power_low = round(ftp * b["pctLow"] / 100) + 1000
-        power_high = round(ftp * b["pctHigh"] / 100) + 1000
-        step.custom_target_power_low = power_low
-        step.custom_target_power_high = power_high
+        # v2.4.3 — %FTP targets, not absolute watts. FIT workout_power encodes a
+        # value <1000 as % of FTP and >=1000 as (watts + 1000). %FTP is the
+        # portable form (the workout scales to the athlete's FTP on the device /
+        # in TrainingPeaks, matching ZWO's relative model) and is what structured-
+        # workout importers expect. pctLow/pctHigh are already percentages.
+        step.custom_target_power_low = max(1, round(b["pctLow"]))
+        step.custom_target_power_high = max(1, round(b["pctHigh"]))
         step.target_value = 0  # 0 = custom target (not a zone)
 
         builder.add(step)
@@ -10604,6 +10611,11 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int) -> bytes:
     builder = FitFileBuilder()
     file_id = FileIdMessage()
     file_id.type = FileType.WORKOUT
+    # DEVELOPMENT (255) is the honest, spec-correct manufacturer id for an
+    # unregistered third-party app like Domestique. Using a real brand's id
+    # (garmin/zwift/peaksware) would be spoofing. If it turns out an importer
+    # truly rejects development-stamped workouts, the correct fix is to register
+    # a manufacturer id with Garmin FIT — not to impersonate another product.
     file_id.manufacturer = Manufacturer.DEVELOPMENT.value
     file_id.product = 0
     file_id.serial_number = 12345
@@ -10631,9 +10643,11 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int) -> bytes:
             "warmup": "Warm up", "cooldown": "Cool down",
             "rest": "Recovery", "active": "Work",
         }.get(intensity_kind, "Work")
-        # FIT uses absolute watts + 1000 offset for custom targets.
-        step.custom_target_power_low = round(ftp * p_lo) + 1000
-        step.custom_target_power_high = round(ftp * p_hi) + 1000
+        # v2.4.3 — %FTP targets (value <1000 = % of FTP; >=1000 = watts+1000).
+        # %FTP is the portable form importers expect + scales to the athlete's FTP.
+        # p_lo/p_hi are FTP fractions (0.65 = 65%), so ×100 → percent.
+        step.custom_target_power_low = max(1, round(p_lo * 100))
+        step.custom_target_power_high = max(1, round(p_hi * 100))
         step.target_value = 0  # 0 = custom target (not a zone)
         builder.add(step)
 

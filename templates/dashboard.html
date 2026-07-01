@@ -10524,7 +10524,7 @@ async function renderPlanJSON(plan) {
           ? `draggable="true" ondragstart="pgDragStart(event,'${dayStr}',${wi})" ondragend="pgDragEnd(event)"`
           : '';
 
-        cal += `<div class="wc-day${todayCls}${stateExtraCls}" data-pg-day="${dayStr}" data-pg-week-idx="${wi}" data-pg-completed="${dayCompleted ? '1' : '0'}" data-pg-rest="0" data-cs="${cardState}" data-content-class="${esc(s.content_class || '')}" style="cursor:pointer;min-height:55px;padding:3px;position:relative;" ${dragAttrs} ondragover="pgDragOver(event)" ondragleave="pgDragLeave(event)" ondrop="pgDrop(event,'${dayStr}',${wi})" onclick="openPlanDayWorkout(${wi},${d})">
+        cal += `<div class="wc-day${todayCls}${stateExtraCls}" data-pg-day="${dayStr}" data-pg-week-idx="${wi}" data-pg-completed="${dayCompleted ? '1' : '0'}" data-pg-rest="0" data-cs="${cardState}" data-content-class="${esc(s.content_class || '')}" style="cursor:pointer;min-height:55px;padding:3px;position:relative;" ${dragAttrs} ondragover="pgDragOver(event)" ondragleave="pgDragLeave(event)" ondrop="pgDrop(event,'${dayStr}',${wi})" onclick="openOverviewDay(${wi},${d},'${dayStr}')">
           <div class="wc-type ${cssCls}" style="font-size:10px;padding:1px 3px;">${short}</div>
           <div style="font-size:8px;color:var(--text2);">${s.duration_min}m</div>
           ${miniSvg}
@@ -11468,11 +11468,41 @@ function calJumpToToday() {
 // content_class doesn't agree with the session_type.
 // v2.4.0 — day with 2+ rides: list every same-day activity + the combined load,
 // each row opening its own activity detail. Fixes "only 1 activity shows".
-function _calOpenMultiRideDay(day, sec) {
+// Open the SCHEDULED workout for a date straight from the plan data (so the full
+// modal with Rematch + downloads shows). Keyed by date, robust to calendar-vs-plan
+// week indexing differences.
+function _calOpenPlannedByDate(dateStr) {
+  const plan = window._planData;
+  if (!plan) return false;
+  for (const wk of (plan.weeks || [])) {
+    const s = (wk.sessions || []).find(x => x.day === dateStr);
+    if (s && s.session_type !== 'rest') {
+      window._weekPlanSessions = wk.sessions;
+      try { openDayWorkout(wk.sessions.indexOf(s)); return true; } catch (_) { return false; }
+    }
+  }
+  return false;
+}
+
+// Day chooser (Lapo feedback): a day can hold BOTH a scheduled workout and one or
+// more done activities (e.g. an early ride before the planned session). List the
+// scheduled workout (openable → Rematch + download) AND every activity (openable →
+// details) so an early activity never hides the workout.
+function _calOpenDayChooser(day, sec, showPlanned) {
   const rides = [day.actual].concat(sec).filter(Boolean);
   const totalTss = rides.reduce((s, r) => s + (Number(r.tss) || 0), 0);
   const totalDur = rides.reduce((s, r) => s + (Number(r.duration_min) || 0), 0);
   const plannedTss = (day.planned && Number(day.planned.tss)) || 0;
+  let plannedRow = '';
+  const p = day.planned;
+  if (showPlanned && p && p.session_type && p.session_type !== 'rest') {
+    const ptitle = esc(p.display_name || p.name || p.session_type);
+    const pmeta = (p.duration_min ? Math.round(p.duration_min) + 'min' : '') + (p.tss ? ' · TSS ' + Math.round(p.tss) : '');
+    plannedRow = `<div class="card" onclick="closeModal();_calOpenPlannedByDate('${escJs(day.date)}')" style="cursor:pointer;display:flex;justify-content:space-between;gap:12px;padding:10px 12px;margin:6px 0;border-left:3px solid var(--accent);">
+      <span style="font-weight:600;color:var(--text);">&#x1F4CB; Scheduled: ${ptitle}<div style="font-size:11px;color:var(--text3);font-weight:400;">open · rematch · download</div></span>
+      <span style="color:var(--text2);white-space:nowrap;">${pmeta}</span>
+    </div>`;
+  }
   const rows = rides.map(r => {
     const nm = esc(r.name || 'Activity');
     const dur = r.duration_min ? Math.round(r.duration_min) + 'min' : '';
@@ -11481,14 +11511,16 @@ function _calOpenMultiRideDay(day, sec) {
     const rid = r.ride_id || '';
     const click = rid ? ` onclick="closeModal();(window.openActivityModal||window.openRideDetail||function(){})('${escJs(rid)}')" style="cursor:pointer;"` : '';
     return `<div class="card"${click} style="display:flex;justify-content:space-between;gap:12px;padding:10px 12px;margin:6px 0;">
-      <span style="font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${nm}</span>
+      <span style="font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">&#x2705; ${nm}</span>
       <span style="color:var(--text2);white-space:nowrap;">${meta}</span>
     </div>`;
   }).join('');
   const dlabel = new Date(day.date + 'T12:00:00').toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'short'});
+  const n = rides.length;
   openModal(`<div class="modal-body">
-    <h2>${esc(dlabel)} — ${rides.length} activities</h2>
-    <div style="font-size:13px;color:var(--text2);margin:6px 0 10px;">Total: <b style="color:var(--text);">${Math.round(totalDur)} min · TSS ${Math.round(totalTss)}</b>${plannedTss ? ` &middot; planned TSS ${Math.round(plannedTss)}` : ''}</div>
+    <h2>${esc(dlabel)}</h2>
+    <div style="font-size:13px;color:var(--text2);margin:6px 0 10px;">${n} ${n===1?'activity':'activities'} &middot; <b style="color:var(--text);">${Math.round(totalDur)} min · TSS ${Math.round(totalTss)}</b>${plannedTss ? ` &middot; planned TSS ${Math.round(plannedTss)}` : ''}</div>
+    ${plannedRow}
     ${rows}
     <div style="margin-top:12px;"><button onclick="closeModal()" class="btn">Close</button></div>
   </div>`);
@@ -11509,18 +11541,20 @@ async function calOpenDay(dateStr) {
   if (!day) return;
   const cs = day.card_state || 'rest';
 
-  // v2.4.0 — multiple same-day rides: show ALL of them (primary + extras) with
-  // the day's combined TSS, each openable, instead of silently opening only the
-  // longest/primary. Single-ride days keep the direct-open behaviour below.
+  // v2.4.0 + Lapo feedback — a day can carry BOTH a scheduled workout and
+  // already-done activities. If a workout is scheduled AND ≥1 activity exists
+  // (e.g. an early ride before the planned session), OR there are multiple
+  // rides, open a chooser so BOTH the scheduled workout (Rematch/download) and
+  // each activity (details) are reachable — never silently open only the ride.
   const _secRides = Array.isArray(day.actual_secondary) ? day.actual_secondary : [];
-  if (day.actual && _secRides.length) {
-    try { _calOpenMultiRideDay(day, _secRides); return; } catch (_) {}
+  const _rides = [day.actual].concat(_secRides).filter(Boolean);
+  const _hasWorkout = !!(day.planned && day.planned.session_type && day.planned.session_type !== 'rest');
+  if (_rides.length && (_hasWorkout || _rides.length >= 2)) {
+    try { _calOpenDayChooser(day, _secRides, _hasWorkout); return; } catch (_) {}
   }
 
-  // v4.5.1 FIX-UI B3 — if an actual ride exists, ALWAYS open the activity
-  // modal regardless of card_state. This unblocks rest+actual cells (server
-  // 1f26123 classifies as completed but legacy payloads might still say
-  // rest) and gives the user a way into ICU detail from THIS WEEK + calendar.
+  // v4.5.1 FIX-UI B3 — single activity, no scheduled workout: open the activity
+  // modal directly (gives a way into ICU detail from This Week + calendar).
   if (day.actual && day.actual.ride_id) {
     if (typeof openActivityModal === 'function') {
       try { openActivityModal(day.actual.ride_id); return; } catch(_) {}
@@ -12063,6 +12097,24 @@ function openPlanDayWorkout(weekIdx, dayIdx) {
   window._weekPlanSessions = week.sessions;
   const sIdx = week.sessions.indexOf(session);
   openDayWorkout(sIdx);
+}
+
+// Overview/plan-grid day click. If the calendar payload shows this day has
+// actual ride(s), open the day chooser (scheduled workout + every activity) so
+// the overview matches This Week; otherwise open the planned-workout modal. This
+// is why an early activity no longer hides the workout in the whole-calendar view.
+function openOverviewDay(weekIdx, dayIdx, dayStr) {
+  const cal = window._calData;
+  if (cal && dayStr) {
+    for (const w of (cal.weeks || [])) {
+      for (const dd of (w.days || [])) {
+        if (dd.date === dayStr && (dd.actual || (Array.isArray(dd.actual_secondary) && dd.actual_secondary.length))) {
+          try { calOpenDay(dayStr); return; } catch (_) {}
+        }
+      }
+    }
+  }
+  openPlanDayWorkout(weekIdx, dayIdx);
 }
 
 // IP-2: round-trip the SAVED plan config back into the form. Previously the

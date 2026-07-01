@@ -14825,7 +14825,7 @@
     },
     "endurance_10s240s_9x_62min.zwo": {
       "file": "endurance_10s240s_9x_62min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 63min \u2014 Z3 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
@@ -14877,7 +14877,7 @@
     },
     "endurance_12x30s_27min.zwo": {
       "file": "endurance_12x30s_27min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 27min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -14929,7 +14929,7 @@
     },
     "endurance_15s600s_7x_96min.zwo": {
       "file": "endurance_15s600s_7x_96min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 96min \u2014 Z2",
       "confidence": 0.962,
       "secondary_flags": {
@@ -14981,7 +14981,7 @@
     },
     "endurance_17x15s_119min.zwo": {
       "file": "endurance_17x15s_119min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 119min \u2014 Z1",
       "confidence": 1.0,
       "secondary_flags": {
@@ -15033,7 +15033,7 @@
     },
     "endurance_1min_6x_60min_renamed_v46_1.zwo": {
       "file": "endurance_1min_6x_60min_renamed_v46_1.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 60min \u2014 Z2 +VO2 set",
       "confidence": 0.55,
       "secondary_flags": {
@@ -15085,7 +15085,7 @@
     },
     "endurance_20s129s_6x_60min.zwo": {
       "file": "endurance_20s129s_6x_60min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 60min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -15189,7 +15189,7 @@
     },
     "endurance_2x1min_12min.zwo": {
       "file": "endurance_2x1min_12min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 17min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -15501,7 +15501,7 @@
     },
     "endurance_2x30s_17min.zwo": {
       "file": "endurance_2x30s_17min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 22min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
@@ -15657,7 +15657,7 @@
     },
     "endurance_2x4min_20min.zwo": {
       "file": "endurance_2x4min_20min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 20min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -15709,7 +15709,7 @@
     },
     "endurance_2x4min_44min.zwo": {
       "file": "endurance_2x4min_44min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 44min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
@@ -15813,7 +15813,7 @@
     },
     "endurance_2x5min_48min_v2.zwo": {
       "file": "endurance_2x5min_48min_v2.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 48min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
@@ -15865,7 +15865,7 @@
     },
     "endurance_2x6min_52min.zwo": {
       "file": "endurance_2x6min_52min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 52min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
@@ -15917,7 +15917,7 @@
     },
     "endurance_2x7min_56min.zwo": {
       "file": "endurance_2x7min_56min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 56min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
@@ -16021,7 +16021,7 @@
     },
     "endurance_2x8min_60min.zwo": {
       "file": "endurance_2x8min_60min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 60min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
@@ -16229,7 +16229,7 @@
     },
     "endurance_30s180s_10x_111min.zwo": {
       "file": "endurance_30s180s_10x_111min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 111min \u2014 Z3",
       "confidence": 0.873,
       "secondary_flags": {
@@ -16281,7 +16281,7 @@
     },
     "endurance_30s30s_7x_60min.zwo": {
       "file": "endurance_30s30s_7x_60min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 61min \u2014 Z4",
       "confidence": 0.55,
       "secondary_flags": {
@@ -16333,7 +16333,7 @@
     },
     "endurance_30s60s_14x_30min.zwo": {
       "file": "endurance_30s60s_14x_30min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 30min \u2014 Z1 +VO2 set",
       "confidence": 0.55,
       "secondary_flags": {
@@ -16593,7 +16593,7 @@
     },
     "endurance_3x30s_75min.zwo": {
       "file": "endurance_3x30s_75min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 75min \u2014 Z2",
       "confidence": 0.74,
       "secondary_flags": {
@@ -16645,7 +16645,7 @@
     },
     "endurance_3x30s_90min.zwo": {
       "file": "endurance_3x30s_90min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 90min \u2014 Z2",
       "confidence": 0.864,
       "secondary_flags": {
@@ -16697,7 +16697,7 @@
     },
     "endurance_3x4min_51min.zwo": {
       "file": "endurance_3x4min_51min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 51min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -16749,7 +16749,7 @@
     },
     "endurance_3x4min_57min.zwo": {
       "file": "endurance_3x4min_57min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 57min \u2014 Z1 +threshold block",
       "confidence": 0.55,
       "secondary_flags": {
@@ -17009,7 +17009,7 @@
     },
     "endurance_4x10s_60min.zwo": {
       "file": "endurance_4x10s_60min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 60min \u2014 Z1",
       "confidence": 1.0,
       "secondary_flags": {
@@ -17061,7 +17061,7 @@
     },
     "endurance_4x15s_65min.zwo": {
       "file": "endurance_4x15s_65min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 65min \u2014 Z2",
       "confidence": 0.695,
       "secondary_flags": {
@@ -17165,7 +17165,7 @@
     },
     "endurance_4x20s_25min.zwo": {
       "file": "endurance_4x20s_25min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 26min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -17269,7 +17269,7 @@
     },
     "endurance_4x30s_60min.zwo": {
       "file": "endurance_4x30s_60min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 60min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -17425,7 +17425,7 @@
     },
     "endurance_5x2min_120min.zwo": {
       "file": "endurance_5x2min_120min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 120min \u2014 Z2 +VO2 set",
       "confidence": 0.901,
       "secondary_flags": {
@@ -17529,7 +17529,7 @@
     },
     "endurance_6x2min_90min.zwo": {
       "file": "endurance_6x2min_90min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 90min \u2014 Z1 +threshold block",
       "confidence": 0.55,
       "secondary_flags": {
@@ -17685,7 +17685,7 @@
     },
     "endurance_7x0min_60min.zwo": {
       "file": "endurance_7x0min_60min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 60min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -18361,7 +18361,7 @@
     },
     "endurance_clean_100min_v9.zwo": {
       "file": "endurance_clean_100min_v9.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 100min \u2014 Z2",
       "confidence": 0.9,
       "secondary_flags": {
@@ -18725,7 +18725,7 @@
     },
     "endurance_clean_105min_v15.zwo": {
       "file": "endurance_clean_105min_v15.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 105min \u2014 Z2",
       "confidence": 0.944,
       "secondary_flags": {
@@ -20025,7 +20025,7 @@
     },
     "endurance_clean_120min_v15.zwo": {
       "file": "endurance_clean_120min_v15.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 120min \u2014 Z2",
       "confidence": 1.0,
       "secondary_flags": {
@@ -21117,7 +21117,7 @@
     },
     "endurance_clean_135min_v3.zwo": {
       "file": "endurance_clean_135min_v3.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 135min \u2014 Z2",
       "confidence": 1.0,
       "secondary_flags": {
@@ -21897,7 +21897,7 @@
     },
     "endurance_clean_150min_v15.zwo": {
       "file": "endurance_clean_150min_v15.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 150min \u2014 Z2",
       "confidence": 1.0,
       "secondary_flags": {
@@ -23405,7 +23405,7 @@
     },
     "endurance_clean_180min_v13.zwo": {
       "file": "endurance_clean_180min_v13.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 180min \u2014 Z2",
       "confidence": 1.0,
       "secondary_flags": {
@@ -25433,7 +25433,7 @@
     },
     "endurance_clean_60min_v13.zwo": {
       "file": "endurance_clean_60min_v13.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 60min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -26837,7 +26837,7 @@
     },
     "endurance_clean_70min_v9.zwo": {
       "file": "endurance_clean_70min_v9.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 70min \u2014 Z2",
       "confidence": 0.633,
       "secondary_flags": {
@@ -27201,7 +27201,7 @@
     },
     "endurance_clean_75min_v15.zwo": {
       "file": "endurance_clean_75min_v15.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 75min \u2014 Z2",
       "confidence": 0.678,
       "secondary_flags": {
@@ -28345,7 +28345,7 @@
     },
     "endurance_clean_80min_v9.zwo": {
       "file": "endurance_clean_80min_v9.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 80min \u2014 Z2",
       "confidence": 0.722,
       "secondary_flags": {
@@ -29021,7 +29021,7 @@
     },
     "endurance_clean_90min_v15.zwo": {
       "file": "endurance_clean_90min_v15.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 90min \u2014 Z2",
       "confidence": 0.811,
       "secondary_flags": {
@@ -30113,7 +30113,7 @@
     },
     "endurance_mixed_30min.zwo": {
       "file": "endurance_mixed_30min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 30min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -30165,7 +30165,7 @@
     },
     "endurance_mixed_33min.zwo": {
       "file": "endurance_mixed_33min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 33min \u2014 Z2 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
@@ -31049,7 +31049,7 @@
     },
     "endurance_short_10s_50s_2x_59min_v2.zwo": {
       "file": "endurance_short_10s_50s_2x_59min_v2.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 59min \u2014 Z1 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
@@ -31101,7 +31101,7 @@
     },
     "endurance_short_10s_50s_4x_60min_v4.zwo": {
       "file": "endurance_short_10s_50s_4x_60min_v4.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 60min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
@@ -31153,7 +31153,7 @@
     },
     "endurance_short_30s_60s_6x_60min.zwo": {
       "file": "endurance_short_30s_60s_6x_60min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 60min \u2014 Z2 +threshold block",
       "confidence": 0.55,
       "secondary_flags": {
@@ -31205,7 +31205,7 @@
     },
     "endurance_short_60s_30s_2x_29min_v2.zwo": {
       "file": "endurance_short_60s_30s_2x_29min_v2.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 30min \u2014 Z2 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
@@ -31257,7 +31257,7 @@
     },
     "endurance_short_8s_30s_8x_60min.zwo": {
       "file": "endurance_short_8s_30s_8x_60min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 60min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -31541,7 +31541,7 @@
     },
     "endurance_steady_14min.zwo": {
       "file": "endurance_steady_14min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 14min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -32070,7 +32070,7 @@
     },
     "endurance_steady_19min_v3.zwo": {
       "file": "endurance_steady_19min_v3.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 20min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -32703,7 +32703,7 @@
     },
     "endurance_steady_24min_v4.zwo": {
       "file": "endurance_steady_24min_v4.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 25min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -33105,7 +33105,7 @@
     },
     "endurance_steady_28min.zwo": {
       "file": "endurance_steady_28min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 28min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -33313,7 +33313,7 @@
     },
     "endurance_steady_30min_v2.zwo": {
       "file": "endurance_steady_30min_v2.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 30min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -33395,7 +33395,7 @@
     },
     "endurance_steady_30min_v4_v2.zwo": {
       "file": "endurance_steady_30min_v4_v2.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 30min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
@@ -33975,7 +33975,7 @@
     },
     "endurance_steady_37min.zwo": {
       "file": "endurance_steady_37min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 37min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -34235,7 +34235,7 @@
     },
     "endurance_steady_41min.zwo": {
       "file": "endurance_steady_41min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 41min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -34495,7 +34495,7 @@
     },
     "endurance_steady_45min_v2_v2.zwo": {
       "file": "endurance_steady_45min_v2_v2.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 45min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -34651,7 +34651,7 @@
     },
     "endurance_steady_46min.zwo": {
       "file": "endurance_steady_46min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 46min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -34755,7 +34755,7 @@
     },
     "endurance_steady_49min_v3.zwo": {
       "file": "endurance_steady_49min_v3.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 49min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -34963,7 +34963,7 @@
     },
     "endurance_steady_51min.zwo": {
       "file": "endurance_steady_51min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 51min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -35015,7 +35015,7 @@
     },
     "endurance_steady_57min.zwo": {
       "file": "endurance_steady_57min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 57min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
@@ -37258,7 +37258,7 @@
     },
     "intervals_1x2min_75pct_40min.zwo": {
       "file": "intervals_1x2min_75pct_40min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 40min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -37726,7 +37726,7 @@
     },
     "intervals_3x4min_75pct_46min.zwo": {
       "file": "intervals_3x4min_75pct_46min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 46min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
@@ -38090,7 +38090,7 @@
     },
     "intervals_4x6min_70pct_44min.zwo": {
       "file": "intervals_4x6min_70pct_44min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 45min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -38194,7 +38194,7 @@
     },
     "intervals_5x0min_65pct_52min.zwo": {
       "file": "intervals_5x0min_65pct_52min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 52min \u2014 Z2 +VO2 set",
       "confidence": 0.55,
       "secondary_flags": {
@@ -43758,7 +43758,7 @@
     },
     "neuromuscular_30s300s_12x_116min.zwo": {
       "file": "neuromuscular_30s300s_12x_116min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 55min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
@@ -45374,7 +45374,7 @@
     },
     "neuromuscular_3x30s_61min.zwo": {
       "file": "neuromuscular_3x30s_61min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 60min \u2014 Z1",
       "confidence": 0.823,
       "secondary_flags": {
@@ -52760,7 +52760,7 @@
     },
     "over_under_10s60s_12x_44min.zwo": {
       "file": "over_under_10s60s_12x_44min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 44min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -52812,7 +52812,7 @@
     },
     "over_under_10s90s_12x_50min.zwo": {
       "file": "over_under_10s90s_12x_50min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 50min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -54944,7 +54944,7 @@
     },
     "over_under_2x10s_26min_v2.zwo": {
       "file": "over_under_2x10s_26min_v2.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 27min \u2014 Z2 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
@@ -55308,7 +55308,7 @@
     },
     "over_under_2x1min_30min.zwo": {
       "file": "over_under_2x1min_30min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 30min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -55828,7 +55828,7 @@
     },
     "over_under_2x2min_24min.zwo": {
       "file": "over_under_2x2min_24min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 24min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -55880,7 +55880,7 @@
     },
     "over_under_2x30s_26min.zwo": {
       "file": "over_under_2x30s_26min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 27min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -56400,7 +56400,7 @@
     },
     "over_under_2x50s_7min.zwo": {
       "file": "over_under_2x50s_7min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 9min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
@@ -57648,7 +57648,7 @@
     },
     "over_under_30s64s_7x_53min.zwo": {
       "file": "over_under_30s64s_7x_53min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 53min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -59104,7 +59104,7 @@
     },
     "over_under_3x30s_60min.zwo": {
       "file": "over_under_3x30s_60min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 60min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -59416,7 +59416,7 @@
     },
     "over_under_3x3min_31min.zwo": {
       "file": "over_under_3x3min_31min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 32min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -59624,7 +59624,7 @@
     },
     "over_under_3x3min_53min.zwo": {
       "file": "over_under_3x3min_53min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 54min \u2014 Z4",
       "confidence": 0.55,
       "secondary_flags": {
@@ -60196,7 +60196,7 @@
     },
     "over_under_4x1min_46min.zwo": {
       "file": "over_under_4x1min_46min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 46min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -60976,7 +60976,7 @@
     },
     "over_under_4x30s_30min.zwo": {
       "file": "over_under_4x30s_30min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 30min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -63264,7 +63264,7 @@
     },
     "over_under_5x30s_26min.zwo": {
       "file": "over_under_5x30s_26min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 26min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -63316,7 +63316,7 @@
     },
     "over_under_5x30s_30min.zwo": {
       "file": "over_under_5x30s_30min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 30min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -67112,7 +67112,7 @@
     },
     "over_under_ou_42min.zwo": {
       "file": "over_under_ou_42min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 43min \u2014 Z3 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
@@ -69348,7 +69348,7 @@
     },
     "over_under_steady_15min.zwo": {
       "file": "over_under_steady_15min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 15min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -69400,7 +69400,7 @@
     },
     "over_under_steady_16min_v2.zwo": {
       "file": "over_under_steady_16min_v2.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 16min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -69608,7 +69608,7 @@
     },
     "over_under_steady_29min_v2.zwo": {
       "file": "over_under_steady_29min_v2.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 29min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -69712,7 +69712,7 @@
     },
     "over_under_steady_30min.zwo": {
       "file": "over_under_steady_30min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 30min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -69764,7 +69764,7 @@
     },
     "over_under_steady_30min_v2.zwo": {
       "file": "over_under_steady_30min_v2.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 30min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -69816,7 +69816,7 @@
     },
     "over_under_steady_30min_v3.zwo": {
       "file": "over_under_steady_30min_v3.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 30min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -69868,7 +69868,7 @@
     },
     "over_under_steady_30min_v5.zwo": {
       "file": "over_under_steady_30min_v5.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 30min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -70024,7 +70024,7 @@
     },
     "over_under_steady_35min.zwo": {
       "file": "over_under_steady_35min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 35min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -70076,7 +70076,7 @@
     },
     "over_under_steady_35min_v2.zwo": {
       "file": "over_under_steady_35min_v2.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 38min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -70284,7 +70284,7 @@
     },
     "over_under_steady_38min.zwo": {
       "file": "over_under_steady_38min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 38min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
@@ -70388,7 +70388,7 @@
     },
     "over_under_steady_38min_v3.zwo": {
       "file": "over_under_steady_38min_v3.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 38min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -70440,7 +70440,7 @@
     },
     "over_under_steady_40min.zwo": {
       "file": "over_under_steady_40min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 40min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -70492,7 +70492,7 @@
     },
     "over_under_steady_40min_v2.zwo": {
       "file": "over_under_steady_40min_v2.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 40min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -70648,7 +70648,7 @@
     },
     "over_under_steady_40min_v5.zwo": {
       "file": "over_under_steady_40min_v5.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 40min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -70804,7 +70804,7 @@
     },
     "over_under_steady_42min_v5.zwo": {
       "file": "over_under_steady_42min_v5.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 42min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -70908,7 +70908,7 @@
     },
     "over_under_steady_44min_v2.zwo": {
       "file": "over_under_steady_44min_v2.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 44min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -72208,7 +72208,7 @@
     },
     "pyramid_13x3min_60min.zwo": {
       "file": "pyramid_13x3min_60min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 60min \u2014 Z1",
       "confidence": 1.0,
       "secondary_flags": {
@@ -72260,7 +72260,7 @@
     },
     "pyramid_2x10s_18min.zwo": {
       "file": "pyramid_2x10s_18min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 18min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -72364,7 +72364,7 @@
     },
     "pyramid_2x1min_22min.zwo": {
       "file": "pyramid_2x1min_22min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 22min \u2014 Z1 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
@@ -72624,7 +72624,7 @@
     },
     "pyramid_2x30s_26min.zwo": {
       "file": "pyramid_2x30s_26min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 27min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -73196,7 +73196,7 @@
     },
     "pyramid_7x20s_10min.zwo": {
       "file": "pyramid_7x20s_10min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 16min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -73456,7 +73456,7 @@
     },
     "pyramid_steady_23min.zwo": {
       "file": "pyramid_steady_23min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 23min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -73508,7 +73508,7 @@
     },
     "pyramid_steady_27min.zwo": {
       "file": "pyramid_steady_27min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 27min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -73612,7 +73612,7 @@
     },
     "pyramid_steady_32min_v2.zwo": {
       "file": "pyramid_steady_32min_v2.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 34min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -73664,7 +73664,7 @@
     },
     "pyramid_steady_36min.zwo": {
       "file": "pyramid_steady_36min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 38min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -73768,7 +73768,7 @@
     },
     "pyramid_steady_37min_v2.zwo": {
       "file": "pyramid_steady_37min_v2.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 39min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -73976,7 +73976,7 @@
     },
     "recovery_10x30s_60min.zwo": {
       "file": "recovery_10x30s_60min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 60min \u2014 Z1",
       "confidence": 0.867,
       "secondary_flags": {
@@ -74030,7 +74030,7 @@
     },
     "recovery_12s180s_10x_47min.zwo": {
       "file": "recovery_12s180s_10x_47min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 47min \u2014 Z2",
       "confidence": 0.695,
       "secondary_flags": {
@@ -74082,7 +74082,7 @@
     },
     "recovery_20x15s_30min.zwo": {
       "file": "recovery_20x15s_30min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 30min \u2014 Z1",
       "confidence": 0.7,
       "secondary_flags": {
@@ -74136,7 +74136,7 @@
     },
     "recovery_2x0min_42min.zwo": {
       "file": "recovery_2x0min_42min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 43min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -74188,7 +74188,7 @@
     },
     "recovery_2x0min_52min.zwo": {
       "file": "recovery_2x0min_52min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 52min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -74240,7 +74240,7 @@
     },
     "recovery_2x0min_55min.zwo": {
       "file": "recovery_2x0min_55min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 55min \u2014 Z1 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
@@ -74292,7 +74292,7 @@
     },
     "recovery_2x0min_63min.zwo": {
       "file": "recovery_2x0min_63min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 65min \u2014 Z2 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
@@ -74396,7 +74396,7 @@
     },
     "recovery_2x1min_22min.zwo": {
       "file": "recovery_2x1min_22min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 22min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -74552,7 +74552,7 @@
     },
     "recovery_2x2min_35min_v2.zwo": {
       "file": "recovery_2x2min_35min_v2.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 35min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -74604,7 +74604,7 @@
     },
     "recovery_2x30s_22min.zwo": {
       "file": "recovery_2x30s_22min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 22min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -74656,7 +74656,7 @@
     },
     "recovery_2x30s_26min.zwo": {
       "file": "recovery_2x30s_26min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 26min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -74708,7 +74708,7 @@
     },
     "recovery_2x30s_28min.zwo": {
       "file": "recovery_2x30s_28min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 28min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -74760,7 +74760,7 @@
     },
     "recovery_2x30s_30min.zwo": {
       "file": "recovery_2x30s_30min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 30min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -74812,7 +74812,7 @@
     },
     "recovery_2x3min_27min.zwo": {
       "file": "recovery_2x3min_27min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 27min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -74864,7 +74864,7 @@
     },
     "recovery_2x3min_34min.zwo": {
       "file": "recovery_2x3min_34min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 34min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -74916,7 +74916,7 @@
     },
     "recovery_2x4min_28min.zwo": {
       "file": "recovery_2x4min_28min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 28min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -74968,7 +74968,7 @@
     },
     "recovery_2x4min_28min_v3.zwo": {
       "file": "recovery_2x4min_28min_v3.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 28min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -75020,7 +75020,7 @@
     },
     "recovery_2x4min_38min.zwo": {
       "file": "recovery_2x4min_38min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 38min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -75124,7 +75124,7 @@
     },
     "recovery_2x5min_42min.zwo": {
       "file": "recovery_2x5min_42min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 42min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -75384,7 +75384,7 @@
     },
     "recovery_3x0min_67min.zwo": {
       "file": "recovery_3x0min_67min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 67min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -75436,7 +75436,7 @@
     },
     "recovery_3x2min_16min.zwo": {
       "file": "recovery_3x2min_16min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 16min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -75488,7 +75488,7 @@
     },
     "recovery_3x2min_67min.zwo": {
       "file": "recovery_3x2min_67min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 67min \u2014 Z1",
       "confidence": 0.704,
       "secondary_flags": {
@@ -75540,7 +75540,7 @@
     },
     "recovery_3x30s_16min.zwo": {
       "file": "recovery_3x30s_16min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 17min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -75592,7 +75592,7 @@
     },
     "recovery_3x30s_26min.zwo": {
       "file": "recovery_3x30s_26min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 26min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -75644,7 +75644,7 @@
     },
     "recovery_3x3min_20min.zwo": {
       "file": "recovery_3x3min_20min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 21min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -75904,7 +75904,7 @@
     },
     "recovery_4x0min_20min.zwo": {
       "file": "recovery_4x0min_20min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 23min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -75956,7 +75956,7 @@
     },
     "recovery_4x10s_61min.zwo": {
       "file": "recovery_4x10s_61min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 62min \u2014 Z3 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
@@ -76008,7 +76008,7 @@
     },
     "recovery_5x10s_40min.zwo": {
       "file": "recovery_5x10s_40min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 41min \u2014 Z2 +sprints",
       "confidence": 0.607,
       "secondary_flags": {
@@ -76060,7 +76060,7 @@
     },
     "recovery_5x20s_30min.zwo": {
       "file": "recovery_5x20s_30min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 30min \u2014 Z1",
       "confidence": 1.0,
       "secondary_flags": {
@@ -76112,7 +76112,7 @@
     },
     "recovery_5x30s_34min.zwo": {
       "file": "recovery_5x30s_34min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 35min \u2014 Z2 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
@@ -76164,7 +76164,7 @@
     },
     "recovery_5x30s_36min.zwo": {
       "file": "recovery_5x30s_36min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 36min \u2014 Z2 +sprints",
       "confidence": 0.699,
       "secondary_flags": {
@@ -76216,7 +76216,7 @@
     },
     "recovery_6x3min_60min.zwo": {
       "file": "recovery_6x3min_60min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 61min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -76268,7 +76268,7 @@
     },
     "recovery_billat_30_30_2x_30min_v2.zwo": {
       "file": "recovery_billat_30_30_2x_30min_v2.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 30min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -76320,7 +76320,7 @@
     },
     "recovery_billat_30_30_3x_15min.zwo": {
       "file": "recovery_billat_30_30_3x_15min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 15min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -77516,7 +77516,7 @@
     },
     "recovery_mixed_21min.zwo": {
       "file": "recovery_mixed_21min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 21min \u2014 Z1",
       "confidence": 0.697,
       "secondary_flags": {
@@ -77828,7 +77828,7 @@
     },
     "recovery_mixed_30min_renamed_v46_1.zwo": {
       "file": "recovery_mixed_30min_renamed_v46_1.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 30min \u2014 Z1",
       "confidence": 0.847,
       "secondary_flags": {
@@ -77880,7 +77880,7 @@
     },
     "recovery_mixed_30min_renamed_v46_2.zwo": {
       "file": "recovery_mixed_30min_renamed_v46_2.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 30min \u2014 Z1",
       "confidence": 0.848,
       "secondary_flags": {
@@ -77984,7 +77984,7 @@
     },
     "recovery_mixed_31min_renamed_v46_1.zwo": {
       "file": "recovery_mixed_31min_renamed_v46_1.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 31min \u2014 Z1",
       "confidence": 0.859,
       "secondary_flags": {
@@ -78400,7 +78400,7 @@
     },
     "recovery_short_15s_45s_1x_36min.zwo": {
       "file": "recovery_short_15s_45s_1x_36min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 36min \u2014 Z2",
       "confidence": 0.817,
       "secondary_flags": {
@@ -78452,7 +78452,7 @@
     },
     "recovery_spin_15min.zwo": {
       "file": "recovery_spin_15min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 17min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -78504,7 +78504,7 @@
     },
     "recovery_spin_16min.zwo": {
       "file": "recovery_spin_16min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 16min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -78660,7 +78660,7 @@
     },
     "recovery_spin_24min.zwo": {
       "file": "recovery_spin_24min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 24min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -79232,7 +79232,7 @@
     },
     "recovery_spin_30min_v2.zwo": {
       "file": "recovery_spin_30min_v2.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 30min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -79388,7 +79388,7 @@
     },
     "recovery_spin_30min_v5.zwo": {
       "file": "recovery_spin_30min_v5.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 30min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -80584,7 +80584,7 @@
     },
     "recovery_spin_40min_v5.zwo": {
       "file": "recovery_spin_40min_v5.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 40min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -80636,7 +80636,7 @@
     },
     "recovery_spin_40min_v6.zwo": {
       "file": "recovery_spin_40min_v6.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 40min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -82040,7 +82040,7 @@
     },
     "recovery_spin_46min_v3.zwo": {
       "file": "recovery_spin_46min_v3.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 47min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -82976,7 +82976,7 @@
     },
     "recovery_spin_54min_v8.zwo": {
       "file": "recovery_spin_54min_v8.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 54min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -83288,7 +83288,7 @@
     },
     "recovery_spin_56min_v3.zwo": {
       "file": "recovery_spin_56min_v3.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 56min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
@@ -84640,7 +84640,7 @@
     },
     "recovery_spin_80min.zwo": {
       "file": "recovery_spin_80min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 80min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -85992,7 +85992,7 @@
     },
     "recovery_steady_19min_v2.zwo": {
       "file": "recovery_steady_19min_v2.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 19min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -86572,7 +86572,7 @@
     },
     "recovery_steady_21min_v5.zwo": {
       "file": "recovery_steady_21min_v5.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 21min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -88355,7 +88355,7 @@
     },
     "recovery_steady_28min_v2.zwo": {
       "file": "recovery_steady_28min_v2.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 28min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -88407,7 +88407,7 @@
     },
     "recovery_steady_28min_v3.zwo": {
       "file": "recovery_steady_28min_v3.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 28min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
@@ -88630,7 +88630,7 @@
     },
     "recovery_steady_30min_v3_v2.zwo": {
       "file": "recovery_steady_30min_v3_v2.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 30min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
@@ -89856,7 +89856,7 @@
     },
     "recovery_steady_41min.zwo": {
       "file": "recovery_steady_41min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 41min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -91431,7 +91431,7 @@
     },
     "sprints_2x10s_10min.zwo": {
       "file": "sprints_2x10s_10min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 14min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -91587,7 +91587,7 @@
     },
     "sprints_2x30s_34min.zwo": {
       "file": "sprints_2x30s_34min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 34min \u2014 Z1 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
@@ -93147,7 +93147,7 @@
     },
     "sprints_8x12s_41min.zwo": {
       "file": "sprints_8x12s_41min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 41min \u2014 Z2 +sprints",
       "confidence": 0.635,
       "secondary_flags": {
@@ -93199,7 +93199,7 @@
     },
     "sprints_8x12s_49min.zwo": {
       "file": "sprints_8x12s_49min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 49min \u2014 Z2 +sprints",
       "confidence": 0.728,
       "secondary_flags": {
@@ -93511,7 +93511,7 @@
     },
     "sprints_steady_12min.zwo": {
       "file": "sprints_steady_12min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 12min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -93563,7 +93563,7 @@
     },
     "sprints_steady_21min.zwo": {
       "file": "sprints_steady_21min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 21min \u2014 Z1 +sprints",
       "confidence": 0.652,
       "secondary_flags": {
@@ -94395,7 +94395,7 @@
     },
     "supra_threshold_32min.zwo": {
       "file": "supra_threshold_32min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 33min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -94499,7 +94499,7 @@
     },
     "supra_threshold_34min_v2.zwo": {
       "file": "supra_threshold_34min_v2.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 35min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -95175,7 +95175,7 @@
     },
     "supra_threshold_61min_v3.zwo": {
       "file": "supra_threshold_61min_v3.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 61min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -116302,7 +116302,7 @@
     },
     "sweetspot_1x0min_30min.zwo": {
       "file": "sweetspot_1x0min_30min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 30min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -116406,7 +116406,7 @@
     },
     "sweetspot_1x0min_32min_v2.zwo": {
       "file": "sweetspot_1x0min_32min_v2.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 32min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -116510,7 +116510,7 @@
     },
     "sweetspot_1x0min_38min.zwo": {
       "file": "sweetspot_1x0min_38min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 39min \u2014 Z1 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
@@ -117446,7 +117446,7 @@
     },
     "sweetspot_3x0min_40min.zwo": {
       "file": "sweetspot_3x0min_40min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 41min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -117550,7 +117550,7 @@
     },
     "sweetspot_3x0min_55min_v6.zwo": {
       "file": "sweetspot_3x0min_55min_v6.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 55min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -117966,7 +117966,7 @@
     },
     "sweetspot_3x1min_56min.zwo": {
       "file": "sweetspot_3x1min_56min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 56min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -118226,7 +118226,7 @@
     },
     "sweetspot_4x0min_60min.zwo": {
       "file": "sweetspot_4x0min_60min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 60min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -118382,7 +118382,7 @@
     },
     "sweetspot_4x1min_62min.zwo": {
       "file": "sweetspot_4x1min_62min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 62min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -118486,7 +118486,7 @@
     },
     "sweetspot_5x0min_25min.zwo": {
       "file": "sweetspot_5x0min_25min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 25min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -118642,7 +118642,7 @@
     },
     "sweetspot_5x0min_60min_v5.zwo": {
       "file": "sweetspot_5x0min_60min_v5.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 61min \u2014 Z2 +VO2 set",
       "confidence": 0.55,
       "secondary_flags": {
@@ -119786,7 +119786,7 @@
     },
     "tempo_10x1min_61min.zwo": {
       "file": "tempo_10x1min_61min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 61min \u2014 Z1 +threshold block",
       "confidence": 0.55,
       "secondary_flags": {
@@ -122802,7 +122802,7 @@
     },
     "tempo_3x1min_60min.zwo": {
       "file": "tempo_3x1min_60min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 61min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -124414,7 +124414,7 @@
     },
     "tempo_3x3min_57min.zwo": {
       "file": "tempo_3x3min_57min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 57min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -124466,7 +124466,7 @@
     },
     "tempo_3x3min_57min_renamed_v46_1.zwo": {
       "file": "tempo_3x3min_57min_renamed_v46_1.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 57min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -125870,7 +125870,7 @@
     },
     "tempo_5x1min_65min.zwo": {
       "file": "tempo_5x1min_65min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 65min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -133306,7 +133306,7 @@
     },
     "tempo_mixed_51min_renamed_v46_1.zwo": {
       "file": "tempo_mixed_51min_renamed_v46_1.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 51min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -133514,7 +133514,7 @@
     },
     "tempo_mixed_54min_renamed_v46_1.zwo": {
       "file": "tempo_mixed_54min_renamed_v46_1.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 54min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -136530,7 +136530,7 @@
     },
     "tempo_progression_3x20s_60min.zwo": {
       "file": "tempo_progression_3x20s_60min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 60min \u2014 Z2 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
@@ -137102,7 +137102,7 @@
     },
     "tempo_progression_9x1min_60min.zwo": {
       "file": "tempo_progression_9x1min_60min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 60min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -139970,7 +139970,7 @@
     },
     "tempo_steady_30min_v2.zwo": {
       "file": "tempo_steady_30min_v2.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 30min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -141263,7 +141263,7 @@
     },
     "tempo_steady_45min_v3.zwo": {
       "file": "tempo_steady_45min_v3.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 45min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -146153,7 +146153,7 @@
     },
     "threshold_2x30s_20min.zwo": {
       "file": "threshold_2x30s_20min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 20min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -146361,7 +146361,7 @@
     },
     "threshold_2x3min_19min.zwo": {
       "file": "threshold_2x3min_19min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 20min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -146413,7 +146413,7 @@
     },
     "threshold_2x3min_21min.zwo": {
       "file": "threshold_2x3min_21min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 22min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -146569,7 +146569,7 @@
     },
     "threshold_2x4min_30min.zwo": {
       "file": "threshold_2x4min_30min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 30min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
@@ -148805,7 +148805,7 @@
     },
     "threshold_3x1min_38min.zwo": {
       "file": "threshold_3x1min_38min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 39min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -154005,7 +154005,7 @@
     },
     "threshold_5x0min_60min.zwo": {
       "file": "threshold_5x0min_60min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 60min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -181935,7 +181935,7 @@
     },
     "threshold_steady_25min.zwo": {
       "file": "threshold_steady_25min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 26min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -183495,7 +183495,7 @@
     },
     "threshold_steady_39min.zwo": {
       "file": "threshold_steady_39min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 39min \u2014 Z2 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
@@ -183859,7 +183859,7 @@
     },
     "threshold_steady_43min.zwo": {
       "file": "threshold_steady_43min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 43min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -185315,7 +185315,7 @@
     },
     "threshold_steady_51min.zwo": {
       "file": "threshold_steady_51min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 51min \u2014 Z2 +VO2 set",
       "confidence": 0.55,
       "secondary_flags": {
@@ -185419,7 +185419,7 @@
     },
     "threshold_steady_52min_v3.zwo": {
       "file": "threshold_steady_52min_v3.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 52min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -186043,7 +186043,7 @@
     },
     "threshold_steady_55min_v9.zwo": {
       "file": "threshold_steady_55min_v9.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 55min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -186095,7 +186095,7 @@
     },
     "threshold_steady_56min.zwo": {
       "file": "threshold_steady_56min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 56min \u2014 Z2 +threshold block",
       "confidence": 0.55,
       "secondary_flags": {
@@ -186147,7 +186147,7 @@
     },
     "threshold_steady_56min_v3.zwo": {
       "file": "threshold_steady_56min_v3.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 56min \u2014 Z2 +threshold block",
       "confidence": 0.55,
       "secondary_flags": {
@@ -186303,7 +186303,7 @@
     },
     "threshold_steady_58min_v2.zwo": {
       "file": "threshold_steady_58min_v2.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 58min \u2014 Z2 +VO2 set",
       "confidence": 0.55,
       "secondary_flags": {
@@ -186979,7 +186979,7 @@
     },
     "threshold_steady_73min.zwo": {
       "file": "threshold_steady_73min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 73min \u2014 Z1 +VO2 set",
       "confidence": 0.55,
       "secondary_flags": {
@@ -215490,7 +215490,7 @@
     },
     "z2_endurance_20min.zwo": {
       "file": "z2_endurance_20min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 21min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -215646,7 +215646,7 @@
     },
     "z2_endurance_25min.zwo": {
       "file": "z2_endurance_25min.zwo",
-      "primary": "recovery",
+      "primary": "endurance_intervals",
       "display_name": "Recovery 25min \u2014 Z1 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
@@ -215698,7 +215698,7 @@
     },
     "z2_endurance_27min.zwo": {
       "file": "z2_endurance_27min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 27min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -215750,7 +215750,7 @@
     },
     "z2_endurance_30min.zwo": {
       "file": "z2_endurance_30min.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 30min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -216374,7 +216374,7 @@
     },
     "z2_endurance_50min_v4.zwo": {
       "file": "z2_endurance_50min_v4.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 50min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -217154,7 +217154,7 @@
     },
     "z2_endurance_65min_v3.zwo": {
       "file": "z2_endurance_65min_v3.zwo",
-      "primary": "endurance",
+      "primary": "endurance_intervals",
       "display_name": "Endurance 65min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {

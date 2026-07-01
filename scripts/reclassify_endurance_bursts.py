@@ -31,27 +31,43 @@ TARGET = "endurance_intervals"
 TARGET_PROTOCOL = "Endurance + Strides"
 
 
-def burst_count(zwo: Path) -> int:
-    """Number of >=BURST-FTP efforts. A hard bit can be the OnPower OR the
-    OffPower of an IntervalsT (some files put the burst in the 'off' slot)."""
+MAX_STRIDE_S = 90       # a "stride" is a SHORT pop; longer = a real interval
+MAX_HARD_TOTAL_S = 600  # >10 min of hard work = a real interval workout, not strides
+
+
+def is_short_strides(zwo: Path) -> bool:
+    """True only for genuine 'endurance + strides': >=2 hard pops (>=BURST FTP),
+    every hard effort SHORT (<=MAX_STRIDE_S) and total hard time small
+    (<MAX_HARD_TOTAL_S). A file with sustained hard efforts (5-min threshold
+    blocks, 3x4min, over-unders) is a real interval workout — NOT strides — and is
+    deliberately left alone (its true type needs the classifier, which is buggy;
+    guessing here mislabels it, e.g. endurance_steady -> vo2max). A hard bit can
+    be the OnPower OR the OffPower of an IntervalsT (some put the burst in 'off')."""
     try:
         w = ET.parse(zwo).getroot().find("workout")
     except Exception:
-        return 0
+        return False
     if w is None:
-        return 0
+        return False
     n = 0
+    max_effort = 0.0
+    hard_total = 0.0
     for el in w:
         a = el.attrib
         if el.tag == "SteadyState":
             if float(a.get("Power", 0) or 0) >= BURST:
-                n += 1
+                d = float(a.get("Duration", 0) or 0)
+                n += 1; max_effort = max(max_effort, d); hard_total += d
         elif el.tag == "IntervalsT":
-            hi = max(float(a.get("OnPower", 0) or 0), float(a.get("OffPower", 0) or 0))
-            if hi >= BURST:
-                n += int(a.get("Repeat", 1) or 1)
-        # Warmup/Cooldown/Ramp/FreeRide deliberately ignored — a ramp is not a burst.
-    return n
+            r = int(a.get("Repeat", 1) or 1)
+            on, off = float(a.get("OnDuration", 0) or 0), float(a.get("OffDuration", 0) or 0)
+            onp, offp = float(a.get("OnPower", 0) or 0), float(a.get("OffPower", 0) or 0)
+            if onp >= BURST:
+                n += r; max_effort = max(max_effort, on); hard_total += r * on
+            if offp >= BURST:
+                n += r; max_effort = max(max_effort, off); hard_total += r * off
+        # Warmup/Cooldown/Ramp/FreeRide ignored — a ramp is not a burst.
+    return n >= MIN_BURSTS and max_effort <= MAX_STRIDE_S and hard_total < MAX_HARD_TOTAL_S
 
 
 def main() -> None:
@@ -67,12 +83,12 @@ def main() -> None:
     targets = [
         fn for fn, e in cc["classifications"].items()
         if e.get("primary") in SRC and (WK / fn).exists()
-        and burst_count(WK / fn) >= MIN_BURSTS
+        and is_short_strides(WK / fn)
     ]
     tset = set(targets)
     mode = "APPLY" if args.apply else "DRY-RUN"
-    print(f"{mode}: {len(targets)} endurance/recovery files with >={MIN_BURSTS} "
-          f"bursts (>={BURST} FTP) -> {TARGET}")
+    print(f"{mode}: {len(targets)} endurance/recovery files with >={MIN_BURSTS} SHORT "
+          f"strides (<={MAX_STRIDE_S}s each, <{MAX_HARD_TOTAL_S}s total, >={BURST} FTP) -> {TARGET}")
     if not args.apply:
         for fn in sorted(targets)[:20]:
             print("   ", cc["classifications"][fn]["primary"], fn)

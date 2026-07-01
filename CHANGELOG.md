@@ -1,10 +1,13 @@
 # Changelog
 
-## v2.4.4 — "Z2" workouts with hard bursts reclassified (2026-07-01)
+## v2.4.4 — Workout library re-classified so hard sessions aren't hidden as easy (2026-07-01)
 
 ### What changes for users
 
-- **Endurance/Z2 workouts that actually contain repeated hard bursts (≥95% FTP) are now labelled "Endurance + Strides", not Zone 2.** 215 library workouts were mislabelled — e.g. a "Z2" file with 6× 20-second VO2 pops. They're still available and nice to ride; they just no longer get scheduled as pure Zone-2 days.
+Workouts that were labelled "Zone 2" or "Recovery" but actually contain hard efforts are now labelled for what they really are:
+
+- **Easy rides with short hard *strides* → "Endurance + Strides".** A Z2 base ride with, say, 6× 20-second pops is still nice to ride and still an aerobic day — it just isn't scheduled as pure Zone 2.
+- **Rides with sustained hard sets → their real type.** Workouts with threshold blocks, VO2 intervals, or over-unders that had been mislabelled as endurance or recovery are now labelled Threshold / VO2max / Anaerobic, so they land on the right training days — and a hard session is never served on a recovery day.
 
 ## v2.4.3 — FIT workout targets as %FTP + full-calendar day view (2026-07-01)
 

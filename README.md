@@ -513,7 +513,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v2.4.4 — "Z2"-with-bursts workouts reclassified as Endurance + Strides](https://github.com/platypus45/domestique/releases/latest)** (2026-07-01).
+Latest: **[v2.4.4 — Workout library re-classified so hard sessions aren't hidden as easy](https://github.com/platypus45/domestique/releases/latest)** (2026-07-01).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

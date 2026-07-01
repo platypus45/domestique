@@ -14826,7 +14826,7 @@
     "endurance_10s240s_9x_62min.zwo": {
       "file": "endurance_10s240s_9x_62min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 63min \u2014 Z3 +sprints",
+      "display_name": "Endurance + Strides 63min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -14839,7 +14839,7 @@
         "pyramidal_consistent": true,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 3750,
         "valid_dur_s": 3750,
@@ -14878,7 +14878,7 @@
     "endurance_12x30s_27min.zwo": {
       "file": "endurance_12x30s_27min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 27min \u2014 Z2",
+      "display_name": "Endurance + Strides 27min \u2014 12\u00d715s/30s @ 120%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -14930,7 +14930,7 @@
     "endurance_15s600s_7x_96min.zwo": {
       "file": "endurance_15s600s_7x_96min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 96min \u2014 Z2",
+      "display_name": "Endurance + Strides 96min \u2014 7\u00d715s/10min @ 125%",
       "confidence": 0.962,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -14982,7 +14982,7 @@
     "endurance_17x15s_119min.zwo": {
       "file": "endurance_17x15s_119min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 119min \u2014 Z1",
+      "display_name": "Endurance + Strides 119min \u2014 17\u00d715s/5min @ 95%",
       "confidence": 1.0,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -15033,8 +15033,8 @@
     },
     "endurance_1min_6x_60min_renamed_v46_1.zwo": {
       "file": "endurance_1min_6x_60min_renamed_v46_1.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 60min \u2014 Z2 +VO2 set",
+      "primary": "vo2max",
+      "display_name": "VO2max 60min \u2014 6\u00d71min/30s @ 110%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -15047,7 +15047,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 3600,
         "valid_dur_s": 3600,
@@ -15086,7 +15086,7 @@
     "endurance_20s129s_6x_60min.zwo": {
       "file": "endurance_20s129s_6x_60min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 60min \u2014 Z2",
+      "display_name": "Endurance + Strides 60min \u2014 6\u00d7130s/20s @ 80%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -15190,7 +15190,7 @@
     "endurance_2x1min_12min.zwo": {
       "file": "endurance_2x1min_12min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 17min \u2014 Z1",
+      "display_name": "Endurance + Strides 17min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -15200,18 +15200,18 @@
         "pattern_over_under": false,
         "pattern_microinterval": false,
         "polarized_consistent": false,
-        "pyramidal_consistent": false,
+        "pyramidal_consistent": true,
         "is_ladder": false
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 790,
-        "valid_dur_s": 790,
-        "z1_pct": 39.62,
-        "z2_pct": 23.42,
-        "z3_pct": 9.11,
-        "z4_pct": 13.92,
-        "z5_pct": 13.92,
+        "duration_s": 1020,
+        "valid_dur_s": 1020,
+        "z1_pct": 34.61,
+        "z2_pct": 36.76,
+        "z3_pct": 7.06,
+        "z4_pct": 10.78,
+        "z5_pct": 10.78,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
         "z4_lower_s": 0,
@@ -15220,8 +15220,8 @@
         "hard_segment_count": 6,
         "longest_hard_segment_s": 110,
         "sprint_segment_count": 0,
-        "np_fraction": 0.7921,
-        "if_fraction": 0.7584,
+        "np_fraction": 0.7634,
+        "if_fraction": 0.7306,
         "peak_power_fraction": 1.2,
         "ou_transitions": 1,
         "micro_cycles": 3,
@@ -15231,8 +15231,8 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z2",
-        "peak_band_pct": 0.6038,
-        "dominant_segment_band": "z1",
+        "peak_band_pct": 0.6539,
+        "dominant_segment_band": "z2",
         "longest_z4plus_block_s": 110,
         "z4plus_in_work_pct": 0.4,
         "work_dur_s": 550
@@ -15502,7 +15502,7 @@
     "endurance_2x30s_17min.zwo": {
       "file": "endurance_2x30s_17min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 22min \u2014 Z3",
+      "display_name": "Endurance + Strides 22min \u2014 2\u00d730s/30s @ 105%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -15517,23 +15517,23 @@
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 1041,
-        "valid_dur_s": 1041,
-        "z1_pct": 0.0,
-        "z2_pct": 39.0,
-        "z3_pct": 36.22,
-        "z4_pct": 23.25,
-        "z5_pct": 1.54,
+        "duration_s": 1320,
+        "valid_dur_s": 1320,
+        "z1_pct": 11.89,
+        "z2_pct": 43.18,
+        "z3_pct": 25.38,
+        "z4_pct": 18.33,
+        "z5_pct": 1.21,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
-        "z4_lower_s": 193,
+        "z4_lower_s": 187,
         "z4_upper_s": 210,
-        "sweet_spot_pct": 17.68,
+        "sweet_spot_pct": 13.48,
         "hard_segment_count": 5,
         "longest_hard_segment_s": 56,
         "sprint_segment_count": 0,
-        "np_fraction": 0.8527,
-        "if_fraction": 0.8413,
+        "np_fraction": 0.8092,
+        "if_fraction": 0.7822,
         "peak_power_fraction": 1.0959,
         "ou_transitions": 3,
         "micro_cycles": 3,
@@ -15543,8 +15543,8 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z3",
-        "peak_band_pct": 0.61,
-        "dominant_segment_band": "z3",
+        "peak_band_pct": 0.4492,
+        "dominant_segment_band": "z2",
         "longest_z4plus_block_s": 75,
         "z4plus_in_work_pct": 0.2801,
         "work_dur_s": 921
@@ -15658,7 +15658,7 @@
     "endurance_2x4min_20min.zwo": {
       "file": "endurance_2x4min_20min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 20min \u2014 Z2",
+      "display_name": "Endurance + Strides 20min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -15710,7 +15710,7 @@
     "endurance_2x4min_44min.zwo": {
       "file": "endurance_2x4min_44min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 44min \u2014 Z3",
+      "display_name": "Endurance + Strides 44min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -15814,7 +15814,7 @@
     "endurance_2x5min_48min_v2.zwo": {
       "file": "endurance_2x5min_48min_v2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 48min \u2014 Z3",
+      "display_name": "Endurance + Strides 48min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -15866,7 +15866,7 @@
     "endurance_2x6min_52min.zwo": {
       "file": "endurance_2x6min_52min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 52min \u2014 Z3",
+      "display_name": "Endurance + Strides 52min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -15918,7 +15918,7 @@
     "endurance_2x7min_56min.zwo": {
       "file": "endurance_2x7min_56min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 56min \u2014 Z3",
+      "display_name": "Endurance + Strides 56min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -16022,7 +16022,7 @@
     "endurance_2x8min_60min.zwo": {
       "file": "endurance_2x8min_60min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 60min \u2014 Z3",
+      "display_name": "Endurance + Strides 60min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -16229,8 +16229,8 @@
     },
     "endurance_30s180s_10x_111min.zwo": {
       "file": "endurance_30s180s_10x_111min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 111min \u2014 Z3",
+      "primary": "vo2max",
+      "display_name": "VO2max 111min \u2014 10\u00d730s/3min @ 105%",
       "confidence": 0.873,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -16281,8 +16281,8 @@
     },
     "endurance_30s30s_7x_60min.zwo": {
       "file": "endurance_30s30s_7x_60min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 61min \u2014 Z4",
+      "primary": "vo2_short",
+      "display_name": "VO2 Short 61min \u2014 7\u00d730s/30s @ 120%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -16297,23 +16297,23 @@
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 3600,
-        "valid_dur_s": 3600,
-        "z1_pct": 19.14,
-        "z2_pct": 36.0,
-        "z3_pct": 23.36,
-        "z4_pct": 14.0,
-        "z5_pct": 7.5,
+        "duration_s": 3660,
+        "valid_dur_s": 3660,
+        "z1_pct": 15.9,
+        "z2_pct": 39.97,
+        "z3_pct": 22.98,
+        "z4_pct": 13.77,
+        "z5_pct": 7.38,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
         "z4_lower_s": 252,
         "z4_upper_s": 361,
-        "sweet_spot_pct": 6.0,
+        "sweet_spot_pct": 5.9,
         "hard_segment_count": 11,
         "longest_hard_segment_s": 361,
         "sprint_segment_count": 0,
-        "np_fraction": 0.8093,
-        "if_fraction": 0.7736,
+        "np_fraction": 0.8098,
+        "if_fraction": 0.7775,
         "peak_power_fraction": 1.2,
         "ou_transitions": 0,
         "micro_cycles": 6,
@@ -16323,7 +16323,7 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z4",
-        "peak_band_pct": 0.215,
+        "peak_band_pct": 0.2115,
         "dominant_segment_band": "z4",
         "longest_z4plus_block_s": 504,
         "z4plus_in_work_pct": 0.2481,
@@ -16334,7 +16334,7 @@
     "endurance_30s60s_14x_30min.zwo": {
       "file": "endurance_30s60s_14x_30min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 30min \u2014 Z1 +VO2 set",
+      "display_name": "Endurance + Strides 30min \u2014 14\u00d730s/1min @ 120%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -16347,7 +16347,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 1800,
         "valid_dur_s": 1800,
@@ -16594,7 +16594,7 @@
     "endurance_3x30s_75min.zwo": {
       "file": "endurance_3x30s_75min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 75min \u2014 Z2",
+      "display_name": "Endurance + Strides 75min \u2014 3\u00d730s/3min @ 100%",
       "confidence": 0.74,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -16646,7 +16646,7 @@
     "endurance_3x30s_90min.zwo": {
       "file": "endurance_3x30s_90min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 90min \u2014 Z2",
+      "display_name": "Endurance + Strides 90min \u2014 3\u00d730s/3min @ 100%",
       "confidence": 0.864,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -16697,8 +16697,8 @@
     },
     "endurance_3x4min_51min.zwo": {
       "file": "endurance_3x4min_51min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 51min \u2014 Z2",
+      "primary": "threshold",
+      "display_name": "Threshold 51min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -16749,8 +16749,8 @@
     },
     "endurance_3x4min_57min.zwo": {
       "file": "endurance_3x4min_57min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 57min \u2014 Z1 +threshold block",
+      "primary": "threshold",
+      "display_name": "Threshold 57min \u2014 3\u00d74min/4min @ 105%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": true,
@@ -16763,7 +16763,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 3420,
         "valid_dur_s": 3420,
@@ -17010,7 +17010,7 @@
     "endurance_4x10s_60min.zwo": {
       "file": "endurance_4x10s_60min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 60min \u2014 Z1",
+      "display_name": "Endurance + Strides 60min \u2014 9\u00d710s/3min @ 80%",
       "confidence": 1.0,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -17062,7 +17062,7 @@
     "endurance_4x15s_65min.zwo": {
       "file": "endurance_4x15s_65min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 65min \u2014 Z2",
+      "display_name": "Endurance + Strides 65min \u2014 4\u00d715s/10min @ 125%",
       "confidence": 0.695,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -17166,7 +17166,7 @@
     "endurance_4x20s_25min.zwo": {
       "file": "endurance_4x20s_25min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 26min \u2014 Z2",
+      "display_name": "Endurance + Strides 26min \u2014 5\u00d720s/20s @ 110%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -17181,23 +17181,23 @@
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 1500,
-        "valid_dur_s": 1500,
-        "z1_pct": 0.0,
-        "z2_pct": 46.67,
-        "z3_pct": 20.0,
-        "z4_pct": 26.67,
-        "z5_pct": 6.67,
+        "duration_s": 1560,
+        "valid_dur_s": 1560,
+        "z1_pct": 4.68,
+        "z2_pct": 44.04,
+        "z3_pct": 19.23,
+        "z4_pct": 25.64,
+        "z5_pct": 6.41,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
         "z4_lower_s": 100,
         "z4_upper_s": 400,
-        "sweet_spot_pct": 6.67,
+        "sweet_spot_pct": 6.41,
         "hard_segment_count": 15,
         "longest_hard_segment_s": 40,
         "sprint_segment_count": 0,
-        "np_fraction": 0.8574,
-        "if_fraction": 0.8383,
+        "np_fraction": 0.8463,
+        "if_fraction": 0.8215,
         "peak_power_fraction": 1.1,
         "ou_transitions": 10,
         "micro_cycles": 5,
@@ -17207,7 +17207,7 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z4",
-        "peak_band_pct": 0.3333,
+        "peak_band_pct": 0.3205,
         "dominant_segment_band": "z2",
         "longest_z4plus_block_s": 40,
         "z4plus_in_work_pct": 0.4386,
@@ -17270,7 +17270,7 @@
     "endurance_4x30s_60min.zwo": {
       "file": "endurance_4x30s_60min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 60min \u2014 Z2",
+      "display_name": "Endurance + Strides 60min \u2014 4\u00d730s/1min @ 120%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -17426,7 +17426,7 @@
     "endurance_5x2min_120min.zwo": {
       "file": "endurance_5x2min_120min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 120min \u2014 Z2 +VO2 set",
+      "display_name": "Endurance + Strides 120min \u2014 5\u00d790s/3min @ 110%",
       "confidence": 0.901,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -17439,7 +17439,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 7200,
         "valid_dur_s": 7200,
@@ -17529,8 +17529,8 @@
     },
     "endurance_6x2min_90min.zwo": {
       "file": "endurance_6x2min_90min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 90min \u2014 Z1 +threshold block",
+      "primary": "threshold",
+      "display_name": "Threshold 90min \u2014 6\u00d72min/1min @ 100%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": true,
@@ -17543,7 +17543,7 @@
         "pyramidal_consistent": true,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 5400,
         "valid_dur_s": 5400,
@@ -17686,7 +17686,7 @@
     "endurance_7x0min_60min.zwo": {
       "file": "endurance_7x0min_60min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 60min \u2014 Z2",
+      "display_name": "Endurance + Strides 60min \u2014 7\u00d710s/290s @ 130%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -18362,7 +18362,7 @@
     "endurance_clean_100min_v9.zwo": {
       "file": "endurance_clean_100min_v9.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 100min \u2014 Z2",
+      "display_name": "Endurance + Strides 100min \u2014 10\u00d730s/1min @ 95%",
       "confidence": 0.9,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -18726,7 +18726,7 @@
     "endurance_clean_105min_v15.zwo": {
       "file": "endurance_clean_105min_v15.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 105min \u2014 Z2",
+      "display_name": "Endurance + Strides 105min \u2014 10\u00d730s/1min @ 95%",
       "confidence": 0.944,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -20026,7 +20026,7 @@
     "endurance_clean_120min_v15.zwo": {
       "file": "endurance_clean_120min_v15.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 120min \u2014 Z2",
+      "display_name": "Endurance + Strides 120min \u2014 10\u00d730s/1min @ 95%",
       "confidence": 1.0,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -21118,7 +21118,7 @@
     "endurance_clean_135min_v3.zwo": {
       "file": "endurance_clean_135min_v3.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 135min \u2014 Z2",
+      "display_name": "Endurance + Strides 135min \u2014 10\u00d730s/1min @ 95%",
       "confidence": 1.0,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -21898,7 +21898,7 @@
     "endurance_clean_150min_v15.zwo": {
       "file": "endurance_clean_150min_v15.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 150min \u2014 Z2",
+      "display_name": "Endurance + Strides 150min \u2014 10\u00d730s/1min @ 95%",
       "confidence": 1.0,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -23406,7 +23406,7 @@
     "endurance_clean_180min_v13.zwo": {
       "file": "endurance_clean_180min_v13.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 180min \u2014 Z2",
+      "display_name": "Endurance + Strides 180min \u2014 10\u00d730s/1min @ 95%",
       "confidence": 1.0,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -25434,7 +25434,7 @@
     "endurance_clean_60min_v13.zwo": {
       "file": "endurance_clean_60min_v13.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 60min \u2014 Z2",
+      "display_name": "Endurance + Strides 60min \u2014 10\u00d730s/1min @ 95%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -26838,7 +26838,7 @@
     "endurance_clean_70min_v9.zwo": {
       "file": "endurance_clean_70min_v9.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 70min \u2014 Z2",
+      "display_name": "Endurance + Strides 70min \u2014 10\u00d730s/1min @ 95%",
       "confidence": 0.633,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -27202,7 +27202,7 @@
     "endurance_clean_75min_v15.zwo": {
       "file": "endurance_clean_75min_v15.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 75min \u2014 Z2",
+      "display_name": "Endurance + Strides 75min \u2014 10\u00d730s/1min @ 95%",
       "confidence": 0.678,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -28346,7 +28346,7 @@
     "endurance_clean_80min_v9.zwo": {
       "file": "endurance_clean_80min_v9.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 80min \u2014 Z2",
+      "display_name": "Endurance + Strides 80min \u2014 10\u00d730s/1min @ 95%",
       "confidence": 0.722,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -29022,7 +29022,7 @@
     "endurance_clean_90min_v15.zwo": {
       "file": "endurance_clean_90min_v15.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 90min \u2014 Z2",
+      "display_name": "Endurance + Strides 90min \u2014 10\u00d730s/1min @ 95%",
       "confidence": 0.811,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -30114,7 +30114,7 @@
     "endurance_mixed_30min.zwo": {
       "file": "endurance_mixed_30min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 30min \u2014 Z2",
+      "display_name": "Endurance + Strides 30min \u2014 5\u00d73min/15s @ 75%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -30166,7 +30166,7 @@
     "endurance_mixed_33min.zwo": {
       "file": "endurance_mixed_33min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 33min \u2014 Z2 +sprints",
+      "display_name": "Endurance + Strides 33min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -30179,7 +30179,7 @@
         "pyramidal_consistent": true,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 1971,
         "valid_dur_s": 1971,
@@ -31049,8 +31049,8 @@
     },
     "endurance_short_10s_50s_2x_59min_v2.zwo": {
       "file": "endurance_short_10s_50s_2x_59min_v2.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 59min \u2014 Z1 +sprints",
+      "primary": "threshold",
+      "display_name": "Threshold 59min \u2014 2\u00d710s/50s @ 175% +sprints",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -31102,7 +31102,7 @@
     "endurance_short_10s_50s_4x_60min_v4.zwo": {
       "file": "endurance_short_10s_50s_4x_60min_v4.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 60min \u2014 Z3",
+      "display_name": "Endurance + Strides 60min \u2014 8\u00d715s/225s @ 106%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -31153,8 +31153,8 @@
     },
     "endurance_short_30s_60s_6x_60min.zwo": {
       "file": "endurance_short_30s_60s_6x_60min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 60min \u2014 Z2 +threshold block",
+      "primary": "threshold",
+      "display_name": "Threshold 60min \u2014 5\u00d71min/2min @ 105%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": true,
@@ -31167,7 +31167,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 3600,
         "valid_dur_s": 3600,
@@ -31206,7 +31206,7 @@
     "endurance_short_60s_30s_2x_29min_v2.zwo": {
       "file": "endurance_short_60s_30s_2x_29min_v2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 30min \u2014 Z2 +sprints",
+      "display_name": "Endurance + Strides 30min \u2014 2\u00d71min/30s @ 150%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -31219,7 +31219,7 @@
         "pyramidal_consistent": true,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 1770,
         "valid_dur_s": 1770,
@@ -31258,7 +31258,7 @@
     "endurance_short_8s_30s_8x_60min.zwo": {
       "file": "endurance_short_8s_30s_8x_60min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 60min \u2014 Z2",
+      "display_name": "Endurance + Strides 60min \u2014 16\u00d78s/30s @ 115%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -31541,8 +31541,8 @@
     },
     "endurance_steady_14min.zwo": {
       "file": "endurance_steady_14min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 14min \u2014 Z2",
+      "primary": "vo2max",
+      "display_name": "VO2max 14min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -32071,7 +32071,7 @@
     "endurance_steady_19min_v3.zwo": {
       "file": "endurance_steady_19min_v3.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 20min \u2014 Z2",
+      "display_name": "Endurance + Strides 20min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -32086,23 +32086,23 @@
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 1140,
-        "valid_dur_s": 1140,
-        "z1_pct": 0.0,
-        "z2_pct": 56.32,
-        "z3_pct": 34.47,
-        "z4_pct": 5.26,
-        "z5_pct": 3.95,
+        "duration_s": 1200,
+        "valid_dur_s": 1200,
+        "z1_pct": 6.83,
+        "z2_pct": 55.67,
+        "z3_pct": 28.75,
+        "z4_pct": 5.0,
+        "z5_pct": 3.75,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
         "z4_lower_s": 180,
         "z4_upper_s": 0,
-        "sweet_spot_pct": 13.16,
+        "sweet_spot_pct": 12.5,
         "hard_segment_count": 3,
         "longest_hard_segment_s": 15,
         "sprint_segment_count": 0,
-        "np_fraction": 0.7938,
-        "if_fraction": 0.7888,
+        "np_fraction": 0.7748,
+        "if_fraction": 0.7625,
         "peak_power_fraction": 1.15,
         "ou_transitions": 0,
         "micro_cycles": 0,
@@ -32112,11 +32112,11 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z3",
-        "peak_band_pct": 0.4368,
+        "peak_band_pct": 0.375,
         "dominant_segment_band": "z2",
         "longest_z4plus_block_s": 30,
-        "z4plus_in_work_pct": 0.1346,
-        "work_dur_s": 780
+        "z4plus_in_work_pct": 0.14,
+        "work_dur_s": 750
       },
       "tags": []
     },
@@ -32704,7 +32704,7 @@
     "endurance_steady_24min_v4.zwo": {
       "file": "endurance_steady_24min_v4.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 25min \u2014 Z2",
+      "display_name": "Endurance + Strides 25min \u2014 3\u00d730s/30s @ 120%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -33105,8 +33105,8 @@
     },
     "endurance_steady_28min.zwo": {
       "file": "endurance_steady_28min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 28min \u2014 Z2",
+      "primary": "threshold",
+      "display_name": "Threshold 28min \u2014 2\u00d730s/3min @ 130%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -33314,7 +33314,7 @@
     "endurance_steady_30min_v2.zwo": {
       "file": "endurance_steady_30min_v2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 30min \u2014 Z2",
+      "display_name": "Endurance + Strides 30min \u2014 2\u00d71min/1min @ 110%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -33395,8 +33395,8 @@
     },
     "endurance_steady_30min_v4_v2.zwo": {
       "file": "endurance_steady_30min_v4_v2.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 30min \u2014 Z3",
+      "primary": "tempo",
+      "display_name": "Tempo 30min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -33976,7 +33976,7 @@
     "endurance_steady_37min.zwo": {
       "file": "endurance_steady_37min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 37min \u2014 Z2",
+      "display_name": "Endurance + Strides 37min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -34236,7 +34236,7 @@
     "endurance_steady_41min.zwo": {
       "file": "endurance_steady_41min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 41min \u2014 Z1",
+      "display_name": "Endurance + Strides 41min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -34496,7 +34496,7 @@
     "endurance_steady_45min_v2_v2.zwo": {
       "file": "endurance_steady_45min_v2_v2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 45min \u2014 Z1",
+      "display_name": "Endurance + Strides 45min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -34652,7 +34652,7 @@
     "endurance_steady_46min.zwo": {
       "file": "endurance_steady_46min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 46min \u2014 Z2",
+      "display_name": "Endurance + Strides 46min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -34756,7 +34756,7 @@
     "endurance_steady_49min_v3.zwo": {
       "file": "endurance_steady_49min_v3.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 49min \u2014 Z1",
+      "display_name": "Endurance + Strides 49min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -34963,8 +34963,8 @@
     },
     "endurance_steady_51min.zwo": {
       "file": "endurance_steady_51min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 51min \u2014 Z2",
+      "primary": "threshold",
+      "display_name": "Threshold 51min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -35016,7 +35016,7 @@
     "endurance_steady_57min.zwo": {
       "file": "endurance_steady_57min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 57min \u2014 Z3",
+      "display_name": "Endurance + Strides 57min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -37259,7 +37259,7 @@
     "intervals_1x2min_75pct_40min.zwo": {
       "file": "intervals_1x2min_75pct_40min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 40min \u2014 Z1",
+      "display_name": "Endurance + Strides 40min \u2014 4\u00d72min/1min @ 75%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -37727,7 +37727,7 @@
     "intervals_3x4min_75pct_46min.zwo": {
       "file": "intervals_3x4min_75pct_46min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 46min \u2014 Z3",
+      "display_name": "Endurance + Strides 46min \u2014 3\u00d74min/1min @ 75%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -38091,7 +38091,7 @@
     "intervals_4x6min_70pct_44min.zwo": {
       "file": "intervals_4x6min_70pct_44min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 45min \u2014 Z2",
+      "display_name": "Endurance + Strides 45min \u2014 4\u00d76min/10s @ 70%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -38195,7 +38195,7 @@
     "intervals_5x0min_65pct_52min.zwo": {
       "file": "intervals_5x0min_65pct_52min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 52min \u2014 Z2 +VO2 set",
+      "display_name": "Endurance + Strides 52min \u2014 12\u00d730s/30s @ 113%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -38208,7 +38208,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 3120,
         "valid_dur_s": 2220,
@@ -43759,7 +43759,7 @@
     "neuromuscular_30s300s_12x_116min.zwo": {
       "file": "neuromuscular_30s300s_12x_116min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 55min \u2014 Z3",
+      "display_name": "Endurance + Strides 55min \u2014 1\u00d730s/5min @ 150%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -45375,7 +45375,7 @@
     "neuromuscular_3x30s_61min.zwo": {
       "file": "neuromuscular_3x30s_61min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 60min \u2014 Z1",
+      "display_name": "Endurance + Strides 60min \u2014 2\u00d730s/30s @ 115%",
       "confidence": 0.823,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -52760,8 +52760,8 @@
     },
     "over_under_10s60s_12x_44min.zwo": {
       "file": "over_under_10s60s_12x_44min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 44min \u2014 Z2",
+      "primary": "anaerobic",
+      "display_name": "Anaerobic 44min \u2014 2\u00d73min/1min @ 75%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -52812,8 +52812,8 @@
     },
     "over_under_10s90s_12x_50min.zwo": {
       "file": "over_under_10s90s_12x_50min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 50min \u2014 Z2",
+      "primary": "anaerobic",
+      "display_name": "Anaerobic 50min \u2014 2\u00d73min/90s @ 75%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -54945,7 +54945,7 @@
     "over_under_2x10s_26min_v2.zwo": {
       "file": "over_under_2x10s_26min_v2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 27min \u2014 Z2 +sprints",
+      "display_name": "Endurance + Strides 27min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -54958,7 +54958,7 @@
         "pyramidal_consistent": true,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 1590,
         "valid_dur_s": 1590,
@@ -55308,8 +55308,8 @@
     },
     "over_under_2x1min_30min.zwo": {
       "file": "over_under_2x1min_30min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 30min \u2014 Z2",
+      "primary": "vo2max",
+      "display_name": "VO2max 30min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -55828,8 +55828,8 @@
     },
     "over_under_2x2min_24min.zwo": {
       "file": "over_under_2x2min_24min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Recovery 24min \u2014 Z1",
+      "primary": "threshold",
+      "display_name": "Threshold 24min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -55881,7 +55881,7 @@
     "over_under_2x30s_26min.zwo": {
       "file": "over_under_2x30s_26min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 27min \u2014 Z1",
+      "display_name": "Endurance + Strides 27min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -56401,7 +56401,7 @@
     "over_under_2x50s_7min.zwo": {
       "file": "over_under_2x50s_7min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 9min \u2014 Z3",
+      "display_name": "Endurance + Strides 9min \u2014 3\u00d710s/50s @ 125%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -56411,19 +56411,19 @@
         "pattern_over_under": false,
         "pattern_microinterval": false,
         "polarized_consistent": false,
-        "pyramidal_consistent": false,
+        "pyramidal_consistent": true,
         "is_ladder": false
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 420,
-        "valid_dur_s": 420,
-        "z1_pct": 0.0,
-        "z2_pct": 56.67,
-        "z3_pct": 36.19,
+        "duration_s": 540,
+        "valid_dur_s": 540,
+        "z1_pct": 16.67,
+        "z2_pct": 49.63,
+        "z3_pct": 28.15,
         "z4_pct": 0.0,
         "z5_pct": 0.0,
-        "z6_pct": 7.14,
+        "z6_pct": 5.56,
         "z7_pct": 0.0,
         "z4_lower_s": 0,
         "z4_upper_s": 0,
@@ -56431,8 +56431,8 @@
         "hard_segment_count": 0,
         "longest_hard_segment_s": 0,
         "sprint_segment_count": 0,
-        "np_fraction": 0.7871,
-        "if_fraction": 0.7833,
+        "np_fraction": 0.7491,
+        "if_fraction": 0.73,
         "peak_power_fraction": 1.25,
         "ou_transitions": 0,
         "micro_cycles": 2,
@@ -56442,7 +56442,7 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z2",
-        "peak_band_pct": 1.0,
+        "peak_band_pct": 0.8333,
         "dominant_segment_band": "z3",
         "longest_z4plus_block_s": 10,
         "z4plus_in_work_pct": 0.12,
@@ -57649,7 +57649,7 @@
     "over_under_30s64s_7x_53min.zwo": {
       "file": "over_under_30s64s_7x_53min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 53min \u2014 Z2",
+      "display_name": "Endurance + Strides 53min \u2014 7\u00d730s/30s @ 105%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -59105,7 +59105,7 @@
     "over_under_3x30s_60min.zwo": {
       "file": "over_under_3x30s_60min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 60min \u2014 Z2",
+      "display_name": "Endurance + Strides 60min \u2014 9\u00d7210s/30s @ 75%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -59417,7 +59417,7 @@
     "over_under_3x3min_31min.zwo": {
       "file": "over_under_3x3min_31min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 32min \u2014 Z2",
+      "display_name": "Endurance + Strides 32min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -59432,14 +59432,14 @@
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 1860,
-        "valid_dur_s": 1860,
-        "z1_pct": 25.05,
-        "z2_pct": 67.85,
-        "z3_pct": 3.87,
-        "z4_pct": 1.08,
-        "z5_pct": 1.08,
-        "z6_pct": 1.08,
+        "duration_s": 1920,
+        "valid_dur_s": 1920,
+        "z1_pct": 18.7,
+        "z2_pct": 74.43,
+        "z3_pct": 3.75,
+        "z4_pct": 1.04,
+        "z5_pct": 1.04,
+        "z6_pct": 1.04,
         "z7_pct": 0.0,
         "z4_lower_s": 0,
         "z4_upper_s": 20,
@@ -59447,8 +59447,8 @@
         "hard_segment_count": 3,
         "longest_hard_segment_s": 20,
         "sprint_segment_count": 0,
-        "np_fraction": 0.6539,
-        "if_fraction": 0.6306,
+        "np_fraction": 0.6624,
+        "if_fraction": 0.6444,
         "peak_power_fraction": 1.25,
         "ou_transitions": 0,
         "micro_cycles": 0,
@@ -59458,7 +59458,7 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z2",
-        "peak_band_pct": 0.7495,
+        "peak_band_pct": 0.813,
         "dominant_segment_band": "z2",
         "longest_z4plus_block_s": 20,
         "z4plus_in_work_pct": 0.0455,
@@ -59624,8 +59624,8 @@
     },
     "over_under_3x3min_53min.zwo": {
       "file": "over_under_3x3min_53min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 54min \u2014 Z4",
+      "primary": "threshold",
+      "display_name": "Threshold 54min \u2014 Z4",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -59640,23 +59640,23 @@
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 3180,
-        "valid_dur_s": 3180,
-        "z1_pct": 21.7,
-        "z2_pct": 34.12,
-        "z3_pct": 26.45,
-        "z4_pct": 15.85,
-        "z5_pct": 1.89,
+        "duration_s": 3240,
+        "valid_dur_s": 3240,
+        "z1_pct": 17.99,
+        "z2_pct": 38.64,
+        "z3_pct": 25.96,
+        "z4_pct": 15.56,
+        "z5_pct": 1.85,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
         "z4_lower_s": 252,
         "z4_upper_s": 361,
-        "sweet_spot_pct": 6.79,
+        "sweet_spot_pct": 6.67,
         "hard_segment_count": 4,
         "longest_hard_segment_s": 361,
         "sprint_segment_count": 0,
-        "np_fraction": 0.7758,
-        "if_fraction": 0.7416,
+        "np_fraction": 0.7771,
+        "if_fraction": 0.7467,
         "peak_power_fraction": 1.1,
         "ou_transitions": 0,
         "micro_cycles": 0,
@@ -59666,7 +59666,7 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z4",
-        "peak_band_pct": 0.1774,
+        "peak_band_pct": 0.1741,
         "dominant_segment_band": "z4",
         "longest_z4plus_block_s": 504,
         "z4plus_in_work_pct": 0.2089,
@@ -60197,7 +60197,7 @@
     "over_under_4x1min_46min.zwo": {
       "file": "over_under_4x1min_46min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 46min \u2014 Z1",
+      "display_name": "Endurance + Strides 46min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -60977,7 +60977,7 @@
     "over_under_4x30s_30min.zwo": {
       "file": "over_under_4x30s_30min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 30min \u2014 Z1",
+      "display_name": "Endurance + Strides 30min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -63265,7 +63265,7 @@
     "over_under_5x30s_26min.zwo": {
       "file": "over_under_5x30s_26min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 26min \u2014 Z1",
+      "display_name": "Endurance + Strides 26min \u2014 7\u00d730s/30s @ 105%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -63317,7 +63317,7 @@
     "over_under_5x30s_30min.zwo": {
       "file": "over_under_5x30s_30min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 30min \u2014 Z1",
+      "display_name": "Endurance + Strides 30min \u2014 2\u00d730s/30s @ 108%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -67112,8 +67112,8 @@
     },
     "over_under_ou_42min.zwo": {
       "file": "over_under_ou_42min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 43min \u2014 Z3 +sprints",
+      "primary": "anaerobic",
+      "display_name": "Anaerobic 43min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -67126,25 +67126,25 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
-        "duration_s": 2520,
-        "valid_dur_s": 2520,
-        "z1_pct": 6.71,
-        "z2_pct": 40.91,
-        "z3_pct": 40.48,
-        "z4_pct": 7.14,
+        "duration_s": 2580,
+        "valid_dur_s": 2580,
+        "z1_pct": 6.28,
+        "z2_pct": 42.56,
+        "z3_pct": 39.53,
+        "z4_pct": 6.98,
         "z5_pct": 0.0,
-        "z6_pct": 3.57,
-        "z7_pct": 1.19,
+        "z6_pct": 3.49,
+        "z7_pct": 1.16,
         "z4_lower_s": 480,
         "z4_upper_s": 180,
-        "sweet_spot_pct": 19.05,
+        "sweet_spot_pct": 18.6,
         "hard_segment_count": 5,
         "longest_hard_segment_s": 180,
         "sprint_segment_count": 2,
-        "np_fraction": 0.8607,
-        "if_fraction": 0.838,
+        "np_fraction": 0.8569,
+        "if_fraction": 0.834,
         "peak_power_fraction": 2.37,
         "ou_transitions": 0,
         "micro_cycles": 0,
@@ -67154,7 +67154,7 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z4",
-        "peak_band_pct": 0.119,
+        "peak_band_pct": 0.1163,
         "dominant_segment_band": "z3",
         "longest_z4plus_block_s": 180,
         "z4plus_in_work_pct": 0.1471,
@@ -69349,7 +69349,7 @@
     "over_under_steady_15min.zwo": {
       "file": "over_under_steady_15min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 15min \u2014 Z1",
+      "display_name": "Endurance + Strides 15min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -69401,7 +69401,7 @@
     "over_under_steady_16min_v2.zwo": {
       "file": "over_under_steady_16min_v2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 16min \u2014 Z1",
+      "display_name": "Endurance + Strides 16min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -69609,7 +69609,7 @@
     "over_under_steady_29min_v2.zwo": {
       "file": "over_under_steady_29min_v2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 29min \u2014 Z1",
+      "display_name": "Endurance + Strides 29min \u2014 2\u00d730s/4min @ 115%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -69713,7 +69713,7 @@
     "over_under_steady_30min.zwo": {
       "file": "over_under_steady_30min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 30min \u2014 Z1",
+      "display_name": "Endurance + Strides 30min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -69765,7 +69765,7 @@
     "over_under_steady_30min_v2.zwo": {
       "file": "over_under_steady_30min_v2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 30min \u2014 Z1",
+      "display_name": "Endurance + Strides 30min \u2014 4\u00d715s/2min @ 115%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -69817,7 +69817,7 @@
     "over_under_steady_30min_v3.zwo": {
       "file": "over_under_steady_30min_v3.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 30min \u2014 Z2",
+      "display_name": "Endurance + Strides 30min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -69869,7 +69869,7 @@
     "over_under_steady_30min_v5.zwo": {
       "file": "over_under_steady_30min_v5.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 30min \u2014 Z1",
+      "display_name": "Endurance + Strides 30min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -70024,8 +70024,8 @@
     },
     "over_under_steady_35min.zwo": {
       "file": "over_under_steady_35min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 35min \u2014 Z2",
+      "primary": "threshold",
+      "display_name": "Threshold 35min \u2014 2\u00d730s/1min @ 125%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -70077,7 +70077,7 @@
     "over_under_steady_35min_v2.zwo": {
       "file": "over_under_steady_35min_v2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 38min \u2014 Z2",
+      "display_name": "Endurance + Strides 38min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -70092,14 +70092,14 @@
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 2115,
-        "valid_dur_s": 2115,
-        "z1_pct": 24.78,
-        "z2_pct": 63.17,
-        "z3_pct": 2.84,
-        "z4_pct": 5.67,
-        "z5_pct": 1.42,
-        "z6_pct": 2.13,
+        "duration_s": 2280,
+        "valid_dur_s": 2280,
+        "z1_pct": 26.8,
+        "z2_pct": 62.02,
+        "z3_pct": 2.63,
+        "z4_pct": 5.26,
+        "z5_pct": 1.32,
+        "z6_pct": 1.97,
         "z7_pct": 0.0,
         "z4_lower_s": 60,
         "z4_upper_s": 60,
@@ -70107,8 +70107,8 @@
         "hard_segment_count": 4,
         "longest_hard_segment_s": 60,
         "sprint_segment_count": 0,
-        "np_fraction": 0.6925,
-        "if_fraction": 0.6779,
+        "np_fraction": 0.6915,
+        "if_fraction": 0.6699,
         "peak_power_fraction": 1.49,
         "ou_transitions": 1,
         "micro_cycles": 0,
@@ -70118,7 +70118,7 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z2",
-        "peak_band_pct": 0.7522,
+        "peak_band_pct": 0.732,
         "dominant_segment_band": "z2",
         "longest_z4plus_block_s": 60,
         "z4plus_in_work_pct": 0.115,
@@ -70284,8 +70284,8 @@
     },
     "over_under_steady_38min.zwo": {
       "file": "over_under_steady_38min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Recovery 38min \u2014 Z3",
+      "primary": "threshold",
+      "display_name": "Threshold 38min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -70388,8 +70388,8 @@
     },
     "over_under_steady_38min_v3.zwo": {
       "file": "over_under_steady_38min_v3.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 38min \u2014 Z2",
+      "primary": "vo2max",
+      "display_name": "VO2max 38min \u2014 2\u00d71min/1min @ 100%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -70441,7 +70441,7 @@
     "over_under_steady_40min.zwo": {
       "file": "over_under_steady_40min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 40min \u2014 Z1",
+      "display_name": "Endurance + Strides 40min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -70492,8 +70492,8 @@
     },
     "over_under_steady_40min_v2.zwo": {
       "file": "over_under_steady_40min_v2.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Recovery 40min \u2014 Z2",
+      "primary": "threshold",
+      "display_name": "Threshold 40min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -70648,8 +70648,8 @@
     },
     "over_under_steady_40min_v5.zwo": {
       "file": "over_under_steady_40min_v5.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 40min \u2014 Z2",
+      "primary": "vo2max",
+      "display_name": "VO2max 40min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -70805,7 +70805,7 @@
     "over_under_steady_42min_v5.zwo": {
       "file": "over_under_steady_42min_v5.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 42min \u2014 Z1",
+      "display_name": "Endurance + Strides 42min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -70909,7 +70909,7 @@
     "over_under_steady_44min_v2.zwo": {
       "file": "over_under_steady_44min_v2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 44min \u2014 Z2",
+      "display_name": "Endurance + Strides 44min \u2014 3\u00d730s/30s @ 125%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -72209,7 +72209,7 @@
     "pyramid_13x3min_60min.zwo": {
       "file": "pyramid_13x3min_60min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 60min \u2014 Z1",
+      "display_name": "Endurance + Strides 60min \u2014 9\u00d710s/3min @ 80%",
       "confidence": 1.0,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -72261,7 +72261,7 @@
     "pyramid_2x10s_18min.zwo": {
       "file": "pyramid_2x10s_18min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 18min \u2014 Z1",
+      "display_name": "Endurance + Strides 18min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -72365,7 +72365,7 @@
     "pyramid_2x1min_22min.zwo": {
       "file": "pyramid_2x1min_22min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 22min \u2014 Z1 +sprints",
+      "display_name": "Endurance + Strides 22min \u2014 3\u00d730s/1min @ 150%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -72378,7 +72378,7 @@
         "pyramidal_consistent": true,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 1290,
         "valid_dur_s": 1290,
@@ -72625,7 +72625,7 @@
     "pyramid_2x30s_26min.zwo": {
       "file": "pyramid_2x30s_26min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 27min \u2014 Z1",
+      "display_name": "Endurance + Strides 27min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -73197,7 +73197,7 @@
     "pyramid_7x20s_10min.zwo": {
       "file": "pyramid_7x20s_10min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 16min \u2014 Z2",
+      "display_name": "Endurance + Strides 16min \u2014 8\u00d720s/1min @ 115%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -73206,19 +73206,19 @@
         "has_sweet_spot_work": false,
         "pattern_over_under": false,
         "pattern_microinterval": false,
-        "polarized_consistent": false,
+        "polarized_consistent": true,
         "pyramidal_consistent": false,
         "is_ladder": false
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 600,
-        "valid_dur_s": 600,
-        "z1_pct": 0.0,
-        "z2_pct": 70.0,
+        "duration_s": 960,
+        "valid_dur_s": 960,
+        "z1_pct": 14.17,
+        "z2_pct": 67.08,
         "z3_pct": 0.0,
         "z4_pct": 0.0,
-        "z5_pct": 30.0,
+        "z5_pct": 18.75,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
         "z4_lower_s": 0,
@@ -73227,8 +73227,8 @@
         "hard_segment_count": 8,
         "longest_hard_segment_s": 40,
         "sprint_segment_count": 0,
-        "np_fraction": 0.8219,
-        "if_fraction": 0.8322,
+        "np_fraction": 0.7779,
+        "if_fraction": 0.75,
         "peak_power_fraction": 1.15,
         "ou_transitions": 0,
         "micro_cycles": 7,
@@ -73238,7 +73238,7 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z2",
-        "peak_band_pct": 1.0,
+        "peak_band_pct": 0.8583,
         "dominant_segment_band": "z2",
         "longest_z4plus_block_s": 40,
         "z4plus_in_work_pct": 0.3,
@@ -73456,8 +73456,8 @@
     },
     "pyramid_steady_23min.zwo": {
       "file": "pyramid_steady_23min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Recovery 23min \u2014 Z2",
+      "primary": "threshold",
+      "display_name": "Threshold 23min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -73509,7 +73509,7 @@
     "pyramid_steady_27min.zwo": {
       "file": "pyramid_steady_27min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 27min \u2014 Z2",
+      "display_name": "Endurance + Strides 27min \u2014 2\u00d740s/1min @ 85%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -73613,7 +73613,7 @@
     "pyramid_steady_32min_v2.zwo": {
       "file": "pyramid_steady_32min_v2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 34min \u2014 Z1",
+      "display_name": "Endurance + Strides 34min \u2014 5\u00d730s/55s @ 95%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -73628,12 +73628,12 @@
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 1925,
-        "valid_dur_s": 1925,
-        "z1_pct": 45.45,
-        "z2_pct": 46.75,
+        "duration_s": 2040,
+        "valid_dur_s": 2040,
+        "z1_pct": 47.25,
+        "z2_pct": 45.39,
         "z3_pct": 0.0,
-        "z4_pct": 7.79,
+        "z4_pct": 7.35,
         "z5_pct": 0.0,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
@@ -73643,8 +73643,8 @@
         "hard_segment_count": 5,
         "longest_hard_segment_s": 30,
         "sprint_segment_count": 0,
-        "np_fraction": 0.6149,
-        "if_fraction": 0.6015,
+        "np_fraction": 0.6161,
+        "if_fraction": 0.6018,
         "peak_power_fraction": 0.95,
         "ou_transitions": 0,
         "micro_cycles": 0,
@@ -73654,18 +73654,18 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z2",
-        "peak_band_pct": 0.5455,
+        "peak_band_pct": 0.5275,
         "dominant_segment_band": "z1",
         "longest_z4plus_block_s": 30,
-        "z4plus_in_work_pct": 0.0779,
-        "work_dur_s": 1925
+        "z4plus_in_work_pct": 0.086,
+        "work_dur_s": 1745
       },
       "tags": []
     },
     "pyramid_steady_36min.zwo": {
       "file": "pyramid_steady_36min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 38min \u2014 Z1",
+      "display_name": "Endurance + Strides 38min \u2014 5\u00d730s/55s @ 95%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -73680,12 +73680,12 @@
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 2165,
-        "valid_dur_s": 2165,
-        "z1_pct": 51.5,
-        "z2_pct": 41.57,
+        "duration_s": 2280,
+        "valid_dur_s": 2280,
+        "z1_pct": 52.81,
+        "z2_pct": 40.61,
         "z3_pct": 0.0,
-        "z4_pct": 6.93,
+        "z4_pct": 6.58,
         "z5_pct": 0.0,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
@@ -73695,8 +73695,8 @@
         "hard_segment_count": 5,
         "longest_hard_segment_s": 30,
         "sprint_segment_count": 0,
-        "np_fraction": 0.6086,
-        "if_fraction": 0.596,
+        "np_fraction": 0.61,
+        "if_fraction": 0.5966,
         "peak_power_fraction": 0.95,
         "ou_transitions": 0,
         "micro_cycles": 0,
@@ -73706,11 +73706,11 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z2",
-        "peak_band_pct": 0.485,
+        "peak_band_pct": 0.4719,
         "dominant_segment_band": "z1",
         "longest_z4plus_block_s": 30,
-        "z4plus_in_work_pct": 0.0693,
-        "work_dur_s": 2165
+        "z4plus_in_work_pct": 0.0756,
+        "work_dur_s": 1985
       },
       "tags": []
     },
@@ -73769,7 +73769,7 @@
     "pyramid_steady_37min_v2.zwo": {
       "file": "pyramid_steady_37min_v2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 39min \u2014 Z1",
+      "display_name": "Endurance + Strides 39min \u2014 5\u00d730s/55s @ 95%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -73784,12 +73784,12 @@
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 2225,
-        "valid_dur_s": 2225,
-        "z1_pct": 52.81,
-        "z2_pct": 40.45,
+        "duration_s": 2340,
+        "valid_dur_s": 2340,
+        "z1_pct": 54.02,
+        "z2_pct": 39.57,
         "z3_pct": 0.0,
-        "z4_pct": 6.74,
+        "z4_pct": 6.41,
         "z5_pct": 0.0,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
@@ -73799,8 +73799,8 @@
         "hard_segment_count": 5,
         "longest_hard_segment_s": 30,
         "sprint_segment_count": 0,
-        "np_fraction": 0.6072,
-        "if_fraction": 0.5949,
+        "np_fraction": 0.6087,
+        "if_fraction": 0.5954,
         "peak_power_fraction": 0.95,
         "ou_transitions": 0,
         "micro_cycles": 0,
@@ -73810,11 +73810,11 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z2",
-        "peak_band_pct": 0.4719,
+        "peak_band_pct": 0.4598,
         "dominant_segment_band": "z1",
         "longest_z4plus_block_s": 30,
-        "z4plus_in_work_pct": 0.0674,
-        "work_dur_s": 2225
+        "z4plus_in_work_pct": 0.0733,
+        "work_dur_s": 2045
       },
       "tags": []
     },
@@ -73977,7 +73977,7 @@
     "recovery_10x30s_60min.zwo": {
       "file": "recovery_10x30s_60min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 60min \u2014 Z1",
+      "display_name": "Endurance + Strides 60min \u2014 10\u00d730s/30s @ 100%",
       "confidence": 0.867,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -74024,14 +74024,12 @@
         "z4plus_in_work_pct": 0.125,
         "work_dur_s": 2400
       },
-      "tags": [
-        "is_ronnestad"
-      ]
+      "tags": []
     },
     "recovery_12s180s_10x_47min.zwo": {
       "file": "recovery_12s180s_10x_47min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 47min \u2014 Z2",
+      "display_name": "Endurance + Strides 47min \u2014 10\u00d712s/3min @ 145%",
       "confidence": 0.695,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -74083,7 +74081,7 @@
     "recovery_20x15s_30min.zwo": {
       "file": "recovery_20x15s_30min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 30min \u2014 Z1",
+      "display_name": "Endurance + Strides 30min \u2014 20\u00d715s/15s @ 100%",
       "confidence": 0.7,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -74130,14 +74128,12 @@
         "z4plus_in_work_pct": 0.25,
         "work_dur_s": 1200
       },
-      "tags": [
-        "is_ronnestad"
-      ]
+      "tags": []
     },
     "recovery_2x0min_42min.zwo": {
       "file": "recovery_2x0min_42min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 43min \u2014 Z2",
+      "display_name": "Endurance + Strides 43min \u2014 2\u00d720s/2min @ 130%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -74189,7 +74185,7 @@
     "recovery_2x0min_52min.zwo": {
       "file": "recovery_2x0min_52min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 52min \u2014 Z2",
+      "display_name": "Endurance + Strides 52min \u2014 2\u00d730s/150s @ 125%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -74240,7 +74236,7 @@
     },
     "recovery_2x0min_55min.zwo": {
       "file": "recovery_2x0min_55min.zwo",
-      "primary": "endurance_intervals",
+      "primary": "recovery",
       "display_name": "Recovery 55min \u2014 Z1 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
@@ -74292,7 +74288,7 @@
     },
     "recovery_2x0min_63min.zwo": {
       "file": "recovery_2x0min_63min.zwo",
-      "primary": "endurance_intervals",
+      "primary": "recovery",
       "display_name": "Recovery 65min \u2014 Z2 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
@@ -74397,7 +74393,7 @@
     "recovery_2x1min_22min.zwo": {
       "file": "recovery_2x1min_22min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 22min \u2014 Z1",
+      "display_name": "Endurance + Strides 22min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -74552,7 +74548,7 @@
     },
     "recovery_2x2min_35min_v2.zwo": {
       "file": "recovery_2x2min_35min_v2.zwo",
-      "primary": "endurance_intervals",
+      "primary": "recovery",
       "display_name": "Recovery 35min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -74605,7 +74601,7 @@
     "recovery_2x30s_22min.zwo": {
       "file": "recovery_2x30s_22min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 22min \u2014 Z1",
+      "display_name": "Endurance + Strides 22min \u2014 3\u00d730s/2min @ 110%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -74657,7 +74653,7 @@
     "recovery_2x30s_26min.zwo": {
       "file": "recovery_2x30s_26min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 26min \u2014 Z1",
+      "display_name": "Endurance + Strides 26min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -74709,7 +74705,7 @@
     "recovery_2x30s_28min.zwo": {
       "file": "recovery_2x30s_28min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 28min \u2014 Z1",
+      "display_name": "Endurance + Strides 28min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -74761,7 +74757,7 @@
     "recovery_2x30s_30min.zwo": {
       "file": "recovery_2x30s_30min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 30min \u2014 Z2",
+      "display_name": "Endurance + Strides 30min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -74812,7 +74808,7 @@
     },
     "recovery_2x3min_27min.zwo": {
       "file": "recovery_2x3min_27min.zwo",
-      "primary": "endurance_intervals",
+      "primary": "recovery",
       "display_name": "Recovery 27min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -74865,7 +74861,7 @@
     "recovery_2x3min_34min.zwo": {
       "file": "recovery_2x3min_34min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 34min \u2014 Z1",
+      "display_name": "Endurance + Strides 34min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -74916,7 +74912,7 @@
     },
     "recovery_2x4min_28min.zwo": {
       "file": "recovery_2x4min_28min.zwo",
-      "primary": "endurance_intervals",
+      "primary": "recovery",
       "display_name": "Recovery 28min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -74968,7 +74964,7 @@
     },
     "recovery_2x4min_28min_v3.zwo": {
       "file": "recovery_2x4min_28min_v3.zwo",
-      "primary": "endurance_intervals",
+      "primary": "recovery",
       "display_name": "Recovery 28min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -75021,7 +75017,7 @@
     "recovery_2x4min_38min.zwo": {
       "file": "recovery_2x4min_38min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 38min \u2014 Z1",
+      "display_name": "Endurance + Strides 38min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -75125,7 +75121,7 @@
     "recovery_2x5min_42min.zwo": {
       "file": "recovery_2x5min_42min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 42min \u2014 Z1",
+      "display_name": "Endurance + Strides 42min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -75385,7 +75381,7 @@
     "recovery_3x0min_67min.zwo": {
       "file": "recovery_3x0min_67min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 67min \u2014 Z1",
+      "display_name": "Endurance + Strides 67min \u2014 3\u00d730s/150s @ 123%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -75436,7 +75432,7 @@
     },
     "recovery_3x2min_16min.zwo": {
       "file": "recovery_3x2min_16min.zwo",
-      "primary": "endurance_intervals",
+      "primary": "recovery",
       "display_name": "Recovery 16min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -75489,7 +75485,7 @@
     "recovery_3x2min_67min.zwo": {
       "file": "recovery_3x2min_67min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 67min \u2014 Z1",
+      "display_name": "Endurance + Strides 67min \u2014 3\u00d72min/2min @ 90%",
       "confidence": 0.704,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -75541,8 +75537,8 @@
     "recovery_3x30s_16min.zwo": {
       "file": "recovery_3x30s_16min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 17min \u2014 Z2",
-      "confidence": 0.55,
+      "display_name": "Endurance + Strides 17min \u2014 Z2",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": false,
         "has_vo2_work": false,
@@ -75551,28 +75547,28 @@
         "pattern_over_under": false,
         "pattern_microinterval": false,
         "polarized_consistent": false,
-        "pyramidal_consistent": false,
+        "pyramidal_consistent": true,
         "is_ladder": false
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 930,
-        "valid_dur_s": 930,
-        "z1_pct": 34.52,
-        "z2_pct": 28.6,
-        "z3_pct": 21.51,
-        "z4_pct": 5.7,
-        "z5_pct": 9.68,
+        "duration_s": 1020,
+        "valid_dur_s": 1020,
+        "z1_pct": 33.33,
+        "z2_pct": 33.04,
+        "z3_pct": 19.61,
+        "z4_pct": 5.2,
+        "z5_pct": 8.82,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
         "z4_lower_s": 93,
         "z4_upper_s": 0,
-        "sweet_spot_pct": 8.6,
+        "sweet_spot_pct": 7.84,
         "hard_segment_count": 3,
         "longest_hard_segment_s": 30,
         "sprint_segment_count": 0,
-        "np_fraction": 0.7673,
-        "if_fraction": 0.7364,
+        "np_fraction": 0.7588,
+        "if_fraction": 0.7249,
         "peak_power_fraction": 1.2,
         "ou_transitions": 1,
         "micro_cycles": 2,
@@ -75582,18 +75578,18 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z3",
-        "peak_band_pct": 0.3688,
+        "peak_band_pct": 0.3363,
         "dominant_segment_band": "z2",
         "longest_z4plus_block_s": 53,
-        "z4plus_in_work_pct": 0.4333,
-        "work_dur_s": 330
+        "z4plus_in_work_pct": 0.5296,
+        "work_dur_s": 270
       },
       "tags": []
     },
     "recovery_3x30s_26min.zwo": {
       "file": "recovery_3x30s_26min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 26min \u2014 Z2",
+      "display_name": "Endurance + Strides 26min \u2014 3\u00d730s/2min @ 110%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -75645,7 +75641,7 @@
     "recovery_3x3min_20min.zwo": {
       "file": "recovery_3x3min_20min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 21min \u2014 Z1",
+      "display_name": "Endurance + Strides 21min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -75660,13 +75656,13 @@
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 1200,
-        "valid_dur_s": 1200,
-        "z1_pct": 66.58,
-        "z2_pct": 28.42,
+        "duration_s": 1260,
+        "valid_dur_s": 1260,
+        "z1_pct": 54.92,
+        "z2_pct": 40.32,
         "z3_pct": 0.0,
-        "z4_pct": 3.33,
-        "z5_pct": 1.67,
+        "z4_pct": 3.17,
+        "z5_pct": 1.59,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
         "z4_lower_s": 0,
@@ -75675,8 +75671,8 @@
         "hard_segment_count": 3,
         "longest_hard_segment_s": 20,
         "sprint_segment_count": 0,
-        "np_fraction": 0.5892,
-        "if_fraction": 0.5597,
+        "np_fraction": 0.6109,
+        "if_fraction": 0.5892,
         "peak_power_fraction": 1.1,
         "ou_transitions": 1,
         "micro_cycles": 0,
@@ -75686,7 +75682,7 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z2",
-        "peak_band_pct": 0.3342,
+        "peak_band_pct": 0.4508,
         "dominant_segment_band": "z1",
         "longest_z4plus_block_s": 20,
         "z4plus_in_work_pct": 0.0833,
@@ -75904,7 +75900,7 @@
     },
     "recovery_4x0min_20min.zwo": {
       "file": "recovery_4x0min_20min.zwo",
-      "primary": "endurance_intervals",
+      "primary": "recovery",
       "display_name": "Recovery 23min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -75957,7 +75953,7 @@
     "recovery_4x10s_61min.zwo": {
       "file": "recovery_4x10s_61min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 62min \u2014 Z3 +sprints",
+      "display_name": "Endurance + Strides 62min \u2014 4\u00d710s/50s @ 150%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -75970,25 +75966,25 @@
         "pyramidal_consistent": true,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
-        "duration_s": 3660,
-        "valid_dur_s": 3660,
-        "z1_pct": 56.28,
-        "z2_pct": 9.75,
-        "z3_pct": 24.84,
-        "z4_pct": 8.03,
+        "duration_s": 3720,
+        "valid_dur_s": 3720,
+        "z1_pct": 52.5,
+        "z2_pct": 14.09,
+        "z3_pct": 24.44,
+        "z4_pct": 7.9,
         "z5_pct": 0.0,
-        "z6_pct": 1.09,
+        "z6_pct": 1.08,
         "z7_pct": 0.0,
         "z4_lower_s": 582,
         "z4_upper_s": 135,
-        "sweet_spot_pct": 14.84,
+        "sweet_spot_pct": 14.6,
         "hard_segment_count": 3,
         "longest_hard_segment_s": 45,
         "sprint_segment_count": 4,
-        "np_fraction": 0.7291,
-        "if_fraction": 0.7006,
+        "np_fraction": 0.7305,
+        "if_fraction": 0.703,
         "peak_power_fraction": 1.5,
         "ou_transitions": 0,
         "micro_cycles": 3,
@@ -75998,18 +75994,18 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z3",
-        "peak_band_pct": 0.3396,
+        "peak_band_pct": 0.3341,
         "dominant_segment_band": "z3",
         "longest_z4plus_block_s": 63,
-        "z4plus_in_work_pct": 0.0913,
-        "work_dur_s": 3660
+        "z4plus_in_work_pct": 0.096,
+        "work_dur_s": 3480
       },
       "tags": []
     },
     "recovery_5x10s_40min.zwo": {
       "file": "recovery_5x10s_40min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 41min \u2014 Z2 +sprints",
+      "display_name": "Endurance + Strides 41min \u2014 5\u00d710s/50s @ 150%",
       "confidence": 0.607,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -76022,7 +76018,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 2430,
         "valid_dur_s": 2220,
@@ -76061,7 +76057,7 @@
     "recovery_5x20s_30min.zwo": {
       "file": "recovery_5x20s_30min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 30min \u2014 Z1",
+      "display_name": "Endurance + Strides 30min \u2014 5\u00d720s/40s @ 125%",
       "confidence": 1.0,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -76113,7 +76109,7 @@
     "recovery_5x30s_34min.zwo": {
       "file": "recovery_5x30s_34min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 35min \u2014 Z2 +sprints",
+      "display_name": "Endurance + Strides 35min \u2014 5\u00d730s/4min @ 150%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -76126,7 +76122,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 2070,
         "valid_dur_s": 2070,
@@ -76165,7 +76161,7 @@
     "recovery_5x30s_36min.zwo": {
       "file": "recovery_5x30s_36min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 36min \u2014 Z2 +sprints",
+      "display_name": "Endurance + Strides 36min \u2014 5\u00d730s/5min @ 150%",
       "confidence": 0.699,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -76178,7 +76174,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 2130,
         "valid_dur_s": 2130,
@@ -76217,7 +76213,7 @@
     "recovery_6x3min_60min.zwo": {
       "file": "recovery_6x3min_60min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 61min \u2014 Z1",
+      "display_name": "Endurance + Strides 61min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -76268,7 +76264,7 @@
     },
     "recovery_billat_30_30_2x_30min_v2.zwo": {
       "file": "recovery_billat_30_30_2x_30min_v2.zwo",
-      "primary": "endurance_intervals",
+      "primary": "recovery",
       "display_name": "Recovery 30min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -76321,7 +76317,7 @@
     "recovery_billat_30_30_3x_15min.zwo": {
       "file": "recovery_billat_30_30_3x_15min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 15min \u2014 Z1",
+      "display_name": "Endurance + Strides 15min \u2014 3\u00d730s/30s @ 115%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -77517,7 +77513,7 @@
     "recovery_mixed_21min.zwo": {
       "file": "recovery_mixed_21min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 21min \u2014 Z1",
+      "display_name": "Endurance + Strides 21min \u2014 2\u00d730s/3min @ 109%",
       "confidence": 0.697,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -77829,7 +77825,7 @@
     "recovery_mixed_30min_renamed_v46_1.zwo": {
       "file": "recovery_mixed_30min_renamed_v46_1.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 30min \u2014 Z1",
+      "display_name": "Endurance + Strides 30min \u2014 Z1",
       "confidence": 0.847,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -77881,7 +77877,7 @@
     "recovery_mixed_30min_renamed_v46_2.zwo": {
       "file": "recovery_mixed_30min_renamed_v46_2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 30min \u2014 Z1",
+      "display_name": "Endurance + Strides 30min \u2014 2\u00d730s/3min @ 109%",
       "confidence": 0.848,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -77985,7 +77981,7 @@
     "recovery_mixed_31min_renamed_v46_1.zwo": {
       "file": "recovery_mixed_31min_renamed_v46_1.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 31min \u2014 Z1",
+      "display_name": "Endurance + Strides 31min \u2014 2\u00d730s/3min @ 109%",
       "confidence": 0.859,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -78401,7 +78397,7 @@
     "recovery_short_15s_45s_1x_36min.zwo": {
       "file": "recovery_short_15s_45s_1x_36min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 36min \u2014 Z2",
+      "display_name": "Endurance + Strides 36min \u2014 1\u00d715s/105s @ 150%",
       "confidence": 0.817,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -78453,7 +78449,7 @@
     "recovery_spin_15min.zwo": {
       "file": "recovery_spin_15min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 17min \u2014 Z2",
+      "display_name": "Endurance + Strides 17min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -78468,23 +78464,23 @@
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 920,
-        "valid_dur_s": 920,
-        "z1_pct": 0.0,
-        "z2_pct": 40.98,
-        "z3_pct": 37.83,
-        "z4_pct": 16.3,
-        "z5_pct": 4.89,
+        "duration_s": 1020,
+        "valid_dur_s": 1020,
+        "z1_pct": 15.69,
+        "z2_pct": 35.78,
+        "z3_pct": 29.41,
+        "z4_pct": 14.71,
+        "z5_pct": 4.41,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
         "z4_lower_s": 105,
         "z4_upper_s": 105,
-        "sweet_spot_pct": 9.78,
+        "sweet_spot_pct": 8.82,
         "hard_segment_count": 4,
         "longest_hard_segment_s": 60,
         "sprint_segment_count": 0,
-        "np_fraction": 0.8214,
-        "if_fraction": 0.8097,
+        "np_fraction": 0.7897,
+        "if_fraction": 0.7616,
         "peak_power_fraction": 1.1,
         "ou_transitions": 1,
         "micro_cycles": 3,
@@ -78494,17 +78490,17 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z3",
-        "peak_band_pct": 0.5902,
+        "peak_band_pct": 0.4853,
         "dominant_segment_band": "z2",
         "longest_z4plus_block_s": 90,
-        "z4plus_in_work_pct": 0.3071,
-        "work_dur_s": 635
+        "z4plus_in_work_pct": 0.3171,
+        "work_dur_s": 615
       },
       "tags": []
     },
     "recovery_spin_16min.zwo": {
       "file": "recovery_spin_16min.zwo",
-      "primary": "endurance_intervals",
+      "primary": "recovery",
       "display_name": "Recovery 16min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -78660,7 +78656,7 @@
     },
     "recovery_spin_24min.zwo": {
       "file": "recovery_spin_24min.zwo",
-      "primary": "endurance_intervals",
+      "primary": "recovery",
       "display_name": "Recovery 24min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -79233,7 +79229,7 @@
     "recovery_spin_30min_v2.zwo": {
       "file": "recovery_spin_30min_v2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 30min \u2014 Z1",
+      "display_name": "Endurance + Strides 30min \u2014 4\u00d715s/2min @ 115%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -79389,7 +79385,7 @@
     "recovery_spin_30min_v5.zwo": {
       "file": "recovery_spin_30min_v5.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 30min \u2014 Z1",
+      "display_name": "Endurance + Strides 30min \u2014 4\u00d730s/1min @ 105%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -80585,7 +80581,7 @@
     "recovery_spin_40min_v5.zwo": {
       "file": "recovery_spin_40min_v5.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 40min \u2014 Z2",
+      "display_name": "Endurance + Strides 40min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -80636,7 +80632,7 @@
     },
     "recovery_spin_40min_v6.zwo": {
       "file": "recovery_spin_40min_v6.zwo",
-      "primary": "endurance_intervals",
+      "primary": "recovery",
       "display_name": "Recovery 40min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
@@ -82041,7 +82037,7 @@
     "recovery_spin_46min_v3.zwo": {
       "file": "recovery_spin_46min_v3.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 47min \u2014 Z1",
+      "display_name": "Endurance + Strides 47min \u2014 3\u00d710s/30s @ 120%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -82977,7 +82973,7 @@
     "recovery_spin_54min_v8.zwo": {
       "file": "recovery_spin_54min_v8.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 54min \u2014 Z2",
+      "display_name": "Endurance + Strides 54min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -83288,7 +83284,7 @@
     },
     "recovery_spin_56min_v3.zwo": {
       "file": "recovery_spin_56min_v3.zwo",
-      "primary": "endurance_intervals",
+      "primary": "recovery",
       "display_name": "Recovery 56min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
@@ -84641,7 +84637,7 @@
     "recovery_spin_80min.zwo": {
       "file": "recovery_spin_80min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 80min \u2014 Z1",
+      "display_name": "Endurance + Strides 80min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -85992,7 +85988,7 @@
     },
     "recovery_steady_19min_v2.zwo": {
       "file": "recovery_steady_19min_v2.zwo",
-      "primary": "endurance_intervals",
+      "primary": "recovery",
       "display_name": "Recovery 19min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -86572,7 +86568,7 @@
     },
     "recovery_steady_21min_v5.zwo": {
       "file": "recovery_steady_21min_v5.zwo",
-      "primary": "endurance_intervals",
+      "primary": "recovery",
       "display_name": "Recovery 21min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
@@ -88356,7 +88352,7 @@
     "recovery_steady_28min_v2.zwo": {
       "file": "recovery_steady_28min_v2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 28min \u2014 Z1",
+      "display_name": "Endurance + Strides 28min \u2014 3\u00d715s/5min @ 130%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -88408,7 +88404,7 @@
     "recovery_steady_28min_v3.zwo": {
       "file": "recovery_steady_28min_v3.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 28min \u2014 Z3",
+      "display_name": "Endurance + Strides 28min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -88631,7 +88627,7 @@
     "recovery_steady_30min_v3_v2.zwo": {
       "file": "recovery_steady_30min_v3_v2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 30min \u2014 Z3",
+      "display_name": "Endurance + Strides 30min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -89857,7 +89853,7 @@
     "recovery_steady_41min.zwo": {
       "file": "recovery_steady_41min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 41min \u2014 Z1",
+      "display_name": "Endurance + Strides 41min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -91432,7 +91428,7 @@
     "sprints_2x10s_10min.zwo": {
       "file": "sprints_2x10s_10min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 14min \u2014 Z2",
+      "display_name": "Endurance + Strides 14min \u2014 5\u00d710s/30s @ 120%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -91447,13 +91443,13 @@
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 710,
-        "valid_dur_s": 710,
-        "z1_pct": 33.24,
-        "z2_pct": 51.27,
+        "duration_s": 840,
+        "valid_dur_s": 840,
+        "z1_pct": 36.31,
+        "z2_pct": 50.6,
         "z3_pct": 0.0,
-        "z4_pct": 8.45,
-        "z5_pct": 7.04,
+        "z4_pct": 7.14,
+        "z5_pct": 5.95,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
         "z4_lower_s": 0,
@@ -91462,8 +91458,8 @@
         "hard_segment_count": 1,
         "longest_hard_segment_s": 70,
         "sprint_segment_count": 0,
-        "np_fraction": 0.7162,
-        "if_fraction": 0.7052,
+        "np_fraction": 0.7053,
+        "if_fraction": 0.6844,
         "peak_power_fraction": 1.2,
         "ou_transitions": 0,
         "micro_cycles": 3,
@@ -91473,7 +91469,7 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z2",
-        "peak_band_pct": 0.6676,
+        "peak_band_pct": 0.6369,
         "dominant_segment_band": "z2",
         "longest_z4plus_block_s": 70,
         "z4plus_in_work_pct": 0.4783,
@@ -91588,7 +91584,7 @@
     "sprints_2x30s_34min.zwo": {
       "file": "sprints_2x30s_34min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 34min \u2014 Z1 +sprints",
+      "display_name": "Endurance + Strides 34min \u2014 3\u00d715s/30s @ 280%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -91601,7 +91597,7 @@
         "pyramidal_consistent": true,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 2025,
         "valid_dur_s": 2025,
@@ -93148,7 +93144,7 @@
     "sprints_8x12s_41min.zwo": {
       "file": "sprints_8x12s_41min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 41min \u2014 Z2 +sprints",
+      "display_name": "Endurance + Strides 41min \u2014 8\u00d712s/3min @ 150%",
       "confidence": 0.635,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -93161,7 +93157,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 2436,
         "valid_dur_s": 2436,
@@ -93200,7 +93196,7 @@
     "sprints_8x12s_49min.zwo": {
       "file": "sprints_8x12s_49min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 49min \u2014 Z2 +sprints",
+      "display_name": "Endurance + Strides 49min \u2014 8\u00d712s/4min @ 150%",
       "confidence": 0.728,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -93213,7 +93209,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 2916,
         "valid_dur_s": 2916,
@@ -93512,7 +93508,7 @@
     "sprints_steady_12min.zwo": {
       "file": "sprints_steady_12min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 12min \u2014 Z2",
+      "display_name": "Endurance + Strides 12min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -93564,7 +93560,7 @@
     "sprints_steady_21min.zwo": {
       "file": "sprints_steady_21min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 21min \u2014 Z1 +sprints",
+      "display_name": "Endurance + Strides 21min \u2014 2\u00d715s/5min @ 150%",
       "confidence": 0.652,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -93577,7 +93573,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 1260,
         "valid_dur_s": 1260,
@@ -94396,7 +94392,7 @@
     "supra_threshold_32min.zwo": {
       "file": "supra_threshold_32min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 33min \u2014 Z1",
+      "display_name": "Endurance + Strides 33min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -94500,7 +94496,7 @@
     "supra_threshold_34min_v2.zwo": {
       "file": "supra_threshold_34min_v2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 35min \u2014 Z1",
+      "display_name": "Endurance + Strides 35min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -95176,7 +95172,7 @@
     "supra_threshold_61min_v3.zwo": {
       "file": "supra_threshold_61min_v3.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 61min \u2014 Z1",
+      "display_name": "Endurance + Strides 61min \u2014 2\u00d730s/3min @ 109%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -116303,7 +116299,7 @@
     "sweetspot_1x0min_30min.zwo": {
       "file": "sweetspot_1x0min_30min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 30min \u2014 Z1",
+      "display_name": "Endurance + Strides 30min \u2014 4\u00d725s/25s @ 100%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -116407,7 +116403,7 @@
     "sweetspot_1x0min_32min_v2.zwo": {
       "file": "sweetspot_1x0min_32min_v2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 32min \u2014 Z1",
+      "display_name": "Endurance + Strides 32min \u2014 1\u00d715s/45s @ 120%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -116511,7 +116507,7 @@
     "sweetspot_1x0min_38min.zwo": {
       "file": "sweetspot_1x0min_38min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 39min \u2014 Z1 +sprints",
+      "display_name": "Endurance + Strides 39min \u2014 3\u00d715s/45s @ 150%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -116524,7 +116520,7 @@
         "pyramidal_consistent": true,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 2310,
         "valid_dur_s": 2220,
@@ -117447,7 +117443,7 @@
     "sweetspot_3x0min_40min.zwo": {
       "file": "sweetspot_3x0min_40min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 41min \u2014 Z2",
+      "display_name": "Endurance + Strides 41min \u2014 3\u00d730s/30s @ 100%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -117551,7 +117547,7 @@
     "sweetspot_3x0min_55min_v6.zwo": {
       "file": "sweetspot_3x0min_55min_v6.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 55min \u2014 Z2",
+      "display_name": "Endurance + Strides 55min \u2014 3\u00d730s/170s @ 100%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -117966,8 +117962,8 @@
     },
     "sweetspot_3x1min_56min.zwo": {
       "file": "sweetspot_3x1min_56min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 56min \u2014 Z2",
+      "primary": "threshold",
+      "display_name": "Threshold 56min \u2014 2\u00d72min/10s @ 95%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -118227,7 +118223,7 @@
     "sweetspot_4x0min_60min.zwo": {
       "file": "sweetspot_4x0min_60min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 60min \u2014 Z1",
+      "display_name": "Endurance + Strides 60min \u2014 4\u00d730s/150s @ 100%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -118383,7 +118379,7 @@
     "sweetspot_4x1min_62min.zwo": {
       "file": "sweetspot_4x1min_62min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 62min \u2014 Z1",
+      "display_name": "Endurance + Strides 62min \u2014 8\u00d71min/4min @ 95%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -118487,7 +118483,7 @@
     "sweetspot_5x0min_25min.zwo": {
       "file": "sweetspot_5x0min_25min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 25min \u2014 Z1",
+      "display_name": "Endurance + Strides 25min \u2014 5\u00d730s/30s @ 100%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -118643,7 +118639,7 @@
     "sweetspot_5x0min_60min_v5.zwo": {
       "file": "sweetspot_5x0min_60min_v5.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 61min \u2014 Z2 +VO2 set",
+      "display_name": "Endurance + Strides 61min \u2014 8\u00d740s/20s @ 115%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -118656,25 +118652,25 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
-        "duration_s": 3600,
-        "valid_dur_s": 3600,
-        "z1_pct": 18.83,
-        "z2_pct": 42.14,
-        "z3_pct": 18.36,
-        "z4_pct": 11.78,
-        "z5_pct": 8.89,
+        "duration_s": 3660,
+        "valid_dur_s": 3660,
+        "z1_pct": 16.58,
+        "z2_pct": 45.03,
+        "z3_pct": 18.06,
+        "z4_pct": 11.58,
+        "z5_pct": 8.74,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
         "z4_lower_s": 252,
         "z4_upper_s": 281,
-        "sweet_spot_pct": 6.0,
+        "sweet_spot_pct": 5.9,
         "hard_segment_count": 14,
         "longest_hard_segment_s": 181,
         "sprint_segment_count": 0,
-        "np_fraction": 0.7949,
-        "if_fraction": 0.7603,
+        "np_fraction": 0.7946,
+        "if_fraction": 0.7615,
         "peak_power_fraction": 1.15,
         "ou_transitions": 0,
         "micro_cycles": 11,
@@ -118684,7 +118680,7 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z4",
-        "peak_band_pct": 0.2067,
+        "peak_band_pct": 0.2033,
         "dominant_segment_band": "z2",
         "longest_z4plus_block_s": 324,
         "z4plus_in_work_pct": 0.2638,
@@ -119786,8 +119782,8 @@
     },
     "tempo_10x1min_61min.zwo": {
       "file": "tempo_10x1min_61min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 61min \u2014 Z1 +threshold block",
+      "primary": "threshold",
+      "display_name": "Threshold 61min \u2014 10\u00d72min/1min @ 75%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": true,
@@ -119800,7 +119796,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 3660,
         "valid_dur_s": 3660,
@@ -122803,7 +122799,7 @@
     "tempo_3x1min_60min.zwo": {
       "file": "tempo_3x1min_60min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 61min \u2014 Z2",
+      "display_name": "Endurance + Strides 61min \u2014 3\u00d71min/5min @ 118%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -124414,8 +124410,8 @@
     },
     "tempo_3x3min_57min.zwo": {
       "file": "tempo_3x3min_57min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 57min \u2014 Z1",
+      "primary": "threshold",
+      "display_name": "Threshold 57min \u2014 3\u00d73min/3min @ 95%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -124466,8 +124462,8 @@
     },
     "tempo_3x3min_57min_renamed_v46_1.zwo": {
       "file": "tempo_3x3min_57min_renamed_v46_1.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 57min \u2014 Z1",
+      "primary": "threshold",
+      "display_name": "Threshold 57min \u2014 3\u00d73min/3min @ 95%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -125870,8 +125866,8 @@
     },
     "tempo_5x1min_65min.zwo": {
       "file": "tempo_5x1min_65min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 65min \u2014 Z2",
+      "primary": "vo2max",
+      "display_name": "VO2max 65min \u2014 5\u00d71min/1min @ 85%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -133307,7 +133303,7 @@
     "tempo_mixed_51min_renamed_v46_1.zwo": {
       "file": "tempo_mixed_51min_renamed_v46_1.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 51min \u2014 Z2",
+      "display_name": "Endurance + Strides 51min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -133515,7 +133511,7 @@
     "tempo_mixed_54min_renamed_v46_1.zwo": {
       "file": "tempo_mixed_54min_renamed_v46_1.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 54min \u2014 Z2",
+      "display_name": "Endurance + Strides 54min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -136531,7 +136527,7 @@
     "tempo_progression_3x20s_60min.zwo": {
       "file": "tempo_progression_3x20s_60min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 60min \u2014 Z2 +sprints",
+      "display_name": "Endurance + Strides 60min \u2014 2\u00d710min/5min @ 75%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -136544,7 +136540,7 @@
         "pyramidal_consistent": true,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 3600,
         "valid_dur_s": 3600,
@@ -137102,8 +137098,8 @@
     },
     "tempo_progression_9x1min_60min.zwo": {
       "file": "tempo_progression_9x1min_60min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 60min \u2014 Z1",
+      "primary": "threshold",
+      "display_name": "Threshold 60min \u2014 9\u00d73min/1min @ 75%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -139971,7 +139967,7 @@
     "tempo_steady_30min_v2.zwo": {
       "file": "tempo_steady_30min_v2.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 30min \u2014 Z2",
+      "display_name": "Endurance + Strides 30min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -141264,7 +141260,7 @@
     "tempo_steady_45min_v3.zwo": {
       "file": "tempo_steady_45min_v3.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 45min \u2014 Z2",
+      "display_name": "Endurance + Strides 45min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -146154,7 +146150,7 @@
     "threshold_2x30s_20min.zwo": {
       "file": "threshold_2x30s_20min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 20min \u2014 Z1",
+      "display_name": "Endurance + Strides 20min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -146362,7 +146358,7 @@
     "threshold_2x3min_19min.zwo": {
       "file": "threshold_2x3min_19min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 20min \u2014 Z2",
+      "display_name": "Endurance + Strides 20min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -146377,12 +146373,12 @@
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 1140,
-        "valid_dur_s": 1140,
-        "z1_pct": 40.35,
-        "z2_pct": 54.39,
+        "duration_s": 1200,
+        "valid_dur_s": 1200,
+        "z1_pct": 29.42,
+        "z2_pct": 65.58,
         "z3_pct": 0.0,
-        "z4_pct": 5.26,
+        "z4_pct": 5.0,
         "z5_pct": 0.0,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
@@ -146392,8 +146388,8 @@
         "hard_segment_count": 2,
         "longest_hard_segment_s": 30,
         "sprint_segment_count": 0,
-        "np_fraction": 0.6259,
-        "if_fraction": 0.5986,
+        "np_fraction": 0.6423,
+        "if_fraction": 0.6234,
         "peak_power_fraction": 0.95,
         "ou_transitions": 0,
         "micro_cycles": 0,
@@ -146403,7 +146399,7 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z2",
-        "peak_band_pct": 0.5965,
+        "peak_band_pct": 0.7058,
         "dominant_segment_band": "z2",
         "longest_z4plus_block_s": 30,
         "z4plus_in_work_pct": 0.0833,
@@ -146414,7 +146410,7 @@
     "threshold_2x3min_21min.zwo": {
       "file": "threshold_2x3min_21min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 22min \u2014 Z2",
+      "display_name": "Endurance + Strides 22min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -146429,12 +146425,12 @@
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 1260,
-        "valid_dur_s": 1260,
-        "z1_pct": 38.49,
-        "z2_pct": 56.75,
+        "duration_s": 1320,
+        "valid_dur_s": 1320,
+        "z1_pct": 28.64,
+        "z2_pct": 66.82,
         "z3_pct": 0.0,
-        "z4_pct": 4.76,
+        "z4_pct": 4.55,
         "z5_pct": 0.0,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
@@ -146444,8 +146440,8 @@
         "hard_segment_count": 2,
         "longest_hard_segment_s": 30,
         "sprint_segment_count": 0,
-        "np_fraction": 0.6231,
-        "if_fraction": 0.5964,
+        "np_fraction": 0.6383,
+        "if_fraction": 0.6191,
         "peak_power_fraction": 0.95,
         "ou_transitions": 0,
         "micro_cycles": 0,
@@ -146455,7 +146451,7 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z2",
-        "peak_band_pct": 0.6151,
+        "peak_band_pct": 0.7136,
         "dominant_segment_band": "z2",
         "longest_z4plus_block_s": 30,
         "z4plus_in_work_pct": 0.0769,
@@ -146570,7 +146566,7 @@
     "threshold_2x4min_30min.zwo": {
       "file": "threshold_2x4min_30min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 30min \u2014 Z3",
+      "display_name": "Endurance + Strides 30min \u2014 Z3",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -148806,7 +148802,7 @@
     "threshold_3x1min_38min.zwo": {
       "file": "threshold_3x1min_38min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 39min \u2014 Z1",
+      "display_name": "Endurance + Strides 39min \u2014 3\u00d790s/3min @ 105%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -154006,7 +154002,7 @@
     "threshold_5x0min_60min.zwo": {
       "file": "threshold_5x0min_60min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 60min \u2014 Z2",
+      "display_name": "Endurance + Strides 60min \u2014 5\u00d730s/30s @ 110%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -181936,7 +181932,7 @@
     "threshold_steady_25min.zwo": {
       "file": "threshold_steady_25min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 26min \u2014 Z2",
+      "display_name": "Endurance + Strides 26min \u2014 5\u00d720s/20s @ 110%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -181951,23 +181947,23 @@
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 1500,
-        "valid_dur_s": 1500,
-        "z1_pct": 0.0,
-        "z2_pct": 46.67,
-        "z3_pct": 20.0,
-        "z4_pct": 26.67,
-        "z5_pct": 6.67,
+        "duration_s": 1560,
+        "valid_dur_s": 1560,
+        "z1_pct": 4.68,
+        "z2_pct": 44.04,
+        "z3_pct": 19.23,
+        "z4_pct": 25.64,
+        "z5_pct": 6.41,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
         "z4_lower_s": 100,
         "z4_upper_s": 400,
-        "sweet_spot_pct": 6.67,
+        "sweet_spot_pct": 6.41,
         "hard_segment_count": 15,
         "longest_hard_segment_s": 40,
         "sprint_segment_count": 0,
-        "np_fraction": 0.858,
-        "if_fraction": 0.8383,
+        "np_fraction": 0.847,
+        "if_fraction": 0.8216,
         "peak_power_fraction": 1.1,
         "ou_transitions": 10,
         "micro_cycles": 5,
@@ -181977,7 +181973,7 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z4",
-        "peak_band_pct": 0.3333,
+        "peak_band_pct": 0.3205,
         "dominant_segment_band": "z2",
         "longest_z4plus_block_s": 40,
         "z4plus_in_work_pct": 0.4386,
@@ -183495,8 +183491,8 @@
     },
     "threshold_steady_39min.zwo": {
       "file": "threshold_steady_39min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 39min \u2014 Z2 +sprints",
+      "primary": "threshold",
+      "display_name": "Threshold 39min \u2014 Z2 +sprints",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -183860,7 +183856,7 @@
     "threshold_steady_43min.zwo": {
       "file": "threshold_steady_43min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 43min \u2014 Z1",
+      "display_name": "Endurance + Strides 43min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -185315,8 +185311,8 @@
     },
     "threshold_steady_51min.zwo": {
       "file": "threshold_steady_51min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 51min \u2014 Z2 +VO2 set",
+      "primary": "vo2max",
+      "display_name": "VO2max 51min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -185329,7 +185325,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 3060,
         "valid_dur_s": 1860,
@@ -185419,8 +185415,8 @@
     },
     "threshold_steady_52min_v3.zwo": {
       "file": "threshold_steady_52min_v3.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Recovery 52min \u2014 Z2",
+      "primary": "threshold",
+      "display_name": "Threshold 52min \u2014 4\u00d73min/2min @ 81%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -186044,7 +186040,7 @@
     "threshold_steady_55min_v9.zwo": {
       "file": "threshold_steady_55min_v9.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 55min \u2014 Z2",
+      "display_name": "Endurance + Strides 55min \u2014 4\u00d71min/2min @ 104%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -186095,8 +186091,8 @@
     },
     "threshold_steady_56min.zwo": {
       "file": "threshold_steady_56min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 56min \u2014 Z2 +threshold block",
+      "primary": "threshold",
+      "display_name": "Threshold 56min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": true,
@@ -186109,7 +186105,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 3360,
         "valid_dur_s": 3360,
@@ -186147,8 +186143,8 @@
     },
     "threshold_steady_56min_v3.zwo": {
       "file": "threshold_steady_56min_v3.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 56min \u2014 Z2 +threshold block",
+      "primary": "threshold",
+      "display_name": "Threshold 56min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": true,
@@ -186161,7 +186157,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 3360,
         "valid_dur_s": 3360,
@@ -186303,8 +186299,8 @@
     },
     "threshold_steady_58min_v2.zwo": {
       "file": "threshold_steady_58min_v2.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 58min \u2014 Z2 +VO2 set",
+      "primary": "vo2max",
+      "display_name": "VO2max 58min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -186317,7 +186313,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 3480,
         "valid_dur_s": 2280,
@@ -186979,8 +186975,8 @@
     },
     "threshold_steady_73min.zwo": {
       "file": "threshold_steady_73min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 73min \u2014 Z1 +VO2 set",
+      "primary": "vo2max",
+      "display_name": "VO2max 73min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -186993,7 +186989,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 4380,
         "valid_dur_s": 3180,
@@ -215491,7 +215487,7 @@
     "z2_endurance_20min.zwo": {
       "file": "z2_endurance_20min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 21min \u2014 Z2",
+      "display_name": "Endurance + Strides 21min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -215506,23 +215502,23 @@
       },
       "objective_coherent": true,
       "features": {
-        "duration_s": 1200,
-        "valid_dur_s": 1200,
-        "z1_pct": 0.0,
-        "z2_pct": 58.5,
-        "z3_pct": 32.75,
-        "z4_pct": 5.0,
-        "z5_pct": 3.75,
+        "duration_s": 1260,
+        "valid_dur_s": 1260,
+        "z1_pct": 6.51,
+        "z2_pct": 57.78,
+        "z3_pct": 27.38,
+        "z4_pct": 4.76,
+        "z5_pct": 3.57,
         "z6_pct": 0.0,
         "z7_pct": 0.0,
         "z4_lower_s": 180,
         "z4_upper_s": 0,
-        "sweet_spot_pct": 12.5,
+        "sweet_spot_pct": 11.9,
         "hard_segment_count": 3,
         "longest_hard_segment_s": 15,
         "sprint_segment_count": 0,
-        "np_fraction": 0.7912,
-        "if_fraction": 0.7855,
+        "np_fraction": 0.7731,
+        "if_fraction": 0.7606,
         "peak_power_fraction": 1.15,
         "ou_transitions": 0,
         "micro_cycles": 0,
@@ -215532,11 +215528,11 @@
         "ladder_peak_power": 0.0,
         "ladder_peak_zone": "",
         "peak_band": "z3",
-        "peak_band_pct": 0.415,
+        "peak_band_pct": 0.3571,
         "dominant_segment_band": "z2",
         "longest_z4plus_block_s": 30,
-        "z4plus_in_work_pct": 0.125,
-        "work_dur_s": 840
+        "z4plus_in_work_pct": 0.1296,
+        "work_dur_s": 810
       },
       "tags": []
     },
@@ -215647,7 +215643,7 @@
     "z2_endurance_25min.zwo": {
       "file": "z2_endurance_25min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Recovery 25min \u2014 Z1 +sprints",
+      "display_name": "Endurance + Strides 25min \u2014 3\u00d730s/90s @ 150%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -215660,7 +215656,7 @@
         "pyramidal_consistent": true,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 1500,
         "valid_dur_s": 1500,
@@ -215699,7 +215695,7 @@
     "z2_endurance_27min.zwo": {
       "file": "z2_endurance_27min.zwo",
       "primary": "endurance_intervals",
-      "display_name": "Endurance 27min \u2014 Z2",
+      "display_name": "Endurance + Strides 27min \u2014 2\u00d740s/1min @ 85%",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -215750,8 +215746,8 @@
     },
     "z2_endurance_30min.zwo": {
       "file": "z2_endurance_30min.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 30min \u2014 Z1",
+      "primary": "threshold",
+      "display_name": "Threshold 30min \u2014 Z1",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -216374,8 +216370,8 @@
     },
     "z2_endurance_50min_v4.zwo": {
       "file": "z2_endurance_50min_v4.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 50min \u2014 Z2",
+      "primary": "threshold",
+      "display_name": "Threshold 50min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,
@@ -217154,8 +217150,8 @@
     },
     "z2_endurance_65min_v3.zwo": {
       "file": "z2_endurance_65min_v3.zwo",
-      "primary": "endurance_intervals",
-      "display_name": "Endurance 65min \u2014 Z2",
+      "primary": "threshold",
+      "display_name": "Threshold 65min \u2014 Z2",
       "confidence": 0.55,
       "secondary_flags": {
         "has_threshold_work": false,

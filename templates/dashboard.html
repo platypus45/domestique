@@ -12,7 +12,7 @@
   --text: #e6edf3; --text2: #b8c8d8; --text3: #8a9bb0;
   --accent: #4f9cf7; --accent2: #6366f1;
   --green: #22c55e; --yellow: #eab308; --orange: #f97316; --red: #ef4444; --purple: #a855f7;
-  --z1: #64748b; --z2: #3b82f6; --z3: #22c55e; --z4: #eab308; --z5: #f97316; --z6: #ef4444;
+  --z1: #64748b; --z2: #3b82f6; --z3: #22c55e; --z4: #eab308; --z5: #f97316; --z6: #ef4444; --z7: #e2e8f0;
   --radius: 10px;
 }
 [data-theme="light"] {
@@ -20,7 +20,7 @@
   --text: #1e293b; --text2: #475569; --text3: #64748b;
   --accent: #2563eb; --accent2: #4f46e5;
   --green: #16a34a; --yellow: #ca8a04; --orange: #ea580c; --red: #dc2626; --purple: #9333ea;
-  --z1: #94a3b8; --z2: #3b82f6; --z3: #16a34a; --z4: #ca8a04; --z5: #ea580c; --z6: #dc2626;
+  --z1: #94a3b8; --z2: #3b82f6; --z3: #16a34a; --z4: #ca8a04; --z5: #ea580c; --z6: #dc2626; --z7: #475569;
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -16451,7 +16451,7 @@ function renderActivityModal(p) {
     z4: {label: 'Threshold',       range: '91-105%', color: '#f97316'},
     z5: {label: 'VO2 Max',         range: '106-120%',color: '#ef4444'},
     z6: {label: 'Anaerobic',       range: '121-150%',color: '#a855f7'},
-    z7: {label: 'Neuromuscular',   range: '151%+',   color: '#475569'},
+    z7: {label: 'Neuromuscular',   range: '151%+',   color: 'var(--z7)'},
     ss: {label: 'Sweet Spot',      range: '84-97%',  color: '#f59e0b'},
   };
   let tizTotal = 0;
@@ -16494,7 +16494,7 @@ function renderActivityModal(p) {
     z4: {label: 'SubThreshold',     color: '#f97316'},
     z5: {label: 'SuperThreshold',   color: '#ef4444'},
     z6: {label: 'Aerobic Capacity', color: '#a855f7'},
-    z7: {label: 'Anaerobic',        color: '#475569'},
+    z7: {label: 'Anaerobic',        color: 'var(--z7)'},
   };
   let hrTizTotal = 0;
   if (hrTiz) { for (const k of hrZoneOrder) hrTizTotal += Number(hrTiz[k] || 0); }

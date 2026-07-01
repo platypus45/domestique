@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.4.3 — FIT workout targets as %FTP + full-calendar day view (2026-07-01)
+
+### What changes for users
+
+- **FIT workouts now target %FTP, not fixed watts.** Downloaded FIT workouts scale to your FTP on the device / in TrainingPeaks (matching how ZWO works), which also imports more reliably.
+- **A day with both a workout and a ride shows both.** Clicking any day — in This Week *or* the full calendar — now lists the scheduled workout (open / rematch / download) *and* every activity you did (details). Previously, doing an activity before your scheduled workout hid the workout behind the completed ride.
+
 ## v2.4.2 — FIT workouts import into TrainingPeaks / Vekta (2026-06-30)
 
 Downloaded FIT workouts were rejected with "no workout in this file" by TrainingPeaks and Vekta. The file was valid, but its steps had no names — which those apps require. Every step is now named, matching Garmin's own workout-file format.

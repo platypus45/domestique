@@ -65,7 +65,14 @@ DRIFT_NOTE = ("long steady effort: expect HR to drift up 10-20 bpm — "
 
 
 def zone_of_pct(pct: float) -> int:
-    """Coggan zone (1-7) for a %FTP value. Mirrors zones._POWER_FRACS bounds."""
+    """Coggan zone (1-7) for a %FTP value. Mirrors zones._POWER_FRACS bounds.
+
+    Rounded to 6 decimals first: callers pass raw ``fraction * 100`` and IEEE
+    gives float("0.55")*100 == 55.000000000000001, which without rounding
+    misclassified the ubiquitous 55%-FTP recovery block as Z2 — wrong bpm
+    floor on 2,557 segments across 1,457 library files (red-team D1).
+    """
+    pct = round(pct, 6)
     if pct <= 55:
         return 1
     if pct <= 75:

@@ -147,10 +147,17 @@ class ProfileManager:
     def lthr_is_set(self) -> bool:
         """True only when LTHR was explicitly provided (profile setup, the
         settings form, or the ICU HR estimate) — i.e. the key exists in
-        athlete.json. The bare ``lthr`` property always returns a 170 default,
-        so it can NEVER gate hr target_mode (IP_HR_ONLY C15): every user would
-        appear to "have" an LTHR."""
-        return self._athlete.get("lthr") is not None
+        athlete.json — AND is physiologically sane. The bare ``lthr`` property
+        always returns a 170 default, so it can NEVER gate hr target_mode
+        (IP_HR_ONLY C15): every user would appear to "have" an LTHR. The
+        [100, 220] sanity band matches save_athlete's validator; a hand-edited
+        lthr of 0 or 50 must not put the app in hr mode with 35-bpm "targets"
+        (red-team D7)."""
+        v = self._athlete.get("lthr")
+        try:
+            return v is not None and 100 <= float(v) <= 220
+        except (TypeError, ValueError):
+            return False
 
     @property
     def target_mode(self) -> str:

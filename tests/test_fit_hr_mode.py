@@ -91,3 +91,56 @@ def test_hr_mode_step_count_matches_header(monkeypatch):
     wk = next(ff.get_messages("workout"))
     declared = {f.name: f.value for f in wk.fields}.get("num_valid_steps")
     assert declared == n_steps
+
+
+# ── red-team regressions ─────────────────────────────────────────────────────
+
+def test_hr_mode_recovery_and_cooldown_have_no_bpm_floor(monkeypatch):
+    """Red-team D4: rest/cooldown/Z1 steps must not carry a bpm FLOOR — HR
+    decays slowly and idles low; a floored range makes the device beep at a
+    rider doing recovery right. Floor is 1 bpm (raw 101), ceiling kept."""
+    steps = steps_of(build(monkeypatch, hr=True))
+    hr_steps = [s for s in steps if s.get("target_type") == "heart_rate"]
+    # The cooldown ramp of this file descends into Z1 → intensity 'cooldown'.
+    cooldowns = [s for s in steps if s.get("intensity") == "cooldown"
+                 and s.get("target_type") == "heart_rate"]
+    assert cooldowns, "no HR cooldown step found"
+    for s in cooldowns:
+        assert s["custom_target_heart_rate_low"] == 101  # 1 bpm + 100 = no floor
+        assert s["custom_target_heart_rate_high"] > 101
+
+
+def test_blocks_path_vo2_band_is_rpe_not_pinned_hr(monkeypatch):
+    """Red-team F1 (HIGH): the synthetic blocks path fed work BANDS (VO2
+    106-115) into the converter as ramps, emitting a 1-bpm HEART_RATE target
+    pinned at threshold for 4-min VO2 intervals. Bands must convert as steady
+    at the band top → steady Z5 → RPE OPEN step."""
+    import app
+    monkeypatch.setattr(app, "_fit_hr_mode", lambda: True)
+    monkeypatch.setattr(app, "_fit_hr_params", lambda: (LTHR, MAX_HR))
+    data = app.build_fit_workout_bytes("vo2max", 60, "vo2 test", None)
+    steps = steps_of(data)
+    vo2 = [s for s in steps if str(s.get("wkt_step_name", "")).startswith("RPE 8-9")]
+    assert vo2, f"VO2 blocks did not degrade to RPE: {[s.get('wkt_step_name') for s in steps]}"
+    for s in vo2:
+        assert s.get("target_type") == "open"
+    # No HEART_RATE step may be a pinned 1-bpm band at threshold.
+    for s in steps:
+        if s.get("target_type") == "heart_rate":
+            lo, hi = s["custom_target_heart_rate_low"], s["custom_target_heart_rate_high"]
+            assert hi - lo > 2 or lo == 101, f"pinned pseudo-range: {s}"
+
+
+def test_blocks_path_threshold_band_is_steady_z4(monkeypatch):
+    """F1 follow-up: a 20-min 95-100%% threshold BLOCK must convert as steady
+    Z4 (full Coggan range), not as a narrow 'ramp' span."""
+    import app
+    monkeypatch.setattr(app, "_fit_hr_mode", lambda: True)
+    monkeypatch.setattr(app, "_fit_hr_params", lambda: (LTHR, MAX_HR))
+    data = app.build_fit_workout_bytes("threshold", 60, "thr test", None)
+    steps = steps_of(data)
+    z4 = [s for s in steps if s.get("target_type") == "heart_rate"
+          and s.get("duration_time") == 1200.0]
+    assert z4, "no 20-min threshold HR step"
+    assert z4[0]["custom_target_heart_rate_low"] == round(0.95 * LTHR) + 100
+    assert z4[0]["custom_target_heart_rate_high"] == round(1.05 * LTHR) + 100

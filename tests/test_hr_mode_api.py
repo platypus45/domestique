@@ -49,7 +49,11 @@ class _StubPM:
 
     @property
     def lthr_is_set(self):
-        return self._athlete.get("lthr") is not None
+        v = self._athlete.get("lthr")
+        try:
+            return v is not None and 100 <= float(v) <= 220
+        except (TypeError, ValueError):
+            return False
 
     @property
     def max_hr(self):
@@ -143,3 +147,42 @@ def test_detail_hr_mode_attaches_segment_targets(client, monkeypatch):
     s60 = next(s for s in segs if s["type"] == "SteadyState"
                and s["duration"] == 60 and s["pct"] == 95)
     assert s60["hr"]["kind"] == "rpe" and s60["hr"]["reason"] == "short"
+
+
+# ── red-team regressions (S1/S2/S4/D7) ───────────────────────────────────────
+
+def test_settings_400_on_out_of_persist_range_max_hr(client, monkeypatch):
+    """Red-team S1: max_hr 240 passed save_athlete's validator but the
+    _set_max_hr persist path silently clamps to [140,220] — a 200 OK for an
+    hr switch that never landed, leaving lthr>max_hr on disk. The endpoint
+    must 400 outside the range that actually persists."""
+    _stub(monkeypatch, {"max_hr": 190})
+    r = client.post("/api/settings", json={"target_mode": "hr", "lthr": 220, "max_hr": 240})
+    assert r.status_code == 400
+    assert "out of range" in r.json()["detail"]
+
+
+def test_settings_400_not_500_on_out_of_range_lthr(client, monkeypatch):
+    """Red-team S2: out-of-range athlete input must be a 400, not an
+    unhandled ValueError → 500."""
+    _stub(monkeypatch, {"max_hr": 190})
+    r = client.post("/api/settings", json={"lthr": 50})
+    assert r.status_code == 400
+
+
+def test_settings_self_heals_stale_hr_mode(client, monkeypatch):
+    """Red-team S4: lowering max_hr below lthr WITHOUT target_mode in the
+    body must also flip the stored mode to power — no stale raw 'hr' left
+    for a future direct-dict reader."""
+    stub = _stub(monkeypatch, {"lthr": 175, "max_hr": 190, "target_mode": "hr"})
+    r = client.post("/api/settings", json={"max_hr": 160})
+    assert r.status_code == 200
+    assert stub._athlete["target_mode"] == "power"
+
+
+def test_lthr_is_set_rejects_insane_values():
+    """Red-team D7: a hand-edited lthr of 0 or 50 must not satisfy the gate
+    (0 'is not None' — key-presence alone was bypassable)."""
+    assert _StubPM({"lthr": 0, "max_hr": 190, "target_mode": "hr"}).target_mode == "power"
+    assert _StubPM({"lthr": 50, "max_hr": 190, "target_mode": "hr"}).target_mode == "power"
+    assert _StubPM({"lthr": 160, "max_hr": 190, "target_mode": "hr"}).target_mode == "hr"

@@ -4656,6 +4656,17 @@ def api_workout_detail(category: str, filename: str):
         out["target_mode"] = "hr"
         out["lthr"] = _lthr
         out["max_hr"] = _maxhr
+        # Chart axis labels — computed HERE with the same Python rounding the
+        # converter uses. Client-side Math.round(frac*lthr) disagreed with
+        # Python's banker's rounding at e.g. LTHR 150 (125 vs 124), breaking
+        # the "one number everywhere" promise (red-team D2). Keyed by the %FTP
+        # gridline they sit on; values are the Coggan zone-top bpm.
+        out["hr_axis"] = {
+            "55": min(round(0.68 * _lthr), _maxhr),
+            "75": min(round(0.83 * _lthr), _maxhr),
+            "90": min(round(0.94 * _lthr), _maxhr),
+            "105": min(round(1.05 * _lthr), _maxhr),
+        }
     return out
 
 
@@ -7188,6 +7199,14 @@ def api_settings():
         # the bare lthr value above is a 170 default when unset.
         "target_mode": pm.target_mode,
         "lthr_is_set": pm.lthr_is_set,
+        # Coggan prescription rows, computed HERE so no client surface ever
+        # re-derives bpm with JS rounding (red-team D2/F3). [low, high] bpm.
+        "hr_rows": (lambda L, M: {
+            "z1": [0, min(round(0.68 * L), M)],
+            "z2": [min(round(0.69 * L), M), min(round(0.83 * L), M)],
+            "z3": [min(round(0.84 * L), M), min(round(0.94 * L), M)],
+            "z4": [min(round(0.95 * L), M), min(round(1.05 * L), M)],
+        })(int(pm.lthr), int(pm.max_hr)),
         "power_zones": p_zones,
         "hr_zones": h_zones,
         "w_per_kg": round(config.ATHLETE_FTP_W / max(config.ATHLETE_WEIGHT_KG, 1), 2),
@@ -7243,6 +7262,16 @@ def update_settings(request_body: dict):
             if config_key is not None:
                 updates[config_key] = val
 
+    # Red-team S1/S2: validate lthr/max_hr HERE with the ranges that actually
+    # PERSIST. save_athlete accepts max_hr [120,240] but the _set_max_hr write
+    # path silently clamps to [140,220] — so a 240 got a 200 OK, never landed,
+    # and could leave lthr > max_hr on disk with hr mode silently degraded.
+    # Out-of-range now 400s (was an unhandled ValueError → 500).
+    if "lthr" in athlete_updates and not (100 <= athlete_updates["lthr"] <= 220):
+        raise HTTPException(400, f"LTHR {athlete_updates['lthr']} out of range [100, 220]")
+    if "max_hr" in athlete_updates and not (140 <= athlete_updates["max_hr"] <= 220):
+        raise HTTPException(400, f"max HR {athlete_updates['max_hr']} out of range [140, 220]")
+
     # hr target_mode (IP_HR_ONLY C15/C16). Gate on the PROSPECTIVE lthr/max_hr
     # (a same-request lthr write counts), and on lthr being EXPLICITLY set —
     # pm.lthr's bare 170 default must never satisfy the gate.
@@ -7260,6 +7289,15 @@ def update_settings(request_body: dict):
                 raise HTTPException(400, f"max HR ({eff_max}) must be above LTHR "
                                           f"({eff_lthr}) for hr mode")
         athlete_updates["target_mode"] = mode
+    elif pm._athlete.get("target_mode") == "hr":
+        # Red-team S4: an lthr/max_hr edit can break the hr invariant while
+        # target_mode isn't in the body. Reads already degrade to power, but
+        # self-heal the stored value too so no stale raw "hr" lingers for a
+        # future direct-dict reader.
+        eff_lthr = athlete_updates.get("lthr", pm._athlete.get("lthr"))
+        eff_max = athlete_updates.get("max_hr", pm.max_hr)
+        if eff_lthr is None or eff_max <= eff_lthr:
+            athlete_updates["target_mode"] = "power"
 
     # E2 detect: did the FTP change to exactly-match the currently-cached
     # eFTP? If so this is almost certainly an "Accept eFTP" action.
@@ -7279,7 +7317,12 @@ def update_settings(request_body: dict):
             ftp_source_for_history = "manual"
 
     if athlete_updates:
-        pm.save_athlete(athlete_updates)
+        try:
+            pm.save_athlete(athlete_updates)
+        except ValueError as e:
+            # Out-of-range athlete input is a client error, not a 500
+            # (red-team S2 — e.g. ftp 9999 during the hr-mode onboarding save).
+            raise HTTPException(400, str(e))
         # E1 stamp provenance on profile when an FTP write happened.
         if new_ftp is not None and new_ftp != old_ftp:
             try:
@@ -8551,6 +8594,7 @@ def _api_today_session_impl():
     # {reason}" without re-parsing the legacy arrow-string. Empty when no
     # adjustment ran; otherwise mirrors `reason` (kept for back-compat).
     adjustment_reason = reason if reason else ""
+    from profile_manager import ProfileManager as _PM
     return {
         "planned": {
             "session_type": planned.session_type,
@@ -8574,6 +8618,9 @@ def _api_today_session_impl():
         "was_modified": reason != "",
         "hr_target": _session_hr_target(adjusted.session_type),
         "power_target": _session_power_target(adjusted.session_type),
+        # hr target_mode (red-team F3): lets the today card / session modal
+        # hide the watts chip and render the converter-consistent HR chip.
+        "target_mode": _PM.get().target_mode,
         # F1/F2 (v4.1.0): expose DFA cap + decoupling advisory so the UI
         # can surface a "Why Z2?" tooltip on the today card.
         "dfa_cap": r.get("dfa_cap"),
@@ -8618,7 +8665,34 @@ def _get_soreness_subjective() -> float | None:
 
 
 def _session_hr_target(session_type: str) -> dict:
-    """Return HR zone target for a session type."""
+    """Return HR zone target for a session type.
+
+    In hr target_mode (IP_HR_ONLY) the chips must speak the SAME numbers as
+    the converted chart and the FIT file — the Coggan %LTHR prescription rows
+    from hr_targets — not the Friel analysis zones (red-team F3: for the same
+    z2 session the Friel chip said 138-151 while chart+device said 117-141).
+    vo2max carries no bpm at all in hr mode (RPE, per the locked contract).
+    """
+    from profile_manager import ProfileManager
+    pm = ProfileManager.get()
+    if pm.target_mode == "hr":
+        lthr, maxhr = int(pm.lthr), int(pm.max_hr)
+        row = lambda lo, hi: {"low": min(round(lo * lthr), maxhr),
+                              "high": min(round(hi * lthr), maxhr)}
+        coggan = {
+            "rest": None,
+            "recovery": {"zone": "Z1", "name": "Recovery", "low": 0, **{"high": row(0.5, 0.68)["high"]}, "ceiling_only": True},
+            "z2": {"zone": "Z2", "name": "Endurance", **row(0.69, 0.83)},
+            "long_z2": {"zone": "Z2", "name": "Endurance", **row(0.69, 0.83)},
+            "tempo": {"zone": "Z3", "name": "Tempo", **row(0.84, 0.94)},
+            "sweetspot": {"zone": "Z4", "name": "Sweet Spot / Threshold", **row(0.95, 1.05)},
+            "threshold": {"zone": "Z4", "name": "Threshold", **row(0.95, 1.05)},
+            "overunder": {"zone": "Z4", "name": "Over-Under", **row(0.95, 1.05)},
+            "vo2max": {"zone": "Z5", "name": "VO2max", "low": 0, "high": 0,
+                       "rpe": "8-9", "note": "by feel — HR can't guide VO2 efforts"},
+        }
+        t = coggan.get(session_type)
+        return t if t else {"zone": "—", "low": 0, "high": 0}
     hr_zones = _hr_zones(config.ATHLETE_LTHR, config.ATHLETE_MAX_HR)
     zone_map = {
         "rest": None, "recovery": hr_zones[0],  # Z1
@@ -8636,7 +8710,12 @@ def _session_hr_target(session_type: str) -> dict:
 
 
 def _session_power_target(session_type: str) -> dict:
-    """Return power zone target for a session type."""
+    """Return power zone target for a session type. Suppressed in hr
+    target_mode — an FTP-relative watt range is unusable without a power
+    meter (red-team F3 / contract C19)."""
+    from profile_manager import ProfileManager
+    if ProfileManager.get().target_mode == "hr":
+        return {"suppressed": True, "low": 0, "high": 0}
     ftp = config.ATHLETE_FTP_W
     targets = {
         "rest": None, "recovery": {"low": 0, "high": round(ftp * 0.55)},
@@ -10504,13 +10583,17 @@ def _fit_hr_mode() -> bool:
 
 
 def _fit_hr_params() -> tuple[int, int]:
+    # int() — save_athlete's validator stores lthr as float (e.g. 167.5 from an
+    # ICU estimate); the detail endpoint ints too, so chart and FIT round the
+    # same base and can't skew by 1-2 bpm (red-team F5).
     from profile_manager import ProfileManager
     pm = ProfileManager.get()
-    return pm.lthr, pm.max_hr
+    return int(pm.lthr), int(pm.max_hr)
 
 
 def _fit_apply_hr_target(step, pct_lo: float, pct_hi: float, dur_s: float,
-                         step_name: str, lthr: int, max_hr: int) -> None:
+                         step_name: str, lthr: int, max_hr: int,
+                         intensity_kind: str = "active") -> None:
     """Set one FIT workout step's target for hr target_mode (IP_HR_ONLY C8).
 
     Guidable segments (per hr_targets.power_target_to_hr) get a real
@@ -10519,14 +10602,21 @@ def _fit_apply_hr_target(step, pct_lo: float, pct_hi: float, dur_s: float,
     stores the raw field without applying the offset itself. RPE segments get
     an OPEN target (duration-only step) with the RPE cue in the step name so
     the head unit shows guidance text instead of an unreachable bpm.
+
+    Red-team D4: recovery/cooldown/Z1 steps get NO bpm floor (low = 1 bpm).
+    HR decays slowly after hard work and idles low on easy days — a floored
+    range makes the head unit beep "HR too low" at a rider who is doing it
+    right. The CEILING is the useful half ("keep it under X"); keep only it.
     """
     from fit_tool.profile.profile_type import WorkoutStepTarget
     from hr_targets import power_target_to_hr
 
     tgt = power_target_to_hr(pct_lo, pct_hi, dur_s, lthr, max_hr)
+    no_floor = intensity_kind in ("rest", "cooldown") or tgt.get("zone") == 1
     if tgt["kind"] == "hr":
+        lo = 1 if no_floor else tgt["bpm_low"]
         step.target_type = WorkoutStepTarget.HEART_RATE
-        step.custom_target_heart_rate_low = tgt["bpm_low"] + 100
+        step.custom_target_heart_rate_low = lo + 100
         step.custom_target_heart_rate_high = tgt["bpm_high"] + 100
         step.target_value = 0  # 0 = custom target (not a zone)
         step.workout_step_name = step_name[:15]
@@ -10535,6 +10625,8 @@ def _fit_apply_hr_target(step, pct_lo: float, pct_hi: float, dur_s: float,
         # through). Callers that staircase ramps pass flat sub-steps instead.
         lo = min(tgt["bpm_start"], tgt["bpm_end"])
         hi = max(tgt["bpm_start"], tgt["bpm_end"])
+        if no_floor:
+            lo = 1  # cooldown: ceiling only — HR decay can't be paced downward
         step.target_type = WorkoutStepTarget.HEART_RATE
         step.custom_target_heart_rate_low = lo + 100
         step.custom_target_heart_rate_high = max(hi, lo + 1) + 100
@@ -10609,8 +10701,19 @@ def _build_fit_workout(name: str, blocks: list[dict], ftp: int) -> bytes:
             # hr target_mode (IP_HR_ONLY C8): guidable steps carry a real FIT
             # HEART_RATE target; RPE steps go OPEN (duration only) with the cue
             # in the step name — no false bpm to chase on a sprint.
-            _fit_apply_hr_target(step, b["pctLow"], b["pctHigh"],
-                                 b["min"] * 60, step_name, *hr_mode)
+            # Red-team F1: block pctLow/pctHigh is a ramp ONLY for warmup/
+            # cooldown; for work blocks it's a POWER BAND (VO2 106-115 etc.) —
+            # feeding a band as a ramp made 4-min VO2 steps a 1-bpm pinned
+            # threshold target. Bands convert as steady at the band top (the
+            # zone-defining end, same hard_pct semantic as the converter).
+            _kind = b.get("intensity", "active")
+            if _kind in ("warmup", "cooldown"):
+                _p_start, _p_end = b["pctLow"], b["pctHigh"]
+            else:
+                _p_start = _p_end = max(b["pctLow"], b["pctHigh"])
+            _fit_apply_hr_target(step, _p_start, _p_end,
+                                 b["min"] * 60, step_name, *hr_mode,
+                                 intensity_kind=_kind)
         else:
             step.target_type = WorkoutStepTarget.POWER
             # v2.4.3 — %FTP targets, not absolute watts. FIT workout_power encodes a
@@ -10789,7 +10892,8 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int) -> bytes:
             # hr target_mode (IP_HR_ONLY C8): HEART_RATE targets where HR can
             # guide, OPEN + RPE-in-name where it can't (short / supra-threshold).
             _fit_apply_hr_target(step, p_start * 100, p_end * 100, dur_s,
-                                 step_name, *hr_mode)
+                                 step_name, *hr_mode,
+                                 intensity_kind=intensity_kind)
         else:
             step.target_type = WorkoutStepTarget.POWER
             step.workout_step_name = step_name

@@ -141,3 +141,26 @@ def test_ramp_interpolation_midpoint():
     # LTHR fraction midway too (88.5%).
     r = conv(55, 600, pct_end=82.5)
     assert r["bpm_end"] == round(0.885 * LTHR)
+
+
+# ── red-team regressions ─────────────────────────────────────────────────────
+
+def test_float_dust_at_55_boundary_stays_z1():
+    """Red-team D1: float("0.55")*100 == 55.000000000000001 misclassified the
+    ubiquitous 55%-FTP recovery block as Z2 (wrong bpm floor on 2,557 segments
+    across 1,457 library files). zone_of_pct must round away IEEE dust."""
+    dirty = float("0.55") * 100
+    assert dirty != 55  # the trap is real
+    assert zone_of_pct(dirty) == 1
+    r = conv(dirty, 600)
+    assert r["zone"] == 1
+
+
+def test_rpe_rows_pinned():
+    """Red-team D5: the zone→RPE cues are product behaviour — pin them so a
+    silent edit can't shift effort guidance."""
+    assert (conv(65, 60)["rpe_low"], conv(65, 60)["rpe_high"]) == (2, 3)      # Z2 short
+    assert (conv(100, 60)["rpe_low"], conv(100, 60)["rpe_high"]) == (6, 7)    # Z4 short
+    assert (conv(110, 600)["rpe_low"], conv(110, 600)["rpe_high"]) == (8, 9)  # Z5
+    assert (conv(130, 600)["rpe_low"], conv(130, 600)["rpe_high"]) == (9, 10) # Z6
+    assert (conv(200, 15)["rpe_low"], conv(200, 15)["rpe_high"]) == (10, 10)  # Z7

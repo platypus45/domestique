@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import shutil
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 
@@ -186,7 +187,24 @@ def migrate_to_profiles() -> None:
 
     # ── Idempotent guard ────────────────────────────────────────────────
     if registry.exists():
-        return  # already migrated
+        # Legacy single-user layout already migrated. Still run the AC2a
+        # archive migration every boot — it is idempotent and no-ops fast
+        # when no global rides/wellness trees remain.
+        try:
+            migrate_archives_to_profiles(base)
+        except Exception as e:
+            log.warning(f"archive migration failed (will retry next boot): {e}")
+        return
+
+    # AC4 bootstrapped flag: "fresh install" ⇔ NONE of the legacy user-data
+    # files existed at migration time. Computed BEFORE the copy step below
+    # touches anything. Legacy upgrades get an explicit False so the / route
+    # can trust the flag without heuristics.
+    fresh_install = not any(
+        (base / f).exists()
+        for f in (".env", "health_tracker.db", ".setup_complete",
+                  "user_prefs.json")
+    )
 
     default_dir = base / "profiles" / "default"
     default_dir.mkdir(parents=True, exist_ok=True)
@@ -271,6 +289,10 @@ def migrate_to_profiles() -> None:
                 "color": "#3b82f6",
                 "created": now,
                 "last_used": now,
+                # AC4: True only on a truly fresh install — the / route
+                # redirects to /setup while (bootstrapped && !setup_complete).
+                # ProfileManager.clear_bootstrapped() drops it on wizard save.
+                "bootstrapped": fresh_install,
             }
         ],
     }
@@ -298,6 +320,233 @@ def migrate_to_profiles() -> None:
         src = base / f
         if src.exists():
             src.unlink()
+
+    # ── 6. AC2a: move the global ride/wellness archives into the profile ──
+    try:
+        migrate_archives_to_profiles(base)
+    except Exception as e:
+        log.warning(f"archive migration failed (will retry next boot): {e}")
+
+
+# ─── v3.0.0 AC2a — per-profile ride/wellness archive migration ───────────────
+#
+# Legacy layout (pre-3.0.0): ONE global archive shared by every profile —
+#   ~/.domestique/rides/icu/*.json   (ICU activity envelopes, stem == ICU id)
+#   ~/.domestique/rides/*.fit (+sidecars, loose files)
+#   ~/.domestique/wellness/YYYY-MM-DD.json
+# New layout: the same subtrees under profiles/<id>/. NAME COLLISION NOTE:
+# profiles/<id>/rides/ already holds ride SUMMARIES (ride_*.json), so the
+# migration merges per-subtree / per-file — never a blanket dir rename.
+#
+# OWNERSHIP (grill-locked): a file is assigned to the profile whose OWN DB
+# proves ownership — activities.id == icu filename stem; wellness by exact
+# (date, ctl, atl) tuple (float-identical, same upstream payload). Matched
+# files go to the matching profile even if it is not active. ONLY the
+# unmatched remainder goes to the ACTIVE profile, with MIGRATION_NOTE.txt in
+# the old location + a registry banner flag ("archive assigned to <name> —
+# use Import to reassign") — and only when several profiles exist (a sole
+# profile owns everything trivially; no banner noise).
+#
+# Idempotent + kill-9 resumable (A11): trigger = the global trees still hold
+# files; each file is moved individually (shutil.move — atomic rename on the
+# same volume, copy+unlink across volumes); an interrupted copy leaves the
+# source intact, and the re-run overwrites the possibly-truncated dest from
+# the still-authoritative source. Counts are preserved: a file only leaves
+# the global tree by arriving in a profile tree.
+
+def _profile_activity_ids(profile_dir: Path) -> set:
+    """activities.id set from one profile's DB (read-only; empty on any error)."""
+    db_file = profile_dir / "health_tracker.db"
+    if not db_file.exists():
+        return set()
+    try:
+        conn = sqlite3.connect(str(db_file), timeout=5)
+        try:
+            return {str(r[0]) for r in conn.execute("SELECT id FROM activities")}
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        log.warning(f"archive migration: cannot read activities from {db_file}: {e}")
+        return set()
+
+
+def _profile_wellness_keys(profile_dir: Path) -> set:
+    """(date, ctl, atl) tuples from one profile's DB (empty on any error)."""
+    db_file = profile_dir / "health_tracker.db"
+    if not db_file.exists():
+        return set()
+    try:
+        conn = sqlite3.connect(str(db_file), timeout=5)
+        try:
+            return {(str(r[0]), r[1], r[2]) for r in
+                    conn.execute("SELECT date, ctl, atl FROM wellness")}
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        log.warning(f"archive migration: cannot read wellness from {db_file}: {e}")
+        return set()
+
+
+def _move_file(src: Path, dest_dir: Path) -> None:
+    """Move one archive file; the SOURCE is authoritative on collision.
+
+    A same-named dest can only be debris of a kill-9'd cross-volume copy
+    (the source survives until its final unlink) — replace it, never lose src.
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / src.name
+    if dest.exists():
+        dest.unlink()
+    shutil.move(str(src), str(dest))
+
+
+def migrate_archives_to_profiles(base: "Path | None" = None) -> dict:
+    """Move global ride/wellness archives into per-profile dirs (AC2a).
+
+    Runs in lifespan pre-serve via migrate_to_profiles() every boot; safe to
+    call directly (tests pass an explicit ``base``). Returns a stats dict:
+    {"ran": bool, "icu": n, "wellness": n, "loose": n, "unmatched": n}.
+    """
+    base = Path(base) if base is not None else Path.home() / ".domestique"
+    global_rides = base / "rides"
+    global_icu = global_rides / "icu"
+    global_wellness = base / "wellness"
+    profiles_root = base / "profiles"
+    registry_path = base / "profiles.json"
+
+    stats = {"ran": False, "icu": 0, "wellness": 0, "loose": 0, "unmatched": 0}
+
+    def _files(d: Path) -> list:
+        return sorted(p for p in d.iterdir() if p.is_file()) if d.is_dir() else []
+
+    icu_files = _files(global_icu)
+    wellness_files = _files(global_wellness)
+    loose_files = [p for p in _files(global_rides)
+                   if p.name != "MIGRATION_NOTE.txt"]
+    if not (icu_files or wellness_files or loose_files):
+        return stats  # trigger absent — nothing global left to migrate
+
+    # Registry: assignment targets. Without profiles there is nowhere to
+    # move data — leave the global trees for the boot after profile creation.
+    try:
+        reg = json.loads(registry_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return stats
+    profiles = [p for p in reg.get("profiles", []) if p.get("id")]
+    profile_ids = [p["id"] for p in profiles]
+    if not profile_ids:
+        return stats
+    active_id = reg.get("active_profile")
+    if active_id not in profile_ids:
+        active_id = profile_ids[0]
+    multi = len(profile_ids) > 1
+
+    stats["ran"] = True
+    log.info(
+        f"AC2a archive migration: {len(icu_files)} icu + "
+        f"{len(wellness_files)} wellness + {len(loose_files)} loose files; "
+        f"profiles={profile_ids} active={active_id}"
+    )
+
+    # Ownership indexes from EACH profile's DB (ride JSONs carry no
+    # athlete_id — the DB is the only ownership proof).
+    act_ids = {pid: _profile_activity_ids(profiles_root / pid) for pid in profile_ids}
+    well_keys = {pid: _profile_wellness_keys(profiles_root / pid) for pid in profile_ids}
+
+    def _owner(match_fn) -> "str | None":
+        owners = [pid for pid in profile_ids if match_fn(pid)]
+        if not owners:
+            return None
+        # Cloned DBs (migrate copies) can match several profiles — prefer
+        # the active one, else first registry order (deterministic).
+        return active_id if active_id in owners else owners[0]
+
+    # ── rides/icu/*.json (+ .last_sync_at bookkeeping dotfile) ──────────
+    for f in icu_files:
+        if f.name.startswith("."):
+            # .last_sync_at etc: sync bookkeeping of whoever was syncing —
+            # the active profile. Not "unmatched" data (no banner for it).
+            _move_file(f, profiles_root / active_id / "rides" / "icu")
+            continue
+        pid = _owner(lambda p, stem=f.stem: stem in act_ids[p])
+        if pid is None:
+            pid = active_id
+            stats["unmatched"] += 1
+        _move_file(f, profiles_root / pid / "rides" / "icu")
+        stats["icu"] += 1
+
+    # ── wellness/YYYY-MM-DD.json ─────────────────────────────────────────
+    for f in wellness_files:
+        key = None
+        if not f.name.startswith("."):
+            try:
+                rec = json.loads(f.read_text(encoding="utf-8"))
+                key = (str(rec.get("id")), rec.get("ctl"), rec.get("atl"))
+            except (OSError, json.JSONDecodeError, ValueError):
+                key = None
+        pid = _owner(lambda p, k=key: k is not None and k in well_keys[p])
+        if pid is None:
+            pid = active_id
+            if not f.name.startswith("."):
+                stats["unmatched"] += 1
+        _move_file(f, profiles_root / pid / "wellness")
+        if not f.name.startswith("."):
+            stats["wellness"] += 1
+
+    # ── loose rides/* (raw FITs + sidecars) ─────────────────────────────
+    # Merged file-by-file into <profile>/rides/ — that dir already holds
+    # ride summaries, hence never a blanket dir move. FIT stems only match
+    # activities.id when the recording app named them by ICU id; everything
+    # else is unmatched → active.
+    for f in loose_files:
+        stem = f.name.split(".")[0]
+        pid = _owner(lambda p, s=stem: s and s in act_ids[p])
+        if pid is None:
+            pid = active_id
+            if not f.name.startswith("."):
+                stats["unmatched"] += 1
+        _move_file(f, profiles_root / pid / "rides")
+        stats["loose"] += 1
+
+    # ── cleanup + honesty surface ────────────────────────────────────────
+    for d in (global_icu, global_rides, global_wellness):
+        try:
+            if d.is_dir() and not any(d.iterdir()):
+                d.rmdir()
+        except OSError:
+            pass
+
+    if stats["unmatched"] and multi:
+        active_name = next((p.get("name", active_id) for p in profiles
+                            if p["id"] == active_id), active_id)
+        try:
+            global_rides.mkdir(parents=True, exist_ok=True)
+            (global_rides / "MIGRATION_NOTE.txt").write_text(
+                f"Domestique v3.0.0 moved this shared ride/wellness archive "
+                f"into per-profile storage.\n{stats['unmatched']} file(s) "
+                f"could not be matched to a profile via its database and "
+                f"were assigned to the active profile '{active_name}' "
+                f"({active_id}).\nUse Import in the app to reassign rides "
+                f"to another profile.\n",
+                encoding="utf-8",
+            )
+        except OSError as e:
+            log.warning(f"archive migration: note write failed: {e}")
+        # One-time banner flag for the dashboard (FLOW reads + clears it).
+        reg["archive_migration"] = {
+            "assigned_to": active_id,
+            "assigned_to_name": active_name,
+            "unmatched": stats["unmatched"],
+            "at": datetime.now().isoformat(),
+            "banner": True,
+        }
+        try:
+            _write_registry_atomic(registry_path, reg)
+        except Exception as e:
+            log.warning(f"archive migration: registry flag write failed: {e}")
+
+    log.info(f"AC2a archive migration done: {stats}")
+    return stats
 
 
 # ─── v1.0.2 IMPL-MIGRATION ──────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import re
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -36,6 +37,95 @@ DB_PATH = _USER_DATA / "health_tracker.db"
 _local = threading.local()
 _db_version = 0  # incremented on profile switch; each thread tracks its own version
 
+
+class SyncAborted(RuntimeError):
+    """A gated sync write was abandoned: the owning identity (active profile,
+    DB path, or purge epoch) changed between fetch and write, or a stop was
+    requested while waiting for the write gate. Benign — the next pass
+    re-fetches under the new identity."""
+
+
+class SyncBusy(RuntimeError):
+    """The sync write gate could not be acquired within the bounded wait.
+    Callers (profile switch, purge) surface this as HTTP 503 — they must
+    NEVER proceed unlocked."""
+
+
+# ── AC1 write-window gate ────────────────────────────────────────────────────
+# Data-plane lock: every sync WRITE SECTION (wellness batch, activities batch,
+# sync_log row, each _refresh_* mirror, app.py's persist loops via
+# sync_write_gate) holds it briefly; switch()/purge hold it while mutating
+# identity. Lock order: pm._switch_lock → _sync_write_lock, never reverse.
+# _sync_lock (below) stays control-plane only (thread stop/start).
+_sync_write_lock = threading.Lock()
+# Bumped by purge_profile_data() under the gate: in-flight passes that fetched
+# BEFORE the purge fail their next snapshot check and abort (contract A10 —
+# zero post-purge stale rows). Profile switches do NOT bump it: an A→B→A
+# round-trip mid-fetch still targets A, which is the correct owner.
+_sync_epoch = 0
+
+
+def snapshot_sync_identity() -> tuple:
+    """(active_profile_id, DB_PATH, sync_epoch) at this instant.
+
+    Taken at the START of a sync pass / persist task; every subsequent write
+    section re-checks it inside sync_write_gate(). Never raises — before the
+    profile system is up it degrades to (None, DB_PATH, epoch), which still
+    pins the DB path + epoch.
+    """
+    try:
+        from profile_manager import ProfileManager
+        pm = ProfileManager.get()
+        pid = getattr(pm, "active_id", None)
+    except Exception:
+        pid = None
+    return (pid, DB_PATH, _sync_epoch)
+
+
+@contextmanager
+def sync_write_gate(snapshot):
+    """AC1 write-window gate — wrap every sync write section in this.
+
+    Usage (FLOW applies the same pattern in app.py's lazy-sync / backfill /
+    wellness-persist loops)::
+
+        snap = db.snapshot_sync_identity()   # at task start, BEFORE fetching
+        ...network fetches OUTSIDE any lock...
+        with db.sync_write_gate(snap):
+            ...writes targeting the snapshotted profile...
+
+    Acquisition is a timeout-retry loop that re-checks the sync stop event so
+    a stopping switch/restart can never deadlock against a blocked writer
+    (restart_sync's bounded join stays safe). After acquiring, the CURRENT
+    (profile, DB_PATH, epoch) must equal ``snapshot`` or SyncAborted is
+    raised — a switch or purge landed since the fetch, so these writes would
+    target the wrong profile.
+    """
+    try:
+        snap_id, snap_path, snap_epoch = snapshot
+    except (TypeError, ValueError):
+        raise ValueError(
+            "snapshot must be the 3-tuple from db.snapshot_sync_identity()"
+        )
+    while True:
+        # Module-global lookup each iteration: restart_sync replaces the
+        # Event object; a stale local reference would miss the new signal.
+        if _sync_stop.is_set():
+            raise SyncAborted("sync stop requested while waiting for write gate")
+        if _sync_write_lock.acquire(timeout=0.25):
+            break
+    try:
+        cur_id, cur_path, cur_epoch = snapshot_sync_identity()
+        if (cur_id, cur_path, cur_epoch) != (snap_id, snap_path, snap_epoch):
+            raise SyncAborted(
+                f"sync identity changed since fetch: profile {snap_id!r} -> "
+                f"{cur_id!r}, db {snap_path} -> {cur_path}, "
+                f"epoch {snap_epoch} -> {cur_epoch}"
+            )
+        yield
+    finally:
+        _sync_write_lock.release()
+
 # Background-sync state (exposed via get_sync_status())
 _auth_disabled = False  # set True after repeated HTTP 401s; stops retry loop
 _consecutive_failures = 0  # updated by _sync_loop; surfaced for diagnostics
@@ -47,7 +137,13 @@ def get_db() -> sqlite3.Connection:
 
     Uses a version counter instead of a single bool flag to ensure ALL threads
     reopen after a profile switch (not just the first one to check).
+
+    Raises RuntimeError when DB_PATH is the None sentinel (no active profile,
+    AC6a) — connecting would mkdir + create an empty DB at a dead path, which
+    is exactly the deleted-profile resurrection bug (probe L3).
     """
+    if DB_PATH is None:
+        raise RuntimeError("no active profile: database path is unset")
     local_ver = getattr(_local, "db_version", -1)
     if local_ver != _db_version or not hasattr(_local, "conn") or _local.conn is None:
         if hasattr(_local, "conn") and _local.conn is not None:
@@ -71,8 +167,12 @@ def get_db() -> sqlite3.Connection:
     return _local.conn
 
 
-def set_db_path(path: Path) -> None:
-    """Update the global DB_PATH. Call close_all_connections() first."""
+def set_db_path(path: "Path | None") -> None:
+    """Update the global DB_PATH. Call close_all_connections() first.
+
+    ``None`` is the AC6a no-active-profile sentinel (set by delete-last):
+    get_db()/init_db() then raise / no-op instead of resurrecting files.
+    """
     global DB_PATH
     DB_PATH = path
 
@@ -130,6 +230,11 @@ def _maybe_add_column(db: sqlite3.Connection, table: str, column: str, coltype: 
 
 def init_db():
     """Create tables and indexes if they don't exist. Idempotent."""
+    if DB_PATH is None:
+        # AC6a: no active profile — nothing to initialize; creating a DB here
+        # would resurrect root-dir artifacts after a delete-last.
+        log.warning("init_db skipped: no active profile (DB path unset)")
+        return
     db = get_db()
     # All table creation uses IF NOT EXISTS — safe to re-run on existing DBs.
     db.executescript("""
@@ -224,11 +329,17 @@ def init_db():
     db.commit()
 
 
-def sync_wellness(days: int = 90) -> int:
+def sync_wellness(days: int = 90, _snapshot=None) -> int:
     """Fetch wellness from Intervals.icu and upsert into SQLite. Returns count.
 
     Transactional: if any row fails mid-loop, the entire batch is rolled back.
+
+    AC1: the network fetch runs OUTSIDE any lock; the post-fetch write
+    section holds ``_sync_write_lock`` and re-asserts the ``_snapshot``
+    identity (raising SyncAborted when a profile switch / purge landed since
+    the fetch). ``_snapshot`` defaults to a fresh snapshot for direct callers.
     """
+    snapshot = _snapshot if _snapshot is not None else snapshot_sync_identity()
     try:
         data = fetch_wellness(days=days)
     except Exception as e:
@@ -237,216 +348,246 @@ def sync_wellness(days: int = 90) -> int:
     if not data:
         return 0
 
-    db = get_db()
     count = 0
-    try:
-        for w in data:
-            dt = w.get("id")
-            if not dt:
-                continue
-            si = w.get("sportInfo") or []
-            eftp = si[0].get("eftp") if len(si) > 0 else None
-            db.execute(
-                """INSERT OR REPLACE INTO wellness
-                   (date, ctl, atl, hrv, rhr, sleep_secs, sleep_score, eftp, raw_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    dt,
-                    w.get("ctl"),
-                    w.get("atl"),
-                    w.get("hrv"),
-                    w.get("restingHR"),
-                    w.get("sleepSecs"),
-                    w.get("sleepScore"),
-                    eftp,
-                    json.dumps(w),
-                ),
-            )
-            # Auto-log VO2max, eFTP, wPrime from Intervals.icu/Garmin
-            vo2max = w.get("vo2max")
-            if vo2max and isinstance(vo2max, (int, float)) and vo2max > 0:
+    with sync_write_gate(snapshot):
+        db = get_db()
+        try:
+            for w in data:
+                dt = w.get("id")
+                if not dt:
+                    continue
+                si = w.get("sportInfo") or []
+                eftp = si[0].get("eftp") if len(si) > 0 else None
                 db.execute(
-                    "INSERT OR REPLACE INTO athlete_metrics (date, metric, value, source) VALUES (?, 'vo2max', ?, 'intervals.icu')",
-                    (dt, round(vo2max, 1)),
+                    """INSERT OR REPLACE INTO wellness
+                       (date, ctl, atl, hrv, rhr, sleep_secs, sleep_score, eftp, raw_json)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        dt,
+                        w.get("ctl"),
+                        w.get("atl"),
+                        w.get("hrv"),
+                        w.get("restingHR"),
+                        w.get("sleepSecs"),
+                        w.get("sleepScore"),
+                        eftp,
+                        json.dumps(w),
+                    ),
                 )
-            if eftp and isinstance(eftp, (int, float)) and eftp > 0:
-                # Don't clobber manual eFTP entries: check source before replace.
-                existing = db.execute(
-                    "SELECT source FROM athlete_metrics WHERE date = ? AND metric = 'eftp'",
-                    (dt,),
-                ).fetchone()
-                if not (existing and existing[0] == "manual"):
+                # Auto-log VO2max, eFTP, wPrime from Intervals.icu/Garmin
+                vo2max = w.get("vo2max")
+                if vo2max and isinstance(vo2max, (int, float)) and vo2max > 0:
                     db.execute(
-                        "INSERT OR REPLACE INTO athlete_metrics (date, metric, value, source) VALUES (?, 'eftp', ?, 'intervals.icu')",
-                        (dt, round(eftp)),
+                        "INSERT OR REPLACE INTO athlete_metrics (date, metric, value, source) VALUES (?, 'vo2max', ?, 'intervals.icu')",
+                        (dt, round(vo2max, 1)),
                     )
-            w_prime = si[0].get("wPrime") if len(si) > 0 else None
-            if w_prime and isinstance(w_prime, (int, float)) and w_prime > 0:
-                # Manual-source guard: if the user logged W' manually (e.g.
-                # from a 3-min all-out test), don't let ICU overwrite it.
-                # IMPL-WBAL may later add a `_set_wprime(value, source)`
-                # helper in profile_manager.py; until then we mirror the
-                # eftp guard above (source='manual' wins).
-                existing_wp = db.execute(
-                    "SELECT source FROM athlete_metrics WHERE date = ? AND metric = 'w_prime'",
-                    (dt,),
-                ).fetchone()
-                if not (existing_wp and existing_wp[0] == "manual"):
-                    db.execute(
-                        "INSERT OR REPLACE INTO athlete_metrics (date, metric, value, source) VALUES (?, 'w_prime', ?, 'intervals.icu')",
-                        (dt, round(w_prime)),
-                    )
+                if eftp and isinstance(eftp, (int, float)) and eftp > 0:
+                    # Don't clobber manual eFTP entries: check source before replace.
+                    existing = db.execute(
+                        "SELECT source FROM athlete_metrics WHERE date = ? AND metric = 'eftp'",
+                        (dt,),
+                    ).fetchone()
+                    if not (existing and existing[0] == "manual"):
+                        db.execute(
+                            "INSERT OR REPLACE INTO athlete_metrics (date, metric, value, source) VALUES (?, 'eftp', ?, 'intervals.icu')",
+                            (dt, round(eftp)),
+                        )
+                w_prime = si[0].get("wPrime") if len(si) > 0 else None
+                if w_prime and isinstance(w_prime, (int, float)) and w_prime > 0:
+                    # Manual-source guard: if the user logged W' manually (e.g.
+                    # from a 3-min all-out test), don't let ICU overwrite it.
+                    # IMPL-WBAL may later add a `_set_wprime(value, source)`
+                    # helper in profile_manager.py; until then we mirror the
+                    # eftp guard above (source='manual' wins).
+                    existing_wp = db.execute(
+                        "SELECT source FROM athlete_metrics WHERE date = ? AND metric = 'w_prime'",
+                        (dt,),
+                    ).fetchone()
+                    if not (existing_wp and existing_wp[0] == "manual"):
+                        db.execute(
+                            "INSERT OR REPLACE INTO athlete_metrics (date, metric, value, source) VALUES (?, 'w_prime', ?, 'intervals.icu')",
+                            (dt, round(w_prime)),
+                        )
 
-            # v1.0.6 IMPL-3D-INGEST: pull Pmax from ICU sportInfo[0].pMax
-            # (best 1s power; live: 1,114.7 W on 2026-05-05). Mirror of the
-            # wPrime block above with the same manual-source guard.
-            p_max = si[0].get("pMax") if len(si) > 0 else None
-            if p_max and isinstance(p_max, (int, float)) and p_max > 0:
-                existing_pm = db.execute(
-                    "SELECT source FROM athlete_metrics WHERE date = ? AND metric = 'pmax'",
-                    (dt,),
-                ).fetchone()
-                if not (existing_pm and existing_pm[0] == "manual"):
-                    db.execute(
-                        "INSERT OR REPLACE INTO athlete_metrics (date, metric, value, source) VALUES (?, 'pmax', ?, 'intervals.icu')",
-                        (dt, round(p_max)),
-                    )
+                # v1.0.6 IMPL-3D-INGEST: pull Pmax from ICU sportInfo[0].pMax
+                # (best 1s power; live: 1,114.7 W on 2026-05-05). Mirror of the
+                # wPrime block above with the same manual-source guard.
+                p_max = si[0].get("pMax") if len(si) > 0 else None
+                if p_max and isinstance(p_max, (int, float)) and p_max > 0:
+                    existing_pm = db.execute(
+                        "SELECT source FROM athlete_metrics WHERE date = ? AND metric = 'pmax'",
+                        (dt,),
+                    ).fetchone()
+                    if not (existing_pm and existing_pm[0] == "manual"):
+                        db.execute(
+                            "INSERT OR REPLACE INTO athlete_metrics (date, metric, value, source) VALUES (?, 'pmax', ?, 'intervals.icu')",
+                            (dt, round(p_max)),
+                        )
 
-            # v1.1.0 IMPL-NORWEGIAN-HR: pull max_hr from ICU wellness payload
-            # when exposed (athlete profile may carry it as `maxHr` or
-            # `max_hr`). Same manual-source guard as wPrime / pMax.
-            # PATCH G6: metric name is `max_hr` (not `hr_max`) — matches
-            # ProfileManager.max_hr property at profile_manager.py:147.
-            ahr = w.get("maxHr") or w.get("max_hr")
-            if ahr and isinstance(ahr, (int, float)) and 140 <= ahr <= 220:
-                existing_hr = db.execute(
-                    "SELECT source FROM athlete_metrics WHERE date = ? AND metric = 'max_hr'",
-                    (dt,),
-                ).fetchone()
-                if not (existing_hr and existing_hr[0] == "manual"):
-                    db.execute(
-                        "INSERT OR REPLACE INTO athlete_metrics (date, metric, value, source) VALUES (?, 'max_hr', ?, 'intervals.icu')",
-                        (dt, round(ahr)),
-                    )
+                # v1.1.0 IMPL-NORWEGIAN-HR: pull max_hr from ICU wellness payload
+                # when exposed (athlete profile may carry it as `maxHr` or
+                # `max_hr`). Same manual-source guard as wPrime / pMax.
+                # PATCH G6: metric name is `max_hr` (not `hr_max`) — matches
+                # ProfileManager.max_hr property at profile_manager.py:147.
+                ahr = w.get("maxHr") or w.get("max_hr")
+                if ahr and isinstance(ahr, (int, float)) and 140 <= ahr <= 220:
+                    existing_hr = db.execute(
+                        "SELECT source FROM athlete_metrics WHERE date = ? AND metric = 'max_hr'",
+                        (dt,),
+                    ).fetchone()
+                    if not (existing_hr and existing_hr[0] == "manual"):
+                        db.execute(
+                            "INSERT OR REPLACE INTO athlete_metrics (date, metric, value, source) VALUES (?, 'max_hr', ?, 'intervals.icu')",
+                            (dt, round(ahr)),
+                        )
 
-            count += 1
-    except Exception:
-        db.rollback()
-        raise
-    db.commit()
+                count += 1
+        except Exception:
+            db.rollback()
+            raise
+        db.commit()
 
     # v3.6.0-fix26 (IMPL-WBAL §4.1): after the ICU sync, mirror the most
     # recent `w_prime` into the active profile so MetricsEngine picks it
     # up on the next session construct instead of using the `ftp*80`
     # fallback. Guarded by profile_manager._set_wprime() which ignores
     # writes that would downgrade a manually-typed value.
-    _refresh_wprime_from_metrics()
+    # AC1: each mirror is its own gated write section against `snapshot` —
+    # a switch landing between the batch above and a mirror skips the mirror.
+    _refresh_wprime_from_metrics(snapshot)
     # v1.0.6 IMPL-3D-INGEST: same mirror pattern for Pmax.
-    _refresh_pmax_from_metrics()
+    _refresh_pmax_from_metrics(snapshot)
     # v1.1.0 IMPL-NORWEGIAN-HR: same mirror pattern for max_hr.
-    _refresh_max_hr_from_metrics()
+    _refresh_max_hr_from_metrics(snapshot)
 
     return count
 
 
-def _refresh_wprime_from_metrics() -> None:
+def _refresh_wprime_from_metrics(snapshot=None) -> None:
     """Copy the newest athlete_metrics.w_prime (source='intervals.icu') into
     the active ProfileManager athlete.wprime_j.
 
     Called after `sync_wellness()` finishes its ICU batch. Failures are
     logged but never re-raised — the ICU sync should still succeed even
     if profile mirroring misfires (e.g. no profile loaded yet, disk
-    full, race with a switch_profile()). Reading the latest row is cheap
-    (PK date prefix index) so this is O(1) regardless of metrics-table
-    size.
+    full). Reading the latest row is cheap (PK date prefix index) so this
+    is O(1) regardless of metrics-table size.
+
+    AC1: the read+write runs inside the sync write gate targeting
+    ``snapshot``; when the identity moved (profile switch / purge) the
+    mirror is SKIPPED (SyncAborted logged at INFO) instead of stamping
+    the wrong profile. Re-resolving ProfileManager.get() inside the gated
+    section is safe — switch() needs the same gate to mutate identity.
     """
+    if snapshot is None:
+        snapshot = snapshot_sync_identity()
     try:
-        from profile_manager import ProfileManager
-        pm = ProfileManager.get()
-        db = get_db()
-        row = db.execute(
-            "SELECT value, source FROM athlete_metrics "
-            "WHERE metric = 'w_prime' ORDER BY date DESC LIMIT 1"
-        ).fetchone()
-        if not row:
-            return
-        value, source = row[0], row[1]
-        if value is None or float(value) <= 0:
-            return
-        # Only mirror intervals.icu-sourced w_prime into the profile via the
-        # "icu" priority tier. A 'manual' row in athlete_metrics should not
-        # be re-promoted here — manual profile writes go through
-        # save_athlete directly and already tag source="manual".
-        if source != "intervals.icu":
-            return
-        pm._set_wprime(int(float(value)), "icu")
+        with sync_write_gate(snapshot):
+            from profile_manager import ProfileManager
+            pm = ProfileManager.get()
+            db = get_db()
+            row = db.execute(
+                "SELECT value, source FROM athlete_metrics "
+                "WHERE metric = 'w_prime' ORDER BY date DESC LIMIT 1"
+            ).fetchone()
+            if not row:
+                return
+            value, source = row[0], row[1]
+            if value is None or float(value) <= 0:
+                return
+            # Only mirror intervals.icu-sourced w_prime into the profile via the
+            # "icu" priority tier. A 'manual' row in athlete_metrics should not
+            # be re-promoted here — manual profile writes go through
+            # save_athlete directly and already tag source="manual".
+            if source != "intervals.icu":
+                return
+            pm._set_wprime(int(float(value)), "icu")
+    except SyncAborted as e:
+        log.info("wprime mirror skipped: %s", e)
     except Exception as e:
         log.warning("refresh_wprime_from_metrics failed: %s", e)
 
 
-def _refresh_pmax_from_metrics() -> None:
+def _refresh_pmax_from_metrics(snapshot=None) -> None:
     """v1.0.6 IMPL-3D-INGEST: copy the newest athlete_metrics.pmax row
     (source='intervals.icu') into the active ProfileManager athlete.pmax_w.
 
-    Mirror of `_refresh_wprime_from_metrics()`. Called after sync_wellness()
-    finishes its ICU batch. Failures are logged but never re-raised.
+    Mirror of `_refresh_wprime_from_metrics()` (incl. the AC1 write gate).
+    Called after sync_wellness() finishes its ICU batch. Failures are
+    logged but never re-raised.
     """
+    if snapshot is None:
+        snapshot = snapshot_sync_identity()
     try:
-        from profile_manager import ProfileManager
-        pm = ProfileManager.get()
-        db = get_db()
-        row = db.execute(
-            "SELECT value, source FROM athlete_metrics "
-            "WHERE metric = 'pmax' ORDER BY date DESC LIMIT 1"
-        ).fetchone()
-        if not row:
-            return
-        value, source = row[0], row[1]
-        if value is None or float(value) <= 0:
-            return
-        # Only mirror intervals.icu-sourced pmax. Manual rows go through
-        # save_athlete directly with source="manual" already.
-        if source != "intervals.icu":
-            return
-        pm._set_pmax(int(float(value)), "icu")
+        with sync_write_gate(snapshot):
+            from profile_manager import ProfileManager
+            pm = ProfileManager.get()
+            db = get_db()
+            row = db.execute(
+                "SELECT value, source FROM athlete_metrics "
+                "WHERE metric = 'pmax' ORDER BY date DESC LIMIT 1"
+            ).fetchone()
+            if not row:
+                return
+            value, source = row[0], row[1]
+            if value is None or float(value) <= 0:
+                return
+            # Only mirror intervals.icu-sourced pmax. Manual rows go through
+            # save_athlete directly with source="manual" already.
+            if source != "intervals.icu":
+                return
+            pm._set_pmax(int(float(value)), "icu")
+    except SyncAborted as e:
+        log.info("pmax mirror skipped: %s", e)
     except Exception as e:
         log.warning("refresh_pmax_from_metrics failed: %s", e)
 
 
-def _refresh_max_hr_from_metrics() -> None:
+def _refresh_max_hr_from_metrics(snapshot=None) -> None:
     """v1.1.0 IMPL-NORWEGIAN-HR: copy the newest athlete_metrics.max_hr row
     (source='intervals.icu') into the active ProfileManager athlete.max_hr.
 
-    Mirror of `_refresh_wprime_from_metrics()`. Called after sync_wellness()
-    finishes its ICU batch. Failures are logged but never re-raised.
+    Mirror of `_refresh_wprime_from_metrics()` (incl. the AC1 write gate).
+    Called after sync_wellness() finishes its ICU batch. Failures are
+    logged but never re-raised.
 
     PATCH G6: metric name is `max_hr` (not `hr_max`) — matches
     ProfileManager.max_hr property at profile_manager.py:147.
     """
+    if snapshot is None:
+        snapshot = snapshot_sync_identity()
     try:
-        from profile_manager import ProfileManager
-        pm = ProfileManager.get()
-        db = get_db()
-        row = db.execute(
-            "SELECT value, source FROM athlete_metrics "
-            "WHERE metric = 'max_hr' ORDER BY date DESC LIMIT 1"
-        ).fetchone()
-        if not row:
-            return
-        value, source = row[0], row[1]
-        if value is None or float(value) <= 0:
-            return
-        # Only mirror intervals.icu-sourced max_hr. Manual rows go through
-        # save_athlete directly with source="manual" already.
-        if source != "intervals.icu":
-            return
-        pm._set_max_hr(int(float(value)), "icu")
+        with sync_write_gate(snapshot):
+            from profile_manager import ProfileManager
+            pm = ProfileManager.get()
+            db = get_db()
+            row = db.execute(
+                "SELECT value, source FROM athlete_metrics "
+                "WHERE metric = 'max_hr' ORDER BY date DESC LIMIT 1"
+            ).fetchone()
+            if not row:
+                return
+            value, source = row[0], row[1]
+            if value is None or float(value) <= 0:
+                return
+            # Only mirror intervals.icu-sourced max_hr. Manual rows go through
+            # save_athlete directly with source="manual" already.
+            if source != "intervals.icu":
+                return
+            pm._set_max_hr(int(float(value)), "icu")
+    except SyncAborted as e:
+        log.info("max_hr mirror skipped: %s", e)
     except Exception as e:
         log.warning("refresh_max_hr_from_metrics failed: %s", e)
 
 
-def _refresh_hr_from_activities() -> None:
+def _refresh_hr_from_activities(snapshot=None) -> None:
     """v2.5.0 W3: mirror LTHR + max_hr from the newest synced ICU activity.
+
+    AC1: read+write run inside the sync write gate targeting ``snapshot``
+    (default: fresh snapshot for direct callers). A mid-sync profile switch
+    or purge skips the mirror (SyncAborted, INFO) — the alice/bob repro's
+    R2 defect was exactly this mirror stamping A's LTHR into B's profile.
 
     ICU activity payloads carry the athlete-level fields `lthr` and
     `athlete_max_hr` (live-verified 177/195, ACTIVITY:READ scope). The
@@ -471,81 +612,91 @@ def _refresh_hr_from_activities() -> None:
       * unchanged values are skipped (idempotent — no churn writes, no
         daily lthr_source_date advance). One INFO line on change.
     """
+    if snapshot is None:
+        snapshot = snapshot_sync_identity()
     try:
-        from profile_manager import ProfileManager
-        pm = ProfileManager.get()
-        db = get_db()
-        # Newest first (idx_activities_date); ICU echoes the athlete-level
-        # HR fields on every activity, the LIMIT just bounds the scan when
-        # recent payloads carry no plausible values at all.
-        rows = db.execute(
-            "SELECT json_extract(raw_json, '$.lthr'),"
-            "       json_extract(raw_json, '$.athlete_max_hr')"
-            " FROM activities ORDER BY date DESC, id DESC LIMIT 20"
-        ).fetchall()
-        lthr = next((int(r[0]) for r in rows
-                     if isinstance(r[0], (int, float)) and 100 <= r[0] <= 220),
-                    None)
-        max_hr = next((int(r[1]) for r in rows
-                       if isinstance(r[1], (int, float)) and 140 <= r[1] <= 220),
-                      None)
-        if lthr is None and max_hr is None:
-            return
+        with sync_write_gate(snapshot):
+            from profile_manager import ProfileManager
+            pm = ProfileManager.get()
+            db = get_db()
+            # Newest first (idx_activities_date); ICU echoes the athlete-level
+            # HR fields on every activity, the LIMIT just bounds the scan when
+            # recent payloads carry no plausible values at all.
+            rows = db.execute(
+                "SELECT json_extract(raw_json, '$.lthr'),"
+                "       json_extract(raw_json, '$.athlete_max_hr')"
+                " FROM activities ORDER BY date DESC, id DESC LIMIT 20"
+            ).fetchall()
+            lthr = next((int(r[0]) for r in rows
+                         if isinstance(r[0], (int, float)) and 100 <= r[0] <= 220),
+                        None)
+            max_hr = next((int(r[1]) for r in rows
+                           if isinstance(r[1], (int, float)) and 140 <= r[1] <= 220),
+                          None)
+            if lthr is None and max_hr is None:
+                return
 
-        # Raw dict reads (not the properties): pm.lthr defaults to 170, which
-        # would mask an unset key and skip the first-ever mirror.
-        cur_lthr = pm._athlete.get("lthr")
-        cur_max = pm._athlete.get("max_hr")
-        write_lthr = (
-            lthr is not None
-            and str(pm._athlete.get("lthr_source", "") or "") != "manual"
-            and lthr != cur_lthr
-        )
-        write_max = (
-            max_hr is not None
-            and str(pm._athlete.get("max_hr_source", "") or "") != "manual"
-            and max_hr != cur_max
-        )
-        if not (write_lthr or write_max):
-            return
-
-        # Post-write invariant: max_hr > lthr (target_mode's hr gate). Only
-        # checkable when both sides exist; a missing side means there is no
-        # pair to violate and hr mode is separately gated by lthr_is_set.
-        final_lthr = lthr if write_lthr else cur_lthr
-        final_max = max_hr if write_max else cur_max
-        if final_lthr is not None and final_max is not None \
-                and float(final_max) <= float(final_lthr):
-            log.warning(
-                "hr mirror skipped: max_hr=%s <= lthr=%s would break the "
-                "hr-mode invariant (activity payload lthr=%s athlete_max_hr=%s)",
-                final_max, final_lthr, lthr, max_hr,
+            # Raw dict reads (not the properties): pm.lthr defaults to 170, which
+            # would mask an unset key and skip the first-ever mirror.
+            cur_lthr = pm._athlete.get("lthr")
+            cur_max = pm._athlete.get("max_hr")
+            write_lthr = (
+                lthr is not None
+                and str(pm._athlete.get("lthr_source", "") or "") != "manual"
+                and lthr != cur_lthr
             )
-            return
+            write_max = (
+                max_hr is not None
+                and str(pm._athlete.get("max_hr_source", "") or "") != "manual"
+                and max_hr != cur_max
+            )
+            if not (write_lthr or write_max):
+                return
 
-        changed = []
-        if write_lthr:
-            # save_athlete validates [100, 220] and writes atomically; the
-            # icu + date stamp rides along (W2d provenance hint reads it).
-            pm.save_athlete({
-                "lthr": lthr,
-                "lthr_source": "icu",
-                "lthr_source_date": date.today().isoformat(),
-            })
-            changed.append(f"lthr={lthr}")
-        if write_max:
-            pm._set_max_hr(max_hr, "icu")
-            changed.append(f"max_hr={max_hr}")
-        log.info("EVENT=hr_mirror_from_activity %s source=icu", " ".join(changed))
+            # Post-write invariant: max_hr > lthr (target_mode's hr gate). Only
+            # checkable when both sides exist; a missing side means there is no
+            # pair to violate and hr mode is separately gated by lthr_is_set.
+            final_lthr = lthr if write_lthr else cur_lthr
+            final_max = max_hr if write_max else cur_max
+            if final_lthr is not None and final_max is not None \
+                    and float(final_max) <= float(final_lthr):
+                log.warning(
+                    "hr mirror skipped: max_hr=%s <= lthr=%s would break the "
+                    "hr-mode invariant (activity payload lthr=%s athlete_max_hr=%s)",
+                    final_max, final_lthr, lthr, max_hr,
+                )
+                return
+
+            changed = []
+            if write_lthr:
+                # save_athlete validates [100, 220] and writes atomically; the
+                # icu + date stamp rides along (W2d provenance hint reads it).
+                pm.save_athlete({
+                    "lthr": lthr,
+                    "lthr_source": "icu",
+                    "lthr_source_date": date.today().isoformat(),
+                })
+                changed.append(f"lthr={lthr}")
+            if write_max:
+                pm._set_max_hr(max_hr, "icu")
+                changed.append(f"max_hr={max_hr}")
+            log.info("EVENT=hr_mirror_from_activity %s source=icu", " ".join(changed))
+    except SyncAborted as e:
+        log.info("hr mirror skipped: %s", e)
     except Exception as e:
         log.warning("refresh_hr_from_activities failed: %s", e)
 
 
-def sync_activities(days: int = 90) -> int:
+def sync_activities(days: int = 90, _snapshot=None) -> int:
     """Fetch activities from Intervals.icu and upsert into SQLite. Returns count.
 
     Transactional: if any row fails mid-loop, the entire batch is rolled back.
+
+    AC1: fetch OUTSIDE any lock; the post-fetch write section holds the sync
+    write gate against ``_snapshot`` (raises SyncAborted when the identity
+    moved) — see sync_wellness().
     """
+    snapshot = _snapshot if _snapshot is not None else snapshot_sync_identity()
     try:
         data = fetch_activities(days=days)
     except Exception as e:
@@ -554,56 +705,58 @@ def sync_activities(days: int = 90) -> int:
     if not data:
         return 0
 
-    db = get_db()
     count = 0
-    try:
-        for a in data:
-            aid = a.get("id", a.get("start_date_local", ""))
-            dt = a.get("start_date_local", "")[:10]
-            if not aid:
-                continue
-            # Widened projection — real columns (not just raw_json) for fast filtering.
-            distance_m = a.get("distance")
-            distance_km = None
-            if distance_m is not None:
-                try:
-                    distance_km = float(distance_m) / 1000.0
-                except (TypeError, ValueError):
-                    distance_km = None
-            kilojoules = a.get("kilojoules")
-            calories = a.get("calories")
-            elevation_gain = a.get("total_elevation_gain")
-            db.execute(
-                """INSERT OR REPLACE INTO activities
-                   (id, date, name, sport, duration_sec, tss, avg_power, avg_hr,
-                    distance_km, kilojoules, calories, elevation_gain, raw_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    str(aid),
-                    dt,
-                    a.get("name"),
-                    a.get("sport_type", a.get("type", "")),
-                    a.get("moving_time") or a.get("elapsed_time"),
-                    a.get("icu_training_load") or a.get("training_load"),
-                    a.get("average_watts"),
-                    a.get("average_heartrate"),
-                    distance_km,
-                    kilojoules,
-                    calories,
-                    elevation_gain,
-                    json.dumps(a),
-                ),
-            )
-            count += 1
-    except Exception:
-        db.rollback()
-        raise
-    db.commit()
+    with sync_write_gate(snapshot):
+        db = get_db()
+        try:
+            for a in data:
+                aid = a.get("id", a.get("start_date_local", ""))
+                dt = a.get("start_date_local", "")[:10]
+                if not aid:
+                    continue
+                # Widened projection — real columns (not just raw_json) for fast filtering.
+                distance_m = a.get("distance")
+                distance_km = None
+                if distance_m is not None:
+                    try:
+                        distance_km = float(distance_m) / 1000.0
+                    except (TypeError, ValueError):
+                        distance_km = None
+                kilojoules = a.get("kilojoules")
+                calories = a.get("calories")
+                elevation_gain = a.get("total_elevation_gain")
+                db.execute(
+                    """INSERT OR REPLACE INTO activities
+                       (id, date, name, sport, duration_sec, tss, avg_power, avg_hr,
+                        distance_km, kilojoules, calories, elevation_gain, raw_json)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        str(aid),
+                        dt,
+                        a.get("name"),
+                        a.get("sport_type", a.get("type", "")),
+                        a.get("moving_time") or a.get("elapsed_time"),
+                        a.get("icu_training_load") or a.get("training_load"),
+                        a.get("average_watts"),
+                        a.get("average_heartrate"),
+                        distance_km,
+                        kilojoules,
+                        calories,
+                        elevation_gain,
+                        json.dumps(a),
+                    ),
+                )
+                count += 1
+        except Exception:
+            db.rollback()
+            raise
+        db.commit()
 
     # v2.5.0 W3: mirror the athlete-level lthr / athlete_max_hr carried on
     # every ICU activity payload into the active profile — same post-batch
     # pattern as the _refresh_* calls at the end of sync_wellness().
-    _refresh_hr_from_activities()
+    # AC1: gated against the same snapshot (its own short write section).
+    _refresh_hr_from_activities(snapshot)
 
     return count
 
@@ -614,6 +767,12 @@ def run_sync(days: int = 90) -> dict:
     Wraps sync_wellness() + sync_activities() in a single logical transaction:
     either both succeed (single sync_log row, status=ok) or both roll back
     (sync_log row recorded with status=error and exception message).
+
+    AC1: snapshots the owning (profile_id, DB_PATH, epoch) at ENTRY; every
+    write section (wellness batch, activities batch, mirrors, the sync_log
+    row) re-asserts it under the write gate. A mid-pass profile switch /
+    purge raises SyncAborted (benign — the pass is abandoned; nothing was
+    written to the wrong profile).
     """
     import config
     log.info("EVENT=sync_start days=%s", days)
@@ -624,40 +783,44 @@ def run_sync(days: int = 90) -> dict:
         log.info("EVENT=sync_skipped reason=no_athlete_id oauth_token=%s", has_token)
         return {"timestamp": datetime.now().isoformat(), "wellness": 0,
                 "activities": 0, "status": "skipped", "error": "No ICU credentials"}
-    db = get_db()
+    snapshot = snapshot_sync_identity()
     ts = datetime.now().isoformat()
     w_count = a_count = 0
     error = None
     status = "ok"
     sync_exc: Exception | None = None
     try:
-        w_count = sync_wellness(days)
-        a_count = sync_activities(days)
+        w_count = sync_wellness(days, _snapshot=snapshot)
+        a_count = sync_activities(days, _snapshot=snapshot)
+    except SyncAborted as e:
+        # Identity changed mid-pass (switch/purge). Do NOT write sync_log —
+        # it would need the gate and target the departed profile anyway.
+        log.info("EVENT=sync_aborted days=%s reason=%s", days, e)
+        raise
     except Exception as e:
-        # Each sync_* already rolled back its own partial batch; roll back
-        # anything else still open on this connection before writing sync_log.
-        try:
-            db.rollback()
-        except Exception:
-            pass
+        # Each sync_* already rolled back its own partial batch inside its
+        # gated section; a fetch-level failure leaves no open transaction.
         error = str(e)
         status = "error"
         sync_exc = e
         log.error("Sync error: %s", e)
 
-    # sync_log write happens regardless of outcome, in its own transaction.
+    # sync_log write happens regardless of outcome, in its own gated
+    # transaction (it's a write section too — db:650-654 in the grill).
     try:
-        db.execute(
-            "INSERT INTO sync_log (timestamp, wellness_synced, activity_synced, status, error) VALUES (?, ?, ?, ?, ?)",
-            (ts, w_count, a_count, status, error),
-        )
-        db.commit()
+        with sync_write_gate(snapshot):
+            db = get_db()
+            db.execute(
+                "INSERT INTO sync_log (timestamp, wellness_synced, activity_synced, status, error) VALUES (?, ?, ?, ?, ?)",
+                (ts, w_count, a_count, status, error),
+            )
+            db.commit()
+    except SyncAborted as e:
+        # Data batches landed on the right profile before the switch; only
+        # the log row is skipped.
+        log.info("EVENT=sync_log_skipped reason=%s", e)
     except Exception as log_exc:
         log.error("Failed to write sync_log: %s", log_exc)
-        try:
-            db.rollback()
-        except Exception:
-            pass
 
     if sync_exc is not None:
         # Re-raise so callers / background loop can react (e.g. backoff on 401).
@@ -923,6 +1086,13 @@ def _sync_loop(interval_sec: int = 1800):
             _last_sync_error = str(e)
             log.info("Background sync skipped: %s", e)
             sleep_for = interval_sec
+        except SyncAborted as e:
+            # AC1: a profile switch / purge landed mid-pass. Not a failure —
+            # the stop event is normally set too, so the while-condition
+            # exits and restart_sync spawns a fresh thread for the new
+            # profile; a pure epoch bump (purge) just waits for next tick.
+            log.info("Background sync pass aborted: %s", e)
+            sleep_for = interval_sec
         except Exception as e:
             _consecutive_failures += 1
             _last_sync_error = str(e)
@@ -947,6 +1117,33 @@ def _sync_loop(interval_sec: int = 1800):
 def stop_sync() -> None:
     """Signal the sync thread to stop."""
     _sync_stop.set()
+
+
+def shutdown_sync(timeout: float = 5.0) -> bool:
+    """Stop the sync thread AND reset the stop event (AC6a delete-last).
+
+    Plain stop_sync() leaves the stop flag set until the next restart_sync;
+    after a delete-last there IS no restart, and a permanently-set flag
+    would make every future write gate abort (including in an unrelated
+    later profile session in the same process). This joins the thread
+    bounded, then swaps in a fresh unset Event — safe because the old
+    thread is confirmed dead (or we keep the set flag and report False).
+    """
+    global _sync_thread, _sync_stop
+    with _sync_lock:
+        _sync_stop.set()
+        t = _sync_thread
+        if t is not None:
+            t.join(timeout=timeout)
+            if t.is_alive():
+                log.error(
+                    "shutdown_sync: thread still alive after %.1fs join — "
+                    "keeping stop flag set (write gates will abort)", timeout
+                )
+                return False
+        _sync_thread = None
+        _sync_stop = threading.Event()
+        return True
 
 
 def restart_sync() -> None:
@@ -990,3 +1187,127 @@ def start_background_sync():
         _sync_stop = threading.Event()  # fresh event to avoid stale state
         _sync_thread = threading.Thread(target=_sync_loop, daemon=True, name="sync")
         _sync_thread.start()
+
+
+# ── AC3b/A10: disconnect / athlete-change purge ─────────────────────────────
+
+# Athlete.json mirror fields that ICU sync writes: (value_key, source_key,
+# extra keys removed alongside). Only entries whose source is exactly "icu"
+# are reset — manual values always survive a purge.
+_ICU_MIRROR_FIELDS = (
+    ("wprime_j", "wprime_source", ()),
+    ("pmax_w", "pmax_source", ()),
+    ("max_hr", "max_hr_source", ()),
+    ("lthr", "lthr_source", ("lthr_source_date",)),
+)
+
+
+def purge_profile_data(profile_id: str) -> dict:
+    """Wipe ICU-synced data for ``profile_id`` (disconnect / different-athlete
+    reconnect — contract A4).
+
+    Deletes every row in activities / wellness / sync_log, plus the
+    intervals.icu-sourced athlete_metrics rows (vo2max/eftp/w_prime/pmax/
+    max_hr auto-logs — residual rows from the first athlete otherwise
+    resurface through the mirrors). Wipes the profile's ICU-derived ARCHIVES
+    too (<profile>/rides/icu/ incl. .last_sync_at, <profile>/wellness/) —
+    contract A4 "no residual rows in DB or archives". Loose FIT imports and
+    ride summaries are USER data and survive. Resets the icu-sourced
+    athlete.json mirrors (lthr / max_hr / wprime / pmax where
+    *_source == "icu") so the profile's numbers fall back to defaults until
+    the next athlete syncs. Manual values are never touched.
+
+    A10: holds the sync write gate for the whole wipe and bumps the sync
+    epoch, so an in-flight pass that FETCHED before the purge fails its
+    snapshot check at the next write section — zero post-purge stale rows.
+
+    Raises SyncBusy when the gate can't be acquired within ~10s (caller
+    surfaces 503 and retries; never proceeds unlocked). Returns per-table
+    deleted-row counts for the caller's response payload.
+    """
+    global _sync_epoch
+    from profile_manager import ProfileManager, _safe_profile_dir
+    pm = ProfileManager.get()
+    profile_dir = _safe_profile_dir(pm, profile_id)
+
+    if not _sync_write_lock.acquire(timeout=10.0):
+        raise SyncBusy(
+            f"sync write in progress; purge of '{profile_id}' aborted — retry"
+        )
+    try:
+        # Invalidate every in-flight snapshot BEFORE wiping so a pass that
+        # already fetched can never land rows after us.
+        _sync_epoch += 1
+
+        removed = {"activities": 0, "wellness": 0, "sync_log": 0,
+                   "athlete_metrics_icu": 0, "archive_files": 0}
+
+        # ICU-derived archives (post-AC2a these live inside the profile dir).
+        # rides/icu/ is wholly ICU-synced (records + .last_sync_at); wellness/
+        # is wholly ICU-synced day records. Loose *.fit + ride summaries in
+        # rides/ are user data — untouched.
+        import shutil as _shutil
+        for _arch in (profile_dir / "rides" / "icu", profile_dir / "wellness"):
+            if _arch.is_dir():
+                try:
+                    removed["archive_files"] += sum(
+                        1 for p in _arch.iterdir() if p.is_file()
+                    )
+                    _shutil.rmtree(str(_arch))
+                except OSError as e:
+                    log.warning("purge: failed to remove %s: %s", _arch, e)
+        db_file = profile_dir / "health_tracker.db"
+        if db_file.exists():
+            is_active_db = (
+                profile_id == getattr(pm, "active_id", None)
+                and DB_PATH is not None
+                and Path(DB_PATH) == db_file
+            )
+            conn = get_db() if is_active_db else sqlite3.connect(str(db_file), timeout=10)
+            try:
+                for table in ("activities", "wellness", "sync_log"):
+                    try:
+                        cur = conn.execute(f"DELETE FROM {table}")  # noqa: S608 — fixed names
+                        removed[table] = cur.rowcount if cur.rowcount >= 0 else 0
+                    except sqlite3.OperationalError:
+                        pass  # table absent in a legacy/partial DB
+                try:
+                    cur = conn.execute(
+                        "DELETE FROM athlete_metrics WHERE source = 'intervals.icu'"
+                    )
+                    removed["athlete_metrics_icu"] = (
+                        cur.rowcount if cur.rowcount >= 0 else 0
+                    )
+                except sqlite3.OperationalError:
+                    pass
+                conn.commit()
+            finally:
+                if not is_active_db:
+                    conn.close()
+
+        # Reset icu-sourced athlete.json mirrors. Active profile: through the
+        # in-memory dict (kept coherent); other profiles: edit the file.
+        athlete_path = profile_dir / "athlete.json"
+        if profile_id == getattr(pm, "active_id", None):
+            athlete = pm._athlete
+        else:
+            try:
+                athlete = json.loads(athlete_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, ValueError):
+                athlete = None
+        if isinstance(athlete, dict):
+            changed = False
+            for value_key, source_key, extras in _ICU_MIRROR_FIELDS:
+                if str(athlete.get(source_key, "") or "") == "icu":
+                    athlete.pop(value_key, None)
+                    athlete.pop(source_key, None)
+                    for k in extras:
+                        athlete.pop(k, None)
+                    changed = True
+            if changed:
+                pm._write_json(athlete_path, athlete)
+
+        log.info("EVENT=profile_purged profile=%s removed=%s", profile_id, removed)
+        return removed
+    finally:
+        _sync_write_lock.release()

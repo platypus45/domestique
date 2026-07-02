@@ -80,9 +80,15 @@ def _backfill_lock_path() -> Path:
 
 
 def _icu_rides_dir() -> Path:
-    base = Path.home() / ".domestique" / "rides" / "icu"
-    base.mkdir(parents=True, exist_ok=True)
-    return base
+    """v3.0.0 AC2a: delegates to ride_storage._icu_rides_dir — the ONE
+    resolver for the (now per-profile) ICU archive. This module previously
+    duplicated the global ``~/.domestique/rides/icu`` path; post-migration
+    that dir is empty and reading it here would blank every power curve.
+    Kept as a module-level function so tests can still monkey-patch
+    ``power_curve._icu_rides_dir`` independently. Raises RuntimeError when
+    no profile is active (AC6a)."""
+    from ride_storage import _icu_rides_dir as _rs_icu_rides_dir
+    return _rs_icu_rides_dir()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -130,7 +136,11 @@ def _load_cached_rides() -> list[dict]:
     window filters.
     """
     out: list[dict] = []
-    for f in sorted(_icu_rides_dir().glob("*.json")):
+    try:
+        files = sorted(_icu_rides_dir().glob("*.json"))
+    except RuntimeError:
+        return out  # AC6a: no active profile — empty curve, nothing created
+    for f in files:
         # Skip dotfiles like .last_sync_at — they're not ride records.
         if f.name.startswith("."):
             continue
@@ -152,8 +162,12 @@ def _filter_rides_by_window(rides: list[dict], window_days: int) -> list[dict]:
     return [r for r in rides if _ride_started_iso_date(r) >= cutoff]
 
 
-def _profile_ftp_weight(profile_id: str = "default") -> tuple[int, float]:
-    """Best-effort current FTP + weight for the active profile."""
+def _profile_ftp_weight(profile_id: "str | None" = None) -> tuple[int, float]:
+    """Best-effort current FTP + weight for the ACTIVE profile.
+
+    AC2a (grill): the old ``profile_id="default"`` default was a lie — the
+    body always resolved the active ProfileManager. The parameter is kept as
+    a label for call-site symmetry only; ``None`` means "active profile"."""
     try:
         from profile_manager import ProfileManager
         pm = ProfileManager.get()
@@ -240,7 +254,7 @@ def is_sensor_glitch(effort: dict, ride: dict, profile: dict) -> bool:
 # AGGREGATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-def aggregate_power_curve(profile_id: str = "default",
+def aggregate_power_curve(profile_id: "str | None" = None,
                            window_days: int = 90) -> dict:
     """Aggregate the rider's mean-max curve across every cached ride in window.
 
@@ -673,7 +687,7 @@ def release_backfill_lock() -> None:
         pass
 
 
-def backfill_icu_history(profile_id: str = "default",
+def backfill_icu_history(profile_id: "str | None" = None,
                           max_per_second: int = 1,
                           _skip_lock: bool = False,
                           progress_cb=None) -> dict:
@@ -826,7 +840,7 @@ def backfill_icu_history(profile_id: str = "default",
     }
 
 
-def latest_ride_id_in_window(profile_id: str = "default",
+def latest_ride_id_in_window(profile_id: "str | None" = None,
                               window_days: int = 90) -> str:
     """Return the ride_id of the most recent ride within the window.
 
@@ -1020,7 +1034,7 @@ def _fr_per_ride_peaks(power_w: list[int],
     return out
 
 
-def compute_fatigue_resistance(profile_id: str = "default",
+def compute_fatigue_resistance(profile_id: "str | None" = None,
                                 window_days: int = 365,
                                 kj_threshold: int = 1500) -> dict:
     """Pinot 2014 robustness index — peak power on tired vs fresh legs.

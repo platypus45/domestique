@@ -89,41 +89,32 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,156,247
     <div class="status" id="step1-status"></div>
     <div class="actions">
       <a href="/" class="skip-link">Cancel</a>
-      <button type="button" class="btn btn-primary" onclick="createProfile()" id="create-btn">Next</button>
+      <!-- AC4b: purely local — the profile is created server-side only at the
+           final "Create profile" step, so cancelling never leaves a phantom. -->
+      <button type="button" class="btn btn-primary" onclick="stepOneNext()" id="create-btn">Next</button>
     </div>
   </div>
 
-  <!-- STEP 2: Intervals.icu -->
+  <!-- STEP 2: Athlete Numbers (AC4b: collected locally — NOTHING is created
+       server-side until Finish, so abandoning here leaves no phantom profile) -->
   <div class="step-panel" id="step-2">
-    <h2>Connect Intervals.icu</h2>
-    <p class="info">
-      Syncs your training data (CTL, ATL, TSB, HRV). You'll need a free
-      <a href="https://intervals.icu/" target="_blank" rel="noopener noreferrer" class="help-link">intervals.icu</a>
-      account — sign in there with Garmin or Strava (no new password).
-    </p>
-    <div class="info" style="background:rgba(59,130,246,0.08);border:1px solid #3b82f6;border-radius:8px;padding:10px 12px;margin:8px 0;">
-      Click <b>Sign in to intervals.icu</b> — it opens in your browser, you log in and approve
-      once, and we link <b>that account</b> to this profile. Do it now, or skip and connect later
-      in <b>Settings</b>.
-    </div>
-    <!-- Link status: shows "✓ Linked as <name>" after a successful OAuth round-trip,
-         or an error + retry. Populated by refreshLinkStatus() on return. -->
-    <div id="link-status" style="font-size:13px;margin:8px 0;min-height:18px;"></div>
-    <div class="status" id="step2-status"></div>
-    <div class="actions">
-      <button type="button" class="btn btn-primary" id="connect-icu-btn" onclick="connectIcu()">Sign in to intervals.icu</button>
-      <button type="button" class="skip-link" id="step2-continue" onclick="goStep(3)">Skip for now →</button>
-    </div>
-  </div>
-
-  <!-- STEP 3: Athlete Numbers -->
-  <div class="step-panel" id="step-3">
     <h2>Athlete Numbers</h2>
-    <p class="info">Set your current fitness values. You can update these anytime in Settings.</p>
+    <p class="info">Set your current fitness values. You can update these anytime in Settings — fields you leave untouched simply aren't written.</p>
+
+    <!-- AC5e (D9): target-mode question — hr requires the LTHR field filled. -->
+    <div class="form-row">
+      <label>How do you train?</label>
+      <div style="display:flex;gap:8px;">
+        <button type="button" class="btn btn-secondary" id="tm-power" style="border-color:var(--accent);" onclick="setTargetMode('power', true)">Power meter</button>
+        <button type="button" class="btn btn-secondary" id="tm-hr" onclick="setTargetMode('hr', true)">Heart rate only</button>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px;">Heart-rate mode prescribes workout targets from your LTHR — the LTHR field below is required.</div>
+    </div>
+
     <div class="form-row-pair">
       <div class="form-row">
         <label>FTP (watts)</label>
-        <input type="number" id="ftp" value="200" min="50" max="500">
+        <input type="number" id="ftp" value="200" min="50" max="600">
       </div>
       <div class="form-row">
         <label>Weight (kg)</label>
@@ -137,7 +128,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,156,247
       </div>
       <div class="form-row">
         <label>Max HR (bpm)</label>
-        <input type="number" id="max-hr" value="190" min="120" max="230">
+        <input type="number" id="max-hr" value="190" min="140" max="220">
       </div>
     </div>
     <div class="form-row-pair">
@@ -172,10 +163,35 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,156,247
         </label>
       </details>
     </div>
+    <div class="status" id="numbers-status"></div>
+    <div class="actions">
+      <button type="button" class="btn btn-secondary" onclick="goStep(1)">Back</button>
+      <button type="button" class="btn btn-primary" onclick="doFinish()" id="save-athlete-btn">Create profile</button>
+    </div>
+  </div>
+
+  <!-- STEP 3: Connect intervals.icu — AFTER the profile exists and is active,
+       so the OAuth state binds to the NEW profile (AC3a), and abandoning the
+       earlier steps never leaves a phantom profile (AC4b). -->
+  <div class="step-panel" id="step-3">
+    <h2>Connect Intervals.icu</h2>
+    <p class="info">
+      Profile created ✓ — optionally link an
+      <a href="https://intervals.icu/" target="_blank" rel="noopener noreferrer" class="help-link">intervals.icu</a>
+      account to sync training data (CTL, ATL, TSB, HRV). You can also do this
+      later in <b>Settings</b>.
+    </p>
+    <div class="info" style="background:rgba(59,130,246,0.08);border:1px solid #3b82f6;border-radius:8px;padding:10px 12px;margin:8px 0;">
+      Click <b>Sign in to intervals.icu</b> — it opens in your browser, you log in and approve
+      once, and we link <b>that account</b> to this profile.
+    </div>
+    <!-- Link status: shows "✓ Linked as <name>" after a successful OAuth round-trip,
+         or an error + retry. Populated by refreshLinkStatus() on return. -->
+    <div id="link-status" style="font-size:13px;margin:8px 0;min-height:18px;"></div>
     <div class="status" id="step3-status"></div>
     <div class="actions">
-      <span></span>
-      <button type="button" class="btn btn-primary" onclick="saveAthlete()" id="save-athlete-btn">Finish</button>
+      <button type="button" class="btn btn-primary" id="connect-icu-btn" onclick="connectIcu()">Sign in to intervals.icu</button>
+      <a href="/" class="skip-link" id="step3-done">Go to dashboard →</a>
     </div>
   </div>
 </div>
@@ -183,7 +199,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,156,247
 <script>
 const COLORS = ['#3b82f6','#22c55e','#f97316','#a855f7','#ef4444','#eab308','#06b6d4','#ec4899'];
 let selectedColor = COLORS[0];
-let createdId = null;
+let createdId = null;     // set ONLY by doFinish — AC4b: creation is deferred
 let currentStep = 1;
 
 // Render color swatches
@@ -202,6 +218,47 @@ let currentStep = 1;
   });
 })();
 
+// ── AC5e: touched-field tracking — untouched fields are OMITTED from the save
+// payload (no fabricated provenance, no fake FTP-test ledger rows).
+const _touched = new Set();
+['ftp','weight','lthr','max-hr','age','cp','wprime'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', () => _touched.add(id));
+});
+(function() {
+  const el = document.getElementById('sex');
+  if (el) el.addEventListener('change', () => _touched.add('sex'));
+})();
+
+// AC5e (D9): target-mode question — only an explicit click writes target_mode.
+let _targetMode = 'power';
+let _targetModeTouched = false;
+function setTargetMode(mode, touched) {
+  _targetMode = mode;
+  if (touched) _targetModeTouched = true;
+  const p = document.getElementById('tm-power'), h = document.getElementById('tm-hr');
+  if (p) p.style.borderColor = (mode === 'power') ? 'var(--accent)' : 'var(--border)';
+  if (h) h.style.borderColor = (mode === 'hr') ? 'var(--accent)' : 'var(--border)';
+}
+
+// ── AC5d: ONE range table — min/max come from /api/setup/limits (the table
+// /api/setup/save validates against); the static attributes match it and are
+// only the offline fallback.
+async function applyServerLimits() {
+  try {
+    const lim = await (await fetch('/api/setup/limits')).json();
+    const map = { ftp: 'ftp', weight: 'weight', lthr: 'lthr', max_hr: 'max-hr',
+                  age: 'age', cp: 'cp', wprime_j: 'wprime' };
+    for (const field in map) {
+      const el = document.getElementById(map[field]);
+      if (el && Array.isArray(lim[field]) && lim[field].length === 2) {
+        el.min = lim[field][0]; el.max = lim[field][1];
+      }
+    }
+  } catch (_) {}
+}
+applyServerLimits();
+
 // On load: if we're returning from the intervals.icu OAuth round-trip, resume
 // the wizard at the link step (the page reloaded, so JS state was lost) and
 // render the linked-account status. goStep / refreshLinkStatus are hoisted.
@@ -210,8 +267,10 @@ let currentStep = 1;
   try { saved = JSON.parse(sessionStorage.getItem('ps_wizard') || 'null'); } catch (_) {}
   const icu = new URLSearchParams(location.search).get('icu');
   if (saved && saved.createdId) {
+    // ps_wizard is stashed only AFTER a successful finish — the profile
+    // exists and is active, so landing on the connect step is correct.
     createdId = saved.createdId;
-    goStep(saved.step || 2);
+    goStep(3);
   }
   if (icu) {
     try { sessionStorage.removeItem('ps_wizard'); } catch (_) {}
@@ -229,31 +288,6 @@ function goStep(n) {
     if (i < n - 1) d.classList.add('done');
     else if (i === n - 1) d.classList.add('active');
   });
-  // Entering Athlete Numbers: pull FTP/weight/LTHR/maxHR from intervals.icu when
-  // linked (prefill, still editable). Also refreshes the zone preview.
-  if (n === 3) { try { maybePrefillAthleteFromIcu(); } catch (_) {} }
-}
-
-let _icuPrefilled = false;
-async function maybePrefillAthleteFromIcu() {
-  if (_icuPrefilled) return;
-  try {
-    const c = await (await fetch('/api/icu/connection')).json();
-    if (!c || !c.connected) return;
-    const a = await (await fetch('/api/icu/athlete-numbers')).json();
-    if (!a || !a.ok) return;
-    const set = (id, v) => {
-      if (v != null && v !== '') { const el = document.getElementById(id); if (el) el.value = v; }
-    };
-    set('ftp', a.ftp); set('weight', a.weight); set('lthr', a.lthr); set('max-hr', a.max_hr);
-    _icuPrefilled = true;
-    const st = document.getElementById('step3-status');
-    if (st && (a.ftp || a.weight || a.lthr || a.max_hr)) {
-      st.textContent = 'Prefilled from intervals.icu — edit anything that looks off.';
-      st.className = 'status ok';
-    }
-    if (typeof renderZonePreview === 'function') renderZonePreview();
-  } catch (_) {}
 }
 
 function showStatus(id, msg, ok) {
@@ -262,53 +296,115 @@ function showStatus(id, msg, ok) {
   el.className = 'status ' + (ok ? 'ok' : 'err');
 }
 
-let _creatingProfile = false;
-async function createProfile() {
-  if (_creatingProfile) return;
+function stepOneNext() {
   const name = document.getElementById('profile-name').value.trim();
   if (!name) { showStatus('step1-status', 'Please enter a name.', false); return; }
-  const btn = document.getElementById('create-btn');
-  _creatingProfile = true;
-  if (btn) { btn.disabled = true; }
+  goStep(2);
+}
+
+// ── AC4b: ONE server interaction, at the END ────────────────────────────────
+// create → activate (switch response CHECKED — a silent switch failure used to
+// leave later writes bound to the WRONG profile) → save the touched fields.
+// Abandoning any earlier step leaves no phantom profile and no partial
+// athlete.json. A retry after a failed switch/save re-uses createdId, so no
+// duplicate profiles either.
+let _finishing = false;
+async function doFinish() {
+  if (_finishing) return;
+  const name = document.getElementById('profile-name').value.trim();
+  if (!name) { showStatus('step1-status', 'Please enter a name.', false); goStep(1); return; }
+
+  // AC5e client gate: hr mode needs an LTHR the user actually filled in.
+  if (_targetModeTouched && _targetMode === 'hr' && !_touched.has('lthr')) {
+    showStatus('numbers-status', 'Heart-rate mode needs your LTHR — fill in the LTHR field.', false);
+    return;
+  }
+
+  const btn = document.getElementById('save-athlete-btn');
+  _finishing = true;
+  if (btn) btn.disabled = true;
   try {
-    const res = await fetch('/api/profiles/create', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({name, color: selectedColor})
-    });
-    let data;
-    try { data = await res.json(); } catch (e) { data = {}; }
-    if (!res.ok) { showStatus('step1-status', data.error || 'Failed to create profile.', false); return; }
-    createdId = data.id;
-    // Switch to the new profile immediately
-    await fetch('/api/profiles/switch', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+    // 1. Create (once — retries after a later failure skip this).
+    let warning = null;
+    if (!createdId) {
+      const res = await fetch('/api/profiles/create', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, color: selectedColor})
+      });
+      let data; try { data = await res.json(); } catch (e) { data = {}; }
+      if (!res.ok || !data.id) {
+        showStatus('numbers-status', data.error || 'Failed to create profile.', false);
+        return;
+      }
+      createdId = data.id;
+      warning = data.warning || null;  // AC6b: duplicate display-name warning
+    }
+    // 2. Activate — CHECK the response.
+    const swRes = await fetch('/api/profiles/switch', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({id: createdId})
     });
-    goStep(2);
+    let swData; try { swData = await swRes.json(); } catch (e) { swData = {}; }
+    if (!swRes.ok || swData.active !== createdId) {
+      showStatus('numbers-status',
+        'Could not activate the new profile' +
+        (swData && swData.error ? ' — ' + swData.error : '') + '. Try again.', false);
+      return;
+    }
+    // 3. Save the touched fields through the wizard save path (server
+    //    validates against the same range table and returns a `detail`).
+    const payload = {};
+    const numMap = { ftp: 'ftp', weight: 'weight', lthr: 'lthr', 'max-hr': 'max_hr' };
+    for (const id in numMap) {
+      if (_touched.has(id)) {
+        const v = parseFloat(document.getElementById(id).value);
+        if (!isNaN(v)) payload[numMap[id]] = v;
+      }
+    }
+    if (_targetModeTouched) payload.target_mode = _targetMode;
+    if (_touched.has('age')) {
+      const v = parseInt(document.getElementById('age').value, 10);
+      if (!isNaN(v)) payload.age = v;
+    }
+    if (_touched.has('cp')) {
+      const v = parseInt(document.getElementById('cp').value, 10);
+      if (!isNaN(v)) payload.cp = v;
+    }
+    if (_touched.has('wprime')) {
+      const v = parseInt(document.getElementById('wprime').value, 10);
+      if (!isNaN(v)) payload.wprime_j = v;
+    }
+    if (_touched.has('sex')) payload.sex = document.getElementById('sex').value;
+
+    const sRes = await fetch('/api/setup/save', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    let sData; try { sData = await sRes.json(); } catch (e) { sData = null; }
+    if (!sRes.ok) {
+      // AC5d: show the server's validation detail, keep the wizard here so the
+      // user can fix the value and retry (profile already exists + is active).
+      showStatus('numbers-status',
+        (sData && (sData.detail || sData.error)) || ('Save failed: HTTP ' + sRes.status), false);
+      return;
+    }
+    goStep(3);
+    if (warning) showStatus('step3-status', warning, true);
   } finally {
-    _creatingProfile = false;
-    if (btn) { btn.disabled = false; }
+    _finishing = false;
+    if (btn) btn.disabled = false;
   }
 }
 
-let _savingIcu = false;
-async function saveIcu() {
-  // Manual API-key entry removed — connect via Settings → "Connect intervals.icu"
-  // after setup (OAuth attaches to the active profile). Safe no-op for any legacy caller.
-  goStep(3);
-}
-
-// ── Explicit, retryable intervals.icu link step ──────────────────────────
-// The new profile is already active (createProfile -> /api/profiles/switch),
-// so /oauth/icu/start binds the OAuth state to it. We stash the wizard position
-// in sessionStorage because the OAuth round-trip reloads this page; on return
-// (?icu=...) we restore step 2 and show the linked account.
+// ── Explicit, retryable intervals.icu link step (AFTER create+activate) ─────
+// The new profile is active, so /oauth/icu/start binds the OAuth state to it
+// (AC3a). We stash the wizard position in sessionStorage because the OAuth
+// round-trip reloads this page; on return (?icu=...) we restore step 3 and
+// show the linked account.
 function connectIcu() {
   try {
     sessionStorage.setItem('ps_wizard', JSON.stringify({
-      createdId: createdId, step: currentStep || 2,
+      createdId: createdId, step: 3,
     }));
   } catch (_) {}
   window.location.href = '/oauth/icu/start?return_to=' +
@@ -318,7 +414,6 @@ function connectIcu() {
 async function refreshLinkStatus(icuParam) {
   const el = document.getElementById('link-status');
   const btn = document.getElementById('connect-icu-btn');
-  const cont = document.getElementById('step2-continue');
   if (!el) return;
   if (icuParam === 'error' || icuParam === 'unavailable') {
     el.innerHTML = '<span style="color:var(--red);">Couldn’t link your account — please try again.</span>';
@@ -332,62 +427,10 @@ async function refreshLinkStatus(icuParam) {
       el.innerHTML = '✓ Linked as <b>' + (who.replace(/</g, '&lt;')) + '</b>';
       el.style.color = 'var(--green)';
       if (btn) btn.textContent = 'Re-link a different account';
-      if (cont) cont.textContent = 'Continue →';
     } else {
       el.textContent = '';
     }
   } catch (_) {}
-}
-
-let _savingAthlete = false;
-async function saveAthlete() {
-  if (_savingAthlete) return;
-  const ftp = parseInt(document.getElementById('ftp').value) || 200;
-  const weight = parseFloat(document.getElementById('weight').value) || 70;
-  const lthr = parseInt(document.getElementById('lthr').value) || 170;
-  const max_hr = parseInt(document.getElementById('max-hr').value) || 190;
-
-  // Optional new athlete fields — only include when user entered a value.
-  // For sex, send "" as "unset" (always include).
-  const extras = {};
-  const ageRaw = document.getElementById('age').value.trim();
-  if (ageRaw !== '') {
-    const ageVal = parseInt(ageRaw, 10);
-    if (!isNaN(ageVal)) extras.age = ageVal;
-  }
-  const cpRaw = document.getElementById('cp').value.trim();
-  if (cpRaw !== '') {
-    const cpVal = parseInt(cpRaw, 10);
-    if (!isNaN(cpVal)) extras.cp = cpVal;
-  }
-  const wprimeRaw = document.getElementById('wprime').value.trim();
-  if (wprimeRaw !== '') {
-    const wprimeVal = parseInt(wprimeRaw, 10);
-    if (!isNaN(wprimeVal)) extras.wprime_j = wprimeVal;
-  }
-  extras.sex = document.getElementById('sex').value;
-
-  const btn = document.getElementById('save-athlete-btn');
-  _savingAthlete = true;
-  if (btn) { btn.disabled = true; }
-  try {
-    const res = await fetch('/api/settings', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ftp, weight, lthr, max_hr, lbm: Math.round(weight * 0.8 * 10) / 10, ...extras})
-    });
-    if (!res.ok) { showStatus('step3-status', 'Failed to save settings.', false); return; }
-    // Mark setup complete for this profile
-    await fetch('/api/setup/save', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ftp, weight, lthr, max_hr, ...extras})
-    });
-    window.location.href = '/';
-  } finally {
-    _savingAthlete = false;
-    if (btn) { btn.disabled = false; }
-  }
 }
 </script>
 </body>

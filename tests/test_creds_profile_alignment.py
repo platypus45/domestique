@@ -222,8 +222,11 @@ class TestSyncSeesCredsAfterSave(_CredsProfileBase):
             self.assertEqual(r1.status_code, 200)
 
         # 2. Now sync should see creds (no_credentials → would have been the
-        #    bug). We mock fetch_recent_activities so we don't hit the real ICU.
-        with patch.object(training_module, "fetch_recent_activities", return_value=[]):
+        #    bug). Mock BOTH fetches — the wellness one was unstubbed and hit
+        #    live ICU (a 429 Retry-After sleep hung this test past the 120s
+        #    timeout; the tranche-10 hermetic-gate family).
+        with patch.object(training_module, "fetch_recent_activities", return_value=[]), \
+             patch.object(training_module, "fetch_recent_wellness", return_value=[], create=True):
             r2 = self.client.post("/api/rides/sync?force=1")
             self.assertEqual(r2.status_code, 200)
             payload = r2.json()

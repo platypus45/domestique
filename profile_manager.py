@@ -28,6 +28,7 @@ import os
 import re
 import shutil
 import threading
+import time
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +42,11 @@ _PROFILE_ID_RE = re.compile(r'^[a-z0-9][a-z0-9_-]{0,31}$')
 
 # Required athlete keys for a profile to be considered fully configured.
 _REQUIRED_ATHLETE_KEYS = ("ftp", "weight_kg")
+
+# AC1: bounded wait for db._sync_write_lock in switch(). A sync write section
+# is a short DB batch — 10s means something is wedged; we raise db.SyncBusy
+# (503) rather than mutate identity under a live writer.
+_SYNC_GATE_TIMEOUT_S = 10.0
 
 # v4.0.0-alpha trainer-rip pivot: the profile schema now contains only
 # planner/wellness/library fields. The v3 schema had device-pair list,
@@ -260,8 +266,20 @@ class ProfileManager:
     def db_path(self) -> Path:
         return self.active_dir / "health_tracker.db"
 
+    def _require_active(self) -> None:
+        """AC6a: every profile WRITER calls this first. After a delete-last
+        there is no active profile and ``active_dir`` degrades to the profiles
+        ROOT — writing there resurrects the exact orphan artifacts the live
+        install carries (profiles/health_tracker.db, profiles/rides/). Raise
+        instead so API callers surface a clean error."""
+        if self._active_id is None:
+            raise RuntimeError("no active profile")
+
     @property
     def plan_dir(self) -> Path:
+        # AC6a: the mkdir makes this a writer — without a profile it would
+        # create <profiles root>/plans (root-dir artifact resurrection).
+        self._require_active()
         d = self.active_dir / "plans"
         d.mkdir(parents=True, exist_ok=True)
         return d
@@ -357,10 +375,14 @@ class ProfileManager:
             try:
                 (profile_dir / "plans").mkdir(exist_ok=True)
 
-                # Default athlete.json
+                # Default athlete.json. AC5e/A3 (grill): lthr / max_hr are
+                # NOT seeded — a fabricated lthr:170 made lthr_is_set True on
+                # a virgin profile, opening hr target_mode with numbers the
+                # rider never entered. Absent keys keep the property
+                # fallbacks (170/190) for display while lthr_is_set stays
+                # False until the rider (or ICU) provides a real value.
                 athlete = {
                     "ftp": 200, "weight_kg": 70.0, "lbm_kg": 56.0,
-                    "lthr": 170, "max_hr": 190,
                     "hrv_baseline_mean": None, "hrv_baseline_sd": None,
                     "rhr_baseline": None,
                 }
@@ -444,8 +466,29 @@ class ProfileManager:
             # If that was the last profile, clear the active pointer so the
             # picker page knows to render the "create account" wizard.
             if is_last:
+                # AC6a: clear the REAL pointer (the old code left
+                # active_profile stale and wrote a stray "active" key that
+                # nothing reads — probe L1).
                 self._active_id = None
-                self._registry["active"] = None
+                self._registry["active_profile"] = None
+                self._registry.pop("active", None)
+                # Drop the deleted profile's data from memory (probe L2 —
+                # the old code kept serving its FTP/LTHR after delete).
+                self._load_active_profile()
+                # Detach the DB and stop sync so nothing resurrects the
+                # deleted files (probe L3: get_db() used to mkdir the dir
+                # back + create an empty DB at the stale DB_PATH).
+                try:
+                    import db as db_mod
+                    db_mod.shutdown_sync()
+                    db_mod.set_db_path(None)   # AC6a sentinel
+                    db_mod.close_all_connections()
+                except Exception as e:
+                    log.warning(f"delete-last: db detach failed: {e}")
+                # No profile → no credentials: a straggler fetch must not
+                # run with the deleted rider's identity.
+                for k in ("ICU_ATHLETE_ID", "ICU_API_KEY", "ICU_ACCESS_TOKEN"):
+                    os.environ.pop(k, None)
             self._save_registry()
 
         log.info(f"Deleted profile '{profile_id}'")
@@ -461,6 +504,27 @@ class ProfileManager:
                         p["color"] = color
                     break
             self._save_registry()
+
+    def clear_bootstrapped(self) -> None:
+        """AC4: drop the ACTIVE profile's registry ``bootstrapped`` flag.
+
+        migrate_to_profiles() stamps ``bootstrapped: true`` on the profile it
+        auto-creates for a FRESH install (none of .env / health_tracker.db /
+        .setup_complete / user_prefs.json existed); the / route redirects to
+        /setup while the active profile is bootstrapped and setup incomplete.
+        The wizard's final save calls this so the redirect stops firing.
+        Idempotent; no-op when no profile is active."""
+        with self._switch_lock:
+            if self._active_id is None:
+                return
+            changed = False
+            for p in self._registry.get("profiles", []):
+                if p.get("id") == self._active_id and "bootstrapped" in p:
+                    p.pop("bootstrapped", None)
+                    changed = True
+                    break
+            if changed:
+                self._save_registry()
 
     def switch(self, profile_id: str) -> None:
         """Hot-swap to a different profile."""
@@ -484,70 +548,80 @@ class ProfileManager:
             # Save current last_used
             self._update_last_used()
 
-            # Stop background sync (interruptible)
+            # AC1 order: stop_sync → acquire db._sync_write_lock (bounded) →
+            # mutate identity (env / DB_PATH / dirs) → release → callbacks
+            # (which restart sync). Lock order pm._switch_lock →
+            # db._sync_write_lock, never reverse.
+            db_mod = None
             try:
-                import db
-                db.stop_sync()
+                import db as db_mod
+                db_mod.stop_sync()  # in-flight pass aborts at its next gate
             except Exception as e:
                 log.warning(f"Error stopping sync: {e}")
 
-            # Load new profile in-memory
-            self._active_id = profile_id
-            self._registry["active_profile"] = profile_id
-            self._load_active_profile()
-
-            # Update os.environ (NOT setdefault — must overwrite)
-            os.environ["ICU_ATHLETE_ID"] = self.icu_athlete_id
-            os.environ["ICU_API_KEY"] = self.icu_api_key
-            os.environ["ICU_ACCESS_TOKEN"] = self.icu_access_token
-
-            # Repoint DB. Order matters: set_db_path BEFORE close_all_connections
-            # so that when worker threads re-open their connections (triggered
-            # by the _db_version bump inside close_all_connections) they see
-            # the new DB_PATH. See db.py: set_db_path only rebinds DB_PATH, it
-            # does NOT bump the version — close_all_connections does.
+            gate_held = False
+            if db_mod is not None:
+                gate_held = db_mod._sync_write_lock.acquire(
+                    timeout=_SYNC_GATE_TIMEOUT_S)
+                if not gate_held:
+                    # NEVER mutate identity under a live writer. Recover by
+                    # restarting sync on the OLD (unchanged) profile, then
+                    # surface a clean 503-able error.
+                    try:
+                        db_mod.restart_sync()
+                    except Exception as e:
+                        log.warning(f"restart_sync after busy gate failed: {e}")
+                    raise db_mod.SyncBusy(
+                        f"sync busy: write gate not released within "
+                        f"{_SYNC_GATE_TIMEOUT_S:.0f}s; profile switch aborted"
+                    )
             try:
-                import db
-                db.set_db_path(self.db_path)
-                db.close_all_connections()  # bumps _db_version → threads reopen on new path
-                db.init_db()
-                db.restart_sync()
-            except Exception as e:
-                log.warning(f"Error reinitializing DB: {e}")
+                # ── identity mutation window (write gate held) ──────────
+                self._active_id = profile_id
+                self._registry["active_profile"] = profile_id
+                self._load_active_profile()
+
+                # Update os.environ (NOT setdefault — must overwrite)
+                os.environ["ICU_ATHLETE_ID"] = self.icu_athlete_id
+                os.environ["ICU_API_KEY"] = self.icu_api_key
+                os.environ["ICU_ACCESS_TOKEN"] = self.icu_access_token
+
+                # Repoint DB. Order matters: set_db_path BEFORE
+                # close_all_connections so that when worker threads re-open
+                # their connections (triggered by the _db_version bump inside
+                # close_all_connections) they see the new DB_PATH.
+                if db_mod is not None:
+                    try:
+                        db_mod.set_db_path(self.db_path)
+                        db_mod.close_all_connections()  # bumps _db_version
+                        db_mod.init_db()
+                    except Exception as e:
+                        log.warning(f"Error reinitializing DB: {e}")
+            finally:
+                if gate_held:
+                    db_mod._sync_write_lock.release()
+
+            # AC1 (kill the double restart): restart_sync is NOT called
+            # inline here anymore. app.py's lifespan registers
+            # pm.on_switch(db.restart_sync); the callback chain below is the
+            # SINGLE owner of the restart. The old inline+callback double
+            # restart meant the second stop/join(5s) could silently refuse to
+            # start a thread after a slow first pass — killing sync forever.
 
             # Update PLAN_DIR + WORKOUT_DIR in training_planner so freshly
-            # loaded plans/workouts come from the new profile.
-            # Resolution order for WORKOUT_DIR:
-            #   1. user_paths.json["workout_dir"] if dir exists
-            #   2. <active_dir>/workouts if dir exists
-            #   3. leave the module default (bundled workouts) alone
+            # loaded plans/workouts come from the new profile (AC2b: shared
+            # resolver, incl. the reset-to-bundled else-branch).
             try:
-                import training_planner
-                training_planner.PLAN_DIR = self.plan_dir
-
-                wp_dir: Optional[Path] = None
-                paths = self._load_json(self.active_dir / "user_paths.json")
-                custom = paths.get("workout_dir")
-                if custom:
-                    candidate = Path(custom)
-                    if candidate.exists():
-                        wp_dir = candidate
-                if wp_dir is None:
-                    default_per_profile = self.active_dir / "workouts"
-                    if default_per_profile.exists():
-                        wp_dir = default_per_profile
-
-                if wp_dir is not None:
-                    training_planner.WORKOUT_DIR = wp_dir
+                self.apply_training_dirs()
             except Exception as e:
                 log.warning(f"Error updating training_planner on switch: {e}")
 
             # Save registry
             self._save_registry()
 
-            # NOTE: trainer_connection.reload_from_profile is registered via
-            # pm.on_switch in app.py lifespan and runs through the callback chain
-            # below — picking up the new profile's device_prefs (H17 fix wired).
+            # NOTE: db.restart_sync + app cache-clear run through the callback
+            # chain below — AFTER the identity mutation block, so the fresh
+            # sync thread reads the new DB_PATH/env.
             for cb in self._on_switch_callbacks:
                 try:
                     cb()
@@ -555,6 +629,43 @@ class ProfileManager:
                     log.warning(f"Switch callback error: {e}")
 
             log.info(f"Profile switched to '{profile_id}'")
+
+    def apply_training_dirs(self) -> None:
+        """Point training_planner.PLAN_DIR / WORKOUT_DIR at the active profile.
+
+        AC2b: ONE resolver shared by switch() and the boot path (app.py's
+        lifespan calls this once post-activation so boot and switch agree).
+        WORKOUT_DIR resolution order:
+          1. `<active_dir>/user_paths.json`["workout_dir"] if that dir exists
+          2. `<active_dir>/workouts` if it exists
+          3. the BUNDLED default (`<training_planner dir>/workouts`) — the
+             else-branch that was missing pre-3.0.0: without it, profile A's
+             custom library stayed active after switching to B (sticky
+             WORKOUT_DIR, probe G).
+        No-op when no profile is active.
+        """
+        if self._active_id is None:
+            return
+        import training_planner
+        training_planner.PLAN_DIR = self.plan_dir
+
+        wp_dir: Optional[Path] = None
+        paths = self._load_json(self.active_dir / "user_paths.json")
+        custom = paths.get("workout_dir")
+        if custom:
+            candidate = Path(custom)
+            if candidate.exists():
+                wp_dir = candidate
+        if wp_dir is None:
+            default_per_profile = self.active_dir / "workouts"
+            if default_per_profile.exists():
+                wp_dir = default_per_profile
+        if wp_dir is None:
+            # Recompute the bundled default from the module location instead
+            # of caching the import-time value — the module global may have
+            # been mutated by an earlier switch (that's the bug).
+            wp_dir = Path(training_planner.__file__).parent / "workouts"
+        training_planner.WORKOUT_DIR = wp_dir
 
     def on_switch(self, callback: Callable) -> None:
         """Register a callback for profile switches."""
@@ -572,6 +683,7 @@ class ProfileManager:
         `_set_wprime(..., source="manual")` so the `wprime_source` tag is
         updated atomically and later ICU / Monod writes can't clobber it.
         """
+        self._require_active()
         validators = {
             "ftp":       (50, 600),
             "weight_kg": (30, 200),
@@ -652,6 +764,11 @@ class ProfileManager:
         _PRIO = {"manual": 3, "icu": 2, "monod": 1, "fallback": 0}
         if source not in _PRIO:
             raise ValueError(f"unknown wprime source: {source!r}")
+        if self._active_id is None:
+            # AC6a: no active profile (delete-last) — a straggler mirror must
+            # not write athlete.json into the profiles root.
+            log.warning("_set_wprime: no active profile; write dropped")
+            return False
 
         try:
             v = int(float(value))
@@ -718,6 +835,9 @@ class ProfileManager:
         _PRIO = {"manual": 3, "icu": 2, "computed": 1, "fallback": 0}
         if source not in _PRIO:
             raise ValueError(f"unknown pmax source: {source!r}")
+        if self._active_id is None:
+            log.warning("_set_pmax: no active profile; write dropped")  # AC6a
+            return False
 
         try:
             v = int(float(value))
@@ -788,6 +908,9 @@ class ProfileManager:
         _PRIO = {"manual": 3, "icu": 2, "computed": 1, "age_tanaka": 0}
         if source not in _PRIO:
             raise ValueError(f"unknown max_hr source: {source!r}")
+        if self._active_id is None:
+            log.warning("_set_max_hr: no active profile; write dropped")  # AC6a
+            return False
 
         try:
             v = int(float(value))
@@ -843,6 +966,7 @@ class ProfileManager:
         `update_ftp()`. `applied=True` is a flag stored on the entry for
         audit (did the rider accept the suggestion).
         """
+        self._require_active()
         try:
             ftp = int(ftp)
         except (TypeError, ValueError):
@@ -877,6 +1001,7 @@ class ProfileManager:
         don't break. Callers that don't care about provenance omit the
         argument and leave the existing ftp_source untouched.
         """
+        self._require_active()
         try:
             v = int(ftp)
         except (TypeError, ValueError):
@@ -938,6 +1063,12 @@ class ProfileManager:
         ``icu_access_token`` is the OAuth bearer token. When None the existing
         stored token is preserved (so the API-key save path doesn't clobber an
         OAuth connection); pass "" to explicitly clear it (disconnect).
+
+        AC3c: the optional OAuth bookkeeping keys ICU_REFRESH_TOKEN /
+        ICU_TOKEN_EXPIRES_AT already in ``self._env`` (written by
+        save_icu_token when ICU returned them) are carried into the rewrite so
+        an API-key save can't silently drop them. Absent keys write nothing —
+        code everywhere must tolerate both shapes.
         """
         icu_athlete_id = (icu_athlete_id or "").strip()
         icu_api_key = (icu_api_key or "").strip()
@@ -946,6 +1077,7 @@ class ProfileManager:
         icu_access_token = (icu_access_token or "").strip()
         if any(c in (icu_athlete_id + icu_api_key + icu_access_token) for c in "\n\r"):
             raise ValueError("credentials may not contain newlines")
+        self._require_active()
 
         self._env["ICU_ATHLETE_ID"] = icu_athlete_id
         self._env["ICU_API_KEY"] = icu_api_key
@@ -953,17 +1085,44 @@ class ProfileManager:
         content = (f"ICU_ATHLETE_ID={icu_athlete_id}\n"
                    f"ICU_API_KEY={icu_api_key}\n"
                    f"ICU_ACCESS_TOKEN={icu_access_token}\n")
+        for extra in ("ICU_REFRESH_TOKEN", "ICU_TOKEN_EXPIRES_AT"):
+            v = (self._env.get(extra) or "").strip()
+            if v and not any(c in v for c in "\n\r"):
+                content += f"{extra}={v}\n"
         self._write_env_atomic(self.active_dir / ".env", content)
         os.environ["ICU_ATHLETE_ID"] = icu_athlete_id
         os.environ["ICU_API_KEY"] = icu_api_key
         os.environ["ICU_ACCESS_TOKEN"] = icu_access_token
 
     def save_icu_token(self, access_token: str, icu_athlete_id: "str | None" = None,
-                       icu_athlete_name: "str | None" = None) -> None:
+                       icu_athlete_name: "str | None" = None,
+                       refresh_token: "str | None" = None,
+                       expires_in: "int | float | None" = None) -> None:
         """Persist an OAuth bearer token (+ athlete id / display name) to the
         active profile, keeping the existing API key. Pass access_token="" to
         disconnect. ``icu_athlete_name`` (when given) is stored in athlete.json
-        so the UI can show 'Linked as <name>'."""
+        so the UI can show 'Linked as <name>'.
+
+        AC3c (grill: capture only, NO refresh flow): when ICU's token response
+        carries ``refresh_token`` / ``expires_in``, pass them here and they are
+        persisted to the profile .env as ICU_REFRESH_TOKEN /
+        ICU_TOKEN_EXPIRES_AT (absolute epoch seconds). ICU currently issues
+        long-lived tokens with neither field — absent values store nothing and
+        today's behavior is unchanged. Disconnect clears both."""
+        if not (access_token or "").strip():
+            # Disconnect: a stale refresh token must not outlive the bearer.
+            self._env.pop("ICU_REFRESH_TOKEN", None)
+            self._env.pop("ICU_TOKEN_EXPIRES_AT", None)
+        else:
+            if refresh_token:
+                self._env["ICU_REFRESH_TOKEN"] = str(refresh_token).strip()
+            try:
+                if expires_in is not None and float(expires_in) > 0:
+                    self._env["ICU_TOKEN_EXPIRES_AT"] = str(
+                        int(time.time() + float(expires_in)))
+            except (TypeError, ValueError):
+                log.warning("save_icu_token: ignoring bad expires_in %r",
+                            expires_in)
         self.save_env(icu_athlete_id if icu_athlete_id is not None else self.icu_athlete_id,
                       self.icu_api_key, access_token)
         if icu_athlete_name is not None:
@@ -972,11 +1131,13 @@ class ProfileManager:
 
     def save_prefs(self, prefs: dict) -> None:
         """Save training preferences to active profile's user_prefs.json."""
+        self._require_active()
         self._prefs.update(prefs)
         self._write_json(self.active_dir / "user_prefs.json", self._prefs)
 
     def save_device_prefs(self, prefs: dict) -> None:
         """Save per-rider device preferences."""
+        self._require_active()
         self._device_prefs.update(prefs)
         self._write_json(self.active_dir / "device_prefs.json", self._device_prefs)
 
@@ -989,6 +1150,10 @@ class ProfileManager:
                 self._registry = json.loads(
                     self._registry_path.read_text(encoding="utf-8")
                 )
+                # A12: drop the stray "active" key an old delete-last wrote
+                # (nothing ever read it; "active_profile" is the pointer).
+                # Persisted on the next _save_registry.
+                self._registry.pop("active", None)
                 self._active_id = self._registry.get("active_profile")
                 self._fix_env_permissions()
                 return

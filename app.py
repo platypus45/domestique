@@ -235,8 +235,10 @@ def _session_naming_lookup(
 
 # Legacy alias for any direct references
 PLAN_DIR = _DEFAULT_PLAN_DIR
-WORKOUT_DIR   = Path(__file__).parent / "workouts"  # bundled workout files
-GPX_DIR       = Path(__file__).parent / "gpx"       # bundled GPX files
+_BUNDLED_WORKOUT_DIR = Path(__file__).parent / "workouts"  # bundled workout files
+_BUNDLED_GPX_DIR     = Path(__file__).parent / "gpx"       # bundled GPX files
+WORKOUT_DIR   = _BUNDLED_WORKOUT_DIR
+GPX_DIR       = _BUNDLED_GPX_DIR
 
 # Load user path overrides — check user data dir (packaged) then project dir (dev)
 for _upf in [_user_data_dir / "user_paths.json", Path(__file__).parent / "user_paths.json"]:
@@ -250,6 +252,48 @@ for _upf in [_user_data_dir / "user_paths.json", Path(__file__).parent / "user_p
         except Exception:
             pass
         break
+
+
+def _apply_profile_paths() -> None:
+    """AC2b: resolve app.py's module-global WORKOUT_DIR / GPX_DIR from the
+    ACTIVE profile's user_paths.json — one source of truth with the
+    training_planner resolution profile_manager.switch() performs.
+
+    Resolution order (mirrors profile_manager.switch):
+      1. <active_dir>/user_paths.json override, when the dir exists
+      2. <active_dir>/workouts, when it exists (workout dir only)
+      3. bundled default (so a profile WITHOUT an override never inherits the
+         previous profile's dirs — the sticky-global bug).
+
+    Registered as a pm.on_switch callback AND run once at boot post-activation
+    (same code path); setup_save calls it after writing the profile's
+    user_paths.json.
+    """
+    global WORKOUT_DIR, GPX_DIR
+    wp: Path = _BUNDLED_WORKOUT_DIR
+    gp: Path = _BUNDLED_GPX_DIR
+    try:
+        from profile_manager import ProfileManager
+        pm = ProfileManager.get()
+        if pm.active_id is not None:
+            try:
+                up = json.loads((pm.active_dir / "user_paths.json").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                up = {}
+            if not isinstance(up, dict):
+                up = {}
+            cand = up.get("workout_dir")
+            if cand and Path(cand).exists():
+                wp = Path(cand)
+            elif (pm.active_dir / "workouts").exists():
+                wp = pm.active_dir / "workouts"
+            gcand = up.get("gpx_dir")
+            if gcand and Path(gcand).exists():
+                gp = Path(gcand)
+    except Exception as e:
+        log.debug(f"_apply_profile_paths: fell back to bundled dirs: {e}")
+    WORKOUT_DIR = wp
+    GPX_DIR = gp
 CONFIG_PATH   = Path(__file__).parent / "config.py"
 ROUTE_DATA    = Path(__file__).parent / "routes.json"
 ROUTE_PROFILES_INDEX = Path(__file__).parent / "profiles_indexed.json"
@@ -345,9 +389,34 @@ async def lifespan(app):
         _log.warning(f"v4 profile migration loop failed: {e}")
 
     pm.on_switch(clear_cache)
+    # AC2b: one-time adoption of the legacy ROOT ~/.domestique/user_paths.json
+    # into the active profile (setup_save now writes per-profile only), then
+    # resolve app.py's WORKOUT_DIR/GPX_DIR through the same resolver used on
+    # every profile switch — one code path.
+    try:
+        _root_paths = _user_data_dir / "user_paths.json"
+        if pm.active_id is not None and _root_paths.exists():
+            _prof_paths = pm.active_dir / "user_paths.json"
+            if not _prof_paths.exists():
+                _prof_paths.write_text(_root_paths.read_text(encoding="utf-8"),
+                                       encoding="utf-8")
+                _log.info("AC2b: adopted legacy root user_paths.json into "
+                          f"profile '{pm.active_id}'")
+    except Exception as _e:
+        _log.debug(f"legacy user_paths adoption skipped: {_e}")
+    # AC2b boot side: run the SAME training-dir resolver switch() uses, once,
+    # post-activation — training_planner.WORKOUT_DIR etc. point at the active
+    # profile from the first request (one code path for boot + switch).
+    try:
+        pm.apply_training_dirs()
+    except Exception as _e:
+        _log.warning(f"apply_training_dirs at boot failed: {_e}")
+    _apply_profile_paths()
+    pm.on_switch(_apply_profile_paths)
     # Restart the DB sync thread on every profile switch so it picks up the new
-    # profile's db_path. profile_manager may also call this inline during
-    # switch() — a second call here is intentionally idempotent.
+    # profile's db_path. This on_switch registration is the ONLY owner of the
+    # restart (AC1 killed switch()'s inline call — the double stop/join could
+    # silently kill sync after a slow pass; do not re-add it there).
     if hasattr(db, 'restart_sync'):
         pm.on_switch(db.restart_sync)
     # Point DB at active profile's database
@@ -510,11 +579,28 @@ _static_dir = Path(__file__).parent / "static"
 _static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
-# Check both locations for setup marker (user home takes priority)
-SETUP_MARKER = _user_data_dir / ".setup_complete"
-if not SETUP_MARKER.exists() and (Path(__file__).parent / ".setup_complete").exists():
-    SETUP_MARKER = Path(__file__).parent / ".setup_complete"
 DATA_DIR = _user_data_dir
+
+
+def _setup_marker() -> Path:
+    """AC4: the setup-complete marker lives in the USER DATA DIR only.
+
+    The old module-load constant also fell back to the repo/bundle copy of
+    .setup_complete — the repo bundles that file, so first-run detection was
+    permanently defeated on dev checkouts and any build that shipped it.
+    Function (not constant) so a test-stubbed DATA_DIR is honoured."""
+    return DATA_DIR / ".setup_complete"
+
+
+def _active_profile_entry(pm) -> dict:
+    """Registry entry for the active profile ({} when none)."""
+    try:
+        for p in pm.list_profiles():
+            if p.get("id") == pm.active_id:
+                return p
+    except Exception:
+        pass
+    return {}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -528,7 +614,27 @@ def setup_page(request: Request):
 
 @app.get("/api/setup/status")
 def setup_status():
-    return {"complete": SETUP_MARKER.exists()}
+    return {"complete": _setup_marker().exists()}
+
+
+# ── AC5d: ONE range table. Server-side validation (setup_save + update_settings)
+# and both wizards' client-side input min/max all read from here — the wizards
+# fetch it via GET /api/setup/limits so client ranges can never drift again.
+SETUP_LIMITS: dict[str, list[float]] = {
+    "ftp": [50, 600],
+    "weight": [30, 200],
+    "lthr": [100, 220],
+    "max_hr": [140, 220],
+    "hours_per_week": [1, 40],
+    "age": [10, 100],
+    "cp": [100, 500],
+    "wprime_j": [5000, 40000],
+}
+
+
+@app.get("/api/setup/limits")
+def setup_limits():
+    return SETUP_LIMITS
 
 
 @app.get("/api/setup/defaults")
@@ -628,6 +734,27 @@ def setup_check_activities(body: dict):
     """
     athlete_id = (body.get("athlete_id") or "").strip()
     api_key = (body.get("api_key") or "").strip()
+    # AC5a: OAuth-era wizard path — no key in the browser, use the ACTIVE
+    # profile's saved connection (Bearer token / stored key) via training.
+    if not api_key and body.get("use_connection"):
+        if not _icu_credentials_present():
+            return {"ok": False, "error": "Connect Intervals.icu first."}
+        try:
+            import training as _training
+            acts = _training.fetch_recent_activities(days=42) or []
+        except Exception as e:
+            return {"ok": False, "error": f"Intervals.icu request failed: {type(e).__name__}"}
+        if not isinstance(acts, list):
+            acts = []
+        garmin = 0
+        for a in acts:
+            blob = " ".join(str(a.get(k) or "") for k in ("source", "device_name", "deviceName")).upper()
+            if "GARMIN" in blob:
+                garmin += 1
+        latest = ""
+        if acts:
+            latest = str(acts[0].get("start_date_local") or acts[0].get("start_date") or "")[:10]
+        return {"ok": True, "count": len(acts), "garmin_count": garmin, "latest_date": latest}
     if not api_key:
         return {"ok": False, "error": "Connect Intervals.icu first."}
     if not athlete_id:
@@ -797,14 +924,21 @@ def setup_save(body: dict):
 
     with _setup_lock:
         pm = ProfileManager.get()
+        if pm.active_id is None:
+            # AC6a adjacency: with no active profile there is nowhere to write —
+            # never fall back to the profiles-root athlete.json.
+            raise HTTPException(status_code=409,
+                                detail="no active profile — create a profile first")
 
-        # 1. Save ICU credentials to profile's .env
+        # ══ PHASE 1 — VALIDATE EVERYTHING (AC4b: no partial creds/athlete on 400) ══
         icu_id = body.get("icu_athlete_id", "").strip()
         icu_key = body.get("icu_api_key", "").strip()
+        if any(c in (icu_id + icu_key) for c in "\n\r"):
+            raise HTTPException(status_code=400,
+                                detail="credentials may not contain newlines")
         # v4.5.3 FIX-AUTO-ATHLETE-ID: when user provides an API key but no
         # athlete ID (or wants to verify the one they typed), call /athlete/0
-        # to discover the authenticated athlete. Eliminates a class of typo-
-        # induced HTTP 403 errors.
+        # to discover the authenticated athlete. Read-only — safe pre-write.
         if icu_key:
             try:
                 import training as _training
@@ -824,6 +958,120 @@ def setup_save(body: dict):
                         f"Submitted athlete_id differs from API key's athlete "
                         f"({discovered_id}). Using submitted value."
                     )
+
+        # Athlete numbers — AC5d: validated against the ONE range table. Only
+        # fields present in the payload are validated/written (AC5e: wizards
+        # omit untouched fields; omission is the no-write mechanism).
+        profile = {}
+        for key in ("weight", "ftp", "lthr", "max_hr"):
+            if key in body:
+                profile[key] = body[key]
+        for key in ("weight", "ftp", "lthr", "max_hr"):
+            if key in profile:
+                lo, hi = SETUP_LIMITS[key]
+                try:
+                    v = float(profile[key])
+                except (TypeError, ValueError):
+                    raise HTTPException(400, f"invalid {key}")
+                if not (lo <= v <= hi):
+                    raise HTTPException(400, f"{key}={v} out of range [{lo},{hi}]")
+                profile[key] = v
+        if body.get("weight"):
+            profile["lbm"] = round(float(body["weight"]) * 0.80, 1)
+
+        # AC5b (D3): lthr < max_hr — same invariant update_settings enforces.
+        # Effective values: payload wins, else the stored profile value.
+        eff_lthr = profile.get("lthr", pm._athlete.get("lthr"))
+        eff_max = profile.get("max_hr", pm._athlete.get("max_hr"))
+        if eff_lthr is not None and eff_max is not None and float(eff_lthr) >= float(eff_max):
+            raise HTTPException(
+                400, f"LTHR ({int(float(eff_lthr))}) must be below max HR "
+                     f"({int(float(eff_max))})")
+
+        # AC5e (D9): target-mode question. hr requires an LTHR (typed in this
+        # payload or already explicitly set on the profile).
+        target_mode = None
+        if "target_mode" in body:
+            target_mode = str(body["target_mode"]).strip().lower()
+            if target_mode not in ("power", "hr"):
+                raise HTTPException(400, "target_mode must be 'power' or 'hr'")
+            if target_mode == "hr":
+                if eff_lthr is None:
+                    raise HTTPException(400, "hr mode needs your LTHR — fill in "
+                                             "the LTHR field first")
+                # Mirror update_settings' gate EXACTLY (pm.max_hr property
+                # fallback) — phase 2 must never 400 after creds are written.
+                _hr_eff_max = profile.get("max_hr", pm.max_hr)
+                if _hr_eff_max is not None and float(_hr_eff_max) <= float(eff_lthr):
+                    raise HTTPException(
+                        400, f"max HR ({int(float(_hr_eff_max))}) must be above "
+                             f"LTHR ({int(float(eff_lthr))}) for hr mode")
+
+        # AC5c (D4): age / sex / cp / wprime_j forwarded through save_athlete.
+        extras = {}
+        for key in ("age", "cp", "wprime_j"):
+            if key in body and body[key] is not None and body[key] != "":
+                lo, hi = SETUP_LIMITS[key]
+                try:
+                    v = float(body[key])
+                except (TypeError, ValueError):
+                    raise HTTPException(400, f"invalid {key}")
+                if not (lo <= v <= hi):
+                    raise HTTPException(400, f"{key}={v} out of range [{lo},{hi}]")
+                extras[key] = v
+        if "sex" in body:
+            sex = str(body["sex"]).upper().strip()
+            if sex not in ("M", "F", "O", ""):
+                raise HTTPException(400, "sex must be M, F, or O")
+            extras["sex"] = sex
+
+        # Preferences — AC6b: hours_per_week server bound + the two day grids
+        # must reconcile (a day can't be training AND rest).
+        prefs = {}
+        if body.get("hours_per_week"):
+            lo, hi = SETUP_LIMITS["hours_per_week"]
+            try:
+                hpw = float(body["hours_per_week"])
+            except (TypeError, ValueError):
+                raise HTTPException(400, "invalid hours_per_week")
+            if not (lo <= hpw <= hi):
+                raise HTTPException(400, f"hours_per_week={hpw} out of range [{lo},{hi}]")
+            prefs["hours_per_week"] = hpw
+        avail_days = rest_days = None
+        if body.get("available_days") is not None:
+            try:
+                avail_days = [int(d) for d in body["available_days"]]
+            except (TypeError, ValueError):
+                raise HTTPException(400, "available_days must be a list of weekday numbers")
+        if body.get("rest_days") is not None:
+            try:
+                rest_days = [int(d) for d in body["rest_days"]]
+            except (TypeError, ValueError):
+                raise HTTPException(400, "rest_days must be a list of weekday numbers")
+        if avail_days is not None and rest_days is not None:
+            overlap = sorted(set(avail_days) & set(rest_days))
+            if overlap:
+                _names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+                _which = ", ".join(_names[d] if 0 <= d <= 6 else str(d) for d in overlap)
+                raise HTTPException(400, f"{_which}: a day can't be both a "
+                                         f"training day and a rest day")
+        if avail_days is not None:
+            prefs["available_days"] = avail_days
+        if rest_days is not None:
+            prefs["rest_days"] = rest_days
+
+        # Path overrides. SEC4: reject paths outside the allow-list
+        # (home / ~/.domestique / /tmp) so a malicious setup-save cannot make
+        # the server read/write arbitrary filesystem locations later.
+        for _field in ("workout_dir", "gpx_dir"):
+            _val = body.get(_field)
+            if _val and not _setup_path_allowed(Path(_val)):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{_field} must be under $HOME, ~/.domestique, or /tmp",
+                )
+
+        # ══ PHASE 2 — WRITE (all validation passed) ══════════════════════════
         creds_changed = False
         if icu_id or icu_key:
             old_id = pm.icu_athlete_id
@@ -885,73 +1133,60 @@ def setup_save(body: dict):
                 except Exception as e:
                     creds_test = f"failed: {type(e).__name__}"
 
-        # 2. Update athlete profile via ProfileManager
-        profile = {}
-        for key in ("weight", "ftp", "lthr", "max_hr"):
-            if key in body:
-                profile[key] = body[key]
-        if body.get("weight"):
-            profile["lbm"] = round(float(body["weight"]) * 0.80, 1)
+        # Athlete numbers via the shared settings write path (provenance
+        # stamping, ledger, config mirror). AC5f: forward the wizard's
+        # lthr_source_hint (set ONLY for ICU-prefilled, unedited values).
+        settings_payload = dict(profile)
+        if target_mode is not None:
+            settings_payload["target_mode"] = target_mode
+        if body.get("lthr_source_hint"):
+            settings_payload["lthr_source_hint"] = body["lthr_source_hint"]
+        if settings_payload:
+            update_settings(settings_payload)
+        if extras:
+            try:
+                pm.save_athlete(extras)
+            except ValueError as e:
+                # Pre-validated above; belt-and-braces only.
+                raise HTTPException(400, str(e))
 
-        # Server-side validation: clamp/reject physiologically implausible values
-        validators = {
-            "ftp": (50, 600),
-            "weight": (30, 200),
-            "lthr": (100, 220),
-            "max_hr": (120, 240),
-        }
-        for key, (lo, hi) in validators.items():
-            if key in profile:
-                try:
-                    v = float(profile[key])
-                except (TypeError, ValueError):
-                    raise HTTPException(400, f"invalid {key}")
-                if not (lo <= v <= hi):
-                    raise HTTPException(400, f"{key}={v} out of range [{lo},{hi}]")
-                profile[key] = v
-        if profile:
-            update_settings(profile)
-
-        # 3. Update path overrides. SEC4: reject paths outside the allow-list
-        # (home / ~/.domestique / /tmp) so a malicious setup-save cannot make
-        # the server read/write arbitrary filesystem locations later.
-        for _field in ("workout_dir", "gpx_dir"):
-            _val = body.get(_field)
-            if _val and not _setup_path_allowed(Path(_val)):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"{_field} must be under $HOME, ~/.domestique, or /tmp",
-                )
-        if body.get("workout_dir"):
-            WORKOUT_DIR = Path(body["workout_dir"])
-        if body.get("gpx_dir"):
-            GPX_DIR = Path(body["gpx_dir"])
-
-        paths_file = DATA_DIR / "user_paths.json"
+        # Path overrides. AC2b: write the PROFILE's user_paths.json (the old
+        # root-level DATA_DIR/user_paths.json was a third copy nothing on the
+        # switch path ever read), then refresh the module globals through the
+        # same resolver boot + profile-switch use — one code path.
         paths = {}
         if body.get("workout_dir"):
             paths["workout_dir"] = body["workout_dir"]
         if body.get("gpx_dir"):
             paths["gpx_dir"] = body["gpx_dir"]
         if paths:
-            paths_file.write_text(json.dumps(paths, indent=2), encoding="utf-8")
+            paths_file = pm.active_dir / "user_paths.json"
+            try:
+                existing = json.loads(paths_file.read_text(encoding="utf-8"))
+                if not isinstance(existing, dict):
+                    existing = {}
+            except (OSError, json.JSONDecodeError):
+                existing = {}
+            existing.update(paths)
+            paths_file.parent.mkdir(parents=True, exist_ok=True)
+            paths_file.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+            _apply_profile_paths()
 
-        # 4. Save training preferences to profile
-        prefs = {}
-        if body.get("hours_per_week"):
-            prefs["hours_per_week"] = float(body["hours_per_week"])
-        if body.get("available_days") is not None:
-            prefs["available_days"] = [int(d) for d in body["available_days"]]
-        if body.get("rest_days") is not None:
-            prefs["rest_days"] = [int(d) for d in body["rest_days"]]
+        # Training preferences (validated in phase 1).
         if prefs:
             pm.save_prefs(prefs)
 
-        # 5. Mark setup complete — single global marker (per-profile marker dropped to avoid drift).
-        SETUP_MARKER.write_text(
+        # Mark setup complete — single global marker (per-profile marker dropped to avoid drift).
+        _setup_marker().parent.mkdir(parents=True, exist_ok=True)
+        _setup_marker().write_text(
             json.dumps({"completed": datetime.now().isoformat(), "version": "1.0.0"}, indent=2),
             encoding="utf-8",
         )
+
+        # AC4: wizard completion clears the migrate-created "bootstrapped"
+        # flag so / stops redirecting to /setup for this profile.
+        if _active_profile_entry(pm).get("bootstrapped"):
+            pm.clear_bootstrapped()
 
         clear_cache()
     resp: dict = {"ok": True}
@@ -999,7 +1234,7 @@ def _fatigue_resistance_memoised(latest_ride_id: str, current_ftp: int,
                                   window_days: int, kj_threshold: int) -> dict:
     import power_curve as _pc
     return _pc.compute_fatigue_resistance(
-        "default",
+        _active_profile_id_or_default(),
         window_days=int(window_days),
         kj_threshold=int(kj_threshold),
     )
@@ -1038,6 +1273,35 @@ def cached(key, fn, ttl=300):
 def clear_cache():
     _cache.clear()
     _cache_ts.clear()
+    # AC2c: the fatigue-resistance memo is keyed on (ride_id, ftp, window, kj)
+    # only — NOT profile — so a profile switch (clear_cache is an on_switch
+    # callback) must drop it or profile B could serve A's cached curve.
+    try:
+        _fatigue_resistance_memoised.cache_clear()
+    except Exception:
+        pass
+
+
+# Serialises FIRST-EVER ProfileManager construction from concurrent request
+# threads: ProfileManager.get() assigns cls._instance BEFORE loading the
+# registry/active profile, so a racing thread can observe a half-built
+# singleton whose active_id is still None (and silently fall back to
+# "default" — two cache keys, double computes). Boot normally constructs it
+# in the single-threaded lifespan; this covers lifespan-less contexts (tests).
+_pm_get_lock = threading.Lock()
+
+
+def _active_profile_id_or_default() -> str:
+    """AC2a (grill): power_curve call sites must stop hardcoding "default" —
+    pass the ACTIVE profile id so per-profile archive resolution attributes
+    work to the right rider. "default" only as the no-profile fallback."""
+    try:
+        from profile_manager import ProfileManager
+        with _pm_get_lock:
+            pm = ProfileManager.get()
+        return pm.active_id or "default"
+    except Exception:
+        return "default"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1103,8 +1367,17 @@ def api_profiles_create(body: dict):
     color = body.get("color", "").strip()
     if not name:
         return JSONResponse({"error": "Name is required"}, status_code=400)
+    # AC6b: duplicate display-name warning (non-blocking — ids stay unique via
+    # the slug counter, but two "Anna" profiles are a foot-gun in the picker).
+    dup = any((p.get("name") or "").strip().lower() == name.lower()
+              for p in pm.list_profiles())
     new_id = pm.create_profile(name, color)
-    return {"ok": True, "id": new_id}
+    resp = {"ok": True, "id": new_id}
+    if dup:
+        resp["warning"] = (f"A profile named \"{name}\" already exists — "
+                           f"both will show in the picker. Rename one in "
+                           f"Settings if that's not intended.")
+    return resp
 
 
 @app.post("/api/profiles/switch")
@@ -1126,6 +1399,11 @@ async def api_profiles_switch(request: Request):
         pm.switch(profile_id)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
+    except db.SyncBusy:
+        # AC1: switch could not quiesce an in-flight sync write within the
+        # bounded wait — NEVER proceed unlocked. Client retries.
+        return JSONResponse({"error": "sync busy — try again in a moment"},
+                            status_code=503)
     return {"ok": True, "active": pm.active_id}
 
 
@@ -1354,18 +1632,19 @@ def api_profile_power_curve(window_days: int = Query(90, ge=1, le=3650),
     bust needed). Pass ``?refresh=1`` to force recompute.
     """
     import power_curve
+    _pid = _active_profile_id_or_default()
     try:
-        latest = power_curve.latest_ride_id_in_window("default", int(window_days))
+        latest = power_curve.latest_ride_id_in_window(_pid, int(window_days))
     except Exception as e:
         _log.debug(f"power_curve latest_ride_id failed: {e}")
         latest = ""
-    cache_key = f"power_curve_default_{int(window_days)}_{latest}"
+    cache_key = f"power_curve_{_pid}_{int(window_days)}_{latest}"
     now = time.time()
     ttl = 24 * 3600
     if not refresh and cache_key in _cache and now - _cache_ts.get(cache_key, 0) < ttl:
         return _cache[cache_key]
     try:
-        result = power_curve.aggregate_power_curve("default",
+        result = power_curve.aggregate_power_curve(_pid,
                                                     window_days=int(window_days))
     except Exception as e:
         _log.warning(f"api_profile_power_curve failed: {e}")
@@ -1414,7 +1693,7 @@ def api_profile_power_curve(window_days: int = Query(90, ge=1, le=3650),
             acquired, _lock = power_curve.acquire_backfill_lock()
             if acquired:
                 try:
-                    bf = power_curve.backfill_icu_history("default",
+                    bf = power_curve.backfill_icu_history(_pid,
                                                           max_per_second=1,
                                                           _skip_lock=True)
                     _log.info(
@@ -1430,7 +1709,7 @@ def api_profile_power_curve(window_days: int = Query(90, ge=1, le=3650),
                 # Recompute once now that envelopes are hydrated.
                 try:
                     result = power_curve.aggregate_power_curve(
-                        "default", window_days=int(window_days))
+                        _pid, window_days=int(window_days))
                     try:
                         n_rides = int(result.get("n_rides") or 0)
                     except (TypeError, ValueError):
@@ -1446,7 +1725,7 @@ def api_profile_power_curve(window_days: int = Query(90, ge=1, le=3650),
     result["needs_backfill"] = bool(not (result.get("rider_curve") or []))
     # Lazy GC — prune stale power_curve_* entries with old latest_ride_ids.
     for k in list(_cache.keys()):
-        if k.startswith(f"power_curve_default_{int(window_days)}_") and k != cache_key:
+        if k.startswith(f"power_curve_{_pid}_{int(window_days)}_") and k != cache_key:
             _cache.pop(k, None)
             _cache_ts.pop(k, None)
     # Only cache a populated curve for 24h. When the curve is still empty
@@ -1459,6 +1738,16 @@ def api_profile_power_curve(window_days: int = Query(90, ge=1, le=3650),
     return result
 
 
+def _sync_task_snapshot() -> tuple:
+    """AC1: sync-identity snapshot taken at TASK START by app.py's write
+    pipelines (lazy icu_sync thread, wellness sync, backfill worker). Passed
+    to db.sync_write_gate(snapshot) around every write section so a mid-task
+    profile switch (or purge) aborts the writes instead of landing them in
+    the wrong profile's DB/dirs. Must be the exact 3-tuple the gate checks —
+    delegate to db so the shape can never drift."""
+    return db.snapshot_sync_identity()
+
+
 def _run_backfill_job(task_id: str) -> None:
     """Worker thread — runs the one-shot backfill and updates the task entry.
 
@@ -1467,8 +1756,15 @@ def _run_backfill_job(task_id: str) -> None:
     here, in the `finally`. Closes the TOCTOU window where two POSTs
     between endpoint-release and worker-acquire could spawn duplicate
     ICU workers.
+
+    AC1 scope-add (A13): the target profile is snapshotted at task start and
+    passed down explicitly — power_curve's per-write gate (CORE) refuses
+    writes once the active profile no longer matches, so a switch mid-backfill
+    yields zero cross-profile files.
     """
     import power_curve
+
+    snap = _sync_task_snapshot()
 
     def _progress(done, total):
         # Live "xx of yy" for the UI poll (backfill-history/status).
@@ -1479,7 +1775,8 @@ def _run_backfill_job(task_id: str) -> None:
 
     try:
         result = power_curve.backfill_icu_history(
-            "default", max_per_second=1, _skip_lock=True, progress_cb=_progress
+            snap[0] or "default", max_per_second=1, _skip_lock=True,
+            progress_cb=_progress,
         )
         with _backfill_thread_lock:
             _backfill_tasks[task_id] = {
@@ -1848,8 +2145,9 @@ def api_profile_fatigue_resistance(window_days: int = Query(365, ge=1, le=3650),
                 "received": int(kj_threshold),
             },
         )
+    _pid = _active_profile_id_or_default()
     try:
-        latest = power_curve.latest_ride_id_in_window("default",
+        latest = power_curve.latest_ride_id_in_window(_pid,
                                                       int(window_days))
     except Exception as e:
         _log.debug(f"fatigue_resistance latest_ride_id failed: {e}")
@@ -1862,7 +2160,7 @@ def api_profile_fatigue_resistance(window_days: int = Query(365, ge=1, le=3650),
         _current_ftp = int(_PM.get().ftp or 0)
     except Exception:
         _current_ftp = 0
-    cache_key = (f"fatigue_resistance_default_{int(window_days)}_"
+    cache_key = (f"fatigue_resistance_{_pid}_{int(window_days)}_"
                  f"{int(kj_threshold)}_{latest}")
     now = time.time()
     ttl = 24 * 3600
@@ -1964,7 +2262,7 @@ def api_profile_fatigue_resistance(window_days: int = Query(365, ge=1, le=3650),
         # when latest=="" so a transient latest-ride-lookup failure doesn't
         # nuke a perfectly good cached result.
         if latest:
-            prefix = (f"fatigue_resistance_default_{int(window_days)}_"
+            prefix = (f"fatigue_resistance_{_pid}_{int(window_days)}_"
                       f"{int(kj_threshold)}_")
             for k in list(_cache.keys()):
                 if k.startswith(prefix) and k != cache_key:
@@ -2315,7 +2613,8 @@ def api_rider_stats():
     curve: dict = {}
     try:
         import power_curve
-        curve = power_curve.aggregate_power_curve("default", 90) or {}
+        curve = power_curve.aggregate_power_curve(
+            _active_profile_id_or_default(), 90) or {}
     except Exception as e:
         _fail("power_curve", e)
 
@@ -7260,6 +7559,83 @@ def _icu_oauth_safe_return(return_to: str) -> str:
     return rt
 
 
+def _icu_profile_exists(pm, profile_id: str) -> bool:
+    """AC3a: does the OAuth-state's profile still exist in the registry?"""
+    return bool(profile_id) and any(
+        p.get("id") == profile_id for p in pm.list_profiles())
+
+
+def _icu_profile_stored_athlete_id(pm, profile_id: str) -> str:
+    """Stored ICU_ATHLETE_ID for ``profile_id`` (may be non-active). Reads the
+    profile's own .env — never the active profile's in-memory _env."""
+    try:
+        if profile_id == pm.active_id:
+            return pm.icu_athlete_id or ""
+        env = pm._load_env_file(pm._profiles_dir / profile_id / ".env")
+        return (env.get("ICU_ATHLETE_ID") or "").strip()
+    except Exception:
+        return ""
+
+
+def _save_icu_token_for_profile(pm, profile_id: str, access_token: str,
+                                athlete_id: "str | None",
+                                athlete_name: "str | None",
+                                refresh_token: "str | None" = None,
+                                expires_in: "int | float | None" = None) -> None:
+    """AC3a: persist an OAuth token to the profile that STARTED the flow —
+    not whichever profile happens to be active when ICU redirects back.
+
+    Active profile → the normal pm.save_icu_token path (in-memory _env +
+    os.environ refresh). Non-active → path-based write into that profile's
+    .env (atomic, 0600) + athlete.json, leaving the active profile's
+    in-memory state untouched.
+
+    AC3c (capture only, no refresh flow): refresh_token / expires_in are
+    stored when ICU sends them — mirror of pm.save_icu_token's fields.
+    """
+    if profile_id == pm.active_id:
+        pm.save_icu_token(access_token, athlete_id, athlete_name,
+                          refresh_token, expires_in)
+        return
+    prof_dir = pm._profiles_dir / profile_id
+    env = {}
+    try:
+        env = pm._load_env_file(prof_dir / ".env")
+    except Exception:
+        env = {}
+    new_id = (athlete_id if athlete_id is not None
+              else (env.get("ICU_ATHLETE_ID") or "")).strip()
+    api_key = (env.get("ICU_API_KEY") or "").strip()
+    token = (access_token or "").strip()
+    lines = [f"ICU_ATHLETE_ID={new_id}",
+             f"ICU_API_KEY={api_key}",
+             f"ICU_ACCESS_TOKEN={token}"]
+    if token:
+        # AC3c parity with pm.save_icu_token: keep/refresh the capture fields;
+        # a disconnect (empty token) drops them.
+        rt = (str(refresh_token).strip() if refresh_token
+              else (env.get("ICU_REFRESH_TOKEN") or "").strip())
+        if rt:
+            lines.append(f"ICU_REFRESH_TOKEN={rt}")
+        exp = (env.get("ICU_TOKEN_EXPIRES_AT") or "").strip()
+        try:
+            if expires_in is not None and float(expires_in) > 0:
+                exp = str(int(time.time() + float(expires_in)))
+        except (TypeError, ValueError):
+            _log.warning("icu token save: ignoring bad expires_in %r", expires_in)
+        if exp:
+            lines.append(f"ICU_TOKEN_EXPIRES_AT={exp}")
+    if any(c in "".join(lines) for c in "\n\r"):
+        raise ValueError("credentials may not contain newlines")
+    pm._write_env_atomic(prof_dir / ".env", "\n".join(lines) + "\n")
+    if athlete_name is not None:
+        athlete = pm._load_json(prof_dir / "athlete.json")
+        if not isinstance(athlete, dict):
+            athlete = {}
+        athlete["icu_athlete_name"] = athlete_name
+        pm._write_json(prof_dir / "athlete.json", athlete)
+
+
 @app.get("/oauth/icu/start")
 def api_oauth_icu_start(return_to: str = Query("/")):
     """Begin the ICU OAuth flow: mint a CSRF state, 302 to ICU's authorize page.
@@ -7316,6 +7692,14 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
         _log.warning("EVENT=icu_oauth_bad_state has_state=%s has_code=%s",
                      bool(st), bool(code))
         return _back("icu=error&reason=state")
+    # AC3a: the token belongs to the profile that STARTED this flow. If it was
+    # deleted while the user was on intervals.icu, error out — never bind the
+    # token to whichever profile is active now.
+    target_pid = (st.get("profile_id") or "").strip()
+    pm = ProfileManager.get()
+    if not _icu_profile_exists(pm, target_pid):
+        _log.warning("EVENT=icu_oauth_profile_gone profile=%s", target_pid or "?")
+        return _back("icu=error&reason=profile_gone")
     try:
         import httpx
         # Diagnostic: a build that didn't bundle .oauth.env ships an empty secret
@@ -7354,18 +7738,41 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
                     athlete_id = athlete_id or str(a2.get("id") or "")
             except Exception:
                 pass
-        ProfileManager.get().save_icu_token(
-            access_token, athlete_id or None, athlete_name or None)
-        # Unshadow stale module-level config.ICU_* so the proxy re-resolves to the
-        # freshly-saved token immediately (same fix as the API-key save path).
-        for _attr in ("ICU_ATHLETE_ID", "ICU_API_KEY", "ICU_ACCESS_TOKEN"):
+        # AC3d: no athlete id → hard error surface (the connection card shows a
+        # retry hint) instead of persisting a token that yields silent
+        # sync_skipped-forever. Nothing is saved — retry is clean.
+        if not athlete_id:
+            _log.warning("EVENT=icu_oauth_no_athlete_id profile=%s", target_pid)
+            return _back("icu=error&reason=no_athlete_id")
+        # AC3b: the SAME profile reconnected as a DIFFERENT ICU athlete →
+        # its local rows/mirrors belong to the old athlete; purge before save.
+        prev_athlete = _icu_profile_stored_athlete_id(pm, target_pid)
+        if prev_athlete and prev_athlete != athlete_id:
+            _log.info("EVENT=icu_oauth_athlete_changed profile=%s old=%s new=%s "
+                      "— purging the profile's synced data",
+                      target_pid, prev_athlete, athlete_id)
             try:
-                delattr(config, _attr)
-            except AttributeError:
-                pass
-        _icu_oauth_reset_throttle()
-        _log.info("EVENT=icu_oauth_connected athlete_id=%s name=%r",
-                  athlete_id or "?", athlete_name or "")
+                db.purge_profile_data(target_pid)
+            except db.SyncBusy:
+                # Nothing saved yet — a clean retry re-runs the whole flow.
+                _log.warning("EVENT=icu_oauth_purge_busy profile=%s", target_pid)
+                return _back("icu=error&reason=busy")
+        _save_icu_token_for_profile(
+            pm, target_pid, access_token, athlete_id or None, athlete_name or None,
+            refresh_token=tok.get("refresh_token"),
+            expires_in=tok.get("expires_in"))
+        if target_pid == pm.active_id:
+            # Unshadow stale module-level config.ICU_* so the proxy re-resolves
+            # to the freshly-saved token immediately (same fix as the API-key
+            # save path). Only meaningful when the ACTIVE profile changed.
+            for _attr in ("ICU_ATHLETE_ID", "ICU_API_KEY", "ICU_ACCESS_TOKEN"):
+                try:
+                    delattr(config, _attr)
+                except AttributeError:
+                    pass
+            _icu_oauth_reset_throttle()
+        _log.info("EVENT=icu_oauth_connected profile=%s athlete_id=%s name=%r",
+                  target_pid, athlete_id or "?", athlete_name or "")
         return _back("icu=connected")
     except Exception:
         _log.exception("ICU OAuth token exchange failed")
@@ -7374,14 +7781,29 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
 
 @app.post("/api/icu/disconnect")
 def api_icu_disconnect():
-    """Clear the OAuth token for the active profile (revert to API-key / none)."""
+    """AC3b: disconnect = clear the token AND purge the profile's synced data
+    (activities/wellness/sync_log rows + icu-sourced athlete mirrors). The next
+    account connected to this profile must start clean — no residual rows from
+    the previous athlete polluting CTL/ATL."""
     from profile_manager import ProfileManager
     try:
-        ProfileManager.get().save_icu_token("", None)
+        pm = ProfileManager.get()
+        pid = pm.active_id
+        if pid is None:
+            return JSONResponse({"ok": False, "error": "no active profile"},
+                                status_code=409)
+        try:
+            db.purge_profile_data(pid)
+        except db.SyncBusy:
+            return JSONResponse(
+                {"ok": False, "error": "sync busy — try again in a moment"},
+                status_code=503)
+        pm.save_icu_token("", None)
         try:
             delattr(config, "ICU_ACCESS_TOKEN")
         except AttributeError:
             pass
+        _log.info("EVENT=icu_disconnect profile=%s (token cleared + data purged)", pid)
         return {"ok": True}
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
@@ -7671,9 +8093,13 @@ def update_settings(request_body: dict):
 
     # W2d provenance: a settings-form LTHR write is MANUAL — it blocks the ICU
     # mirror (W3) from clobbering a tested value, and the UI shows source+date.
+    # AC5f: EXCEPT when the caller passes lthr_source_hint="icu" — the wizards
+    # send that ONLY for an ICU-prefilled value the user did not edit, so the
+    # provenance honestly reads "icu" (a typed value still stamps manual).
     if "lthr" in athlete_updates:
         from datetime import date as _date
-        athlete_updates["lthr_source"] = "manual"
+        _hint = str(request_body.get("lthr_source_hint") or "").strip().lower()
+        athlete_updates["lthr_source"] = "icu" if _hint == "icu" else "manual"
         athlete_updates["lthr_source_date"] = _date.today().isoformat()
 
     # Red-team S1/S2: validate lthr/max_hr HERE with the ranges that actually
@@ -7681,10 +8107,13 @@ def update_settings(request_body: dict):
     # path silently clamps to [140,220] — so a 240 got a 200 OK, never landed,
     # and could leave lthr > max_hr on disk with hr mode silently degraded.
     # Out-of-range now 400s (was an unhandled ValueError → 500).
-    if "lthr" in athlete_updates and not (100 <= athlete_updates["lthr"] <= 220):
-        raise HTTPException(400, f"LTHR {athlete_updates['lthr']} out of range [100, 220]")
-    if "max_hr" in athlete_updates and not (140 <= athlete_updates["max_hr"] <= 220):
-        raise HTTPException(400, f"max HR {athlete_updates['max_hr']} out of range [140, 220]")
+    # AC5d: bounds come from the ONE range table (SETUP_LIMITS).
+    _lthr_lo, _lthr_hi = SETUP_LIMITS["lthr"]
+    _mhr_lo, _mhr_hi = SETUP_LIMITS["max_hr"]
+    if "lthr" in athlete_updates and not (_lthr_lo <= athlete_updates["lthr"] <= _lthr_hi):
+        raise HTTPException(400, f"LTHR {athlete_updates['lthr']} out of range [{_lthr_lo}, {_lthr_hi}]")
+    if "max_hr" in athlete_updates and not (_mhr_lo <= athlete_updates["max_hr"] <= _mhr_hi):
+        raise HTTPException(400, f"max HR {athlete_updates['max_hr']} out of range [{_mhr_lo}, {_mhr_hi}]")
 
     # hr target_mode (IP_HR_ONLY C15/C16). Gate on the PROSPECTIVE lthr/max_hr
     # (a same-request lthr write counts), and on lthr being EXPLICITLY set —
@@ -14926,12 +15355,14 @@ def api_gc_status():
 
 
 def _rides_fit_dir() -> Path:
-    """Directory for raw FIT imports. Shared across profiles by design:
-    the imported FIT contains its own athlete/device metadata and the
-    per-profile saved-ride archive lives elsewhere (ride_storage)."""
-    d = _user_data_dir / "rides"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    """Directory for raw FIT imports — v3.0.0 AC2a: PER-PROFILE, delegated to
+    ride_storage._fit_rides_dir() so app.py and ride_storage.load_all_rides
+    can never disagree about where FITs live (the old global
+    ~/.domestique/rides made one profile's imports visible to all, and after
+    the per-profile migration an app-side global would make imports vanish
+    from load_all_rides entirely)."""
+    import ride_storage as _rs
+    return _rs._fit_rides_dir()
 
 
 def _parse_fit_stats(fit_path: Path) -> dict:
@@ -15412,6 +15843,10 @@ def _sync_icu_wellness(force: bool = False, days: int = 90) -> dict:
     import training as _training
     import ride_storage as _rs
 
+    # AC1: snapshot the owning profile at TASK START — the fetch below runs
+    # outside any lock; every write section is gated on the snapshot.
+    _snap = _sync_task_snapshot()
+
     try:
         records = _training.fetch_recent_wellness(days=days)
     except Exception as e:
@@ -15423,14 +15858,22 @@ def _sync_icu_wellness(force: bool = False, days: int = 90) -> dict:
         return {"added": 0, "total": total, "skipped": f"fetch_failed:{type(e).__name__}"}
 
     added = 0
-    for rec in records or []:
-        if not isinstance(rec, dict):
-            continue
-        path = _rs.persist_wellness(rec)
-        if path is not None:
-            added += 1
+    try:
+        for rec in records or []:
+            if not isinstance(rec, dict):
+                continue
+            with db.sync_write_gate(_snap):
+                path = _rs.persist_wellness(rec)
+            if path is not None:
+                added += 1
 
-    _write_last_wellness_sync_at(time.time())
+        with db.sync_write_gate(_snap):
+            _write_last_wellness_sync_at(time.time())
+    except db.SyncAborted:
+        # Profile switched mid-task — writes stop; already-persisted records
+        # went to the snapshot profile's dirs, nothing lands in the new one.
+        _log.info("_sync_icu_wellness: aborted mid-task (profile switched)")
+        return {"added": added, "total": added, "skipped": "profile_switched"}
     try:
         total = len(_rs.load_recent_wellness(days=days))
     except Exception:
@@ -15788,6 +16231,11 @@ def _sync_icu_activities_locked(force: bool = False) -> dict:
     import training as _training
     import ride_storage as _rs
 
+    # AC1: snapshot the owning profile at TASK START (this function runs on the
+    # domestique.icu_sync daemon thread and on forced request threads). The
+    # network fetch stays OUTSIDE any lock; each write below is gated.
+    _snap = _sync_task_snapshot()
+
     try:
         activities = _training.fetch_recent_activities(days=90)
     except Exception as e:
@@ -15802,6 +16250,7 @@ def _sync_icu_activities_locked(force: bool = False) -> dict:
 
     added = 0
     updated = 0
+    aborted = False
     added_paths: list[Path] = []
     icu_dir = _rs._icu_rides_dir()
     # v2.2.9 — publish live progress so the dashboard banner shows real counts
@@ -15829,7 +16278,16 @@ def _sync_icu_activities_locked(force: bool = False) -> dict:
             _set_sync_progress(done=_idx, added=added, updated=updated)
             continue
         existed = (icu_dir / f"{ext}.json").exists()
-        path = _rs.persist_icu_activity(a)
+        # AC1: each persist is a gated write section — a profile switch between
+        # activities aborts the rest of the pass (writes never re-resolve to
+        # the NEW profile's dirs).
+        try:
+            with db.sync_write_gate(_snap):
+                path = _rs.persist_icu_activity(a)
+        except db.SyncAborted:
+            aborted = True
+            _log.info("_sync_icu_activities: aborted mid-pass (profile switched)")
+            break
         if path is None:
             _set_sync_progress(done=_idx, added=added, updated=updated)
             continue
@@ -15861,8 +16319,24 @@ def _sync_icu_activities_locked(force: bool = False) -> dict:
             f"_sync_icu_activities: DFA augment budget ({_SYNC_AUGMENT_BUDGET_S}s) "
             f"reached — deferred {_aug_deferred} record(s) to next sync"
         )
+    if aborted:
+        # AC1: never stamp .last_sync_at for the NEW profile after a mid-pass
+        # switch (it would suppress the new profile's own first sync for 1h).
+        if added or updated:
+            clear_cache()
+        return {
+            "added": added, "updated": updated,
+            "total": len(_load_all_rides_safe()),
+            "status": "aborted",
+            "skipped": "profile_switched",
+            "last_sync_at": _read_last_sync_at(),
+        }
     now = time.time()
-    _write_last_sync_at(now)
+    try:
+        with db.sync_write_gate(_snap):
+            _write_last_sync_at(now)
+    except db.SyncAborted:
+        _log.info("_sync_icu_activities: last_sync_at stamp skipped (profile switched)")
     # v2.2.6 perf — new/updated rides were just written to disk; drop the
     # memoised archive caches (cached("all_rides") + cached("recent_dfa_
     # decoupling")) so the `total` below — and every downstream reader on this
@@ -15995,8 +16469,11 @@ def _aggregate_best_efforts_90d(rides: list[dict] | None = None,
                     result[secs] = watts
         # Drop tiers with zero (no caller-supplied effort at that duration)
         return {d: w for d, w in result.items() if w > 0}
-    # v1.3.0 default mode: delegate to power_curve.
+    # v1.3.0 default mode: delegate to power_curve. AC2a: an un-passed
+    # profile_id resolves to the ACTIVE profile (was hardcoded "default").
     import power_curve
+    if profile_id == "default":
+        profile_id = _active_profile_id_or_default()
     full = power_curve.aggregate_power_curve(profile_id, window_days=90)
     return {pt["duration_s"]: pt["watts"] for pt in full["rider_curve"]
             if pt["duration_s"] in target_durations}
@@ -17809,21 +18286,36 @@ def api_diag_health(request: Request):
 def dashboard(request: Request):
     from fastapi.responses import RedirectResponse
     from profile_manager import ProfileManager
-    registry_path = Path.home() / ".domestique" / "profiles.json"
-    # 1. No profiles.json at all → first-time setup
-    if not registry_path.exists() and not SETUP_MARKER.exists():
-        return RedirectResponse(url="/setup")
-    # 2. Multiple profiles + skip_picker=false → profile picker
+    active_profile_id = ""
     try:
         pm = ProfileManager.get()
+        # AC4 (flag-only rule, no heuristics): first-run wizard when
+        #   1. there is NO active profile (fresh boot pre-migration, or
+        #      delete-last), or
+        #   2. the active profile was auto-created fresh by migrate_to_profiles
+        #      ("bootstrapped": true in the registry) AND setup never completed.
+        # The old bundle-marker fallback is gone (the repo ships
+        # .setup_complete, which defeated first-run detection entirely), and
+        # legacy upgrades are marked bootstrapped=false by the migration — a
+        # real install provably never redirects.
+        if pm.active_id is None:
+            return RedirectResponse(url="/setup")
+        if (_active_profile_entry(pm).get("bootstrapped")
+                and not _setup_marker().exists()):
+            return RedirectResponse(url="/setup")
+        active_profile_id = pm.active_id or ""
+        # Multiple profiles + skip_picker=false → profile picker
         profiles = pm.list_profiles()
         skip = pm._registry.get("skip_picker", True)
         if len(profiles) > 1 and not skip:
             return RedirectResponse(url="/profile-picker")
     except Exception:
         pass
-    # 3. Otherwise → dashboard
-    return templates.TemplateResponse(request=request, name="dashboard.html")
+    # Otherwise → dashboard. active_profile_id feeds the per-profile
+    # localStorage keys (AC2d) — rendered into an inline const.
+    return templates.TemplateResponse(
+        request=request, name="dashboard.html",
+        context={"active_profile_id": active_profile_id})
 
 
 if __name__ == "__main__":

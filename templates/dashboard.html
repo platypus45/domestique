@@ -2835,7 +2835,7 @@ window.addEventListener('unhandledrejection', function(e) {
   </div>
 
   <!-- Connections (Intervals.icu) -->
-  <div class="card" style="margin-top:12px;">
+  <div class="card" style="margin-top:12px;" id="icu-connection-card">
     <h3>Connections</h3>
 
     <!-- Intervals.icu — OAuth "Connect" is primary; API key is the manual fallback. -->
@@ -2850,6 +2850,7 @@ window.addEventListener('unhandledrejection', function(e) {
       <div id="icu-oauth-block" style="margin-bottom:10px;">
         <button class="btn btn-primary" id="icu-connect-btn" onclick="window.location='/oauth/icu/start'">Connect intervals.icu</button>
         <button class="btn btn-sm" id="icu-disconnect-btn" style="display:none;" onclick="icuDisconnect()">Disconnect</button>
+        <div id="icu-conn-error" style="display:none;font-size:12px;color:var(--red);margin-top:6px;"></div>
         <div id="icu-conn-help" style="font-size:11px;color:var(--text3);margin-top:6px;">Log in at intervals.icu and authorize Domestique — no copy-pasting keys.</div>
       </div>
     </div>
@@ -3164,6 +3165,12 @@ loadProfileBadge();
 // _targetMode too — red-team F6: it was only set on the Settings tab, so every
 // hr-mode surface outside Settings saw `undefined` until that tab was visited.
 fetch('/api/settings').then(r=>r.json()).then(d=>{window._athleteFtp=d.ftp||250;window._athleteLthr=d.lthr||170;window._athleteMaxHr=d.max_hr||195;window._targetMode=d.target_mode||'power';window._lthrIsSet=!!d.lthr_is_set;window._hrRows=d.hr_rows||null;}).catch(()=>{});
+
+// AC2d — active profile id (server-rendered). Per-profile localStorage keys
+// (volume unit, DFA throttles) append ':<profile_id>' so profiles don't share
+// client-side state. Theme stays global (genuinely cosmetic/shared).
+const __ACTIVE_PROFILE_ID = '{{ active_profile_id }}';
+function _profileLsKey(base) { return base + ':' + __ACTIVE_PROFILE_ID; }
 
 // Theme toggle — safe wrapper for localStorage (unavailable in pywebview data: URLs)
 function _lsGet(k) { try { return localStorage.getItem(k); } catch(e) { return null; } }
@@ -6285,7 +6292,7 @@ async function loadReadinessComposite() {
 // records). The backfill runs the lazy compute_dfa_alpha1_from_hrv_stream
 // path so it usually finishes in <10 s even for 60+ rides.
 const _DFA_BACKFILL_THROTTLE_MS = 30 * 60 * 1000;  // 30 min
-const _DFA_BACKFILL_LS_KEY = 'dfa_backfill_last_run_at';
+const _DFA_BACKFILL_LS_KEY = _profileLsKey('dfa_backfill_last_run_at');  // AC2d per-profile
 
 async function _dfaBackfillIfStale(diag) {
   // Stickiness check: if every "recent" ride is already in a sticky
@@ -6461,7 +6468,7 @@ async function loadHomeSnapshotDfa(_activitiesUnused) {
 // recomputes computed-but-old rides into algo v3.
 let _dfaTabData = null;
 let _dfaView = 'aggregate';
-const _DFA_MIGRATE_LS_KEY = 'dfa_migrate_last_run_at';
+const _DFA_MIGRATE_LS_KEY = _profileLsKey('dfa_migrate_last_run_at');  // AC2d per-profile
 const _DFA_MIGRATE_THROTTLE_MS = 10 * 60 * 1000;  // 10 min
 
 // r² → confidence color (grill S5). Drives per-channel cell color.
@@ -10580,7 +10587,7 @@ async function reforecastPlan() {
 
 // F2 — weekly-volume unit toggle. Default hours (the tester's ask); flips to
 // minutes; choice persisted in localStorage so it survives reloads.
-window._volUnit = (() => { try { return localStorage.getItem('domestiqueVolUnit') || 'h'; } catch(_) { return 'h'; } })();
+window._volUnit = (() => { try { return localStorage.getItem(_profileLsKey('domestiqueVolUnit')) || 'h'; } catch(_) { return 'h'; } })();  // AC2d per-profile
 function volFmt(min) {
   const m = Math.round(Number(min) || 0);
   if (window._volUnit === 'min') return `${m}m`;
@@ -10592,7 +10599,7 @@ function _syncVolUnitBtn() {
 }
 function toggleVolUnit() {
   window._volUnit = (window._volUnit === 'h') ? 'min' : 'h';
-  try { localStorage.setItem('domestiqueVolUnit', window._volUnit); } catch(_) {}
+  try { localStorage.setItem(_profileLsKey('domestiqueVolUnit'), window._volUnit); } catch(_) {}
   _syncVolUnitBtn();
   try { if (window._planData) renderPlanJSON(window._planData); } catch(_) {}
   try { loadWeeklyCalendar(); } catch(_) {}
@@ -13637,13 +13644,27 @@ async function loadIcuConnection() {
     if (oauthBlk) oauthBlk.style.display = 'block';
     // Connected → subtle "Switch account" (NOT alarming "Reconnect"); legacy key →
     // "Switch to sign-in"; disconnected → "Reconnect" (primary).
+    // AC3b: "Switch account" routes through disconnect-then-start (the profile's
+    // synced data is purged server-side so the next account starts clean).
     if (connBtn) {
-      if (oauth) { connBtn.textContent = 'Switch account'; connBtn.className = 'btn btn-sm'; }
-      else if (c.method === 'apikey') { connBtn.textContent = 'Switch to sign-in'; connBtn.className = 'btn btn-primary'; }
-      else { connBtn.textContent = 'Reconnect intervals.icu'; connBtn.className = 'btn btn-primary'; }
+      if (oauth) { connBtn.textContent = 'Switch account'; connBtn.className = 'btn btn-sm'; connBtn.onclick = icuSwitchAccount; }
+      else if (c.method === 'apikey') { connBtn.textContent = 'Switch to sign-in'; connBtn.className = 'btn btn-primary'; connBtn.onclick = () => { window.location = '/oauth/icu/start'; }; }
+      else { connBtn.textContent = 'Reconnect intervals.icu'; connBtn.className = 'btn btn-primary'; connBtn.onclick = () => { window.location = '/oauth/icu/start'; }; }
     }
     if (disBtn) disBtn.style.display = oauth ? 'inline-flex' : 'none';
     if (help) help.style.display = oauth ? 'none' : 'block';
+    // AC3d: surface the last OAuth-callback failure on the card itself (a toast
+    // alone vanishes). Cleared the moment a connection succeeds.
+    const errEl = $('icu-conn-error');
+    if (errEl) {
+      if (!oauth && window._icuConnError) {
+        errEl.textContent = window._icuConnError;
+        errEl.style.display = 'block';
+      } else {
+        window._icuConnError = null;
+        errEl.style.display = 'none';
+      }
+    }
   } catch (e) { if (statusEl) statusEl.textContent = ''; }
 }
 
@@ -13655,6 +13676,34 @@ async function icuDisconnect() {
   } catch (e) { showToast('Disconnect failed', 3000, 'error'); }
 }
 
+// AC3b: "Switch account" = disconnect FIRST (server clears the token and purges
+// this profile's synced rows/mirrors), then restart the OAuth flow so the next
+// account starts clean. Rides re-sync from intervals.icu after reconnecting.
+async function icuSwitchAccount() {
+  try {
+    const r = await fetch('/api/icu/disconnect', { method: 'POST' });
+    if (!r.ok) {
+      const d = await r.json().catch(() => null);
+      showToast((d && d.error) || 'Could not disconnect — try again.', 5000, 'error');
+      return;
+    }
+  } catch (e) {
+    showToast('Could not disconnect — try again.', 5000, 'error');
+    return;
+  }
+  window.location = '/oauth/icu/start';
+}
+
+// D8: land the user on the Settings connection card (not the first-run wizard).
+function openSettingsConnections() {
+  const tab = document.querySelector('.tab[data-tab="settings"]');
+  if (tab) tab.click();
+  setTimeout(() => {
+    const card = document.getElementById('icu-connection-card');
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 150);
+}
+
 // Toast the OAuth callback bounce (?icu=connected|error|unavailable), then strip
 // the params so a refresh doesn't re-toast. Called once on page load.
 function handleIcuOauthReturn() {
@@ -13664,7 +13713,23 @@ function handleIcuOauthReturn() {
     if (!icu) return;
     if (icu === 'connected') showToast('intervals.icu connected ✓', 4000, 'success');
     else if (icu === 'unavailable') showToast("intervals.icu connect isn't enabled in this build yet — coming soon.", 6000, 'warning');
-    else if (icu === 'error') showToast('intervals.icu connection failed — ' + (p.get('reason') || 'try again') + '.', 6000, 'error');
+    else if (icu === 'error') {
+      // AC3d: friendly per-reason copy; no_athlete_id is a hard error the
+      // connection card must keep showing (nothing was saved — retry is clean).
+      const REASON_MSGS = {
+        no_athlete_id: "intervals.icu didn't return an athlete id for that account. Nothing was linked — try connecting again.",
+        profile_gone: 'the profile that started the sign-in no longer exists.',
+        state: 'the sign-in link expired — start again from this page.',
+        exchange: 'the token exchange failed — try again.',
+        denied: 'access was declined on intervals.icu.',
+        busy: 'a sync was in progress — try again in a moment.'
+      };
+      const reason = p.get('reason') || '';
+      const msg = REASON_MSGS[reason] || 'try again';
+      showToast('intervals.icu connection failed — ' + msg, 8000, 'error');
+      window._icuConnError = 'Connection failed — ' + msg;
+      try { loadIcuConnection(); } catch (_) {}
+    }
     p.delete('icu'); p.delete('reason');
     const qs = p.toString();
     window.history.replaceState({}, '', window.location.pathname + (qs ? '?' + qs : ''));
@@ -16278,8 +16343,11 @@ async function loadSyncBanner() {
     let bg = '', border = '', fg = '';
     if (s.auth_disabled === true) {
       bg = 'rgba(239,68,68,0.10)'; border = 'rgba(239,68,68,0.35)'; fg = '#b91c1c';
-      html = `<strong>Intervals.icu sync paused</strong> — check your API key. ` +
-             `<a href="/setup" style="color:inherit;text-decoration:underline;">Open Settings</a>`;
+      // D8: OAuth-era copy + deep-link to the Settings connection card (the old
+      // link went to the first-run wizard, which no longer handles credentials).
+      html = `<strong>Intervals.icu sync paused</strong> — your account needs to be re-linked. ` +
+             `<a href="#" onclick="openSettingsConnections();return false;" ` +
+             `style="color:inherit;text-decoration:underline;">Reconnect intervals.icu</a>`;
     } else if ((s.consecutive_failures || 0) > 2) {
       bg = 'rgba(234,179,8,0.10)'; border = 'rgba(234,179,8,0.35)'; fg = '#a16207';
       const lastErr = (s.last_error || '').toString().slice(0, 140);

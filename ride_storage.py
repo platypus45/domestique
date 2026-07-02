@@ -27,11 +27,24 @@ _DFA_CARRY_KEYS = (
 )
 
 
-def _rides_dir() -> Path:
-    """Get the rides directory for the active profile."""
+def _active_profile_dir() -> Path:
+    """AC2a: the ACTIVE profile's directory — every archive dir hangs off it.
+
+    Raises RuntimeError when no profile is active (post delete-last): the
+    active_dir fallback is the profiles ROOT, and mkdir-ing archive dirs
+    there is exactly the root-artifact resurrection bug (A12). Read paths
+    catch this and return empty; write paths let it propagate.
+    """
     from profile_manager import ProfileManager
     pm = ProfileManager.get()
-    d = pm.active_dir / "rides"
+    if pm.active_id is None:
+        raise RuntimeError("no active profile: ride/wellness archives unavailable")
+    return pm.active_dir
+
+
+def _rides_dir() -> Path:
+    """Get the rides directory for the active profile."""
+    d = _active_profile_dir() / "rides"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -39,13 +52,16 @@ def _rides_dir() -> Path:
 def _icu_rides_dir() -> Path:
     """v4.4.0 — directory for ICU-synced normalized activity records.
 
-    Lives under ``~/.domestique/rides/icu/`` (NOT inside the per-profile
-    rides dir — ICU records are global like raw FIT imports). One JSON file
-    per ICU activity, keyed by ICU's external id.
+    v3.0.0 AC2a: per-profile — ``<profile>/rides/icu/`` (was the global
+    ``~/.domestique/rides/icu/``, which leaked every rider's ICU archive to
+    whoever was active; migrate_profiles.migrate_archives_to_profiles moves
+    the legacy global tree on first boot). One JSON file per ICU activity,
+    keyed by ICU's external id. power_curve._icu_rides_dir delegates here —
+    single source of truth.
 
     Tests can patch this helper to redirect the dir into a tmp path.
     """
-    base = Path.home() / ".domestique" / "rides" / "icu"
+    base = _active_profile_dir() / "rides" / "icu"
     base.mkdir(parents=True, exist_ok=True)
     return base
 
@@ -54,10 +70,12 @@ def _fit_rides_dir() -> Path:
     """v4.4.0 — directory containing raw FIT imports.
 
     Mirror of app._rides_fit_dir() (kept here so ride_storage.load_all_rides
-    doesn't have to import app.py — that would be a circular import). Same
-    path: ``~/.domestique/rides/``.
+    doesn't have to import app.py — that would be a circular import).
+    v3.0.0 AC2a: per-profile ``<profile>/rides/`` (same dir as the ride
+    summaries — FITs and summaries have always shared it, different
+    extensions).
     """
-    base = Path.home() / ".domestique" / "rides"
+    base = _active_profile_dir() / "rides"
     base.mkdir(parents=True, exist_ok=True)
     return base
 
@@ -65,12 +83,12 @@ def _fit_rides_dir() -> Path:
 def _wellness_dir() -> Path:
     """v4.5.0 — directory for ICU-synced wellness records.
 
-    Lives under ``~/.domestique/wellness/`` (global like the ICU rides dir,
-    not per-profile). One JSON file per day, keyed by ISO date.
+    v3.0.0 AC2a: per-profile ``<profile>/wellness/`` (was global). One JSON
+    file per day, keyed by ISO date.
 
     Tests can patch this helper to redirect the dir into a tmp path.
     """
-    base = Path.home() / ".domestique" / "wellness"
+    base = _active_profile_dir() / "wellness"
     base.mkdir(parents=True, exist_ok=True)
     return base
 
@@ -406,7 +424,10 @@ def persist_icu_activity(activity: dict) -> Path | None:
 def load_icu_rides() -> list[dict]:
     """v4.4.0 — load every persisted ICU normalized record."""
     out: list[dict] = []
-    d = _icu_rides_dir()
+    try:
+        d = _icu_rides_dir()
+    except RuntimeError:
+        return out  # AC6a: no active profile — nothing to load, nothing created
     for f in sorted(d.glob("*.json"), reverse=True):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
@@ -431,7 +452,10 @@ def load_all_rides() -> list[dict]:
     icu = load_icu_rides()
 
     fits: list[dict] = []
-    fit_dir = _fit_rides_dir()
+    try:
+        fit_dir = _fit_rides_dir()
+    except RuntimeError:
+        return icu  # AC6a: no active profile (icu is [] too)
     for f in sorted(fit_dir.glob("*.fit")):
         try:
             st = f.stat()
@@ -757,7 +781,10 @@ def get_icu_ride(external_id: str) -> dict | None:
     if not re.match(r"^[\w\-]+$", external_id) or len(external_id) > 40:
         log.warning(f"Rejected external_id in get_icu_ride: {external_id!r}")
         return None
-    path = _icu_rides_dir() / f"{external_id}.json"
+    try:
+        path = _icu_rides_dir() / f"{external_id}.json"
+    except RuntimeError:
+        return None  # AC6a: no active profile
     if not path.exists():
         return None
     try:
@@ -1010,7 +1037,10 @@ def list_rides() -> list[dict]:
     orphan does not spam the log on every dashboard refresh.
     """
     rides = []
-    rides_dir = _rides_dir()
+    try:
+        rides_dir = _rides_dir()
+    except RuntimeError:
+        return rides  # AC6a: no active profile
     for f in sorted(rides_dir.glob("ride_*.json"), reverse=True):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
@@ -1090,6 +1120,8 @@ def get_ride(ride_id: str) -> Optional[dict]:
     except ValueError as e:
         log.warning(f"Rejected ride_id in get_ride: {e}")
         return None
+    except RuntimeError:
+        return None  # AC6a: no active profile
     if not path or not path.exists():
         return None
     try:
@@ -1236,7 +1268,10 @@ def load_recent_wellness(days: int = 90) -> list[dict]:
     are skipped silently. Returns [] when the dir is empty or unreadable.
     """
     out: list[dict] = []
-    d = _wellness_dir()
+    try:
+        d = _wellness_dir()
+    except RuntimeError:
+        return out  # AC6a: no active profile
     for f in sorted(d.glob("*.json"), reverse=True):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
@@ -1304,6 +1339,8 @@ def delete_ride(ride_id: str) -> bool:
     except ValueError as e:
         log.warning(f"Rejected ride_id in delete_ride: {e}")
         return False
+    except RuntimeError:
+        return False  # AC6a: no active profile
     if path and path.exists():
         path.unlink()
         log.info(f"Ride deleted: {ride_id}")

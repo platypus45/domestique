@@ -113,12 +113,8 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,108,247
       <div id="setup-link-status" style="font-size:13px;margin-top:8px;min-height:18px;"></div>
       <button type="button" class="btn" id="setup-connect-btn" style="margin-top:8px;" onclick="connectIcu()">Sign in to intervals.icu</button>
     </div>
-    <!-- Manual API-key entry removed (OAuth is the only setup path). Hidden empty
-         stubs keep the legacy skip/test/finish JS null-safe — they always read "". -->
-    <input type="hidden" id="icu-key" value="">
-    <input type="hidden" id="icu-id" value="">
-    <input type="hidden" id="icu-id-hidden">
-    <div class="status" id="icu-status" style="display:none;"></div>
+    <!-- Manual API-key entry removed (OAuth is the only setup path); the legacy
+         hidden stubs went with the api-key JS (AC5a). -->
 
     <!-- Garmin sub-step, revealed once ICU is connected -->
     <div id="garmin-block" style="display:none;">
@@ -149,47 +145,49 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,108,247
   <!-- STEP 2: Athlete Profile -->
   <div class="step-panel" id="step-2">
     <h2>Your Profile</h2>
-    <p class="info">These values power your training zones. If you connected Intervals.icu, we'll try to auto-fill from your data.</p>
+    <p class="info">These values power your training zones. If you connected Intervals.icu, auto-fill pulls them from your data.</p>
+
+    <!-- AC5a: OAuth-era auto-fill (the per-field API-key toggles are gone).
+         Shown only when an intervals.icu connection exists. -->
+    <div id="autofill-row" style="display:none;margin-bottom:16px;">
+      <button type="button" class="btn btn-secondary" id="autofill-btn" onclick="autofillFromIcu()">Auto-fill from your data</button>
+      <div id="autofill-status" style="font-size:12px;color:var(--text2);margin-top:6px;"></div>
+    </div>
+
+    <!-- AC5e (D9): target-mode question — hr requires the LTHR field filled. -->
+    <div class="form-row">
+      <label>How do you train?</label>
+      <div style="display:flex;gap:8px;">
+        <button type="button" class="btn btn-secondary toggle-btn active" id="tm-power" onclick="setTargetMode('power', true)" style="font-size:12px;padding:5px 12px;">Power meter</button>
+        <button type="button" class="btn btn-secondary toggle-btn" id="tm-hr" onclick="setTargetMode('hr', true)" style="font-size:12px;padding:5px 12px;">Heart rate only</button>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px;" id="tm-hint">Heart-rate mode prescribes workout targets from your LTHR — the LTHR field below is required.</div>
+    </div>
 
     <div class="form-row">
       <label>Weight (kg)</label>
-      <input type="number" id="s-weight" value="72" min="20" max="300" step="0.1">
+      <input type="number" id="s-weight" value="72" min="30" max="200" step="0.1">
       <div style="font-size:11px;color:var(--text3);margin-top:3px;">Used for W/kg and climb power estimates</div>
     </div>
 
     <div class="form-row">
       <label>FTP — Functional Threshold Power (watts)
         <span style="font-weight:400;color:var(--text3);"> — the max power you can sustain for ~1 hour</span></label>
-      <div style="display:flex;gap:8px;margin-bottom:6px;">
-        <button type="button" class="btn btn-secondary toggle-btn active" onclick="setSource('ftp','manual',this)" style="font-size:12px;padding:5px 12px;">I know my FTP</button>
-        <button type="button" class="btn btn-secondary toggle-btn" onclick="setSource('ftp','icu',this)" style="font-size:12px;padding:5px 12px;">Use eFTP from Intervals.icu</button>
-      </div>
-      <div id="ftp-manual"><input type="number" id="s-ftp" value="250" min="50" max="500" step="1"></div>
-      <div id="ftp-icu" style="display:none;padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:13px;color:var(--text2);">Will be auto-filled from your Intervals.icu data</div>
+      <input type="number" id="s-ftp" value="250" min="50" max="600" step="1">
     </div>
 
     <div class="form-row">
       <label>LTHR — Lactate Threshold Heart Rate (bpm)
         <span style="font-weight:400;color:var(--text3);"> — HR at the point where lactate accumulates rapidly (~FTP effort)</span></label>
-      <div style="display:flex;gap:8px;margin-bottom:6px;">
-        <button type="button" class="btn btn-secondary toggle-btn active" onclick="setSource('lthr','manual',this)" style="font-size:12px;padding:5px 12px;">I know my LTHR</button>
-        <button type="button" class="btn btn-secondary toggle-btn" onclick="setSource('lthr','icu',this)" style="font-size:12px;padding:5px 12px;">Get from Intervals.icu</button>
-      </div>
-      <div id="lthr-manual"><input type="number" id="s-lthr" value="175" min="100" max="220" step="1">
-        <div style="font-size:11px;color:var(--text3);margin-top:3px;">Tip: your average HR during a 30min all-out effort is a good estimate</div></div>
-      <div id="lthr-icu" style="display:none;padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:13px;color:var(--text2);">Will be estimated from your high-intensity activities</div>
+      <input type="number" id="s-lthr" value="175" min="100" max="220" step="1">
+      <div style="font-size:11px;color:var(--text3);margin-top:3px;">Tip: your average HR during a 30min all-out effort is a good estimate</div>
     </div>
 
     <div class="form-row">
       <label>Max Heart Rate (bpm)
         <span style="font-weight:400;color:var(--text3);"> — the highest HR you've ever recorded during a max effort</span></label>
-      <div style="display:flex;gap:8px;margin-bottom:6px;">
-        <button type="button" class="btn btn-secondary toggle-btn active" onclick="setSource('maxhr','manual',this)" style="font-size:12px;padding:5px 12px;">I know my Max HR</button>
-        <button type="button" class="btn btn-secondary toggle-btn" onclick="setSource('maxhr','icu',this)" style="font-size:12px;padding:5px 12px;">Get from Intervals.icu</button>
-      </div>
-      <div id="maxhr-manual"><input type="number" id="s-maxhr" value="196" min="120" max="230" step="1">
-        <div style="font-size:11px;color:var(--text3);margin-top:3px;">Formula estimates (220-age) are unreliable. Use your actual recorded max if known.</div></div>
-      <div id="maxhr-icu" style="display:none;padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:13px;color:var(--text2);">Will be pulled from your highest recorded HR</div>
+      <input type="number" id="s-maxhr" value="196" min="140" max="220" step="1">
+      <div style="font-size:11px;color:var(--text3);margin-top:3px;">Formula estimates (220-age) are unreliable. Use your actual recorded max if known.</div>
     </div>
 
     <div class="form-row">
@@ -223,7 +221,6 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,108,247
       </details>
     </div>
 
-    <div id="eftp-hint" class="status info" style="display:none;"></div>
     <div class="actions">
       <button type="button" class="btn btn-secondary" onclick="nextStep(1)">Back</button>
       <button type="button" class="btn btn-primary" onclick="nextStep(3)">Next</button>
@@ -260,12 +257,14 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,108,247
     <h2>Training Preferences</h2>
     <div class="form-row">
       <label>Hours per week</label>
-      <input type="number" id="s-hours" value="8" min="3" max="20" step="0.5">
+      <input type="number" id="s-hours" value="8" min="1" max="40" step="0.5">
     </div>
     <div class="form-row">
       <label>Training days (click to toggle)</label>
       <div class="day-grid" id="day-grid">
-        <div class="day-btn selected" data-day="0">Mon</div>
+        <!-- AC6b: Mon starts unselected — it is the default REST day below,
+             and a day can't be both a training day and a rest day. -->
+        <div class="day-btn" data-day="0">Mon</div>
         <div class="day-btn selected" data-day="1">Tue</div>
         <div class="day-btn selected" data-day="2">Wed</div>
         <div class="day-btn selected" data-day="3">Thu</div>
@@ -299,11 +298,6 @@ let currentStep = 1;
 const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const TOTAL_STEPS = 4;
 
-// v1.8.25 — connection gate state. _icuOk = a Test passed for the CURRENT key;
-// _skipIcu = user opted out of Intervals.icu. Step-1 Next is enabled iff either.
-let _icuOk = false;
-let _skipIcu = false;
-
 function nextStep(n) {
   document.getElementById('step-' + currentStep).classList.remove('active');
   document.getElementById('step-' + n).classList.add('active');
@@ -316,125 +310,111 @@ function nextStep(n) {
   currentStep = n;
 }
 
-function updateStep1Gate() {
-  // OAuth-only: nothing to gate at this step (you connect in Settings after
-  // setup), so Continue is always enabled.
-  const btn = document.getElementById('step1-next');
-  if (btn) btn.disabled = false;
+// ── AC5e: touched-field tracking ─────────────────────────────────────────────
+// The wizard OMITS untouched fields from the save payload — omission is the
+// no-write mechanism (no fabricated lthr_source=manual, no fake FTP-test
+// ledger rows). "Touched" = the user typed it, restored it from a previous
+// wizard visit, or explicitly auto-filled it from intervals.icu.
+const _touched = new Set();
+const _icuOrigin = new Set();   // touched fields whose value came from auto-fill (AC5f)
+function _markTouched(id, fromIcu) {
+  _touched.add(id);
+  if (fromIcu) _icuOrigin.add(id); else _icuOrigin.delete(id);
+}
+let _daysTouched = false;
+let _restTouched = false;
+
+// AC5e (D9): target-mode question state. Only an explicit click writes
+// target_mode — leaving the preselected "Power meter" untouched writes nothing.
+let _targetMode = 'power';
+let _targetModeTouched = false;
+function setTargetMode(mode, touched) {
+  _targetMode = mode;
+  if (touched) _targetModeTouched = true;
+  document.getElementById('tm-power').classList.toggle('active', mode === 'power');
+  document.getElementById('tm-hr').classList.toggle('active', mode === 'hr');
+  persistState();
 }
 
-// Day toggles
+// ── AC5d: ONE range table ────────────────────────────────────────────────────
+// min/max come from GET /api/setup/limits — the same table /api/setup/save
+// validates against — so client ranges can never drift from the server again.
+// The static attributes in the HTML match the table and are only the fallback.
+const LIMIT_FIELDS = { weight: 's-weight', ftp: 's-ftp', lthr: 's-lthr',
+                       max_hr: 's-maxhr', hours_per_week: 's-hours',
+                       age: 's-age', cp: 's-cp', wprime_j: 's-wprime' };
+async function applyServerLimits() {
+  try {
+    const lim = await (await fetch('/api/setup/limits')).json();
+    for (const field in LIMIT_FIELDS) {
+      const el = document.getElementById(LIMIT_FIELDS[field]);
+      if (el && Array.isArray(lim[field]) && lim[field].length === 2) {
+        el.min = lim[field][0]; el.max = lim[field][1];
+      }
+    }
+  } catch (_) { /* offline — the matching static attributes stay in force */ }
+}
+
+// Day toggles — AC6b: a day can't be a training day AND a rest day; selecting
+// one side clears the other.
 document.querySelectorAll('#day-grid .day-btn').forEach(btn => {
-  btn.addEventListener('click', () => { btn.classList.toggle('selected'); persistState(); });
+  btn.addEventListener('click', () => {
+    btn.classList.toggle('selected');
+    _daysTouched = true;
+    if (btn.classList.contains('selected')) {
+      const rest = document.querySelector('#rest-grid .day-btn[data-day="' + btn.dataset.day + '"]');
+      if (rest && rest.classList.contains('rest')) { rest.classList.remove('rest'); _restTouched = true; }
+    }
+    persistState();
+  });
 });
 document.querySelectorAll('#rest-grid .day-btn').forEach(btn => {
-  btn.addEventListener('click', () => { btn.classList.toggle('rest'); persistState(); });
+  btn.addEventListener('click', () => {
+    btn.classList.toggle('rest');
+    _restTouched = true;
+    if (btn.classList.contains('rest')) {
+      const day = document.querySelector('#day-grid .day-btn[data-day="' + btn.dataset.day + '"]');
+      if (day && day.classList.contains('selected')) { day.classList.remove('selected'); _daysTouched = true; }
+    }
+    persistState();
+  });
 });
 
-// ── v1.8.25 ICU connection gate ──────────────────────────────────────────────
-// Editing the key invalidates a prior green (grill: stale _icuOk). A monotonic
-// token makes a late-arriving stale test response a no-op.
-let _icuTestToken = 0;
-let _autoTestTimer = null;
-function onIcuKeyInput() {
-  _icuOk = false;
-  document.getElementById('garmin-block').style.display = 'none';
-  const st = document.getElementById('icu-status'); if (st) st.className = 'status';
-  updateStep1Gate();
-  // debounce an auto-test so a paste validates without a manual click
-  if (_autoTestTimer) clearTimeout(_autoTestTimer);
-  _autoTestTimer = setTimeout(maybeAutoTest, 700);
-}
-function maybeAutoTest() {
-  const key = (document.getElementById('icu-key').value || '').trim();
-  if (key.length >= 8 && !_icuOk) testIcu(true);
-}
-
-function skipIcu() {
-  _skipIcu = true;
-  _icuOk = false;
-  const st = document.getElementById('icu-status');
-  st.className = 'status info';
-  st.textContent = "Skipping Intervals.icu — fitness (CTL/ATL/TSB) will be computed from FIT files you import. You can connect later in Settings.";
-  updateStep1Gate();
-}
-
-// Test ICU connection. auto=true → triggered by paste/blur (quieter on failure).
-let _testingIcu = false;
-async function testIcu(auto) {
-  if (_testingIcu) return;
-  const key = document.getElementById('icu-key').value.trim();
-  const id = document.getElementById('icu-id').value.trim();  // optional override
-  const st = document.getElementById('icu-status');
-  const btn = document.getElementById('test-btn');
-  if (!key) { if (!auto) { st.className = 'status err'; st.textContent = 'Paste your API key first.'; } return; }
-  const token = ++_icuTestToken;
-  _testingIcu = true;
-  btn.disabled = true; btn.textContent = 'Testing...';
-  st.className = 'status info'; st.textContent = 'Connecting...';
+// ── AC5a: auto-fill from the saved intervals.icu connection ─────────────────
+// Same /api/icu/athlete-numbers path profile_setup uses — no key in the
+// browser. Explicit button (never silently overwrites typed values).
+async function autofillFromIcu() {
+  const st = document.getElementById('autofill-status');
+  const btn = document.getElementById('autofill-btn');
+  st.textContent = 'Fetching from intervals.icu…';
+  if (btn) btn.disabled = true;
   try {
-    const res = await fetch('/api/setup/test-icu', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({athlete_id: id, api_key: key})
-    });
-    let data = null;
-    try { data = await res.json(); } catch (e) { data = null; }
-    if (token !== _icuTestToken) return;  // a newer test (or an edit) superseded this one
-    if (!res.ok || !data) {
-      st.className = 'status err';
-      st.textContent = (data && data.error) || ('Connection failed: HTTP ' + res.status);
-      _icuOk = false; updateStep1Gate(); return;
+    const a = await (await fetch('/api/icu/athlete-numbers')).json();
+    const map = { ftp: 's-ftp', weight: 's-weight', lthr: 's-lthr', max_hr: 's-maxhr' };
+    const got = [];
+    if (a && a.ok) {
+      for (const k in map) {
+        if (a[k] != null && a[k] !== '') {
+          const el = document.getElementById(map[k]);
+          if (el) { el.value = a[k]; _markTouched(map[k], true); got.push(k.replace('_', ' ')); }
+        }
+      }
     }
-    if (data.ok) {
-      _icuOk = true; _skipIcu = false;
-      // stash the (auto-detected or entered) athlete id for save
-      if (data.athlete_id) {
-        document.getElementById('icu-id-hidden').value = data.athlete_id;
-        if (!document.getElementById('icu-id').value.trim())
-          document.getElementById('icu-id').value = data.athlete_id;
-      }
-      st.className = 'status ok';
-      st.textContent = 'Connected' + (data.name ? ' as ' + data.name : '')
-        + (data.athlete_id ? ' · athlete ' + data.athlete_id : '')
-        + (data.eftp ? ' · eFTP ' + data.eftp + 'W' : '');
-      // auto-fill profile (ask before overwriting custom-typed values)
-      const ftpEl = document.getElementById('s-ftp');
-      const weightEl = document.getElementById('s-weight');
-      const ftpHasCustom = ftpEl && ftpEl.value && String(ftpEl.value) !== '250';
-      const weightHasCustom = weightEl && weightEl.value && String(weightEl.value) !== '72';
-      const anyOverwrite = (data.eftp && ftpHasCustom) || (data.weight && weightHasCustom);
-      let doOverwrite = true;
-      if (anyOverwrite) doOverwrite = confirm('Overwrite your entered values with Intervals.icu data?');
-      if (doOverwrite) {
-        if (data.eftp && ftpEl) { ftpEl.value = data.eftp; icuValues.ftp = data.eftp; }
-        if (data.weight && weightEl) weightEl.value = data.weight;
-      }
-      if (data.eftp) {
-        const hint = document.getElementById('eftp-hint');
-        hint.style.display = 'block';
-        hint.textContent = 'Auto-filled from Intervals.icu: eFTP ' + data.eftp + 'W' + (data.weight ? ', weight ' + data.weight + 'kg' : '');
-      }
-      document.getElementById('garmin-block').style.display = 'block';
-      updateStep1Gate();
-    } else {
-      st.className = 'status err';
-      st.textContent = data.error || 'Connection failed. Check your API key.';
-      _icuOk = false; updateStep1Gate();
-    }
-  } catch(e) {
-    if (token !== _icuTestToken) return;
-    st.className = 'status err'; st.textContent = 'Request failed: ' + e.message;
-    _icuOk = false; updateStep1Gate();
+    st.textContent = got.length
+      ? 'Filled from intervals.icu: ' + got.join(', ') + ' — edit anything that looks off.'
+      : 'Nothing to fill yet — your first sync runs after setup.';
+    persistState();
+  } catch (e) {
+    st.textContent = 'Auto-fill failed — enter your numbers manually.';
   } finally {
-    _testingIcu = false;
-    btn.disabled = false; btn.textContent = 'Test Connection';
+    if (btn) btn.disabled = false;
   }
 }
 
-// v1.8.25 — verify activities are flowing into Intervals.icu (Garmin sync check).
+// v1.8.25 — verify activities are flowing into Intervals.icu (Garmin sync
+// check). AC5a: uses the SAVED connection server-side (use_connection) — the
+// browser never holds a key.
 async function checkGarminSync() {
-  const key = document.getElementById('icu-key').value.trim();
-  const id = (document.getElementById('icu-id-hidden').value || document.getElementById('icu-id').value || '').trim();
   const st = document.getElementById('garmin-status');
   const btn = document.getElementById('garmin-check-btn');
   st.className = 'status info'; st.textContent = 'Checking Intervals.icu for recent activities...';
@@ -442,7 +422,7 @@ async function checkGarminSync() {
   try {
     const res = await fetch('/api/setup/check-activities', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({athlete_id: id, api_key: key})
+      body: JSON.stringify({use_connection: true})
     });
     const d = await res.json().catch(() => null);
     if (!d || !d.ok) {
@@ -467,123 +447,96 @@ async function checkGarminSync() {
   }
 }
 
-// Save everything
+// Save everything.
+// AC5e: only TOUCHED fields go in the payload — untouched defaults write
+// nothing server-side (no provenance rows, no ledger rows). Credentials are
+// NOT sent at all: the OAuth callback already bound the token to this profile.
 let _saving = false;
 async function saveAll() {
   if (_saving) return;
-  _saving = true;
   const btn = document.getElementById('save-btn');
   const st = document.getElementById('save-status');
+
+  // AC5e client gate: hr mode needs a filled-in LTHR (typed or auto-filled).
+  if (_targetModeTouched && _targetMode === 'hr' && !_touched.has('s-lthr')) {
+    st.className = 'status err';
+    st.textContent = 'Heart-rate mode needs your LTHR — fill in the LTHR field on the Profile step.';
+    nextStep(2);
+    return;
+  }
+  _saving = true;
   btn.disabled = true; btn.textContent = 'Saving...';
 
-  const availDays = [...document.querySelectorAll('#day-grid .day-btn.selected')].map(b => parseInt(b.dataset.day));
-  const restDays = [...document.querySelectorAll('#rest-grid .day-btn.rest')].map(b => parseInt(b.dataset.day));
+  const payload = {};
+  const numFields = { 's-weight': 'weight', 's-ftp': 'ftp', 's-lthr': 'lthr', 's-maxhr': 'max_hr' };
+  for (const id in numFields) {
+    if (_touched.has(id)) {
+      const v = parseFloat(document.getElementById(id).value);
+      if (!isNaN(v)) payload[numFields[id]] = v;
+    }
+  }
+  // AC5f: ICU-prefilled and unedited → provenance honestly reads "icu";
+  // a typed LTHR still stamps manual.
+  if ('lthr' in payload && _icuOrigin.has('s-lthr')) payload.lthr_source_hint = 'icu';
+  if (_targetModeTouched) payload.target_mode = _targetMode;
 
-  // athlete id: prefer the auto-detected hidden value, else the manual override
-  const icuId = (document.getElementById('icu-id-hidden').value
-                 || document.getElementById('icu-id').value || '').trim();
-  const payload = {
-    icu_athlete_id: _skipIcu ? '' : icuId,
-    icu_api_key: _skipIcu ? '' : document.getElementById('icu-key').value.trim(),
-    weight: parseFloat(document.getElementById('s-weight').value) || 72,
-    ftp: getFieldValue('ftp', 's-ftp', 250),
-    lthr: getFieldValue('lthr', 's-lthr', 175),
-    max_hr: getFieldValue('maxhr', 's-maxhr', 196),
-    workout_dir: document.getElementById('s-workout-dir').value.trim(),
-    gpx_dir: document.getElementById('s-gpx-dir').value.trim(),
-    hours_per_week: parseFloat(document.getElementById('s-hours').value) || 8,
-    available_days: availDays,
-    rest_days: restDays,
-  };
+  if (_touched.has('s-age')) {
+    const v = parseInt(document.getElementById('s-age').value, 10);
+    if (!isNaN(v)) payload.age = v;
+  }
+  if (_touched.has('s-cp')) {
+    const v = parseInt(document.getElementById('s-cp').value, 10);
+    if (!isNaN(v)) payload.cp = v;
+  }
+  if (_touched.has('s-wprime')) {
+    const v = parseInt(document.getElementById('s-wprime').value, 10);
+    if (!isNaN(v)) payload.wprime_j = v;
+  }
+  if (_touched.has('s-sex')) payload.sex = document.getElementById('s-sex').value;
 
-  // Optional new athlete fields — only include when user entered a value.
-  const ageRaw = document.getElementById('s-age').value.trim();
-  if (ageRaw !== '') {
-    const ageVal = parseInt(ageRaw, 10);
-    if (!isNaN(ageVal)) payload.age = ageVal;
+  const wd = document.getElementById('s-workout-dir').value.trim();
+  const gd = document.getElementById('s-gpx-dir').value.trim();
+  if (_touched.has('s-workout-dir') && wd) payload.workout_dir = wd;
+  if (_touched.has('s-gpx-dir') && gd) payload.gpx_dir = gd;
+
+  if (_touched.has('s-hours')) {
+    const v = parseFloat(document.getElementById('s-hours').value);
+    if (!isNaN(v)) payload.hours_per_week = v;
   }
-  const cpRaw = document.getElementById('s-cp').value.trim();
-  if (cpRaw !== '') {
-    const cpVal = parseInt(cpRaw, 10);
-    if (!isNaN(cpVal)) payload.cp = cpVal;
-  }
-  const wprimeRaw = document.getElementById('s-wprime').value.trim();
-  if (wprimeRaw !== '') {
-    const wprimeVal = parseInt(wprimeRaw, 10);
-    if (!isNaN(wprimeVal)) payload.wprime_j = wprimeVal;
-  }
-  payload.sex = document.getElementById('s-sex').value;
+  if (_daysTouched)
+    payload.available_days = [...document.querySelectorAll('#day-grid .day-btn.selected')].map(b => parseInt(b.dataset.day));
+  if (_restTouched)
+    payload.rest_days = [...document.querySelectorAll('#rest-grid .day-btn.rest')].map(b => parseInt(b.dataset.day));
 
   try {
     const res = await fetch('/api/setup/save', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload)
     });
+    let data = null;
+    try { data = await res.json(); } catch (parseErr) { data = null; }
     if (!res.ok) {
+      // AC5d: surface the server's validation `detail` (e.g. "LTHR (180) must
+      // be below max HR (170)"), not a bare status code.
       st.className = 'status err';
-      st.textContent = 'Save failed: HTTP ' + res.status + ' ' + (res.statusText || '');
+      st.textContent = (data && (data.detail || data.error))
+        || ('Save failed: HTTP ' + res.status + ' ' + (res.statusText || ''));
       return;
     }
-    let data;
-    try {
-      data = await res.json();
-    } catch (parseErr) {
-      st.className = 'status err';
-      st.textContent = 'Server returned invalid response.';
-      return;
-    }
-    if (data.ok) {
+    if (data && data.ok) {
       st.className = 'status ok';
       st.textContent = 'Setup complete! Redirecting to dashboard...';
       try { localStorage.removeItem(SETUP_LS_KEY); } catch(e) {}
       setTimeout(() => window.location.href = '/', 1500);
     } else {
-      st.className = 'status err'; st.textContent = data.error || 'Save failed.';
+      st.className = 'status err';
+      st.textContent = (data && (data.error || data.detail)) || 'Save failed.';
     }
   } catch(e) {
     st.className = 'status err'; st.textContent = 'Error: ' + e.message;
   } finally {
     _saving = false;
     btn.disabled = false; btn.textContent = 'Complete Setup';
-  }
-}
-
-// ICU-fetched values stored here for toggle switching
-let icuValues = { ftp: null, lthr: null, maxhr: null };
-
-function setSource(field, source, btn) {
-  btn.parentElement.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-
-  const manualEl = document.getElementById(field + '-manual');
-  const icuEl = document.getElementById(field + '-icu');
-
-  if (source === 'icu') {
-    if (manualEl) manualEl.style.display = 'none';
-    if (icuEl) icuEl.style.display = 'block';
-    if (!icuValues[field]) {
-      const id = (document.getElementById('icu-id-hidden').value || document.getElementById('icu-id').value).trim();
-      const key = document.getElementById('icu-key').value.trim();
-      if (!key) {
-        if (icuEl) { icuEl.textContent = 'Connect Intervals.icu first (Step 1)'; icuEl.style.color = 'var(--red)'; }
-        alert('Please connect your Intervals.icu API key on Step 1 first.');
-        nextStep(1);
-        const keyEl = document.getElementById('icu-key');
-        if (keyEl) keyEl.focus();
-        return;
-      }
-      if (icuEl) { icuEl.textContent = 'Fetching from Intervals.icu...'; icuEl.style.color = 'var(--text2)'; }
-      fetchIcuProfile(id, key);
-    } else {
-      if (icuEl) {
-        const num = Number(icuValues[field]);
-        const val = Number.isFinite(num) ? num : String(icuValues[field]).replace(/[<&>"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
-        icuEl.innerHTML = '<b style="font-size:16px;color:var(--green);">' + val + '</b> <span>from Intervals.icu</span>';
-      }
-    }
-  } else {
-    if (manualEl) manualEl.style.display = 'block';
-    if (icuEl) icuEl.style.display = 'none';
   }
 }
 
@@ -597,100 +550,31 @@ async function pickFolder(btn, inputId) {
     if (data.path) {
       input.value = data.path;
       input.style.borderColor = 'var(--green)';
+      _markTouched(inputId, false);
       persistState();
     }
   } catch(e) {}
   btn.innerHTML = '&#128193; Browse';
 }
 
-// HTML-escape for defense-in-depth.
-const _escHtml = s => String(s==null?'':s)
-  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-
-function _setIcuPlaceholders(errMsg) {
-  for (const field of ['ftp', 'lthr', 'maxhr']) {
-    const icuEl = document.getElementById(field + '-icu');
-    if (!icuEl) continue;
-    if (icuValues[field]) {
-      const unit = field === 'ftp' ? 'W' : 'bpm';
-      const num = Number(icuValues[field]);
-      const val = Number.isFinite(num) ? num : _escHtml(icuValues[field]);
-      icuEl.innerHTML = '<b style="font-size:16px;color:var(--green);">' + val + ' ' + unit + '</b> <span style="color:var(--text2);">from Intervals.icu</span>';
-    } else if (errMsg) {
-      icuEl.innerHTML = '<span style="color:var(--red);">' + _escHtml(errMsg) + '</span>';
-    } else {
-      icuEl.innerHTML = '<span style="color:var(--yellow);">Not found in your data — switch to manual entry</span>';
-    }
-  }
-}
-
-async function fetchIcuProfile(id, key) {
-  try {
-    const res = await fetch('/api/setup/test-icu', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({athlete_id: id, api_key: key})
-    });
-    if (!res.ok) {
-      if (res.status === 404) {
-        _setIcuPlaceholders('Athlete not found in Intervals.icu (404). Check your Athlete ID.');
-      } else if (res.status === 401 || res.status === 403) {
-        _setIcuPlaceholders('Authentication failed (HTTP ' + res.status + '). Check your API key.');
-      } else {
-        _setIcuPlaceholders('Intervals.icu error: HTTP ' + res.status);
-      }
-      return;
-    }
-    let data;
-    try { data = await res.json(); }
-    catch (parseErr) {
-      _setIcuPlaceholders('Intervals.icu returned an invalid response.');
-      return;
-    }
-    if (!data.ok) {
-      _setIcuPlaceholders(data.error || 'Intervals.icu reported an error.');
-      return;
-    }
-    if (data.athlete_id) document.getElementById('icu-id-hidden').value = data.athlete_id;
-    if (data.eftp) icuValues.ftp = data.eftp;
-    if (data.weight) document.getElementById('s-weight').value = data.weight;
-
-    const fetchId = data.athlete_id || id;
-    try {
-      const wRes = await fetch('/api/setup/icu-hr?athlete_id=' + encodeURIComponent(fetchId) + '&api_key=' + encodeURIComponent(key));
-      if (wRes.ok) {
-        const wData = await wRes.json();
-        if (wData.lthr) icuValues.lthr = wData.lthr;
-        if (wData.max_hr) icuValues.maxhr = wData.max_hr;
-      }
-    } catch(e) { /* HR endpoint optional */ }
-
-    _setIcuPlaceholders();
-  } catch(e) {
-    _setIcuPlaceholders('Network error: ' + (e && e.message ? e.message : 'request failed'));
-  }
-}
-
-function getFieldValue(field, inputId, fallback) {
-  const icuEl = document.getElementById(field + '-icu');
-  const isIcu = icuEl && icuEl.style.display !== 'none';
-  if (isIcu && icuValues[field]) return icuValues[field];
-  return parseFloat(document.getElementById(inputId).value) || fallback;
-}
-
 // ── v1.8.25 wizard-state persistence (NON-SECRET fields only) ─────────────────
-// The API key + athlete id are NEVER persisted (no extra at-rest copy beyond the
-// 0600 .env). On refresh the user re-pastes the key (one field); everything else
-// is restored.
+// OAuth round-trips and refreshes restore the user's entries. The touched/
+// icu-origin sets persist too so a restored wizard keeps honest provenance.
 const SETUP_LS_KEY = 'domestique_setup';
 const PERSIST_IDS = ['s-weight','s-ftp','s-lthr','s-maxhr','s-age','s-sex','s-cp',
                      's-wprime','s-workout-dir','s-gpx-dir','s-hours'];
 function persistState() {
   try {
-    const o = { skipIcu: _skipIcu };
+    const o = {};
     PERSIST_IDS.forEach(id => { const el = document.getElementById(id); if (el) o[id] = el.value; });
     o.days = [...document.querySelectorAll('#day-grid .day-btn.selected')].map(b => b.dataset.day);
     o.rest = [...document.querySelectorAll('#rest-grid .day-btn.rest')].map(b => b.dataset.day);
+    o.touched = [..._touched];
+    o.icuOrigin = [..._icuOrigin];
+    o.daysTouched = _daysTouched;
+    o.restTouched = _restTouched;
+    o.targetMode = _targetMode;
+    o.targetModeTouched = _targetModeTouched;
     localStorage.setItem(SETUP_LS_KEY, JSON.stringify(o));
   } catch(e) {}
 }
@@ -706,11 +590,25 @@ function restoreState() {
     document.querySelectorAll('#rest-grid .day-btn').forEach(b =>
       b.classList.toggle('rest', o.rest.includes(b.dataset.day)));
   }
+  // AC5e: restore the touched/origin sets. Legacy blobs (no `touched` key)
+  // restore VALUES only — we can't tell user entries from persisted defaults,
+  // so nothing is marked touched (worst case: the user retypes a field).
+  if (Array.isArray(o.touched)) o.touched.forEach(id => _touched.add(id));
+  if (Array.isArray(o.icuOrigin)) o.icuOrigin.forEach(id => _icuOrigin.add(id));
+  _daysTouched = !!o.daysTouched;
+  _restTouched = !!o.restTouched;
+  if (o.targetMode === 'hr' || o.targetMode === 'power') {
+    setTargetMode(o.targetMode, false);
+    _targetModeTouched = !!o.targetModeTouched;
+  }
 }
-// persist on any input to the non-secret fields
+// persist on any input to the non-secret fields; typing marks the field
+// touched with manual origin (AC5e/AC5f)
 PERSIST_IDS.forEach(id => {
   const el = document.getElementById(id);
-  if (el) el.addEventListener('input', persistState);
+  if (!el) return;
+  const evt = (id === 's-sex') ? 'change' : 'input';
+  el.addEventListener(evt, () => { _markTouched(id, false); persistState(); });
 });
 
 // ── Explicit, retryable intervals.icu link (mirrors profile_setup) ───────
@@ -720,12 +618,16 @@ function connectIcu() {
   try { persistState(); } catch (_) {}
   window.location.href = '/oauth/icu/start?return_to=' + encodeURIComponent('/setup');
 }
-async function refreshLinkStatus(icuParam) {
+async function refreshLinkStatus(icuParam, reason) {
   const el = document.getElementById('setup-link-status');
   const btn = document.getElementById('setup-connect-btn');
   if (!el) return;
   if (icuParam === 'error' || icuParam === 'unavailable') {
-    el.innerHTML = '<span style="color:var(--red);">Couldn’t link your account — please try again.</span>';
+    // AC3d: no_athlete_id is a hard, actionable error — say what happened.
+    const msg = (reason === 'no_athlete_id')
+      ? "intervals.icu didn't return an athlete id for that account. Nothing was linked — try again."
+      : 'Couldn’t link your account — please try again.';
+    el.innerHTML = '<span style="color:var(--red);">' + msg + '</span>';
     if (btn) btn.textContent = 'Retry — sign in to intervals.icu';
     return;
   }
@@ -737,6 +639,14 @@ async function refreshLinkStatus(icuParam) {
       el.style.color = 'var(--green)';
       if (btn) btn.textContent = 'Re-link a different account';
     }
+    // AC5a: connection-gated affordances — the step-2 auto-fill and the
+    // Garmin sub-step only make sense with a live connection.
+    if (c && (c.connected || c.method === 'oauth' || c.method === 'apikey')) {
+      const ar = document.getElementById('autofill-row');
+      if (ar) ar.style.display = 'block';
+      const gb = document.getElementById('garmin-block');
+      if (gb) gb.style.display = 'block';
+    }
   } catch (_) {}
 }
 
@@ -744,6 +654,7 @@ async function refreshLinkStatus(icuParam) {
 // the user's previously-typed values win over /api/setup/defaults; the ICU green
 // (later, user-triggered) overrides both.
 (async function() {
+  applyServerLimits();  // AC5d — async; static attrs already match the table
   const ctrl = new AbortController();
   const timeoutId = setTimeout(() => ctrl.abort(), 5000);
   try {
@@ -752,8 +663,12 @@ async function refreshLinkStatus(icuParam) {
     if (res.ok) {
       let d; try { d = await res.json(); } catch (e) { d = null; }
       if (d) {
-        if (d.workout_dir) document.getElementById('s-workout-dir').value = d.workout_dir;
-        if (d.gpx_dir) document.getElementById('s-gpx-dir').value = d.gpx_dir;
+        // Auto-DETECTED paths are a proposal the user accepts by clicking
+        // through — mark them touched so they land in user_paths.json.
+        if (d.workout_dir) { document.getElementById('s-workout-dir').value = d.workout_dir; _markTouched('s-workout-dir', false); }
+        if (d.gpx_dir) { document.getElementById('s-gpx-dir').value = d.gpx_dir; _markTouched('s-gpx-dir', false); }
+        // Athlete numbers are just display prefills of the STORED values —
+        // NOT touched (AC5e: re-sending them would fabricate provenance).
         if (d.weight) document.getElementById('s-weight').value = d.weight;
         if (d.ftp) document.getElementById('s-ftp').value = d.ftp;
         if (d.lthr) document.getElementById('s-lthr').value = d.lthr;
@@ -767,10 +682,12 @@ async function refreshLinkStatus(icuParam) {
   restoreState();
   // returning from the intervals.icu OAuth round-trip → render the link status;
   // otherwise reflect any existing connection.
-  const _icuRet = new URLSearchParams(location.search).get('icu');
+  const _q = new URLSearchParams(location.search);
+  const _icuRet = _q.get('icu');
+  const _icuReason = _q.get('reason') || '';
   if (_icuRet) {
     try { history.replaceState({}, '', '/setup'); } catch (_) {}
-    refreshLinkStatus(_icuRet);
+    refreshLinkStatus(_icuRet, _icuReason);
   } else {
     refreshLinkStatus('');
   }

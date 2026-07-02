@@ -118,6 +118,12 @@ def test_vo2max_session_drops_to_threshold(tmp_path, monkeypatch):
     don't break the v1.7.5 success flow."""
     plan_dir = _isolate_plan_dir(tmp_path, monkeypatch)
     _seed_plan(plan_dir, session_type="vo2max", duration_min=60, tss=95.0)
+    # Hermetic gate (tranche-10 family): the tier-down path calls
+    # get_today_metrics() → live ICU wellness; a machine-wide 429 with a huge
+    # Retry-After hung this test past the 120s timeout. Stub it.
+    import training as _training
+    monkeypatch.setattr(_training, "get_today_metrics", lambda: {}, raising=False)
+    monkeypatch.setattr(app_module, "get_today_metrics", lambda: {}, raising=False)
 
     client = TestClient(app_module.app)
     r = client.post("/api/readiness/apply-tier-down", json={})

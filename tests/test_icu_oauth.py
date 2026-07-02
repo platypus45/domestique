@@ -102,6 +102,9 @@ class TestRoutes(unittest.TestCase):
         self.assertIn("reason=state", r.headers["location"])
 
     def test_callback_success_persists_token(self):
+        # AC3a: the token must be bound to the profile the STATE names ("p"),
+        # not whichever profile is active when ICU redirects back. The old
+        # assertion was dead — save_icu_token ignored the state's profile.
         app_module._icu_oauth_states["S1"] = {"profile_id": "p", "ts": 9e12}
 
         class _Resp:
@@ -112,10 +115,19 @@ class TestRoutes(unittest.TestCase):
         captured = {}
         from profile_manager import ProfileManager as _PM
         pm = _PM.get()
+
+        def _capture(pm_arg, profile_id, token, athlete, name, **kw):
+            captured.update(profile_id=profile_id, token=token,
+                            athlete=athlete, name=name)
+
         with mock.patch("httpx.post", return_value=_Resp()), \
-             mock.patch.object(pm, "save_icu_token",
-                               side_effect=lambda t, a=None, n=None: captured.update(token=t, athlete=a, name=n)):
+             mock.patch.object(pm, "list_profiles", return_value=[{"id": "p"}]), \
+             mock.patch.object(app_module, "_icu_profile_stored_athlete_id",
+                               return_value=""), \
+             mock.patch.object(app_module, "_save_icu_token_for_profile",
+                               side_effect=_capture):
             r = self.client.get("/oauth/icu/callback?code=C&state=S1", follow_redirects=False)
+        self.assertEqual(captured.get("profile_id"), "p")  # bound to the state's profile
         self.assertEqual(captured.get("token"), "ATOK")
         self.assertEqual(captured.get("athlete"), "i999")
         self.assertEqual(captured.get("name"), "Z")  # name captured from token response
@@ -124,10 +136,49 @@ class TestRoutes(unittest.TestCase):
 
     def test_callback_exchange_failure_errors(self):
         app_module._icu_oauth_states["S2"] = {"profile_id": "p", "ts": 9e12}
-        with mock.patch("httpx.post", side_effect=RuntimeError("boom")):
+        from profile_manager import ProfileManager as _PM
+        pm = _PM.get()
+        with mock.patch("httpx.post", side_effect=RuntimeError("boom")), \
+             mock.patch.object(pm, "list_profiles", return_value=[{"id": "p"}]):
             r = self.client.get("/oauth/icu/callback?code=C&state=S2", follow_redirects=False)
         self.assertIn("icu=error", r.headers["location"])
         self.assertIn("reason=exchange", r.headers["location"])
+
+    def test_callback_deleted_profile_errors(self):
+        # AC3a: the state's profile was deleted mid-flow → error redirect,
+        # NEVER a bind to whichever profile is active now.
+        app_module._icu_oauth_states["S3"] = {"profile_id": "ghost-gone", "ts": 9e12}
+        saved = []
+        with mock.patch.object(app_module, "_save_icu_token_for_profile",
+                               side_effect=lambda *a, **k: saved.append(a)):
+            r = self.client.get("/oauth/icu/callback?code=C&state=S3", follow_redirects=False)
+        self.assertIn("icu=error", r.headers["location"])
+        self.assertIn("reason=profile_gone", r.headers["location"])
+        self.assertEqual(saved, [])  # nothing persisted anywhere
+
+    def test_callback_empty_athlete_id_errors(self):
+        # AC3d: token exchange succeeds but ICU returns no athlete id →
+        # hard error redirect (reason=no_athlete_id), nothing saved (the old
+        # behavior persisted the token and sync_skipped forever, silently).
+        app_module._icu_oauth_states["S4"] = {"profile_id": "p", "ts": 9e12}
+
+        class _Resp:
+            status_code = 200
+            def json(self):
+                return {"access_token": "ATOK", "athlete": {}}
+
+        saved = []
+        from profile_manager import ProfileManager as _PM
+        pm = _PM.get()
+        with mock.patch("httpx.post", return_value=_Resp()), \
+             mock.patch("httpx.get", side_effect=RuntimeError("no fallback")), \
+             mock.patch.object(pm, "list_profiles", return_value=[{"id": "p"}]), \
+             mock.patch.object(app_module, "_save_icu_token_for_profile",
+                               side_effect=lambda *a, **k: saved.append(a)):
+            r = self.client.get("/oauth/icu/callback?code=C&state=S4", follow_redirects=False)
+        self.assertIn("icu=error", r.headers["location"])
+        self.assertIn("reason=no_athlete_id", r.headers["location"])
+        self.assertEqual(saved, [])
 
     def test_connection_method(self):
         _set_creds(token="T", key="", athlete="i1")

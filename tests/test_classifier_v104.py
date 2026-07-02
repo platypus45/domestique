@@ -93,9 +93,10 @@ class TestCanary(unittest.TestCase):
             result["display_name"],
             r"^Threshold Ladder \d+min — \d+→\d+% × \d+$",
         )
-        # Canary's specified output: "Threshold Ladder 58min — 85→97% × 4"
+        # Canary output (v2.4.0 warmup migration lengthened the file 58→63min;
+        # live classifier and cache both say 63min — verified 2026-07-02):
         self.assertEqual(
-            result["display_name"], "Threshold Ladder 58min — 85→97% × 4",
+            result["display_name"], "Threshold Ladder 63min — 85→97% × 4",
             f"canary display_name drift: {result['display_name']!r}",
         )
 
@@ -322,7 +323,7 @@ class TestJSONIntegrity(unittest.TestCase):
         entry = self.classifications.get("tempo_steady_57min.zwo")
         self.assertIsNotNone(entry, "canary file missing from cache")
         self.assertEqual(entry["display_name"],
-                         "Threshold Ladder 58min — 85→97% × 4")
+                         "Threshold Ladder 63min — 85→97% × 4")
 
 
 # ── 4: Audit-trail integrity ─────────────────────────────────────────────────

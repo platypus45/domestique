@@ -228,3 +228,43 @@ def test_fit_export_view_hr_in_power_mode(client, monkeypatch):
     steps2 = [{f.name: f.value for f in m.fields}
               for m in fitparse.FitFile(r2.content).get_messages("workout_step")]
     assert all(s.get("target_type") == "power" for s in steps2)
+
+
+# ── W1 (v2.5.0): custom prescription rows end-to-end ─────────────────────────
+
+OVR = {"z1_high": 120, "z2": [125, 138], "z3": [140, 152], "z4": [155, 172]}
+
+
+def test_settings_accepts_and_applies_custom_rows(client, monkeypatch):
+    stub = _stub(monkeypatch, {"lthr": 160, "max_hr": 185, "target_mode": "hr"})
+    r = client.post("/api/settings", json={"hr_rows_custom": OVR})
+    assert r.status_code == 200
+    assert stub._athlete["hr_prescription_rows_custom"] == OVR
+    # detail endpoint now speaks the custom numbers everywhere
+    stub._athlete["hr_prescription_rows_custom"] = OVR
+    d = client.get(f"/api/workout/all/{ZWO}").json()
+    assert d["hr_axis"]["75"] == 138 and d["hr_axis"]["105"] == 172
+    s180 = next(s for s in d["segments"] if s["type"] == "SteadyState"
+                and s["duration"] == 180 and s["pct"] == 95)
+    assert (s180["hr"]["bpm_low"], s180["hr"]["bpm_high"]) == (155, 172)
+    wu = next(s for s in d["segments"] if s["type"] == "Warmup")
+    assert wu["hr"]["bpm_end"] == 138
+
+
+def test_settings_rejects_bad_custom_rows(client, monkeypatch):
+    _stub(monkeypatch, {"lthr": 160, "max_hr": 185, "target_mode": "hr"})
+    for bad in (
+        {"z1_high": 120, "z2": [138, 125], "z3": [140, 152], "z4": [155, 172]},  # low>high
+        {"z1_high": 120, "z2": [125, 138], "z3": [140, 152], "z4": [155, 250]},  # > max_hr
+        {"z1_high": 160, "z2": [125, 138], "z3": [140, 152], "z4": [155, 172]},  # descending tops
+        {"z2": [125, 138]},                                                       # missing keys
+    ):
+        assert client.post("/api/settings", json={"hr_rows_custom": bad}).status_code == 400
+
+
+def test_settings_reset_custom_rows(client, monkeypatch):
+    stub = _stub(monkeypatch, {"lthr": 160, "max_hr": 185, "target_mode": "hr",
+                               "hr_prescription_rows_custom": OVR})
+    r = client.post("/api/settings", json={"hr_rows_custom": None})
+    assert r.status_code == 200
+    assert stub._athlete["hr_prescription_rows_custom"] is None

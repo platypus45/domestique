@@ -103,13 +103,44 @@ def _rpe(zone: int, reason: str) -> dict:
             "zone": zone, "zone_name": _ZONE_NAMES[zone], "reason": reason}
 
 
+def _resolve_rows_bpm(lthr: int, max_hr: int,
+                      hr_rows_override: dict | None) -> dict:
+    """Absolute bpm bounds per prescription row (zones 1-4).
+
+    Default = the Coggan %LTHR table. ``hr_rows_override`` (v2.5.0 W1 — the
+    Settings "HR workout targets" editor) supplies athlete-tuned ABSOLUTE bpm:
+    {"z1_high": int, "z2": [lo,hi], "z3": [lo,hi], "z4": [lo,hi]}. Validation
+    (monotone, sane range) happens at the settings write; here we just clamp
+    to max_hr so a later max_hr edit can't leave targets above the ceiling.
+    """
+    if hr_rows_override:
+        try:
+            z1h = min(int(hr_rows_override["z1_high"]), max_hr)
+            rows = {1: (min(round(0.50 * lthr), z1h), z1h)}
+            for z, key in ((2, "z2"), (3, "z3"), (4, "z4")):
+                lo, hi = hr_rows_override[key]
+                hi = min(int(hi), max_hr)
+                rows[z] = (min(int(lo), hi), hi)
+            return rows
+        except (KeyError, TypeError, ValueError, IndexError):
+            pass  # malformed override → Coggan defaults (never crash a chart)
+    out = {}
+    for z, _top, lo, hi in _HR_ROWS:
+        bpm_hi = min(round(hi * lthr), max_hr)
+        out[z] = (min(round(lo * lthr), bpm_hi), bpm_hi)
+    return out
+
+
 def power_target_to_hr(pct_start: float, pct_end: float, duration_s: float,
-                       lthr: int, max_hr: int) -> dict:
+                       lthr: int, max_hr: int,
+                       hr_rows_override: dict | None = None) -> dict:
     """Convert one workout segment's power target to HR/RPE guidance.
 
     pct_start/pct_end are %FTP at the segment's start/end IN TIME ORDER
     (equal for a steady block; differing for a Warmup/Cooldown/Ramp — the
     caller resolves ramp direction exactly like the detail chart does).
+    ``hr_rows_override`` = athlete-tuned absolute bpm rows (see
+    :func:`_resolve_rows_bpm`); None → Coggan defaults.
 
     Returns one of:
       {"kind":"hr", "bpm_low","bpm_high","zone","zone_name","drift",("note")}
@@ -128,11 +159,25 @@ def power_target_to_hr(pct_start: float, pct_end: float, duration_s: float,
     if duration_s < HR_MIN_SEG_S:
         return _rpe(zone, "short")
 
+    rows = _resolve_rows_bpm(lthr, max_hr, hr_rows_override)
+
     if abs(pct_start - pct_end) > 1e-9:
-        # Ramp: continuous map at each end; 106-120% ends cap at 105% LTHR.
-        bpm_start = min(round(_lthr_frac_at(pct_start) * lthr), max_hr)
-        bpm_end = min(round(_lthr_frac_at(pct_end) * lthr), max_hr)
-        return {"kind": "hr_ramp", "bpm_start": bpm_start, "bpm_end": bpm_end,
+        # Ramp: piecewise-linear through the zone-top bpm at the Coggan %FTP
+        # boundaries (55/75/90/105) — with an override those tops ARE the
+        # athlete's own numbers, so ramps agree with steady rows by
+        # construction. 106-120% ends cap at the Z4 top.
+        anchors = [(55.0, rows[1][1]), (75.0, rows[2][1]),
+                   (90.0, rows[3][1]), (105.0, rows[4][1])]
+
+        def _bpm_at(pct: float) -> int:
+            pct = max(55.0, min(105.0, pct))
+            for (x1, y1), (x2, y2) in zip(anchors, anchors[1:]):
+                if pct <= x2:
+                    return min(round(y1 + (y2 - y1) * (pct - x1) / (x2 - x1)), max_hr)
+            return min(anchors[-1][1], max_hr)
+
+        return {"kind": "hr_ramp", "bpm_start": _bpm_at(pct_start),
+                "bpm_end": _bpm_at(pct_end),
                 "zone": zone, "zone_name": _ZONE_NAMES[zone],
                 "capped": hard_pct > 105}
 
@@ -141,9 +186,7 @@ def power_target_to_hr(pct_start: float, pct_end: float, duration_s: float,
     if zone == 5:
         return _rpe(5, "supra_threshold")
 
-    frac_lo, frac_hi = next((lo, hi) for z, top, lo, hi in _HR_ROWS if z == zone)
-    bpm_high = min(round(frac_hi * lthr), max_hr)
-    bpm_low = min(round(frac_lo * lthr), bpm_high)  # clamp order keeps low<=high
+    bpm_low, bpm_high = rows[zone]
     out = {"kind": "hr", "bpm_low": bpm_low, "bpm_high": bpm_high,
            "zone": zone, "zone_name": _ZONE_NAMES[zone],
            "drift": duration_s >= HR_DRIFT_S}

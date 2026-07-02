@@ -164,3 +164,46 @@ def test_rpe_rows_pinned():
     assert (conv(110, 600)["rpe_low"], conv(110, 600)["rpe_high"]) == (8, 9)  # Z5
     assert (conv(130, 600)["rpe_low"], conv(130, 600)["rpe_high"]) == (9, 10) # Z6
     assert (conv(200, 15)["rpe_low"], conv(200, 15)["rpe_high"]) == (10, 10)  # Z7
+
+
+# ── W1 (v2.5.0): custom prescription rows override ───────────────────────────
+
+def test_custom_rows_override_steady_and_axis_consistency():
+    ovr = {"z1_high": 120, "z2": [125, 138], "z3": [140, 152], "z4": [155, 172]}
+    r = conv(65, 600)  # default
+    r2 = power_target_to_hr(65, 65, 600, LTHR, MAX_HR, hr_rows_override=ovr)
+    assert (r2["bpm_low"], r2["bpm_high"]) == (125, 138)
+    assert (r["bpm_low"], r["bpm_high"]) != (125, 138)  # default differs
+    z4 = power_target_to_hr(100, 100, 600, LTHR, MAX_HR, hr_rows_override=ovr)
+    assert (z4["bpm_low"], z4["bpm_high"]) == (155, 172)
+
+
+def test_custom_rows_ramp_agrees_with_rows():
+    """Ramp endpoints at the Coggan %FTP boundaries must equal the custom
+    zone tops — steady and ramp can never disagree (W1 invariant)."""
+    ovr = {"z1_high": 120, "z2": [125, 138], "z3": [140, 152], "z4": [155, 172]}
+    wu = power_target_to_hr(25, 75, 600, LTHR, MAX_HR, hr_rows_override=ovr)
+    assert wu["kind"] == "hr_ramp"
+    assert wu["bpm_start"] == 120 and wu["bpm_end"] == 138
+    hard = power_target_to_hr(90, 105, 600, LTHR, MAX_HR, hr_rows_override=ovr)
+    assert hard["bpm_end"] == 172
+
+
+def test_custom_rows_none_is_byte_identical_to_default():
+    """C1+: no override (or malformed override) == Coggan defaults exactly."""
+    for pct in (40, 65, 88, 100):
+        assert power_target_to_hr(pct, pct, 600, LTHR, MAX_HR, hr_rows_override=None) == conv(pct, 600)
+        assert power_target_to_hr(pct, pct, 600, LTHR, MAX_HR, hr_rows_override={"bogus": 1}) == conv(pct, 600)
+
+
+def test_custom_rows_clamped_to_max_hr():
+    ovr = {"z1_high": 120, "z2": [125, 138], "z3": [140, 152], "z4": [180, 200]}
+    z4 = power_target_to_hr(100, 100, 600, LTHR, max_hr=185, hr_rows_override=ovr)
+    assert z4["bpm_high"] == 185 and z4["bpm_low"] <= z4["bpm_high"]
+
+
+def test_custom_rows_never_affect_rpe_carveouts():
+    """Z5+/short stay RPE regardless of custom rows (power-zone rule)."""
+    ovr = {"z1_high": 120, "z2": [125, 138], "z3": [140, 152], "z4": [155, 172]}
+    assert power_target_to_hr(110, 110, 600, LTHR, MAX_HR, hr_rows_override=ovr)["kind"] == "rpe"
+    assert power_target_to_hr(65, 65, 60, LTHR, MAX_HR, hr_rows_override=ovr)["kind"] == "rpe"

@@ -31593,9 +31593,9 @@
     },
     "endurance_steady_14min_v2.zwo": {
       "file": "endurance_steady_14min_v2.zwo",
-      "primary": "endurance",
-      "display_name": "Endurance 14min \u2014 Z5",
-      "confidence": 0.55,
+      "primary": "vo2max",
+      "display_name": "VO2max 14min \u2014 Z5",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": false,
         "has_vo2_work": false,
@@ -32815,9 +32815,9 @@
     },
     "endurance_steady_25min_v4_v2.zwo": {
       "file": "endurance_steady_25min_v4_v2.zwo",
-      "primary": "endurance",
-      "display_name": "Endurance 25min \u2014 Z2",
-      "confidence": 0.55,
+      "primary": "vo2max",
+      "display_name": "VO2max 25min \u2014 Z2",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": false,
         "has_vo2_work": false,
@@ -43706,9 +43706,9 @@
     },
     "neuromuscular_30s240s_10x_56min.zwo": {
       "file": "neuromuscular_30s240s_10x_56min.zwo",
-      "primary": "recovery",
-      "display_name": "Recovery 56min \u2014 Z1",
-      "confidence": 0.821,
+      "primary": "anaerobic",
+      "display_name": "Anaerobic 56min \u2014 Z1",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": false,
         "has_vo2_work": false,
@@ -45530,9 +45530,9 @@
     },
     "neuromuscular_40s180s_10x_59min.zwo": {
       "file": "neuromuscular_40s180s_10x_59min.zwo",
-      "primary": "recovery",
-      "display_name": "Recovery 59min \u2014 Z1",
-      "confidence": 0.55,
+      "primary": "anaerobic",
+      "display_name": "Anaerobic 59min \u2014 Z1",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": false,
         "has_vo2_work": false,
@@ -95431,9 +95431,9 @@
     },
     "supra_threshold_70min_v2.zwo": {
       "file": "supra_threshold_70min_v2.zwo",
-      "primary": "endurance",
-      "display_name": "Endurance 70min \u2014 Z2",
-      "confidence": 0.55,
+      "primary": "threshold",
+      "display_name": "Threshold 70min \u2014 Z2",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": false,
         "has_vo2_work": false,
@@ -121706,9 +121706,9 @@
     },
     "tempo_2x3min_56min.zwo": {
       "file": "tempo_2x3min_56min.zwo",
-      "primary": "recovery",
-      "display_name": "Recovery 57min \u2014 Z1",
-      "confidence": 0.55,
+      "primary": "tempo",
+      "display_name": "Tempo 57min \u2014 2\u00d73min/90s @ 85%",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": false,
         "has_vo2_work": false,
@@ -133458,9 +133458,9 @@
     },
     "tempo_mixed_54min.zwo": {
       "file": "tempo_mixed_54min.zwo",
-      "primary": "endurance",
-      "display_name": "Endurance 54min \u2014 Z2",
-      "confidence": 0.55,
+      "primary": "threshold",
+      "display_name": "Threshold 54min \u2014 Z2",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": false,
         "has_vo2_work": false,
@@ -134446,9 +134446,9 @@
     },
     "tempo_mixed_60min_renamed_v46_11.zwo": {
       "file": "tempo_mixed_60min_renamed_v46_11.zwo",
-      "primary": "endurance",
-      "display_name": "Endurance 60min \u2014 Z2 +threshold block",
-      "confidence": 0.55,
+      "primary": "threshold",
+      "display_name": "Threshold 60min \u2014 Z2",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": true,
         "has_vo2_work": false,
@@ -134460,7 +134460,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 3600,
         "valid_dur_s": 3600,
@@ -134550,9 +134550,9 @@
     },
     "tempo_mixed_60min_renamed_v46_13.zwo": {
       "file": "tempo_mixed_60min_renamed_v46_13.zwo",
-      "primary": "endurance",
-      "display_name": "Endurance 60min \u2014 Z2 +threshold block",
-      "confidence": 0.55,
+      "primary": "threshold",
+      "display_name": "Threshold 60min \u2014 Z2",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": true,
         "has_vo2_work": false,
@@ -134564,7 +134564,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 3600,
         "valid_dur_s": 3600,
@@ -140271,9 +140271,9 @@
     },
     "tempo_steady_34min_v2.zwo": {
       "file": "tempo_steady_34min_v2.zwo",
-      "primary": "endurance",
-      "display_name": "Endurance 34min \u2014 Z3",
-      "confidence": 0.55,
+      "primary": "tempo",
+      "display_name": "Tempo 34min \u2014 Z3",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": false,
         "has_vo2_work": false,
@@ -145941,9 +145941,9 @@
     },
     "threshold_2x2min_18min.zwo": {
       "file": "threshold_2x2min_18min.zwo",
-      "primary": "endurance",
-      "display_name": "Endurance 18min \u2014 Z2",
-      "confidence": 0.55,
+      "primary": "threshold",
+      "display_name": "Threshold 18min \u2014 Z2",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": false,
         "has_vo2_work": false,
@@ -146669,9 +146669,9 @@
     },
     "threshold_2x5min_28min.zwo": {
       "file": "threshold_2x5min_28min.zwo",
-      "primary": "endurance",
-      "display_name": "Endurance 28min \u2014 Z2",
-      "confidence": 0.55,
+      "primary": "threshold",
+      "display_name": "Threshold 28min \u2014 Z2",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": false,
         "has_vo2_work": false,
@@ -149425,9 +149425,9 @@
     },
     "threshold_3x2min_37min.zwo": {
       "file": "threshold_3x2min_37min.zwo",
-      "primary": "endurance",
-      "display_name": "Endurance 37min \u2014 Z4 +threshold block",
-      "confidence": 0.55,
+      "primary": "threshold",
+      "display_name": "Threshold 37min \u2014 Z4",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": true,
         "has_vo2_work": false,
@@ -149439,7 +149439,7 @@
         "pyramidal_consistent": false,
         "is_ladder": false
       },
-      "objective_coherent": false,
+      "objective_coherent": true,
       "features": {
         "duration_s": 2220,
         "valid_dur_s": 2220,
@@ -150413,9 +150413,9 @@
     },
     "threshold_3x4min_57min.zwo": {
       "file": "threshold_3x4min_57min.zwo",
-      "primary": "recovery",
-      "display_name": "Recovery 57min \u2014 Z3",
-      "confidence": 0.55,
+      "primary": "sweet_spot",
+      "display_name": "Sweet Spot 57min \u2014 Z3",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": false,
         "has_vo2_work": false,
@@ -150829,9 +150829,9 @@
     },
     "threshold_3x5min_50min.zwo": {
       "file": "threshold_3x5min_50min.zwo",
-      "primary": "endurance",
-      "display_name": "Endurance 50min \u2014 Z2",
-      "confidence": 0.55,
+      "primary": "threshold",
+      "display_name": "Threshold 50min \u2014 Z2",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": false,
         "has_vo2_work": false,
@@ -184583,9 +184583,9 @@
     },
     "threshold_steady_47min_v4.zwo": {
       "file": "threshold_steady_47min_v4.zwo",
-      "primary": "endurance",
-      "display_name": "Endurance 47min \u2014 Z1",
-      "confidence": 0.55,
+      "primary": "sweet_spot",
+      "display_name": "Sweet Spot 47min \u2014 Z1",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": false,
         "has_vo2_work": false,
@@ -184895,9 +184895,9 @@
     },
     "threshold_steady_50min_v10.zwo": {
       "file": "threshold_steady_50min_v10.zwo",
-      "primary": "endurance",
-      "display_name": "Endurance 50min \u2014 Z2",
-      "confidence": 0.55,
+      "primary": "threshold",
+      "display_name": "Threshold 50min \u2014 Z2",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": false,
         "has_vo2_work": false,
@@ -184947,9 +184947,9 @@
     },
     "threshold_steady_50min_v11.zwo": {
       "file": "threshold_steady_50min_v11.zwo",
-      "primary": "endurance",
-      "display_name": "Endurance 50min \u2014 Z2",
-      "confidence": 0.55,
+      "primary": "sweet_spot",
+      "display_name": "Sweet Spot 50min \u2014 Z2",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": false,
         "has_vo2_work": false,
@@ -216422,9 +216422,9 @@
     },
     "z2_endurance_50min_v5.zwo": {
       "file": "z2_endurance_50min_v5.zwo",
-      "primary": "endurance",
-      "display_name": "Endurance 50min \u2014 Z2",
-      "confidence": 0.55,
+      "primary": "threshold",
+      "display_name": "Threshold 50min \u2014 Z2",
+      "confidence": 0.6,
       "secondary_flags": {
         "has_threshold_work": false,
         "has_vo2_work": false,

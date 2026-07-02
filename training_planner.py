@@ -2978,8 +2978,18 @@ def match_zwo(
     raise_on_empty: bool = False,
     seed_salt: int = 0,
     exact_duration: bool = False,
+    hr_bias: bool = False,
 ) -> PlannedSession:
     """Find a ZWO workout matching this session, rotating for variety.
+
+    hr_bias (v2.5.0 W5): soft preference for HR-guidable files when the
+    athlete trains by heart rate (no power meter). Micro-interval/sprint
+    classes (vo2_short/anaerobic/neuromuscular) degrade to all-RPE on a head
+    unit, so they take a small score penalty — ONLY when the pool has ≥3
+    guidable alternatives (a penalty, never a filter; a slot still fills).
+    Callers thread the athlete's target_mode from app.py — match_zwo itself
+    never reads profile state (stays a pure function of its args). Default
+    False = power mode = bit-identical behaviour.
 
     Args:
         session: The planned session to match.
@@ -3341,6 +3351,21 @@ def match_zwo(
         except Exception:
             pass
         return session
+
+    # v2.5.0 W5 — hr-mode soft bias: RPE-heavy classes (no usable bpm target
+    # on a head unit) get a small penalty when >=3 guidable alternatives
+    # exist. Rebuilds the LOCAL (score, w) tuples only — library row dicts are
+    # shared via the module cache and must never be mutated here.
+    if hr_bias and candidates:
+        _RPE_HEAVY = {"vo2_short", "anaerobic", "neuromuscular"}
+        _n_guidable = sum(1 for _s, _w in candidates
+                          if str(_w.get("ContentClass") or "") not in _RPE_HEAVY)
+        if _n_guidable >= 3:
+            candidates = [
+                ((s - 3, w) if str(w.get("ContentClass") or "") in _RPE_HEAVY
+                 else (s, w))
+                for s, w in candidates
+            ]
 
     # Sort by score descending
     candidates.sort(key=lambda x: -x[0])

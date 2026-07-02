@@ -144,3 +144,16 @@ def test_blocks_path_threshold_band_is_steady_z4(monkeypatch):
     assert z4, "no 20-min threshold HR step"
     assert z4[0]["custom_target_heart_rate_low"] == round(0.95 * LTHR) + 100
     assert z4[0]["custom_target_heart_rate_high"] == round(1.05 * LTHR) + 100
+
+
+def test_fit_uses_custom_prescription_rows(monkeypatch):
+    """W1: FIT bpm comes from the athlete's custom rows when set."""
+    import app
+    OVR = {"z1_high": 120, "z2": [125, 138], "z3": [140, 152], "z4": [155, 172]}
+    monkeypatch.setattr(app, "_fit_hr_mode", lambda: True)
+    monkeypatch.setattr(app, "_fit_hr_params", lambda: (LTHR, MAX_HR, OVR))
+    steps = steps_of(app._build_fit_workout_from_zwo("t", ZWO, ftp=250))
+    z4 = [s for s in steps if s.get("target_type") == "heart_rate"
+          and s.get("duration_time") == 180.0]
+    assert z4 and z4[0]["custom_target_heart_rate_low"] == 155 + 100
+    assert z4[0]["custom_target_heart_rate_high"] == 172 + 100

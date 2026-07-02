@@ -445,6 +445,102 @@ def _refresh_max_hr_from_metrics() -> None:
         log.warning("refresh_max_hr_from_metrics failed: %s", e)
 
 
+def _refresh_hr_from_activities() -> None:
+    """v2.5.0 W3: mirror LTHR + max_hr from the newest synced ICU activity.
+
+    ICU activity payloads carry the athlete-level fields `lthr` and
+    `athlete_max_hr` (live-verified 177/195, ACTIVITY:READ scope). The
+    wellness payload does NOT carry maxHr/lthr — the sync_wellness max_hr
+    block above never fires in practice — and athlete/sportSettings is 403
+    without SETTINGS:READ. So the newest activity row is the one live
+    source for both numbers.
+
+    Mirror of `_refresh_wprime_from_metrics()`: called after
+    sync_activities() commits its ICU batch. Failures are logged but never
+    re-raised.
+
+    Guards:
+      * lthr_source == "manual" blocks the LTHR mirror (a settings-form
+        LTHR is stamped manual in app.py W2d and must never be clobbered);
+        max_hr precedence lives in pm._set_max_hr (manual > icu) and is
+        pre-checked here so a blocked write stays silent.
+      * ranges: lthr [100, 220], athlete_max_hr [140, 220]; each field is
+        taken from the newest activity where IT is plausible.
+      * max_hr must stay > lthr after the write — a violating post-write
+        pair skips both writes with one WARNING.
+      * unchanged values are skipped (idempotent — no churn writes, no
+        daily lthr_source_date advance). One INFO line on change.
+    """
+    try:
+        from profile_manager import ProfileManager
+        pm = ProfileManager.get()
+        db = get_db()
+        # Newest first (idx_activities_date); ICU echoes the athlete-level
+        # HR fields on every activity, the LIMIT just bounds the scan when
+        # recent payloads carry no plausible values at all.
+        rows = db.execute(
+            "SELECT json_extract(raw_json, '$.lthr'),"
+            "       json_extract(raw_json, '$.athlete_max_hr')"
+            " FROM activities ORDER BY date DESC, id DESC LIMIT 20"
+        ).fetchall()
+        lthr = next((int(r[0]) for r in rows
+                     if isinstance(r[0], (int, float)) and 100 <= r[0] <= 220),
+                    None)
+        max_hr = next((int(r[1]) for r in rows
+                       if isinstance(r[1], (int, float)) and 140 <= r[1] <= 220),
+                      None)
+        if lthr is None and max_hr is None:
+            return
+
+        # Raw dict reads (not the properties): pm.lthr defaults to 170, which
+        # would mask an unset key and skip the first-ever mirror.
+        cur_lthr = pm._athlete.get("lthr")
+        cur_max = pm._athlete.get("max_hr")
+        write_lthr = (
+            lthr is not None
+            and str(pm._athlete.get("lthr_source", "") or "") != "manual"
+            and lthr != cur_lthr
+        )
+        write_max = (
+            max_hr is not None
+            and str(pm._athlete.get("max_hr_source", "") or "") != "manual"
+            and max_hr != cur_max
+        )
+        if not (write_lthr or write_max):
+            return
+
+        # Post-write invariant: max_hr > lthr (target_mode's hr gate). Only
+        # checkable when both sides exist; a missing side means there is no
+        # pair to violate and hr mode is separately gated by lthr_is_set.
+        final_lthr = lthr if write_lthr else cur_lthr
+        final_max = max_hr if write_max else cur_max
+        if final_lthr is not None and final_max is not None \
+                and float(final_max) <= float(final_lthr):
+            log.warning(
+                "hr mirror skipped: max_hr=%s <= lthr=%s would break the "
+                "hr-mode invariant (activity payload lthr=%s athlete_max_hr=%s)",
+                final_max, final_lthr, lthr, max_hr,
+            )
+            return
+
+        changed = []
+        if write_lthr:
+            # save_athlete validates [100, 220] and writes atomically; the
+            # icu + date stamp rides along (W2d provenance hint reads it).
+            pm.save_athlete({
+                "lthr": lthr,
+                "lthr_source": "icu",
+                "lthr_source_date": date.today().isoformat(),
+            })
+            changed.append(f"lthr={lthr}")
+        if write_max:
+            pm._set_max_hr(max_hr, "icu")
+            changed.append(f"max_hr={max_hr}")
+        log.info("EVENT=hr_mirror_from_activity %s source=icu", " ".join(changed))
+    except Exception as e:
+        log.warning("refresh_hr_from_activities failed: %s", e)
+
+
 def sync_activities(days: int = 90) -> int:
     """Fetch activities from Intervals.icu and upsert into SQLite. Returns count.
 
@@ -503,6 +599,12 @@ def sync_activities(days: int = 90) -> int:
         db.rollback()
         raise
     db.commit()
+
+    # v2.5.0 W3: mirror the athlete-level lthr / athlete_max_hr carried on
+    # every ICU activity payload into the active profile — same post-batch
+    # pattern as the _refresh_* calls at the end of sync_wellness().
+    _refresh_hr_from_activities()
+
     return count
 
 

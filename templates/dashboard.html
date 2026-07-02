@@ -2723,7 +2723,8 @@ window.addEventListener('unhandledrejection', function(e) {
         </div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label>LTHR (bpm)</label><input type="number" id="set-lthr"></div>
+        <div class="form-group"><label>LTHR (bpm)</label><input type="number" id="set-lthr">
+          <div id="lthr-provenance" style="font-size:10px;color:var(--text3);margin-top:3px;display:none;"></div></div>
         <div class="form-group"><label>Max HR (bpm)</label><input type="number" id="set-maxhr"></div>
       </div>
       <!-- hr target_mode (IP_HR_ONLY): global equipment mode. Gated on an
@@ -2741,6 +2742,23 @@ window.addEventListener('unhandledrejection', function(e) {
           <div id="target-mode-hint" style="font-size:11px;color:var(--text3);margin-top:4px;display:none;"></div>
         </div>
       </div>
+      <!-- W1: HR workout-target rows (visible in hr mode). These are the
+           PRESCRIPTION rows the charts/FIT/chips use — distinct from the Friel
+           analysis zones below. Server-validated; Reset restores Coggan. -->
+      <div id="hr-rows-editor" style="display:none;border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;">
+        <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:6px;">HR workout targets (bpm)
+          <span class="hint" title="The bpm ranges your workouts prescribe (charts, FIT files, session chips). Defaults follow the Coggan %LTHR table; tune them if you know your zones better. Analysis zones below are separate." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:14px;height:14px;display:inline-flex;align-items:center;justify-content:center;font-size:9px;">?</span>
+          <span id="hr-rows-custom-badge" style="display:none;margin-left:6px;font-size:9px;color:var(--accent);">custom</span>
+        </div>
+        <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px;align-items:center;font-size:11px;">
+          <span style="color:var(--text3);">Z1 recovery ≤</span><input type="number" id="hrr-z1h" style="width:70px;"><span></span>
+          <span style="color:var(--text3);">Z2 endurance</span><input type="number" id="hrr-z2l" style="width:70px;"><input type="number" id="hrr-z2h" style="width:70px;">
+          <span style="color:var(--text3);">Z3 tempo</span><input type="number" id="hrr-z3l" style="width:70px;"><input type="number" id="hrr-z3h" style="width:70px;">
+          <span style="color:var(--text3);">Z4 threshold</span><input type="number" id="hrr-z4l" style="width:70px;"><input type="number" id="hrr-z4h" style="width:70px;">
+        </div>
+        <div style="margin-top:6px;font-size:10px;color:var(--text3);">Z5+ stays by-feel (RPE) — heart rate can't guide those. Saved with Save Settings.</div>
+        <button class="btn btn-sm" style="margin-top:6px;" onclick="resetHrRows()">Reset to defaults</button>
+      </div>
       <div class="form-row">
         <div class="form-group"><label>W/kg</label>
           <span id="set-wkg" style="font-size:20px;font-weight:700;">—</span></div>
@@ -2754,6 +2772,7 @@ window.addEventListener('unhandledrejection', function(e) {
       <div id="power-zones"></div>
       <h3 style="margin-top:16px;display:flex;align-items:center;gap:10px;">HR Zones
         <button class="btn btn-sm" id="hr-zones-edit" onclick="editZones('hr')">Edit</button></h3>
+      <div style="font-size:10px;color:var(--text3);margin-bottom:4px;">Analysis zones (ride time-in-zone). Workout HR targets are edited under “Workout targets” on the left.</div>
       <div id="hr-zones"></div>
       <h3 style="margin-top:16px;">Data Sync</h3>
       <div id="sync-status" style="font-size:12px;color:var(--text2);margin-bottom:8px;">Loading...</div>
@@ -3705,7 +3724,10 @@ async function openWorkoutDetail(category, filename, meta, view) {
       ${metaHtml}
       ${chart}
       ${zoneHtml}
-      ${d.description ? `<div style="margin-top:12px;font-size:12px;color:var(--text2);max-height:100px;overflow-y:auto;">${esc(fixZeroMin(d.description) || '').replace(/ \| /g, '<br>')}</div>` : ''}
+      ${d.description ? (hrCtx
+        ? `<details style="margin-top:12px;"><summary style="font-size:11px;color:var(--text3);cursor:pointer;">Power-based file details (targets shown in bpm above)</summary>
+             <div style="margin-top:6px;font-size:12px;color:var(--text2);max-height:100px;overflow-y:auto;">${esc(fixZeroMin(d.description) || '').replace(/ \| /g, '<br>')}</div></details>`
+        : `<div style="margin-top:12px;font-size:12px;color:var(--text2);max-height:100px;overflow-y:auto;">${esc(fixZeroMin(d.description) || '').replace(/ \| /g, '<br>')}</div>`) : ''}
       <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;">
         ${hrCtx
           ? `<button class="btn btn-primary" onclick="downloadFIT('z2', ${Math.round(d.total_seconds/60)}, '${escJs((d.display_name || d.name || 'workout'))}', '${escJs(filename)}', 'hr')">Download FIT (HR targets)</button>
@@ -12782,6 +12804,35 @@ async function loadSettings() {
   // suppression; the <select> is gated on an explicitly-set LTHR.
   window._targetMode = d.target_mode || 'power';
   window._lthrIsSet = !!d.lthr_is_set;
+  // W2d: LTHR provenance hint — hr-mode targets hang on this one number.
+  const lp = $('lthr-provenance');
+  if (lp) {
+    if (d.lthr_is_set && d.lthr_source) {
+      const srcTxt = d.lthr_source === 'manual' ? 'set manually' : 'intervals.icu estimate';
+      lp.style.display = '';
+      lp.textContent = `${srcTxt}${d.lthr_source_date ? ' · ' + d.lthr_source_date : ''} — retest now and then to keep HR targets honest`;
+    } else if (d.lthr_is_set) {
+      lp.style.display = '';
+      lp.textContent = 'source unknown (set before v2.5.0) — retest to keep HR targets honest';
+    } else {
+      lp.style.display = 'none';
+    }
+  }
+  // W1: HR workout-target rows editor — prefilled from the server-resolved
+  // rows (window._hrRows was set at boot; d.hr_rows is fresh here).
+  const hre = $('hr-rows-editor');
+  if (hre) {
+    hre.style.display = (d.target_mode === 'hr' && d.lthr_is_set) ? '' : 'none';
+    const R = d.hr_rows || {};
+    if (R.z1) {
+      $('hrr-z1h').value = R.z1[1];
+      $('hrr-z2l').value = R.z2[0]; $('hrr-z2h').value = R.z2[1];
+      $('hrr-z3l').value = R.z3[0]; $('hrr-z3h').value = R.z3[1];
+      $('hrr-z4l').value = R.z4[0]; $('hrr-z4h').value = R.z4[1];
+    }
+    window._hrRowsServer = R;
+    $('hr-rows-custom-badge').style.display = d.hr_rows_custom ? '' : 'none';
+  }
   const tmSel = $('set-target-mode');
   if (tmSel) {
     tmSel.value = window._targetMode;
@@ -13188,6 +13239,14 @@ async function runSync(btn) {
   }
 }
 
+async function resetHrRows() {
+  // W1: back to the Coggan defaults (server drops the custom key).
+  try {
+    const r = await fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({hr_rows_custom: null})});
+    if (r.ok) loadSettings();
+  } catch(_) {}
+}
+
 async function saveSettings() {
   const newFtp = parseInt($('set-ftp').value);
   const priorFtp = window._athleteFtpPrior;
@@ -13216,6 +13275,25 @@ async function saveSettings() {
   // and 400s with a readable message; surfaced via the alert below.
   const tmSel = $('set-target-mode');
   if (tmSel) body.target_mode = tmSel.value;
+  // W1: include hr_rows_custom ONLY when the editor values differ from the
+  // server-resolved rows (saving untouched defaults changes nothing — C1+).
+  const hre2 = $('hr-rows-editor');
+  if (hre2 && hre2.style.display !== 'none' && window._hrRowsServer && window._hrRowsServer.z1) {
+    const cur = {
+      z1_high: parseInt($('hrr-z1h').value),
+      z2: [parseInt($('hrr-z2l').value), parseInt($('hrr-z2h').value)],
+      z3: [parseInt($('hrr-z3l').value), parseInt($('hrr-z3h').value)],
+      z4: [parseInt($('hrr-z4l').value), parseInt($('hrr-z4h').value)],
+    };
+    const S = window._hrRowsServer;
+    const changed = cur.z1_high !== S.z1[1]
+      || cur.z2[0] !== S.z2[0] || cur.z2[1] !== S.z2[1]
+      || cur.z3[0] !== S.z3[0] || cur.z3[1] !== S.z3[1]
+      || cur.z4[0] !== S.z4[0] || cur.z4[1] !== S.z4[1];
+    if (changed && [cur.z1_high, ...cur.z2, ...cur.z3, ...cur.z4].every(Number.isFinite)) {
+      body.hr_rows_custom = cur;
+    }
+  }
   try {
     const res = await fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
     if (!res.ok) {
@@ -13229,9 +13307,12 @@ async function saveSettings() {
       throw new Error(`${res.status}: ${msg}`);
     }
     // First switch INTO hr mode: one-time disclaimer (IP_HR_ONLY C11).
+    // Per-profile key (red-team S3): a second athlete on the same machine
+    // must see the disclaimer too, not inherit profile #1's dismissal.
+    const _dscKey = 'hrModeDisclaimerShown:' + ((_profileData && _profileData.active) || 'default');
     if (tmSel && tmSel.value === 'hr' && (window._targetMode || 'power') !== 'hr'
-        && !localStorage.getItem('hrModeDisclaimerShown')) {
-      localStorage.setItem('hrModeDisclaimerShown', '1');
+        && !localStorage.getItem(_dscKey)) {
+      localStorage.setItem(_dscKey, '1');
       alert('Heart-rate mode: HR targets are approximate and personal — heat, fatigue and dehydration shift them, and HR drifts upward on long efforts (hold the lower half of the range early). Short and very hard efforts are prescribed by feel (RPE) because heart rate reacts too slowly to guide them.');
     }
     // v4.1.0 U4: if the FTP actually changed, log the prior value in
@@ -14807,7 +14888,12 @@ async function openDayWorkout(sessionIdx) {
     const durNote = showGap ? ` · plan target ${sessionDur}min` : '';
     html += `<div style="font-size:11px;color:var(--text3);margin:-4px 0 8px;font-style:italic;">Matched library file: ${esc(matchedFile)}${durNote}</div>`;
   }
-  html += `<div style="font-size:13px;color:var(--text2);margin:8px 0;">${esc(fixZeroMin(session.description) || '')}</div>`;
+  // hr mode: planner descriptions are power-prose ("3×15min @88-93% FTP") —
+  // fold them so the bpm chart/chips above stay the primary read (W2a).
+  html += window._targetMode === 'hr'
+    ? `<details style="margin:8px 0;"><summary style="font-size:11px;color:var(--text3);cursor:pointer;">Power-based session details (targets shown in bpm above)</summary>
+         <div style="font-size:13px;color:var(--text2);margin-top:6px;">${esc(fixZeroMin(session.description) || '')}</div></details>`
+    : `<div style="font-size:13px;color:var(--text2);margin:8px 0;">${esc(fixZeroMin(session.description) || '')}</div>`;
 
   // Stats grid
   // v2.2.12 — Duration stat = the matched file's real length (dispDur), matching
@@ -15170,8 +15256,11 @@ async function _rematchAccept(day) {
           &middot; ${esc(String(c.zwo_name || c.zwo_file))}
           &middot; ${n} session${n === 1 ? '' : 's'} reflowed
           <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
-            <button class="btn btn-sm" onclick="downloadZwoFile('${escJs(String(c.zwo_file || ''))}')">Download ZWO</button>
-            <button class="btn btn-sm" onclick="downloadFIT('${escJs(String(c.session_type || 'z2'))}', ${Number(c.duration_min || 0)}, '${escJs(String((c.zwo_file||'').replace(/\.zwo$/i, '') || 'workout'))}', '${escJs(String(c.zwo_file || ''))}')">Download FIT</button>
+            ${window._targetMode === 'hr'
+              ? `<button class="btn btn-sm" onclick="downloadFIT('${escJs(String(c.session_type || 'z2'))}', ${Number(c.duration_min || 0)}, '${escJs(String((c.zwo_file||'').replace(/\.zwo$/i, '') || 'workout'))}', '${escJs(String(c.zwo_file || ''))}', 'hr')">Download FIT (HR targets)</button>
+                 <button class="btn btn-sm" disabled style="opacity:0.4;cursor:not-allowed;" title="ZWO is a power-only format — it cannot encode heart-rate targets.">ZWO — can't encode HR</button>`
+              : `<button class="btn btn-sm" onclick="downloadZwoFile('${escJs(String(c.zwo_file || ''))}')">Download ZWO</button>
+                 <button class="btn btn-sm" onclick="downloadFIT('${escJs(String(c.session_type || 'z2'))}', ${Number(c.duration_min || 0)}, '${escJs(String((c.zwo_file||'').replace(/\.zwo$/i, '') || 'workout'))}', '${escJs(String(c.zwo_file || ''))}')">Download FIT</button>`}
           </div>
         </div>`;
       }

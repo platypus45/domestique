@@ -5388,7 +5388,12 @@ def generate_plan(
     # get_budget_for_phase lookup in this run (default "polarized" → unchanged).
     set_active_distribution(getattr(goal, "distribution", "polarized"),
                             getattr(goal, "custom_bands", None))
-    metrics = get_today_metrics()
+    # v3.0.0: only self-fetch when the caller didn't supply CTL — `metrics`
+    # feeds nothing but the ctl fallback below, and the v2.1.0 comment already
+    # promised the thread-through "avoids a redundant fetch" (it never did:
+    # every pinned test + the app path still hit intervals.icu live; a 429
+    # retry-sleep here hung the full-suite gate for 36 minutes).
+    metrics = {} if current_ctl is not None else get_today_metrics()
     # F4 (v4.1.0) — local CTL fallback. Previously this path hardcoded 37.0
     # when ICU was unreachable; any user whose wellness sync was broken got
     # a phantom fitness baseline wildly divergent from their actual recent

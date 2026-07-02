@@ -86,3 +86,15 @@ def _reset_icu_sync_singleton():
         if t.name == "domestique.icu_sync" and t.is_alive():
             t.join(timeout=5.0)
     app_module._icu_sync_in_progress.clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_live_icu_in_generate_plan(monkeypatch):
+    """v3.0.0 hermetic gate: generate_plan's CTL self-fetch must never hit the
+    live intervals.icu API from tests (a 429 retry-sleep hung the release gate;
+    ~15 suites call generate_plan unpinned). Suites that pin current_ctl skip
+    the fetch entirely (source fix); this stub covers the rest. Tests that
+    exercise get_today_metrics itself target training.get_today_metrics and
+    are unaffected; per-suite stubs simply override this one."""
+    import training_planner as _tp
+    monkeypatch.setattr(_tp, "get_today_metrics", lambda: {}, raising=False)

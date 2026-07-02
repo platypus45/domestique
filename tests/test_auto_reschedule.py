@@ -55,7 +55,11 @@ def test_missed_session_is_auto_relocated():
     tgt = by_day["2026-06-26"]
     assert tgt["session_type"] == "vo2max"
     assert tgt["duration_min"] == 60
-    assert tgt["user_moved"] is True
+    # v3.0.0 FC5a: auto-moves set auto_moved, NEVER user_moved — user_moved is
+    # reserved for actual user drags (it grants regen immunity; the system's
+    # own moves must stay re-decidable). This closes the L3-1 self-immunize chain.
+    assert tgt["user_moved"] is False
+    assert tgt.get("auto_moved") is True
     # ...and is reset to pending so the missed-hard refit tier won't ALSO
     # redistribute the same stimulus (no double-handling).
     assert tgt["status"] == "pending"

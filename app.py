@@ -3142,6 +3142,12 @@ async def api_plan_auto_adjust(request: Request):
                     break
             if target:
                 break
+        # FC3 (v2.5.0, L3-7): severity=rest must never wipe the race day — the
+        # readiness card's "Apply rest day" button on race eve converted the
+        # race to rest/0min/no-zwo (the race chip floating over a rest cell).
+        if target is not None and target.get("is_race"):
+            note = "race day is fixed — edit the race instead"
+            target = None
         if target is not None:
             old_type = target.get("session_type", "") or ""
             old_duration = int(target.get("duration_min", 0) or 0)
@@ -9397,6 +9403,21 @@ async def api_plan_generate(request: Request):
         # generated sessions) for the UI's "% distribution" readout.
         plan_dict["realized_bands"] = tp.realized_band_distribution(plan_dict)
 
+        # F4c (v2.5.0, D4): a <14-day runway generates a race-week-only
+        # MICRO-PLAN (single taper phase — see tp.generate_phases): rest,
+        # openers, race; at most one hard touch. Surface a warning in the plan
+        # payload so the UI can explain the shape instead of the user
+        # wondering where the training block went. Detected via the phase
+        # shape (the planner's decision), not a second clock read.
+        if (goal.goal_type in ("event", "ctl") and goal.target_date
+                and len(phases) == 1 and phases[0].name == "taper"):
+            plan_dict["warning"] = (
+                f"{goal.event_name or 'Your event'} is under two weeks away — "
+                "this is a race-week plan (rest, openers, race), not a "
+                "training block. Fitness for the event is already set; "
+                "arriving fresh is what's left to win."
+            )
+
         tp.atomic_write_plan(json_path, plan_dict)
 
         # v1.4.0 — single enrichment helper (replaces the inline duplicate).
@@ -9412,7 +9433,10 @@ async def api_plan_generate(request: Request):
                 week_count=len(plan_dict.get("weeks", [])) if isinstance(plan_dict, dict) else 0,
             )
 
-        return {"ok": True, "plan_json": plan_dict, "plan_file": str(plan_path)}
+        resp = {"ok": True, "plan_json": plan_dict, "plan_file": str(plan_path)}
+        if plan_dict.get("warning"):
+            resp["warning"] = plan_dict["warning"]  # F4c: top-level for the UI
+        return resp
 
     except ValueError as e:
         # F4b/F4d (v2.5.0): planner input rejection — target date today/past
@@ -10243,6 +10267,13 @@ def _apply_plan_update(
             taper_window = max(21, int(getattr(tp, "TAPER_DAYS", 12)))
             if 0 <= days_to_event <= taper_window:
                 taper_blocks = True
+            elif days_to_event < 0:
+                # FC5d (v2.5.0, L3-6): the event date has PASSED — never
+                # auto-rebuild toward a stale target (post-race CTL decay used
+                # to re-fire the ctl-gap regen against it; the regen core now
+                # refuses with a ValueError, so block the tier here instead of
+                # turning every post-race sync into a 500).
+                taper_blocks = True
         except (ValueError, TypeError):
             pass
 
@@ -10432,6 +10463,11 @@ async def api_plan_regenerate_dynamic(request: Request):
 
         return {"ok": True, "plan_json": plan_dict, "regen_info": regen_info}
 
+    except ValueError as e:
+        # FC5d (v2.5.0, L3-6): planner input rejection (event date passed) —
+        # user-facing message, 400 not 500. Mirrors /api/plan/generate (F4b).
+        _log.warning(f"Plan regenerate rejected: {e}")
+        return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -10491,6 +10527,11 @@ async def api_plan_add_race(request: Request):
         )
         tp.atomic_write_plan(json_path, plan_dict)
         return {"ok": True, "plan_json": plan_dict, "regen_info": regen_info, "added": new_event}
+    except ValueError as e:
+        # FC5d (v2.5.0, L3-6): the shared regen core refuses a passed A-event
+        # date — surface it as a 400 with the user-facing message.
+        _log.warning(f"Plan add-race rejected: {e}")
+        return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -11042,7 +11083,9 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int,
 # redraw-seed reproducibility).
 import dataclasses as _dataclasses
 
-_PS_JSON_ONLY_KEYS = ("variation", "adapted_reason")
+# FC5a (v2.5.0): "auto_moved" is the auto-reschedule provenance marker (never
+# user_moved — that pin is reserved for user drags). JSON-only like variation.
+_PS_JSON_ONLY_KEYS = ("variation", "adapted_reason", "auto_moved")
 
 
 def _planned_session_from_json(s: dict) -> "tp.PlannedSession":
@@ -11226,7 +11269,8 @@ def api_plan_daily_adapt():
 
 
 def _apply_move_session(
-    plan: dict, src_iso: str, dst_iso: str, reset_status_to_pending: bool = False
+    plan: dict, src_iso: str, dst_iso: str, reset_status_to_pending: bool = False,
+    auto: bool = False,
 ) -> dict | None:
     """Relocate the session at ``src_iso`` to ``dst_iso`` within ``plan['weeks']``
     (in place). Same-ISO-week move only. Returns the moved-session payload, or
@@ -11237,6 +11281,15 @@ def _apply_move_session(
     ``reset_status_to_pending`` forces the relocated session to ``pending`` (used
     by the auto-reschedule path: a rescheduled session is no longer "missed", so
     the missed-hard refit tier won't also redistribute it).
+
+    FC5a (v2.5.0, L3-1): ``auto=True`` marks the relocated session with the
+    ``auto_moved`` provenance field and NEVER ``user_moved`` — that pin is
+    reserved for actual user drags (v1.8.20 move-persistence). The old shared
+    flag self-immunized auto-moves: a missed hard auto-relocated onto race eve
+    became user_moved=True, which froze it against refit/regen/reforecast.
+
+    FC3 (v2.5.0, L3-2/L3-10): a race entry is never moved, and nothing is ever
+    moved ONTO a race day — returns None (the endpoint 400s before calling).
     """
     try:
         src_d = date.fromisoformat(src_iso)
@@ -11275,12 +11328,24 @@ def _apply_move_session(
         return None
     dst_session = next((s for s in dst_sessions if s.get("day") == dst_iso), None)
 
+    # FC3 (v2.5.0): the race entry is immutable — not movable, not overwritable.
+    if src_session.get("is_race") or (dst_session or {}).get("is_race"):
+        return None
+
     moved_payload = {k: v for k, v in src_session.items()}
     moved_payload["day"] = dst_iso
     moved_payload["day_name"] = (
         dst_session["day_name"] if dst_session else dst_d.strftime("%a")
     )
-    moved_payload["user_moved"] = True
+    if auto:
+        # FC5a: auto-relocations carry their own provenance and never the
+        # user pin (a prior user_moved on the source is superseded — the
+        # session no longer sits where the user put it).
+        moved_payload["user_moved"] = False
+        moved_payload["auto_moved"] = True
+    else:
+        moved_payload["user_moved"] = True
+        moved_payload["auto_moved"] = False
     moved_payload["moved_from"] = src_iso
     if reset_status_to_pending or moved_payload.get("status", "pending") == "pending":
         moved_payload["status"] = "pending"
@@ -11356,7 +11421,40 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
             if day_iso:
                 sess_by_day[day_iso] = s
 
-    def _is_available_slot(d_iso: str, missed_iso: str) -> bool:
+    # FC5a (v2.5.0, L3-1): collect A/B event dates — a HARD session must never
+    # be auto-moved into the T-2..T+0 freshness window of any of them (that is
+    # exactly the window every taper/eve pass protects; the audit saw a missed
+    # vo2max relocated onto race eve and then self-immunized there).
+    event_days: list[date] = []
+    _ev_iso = goal.get("event_date")
+    if _ev_iso:
+        try:
+            event_days.append(date.fromisoformat(str(_ev_iso)[:10]))
+        except (TypeError, ValueError):
+            pass
+    for _e in goal.get("events") or []:
+        if not isinstance(_e, dict):
+            continue
+        if str(_e.get("priority", "B") or "B").upper() not in ("A", "B"):
+            continue
+        try:
+            event_days.append(date.fromisoformat(str(_e.get("date"))[:10]))
+        except (TypeError, ValueError):
+            continue
+
+    def _sess_is_hard(sess: dict) -> bool:
+        """Union-of-axes hard check on a persisted session dict (mirrors
+        tp._session_is_hit without needing a DTO)."""
+        if (sess.get("session_type") or "") in tp._HIT_SESSION_TYPES:
+            return True
+        try:
+            cc = tp._content_class_for_zwo(sess.get("zwo_file") or "")
+        except Exception:
+            cc = ""
+        return cc in tp._HIT_SLOT_CONTENT_CLASSES
+
+    def _is_available_slot(d_iso: str, missed_iso: str,
+                           missed_sess: "dict | None" = None) -> bool:
         try:
             d = date.fromisoformat(d_iso)
         except ValueError:
@@ -11376,6 +11474,13 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
             return False
         if wd in rest_days_idx:
             return False
+        # FC5a (v2.5.0, L3-1): no HARD destination inside T-2..T+0 of an A/B
+        # event. Openers are exempt — a short touch ride is what belongs there.
+        if (missed_sess is not None and _sess_is_hard(missed_sess)
+                and not missed_sess.get("is_opener")):
+            for ed in event_days:
+                if 0 <= (ed - d).days <= 2:
+                    return False
         entry = availability.get(d_iso)
         if isinstance(entry, dict) and entry.get("type") == "unavailable":
             return False
@@ -11399,7 +11504,9 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
     for w in plan.get("weeks", []) or []:
         for s in w.get("sessions", []) or []:
             if (s.get("status") or "") != "missed":
-                continue
+                continue  # (missed_race is terminal — never a candidate, L3-2)
+            if s.get("is_race"):
+                continue  # FC3: the race entry itself is never rescheduled
             if not s.get("day", ""):
                 continue
             misses.append(s)
@@ -11429,7 +11536,7 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
         for cand_iso in same_week_dates:
             if cand_iso in used:
                 continue
-            if not _is_available_slot(cand_iso, missed_iso):
+            if not _is_available_slot(cand_iso, missed_iso, missed_sess=miss):
                 continue
             chosen = cand_iso
             cand_sess = sess_by_day.get(cand_iso, {})
@@ -11484,7 +11591,8 @@ def _auto_apply_missed_moves(plan: dict, today: date) -> list[dict]:
         dst = s.get("suggested_date")
         if not src or not dst:
             continue
-        moved = _apply_move_session(plan, src, dst, reset_status_to_pending=True)
+        moved = _apply_move_session(plan, src, dst, reset_status_to_pending=True,
+                                    auto=True)  # FC5a: auto_moved, never user_moved
         if moved:
             applied.append({"from": src, "to": dst})
     return applied
@@ -11593,6 +11701,17 @@ async def api_plan_move_session(request: Request):
             return JSONResponse(
                 {"error": "target_week_not_found", "date": dst_iso}, 422
             )
+
+        # FC3 (v2.5.0, L3-2/L3-10): the race entry is goal-owned — a drag must
+        # not move it, and nothing may be dropped ONTO it. The sanctioned write
+        # path for the race is the goal-level add/edit-race flow.
+        for w in plan.get("weeks", []) or []:
+            for s in w.get("sessions", []) or []:
+                if s.get("day") in (src_iso, dst_iso) and s.get("is_race"):
+                    return JSONResponse(
+                        {"error": "race day is fixed — edit the race instead"},
+                        400,
+                    )
 
         # Mutation is shared with the auto-reschedule path (_apply_move_session)
         # so both apply the identical same-week relocation + rest-stub rewrite.
@@ -13336,6 +13455,9 @@ def _pick_redraw_candidate(plan: dict, day_iso: str, exclude_extra: "list[str] |
         raise ValueError(f"No session at {day_iso}")
     if target_session.get("session_type") == "rest":
         raise ValueError("rest_day")
+    # FC3 (v2.5.0, L3-10): redraw installed a training ZWO on the race entry.
+    if target_session.get("is_race"):
+        raise ValueError("race day is fixed — edit the race instead")
 
     # Same-week workout names — SOFT avoid (variety within the week).
     same_week: set[str] = set()
@@ -13433,6 +13555,9 @@ def _accept_redraw_apply(plan: dict, day_iso: str, candidate: dict) -> dict:
             break
     if not target:
         raise ValueError(f"No session at {day_iso}")
+    # FC3 (v2.5.0, L3-10): never install a workout over the race entry.
+    if target.get("is_race"):
+        raise ValueError("race day is fixed — edit the race instead")
 
     target["zwo_file"] = str(candidate.get("zwo_file") or "")
     target["zwo_name"] = str(candidate.get("zwo_name") or candidate.get("zwo_file") or "")
@@ -13598,6 +13723,10 @@ def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: i
             break
     if not target:
         raise ValueError(f"No session at {day_iso}")
+    # FC3 (v2.5.0, L3-10): swap-type pinned a vo2max onto the race day with the
+    # race flag still attached (user_swapped then immunized it everywhere).
+    if target.get("is_race"):
+        raise ValueError("race day is fixed — edit the race instead")
 
     tss_per_h = tp.TSS_PER_HOUR.get(new_type, 60)
     target["session_type"] = new_type
@@ -13859,22 +13988,27 @@ async def api_plan_dismiss_session(request: Request):
         with open(json_path, encoding="utf-8") as f:
             plan = json.load(f)
 
-        found = False
-        for w in plan.get("weeks", []):
-            for s in w.get("sessions", []):
-                if s.get("day") == d_iso:
-                    if undo:
-                        s["status"] = "pending"
-                        s["dismissed_at"] = ""
-                    else:
-                        s["status"] = "dismissed"
-                        s["dismissed_at"] = datetime.now().isoformat()
-                    found = True
-                    break
-            if found:
-                break
-        if not found:
+        # L3-11 (v2.5.0): operate on ALL sessions matching the date, not the
+        # first match — on a (legacy) duplicated date the earlier row's copy
+        # got dismissed while the later row's conflicting copy stayed pending,
+        # so the user's dismissal "didn't stick". Post-FC1 duplicates can't be
+        # produced anymore; the all-matches loop stays as defense for plans
+        # persisted before the clip engine.
+        matched = [s for w in plan.get("weeks", [])
+                   for s in w.get("sessions", []) if s.get("day") == d_iso]
+        if not matched:
             return JSONResponse({"error": f"no session at {d_iso}"}, 404)
+        # FC3 (v2.5.0): the race entry is not dismissable — goal-owned.
+        if any(s.get("is_race") for s in matched):
+            return JSONResponse(
+                {"error": "race day is fixed — edit the race instead"}, 400)
+        for s in matched:
+            if undo:
+                s["status"] = "pending"
+                s["dismissed_at"] = ""
+            else:
+                s["status"] = "dismissed"
+                s["dismissed_at"] = datetime.now().isoformat()
 
         tp.atomic_write_plan(json_path, plan)
 

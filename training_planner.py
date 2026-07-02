@@ -1831,6 +1831,32 @@ def generate_phases(goal: Goal, current_ctl: float,
     # Only create taper for event/ctl goals — not for general, ftp, vo2max, etc.
     taper_weeks = 0
     if goal.goal_type in ("event", "ctl"):
+        # F4c (v2.5.0, D4): a runway under 14 days cannot fit ANY build+taper
+        # structure — the old path emitted a degenerate 1-2 day "peak" (or a
+        # coverage hole before a backward-anchored taper) and trained THROUGH
+        # the final days. Emit ONE race-week micro-phase covering start..target:
+        # rest/openers/race arrive via the standard post-passes (race-week
+        # shape + eve guard + clip emission), and generate_plan caps the whole
+        # micro-plan at a single hard touch. Kept under the "taper" name so
+        # every taper-keyed guard (budget table, stepback skip, eve guard,
+        # FC2a shrink order) applies unchanged.
+        _micro_start = getattr(goal, "_phase_start_override", None) or date.today()
+        _runway_days = (target_date - date.today()).days
+        if 0 < _runway_days < 14 and _micro_start <= target_date:
+            _span = (target_date - _micro_start).days + 1
+            return [Phase(
+                name="taper",
+                start=_micro_start,
+                end=target_date,
+                weeks=max(1, -(-_span // 7)),
+                focus=(f"Race-week micro-plan — {goal.event_name or 'event'} in "
+                       f"{_runway_days}d: rest, openers, race. Too close for a "
+                       "training block."),
+                weekly_tss_target=round(peak_weekly_tss * TAPER_FRACS[-1]),
+                z2_pct=80,
+                hit_per_week=1,
+                session_types=["z2", "recovery", "rest"],
+            )]
         # FC1-CLIP (v2.5.0, D2/D3/SM2): the taper ends ON the target date (race
         # day belongs to the plan; the emitters clip the final week at the phase
         # end instead of spilling to target+1), and Phase.weeks is the ceil of
@@ -5215,6 +5241,9 @@ def _apply_long_ride_target(sessions: list, target_min: int, max_weekend_min: in
     for s in sessions:
         if s is None or s.session_type not in ("z2", "long_z2") or (s.duration_min or 0) <= 0:
             continue
+        # FC3/F2b (v2.5.0): never grow the race entry or the openers ride.
+        if _protect_race(s) or getattr(s, "is_opener", False):
+            continue
         day = getattr(s, "day", None)
         wd = day.weekday() if hasattr(day, "weekday") else None
         if wd not in (5, 6):
@@ -5756,6 +5785,33 @@ def generate_plan(
         _apply_race_week_shape(weeks, goal, library)
     _mark_race_days(weeks, goal)  # issue #7: race day shows the race, not a session
 
+    # F4c (v2.5.0, D4): a race-week-only MICRO-PLAN (single taper phase — see
+    # generate_phases) keeps at most ONE hard touch total, excluding the
+    # openers ride and the race itself: there is no training block for a
+    # second interval day to serve, and the rider must arrive fresh. The
+    # per-week taper budget (1 HIT/week) still allows 2 across a 8-13d runway,
+    # so demote every hard slot after the first to a short easy spin.
+    if (len(phases) == 1 and phases[0].name == "taper"
+            and goal.goal_type in ("event", "ctl") and goal.target_date):
+        _hard_kept = False
+        for _w in weeks:
+            for _off, _s in enumerate(_w.sessions):
+                if (not _session_is_hit(_s) or getattr(_s, "is_opener", False)
+                        or _protect_race(_s)):
+                    continue
+                if not _hard_kept:
+                    _hard_kept = True
+                    continue
+                _dur = min(_s.duration_min or 45, 45)
+                _cand = PlannedSession(
+                    day=_s.day, day_name=_s.day_name, session_type="z2",
+                    duration_min=_dur,
+                    tss_estimate=round(_dur / 60 * TSS_PER_HOUR["z2"]),
+                    description="Easy spin — race week (one hard touch max).",
+                )
+                _m = match_zwo(_cand, library)
+                _w.sessions[_off] = _m if (_m and getattr(_m, "zwo_file", "")) else _cand
+
     # v1.8.21 — AUTHORITATIVE per-day availability clamp. Session durations are
     # set from matched ZWO files at FOUR sites (sampler + 3 utilization/
     # re-match passes) plus match_zwo, several of which admit a file up to
@@ -5771,6 +5827,12 @@ def generate_plan(
     for w in weeks:
         for s in w.sessions:
             if s.session_type == "rest" or (s.duration_min or 0) <= 0:
+                continue
+            # FC3 (v2.5.0, D9/L3-9): the race entry is sized ONLY by
+            # _mark_race_days (self-clamping to the day cap, E9) — a second
+            # clamp here re-shrunk it against per-date overrides/TYPE_CEILING
+            # on some paths but not others, flapping the race card.
+            if _protect_race(s):
                 continue
             d_iso = s.day.isoformat() if hasattr(s.day, "isoformat") else str(s.day)
             if d_iso in _avail:
@@ -5914,6 +5976,22 @@ def _session_is_hit(sess) -> bool:
 def _week_hit_count(week) -> int:
     """Count HIT sessions in a PlannedWeek (union-of-axes definition)."""
     return sum(1 for s in week.sessions if _session_is_hit(s))
+
+
+def _protect_race(s) -> bool:
+    """FC3 (v2.5.0, D9/L3-2/L3-7/L3-10) — ONE invariant, one place: a session
+    with ``is_race=True`` is IMMUTABLE to every mutating pass (volume clamps,
+    stepback-lightest, availability rescale, tier-down, swap-type, redraw,
+    rematch, auto-move, demote, refit, per-day clamp). Its duration/TSS come
+    ONLY from ``_mark_race_days`` (self-clamping + idempotent, E9); the
+    sanctioned write path for the race itself is the goal-level add/edit-race
+    flow. Accepts both PlannedSession objects and persisted plan-dict session
+    dicts so the app-layer writers can consult the same guard."""
+    if s is None:
+        return False
+    if isinstance(s, dict):
+        return bool(s.get("is_race", False))
+    return bool(getattr(s, "is_race", False))
 
 
 def _enforce_build2_peak_hard_floor(
@@ -6084,6 +6162,7 @@ def _enforce_build2_peak_hard_floor(
                 sess_list = [
                     (i, s) for i, s in enumerate(w_target.sessions)
                     if s.session_type != "rest"
+                    and not _protect_race(s)  # FC3: never swap over the race
                     and (_content_class_for_zwo(s.zwo_file or "") not in all_targets)
                 ]
                 # Sort: (1) prefer slots whose current file is a duplicate
@@ -6213,9 +6292,11 @@ def _enforce_weekly_hit_cap(weeks: list, library: list[dict]) -> None:
         for _ in range(len(wk.sessions) + 1):
             # F2b (v2.5.0): openers are whitelisted — a race-week opener is a
             # deliberate short touch session, neither counted nor demotable.
+            # FC3: the race entry is never a demotion candidate either.
             hit_slots = [
                 (i, s) for i, s in enumerate(wk.sessions)
                 if _session_is_hit(s) and not getattr(s, "is_opener", False)
+                and not _protect_race(s)
             ]
             if len(hit_slots) <= cap:
                 break
@@ -6386,8 +6467,13 @@ def _enforce_weekly_volume_ceiling(weeks: list, recent_weekly_tss=None, goal=Non
                     continue
                 if _session_is_hit(s):
                     continue
-                if getattr(s, "is_race", False):
-                    continue  # a race entry is never "easy volume to shed"
+                # FC3 + §6.12 (v2.5.0): the race entry, user-pinned moves/swaps,
+                # done/dismissed records and unavailable days are never "easy
+                # volume to shed" (the regen path now runs this pass over weeks
+                # that carry preserved rider state — L3-13). Structural no-op at
+                # generate time (fresh sessions carry none of these flags).
+                if _race_shape_frozen(s):
+                    continue
                 if getattr(s, "is_opener", False):
                     continue  # F2b: the race-week opener is deliberate
                 out.append((idx, s))
@@ -6491,7 +6577,8 @@ def _enforce_stepback_is_lightest(weeks: list) -> None:
             easy = [(idx, s) for idx, s in enumerate(wk.sessions)
                     if s and s.session_type != "rest"
                     and (s.duration_min or 0) > _VOLUME_MIN_SESSION_MIN
-                    and not _session_is_hit(s)]
+                    and not _session_is_hit(s)
+                    and not _protect_race(s)]  # FC3: race entry never shrunk
             if not easy:
                 break  # every easy slot already at/under the floor
             easy.sort(key=lambda kv: -(kv[1].duration_min or 0))
@@ -6517,7 +6604,8 @@ def _enforce_stepback_is_lightest(weeks: list) -> None:
             if _rest_count(wk) > build_max_rest:
                 break
             easy = [(idx, s) for idx, s in enumerate(wk.sessions)
-                    if s and s.session_type != "rest" and not _session_is_hit(s)]
+                    if s and s.session_type != "rest" and not _session_is_hit(s)
+                    and not _protect_race(s)]  # FC3: race entry never rested
             if len(easy) <= 1:
                 break  # keep at least one easy recovery spin
             easy.sort(key=lambda kv: (kv[1].duration_min or 0))  # drop the shortest first
@@ -6558,7 +6646,8 @@ def _enforce_easy_slot_content(weeks: list, library: list, plan_start_date,
                 continue
             # F2b (v2.5.0): an opener deliberately carries a short-surge file on
             # a z2-typed slot — that's its whole point; don't re-match it away.
-            if getattr(s, "is_opener", False):
+            # FC3: the race entry (typed "recovery") is not a slot to re-match.
+            if getattr(s, "is_opener", False) or _protect_race(s):
                 continue
             f = (getattr(s, "zwo_file", "") or "").strip()
             if not f or if_by_file.get(f, 0.0) <= _EASY_SLOT_IF_CEILING:
@@ -6599,6 +6688,17 @@ def _demote_hit_window(weeks: list, center_date, days: int, library=None,
             # F2b (v2.5.0): a deliberate opener is exactly what belongs in this
             # window — never demote it (it's short, sharp by design).
             if getattr(s, "is_opener", False):
+                continue
+            # F5b (v2.5.0, L3-4): demote only PENDING, UNPINNED prescriptions.
+            # This pass used to rewrite DONE rides (erasing training history),
+            # resurrect DISMISSED sessions as pending z2, replace user-moved
+            # pins, and flip MISSED records to pending (falsifying the
+            # missed-hard refit latch key). FC3: the race entry is immutable.
+            if _protect_race(s):
+                continue
+            if (getattr(s, "status", "pending") != "pending"
+                    or getattr(s, "dismissed_at", "")
+                    or getattr(s, "user_moved", False)):
                 continue
             if 0 <= delta <= days and _session_is_hit(s):
                 dur = min(s.duration_min or OPENER_MAX_MIN, OPENER_MAX_MIN)
@@ -7017,6 +7117,8 @@ def _enforce_ronnestad_floor(
                 for s in w.sessions:
                     if s.session_type not in hit_types:
                         continue
+                    if _protect_race(s):  # FC3: never swap the race entry
+                        continue
                     cur_file = s.zwo_file or ""
                     if not cur_file or _is_ronn_file(cur_file):
                         continue
@@ -7151,6 +7253,8 @@ def apply_week_tier_down(
             if sess.get("status") in {
                 "completed", "done", "done_partial", "missed", "dismissed",
             }:
+                continue
+            if _protect_race(sess):  # FC3: race entry immutable to tier-down
                 continue
             old_type = sess.get("session_type", "") or ""
             if old_type not in _HARD_SESSION_TYPES:
@@ -7604,6 +7708,13 @@ def reforecast(
                 d_iso = s.day.isoformat()
                 if d_iso not in availability_overrides:
                     continue
+                # FC3 (v2.5.0, E12 — writer #12): the availability rescale must
+                # never touch the race entry. hours=0 on the race date used to
+                # convert race day to a rest stub (and _mark_race_days'
+                # idempotency then correctly refused to churn it back). The
+                # race happens whether or not the calendar says "0h free".
+                if _protect_race(s):
+                    continue
                 hours = float(availability_overrides[d_iso])
                 if hours <= 0:
                     # v1.3.5 fix: also clear ZWO + description so the
@@ -7714,6 +7825,8 @@ def reforecast(
                     continue  # today + past already handled by daily_adapt_plan
                 if s.session_type not in _HARD_SESSION_TYPES:
                     continue
+                if _protect_race(s):
+                    continue  # FC3: race entry immutable to the TSB downshift
                 if getattr(s, "user_swapped", False):
                     continue  # v2.3.0: user's manual type-swap is pinned
                 tsb = _tsb_at(s.day)
@@ -7786,6 +7899,8 @@ def reforecast(
                     continue
                 if s.session_type not in _HARD_SESSION_TYPES:
                     continue
+                if _protect_race(s):
+                    continue  # FC3: race entry immutable to the G3 downshift
                 if s.adapted:
                     continue  # already touched by TSB loop above
                 if getattr(s, "user_swapped", False):
@@ -8528,6 +8643,18 @@ def regenerate_from_today(
     """
     today = date.today()
 
+    # FC5d (v2.5.0, L3-6): route the regen through the same generator invariant
+    # as generate_plan (F4b) — a stale PAST target used to rebuild a recovery
+    # ramp plowing z2 weeks through and 5 weeks past race day, plus a
+    # negative-span taper phase, with no error. app.py surfaces this as a 400
+    # on /api/plan/regenerate and /api/plan/add-race; the auto-adapt path
+    # skips the regen tier for passed events.
+    if goal.target_date is not None and goal.target_date < today:
+        raise ValueError(
+            f"Event date {goal.target_date.isoformat()} has passed — set a "
+            "new goal (or target date) before rebuilding the plan."
+        )
+
     # 1. Keep past weeks
     past_weeks = [w for w in old_plan_weeks if w.end < today]
 
@@ -8576,7 +8703,33 @@ def regenerate_from_today(
 
     # 4. Build recovery ramp if needed
     recovery_weeks = build_recovery_ramp(current_ctl, absence_days, goal)
-    recovery_days = len(recovery_weeks) * 7
+
+    # FC5d (v2.5.0, L3-6): the ramp must never plow training weeks past the
+    # event — cap it at race + 2 weeks (post-race recovery riding is fine; a
+    # multi-week z2 block THROUGH and past race day is not). Drop whole ramp
+    # weeks starting past the cap and clip the last one's sessions to it.
+    if goal.target_date:
+        _ramp_cap = goal.target_date + timedelta(days=14)
+        recovery_weeks = [rw for rw in recovery_weeks if rw.start <= _ramp_cap]
+        for rw in recovery_weeks:
+            if rw.end > _ramp_cap:
+                rw.sessions = [s for s in rw.sessions if s.day <= _ramp_cap]
+                rw.end = _ramp_cap
+
+    # FC5d (v2.5.0, L3-6): the §6.12 preserved-field swap applies to RAMP weeks
+    # too — the recovery ramp bypassed the plan_week swap loop below, so
+    # user_moved / dismissed / done sessions whose dates fell inside the ramp
+    # span were silently re-prescribed as generic z2 on every gap-regen.
+    if adapted_current_week:
+        for rw in recovery_weeks:
+            for _i, _s in enumerate(rw.sessions):
+                _kept = adapted_current_week.get(_s.day)
+                if _kept is not None:
+                    rw.sessions[_i] = _kept
+
+    recovery_days = (
+        ((recovery_weeks[-1].end - today).days + 1) if recovery_weeks else 0
+    )
 
     # 5. Remaining time after recovery
     post_recovery_days = remaining_days - recovery_days
@@ -8668,6 +8821,10 @@ def regenerate_from_today(
     for p in new_phases:
         if p.start < phase_start_date:
             p.start = phase_start_date
+    # FC5d (v2.5.0, L3-6): the clamp above can push a phase's start past its
+    # end (e.g. a capped ramp consuming the whole runway to the target) —
+    # negative-span phases must be impossible on every emitter path.
+    new_phases = [p for p in new_phases if p.start <= p.end]
 
     # 11. Generate new weeks
     library = load_workout_library()
@@ -8861,6 +9018,22 @@ def regenerate_from_today(
                 max_weekend_min=_mw_min,
                 is_stepback=getattr(_w, "is_stepback", False))
 
+    # L3-13 (v2.5.0): the regen path runs the SAME volume ceiling as
+    # generate_plan (it had neither clamp — the comeback ramp, the one place
+    # overload matters most, was the least-clamped output in the system).
+    # recent_weekly_tss mirrors generate_plan's fetch: archive → CTL×7 proxy.
+    _recent_wtss = None
+    try:
+        import ride_storage as _rs
+        _recent_wtss = _rs.recent_mean_weekly_tss()
+    except Exception:  # noqa: BLE001
+        _recent_wtss = None
+    if _recent_wtss is None and current_ctl and current_ctl > 0:
+        _recent_wtss = round(current_ctl * 7)
+    _future_weeks = recovery_weeks + new_weeks
+    _enforce_weekly_volume_ceiling(_future_weeks, recent_weekly_tss=_recent_wtss,
+                                   goal=adjusted_goal)
+
     # Renumber recovery weeks
     for i, rw in enumerate(recovery_weeks):
         rw.week_num = len(past_weeks) + i + 1
@@ -8891,6 +9064,40 @@ def regenerate_from_today(
     if goal.goal_type in ("event", "ctl") and goal.target_date:
         _apply_race_week_shape(all_weeks, goal, library)
     _mark_race_days(all_weeks, goal)  # issue #7: race day shows the race, not a session
+
+    # L3-13 (v2.5.0): AUTHORITATIVE per-day availability clamp, mirroring
+    # generate_plan's final pass (per-weekday goal cap + per-type ceiling +
+    # stepback long-ride cap). Future weeks only; race entries are sized by
+    # _mark_race_days alone (FC3) and preserved rider state (§6.12) is never
+    # rescaled.
+    for _w in _future_weeks:
+        for _s in _w.sessions:
+            if _s.session_type == "rest" or (_s.duration_min or 0) <= 0:
+                continue
+            if _protect_race(_s):
+                continue
+            if (getattr(_s, "user_moved", False)
+                    or getattr(_s, "dismissed_at", "")
+                    or getattr(_s, "status", "pending") != "pending"):
+                continue
+            _wd = _s.day.weekday() if hasattr(_s.day, "weekday") else 0
+            _cap_min = int(adjusted_goal.max_hours_for_day(_wd) * 60)
+            _cc = _content_class_for_zwo(getattr(_s, "zwo_file", "") or "")
+            _ceil = TYPE_CEILING.get(_cc) or TYPE_CEILING.get(_s.session_type)
+            _eff = _cap_min if _ceil is None else (
+                _ceil if _cap_min <= 0 else min(_cap_min, _ceil))
+            if (getattr(_w, "is_stepback", False)
+                    and (_eff <= 0 or _eff > STEPBACK_LONG_RIDE_CAP_MIN)):
+                _eff = STEPBACK_LONG_RIDE_CAP_MIN
+            if _eff > 0 and _s.duration_min > _eff:
+                _scale = _eff / float(_s.duration_min)
+                _s.tss_estimate = round((_s.tss_estimate or 0) * _scale)
+                _s.duration_min = _eff
+
+    # FC2a parity: re-anchor the taper budget on the FINAL (post-clamp) build
+    # sums — a strict no-op when the rebuilt span holds no taper rows.
+    _enforce_weekly_volume_ceiling(_future_weeks, recent_weekly_tss=_recent_wtss,
+                                   goal=adjusted_goal, taper_only=True)
     return new_phases, all_weeks, regen_info
 
 
@@ -9326,6 +9533,8 @@ def _refit_session_frozen(s, today: date) -> bool:
     """
     if getattr(s, "day", None) is None or s.day < today:
         return True
+    if _protect_race(s):
+        return True  # FC3 (v2.5.0): the race entry is immutable to the refit
     if getattr(s, "adapted", False) or getattr(s, "user_moved", False):
         return True
     if getattr(s, "user_swapped", False):
@@ -9414,6 +9623,22 @@ def refit_remaining_week(
     ]
     if not remaining_offsets:
         return current_plan_weeks, {**no_op, "missed_dates": missed_dates}
+
+    # L3-12 (v2.5.0): near the race — the final 2 build weeks and the taper —
+    # the refit may RE-OWE at most 1.0× the missed dose. The taper-week probe
+    # showed a 45min/50-TSS miss re-fitted into a 90min threshold + 119min z2
+    # (2.7× the missed TSS) because the count/spacing caps bound intensity,
+    # not dose. Snapshot the remaining-days dose BEFORE the splice; the cap
+    # below trims the refit-touched days back to (pre + missed).
+    _reowe_guard = (
+        goal.target_date is not None
+        and week.end >= goal.target_date - timedelta(days=TAPER_DAYS + 14)
+    )
+    _pre_remaining_tss = (
+        sum((week.sessions[o].tss_estimate or 0) for o in remaining_offsets)
+        if _reowe_guard else 0.0
+    )
+    _missed_dose = sum((s.tss_estimate or 0) for s in missed_hard)
 
     # Reconstruct the rolling-diversity context the sampler needs from the
     # PRIOR weeks (mirrors recalculate_plan's bookkeeping: used_names by week,
@@ -9651,6 +9876,35 @@ def refit_remaining_week(
         if iso not in refit_days:
             refit_days.append(iso)
         promotions_owed -= 1
+
+    # L3-12 (v2.5.0) — re-owe cap (see the snapshot above): inside the final 2
+    # build weeks + the taper, the refit-touched days may add at most 1.0× the
+    # missed dose over what the remaining days already carried. Rescale the
+    # touched (non-rest, non-frozen — refit_days only ever holds remaining
+    # trainable days) sessions proportionally; a 20-min floor keeps each ride
+    # rideable. Cleared zwo fields are re-matched by the pass below.
+    if _reowe_guard:
+        _budget = _pre_remaining_tss + _missed_dose
+        _post_remaining = sum(
+            (week.sessions[o].tss_estimate or 0) for o in remaining_offsets
+        )
+        _touched_offs = [
+            o for o in remaining_offsets
+            if week.sessions[o].day.isoformat() in refit_days
+            and week.sessions[o].session_type != "rest"
+        ]
+        _touched_tss = sum(
+            (week.sessions[o].tss_estimate or 0) for o in _touched_offs
+        )
+        if _post_remaining > _budget and _touched_tss > 0:
+            _keep = max(0.0, _touched_tss - (_post_remaining - _budget))
+            _f = _keep / _touched_tss
+            for o in _touched_offs:
+                s = week.sessions[o]
+                s.duration_min = max(20, int(round((s.duration_min or 0) * _f)))
+                s.tss_estimate = round((s.tss_estimate or 0) * _f)
+                s.zwo_file = ""
+                s.zwo_name = ""
 
     # Re-match a real library workout for any refitted day that lost its file in
     # the demotion (or never carried one). Anchor the seed on the plan start so
@@ -10014,7 +10268,8 @@ def rematch_week(
             by_date.setdefault(d, []).append(a)
 
     matches = []
-    summary = {"done": 0, "done_partial": 0, "ambiguous": 0, "missed": 0, "pending": 0, "dismissed": 0, "no_match": 0}
+    summary = {"done": 0, "done_partial": 0, "ambiguous": 0, "missed": 0,
+               "missed_race": 0, "pending": 0, "dismissed": 0, "no_match": 0}
     for s in week.sessions:
         cur_status = getattr(s, "status", "pending")
         if cur_status == "dismissed":
@@ -10022,6 +10277,11 @@ def rematch_week(
             continue
         if cur_status in ("done", "done_partial"):
             summary[cur_status] += 1
+            continue
+        if cur_status == "missed_race":
+            # FC3 (v2.5.0, L3-2): terminal — a past unridden race is never
+            # re-evaluated back to pending/missed (and never rescheduled).
+            summary["missed_race"] = summary.get("missed_race", 0) + 1
             continue
         if s.session_type == "rest":
             continue
@@ -10034,7 +10294,14 @@ def rematch_week(
                 best = {**cls, "activity": a}
 
         if best is None:
-            new_status = "missed" if s.day < today else "pending"
+            # FC3 (v2.5.0, L3-2): an unridden race becomes the TERMINAL
+            # "missed_race" — never plain "missed", which the auto-reschedule
+            # layer would relocate to the next rest slot (the audit saw the
+            # race entry rendered 2 days after the event).
+            if s.day < today:
+                new_status = "missed_race" if _protect_race(s) else "missed"
+            else:
+                new_status = "pending"
             summary[new_status] = summary.get(new_status, 0) + 1
             matches.append({
                 "session_date": s.day.isoformat(),
@@ -10052,7 +10319,11 @@ def rematch_week(
             resolved = status_map.get(best["status"])
             if resolved is None:
                 # no_match with a same-day activity: treat as missed if past, pending if future
-                new_status = "missed" if s.day < today else "pending"
+                # FC3 (L3-2): a race day resolves to the terminal missed_race.
+                if s.day < today:
+                    new_status = "missed_race" if _protect_race(s) else "missed"
+                else:
+                    new_status = "pending"
             else:
                 new_status = resolved
             summary[new_status] = summary.get(new_status, 0) + 1

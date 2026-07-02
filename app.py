@@ -2224,6 +2224,374 @@ def api_profile_dfa_rides():
     }
 
 
+# ── P2.4 (v3.0.0, G14-G20) — Rider Profile stats card ───────────────────────
+# ONE aggregation endpoint over EXISTING sources. Every field is a provenance
+# TRIPLE {value, source: icu|manual|derived|fallback, source_date|null} —
+# never a bare "est." tag (G-locked). Fallback-valued fields (wprime/pmax
+# source ∈ {"", fallback}; cp with no persisted key AND power-curve cp_w None;
+# lbm default) emit value=None → the card renders an empty-state, never a
+# fabricated number. The ONLY new computations are the EF 42d trend + the
+# season-totals loop (G14). Each subsystem fan-out is wrapped in try/except so
+# a failing subsystem yields a PARTIAL payload, never a 500 (get_today_metrics
+# does live ICU calls).
+
+def _prov(value, source: str, source_date=None) -> dict:
+    """Provenance triple. source ∈ {icu, manual, derived, fallback}."""
+    return {"value": value, "source": source, "source_date": source_date}
+
+
+_PROV_EMPTY = {"value": None, "source": "fallback", "source_date": None}
+
+
+def _prov_source(raw) -> str:
+    """Map internal provenance enums onto the locked 4-value vocabulary."""
+    s = str(raw or "").strip().lower()
+    if s in ("icu", "eftp_icu", "eftp_auto", "intervals.icu"):
+        return "icu"
+    if s in ("eftp_local", "monod", "computed", "derived"):
+        return "derived"
+    if s in ("", "fallback", "unknown"):
+        return "fallback"
+    return "manual"  # manual / tested_* enums
+
+
+def _rider_stats_season_block(rides: list, start_iso: str, end_iso: str) -> dict:
+    """Season totals over the ride archive (G14 sanctioned computation #2).
+
+    Distance sums ICU rides only (the FIT sidecar carries no distance) —
+    labeled as such in the payload. hrTSS-sourced loads count toward TSS and
+    are surfaced via ``hr_loads`` so the card can label them.
+    """
+    hours = 0.0
+    tss = 0.0
+    dist = 0.0
+    count = 0
+    hr_loads = 0
+    for r in rides:
+        if not isinstance(r, dict):
+            continue
+        d = (r.get("date") or str(r.get("started_at") or ""))[:10]
+        if not d or not (start_iso <= d <= end_iso):
+            continue
+        count += 1
+        try:
+            hours += float(r.get("duration_s") or 0) / 3600.0
+        except (TypeError, ValueError):
+            pass
+        try:
+            tss += float(r.get("tss") or 0)
+        except (TypeError, ValueError):
+            pass
+        if r.get("load_source") == "hr_icu":
+            hr_loads += 1
+        if r.get("source") == "icu":
+            try:
+                dist += float(r.get("distance_km") or 0)
+            except (TypeError, ValueError):
+                pass
+    return {"hours": round(hours, 1), "tss": round(tss), "rides": count,
+            "distance_km": round(dist), "hr_loads": hr_loads}
+
+
+@app.get("/api/rider-stats")
+def api_rider_stats():
+    """P2.4 — read-only stats grid for the top of the Analysis tab."""
+    out: dict = {"errors": []}
+
+    def _fail(section: str, e: Exception):
+        _log.debug(f"/api/rider-stats {section} failed: {e}")
+        out["errors"].append(section)
+
+    athlete: dict = {}
+    pm = None
+    try:
+        from profile_manager import ProfileManager
+        pm = ProfileManager.get()
+        athlete = getattr(pm, "_athlete", {}) or {}
+    except Exception as e:
+        _fail("profile", e)
+
+    # ── power-curve subsystem (peaks + Monod CP fallback) ───────────────────
+    curve: dict = {}
+    try:
+        import power_curve
+        curve = power_curve.aggregate_power_curve("default", 90) or {}
+    except Exception as e:
+        _fail("power_curve", e)
+
+    # ── power section ────────────────────────────────────────────────────────
+    power: dict = {}
+    try:
+        ftp_set = bool(athlete.get("ftp"))
+        ftp_source_raw = None
+        ftp_date = None
+        if pm is not None:
+            try:
+                ftp_source_raw = pm.get_ftp_source()
+            except Exception:
+                ftp_source_raw = athlete.get("ftp_source")
+            try:
+                ftp_date = pm.get_ftp_source_date()
+            except Exception:
+                ftp_date = None
+        power["ftp"] = (
+            _prov(int(athlete["ftp"]), _prov_source(ftp_source_raw or "manual"),
+                  ftp_date)
+            if ftp_set else dict(_PROV_EMPTY)
+        )
+
+        # eFTP — latest ICU wellness sportInfo[0].eftp (synced store).
+        eftp_triple = dict(_PROV_EMPTY)
+        try:
+            import ride_storage as _rs
+            wl = _rs.load_recent_wellness(days=90) or []
+            for w in sorted(wl, key=lambda x: str(x.get("id") or ""),
+                            reverse=True):
+                si = w.get("sportInfo") or []
+                ef = si[0].get("eftp") if si and isinstance(si[0], dict) else None
+                if ef:
+                    eftp_triple = _prov(round(float(ef)), "icu",
+                                        str(w.get("id") or "")[:10] or None)
+                    break
+        except Exception as e:
+            _fail("eftp", e)
+        power["eftp"] = eftp_triple
+
+        weight_set = bool(athlete.get("weight_kg"))
+        if ftp_set and weight_set:
+            try:
+                wkg = round(float(athlete["ftp"]) / float(athlete["weight_kg"]), 2)
+                power["w_per_kg"] = _prov(wkg, "derived", ftp_date)
+            except (TypeError, ValueError, ZeroDivisionError):
+                power["w_per_kg"] = dict(_PROV_EMPTY)
+        else:
+            power["w_per_kg"] = dict(_PROV_EMPTY)
+
+        # CP: persisted athlete key (manual) → power-curve Monod fit
+        # (derived) → empty-state (keys on curve cp_w None, per the grill).
+        if athlete.get("cp"):
+            power["cp"] = _prov(int(athlete["cp"]), "manual", None)
+        elif curve.get("cp_w") is not None:
+            power["cp"] = _prov(int(curve["cp_w"]), "derived", None)
+        else:
+            power["cp"] = dict(_PROV_EMPTY)
+
+        # W' (kJ) / Pmax: fallback-source values render EMPTY (never the
+        # ftp×80 / ftp×1.30 property fallbacks).
+        wp_src = str(athlete.get("wprime_source") or "")
+        if athlete.get("wprime_j") and wp_src not in ("", "fallback"):
+            power["wprime_kj"] = _prov(
+                round(float(athlete["wprime_j"]) / 1000.0, 1),
+                _prov_source(wp_src), None)
+        else:
+            power["wprime_kj"] = dict(_PROV_EMPTY)
+        pm_src = str(athlete.get("pmax_source") or "")
+        if athlete.get("pmax_w") and pm_src not in ("", "fallback"):
+            power["pmax"] = _prov(int(athlete["pmax_w"]), _prov_source(pm_src),
+                                  None)
+        else:
+            power["pmax"] = dict(_PROV_EMPTY)
+    except Exception as e:
+        _fail("power", e)
+    out["power"] = power
+
+    # ── peak efforts 5s/1m/5m/20m (90d window, from the existing curve) ─────
+    try:
+        by_dur = {pt.get("duration_s"): pt
+                  for pt in (curve.get("rider_curve") or [])
+                  if isinstance(pt, dict)}
+        peaks = {"window_days": 90}
+        for label, secs in (("5s", 5), ("1m", 60), ("5m", 300), ("20m", 1200)):
+            pt = by_dur.get(secs)
+            peaks[label] = (
+                {"watts": pt.get("watts"), "watts_per_kg": pt.get("watts_per_kg"),
+                 "date": pt.get("date"), "source": "derived"}
+                if pt else None
+            )
+        out["peaks"] = peaks
+    except Exception as e:
+        _fail("peaks", e)
+
+    # ── VO2max — ICU-ONLY (athlete_metrics metric=vo2max); omit if absent ───
+    try:
+        rows = db.query_metric_history("vo2max", days=3650)
+        if rows:
+            last = rows[-1]
+            out["vo2max"] = {
+                **_prov(last.get("value"), "icu", last.get("date")),
+                "label": "via Intervals.icu",
+            }
+    except Exception as e:
+        _fail("vo2max", e)
+
+    # ── heart section ────────────────────────────────────────────────────────
+    heart: dict = {}
+    try:
+        lthr_ok = False
+        try:
+            v = athlete.get("lthr")
+            lthr_ok = v is not None and 100 <= float(v) <= 220
+        except (TypeError, ValueError):
+            lthr_ok = False
+        heart["lthr"] = (
+            _prov(int(athlete["lthr"]),
+                  _prov_source(athlete.get("lthr_source") or "manual"),
+                  athlete.get("lthr_source_date"))
+            if lthr_ok else dict(_PROV_EMPTY)
+        )
+        if athlete.get("max_hr"):
+            heart["max_hr"] = _prov(
+                int(athlete["max_hr"]),
+                _prov_source(athlete.get("max_hr_source") or "manual"), None)
+        elif athlete.get("age") and pm is not None:
+            heart["max_hr"] = _prov(int(pm.max_hr), "derived", None)
+        else:
+            heart["max_hr"] = dict(_PROV_EMPTY)
+        # RHR: manual baseline → latest wellness restingHR (fallback chain).
+        if athlete.get("rhr_baseline"):
+            heart["rhr"] = _prov(int(athlete["rhr_baseline"]), "manual", None)
+        else:
+            heart["rhr"] = dict(_PROV_EMPTY)
+            try:
+                import ride_storage as _rs
+                wl = _rs.load_recent_wellness(days=28) or []
+                for w in sorted(wl, key=lambda x: str(x.get("id") or ""),
+                                reverse=True):
+                    if w.get("restingHR"):
+                        heart["rhr"] = _prov(int(w["restingHR"]), "icu",
+                                             str(w.get("id") or "")[:10] or None)
+                        break
+            except Exception as e:
+                _fail("rhr_wellness", e)
+    except Exception as e:
+        _fail("heart", e)
+
+    # DFA-AeT — the dfa-rides 42d hrvt1 aggregate (existing endpoint helper).
+    try:
+        dfa = api_profile_dfa_rides()
+        agg = ((dfa or {}).get("aggregate") or {}).get("hrvt1")
+        if isinstance(agg, dict) and (agg.get("hr") or agg.get("power")):
+            span = agg.get("date_span") or [None, None]
+            heart["dfa_aet"] = {
+                **_prov(agg.get("hr"), "derived",
+                        span[1] if len(span) > 1 else None),
+                "watts": agg.get("power"),
+                "n": (agg.get("n_hr") or 0) + (agg.get("n_power") or 0),
+                "label": "DFA α1 HRVT1, 42d aggregate",
+            }
+        else:
+            heart["dfa_aet"] = dict(_PROV_EMPTY)
+    except Exception as e:
+        _fail("dfa_aet", e)
+        heart["dfa_aet"] = dict(_PROV_EMPTY)
+    out["heart"] = heart
+
+    # ── efficiency: EF (NP/avgHR) latest + 42d trend (G14 computation #1),
+    #    decoupling latest ──────────────────────────────────────────────────
+    efficiency: dict = {}
+    rides_all: list = []
+    try:
+        rides_all = _load_all_rides_safe()
+    except Exception as e:
+        _fail("rides", e)
+    try:
+        today = date.today()
+        ef_rows = []  # (date_iso, ef)
+        for r in rides_all:
+            if not isinstance(r, dict):
+                continue
+            np_w, avg_hr = r.get("np_w"), r.get("avg_hr")
+            if not np_w or not avg_hr:
+                continue
+            d = (r.get("date") or str(r.get("started_at") or ""))[:10]
+            if not d:
+                continue
+            try:
+                ef_rows.append((d, round(float(np_w) / float(avg_hr), 2)))
+            except (TypeError, ValueError, ZeroDivisionError):
+                continue
+        ef_rows.sort()
+        if ef_rows:
+            last_d, last_ef = ef_rows[-1]
+            cut_recent = (today - timedelta(days=21)).isoformat()
+            cut_old = (today - timedelta(days=42)).isoformat()
+            recent = [ef for d, ef in ef_rows if d >= cut_recent]
+            prior = [ef for d, ef in ef_rows if cut_old <= d < cut_recent]
+            trend = None
+            trend_pct = None
+            if len(recent) >= 2 and len(prior) >= 2:
+                mr = sum(recent) / len(recent)
+                mp = sum(prior) / len(prior)
+                if mp > 0:
+                    trend_pct = round((mr - mp) / mp * 100, 1)
+                    trend = ("up" if trend_pct > 2.0
+                             else "down" if trend_pct < -2.0 else "flat")
+            efficiency["ef"] = {**_prov(last_ef, "derived", last_d),
+                                "trend": trend, "trend_pct": trend_pct,
+                                "window_days": 42}
+        else:
+            efficiency["ef"] = dict(_PROV_EMPTY)
+        dec = None
+        for r in rides_all:  # newest-first from load_all_rides
+            if isinstance(r, dict) and r.get("decoupling_pct") is not None:
+                d = (r.get("date") or str(r.get("started_at") or ""))[:10]
+                dec = _prov(round(float(r["decoupling_pct"]), 1), "icu", d or None)
+                break
+        efficiency["decoupling"] = dec if dec else dict(_PROV_EMPTY)
+    except Exception as e:
+        _fail("efficiency", e)
+    out["efficiency"] = efficiency
+
+    # ── training load: CTL/ATL/TSB via get_today_metrics + local fallback ───
+    load: dict = {}
+    try:
+        merged = _merge_training_load(cached("training", get_today_metrics))
+        src = {"icu": "icu", "local": "derived",
+               "mixed": "derived"}.get(merged.get("source"), "fallback")
+        today_iso = date.today().isoformat()
+        for k in ("ctl", "atl", "tsb"):
+            v = merged.get(k)
+            load[k] = (_prov(round(float(v), 1), src, today_iso)
+                       if v is not None else dict(_PROV_EMPTY))
+    except Exception as e:
+        _fail("load", e)
+    out["load"] = load
+
+    # ── body section ─────────────────────────────────────────────────────────
+    body: dict = {}
+    try:
+        body["weight_kg"] = (
+            _prov(round(float(athlete["weight_kg"]), 1), "manual", None)
+            if athlete.get("weight_kg") else dict(_PROV_EMPTY)
+        )
+        # LBM: default-valued profiles render empty-state (locked).
+        body["lbm_kg"] = (
+            _prov(round(float(athlete["lbm_kg"]), 1), "manual", None)
+            if athlete.get("lbm_kg") and float(athlete["lbm_kg"]) != 56.0
+            else dict(_PROV_EMPTY)
+        )
+    except Exception as e:
+        _fail("body", e)
+    out["body"] = body
+
+    # ── season totals (G14 computation #2) ──────────────────────────────────
+    try:
+        today = date.today()
+        out["season"] = {
+            "year": _rider_stats_season_block(
+                rides_all, date(today.year, 1, 1).isoformat(),
+                today.isoformat()),
+            "rolling_365": _rider_stats_season_block(
+                rides_all, (today - timedelta(days=365)).isoformat(),
+                today.isoformat()),
+            "distance_label": "(ICU rides only)",
+        }
+    except Exception as e:
+        _fail("season", e)
+
+    return out
+
+
 @app.post("/api/activity/{activity_id}/race")
 def api_activity_set_race(activity_id: str, body: dict):
     """v1.0.7 IMPL-TAU-FIT-WIRING — toggle the is_race flag on an activity.
@@ -8492,6 +8860,192 @@ async def api_today_session_persist(request: Request):
         return JSONResponse({"detail": "Persist failed"}, 500)
 
 
+# ── P2.3 (v3.0.0, G11) — retest nudges: FTP / LTHR staleness ────────────────
+# Server-side rule; surfaced as ONE dismissible banner on the today card via
+# the /api/today-session `retest_nudge` flag. Snooze persists in athlete.json
+# (survives webview storage clears). Thresholds test-locked
+# (tests/test_retest_nudges.py).
+RETEST_STALE_DAYS_TESTED = 56     # manual / real-test provenance
+RETEST_STALE_DAYS_ESTIMATE = 28   # icu_estimate / unknown provenance
+RETEST_PROFILE_GRACE_DAYS = 28    # no nudge in the first 28d of a profile
+RETEST_SNOOZE_DAYS = 14
+
+# Provenance values that are ESTIMATES (28d rule); anything else — manual /
+# tested_* enums — counts as a real test (56d rule).
+_RETEST_ESTIMATE_SOURCES = frozenset({
+    "", "unknown", "icu_estimate", "icu", "eftp_icu", "eftp_auto", "eftp_local",
+})
+
+
+def _retest_staleness(source, source_date, profile_created, today: date):
+    """Pure staleness rule for one metric. Returns (stale, days_since, reason).
+
+    * ``source_date`` None → NO nudge before profile created+28d (grace);
+      after that the unknown-source rule applies from creation → stale
+      ("never_tested"). A missing creation date (legacy profile) counts as
+      past the grace window.
+    * Dated sources: stale at 56d (manual/tested) or 28d (estimate sources).
+    """
+    if not source_date:
+        if profile_created:
+            try:
+                created = date.fromisoformat(str(profile_created)[:10])
+                if (today - created).days < RETEST_PROFILE_GRACE_DAYS:
+                    return False, None, "profile_grace"
+            except ValueError:
+                pass
+        return True, None, "never_tested"
+    try:
+        sd = date.fromisoformat(str(source_date)[:10])
+    except ValueError:
+        return False, None, "bad_date"
+    days = (today - sd).days
+    src = str(source or "").strip().lower()
+    limit = (RETEST_STALE_DAYS_ESTIMATE if src in _RETEST_ESTIMATE_SOURCES
+             else RETEST_STALE_DAYS_TESTED)
+    return days >= limit, days, ("stale" if days >= limit else "fresh")
+
+
+def _profile_created_iso(pm) -> "str | None":
+    """ISO date the active profile was created (registry stamp), or None."""
+    try:
+        active = getattr(pm, "active_id", None)
+        for p in (pm.list_profiles() or []):
+            if p.get("id") == active and p.get("created"):
+                return str(p["created"])[:10]
+    except Exception:
+        pass
+    return None
+
+
+def _next_ftp_test_slot() -> "str | None":
+    """First suitable day in the NEXT plan week to host an ftp_test insert.
+
+    "Next appropriate week" = the earliest eligible week starting from next
+    Monday. Within it, prefer replacing a HARD slot (a test IS a hard
+    session, so the week's structure is preserved); skip rest days, races,
+    user-pinned days and anything already done/missed. None when no plan or
+    no eligible slot (the banner then offers snooze/instructions only).
+    """
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return None
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+    today = date.today()
+    next_monday = today + timedelta(days=7 - today.weekday())
+    hard_types = {"vo2max", "threshold", "overunder", "sweetspot", "tempo"}
+    candidates: list[tuple[date, bool]] = []
+    for w in plan.get("weeks", []) or []:
+        for s in w.get("sessions", []) or []:
+            try:
+                d = date.fromisoformat(str(s.get("day") or "")[:10])
+            except ValueError:
+                continue
+            stype = (s.get("session_type") or "").lower()
+            if d < next_monday or stype in ("rest", "ftp_test"):
+                continue
+            if s.get("is_race") or s.get("user_swapped") or s.get("user_moved"):
+                continue
+            if (s.get("status") or "pending") != "pending":
+                continue
+            candidates.append((d, stype in hard_types))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda t: t[0])
+    first_d = candidates[0][0]
+    week_end = first_d + timedelta(days=6 - first_d.weekday())
+    week_c = [c for c in candidates if c[0] <= week_end]
+    hard_c = [c for c in week_c if c[1]]
+    return (hard_c[0] if hard_c else week_c[0])[0].isoformat()
+
+
+def _retest_nudge_payload(pm=None, today: "date | None" = None) -> "dict | None":
+    """The /api/today-session ``retest_nudge`` flag, or None (no banner).
+
+    Mode picks the metric: hr target_mode → LTHR (the button opens the
+    20-min-TT instructions modal); power → FTP (the button inserts an
+    ftp_test into the next appropriate week via /api/plan/swap-type).
+    """
+    try:
+        if pm is None:
+            from profile_manager import ProfileManager
+            pm = ProfileManager.get()
+        athlete = getattr(pm, "_athlete", {}) or {}
+        today = today or date.today()
+
+        snooze = athlete.get("retest_snooze_until")
+        if snooze:
+            try:
+                if today <= date.fromisoformat(str(snooze)[:10]):
+                    return None
+            except ValueError:
+                pass
+
+        created = _profile_created_iso(pm)
+        mode = getattr(pm, "target_mode", "power") or "power"
+        if mode == "hr":
+            metric = "lthr"
+            source = athlete.get("lthr_source") or "unknown"
+            source_date = athlete.get("lthr_source_date")
+        else:
+            metric = "ftp"
+            source = None
+            source_date = None
+            try:
+                source = pm.get_ftp_source()
+            except Exception:
+                pass
+            try:
+                source_date = pm.get_ftp_source_date()
+            except Exception:
+                pass
+            source = source or athlete.get("ftp_source") or "unknown"
+
+        stale, days_since, reason = _retest_staleness(
+            source, source_date, created, today)
+        if not stale:
+            return None
+        payload = {
+            "metric": metric,
+            "source": source,
+            "source_date": source_date,
+            "days_since": days_since,
+            "reason": reason,
+            "action": "lthr_instructions" if mode == "hr" else "insert_ftp_test",
+            "snooze_days": RETEST_SNOOZE_DAYS,
+        }
+        if payload["action"] == "insert_ftp_test":
+            try:
+                payload["suggested_date"] = _next_ftp_test_slot()
+            except Exception:
+                payload["suggested_date"] = None
+        return payload
+    except Exception as e:
+        _log.debug(f"retest nudge skipped: {e}")
+        return None
+
+
+@app.post("/api/retest-nudge/snooze")
+def api_retest_nudge_snooze():
+    """Snooze the retest banner for 14 days (persisted in athlete.json via
+    the sanctioned save_athlete path, so it survives webview storage
+    clears). The date is computed server-side — nothing client-supplied."""
+    until = (date.today() + timedelta(days=RETEST_SNOOZE_DAYS)).isoformat()
+    try:
+        from profile_manager import ProfileManager
+        ProfileManager.get().save_athlete({"retest_snooze_until": until})
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, 400)
+    except Exception:
+        _log.exception("retest snooze failed")
+        return JSONResponse({"detail": "snooze failed"}, 500)
+    return {"ok": True, "until": until}
+
+
 @app.get("/api/today-session")
 def api_today_session():
     """Return today's adjusted session based on readiness + HRV protocol.
@@ -8697,6 +9251,9 @@ def _api_today_session_impl():
         # can surface a "Why Z2?" tooltip on the today card.
         "dfa_cap": r.get("dfa_cap"),
         "decoupling_advisory": r.get("decoupling_advisory"),
+        # P2.3 (v3.0.0, G11): FTP/LTHR retest nudge — one dismissible banner
+        # on the today card; None when fresh / snoozed / in profile grace.
+        "retest_nudge": _retest_nudge_payload(_PM.get()),
     }
 
 
@@ -8810,6 +9367,41 @@ def _session_power_target(session_type: str) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 # PLAN API
 # ═══════════════════════════════════════════════════════════════════════════════
+
+# P4.2 (v3.0.0) — plan-drift chip threshold: the Training Plan tab shows a
+# subtle "Plan assumes CTL x — you're at y. Re-plan?" chip when live CTL has
+# drifted more than this fraction from the plan's generation snapshot.
+# Constant is test-locked (tests/test_drift_chip.py). No auto-regen — the
+# chip only offers the existing Regenerate action.
+PLAN_CTL_DRIFT_THRESHOLD = 0.15
+
+
+def _plan_ctl_drift(snapshot: "dict | None", live_ctl) -> "dict | None":
+    """Pure comparison of live CTL vs the plan's ``ctl_snapshot``.
+
+    Returns ``{snapshot_ctl, live_ctl, drift_pct, threshold, exceeded,
+    generated_on}`` or None when either side is missing/unusable (pre-P4.2
+    plans carry no snapshot — no chip, never an error).
+    """
+    if not isinstance(snapshot, dict):
+        return None
+    try:
+        snap_ctl = float(snapshot.get("current_ctl"))
+        live = float(live_ctl)
+    except (TypeError, ValueError):
+        return None
+    if snap_ctl <= 0:
+        return None
+    drift = abs(live - snap_ctl) / snap_ctl
+    return {
+        "snapshot_ctl": round(snap_ctl, 1),
+        "live_ctl": round(live, 1),
+        "drift_pct": round(drift, 4),
+        "threshold": PLAN_CTL_DRIFT_THRESHOLD,
+        "exceeded": drift > PLAN_CTL_DRIFT_THRESHOLD,
+        "generated_on": snapshot.get("generated_on"),
+    }
+
 
 @app.get("/api/plan")
 def api_plan():
@@ -8925,6 +9517,20 @@ def api_plan():
                     endpoint="/api/plan",
                     week_count=len(plan_data.get("weeks", [])) if isinstance(plan_data, dict) else 0,
                 )
+            # P4.2 (v3.0.0) — drift chip payload: snapshot vs live CTL (with
+            # local fallback, mirroring the today-card's merged load). Chip
+            # render is client-only; no auto-regen.
+            try:
+                _snap = plan_data.get("ctl_snapshot")
+                if _snap:
+                    _live_ctl = _merge_training_load(
+                        cached("training", get_today_metrics)
+                    ).get("ctl")
+                    _drift = _plan_ctl_drift(_snap, _live_ctl)
+                    if _drift:
+                        plan_data["ctl_drift"] = _drift
+            except Exception as _e:
+                _log.debug(f"/api/plan ctl_drift skipped: {_e}")
             # Also include markdown if available
             plans = sorted(_plan_dir().glob("*.md"), reverse=True)
             md = None
@@ -9359,6 +9965,9 @@ async def api_plan_generate(request: Request):
                 for w in weeks
             ],
             "generated": datetime.now().isoformat(),
+            # P4.2 (v3.0.0) — generation-time fitness snapshot for the
+            # Training-Plan-tab drift chip (live CTL vs plan assumption).
+            "ctl_snapshot": tp.plan_ctl_snapshot(current_ctl, recent_weekly_tss),
         }
 
         # v1.8.21 — rebuild the per-day availability calendar from the NEWLY
@@ -9945,6 +10554,15 @@ def _regenerate_plan_dict(
     # v4.3.0 B3: persist the per-regen entropy salt so external readers
     # (UI, tests) can detect that a fresh regen happened.
     plan_dict["last_regen_at"] = seed_salt
+    # P4.2 (v3.0.0) — refresh the drift snapshot: a regen re-anchors the plan
+    # on live fitness, so the chip's baseline moves with it. recent_weekly_tss
+    # mirrors the generate site's best-effort archive fetch.
+    try:
+        import ride_storage as _rs
+        _recent_wtss = _rs.recent_mean_weekly_tss()
+    except Exception:
+        _recent_wtss = None
+    plan_dict["ctl_snapshot"] = tp.plan_ctl_snapshot(current_ctl, _recent_wtss)
     return plan_dict, regen_info
 
 
@@ -11882,6 +12500,9 @@ SESSION_FIELDS_LOCKED: frozenset[str] = frozenset({
     # adapt + redraw + dismiss + move
     "adapted", "adapted_reason", "variation",
     "dismissed_at", "completion_matches", "user_moved", "moved_from",
+    # P2.1 (v3.0.0, G10): execution score written at completion-match time
+    # ({score, basis, components, verdict, activity_id, computed_at}).
+    "execution",
     # 3D mirrors (None when 3D unavailable; v1.0.6)
     "wprime_tss", "pmax_tss", "cp_tss",
     "wprime_xss", "pmax_xss", "cp_xss",
@@ -13058,6 +13679,11 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
                     "zwo_file": _zwo,
                     "is_race": bool(sess.get("is_race")),
                     "race": sess.get("race"),
+                    # P2.1 (G10): execution score for the week-strip badge
+                    # (✓ NN) + the day-modal breakdown line.
+                    "execution": (sess.get("execution")
+                                  if isinstance(sess.get("execution"), dict)
+                                  else None),
                 }
                 pz12, pz34, pz5p = _planned_zone_split_minutes(sess)
                 planned_z12 += pz12
@@ -13268,12 +13894,75 @@ def api_calendar():
         }
 
 
+def _fetch_ride_for_execution(activity_id) -> "dict | None":
+    """P2.1 (G10) — re-fetch the FULL ride record for an activity_id.
+
+    The week-activities collector (:func:`_collect_week_activities`) strips
+    time-in-zone, so the execution-score persist step re-fetches the ride
+    from the archive (TiZ lives on the ride record: ride_storage
+    ``time_in_zone`` / ``hr_time_in_zone``). Matches ``ride_id`` /
+    ``external_id`` / the ``icu_<id>`` form; falls back to the legacy JSON
+    rides dir. Returns None when not found (callers skip scoring).
+    """
+    if activity_id in (None, ""):
+        return None
+    aid = str(activity_id)
+    try:
+        for r in _load_all_rides_safe():
+            if not isinstance(r, dict):
+                continue
+            rid = str(r.get("ride_id") or "")
+            ext = str(r.get("external_id") or "")
+            if aid in (rid, ext) or rid == f"icu_{aid}":
+                return r
+    except Exception as e:
+        _log.debug(f"execution ride fetch (archive) failed: {e}")
+    try:
+        from ride_storage import list_rides
+        for r in list_rides():
+            if isinstance(r, dict) and aid in (str(r.get("id") or ""),
+                                               str(r.get("ride_id") or "")):
+                return r
+    except Exception as e:
+        _log.debug(f"execution ride fetch (legacy) failed: {e}")
+    return None
+
+
+def _execution_for_match(s_json: dict, activity_id) -> "dict | None":
+    """P2.1 (G10) — compute the persisted ``execution`` dict for a session
+    that just (re-)matched ``activity_id``. Returns None when the ride can't
+    be fetched or nothing is scoreable (caller decides what to keep)."""
+    ride = _fetch_ride_for_execution(activity_id)
+    if ride is None:
+        return None
+    try:
+        from profile_manager import ProfileManager
+        mode = ProfileManager.get().target_mode or "power"
+    except Exception:
+        mode = "power"
+    try:
+        import execution_score
+        result = execution_score.score_ride(s_json, ride, mode)
+    except Exception:
+        _log.exception("execution score_ride failed")
+        return None
+    if result.get("score") is None:
+        return None
+    return {**result, "activity_id": activity_id,
+            "computed_at": datetime.now().isoformat()}
+
+
 def _apply_rematch_preview_to_plan(plan: dict, week_idx: int, preview: dict) -> int:
     """Apply a rematch ``preview`` (from tp.rematch_week) onto the plan's
     week ``week_idx`` sessions — set status + dedup'd completion_matches.
     Mutates ``plan`` in place. Returns the count of sessions whose status
     actually changed. Idempotent (dedup by activity_id) so it's safe to run on
     every sync / Plan-tab open.
+
+    P2.1 (G10): whenever a completion-match entry is written (append OR the
+    auto-reconcile update-in-place), the session's ``execution`` score is
+    recomputed from the freshly re-fetched full ride — so a re-match to a
+    different activity can never leave a stale score behind.
     """
     matches_by_date = {m["session_date"]: m for m in preview.get("matches", [])}
     changed = 0
@@ -13310,6 +13999,21 @@ def _apply_rematch_preview_to_plan(plan: dict, week_idx: int, preview: dict) -> 
             else:
                 existing.append(entry)
             s_json["completion_matches"] = existing
+            # P2.1 (G10) — (re)compute the execution score for the entry just
+            # written. On fetch failure keep an existing score ONLY if it was
+            # computed from the SAME activity (never leave a stale score from
+            # a different ride).
+            try:
+                exec_block = _execution_for_match(s_json, m["activity_id"])
+                if exec_block is not None:
+                    s_json["execution"] = exec_block
+                else:
+                    prior_exec = s_json.get("execution")
+                    if (isinstance(prior_exec, dict)
+                            and prior_exec.get("activity_id") != m["activity_id"]):
+                        s_json["execution"] = None
+            except Exception:
+                _log.exception("execution score persist skipped")
     return changed
 
 
@@ -13703,8 +14407,11 @@ async def api_plan_accept_redraw(request: Request):
 
 
 # v2.3.0 — valid Swap-type targets (user-facing training types → engine keys).
+# P2.3 (v3.0.0, G11): + ftp_test so the retest-nudge banner's "Schedule test"
+# button can place a test via this machinery (planner + matcher + rematch
+# already speak ftp_test end-to-end).
 _SWAP_TYPES = {"recovery", "z2", "tempo", "sweetspot", "threshold",
-               "overunder", "vo2max", "sprint"}
+               "overunder", "vo2max", "sprint", "ftp_test"}
 
 
 def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: int) -> dict:

@@ -1442,6 +1442,10 @@ window.addEventListener('unhandledrejection', function(e) {
     <!-- Prescription: today's planned session. loadTodaySession() owns this;
          click → openTodaySessionDetail(). -->
     <div id="home-recommendation" class="loading" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">Loading...</div>
+    <!-- P2.3 (v3.0.0) — FTP/LTHR retest nudge banner. Rendered by
+         loadTodaySession() from the /api/today-session retest_nudge flag;
+         dismissible (snooze 14d, persisted in athlete.json server-side). -->
+    <div id="retest-nudge-host"></div>
     <!-- Leg-check INPUT. loadMorningLog() renders a compact emoji + "Hooper
          N/28 · Change" once logged, or the 4-question form when nothing is
          logged yet — so the big form only appears when it's needed. -->
@@ -1906,6 +1910,12 @@ window.addEventListener('unhandledrejection', function(e) {
 <div class="section" id="sec-plan">
   <!-- Current Metrics Banner -->
   <div id="plan-metrics-banner" style="display:flex;gap:16px;margin-bottom:12px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--text2);flex-wrap:wrap;"></div>
+
+  <!-- P4.2 (v3.0.0) — plan-drift chip. Server computes drift (live CTL vs the
+       plan's generation snapshot, threshold 15%) into plan_json.ctl_drift;
+       this chip is render-only and offers the EXISTING Regenerate action —
+       no auto-regen. Hidden unless drift.exceeded. -->
+  <div id="plan-drift-chip" style="display:none;margin-bottom:12px;padding:6px 12px;background:rgba(234,179,8,0.08);border:1px solid var(--border);border-left:3px solid var(--yellow);border-radius:var(--radius);font-size:12px;color:var(--text2);"></div>
 
   <!-- v1.0.3 IMPL-UI: collapsed help panel — explains the four ways the plan
        updates (Reforecast / Regenerate / Availability / Rematch). Closed by
@@ -2512,6 +2522,21 @@ window.addEventListener('unhandledrejection', function(e) {
      would render 0×0 inside a display:none section. Element ids
      unchanged (document-global). Home keeps a compact CTL/TSB sparkline. -->
 <div class="section" id="sec-analysis">
+  <!-- P2.4 (v3.0.0) — Rider Profile stats card. TOP of the Analysis tab,
+       lazy with the tab (loadRiderStats() runs from loadAnalysisTab()).
+       Read-only grid over /api/rider-stats; every value carries provenance
+       {value, source, source_date} and greys out when its source_date is
+       stale. Empty-states render "—" + a calibrate hint, never numbers. -->
+  <div class="card" id="rider-stats-card" style="margin-bottom:12px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <h3 style="margin:0;">Rider Profile</h3>
+      <span style="font-size:10px;color:var(--text3);">peaks: 90d window · greyed = stale</span>
+    </div>
+    <div id="rider-stats-body" style="margin-top:10px;font-size:12px;color:var(--text2);">
+      <div style="color:var(--text3);">Loading…</div>
+    </div>
+  </div>
+
   <!-- Fitness Chart — full width -->
   <div class="card" style="margin-bottom:12px;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
@@ -4410,6 +4435,111 @@ function loadAnalysisTab() {
   try { loadFitnessChart(days); } catch (_) {}
   // Power curve (+ its backfill toast machinery via maybeKickBackfill).
   try { if (typeof loadPowerCurve === 'function') loadPowerCurve(); } catch (_) {}
+  // P2.4 — Rider Profile stats card (lazy with the tab, one round-trip).
+  try { if (typeof loadRiderStats === 'function') loadRiderStats(); } catch (_) {}
+}
+
+// P2.4 (v3.0.0) — Rider Profile stats card. One fetch of /api/rider-stats;
+// each stat renders its provenance triple: value + a small source badge +
+// the source date, greyed when source_date is older than 90 days. Empty
+// states ({value:null}) render "—" with a calibrate hint — never a number.
+const RIDER_STATS_STALE_DAYS = 90;
+
+function _rsStale(sourceDate) {
+  if (!sourceDate) return false;
+  const d = new Date(String(sourceDate).slice(0, 10) + 'T12:00:00');
+  if (isNaN(d)) return false;
+  return (Date.now() - d.getTime()) / 86400000 > RIDER_STATS_STALE_DAYS;
+}
+
+function _rsRow(label, triple, opts) {
+  opts = opts || {};
+  const t = triple || {};
+  const has = t.value !== null && t.value !== undefined;
+  const stale = has && _rsStale(t.source_date);
+  const valTxt = has
+    ? `${esc(String(t.value))}${opts.unit ? ' ' + opts.unit : ''}${opts.extra || ''}`
+    : `<span style="color:var(--text3);">—${opts.emptyHint ? ' · ' + esc(opts.emptyHint) : ''}</span>`;
+  const src = has && t.source
+    ? `<span style="font-size:9px;padding:1px 4px;border:1px solid var(--border);border-radius:3px;color:var(--text3);margin-left:4px;" title="${esc(t.source)}${t.source_date ? ' · ' + esc(String(t.source_date).slice(0,10)) : ''}">${esc(t.source)}</span>`
+    : '';
+  const dateTxt = has && t.source_date
+    ? `<span style="font-size:9px;color:var(--text3);margin-left:4px;">${esc(String(t.source_date).slice(0, 10))}</span>` : '';
+  return `<div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0;${stale ? 'opacity:0.45;' : ''}"${stale ? ` title="Stale — last updated ${esc(String(t.source_date).slice(0,10))}"` : ''}>
+    <span style="color:var(--text3);">${esc(label)}</span>
+    <span style="color:var(--text);font-weight:600;text-align:right;">${valTxt}${src}${dateTxt}</span>
+  </div>`;
+}
+
+function _rsSection(title, rowsHtml) {
+  return `<div style="min-width:200px;flex:1;">
+    <div style="font-size:10px;font-weight:700;letter-spacing:0.05em;color:var(--accent);margin-bottom:4px;">${esc(title)}</div>
+    ${rowsHtml}
+  </div>`;
+}
+
+async function loadRiderStats() {
+  const host = document.getElementById('rider-stats-body');
+  if (!host) return;
+  let d;
+  try { d = await (await fetch('/api/rider-stats')).json(); }
+  catch (e) { host.innerHTML = '<div style="color:var(--text3);">Stats unavailable</div>'; return; }
+  try {
+    const p = d.power || {}, h = d.heart || {}, ef = d.efficiency || {},
+          ld = d.load || {}, b = d.body || {}, pk = d.peaks || {},
+          se = d.season || {};
+    let powerRows = _rsRow('FTP', p.ftp, {unit: 'W'})
+      + _rsRow('eFTP', p.eftp, {unit: 'W'})
+      + _rsRow('W/kg (FTP)', p.w_per_kg)
+      + _rsRow('CP', p.cp, {unit: 'W', emptyHint: 'calibrate'})
+      + _rsRow("W'", p.wprime_kj, {unit: 'kJ', emptyHint: 'calibrate'})
+      + _rsRow('Pmax', p.pmax, {unit: 'W', emptyHint: 'calibrate'});
+    let peakRows = '';
+    for (const [k, label] of [['5s','Peak 5s'],['1m','Peak 1min'],['5m','Peak 5min'],['20m','Peak 20min']]) {
+      const pt = pk[k];
+      peakRows += _rsRow(label, pt ? {value: pt.watts, source: pt.source || 'derived', source_date: pt.date} : null,
+                         {unit: 'W', extra: pt && pt.watts_per_kg ? ` <span style="color:var(--text3);font-weight:400;">(${pt.watts_per_kg} W/kg)</span>` : ''});
+    }
+    let heartRows = _rsRow('LTHR', h.lthr, {unit: 'bpm'})
+      + _rsRow('Max HR', h.max_hr, {unit: 'bpm'})
+      + _rsRow('Resting HR', h.rhr, {unit: 'bpm'})
+      + _rsRow('DFA-a1 AeT', h.dfa_aet, {unit: 'bpm',
+          extra: h.dfa_aet && h.dfa_aet.watts ? ` <span style="color:var(--text3);font-weight:400;">/ ${Math.round(h.dfa_aet.watts)}W</span>` : ''});
+    const efTrend = ef.ef && ef.ef.trend
+      ? ` <span style="font-weight:400;" title="42d trend ${ef.ef.trend_pct != null ? ef.ef.trend_pct + '%' : ''}">${ef.ef.trend === 'up' ? '↗' : ef.ef.trend === 'down' ? '↘' : '→'}</span>` : '';
+    let loadRows = _rsRow('EF (NP/HR)', ef.ef, {extra: efTrend})
+      + _rsRow('Decoupling', ef.decoupling, {unit: '%'})
+      + _rsRow('CTL', ld.ctl) + _rsRow('ATL', ld.atl) + _rsRow('TSB', ld.tsb);
+    // VO2max row — ICU-only; omitted entirely when ICU never supplied one.
+    let vo2Row = '';
+    if (d.vo2max && d.vo2max.value != null) {
+      vo2Row = _rsRow('VO2max', d.vo2max,
+        {extra: ` <span style="color:var(--text3);font-weight:400;">${esc(d.vo2max.label || 'via Intervals.icu')}</span>`});
+    }
+    let bodyRows = _rsRow('Weight', b.weight_kg, {unit: 'kg'})
+      + _rsRow('Lean mass', b.lbm_kg, {unit: 'kg', emptyHint: 'set in Settings'})
+      + vo2Row;
+    const seasonFmt = (blk) => blk
+      ? `${blk.hours || 0}h · ${blk.tss || 0} TSS · ${blk.rides || 0} rides · ${blk.distance_km || 0}km`
+      : '—';
+    let seasonRows =
+      `<div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0;">
+         <span style="color:var(--text3);">This year</span>
+         <span style="color:var(--text);font-weight:600;">${seasonFmt(se.year)}</span></div>
+       <div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0;">
+         <span style="color:var(--text3);">Rolling 365d</span>
+         <span style="color:var(--text);font-weight:600;">${seasonFmt(se.rolling_365)}</span></div>
+       <div style="font-size:9px;color:var(--text3);">distance ${esc(se.distance_label || '(ICU rides only)')}${(se.year && se.year.hr_loads) ? ` · ${se.year.hr_loads} HR-derived loads included` : ''}</div>`;
+    host.innerHTML = `<div style="display:flex;gap:20px;flex-wrap:wrap;">
+      ${_rsSection('POWER', powerRows)}
+      ${_rsSection('PEAK EFFORTS (90D)', peakRows)}
+      ${_rsSection('HEART', heartRows)}
+      ${_rsSection('EFFICIENCY & LOAD', loadRows)}
+      ${_rsSection('BODY & SEASON', bodyRows + seasonRows)}
+    </div>`;
+  } catch (e) {
+    host.innerHTML = '<div style="color:var(--text3);">Stats unavailable</div>';
+  }
 }
 
 // P3.1 — compact CTL/TSB sparkline on Home (the full Fitness & Form chart
@@ -11726,9 +11856,24 @@ function _calOpenDayChooser(day, sec, showPlanned) {
   }).join('');
   const dlabel = new Date(day.date + 'T12:00:00').toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'short'});
   const n = rides.length;
+  // P2.1 (G10) — one execution-breakdown line when this day's planned session
+  // carries a persisted score: per-axis % (capped component scores) + verdict.
+  let execRow = '';
+  const ex = p && p.execution;
+  if (ex && typeof ex.score === 'number') {
+    const c = ex.components || {};
+    const pct = a => (a && typeof a.score === 'number') ? Math.round(a.score * 100) + '%' : '—';
+    const parts = [`duration ${pct(c.duration)}`, `load ${pct(c.load)}`];
+    if (c.intensity) parts.push(`intensity ${pct(c.intensity)}${ex.basis === 'hr' ? ' (HR)' : ''}`);
+    else if (ex.basis === 'load_only') parts.push('intensity n/a');
+    execRow = `<div style="font-size:12px;color:var(--text2);margin:0 0 10px;padding:6px 10px;background:var(--surface2);border-radius:6px;">
+      Execution <b style="color:var(--text);">${Math.round(ex.score)}</b>/100 — ${parts.join(' · ')} <span style="color:var(--text3);">(${esc(String(ex.verdict || '').replace('_', ' '))})</span>
+    </div>`;
+  }
   openModal(`<div class="modal-body">
     <h2>${esc(dlabel)}</h2>
     <div style="font-size:13px;color:var(--text2);margin:6px 0 10px;">${n} ${n===1?'activity':'activities'} &middot; <b style="color:var(--text);">${Math.round(totalDur)} min · TSS ${Math.round(totalTss)}</b>${plannedTss ? ` &middot; planned TSS ${Math.round(plannedTss)}` : ''}</div>
+    ${execRow}
     ${plannedRow}
     ${rows}
     <div style="margin-top:12px;"><button onclick="closeModal()" class="btn">Close</button></div>
@@ -12173,7 +12318,18 @@ function renderThisWeekFromCalendar(data) {
     // did-I-train badge so completion is clear at a glance (not only by colour).
     const todayBadge = isToday ? '<div class="twk-today-badge">TODAY</div>' : '';
     let doneBadge = '';
-    if (actual) doneBadge = '<span class="twk-done-badge">✓ done</span>';
+    // P2.1 (G10) — execution badge (✓ NN): planned-vs-ridden score computed at
+    // completion-match time. Falls back to the plain "✓ done" when no score
+    // was persisted (unmatched extra ride, pre-P2.1 plans, RPE-only slots
+    // without load data).
+    const execBlock = planned && planned.execution;
+    if (actual && execBlock && typeof execBlock.score === 'number') {
+      const exTip = 'Execution ' + Math.round(execBlock.score) + '/100 — ' +
+        String(execBlock.verdict || '').replace('_', ' ') +
+        (execBlock.basis ? ' (' + execBlock.basis + ' basis)' : '');
+      doneBadge = `<span class="twk-done-badge" title="${esc(exTip)}">✓ ${Math.round(execBlock.score)}</span>`;
+    }
+    else if (actual) doneBadge = '<span class="twk-done-badge">✓ done</span>';
     else if (planned && isPast && cs !== 'rest') doneBadge = '<span class="twk-missed-badge">✕ missed</span>';
     html += `<div class="twk-day ${stateCls}${tintCls ? ' ' + tintCls : ''}${isToday ? ' wc-today twk-is-today' : ''}"
       data-cs="${cs}" data-date="${d.date}" style="${cursorRule}"${tipAttrTW}
@@ -12469,6 +12625,7 @@ async function loadPlan() {
   if (d.plan_json) {
     await renderPlanJSON(d.plan_json);
     try { populatePlanFormFromGoal(d.plan_json.goal); } catch (_) {}
+    try { renderPlanDriftChip(d.plan_json.ctl_drift); } catch (_) {}
   }
   if (d.plan) {
     // Also render markdown below as fallback/reference
@@ -12486,6 +12643,21 @@ async function loadPlan() {
   } else if (!d.plan_json) {
     $('plan-content').innerHTML = '<div class="card"><p style="color:var(--text2)">No plan generated yet. Use the form above or run:<br><code>python3 training_planner.py --goal event --event-date 2026-07-15</code></p></div>';
   }
+}
+
+// P4.2 (v3.0.0) — plan-drift chip render (client is render-ONLY: the server
+// computed drift_pct/exceeded against PLAN_CTL_DRIFT_THRESHOLD). "Re-plan?"
+// wires to the existing regeneratePlan() action; no auto-regen ever.
+function renderPlanDriftChip(drift) {
+  const chip = document.getElementById('plan-drift-chip');
+  if (!chip) return;
+  if (!drift || !drift.exceeded) { chip.style.display = 'none'; chip.innerHTML = ''; return; }
+  const snap = Math.round(Number(drift.snapshot_ctl));
+  const live = Math.round(Number(drift.live_ctl));
+  chip.innerHTML = `⚠ Plan assumes CTL <b>${snap}</b> — you're at <b>${live}</b>. ` +
+    `<a href="javascript:void(0)" onclick="regeneratePlan()" style="color:var(--accent);text-decoration:none;font-weight:600;">Re-plan?</a>` +
+    (drift.generated_on ? ` <span style="color:var(--text3);font-size:10px;">(plan anchored ${esc(String(drift.generated_on).slice(0,10))})</span>` : '');
+  chip.style.display = 'block';
 }
 
 // ═══ PLAN DYNAMIC ADJUSTMENT ═════════════════════════════════════════════
@@ -14661,9 +14833,90 @@ async function loadTodaySession() {
       try { window._diagFrontendError('E_FRONTEND_TODAY_SESSION_RENDER', {msg: String(eR && eR.message || eR)}); } catch(_) {}
       throw eR;
     }
+    // P2.3 — retest nudge banner (its own host, outside the clickable hero).
+    try { renderRetestNudge(d.retest_nudge); } catch (_) {}
   } catch(e) {
     $('home-recommendation').innerHTML = '<div style="color:var(--text3);font-size:12px;">Session unavailable</div>';
   }
+}
+
+// ═══ P2.3 (v3.0.0) — FTP/LTHR RETEST NUDGE ═══════════════════════════════
+// One dismissible banner on the today card. Server decides staleness
+// (/api/today-session retest_nudge flag); this renders + wires the actions:
+//   power mode  → "Schedule test" inserts an ftp_test into the next
+//                 appropriate week via the EXISTING /api/plan/swap-type
+//                 machinery (suggested_date chosen server-side);
+//   hr mode     → "How to test" opens the 20-min-TT LTHR instructions modal.
+// Snooze 14d persists in athlete.json (survives webview storage clears).
+function renderRetestNudge(nudge) {
+  const host = document.getElementById('retest-nudge-host');
+  if (!host) return;
+  if (!nudge || !nudge.metric) { host.innerHTML = ''; return; }
+  const label = nudge.metric === 'lthr' ? 'LTHR' : 'FTP';
+  const when = nudge.source_date
+    ? `last ${nudge.metric === 'lthr' ? 'set' : 'tested'} ${new Date(String(nudge.source_date).slice(0,10) + 'T12:00:00').toLocaleDateString('en-GB', {day:'numeric', month:'short'})}${nudge.days_since != null ? ` (${nudge.days_since}d ago)` : ''}`
+    : 'never tested';
+  let actionBtn = '';
+  if (nudge.action === 'insert_ftp_test' && nudge.suggested_date) {
+    actionBtn = `<button class="btn btn-primary" style="font-size:11px;" onclick="event.stopPropagation();retestScheduleTest('${esc(nudge.suggested_date)}')">Schedule test</button>`;
+  } else if (nudge.action === 'lthr_instructions') {
+    actionBtn = `<button class="btn btn-primary" style="font-size:11px;" onclick="event.stopPropagation();showLthrTestInstructions()">How to test</button>`;
+  }
+  host.innerHTML = `<div style="margin-top:12px;padding:8px 10px;background:rgba(234,179,8,0.08);border:1px solid var(--border);border-left:3px solid var(--yellow);border-radius:6px;font-size:12px;color:var(--text2);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+    <span>🧪 <b style="color:var(--text);">${label} test due</b> — ${esc(when)}${nudge.action === 'insert_ftp_test' && nudge.suggested_date ? `: schedule a test on ${new Date(nudge.suggested_date + 'T12:00:00').toLocaleDateString('en-GB', {weekday:'short', day:'numeric', month:'short'})}?` : '.'}</span>
+    <span style="display:flex;gap:6px;flex-shrink:0;">
+      ${actionBtn}
+      <button class="btn" style="font-size:11px;" onclick="event.stopPropagation();retestSnooze()">Snooze 14d</button>
+    </span>
+  </div>`;
+}
+
+async function retestSnooze() {
+  try { await fetch('/api/retest-nudge/snooze', {method: 'POST'}); } catch (_) {}
+  const host = document.getElementById('retest-nudge-host');
+  if (host) host.innerHTML = '';
+  try { showToast('Retest reminder snoozed for 14 days', 2500); } catch (_) {}
+}
+
+async function retestScheduleTest(dateIso) {
+  const host = document.getElementById('retest-nudge-host');
+  try {
+    const res = await fetch('/api/plan/swap-type', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({date: dateIso, session_type: 'ftp_test', duration_min: 60}),
+    });
+    const j = await res.json();
+    if (!res.ok || j.error) {
+      try { showToast('Could not schedule the test: ' + (j.error || ('HTTP ' + res.status)), 4000); } catch (_) {}
+      return;
+    }
+    if (host) host.innerHTML = '';
+    try { showToast(`FTP test scheduled for ${new Date(dateIso + 'T12:00:00').toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'short'})}`, 3500); } catch (_) {}
+    try { await loadCalendar(); } catch (_) {}
+  } catch (e) {
+    try { showToast('Could not schedule the test: ' + e.message, 4000); } catch (_) {}
+  }
+}
+
+// hr target_mode — LTHR field-test instructions (20-min TT protocol). No
+// auto-insert in hr mode: the rider does the test outdoors/free-form and
+// types the result into Settings.
+function showLthrTestInstructions() {
+  openModal(`<div class="modal-body">
+    <h2>LTHR field test — 20-minute time trial</h2>
+    <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-top:10px;">
+      <p><b style="color:var(--text);">Protocol</b> (do it solo — group riding skews HR):</p>
+      <ol style="margin:8px 0 8px 18px;padding:0;">
+        <li>Warm up 15–20 min easy, with 3×1 min faster efforts.</li>
+        <li>Ride a <b>30-minute maximal steady effort</b> — the hardest pace you can hold for the full 30 minutes. Start your HR lap timer at the start.</li>
+        <li>Press the lap button 10 minutes in. Your <b>LTHR = average HR of the final 20 minutes</b>.</li>
+        <li>Pace it even: going out too hard for the first 5 minutes is the classic error.</li>
+      </ol>
+      <p style="color:var(--text3);font-size:12px;">Best done rested (after an easy day). Repeat every ~8 weeks — LTHR drifts with fitness.</p>
+      <p style="margin-top:10px;">Afterwards, enter the number in <a href="javascript:void(0)" onclick="closeModal();document.querySelector('.tab[data-tab=settings]').click()" style="color:var(--accent);text-decoration:none;">Settings → LTHR</a> — the app re-derives your HR zones from it.</p>
+    </div>
+    <div style="margin-top:14px;"><button class="btn" onclick="closeModal()">Close</button></div>
+  </div>`);
 }
 
 // v2.2.11 — clicking today's session on the home page opens the SAME rich modal

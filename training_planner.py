@@ -397,6 +397,29 @@ def atomic_write_plan(json_path: "Path | str", plan: dict) -> None:
         tmp.replace(p)
 
 
+def plan_ctl_snapshot(current_ctl, recent_weekly_tss,
+                      generated_on: "str | None" = None) -> dict:
+    """P4.2 (v3.0.0) — the plan's generation-time fitness snapshot.
+
+    Stamped into the plan dict (key ``ctl_snapshot``) at the generate /
+    regenerate serialization sites in app.py, so the Training-Plan tab can
+    render a drift chip when live CTL has diverged from what the plan was
+    built against. Pure constructor: non-numeric inputs become None.
+    """
+    def _num(v):
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return round(f, 1)
+
+    return {
+        "current_ctl": _num(current_ctl),
+        "recent_weekly_tss": _num(recent_weekly_tss),
+        "generated_on": generated_on or date.today().isoformat(),
+    }
+
+
 # v4.1.1 FIX-PLANNER A: auto-rewrite stale-classified sessions in a stored plan.
 # Bug A cause: _classify_protocol missed six prefix families (vo2_, over_under_,
 # sprints_, anaerobic_, sweet_spot_, pyramid_), so ~30% of sessions ended up
@@ -1352,6 +1375,12 @@ class PlannedSession:
     # _demote_hit_window + _enforce_weekly_hit_cap and round-tripped through the
     # plan dict (E7) so the eve-guard / caps / reforecast never flatten it.
     is_opener: bool = False
+    # P2.1 (v3.0.0, G10) — execution score, written at completion-match time
+    # by app._apply_rematch_preview_to_plan: {score, basis, components,
+    # verdict, activity_id, computed_at} from execution_score.score_ride.
+    # Dataclass field so the canonical _planned_session_to/from_json
+    # round-trip (app.py) carries it through regenerate/refit/reforecast.
+    execution: dict | None = None
 
 
 # ── v4.4.0 — phase targets (CONCEPT-SCI §1, §5) ───────────────────────────────

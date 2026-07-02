@@ -93,6 +93,33 @@ if [ -z "$BUNDLED_VER_FILE" ] || [ "$BUNDLED_VER" != "$REPO_VER" ]; then
 fi
 echo "[1b/9] Version smoke-test OK — bundle reports $BUNDLED_VER"
 
+# 1c. HR-mode FIT smoke (v2.5.0 P1.5) — the desktop save path builds FIT bytes
+# in-process (launcher.JsApi save_fit bridge), a path the web tests can't reach.
+# Prove the bundled code produces HEART_RATE-target steps for view='hr' before
+# notarize/upload; a regression here would silently ship power-only FITs to
+# HR-mode riders using the native save dialog.
+FIT_SMOKE="$(python3 - <<'PYEOF'
+import sys
+sys.path.insert(0, ".")
+try:
+    import app
+    data = app.build_fit_workout_bytes("z2", 56, "smoke",
+                                       "threshold_steady_56min.zwo", view="hr")
+    import fitparse
+    steps = list(fitparse.FitFile(data).get_messages("workout_step"))
+    hr = sum(1 for m in steps
+             for f in m.fields if f.name == "target_type" and f.value == "heart_rate")
+    print("OK" if hr >= 1 else f"NO_HR_STEPS ({len(steps)} steps)")
+except Exception as e:  # noqa: BLE001
+    print(f"ERROR {e}")
+PYEOF
+)"
+if [ "$FIT_SMOKE" != "OK" ]; then
+    echo "FATAL: HR-mode FIT smoke failed: $FIT_SMOKE — the desktop FIT save would ship broken for HR riders. Aborting build." >&2
+    exit 1
+fi
+echo "[1c/9] HR-mode FIT smoke OK — view='hr' emits HEART_RATE steps"
+
 if [ "$NOTARIZE_MODE" = "notarize" ]; then
     # 2. Resolve signing identity.
     #

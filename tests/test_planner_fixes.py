@@ -285,15 +285,17 @@ class TestFix4AtomicWrites(unittest.TestCase):
 
     def test_all_sites_use_atomic_write_plan_helper(self):
         """Every plan-mutation endpoint must call ``tp.atomic_write_plan``
-        instead of inlining tmp+rename. Count must stay at 16 (v1.8.24)."""
+        instead of inlining tmp+rename. Count 16 (v1.8.24) → 18 (v3.0.0:
+        two new plan-writing endpoints landed in the hrTSS/event tranches,
+        both correctly routed through the helper)."""
         src = APP_PY.read_text()
         helper_calls = re.findall(
             r"tp\.atomic_write_plan\(\s*json_path\s*,\s*(plan|plan_dict)\s*\)",
             src,
         )
         self.assertEqual(
-            len(helper_calls), 16,
-            f"Expected 16 tp.atomic_write_plan() sites, found {len(helper_calls)}",
+            len(helper_calls), 18,
+            f"Expected 18 tp.atomic_write_plan() sites, found {len(helper_calls)}",
         )
 
     def test_no_inline_tmp_rename_pattern(self):

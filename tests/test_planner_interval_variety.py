@@ -96,7 +96,12 @@ def _intervals_per_week(weeks):
             cc, is_intvl = _classify(s.zwo_file or "")
             if is_intvl:
                 intvl += 1
-        out.append((w.week_num, w.phase, w.is_stepback, intvl, work))
+        # v3.0.0 FC1 clip: the final pre-taper row may be SHORT (span < 7 days,
+        # truncated at the phase boundary) — a per-week floor sized for 7-day
+        # weeks doesn't apply to it (same principle as the stepback-lightest
+        # short-row exemption in the planner itself).
+        span_days = (w.end - w.start).days + 1
+        out.append((w.week_num, w.phase, w.is_stepback or span_days < 7, intvl, work))
     return out
 
 

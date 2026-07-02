@@ -25,6 +25,11 @@ class TestTaperEve(unittest.TestCase):
                 if s.session_type == "rest":
                     continue
                 delta = (td - s.day).days
+                # v3.0.0 (event audit D6): a SHORT is_opener ride at T-1 is the
+                # sports-science-correct exception — race-week legs need brief
+                # touches, not a hard session. Everything else stays banned.
+                if getattr(s, "is_opener", False) and s.duration_min <= 50:
+                    continue
                 if 0 <= delta <= tp.EVENT_EVE_EASY_DAYS and tp._session_is_hit(s):
                     bad.append((s.day.isoformat(), s.session_type, f"{delta}d before"))
         self.assertEqual(

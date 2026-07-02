@@ -85,8 +85,9 @@ class TestSecondaryEventTapers(unittest.TestCase):
     def test_b_event_window_has_no_hit(self):
         A = date.today() + timedelta(weeks=12)
         B = date.today() + timedelta(weeks=6)  # mid-plan build, well before the A taper
+        # v3.0.0 F4d: the goal's target_date IS the A race; listing a second
+        # A in events is now rejected (silent-drop bug fixed). B only here.
         goal = self._goal(events=[
-            tp.TargetEvent(date=A, priority="A"),
             tp.TargetEvent(date=B, priority="B"),
         ])
         _ph, weeks = tp.generate_plan(goal, athlete={"ftp": 250, "weight_kg": 70},
@@ -95,6 +96,10 @@ class TestSecondaryEventTapers(unittest.TestCase):
             for s in w.sessions:
                 d = getattr(s, "day", None)
                 if d and s.session_type != "rest" and 0 <= (B - d).days <= 2:
+                    # v3.0.0 (event audit F2d): the B-1 opener is the mandated
+                    # exception; anything else hard in the window stays banned.
+                    if getattr(s, "is_opener", False) and s.duration_min <= 50:
+                        continue
                     self.assertFalse(tp._session_is_hit(s),
                                      f"HIT inside the B-race mini-taper window: {d}")
 

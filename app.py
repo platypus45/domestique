@@ -9339,6 +9339,13 @@ async def api_plan_generate(request: Request):
                             "description": s.description,
                             "zwo_file": s.zwo_file,
                             "zwo_name": s.zwo_name,
+                            # E7 (v2.5.0): persist the race marking + opener flag
+                            # from birth — generate_plan marks race days and
+                            # places openers, and the reforecast/refit round-trip
+                            # (tp._plan_dict_to_planned_weeks) keys on them.
+                            "is_race": bool(getattr(s, "is_race", False)),
+                            "race": getattr(s, "race", None),
+                            "is_opener": bool(getattr(s, "is_opener", False)),
                         }
                         for s in w.sessions
                     ],
@@ -9407,6 +9414,12 @@ async def api_plan_generate(request: Request):
 
         return {"ok": True, "plan_json": plan_dict, "plan_file": str(plan_path)}
 
+    except ValueError as e:
+        # F4b/F4d (v2.5.0): planner input rejection — target date today/past
+        # (D1) or a second priority-A event (SM4). generate_plan raises with a
+        # user-facing message; surface it as a 400, not a generic 500.
+        _log.warning(f"Plan generate rejected: {e}")
+        return JSONResponse({"detail": str(e)}, status_code=400)
     except Exception:
         # SEC3: don't leak exception text to the client. Log the full
         # traceback server-side; return a generic detail for the UI.

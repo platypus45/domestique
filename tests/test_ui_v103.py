@@ -36,9 +36,11 @@ class TestUIv103Smoke(unittest.TestCase):
     def test_all_four_planpop_ids_present(self):
         """Each of the four locked popover IDs must render in the HTML."""
         html = _read_dashboard()
+        # v2.x consolidated the reforecast + regenerate popovers into one
+        # "planpop-update" (single Update-plan control); availability and
+        # rematch unchanged. Was stale for several releases.
         for pid in (
-            "planpop-reforecast",
-            "planpop-regenerate",
+            "planpop-update",
             "planpop-availability",
             "planpop-rematch",
         ):

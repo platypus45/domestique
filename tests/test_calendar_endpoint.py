@@ -71,6 +71,14 @@ def _mk_plan_dict(monday: date, weeks_count: int = 2) -> dict:
 
 class CalendarBase(unittest.TestCase):
     def setUp(self):
+        # v3.0.0 gate: bust app's TTL response cache — a preceding suite's
+        # client calls (e.g. test_plan_api) prime ride/calendar entries from
+        # the REAL archive; within the 300s TTL those leak into this class's
+        # temp-redirected world (order-dependent failures in full runs).
+        try:
+            app_module.clear_cache()
+        except Exception:
+            pass
         self._tmpdir = tempfile.TemporaryDirectory()
         self._tmp = Path(self._tmpdir.name)
         today = date.today()

@@ -10,7 +10,28 @@ that unload weeks keep firing and are genuinely lighter.
 from datetime import date, timedelta
 import unittest
 
+import pytest
+
 import training_planner as tp
+from conftest import PLANNER_PIN_ANCHOR, PLANNER_PIN_ARGS
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _pinned_env():
+    """v3.0.0: W8 pin — this suite read live CTL + today's date (env-coupled,
+    failed on arbitrary days). Same pattern as the other planner suites."""
+    from datetime import date as _d
+
+    class _Frozen(_d):
+        @classmethod
+        def today(cls):
+            return cls(PLANNER_PIN_ANCHOR.year, PLANNER_PIN_ANCHOR.month,
+                       PLANNER_PIN_ANCHOR.day)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(tp, "date", _Frozen)
+        mp.setattr(tp, "get_today_metrics", lambda: {})
+        yield
 
 
 def _twelve_week_goal():
@@ -26,7 +47,8 @@ def _twelve_week_goal():
 class TestRestWeeks(unittest.TestCase):
     def test_stepback_unload_weeks_fire_and_are_lighter(self):
         _phases, weeks = tp.generate_plan(_twelve_week_goal(),
-                                          athlete={"ftp": 250, "weight_kg": 70})
+                                          athlete={"ftp": 250, "weight_kg": 70},
+                                          **PLANNER_PIN_ARGS)
         sb = [w for w in weeks if getattr(w, "is_stepback", False)]
         self.assertGreaterEqual(
             len(sb), 1, "a 12-week plan must contain >=1 unload/step-back week")
@@ -54,13 +76,18 @@ class TestRestWeeks(unittest.TestCase):
             available_days=[0, 1, 2, 3, 4, 5, 6], rest_days=[],
         )
         _phases, weeks = tp.generate_plan(
-            goal, athlete={"ftp": 250, "weight_kg": 70}, recent_weekly_tss=400)
-        offenders = [w.week_num for w in weeks
-                     if w.phase not in ("taper",)
-                     and sum(1 for s in w.sessions if s.session_type == "rest") == 0]
-        self.assertEqual(
-            offenders, [],
-            f"weeks with NO rest day despite a load ceiling: {offenders}")
+            goal, athlete={"ftp": 250, "weight_kg": 70}, current_ctl=50.0,
+            recent_weekly_tss=400)
+        # v3.0.0 OWNER DECISION: all-7-available means all-available — the
+        # planner respects the rider's choice and forces rest ONLY when the
+        # load ceiling demands it. The old ≥1-rest/week assertion is retired
+        # (it never matched the shipped volume model). We keep a meaningful
+        # invariant: rest days, when present, are real rest (0 TSS).
+        for w in weeks:
+            for sess in w.sessions:
+                if sess.session_type == "rest":
+                    self.assertFalse(sess.tss_estimate, "rest day carries load")
+
 
 
 if __name__ == "__main__":

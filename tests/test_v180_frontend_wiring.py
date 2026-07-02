@@ -33,19 +33,22 @@ _DASH = (Path(app_module.__file__).parent / "templates" / "dashboard.html").read
 # ─── Source pill ───────────────────────────────────────────────────────────
 
 def test_dashboard_has_source_pill_class():
-    assert "readiness-source-pill" in _DASH
+    # 65eaaec3 (issue #3 R2) unified the readiness surfaces into one card;
+    # the standalone pill class became an inline srcPill span keyed on the
+    # same backend `source` field. Assert the mechanism, not the old class.
+    assert "srcPill" in _DASH
 
 
 def test_dashboard_has_source_pill_labels():
-    assert "From HRV+TSB" in _DASH
-    assert "From Hooper override" in _DASH
-    assert "Insufficient signal" in _DASH
+    # Labels renamed in the unified card (same three sources).
+    assert "From your leg-check" in _DASH      # hooper
+    assert "From HRV + form" in _DASH           # tsb_hrv_auto
+    assert "Limited data" in _DASH              # insufficient
 
 
 def test_dashboard_source_pill_emits_data_source_attribute():
-    # data-source="..." is what UX/QA + smoke tests grep for to confirm
-    # the pill reflects the backend `source` field.
-    assert 'data-source="' in _DASH
+    # The unified card branches on the backend `source` values directly.
+    assert "'tsb_hrv_auto'" in _DASH and "'hooper'" in _DASH and "'insufficient'" in _DASH
 
 
 # ─── Severity-gated buttons ────────────────────────────────────────────────

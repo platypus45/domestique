@@ -1397,189 +1397,27 @@ window.addEventListener('unhandledrejection', function(e) {
   <div class="tab" data-tab="library">Workout Library</div>
   <div class="tab" data-tab="courses">Routes & Climbs</div>
   <div class="tab" data-tab="plan">Training Plan</div>
+  <div class="tab" data-tab="analysis">Analysis</div>
   <div class="tab" data-tab="dfa">DFA α1</div>
   <div class="tab" data-tab="settings">Settings</div>
 </div>
 
 <!-- ═══ HOME ═══════════════════════════════════════════════════════════════ -->
 <div class="section active" id="sec-home">
-  <!-- Fitness Chart — full width -->
-  <div class="card" style="margin-bottom:12px;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-      <div>
+  <!-- P3.1 — compact Fitness & Form sparkline. The full chart card (+ energy-
+       system / τ-fit / model-accuracy panels) and the Power Curve card moved
+       to the Analysis tab; this strip keeps CTL/TSB glanceable on Home.
+       Rendered by renderHomeFitnessSparkline() from the same /api/wellness
+       payload loadHome() already fetches. Click → opens the Analysis tab. -->
+  <div class="card" id="home-fitness-sparkline-card" style="margin-bottom:12px;cursor:pointer;" role="link" aria-label="Fitness and form trend — open the Analysis tab" title="Open Analysis — full Fitness &amp; Form chart" onclick="document.querySelector('.tab[data-tab=analysis]').click()">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;">
+      <div style="min-width:120px;">
         <h3 style="margin:0;">Fitness &amp; Form</h3>
-        <div class="chart-legend" style="margin-top:4px;">
-          <span><span class="dot" style="background:var(--accent);"></span> CTL (Fitness)</span>
-          <span><span class="dot" style="background:#f472b6;"></span> ATL (Fatigue)</span>
-          <span><span class="dot" style="background:var(--green);"></span> TSB (Form)</span>
-        </div>
+        <div id="home-fitness-sparkline-stats" style="font-size:11px;color:var(--text3);margin-top:2px;">Loading…</div>
       </div>
-      <div class="date-range-btns" style="flex-wrap:wrap;">
-        <button onclick="loadFitnessChart(30)" id="dr-30">1M</button>
-        <button onclick="loadFitnessChart(90)" id="dr-90" class="active">90d</button>
-        <button onclick="loadFitnessChart(180)" id="dr-180">180d</button>
-        <button onclick="loadFitnessChart(365)" id="dr-365">1Y</button>
-        <button onclick="loadFitnessChart(0)" id="dr-0">All</button>
-      </div>
+      <div id="home-fitness-sparkline" style="flex:1;min-width:180px;max-width:460px;"></div>
+      <span style="font-size:11px;color:var(--text3);white-space:nowrap;">Analysis ↗</span>
     </div>
-    <div id="fitness-chart" style="min-height:320px;"></div>
-    <!-- v1.0.6 IMPL-3D-DASHBOARD: secondary collapsed panel — additive lens.
-         CTL/ATL/TSB chart above stays the PRIMARY view (TSS-driven, untouched).
-         This <details> defaults closed so the dashboard hierarchy continues
-         to lead with TSS; opening reveals the three normalized fitness curves
-         (CP/W'/Pmax) on a 0-100 axis. Each tooltip uses the locked verbatim
-         copy from MASTER_DECISIONS_v106 §5. -->
-    <details class="energy-system-breakdown" style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;">
-      <summary style="cursor:pointer;font-size:12px;color:var(--text2);user-select:none;">Energy-system breakdown — beta</summary>
-      <div style="margin-top:8px;">
-        <div class="chart-legend" style="margin-bottom:6px;">
-          <span title="Your aerobic engine. Builds and recovers slowly over a 52-day window; long Z2 rides move it."><span class="dot" style="background:#3b82f6;"></span> CP fitness</span>
-          <span title="Glycolytic capacity above threshold. Recovers in days; built by VO2max and over-under intervals (5-day window)."><span class="dot" style="background:#f97316;"></span> W' fitness</span>
-          <span title="Sprint and PCr power. Recovers fastest (10-day window); driven by short all-out efforts under 20 s."><span class="dot" style="background:#ef4444;"></span> Pmax fitness</span>
-        </div>
-        <div id="energy-system-chart" style="min-height:180px;"></div>
-        <div style="font-size:10px;color:var(--text3);margin-top:4px;line-height:1.4;">
-          Three normalized Banister fitness curves (CP/W'/Pmax) on a 0-100 axis.
-          Secondary lens — CTL/ATL/TSB above stays primary. Source: Kontro et al. 2026 (PLOS ONE), τ defaults from Fig S2.
-        </div>
-      </div>
-    </details>
-    <!-- v1.0.7 IMPL-TAU-FIT-WIRING — per-athlete τ fit panel.
-         Default collapsed so the primary CTL/ATL/TSB view leads. Reads
-         /api/profile/tau-fits which returns the current fit τ values per
-         component (CTL/ATL + CP/W'/Pmax) with bootstrap CI ranges and the
-         success/low_confidence/insufficient_data status. Falls back to
-         conventional τ when the rider's data is too sparse to fit. -->
-    <details class="tau-fit-results" style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;" id="tau-fit-results-panel" ontoggle="if(this.open)loadTauFitPanel()">
-      <summary style="cursor:pointer;font-size:12px;color:var(--text2);user-select:none;">Per-athlete τ fit — beta</summary>
-      <div id="tau-fit-results-content" style="margin-top:8px;font-size:12px;color:var(--text2);">
-        <div style="color:var(--text3);">Loading…</div>
-      </div>
-    </details>
-    <!-- v1.2.1 IMPL-PANEL — out-of-sample Banister-validation panel.
-         Lazy-loads /api/profile/banister-validation on first <details> open.
-         Renders three branched states (success / low_confidence /
-         insufficient_data) with comparison badge against Hellard 2006
-         5-8 % MAE literature baseline. Refresh button forces server-side
-         re-compute via ?refresh=1 (debounced). Reads top-to-bottom under
-         the τ-fits panel: τ-fits = "what we fit", banister-validation =
-         "how accurate those τ were on a 4-week holdout". -->
-    <details class="banister-validation" id="banister-oos-panel"
-             style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;"
-             ontoggle="if(this.open)loadBanisterValidationPanel()">
-      <summary style="cursor:pointer;font-size:12px;color:var(--text2);user-select:none;display:flex;align-items:center;gap:8px;">
-        <span>Model accuracy — out-of-sample (beta)</span>
-        <span id="banister-oos-comparison-badge" style="font-size:10px;"></span>
-        <button id="banister-oos-refresh-btn" class="btn"
-                style="font-size:10px;padding:2px 6px;margin-left:auto;cursor:pointer;"
-                onclick="event.preventDefault();event.stopPropagation();refreshBanisterValidation();"
-                title="Re-run holdout"
-                aria-label="Re-run holdout validation">Refresh ⟳</button>
-      </summary>
-      <div id="banister-oos-content" style="margin-top:8px;font-size:12px;color:var(--text2);" aria-busy="false">
-        <div style="color:var(--text3);">Loading…</div>
-      </div>
-    </details>
-  </div>
-
-  <!-- v1.3.0 IMPL-DASHBOARD — Power Curve card on Home, BELOW CTL/ATL/TSB.
-       Per MASTER_DECISIONS_v130 §2 + PATCH G10/G11/G14: Chart.js log-x linear-y
-       (3-way y-axis: Watts / W/kg / %FTP, each reading per-ride ftp_at_ride
-       + weight_kg). Window selector 30/90/180/365/All (default 90). P&G 2011
-       baseline as dashed gray line scaled per current y-axis mode. Hover
-       tooltip on each rider point shows source ride + date + raw watts
-       regardless of toggle mode. Click → opens source ride. (?) tooltip
-       documents the silent 1-s sub-HR sensor-glitch filter (PATCH G16+G9 —
-       the only surviving filter; "an effort = an effort"). Backfill toast
-       fires when n_rides<30 + ICU has more list entries than locally cached
-       (PATCH G3 single-flight). Feature flag: window.FEATURES.power_curve. -->
-  <div class="card" style="margin-bottom:12px;" id="power-curve-card">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
-      <div style="display:flex;align-items:center;gap:8px;">
-        <h3 style="margin:0;">Power Curve</h3>
-        <span id="power-curve-help" style="cursor:help;font-size:12px;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;line-height:1;" title="Mean-max power per duration across selected window. An effort = an effort: indoor erg, paceline, structured workouts all count as recorded. The ONLY filter is a silent sensor-glitch drop on 1-s peaks where HR is below 50% of HR_max during that 1-s window — the wireless dropout reporting a phantom 1500W spike. (PATCH G16 + G9: position-based filters dropped; cached envelope has no offset data.)" aria-label="Help">?</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-        <div class="power-curve-yaxis-toggle" role="group" aria-label="Y-axis units" style="display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:11px;">
-          <button id="pc-yaxis-watts" type="button" class="pc-yaxis-btn active" data-yaxis="watts" onclick="setPowerCurveYAxis('watts')" style="background:var(--accent);color:white;border:0;padding:4px 8px;cursor:pointer;">Watts</button>
-          <button id="pc-yaxis-wkg" type="button" class="pc-yaxis-btn" data-yaxis="wkg" onclick="setPowerCurveYAxis('wkg')" style="background:transparent;color:var(--text2);border:0;border-left:1px solid var(--border);padding:4px 8px;cursor:pointer;">W/kg</button>
-          <button id="pc-yaxis-pct-ftp" type="button" class="pc-yaxis-btn" data-yaxis="pct_ftp" onclick="setPowerCurveYAxis('pct_ftp')" style="background:transparent;color:var(--text2);border:0;border-left:1px solid var(--border);padding:4px 8px;cursor:pointer;">% FTP</button>
-        </div>
-        <div class="power-curve-window-btns" role="group" aria-label="Window" style="display:inline-flex;flex-wrap:wrap;gap:4px;">
-          <button id="pc-win-30" type="button" class="pc-win-btn" data-win="30" onclick="setPowerCurveWindow(30)" style="font-size:11px;padding:4px 8px;background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;cursor:pointer;">30</button>
-          <button id="pc-win-90" type="button" class="pc-win-btn active" data-win="90" onclick="setPowerCurveWindow(90)" style="font-size:11px;padding:4px 8px;background:var(--accent);color:white;border:1px solid var(--accent);border-radius:6px;cursor:pointer;">90</button>
-          <button id="pc-win-180" type="button" class="pc-win-btn" data-win="180" onclick="setPowerCurveWindow(180)" style="font-size:11px;padding:4px 8px;background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;cursor:pointer;">180</button>
-          <button id="pc-win-365" type="button" class="pc-win-btn" data-win="365" onclick="setPowerCurveWindow(365)" style="font-size:11px;padding:4px 8px;background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;cursor:pointer;">365</button>
-          <button id="pc-win-all" type="button" class="pc-win-btn" data-win="all" onclick="setPowerCurveWindow('all')" style="font-size:11px;padding:4px 8px;background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;cursor:pointer;">All</button>
-        </div>
-      </div>
-    </div>
-    <div id="power-curve-chart-container" style="position:relative;height:280px;">
-      <canvas id="power-curve-chart"></canvas>
-    </div>
-    <div id="power-curve-meta" style="font-size:11px;color:var(--text3);margin-top:6px;">Loading…</div>
-    <div id="power-curve-backfill-toast" style="display:none;margin-top:8px;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text2);">
-      <span id="power-curve-backfill-msg">Backfilling rides from ICU history…</span>
-      <div id="power-curve-backfill-progress" style="margin-top:4px;height:4px;background:var(--border);border-radius:2px;overflow:hidden;">
-        <div id="power-curve-backfill-bar" style="height:100%;width:0%;background:var(--accent);transition:width 0.4s;"></div>
-      </div>
-    </div>
-
-    <!-- v1.3.0 IMPL-DASHBOARD — Fatigue Resistance panel.
-         Collapsed <details> below the Power Curve. Pinot 2014 robustness
-         index + per-duration table + scatter (kJ on x, watts on y, color
-         per duration tier). PATCH G5: TWO-button kJ threshold toggle
-         (1500 default, 2000 strict Pinot 2014) + (i) info popover with
-         four literature anchors (Coyle 1986 / Pinot 2014 /
-         Mateo-March 2022 / Maturana 2025). Each toggle re-fetches with
-         kj_threshold= query param (per PATCH G4 cache key). Empty state
-         honours threshold context. Feature flag: window.FEATURES.fatigue_resistance. -->
-    <details class="fatigue-resistance" id="fatigue-resistance-panel"
-             style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;"
-             ontoggle="if(this.open)loadFatigueResistance()">
-      <summary style="cursor:pointer;font-size:12px;color:var(--text2);user-select:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-        <span>Fatigue Resistance — robustness index (beta)</span>
-        <span id="fatigue-resistance-headline" style="font-size:11px;color:var(--text3);"></span>
-        <button id="fatigue-resistance-refresh-btn" class="btn"
-                style="font-size:10px;padding:2px 6px;margin-left:auto;cursor:pointer;"
-                onclick="event.preventDefault();event.stopPropagation();refreshFatigueResistance();"
-                title="Recompute robustness index"
-                aria-label="Refresh fatigue resistance">Refresh ⟳</button>
-      </summary>
-      <div id="fatigue-resistance-content" style="margin-top:8px;font-size:12px;color:var(--text2);" aria-busy="false">
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
-          <span style="font-size:11px;color:var(--text3);">Threshold:</span>
-          <div role="group" aria-label="kJ threshold" style="display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:11px;">
-            <button id="fr-kj-1500" type="button" class="fr-kj-btn active" data-kj="1500" onclick="setFatigueResistanceThreshold(1500)" style="background:var(--accent);color:white;border:0;padding:4px 10px;cursor:pointer;">&gt; 1500 kJ</button>
-            <button id="fr-kj-2000" type="button" class="fr-kj-btn" data-kj="2000" onclick="setFatigueResistanceThreshold(2000)" style="background:transparent;color:var(--text2);border:0;border-left:1px solid var(--border);padding:4px 10px;cursor:pointer;">&gt; 2000 kJ</button>
-          </div>
-          <span id="fatigue-resistance-info-icon" tabindex="0" role="button" aria-label="Threshold info" onclick="toggleFatigueResistanceInfo()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleFatigueResistanceInfo();}" style="cursor:pointer;font-size:11px;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;line-height:1;">i</span>
-        </div>
-        <div id="fatigue-resistance-info-popover" style="display:none;margin-bottom:10px;padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:11px;color:var(--text2);line-height:1.5;">
-          <div style="font-weight:700;margin-bottom:4px;">THRESHOLD: &gt; 1500 kJ (default)</div>
-          <div style="color:var(--text3);margin-bottom:8px;">
-            The conventional "durability ride" inclusion threshold used in van Erp et al. 2021 (Visma retrospective),
-            <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC12174182/" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Maturana et al. 2025</a> review,
-            and <a href="https://journals.humankinetics.com/view/journals/ijspp/17/6/article-p926.xml" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Mateo-March et al. 2022</a> (IJSPP 17:6).
-            Captures meaningful glycogen depletion onset (~1800–2200 kJ for trained cyclists per
-            <a href="https://pubmed.ncbi.nlm.nih.gov/3536834/" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Coyle 1986</a>).
-            Wide adoption in performance research and the broadest sample size for most amateur riders.
-          </div>
-          <div style="font-weight:700;margin-bottom:4px;">THRESHOLD: &gt; 2000 kJ (strict Pinot 2014)</div>
-          <div style="color:var(--text3);">
-            The original
-            <a href="https://www.fredericgrappe.com/wp-content/uploads/2014/07/MAP.pdf" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Pinot &amp; Grappe 2014</a>
-            measurement point — the threshold at which trained-cyclist glycogen depletion approaches its peak,
-            derived from Grand Tour stage data (3500–4500 kJ per stage) and validated against post-stage
-            power retention. The gold standard for elite-rider durability assessment. Smaller N for amateurs,
-            but the most rigorous comparison against the WorldTour 92–95% robustness benchmark.
-          </div>
-        </div>
-        <div id="fatigue-resistance-body">
-          <div style="color:var(--text3);">Loading…</div>
-        </div>
-      </div>
-    </details>
   </div>
 
   <!-- Event Countdown + eFTP Drift -->
@@ -2664,6 +2502,196 @@ window.addEventListener('unhandledrejection', function(e) {
   </div>
 </div>
 
+<!-- ═══ ANALYSIS ═══════════════════════════════════════════════════════════════════ -->
+<!-- P3.1 home IA pass — long-horizon diagnostics moved off Home, blocks
+     verbatim: the Fitness & Form card (+ energy-system / τ-fit / model-
+     accuracy panels) and the Power Curve card (+ fatigue resistance +
+     backfill toast machinery). Panels render on first tab OPEN via
+     loadAnalysisTab() (registered in the tab-loader map) — NOT at boot:
+     the power-curve Chart.js canvas sizes against its layout box and
+     would render 0×0 inside a display:none section. Element ids
+     unchanged (document-global). Home keeps a compact CTL/TSB sparkline. -->
+<div class="section" id="sec-analysis">
+  <!-- Fitness Chart — full width -->
+  <div class="card" style="margin-bottom:12px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <div>
+        <h3 style="margin:0;">Fitness &amp; Form</h3>
+        <div class="chart-legend" style="margin-top:4px;">
+          <span><span class="dot" style="background:var(--accent);"></span> CTL (Fitness)</span>
+          <span><span class="dot" style="background:#f472b6;"></span> ATL (Fatigue)</span>
+          <span><span class="dot" style="background:var(--green);"></span> TSB (Form)</span>
+        </div>
+      </div>
+      <div class="date-range-btns" style="flex-wrap:wrap;">
+        <button onclick="loadFitnessChart(30)" id="dr-30">1M</button>
+        <button onclick="loadFitnessChart(90)" id="dr-90" class="active">90d</button>
+        <button onclick="loadFitnessChart(180)" id="dr-180">180d</button>
+        <button onclick="loadFitnessChart(365)" id="dr-365">1Y</button>
+        <button onclick="loadFitnessChart(0)" id="dr-0">All</button>
+      </div>
+    </div>
+    <div id="fitness-chart" style="min-height:320px;"></div>
+    <!-- v1.0.6 IMPL-3D-DASHBOARD: secondary collapsed panel — additive lens.
+         CTL/ATL/TSB chart above stays the PRIMARY view (TSS-driven, untouched).
+         This <details> defaults closed so the dashboard hierarchy continues
+         to lead with TSS; opening reveals the three normalized fitness curves
+         (CP/W'/Pmax) on a 0-100 axis. Each tooltip uses the locked verbatim
+         copy from MASTER_DECISIONS_v106 §5. -->
+    <details class="energy-system-breakdown" style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text2);user-select:none;">Energy-system breakdown — beta</summary>
+      <div style="margin-top:8px;">
+        <div class="chart-legend" style="margin-bottom:6px;">
+          <span title="Your aerobic engine. Builds and recovers slowly over a 52-day window; long Z2 rides move it."><span class="dot" style="background:#3b82f6;"></span> CP fitness</span>
+          <span title="Glycolytic capacity above threshold. Recovers in days; built by VO2max and over-under intervals (5-day window)."><span class="dot" style="background:#f97316;"></span> W' fitness</span>
+          <span title="Sprint and PCr power. Recovers fastest (10-day window); driven by short all-out efforts under 20 s."><span class="dot" style="background:#ef4444;"></span> Pmax fitness</span>
+        </div>
+        <div id="energy-system-chart" style="min-height:180px;"></div>
+        <div style="font-size:10px;color:var(--text3);margin-top:4px;line-height:1.4;">
+          Three normalized Banister fitness curves (CP/W'/Pmax) on a 0-100 axis.
+          Secondary lens — CTL/ATL/TSB above stays primary. Source: Kontro et al. 2026 (PLOS ONE), τ defaults from Fig S2.
+        </div>
+      </div>
+    </details>
+    <!-- v1.0.7 IMPL-TAU-FIT-WIRING — per-athlete τ fit panel.
+         Default collapsed so the primary CTL/ATL/TSB view leads. Reads
+         /api/profile/tau-fits which returns the current fit τ values per
+         component (CTL/ATL + CP/W'/Pmax) with bootstrap CI ranges and the
+         success/low_confidence/insufficient_data status. Falls back to
+         conventional τ when the rider's data is too sparse to fit. -->
+    <details class="tau-fit-results" style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;" id="tau-fit-results-panel" ontoggle="if(this.open)loadTauFitPanel()">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text2);user-select:none;">Per-athlete τ fit — beta</summary>
+      <div id="tau-fit-results-content" style="margin-top:8px;font-size:12px;color:var(--text2);">
+        <div style="color:var(--text3);">Loading…</div>
+      </div>
+    </details>
+    <!-- v1.2.1 IMPL-PANEL — out-of-sample Banister-validation panel.
+         Lazy-loads /api/profile/banister-validation on first <details> open.
+         Renders three branched states (success / low_confidence /
+         insufficient_data) with comparison badge against Hellard 2006
+         5-8 % MAE literature baseline. Refresh button forces server-side
+         re-compute via ?refresh=1 (debounced). Reads top-to-bottom under
+         the τ-fits panel: τ-fits = "what we fit", banister-validation =
+         "how accurate those τ were on a 4-week holdout". -->
+    <details class="banister-validation" id="banister-oos-panel"
+             style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;"
+             ontoggle="if(this.open)loadBanisterValidationPanel()">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text2);user-select:none;display:flex;align-items:center;gap:8px;">
+        <span>Model accuracy — out-of-sample (beta)</span>
+        <span id="banister-oos-comparison-badge" style="font-size:10px;"></span>
+        <button id="banister-oos-refresh-btn" class="btn"
+                style="font-size:10px;padding:2px 6px;margin-left:auto;cursor:pointer;"
+                onclick="event.preventDefault();event.stopPropagation();refreshBanisterValidation();"
+                title="Re-run holdout"
+                aria-label="Re-run holdout validation">Refresh ⟳</button>
+      </summary>
+      <div id="banister-oos-content" style="margin-top:8px;font-size:12px;color:var(--text2);" aria-busy="false">
+        <div style="color:var(--text3);">Loading…</div>
+      </div>
+    </details>
+  </div>
+
+  <!-- v1.3.0 IMPL-DASHBOARD — Power Curve card on Home, BELOW CTL/ATL/TSB.
+       Per MASTER_DECISIONS_v130 §2 + PATCH G10/G11/G14: Chart.js log-x linear-y
+       (3-way y-axis: Watts / W/kg / %FTP, each reading per-ride ftp_at_ride
+       + weight_kg). Window selector 30/90/180/365/All (default 90). P&G 2011
+       baseline as dashed gray line scaled per current y-axis mode. Hover
+       tooltip on each rider point shows source ride + date + raw watts
+       regardless of toggle mode. Click → opens source ride. (?) tooltip
+       documents the silent 1-s sub-HR sensor-glitch filter (PATCH G16+G9 —
+       the only surviving filter; "an effort = an effort"). Backfill toast
+       fires when n_rides<30 + ICU has more list entries than locally cached
+       (PATCH G3 single-flight). Feature flag: window.FEATURES.power_curve. -->
+  <div class="card" style="margin-bottom:12px;" id="power-curve-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <h3 style="margin:0;">Power Curve</h3>
+        <span id="power-curve-help" style="cursor:help;font-size:12px;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;line-height:1;" title="Mean-max power per duration across selected window. An effort = an effort: indoor erg, paceline, structured workouts all count as recorded. The ONLY filter is a silent sensor-glitch drop on 1-s peaks where HR is below 50% of HR_max during that 1-s window — the wireless dropout reporting a phantom 1500W spike. (PATCH G16 + G9: position-based filters dropped; cached envelope has no offset data.)" aria-label="Help">?</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+        <div class="power-curve-yaxis-toggle" role="group" aria-label="Y-axis units" style="display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:11px;">
+          <button id="pc-yaxis-watts" type="button" class="pc-yaxis-btn active" data-yaxis="watts" onclick="setPowerCurveYAxis('watts')" style="background:var(--accent);color:white;border:0;padding:4px 8px;cursor:pointer;">Watts</button>
+          <button id="pc-yaxis-wkg" type="button" class="pc-yaxis-btn" data-yaxis="wkg" onclick="setPowerCurveYAxis('wkg')" style="background:transparent;color:var(--text2);border:0;border-left:1px solid var(--border);padding:4px 8px;cursor:pointer;">W/kg</button>
+          <button id="pc-yaxis-pct-ftp" type="button" class="pc-yaxis-btn" data-yaxis="pct_ftp" onclick="setPowerCurveYAxis('pct_ftp')" style="background:transparent;color:var(--text2);border:0;border-left:1px solid var(--border);padding:4px 8px;cursor:pointer;">% FTP</button>
+        </div>
+        <div class="power-curve-window-btns" role="group" aria-label="Window" style="display:inline-flex;flex-wrap:wrap;gap:4px;">
+          <button id="pc-win-30" type="button" class="pc-win-btn" data-win="30" onclick="setPowerCurveWindow(30)" style="font-size:11px;padding:4px 8px;background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;cursor:pointer;">30</button>
+          <button id="pc-win-90" type="button" class="pc-win-btn active" data-win="90" onclick="setPowerCurveWindow(90)" style="font-size:11px;padding:4px 8px;background:var(--accent);color:white;border:1px solid var(--accent);border-radius:6px;cursor:pointer;">90</button>
+          <button id="pc-win-180" type="button" class="pc-win-btn" data-win="180" onclick="setPowerCurveWindow(180)" style="font-size:11px;padding:4px 8px;background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;cursor:pointer;">180</button>
+          <button id="pc-win-365" type="button" class="pc-win-btn" data-win="365" onclick="setPowerCurveWindow(365)" style="font-size:11px;padding:4px 8px;background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;cursor:pointer;">365</button>
+          <button id="pc-win-all" type="button" class="pc-win-btn" data-win="all" onclick="setPowerCurveWindow('all')" style="font-size:11px;padding:4px 8px;background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;cursor:pointer;">All</button>
+        </div>
+      </div>
+    </div>
+    <div id="power-curve-chart-container" style="position:relative;height:280px;">
+      <canvas id="power-curve-chart"></canvas>
+    </div>
+    <div id="power-curve-meta" style="font-size:11px;color:var(--text3);margin-top:6px;">Loading…</div>
+    <div id="power-curve-backfill-toast" style="display:none;margin-top:8px;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text2);">
+      <span id="power-curve-backfill-msg">Backfilling rides from ICU history…</span>
+      <div id="power-curve-backfill-progress" style="margin-top:4px;height:4px;background:var(--border);border-radius:2px;overflow:hidden;">
+        <div id="power-curve-backfill-bar" style="height:100%;width:0%;background:var(--accent);transition:width 0.4s;"></div>
+      </div>
+    </div>
+
+    <!-- v1.3.0 IMPL-DASHBOARD — Fatigue Resistance panel.
+         Collapsed <details> below the Power Curve. Pinot 2014 robustness
+         index + per-duration table + scatter (kJ on x, watts on y, color
+         per duration tier). PATCH G5: TWO-button kJ threshold toggle
+         (1500 default, 2000 strict Pinot 2014) + (i) info popover with
+         four literature anchors (Coyle 1986 / Pinot 2014 /
+         Mateo-March 2022 / Maturana 2025). Each toggle re-fetches with
+         kj_threshold= query param (per PATCH G4 cache key). Empty state
+         honours threshold context. Feature flag: window.FEATURES.fatigue_resistance. -->
+    <details class="fatigue-resistance" id="fatigue-resistance-panel"
+             style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;"
+             ontoggle="if(this.open)loadFatigueResistance()">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text2);user-select:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span>Fatigue Resistance — robustness index (beta)</span>
+        <span id="fatigue-resistance-headline" style="font-size:11px;color:var(--text3);"></span>
+        <button id="fatigue-resistance-refresh-btn" class="btn"
+                style="font-size:10px;padding:2px 6px;margin-left:auto;cursor:pointer;"
+                onclick="event.preventDefault();event.stopPropagation();refreshFatigueResistance();"
+                title="Recompute robustness index"
+                aria-label="Refresh fatigue resistance">Refresh ⟳</button>
+      </summary>
+      <div id="fatigue-resistance-content" style="margin-top:8px;font-size:12px;color:var(--text2);" aria-busy="false">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+          <span style="font-size:11px;color:var(--text3);">Threshold:</span>
+          <div role="group" aria-label="kJ threshold" style="display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:11px;">
+            <button id="fr-kj-1500" type="button" class="fr-kj-btn active" data-kj="1500" onclick="setFatigueResistanceThreshold(1500)" style="background:var(--accent);color:white;border:0;padding:4px 10px;cursor:pointer;">&gt; 1500 kJ</button>
+            <button id="fr-kj-2000" type="button" class="fr-kj-btn" data-kj="2000" onclick="setFatigueResistanceThreshold(2000)" style="background:transparent;color:var(--text2);border:0;border-left:1px solid var(--border);padding:4px 10px;cursor:pointer;">&gt; 2000 kJ</button>
+          </div>
+          <span id="fatigue-resistance-info-icon" tabindex="0" role="button" aria-label="Threshold info" onclick="toggleFatigueResistanceInfo()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleFatigueResistanceInfo();}" style="cursor:pointer;font-size:11px;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;line-height:1;">i</span>
+        </div>
+        <div id="fatigue-resistance-info-popover" style="display:none;margin-bottom:10px;padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:11px;color:var(--text2);line-height:1.5;">
+          <div style="font-weight:700;margin-bottom:4px;">THRESHOLD: &gt; 1500 kJ (default)</div>
+          <div style="color:var(--text3);margin-bottom:8px;">
+            The conventional "durability ride" inclusion threshold used in van Erp et al. 2021 (Visma retrospective),
+            <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC12174182/" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Maturana et al. 2025</a> review,
+            and <a href="https://journals.humankinetics.com/view/journals/ijspp/17/6/article-p926.xml" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Mateo-March et al. 2022</a> (IJSPP 17:6).
+            Captures meaningful glycogen depletion onset (~1800–2200 kJ for trained cyclists per
+            <a href="https://pubmed.ncbi.nlm.nih.gov/3536834/" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Coyle 1986</a>).
+            Wide adoption in performance research and the broadest sample size for most amateur riders.
+          </div>
+          <div style="font-weight:700;margin-bottom:4px;">THRESHOLD: &gt; 2000 kJ (strict Pinot 2014)</div>
+          <div style="color:var(--text3);">
+            The original
+            <a href="https://www.fredericgrappe.com/wp-content/uploads/2014/07/MAP.pdf" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Pinot &amp; Grappe 2014</a>
+            measurement point — the threshold at which trained-cyclist glycogen depletion approaches its peak,
+            derived from Grand Tour stage data (3500–4500 kJ per stage) and validated against post-stage
+            power retention. The gold standard for elite-rider durability assessment. Smaller N for amateurs,
+            but the most rigorous comparison against the WorldTour 92–95% robustness benchmark.
+          </div>
+        </div>
+        <div id="fatigue-resistance-body">
+          <div style="color:var(--text3);">Loading…</div>
+        </div>
+      </div>
+    </details>
+  </div>
+</div>
+
 <!-- ═══ DFA α1 ═════════════════════════════════════════════════════════════ -->
 <!-- v1.8.14 — HRV fractal-analysis tab. HRVT1 (α1=0.75, aerobic threshold) +
      HRVT2 (α1=0.50, anaerobic threshold) HR/power zones, 3-zone intensity
@@ -3171,6 +3199,7 @@ document.querySelectorAll('.tab[data-tab]').forEach(t => {
                        initAvailCalendar();
                        loadCapabilityProjection();
                      }, settings:()=>{loadSettings();loadIcuConnection();}, library:loadWorkouts,
+                     analysis:()=>{ if (typeof loadAnalysisTab === 'function') loadAnalysisTab(); },
                      dfa:()=>{ if (typeof loadDfaTab === 'function') loadDfaTab(); }};
     if (loaders[tab]) loaders[tab]();
   });
@@ -4353,11 +4382,81 @@ async function loadFitnessChart(days=90) {
     // collapsed by default so the primary CTL/ATL/TSB view leads).
     try { energySystemChart(data, 'energy-system-chart'); }
     catch(eE) { try { window._diagFrontendError('E_FRONTEND_ENERGY_SYS_RENDER', {msg: String(eE && eE.message || eE)}); } catch(_) {} }
-    // v1.3.0 IMPL-DASHBOARD: kick the Power Curve fetch alongside the
-    // primary CTL/ATL/TSB load (one round-trip on Home open). The chart
-    // renders below the CTL/ATL/TSB card.
-    try { if (typeof loadPowerCurve === 'function') loadPowerCurve(); } catch(_) {}
+    // P3.1 — the Power Curve no longer chains off this wellness fetch: the
+    // Analysis tab loader (loadAnalysisTab) owns loadPowerCurve() on tab open.
   } catch(e) { console.error(e); }
+}
+
+// P3.1 — Analysis tab lazy loader (mirrors the dfa:()=>loadDfaTab() pattern).
+// Runs on tab OPEN, never at boot: the tab-click handler flips the section to
+// .active BEFORE loaders fire, so the power-curve Chart.js canvas (responsive)
+// measures a real layout box — at boot, inside the display:none section, it
+// would render 0×0. Re-opens refresh data but preserve the user's selections:
+// the fitness range is read back from the active dr-* button, and
+// loadPowerCurve respects _powerCurveWindow/_powerCurveYAxis (single-flight
+// guarded). The τ-fit / model-accuracy / fatigue-resistance <details> panels
+// keep their own lazy ontoggle loaders — nothing to do here.
+function loadAnalysisTab() {
+  // Fitness & Form + energy-system breakdown: one /api/wellness round-trip
+  // via loadFitnessChart (renders both; seeds _wellnessCache at 90d).
+  let days = 90;
+  try {
+    const active = document.querySelector('#sec-analysis .date-range-btns button.active');
+    if (active && active.id && active.id.startsWith('dr-')) {
+      const n = Number(active.id.slice(3));
+      if (Number.isFinite(n)) days = n;
+    }
+  } catch (_) {}
+  try { loadFitnessChart(days); } catch (_) {}
+  // Power curve (+ its backfill toast machinery via maybeKickBackfill).
+  try { if (typeof loadPowerCurve === 'function') loadPowerCurve(); } catch (_) {}
+}
+
+// P3.1 — compact CTL/TSB sparkline on Home (the full Fitness & Form chart
+// lives on the Analysis tab now). Inline SVG, last 42 days, no axes; fed by
+// the /api/wellness?days=90 payload loadHome() already fetches — no extra
+// round-trip. Click on the host card opens the Analysis tab.
+function renderHomeFitnessSparkline(wellness) {
+  const host = document.getElementById('home-fitness-sparkline');
+  const stats = document.getElementById('home-fitness-sparkline-stats');
+  if (!host) return;
+  const rows = (wellness || []).slice(-42);
+  const ctl = rows.map(d => (d && d.ctl != null ? Number(d.ctl) : null));
+  const tsb = rows.map(d => (d && d.tsb != null ? Number(d.tsb) : null));
+  const vals = ctl.concat(tsb).filter(v => v != null && !isNaN(v));
+  if (rows.length < 2 || vals.length < 2) {
+    host.innerHTML = '';
+    if (stats) stats.textContent = 'Not enough data yet — open Analysis for details';
+    return;
+  }
+  const W = 460, H = 44, pad = 2;
+  const min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
+  const range = (max - min) || 1;
+  const X = i => pad + (i / (rows.length - 1)) * (W - 2 * pad);
+  const Y = v => H - pad - ((v - min) / range) * (H - 2 * pad);
+  const pathOf = series => {
+    let d = '', pen = false;
+    for (let i = 0; i < series.length; i++) {
+      const v = series[i];
+      if (v == null || isNaN(v)) { pen = false; continue; }
+      d += (pen ? 'L' : 'M') + X(i).toFixed(1) + ',' + Y(v).toFixed(1);
+      pen = true;
+    }
+    return d;
+  };
+  const zeroY = (min <= 0 && 0 <= max) ? Y(0) : null;
+  host.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="width:100%;height:' + H + 'px;display:block;">'
+    + (zeroY != null ? '<line x1="' + pad + '" y1="' + zeroY.toFixed(1) + '" x2="' + (W - pad) + '" y2="' + zeroY.toFixed(1) + '" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 3"/>' : '')
+    + '<path d="' + pathOf(ctl) + '" fill="none" stroke="var(--accent)" stroke-width="1.6"/>'
+    + '<path d="' + pathOf(tsb) + '" fill="none" stroke="var(--green)" stroke-width="1.3" opacity="0.9"/>'
+    + '</svg>';
+  if (stats) {
+    const lastOf = s => { for (let i = s.length - 1; i >= 0; i--) if (s[i] != null && !isNaN(s[i])) return s[i]; return null; };
+    const c = lastOf(ctl), t = lastOf(tsb);
+    stats.innerHTML = 'CTL <b style="color:var(--accent);">' + (c != null ? Math.round(c) : '—') + '</b>'
+      + ' · TSB <b style="color:var(--green);">' + (t != null ? (t > 0 ? '+' : '') + Math.round(t) : '—') + '</b>'
+      + ' <span style="color:var(--text3);">· last 42d</span>';
+  }
 }
 
 // v1.3.0 IMPL-DASHBOARD — feature flags. Per PATCH G14: each panel checks
@@ -5756,15 +5855,12 @@ async function loadHome() {
     }
     const r=d.readiness, t=d.training, s=d.sleep;
 
-    // Fitness chart
-    try { fitnessChart(wellness, 'fitness-chart'); }
+    // P3.1 — the full Fitness & Form + energy-system charts moved to the
+    // Analysis tab (rendered by loadAnalysisTab() on first tab open, not at
+    // boot). Home keeps a compact CTL/TSB sparkline fed by this same
+    // wellness payload — no extra fetch.
+    try { renderHomeFitnessSparkline(wellness); }
     catch (e) { try { window._diagFrontendError('E_FRONTEND_FITNESS_RENDER', {msg: String(e && e.message || e)}); } catch(_) {} }
-    // v1.3.2 fix: also paint the secondary energy-system breakdown chart on
-    // initial home-load. Previously this only fired from loadFitnessChart()
-    // (button-driven), so the <details> panel showed an empty canvas until
-    // the user clicked a date-range button. Inline with fitnessChart() above.
-    try { energySystemChart(wellness, 'energy-system-chart'); }
-    catch(e) { try { window._diagFrontendError('E_FRONTEND_ENERGY_SYS_RENDER', {msg: String(e && e.message || e)}); } catch(_) {} }
 
     try {
       // v1.8.8 Bug 8 — gauge consumes the canonical score_0_100 field from
@@ -5940,10 +6036,11 @@ async function loadHome() {
       try { window._diagFrontendError('E_FRONTEND_ACTIVITIES_RENDER', {msg: String(e && e.message || e)}); } catch(_) {}
     }
 
-    // Morning log + Body & Performance + Power Curve (parallel, non-blocking)
+    // Morning log + Body & Performance (parallel, non-blocking).
+    // P3.1 — loadPowerCurve() no longer fires here: the Power Curve card
+    // lives on the Analysis tab and loads via loadAnalysisTab() on tab open.
     loadMorningLog();
     loadBodyPerf();
-    loadPowerCurve();
     // v1.1.0 IMPL-HRV-RECOVERY — Readiness today (composite, 0-10).
     loadReadinessComposite();
     // v1.8.8 Bug 3 — last ride DFA α1 snapshot in the readiness card.
@@ -16934,7 +17031,10 @@ function _actModalSparklines(samples) {
 // projection and surface a non-intrusive hint only when something meaningful
 // is computed.
 document.addEventListener('DOMContentLoaded', () => {
-  if (document.getElementById('fitness-chart')) {
+  // P3.1 — boot gate keyed to the home section itself. The old sentinel
+  // (#fitness-chart) moved to the Analysis tab; home boot must not key off
+  // a moved diagnostics panel.
+  if (document.getElementById('sec-home')) {
     fetch('/api/plan/daily-adapt').then(r=>r.json()).then(d => {
       if (!d || !d.projection_only) return;
       const projCount = (d.projected_adaptations || []).length;

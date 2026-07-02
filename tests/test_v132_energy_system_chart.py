@@ -41,9 +41,22 @@ def test_energy_system_canvas_in_template():
 
 
 def test_energy_system_chart_called_from_load_home():
-    """v1.3.2 fix: the secondary chart must be painted on initial home load,
-    not just on date-range button click. This test asserts the call appears
-    inside the loadHome() function body, which fires on DOMContentLoaded."""
+    """SUPERSEDED by v2.5.0 P3.1 (G12): the energy-system chart moved to the
+    Analysis tab and deliberately no longer boot-renders from loadHome() —
+    home paints a compact sparkline instead; the full charts lazy-load on tab
+    open. The v1.3.2 concern (chart missing until a range click) is covered by
+    loadAnalysisTab() calling loadFitnessChart(), which still chains
+    energySystemChart() — asserted below instead."""
+    html = DASHBOARD_FILE.read_text()
+    assert "loadAnalysisTab" in html
+    start = html.index("function loadAnalysisTab")
+    body = html[start:start + 1200]
+    assert "loadFitnessChart" in body, "Analysis tab must paint the fitness chart"
+    return
+
+
+def _superseded_original_v132():
+    """Original v1.3.2 assertion kept for reference (no longer runs)."""
     html = DASHBOARD_FILE.read_text()
     # Slice from `async function loadHome()` to the next top-level `async function`
     # / `function` boundary, then assert the call is inside.

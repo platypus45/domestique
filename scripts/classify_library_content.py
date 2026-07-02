@@ -1582,13 +1582,17 @@ def classify_v104(features: dict, tags: list[str] | None = None,
             # a threshold/sweet-spot ride with sprints bolted on, not a
             # neuromuscular session — demote to the sustained band (z4-upper
             # vs sweet-spot dominance), KEEPING has_sprints in secondary so
-            # matching still sees the sprint content. z7 ≥ 300 s is a real
-            # anaerobic/sprint dose and is never demoted here. The v2.0.6
+            # matching still sees the sprint content. z7 ≥ 120 s is a real
+            # sprint dose and is never demoted here (independent review of the
+            # first slice: a 285 s / 14-effort sprint session slipped under a
+            # 300 s cap; dedicated sprint SETS with real recoveries live in the
+            # 120-300 s band, while fused-couplet/finisher token sprints sit
+            # ≤ 120 s). The v2.0.6
             # matcher-side sprint-slot ceiling (IF ≤ 0.82) REMAINS
             # load-bearing: ~64 high-RMS NM files have no ≥10-min mid block,
             # stay neuromuscular, and still must not fill easy sprint slots.
             if (features["if_fraction"] > 0.82 and _mid_block_s >= 600
-                    and z7_s < 300):
+                    and z7_s <= 120):
                 demoted = ("threshold"
                            if features.get("z4_upper_s", z4_s) >= features["sweet_spot_s"]
                            else "sweet_spot")

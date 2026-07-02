@@ -216,8 +216,9 @@ def test_p13_rung_failure_falls_to_steady_mid_check(_classifier):
 # ── v2.5.0 P1.4 (G9): neuromuscular IF-dose demotion ──────────────────────────
 # classify_v104 demotes a "sprint" session to threshold/sweet_spot when
 # if_fraction > 0.82 (STRICT; RMS of power fractions — NOT Coggan IF) AND a
-# sustained tempo–threshold mid block ≥600 s (INCLUSIVE) AND z7 < 300 s
-# (INCLUSIVE exclusion: a ≥300 s Z7 dose is genuinely anaerobic/sprint work).
+# sustained tempo–threshold mid block ≥600 s (INCLUSIVE) AND z7 ≤ 120 s
+# (a >120 s Z7 dose is a real sprint set — independent review caught a 285 s
+# 14-effort sprint session slipping under the original 300 s cap).
 # has_sprints stays set on demoted rides.
 
 def _sprint_over_mid_features(if_fraction: float, z7_s: int,
@@ -255,8 +256,9 @@ def _steady_mid_segments(mid_s: int) -> list[dict]:
     (0.821, 600, 120, "threshold"),
     (0.90, 599, 120, "neuromuscular"),   # mid-block gate INCLUSIVE at 600
     (0.90, 600, 120, "threshold"),
-    (0.90, 600, 300, "neuromuscular"),   # z7 exclusion INCLUSIVE at 300
-    (0.90, 600, 299, "threshold"),
+    (0.90, 600, 121, "neuromuscular"),   # z7 exclusion: >120 stays NM
+    (0.90, 600, 120, "threshold"),        # 120 inclusive demote
+    (0.90, 600, 285, "neuromuscular"),    # the review-caught sprint session
 ])
 def test_p14_demotion_boundary(_classifier, if_frac, mid_s, z7_s, expect):
     primary, _, _ = _classifier.classify_v104(
@@ -287,16 +289,20 @@ def test_p14_demotion_keeps_has_sprints_flag(_classifier):
     assert secondary["has_sprints"] is True
 
 
-P14_SLICE = {  # cache primary=neuromuscular rows the demotion re-classes
+P14_SLICE = {  # independently reviewed: 7/8 DEFENSIBLE applied; the z7≤120 cap
+    # excludes the one WRONG verdict (285 s / 14-effort sprint session)
     "neuromuscular_15s0s_7x_60min.zwo": "threshold",
     "neuromuscular_15s0s_8x_60min.zwo": "threshold",
     "neuromuscular_15s0s_8x_60min_renamed_v46_1.zwo": "threshold",
     "neuromuscular_15s300s_6x_74min.zwo": "threshold",
     "neuromuscular_4x30s_144min.zwo": "threshold",
-    "neuromuscular_5x30s_46min.zwo": "threshold",
     "sprints_5x2min_53min.zwo": "threshold",
     "sprints_6x15s_58min.zwo": "threshold",
 }
+
+P14_STAY_NM = (  # review verdict: a real sprint set, must stay neuromuscular
+    "neuromuscular_5x30s_46min.zwo",   # z7=285 s, 14 max efforts — cap-excluded
+)
 
 
 def test_p14_slice_files_classify_to_demoted_class_live(_classifier):
@@ -315,6 +321,7 @@ def test_p14_genuine_neuromuscular_stays(_classifier):
     despite high RMS + long mid block) and a high-RMS session with NO sustained
     mid block (the ~64-file clientele the v2.0.6 matcher ceiling still guards)."""
     for fn in ("neuromuscular_30s60s_10x_63min_renamed_v46_1.zwo",  # z7=360
-               "neuromuscular_10s0s_15x_48min.zwo"):                # mid=0, if=0.826
+               "neuromuscular_10s0s_15x_48min.zwo",                 # mid=0, if=0.826
+               *P14_STAY_NM):                                       # reviewed keep-NM
         live = _classifier.classify_zwo_v104(WK / fn).get("primary")
         assert live == "neuromuscular", f"{fn}: live={live}, must stay NM"

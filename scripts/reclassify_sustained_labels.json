@@ -57,5 +57,12 @@
  "threshold_steady_47min_v4.zwo": "sweet_spot",
  "threshold_steady_50min_v10.zwo": "threshold",
  "threshold_steady_50min_v11.zwo": "sweet_spot",
- "z2_endurance_50min_v5.zwo": "threshold"
+ "z2_endurance_50min_v5.zwo": "threshold",
+ "neuromuscular_15s0s_7x_60min.zwo": "threshold",
+ "neuromuscular_15s0s_8x_60min.zwo": "threshold",
+ "neuromuscular_15s0s_8x_60min_renamed_v46_1.zwo": "threshold",
+ "neuromuscular_15s300s_6x_74min.zwo": "threshold",
+ "neuromuscular_4x30s_144min.zwo": "threshold",
+ "sprints_5x2min_53min.zwo": "threshold",
+ "sprints_6x15s_58min.zwo": "threshold"
 }

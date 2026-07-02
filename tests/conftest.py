@@ -98,3 +98,26 @@ def _no_live_icu_in_generate_plan(monkeypatch):
     are unaffected; per-suite stubs simply override this one."""
     import training_planner as _tp
     monkeypatch.setattr(_tp, "get_today_metrics", lambda: {}, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_live_icu_network(monkeypatch):
+    """v3.0.0 hermetic gate, part 2: NO test may reach the live intervals.icu
+    API through ANY path. Part 1 (above) stubbed the planner's metrics
+    self-fetch, but the A7 gate still hung on two app-level leaks: the lazy
+    icu_sync background thread (spun up by TestClient boots) and endpoint
+    wellness fetches — both funnel into training._get → urllib, where a
+    machine-wide 429 (Retry-After ~20000s) turns into capped 60s retry-sleeps
+    that outlive any per-test timeout. Block the transport itself: urlopen in
+    training's namespace raises URLError instantly (the graceful
+    "ICU unreachable" path), and training's retry sleep becomes a no-op.
+    Tests that mock urlopen/_get/fetch_* apply their patches after this one
+    and win; nothing in the suite may exercise the real network."""
+    import urllib.error
+    import training as _tr
+
+    def _blocked(*a, **k):
+        raise urllib.error.URLError("live ICU network disabled in tests")
+
+    monkeypatch.setattr(_tr.urllib.request, "urlopen", _blocked)
+    monkeypatch.setattr(_tr.time, "sleep", lambda s: None)

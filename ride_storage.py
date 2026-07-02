@@ -309,6 +309,13 @@ def _normalize_icu_activity(a: dict) -> dict:
         "np_w": int(np_w) if np_w else None,
         "if_pct": if_pct,
         "tss": round(float(tss), 1) if tss is not None else None,
+        # W4 (v2.5.0): provenance tag for the load number — "icu" when the
+        # ride has power, "hr_icu" when ICU derived the load from HR only.
+        # Pure tag: the tss VALUE above is untouched (ICU's own hr-based
+        # load is already the ride's TSS for no-power rides).
+        "load_source": (
+            None if tss is None else ("icu" if avg_power else "hr_icu")
+        ),
         "kj": round(float(kj), 1) if kj is not None else None,
         "kj_above_ftp": kj_above_ftp,
         "kcal": int(kcal) if kcal else None,
@@ -432,7 +439,7 @@ def load_all_rides() -> list[dict]:
             continue
         # Use a sha-stable id derived from the filename stem (which is the
         # ISO-timestamp set at upload-time). Prefix with fit_ per §3.
-        fits.append({
+        entry = {
             "ride_id": f"fit_{f.stem}",
             "source": "fit",
             "external_id": None,
@@ -441,7 +448,28 @@ def load_all_rides() -> list[dict]:
             "duration_s": None,
             "size_bytes": st.st_size,
             "_fit_path": str(f),
-        })
+        }
+        # W4 (v2.5.0): attach the persisted load summary (tss + load_source,
+        # plus true duration/start when derivable) so compute_local_atl /
+        # recent_mean_weekly_tss / analytics count imported FITs without any
+        # reader edits — and so the ICU dedupe below can match the ICU copy
+        # of a ride the importer relayed to intervals.icu. A missing sidecar
+        # (pre-W4 import) is lazily computed + persisted once.
+        load = read_fit_load_sidecar(f)
+        if load is None:
+            load = write_fit_load_sidecar(f)
+        if isinstance(load, dict):
+            if load.get("duration_s"):
+                try:
+                    entry["duration_s"] = int(load["duration_s"])
+                except (TypeError, ValueError):
+                    pass
+            if load.get("started_at"):
+                entry["started_at"] = str(load["started_at"])
+            if load.get("tss") is not None:
+                entry["tss"] = load["tss"]
+                entry["load_source"] = load.get("load_source")
+        fits.append(entry)
 
     # Dedupe: index ICU rides by (date-prefix, duration-bucket).
     def _bucket(r: dict) -> tuple[str, int]:
@@ -478,6 +506,240 @@ def _fit_iso_started_at(fit_path: Path) -> str:
         ).astimezone().isoformat()
     except OSError:
         return ""
+
+
+# ── W4 (v2.5.0) — post-ride load (TSS) for locally imported FITs ────────────
+# POST /api/ride/import used to persist raw FIT bytes only, so imported rides
+# (with or without power) contributed 0 to compute_local_atl /
+# recent_mean_weekly_tss / analytics compliance. Fix is ingestion-side: a
+# small ``<stem>.load.json`` sidecar next to the FIT carries {tss,
+# load_source, duration_s, started_at}; load_all_rides attaches it to the
+# FIT entry so every existing reader picks it up unchanged.
+
+
+def _fit_load_sidecar_path(fit_path: Path) -> Path:
+    """Sidecar JSON next to an imported FIT: ``<stem>.load.json``.
+
+    Lives in ``~/.domestique/rides/`` alongside the FIT — nothing globs
+    ``*.json`` there (ICU records live in the ``icu/`` subdir), so the
+    sidecar can't be mistaken for a ride record.
+    """
+    return fit_path.with_name(f"{fit_path.stem}.load.json")
+
+
+def compute_power_tss(
+    power: list,
+    ftp: int,
+    duration_s: int | None = None,
+) -> float | None:
+    """Standard power TSS from a 1 Hz power series.
+
+    NP = 30-s rolling 4th-power mean — the same windowing as
+    ``training_live.MetricsEngine._wp_for_slice`` and
+    ``fitness_estimation.aerobic_decoupling``'s per-half NP (full 30-sample
+    windows only; sub-30-sample rides fall back to the plain average).
+    TSS = dur_h × (NP/FTP)² × 100, matching the live engine's
+    ``MetricsEngine.tss`` formula.
+
+    Returns None when the series is empty or FTP is unusable (≤0).
+    """
+    if not power or not ftp or int(ftp) <= 0:
+        return None
+    series = [float(p or 0) for p in power]
+    n = len(series)
+    dur_s = int(duration_s) if duration_s and int(duration_s) > 0 else n
+    if dur_s <= 0:
+        return None
+    if n < 30:
+        np_w = sum(series) / n
+    else:
+        from collections import deque
+        win: deque = deque(maxlen=30)
+        p4_sum = 0.0
+        count = 0
+        for p in series:
+            win.append(p)
+            if len(win) == 30:
+                avg30 = sum(win) / 30.0
+                p4_sum += avg30 ** 4
+                count += 1
+        np_w = (p4_sum / count) ** 0.25 if count else 0.0
+    if np_w <= 0:
+        return None
+    if_ = np_w / float(int(ftp))
+    return round((dur_s / 3600.0) * (if_ ** 2) * 100.0, 1)
+
+
+def compute_hr_tss(
+    hr: list,
+    lthr: int,
+    max_hr: int | None = None,
+) -> float | None:
+    """hrTSS from a 1 Hz HR series: Σ((hr/lthr)²) / 3600 × 100.
+
+    TRIMP-flavored APPROXIMATION — NOT TrainingPeaks-equivalent. It reuses
+    the power-TSS analogy (TSS = IF² × hours × 100) with per-second hr/LTHR
+    as the IF proxy; TrainingPeaks' hrTSS additionally regresses per-zone
+    weighting that we deliberately don't replicate (IP_V250 W4, grill-locked).
+
+    Samples with hr ≤ 0 are dropped (sensor gaps); hr is clamped to
+    ``max_hr`` when provided so spikes can't inflate load. Assumes 1 Hz
+    sampling (each sample contributes one second).
+
+    Returns None when the series has no usable samples or LTHR is
+    unusable (≤0).
+    """
+    if not hr or not lthr or int(lthr) <= 0:
+        return None
+    lthr_f = float(int(lthr))
+    cap = float(max_hr) if max_hr and int(max_hr) > 0 else None
+    total = 0.0
+    used = 0
+    for h in hr:
+        try:
+            hv = float(h or 0)
+        except (TypeError, ValueError):
+            continue
+        if hv <= 0:
+            continue
+        if cap is not None and hv > cap:
+            hv = cap
+        total += (hv / lthr_f) ** 2
+        used += 1
+    if used == 0:
+        return None
+    return round(total / 3600.0 * 100.0, 1)
+
+
+def compute_fit_load(fit_path: Path) -> dict | None:
+    """Parse an imported FIT once and derive its training load.
+
+    Priority (IP_V250 W4, grill-locked):
+      1. power samples present → power TSS, load_source="power". When the
+         producing app stored ``training_stress_score`` in the file, that
+         value wins (it is the number ``_build_fit_normalized`` already
+         displays — one number app-wide); otherwise NP-based TSS against
+         profile FTP (``compute_power_tss``).
+      2. no power, HR samples present → local hrTSS (``compute_hr_tss``),
+         load_source="hr_local".
+      3. neither → ``{"tss": None, "load_source": None}`` — a definitive
+         marker (the file simply has no load signal) that stops re-parsing.
+
+    Also carries ``duration_s`` + ``started_at`` (true ride start from the
+    FIT session) so load_all_rides' existing FIT-vs-ICU dedupe can match
+    the ICU copy of a ride the importer relayed to intervals.icu — without
+    them the FIT copy (mtime date, no duration) never buckets with the ICU
+    record and the ride's TSS would double-count.
+
+    Returns None when nothing persistable was produced — FIT unparseable,
+    or the required profile input (FTP for power / LTHR for HR) is not set
+    yet — so the caller retries on a later listing instead of freezing a
+    zero into a sidecar.
+    """
+    try:
+        from fit_activity import parse_record_streams
+        streams = parse_record_streams(fit_path)
+    except Exception as e:
+        log.debug(f"compute_fit_load({fit_path.name}) parse failed: {e}")
+        return None
+    if not isinstance(streams, dict):
+        return None
+
+    power = streams.get("power") or []
+    hr = streams.get("hr") or []
+    duration_s = int(streams.get("duration_s") or 0) or None
+    has_power = any((p or 0) > 0 for p in power)
+    has_hr = any((h or 0) > 0 for h in hr)
+
+    started_at = None
+    ms = streams.get("start_time_ms")
+    if ms:
+        import datetime as _dt
+        try:
+            dt = _dt.datetime.fromtimestamp(
+                float(ms) / 1000.0, _dt.timezone.utc
+            )
+            if 2000 <= dt.year <= 2100:
+                started_at = dt.astimezone().isoformat()
+        except (TypeError, ValueError, OSError, OverflowError):
+            started_at = None
+
+    out: dict = {
+        "tss": None,
+        "load_source": None,
+        "duration_s": duration_s,
+        "started_at": started_at,
+    }
+    if not has_power and not has_hr:
+        return out  # definitive: no load signal in this file
+
+    try:
+        from profile_manager import ProfileManager
+        pm = ProfileManager.get()
+        ftp = int(pm.ftp or 0)
+        lthr = int(pm.lthr or 0)
+        max_hr = int(pm.max_hr or 0)
+    except Exception as e:
+        log.debug(f"compute_fit_load({fit_path.name}) profile read failed: {e}")
+        return None
+
+    if has_power:
+        file_tss = streams.get("file_tss")
+        if file_tss is not None:
+            out["tss"] = round(float(file_tss), 1)
+            out["load_source"] = "power"
+            return out
+        tss = compute_power_tss(power, ftp, duration_s)
+        if tss is None:
+            return None  # FTP not set yet — retry once the profile is complete
+        out["tss"] = tss
+        out["load_source"] = "power"
+        return out
+
+    tss = compute_hr_tss(hr, lthr, max_hr)
+    if tss is None:
+        return None  # LTHR not set yet — retry once the profile is complete
+    out["tss"] = tss
+    out["load_source"] = "hr_local"
+    return out
+
+
+def write_fit_load_sidecar(fit_path: Path) -> dict | None:
+    """Compute + persist the load sidecar for one imported FIT.
+
+    Called eagerly by ``POST /api/ride/import`` and lazily by
+    ``load_all_rides`` for FITs imported before W4. Only definitive results
+    are persisted — a parse failure or a not-yet-configured profile returns
+    None WITHOUT writing so the next listing retries.
+
+    Returns the load dict even if the disk write fails (callers can still
+    attach it for this listing).
+    """
+    # ponytail: sidecar is never invalidated when profile FTP/LTHR later
+    # change; delete <stem>.load.json to force a recompute.
+    load = compute_fit_load(fit_path)
+    if load is None:
+        return None
+    side = _fit_load_sidecar_path(fit_path)
+    try:
+        side.write_text(json.dumps(load, indent=2), encoding="utf-8")
+    except OSError as e:
+        log.warning(f"write_fit_load_sidecar({fit_path.name}) failed: {e}")
+    return load
+
+
+def read_fit_load_sidecar(fit_path: Path) -> dict | None:
+    """Read a previously persisted load sidecar; None when absent/corrupt
+    (corrupt → the caller recomputes and rewrites)."""
+    side = _fit_load_sidecar_path(fit_path)
+    if not side.exists():
+        return None
+    try:
+        data = json.loads(side.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except (json.JSONDecodeError, OSError) as e:
+        log.debug(f"read_fit_load_sidecar({fit_path.name}) failed: {e}")
+        return None
 
 
 def get_icu_ride(external_id: str) -> dict | None:

@@ -52,10 +52,12 @@ class TestUIv104TitleSource(unittest.TestCase):
         self.assertIn("const slotLabel", html)
         self.assertIn("CAL_CONTENT_LABEL[session.content_class]", html)
         self.assertIn("CAL_SESSION_LABEL[session.session_type]", html)
+        # v2.2.12 (0ef58e0a) renamed sessionDur→dispDur: the headline shows the
+        # matched FILE's duration (deliberate). Slot-centric label unchanged.
         self.assertRegex(
             html,
-            r"const\s+heroTitle\s*=\s*`\$\{slotLabel\}\s*\(\$\{sessionDur\}min\)`",
-            "modal hero title must be `${slotLabel} (${sessionDur}min)` (B1 slot-centric)",
+            r"const\s+heroTitle\s*=\s*`\$\{slotLabel\}\s*\(\$\{dispDur\}min\)`",
+            "modal hero title must be `${slotLabel} (${dispDur}min)` (B1 slot-centric)",
         )
         # Matched file is a SECONDARY line now, not the title source.
         self.assertIn("Matched library file:", html)

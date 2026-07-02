@@ -710,8 +710,13 @@ def setup_icu_hr(athlete_id: str = Query(""), api_key: str = Query("")):
         return {"lthr": None, "max_hr": None}
     import httpx
     try:
-        # Get recent activities to find max HR and threshold HR
-        url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities?oldest=2024-01-01&newest=2026-12-31"
+        # Get recent activities to find max HR and threshold HR.
+        # Rolling 12-month window (W2d): the old hardcoded 2024→2026 range was
+        # both a staleness source and a Jan-2027 time bomb.
+        from datetime import date as _date, timedelta as _td
+        _new = (_date.today() + _td(days=1)).isoformat()
+        _old = (_date.today() - _td(days=365)).isoformat()
+        url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities?oldest={_old}&newest={_new}"
         resp = httpx.get(url, auth=("API_KEY", api_key), timeout=15)
         if resp.status_code != 200:
             return {"lthr": None, "max_hr": None}
@@ -2951,6 +2956,7 @@ async def api_readiness_apply_tier_down(request: Request):
                 planned, library,
                 week_num=week_num, day_idx=day_idx,
                 used_names=excluded, raise_on_empty=True,
+                hr_bias=_hr_bias(),
             )
             target["zwo_file"] = planned.zwo_file
             target["zwo_name"] = planned.zwo_name
@@ -3212,6 +3218,7 @@ async def api_plan_auto_adjust(request: Request):
                             planned, library,
                             week_num=week_num, day_idx=day_idx,
                             used_names=excluded, raise_on_empty=True,
+                            hr_bias=_hr_bias(),
                         )
                         target["zwo_file"] = planned.zwo_file
                         target["zwo_name"] = planned.zwo_name
@@ -4583,10 +4590,15 @@ def api_workout_detail(category: str, filename: str, view: str | None = Query(No
     else:
         _hr_mode = _pm.target_mode == "hr"
     if _hr_mode:
-        from hr_targets import power_target_to_hr
+        from functools import partial
+        from hr_targets import power_target_to_hr as _pt2hr
         # int() — save_athlete's range validator stores numerics as float;
         # bpm maths rounds anyway but the UI shows this value verbatim.
         _lthr, _maxhr = int(_pm.lthr), int(_pm.max_hr)
+        # W1: athlete-tuned prescription rows (or None → Coggan defaults),
+        # threaded into every conversion below via partial.
+        _rows_ovr = _prescription_hr_rows(_pm)
+        power_target_to_hr = partial(_pt2hr, hr_rows_override=_rows_ovr)
 
     for el in workout_el:
         tag = el.tag
@@ -4676,12 +4688,13 @@ def api_workout_detail(category: str, filename: str, view: str | None = Query(No
         # converter uses. Client-side Math.round(frac*lthr) disagreed with
         # Python's banker's rounding at e.g. LTHR 150 (125 vs 124), breaking
         # the "one number everywhere" promise (red-team D2). Keyed by the %FTP
-        # gridline they sit on; values are the Coggan zone-top bpm.
+        # gridline they sit on; values are the zone-top bpm from the SAME
+        # resolved rows the converter uses (W1: custom rows flow through too).
+        from hr_targets import _resolve_rows_bpm as _rrb
+        _rows = _rrb(_lthr, _maxhr, _rows_ovr)
         out["hr_axis"] = {
-            "55": min(round(0.68 * _lthr), _maxhr),
-            "75": min(round(0.83 * _lthr), _maxhr),
-            "90": min(round(0.94 * _lthr), _maxhr),
-            "105": min(round(1.05 * _lthr), _maxhr),
+            "55": _rows[1][1], "75": _rows[2][1],
+            "90": _rows[3][1], "105": _rows[4][1],
         }
     return out
 
@@ -7215,14 +7228,18 @@ def api_settings():
         # the bare lthr value above is a 170 default when unset.
         "target_mode": pm.target_mode,
         "lthr_is_set": pm.lthr_is_set,
-        # Coggan prescription rows, computed HERE so no client surface ever
-        # re-derives bpm with JS rounding (red-team D2/F3). [low, high] bpm.
-        "hr_rows": (lambda L, M: {
-            "z1": [0, min(round(0.68 * L), M)],
-            "z2": [min(round(0.69 * L), M), min(round(0.83 * L), M)],
-            "z3": [min(round(0.84 * L), M), min(round(0.94 * L), M)],
-            "z4": [min(round(0.95 * L), M), min(round(1.05 * L), M)],
-        })(int(pm.lthr), int(pm.max_hr)),
+        # W2d: LTHR provenance — hr-mode accuracy hangs on this one number.
+        "lthr_source": pm._athlete.get("lthr_source"),
+        "lthr_source_date": pm._athlete.get("lthr_source_date"),
+        # Prescription rows, computed HERE so no client surface ever re-derives
+        # bpm with JS rounding (red-team D2/F3). [low, high] bpm. W1: resolved
+        # through the same helper the converter uses (custom rows included).
+        "hr_rows": (lambda rows: {
+            "z1": [0, rows[1][1]], "z2": list(rows[2]),
+            "z3": list(rows[3]), "z4": list(rows[4]),
+        })(__import__("hr_targets")._resolve_rows_bpm(
+            int(pm.lthr), int(pm.max_hr), _prescription_hr_rows(pm))),
+        "hr_rows_custom": _prescription_hr_rows(pm) is not None,
         "power_zones": p_zones,
         "hr_zones": h_zones,
         "w_per_kg": round(config.ATHLETE_FTP_W / max(config.ATHLETE_WEIGHT_KG, 1), 2),
@@ -7278,6 +7295,13 @@ def update_settings(request_body: dict):
             if config_key is not None:
                 updates[config_key] = val
 
+    # W2d provenance: a settings-form LTHR write is MANUAL — it blocks the ICU
+    # mirror (W3) from clobbering a tested value, and the UI shows source+date.
+    if "lthr" in athlete_updates:
+        from datetime import date as _date
+        athlete_updates["lthr_source"] = "manual"
+        athlete_updates["lthr_source_date"] = _date.today().isoformat()
+
     # Red-team S1/S2: validate lthr/max_hr HERE with the ranges that actually
     # PERSIST. save_athlete accepts max_hr [120,240] but the _set_max_hr write
     # path silently clamps to [140,220] — so a 240 got a 200 OK, never landed,
@@ -7314,6 +7338,31 @@ def update_settings(request_body: dict):
         eff_max = athlete_updates.get("max_hr", pm.max_hr)
         if eff_lthr is None or eff_max <= eff_lthr:
             athlete_updates["target_mode"] = "power"
+
+    # W1: custom HR prescription rows. null resets to Coggan defaults; a dict
+    # must be monotone, each low<high, all within [80, prospective max_hr].
+    if "hr_rows_custom" in request_body:
+        rows_in = request_body["hr_rows_custom"]
+        if rows_in is None:
+            athlete_updates["hr_prescription_rows_custom"] = None
+        else:
+            eff_max = athlete_updates.get("max_hr", pm.max_hr)
+            try:
+                z1h = int(rows_in["z1_high"])
+                z2 = [int(rows_in["z2"][0]), int(rows_in["z2"][1])]
+                z3 = [int(rows_in["z3"][0]), int(rows_in["z3"][1])]
+                z4 = [int(rows_in["z4"][0]), int(rows_in["z4"][1])]
+            except (KeyError, TypeError, ValueError, IndexError):
+                raise HTTPException(400, "hr_rows_custom must carry z1_high + z2/z3/z4 [low,high] bpm")
+            vals = [z1h, *z2, *z3, *z4]
+            if any(not (80 <= v <= eff_max) for v in vals):
+                raise HTTPException(400, f"HR target rows must be within [80, {eff_max}] bpm")
+            if not (z2[0] < z2[1] and z3[0] < z3[1] and z4[0] < z4[1]):
+                raise HTTPException(400, "each HR row needs low < high")
+            if not (z1h <= z2[1] <= z3[1] <= z4[1]):
+                raise HTTPException(400, "HR rows must not descend across zones (Z1 top ≤ Z2 ≤ Z3 ≤ Z4)")
+            athlete_updates["hr_prescription_rows_custom"] = {
+                "z1_high": z1h, "z2": z2, "z3": z3, "z4": z4}
 
     # E2 detect: did the FTP change to exactly-match the currently-cached
     # eFTP? If so this is almost certainly an "Accept eFTP" action.
@@ -7844,6 +7893,7 @@ def api_weekly_plan(week_offset: int = Query(0)):
                     s, library,
                     week_num=week.week_num, day_idx=i,
                     used_names=cross_week_used_names,
+                    hr_bias=_hr_bias(),
                 )
             except Exception:
                 pass
@@ -8692,18 +8742,20 @@ def _session_hr_target(session_type: str) -> dict:
     from profile_manager import ProfileManager
     pm = ProfileManager.get()
     if pm.target_mode == "hr":
-        lthr, maxhr = int(pm.lthr), int(pm.max_hr)
-        row = lambda lo, hi: {"low": min(round(lo * lthr), maxhr),
-                              "high": min(round(hi * lthr), maxhr)}
+        from hr_targets import _resolve_rows_bpm
+        # W1: same resolver as converter/FIT/axis — custom rows flow through.
+        rows = _resolve_rows_bpm(int(pm.lthr), int(pm.max_hr),
+                                 _prescription_hr_rows(pm))
         coggan = {
             "rest": None,
-            "recovery": {"zone": "Z1", "name": "Recovery", "low": 0, **{"high": row(0.5, 0.68)["high"]}, "ceiling_only": True},
-            "z2": {"zone": "Z2", "name": "Endurance", **row(0.69, 0.83)},
-            "long_z2": {"zone": "Z2", "name": "Endurance", **row(0.69, 0.83)},
-            "tempo": {"zone": "Z3", "name": "Tempo", **row(0.84, 0.94)},
-            "sweetspot": {"zone": "Z4", "name": "Sweet Spot / Threshold", **row(0.95, 1.05)},
-            "threshold": {"zone": "Z4", "name": "Threshold", **row(0.95, 1.05)},
-            "overunder": {"zone": "Z4", "name": "Over-Under", **row(0.95, 1.05)},
+            "recovery": {"zone": "Z1", "name": "Recovery", "low": 0,
+                         "high": rows[1][1], "ceiling_only": True},
+            "z2": {"zone": "Z2", "name": "Endurance", "low": rows[2][0], "high": rows[2][1]},
+            "long_z2": {"zone": "Z2", "name": "Endurance", "low": rows[2][0], "high": rows[2][1]},
+            "tempo": {"zone": "Z3", "name": "Tempo", "low": rows[3][0], "high": rows[3][1]},
+            "sweetspot": {"zone": "Z4", "name": "Sweet Spot / Threshold", "low": rows[4][0], "high": rows[4][1]},
+            "threshold": {"zone": "Z4", "name": "Threshold", "low": rows[4][0], "high": rows[4][1]},
+            "overunder": {"zone": "Z4", "name": "Over-Under", "low": rows[4][0], "high": rows[4][1]},
             "vo2max": {"zone": "Z5", "name": "VO2max", "low": 0, "high": 0,
                        "rpe": "8-9", "note": "by feel — HR can't guide VO2 efforts"},
         }
@@ -10610,17 +10662,34 @@ def _fit_hr_mode() -> bool:
         return False
 
 
-def _fit_hr_params() -> tuple[int, int]:
+def _prescription_hr_rows(pm) -> dict | None:
+    """The athlete's custom HR prescription rows (W1) or None for Coggan
+    defaults. SINGLE resolver — converter, FIT, hr_axis, /api/settings
+    hr_rows and session chips all route through here so the numbers can
+    never diverge. Shape: {"z1_high": int, "z2": [lo,hi], "z3": [lo,hi],
+    "z4": [lo,hi]} (absolute bpm; validated at the settings write)."""
+    rows = pm._athlete.get("hr_prescription_rows_custom")
+    return rows if isinstance(rows, dict) else None
+
+
+def _hr_bias() -> bool:
+    """hr target_mode -> soft matcher preference for HR-guidable files
+    (v2.5.0 W5). One chokepoint so every rematch/redraw path agrees."""
+    return _fit_hr_mode()
+
+
+def _fit_hr_params() -> tuple[int, int, dict | None]:
     # int() — save_athlete's validator stores lthr as float (e.g. 167.5 from an
     # ICU estimate); the detail endpoint ints too, so chart and FIT round the
     # same base and can't skew by 1-2 bpm (red-team F5).
     from profile_manager import ProfileManager
     pm = ProfileManager.get()
-    return int(pm.lthr), int(pm.max_hr)
+    return int(pm.lthr), int(pm.max_hr), _prescription_hr_rows(pm)
 
 
 def _fit_apply_hr_target(step, pct_lo: float, pct_hi: float, dur_s: float,
                          step_name: str, lthr: int, max_hr: int,
+                         hr_rows_override: dict | None = None,
                          intensity_kind: str = "active") -> None:
     """Set one FIT workout step's target for hr target_mode (IP_HR_ONLY C8).
 
@@ -10639,7 +10708,8 @@ def _fit_apply_hr_target(step, pct_lo: float, pct_hi: float, dur_s: float,
     from fit_tool.profile.profile_type import WorkoutStepTarget
     from hr_targets import power_target_to_hr
 
-    tgt = power_target_to_hr(pct_lo, pct_hi, dur_s, lthr, max_hr)
+    tgt = power_target_to_hr(pct_lo, pct_hi, dur_s, lthr, max_hr,
+                             hr_rows_override=hr_rows_override)
     no_floor = intensity_kind in ("rest", "cooldown") or tgt.get("zone") == 1
     if tgt["kind"] == "hr":
         lo = 1 if no_floor else tgt["bpm_low"]
@@ -13294,6 +13364,7 @@ def _pick_redraw_candidate(plan: dict, day_iso: str, exclude_extra: "list[str] |
             day_idx=day_idx,
             used_names=same_week | hard_exclude,
             raise_on_empty=True,
+            hr_bias=_hr_bias(),
             exact_duration=True,  # closest-duration tier (v1.8.24)
         )
         planned = cand
@@ -13541,7 +13612,8 @@ def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: i
         except Exception:
             day_idx = 0
         tp.match_zwo(planned, library, week_num=week_num, day_idx=day_idx,
-                     used_names=excluded, raise_on_empty=False)
+                     used_names=excluded, raise_on_empty=False,
+                     hr_bias=_hr_bias())
         if planned.zwo_file:
             target["zwo_file"] = planned.zwo_file
             target["zwo_name"] = planned.zwo_name
@@ -13722,6 +13794,7 @@ async def api_plan_rematch_day(day: str):
                 day_idx=day_idx,
                 used_names=excluded,
                 raise_on_empty=True,
+                hr_bias=_hr_bias(),
                 # v1.8.24 — closest-duration match on reshuffle (see helper).
                 exact_duration=True,
             )
@@ -14325,6 +14398,23 @@ async def api_ride_import(
         raise HTTPException(status_code=500, detail="failed to persist FIT")
 
     parsed = _parse_fit_stats(fit_path)
+
+    # W4 (v2.5.0): compute + persist the load sidecar (tss + load_source)
+    # at ingestion so load_all_rides / CTL / ATL / weekly-actual count this
+    # ride without re-parsing the FIT on every listing (pre-W4 imports are
+    # lazily backfilled by ride_storage.load_all_rides). Best-effort: a
+    # failure never blocks the import; readers stay untouched.
+    try:
+        import ride_storage as _rs_w4
+        _load = _rs_w4.write_fit_load_sidecar(fit_path)
+        if isinstance(_load, dict) and _load.get("tss") is not None:
+            # Surface in the import response; never clobber a TSS the FIT
+            # itself carried (pre-existing behavior for power rides).
+            if parsed.get("tss") is None:
+                parsed["tss"] = _load["tss"]
+            parsed.setdefault("load_source", _load.get("load_source"))
+    except Exception as _e:
+        log_ride_import.debug(f"W4 load sidecar skipped: {_e}")
 
     log_ride_import.info(
         f"EVENT=ride_imported id={ride_id} bytes={len(data)} "

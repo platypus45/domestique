@@ -26,10 +26,55 @@ after every test so the singleton can never leak across test boundaries.
 from __future__ import annotations
 
 import threading
+from datetime import date
 
 import pytest
 
 import app as app_module
+import training_planner as _tp
+
+# ── W8 (v2.5.0): shared planner-environment pinning ─────────────────────────
+# generate_plan is DETERMINISTIC under a fixed seed_salt; the historic planner
+# suite flakiness was ENVIRONMENT COUPLING — it self-fetches live CTL
+# (get_today_metrics → ICU wellness), recent_mean_weekly_tss() from the live
+# ~/.domestique archive, and anchors phase layout on date.today(). The planner
+# suites (test_planner_diversification / _variety_bonus /
+# _full_library_utilization / _interval_variety) pin all three via this block
+# so the same plan is produced on any machine, any day.
+#
+# PLANNER_PIN_WEEKLY_TSS = 650 is the fixture-implied value (~10h/week × 65
+# TSS/h, the legacy availability cap): the E1 ACWR ceiling becomes 650×1.3=845,
+# above every phase tss_per_week target, so the full 24-week plan geometry the
+# suites' acceptance thresholds were calibrated for is preserved. (A live
+# archive in a low-volume period caps weeks at ~460 TSS and shrinks the plan
+# to ~96 sessions — the flake vector.)
+PLANNER_PIN_ANCHOR = date(2026, 1, 5)      # fixed Monday — frozen "today"
+PLANNER_PIN_CTL = 50.0
+PLANNER_PIN_WEEKLY_TSS = 650.0
+# Splat into generate_plan calls: tp.generate_plan(goal, **PLANNER_PIN_ARGS)
+PLANNER_PIN_ARGS = {
+    "current_ctl": PLANNER_PIN_CTL,
+    "recent_weekly_tss": PLANNER_PIN_WEEKLY_TSS,
+}
+
+
+class FrozenPlannerDate(date):
+    @classmethod
+    def today(cls):
+        return cls(PLANNER_PIN_ANCHOR.year, PLANNER_PIN_ANCHOR.month,
+                   PLANNER_PIN_ANCHOR.day)
+
+
+@pytest.fixture(scope="module")
+def planner_pinned_env():
+    """Freeze date.today() inside training_planner and stub the live ICU
+    metrics fetch (its result is unused once current_ctl is passed, but the
+    call itself is a network round-trip per generate_plan). Request from a
+    module-scoped autouse fixture in each planner suite."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(_tp, "date", FrozenPlannerDate)
+        mp.setattr(_tp, "get_today_metrics", lambda: {})
+        yield
 
 
 @pytest.fixture(autouse=True)

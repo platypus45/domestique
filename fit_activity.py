@@ -280,6 +280,102 @@ def read_session_sport(fit_path: Path) -> "str | None":
     return None
 
 
+def parse_record_streams(fit_path: Path) -> "dict | None":
+    """W4 (v2.5.0) — extract per-record power/HR streams + session totals
+    for post-ride load (TSS) computation at FIT ingestion.
+
+    One walk over the file. Returns::
+
+        {"power": list[int],        # per-RecordMessage, 0 = no reading
+         "hr": list[int],           # per-RecordMessage, 0 = no reading
+         "duration_s": int,         # SessionMessage total_timer_time, falls
+                                    # back to the record count (1 Hz assumption)
+         "start_time_ms": int|None, # SessionMessage start_time (unix millis,
+                                    # fit_tool's DateTime convention)
+         "file_tss": float|None}    # training_stress_score if the producing
+                                    # app stored one
+
+    Returns None when the FIT itself fails to parse (caller retries later).
+    """
+    try:
+        from fit_tool.fit_file import FitFile
+    except Exception as e:
+        log.warning(f"parse_record_streams: fit_tool import failed: {e}")
+        return None
+
+    try:
+        ff = FitFile.from_file(str(fit_path))
+    except Exception as e:
+        log.warning(f"parse_record_streams({fit_path}) FIT parse failed: {e}")
+        return None
+
+    def _field(msg, name):
+        """Read a message field across fit_tool versions: attribute first,
+        ``get_value`` fallback (same split parse_rr_intervals handles —
+        some fit_tool versions only expose one of the two)."""
+        try:
+            v = getattr(msg, name)
+            if v is not None:
+                return v
+        except Exception:
+            pass
+        try:
+            return msg.get_value(name)
+        except Exception:
+            return None
+
+    power: list[int] = []
+    hr: list[int] = []
+    duration_s = 0
+    start_time_ms: "int | None" = None
+    file_tss: "float | None" = None
+    try:
+        for rec in ff.records:
+            msg = rec.message
+            mtype = type(msg).__name__
+            if mtype == "RecordMessage":
+                p = _field(msg, "power")
+                try:
+                    power.append(int(p) if p is not None else 0)
+                except (TypeError, ValueError):
+                    power.append(0)
+                h = _field(msg, "heart_rate")
+                try:
+                    hr.append(int(h) if h is not None else 0)
+                except (TypeError, ValueError):
+                    hr.append(0)
+            elif mtype == "SessionMessage":
+                v = _field(msg, "total_timer_time")
+                if v is not None:
+                    try:
+                        duration_s = int(round(float(v)))
+                    except (TypeError, ValueError):
+                        pass
+                v = _field(msg, "start_time")
+                if v is not None:
+                    try:
+                        start_time_ms = int(v)
+                    except (TypeError, ValueError):
+                        pass
+                v = _field(msg, "training_stress_score")
+                if v is not None:
+                    try:
+                        file_tss = float(v)
+                    except (TypeError, ValueError):
+                        pass
+    except Exception as e:
+        log.warning(f"parse_record_streams({fit_path}) walk failed: {e}")
+        return None
+
+    return {
+        "power": power,
+        "hr": hr,
+        "duration_s": duration_s if duration_s > 0 else len(power),
+        "start_time_ms": start_time_ms,
+        "file_tss": file_tss,
+    }
+
+
 def _serial_for_profile(profile_id: str) -> int:
     """Stable 32-bit serial derived from profile_id (deterministic)."""
     h = hashlib.sha256(profile_id.encode("utf-8")).digest()

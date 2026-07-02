@@ -52,12 +52,18 @@ class TestCoherenceInCache(unittest.TestCase):
         cls.cls = cls.cls.get("classifications", cls.cls)
 
     def test_smoking_gun_is_flagged_and_named_honestly(self):
+        """v2.5.0 premise update: the v2.2 era flagged this file as an
+        'endurance ride hiding a VO2 set'. Independent review (2026-07-02)
+        ruled the honest label IS endurance_intervals — 5x90s @1.10 with
+        full recoveries on an IF-0.64 endurance ride is surges/strides, not
+        a VO2 main set. The label now discloses the intervals; the old
+        incoherent+suffix state was the pre-v2.4.4 stopgap."""
         sg = self.cls.get("endurance_5x2min_120min.zwo")
         self.assertIsNotNone(sg, "smoking-gun fixture missing from library")
-        self.assertFalse(sg.get("objective_coherent"),
-                         "endurance file hiding a VO2 set must be incoherent")
-        self.assertIn("+VO2 set", sg.get("display_name", ""),
-                      "honest display name must surface the hidden VO2 set")
+        self.assertEqual(sg.get("primary"), "endurance_intervals",
+                         "reviewed verdict: surges on an endurance base")
+        self.assertIn("Strides", sg.get("display_name", ""),
+                      "display name must disclose the interval content")
 
     def test_clean_long_z2_is_coherent(self):
         clean = self.cls.get("endurance_clean_210min.zwo")

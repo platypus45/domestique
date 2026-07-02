@@ -1422,6 +1422,9 @@ SALVAGE_MIN_BLOCK_S = 50       # the CUMULATIVE-Z4 branch also needs a SUSTAINED
                                # scattered false-positives block ≤40 s. Z5+ work
                                # (VO2/anaerobic/strides-with-pops) still enters via
                                # the high_intensity branch regardless of block.
+SALVAGE_THRESHOLD_RUN_S = 60   # the THRESHOLD rung additionally needs ONE contiguous
+                               # ≥0.95 run of ≥60 s (longest_hard_segment_s) —
+                               # INCLUSIVE: the ledger floor sits exactly at 60 s.
 
 
 def _salvage_hard(features: dict, segments: list[dict] | None) -> str | None:
@@ -1489,9 +1492,21 @@ def _salvage_hard(features: dict, segments: list[dict] | None) -> str | None:
         # Threshold — TRUE threshold (≥95% FTP) is the dominant hard band. Gate on
         # z4_upper_s ONLY; 91-94% is sweet-spot territory (handled above), matching
         # the main cascade's threshold rule (which never counts raw z4).
+        # v2.5.0 crest-sliver guard: the rung ALSO requires one CONTIGUOUS ≥0.95
+        # run of ≥ SALVAGE_THRESHOLD_RUN_S (longest_hard_segment_s already measures
+        # the longest contiguous ≥0.95 run). Scattered crest slivers inside
+        # sub-threshold pyramids clear the cumulative band floor without ever
+        # HOLDING threshold (the 3 verified false-positives:
+        # threshold_steady_37min 46 s, recovery_spin_46min_v3 51 s,
+        # endurance_2x30s_17min 56 s) — those fall THROUGH to the sustained
+        # steady-mid check below (tempo or None), NOT the unconditional tempo.
+        # INCLUSIVE bound: the ledger floor sits exactly at 60 s
+        # (tempo_10x1min_61min, tempo_progression_9x1min_60min).
         if z4_upper_s >= SALVAGE_BAND_S:
-            return "threshold"
-        return "tempo"
+            if features["longest_hard_segment_s"] >= SALVAGE_THRESHOLD_RUN_S:
+                return "threshold"
+        else:
+            return "tempo"
 
     # No true-hard dose, but a long sustained STEADY tempo–threshold block that
     # missed the ≥20 min Z3 tempo gate → tempo (not plain endurance). STEADY-only:
@@ -1559,6 +1574,26 @@ def classify_v104(features: dict, tags: list[str] | None = None,
         _mid_block_s = _sustained_mid_block_s(segments)
         _token = z7_s < 90 and _mid_block_s >= 600 and _mid_block_s >= 2 * z7_s
         if not _token:
+            # v2.5.0 — IF-dose demotion (P1.4 root fix). NOTE: if_fraction is
+            # the RMS of per-second power FRACTIONS over the whole ride (rests
+            # included) — NOT Coggan IF (np_fraction / the index IF are
+            # different measures). A "sprint" session whose RMS clears 0.82
+            # while carrying a sustained ≥10-min tempo–threshold mid block is
+            # a threshold/sweet-spot ride with sprints bolted on, not a
+            # neuromuscular session — demote to the sustained band (z4-upper
+            # vs sweet-spot dominance), KEEPING has_sprints in secondary so
+            # matching still sees the sprint content. z7 ≥ 300 s is a real
+            # anaerobic/sprint dose and is never demoted here. The v2.0.6
+            # matcher-side sprint-slot ceiling (IF ≤ 0.82) REMAINS
+            # load-bearing: ~64 high-RMS NM files have no ≥10-min mid block,
+            # stay neuromuscular, and still must not fill easy sprint slots.
+            if (features["if_fraction"] > 0.82 and _mid_block_s >= 600
+                    and z7_s < 300):
+                demoted = ("threshold"
+                           if features.get("z4_upper_s", z4_s) >= features["sweet_spot_s"]
+                           else "sweet_spot")
+                conf = _confidence_from_dose(_mid_block_s, 600)
+                return demoted, conf, secondary
             conf = _confidence_from_dose(features["sprint_segment_count"], DOSE_NM_MIN_SPRINTS, 8)
             return "neuromuscular", conf, secondary
 

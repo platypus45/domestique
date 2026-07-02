@@ -146,3 +146,175 @@ def test_classifier_ramp_not_counted_as_tempo_block(_classifier):
     if (WK / fn).exists():
         live = _classifier.classify_zwo_v104(WK / fn).get("primary")
         assert live != "tempo", f"ramp-average mislabelled tempo (live={live})"
+
+
+# ── v2.5.0 P1.3 (G8): crest-sliver guard on the salvage THRESHOLD rung ────────
+# _salvage_hard's threshold rung additionally requires ONE contiguous ≥0.95 run
+# of ≥60 s (longest_hard_segment_s; INCLUSIVE — the ledger floor sits exactly at
+# 60 s: tempo_10x1min_61min, tempo_progression_9x1min_60min). Scattered crest
+# slivers inside sub-threshold pyramids clear the cumulative band floor without
+# ever holding threshold; the rung failure falls THROUGH to the steady-mid check
+# (tempo or None), never the branch's unconditional tempo. The 59-file ledger
+# keep-hard guard is test_classifier_code_no_longer_routes_corrected_files_to_easy
+# above (unchanged).
+
+P13_FALSE_POSITIVES = (  # verified keep-easy (re-grill 2026-07-02; w6 verdicts)
+    "threshold_steady_37min.zwo",   # longest ≥0.95 run: 46 s
+    "recovery_spin_46min_v3.zwo",   # 51 s
+    "endurance_2x30s_17min.zwo",    # 56 s
+)
+
+
+def test_p13_false_positives_stay_easy_live(_classifier):
+    """The 3 human-verified salvage false-positives must classify EASY live —
+    before the rung guard they salvaged to threshold off scattered slivers."""
+    bad = []
+    for fn in P13_FALSE_POSITIVES:
+        live = _classifier.classify_zwo_v104(WK / fn).get("primary")
+        if live not in EASY:
+            bad.append(f"{fn}: live={live}")
+    assert not bad, "crest-sliver FPs salvaged to hard again:\n" + "\n".join(bad)
+
+
+def _sliver_pyramid_features(longest_hard_s: int) -> dict:
+    """Synthetic crest-sliver pyramid (modelled on threshold_steady_37min):
+    Z1-dominated easy exit, cumulative Z4 clears the salvage entry (cum ≥210 s,
+    Z4+ block ≥50 s), every rung before threshold fails, so the outcome is
+    decided by the threshold rung's contiguous-run gate."""
+    z = {"z1": 1500, "z2": 200, "z3": 0, "z4": 284, "z5": 0, "z6": 0, "z7": 0}
+    return {
+        "z_seconds": z,
+        "valid_dur_s": sum(z.values()),
+        "longest_hard_segment_s": longest_hard_s,  # longest contiguous ≥0.95 run
+        "longest_z4plus_block_s": 64,              # entry + not-strides
+        "z4_upper_s": 200,                         # ≥ SALVAGE_BAND_S → rung reached
+        "sweet_spot_s": 0,
+    }
+
+
+@pytest.mark.parametrize("run_s,expect", [
+    (45, None),         # ledger-adjacent sliver (threshold_3x4min_57min z95)
+    (46, None),         # FP minimum (threshold_steady_37min)
+    (56, None),         # FP maximum (endurance_2x30s_17min)
+    (60, "threshold"),  # INCLUSIVE ledger floor
+])
+def test_p13_threshold_rung_contiguous_run_boundary(_classifier, run_s, expect):
+    got = _classifier._salvage_hard(_sliver_pyramid_features(run_s), None)
+    assert got == expect, f"run={run_s}s: salvage={got}, want {expect}"
+
+
+def test_p13_rung_failure_falls_to_steady_mid_check(_classifier):
+    """On rung failure the sliver file must reach the STEADY-MID check: with a
+    ≥10-min sustained steady mid block it earns tempo (not threshold, and not
+    via the branch's unconditional tempo — that path is only for z4_upper below
+    the band floor)."""
+    segs = [{"kind": "steady", "power": 0.80, "duration_s": 660}]
+    got = _classifier._salvage_hard(_sliver_pyramid_features(56), segs)
+    assert got == "tempo", f"expected steady-mid tempo fall-through, got {got}"
+
+
+# ── v2.5.0 P1.4 (G9): neuromuscular IF-dose demotion ──────────────────────────
+# classify_v104 demotes a "sprint" session to threshold/sweet_spot when
+# if_fraction > 0.82 (STRICT; RMS of power fractions — NOT Coggan IF) AND a
+# sustained tempo–threshold mid block ≥600 s (INCLUSIVE) AND z7 < 300 s
+# (INCLUSIVE exclusion: a ≥300 s Z7 dose is genuinely anaerobic/sprint work).
+# has_sprints stays set on demoted rides.
+
+def _sprint_over_mid_features(if_fraction: float, z7_s: int,
+                              z4_upper_s: int = 700,
+                              sweet_spot_s: int = 300) -> dict:
+    """Synthetic sprints-over-sustained-mid-block session that reaches the
+    neuromuscular rule (≥4 sprint segments, z7 ≥ 20 s, no earlier rule fires)."""
+    z = {"z1": 900, "z2": 600, "z3": 0, "z4": 700, "z5": 0, "z6": 0, "z7": z7_s}
+    return {
+        "z_seconds": z,
+        "valid_dur_s": sum(z.values()),
+        "sprint_segment_count": 6,
+        "sweet_spot_s": sweet_spot_s,
+        "z4_upper_s": z4_upper_s,
+        "z4_lower_s": 0,
+        "longest_hard_segment_s": 0,
+        "if_fraction": if_fraction,
+        "np_fraction": if_fraction,
+        "peak_power_fraction": 1.6,
+        "is_over_under": False,
+        "ou_transitions": 0,
+        "is_microinterval": False,
+        "micro_cycles": 0,
+        "is_ftp_test": False,
+        "ftp_test_subtype": "",
+    }
+
+
+def _steady_mid_segments(mid_s: int) -> list[dict]:
+    return [{"kind": "steady", "power": 0.90, "duration_s": mid_s}]
+
+
+@pytest.mark.parametrize("if_frac,mid_s,z7_s,expect", [
+    (0.82, 600, 120, "neuromuscular"),   # if_fraction gate is STRICT >
+    (0.821, 600, 120, "threshold"),
+    (0.90, 599, 120, "neuromuscular"),   # mid-block gate INCLUSIVE at 600
+    (0.90, 600, 120, "threshold"),
+    (0.90, 600, 300, "neuromuscular"),   # z7 exclusion INCLUSIVE at 300
+    (0.90, 600, 299, "threshold"),
+])
+def test_p14_demotion_boundary(_classifier, if_frac, mid_s, z7_s, expect):
+    primary, _, _ = _classifier.classify_v104(
+        _sprint_over_mid_features(if_frac, z7_s),
+        segments=_steady_mid_segments(mid_s))
+    assert primary == expect, \
+        f"if={if_frac} mid={mid_s} z7={z7_s}: got {primary}, want {expect}"
+
+
+def test_p14_demotion_routes_by_band_dominance(_classifier):
+    """z4_upper ≥ sweet_spot (tie included) → threshold; else sweet_spot."""
+    tie, _, _ = _classifier.classify_v104(
+        _sprint_over_mid_features(0.90, 120, z4_upper_s=300, sweet_spot_s=300),
+        segments=_steady_mid_segments(600))
+    assert tie == "threshold", f"tie must route threshold, got {tie}"
+    ss, _, _ = _classifier.classify_v104(
+        _sprint_over_mid_features(0.90, 120, z4_upper_s=200, sweet_spot_s=600),
+        segments=_steady_mid_segments(600))
+    assert ss == "sweet_spot", f"SS-dominant must route sweet_spot, got {ss}"
+
+
+def test_p14_demotion_keeps_has_sprints_flag(_classifier):
+    """The demoted ride keeps has_sprints so matching still sees the sprints."""
+    primary, _, secondary = _classifier.classify_v104(
+        _sprint_over_mid_features(0.90, 120),
+        segments=_steady_mid_segments(600))
+    assert primary == "threshold"
+    assert secondary["has_sprints"] is True
+
+
+P14_SLICE = {  # cache primary=neuromuscular rows the demotion re-classes
+    "neuromuscular_15s0s_7x_60min.zwo": "threshold",
+    "neuromuscular_15s0s_8x_60min.zwo": "threshold",
+    "neuromuscular_15s0s_8x_60min_renamed_v46_1.zwo": "threshold",
+    "neuromuscular_15s300s_6x_74min.zwo": "threshold",
+    "neuromuscular_4x30s_144min.zwo": "threshold",
+    "neuromuscular_5x30s_46min.zwo": "threshold",
+    "sprints_5x2min_53min.zwo": "threshold",
+    "sprints_6x15s_58min.zwo": "threshold",
+}
+
+
+def test_p14_slice_files_classify_to_demoted_class_live(_classifier):
+    """Every attributed demotion target holds under the LIVE classifier. (The
+    caches stay frozen until the independent review — this locks the code.)"""
+    bad = []
+    for fn, want in sorted(P14_SLICE.items()):
+        live = _classifier.classify_zwo_v104(WK / fn).get("primary")
+        if live != want:
+            bad.append(f"{fn}: live={live} (want {want})")
+    assert not bad, "P1.4 slice drifted:\n" + "\n".join(bad)
+
+
+def test_p14_genuine_neuromuscular_stays(_classifier):
+    """Genuine sprint sessions keep neuromuscular: a real Z7 dose (z7 ≥ 300 s,
+    despite high RMS + long mid block) and a high-RMS session with NO sustained
+    mid block (the ~64-file clientele the v2.0.6 matcher ceiling still guards)."""
+    for fn in ("neuromuscular_30s60s_10x_63min_renamed_v46_1.zwo",  # z7=360
+               "neuromuscular_10s0s_15x_48min.zwo"):                # mid=0, if=0.826
+        live = _classifier.classify_zwo_v104(WK / fn).get("primary")
+        assert live == "neuromuscular", f"{fn}: live={live}, must stay NM"

@@ -4539,8 +4539,15 @@ def download_workout_by_id(filename: str):
 
 
 @app.get("/api/workout/{category}/{filename}")
-def api_workout_detail(category: str, filename: str):
-    """Parse a ZWO file and return segment data for visualization."""
+def api_workout_detail(category: str, filename: str, view: str | None = Query(None)):
+    """Parse a ZWO file and return segment data for visualization.
+
+    ``view`` overrides the athlete's target_mode for THIS response only —
+    'hr' shows the HR conversion to a power-mode user (and 'power' the watt
+    view to an hr-mode user), powering the modal's ⚡/❤ peek toggle. The hr
+    view is only honoured when the profile has a sane LTHR (same invariant
+    as the settings gate); downloads follow the same param so what you see
+    is what the head unit gets."""
     # Flat layout first, legacy category/file fallback
     path = _safe_path(WORKOUT_DIR, filename)
     if not path or not path.exists():
@@ -4565,10 +4572,16 @@ def api_workout_detail(category: str, filename: str):
 
     # hr target_mode (IP_HR_ONLY): attach per-segment HR/RPE guidance from the
     # single-source converter so the detail chart shows exactly what the FIT
-    # builder will put on the head unit. Power mode payload is unchanged.
+    # builder will put on the head unit. Power mode payload is unchanged
+    # (unless view='hr' explicitly asks for the peek).
     from profile_manager import ProfileManager
     _pm = ProfileManager.get()
-    _hr_mode = _pm.target_mode == "hr"
+    if view == "hr":
+        _hr_mode = _pm.lthr_is_set and _pm.max_hr > _pm.lthr
+    elif view == "power":
+        _hr_mode = False
+    else:
+        _hr_mode = _pm.target_mode == "hr"
     if _hr_mode:
         from hr_targets import power_target_to_hr
         # int() — save_athlete's range validator stores numerics as float;
@@ -4651,6 +4664,9 @@ def api_workout_detail(category: str, filename: str):
         "total_seconds": cursor,
         "segments": segments,
         "ftp": ftp,
+        # Whether the ⚡/❤ peek toggle can offer an HR view at all (needs a
+        # sane LTHR — same invariant as the settings gate).
+        "hr_available": bool(_pm.lthr_is_set and _pm.max_hr > _pm.lthr),
     }
     if _hr_mode:
         out["target_mode"] = "hr"
@@ -10474,7 +10490,8 @@ async def api_plan_update(debounce: int = Query(0)):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def build_fit_workout_bytes(session_type: str, duration_min: int,
-                            name: str, zwo_file: str | None = None) -> bytes:
+                            name: str, zwo_file: str | None = None,
+                            view: str | None = None) -> bytes:
     """Generate FIT workout bytes. Shared by ``/api/export/fit-workout`` AND
     ``launcher.JsApi.save_fit`` (issue #5) so the desktop native-save path can
     produce the bytes IN-PROCESS, with no WKWebView ``fetch()`` that can resolve
@@ -10490,12 +10507,22 @@ def build_fit_workout_bytes(session_type: str, duration_min: int,
     """
     from fit_tool.fit_file_builder import FitFileBuilder  # noqa: F401 (availability check)
 
+    # view override (modal ⚡/❤ toggle): what you SEE is what the FIT gets.
+    # 'hr' only honoured with a sane LTHR (same invariant as the settings gate).
+    hr_force: bool | None = None
+    if view == "hr":
+        from profile_manager import ProfileManager
+        _pm = ProfileManager.get()
+        hr_force = bool(_pm.lthr_is_set and _pm.max_hr > _pm.lthr)
+    elif view == "power":
+        hr_force = False
+
     ftp = config.ATHLETE_FTP_W
     if zwo_file:
         zwo_path = _safe_path(WORKOUT_DIR, zwo_file)
         if not zwo_path or not zwo_path.exists():
             raise FileNotFoundError(f"ZWO file not found: {zwo_file}")
-        fit_data = _build_fit_workout_from_zwo(name, zwo_path, ftp)
+        fit_data = _build_fit_workout_from_zwo(name, zwo_path, ftp, hr_force=hr_force)
     else:
         st_norm = (session_type or "").lower().replace("_", "").replace("-", "")
         blocks = []
@@ -10528,7 +10555,7 @@ def build_fit_workout_bytes(session_type: str, duration_min: int,
         else:
             blocks.append({"name": session_type, "min": main_min, "pctLow": 56, "pctHigh": 75, "intensity": "active"})
         blocks.append({"name": "Cooldown", "min": cooldown, "pctLow": 60, "pctHigh": 40, "intensity": "cooldown"})
-        fit_data = _build_fit_workout(name, blocks, ftp)
+        fit_data = _build_fit_workout(name, blocks, ftp, hr_force=hr_force)
 
     if not fit_data:
         raise ValueError("FIT generation produced no data")
@@ -10541,6 +10568,7 @@ def api_export_fit_workout(
     duration_min: int = Query(75),
     name: str = Query("Workout"),
     zwo_file: str | None = Query(None),
+    view: str | None = Query(None),  # 'hr'|'power' — modal toggle: WYSIWYG FIT
 ):
     """Generate a FIT binary workout file for Garmin Edge / Wahoo ELEMNT / Karoo.
 
@@ -10549,7 +10577,7 @@ def api_export_fit_workout(
     """
     from fastapi.responses import Response
     try:
-        fit_data = build_fit_workout_bytes(session_type, duration_min, name, zwo_file)
+        fit_data = build_fit_workout_bytes(session_type, duration_min, name, zwo_file, view=view)
     except ImportError as ie:
         return JSONResponse({"error": f"fit_tool not installed. Run: pip install fit_tool. Detail: {ie}"}, 500)
     except FileNotFoundError as fe:
@@ -10639,11 +10667,13 @@ def _fit_apply_hr_target(step, pct_lo: float, pct_hi: float, dur_s: float,
         step.workout_step_name = rpe[:15]
 
 
-def _build_fit_workout(name: str, blocks: list[dict], ftp: int) -> bytes:
+def _build_fit_workout(name: str, blocks: list[dict], ftp: int,
+                       hr_force: bool | None = None) -> bytes:
     """Build a proper FIT binary workout file using fit_tool.
 
     Produces a valid .fit file readable by Garmin Edge, Wahoo ELEMNT, and other ANT+ devices.
     Workout steps use absolute power targets in watts (calculated from %FTP).
+    ``hr_force`` overrides the profile target_mode (modal ⚡/❤ toggle).
     """
     from fit_tool.fit_file_builder import FitFileBuilder
     from fit_tool.profile.messages.file_id_message import FileIdMessage
@@ -10685,7 +10715,8 @@ def _build_fit_workout(name: str, blocks: list[dict], ftp: int) -> bytes:
         "cooldown": Intensity.COOLDOWN,
     }
 
-    hr_mode = _fit_hr_params() if _fit_hr_mode() else None
+    _hr_on = _fit_hr_mode() if hr_force is None else hr_force
+    hr_mode = _fit_hr_params() if _hr_on else None
     for i, b in enumerate(blocks):
         step = WorkoutStepMessage()
         step.message_index = i
@@ -10733,7 +10764,8 @@ def _build_fit_workout(name: str, blocks: list[dict], ftp: int) -> bytes:
     return fit_file.to_bytes()
 
 
-def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int) -> bytes:
+def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int,
+                                hr_force: bool | None = None) -> bytes:
     """v1.0.3 fix-forward(workout-detail UX): transcode a ZWO file directly
     into a FIT workout. The previous code path keyed only on
     ``(session_type, duration_min)`` so the FIT body could be a generic Tempo
@@ -10773,7 +10805,9 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int) -> bytes:
     # ramps are expanded below — the power-mode 30 s staircase would put every
     # ramp sub-step under HR_MIN_SEG_S and wrongly degrade whole warmups to RPE,
     # so in hr mode a ramp stays ONE step spanning its HR range.
-    hr_mode = _fit_hr_params() if _fit_hr_mode() else None
+    # ``hr_force`` (modal ⚡/❤ toggle) overrides the profile target_mode.
+    _hr_on = _fit_hr_mode() if hr_force is None else hr_force
+    hr_mode = _fit_hr_params() if _hr_on else None
 
     # (intensity, duration_seconds, power_start_fraction, power_end_fraction)
     # start/end are IN TIME ORDER (equal for flat steps).

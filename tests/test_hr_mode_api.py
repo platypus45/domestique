@@ -186,3 +186,45 @@ def test_lthr_is_set_rejects_insane_values():
     assert _StubPM({"lthr": 0, "max_hr": 190, "target_mode": "hr"}).target_mode == "power"
     assert _StubPM({"lthr": 50, "max_hr": 190, "target_mode": "hr"}).target_mode == "power"
     assert _StubPM({"lthr": 160, "max_hr": 190, "target_mode": "hr"}).target_mode == "hr"
+
+
+# ── modal ⚡/❤ peek toggle (view override) ────────────────────────────────────
+
+def test_detail_view_hr_in_power_mode(client, monkeypatch):
+    """view=hr shows the HR conversion to a power-mode user (peek toggle)."""
+    _stub(monkeypatch, {"lthr": 160, "max_hr": 185})  # global mode: power
+    d = client.get(f"/api/workout/all/{ZWO}?view=hr").json()
+    assert d["target_mode"] == "hr" and d.get("hr_axis")
+    assert any("hr" in s for s in d["segments"])
+
+
+def test_detail_view_power_in_hr_mode(client, monkeypatch):
+    """view=power shows the watt view to an hr-mode user."""
+    _stub(monkeypatch, {"lthr": 160, "max_hr": 185, "target_mode": "hr"})
+    d = client.get(f"/api/workout/all/{ZWO}?view=power").json()
+    assert "target_mode" not in d
+    assert all("hr" not in s for s in d["segments"])
+
+
+def test_detail_view_hr_ignored_without_sane_lthr(client, monkeypatch):
+    """The peek honours the same gate as the settings toggle."""
+    _stub(monkeypatch, {"max_hr": 190})  # no lthr
+    d = client.get(f"/api/workout/all/{ZWO}?view=hr").json()
+    assert "target_mode" not in d and d["hr_available"] is False
+
+
+def test_fit_export_view_hr_in_power_mode(client, monkeypatch):
+    """The FIT download follows the toggle (WYSIWYG)."""
+    fitparse = pytest.importorskip("fitparse")
+    _stub(monkeypatch, {"lthr": 160, "max_hr": 185})  # global: power
+    r = client.get(f"/api/export/fit-workout?session_type=z2&duration_min=56&name=t&zwo_file={ZWO}&view=hr")
+    assert r.status_code == 200
+    steps = [{f.name: f.value for f in m.fields}
+             for m in fitparse.FitFile(r.content).get_messages("workout_step")]
+    assert any(s.get("target_type") == "heart_rate" for s in steps)
+    # and view=power forces watts even in hr mode
+    _stub(monkeypatch, {"lthr": 160, "max_hr": 185, "target_mode": "hr"})
+    r2 = client.get(f"/api/export/fit-workout?session_type=z2&duration_min=56&name=t&zwo_file={ZWO}&view=power")
+    steps2 = [{f.name: f.value for f in m.fields}
+              for m in fitparse.FitFile(r2.content).get_messages("workout_step")]
+    assert all(s.get("target_type") == "power" for s in steps2)

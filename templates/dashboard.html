@@ -3664,12 +3664,16 @@ function workoutProfileSVG(segments, ftp, totalSec, hrCtx) {
   </div>`;
 }
 
-async function openWorkoutDetail(category, filename, meta) {
+async function openWorkoutDetail(category, filename, meta, view) {
+  // ``view`` ('hr'|'power') = the modal's ⚡/❤ peek toggle — overrides the
+  // global target_mode for this render AND for the FIT download (WYSIWYG).
   openModal('<div class="loading">Loading workout...</div>');
   try {
-    const res = await fetch(`/api/workout/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`);
+    const vq = view ? `?view=${encodeURIComponent(view)}` : '';
+    const res = await fetch(`/api/workout/${encodeURIComponent(category)}/${encodeURIComponent(filename)}${vq}`);
     const d = await res.json();
     if (d.error) { $('modal-content').innerHTML = `<p style="color:var(--red)">Error: ${esc(d.error)}</p>`; return; }
+    window._wkDetailMeta = meta; // for the toggle re-render
 
     // hr target_mode (IP_HR_ONLY): server attaches target_mode + per-segment
     // hr/rpe when the athlete is in hr mode; the chart relabels its numbers
@@ -3678,13 +3682,21 @@ async function openWorkoutDetail(category, filename, meta) {
     const hrCtx = d.target_mode === 'hr' ? {mode: 'hr', lthr: d.lthr, maxHr: d.max_hr, axis: d.hr_axis} : null;
     const chart = workoutProfileSVG(d.segments, d.ftp, d.total_seconds, hrCtx);
     const durMin = Math.round(d.total_seconds / 60);
-    const metaHtml = meta ? `<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--text2);margin-bottom:12px;">
+    // ⚡/❤ peek toggle — instant swap between watt and HR views; the FIT
+    // download follows the active view. Shown whenever an HR view is
+    // possible (sane LTHR), regardless of the global target_mode.
+    const _tgl = d.hr_available ? `<span style="margin-left:auto;display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:11px;">
+        <button class="btn btn-sm" style="border:none;border-radius:0;${!hrCtx ? 'background:var(--accent);color:#fff;' : 'background:transparent;'}" onclick="openWorkoutDetail('${escJs(category)}','${escJs(filename)}', window._wkDetailMeta, 'power')">⚡ Watts</button>
+        <button class="btn btn-sm" style="border:none;border-radius:0;${hrCtx ? 'background:var(--accent);color:#fff;' : 'background:transparent;'}" onclick="openWorkoutDetail('${escJs(category)}','${escJs(filename)}', window._wkDetailMeta, 'hr')">❤ HR</button>
+      </span>` : '';
+    const metaHtml = `<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:13px;color:var(--text2);margin-bottom:12px;">
       <span>${durMin} min</span>
-      ${meta.tss ? `<span>TSS ${meta.tss}</span>` : ''}
-      ${(meta.if_ && !hrCtx) ? `<span>IF ${meta.if_}</span>` : ''}
-      ${meta.protocol ? `<span>${meta.protocol}</span>` : ''}
+      ${meta && meta.tss ? `<span>TSS ${meta.tss}</span>` : ''}
+      ${(meta && meta.if_ && !hrCtx) ? `<span>IF ${meta.if_}</span>` : ''}
+      ${meta && meta.protocol ? `<span>${meta.protocol}</span>` : ''}
       ${hrCtx ? `<span style="color:var(--accent);">HR targets · from LTHR ${d.lthr}</span>` : ''}
-    </div>` : `<div class="modal-meta">${durMin} min</div>`;
+      ${_tgl}
+    </div>`;
 
     const zoneHtml = meta ? `<div style="margin:12px 0;">${zoneBar(meta.z1||0,meta.z2||0,meta.z3||0,meta.z4||0,meta.z5||0,meta.z6||0)}</div>` : '';
 
@@ -3696,13 +3708,14 @@ async function openWorkoutDetail(category, filename, meta) {
       ${d.description ? `<div style="margin-top:12px;font-size:12px;color:var(--text2);max-height:100px;overflow-y:auto;">${esc(fixZeroMin(d.description) || '').replace(/ \| /g, '<br>')}</div>` : ''}
       <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;">
         ${hrCtx
-          ? `<button class="btn btn-primary" onclick="downloadFIT('z2', ${Math.round(d.total_seconds/60)}, '${escJs((d.display_name || d.name || 'workout'))}', '${escJs(filename)}')">Download FIT (HR targets)</button>
-             <button class="btn" onclick="downloadZwo('${escJs(category)}','${escJs(filename)}')">ZWO (power file)</button>`
-          : `<button class="btn btn-primary" onclick="downloadZwo('${escJs(category)}','${escJs(filename)}')">Open Workout File (.zwo)</button>`}
+          ? `<button class="btn btn-primary" onclick="downloadFIT('z2', ${Math.round(d.total_seconds/60)}, '${escJs((d.display_name || d.name || 'workout'))}', '${escJs(filename)}', 'hr')">Download FIT (HR targets)</button>
+             <button class="btn" disabled style="opacity:0.4;cursor:not-allowed;" title="ZWO is a power-only format — it cannot encode heart-rate targets. Only FIT carries your bpm ranges.">ZWO — can't encode HR</button>`
+          : `<button class="btn btn-primary" onclick="downloadZwo('${escJs(category)}','${escJs(filename)}')">Open Workout File (.zwo)</button>
+             ${d.hr_available ? `<button class="btn" onclick="downloadFIT('z2', ${Math.round(d.total_seconds/60)}, '${escJs((d.display_name || d.name || 'workout'))}', '${escJs(filename)}', 'power')">Download FIT</button>` : ''}`}
         <button class="btn" onclick="closeModal()">Close</button>
       </div>
       <div style="margin-top:8px;font-size:11px;color:var(--text3);">${hrCtx
-        ? 'Heart-rate mode: the FIT file carries your bpm ranges (and RPE cues for short/hard efforts) — load it on a Garmin / Wahoo / Hammerhead. The .zwo is power-based and only useful on a smart trainer. When you finish, use Import FIT (top right) to post-analyze your ride.'
+        ? 'HR view: the FIT carries your bpm ranges (and RPE cues for short/hard efforts) — load it on a Garmin / Wahoo / Hammerhead. ZWO is greyed out because the format is power-only and cannot encode heart rate. When you finish, use Import FIT (top right) to post-analyze your ride.'
         : 'Load the .zwo into an indoor trainer app (MyWhoosh / Zwift / Tacx / Golden Cheetah) — it drives ERG with smooth power ramps. Some bike computers (e.g. Hammerhead) read ZWO directly too; for a planned day you can also export a FIT (for TrainingPeaks / Vekta / head units). When you finish, use Import FIT (top right) to post-analyze your ride.'}</div>`;
   } catch(e) {
     $('modal-content').innerHTML = `<p style="color:var(--red)">Failed to load workout</p>`;
@@ -14535,8 +14548,8 @@ function openTodaySessionDetail() {
     // power-only and demoted.
     if (d.target_mode === 'hr') {
       html += `<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="btn btn-primary" onclick="downloadFIT('${escJs(adj.session_type || 'z2')}', ${adj.duration_min || 60}, '${escJs(adj.zwo_file.replace(/\.zwo$/i, ''))}', '${escJs(adj.zwo_file)}')">Download FIT (HR targets)</button>
-        <button class="btn" onclick="downloadZwoFile('${escJs(adj.zwo_file)}')">ZWO (power file)</button></div>`;
+        <button class="btn btn-primary" onclick="downloadFIT('${escJs(adj.session_type || 'z2')}', ${adj.duration_min || 60}, '${escJs(adj.zwo_file.replace(/\.zwo$/i, ''))}', '${escJs(adj.zwo_file)}', 'hr')">Download FIT (HR targets)</button>
+        <button class="btn" disabled style="opacity:0.4;cursor:not-allowed;" title="ZWO is a power-only format — it cannot encode heart-rate targets. Only FIT carries your bpm ranges.">ZWO — can't encode HR</button></div>`;
     } else {
       html += `<div style="margin-top:12px;"><button class="btn btn-primary" onclick="downloadZwoFile('${escJs(adj.zwo_file)}')">Download ZWO Workout</button></div>`;
     }
@@ -14842,21 +14855,23 @@ async function openDayWorkout(sessionIdx) {
   // hr target_mode (red-team F2): a no-power rider's deliverable is the FIT
   // (bpm targets + RPE cues) — lead with it and demote the power-only ZWO.
   const _hrLead = window._targetMode === 'hr';
-  const _zwoBtnCls = _hrLead ? 'btn' : 'btn btn-primary';
-  const _zwoBtnLabel = _hrLead ? 'ZWO (power file)' : 'Download ZWO (Virtual Trainer)';
-  const _fitBtn = `<button class="btn${_hrLead ? ' btn-primary' : ''}" onclick="downloadFIT('${escJs(type)}', ${session.duration_min}, '${escJs(fitName)}', ${session.zwo_file ? `'${escJs(session.zwo_file)}'` : 'null'})">${_hrLead ? 'Download FIT (HR targets)' : 'Download FIT'}</button>`;
+  const _fitBtn = `<button class="btn${_hrLead ? ' btn-primary' : ''}" onclick="downloadFIT('${escJs(type)}', ${session.duration_min}, '${escJs(fitName)}', ${session.zwo_file ? `'${escJs(session.zwo_file)}'` : 'null'}${_hrLead ? ", 'hr'" : ''})">${_hrLead ? 'Download FIT (HR targets)' : 'Download FIT'}</button>`;
   let _zwoBtn;
-  if (session.zwo_file) {
+  if (_hrLead) {
+    // ZWO cannot encode heart rate — greyed out, not hidden, so the user
+    // learns WHY it's unavailable rather than wondering where it went.
+    _zwoBtn = `<button class="btn" disabled style="opacity:0.4;cursor:not-allowed;" title="ZWO is a power-only format — it cannot encode heart-rate targets. Only FIT carries your bpm ranges.">ZWO — can't encode HR</button>`;
+  } else if (session.zwo_file) {
     // v1.0.3: route through downloadZwoFile() — WKWebView ignores <a download>.
-    _zwoBtn = `<button class="${_zwoBtnCls}" onclick="downloadZwoFile('${escJs(session.zwo_file)}')">${_zwoBtnLabel}</button>`;
+    _zwoBtn = `<button class="btn btn-primary" onclick="downloadZwoFile('${escJs(session.zwo_file)}')">Download ZWO (Virtual Trainer)</button>`;
   } else {
     // Generate ZWO on-the-fly only when no matched library file is available.
-    _zwoBtn = `<button class="${_zwoBtnCls}" onclick="downloadGeneratedZwo('${escJs(type)}', ${session.duration_min}, '${escJs(session.day_name)} ${escJs(typeUpper)}')">${_zwoBtnLabel}</button>`;
+    _zwoBtn = `<button class="btn btn-primary" onclick="downloadGeneratedZwo('${escJs(type)}', ${session.duration_min}, '${escJs(session.day_name)} ${escJs(typeUpper)}')">Download ZWO (Virtual Trainer)</button>`;
   }
   html += _hrLead ? (_fitBtn + _zwoBtn) : (_zwoBtn + _fitBtn);
   html += '</div>';
   html += _hrLead
-    ? '<div style="font-size:10px;color:var(--text3);margin-top:8px;">Heart-rate mode: the <b>FIT</b> carries your bpm ranges (and RPE cues for short/hard efforts) — load it on a Garmin / Wahoo / Hammerhead. The ZWO is power-based and only useful on a smart trainer. Ride it, then Import FIT to analyze.</div>'
+    ? '<div style="font-size:10px;color:var(--text3);margin-top:8px;">Heart-rate mode: the <b>FIT</b> carries your bpm ranges (and RPE cues for short/hard efforts) — load it on a Garmin / Wahoo / Hammerhead. ZWO is greyed out because the format is power-only and cannot encode heart rate. Ride it, then Import FIT to analyze.</div>'
     : '<div style="font-size:10px;color:var(--text3);margin-top:8px;">Same workout, two formats — pick whichever your tool reads. <b>ZWO</b> is the structured-workout file for indoor trainer apps (MyWhoosh / Zwift / Tacx / Golden Cheetah); it drives ERG with smooth power ramps. <b>FIT</b> is the structured-workout file for bike computers and workout platforms (TrainingPeaks, Vekta, and head units). Many devices read either (a Hammerhead takes both). Ride it, then Import FIT to analyze.</div>';
 
   // v4.1.0 U8: per-session rematch button. Calls /api/plan/re-draw first
@@ -15548,7 +15563,7 @@ async function _saveViaPywebview(kind, filename, fetchUrl, meta) {
         try { showToast('FIT export error: empty body', 4000); } catch(_) {}
         return true;
       }
-      res = await window.pywebview.api.save_fit(filename, b64, meta.session_type || '', meta.duration_min || 0, meta.name || '', meta.zwo_file || '');
+      res = await window.pywebview.api.save_fit(filename, b64, meta.session_type || '', meta.duration_min || 0, meta.name || '', meta.zwo_file || '', meta.view || '');
     }
     if (res && res.ok) {
       try { showToast(`Saved to ${res.path}`, 4000); } catch(_) {}
@@ -15600,7 +15615,7 @@ async function downloadZwoFile(filename) {
   }
 }
 
-async function downloadFIT(type, durationMin, name, zwoFile = null) {
+async function downloadFIT(type, durationMin, name, zwoFile = null, view = null) {
   // v1.0.1 fix: pre-fix the button used <a download href=...>.click(), which
   // is fire-and-forget — pywebview's webkit silently swallowed JSON 4xx/5xx
   // responses (no download dialog, no error). fetch() + Blob lets us inspect
@@ -15611,8 +15626,10 @@ async function downloadFIT(type, durationMin, name, zwoFile = null) {
   // exact ZWO library file into FIT (matching content + matching basename).
   let url = `/api/export/fit-workout?session_type=${encodeURIComponent(type)}&duration_min=${durationMin}&name=${encodeURIComponent(name)}`;
   if (zwoFile) url += `&zwo_file=${encodeURIComponent(zwoFile)}`;
+  // modal ⚡/❤ toggle: the FIT matches the view you're looking at (WYSIWYG).
+  if (view) url += `&view=${encodeURIComponent(view)}`;
   const fitName = name.replace(/[^a-zA-Z0-9]/g, '_') + '.fit';
-  if (await _saveViaPywebview('fit', fitName, url, {session_type: type, duration_min: durationMin, name: name, zwo_file: zwoFile || ''})) return;
+  if (await _saveViaPywebview('fit', fitName, url, {session_type: type, duration_min: durationMin, name: name, zwo_file: zwoFile || '', view: view || ''})) return;
   try {
     const r = await fetch(url);
     if (!r.ok) {

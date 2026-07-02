@@ -506,7 +506,7 @@ class JsApi:
         return b""
 
     def _build_fit_serverside(self, session_type, duration_min,
-                              name, zwo_file) -> bytes:
+                              name, zwo_file, view=None) -> bytes:
         """issue #5 — generate the FIT in-process when the JS bridge handed us an
         empty body. Mirrors /api/export/fit-workout via the shared helper."""
         try:
@@ -514,7 +514,8 @@ class JsApi:
             if not (name and (zwo_file or (session_type and duration_min))):
                 return b""
             return app.build_fit_workout_bytes(
-                session_type or "z2", int(duration_min or 0), name, zwo_file) or b""
+                session_type or "z2", int(duration_min or 0), name, zwo_file,
+                view=(view or None)) or b""
         except Exception as e:
             log = _log()
             if log is not None:
@@ -537,7 +538,7 @@ class JsApi:
 
     def save_fit(self, filename: str, content_b64: str = "",
                  session_type: str = "", duration_min: int = 0,
-                 name: str = "", zwo_file: str = "") -> dict:
+                 name: str = "", zwo_file: str = "", view: str = "") -> dict:
         data = b""
         b64_err = None
         if content_b64:
@@ -548,7 +549,8 @@ class JsApi:
                 data = b""
         if not data:
             data = self._build_fit_serverside(
-                session_type, duration_min, name or filename, zwo_file or None)
+                session_type, duration_min, name or filename, zwo_file or None,
+                view=view or None)
         if not data:
             # If the JS body was malformed base64 AND we couldn't regenerate
             # server-side, surface the specific decode error (more useful).

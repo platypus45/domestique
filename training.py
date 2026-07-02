@@ -2,6 +2,7 @@
 import json
 import logging
 import math
+import os
 import random
 import statistics
 import time
@@ -13,6 +14,10 @@ from datetime import date, timedelta
 import config
 
 _log = logging.getLogger("domestique.training")
+
+# The genuine stdlib transport, captured at import. DOMESTIQUE_NO_NET only
+# short-circuits when urlopen is still this function (see _get).
+_REAL_URLOPEN = urllib.request.urlopen
 
 
 # TRIMP → TSS scaling factor (Banister 1980; also see Morton 1990).
@@ -224,6 +229,16 @@ def _get(path: str, params: dict | None = None) -> list | dict | None:
     and network errors. 429 honours Retry-After (capped at 60s). 401/403
     short-circuit — no point retrying a bad key.
     """
+    # v3.0.0 hermetic test gate: cold subprocesses spawned by tests don't
+    # inherit conftest's monkeypatched urlopen block, so honour an env kill
+    # switch at the source. Raise the terminal "ICU unreachable" error the
+    # graceful-degradation paths already handle (get_today_metrics → {}, etc).
+    # The switch blocks only the REAL transport — tests that patch urlopen
+    # with a fake are not using the network, and their mocks must keep
+    # winning (the contract in tests/conftest.py::_no_live_icu_network).
+    if (os.environ.get("DOMESTIQUE_NO_NET") == "1"
+            and urllib.request.urlopen is _REAL_URLOPEN):
+        raise ICUNetworkError(f"network disabled (DOMESTIQUE_NO_NET=1) for {path}")
     url = f"{config.ICU_BASE}/{path}"
     if params:
         url += "?" + urllib.parse.urlencode(params)

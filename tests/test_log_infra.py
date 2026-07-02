@@ -176,17 +176,20 @@ def test_set_level_unknown_level_raises(tmp_log_home):
 
 
 def test_start_session_log_creates_file(tmp_log_home):
+    """v2.2.0 contract: start_session_log is a NO-OP that returns the id.
+
+    Per-session ``app_*.log`` files were deliberately removed (they were the
+    unbounded log bloat — commit 0400f031); everything goes to the single
+    capped ``domestique.log``. Lock that: no per-session file may appear,
+    and the retrievable log path is the capped file.
+    """
     lc = tmp_log_home
     sid = lc.start_session_log("test01")
     assert sid == "test01"
-    # Exactly one session file should exist after a fresh start.
-    # v4.0.0-alpha: filename pattern moved from ride_* to app_* because
-    # there is no ride-session concept in-app anymore.
-    ride_files = sorted(lc.LOG_DIR.glob("app_*.log"))
-    assert len(ride_files) == 1
-    assert "test01" in ride_files[0].name
-    # Path is retrievable.
-    assert lc.get_active_log_path(sid) == str(ride_files[0])
+    # NO per-session file may be created (the bloat regression guard).
+    assert list(lc.LOG_DIR.glob("app_*.log")) == []
+    # Path is retrievable and points at the single capped log.
+    assert lc.get_active_log_path(sid) == str(lc.LOG_FILE)
     lc.stop_session_log(sid)
 
 
@@ -211,9 +214,11 @@ def test_stop_session_log_is_idempotent(tmp_log_home):
 
 
 def test_get_active_log_path_none_when_no_session(tmp_log_home):
+    """v2.2.0 contract: with no per-session logs, get_active_log_path always
+    resolves to the single capped ``domestique.log`` — session id or not."""
     lc = tmp_log_home
-    assert lc.get_active_log_path() is None
-    assert lc.get_active_log_path("nonexistent") is None
+    assert lc.get_active_log_path() == str(lc.LOG_FILE)
+    assert lc.get_active_log_path("nonexistent") == str(lc.LOG_FILE)
 
 
 def test_get_active_log_path_single_session(tmp_log_home):

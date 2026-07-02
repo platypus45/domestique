@@ -100,8 +100,14 @@ def test_save_env_writes_owner_only_0600(tmp_path):
     assert mode == "600", f"expected 0600, got {mode}"
     body = env_file.read_text()
     assert "ICU_API_KEY=SECRETKEY" in body
-    # no injected extra lines
-    assert len([ln for ln in body.splitlines() if ln.strip()]) == 2
+    # no injected extra lines — exactly the three known keys, nothing else
+    # (ICU_ACCESS_TOKEN is always written since the per-profile OAuth change;
+    # empty here because no OAuth token is stored).
+    assert [ln for ln in body.splitlines() if ln.strip()] == [
+        "ICU_ATHLETE_ID=i123",
+        "ICU_API_KEY=SECRETKEY",
+        "ICU_ACCESS_TOKEN=",
+    ]
 
 
 # ── 4. Localhost-only bind (no remote access) ──────────────────────────────────

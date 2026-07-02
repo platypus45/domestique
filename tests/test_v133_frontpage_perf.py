@@ -61,6 +61,7 @@ def _time(client, endpoint, n=3):
 # ── Server-side: /api/calendar must be fast. The bypass-cache fix in
 #    _actual_ctl_today + _hrv_trend_score takes the warm path from ~480ms
 #    to ~100ms. Test asserts it stays under 250ms warm.
+@pytest.mark.release_serial
 def test_api_calendar_warm_under_250ms(client):
     _mn, avg, _mx = _time(client, "/api/calendar", n=3)
     assert avg < 250, (
@@ -73,6 +74,7 @@ def test_api_calendar_warm_under_250ms(client):
 #    weekly-plan rebuild) but must not regress catastrophically. Lock it
 #    under 1.0s warm — purely a tripwire so future changes that make it
 #    >1s force a discussion about caching or paralleling.
+@pytest.mark.release_serial
 def test_api_today_session_warm_under_1000ms(client):
     _mn, avg, _mx = _time(client, "/api/today-session", n=3)
     assert avg < 1000, (

@@ -329,9 +329,15 @@ class RealDataRoundTripTests(_IsolatedRideDirMixin, unittest.TestCase):
         """Load the real i145626886 envelope from the user cache, copy it to
         the isolated test dir with a synthetic prior + a 5-min effort
         injected, and verify compute_ride_prs finds at least one PR."""
-        real_path = Path.home() / ".domestique" / "rides" / "icu" / "i145626886.json"
-        if not real_path.exists():
-            self.skipTest(f"real envelope {real_path} missing")
+        # The archive is per-profile (profiles/<id>/rides/icu/) since the
+        # profile move; fall back to the legacy global path for old layouts.
+        _dom = Path.home() / ".domestique"
+        candidates = sorted(
+            _dom.glob("profiles/*/rides/icu/i145626886.json")
+        ) + [_dom / "rides" / "icu" / "i145626886.json"]
+        real_path = next((p for p in candidates if p.exists()), None)
+        if real_path is None:
+            self.skipTest("real envelope i145626886.json missing")
         envelope = json.loads(real_path.read_text(encoding="utf-8"))
         # Sanity: confirm the keys we depend on are present.
         self.assertIn("ride_id", envelope)
@@ -343,9 +349,21 @@ class RealDataRoundTripTests(_IsolatedRideDirMixin, unittest.TestCase):
         envelope_path = self._tmp / f"{envelope['external_id']}.json"
         envelope_path.write_text(json.dumps(envelope), encoding="utf-8")
 
-        # Seed a prior so we get a comparison.
+        # Seed a prior so we get a comparison. compute_ride_prs compares
+        # against rides BEFORE the target ride's date AND within the rolling
+        # window from today — the real envelope has a FIXED historical date,
+        # so the prior must be anchored on the envelope date (a today-30d
+        # prior drifts to AFTER the ride as time passes and never matches).
         from datetime import date, timedelta
-        prior_started = (date.today() - timedelta(days=30)).isoformat() + "T10:00:00"
+        target_day = date.fromisoformat(envelope["started_at"][:10])
+        cutoff = date.today() - timedelta(days=90)
+        if target_day <= cutoff:
+            self.skipTest(
+                "real envelope has aged out of the 90-day PR window — "
+                "no prior can be both before the ride and inside the window"
+            )
+        prior_day = max(target_day - timedelta(days=30), cutoff)
+        prior_started = prior_day.isoformat() + "T10:00:00"
         prior = _ride(
             "rPRIOR_REAL", prior_started,
             efforts=[{"label": "5m", "watts": 200, "secs": 300}],

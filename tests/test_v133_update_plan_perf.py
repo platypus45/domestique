@@ -28,6 +28,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 import app as app_module
@@ -78,6 +79,7 @@ def _mk_plan_dict(monday: date, weeks_count: int = 12) -> dict:
     }
 
 
+@pytest.mark.release_serial
 class UpdatePlanPerfTest(unittest.TestCase):
     """v1.3.3 — assert the save-availability + calendar round-trip is fast.
 

@@ -10801,15 +10801,18 @@ async def api_save_availability(request: Request):
 
             # Build a flat-projected tsb_series from the cached training
             # snapshot so per-day _tsb_at lookups inside reforecast hit
-            # the dict (no fall-through to live ICU).
-            tsb_series: "dict | None" = None
+            # the dict (no fall-through to live ICU). ALWAYS a dict — when
+            # ICU is unreachable (current_tsb None) an empty dict makes
+            # _tsb_at return None per day; passing None here re-triggered
+            # the pre-v1.3.3 bug (one get_today_metrics fetch PER future
+            # hard session, ~36 round-trips per UPDATE click).
+            tsb_series: dict = {}
             try:
                 training_snap = cached("training", get_today_metrics)
                 current_tsb = training_snap.get("tsb")
             except Exception:
                 current_tsb = None
             if current_tsb is not None:
-                tsb_series = {}
                 for w in plan.get("weeks", []) or []:
                     try:
                         ws = date.fromisoformat(w["start"])

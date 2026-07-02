@@ -83,7 +83,11 @@ class TestGoalSelectorRestore(unittest.TestCase):
         src = DASH.read_text(encoding="utf-8")
         i = src.find("function populatePlanFormFromGoal")
         self.assertGreater(i, 0)
-        body = src[i:i + 2000]
+        # Bound the search to the FUNCTION BODY (up to the next top-level
+        # function) — a fixed char slice went stale as the function grew
+        # (template/intensity-model restore landed between goal and edate).
+        j = src.find("\nfunction ", i + 1)
+        body = src[i:j if j > i else i + 8000]
         g = body.find("setVal('plan-goal'")
         e = body.find("setVal('plan-edate'")
         self.assertGreater(g, 0, "goal selector never restored (issue #6 regressed)")

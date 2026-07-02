@@ -63,7 +63,10 @@ def test_get_retries_on_5xx():
         return r
 
     with patch("urllib.request.urlopen", side_effect=_side_effect):
-        with patch("time.sleep") as slp:
+        # Patch sleep where training resolves it (training.time is a
+        # no-op-sleep proxy under conftest's hermetic gate, the real module
+        # standalone — patch.object works for both).
+        with patch.object(training.time, "sleep") as slp:
             result = training._get("athlete/i1/wellness")
     assert result == {"ok": True}
     # Two backoff sleeps (between the three attempts). Durations are
@@ -88,7 +91,7 @@ def test_get_honors_retry_after_on_429():
         return r
 
     with patch("urllib.request.urlopen", side_effect=_side_effect):
-        with patch("time.sleep") as slp:
+        with patch.object(training.time, "sleep") as slp:
             result = training._get("path")
     assert result == {"ok": 1}
     # Exactly one sleep, exactly 5 seconds (Retry-After value).

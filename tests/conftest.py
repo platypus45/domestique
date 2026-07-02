@@ -78,6 +78,25 @@ def planner_pinned_env():
 
 
 @pytest.fixture(autouse=True)
+def _restore_db_path():
+    """Order-independence guard for the db.DB_PATH global.
+
+    Several suites (test_pmax_ingest, test_tau_fitting, test_xss_per_ride,
+    test_wellness_backend, ...) point db.set_db_path at a per-test tmp file
+    and delete the tmp dir in teardown WITHOUT restoring the path. The next
+    file's endpoint tests then get_db() against the deleted path — sqlite
+    silently creates a fresh EMPTY db there → "no such table: athlete_metrics"
+    (the serial-order test_hr_mode_api-after-test_pmax_ingest failure). Snap
+    the path back after every test that drifted it."""
+    import db as _db
+    orig = _db.DB_PATH
+    yield
+    if _db.DB_PATH != orig:
+        _db.set_db_path(orig)
+        _db.close_all_connections()  # bump version → every thread reopens at orig
+
+
+@pytest.fixture(autouse=True)
 def _reset_icu_sync_singleton():
     yield
     # Drain a still-running lazy-sync daemon thread so it can't bleed into
@@ -100,8 +119,8 @@ def _no_live_icu_in_generate_plan(monkeypatch):
     monkeypatch.setattr(_tp, "get_today_metrics", lambda: {}, raising=False)
 
 
-@pytest.fixture(autouse=True)
-def _no_live_icu_network(monkeypatch):
+@pytest.fixture(autouse=True, scope="session")
+def _no_live_icu_network():
     """v3.0.0 hermetic gate, part 2: NO test may reach the live intervals.icu
     API through ANY path. Part 1 (above) stubbed the planner's metrics
     self-fetch, but the A7 gate still hung on two app-level leaks: the lazy
@@ -112,12 +131,40 @@ def _no_live_icu_network(monkeypatch):
     training's namespace raises URLError instantly (the graceful
     "ICU unreachable" path), and training's retry sleep becomes a no-op.
     Tests that mock urlopen/_get/fetch_* apply their patches after this one
-    and win; nothing in the suite may exercise the real network."""
+    and win; nothing in the suite may exercise the real network.
+
+    SESSION-scoped on purpose: module-scoped fixtures (e.g. the warm
+    TestClient in test_v133_frontpage_perf) run BEFORE function-scoped
+    autouse fixtures, so a function-scoped block let module setup hit the
+    live API — a machine-wide 429 turned each uncached endpoint warm into
+    2×60 s retry-sleeps (the 361 s setup ERRORs in the A7 gate)."""
+    import time as _real_time
     import urllib.error
     import training as _tr
 
     def _blocked(*a, **k):
         raise urllib.error.URLError("live ICU network disabled in tests")
 
-    monkeypatch.setattr(_tr.urllib.request, "urlopen", _blocked)
-    monkeypatch.setattr(_tr.time, "sleep", lambda s: None)
+    # No-op training's retry sleeps WITHOUT touching the global time module:
+    # ``_tr.time`` IS the shared stdlib module, so setattr(_tr.time, "sleep")
+    # would kill time.sleep for the entire process — real short sleeps in
+    # other tests (fake-slow syncs, thread joins) must keep working. Swap the
+    # ``time`` NAME inside training's namespace for a delegating proxy whose
+    # sleep is a no-op.
+    class _NoSleepTime:
+        def __getattr__(self, name):
+            return getattr(_real_time, name)
+
+        @staticmethod
+        def sleep(_s):
+            return None
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(_tr.urllib.request, "urlopen", _blocked)
+        mp.setattr(_tr, "time", _NoSleepTime())
+        # Cold subprocesses spawned by tests (e.g. test_planner_determinism)
+        # don't inherit the monkeypatches above — training._get honours this
+        # env kill switch at the source (real-transport calls only) so they
+        # can't reach the live API either.
+        mp.setenv("DOMESTIQUE_NO_NET", "1")
+        yield

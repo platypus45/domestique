@@ -161,9 +161,12 @@ class PowerCurveEndToEndTests(unittest.TestCase):
         self.assertEqual(peak_after["watts"], 340)
         self.assertEqual(peak_after["ride_id"], "icu_rNEW")
 
-        # Lazy-GC: only ONE power_curve_default_90_* entry remains.
+        # Lazy-GC: only ONE power_curve_<pid>_90_* entry remains. The cache
+        # key is per-profile since the profiles/<id>/ archive move — derive
+        # the prefix the same way the endpoint does.
+        _pid = app_module._active_profile_id_or_default()
         keys = [k for k in app_module._cache.keys()
-                if k.startswith("power_curve_default_90_")]
+                if k.startswith(f"power_curve_{_pid}_90_")]
         self.assertEqual(len(keys), 1, f"stale cache entries: {keys}")
 
 

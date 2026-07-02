@@ -98,7 +98,9 @@ echo "[1b/9] Version smoke-test OK — bundle reports $BUNDLED_VER"
 # Prove the bundled code produces HEART_RATE-target steps for view='hr' before
 # notarize/upload; a regression here would silently ship power-only FITs to
 # HR-mode riders using the native save dialog.
-FIT_SMOKE="$(python3 - <<'PYEOF'
+# python3.12 explicitly: the system python3 (3.9) can't import app.py
+# (PEP 604 unions in FastAPI annotations evaluate at import time).
+FIT_SMOKE="$(python3.12 - <<'PYEOF'
 import sys
 sys.path.insert(0, ".")
 try:

@@ -22,19 +22,21 @@ import app as app_module
 import error_codes as ec
 
 
-def _backup_plan_json():
-    p = Path.home() / ".domestique" / "plans" / "current_plan.json"
-    bk = p.with_suffix(".v160_test_backup")
-    if p.exists() and not bk.exists():
-        p.rename(bk)
-    return p, bk
+import contextlib
+import tempfile
+from unittest import mock
 
 
-def _restore_plan_json(p: Path, bk: Path):
-    if p.exists():
-        p.unlink()
-    if bk.exists():
-        bk.rename(p)
+@contextlib.contextmanager
+def _corrupt_plan(text: str):
+    """v3.0.0: isolated tempdir + app._plan_dir patch (see the note in
+    test_v160_silent_swallow_fixes — the old helper touched the REAL
+    ~/.domestique plan and broke under per-profile plans + parallel runs)."""
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "current_plan.json"
+        p.write_text(text)
+        with mock.patch.object(app_module, "_plan_dir", lambda: Path(td)):
+            yield p
 
 
 class DiagHealthTests(unittest.TestCase):
@@ -59,10 +61,7 @@ class DiagHealthTests(unittest.TestCase):
             self.assertIn(check, body["checks"], f"missing check: {check}")
 
     def test_health_with_corrupt_plan_flags_E_PLAN_PARSE_CORRUPT(self):
-        p, bk = _backup_plan_json()
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text("{ this is not json")
+        with _corrupt_plan("{ this is not json"):
             # bust the 60s cache
             app_module._DIAG_HEALTH_CACHE["result"] = None
             app_module._DIAG_HEALTH_CACHE["ts"] = 0.0
@@ -74,8 +73,6 @@ class DiagHealthTests(unittest.TestCase):
                 body["checks"]["plan_readable"]["code"],
                 ec.Codes.PLAN_PARSE_CORRUPT,
             )
-        finally:
-            _restore_plan_json(p, bk)
 
     def test_health_endpoint_caches_for_60s(self):
         r1 = self.client.get("/api/diag/health").json()

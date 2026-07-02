@@ -19,19 +19,22 @@ import app as app_module
 import error_codes as ec
 
 
-def _backup_plan_json():
-    p = Path.home() / ".domestique" / "plans" / "current_plan.json"
-    bk = p.with_suffix(".v160_swallow_test_backup")
-    if p.exists() and not bk.exists():
-        p.rename(bk)
-    return p, bk
+import contextlib
+import tempfile
+from unittest import mock
 
 
-def _restore_plan_json(p: Path, bk: Path):
-    if p.exists():
-        p.unlink()
-    if bk.exists():
-        bk.rename(p)
+@contextlib.contextmanager
+def _corrupt_plan(text: str):
+    """v3.0.0: write the corrupt plan into an ISOLATED tempdir and point the
+    app at it — the old helper renamed the REAL ~/.domestique plan (dangerous
+    on a dev machine, and wrong since plans became per-profile: under parallel
+    orderings the app read a different path and the corruption was invisible)."""
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "current_plan.json"
+        p.write_text(text)
+        with mock.patch.object(app_module, "_plan_dir", lambda: Path(td)):
+            yield p
 
 
 class CorruptPlanCalendarFixTests(unittest.TestCase):
@@ -44,23 +47,15 @@ class CorruptPlanCalendarFixTests(unittest.TestCase):
             app_module._DIAG_RING.clear()
 
     def test_corrupt_plan_returns_E_PLAN_PARSE_CORRUPT_in_response(self):
-        p, bk = _backup_plan_json()
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text("{this is not json{")
+        with _corrupt_plan("{this is not json{"):
             r = self.client.get("/api/calendar")
             self.assertEqual(r.status_code, 200)
             body = r.json()
             self.assertEqual(body.get("error"), ec.Codes.PLAN_PARSE_CORRUPT)
             self.assertEqual(body.get("weeks"), [])
-        finally:
-            _restore_plan_json(p, bk)
 
     def test_corrupt_plan_logs_to_ring_buffer(self):
-        p, bk = _backup_plan_json()
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text("{not json{")
+        with _corrupt_plan("{not json{"):
             with app_module._DIAG_RING_LOCK:
                 app_module._DIAG_RING.clear()
             self.client.get("/api/calendar")
@@ -68,8 +63,6 @@ class CorruptPlanCalendarFixTests(unittest.TestCase):
                 ring = list(app_module._DIAG_RING)
             codes = [e["code"] for e in ring]
             self.assertIn(ec.Codes.PLAN_PARSE_CORRUPT, codes)
-        finally:
-            _restore_plan_json(p, bk)
 
 
 class CachedSwallowFixTests(unittest.TestCase):

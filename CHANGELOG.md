@@ -1,5 +1,66 @@
 # Changelog
 
+## v3.0.0 — Train by heart rate, race-ready plans, and a new Analysis tab (2026-07-02)
+
+### Headline: train without a power meter
+
+- **Heart-rate training mode.** Pick "Heart rate" under Workout targets in
+  Settings and every workout speaks bpm: steady aerobic segments get a heart-rate
+  range derived from your LTHR, short and very hard efforts are prescribed by
+  feel (RPE) — because heart rate reacts too slowly to guide them — and long
+  steady rides warn about cardiac drift. FIT downloads carry real heart-rate
+  targets to your Garmin, Wahoo or Hammerhead, with effort cues for the sprints.
+  A Watts ⇄ HR toggle in every workout view previews either version, and the
+  downloaded file always matches what you're looking at. Recovery and cooldown
+  steps only get ceilings — no more "HR too low" beeps for riding easy on an
+  easy day.
+- **Your numbers stay honest.** LTHR syncs automatically from your intervals.icu
+  rides unless you set it yourself; a tunable HR-targets editor lets you adjust
+  the prescription ranges; and rides without power now count toward your fitness
+  through a heart-rate-based load estimate, clearly labelled.
+
+### Race-ready event plans
+
+- Tapers now actually taper: volume steps down into race week instead of ramping
+  up, the day before your race is a short openers ride, no hard training lands
+  within two days of any race, and the race day itself can never be overwritten,
+  shrunk, moved or dismissed by any automatic adjustment. B-races get mini-tapers
+  with openers too. Race-tomorrow plans are an honest race-week micro-plan, past
+  dates are refused with a clear message, and re-planning near a race no longer
+  produces duplicate or post-race training days.
+
+### See yourself in one place
+
+- **New Analysis tab** gathers the diagnostics that used to crowd the home page
+  (fitness & form, power curve, energy systems, model panels) — home now opens
+  to today's decision with a compact fitness sparkline.
+- **Rider Profile** at the top of Analysis: FTP, eFTP, W/kg, CP / W′ / Pmax,
+  90-day peak efforts, VO2max (via Intervals.icu), LTHR / max HR / resting HR,
+  threshold estimates, efficiency trend, decoupling, training load and season
+  totals — every number shows where it came from and how fresh it is.
+- **Execution scores.** Completed sessions get a 0–100 "did you ride what was
+  prescribed?" score with a breakdown, power- or heart-rate-based.
+- **Retest reminders.** When your FTP or LTHR goes stale, a dismissible nudge
+  offers to schedule a test week (or shows the LTHR field-test protocol in HR
+  mode).
+
+### Setup, accounts and reliability
+
+- First-run setup actually appears on new installs, asks how you train
+  (power meter or heart rate), imports your numbers over the intervals.icu
+  connection, validates everything with readable errors, and no longer invents
+  values you didn't enter.
+- Multiple athletes on one computer are now fully separated: rides, wellness,
+  workout libraries and connections can't leak between profiles — including
+  during profile switches mid-sync — and disconnecting an intervals.icu account
+  cleans up its data properly.
+- Workout library: 66 more hand-verified label corrections, so hard sessions
+  can't hide as easy ones and easy days can't serve intervals.
+- Plans are transparent about adapting: a small chip offers a re-plan when your
+  fitness has drifted meaningfully from the plan's assumptions.
+- FIT workout files confirmed importing correctly into TrainingPeaks, Vekta and
+  Garmin platforms.
+
 ## v2.4.5 — Clearer workout charts (2026-07-01)
 
 ### What changes for users

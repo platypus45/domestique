@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4232-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v2.4.5-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v3.0.0-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-2100%2B-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -48,7 +48,32 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 ---
 
 ## What's new in v3.0.0
-<!-- COORDINATOR: final release copy inserted at ship time -->
+
+**Train by heart rate — no power meter needed.** A new Workout-targets mode
+prescribes every session in bpm: steady aerobic work gets LTHR-anchored
+heart-rate ranges, short/very-hard efforts are by feel (heart rate is too slow
+to guide them), FIT files carry real HR targets to your head unit, and a
+Watts ⇄ HR toggle previews either view. LTHR syncs from intervals.icu, rides
+without power count toward fitness via a labelled heart-rate load estimate.
+
+**Race-ready event plans.** Tapers genuinely taper, race eve is a short openers
+ride, nothing hard lands within two days of a race, and race days are immune to
+every automatic adjustment. B-races get mini-tapers; impossible dates get clear
+errors.
+
+**A new Analysis tab + Rider Profile.** Home opens to today's decision; the
+diagnostics moved to Analysis, headlined by a Rider Profile card — FTP, eFTP,
+W/kg, CP/W′/Pmax, peak efforts, VO2max (via Intervals.icu), heart numbers,
+efficiency trend, load and season totals, each with source and freshness.
+
+**Closing the loop.** Execution scores rate every completed session against
+its prescription; retest reminders fire when FTP/LTHR go stale; a drift chip
+offers a re-plan when your fitness diverges from the plan's assumptions.
+
+**Foundations.** First-run setup works (and asks how you train), multiple
+athletes on one computer are fully isolated, 66 more hand-verified workout
+label corrections, and FIT workout files confirmed importing into
+TrainingPeaks / Vekta / Garmin.
 
 ---
 
@@ -442,7 +467,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v2.4.5 — Clearer workout charts](https://github.com/platypus45/domestique/releases/latest)** (2026-07-01).
+Latest: **[v3.0.0 — Train by heart rate, race-ready plans, and a new Analysis tab](https://github.com/platypus45/domestique/releases/latest)** (2026-07-02).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

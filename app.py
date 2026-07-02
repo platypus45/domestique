@@ -4563,6 +4563,18 @@ def api_workout_detail(category: str, filename: str):
     cursor = 0  # seconds
     ftp = config.ATHLETE_FTP_W
 
+    # hr target_mode (IP_HR_ONLY): attach per-segment HR/RPE guidance from the
+    # single-source converter so the detail chart shows exactly what the FIT
+    # builder will put on the head unit. Power mode payload is unchanged.
+    from profile_manager import ProfileManager
+    _pm = ProfileManager.get()
+    _hr_mode = _pm.target_mode == "hr"
+    if _hr_mode:
+        from hr_targets import power_target_to_hr
+        # int() — save_athlete's range validator stores numerics as float;
+        # bpm maths rounds anyway but the UI shows this value verbatim.
+        _lthr, _maxhr = int(_pm.lthr), int(_pm.max_hr)
+
     for el in workout_el:
         tag = el.tag
         # ZWO files occasionally store Duration as a float (e.g. "600.5").
@@ -4572,18 +4584,33 @@ def api_workout_detail(category: str, filename: str):
         if tag in ("Warmup", "Cooldown", "Ramp"):
             plo = float(el.get("PowerLow", 0.5))
             phi = float(el.get("PowerHigh", 0.7))
-            segments.append({
+            seg = {
                 "type": tag, "start": cursor, "duration": dur,
                 "power_low": round(plo * ftp), "power_high": round(phi * ftp),
                 "pct_low": round(plo * 100), "pct_high": round(phi * 100),
-            })
+            }
+            if _hr_mode:
+                # Time-order direction mirrors the chart's v2.0.6 rule:
+                # Warmup ramps up, Cooldown down, generic Ramp as authored.
+                lo, hi = min(plo, phi) * 100, max(plo, phi) * 100
+                if tag == "Cooldown":
+                    p_start, p_end = hi, lo
+                elif tag == "Warmup":
+                    p_start, p_end = lo, hi
+                else:
+                    p_start, p_end = plo * 100, phi * 100
+                seg["hr"] = power_target_to_hr(p_start, p_end, dur, _lthr, _maxhr)
+            segments.append(seg)
             cursor += dur
         elif tag == "SteadyState":
             pw = float(el.get("Power", 0.65))
-            segments.append({
+            seg = {
                 "type": tag, "start": cursor, "duration": dur,
                 "power": round(pw * ftp), "pct": round(pw * 100),
-            })
+            }
+            if _hr_mode:
+                seg["hr"] = power_target_to_hr(pw * 100, pw * 100, dur, _lthr, _maxhr)
+            segments.append(seg)
             cursor += dur
         elif tag == "IntervalsT":
             reps = int(el.get("Repeat", 1))
@@ -4591,14 +4618,19 @@ def api_workout_detail(category: str, filename: str):
             off_d = int(el.get("OffDuration", 0))
             on_p = float(el.get("OnPower", 0.95))
             off_p = float(el.get("OffPower", 0.50))
-            segments.append({
+            seg = {
                 "type": tag, "start": cursor,
                 "duration": reps * (on_d + off_d),
                 "repeats": reps,
                 "on_duration": on_d, "off_duration": off_d,
                 "on_power": round(on_p * ftp), "off_power": round(off_p * ftp),
                 "on_pct": round(on_p * 100), "off_pct": round(off_p * 100),
-            })
+            }
+            if _hr_mode:
+                # On/off legs convert independently — each is its own step.
+                seg["hr_on"] = power_target_to_hr(on_p * 100, on_p * 100, on_d, _lthr, _maxhr)
+                seg["hr_off"] = power_target_to_hr(off_p * 100, off_p * 100, off_d, _lthr, _maxhr)
+            segments.append(seg)
             cursor += reps * (on_d + off_d)
         elif tag == "FreeRide":
             segments.append({
@@ -4613,13 +4645,18 @@ def api_workout_detail(category: str, filename: str):
     except Exception:
         _display_name = ""
 
-    return {
+    out = {
         "name": name, "description": desc,
         "display_name": _display_name,
         "total_seconds": cursor,
         "segments": segments,
         "ftp": ftp,
     }
+    if _hr_mode:
+        out["target_mode"] = "hr"
+        out["lthr"] = _lthr
+        out["max_hr"] = _maxhr
+    return out
 
 
 @app.post("/api/workouts/bulk-segments")
@@ -7147,6 +7184,10 @@ def api_settings():
         "eftp": eftp,
         "lthr": config.ATHLETE_LTHR,
         "max_hr": config.ATHLETE_MAX_HR,
+        # hr target_mode (IP_HR_ONLY): lthr_is_set drives the toggle gate —
+        # the bare lthr value above is a 170 default when unset.
+        "target_mode": pm.target_mode,
+        "lthr_is_set": pm.lthr_is_set,
         "power_zones": p_zones,
         "hr_zones": h_zones,
         "w_per_kg": round(config.ATHLETE_FTP_W / max(config.ATHLETE_WEIGHT_KG, 1), 2),
@@ -7201,6 +7242,24 @@ def update_settings(request_body: dict):
             # v3.6.0-fix28 M-3: allow athlete-only keys (no config mirror).
             if config_key is not None:
                 updates[config_key] = val
+
+    # hr target_mode (IP_HR_ONLY C15/C16). Gate on the PROSPECTIVE lthr/max_hr
+    # (a same-request lthr write counts), and on lthr being EXPLICITLY set —
+    # pm.lthr's bare 170 default must never satisfy the gate.
+    if "target_mode" in request_body:
+        mode = str(request_body["target_mode"]).strip().lower()
+        if mode not in ("power", "hr"):
+            raise HTTPException(400, "target_mode must be 'power' or 'hr'")
+        if mode == "hr":
+            eff_lthr = athlete_updates.get("lthr", pm._athlete.get("lthr"))
+            eff_max = athlete_updates.get("max_hr", pm.max_hr)
+            if eff_lthr is None:
+                raise HTTPException(400, "hr mode needs your LTHR — set it first "
+                                          "(20-min field test or intervals.icu estimate)")
+            if eff_max <= eff_lthr:
+                raise HTTPException(400, f"max HR ({eff_max}) must be above LTHR "
+                                          f"({eff_lthr}) for hr mode")
+        athlete_updates["target_mode"] = mode
 
     # E2 detect: did the FTP change to exactly-match the currently-cached
     # eFTP? If so this is almost certainly an "Accept eFTP" action.
@@ -10433,6 +10492,61 @@ def api_export_fit_workout(
     )
 
 
+def _fit_hr_mode() -> bool:
+    """True when the athlete's target_mode is 'hr' (IP_HR_ONLY). Kept tiny so
+    both FIT builders share one gate; ProfileManager.target_mode already
+    degrades to 'power' if the lthr/max_hr invariant is broken."""
+    try:
+        from profile_manager import ProfileManager
+        return ProfileManager.get().target_mode == "hr"
+    except Exception:
+        return False
+
+
+def _fit_hr_params() -> tuple[int, int]:
+    from profile_manager import ProfileManager
+    pm = ProfileManager.get()
+    return pm.lthr, pm.max_hr
+
+
+def _fit_apply_hr_target(step, pct_lo: float, pct_hi: float, dur_s: float,
+                         step_name: str, lthr: int, max_hr: int) -> None:
+    """Set one FIT workout step's target for hr target_mode (IP_HR_ONLY C8).
+
+    Guidable segments (per hr_targets.power_target_to_hr) get a real
+    HEART_RATE custom target. FIT encodes custom_target_heart_rate_* as
+    bpm + 100 (values ≤100 mean %HRmax) — verified against fit_tool, which
+    stores the raw field without applying the offset itself. RPE segments get
+    an OPEN target (duration-only step) with the RPE cue in the step name so
+    the head unit shows guidance text instead of an unreachable bpm.
+    """
+    from fit_tool.profile.profile_type import WorkoutStepTarget
+    from hr_targets import power_target_to_hr
+
+    tgt = power_target_to_hr(pct_lo, pct_hi, dur_s, lthr, max_hr)
+    if tgt["kind"] == "hr":
+        step.target_type = WorkoutStepTarget.HEART_RATE
+        step.custom_target_heart_rate_low = tgt["bpm_low"] + 100
+        step.custom_target_heart_rate_high = tgt["bpm_high"] + 100
+        step.target_value = 0  # 0 = custom target (not a zone)
+        step.workout_step_name = step_name[:15]
+    elif tgt["kind"] == "hr_ramp":
+        # FIT has no HR ramp; target the span (device shows a range to move
+        # through). Callers that staircase ramps pass flat sub-steps instead.
+        lo = min(tgt["bpm_start"], tgt["bpm_end"])
+        hi = max(tgt["bpm_start"], tgt["bpm_end"])
+        step.target_type = WorkoutStepTarget.HEART_RATE
+        step.custom_target_heart_rate_low = lo + 100
+        step.custom_target_heart_rate_high = max(hi, lo + 1) + 100
+        step.target_value = 0
+        step.workout_step_name = step_name[:15]
+    else:  # rpe
+        step.target_type = WorkoutStepTarget.OPEN
+        rpe = (f"RPE {tgt['rpe_low']}" if tgt["rpe_low"] == tgt["rpe_high"]
+               else f"RPE {tgt['rpe_low']}-{tgt['rpe_high']}")
+        step.workout_step_name = rpe[:15]
+
+
 def _build_fit_workout(name: str, blocks: list[dict], ftp: int) -> bytes:
     """Build a proper FIT binary workout file using fit_tool.
 
@@ -10479,26 +10593,35 @@ def _build_fit_workout(name: str, blocks: list[dict], ftp: int) -> bytes:
         "cooldown": Intensity.COOLDOWN,
     }
 
+    hr_mode = _fit_hr_params() if _fit_hr_mode() else None
     for i, b in enumerate(blocks):
         step = WorkoutStepMessage()
         step.message_index = i
         step.duration_type = WorkoutStepDuration.TIME
         step.duration_value = b["min"] * 60 * 1000  # milliseconds
-        step.target_type = WorkoutStepTarget.POWER
         step.intensity = INTENSITY_MAP.get(b.get("intensity", "active"), Intensity.ACTIVE)
         # v2.4.2 — every step needs a name. Garmin's own canonical workout files
         # (and TrainingPeaks / Vekta) expect wkt_step_name on each step; without it
         # strict importers report "no workout in this file". Cap to 15 chars.
-        step.workout_step_name =(str(b.get("name") or "Step"))[:15]
+        step_name = str(b.get("name") or "Step")
 
-        # v2.4.3 — %FTP targets, not absolute watts. FIT workout_power encodes a
-        # value <1000 as % of FTP and >=1000 as (watts + 1000). %FTP is the
-        # portable form (the workout scales to the athlete's FTP on the device /
-        # in TrainingPeaks, matching ZWO's relative model) and is what structured-
-        # workout importers expect. pctLow/pctHigh are already percentages.
-        step.custom_target_power_low = max(1, round(b["pctLow"]))
-        step.custom_target_power_high = max(1, round(b["pctHigh"]))
-        step.target_value = 0  # 0 = custom target (not a zone)
+        if hr_mode:
+            # hr target_mode (IP_HR_ONLY C8): guidable steps carry a real FIT
+            # HEART_RATE target; RPE steps go OPEN (duration only) with the cue
+            # in the step name — no false bpm to chase on a sprint.
+            _fit_apply_hr_target(step, b["pctLow"], b["pctHigh"],
+                                 b["min"] * 60, step_name, *hr_mode)
+        else:
+            step.target_type = WorkoutStepTarget.POWER
+            # v2.4.3 — %FTP targets, not absolute watts. FIT workout_power encodes a
+            # value <1000 as % of FTP and >=1000 as (watts + 1000). %FTP is the
+            # portable form (the workout scales to the athlete's FTP on the device /
+            # in TrainingPeaks, matching ZWO's relative model) and is what structured-
+            # workout importers expect. pctLow/pctHigh are already percentages.
+            step.custom_target_power_low = max(1, round(b["pctLow"]))
+            step.custom_target_power_high = max(1, round(b["pctHigh"]))
+            step.target_value = 0  # 0 = custom target (not a zone)
+            step.workout_step_name = step_name[:15]
 
         builder.add(step)
 
@@ -10543,7 +10666,14 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int) -> bytes:
     root = tree.getroot()
     workout_el = root.find("workout")
 
-    # (intensity, duration_seconds, power_low_pct_fraction, power_high_pct_fraction)
+    # hr target_mode (IP_HR_ONLY): decided ONCE up front because it changes how
+    # ramps are expanded below — the power-mode 30 s staircase would put every
+    # ramp sub-step under HR_MIN_SEG_S and wrongly degrade whole warmups to RPE,
+    # so in hr mode a ramp stays ONE step spanning its HR range.
+    hr_mode = _fit_hr_params() if _fit_hr_mode() else None
+
+    # (intensity, duration_seconds, power_start_fraction, power_end_fraction)
+    # start/end are IN TIME ORDER (equal for flat steps).
     raw_steps: list[tuple[str, int, float, float]] = []
     if workout_el is not None:
         for el in workout_el:
@@ -10567,6 +10697,18 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int) -> bytes:
                     "cooldown" if tag == "Cooldown" else "active")
                 if dur <= 0:
                     pass
+                elif hr_mode:
+                    # One un-staircased step, direction in time order (the
+                    # chart's v2.0.6 rule: Warmup up, Cooldown down, Ramp as
+                    # authored). power_target_to_hr handles the endpoint map.
+                    lo, hi = min(plo, phi), max(plo, phi)
+                    if tag == "Cooldown":
+                        p_start, p_end = hi, lo
+                    elif tag == "Warmup":
+                        p_start, p_end = lo, hi
+                    else:
+                        p_start, p_end = plo, phi
+                    raw_steps.append((intensity, dur, p_start, p_end))
                 else:
                     # 1 sub-step per ~30 s, capped 1..8 so short ramps stay
                     # cheap and long ones still read as a smooth ramp.
@@ -10630,25 +10772,34 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int) -> bytes:
     workout.num_valid_steps = len(raw_steps)
     builder.add(workout)
 
-    for i, (intensity_kind, dur_s, p_lo, p_hi) in enumerate(raw_steps):
+    for i, (intensity_kind, dur_s, p_start, p_end) in enumerate(raw_steps):
         step = WorkoutStepMessage()
         step.message_index = i
         step.duration_type = WorkoutStepDuration.TIME
         step.duration_value = dur_s * 1000  # milliseconds
-        step.target_type = WorkoutStepTarget.POWER
         step.intensity = INTENSITY_MAP.get(intensity_kind, Intensity.ACTIVE)
         # v2.4.2 — name every step (Garmin canonical / TrainingPeaks / Vekta expect
         # wkt_step_name; missing names → "no workout in this file" on import).
-        step.workout_step_name ={
+        step_name = {
             "warmup": "Warm up", "cooldown": "Cool down",
             "rest": "Recovery", "active": "Work",
         }.get(intensity_kind, "Work")
-        # v2.4.3 — %FTP targets (value <1000 = % of FTP; >=1000 = watts+1000).
-        # %FTP is the portable form importers expect + scales to the athlete's FTP.
-        # p_lo/p_hi are FTP fractions (0.65 = 65%), so ×100 → percent.
-        step.custom_target_power_low = max(1, round(p_lo * 100))
-        step.custom_target_power_high = max(1, round(p_hi * 100))
-        step.target_value = 0  # 0 = custom target (not a zone)
+
+        if hr_mode:
+            # hr target_mode (IP_HR_ONLY C8): HEART_RATE targets where HR can
+            # guide, OPEN + RPE-in-name where it can't (short / supra-threshold).
+            _fit_apply_hr_target(step, p_start * 100, p_end * 100, dur_s,
+                                 step_name, *hr_mode)
+        else:
+            step.target_type = WorkoutStepTarget.POWER
+            step.workout_step_name = step_name
+            # v2.4.3 — %FTP targets (value <1000 = % of FTP; >=1000 = watts+1000).
+            # %FTP is the portable form importers expect + scales to the athlete's FTP.
+            # p_start/p_end are FTP fractions (0.65 = 65%), so ×100 → percent
+            # (equal for flat steps — power mode never emits an unstaircased ramp).
+            step.custom_target_power_low = max(1, round(p_start * 100))
+            step.custom_target_power_high = max(1, round(p_end * 100))
+            step.target_value = 0  # 0 = custom target (not a zone)
         builder.add(step)
 
     fit_file = builder.build()

@@ -2726,6 +2726,21 @@ window.addEventListener('unhandledrejection', function(e) {
         <div class="form-group"><label>LTHR (bpm)</label><input type="number" id="set-lthr"></div>
         <div class="form-group"><label>Max HR (bpm)</label><input type="number" id="set-maxhr"></div>
       </div>
+      <!-- hr target_mode (IP_HR_ONLY): global equipment mode. Gated on an
+           explicitly-set LTHR (lthr_is_set from /api/settings — the bare lthr
+           value is a silent 170 default when unset). -->
+      <div class="form-row">
+        <div class="form-group">
+          <label>Workout targets
+            <span class="hint" title="Power: targets as watts/%FTP (power meter or smart trainer). Heart rate: no power meter — steady aerobic segments get a bpm range from your LTHR; short and very hard efforts are by feel (RPE), because heart rate lags ~30s and tops out. HR targets drift up on long efforts — hold the lower half of the range early." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span>
+          </label>
+          <select id="set-target-mode">
+            <option value="power">Power (power meter)</option>
+            <option value="hr">Heart rate (no power meter)</option>
+          </select>
+          <div id="target-mode-hint" style="font-size:11px;color:var(--text3);margin-top:4px;display:none;"></div>
+        </div>
+      </div>
       <div class="form-row">
         <div class="form-group"><label>W/kg</label>
           <span id="set-wkg" style="font-size:20px;font-weight:700;">—</span></div>
@@ -3422,8 +3437,24 @@ function formatDur(s) {
   return r ? `${m} min ${Math.round(r)} sec` : `${m} min`;
 }
 
-function workoutProfileSVG(segments, ftp, totalSec) {
+// hr target_mode (IP_HR_ONLY): tooltip text for a converted segment. The
+// server attaches per-segment `hr` / `hr_on` / `hr_off` objects from
+// hr_targets.power_target_to_hr; this renders them for the chart hover.
+function _hrTipText(t) {
+  if (!t) return '';
+  if (t.kind === 'hr') {
+    let s = `${t.bpm_low}–${t.bpm_high} bpm (${esc(t.zone_name || '')})`;
+    if (t.drift) s += ' • expect upward drift — start low in range';
+    return s;
+  }
+  if (t.kind === 'hr_ramp') return `ramp ${t.bpm_start}→${t.bpm_end} bpm`;
+  const r = t.rpe_low === t.rpe_high ? `RPE ${t.rpe_low}` : `RPE ${t.rpe_low}–${t.rpe_high}`;
+  return `${r} — ${esc(t.label || 'by feel')} (no HR target)`;
+}
+
+function workoutProfileSVG(segments, ftp, totalSec, hrCtx) {
   if (!segments || !segments.length || totalSec <= 0) return '<div style="color:var(--text3);padding:20px;">No workout data</div>';
+  const hrMode = !!(hrCtx && hrCtx.mode === 'hr');
   const W = 860, H = 220, PAD_L = 50, PAD_R = 48, PAD_T = 10, PAD_B = 30;
   const cw = W - PAD_L - PAD_R, ch = H - PAD_T - PAD_B;
   // Find max power for Y scale
@@ -3454,7 +3485,9 @@ function workoutProfileSVG(segments, ftp, totalSec) {
       // FTP; ftp is in watts, so the prerendered `s.power` field is already
       // round(ftp * fraction) (see api_workout_detail).
       const watts = Math.round(s.power);
-      const tip = `${TYPE}: ${formatDur(s.duration)} • ${watts} W (${Math.round(s.pct)}% FTP)`;
+      const tip = hrMode && s.hr
+        ? `${TYPE}: ${formatDur(s.duration)} • ${_hrTipText(s.hr)}`
+        : `${TYPE}: ${formatDur(s.duration)} • ${watts} W (${Math.round(s.pct)}% FTP)`;
       // v1.6.5: data-charttip drives the custom JS tooltip (chart-tip) so the
       // hover hint shows instantly even in WKWebView (which serves SVG
       // <title> with a ~1s delay if at all). <title> is kept as a no-cost
@@ -3506,7 +3539,9 @@ function workoutProfileSVG(segments, ftp, totalSec) {
       // direction the bar visually slopes.
       const wattsStart = Math.round(startPower);
       const wattsEnd = Math.round(endPower);
-      const tip = `${TYPE}: ${formatDur(s.duration)} • ${wattsStart}→${wattsEnd} W (${Math.round(pctStart)}%→${Math.round(pctEnd)}% FTP)`;
+      const tip = hrMode && s.hr
+        ? `${TYPE}: ${formatDur(s.duration)} • ${_hrTipText(s.hr)}`
+        : `${TYPE}: ${formatDur(s.duration)} • ${wattsStart}→${wattsEnd} W (${Math.round(pctStart)}%→${Math.round(pctEnd)}% FTP)`;
       // v1.6.5: see SteadyState branch for the data-charttip / <title> rationale.
       rects += `<polygon points="${x1},${yStart} ${x2},${yEnd} ${x2},${yBot} ${x1},${yBot}" fill="url(#${gid})" opacity="0.85" data-charttip="${esc(tip)}"></polygon>`;
     } else if (s.type === 'IntervalsT') {
@@ -3522,7 +3557,9 @@ function workoutProfileSVG(segments, ftp, totalSec) {
         // bar so the rider hovering an interval sees "3 min • 280 W
         // (113% FTP)" instead of just the percentage.
         const onWatts = Math.round(s.on_power);
-        const onTip = `INTERVALS ON: ${formatDur(s.on_duration)} • ${onWatts} W (${Math.round(s.on_pct)}% FTP)`;
+        const onTip = hrMode && s.hr_on
+          ? `INTERVALS ON: ${formatDur(s.on_duration)} • ${_hrTipText(s.hr_on)}`
+          : `INTERVALS ON: ${formatDur(s.on_duration)} • ${onWatts} W (${Math.round(s.on_pct)}% FTP)`;
         // v1.6.5: data-charttip mirrors <title> — see SteadyState branch.
         rects += `<rect x="${ox1}" y="${oy}" width="${ox2-ox1}" height="${oBot-oy}" fill="${zOn.color}" opacity="0.85" data-charttip="${esc(onTip)}"></rect>`;
         cursor += s.on_duration;
@@ -3532,7 +3569,9 @@ function workoutProfileSVG(segments, ftp, totalSec) {
         const fy = yScale(s.off_power);
         const zOff = powerToZone(s.off_pct);
         const offWatts = Math.round(s.off_power);
-        const offTip = `INTERVALS OFF: ${formatDur(s.off_duration)} • ${offWatts} W (${Math.round(s.off_pct)}% FTP)`;
+        const offTip = hrMode && s.hr_off
+          ? `INTERVALS OFF: ${formatDur(s.off_duration)} • ${_hrTipText(s.hr_off)}`
+          : `INTERVALS OFF: ${formatDur(s.off_duration)} • ${offWatts} W (${Math.round(s.off_pct)}% FTP)`;
         // v1.6.5: data-charttip mirrors <title>.
         rects += `<rect x="${fx1}" y="${fy}" width="${fx2-fx1}" height="${oBot-fy}" fill="${zOff.color}" opacity="0.85" data-charttip="${esc(offTip)}"></rect>`;
         cursor += s.off_duration;
@@ -3550,8 +3589,17 @@ function workoutProfileSVG(segments, ftp, totalSec) {
     }
   }
 
-  // Zone threshold lines
-  const thresholds = [
+  // Zone threshold lines. In hr mode the geometry stays power-shaped (the
+  // profile IS the workout), but the labels speak bpm: the Coggan %FTP→%LTHR
+  // boundary pairs are monotone, so each boundary line carries its bpm value
+  // (68/83/94/105% LTHR); above threshold is RPE territory, no bpm exists.
+  const thresholds = hrMode ? [
+    {pct: 55, label:`${Math.round(0.68*hrCtx.lthr)} bpm`},
+    {pct: 75, label:`${Math.round(0.83*hrCtx.lthr)} bpm`},
+    {pct: 90, label:`${Math.round(0.94*hrCtx.lthr)} bpm`},
+    {pct: 100, label:'LTHR'},
+    {pct: 120, label:'RPE ↑'}
+  ] : [
     {pct: 55, label:'Z1/Z2'}, {pct: 75, label:'Z2/Z3'},
     {pct: 88, label:'SS'}, {pct: 100, label:'FTP'}, {pct: 120, label:'VO2'}
   ];
@@ -3567,12 +3615,15 @@ function workoutProfileSVG(segments, ftp, totalSec) {
     lines += `<text x="${W-PAD_R+4}" y="${y+4}" fill="var(--text2)" font-size="9">${t.label}</text>`;
   }
 
-  // Y axis labels (watts)
+  // Y axis labels (watts; suppressed in hr mode — a no-power rider can't use
+  // watt ticks, the bpm boundary labels on the right are the scale).
   let yLabels = '';
-  const step = maxPwr > 400 ? 100 : maxPwr > 200 ? 50 : 25;
-  for (let pw = 0; pw <= maxPwr; pw += step) {
-    const y = yScale(pw);
-    yLabels += `<text x="${PAD_L-4}" y="${y+3}" text-anchor="end" fill="var(--text3)" font-size="9">${pw}W</text>`;
+  if (!hrMode) {
+    const step = maxPwr > 400 ? 100 : maxPwr > 200 ? 50 : 25;
+    for (let pw = 0; pw <= maxPwr; pw += step) {
+      const y = yScale(pw);
+      yLabels += `<text x="${PAD_L-4}" y="${y+3}" text-anchor="end" fill="var(--text3)" font-size="9">${pw}W</text>`;
+    }
   }
 
   // X axis labels (time)
@@ -3592,7 +3643,7 @@ function workoutProfileSVG(segments, ftp, totalSec) {
       ${rects}${lines}${yLabels}${xLabels}
       <line x1="${PAD_L}" y1="${PAD_T}" x2="${PAD_L}" y2="${H-PAD_B}" stroke="var(--border)" stroke-width="1"/>
       <line x1="${PAD_L}" y1="${H-PAD_B}" x2="${W-PAD_R}" y2="${H-PAD_B}" stroke="var(--border)" stroke-width="1"/>
-      <text x="14" y="${yMid}" fill="var(--text3)" font-size="10" text-anchor="middle" transform="rotate(-90,14,${yMid})">Power (W)</text>
+      <text x="14" y="${yMid}" fill="var(--text3)" font-size="10" text-anchor="middle" transform="rotate(-90,14,${yMid})">${hrMode ? 'Heart rate / RPE' : 'Power (W)'}</text>
       <text x="${xMid}" y="${H-1}" fill="var(--text3)" font-size="10" text-anchor="middle">Time</text>
     </svg>
   </div>`;
@@ -3605,13 +3656,19 @@ async function openWorkoutDetail(category, filename, meta) {
     const d = await res.json();
     if (d.error) { $('modal-content').innerHTML = `<p style="color:var(--red)">Error: ${esc(d.error)}</p>`; return; }
 
-    const chart = workoutProfileSVG(d.segments, d.ftp, d.total_seconds);
+    // hr target_mode (IP_HR_ONLY): server attaches target_mode + per-segment
+    // hr/rpe when the athlete is in hr mode; the chart relabels its numbers
+    // and the IF chip is suppressed (an FTP-relative number is unusable
+    // without a power meter — C19). TSS stays: it's the planning-load unit.
+    const hrCtx = d.target_mode === 'hr' ? {mode: 'hr', lthr: d.lthr, maxHr: d.max_hr} : null;
+    const chart = workoutProfileSVG(d.segments, d.ftp, d.total_seconds, hrCtx);
     const durMin = Math.round(d.total_seconds / 60);
     const metaHtml = meta ? `<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--text2);margin-bottom:12px;">
       <span>${durMin} min</span>
       ${meta.tss ? `<span>TSS ${meta.tss}</span>` : ''}
-      ${meta.if_ ? `<span>IF ${meta.if_}</span>` : ''}
+      ${(meta.if_ && !hrCtx) ? `<span>IF ${meta.if_}</span>` : ''}
       ${meta.protocol ? `<span>${meta.protocol}</span>` : ''}
+      ${hrCtx ? `<span style="color:var(--accent);">HR targets · from LTHR ${d.lthr}</span>` : ''}
     </div>` : `<div class="modal-meta">${durMin} min</div>`;
 
     const zoneHtml = meta ? `<div style="margin:12px 0;">${zoneBar(meta.z1||0,meta.z2||0,meta.z3||0,meta.z4||0,meta.z5||0,meta.z6||0)}</div>` : '';
@@ -12688,6 +12745,22 @@ async function loadSettings() {
   $('set-maxhr').value = d.max_hr;
   $('set-eftp').textContent = d.eftp ? d.eftp + 'W' : 'N/A';
   $('set-wkg').textContent = d.w_per_kg + ' W/kg';
+  // hr target_mode (IP_HR_ONLY): global flag drives detail rendering + chrome
+  // suppression; the <select> is gated on an explicitly-set LTHR.
+  window._targetMode = d.target_mode || 'power';
+  window._lthrIsSet = !!d.lthr_is_set;
+  const tmSel = $('set-target-mode');
+  if (tmSel) {
+    tmSel.value = window._targetMode;
+    const hint = $('target-mode-hint');
+    if (!window._lthrIsSet) {
+      hint.style.display = '';
+      hint.textContent = 'Heart-rate mode needs your LTHR — set it above first (20-min field test, or the intervals.icu estimate from Setup).';
+    } else {
+      hint.style.display = window._targetMode === 'hr' ? '' : 'none';
+      hint.textContent = 'Steady aerobic segments get a bpm range; short/hard efforts are by feel (RPE).';
+    }
+  }
   // v4.1.0 U3: render FTP source badge
   renderFtpSourceBadge(d.ftp_source, d.ftp_source_date);
   // v4.1.0 U2: fetch + render FTP history chart (async, non-blocking).
@@ -13106,11 +13179,27 @@ async function saveSettings() {
     lthr: parseInt($('set-lthr').value),
     max_hr: parseInt($('set-maxhr').value),
   };
+  // hr target_mode — server enforces the gate (explicit LTHR + max_hr > LTHR)
+  // and 400s with a readable message; surfaced via the alert below.
+  const tmSel = $('set-target-mode');
+  if (tmSel) body.target_mode = tmSel.value;
   try {
     const res = await fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
     if (!res.ok) {
-      const errText = await res.text().catch(() => 'unknown');
-      throw new Error(`${res.status}: ${errText}`);
+      let msg = 'unknown';
+      try { msg = (await res.json()).detail || msg; } catch(_) { msg = await res.text().catch(() => 'unknown'); }
+      if (res.status === 400 && tmSel && /hr mode|LTHR/i.test(String(msg))) {
+        alert(String(msg));
+        tmSel.value = window._targetMode || 'power';
+        return;
+      }
+      throw new Error(`${res.status}: ${msg}`);
+    }
+    // First switch INTO hr mode: one-time disclaimer (IP_HR_ONLY C11).
+    if (tmSel && tmSel.value === 'hr' && (window._targetMode || 'power') !== 'hr'
+        && !localStorage.getItem('hrModeDisclaimerShown')) {
+      localStorage.setItem('hrModeDisclaimerShown', '1');
+      alert('Heart-rate mode: HR targets are approximate and personal — heat, fatigue and dehydration shift them, and HR drifts upward on long efforts (hold the lower half of the range early). Short and very hard efforts are prescribed by feel (RPE) because heart rate reacts too slowly to guide them.');
     }
     // v4.1.0 U4: if the FTP actually changed, log the prior value in
     // ftp_test_history via /api/profile/update-ftp with source="manual".
@@ -14582,7 +14671,8 @@ async function openDayWorkout(sessionIdx) {
       if (segRes.ok) {
         const segData = await segRes.json();
         if (segData && segData.segments && segData.segments.length > 0) {
-          segmentChartSvg = workoutProfileSVG(segData.segments, segData.ftp || settingsFtp, segData.total_seconds);
+          segmentChartSvg = workoutProfileSVG(segData.segments, segData.ftp || settingsFtp, segData.total_seconds,
+            segData.target_mode === 'hr' ? {mode: 'hr', lthr: segData.lthr, maxHr: segData.max_hr} : null);
           // v2.4.0 — explicit warmup budgeting: surface the warmup / main /
           // cooldown split so "slot = warmup + main" is visible (the planner
           // already budgets total time; this makes the breakdown explicit).
@@ -14867,7 +14957,8 @@ function _renderRematchCandidate(day, candidate) {
       }
       const settingsFtp = (window._athleteFtp || 250);
       const ftp = segData.ftp || settingsFtp;
-      holder.innerHTML = workoutProfileSVG(segData.segments, ftp, segData.total_seconds);
+      holder.innerHTML = workoutProfileSVG(segData.segments, ftp, segData.total_seconds,
+        segData.target_mode === 'hr' ? {mode: 'hr', lthr: segData.lthr, maxHr: segData.max_hr} : null);
     } catch (e) {
       holder.textContent = 'Preview load error.';
     }

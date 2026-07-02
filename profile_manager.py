@@ -144,6 +144,26 @@ class ProfileManager:
         return self._athlete.get("lthr", 170)
 
     @property
+    def lthr_is_set(self) -> bool:
+        """True only when LTHR was explicitly provided (profile setup, the
+        settings form, or the ICU HR estimate) — i.e. the key exists in
+        athlete.json. The bare ``lthr`` property always returns a 170 default,
+        so it can NEVER gate hr target_mode (IP_HR_ONLY C15): every user would
+        appear to "have" an LTHR."""
+        return self._athlete.get("lthr") is not None
+
+    @property
+    def target_mode(self) -> str:
+        """'power' (default) or 'hr' — how workout targets are prescribed.
+        'hr' requires lthr_is_set and max_hr > lthr (enforced at the settings
+        write path); reads degrade to 'power' if the invariant is broken so a
+        hand-edited athlete.json can't put the UI in an unguarded hr mode."""
+        mode = self._athlete.get("target_mode", "power")
+        if mode == "hr" and (not self.lthr_is_set or self.max_hr <= self.lthr):
+            return "power"
+        return mode
+
+    @property
     def max_hr(self) -> int:
         """Max HR in bpm. Falls back to Tanaka 208-0.7*age if age is known,
         else to the legacy 190 default. Without this, the UI's setup hint

@@ -188,6 +188,17 @@ class TestRoutes(unittest.TestCase):
         _set_creds(token="", key="", athlete="")
         self.assertEqual(self.client.get("/api/icu/connection").json()["method"], "none")
 
+    def test_scopes_one_per_area(self):
+        """v3.0.2 regression: intervals.icu allows ONE scope per area — sending
+        CALENDAR:READ and CALENDAR:WRITE together makes /oauth/authorize fail
+        with "Duplicate scope CALENDAR", bricking connect AND reconnect."""
+        scopes = config.ICU_OAUTH_SCOPES.split(",")
+        areas = [s.split(":")[0] for s in scopes]
+        self.assertEqual(len(areas), len(set(areas)),
+                         f"duplicate scope area in ICU_OAUTH_SCOPES: {scopes}")
+        # The push engine needs calendar write; reads ride on WRITE.
+        self.assertIn("CALENDAR:WRITE", scopes)
+
 
 if __name__ == "__main__":
     unittest.main()

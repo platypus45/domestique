@@ -54,7 +54,11 @@ ICU_OAUTH_REDIRECT_URI = "http://localhost:8080/oauth/icu/callback"  # port pinn
 # workouts onto the athlete's ICU calendar. Pre-existing connections granted
 # only the READ set keep working read-only; the UI offers a one-click
 # reconnect to pick up the new scope (granted scopes are stamped per profile).
-ICU_OAUTH_SCOPES = "ACTIVITY:READ,WELLNESS:READ,CALENDAR:READ,LIBRARY:READ,CALENDAR:WRITE"
+# ONE scope per area: intervals.icu rejects the authorize request with
+# "Duplicate scope CALENDAR" if an area appears twice (v3.0.2 hotfix —
+# CALENDAR:READ + CALENDAR:WRITE together bricked reconnect). WRITE covers
+# the calendar reads the app does.
+ICU_OAUTH_SCOPES = "ACTIVITY:READ,WELLNESS:READ,LIBRARY:READ,CALENDAR:WRITE"
 
 # ── Weekly mesocycle planner — Seiler (2010), Stöggl & Sperlich (2014) ───────
 WEEKLY_LIT_PCT = 0.80

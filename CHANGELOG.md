@@ -1,5 +1,12 @@
 # Changelog
 
+## v3.0.2 — Fix intervals.icu connect error (2026-07-03)
+
+- Fixed connecting (or reconnecting) to intervals.icu failing with a
+  "Duplicate scope CALENDAR" error — introduced in v3.0.1 alongside the new
+  calendar push. If v3.0.1 showed you that error, just update and connect
+  again.
+
 ## v3.0.1 — Send workouts straight to intervals.icu (2026-07-03)
 
 - New on the Training Plan tab: **Push to intervals.icu calendar** sends your

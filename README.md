@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4232-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v3.0.0-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v3.0.1-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-2100%2B-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -48,6 +48,13 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 ---
 
 ## What's new in v3.0.0
+
+**New in v3.0.1 — push to intervals.icu.** Send your planned workouts straight
+to your intervals.icu calendar (one-off button on the Training Plan tab, or an
+optional keep-in-sync setting) so Garmin & MyWhoosh pull them automatically;
+heart-rate plans push with HR targets. Only Domestique's own entries are ever
+touched — your races and anything you added yourself stay put. Reconnect once
+to grant calendar access.
 
 **Train by heart rate — no power meter needed.** A new Workout-targets mode
 prescribes every session in bpm: steady aerobic work gets LTHR-anchored
@@ -467,7 +474,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v3.0.0 — Train by heart rate, race-ready plans, and a new Analysis tab](https://github.com/platypus45/domestique/releases/latest)** (2026-07-02).
+Latest: **[v3.0.1 — Send workouts straight to intervals.icu](https://github.com/platypus45/domestique/releases/latest)** (2026-07-03).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

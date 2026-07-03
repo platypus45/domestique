@@ -1,5 +1,23 @@
 # Changelog
 
+## v3.0.1 — Send workouts straight to intervals.icu (2026-07-03)
+
+- New on the Training Plan tab: **Push to intervals.icu calendar** sends your
+  next 14 days of planned workouts to your intervals.icu calendar — Garmin and
+  MyWhoosh pick them up from there automatically. No more exporting and
+  uploading files by hand.
+- Optional **Keep intervals.icu calendar in sync** setting (off by default):
+  after any plan change your calendar is updated automatically, and once a day
+  the window rolls forward on its own.
+- Training by heart rate? Your workouts are pushed with heart-rate targets.
+  Power-based plans push the original workout files unchanged.
+- Safe by design: Domestique only ever touches the calendar entries it created
+  — your races, notes, and anything you added yourself stay put, even on the
+  same day. Turning sync off (or disconnecting) removes Domestique's entries
+  and nothing else. One Domestique install per athlete.
+- Existing intervals.icu connections are read-only: the button will ask for a
+  one-click reconnect to grant calendar permission the first time.
+
 ## v3.0.0 — Train by heart rate, race-ready plans, and a new Analysis tab (2026-07-02)
 
 ### Headline: train without a power meter

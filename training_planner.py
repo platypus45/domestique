@@ -371,6 +371,15 @@ def _rotate_plan_backups(plan_path: "Path") -> None:
         log.debug(f"_rotate_plan_backups: copy live→.bak failed: {e}")
 
 
+# v3.0.1 (IP_ICU_PUSH): optional post-write hook. app.py registers its
+# debounced ICU-calendar push scheduler here at boot (AFTER the boot-time
+# restore/rewrite writes); the CLI path never registers, so plain
+# `python training_planner.py` stays network-silent. Called with the plan
+# Path AFTER the atomic rename, OUTSIDE the write lock; failures are logged
+# and swallowed — a broken callback must never break a plan write.
+post_write_callback = None
+
+
 def atomic_write_plan(json_path: "Path | str", plan: dict) -> None:
     """Atomically write ``plan`` to ``json_path`` under the plan-write lock.
 
@@ -395,6 +404,12 @@ def atomic_write_plan(json_path: "Path | str", plan: dict) -> None:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(plan, f, indent=2, default=str)
         tmp.replace(p)
+    cb = post_write_callback
+    if cb is not None:
+        try:
+            cb(p)
+        except Exception as e:
+            log.debug(f"atomic_write_plan: post-write callback failed: {e}")
 
 
 def plan_ctl_snapshot(current_ctl, recent_weekly_tss,

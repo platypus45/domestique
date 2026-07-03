@@ -462,10 +462,22 @@ async def lifespan(app):
     except Exception as _e:
         _log.debug(f"stale-plan rewrite on boot failed: {_e}")
 
+    # v3.0.1 (IP_ICU_PUSH): register the plan post-write hook AFTER the
+    # boot-time restore/rewrite writes above, so booting never schedules a
+    # calendar push by itself. Server-only — the CLI path never registers.
+    # Boot-time writes are instead mirrored by the once-a-day reconcile
+    # riding the sync loop (D3b).
+    tp.post_write_callback = _icu_push_schedule_debounced
+    db.post_sync_callback = _icu_push_daily_from_sync
+
     try:
         yield
     finally:
         # ── Shutdown cleanup: best-effort, don't block teardown ──────────
+        try:
+            _icu_push_cancel_pending()
+        except Exception as e:
+            log.debug(f"icu push timer cancel failed: {e}")
         try:
             if hasattr(db, 'stop_sync'):
                 db.stop_sync()
@@ -7581,7 +7593,8 @@ def _save_icu_token_for_profile(pm, profile_id: str, access_token: str,
                                 athlete_id: "str | None",
                                 athlete_name: "str | None",
                                 refresh_token: "str | None" = None,
-                                expires_in: "int | float | None" = None) -> None:
+                                expires_in: "int | float | None" = None,
+                                granted_scopes: "str | None" = None) -> None:
     """AC3a: persist an OAuth token to the profile that STARTED the flow —
     not whichever profile happens to be active when ICU redirects back.
 
@@ -7592,10 +7605,15 @@ def _save_icu_token_for_profile(pm, profile_id: str, access_token: str,
 
     AC3c (capture only, no refresh flow): refresh_token / expires_in are
     stored when ICU sends them — mirror of pm.save_icu_token's fields.
+
+    v3.0.1 (IP_ICU_PUSH): ``granted_scopes`` — the token response's "scope"
+    field — is stamped as ICU_GRANTED_SCOPES so the calendar push engine
+    knows whether CALENDAR:WRITE was granted.
     """
     if profile_id == pm.active_id:
         pm.save_icu_token(access_token, athlete_id, athlete_name,
-                          refresh_token, expires_in)
+                          refresh_token, expires_in,
+                          granted_scopes=granted_scopes)
         return
     prof_dir = pm._profiles_dir / profile_id
     env = {}
@@ -7617,6 +7635,10 @@ def _save_icu_token_for_profile(pm, profile_id: str, access_token: str,
               else (env.get("ICU_REFRESH_TOKEN") or "").strip())
         if rt:
             lines.append(f"ICU_REFRESH_TOKEN={rt}")
+        gs = (str(granted_scopes).strip() if granted_scopes
+              else (env.get("ICU_GRANTED_SCOPES") or "").strip())
+        if gs:
+            lines.append(f"ICU_GRANTED_SCOPES={gs}")
         exp = (env.get("ICU_TOKEN_EXPIRES_AT") or "").strip()
         try:
             if expires_in is not None and float(expires_in) > 0:
@@ -7722,6 +7744,14 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
         athlete = tok.get("athlete") or {}
         athlete_id = str(athlete.get("id") or "")
         athlete_name = (athlete.get("name") or "").strip()
+        # v3.0.1 (IP_ICU_PUSH): ICU's token response carries the GRANTED
+        # scope set (forum #2759). Stamp it on the profile so the calendar
+        # push engine can tell a write-capable connection from a legacy
+        # read-only one (missing stamp ⇒ reconnect prompt, no silent 403s).
+        granted_scopes = tok.get("scope") or ""
+        if isinstance(granted_scopes, (list, tuple)):
+            granted_scopes = ",".join(str(s) for s in granted_scopes)
+        granted_scopes = str(granted_scopes).strip()
         if not access_token:
             raise RuntimeError("no access_token in token response")
         # Capture the athlete's display name for the "Linked as <name>" UI. The
@@ -7760,7 +7790,8 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
         _save_icu_token_for_profile(
             pm, target_pid, access_token, athlete_id or None, athlete_name or None,
             refresh_token=tok.get("refresh_token"),
-            expires_in=tok.get("expires_in"))
+            expires_in=tok.get("expires_in"),
+            granted_scopes=granted_scopes or None)
         if target_pid == pm.active_id:
             # Unshadow stale module-level config.ICU_* so the proxy re-resolves
             # to the freshly-saved token immediately (same fix as the API-key
@@ -7792,6 +7823,15 @@ def api_icu_disconnect():
         if pid is None:
             return JSONResponse({"ok": False, "error": "no active profile"},
                                 status_code=409)
+        # v3.0.1 (IP_ICU_PUSH G-A): best-effort removal of OUR pushed calendar
+        # events BEFORE the token purge — afterwards there are no credentials
+        # left to delete with. Failures never block the disconnect.
+        try:
+            import icu_calendar_push as _icp
+            _icp.sweep_all()
+        except Exception:
+            _log.debug("icu disconnect calendar sweep failed (best-effort)",
+                       exc_info=True)
         try:
             db.purge_profile_data(pid)
         except db.SyncBusy:
@@ -7827,14 +7867,197 @@ def api_icu_connection():
         name = ProfileManager.get().icu_name or ""
     except Exception:
         name = ""
+    # v3.0.1 (IP_ICU_PUSH): can this connection write the ICU calendar?
+    # apikey → always (G-F); oauth → needs the CALENDAR:WRITE stamp (legacy
+    # connections lack it → the UI offers a one-click reconnect).
+    _wok = False
+    try:
+        import icu_calendar_push as _icp
+        _wok = _icp.write_ok()
+    except Exception:
+        _wok = False
     return {
         "connected": bool(token or key),
         "method": method,
         "athlete_id": aid,
         "name": name,
+        "write_ok": _wok,
         "needs_oauth_migration": bool(key and not token),
         "oauth_available": bool(getattr(config, "ICU_OAUTH_CLIENT_ID", "")),
     }
+
+
+# ── v3.0.1 (IP_ICU_PUSH) — calendar push: endpoints + debounced plan hook ────
+# One engine (icu_calendar_push.reconcile), two triggers: the plan-tab button
+# (POST below) and the atomic_write_plan post-write callback registered at
+# boot, debounced ~30s so a mutation burst coalesces into ONE bulk call.
+
+ICU_PUSH_DEBOUNCE_S = 30.0
+_icu_push_timer_lock = threading.Lock()
+_icu_push_timer: "threading.Timer | None" = None
+
+
+def _icu_push_sync_enabled() -> bool:
+    """The Settings toggle 'Keep intervals.icu calendar in sync' (default OFF)."""
+    try:
+        from profile_manager import ProfileManager
+        pm = ProfileManager.get()
+        return pm.active_id is not None and bool(
+            pm.prefs.get("icu_calendar_sync"))
+    except Exception:
+        return False
+
+
+def _icu_push_debounced_run(expected_pid: str) -> None:
+    global _icu_push_timer
+    with _icu_push_timer_lock:
+        _icu_push_timer = None
+    try:
+        if not _icu_push_sync_enabled():   # toggled off while pending
+            return
+        # TOCTOU guard: the profile that scheduled this push must still be
+        # active at fire time — a switch during the debounce window would
+        # push profile A's plan under A's prefix onto B's calendar, where
+        # B's sweeps treat it as foreign (G-B: warn, never delete) and it
+        # can never be cleaned up. (A switch during the reconcile's own
+        # network span is the same race class the sync loop handles with
+        # SyncAborted — seconds wide, accepted.)
+        from profile_manager import ProfileManager
+        if ProfileManager.get().active_id != expected_pid:
+            _log.info("EVENT=icu_push_debounced_abort reason=profile_switch")
+            return
+        import icu_calendar_push
+        res = icu_calendar_push.reconcile()
+        _log.info("EVENT=icu_push_debounced pushed=%s updated=%s deleted=%s",
+                  res.get("pushed"), res.get("updated"), res.get("deleted"))
+    except Exception:
+        _log.warning("debounced ICU calendar push failed", exc_info=True)
+
+
+def _icu_push_schedule_debounced(json_path) -> None:
+    """training_planner.atomic_write_plan post-write callback (boot-registered;
+    the CLI path never registers it). Coalesces: every plan write within the
+    window cancels and re-arms one shared ~30s timer. Only the ACTIVE
+    profile's live current_plan.json schedules — never a stray path."""
+    global _icu_push_timer
+    try:
+        if not _icu_push_sync_enabled():
+            return
+        from profile_manager import ProfileManager
+        pid = ProfileManager.get().active_id
+        if pid is None:
+            return
+        if Path(json_path).name != "current_plan.json":
+            return
+        with _icu_push_timer_lock:
+            if _icu_push_timer is not None:
+                _icu_push_timer.cancel()
+            t = threading.Timer(ICU_PUSH_DEBOUNCE_S, _icu_push_debounced_run,
+                                args=(pid,))
+            t.daemon = True
+            _icu_push_timer = t
+            t.start()
+    except Exception:
+        _log.debug("icu push debounce scheduling failed", exc_info=True)
+
+
+def _icu_push_cancel_pending() -> None:
+    """Cancel any armed debounce timer (toggle-OFF and shutdown paths)."""
+    global _icu_push_timer
+    with _icu_push_timer_lock:
+        if _icu_push_timer is not None:
+            _icu_push_timer.cancel()
+            _icu_push_timer = None
+
+
+_icu_push_last_daily: "str | None" = None
+
+
+def _icu_push_daily_from_sync() -> None:
+    """db.post_sync_callback (boot-registered): ONE reconcile per calendar
+    day, riding the 30-min sync loop (D3b). This is what rolls the 14-day
+    horizon forward on mutation-free days and mirrors boot-time plan writes
+    — the atomic_write_plan hook is deliberately registered AFTER those."""
+    global _icu_push_last_daily
+    try:
+        if not _icu_push_sync_enabled():
+            return
+        today = date.today().isoformat()
+        if _icu_push_last_daily == today:
+            return
+        _icu_push_last_daily = today
+        import icu_calendar_push
+        res = icu_calendar_push.reconcile()
+        if res.get("error"):
+            _icu_push_last_daily = None   # transient — retry next sync pass
+        _log.info("EVENT=icu_push_daily pushed=%s updated=%s deleted=%s "
+                  "needs_reconnect=%s error=%s",
+                  res.get("pushed"), res.get("updated"), res.get("deleted"),
+                  res.get("needs_reconnect"), res.get("error"))
+    except Exception:
+        _icu_push_last_daily = None
+        _log.warning("daily ICU calendar push failed", exc_info=True)
+
+
+@app.get("/api/icu/push")
+def api_icu_push_status():
+    """Push-button + sync-toggle state for the UI. Never raises."""
+    import icu_calendar_push as _icp
+    from profile_manager import ProfileManager
+    token = getattr(config, "ICU_ACCESS_TOKEN", "") or ""
+    key = getattr(config, "ICU_API_KEY", "") or ""
+    _wok = False
+    try:
+        _wok = _icp.write_ok()
+    except Exception:
+        _wok = False
+    sync_enabled = False
+    try:
+        sync_enabled = bool(ProfileManager.get().prefs.get("icu_calendar_sync"))
+    except Exception:
+        pass
+    return {
+        "connected": bool(token or key),
+        "method": "oauth" if token else ("apikey" if key else "none"),
+        "write_ok": _wok,
+        "sync_enabled": sync_enabled,
+        "horizon_days": 14,
+    }
+
+
+@app.post("/api/icu/push")
+def api_icu_push(body: "dict | None" = None):
+    """No body / {} → run the reconcile NOW (the plan-tab button).
+    {"sync": true|false} → flip the keep-in-sync toggle; OFF runs the final
+    forward sweep (G-A) so our events leave the athlete's calendar.
+    Always 200 with a result dict — needs_reconnect/error are data, not 500s
+    (G4)."""
+    import icu_calendar_push as _icp
+    from profile_manager import ProfileManager
+    body = body or {}
+    try:
+        if "sync" in body:
+            enable = bool(body.get("sync"))
+            pm = ProfileManager.get()
+            if pm.active_id is None:
+                return {"ok": False, "error": "no_active_profile"}
+            if enable:
+                if not _icp.write_ok(pm):
+                    # Don't arm a toggle that can only 403 — reconnect first.
+                    return {"ok": False, "needs_reconnect": True,
+                            "sync_enabled": False}
+                pm.save_prefs({"icu_calendar_sync": True})
+                return {"ok": True, "sync_enabled": True}
+            pm.save_prefs({"icu_calendar_sync": False})
+            _icu_push_cancel_pending()      # a pending debounce would re-push
+            res = _icp.sweep_all()          # G-A: final forward sweep
+            return {"ok": True, "sync_enabled": False, **res}
+        res = _icp.reconcile()
+        return {"ok": not res.get("error") and not res.get("needs_reconnect"),
+                **res}
+    except Exception as e:
+        _log.exception("icu push endpoint failed")
+        return {"ok": False, "error": f"internal:{type(e).__name__}"}
 
 
 @app.get("/api/icu/athlete-numbers")

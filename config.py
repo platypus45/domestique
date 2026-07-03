@@ -50,7 +50,11 @@ ICU_OAUTH_CLIENT_SECRET = os.environ.get("ICU_OAUTH_CLIENT_SECRET", "")
 ICU_OAUTH_AUTHORIZE_URL = "https://intervals.icu/oauth/authorize"
 ICU_OAUTH_TOKEN_URL = "https://intervals.icu/api/oauth/token"
 ICU_OAUTH_REDIRECT_URI = "http://localhost:8080/oauth/icu/callback"  # port pinned (launcher.py)
-ICU_OAUTH_SCOPES = "ACTIVITY:READ,WELLNESS:READ,CALENDAR:READ,LIBRARY:READ"
+# CALENDAR:WRITE (v3.0.1, IP_ICU_PUSH): lets the push engine upsert planned
+# workouts onto the athlete's ICU calendar. Pre-existing connections granted
+# only the READ set keep working read-only; the UI offers a one-click
+# reconnect to pick up the new scope (granted scopes are stamped per profile).
+ICU_OAUTH_SCOPES = "ACTIVITY:READ,WELLNESS:READ,CALENDAR:READ,LIBRARY:READ,CALENDAR:WRITE"
 
 # ── Weekly mesocycle planner — Seiler (2010), Stöggl & Sperlich (2014) ───────
 WEEKLY_LIT_PCT = 0.80

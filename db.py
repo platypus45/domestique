@@ -131,6 +131,12 @@ _auth_disabled = False  # set True after repeated HTTP 401s; stops retry loop
 _consecutive_failures = 0  # updated by _sync_loop; surfaced for diagnostics
 _last_sync_error: str | None = None
 
+# v3.0.1 (IP_ICU_PUSH D3b): optional hook called after each SUCCESSFUL sync
+# pass. app.py registers its once-a-day ICU calendar reconcile here at boot
+# (the CLI path never registers). Failures are logged and swallowed — a
+# broken callback must never break the sync loop.
+post_sync_callback = None
+
 
 def get_db() -> sqlite3.Connection:
     """Return a thread-local database connection with WAL mode.
@@ -1081,6 +1087,12 @@ def _sync_loop(interval_sec: int = 1800):
             _last_sync_error = None
             consecutive_auth_failures = 0
             sleep_for = interval_sec
+            cb = post_sync_callback
+            if cb is not None:
+                try:
+                    cb()
+                except Exception:
+                    log.debug("post-sync callback failed", exc_info=True)
         except ICUCredentialsMissing as e:
             # No credentials — no point retrying until user configures them.
             _last_sync_error = str(e)

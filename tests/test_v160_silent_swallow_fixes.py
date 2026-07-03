@@ -37,6 +37,16 @@ def _corrupt_plan(text: str):
             yield p
 
 
+# v3.0.1: minimal-but-valid plan. The enrich tests need /api/plan to actually
+# REACH _enrich_plan_for_response; with no current_plan.json the endpoint
+# short-circuits before enrich and the ring stays empty (order-dependent
+# under xdist — whether a plan exists depended on earlier tests' state).
+_MINIMAL_PLAN = json.dumps({
+    "weeks": [{"week": 1, "sessions": []}],
+    "meta": {"generated": "2026-01-01"},
+})
+
+
 class CorruptPlanCalendarFixTests(unittest.TestCase):
     """Wave 1 §C culprit #1: /api/calendar swallowed corrupt plan and
     returned 12 history-only weeks. v1.6.0 surfaces the error code."""
@@ -137,6 +147,15 @@ class EnrichSwallowFixTests(unittest.TestCase):
         self.client = TestClient(app_module.app)
         with app_module._DIAG_RING_LOCK:
             app_module._DIAG_RING.clear()
+        # Hermetic plan dir: guarantee current_plan.json exists so /api/plan
+        # reaches the enrich call (see _MINIMAL_PLAN note above).
+        self._td = tempfile.TemporaryDirectory()
+        Path(self._td.name, "current_plan.json").write_text(_MINIMAL_PLAN)
+        self._plan_patch = mock.patch.object(
+            app_module, "_plan_dir", lambda: Path(self._td.name))
+        self._plan_patch.start()
+        self.addCleanup(self._plan_patch.stop)
+        self.addCleanup(self._td.cleanup)
 
     def test_enrich_failure_logs_E_ENRICH_FAILED(self):
         # Patch _enrich_plan_for_response to raise; hit /api/plan

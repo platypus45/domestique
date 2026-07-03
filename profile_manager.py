@@ -257,6 +257,14 @@ class ProfileManager:
         return self._env.get("ICU_ACCESS_TOKEN", "")
 
     @property
+    def icu_granted_scopes(self) -> str:
+        """v3.0.1 (IP_ICU_PUSH): the OAuth scopes ICU granted at connect time,
+        stamped by the callback from the token response's "scope" field.
+        Empty for API-key auth AND for OAuth connections that predate the
+        stamp — the latter are treated as read-only until a reconnect."""
+        return (self._env.get("ICU_GRANTED_SCOPES") or "").strip()
+
+    @property
     def icu_name(self) -> str:
         """Display name of the linked intervals.icu athlete (OAuth). Empty until
         a 'Connect' captured it; used by the UI to show 'Linked as <name>'."""
@@ -1085,7 +1093,8 @@ class ProfileManager:
         content = (f"ICU_ATHLETE_ID={icu_athlete_id}\n"
                    f"ICU_API_KEY={icu_api_key}\n"
                    f"ICU_ACCESS_TOKEN={icu_access_token}\n")
-        for extra in ("ICU_REFRESH_TOKEN", "ICU_TOKEN_EXPIRES_AT"):
+        for extra in ("ICU_REFRESH_TOKEN", "ICU_TOKEN_EXPIRES_AT",
+                      "ICU_GRANTED_SCOPES"):
             v = (self._env.get(extra) or "").strip()
             if v and not any(c in v for c in "\n\r"):
                 content += f"{extra}={v}\n"
@@ -1097,7 +1106,8 @@ class ProfileManager:
     def save_icu_token(self, access_token: str, icu_athlete_id: "str | None" = None,
                        icu_athlete_name: "str | None" = None,
                        refresh_token: "str | None" = None,
-                       expires_in: "int | float | None" = None) -> None:
+                       expires_in: "int | float | None" = None,
+                       granted_scopes: "str | None" = None) -> None:
         """Persist an OAuth bearer token (+ athlete id / display name) to the
         active profile, keeping the existing API key. Pass access_token="" to
         disconnect. ``icu_athlete_name`` (when given) is stored in athlete.json
@@ -1108,14 +1118,22 @@ class ProfileManager:
         persisted to the profile .env as ICU_REFRESH_TOKEN /
         ICU_TOKEN_EXPIRES_AT (absolute epoch seconds). ICU currently issues
         long-lived tokens with neither field — absent values store nothing and
-        today's behavior is unchanged. Disconnect clears both."""
+        today's behavior is unchanged. Disconnect clears both.
+
+        v3.0.1 (IP_ICU_PUSH): ``granted_scopes`` is the token response's
+        "scope" field, stamped to .env as ICU_GRANTED_SCOPES so the calendar
+        push engine knows whether CALENDAR:WRITE was granted. None keeps an
+        existing stamp (parity with refresh_token); disconnect clears it."""
         if not (access_token or "").strip():
             # Disconnect: a stale refresh token must not outlive the bearer.
             self._env.pop("ICU_REFRESH_TOKEN", None)
             self._env.pop("ICU_TOKEN_EXPIRES_AT", None)
+            self._env.pop("ICU_GRANTED_SCOPES", None)
         else:
             if refresh_token:
                 self._env["ICU_REFRESH_TOKEN"] = str(refresh_token).strip()
+            if granted_scopes:
+                self._env["ICU_GRANTED_SCOPES"] = str(granted_scopes).strip()
             try:
                 if expires_in is not None and float(expires_in) > 0:
                     self._env["ICU_TOKEN_EXPIRES_AT"] = str(

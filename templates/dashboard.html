@@ -2052,6 +2052,18 @@ window.addEventListener('unhandledrejection', function(e) {
         </div>
         <div id="cb-sum" style="font-size:11px;color:var(--text2);"></div>
       </div>
+      <!-- v3.1.0 (IP_PLAN_CONTINUITY MODE 1): backdated start. Applies to every
+           goal type. Checked + a past date ⇒ the plan anchors on that date;
+           weeks already behind you are marked done and you enter mid-plan. -->
+      <div class="form-row">
+        <div class="form-group"><label style="display:flex;align-items:center;gap:6px;">
+          <input type="checkbox" id="plan-backdate-on" onchange="onBackdateToggle()"> I&rsquo;ve been training already
+        </label></div>
+        <div class="form-group" id="plan-backdate-wrap" style="display:none;">
+          <label>Training since</label>
+          <input type="date" id="plan-sdate" onchange="refreshPlanPreview()">
+        </div>
+      </div>
       <div id="plan-event-fields">
         <div class="form-row">
           <!-- v1.8.9 Bug 8 — oninput syncs to plan-weeks via _syncPlanDateToWeeks(). -->
@@ -5976,9 +5988,33 @@ async function loadMigrationToast() {
   }
 }
 
+// v3.1.0 (IP_PLAN_CONTINUITY PART A): one-time "restored your pre-upgrade
+// plan" toast. Rides the plan-alert channel (the PLAN_AUTO_RESTORED
+// precedent): boot-time adoption logs E_PLAN_ADOPTED_FROM_ROOT into the
+// diag ring; this surfaces it once per adoption (ring entries only exist on
+// the boot that adopted; localStorage keyed by the entry timestamp guards
+// repeat page loads within that boot). Best-effort — never raises.
+async function loadPlanAdoptionToast() {
+  try {
+    const r = await fetch('/api/diag/recent-errors?limit=50');
+    if (!r.ok) return;
+    const d = await r.json();
+    const hit = (d.items || []).find(e => e.code === 'E_PLAN_ADOPTED_FROM_ROOT');
+    if (!hit) return;
+    const key = 'plan-adoption-toast-shown-' + (hit.ts || '');
+    if (localStorage.getItem(key) === '1') return;
+    showToast('✅ Restored your pre-upgrade training plan — the replaced snapshot was kept as a backup.', 7000);
+    try { localStorage.setItem(key, '1'); } catch (_) {}
+  } catch (_) {
+    // silent — the toast is a courtesy, never a boot dependency.
+  }
+}
+
 async function loadHome() {
   // v1.0.2 IMPL-MIGRATION: fire-and-forget upgrade-toast check (non-blocking).
   try { loadMigrationToast(); } catch (_) {}
+  // v3.1.0 PART A: fire-and-forget adoption-toast check (non-blocking).
+  try { loadPlanAdoptionToast(); } catch (_) {}
   try {
     // v1.6.1 — fine-grained fetch + parse instrumentation. Each /api/* call
     // gets its own try-around-fetch and try-around-json so a single failed
@@ -9981,6 +10017,23 @@ function togglePlanFields() {
   refreshPlanPreview();
 }
 
+// v3.1.0 MODE 1 — reveal the "Training since" date only when opted in;
+// clearing the checkbox clears the date so a stale value can't linger in
+// the payload.
+function onBackdateToggle() {
+  const on = ($('plan-backdate-on') || {}).checked;
+  const wrap = $('plan-backdate-wrap');
+  if (wrap) wrap.style.display = on ? '' : 'none';
+  const d = $('plan-sdate');
+  if (d) {
+    // Bounded picker (GB6): a backdate is a PAST date — yesterday at latest.
+    const y = new Date(Date.now() - 86400000);
+    d.max = y.toISOString().slice(0, 10);
+    if (!on) d.value = '';
+  }
+  refreshPlanPreview();
+}
+
 // FS1 — show the template picker only for plan_mode=template.
 function onPlanModeChange() {
   const mode = ($('plan-mode') || {}).value || 'auto';
@@ -10016,6 +10069,9 @@ async function refreshPlanPreview() {
   try {
     const params = new URLSearchParams({ goal, plan_weeks: String(weeks) });
     if (eventDate) params.set('event_date', eventDate);
+    // v3.1.0 MODE 1 — preview must show the same backdated split Generate will build.
+    const _sdate = (($('plan-backdate-on') || {}).checked && $('plan-sdate')) ? $('plan-sdate').value : '';
+    if (_sdate) params.set('start_date', _sdate);
     const r = await fetch('/api/plan/preview?' + params.toString());
     if (!r.ok) return;
     const d = await r.json();
@@ -10530,7 +10586,12 @@ async function generatePlan() {
     // a non-empty custom_bands makes the backend drive template_id=custom.
     custom_bands: ((($('plan-mode')||{}).value === 'template') && (($('plan-template')||{}).value === 'custom'))
       ? getCustomBands() : undefined,
+    // v3.1.0 MODE 1 — backdated start ("I've been training already").
+    start_date: ((($('plan-backdate-on')||{}).checked) && $('plan-sdate') && $('plan-sdate').value)
+      ? $('plan-sdate').value : null,
   };
+  // Provenance for the anchor (MODE 2 "recognized" lands later).
+  body.entry_mode = body.start_date ? 'declared' : null;
   if (body.goal === 'event') {
     body.event_date = $('plan-edate').value || null;
     body.event_name = $('plan-ename').value || null;
@@ -12549,6 +12610,16 @@ function populatePlanFormFromGoal(goal) {
     _sv('cb-vo2', _cb.vo2); _sv('cb-sprint', _cb.sprint);
   }
   try { onPlanModeChange(); } catch (_) {}   // un-hide template picker + populate readout/custom editor
+  // v3.1.0 MODE 1 — repopulate the backdate so a manual Regenerate (which
+  // rebuilds the payload from the FORM) preserves the plan's anchor instead
+  // of silently dropping it back to today.
+  const _bd = $('plan-backdate-on');
+  if (_bd) {
+    _bd.checked = !!goal.start_date;
+    const wrap = $('plan-backdate-wrap');
+    if (wrap) wrap.style.display = goal.start_date ? '' : 'none';
+  }
+  setVal('plan-sdate', goal.start_date || '');
   setVal('plan-edate', goal.event_date || '');
   setVal('plan-ename', goal.event_name || '');
   if (goal.event_km) setVal('plan-ekm', goal.event_km);

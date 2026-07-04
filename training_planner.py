@@ -1175,6 +1175,19 @@ class TargetEvent:
     event_climb_m: float = 0
 
 
+def _entry_anchor(goal) -> "date | None":
+    """v3.1.0 PART B — the backdated entry anchor, or None for legacy behavior.
+
+    Returns ``goal.start_date`` ONLY when ``_phase_start_override`` is absent.
+    B-LOCKED-5 precedence: recovery refit / weekly recalc always set the
+    override, and on those paths the splitter must behave exactly as before
+    (start_date ignored) — the two compose instead of colliding.
+    """
+    if getattr(goal, "_phase_start_override", None):
+        return None
+    return getattr(goal, "start_date", None)
+
+
 @dataclass
 class Goal:
     goal_type: str       # event, ftp, ctl, endurance, general, weight, vo2max, ftp_vo2max
@@ -1243,6 +1256,19 @@ class Goal:
     # the science baseline (parity with polarized/pyramidal/threshold). Empty ⇒
     # not a custom plan.
     custom_bands: dict = field(default_factory=dict)
+    # v3.1.0 (IP_PLAN_CONTINUITY PART B): mid-plan entry. When set to a PAST
+    # date, the plan anchors on it — the phase split covers the FULL runway
+    # start_date→target_date, weeks before today materialize as elapsed rows
+    # (tss_target kept, no sessions), and the rider's position = week
+    # floor((today-start_date)/7)+1. Both None ⇒ today ⇒ exact legacy
+    # behavior (zero migration for existing goals). PRECEDENCE: when
+    # ``_phase_start_override`` is present (recovery refit / weekly recalc),
+    # start_date is ignored by the splitter — legacy behavior exactly.
+    start_date: "date | None" = None
+    # Provenance of start_date: None (fresh start) | "declared" (MODE 1 —
+    # "take my word") | "recognized" (MODE 2 — placed from ride evidence).
+    # The recognizer is never silently re-run; regenerate reuses start_date.
+    entry_mode: "str | None" = None
 
     def max_hours_for_day(self, weekday: int) -> float:
         """Get max training hours for a specific weekday (0=Mon..6=Sun)."""
@@ -1255,7 +1281,12 @@ class Goal:
         if self.plan_weeks > 0:
             return self.plan_weeks
         if self.target_date is not None:
-            return max(1, (self.target_date - date.today()).days // 7)
+            # PART B: a backdated start_date anchors the FULL runway (the
+            # split covers elapsed weeks too); None — or an override-bearing
+            # refit/recalc goal (B-LOCKED-5) — keeps the legacy today-anchor
+            # byte-for-byte.
+            anchor = _entry_anchor(self) or date.today()
+            return max(1, (self.target_date - anchor).days // 7)
         return 16  # default
 
 
@@ -1817,7 +1848,10 @@ def generate_phases(goal: Goal, current_ctl: float,
     full ride archive) sets a LOAD-based weekly volume ceiling instead of the
     availability sum. None → fall back to the legacy ``hours_per_week×65`` cap."""
     total_weeks = goal.weeks_available()
-    target_date = goal.target_date or (date.today() + timedelta(weeks=16))
+    # PART B: no-target default runway hangs off the plan anchor (backdated
+    # start_date when set and no refit override, else today — unchanged).
+    _anchor = _entry_anchor(goal) or date.today()
+    target_date = goal.target_date or (_anchor + timedelta(weeks=16))
 
     # Determine target CTL based on goal type
     if goal.target_ctl:
@@ -1841,7 +1875,17 @@ def generate_phases(goal: Goal, current_ctl: float,
 
     # Clamp target to what's achievable
     max_ramp = safe_ramp_rate(current_ctl)
-    max_achievable = current_ctl + max_ramp * max(0, total_weeks - 2)  # minus taper
+    # PART B SAFETY (B-LOCKED-2, MODE 1 floor): when the start is backdated,
+    # the ramp credit spans the REMAINING weeks only (total − elapsed) from
+    # the rider's REAL current CTL. Honest backdaters are unaffected (their
+    # CTL already reflects the training); a zero-history claimer is
+    # auto-clamped — no build2/440-TSS entry off a bare claim. start_date
+    # None ⇒ elapsed 0 ⇒ legacy expression byte-for-byte.
+    _elapsed_weeks = 0
+    _sd = _entry_anchor(goal)
+    if _sd is not None and _sd < date.today():
+        _elapsed_weeks = min(total_weeks, (date.today() - _sd).days // 7)
+    max_achievable = current_ctl + max_ramp * max(0, total_weeks - _elapsed_weeks - 2)  # minus taper
     target = min(target, max_achievable)
 
     # Weekly TSS at target CTL
@@ -2116,8 +2160,13 @@ def generate_phases(goal: Goal, current_ctl: float,
             "next training cycle.",
             92, 0, ["z2", "long_z2", "recovery"]))
 
-    # Build phases forward (respect override for post-recovery start)
-    cursor_fwd = getattr(goal, "_phase_start_override", None) or date.today()
+    # Build phases forward (respect override for post-recovery start).
+    # PART B precedence (B-LOCKED-5): _phase_start_override present (recovery
+    # refit / weekly recalc always set it) → legacy behavior exactly,
+    # start_date ignored; absent → start_date anchors; both absent → today.
+    cursor_fwd = (getattr(goal, "_phase_start_override", None)
+                  or _entry_anchor(goal)
+                  or date.today())
     for name, weeks, tss, focus, z2, hit, types in phase_defs:
         end = cursor_fwd + timedelta(weeks=weeks) - timedelta(days=1)
         phases.insert(-1 if taper_weeks > 0 else len(phases), Phase(  # insert before taper (or append if no taper)
@@ -5389,6 +5438,22 @@ def generate_plan(
             f"Target date {goal.target_date.isoformat()} is today or in the "
             "past — pick a future date (tomorrow at the earliest)."
         )
+    # PART B (mid-plan entry) input gate: start_date must be in the past (a
+    # future start is not an entry mode) and must leave a runway before the
+    # target. Same clear ValueError path as the impossible-date check above
+    # (app.py surfaces these as a 400).
+    _entry_sd = getattr(goal, "start_date", None)
+    if _entry_sd is not None:
+        if _entry_sd > date.today():
+            raise ValueError(
+                f"Start date {_entry_sd.isoformat()} is in the future — "
+                "\"training since\" must be today or earlier."
+            )
+        if goal.target_date is not None and _entry_sd >= goal.target_date:
+            raise ValueError(
+                f"Start date {_entry_sd.isoformat()} is on or after the "
+                f"target date {goal.target_date.isoformat()} — no runway left."
+            )
     # F4d (v2.5.0, SM4): the A race IS the goal (target_date + event_* scalars);
     # a second priority-A entry in events[] was silently dropped by every
     # consumer. Honest refusal beats silent data loss; app.py surfaces 400.
@@ -5934,7 +5999,36 @@ def generate_plan(
     # rhythm. Only shrinks easy volume in the deload; never touches build weeks.
     _enforce_stepback_is_lightest(weeks)
 
+    # PART B (B-LOCKED-4): backdated entry — ELAPSED weeks stay as rows
+    # (week_num/tss_target kept: the planned-CTL annotators + position math
+    # read them) but carry NO sessions; pre-today days inside the entry week
+    # are stripped too. Without this, _compute_missed_suggestions + the
+    # missed-hard scan would read the whole backdated history as
+    # freshly-missed → refit storm at entry. start_date None ⇒ no-op.
+    _strip_elapsed_sessions(weeks, _entry_anchor(goal))
+
     return phases, weeks
+
+
+def _strip_elapsed_sessions(weeks: list, start_date: "date | None") -> None:
+    """v3.1.0 PART B — drop sessions dated before today from a backdated plan.
+
+    Whole weeks before today lose their entire session list (elapsed rows);
+    the entry week (contains today) keeps only today-and-later sessions.
+    No-op unless ``start_date`` is a past date, so legacy generation is
+    byte-identical (GB1).
+    """
+    if start_date is None:
+        return
+    today = date.today()
+    if start_date >= today:
+        return
+    for w in weeks:
+        if w.end < today:
+            w.sessions = []
+        elif w.start < today:
+            w.sessions = [s for s in w.sessions
+                          if getattr(s, "day", None) is None or s.day >= today]
 
 
 def _inject_mid_cycle_ftp_tests(weeks: list, phases: list) -> None:
@@ -5974,6 +6068,20 @@ def _inject_mid_cycle_ftp_tests(weeks: list, phases: list) -> None:
             test_phase_starts.append(ph.start)
     if not test_phase_starts:
         return
+    # PART B (B-LOCKED-1, tp FTP-test site): on a backdated plan a test week
+    # (build2/peak start) can lie in the ELAPSED past — retarget it to the
+    # first schedulable (non-stepback, ends today-or-later) week so the rider
+    # gets the recalibration test AT entry instead of losing it to the
+    # elapsed strip. Fresh plans start today → every phase start is already
+    # schedulable → strict no-op (GB1).
+    today = date.today()
+    first_sched = next((w.start for w in weeks
+                        if w.end >= today and not getattr(w, "is_stepback", False)),
+                       None)
+    if first_sched is not None:
+        test_phase_starts = sorted({
+            first_sched if ps < first_sched else ps for ps in test_phase_starts
+        })
     skip_types = {"rest", "z2", "long_z2", "recovery"}
     for week in weeks:
         if getattr(week, "is_stepback", False):
@@ -5982,6 +6090,10 @@ def _inject_mid_cycle_ftp_tests(weeks: list, phases: list) -> None:
             continue
         for s in week.sessions:
             if s.session_type in skip_types:
+                continue
+            # PART B: never convert a pre-today slot (the elapsed strip would
+            # delete the test); fresh plans have no pre-today slots → no-op.
+            if getattr(s, "day", None) is not None and s.day < today:
                 continue
             old_type = s.session_type
             s.session_type = "ftp_test"
@@ -8427,9 +8539,19 @@ def reforecast_dict(
                             if isinstance(_ev_iso, str) and _ev_iso else None)
         except (TypeError, ValueError):
             _target_date = None
+        # PART B persistence sweep: carry the mid-plan-entry anchor through
+        # the dict rebuild (class-of-bug precedent: the FC4a fields below).
+        _sd_iso = goal_dict.get("start_date")
+        try:
+            _start_date = (date.fromisoformat(_sd_iso[:10])
+                           if isinstance(_sd_iso, str) and _sd_iso else None)
+        except (TypeError, ValueError):
+            _start_date = None
         reforecast_goal = Goal(
             goal_type=goal_dict.get("type", goal_dict.get("goal_type", "general")),
             target_date=_target_date,
+            start_date=_start_date,
+            entry_mode=goal_dict.get("entry_mode") or None,
             event_name=goal_dict.get("event_name", "") or "",
             event_km=goal_dict.get("event_km", 0) or 0,
             # persisted as "event_climb" (api_plan_generate), tolerate both
@@ -8859,6 +8981,12 @@ def regenerate_from_today(
         # sampler reshuffles the build weeks back to mixed HIT).
         plan_mode=getattr(goal, "plan_mode", "auto"),
         template_id=getattr(goal, "template_id", "") or "",
+        # PART B: carry the mid-plan-entry anchor through the recovery refit
+        # (the _phase_start_override below still wins at the splitter — the
+        # B-LOCKED-5 precedence — so behavior is legacy; the fields survive
+        # for the next full regenerate).
+        start_date=getattr(goal, "start_date", None),
+        entry_mode=getattr(goal, "entry_mode", None),
     )
 
     # 10. Generate new phases — offset start by recovery duration to avoid overlap
@@ -9330,6 +9458,10 @@ def recalculate_plan(
         # fixed on reforecast (else it defaults to "auto" and reshuffles).
         plan_mode=getattr(goal, "plan_mode", "auto"),
         template_id=getattr(goal, "template_id", "") or "",
+        # PART B: carry the mid-plan-entry anchor through the weekly recalc
+        # (_phase_start_override wins at the splitter per B-LOCKED-5).
+        start_date=getattr(goal, "start_date", None),
+        entry_mode=getattr(goal, "entry_mode", None),
     )
 
     # v1.11.0 IMPL-EVENT — event demand → plan targets so the event CTL nudge

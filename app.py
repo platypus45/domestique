@@ -200,6 +200,251 @@ def _maybe_restore_plan_from_backup(plan_path: Path) -> str | None:
         return None
 
 
+def _plan_generated_stamp(plan: dict):
+    """v3.1.0 (PART A) — parse a plan's generation stamp as a naive datetime.
+
+    Reads ``generated`` (live key since v1.0.0) with legacy ``generated_at``
+    fallback — the same both-keys pattern the seed anchor uses
+    (training_planner.rewrite_stale_plan_classifications). Full-timestamp
+    precision when the value parses as an ISO datetime; date-only values
+    become midnight. Returns None when neither key parses (caller falls back
+    to mtime).
+    """
+    for k in ("generated", "generated_at"):
+        v = plan.get(k)
+        if not v:
+            continue
+        s = str(v)
+        try:
+            return datetime.fromisoformat(s).replace(tzinfo=None)
+        except ValueError:
+            pass
+        try:
+            d = date.fromisoformat(s[:10])
+            return datetime(d.year, d.month, d.day)
+        except ValueError:
+            pass
+    return None
+
+
+def _adopt_legacy_root_plan(root_dir: Path, prof_dir: Path,
+                            multi_profile: bool) -> str:
+    """v3.1.0 (IP_PLAN_CONTINUITY PART A) — one-time root→profile plan adoption.
+
+    Since v2.1.0, single-profile users who never opened the profile picker
+    kept writing plans to the legacy ROOT ``~/.domestique/plans/`` while
+    ``profiles/<id>/plans/`` held a frozen migration-day snapshot; the v3.0.0
+    boot repoint then served the stale snapshot. This adopts the legacy root
+    ``current_plan.json`` into the ACTIVE profile's plan dir, once.
+
+    Discriminator (STAMP-primary, A-LOCKED-1): the plan's ``generated`` /
+    ``generated_at`` stamp; newer stamp wins. mtime is the fallback ONLY when
+    a stamp is missing/unparseable on either side (NEVER mtime-primary — the
+    boot-time stale-classification rewrite restamps the profile file every
+    3.0.x boot, so the mtime rule would no-op the fix for the whole victim
+    cohort). Equal stamps: single-profile home adopts (wrong-skip is
+    permanent+silent, wrong-adopt is .bak-recoverable); multi-profile skips.
+    mtime tie: skip (profile wins; conservative).
+
+    Adoption = rotate profile live → .bak chain, then ``copy2`` root → profile
+    (mtime/stamp preserved); root's standard ``.bak..bak{depth}`` names are
+    copied only where the profile has no file of that exact name (2.1.0
+    migration already copied them → expected no-ops); foreign names
+    (``.bak-v206`` etc.) are never touched. The root file is retired via
+    ``Path.replace`` → ``current_plan.json.pre-v3`` (the idempotency latch,
+    immune to restamps) only AFTER the copy succeeded. Byte-identical
+    root == profile retires WITHOUT copy/rotation — this doubles as the
+    retire-failure loop guard (a re-boot after a failed retire re-lands here).
+
+    Corrupt root JSON: skip + warn, leave the file for support. Unparseable /
+    zero-byte profile plan counts as "profile missing" (else the v1.6.2
+    boot restore would resurrect a stale .bak over the adopted plan).
+    Never raises; returns a status string (also logged, one line).
+    """
+    import shutil
+
+    root_dir = Path(root_dir)
+    prof_dir = Path(prof_dir)
+    root = root_dir / "current_plan.json"
+    latch = root_dir / "current_plan.json.pre-v3"
+    prof = prof_dir / "current_plan.json"
+    try:
+        if latch.exists():
+            _log.debug("plan adoption: skipped — .pre-v3 latch present")
+            return "latched"
+        if not root.exists():
+            _log.debug("plan adoption: skipped — no legacy root plan")
+            return "no-root"
+        try:
+            if root_dir.resolve() == prof_dir.resolve():
+                _log.debug("plan adoption: skipped — root dir IS the profile dir")
+                return "same-dir"
+        except OSError:
+            pass
+
+        try:
+            root_bytes = root.read_bytes()
+            root_plan = json.loads(root_bytes.decode("utf-8"))
+            if not isinstance(root_plan, dict) or not root_plan:
+                raise ValueError("not a non-empty JSON object")
+        except Exception as e:  # noqa: BLE001 — corrupt legacy file must not brick boot
+            _log.warning(
+                f"plan adoption: skipped — corrupt legacy root plan left in "
+                f"place for support ({e})"
+            )
+            return "corrupt-root"
+        root_mtime = root.stat().st_mtime
+
+        # H2 (evaluator): fallback latch on the PROFILE side for homes where
+        # the root dir is unwritable (read-only volume / restored backup) and
+        # the .pre-v3 retire keeps failing. Without it, the same boot's
+        # stale-classification rewrite mutates the adopted plan (stamps stay
+        # equal, bytes diverge) and every subsequent boot re-adopts — reverting
+        # the user's edits and churning the .bak chain. The latch records the
+        # adopted root stamp; as long as the root file still carries that
+        # stamp there is nothing new to adopt. A genuinely different root
+        # (changed stamp) still adopts normally.
+        prof_latch = prof_dir / "current_plan.json.adopted-from-root"
+        _r_stamp_obj = _plan_generated_stamp(root_plan)
+        # Stampless roots latch on a CONTENT HASH, not a shared sentinel — a
+        # different stampless root must not match an old latch (wrong-skip is
+        # permanent+silent; wrong-adopt is .bak-recoverable).
+        _root_stamp_str = (str(_r_stamp_obj) if _r_stamp_obj is not None
+                           else "sha256:" + hashlib.sha256(root_bytes).hexdigest()[:16])
+        # The latch only means "this exact root was already adopted HERE" —
+        # meaningless when the profile plan is gone (support lever: delete the
+        # profile plan + reboot ⇒ re-adopt the root).
+        if prof_latch.exists() and (prof_dir / "current_plan.json").exists():
+            try:
+                if prof_latch.read_text(encoding="utf-8").strip() == _root_stamp_str:
+                    _log.debug(
+                        "plan adoption: skipped — profile-side latch matches "
+                        "root stamp (retire previously failed)"
+                    )
+                    return "latched-prof"
+            except OSError:
+                pass  # unreadable latch → fall through to the normal decision
+
+        prof_bytes = None
+        prof_plan = None
+        if prof.exists():
+            try:
+                prof_bytes = prof.read_bytes()
+                parsed = json.loads(prof_bytes.decode("utf-8")) if prof_bytes else None
+                prof_plan = parsed if (isinstance(parsed, dict) and parsed) else None
+            except Exception:  # noqa: BLE001 — unparseable prof ⇒ treated as missing
+                prof_plan = None
+
+        # ── DECIDE first (pure reads), LOG the full decision, THEN act. ─────
+        prof_mtime = prof.stat().st_mtime if prof.exists() else None
+        r_stamp = _plan_generated_stamp(root_plan)
+        p_stamp = _plan_generated_stamp(prof_plan) if prof_plan is not None else None
+
+        if prof_bytes is not None and prof_bytes == root_bytes:
+            # Byte-identical root == profile → retire only (no copy, no
+            # rotation). Also the retire-failure loop guard.
+            verdict, why = "retire-only", "root == profile (byte-identical)"
+        elif prof_plan is None:
+            verdict, why = "adopt", "profile plan missing/unparseable"
+        elif r_stamp is not None and p_stamp is not None:
+            if r_stamp > p_stamp:
+                verdict, why = "adopt", "root stamp newer"
+            elif r_stamp < p_stamp:
+                verdict, why = "skip", "profile stamp newer"
+            elif not multi_profile:
+                verdict, why = "adopt", "equal stamps — single-profile home adopts"
+            else:
+                verdict, why = "skip", "equal stamps — multi-profile home skips"
+        else:
+            # Stamp missing/unparseable on either side → mtime fallback.
+            if prof_mtime is None or root_mtime > prof_mtime:
+                verdict, why = "adopt", "mtime fallback: root newer"
+            elif root_mtime < prof_mtime:
+                verdict, why = "skip", "mtime fallback: profile newer"
+            else:
+                verdict, why = "skip", "mtime fallback: tie — profile wins"
+
+        # Log-before-act (owner requirement — adoption rewrites plan data at
+        # boot): every decision input + the verdict, emitted BEFORE the first
+        # filesystem mutation so the trail exists even on a crash mid-swap.
+        _log.info(
+            f"plan adoption decision: verdict={verdict} ({why}); "
+            f"root_stamp={r_stamp} prof_stamp={p_stamp} "
+            f"root_mtime={root_mtime} prof_mtime={prof_mtime} "
+            f"multi_profile={multi_profile} latch_present=False "
+            f"root={root} prof={prof}"
+        )
+
+        if verdict == "skip":
+            return "skipped"  # GA2 DECIDED: root LEFT in place (support lever)
+
+        if verdict == "retire-only":
+            try:
+                root.replace(latch)  # Path.replace — a rename, never a delete
+                return "retired-identical"
+            except OSError as e:
+                _log.warning(
+                    f"plan adoption: retire of identical root failed ({e}) — "
+                    "writing profile-side latch instead"
+                )
+                try:
+                    prof_latch.write_text(_root_stamp_str, encoding="utf-8")
+                except OSError:
+                    pass
+                return "retire-failed"
+
+        # verdict == "adopt". NEVER-DELETE invariant: only copy2 /
+        # _rotate_plan_backups / Path.replace→.pre-v3 below — no deletion
+        # calls of our own. (The standard rotation ages the OLDEST .bak
+        # off the end at depth 7, same as every plan write — the live plan
+        # and recent history are never destroyed.)
+        with tp.plan_write_lock():
+            if prof.exists():
+                tp._rotate_plan_backups(prof)  # profile's current → .bak chain
+            prof_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(root, prof)
+
+        # Root's standard .bak..bak{depth} history: copy only names the
+        # profile side doesn't already have; foreign .bak names untouched.
+        bak_names = ["current_plan.json.bak"] + [
+            f"current_plan.json.bak{n}" for n in range(2, tp.PLAN_BACKUP_DEPTH + 1)
+        ]
+        for name in bak_names:
+            src, dst = root_dir / name, prof_dir / name
+            if src.exists() and not dst.exists():
+                try:
+                    shutil.copy2(src, dst)
+                except OSError as e:
+                    _log.debug(f"plan adoption: bak copy {name} failed: {e}")
+
+        # Retire ONLY after a successful copy (Path.replace — Windows-safe).
+        try:
+            root.replace(latch)
+        except OSError as e:
+            _log.warning(
+                f"plan adoption: adopted but retire failed ({e}) — writing "
+                "profile-side latch so later boots don't re-adopt after the "
+                "adopted plan is modified (H2)"
+            )
+            try:
+                prof_latch.write_text(_root_stamp_str, encoding="utf-8")
+            except OSError:
+                pass
+
+        _log_error(
+            error_codes.Codes.PLAN_ADOPTED_FROM_ROOT,
+            root=str(root), profile_plan=str(prof), reason=why,
+        )
+        return "adopted"
+    except Exception as e:  # noqa: BLE001 — never brick startup. Total-abort:
+        # every already-completed step is safe on its own (rotation only
+        # COPIES, the root→prof copy leaves root intact until retire), so no
+        # partial-swap state is reachable; boot continues serving whatever
+        # the profile dir holds, exactly as v3.0.2 does.
+        _log.warning(f"plan adoption failed: {e}")
+        return "error"
+
+
 def _session_naming_lookup(
     zwo_file: str,
     classifications: dict | None,
@@ -411,6 +656,22 @@ async def lifespan(app):
         pm.apply_training_dirs()
     except Exception as _e:
         _log.warning(f"apply_training_dirs at boot failed: {_e}")
+    # v3.1.0 (IP_PLAN_CONTINUITY PART A): one-time adoption of the legacy ROOT
+    # plan into the ACTIVE profile's plan dir. MUST run after
+    # apply_training_dirs (PLAN_DIR points at the profile) and BEFORE
+    # _apply_profile_paths / db init / the v1.6.2 .bak restore / the v4.1.1
+    # stale-classification rewrite / the ICU push-hook registration — so the
+    # adopted file is what those boot passes see, and booting never schedules
+    # a calendar push by itself (the daily reconcile mirrors it instead).
+    try:
+        if pm.active_id is not None:
+            _adopt_legacy_root_plan(
+                _DEFAULT_PLAN_DIR,   # legacy root ~/.domestique/plans
+                pm.plan_dir,         # active profile's plans dir
+                multi_profile=len(pm.list_profiles()) > 1,
+            )
+    except Exception as _e:
+        _log.warning(f"legacy root plan adoption failed: {_e}")
     _apply_profile_paths()
     pm.on_switch(_apply_profile_paths)
     # Restart the DB sync thread on every profile switch so it picks up the new
@@ -10206,6 +10467,7 @@ def api_plan_preview(
     plan_weeks: int = Query(0),
     event_date: str | None = Query(None),
     hours_per_week: float = Query(8.0),
+    start_date: str | None = Query(None),
 ):
     """v4.6.0 IMPL-PLAN-CONFIG-UI: live phase preview for the Plan Configuration
     right-panel. Mirrors /api/plan/generate's phase split so the right panel
@@ -10222,12 +10484,23 @@ def api_plan_preview(
         except (ValueError, TypeError):
             target_date = None
 
+    # PART B: the preview must accept the backdated anchor or the right
+    # panel lies about the phase split (persistence-sweep item).
+    start_dt = None
+    if start_date:
+        try:
+            start_dt = date.fromisoformat(str(start_date)[:10])
+        except (ValueError, TypeError):
+            start_dt = None
+    if start_dt is not None and start_dt >= date.today():
+        start_dt = None  # future/today start = fresh start (legacy)
+
     # For event-prep, plan_weeks is auto-computed from event_date; UI
     # disables the input but we recompute server-side as defence in depth
     # so a stale/forced-edit value can't desync the right panel from the
     # generated grid.
     if goal in ("event", "event_preparation") and target_date is not None:
-        days_to_event = (target_date - date.today()).days
+        days_to_event = (target_date - (start_dt or date.today())).days
         plan_weeks = max(4, -(-days_to_event // 7))  # ceil division
     else:
         plan_weeks = max(4, int(plan_weeks or 0))
@@ -10240,6 +10513,7 @@ def api_plan_preview(
         target_date=target_date,
         hours_per_week=hours_per_week,
         plan_weeks=plan_weeks,
+        start_date=start_dt,
     )
 
     try:
@@ -10254,6 +10528,7 @@ def api_plan_preview(
         "plan_weeks": plan_weeks,
         "goal": goal_type,
         "event_date": target_date.isoformat() if target_date else None,
+        "start_date": start_dt.isoformat() if start_dt else None,  # PART B
         "phases": [
             {
                 "name": p.name,
@@ -10425,9 +10700,37 @@ async def api_plan_generate(request: Request):
         available_days = [d for d in all_days if d not in rest_days]
         plan_weeks = int(body.get("weeks", body.get("plan_weeks", 0)))
 
+        # PART B (mid-plan entry): optional backdated anchor + its provenance.
+        # Absent/None ⇒ today ⇒ exact legacy behavior. generate_plan validates
+        # (future start / start≥target → ValueError → 400 below).
+        start_date = None
+        _sd_str = body.get("start_date")
+        if _sd_str:
+            start_date = date.fromisoformat(str(_sd_str)[:10])
+        _entry_mode_raw = str(body.get("entry_mode") or "") or None
+        entry_mode = (_entry_mode_raw
+                      if _entry_mode_raw in ("declared", "recognized") else None)
+
+        # H1 (evaluator): the UI's plan-weeks slider is TODAY-anchored (the
+        # event-date sync computes weeks-to-event from now), and Goal.
+        # weeks_available() short-circuits on plan_weeks>0 — so a backdated
+        # event plan would lay a full-runway phase split into a today-sized
+        # week budget and dump the difference into a multi-week peak block.
+        # Mirror the preview's server-side recompute (defence in depth): for
+        # event goals the week count is ALWAYS derived from the actual
+        # anchor→target span, never trusted from the form.
+        if body.get("goal") in ("event", "event_preparation") and target_date:
+            _anchor_for_weeks = (start_date
+                                 if (start_date and start_date < date.today())
+                                 else date.today())
+            _days = (target_date - _anchor_for_weeks).days
+            plan_weeks = max(4, -(-_days // 7))  # ceil division
+
         goal = tp.Goal(
             goal_type=body.get("goal", "general"),
             target_date=target_date,
+            start_date=start_date,
+            entry_mode=entry_mode,
             event_name=body.get("event_name") or "",
             event_km=body.get("event_km") or 0,
             event_climb_m=body.get("event_climb") or 0,
@@ -10573,6 +10876,12 @@ async def api_plan_generate(request: Request):
                 "plan_mode": getattr(goal, "plan_mode", "auto"),  # FS1
                 "template_id": getattr(goal, "template_id", "") or "",  # FS1
                 "custom_bands": getattr(goal, "custom_bands", {}) or {},  # v2.3.0
+                # PART B: persist the mid-plan-entry anchor + provenance so
+                # every reconstructor (reforecast/refit/recalc/regenerate)
+                # and the regenerate form repopulation see them.
+                "start_date": (goal.start_date.isoformat()
+                               if getattr(goal, "start_date", None) else None),
+                "entry_mode": getattr(goal, "entry_mode", None),
             },
             "phases": [
                 {
@@ -10646,6 +10955,11 @@ async def api_plan_generate(request: Request):
         if weeks:
             _new_avail: dict = {}
             _d = weeks[0].start
+            # PART B (B-LOCKED-1 availability span): on a backdated plan the
+            # calendar starts TODAY — elapsed days are not schedulable, so
+            # they carry no availability rows. Fresh plans start today anyway.
+            if getattr(goal, "start_date", None) and _d < date.today():
+                _d = date.today()
             _end = weeks[-1].end
             _one = timedelta(days=1)
             while _d <= _end:
@@ -11331,9 +11645,21 @@ def _goal_from_plan_dict(g: dict) -> "tp.Goal":
             target_date_val = date.fromisoformat(ev)
         except (TypeError, ValueError):
             target_date_val = None
+    # PART B persistence sweep: restore the mid-plan-entry anchor so
+    # recalc/refit/reforecast goals carry it (splitter precedence still
+    # ignores it whenever _phase_start_override is set).
+    _sd = g.get("start_date")
+    start_date_val = None
+    if _sd:
+        try:
+            start_date_val = date.fromisoformat(str(_sd)[:10])
+        except (TypeError, ValueError):
+            start_date_val = None
     return tp.Goal(
         goal_type=g.get("type", g.get("goal_type", "general")),
         target_date=target_date_val,
+        start_date=start_date_val,
+        entry_mode=g.get("entry_mode") or None,
         event_name=g.get("event_name", ""),
         event_km=g.get("event_km", 0),
         event_climb_m=g.get("event_climb", 0),  # persisted as "event_climb"

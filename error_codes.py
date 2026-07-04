@@ -38,6 +38,7 @@ class Codes:
     PLAN_GENERATE_FAILED     = "E_PLAN_GENERATE_FAILED"
     PLAN_REFORECAST_FAILED   = "E_PLAN_REFORECAST_FAILED"
     PLAN_AUTO_RESTORED       = "E_PLAN_AUTO_RESTORED"  # v1.6.2 — boot-time .bak restore
+    PLAN_ADOPTED_FROM_ROOT   = "E_PLAN_ADOPTED_FROM_ROOT"  # v3.1.0 — one-time legacy root→profile plan adoption
     REFORECAST_DICT_TO_PW    = "E_REFORECAST_DICT_TO_PW"
     REFORECAST_TSB           = "E_REFORECAST_TSB"
     REFORECAST_AVAILABILITY  = "E_REFORECAST_AVAILABILITY"
@@ -157,6 +158,11 @@ REGISTRY: dict[str, CodeMeta] = {
         "severity": "WARN",
         "description": "current_plan.json was missing on boot; restored from latest .bak* snapshot.",
         "user_action": "Plan data has been recovered. Verify it matches the most recent generated plan.",
+    },
+    Codes.PLAN_ADOPTED_FROM_ROOT: {
+        "severity": "WARN",
+        "description": "Restored your pre-upgrade training plan (adopted the newer legacy root plan into the active profile).",
+        "user_action": "Your plan from before the upgrade is active again. The replaced profile snapshot was kept as a .bak file.",
     },
     Codes.REFORECAST_DICT_TO_PW: {
         "severity": "ERROR",

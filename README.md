@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4232-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v3.0.2-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v3.1.0-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-2100%2B-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -46,6 +46,19 @@ Domestique is neither. Every signal that touches the dashboard also has a code-p
 Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus a 1-week consolidation phase at the end of every non-event cycle so people don't ride straight from a peak into a fresh build with elevated fatigue (Mujika 2010).
 
 ---
+
+## What's new in v3.1.0
+
+**Your plan survives upgrades.** Upgrading from a 2.x version could resurface
+an old, long-replaced plan instead of your current one — fixed: on first
+launch the app finds your real plan, restores it automatically (with a
+notice), and keeps every previous file as a backup. If it already happened to
+you, this update brings your original plan back on its own.
+
+**Start a plan mid-way.** Tick "I've been training already" when creating or
+rebuilding a plan and pick your real start date: the plan covers the full
+runway from that date, completed weeks are marked done, and you enter exactly
+where you are — no repeating a base phase you already rode.
 
 ## What's new in v3.0.0
 
@@ -474,7 +487,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v3.0.2 — Send workouts straight to intervals.icu](https://github.com/platypus45/domestique/releases/latest)** (2026-07-03).
+Latest: **[v3.1.0 — Your plan survives upgrades, and plans can start in the past](https://github.com/platypus45/domestique/releases/latest)** (2026-07-04).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

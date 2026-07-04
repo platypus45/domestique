@@ -1,5 +1,27 @@
 # Changelog
 
+## v3.1.0 — Your plan survives upgrades, and plans can start in the past (2026-07-04)
+
+### Upgrade no longer loses your training plan
+
+- Fixed: upgrading from a 2.x version could bring back an old, long-replaced
+  plan instead of your current one. The app now finds your real plan from the
+  old location on first launch, restores it automatically, and tells you it
+  did. Your previous files are kept as backups — nothing is deleted.
+- If this already happened to you: install this update and your original plan
+  comes back on its own. (The plan you re-created is kept in backups too.)
+
+### Start a plan mid-way — "I've been training already"
+
+- New option when creating or rebuilding a plan: tick "I've been training
+  already" and pick the date your training actually started. The plan is laid
+  out over the full runway from that date, the weeks you've already done are
+  marked as completed, and you enter exactly where you are — no repeating the
+  base phase you already rode.
+- Works for every goal type; the phase preview shows the same backdated
+  timeline you'll get. Your fitness numbers still come from your actual ride
+  history, so a backdated plan never prescribes more than you're ready for.
+
 ## v3.0.2 — Fix intervals.icu connect error (2026-07-03)
 
 - Fixed connecting (or reconnecting) to intervals.icu failing with a

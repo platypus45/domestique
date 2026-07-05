@@ -5495,7 +5495,7 @@ def api_workouts(
 
 
 @app.get("/api/workout/download/{filename}")
-def download_workout_by_id(filename: str):
+def download_workout_by_id(filename: str, cap: int = Query(0)):
     """Serve a ZWO workout file as a download attachment.
 
     v4.0.0-alpha: IMPL-B's dashboard calls this URL pattern to let the user
@@ -5507,12 +5507,28 @@ def download_workout_by_id(filename: str):
     FastAPI's declaration-order match resolves ``download`` as the literal
     path segment, not as ``category=download``. Both guarantees must hold
     for the route to resolve correctly.
+
+    task #24: ``cap=1`` (PROMPT APPROVE) or the profile "on" toggle caps short
+    reps to the rider's measured-power envelope. A no-op cap keeps the plain
+    FileResponse (byte-identical to disk).
     """
     path = _safe_path(WORKOUT_DIR, filename)
     if not path or not path.exists():
         return JSONResponse({"error": "not found"}, 404)
     # v1.6.4: media_type "application/octet-stream" (was "application/xml")
     # so WKWebView always treats it as a download.
+    if _cap_active_for_download(cap):
+        from profile_manager import ProfileManager
+        try:
+            raw = path.read_bytes()
+            capped = _cap_zwo_bytes(raw, filename, ProfileManager.get())
+            if capped is not raw and capped != raw:
+                return Response(
+                    capped, media_type="application/octet-stream",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="{filename}"'})
+        except Exception:
+            pass
     return FileResponse(
         path,
         filename=filename,
@@ -5656,6 +5672,34 @@ def api_workout_detail(category: str, filename: str, view: str | None = Query(No
         # sane LTHR — same invariant as the settings gate).
         "hr_available": bool(_pm.lthr_is_set and _pm.max_hr > _pm.lthr),
     }
+
+    # task #24: measured-capacity short-rep advisory for the modal. Built from a
+    # LIVE parse (cap_zwo_text details) -- NOT facts aggregates. Only ever
+    # populated when a trustworthy MEASURED Pmax exists (pmax_is_set) and the
+    # view is power; the client renders it per the toggle (OFF=info,
+    # PROMPT=APPROVE/DENY, ON=capped). pmax_w is exposed only when set so the
+    # UI never shows the ftp*1.30 fallback as a "ceiling".
+    if _pm.pmax_is_set and not _hr_mode:
+        try:
+            import capacity_cap as _cc
+            _txt = path.read_text(encoding="utf-8")
+            _, _n, _det = _cc.cap_zwo_text(
+                _txt, float(ftp), float(_pm.cp), float(_pm.pmax_w),
+                filename=path.name)
+            if _n > 0:
+                # Worst (highest-demand) qualifying rep drives the headline.
+                _worst = max(_det, key=lambda d: d["orig_w"])
+                out["capacity_cap"] = {
+                    "pmax_is_set": True,
+                    "toggle": _pm.cap_short_intervals,
+                    "n_reps": _n,
+                    "rep_seconds": _worst["t"],
+                    "demand_w": _worst["orig_w"],
+                    "ceiling_w": int(round(_pm.pmax_w)),
+                    "cap_w": _worst["cap_w"],
+                }
+        except Exception:
+            pass
     if _hr_mode:
         out["target_mode"] = "hr"
         out["lthr"] = _lthr
@@ -7443,6 +7487,46 @@ def _safe_path(base: Path, *parts: str) -> Path | None:
         return None
 
 
+def _capacity_cap_active(pm, force: bool = False) -> bool:
+    """task #24: True when the measured-capacity short-rep cap should apply to a
+    served ZWO/FIT for this profile. Requires a trustworthy MEASURED Pmax
+    (pmax_is_set), power target_mode (hr prescriptions are untouched --
+    target_mode wins), and the toggle == "on" (or ``force`` for a PROMPT
+    APPROVE with ?cap=1). "prompt"/"off" do NOT auto-apply on their own."""
+    try:
+        if not pm.pmax_is_set:
+            return False
+        if pm.target_mode == "hr":
+            return False
+        if force:
+            return True
+        return pm.cap_short_intervals == "on"
+    except Exception:
+        return False
+
+
+def _cap_zwo_bytes(raw: bytes, filename: str, pm) -> bytes:
+    """Apply the measured-capacity cap to ZWO bytes, or return them UNCHANGED.
+
+    Gate is the CALLER's responsibility via ``_capacity_cap_active`` -- this
+    only does the transform once the caller decided to. Ramp-test exemption is
+    handled inside ``cap_zwo_text`` via the ``ftp_test_ramp*`` filename guard
+    (the grill-validated ramp marker -- the content classifier has no distinct
+    "ramp" primary to add). On any decode hiccup the original bytes are
+    returned (never corrupt a download)."""
+    import capacity_cap as _cc
+    try:
+        txt = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw
+    txt2, n, _ = _cc.cap_zwo_text(
+        txt, float(pm.ftp), float(pm.cp), float(pm.pmax_w),
+        filename=filename)
+    if n == 0:
+        return raw  # byte-identical no-op
+    return txt2.encode("utf-8")
+
+
 def _wrap_zwo_outdoor(xml_text: str, transit_min: int, spin_min: int) -> str:
     """G1 (v2.1) — frame a prescribed indoor block inside a real OUTDOOR ride:
     prepend a flat transit warmup and append a spin-home cooldown. The prescribed
@@ -7467,27 +7551,63 @@ def _wrap_zwo_outdoor(xml_text: str, transit_min: int, spin_min: int) -> str:
 
 
 def _zwo_download_response(path, filename: str, outdoor: int,
-                          transit_min: int, spin_min: int):
-    """Shared ZWO download: plain FileResponse, or (G1) an outdoor-wrapped copy."""
+                          transit_min: int, spin_min: int,
+                          cap_active: bool = False):
+    """Shared ZWO download: plain FileResponse, or (G1) an outdoor-wrapped copy.
+
+    task #24: when ``cap_active`` the served body is first capped to the
+    rider's measured-power envelope (short reps only). A no-op cap (nothing
+    qualifies) still returns the byte-identical FileResponse, so the OFF /
+    non-qualifying paths are unchanged."""
     plain = FileResponse(
         path, filename=filename, media_type="application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    capped_bytes = None
+    if cap_active:
+        from profile_manager import ProfileManager
+        try:
+            raw = path.read_bytes()
+            capped = _cap_zwo_bytes(raw, filename, ProfileManager.get())
+            capped_bytes = capped if capped is not raw and capped != raw else None
+        except Exception:
+            capped_bytes = None
     if not outdoor:
-        return plain
+        if capped_bytes is None:
+            return plain  # byte-identical to the file on disk
+        return Response(
+            capped_bytes, media_type="application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'})
     try:
-        wrapped = _wrap_zwo_outdoor(path.read_text(encoding="utf-8"),
-                                    transit_min, spin_min)
+        if capped_bytes is not None:
+            body_text = capped_bytes.decode("utf-8")
+        else:
+            body_text = path.read_text(encoding="utf-8")
+        wrapped = _wrap_zwo_outdoor(body_text, transit_min, spin_min)
     except Exception:
-        return plain
+        return plain if capped_bytes is None else Response(
+            capped_bytes, media_type="application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'})
     out_name = filename.rsplit(".", 1)[0] + "_outdoor.zwo"
     return Response(
         wrapped, media_type="application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{out_name}"'})
 
 
+def _cap_active_for_download(cap: int) -> bool:
+    """task #24: resolve the ZWO/FIT serve cap for the active profile.
+    ``cap=1`` (PROMPT APPROVE) forces the cap; otherwise the "on" toggle. Both
+    still require pmax_is_set + power mode (``_capacity_cap_active``)."""
+    try:
+        from profile_manager import ProfileManager
+        return _capacity_cap_active(ProfileManager.get(), force=bool(cap))
+    except Exception:
+        return False
+
+
 @app.get("/api/download/zwo/{filename}")
 def download_zwo_flat(filename: str, outdoor: int = Query(0),
-                      transit_min: int = Query(10), spin_min: int = Query(20)):
+                      transit_min: int = Query(10), spin_min: int = Query(20),
+                      cap: int = Query(0)):
     """Single-segment path used by the dashboard's planner-modal "Download ZWO"
     button. v1.0.0 fix: pre-fix the dashboard called /api/download/zwo/<file>
     (one segment) but the only registered route was /api/download/zwo/{category}
@@ -7502,25 +7622,31 @@ def download_zwo_flat(filename: str, outdoor: int = Query(0),
 
     G1 (v2.1): ``outdoor=1`` wraps the block with an off-plan transit warmup +
     spin-home cooldown (transit_min / spin_min minutes).
+    task #24: ``cap=1`` (PROMPT APPROVE) or the profile "on" toggle caps short
+    reps to the rider's measured-power envelope for THIS download only.
     """
     path = _safe_path(WORKOUT_DIR, filename)
     if not path or not path.exists():
         return JSONResponse({"error": "not found"}, 404)
-    return _zwo_download_response(path, filename, outdoor, transit_min, spin_min)
+    return _zwo_download_response(path, filename, outdoor, transit_min, spin_min,
+                                 cap_active=_cap_active_for_download(cap))
 
 
 @app.get("/api/download/zwo/{category}/{filename}")
 def download_zwo(category: str, filename: str, outdoor: int = Query(0),
-                 transit_min: int = Query(10), spin_min: int = Query(20)):
+                 transit_min: int = Query(10), spin_min: int = Query(20),
+                 cap: int = Query(0)):
     """v1.6.4: see download_zwo_flat docstring for media-type + Disposition change.
-    G1 (v2.1): ``outdoor=1`` adds an off-plan transit warmup + spin-home cooldown."""
+    G1 (v2.1): ``outdoor=1`` adds an off-plan transit warmup + spin-home cooldown.
+    task #24: ``cap=1``/on toggle caps short reps to measured power."""
     # Flat layout first, legacy category/file fallback
     path = _safe_path(WORKOUT_DIR, filename)
     if not path or not path.exists():
         path = _safe_path(WORKOUT_DIR, category, filename)
     if not path or not path.exists():
         return JSONResponse({"error": "not found"}, 404)
-    return _zwo_download_response(path, filename, outdoor, transit_min, spin_min)
+    return _zwo_download_response(path, filename, outdoor, transit_min, spin_min,
+                                 cap_active=_cap_active_for_download(cap))
 
 
 @app.get("/api/climb-zwo/{region}/{filename}")
@@ -8561,6 +8687,15 @@ def api_settings():
         # "unknown" and falls back to last-modified mtime.
         "ftp_source": pm.get_ftp_source() or "manual",
         "ftp_source_date": pm.get_ftp_source_date(),
+        # task #24: measured-capacity short-rep cap. The select is only usable
+        # when a trustworthy MEASURED Pmax exists (pmax_is_set); otherwise the
+        # UI disables the row and shows a hint. pmax_w is exposed for the modal
+        # comparison but MUST NOT be shown as a "ceiling" when unset (it is the
+        # ftp*1.30 fallback then) -- pmax_is_set gates that.
+        "cap_short_intervals": pm.cap_short_intervals,
+        "pmax_is_set": pm.pmax_is_set,
+        "pmax_w": int(pm.pmax_w) if pm.pmax_is_set else None,
+        "pmax_source": pm.pmax_source,
     }
 
 
@@ -8680,6 +8815,17 @@ def update_settings(request_body: dict):
                 raise HTTPException(400, "HR rows must not descend across zones (Z1 top ≤ Z2 ≤ Z3 ≤ Z4)")
             athlete_updates["hr_prescription_rows_custom"] = {
                 "z1_high": z1h, "z2": z2, "z3": z3, "z4": z4}
+
+    # task #24: measured-capacity short-rep cap posture. Enum-validated so a
+    # bad value 400s instead of persisting an unknown state. Storing "on"/
+    # "prompt" without a trustworthy Pmax is harmless -- the serve gate
+    # (_capacity_cap_active) also requires pmax_is_set, so it stays inert; the
+    # UI additionally disables the row until a measured Pmax exists.
+    if "cap_short_intervals" in request_body:
+        cap_mode = str(request_body["cap_short_intervals"]).strip().lower()
+        if cap_mode not in ("off", "prompt", "on"):
+            raise HTTPException(400, "cap_short_intervals must be 'off', 'prompt', or 'on'")
+        athlete_updates["cap_short_intervals"] = cap_mode
 
     # E2 detect: did the FTP change to exactly-match the currently-cached
     # eFTP? If so this is almost certainly an "Accept eFTP" action.
@@ -12379,7 +12525,7 @@ async def api_plan_update(debounce: int = Query(0)):
 
 def build_fit_workout_bytes(session_type: str, duration_min: int,
                             name: str, zwo_file: str | None = None,
-                            view: str | None = None) -> bytes:
+                            view: str | None = None, cap: int = 0) -> bytes:
     """Generate FIT workout bytes. Shared by ``/api/export/fit-workout`` AND
     ``launcher.JsApi.save_fit`` (issue #5) so the desktop native-save path can
     produce the bytes IN-PROCESS, with no WKWebView ``fetch()`` that can resolve
@@ -12389,6 +12535,10 @@ def build_fit_workout_bytes(session_type: str, duration_min: int,
     dashboard <select> values ("sweet_spot") route to the same branch.
     v1.0.3: when ``zwo_file`` is supplied, transcode that exact ZWO into FIT so
     the FIT body matches what the rider sees in MyWhoosh / Tacx / Zwift.
+
+    task #24: ``cap=1`` (PROMPT APPROVE) or the profile "on" toggle caps the
+    ZWO's short reps to the rider's measured-power envelope BEFORE transcode
+    (only for a power FIT -- hr view wins, bpm prescriptions untouched).
 
     Raises ImportError if fit_tool is missing, FileNotFoundError if ``zwo_file``
     is named but absent, ValueError if the result has zero workout steps.
@@ -12410,7 +12560,18 @@ def build_fit_workout_bytes(session_type: str, duration_min: int,
         zwo_path = _safe_path(WORKOUT_DIR, zwo_file)
         if not zwo_path or not zwo_path.exists():
             raise FileNotFoundError(f"ZWO file not found: {zwo_file}")
-        fit_data = _build_fit_workout_from_zwo(name, zwo_path, ftp, hr_force=hr_force)
+        # task #24: cap the ZWO text pre-transcode when active + power FIT.
+        # hr_force=True means an hr FIT is being built -> no cap (hr wins).
+        cap_text = None
+        if hr_force is not True:
+            from profile_manager import ProfileManager
+            _pmc = ProfileManager.get()
+            if _capacity_cap_active(_pmc, force=bool(cap)):
+                capped = _cap_zwo_bytes(zwo_path.read_bytes(),
+                                        Path(zwo_file).name, _pmc)
+                cap_text = capped.decode("utf-8", "replace")
+        fit_data = _build_fit_workout_from_zwo(
+            name, zwo_path, ftp, hr_force=hr_force, zwo_text=cap_text)
     else:
         st_norm = (session_type or "").lower().replace("_", "").replace("-", "")
         blocks = []
@@ -12457,6 +12618,7 @@ def api_export_fit_workout(
     name: str = Query("Workout"),
     zwo_file: str | None = Query(None),
     view: str | None = Query(None),  # 'hr'|'power' — modal toggle: WYSIWYG FIT
+    cap: int = Query(0),  # task #24: 1 = PROMPT APPROVE (cap short reps)
 ):
     """Generate a FIT binary workout file for Garmin Edge / Wahoo ELEMNT / Karoo.
 
@@ -12465,7 +12627,7 @@ def api_export_fit_workout(
     """
     from fastapi.responses import Response
     try:
-        fit_data = build_fit_workout_bytes(session_type, duration_min, name, zwo_file, view=view)
+        fit_data = build_fit_workout_bytes(session_type, duration_min, name, zwo_file, view=view, cap=cap)
     except ImportError as ie:
         return JSONResponse({"error": f"fit_tool not installed. Run: pip install fit_tool. Detail: {ie}"}, 500)
     except FileNotFoundError as fe:
@@ -12671,13 +12833,18 @@ def _build_fit_workout(name: str, blocks: list[dict], ftp: int,
 
 
 def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int,
-                                hr_force: bool | None = None) -> bytes:
+                                hr_force: bool | None = None,
+                                zwo_text: str | None = None) -> bytes:
     """v1.0.3 fix-forward(workout-detail UX): transcode a ZWO file directly
     into a FIT workout. The previous code path keyed only on
     ``(session_type, duration_min)`` so the FIT body could be a generic Tempo
     block while the ZWO download was the matched library file (a ladder, an
     over-under, etc.). When both files exist for the same session they MUST
     represent the same workout.
+
+    task #24: when ``zwo_text`` is supplied (the measured-capacity-capped body)
+    it is parsed instead of the file on disk, so the FIT matches the capped ZWO
+    the rider sees. ``zwo_path`` is still used for the not-found error message.
 
     Element coverage:
     - ``<SteadyState Duration=N Power=P>`` → 1 step at duration_time=N s,
@@ -12703,8 +12870,10 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int,
         FileType, Manufacturer, Sport, Intensity, WorkoutStepDuration, WorkoutStepTarget,
     )
 
-    tree = ET.parse(zwo_path)
-    root = tree.getroot()
+    if zwo_text is not None:
+        root = ET.fromstring(zwo_text)
+    else:
+        root = ET.parse(zwo_path).getroot()
     workout_el = root.find("workout")
 
     # hr target_mode (IP_HR_ONLY): decided ONCE up front because it changes how

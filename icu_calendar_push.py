@@ -259,7 +259,17 @@ def _desired_events(pm, plan: dict, today: date, horizon_days: int,
                 contents = fit_bytes
             else:
                 try:
-                    contents = zwo_path.read_bytes()   # G3: byte-identical
+                    contents = zwo_path.read_bytes()
+                    # task #24: when the profile's measured-capacity cap is ON
+                    # (pmax_is_set + power mode + toggle "on"), push the CAPPED
+                    # file -- the workout the rider should actually do. This
+                    # replaces the former "G3: byte-identical" guarantee for
+                    # capped profiles; with the cap OFF (or a no-op) the bytes
+                    # remain byte-identical to disk. hr branch above is untouched
+                    # (target_mode wins).
+                    if _app._capacity_cap_active(pm):
+                        contents = _app._cap_zwo_bytes(
+                            contents, Path(zwo_file).name, pm)
                 except OSError:
                     skipped.append({"day": day_iso, "reason": "file_missing"})
                     broken_ids.add(ext_id)

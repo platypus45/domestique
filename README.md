@@ -47,7 +47,7 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 
 ---
 
-## What's new in v3.2.0
+## What's new in v3
 
 **Shape your own plan.** The phase preview is now an editor — adjust how your
 weeks split across base, build, peak and taper with steppers (within safe
@@ -66,8 +66,6 @@ peak-power number, Domestique can cap a workout's short, very-hard reps to what
 you can actually produce — grounded in critical-power research, using your real
 numbers rather than a model's guess.
 
-## What's new in v3.1.0
-
 **Your plan survives upgrades.** Upgrading from a 2.x version could resurface
 an old, long-replaced plan instead of your current one — fixed: on first
 launch the app finds your real plan, restores it automatically (with a
@@ -79,9 +77,7 @@ rebuilding a plan and pick your real start date: the plan covers the full
 runway from that date, completed weeks are marked done, and you enter exactly
 where you are — no repeating a base phase you already rode.
 
-## What's new in v3.0.0
-
-**New in v3.0.1 — push to intervals.icu.** Send your planned workouts straight
+**Push to intervals.icu.** Send your planned workouts straight
 to your intervals.icu calendar (one-off button on the Training Plan tab, or an
 optional keep-in-sync setting) so Garmin & MyWhoosh pull them automatically;
 heart-rate plans push with HR targets. Only Domestique's own entries are ever

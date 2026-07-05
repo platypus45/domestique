@@ -3749,6 +3749,7 @@ def api_readiness(subjective: float = Query(None)):
         "sleep": {
             "sleep_h": sleep.get("sleep_h"), "sleep_score": sleep.get("sleep_score"),
             "sleep_asof": sleep.get("sleep_asof"), "hrv_asof": sleep.get("hrv_asof"),
+            "rhr_asof": sleep.get("rhr_asof"), "sleep_status": sleep.get("sleep_status"),
             "hrv_ms": sleep.get("hrv_ms"), "ln_rmssd_7d": sleep.get("ln_rmssd_7d"),
             "hrv_status": sleep.get("hrv_status"),
             "swc_lower": sleep.get("swc_lower"), "swc_upper": sleep.get("swc_upper"),

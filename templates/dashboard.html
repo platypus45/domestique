@@ -6193,24 +6193,28 @@ async function loadHome() {
       try { window._diagFrontendError('E_FRONTEND_READINESS_RENDER', {msg: String(e && e.message || e)}); } catch(_) {}
     }
 
-    // v3.2.1: today's overnight sleep/HRV reach intervals.icu hours late
-    // (Garmin→ICU lag). The backend falls back to the last synced night (with
-    // `*_asof` dates); a fallback value renders AMBER with the night's date
-    // under it so it's unmistakably not today's reading.
+    // v3.2.1: today's overnight sleep/HRV/RHR reach intervals.icu hours late
+    // (Garmin→ICU lag). The backend falls back to the last synced day (with
+    // `*_asof` dates). Encoding (owner): ITALIC + small date = backfilled
+    // from an earlier day; COLOR stays quality (green/yellow/red status),
+    // so stale and good/bad never fight over the same channel.
     const _todayISO = new Date().toISOString().slice(0, 10);
     const _dLbl = d => { const dt = new Date(d + 'T00:00:00');
       return isNaN(dt) ? d : dt.toLocaleDateString(undefined, {month:'short', day:'numeric'}); };
     const _hrvStale = !!(s.hrv_asof && s.hrv_asof !== _todayISO && s.hrv_ms != null);
     const _sleepStale = !!(s.sleep_asof && s.sleep_asof !== _todayISO && (s.sleep_h != null || s.sleep_score != null));
+    const _rhrStale = !!(s.rhr_asof && s.rhr_asof !== _todayISO && s.rhr_today != null);
+    // Sleep score quality bands (Garmin-style): 80+ good, 60–79 fair, <60 poor.
+    const _scoreCls = v => v == null ? '' : (v >= 80 ? 'c-green' : v >= 60 ? 'c-yellow' : 'c-red');
 
     // Sleep metrics with sparklines
     $('sleep-metrics').innerHTML = [
-      {v:s.sleep_h?s.sleep_h+'h':'—',l:'Sleep',c:statusClass(s.hrv_status),t:'sleep',st:_sleepStale,sd:s.sleep_asof},
-      {v:s.hrv_ms??'—',l:'HRV (ms)',c:'',t:'hrv',st:_hrvStale,sd:s.hrv_asof},
-      {v:s.rhr_today?s.rhr_today+'bpm':'—',l:'RHR',c:statusClass(s.rhr_status),t:'rhr'},
+      {v:s.sleep_h?s.sleep_h+'h':'—',l:'Sleep',c:statusClass(s.sleep_status),t:'sleep',st:_sleepStale,sd:s.sleep_asof},
+      {v:s.hrv_ms??'—',l:'HRV (ms)',c:statusClass(s.hrv_status),t:'hrv',st:_hrvStale,sd:s.hrv_asof},
+      {v:s.rhr_today?s.rhr_today+'bpm':'—',l:'RHR',c:statusClass(s.rhr_status),t:'rhr',st:_rhrStale,sd:s.rhr_asof},
       {v:s.hrv_status??'—',l:'HRV status',c:statusClass(s.hrv_status),t:'hrv'},
-      {v:s.sleep_score??'—',l:'Sleep score',c:'',t:'sleep',st:_sleepStale,sd:s.sleep_asof},
-    ].map(m=>`<div class="metric" data-tip="${m.t}"><div class="mv ${m.c}"${m.st?' style="color:var(--yellow)" title="Last synced night — not today"':''}>${m.v}${m.st&&m.sd?`<span style="display:block;font-size:8px;font-weight:600;color:var(--yellow);opacity:0.9;">${_dLbl(m.sd)}</span>`:''}</div><div class="ml">${m.l}</div></div>`).join('');
+      {v:s.sleep_score??'—',l:'Sleep score',c:_scoreCls(s.sleep_score),t:'sleep',st:_sleepStale,sd:s.sleep_asof},
+    ].map(m=>`<div class="metric" data-tip="${m.t}"><div class="mv ${m.c}"${m.st?' style="font-style:italic;" title="From an earlier day — today not synced yet"':''}>${m.v}${m.st&&m.sd?`<span style="display:block;font-size:8px;font-weight:500;font-style:italic;color:var(--text3);">${_dLbl(m.sd)}</span>`:''}</div><div class="ml">${m.l}</div></div>`).join('');
 
     // Note under the tiles: stale → say which night you're looking at; no
     // data at all → point at connecting a source. Idempotent across renders.
@@ -6219,7 +6223,7 @@ async function loadHome() {
     const _noData = (s.sleep_h == null && s.hrv_ms == null && s.sleep_score == null);
     if (_staleAsof) {
       $('sleep-metrics').insertAdjacentHTML('afterend',
-        `<div id="sleep-today-note" style="font-size:10px;color:var(--yellow);margin-top:6px;">⏳ Showing your last synced night (${_dLbl(_staleAsof)}) — today's sleep &amp; HRV usually land mid-morning from intervals.icu.</div>`);
+        `<div id="sleep-today-note" style="font-size:10px;font-style:italic;color:var(--text3);margin-top:6px;">⏳ Italic values are from your last synced day (${_dLbl(_staleAsof)}) — today's usually land mid-morning from intervals.icu.</div>`);
     } else if (_noData) {
       $('sleep-metrics').insertAdjacentHTML('afterend',
         `<div id="sleep-today-note" style="font-size:10px;color:var(--text3);margin-top:6px;">No sleep or HRV yet — connect a Garmin/Oura/Whoop source in intervals.icu and it'll show here.</div>`);

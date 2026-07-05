@@ -117,7 +117,9 @@ def compute_sleep_metrics_from_wellness(wellness: list[dict]) -> dict:
     # avoid self-inclusion bias). Naming keeps `rhr_7d_avg` for downstream
     # consumers; the window is whatever is available in [4, 7] non-null samples.
     rhr_values = [r["rhr"] for r in records if r["rhr"]]
-    today_rhr = next((r["rhr"] for r in reversed(records) if r["rhr"]), None)
+    today_rhr, rhr_asof = next(
+        ((r["rhr"], r["date"]) for r in reversed(records) if r["rhr"]),
+        (None, None))
     # Use preceding records (exclude last entry which may be today)
     rhr_baseline = rhr_values[:-1] if len(rhr_values) > 1 else rhr_values
     rhr_7d_avg = round(statistics.mean(rhr_baseline[-7:]), 1) if len(rhr_baseline) >= 4 else None
@@ -198,6 +200,7 @@ def compute_sleep_metrics_from_wellness(wellness: list[dict]) -> dict:
         "swc_lower": swc_lower,
         "hrv_status": hrv_status,
         "rhr_today": today_rhr,
+        "rhr_asof": rhr_asof,
         "rhr_7d_avg": rhr_7d_avg,
         "rhr_delta": rhr_delta,
         "rhr_status": rhr_status,

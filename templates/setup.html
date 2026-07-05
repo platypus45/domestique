@@ -70,6 +70,14 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,108,247
 .summary-table td:last-child { font-weight: 600; }
 .check { color: var(--green); margin-right: 6px; }
 .toggle-btn.active { background: var(--accent); color: #fff; }
+/* Inline validation (client mirror of /api/setup/save's checks) */
+.btn-success:disabled { background: var(--surface2); color: var(--text3); cursor: not-allowed; }
+.field-err { display: none; font-size: 11px; color: var(--red); margin-top: 3px; }
+input.invalid { border-color: var(--red); }
+/* "from intervals.icu" prefill tag — cleared as soon as the user edits */
+.icu-tag { display: none; font-size: 10px; font-weight: 500; color: var(--accent);
+  background: rgba(79,108,247,0.12); border-radius: 999px; padding: 1px 7px;
+  margin-left: 6px; vertical-align: middle; }
 </style>
 </head>
 <body>
@@ -165,40 +173,45 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,108,247
     </div>
 
     <div class="form-row">
-      <label>Weight (kg)</label>
+      <label>Weight (kg)<span class="icu-tag" id="icu-tag-s-weight">from intervals.icu</span></label>
       <input type="number" id="s-weight" value="72" min="30" max="200" step="0.1">
+      <div class="field-err" id="err-s-weight"></div>
       <div style="font-size:11px;color:var(--text3);margin-top:3px;">Used for W/kg and climb power estimates</div>
     </div>
 
     <div class="form-row">
-      <label>FTP — Functional Threshold Power (watts)
+      <label>FTP — Functional Threshold Power (watts)<span class="icu-tag" id="icu-tag-s-ftp">from intervals.icu</span>
         <span style="font-weight:400;color:var(--text3);"> — the max power you can sustain for ~1 hour</span></label>
       <input type="number" id="s-ftp" value="250" min="50" max="600" step="1">
+      <div class="field-err" id="err-s-ftp"></div>
     </div>
 
     <div class="form-row">
-      <label>LTHR — Lactate Threshold Heart Rate (bpm)
+      <label>LTHR — Lactate Threshold Heart Rate (bpm)<span class="icu-tag" id="icu-tag-s-lthr">from intervals.icu</span>
         <span style="font-weight:400;color:var(--text3);"> — HR at the point where lactate accumulates rapidly (~FTP effort)</span></label>
       <input type="number" id="s-lthr" value="175" min="100" max="220" step="1">
+      <div class="field-err" id="err-s-lthr"></div>
       <div style="font-size:11px;color:var(--text3);margin-top:3px;">Tip: your average HR during a 30min all-out effort is a good estimate</div>
     </div>
 
     <div class="form-row">
-      <label>Max Heart Rate (bpm)
+      <label>Max Heart Rate (bpm)<span class="icu-tag" id="icu-tag-s-maxhr">from intervals.icu</span>
         <span style="font-weight:400;color:var(--text3);"> — the highest HR you've ever recorded during a max effort</span></label>
       <input type="number" id="s-maxhr" value="196" min="140" max="220" step="1">
+      <div class="field-err" id="err-s-maxhr"></div>
       <div style="font-size:11px;color:var(--text3);margin-top:3px;">Formula estimates (220-age) are unreliable. Use your actual recorded max if known.</div>
     </div>
 
     <div class="form-row">
       <label>
-        Age (years)
+        Age (years) <span class="skip-link">(optional)</span>
         <input type="number" id="s-age" min="10" max="100" step="1" placeholder="35">
+        <div class="field-err" id="err-s-age"></div>
       </label>
     </div>
     <div class="form-row">
       <label>
-        Sex
+        Sex <span class="skip-link">(optional)</span>
         <select id="s-sex">
           <option value="">Prefer not to say</option>
           <option value="M">Male</option>
@@ -213,39 +226,54 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,108,247
         <label>
           Critical Power (W) — defaults to FTP × 1.03 if blank
           <input type="number" id="s-cp" min="100" max="500" step="1" placeholder="auto">
+          <div class="field-err" id="err-s-cp"></div>
         </label>
         <label>
           W' — anaerobic capacity (J) — defaults to FTP × 80
           <input type="number" id="s-wprime" min="5000" max="40000" step="100" placeholder="auto">
+          <div class="field-err" id="err-s-wprime"></div>
         </label>
       </details>
     </div>
 
     <div class="actions">
       <button type="button" class="btn btn-secondary" onclick="nextStep(1)">Back</button>
-      <button type="button" class="btn btn-primary" onclick="nextStep(3)">Next</button>
+      <button type="button" class="btn btn-primary" onclick="nextStep(3)" id="step2-next">Next</button>
     </div>
   </div>
 
   <!-- STEP 3: Paths -->
   <div class="step-panel" id="step-3">
-    <h2>Data Paths</h2>
-    <p class="info">Where your virtual trainer workouts live. Auto-detected where possible.</p>
+    <h2>Workout &amp; Route Folders</h2>
+    <p class="info">
+      Domestique comes with a full <b>workout library built in</b>, so you can
+      leave both folders as they are. If you already keep your own workout
+      files or routes on this computer, point Domestique at those folders
+      instead — click <b>Browse</b> to pick one. You can change this anytime
+      in <b>Settings</b>.
+    </p>
     <div class="form-row">
-      <label>Virtual Trainer Workouts Folder</label>
+      <label>Workouts folder <span class="skip-link">(optional)</span></label>
       <div style="display:flex;gap:8px;">
         <input type="text" id="s-workout-dir" placeholder="~/Documents/Workouts" style="flex:1;">
         <button type="button" class="btn btn-secondary" onclick="pickFolder(this, 's-workout-dir')" style="padding:8px 12px;white-space:nowrap;" title="Browse">&#128193; Browse</button>
       </div>
-      <div style="font-size:11px;color:var(--text3);margin-top:4px;">Folder containing your .zwo workout files (e.g. TrainerRoad)</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px;">Structured workout files in .zwo format — e.g. exported from TrainerRoad or Zwift</div>
     </div>
     <div class="form-row">
-      <label>GPX Courses Folder <span class="skip-link">(optional)</span></label>
+      <label>Routes folder <span class="skip-link">(optional)</span></label>
       <div style="display:flex;gap:8px;">
         <input type="text" id="s-gpx-dir" placeholder="~/Documents/GPX/cyclinglocations" style="flex:1;">
         <button type="button" class="btn btn-secondary" onclick="pickFolder(this, 's-gpx-dir')" style="padding:8px 12px;white-space:nowrap;">&#128193; Browse</button>
       </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px;">Ride routes in .gpx format, used to suggest outdoor courses — skip it if you don't ride with routes</div>
     </div>
+    <p class="info" style="margin-top:20px;margin-bottom:0;">
+      <b>Almost done.</b> One more step — your weekly hours and training days.
+      When you finish, Domestique opens your dashboard, pulls in your recent
+      training from intervals.icu (if you connected it), and you can generate
+      your first training plan with one click.
+    </p>
     <div class="actions">
       <button type="button" class="btn btn-secondary" onclick="nextStep(2)">Back</button>
       <button type="button" class="btn btn-primary" onclick="nextStep(4)">Next</button>
@@ -258,6 +286,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,108,247
     <div class="form-row">
       <label>Hours per week</label>
       <input type="number" id="s-hours" value="8" min="1" max="40" step="0.5">
+      <div class="field-err" id="err-s-hours"></div>
     </div>
     <div class="form-row">
       <label>Training days (click to toggle)</label>
@@ -320,6 +349,19 @@ const _icuOrigin = new Set();   // touched fields whose value came from auto-fil
 function _markTouched(id, fromIcu) {
   _touched.add(id);
   if (fromIcu) _icuOrigin.add(id); else _icuOrigin.delete(id);
+  refreshIcuTags();
+}
+
+// ── "from intervals.icu" prefill tags (AC5f companion) ───────────────────────
+// Visible while a field's value came from auto-fill and hasn't been edited;
+// any keystroke goes through _markTouched(id, false), which drops the icu
+// origin and the tag with it. Survives OAuth round-trips via the persisted
+// _icuOrigin set (restoreState → refreshIcuTags on load).
+function refreshIcuTags() {
+  ['s-ftp', 's-weight', 's-lthr', 's-maxhr'].forEach(id => {
+    const tag = document.getElementById('icu-tag-' + id);
+    if (tag) tag.style.display = _icuOrigin.has(id) ? 'inline-block' : 'none';
+  });
 }
 let _daysTouched = false;
 let _restTouched = false;
@@ -352,8 +394,63 @@ async function applyServerLimits() {
         el.min = lim[field][0]; el.max = lim[field][1];
       }
     }
+    refreshValidation();  // bounds may have changed under already-typed values
   } catch (_) { /* offline — the matching static attributes stay in force */ }
 }
+
+// ── Inline validation — client mirror of /api/setup/save's checks ───────────
+// Bounds are read from each input's min/max, which applyServerLimits()
+// overwrites from GET /api/setup/limits (the very table setup_save validates
+// against), so this mirror can't drift from the server. Cross-field rule:
+// lthr < max_hr, same as the AC5b server check. Empty fields are VALID —
+// the wizard omits untouched/blank fields and the server only validates keys
+// present in the payload.
+const VALIDATED_FIELDS = ['s-weight', 's-ftp', 's-lthr', 's-maxhr',
+                          's-age', 's-cp', 's-wprime', 's-hours'];
+function fieldError(id) {
+  const el = document.getElementById(id);
+  if (!el) return '';
+  if (el.validity && el.validity.badInput) return 'Enter a number';
+  const raw = el.value.trim();
+  if (raw === '') return '';
+  const v = parseFloat(raw);
+  if (isNaN(v)) return 'Enter a number';
+  const lo = parseFloat(el.min), hi = parseFloat(el.max);
+  if ((!isNaN(lo) && v < lo) || (!isNaN(hi) && v > hi))
+    return 'Must be between ' + lo + ' and ' + hi;
+  if (id === 's-lthr' || id === 's-maxhr') {
+    const l = parseFloat(document.getElementById('s-lthr').value);
+    const m = parseFloat(document.getElementById('s-maxhr').value);
+    if (!isNaN(l) && !isNaN(m) && l >= m)
+      return (id === 's-lthr')
+        ? 'LTHR (' + l + ') must be below max HR (' + m + ')'
+        : 'Max HR (' + m + ') must be above LTHR (' + l + ')';
+  }
+  return '';
+}
+function refreshValidation() {
+  let allOk = true;
+  VALIDATED_FIELDS.forEach(id => {
+    const el = document.getElementById(id);
+    const err = document.getElementById('err-' + id);
+    const msg = fieldError(id);
+    if (el) el.classList.toggle('invalid', !!msg);
+    if (err) { err.textContent = msg; err.style.display = msg ? 'block' : 'none'; }
+    if (msg) allOk = false;
+  });
+  // Gate forward navigation + Finish while anything is invalid.
+  const n2 = document.getElementById('step2-next');
+  if (n2) n2.disabled = !allOk;
+  const sv = document.getElementById('save-btn');
+  if (sv && !_saving) sv.disabled = !allOk;
+  return allOk;
+}
+VALIDATED_FIELDS.forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('input', refreshValidation);
+  el.addEventListener('blur', refreshValidation);
+});
 
 // Day toggles — AC6b: a day can't be a training day AND a rest day; selecting
 // one side clears the other.
@@ -403,6 +500,7 @@ async function autofillFromIcu() {
     st.textContent = got.length
       ? 'Filled from intervals.icu: ' + got.join(', ') + ' — edit anything that looks off.'
       : 'Nothing to fill yet — your first sync runs after setup.';
+    refreshValidation();  // programmatic fill fires no input events
     persistState();
   } catch (e) {
     st.textContent = 'Auto-fill failed — enter your numbers manually.';
@@ -464,6 +562,9 @@ async function saveAll() {
     nextStep(2);
     return;
   }
+  // Inline-validation gate — the button is disabled while invalid, but keep a
+  // hard stop in case saveAll is reached another way.
+  if (!refreshValidation()) return;
   _saving = true;
   btn.disabled = true; btn.textContent = 'Saving...';
 
@@ -537,6 +638,7 @@ async function saveAll() {
   } finally {
     _saving = false;
     btn.disabled = false; btn.textContent = 'Complete Setup';
+    refreshValidation();  // re-apply the invalid-gate after the save attempt
   }
 }
 
@@ -680,6 +782,8 @@ async function refreshLinkStatus(icuParam, reason) {
   }
   // restore user-entered values (takes precedence over server defaults)
   restoreState();
+  refreshValidation();  // validate whatever defaults/restore produced
+  refreshIcuTags();     // restored _icuOrigin → re-show the prefill tags
   // returning from the intervals.icu OAuth round-trip → render the link status;
   // otherwise reflect any existing connection.
   const _q = new URLSearchParams(location.search);

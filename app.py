@@ -1076,9 +1076,39 @@ def setup_check_activities(body: dict):
         return {"ok": False, "error": str(e)}
 
 
+def _pick_folder_webview():
+    """Native pywebview folder dialog — the packaged app runs uvicorn
+    in-process with ``webview.start()`` (launcher.py), so ``webview.windows``
+    is populated and the dialog parents to the app window (same
+    ``create_file_dialog`` bridge launcher.JsApi uses for saves).
+
+    Returns the picked path, ``""`` when the user cancels, or ``None`` when
+    no webview window exists (bare-server/dev run) so the caller falls back
+    to tkinter.
+    """
+    try:
+        import webview
+        if not getattr(webview, "windows", None):
+            return None
+        result = webview.windows[0].create_file_dialog(webview.FOLDER_DIALOG)
+        if not result:
+            return ""
+        return result if isinstance(result, str) else result[0]
+    except Exception:
+        return None
+
+
 @app.get("/api/setup/pick-folder")
 def setup_pick_folder():
-    """Open a native OS folder picker dialog and return the selected path."""
+    """Open a native OS folder picker dialog and return the selected path.
+
+    Prefers the pywebview dialog (native, correctly parented); tkinter is the
+    fallback for runs without a webview window — the bundle keeps tkinter for
+    exactly this (see domestique.spec excludes comment).
+    """
+    native = _pick_folder_webview()
+    if native is not None:
+        return {"path": native}
     import threading
 
     result = {"path": ""}

@@ -1,5 +1,23 @@
 # Changelog
 
+## v3.2.1 — Analysis-tab fixes: the power curve finally draws (2026-07-05)
+
+- **Power curve now renders.** It could hang indefinitely (blank chart) while it
+  cached your ride power from intervals.icu — that hydration now runs in the
+  background, the chart appears right away, and a progress bar shows it filling
+  in. Fatigue Resistance, which shares the same data, no longer gets stuck.
+- **Home card shows the right session.** It could say "Rest" while opening your
+  actual ride for the day (a plan starting mid-week). The card and the click now
+  read the same source.
+- **Sleep & HRV** say "waiting on today's data from intervals.icu" instead of a
+  bare "—" when your overnight metrics haven't synced yet.
+- **First run** shows a "Create your first training plan" button instead of an
+  empty card.
+- Plan-tab polish: a clearer "I've been training already" box, a "Find my week
+  from recent rides" option, readable links in dark mode, and a tidier plan-style
+  help popover.
+
+
 ## v3.2.0 — Personalize your plan, and a workout library you can trust (2026-07-05)
 
 The biggest release yet. You get real control over how your plan is shaped and

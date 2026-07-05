@@ -12,7 +12,43 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import copy
 from datetime import date
 
+import pytest
+
 import training_planner as tp
+import workout_facts as wf
+
+
+# v3.2.0 WATERTIGHT: match_zwo now facts-gates the vo2max slot (hi_s ≥ 240s),
+# and the gate fail-closes a row whose File is not on disk. This unit test
+# exercises the hr-BIAS (which runs after the gate), so its synthetic rows
+# need REAL, gate-passing files on disk — otherwise the gate empties the pool
+# before the bias is ever reached. Write genuine VO2 content (well over the
+# 240s Z5+ floor) for every row name the tests use, and point WORKOUT_DIR at
+# it. This tests the true integration (bias over a gated pool), not a mock.
+_VO2 = ("<workout_file><workout>"
+        '<Warmup Duration="600" PowerLow="0.4" PowerHigh="0.75"/>'
+        '<IntervalsT Repeat="5" OnDuration="240" OffDuration="180" '
+        'OnPower="1.10" OffPower="0.50"/>'
+        '<Cooldown Duration="300" PowerLow="0.6" PowerHigh="0.4"/>'
+        "</workout></workout_file>")
+_VO2_SHORT = ("<workout_file><workout>"
+              '<Warmup Duration="600" PowerLow="0.4" PowerHigh="0.75"/>'
+              '<IntervalsT Repeat="40" OnDuration="30" OffDuration="15" '
+              'OnPower="1.20" OffPower="0.50"/>'
+              '<Cooldown Duration="300" PowerLow="0.6" PowerHigh="0.4"/>'
+              "</workout></workout_file>")
+
+
+@pytest.fixture(autouse=True)
+def _real_gate_files(tmp_path, monkeypatch):
+    for i in range(4):
+        (tmp_path / f"vo2_{i}.zwo").write_text(_VO2, encoding="utf-8")
+        (tmp_path / f"micro_{i}.zwo").write_text(_VO2_SHORT, encoding="utf-8")
+    monkeypatch.setattr(tp, "WORKOUT_DIR", tmp_path)
+    wf.reset_cache()
+    wf.ensure_facts(tmp_path)
+    yield
+    wf.reset_cache()
 
 
 def _row(name, cls, score=6, dur=60):

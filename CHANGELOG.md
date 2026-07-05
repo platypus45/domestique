@@ -9,8 +9,14 @@
 - **Home card shows the right session.** It could say "Rest" while opening your
   actual ride for the day (a plan starting mid-week). The card and the click now
   read the same source.
-- **Sleep & HRV** say "waiting on today's data from intervals.icu" instead of a
-  bare "—" when your overnight metrics haven't synced yet.
+- **Sleep & HRV never show a bare "—" anymore.** Until your watch's overnight
+  data reaches intervals.icu (usually mid-morning), the tiles show your last
+  synced night in amber with its date, plus a note saying exactly what you're
+  looking at.
+- **Preview today's workout on the home page.** The Today card now shows the
+  actual interval blocks of today's session — the real workout file when one
+  is matched, or an approximate shape for free rides — and the card sits
+  directly above the This Week grid so today and the week read as one unit.
 - **First run** shows a "Create your first training plan" button instead of an
   empty card.
 - Plan-tab polish: a clearer "I've been training already" box, a "Find my week

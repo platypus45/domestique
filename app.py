@@ -11460,38 +11460,35 @@ def _regenerate_plan_dict(
     persists via ``tp.atomic_write_plan`` so the latch/status writes land in
     the same critical section.
     """
-    # Reconstruct Goal
+    # Reconstruct Goal via the canonical helper — the old inline build here
+    # carried plan_mode/template_id but DROPPED distribution/custom_bands/
+    # events/block_periodization/start_date/entry_mode/plan_weeks/
+    # available_days/daily_max_hours, so every regen reverted a pyramidal/
+    # threshold/custom plan to whatever the sticky process-global model was
+    # and lost the B/C race rows + mini-tapers.
     g = plan.get("goal", {})
-    target_date = date.fromisoformat(g["event_date"]) if g.get("event_date") else date.today() + timedelta(weeks=12)
-    goal = tp.Goal(
-        goal_type=g.get("type", "general"),
-        target_date=target_date,
-        event_name=g.get("event_name", ""),
-        event_km=g.get("event_km", 0),
-        event_climb_m=g.get("event_climb", 0),
-        event_type=g.get("event_type", "granfondo"),
-        hours_per_week=g.get("hours_per_week", 8),
-        max_weekday_hours=g.get("max_weekday_hours", 2.0),
-        max_weekend_hours=g.get("max_weekend_hours", 3.5),
-        rest_days=g.get("rest_days", [0]),
-        longest_ride_h_90d=g.get("longest_ride_h_90d"),
-        last_ftp_test_date=g.get("last_ftp_test_date"),
-        # FS1: carry the construction mode so /api/plan/regenerate keeps a
-        # fixed_core/template plan FIXED (this inline reconstruction omits it,
-        # so without this the goal defaults to "auto" and the build weeks get
-        # reshuffled back to mixed HIT by the sampler).
-        plan_mode=g.get("plan_mode", "auto"),
-        template_id=g.get("template_id", "") or "",
-        # v3.2.0 phase-split editor (A2, documented-lossy): this inline
-        # reconstruction ALREADY drops custom_bands/distribution/etc., and
-        # phase_weeks is deliberately not carried either — absence means the
-        # regen rebuilds on the recommendation, which is exactly the A1
-        # fallback semantics (the stale plan-meta status is cleared below).
-        # The pre-existing field-loss here is a separate task, not this build.
-    )
+    goal = _goal_from_plan_dict(g)
+    if goal.target_date is None:
+        # Non-event goals: keep the legacy regen horizon (12 weeks out).
+        goal.target_date = date.today() + timedelta(weeks=12)
+    # The persisted plan_weeks is the GENERATION-time week count; on a rebuild
+    # it is stale (weeks_available() short-circuits on plan_weeks>0 — the H1
+    # trap), which would split phases into a longer budget than the remaining
+    # runway. Zero it so weeks_available derives from target_date, exactly as
+    # the pre-fix inline goal (plan_weeks unset) behaved.
+    goal.plan_weeks = 0
+    # v3.2.0 merge note: with the canonical helper this site now CARRIES
+    # phase_weeks — the engine's validity gate (A1) decides applied-vs-
+    # fallback against this rebuild's runway; the write-site below mirrors
+    # goal._phase_weeks_status instead of clearing a "lossy" stale stamp.
     # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
     if goal.longest_ride_h_90d is None:
         goal.longest_ride_h_90d = _longest_ride_h_90d()
+    # J1: pin the active intensity-distribution model for this regen's budget
+    # lookups (mirrors generate_plan) — /api/plan/regenerate and add-race call
+    # this core bare, so after an app restart the process default (polarized)
+    # silently rebudgeted non-polarized plans.
+    tp.set_active_distribution(goal.distribution, goal.custom_bands)
 
     # Reconstruct PlannedWeek list.
     # v1.8.20 — round-trip ALL session fields (user_moved/status/dismissed_at/
@@ -15857,34 +15854,32 @@ def api_plan_auto_recalc():
         training = cached("training", get_today_metrics)
         current_ctl = training.get("ctl") or 30
 
+        # Reconstruct Goal via the canonical helper — the old inline build here
+        # dropped distribution/custom_bands/events/block_periodization/
+        # plan_mode/start_date/…, so a weekly recalc rebudgeted non-polarized
+        # plans to the sticky process default (same defect as the regen core's
+        # inline Goal, fixed the same way). NOTE: recalculate_plan itself runs
+        # no _mark_race_days/_apply_secondary_event_tapers pass — carrying
+        # goal.events here feeds its adjusted_goal, but the taper gap is a
+        # separate engine issue.
         g = plan.get("goal", {})
-        target_date = date.fromisoformat(g["event_date"]) if g.get("event_date") else None
-        if not target_date:
+        goal = _goal_from_plan_dict(g)
+        if goal.target_date is None:
             # Non-event goals (FTP, general): use target_date or default 12 weeks out
-            target_date = date.fromisoformat(g["target_date"]) if g.get("target_date") else (date.today() + timedelta(weeks=12))
-
-        goal = tp.Goal(
-            goal_type=g.get("type", "general"),
-            target_date=target_date,
-            event_name=g.get("event_name", ""),
-            event_km=g.get("event_km", 0),
-            event_climb_m=g.get("event_climb", 0),
-            event_type=g.get("event_type", "granfondo"),
-            hours_per_week=g.get("hours_per_week", 8),
-            max_weekday_hours=g.get("max_weekday_hours", 2.0),
-            max_weekend_hours=g.get("max_weekend_hours", 3.5),
-            rest_days=g.get("rest_days", [0]),
-            longest_ride_h_90d=g.get("longest_ride_h_90d"),
-            last_ftp_test_date=g.get("last_ftp_test_date"),
-            # v3.2.0 phase-split editor (A2, documented-lossy): this scheduler
-            # reconstruction already drops custom_bands/plan_mode/etc., and
-            # phase_weeks is deliberately not carried either — absence means
-            # the recalc rebuilds on the recommendation (the A1 fallback
-            # semantics). Pre-existing loss = separate task, not this build.
-        )
+            goal.target_date = date.fromisoformat(g["target_date"]) if g.get("target_date") else (date.today() + timedelta(weeks=12))
+        # Stale generation-time week count must not outlive the shrinking
+        # runway (weeks_available short-circuits on plan_weeks>0 — H1 trap).
+        goal.plan_weeks = 0
+        # v3.2.0 merge note: the canonical helper carries phase_weeks here
+        # too — the engine's validity gate decides applied-vs-fallback and
+        # the scheduler write-site mirrors goal._phase_weeks_status.
         # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
         if goal.longest_ride_h_90d is None:
             goal.longest_ride_h_90d = _longest_ride_h_90d()
+        # J1: pin the active intensity-distribution model for this recalc's
+        # budget lookups (mirrors generate_plan) — this scheduler called
+        # recalculate_plan bare, so it inherited whatever model ran last.
+        tp.set_active_distribution(goal.distribution, goal.custom_bands)
 
         # Reconstruct plan weeks
         old_weeks = []

@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>HIIT 40s/20s 2x8 (35min)</name>
+    <description>Warmup: 5min ramp from 35% to 75% FTP | Priming: 3 x (30s @ 100% / 30s @ 50%) + 2min @ 40% | Main: 2 sets of 8 x (40s @ 120% / 20s @ 50%), 3min @ 50% between sets — 40/20 HIIT, 2-set rung of the 4x8 ladder | Cooldown: 1min @ 40% + 5min ramp from 40% to 25% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="300" PowerLow="0.35" PowerHigh="0.75" pace="0" />
+        <IntervalsT Repeat="3" OnDuration="30" OffDuration="30" OnPower="1.0" OffPower="0.5" pace="0" />
+        <SteadyState Duration="120" Power="0.4" pace="0" />
+        <IntervalsT Repeat="8" OnDuration="40" OffDuration="20" OnPower="1.2" OffPower="0.5" pace="0" />
+        <SteadyState Duration="180" Power="0.5" pace="0" />
+        <IntervalsT Repeat="8" OnDuration="40" OffDuration="20" OnPower="1.2" OffPower="0.5" pace="0" />
+        <SteadyState Duration="60" Power="0.4" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.4" PowerHigh="0.25" pace="0" />
+    </workout>
+</workout_file>

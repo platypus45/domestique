@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>FTP Test — CTS 2x8min (54min)</name>
+    <description>Warmup: 9min ramp from 35% to 75% FTP + 3 x (1min opener @ 105% / 1min @ 50%) + 5min @ 50% | Main: CTS field test — 2 x 8min ALL-OUT time-trial efforts with 10min @ 50% between; the 108% target is only an ERG stand-in, ride both efforts at maximum sustainable power (disable ERG or ignore target); new FTP is approximately 90% of the average power of the two 8min efforts | Cooldown: 8min ramp from 60% to 30% FTP</description>
+    <sportType>bike</sportType>
+    <tags>
+        <tag name="ftp_test" />
+    </tags>
+    <workout>
+        <Warmup Duration="540" PowerLow="0.35" PowerHigh="0.75" pace="0" />
+        <IntervalsT Repeat="3" OnDuration="60" OffDuration="60" OnPower="1.05" OffPower="0.5" pace="0" />
+        <SteadyState Duration="300" Power="0.5" pace="0" />
+        <SteadyState Duration="480" Power="1.08" pace="0" />
+        <SteadyState Duration="600" Power="0.5" pace="0" />
+        <SteadyState Duration="480" Power="1.08" pace="0" />
+        <Cooldown Duration="480" PowerLow="0.6" PowerHigh="0.3" pace="0" />
+    </workout>
+</workout_file>

@@ -1,0 +1,34 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>The Wringer 12x30s (44min)</name>
+    <description>Warmup: 8min ramp from 30% to 100% FTP | Main: 12 x 30s @ 180% FTP (source 205%, capped at library max) with recoveries @ 50% shrinking each rep from 2:40 down to 1:50 — anaerobic repeatability under decreasing rest | Cooldown: 5min ramp from 70% to 30% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="480" PowerLow="0.3" PowerHigh="1.0" pace="0" />
+        <SteadyState Duration="30" Power="1.8" pace="0" />
+        <SteadyState Duration="160" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.8" pace="0" />
+        <SteadyState Duration="155" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.8" pace="0" />
+        <SteadyState Duration="150" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.8" pace="0" />
+        <SteadyState Duration="145" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.8" pace="0" />
+        <SteadyState Duration="140" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.8" pace="0" />
+        <SteadyState Duration="135" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.8" pace="0" />
+        <SteadyState Duration="130" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.8" pace="0" />
+        <SteadyState Duration="125" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.8" pace="0" />
+        <SteadyState Duration="120" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.8" pace="0" />
+        <SteadyState Duration="115" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.8" pace="0" />
+        <SteadyState Duration="110" Power="0.5" pace="0" />
+        <SteadyState Duration="30" Power="1.8" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.7" PowerHigh="0.3" pace="0" />
+    </workout>
+</workout_file>

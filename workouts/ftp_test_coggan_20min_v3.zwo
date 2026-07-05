@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>FTP Test — Coggan 20min protocol (59min)</name>
+    <description>Coggan 20-minute FTP test, full protocol (~59min). 10min easy ramp warmup, then 3x1min fast-spin openers at 95% with 1min easy between, 4min easy, then a 5min all-out effort at ~110% — this deliberately empties the anaerobic tank so your 20-min number reflects sustainable power, not a fresh anaerobic surge. 9min easy to recover, then the test: 20min at your best steady effort (target ~100% of current FTP; ride it like a time trial). Easy 5min cooldown. Your new FTP = 95% of the 20-min average power — the app computes this from the ride file automatically.</description>
+    <sportType>bike</sportType>
+    <tags>
+        <tag name="ftp_test" />
+    </tags>
+    <workout>
+        <Warmup Duration="600" PowerLow="0.45" PowerHigh="0.70" pace="warmup" />
+        <IntervalsT Repeat="3" OnDuration="60" OffDuration="60" OnPower="0.95" OffPower="0.50" pace="openers" />
+        <SteadyState Duration="240" Power="0.50" pace="easy" />
+        <SteadyState Duration="300" Power="1.10" pace="depletion" />
+        <SteadyState Duration="540" Power="0.50" pace="easy" />
+        <SteadyState Duration="1200" Power="1.00" pace="test" />
+        <Cooldown Duration="300" PowerLow="0.60" PowerHigh="0.40" pace="cooldown" />
+    </workout>
+</workout_file>

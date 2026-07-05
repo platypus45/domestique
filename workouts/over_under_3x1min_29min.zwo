@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>FTP Test 4x1min (29min)</name>
+    <name>Over-Unders 29min — 3×1min/1min @ 110%</name>
     <description>Warmup: 3min from 35% to 55% FTP | Intervals: 4 x (1min @ 110% / 1min @ 55%) | Cooldown: 2min from 35% to 55% FTP</description>
     <sportType>bike</sportType>
     <workout>

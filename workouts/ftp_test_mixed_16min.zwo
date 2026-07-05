@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>FTP Test (16min)</name>
+    <name>Tempo 16min — Z1</name>
     <description>Warmup: 5min from 35% to 55% FTP | Steady: 2min @ 60% FTP | Steady: 2min @ 70% FTP | Steady: 2min @ 85% FTP | Steady: 1min @ 100% FTP | Steady: 30s @ 110% FTP | Steady: 2min @ 55% FTP | Cooldown: 1min from 35% to 55% FTP</description>
     <sportType>bike</sportType>
     <workout>

@@ -1,0 +1,376 @@
+{
+ "other_actions": {
+  "ftp_test_mixed_90min.zwo": {
+   "action": "add_tag",
+   "proposed": "ftp_test",
+   "reason": "real Coggan-20 protocol (5'@110 depletion + 20'@100), class already correct, tag missing"
+  },
+  "ftp_test_ramp_10w_step.zwo": {
+   "action": "fix_file_or_untag",
+   "proposed": "ftp_test",
+   "reason": "ramp caps at 100% - extend steps to >=150% (to-failure) or remove tag+reclass endurance progression; Score 3 servable at 30-52min test slots"
+  },
+  "ramp_test_33min.zwo": {
+   "action": "rename_only",
+   "proposed": "tempo",
+   "reason": "saw-tooth 30/45s micro-ramp intervals, class tempo OK, filename 'ramp_test' lies"
+  },
+  "ramp_test_35min.zwo": {
+   "action": "rename_only",
+   "proposed": "tempo",
+   "reason": "progressive 5x5' tempo ramps 70-95%, class tempo OK, filename lies"
+  },
+  "threshold_2x10min_80min.zwo": {
+   "action": "blocklist_classifier_rerun",
+   "proposed": "threshold",
+   "reason": "fresh classifier would flip it to ftp_test (cts-FP) on next run; keep threshold"
+  },
+  "threshold_mixed_60min_renamed_v46_1.zwo": {
+   "action": "blocklist_classifier_rerun",
+   "proposed": "threshold",
+   "reason": "same pending cts-FP flip"
+  },
+  "vo2max_mixed_45min.zwo": {
+   "action": "add_tag",
+   "proposed": "ftp_test",
+   "reason": "real Coggan-20 variant, twin of ftp_test_coggan_20min_v2; also rename (filename says vo2max)"
+  }
+ },
+ "relabel": {
+  "anaerobic_5x1min_120min_renamed_v46_1.zwo": {
+   "action": "reclass",
+   "new": "threshold",
+   "reason": "ramp-FP; 2x10'@100% + 6x(3'@75+20s@120) + 5x(1'@120/2') - 2h interval session; staircase WU 5x2' 40->80% + 3x30s@120 openers tripped ramp rule"
+  },
+  "anaerobic_steady_26min.zwo": {
+   "action": "reclass",
+   "new": "tempo",
+   "reason": "ramp-FP; 2x staircase 2-3' steps 60->95% + 45s@120 opener; activation/openers ride, zero maximal block"
+  },
+  "ftp_test_12x1min_49min.zwo": {
+   "action": "reclass",
+   "new": "over_under",
+   "reason": "ramp-FP; 2x[6x(1'@95/1'@102)] classic 1-min over-unders"
+  },
+  "ftp_test_2x8min_60min.zwo": {
+   "action": "reclass",
+   "new": "sweet_spot",
+   "reason": "ramp-FP; '2x8' blocks are 8'@87% (SS) + 2x9'@75; real CTS 2x8 is all-out >=100%. Wears the test protocol's name; NO real 2x8 test exists in library"
+  },
+  "ftp_test_3x2min_34min.zwo": {
+   "action": "reclass",
+   "new": "over_under",
+   "reason": "ramp-FP; 3x(90s@95/90s@110) continuous alternations"
+  },
+  "ftp_test_3x2min_42min.zwo": {
+   "action": "reclass",
+   "new": "threshold_ladder",
+   "reason": "ramp-FP; 3x[2'@82,2'@97,1'@104,1'@114] ascending rungs"
+  },
+  "ftp_test_3x30s_90min.zwo": {
+   "action": "reclass",
+   "new": "threshold",
+   "reason": "ramp-FP; 2x5'@110 + 2x10'@105 + 20'@100 descending blocks: 50' of Z4-Z5 intervals; 30' supra work BEFORE the 20' block disqualifies test"
+  },
+  "ftp_test_3x40s_44min.zwo": {
+   "action": "reclass",
+   "new": "threshold_ladder",
+   "reason": "ramp-FP; same 3x ascending ladders @82-114% + 3x40s@85 openers"
+  },
+  "ftp_test_5x1min_90min.zwo": {
+   "action": "reclass",
+   "new": "threshold_ladder",
+   "reason": "ramp-FP; 3x pyramid (4'@93,2'@98,1'@103,30s@110, mirror) + 5x(1'@110/1')"
+  },
+  "ftp_test_5x20s_60min.zwo": {
+   "action": "reclass",
+   "new": "threshold_ladder",
+   "reason": "ramp-FP; 2x pyramid 4'@85->1'@110->back + 5x20s@100 openers"
+  },
+  "ftp_test_6x2min_48min.zwo": {
+   "action": "reclass",
+   "new": "over_under",
+   "reason": "ramp-FP; 6x(90s@95/90s@110)"
+  },
+  "ftp_test_7x1min_42min.zwo": {
+   "action": "reclass",
+   "new": "over_under",
+   "reason": "ramp-FP; 7x(60s@95/60s@110)"
+  },
+  "ftp_test_mixed_16min.zwo": {
+   "action": "reclass",
+   "new": "tempo",
+   "reason": "ramp-FP; 16' activation: 2' steps 60->100% + 30s@110; no test block"
+  },
+  "ftp_test_mixed_21min.zwo": {
+   "action": "reclass",
+   "new": "tempo",
+   "reason": "ramp-FP; 21' activation: 1' steps 70->110%"
+  },
+  "ftp_test_mixed_42min.zwo": {
+   "action": "reclass",
+   "new": "threshold",
+   "reason": "cts-FP; 2x10'@100 w/ 6' recovery; CTS rule fired on two flat 10' blocks - fixed 100% prescription, not max effort"
+  },
+  "ftp_test_mixed_43min.zwo": {
+   "action": "reclass",
+   "new": "threshold",
+   "reason": "cts-FP; 2x10'@95 w/ 10' recovery"
+  },
+  "ftp_test_mixed_45min.zwo": {
+   "action": "reclass",
+   "new": "threshold",
+   "reason": "cts-FP; 10'@100 + 10'@75 + 10'@100"
+  },
+  "ftp_test_mixed_45min_renamed_v46_1.zwo": {
+   "action": "reclass",
+   "new": "threshold",
+   "reason": "cts-FP; duplicate of ftp_test_mixed_45min (10'@100 + 10'@75 + 10'@100)"
+  },
+  "ftp_test_mixed_51min.zwo": {
+   "action": "reclass",
+   "new": "threshold_ladder",
+   "reason": "ramp-FP; 2x pyramid 3'@83,2'@92,1'@100,1'@111, mirror"
+  },
+  "ftp_test_mixed_60min.zwo": {
+   "action": "reclass",
+   "new": "threshold",
+   "reason": "cts-FP; 2x10'@106 w/ 10'@60 between; supra-threshold intervals, not a protocol"
+  },
+  "ftp_test_mixed_60min_renamed_v46_1.zwo": {
+   "action": "reclass",
+   "new": "threshold",
+   "reason": "cts-FP; duplicate of ftp_test_mixed_60min"
+  },
+  "ftp_test_mixed_75min.zwo": {
+   "action": "reclass",
+   "new": "sweet_spot",
+   "reason": "coggan-FP; 18'@88 + 18'@92 + 3x2'@105 progressive blocks; the 18'@92 block matched the 'sustained' rule"
+  },
+  "ftp_test_mixed_79min.zwo": {
+   "action": "reclass",
+   "new": "threshold",
+   "reason": "coggan-FP; 25'@96 + 25'@91 cruise blocks; 91% block ducks the detector's 92% floor so it saw 'one' block"
+  },
+  "ftp_test_mixed_79min_renamed_v46_1.zwo": {
+   "action": "reclass",
+   "new": "threshold",
+   "reason": "cts-FP; 2x12'@100 w/ 10' recovery"
+  },
+  "ftp_test_ou_55min.zwo": {
+   "action": "reclass",
+   "new": "threshold_ladder",
+   "reason": "ramp-FP; 2x pyramid 4'@85->1'@110->mirror + third mini-set"
+  },
+  "ftp_test_ou_55min_renamed_v46_1.zwo": {
+   "action": "reclass",
+   "new": "threshold_ladder",
+   "reason": "ramp-FP; 3x ascending 4'@80,3'@90,2'@100,1'@110"
+  },
+  "ftp_test_ou_60min.zwo": {
+   "action": "reclass",
+   "new": "threshold_ladder",
+   "reason": "ramp-FP; same 3x ascending set + 4x30s primer"
+  },
+  "ftp_test_ou_62min.zwo": {
+   "action": "reclass",
+   "new": "threshold_ladder",
+   "reason": "ramp-FP; 3x ascending 4'@75,3'@85,2'@100,1'@110"
+  },
+  "ftp_test_steady_50min.zwo": {
+   "action": "reclass",
+   "new": "threshold",
+   "reason": "coggan-FP; single 30'@95 steady block, WU/CD; fixed submaximal prescription = threshold workout, not a max test"
+  },
+  "ftp_test_steady_53min.zwo": {
+   "action": "reclass",
+   "new": "sweet_spot",
+   "reason": "coggan-FP; single 20'@93 block; 93% = SS band, not a max effort"
+  },
+  "over_under_12x3min_75min.zwo": {
+   "action": "reclass",
+   "new": "over_under",
+   "reason": "ramp-FP; 2x[6x(3'@90/30s@110)] textbook OU"
+  },
+  "over_under_3x1min_29min.zwo": {
+   "action": "reclass",
+   "new": "over_under",
+   "reason": "ramp-FP; 3x(3'@93/1'@110); 60s-step staircase 60->120% intro tripped ramp rule"
+  },
+  "over_under_3x30s_70min.zwo": {
+   "action": "reclass",
+   "new": "tempo_intervals",
+   "reason": "ramp-FP; 12'@75 + 4x(3'@75+20s@120) + 6'@75 + 6'@100"
+  },
+  "over_under_6x5min_70min.zwo": {
+   "action": "reclass",
+   "new": "over_under",
+   "reason": "ramp-FP; 3x[2x(5'@95/1'@115)]"
+  },
+  "over_under_ou_70min_renamed_v46_1.zwo": {
+   "action": "reclass",
+   "new": "over_under",
+   "reason": "ramp-FP; 1'@100/110/120 alternations + 3-4' blocks 85-110%"
+  },
+  "over_under_ou_70min_renamed_v46_2.zwo": {
+   "action": "reclass",
+   "new": "over_under",
+   "reason": "ramp-FP; duplicate w/ steady 8'@70 intro"
+  },
+  "over_under_steady_36min_v2.zwo": {
+   "action": "reclass",
+   "new": "vo2_ladder",
+   "reason": "ramp-FP; 3x[1'@85,1'@95,45s@110,45s@120] ascending rungs to 120%"
+  },
+  "over_under_steady_42min_v4.zwo": {
+   "action": "reclass",
+   "new": "threshold_ladder",
+   "reason": "ramp-FP; 3x[4'@85,3'@95,1'@110,30s@120 + ramp-down]"
+  },
+  "recovery_spin_27min.zwo": {
+   "action": "reclass",
+   "new": "tempo",
+   "reason": "ramp-FP; activation ride (staircases 60->95% + 45s@120); near-duplicate of anaerobic_steady_26min; filename says recovery, class says test, content says openers"
+  },
+  "recovery_spin_29min.zwo": {
+   "action": "reclass",
+   "new": "over_under",
+   "reason": "ramp-FP; duplicate of over_under_3x1min_29min: 3x(3'@93/1'@110); display name 'FTP Test 4x1min'"
+  },
+  "sweet_spot_2x15min_70min.zwo": {
+   "action": "reclass",
+   "new": "sweet_spot",
+   "reason": "ramp-FP; 2x(15'@88/5') + 5x(1'@115/1')"
+  },
+  "sweet_spot_3x30s_65min.zwo": {
+   "action": "reclass",
+   "new": "sweet_spot",
+   "reason": "ramp-FP; 2x[8'@90+4'@100+8'@90]"
+  },
+  "sweet_spot_4x6min_60min.zwo": {
+   "action": "reclass",
+   "new": "sweet_spot",
+   "reason": "ramp-FP; 4x(6'@90/4')"
+  },
+  "sweetspot_4x0min_60min_v3.zwo": {
+   "action": "reclass",
+   "new": "threshold_ladder",
+   "reason": "ramp-FP; 2x pyramid 3'@83,2'@92,1'@100,1'@111, mirror + 12x15s micro-openers"
+  },
+  "tempo_3x2min_65min.zwo": {
+   "action": "reclass",
+   "new": "sweet_spot",
+   "reason": "ramp-FP; 10'@88 + 3x(2'@94/3'@86) + staircase 75->90%"
+  },
+  "tempo_3x30s_60min_renamed_v46_1.zwo": {
+   "action": "reclass",
+   "new": "tempo",
+   "reason": "ramp-FP; 10' blocks @75/85/70/90 steady tempo"
+  },
+  "tempo_3x30s_60min_renamed_v46_2.zwo": {
+   "action": "reclass",
+   "new": "tempo_intervals",
+   "reason": "ramp-FP; 3x[3'@75+3'@95+3'@75] w/ 4' recoveries"
+  },
+  "tempo_3x30s_60min_renamed_v46_3.zwo": {
+   "action": "reclass",
+   "new": "tempo_intervals",
+   "reason": "ramp-FP; same as v46_2, CD variant"
+  },
+  "tempo_3x30s_64min_renamed_v46_1.zwo": {
+   "action": "reclass",
+   "new": "sweet_spot",
+   "reason": "ramp-FP; 3x[4'@86+4'@95+4'@86]"
+  },
+  "tempo_3x30s_65min_renamed_v46_1.zwo": {
+   "action": "reclass",
+   "new": "tempo_intervals",
+   "reason": "ramp-FP; 3x(10'@75/5')"
+  },
+  "tempo_3x30s_65min_renamed_v46_2.zwo": {
+   "action": "reclass",
+   "new": "sweet_spot",
+   "reason": "ramp-FP; 4x[8x1' wave @84-92%]"
+  },
+  "tempo_3x30s_65min_renamed_v46_3.zwo": {
+   "action": "reclass",
+   "new": "sweet_spot",
+   "reason": "ramp-FP; 2x[5x4' @82->90 progressive]"
+  },
+  "tempo_3x30s_70min.zwo": {
+   "action": "reclass",
+   "new": "tempo_intervals",
+   "reason": "ramp-FP; 2x(20'@75/5')"
+  },
+  "tempo_3x30s_71min.zwo": {
+   "action": "reclass",
+   "new": "tempo_intervals",
+   "reason": "ramp-FP; 3x(12'@75/5')"
+  },
+  "tempo_3x30s_90min.zwo": {
+   "action": "reclass",
+   "new": "tempo",
+   "reason": "ramp-FP; 10' blocks @75/80/85/80/75 w/ 2' floats"
+  },
+  "tempo_3x30s_90min_renamed_v46_1.zwo": {
+   "action": "reclass",
+   "new": "tempo",
+   "reason": "ramp-FP; 5' blocks @75-90 pyramid sets"
+  },
+  "tempo_5x1min_60min_renamed_v46_1.zwo": {
+   "action": "reclass",
+   "new": "sweet_spot",
+   "reason": "ramp-FP; 2x(10'@88/5') + 5x(1'@115/1')"
+  },
+  "threshold_3x30s_74min.zwo": {
+   "action": "reclass",
+   "new": "threshold",
+   "reason": "coggan-FP; 23' continuous @95-100% + 10'@85 + 5'@90 + 3'@100 after; work after the block disqualifies a test"
+  },
+  "threshold_6x5min_90min.zwo": {
+   "action": "reclass",
+   "new": "threshold",
+   "reason": "ramp-FP; 2x[3x(5'@85/5'@95)] cruise alternations"
+  },
+  "vo2_short_4x10min_99min.zwo": {
+   "action": "reclass",
+   "new": "threshold",
+   "reason": "coggan-FP; 4x10'@100 (last 3 back-to-back = 30'@100 matched 'sustained') + ascending 20-60s@120 micro-block"
+  },
+  "vo2max_5x3min_82min.zwo": {
+   "action": "reclass",
+   "new": "vo2max",
+   "reason": "ramp-FP; 5x(3'@115/3') + 2x10'@90 SS finisher"
+  },
+  "vo2max_billat_30_30_3x_107min.zwo": {
+   "action": "reclass",
+   "new": "vo2_ladder",
+   "reason": "ramp-FP; 12x[3'@85+1'@105+30s@115] ascending mini-ladders"
+  },
+  "vo2max_billat_30_30_3x_120min_v3.zwo": {
+   "action": "reclass",
+   "new": "vo2max",
+   "reason": "ramp-FP; 5x(3'@115/3') + 10x(1'@100/1'@75) + 6x(5'@85+1'@100)"
+  },
+  "vo2max_billat_30_30_3x_60min.zwo": {
+   "action": "reclass",
+   "new": "over_under",
+   "reason": "ramp-FP; 4x[5'@94+2'@108]"
+  },
+  "vo2max_billat_30_30_3x_60min_v10.zwo": {
+   "action": "reclass",
+   "new": "over_under",
+   "reason": "ramp-FP; 3x[3x(2'@90/1'@105)]"
+  },
+  "vo2max_billat_30_30_3x_60min_v8.zwo": {
+   "action": "reclass",
+   "new": "tempo_intervals",
+   "reason": "ramp-FP; 3x[5x(1'@75/1'@65)]; nothing above 90% in main set"
+  },
+  "vo2max_billat_30_30_3x_60min_v9.zwo": {
+   "action": "reclass",
+   "new": "sweet_spot",
+   "reason": "ramp-FP; 5x[3'@90+2'@85+1'@75] descending rungs"
+  }
+ }
+}

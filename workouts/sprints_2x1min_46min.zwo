@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Neuromuscular 5x10s (49min)</name>
+    <name>Neuromuscular 49min — 2×10min/5min @ 89%</name>
     <description>Warmup: 8min ramp from 50% to 75% FTP | Intervals: 5 x (10s @ 265% / 1min 54s @ 52%) | Cooldown: 5min from 30% to 70% FTP</description>
     <sportType>bike</sportType>
     <workout>

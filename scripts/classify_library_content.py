@@ -191,16 +191,32 @@ DOSE_NM_SPRINT_FRAC = 1.50  # ≥150% FTP
 DOSE_NM_MIN_SPRINTS = 4     # ≥4 sprints to count as a sprint session
 
 # FTP test detection — single sustained high-IF block sandwiched by warmup/cool.
-# Coggan 20-min: ≥20 min @ ≥95% FTP (the test itself is all-out, so the floor
-# can be relaxed to 92% for slow-paced testers). 18 min as a soft floor accepts
-# minor warmup-bleed at the start of the test block. 15 min is too short — that
-# falls into threshold territory (Seiler 4×8 or 2×15).
-DOSE_FTP_TEST_BLOCK_S = 18 * 60  # ≥18 min sustained — Coggan 20min protocol
-DOSE_FTP_TEST_BLOCK_FRAC = 0.92  # ≥92% FTP sustained
-DOSE_FTP_TEST_RAMP_STEPS = 5     # Ramp protocols: ≥5 monotonic step-ups
-# CTS 2×8 detection uses two ≥8min ≥95% blocks separated by 10min easy
-DOSE_FTP_TEST_CTS_BLOCK_S = 8 * 60
-DOSE_FTP_TEST_CTS_FRAC = 0.95
+# v3.2.0 watertight audit (2026-07-05): a TEST is a MAXIMAL assessment, so the
+# prescription must be at/above 100% FTP (or ridden free) — fixed submaximal
+# blocks (87-96%) are threshold/SS workouts, not tests. The old 92% floor let
+# 30'@95 / 20'@93 / 25'@96 steady workouts classify as ftp_test (coggan-FP).
+# 18 min stays as the block floor (accepts minor warmup-bleed into the block).
+DOSE_FTP_TEST_BLOCK_S = 18 * 60   # ≥18 min sustained — Coggan 20min protocol
+DOSE_FTP_TEST_BLOCK_MAX_S = 25 * 60  # …and ≤25 min: a 30-60' fused @100% run
+                                     # is a threshold cruise, not a 20' test
+DOSE_FTP_TEST_BLOCK_FRAC = 0.999  # ≥100% FTP prescribed (float-safe epsilon)
+# Coggan protocol tolerates a SHORT depletion effort + openers before the test
+# block (≈3×1' + 5' ≈ 8 min) — anything more is an interval session wearing a
+# test's name (e.g. 4×10'@100 where three reps fuse into a 30' "block").
+DOSE_FTP_TEST_PRE_WORK_MAX_S = 9 * 60   # ≥95% work allowed BEFORE the block
+DOSE_FTP_TEST_RAMP_STEPS = 5      # Ramp protocols: ≥5 monotonic step-ups
+# Ramp-to-failure must ascend WITHOUT recovery valleys between steps and peak
+# in genuinely supramaximal territory. The old rule (any 5 ascending ≥30s
+# plateaus anywhere in the ride, peak ≥110%) fired on the library's standard
+# staircase warmup (5×2' @60→90%) chained into 30s@120% openers — 1.20 lands
+# in Z5 so the Z6 disqualifier never tripped (ramp-FP, ~54 files).
+DOSE_FTP_TEST_RAMP_PEAK_FRAC = 1.30  # real ramps top out ≥150%; 130% floor
+# CTS 2×8: two ALL-OUT 8-minute blocks (≥100% prescribed), ~10 min easy
+# between. The old 95% floor + 8-12' window caught 2×10-12'@95-106%
+# threshold cruise workouts (cts-FP) — real CTS blocks are EIGHT minutes.
+DOSE_FTP_TEST_CTS_BLOCK_MIN_S = 7 * 60
+DOSE_FTP_TEST_CTS_BLOCK_MAX_S = 9 * 60
+DOSE_FTP_TEST_CTS_FRAC = 0.999    # ≥100% FTP prescribed (float-safe epsilon)
 
 # Polarized / pyramidal day-marker thresholds (Stöggl & Sperlich 2014)
 POLARIZED_LOW_FRAC = 0.80      # ≥80% Z1+Z2
@@ -590,29 +606,35 @@ def detect_ftp_test(power: list[float], z6_z7_s: int = 0, sprint_count: int = 0)
     """Return (is_ftp_test, subtype).
 
     Two patterns:
-      * Ramp-style: monotonic power increase across ≥5 consecutive
-        plateau steps (each step ≥30s) ending above 110% FTP, with no
-        anaerobic spikes preceding the test (i.e. mostly clean ramp from
-        warmup to failure).
-      * Coggan/CTS-style: a single sustained block ≥8 min at ≥92% FTP
-        with LOW variability index (TT character), surrounded by
-        warmup + cooldown, with NO anaerobic spikes elsewhere in the ride
-        (a real test rides all-out within FTP — no Z6 spikes).
+      * Ramp-style: monotonic power increase across ≥5 CONTIGUOUS plateau
+        steps (each ≥30s, no recovery valleys between steps) peaking at
+        ≥130% FTP, with nothing but recovery after the peak (to-failure).
+      * Coggan/CTS-style: sustained block(s) prescribed AT/ABOVE 100% FTP
+        with LOW variability (TT character): one ≥18-min block (Coggan-20,
+        a short depletion effort + openers before it are protocol) or two
+        ~8-min all-out blocks (CTS 2×8).
 
     Disqualifiers:
       * Any meaningful Z6+Z7 work (≥30s cumulative) — tests don't include
-        anaerobic intervals.
-      * More than one ≥8-min ≥92% block — multi-block intervals are
-        VO2max/threshold workouts, not tests.
+        anaerobic intervals. (Real ramps end ABOVE Z6 but their top steps
+        are <30s of cumulative dwell per zone bin in practice; the ramp
+        rule runs first regardless.)
+      * Submaximal prescription (<100% FTP) — a fixed 87-96% block is a
+        threshold/SS workout, not a maximal assessment (v3.2.0 audit:
+        the old 92% floor produced 6 coggan-FPs, the 95% CTS floor 7
+        cts-FPs, and the 110%-peak "ramp" rule 54 ramp-FPs).
+      * Hard work after the would-be test block — a test ends at failure.
       * Sprints — tests don't include sprints.
     """
-    # Strong disqualifiers: anaerobic work in the ride means it's not a test.
-    if z6_z7_s >= 30 or sprint_count >= 1:
-        return False, ""
-
-    # Ramp test detection. Step detection: contiguous run of ~identical power ≥30s.
-    steps: list[tuple[int, int, float]] = []
     n = len(power)
+
+    # Ramp test detection FIRST (a real ramp's top steps land in Z6/Z7, so
+    # the anaerobic disqualifier below must not veto it). Step detection:
+    # contiguous run of ~identical power ≥30s. The ascending chain must be
+    # UNINTERRUPTED — each step starting where the previous one ends —
+    # so a staircase warmup can't chain across recovery valleys into
+    # later openers (ramp-FP mechanism #1).
+    steps: list[tuple[int, int, float]] = []
     i = 0
     while i < n:
         if power[i] < 0:
@@ -627,26 +649,39 @@ def detect_ftp_test(power: list[float], z6_z7_s: int = 0, sprint_count: int = 0)
     if len(steps) >= DOSE_FTP_TEST_RAMP_STEPS:
         run = 1
         peak = steps[0][2]
+        run_end = steps[0][0] + steps[0][1]
         for j in range(1, len(steps)):
-            if steps[j][2] > steps[j - 1][2] + 0.02:
+            contiguous = abs(steps[j][0] - (steps[j - 1][0] + steps[j - 1][1])) <= 5
+            if steps[j][2] > steps[j - 1][2] + 0.02 and contiguous:
                 run += 1
                 peak = max(peak, steps[j][2])
-                if run >= DOSE_FTP_TEST_RAMP_STEPS and peak >= 1.10:
-                    return True, "ramp"
+                run_end = steps[j][0] + steps[j][1]
+                if run >= DOSE_FTP_TEST_RAMP_STEPS and peak >= DOSE_FTP_TEST_RAMP_PEAK_FRAC:
+                    # To-failure: nothing but recovery (≤60% / FreeRide)
+                    # after the ascending chain's last step.
+                    if all(p < 0 or p <= 0.60 for p in power[run_end:]):
+                        return True, "ramp"
             else:
                 run = 1
                 peak = steps[j][2]
+                run_end = steps[j][0] + steps[j][1]
 
-    # CTS 2×8 detection — two ≥8min blocks at ≥95% FTP, ~10min recovery.
+    # Strong disqualifiers for the block-style rules: anaerobic work in the
+    # ride means it's not a Coggan/CTS test.
+    if z6_z7_s >= 30 or sprint_count >= 1:
+        return False, ""
+
+    # CTS 2×8 detection — two ~8min ALL-OUT blocks (≥100% FTP), ~10min easy.
     cts_blocks = find_contiguous_segments(
-        power, DOSE_FTP_TEST_CTS_FRAC, min_dur_s=DOSE_FTP_TEST_CTS_BLOCK_S,
+        power, DOSE_FTP_TEST_CTS_FRAC, min_dur_s=DOSE_FTP_TEST_CTS_BLOCK_MIN_S,
     )
     if len(cts_blocks) == 2:
         s1, d1, m1 = cts_blocks[0]
         s2, d2, m2 = cts_blocks[1]
         gap = s2 - (s1 + d1)
-        # Both blocks 8-12 min, gap 6-15 min, similar power (within ±5%)
-        if (480 <= d1 <= 720 and 480 <= d2 <= 720
+        # Both blocks ~8 min (7-9'), gap 6-15 min, similar power (within ±5%)
+        if (DOSE_FTP_TEST_CTS_BLOCK_MIN_S <= d1 <= DOSE_FTP_TEST_CTS_BLOCK_MAX_S
+            and DOSE_FTP_TEST_CTS_BLOCK_MIN_S <= d2 <= DOSE_FTP_TEST_CTS_BLOCK_MAX_S
             and 360 <= gap <= 900
             and abs(m1 - m2) <= 0.05):
             # Verify CV (flat TT character) for both blocks
@@ -661,12 +696,13 @@ def detect_ftp_test(power: list[float], z6_z7_s: int = 0, sprint_count: int = 0)
             else:
                 return True, "cts_2x8"
 
-    # Coggan 20-min sustained-block detection — exactly ONE block ≥18min @≥92%,
-    # surrounded by warmup + cooldown. Does NOT match CTS 2×8 above.
+    # Coggan 20-min sustained-block detection — exactly ONE block ≥18min at
+    # ≥100% FTP, surrounded by warmup + cooldown. Does NOT match CTS 2×8 above.
     blocks = find_contiguous_segments(power, DOSE_FTP_TEST_BLOCK_FRAC, min_dur_s=DOSE_FTP_TEST_BLOCK_S)
     if not blocks:
         return False, ""
-    long_blocks = [b for b in blocks if b[1] >= DOSE_FTP_TEST_BLOCK_S]
+    long_blocks = [b for b in blocks
+                   if DOSE_FTP_TEST_BLOCK_S <= b[1] <= DOSE_FTP_TEST_BLOCK_MAX_S]
     if len(long_blocks) != 1:
         return False, ""
     start, dur, mean_p = long_blocks[0]
@@ -691,6 +727,20 @@ def detect_ftp_test(power: list[float], z6_z7_s: int = 0, sprint_count: int = 0)
     for s2, d2, m2 in blocks:
         if s2 > start + dur and m2 > mean_seg + 0.05:
             return False, ""
+    # v3.2.0 audit guards (coggan-FP fix):
+    #   * BEFORE the block, only the protocol's openers + short depletion
+    #     effort are allowed (≈8 min of ≥95% work). More = an interval
+    #     session whose reps fused into a "block" (e.g. 4×10'@100).
+    pre_work_s = sum(1 for p in power[:start] if p >= 0.95)
+    if pre_work_s > DOSE_FTP_TEST_PRE_WORK_MAX_S:
+        return False, ""
+    #   * AFTER the block a test has nothing left — hard work after
+    #     (a ≥30s Z5+ run, or ≥5 min cumulative ≥95%) disqualifies.
+    tail = power[start + dur:]
+    if find_contiguous_segments(tail, 1.06, min_dur_s=30):
+        return False, ""
+    if sum(1 for p in tail if p >= 0.95) > 5 * 60:
+        return False, ""
     total = len(power)
     if start > 5 * 60 and (total - (start + dur)) > 3 * 60:
         return True, "sustained"

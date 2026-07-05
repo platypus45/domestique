@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>FTP Test 4x10min (74min)</name>
+    <name>Threshold 74min — Z4</name>
     <description>Warmup: 12min from 50% to 75% FTP | Intervals: 4 x (10min @ 100% / 0s @ 55%) | Cooldown: 10min from 70% to 25% FTP</description>
     <sportType>bike</sportType>
     <workout>

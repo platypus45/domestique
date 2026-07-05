@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>FTP Test 8 cycles (70min)</name>
+    <name>Over-Unders 70min — 2×3min/3min @ 85%</name>
     <description>Over-Under: 8 cycles (alternating above/below threshold) | Cooldown: 7min 30s @ 45% FTP</description>
     <sportType>bike</sportType>
     <workout>

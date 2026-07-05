@@ -6,10 +6,10 @@
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="900" PowerLow="0.25" PowerHigh="0.75" pace="0" />
-        <IntervalsT Repeat="3" OnDuration="12" OffDuration="24" OnPower="2.0" OffPower="0.5" pace="0" />
+        <IntervalsT Repeat="3" OnDuration="12" OffDuration="24" OnPower="1.45" OffPower="0.5" pace="0" />
         <SteadyState Duration="900" Power="0.92" pace="0" />
         <SteadyState Duration="300" Power="0.65" pace="0" />
-        <IntervalsT Repeat="3" OnDuration="12" OffDuration="24" OnPower="2.0" OffPower="0.5" pace="0" />
+        <IntervalsT Repeat="3" OnDuration="12" OffDuration="24" OnPower="1.45" OffPower="0.5" pace="0" />
         <SteadyState Duration="900" Power="0.92" pace="0" />
         <SteadyState Duration="300" Power="0.65" pace="0" />
         <SteadyState Duration="2784" Power="0.81" pace="0" />

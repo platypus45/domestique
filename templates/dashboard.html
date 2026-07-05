@@ -13129,7 +13129,7 @@ async function runPlanOpenSequence() {
       reconciled = Array.isArray(rj.matches) ? rj.matches.length : 0;
     } catch (e) { if (e && e.name === 'TimeoutError') seqError = {key: 'actual', label: STEPS[1].label, e}; }
     if (seqError) { state.actual = {status: 'error', detail: 'reconcile timed out'}; setBar(0.5, true); paint(null); return; }
-    state.actual = {status: 'done', detail: `${reconciled} reconciled · syncing in background`};
+    state.actual = {status: 'done', detail: `${reconciled} session(s) matched to rides this week · syncing in background`};
     setBar(0.5);
     paint('recovery');
 
@@ -15650,7 +15650,12 @@ async function openDayWorkout(sessionIdx) {
   // shape, planner fell back to flat synthetic for the stale reference).
   let approxPreview = false;
   if (!segmentChartSvg) {
-    approxPreview = !!session.zwo_file;
+    // v3.2.0 sprint-fiction FIX 3: the silhouette below is ALWAYS an
+    // approximation when it isn't real file segments — including the
+    // zwo_file:"" case (unmatched slot) and the ftp_test synthetic template.
+    // Pre-fix this was `!!session.zwo_file`, so exactly the sessions with NO
+    // real file rendered an unlabeled synthetic chart the user read as real.
+    approxPreview = true;
     const zd = session.zone_dist;
     const zdHasData = zd && Object.values(zd).some(v => Number(v) > 0);
     const sFlags = session.secondary_flags || null;
@@ -15741,8 +15746,13 @@ async function openDayWorkout(sessionIdx) {
   }
   html += '</div>';
 
-  // Power blocks visualization — prefer real ZWO segment chart when available
-  html += `<div style="margin:16px 0;">${segmentChartSvg || blocksSvg}</div>`;
+  // Power blocks visualization — prefer real ZWO segment chart when available.
+  // v3.2.0 sprint-fiction FIX 3: any synthetic silhouette carries an explicit
+  // approximation label so it can't be mistaken for the served file's shape.
+  const approxNote = approxPreview
+    ? '<div style="font-size:11px;color:var(--text3);font-style:italic;margin-top:2px;">Approximate preview — generic shape for this session type, not the actual workout file</div>'
+    : '';
+  html += `<div style="margin:16px 0;">${segmentChartSvg || blocksSvg}${approxNote}</div>`;
 
   // Download buttons
   html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;">';
@@ -16174,10 +16184,13 @@ function buildPowerBlocks(type, durationMin, ftp, secondaryFlags) {
     case 'sprint':
     case 'sprints':
     case 'neuromuscular': {
-      // Neuromuscular pattern: many short tall spikes at 200% FTP.
+      // Neuromuscular pattern: short spikes with full recovery. v3.2.0
+      // sprint-fiction FIX 3: capped at 150% — the synthetic silhouette is a
+      // TEMPLATE, and painting 200% bars for a slot whose real pool is
+      // IF<=0.82 sprint files promised watts no served file delivers.
       const sprintReps = Math.min(10, Math.max(5, Math.floor(mainMin / 2)));
       for (let i = 0; i < sprintReps; i++) {
-        blocks.push({ name: `Sp ${i+1}`, min: 1, pctLow: 200, pctHigh: 200, kind: 'work' });
+        blocks.push({ name: `Sp ${i+1}`, min: 1, pctLow: 150, pctHigh: 150, kind: 'work' });
         if (i < sprintReps - 1) blocks.push({ name: 'Rec', min: 1, pctLow: 55, pctHigh: 55, kind: 'rest' });
       }
       break;

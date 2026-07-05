@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>Sweet Spot (51min)</name>
+    <name>Anaerobic 51min — Z3</name>
     <description>Warmup: 10min from 46% to 78% FTP | Steady: 5min @ 85% FTP | Steady: 10min @ 90% FTP | Steady: 5min @ 95% FTP | Steady: 3min @ 110% FTP | Steady: 5min @ 50% FTP | Steady: 3min @ 80% FTP | Steady: 4min @ 42% FTP | Steady: 50s @ 170% FTP | Cooldown: 5min from 49% to 38% FTP</description>
     <sportType>bike</sportType>
     <workout>

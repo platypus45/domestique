@@ -53,6 +53,7 @@ log = logging.getLogger(__name__)
 # to stdlib logging so observability still gets a record. The indirection
 # avoids a circular import (app -> tp -> app).
 import error_codes  # leaf module — no circular risk
+import workout_facts  # v3.2.0 watertight classifier — L1 facts layer (leaf module)
 _LOG_ERROR_HOOK = None
 
 
@@ -888,6 +889,74 @@ _SPRINT_SLOT_IF_CEILING = 0.82
 # bug). Genuine easy files cap at IF ≈ 0.71; reject anything above this ceiling
 # from z2 / long_z2 / recovery slots. Mirrors _SPRINT_SLOT_IF_CEILING.
 _EASY_SLOT_IF_CEILING = 0.78
+
+# ── v3.2.0 WATERTIGHT CLASSIFIER — D3 slot contracts (L3 facts gate) ─────────
+# ONE row-level predicate, applied at THREE call sites (match_zwo main loop,
+# match_zwo coverage fallback, sampler pool build). Slot admission reads
+# content FACTS (workout_facts.py, derived from the classifier's own parser),
+# never labels alone — so a mislabeled file can sit in a pool's class bucket
+# but can never be SERVED where its content violates the slot contract.
+# Locked contract table (grill 2026-07-05); rows REFERENCE the existing
+# constants above rather than duplicating them, and every existing gate
+# (Score floors, duration bands, z345 ceilings, SecondaryFlags, IF ceilings
+# at the match_zwo loops) stays exactly where it is:
+#   sprint            IF <= _SPRINT_SLOT_IF_CEILING AND t150 >= 60s AND
+#                     sprint reps >= 4   (the IF row is the sampler's sprint
+#                     gate — A7: match_zwo already applies the same constant)
+#   sweetspot/tempo   t200 == 0 AND longest run @>=150% < 45s AND t150 <= 30s
+#   threshold/overunder  t240 == 0 AND t200 == 0
+#   vo2max            z5+z6+z7 >= 240s (matches the classifier's salvage floor)
+#   z2/long_z2        no rep >=45s @>=130% AND t200 == 0 (keeps IF<=0.78,
+#                     z345 ceiling, SecondaryFlags gates unchanged)
+#   recovery          t130 == 0 (keeps z345<25, IF<=0.78, SF unchanged)
+# F4 design note (deliberate scope boundary, NOT a hole to plug here): the
+# SS/z2/recovery facts rows key on SUPRA-150% burst metrics (t150/t200/
+# n130_45/t130), so a hypothetical file mislabeled sweet_spot that sat at
+# ~115% FTP with ZERO >150% bursts would satisfy BOTH the category pre-filter
+# (label=sweet_spot) and this facts contract. The CATEGORY pre-filter is the
+# backstop for that mid-band regime — the facts gate is scoped to the supra-
+# burst pathology the two live incidents actually were (735-967% spikes on
+# easy/SS days). Verified: no such file exists in the library today (the audit
+# swept every SS/z2/recovery-labeled row). Widening these rows to a mid-band
+# ceiling is #14 slot-demand territory, not a watertightness gap.
+# Slot types without a row (ftp_test, double_threshold, …) are ungated here.
+# A file whose facts row is missing/unparseable is INADMISSIBLE (A5 — the
+# only fail-closed class; workout_facts self-heals parseable files inline).
+_FACTS_GATED_SLOT_TYPES = frozenset({
+    "sprint", "sweetspot", "tempo", "threshold", "overunder",
+    "vo2max", "z2", "long_z2", "recovery",
+})
+
+
+def file_admissible(slot_type: str, row: dict) -> bool:
+    """D3 facts gate: may this library row be SERVED into this slot type?"""
+    if slot_type not in _FACTS_GATED_SLOT_TYPES:
+        return True
+    fname = (row.get("File") or "").strip()
+    if not fname:
+        return True  # rowless/synthetic sessions carry no file to gate
+    f = workout_facts.get_facts(WORKOUT_DIR, fname)
+    if f is None or f.get("null"):
+        return False  # A5: no facts / unparseable → inadmissible everywhere
+    try:
+        if slot_type == "sprint":
+            if float(row.get("IF") or 0) > _SPRINT_SLOT_IF_CEILING:
+                return False
+            return f["t150"] >= 60 and f["sprints"] >= 4
+        if slot_type in ("sweetspot", "tempo"):
+            return f["t200"] == 0 and f["l150"] < 45 and f["t150"] <= 30
+        if slot_type in ("threshold", "overunder"):
+            return f["t240"] == 0 and f["t200"] == 0
+        if slot_type == "vo2max":
+            return f["hi_s"] >= 240
+        if slot_type in ("z2", "long_z2"):
+            return f["n130_45"] == 0 and f["t200"] == 0
+        if slot_type == "recovery":
+            return f["t130"] == 0
+    except (KeyError, TypeError):
+        return False  # malformed facts row → fail closed like a null row
+    return True
+
 
 # ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ──────────────────────
 # Parallel rough estimates for W'-load (kJ above CP) and Pmax-load (kJ PCr)
@@ -3317,6 +3386,16 @@ def load_workout_library() -> list[dict]:
     # until a *.zwo actually changes. Writing this dotfile does NOT invalidate
     # the index (the validator is over *.zwo, not the dir mtime).
     _write_library_index(workouts, len(zwo_paths), max_mtime)
+    # v3.2.0 watertight classifier (A5): facts self-heal shares the index's
+    # heal moment — a new/changed *.zwo lands here (count/max_mtime miss →
+    # full parse), so computing its facts row inline (~9ms/file, incremental
+    # by (filename, sha1)) keeps .workout_facts.json in lockstep with the
+    # row index. Best-effort: a failure only means the per-file lazy heal in
+    # workout_facts.get_facts covers it later.
+    try:
+        workout_facts.ensure_facts(WORKOUT_DIR, zwo_paths)
+    except Exception as _wf_e:  # noqa: BLE001
+        log.debug("facts self-heal skipped (%s)", _wf_e)
     return workouts
 
 
@@ -3445,6 +3524,11 @@ def match_zwo(
     for w in library:
         try:
             cc_row = _content_class_for_row(w)
+            # v3.2.0 WATERTIGHT — D3 facts gate (call site 1/3): slot admission
+            # reads content FACTS, never labels alone. A mislabeled file can
+            # never be SERVED where its content violates the slot contract.
+            if not file_admissible(session.session_type, w):
+                continue
             # v2.0.6 — sprint/neuromuscular LOAD gate: keep threshold/anaerobic-
             # load files (IF > ceiling) out of sprint slots. See _SPRINT_SLOT_IF_CEILING.
             if session.session_type == "sprint" and float(w.get("IF") or 0) > _SPRINT_SLOT_IF_CEILING:
@@ -3636,6 +3720,10 @@ def match_zwo(
             # loop, so the fallback doesn't re-introduce the Protocol drift / the
             # endurance-recovery exclusion it was meant to bypass.
             cc_row = _content_class_for_row(w)
+            # v3.2.0 WATERTIGHT — D3 facts gate (call site 2/3): the coverage
+            # fallback admits through the same contract as the main loop.
+            if not file_admissible(session.session_type, w):
+                continue
             # v2.0.6 — same sprint/neuromuscular LOAD gate as the main loop, so the
             # coverage fallback can't re-admit an over-cooked sprint candidate.
             if session.session_type == "sprint" and float(w.get("IF") or 0) > _SPRINT_SLOT_IF_CEILING:
@@ -4412,6 +4500,16 @@ def _build_pool_indexes(library: list[dict]) -> dict:
         tags_lower = {t.lower() for t in (w.get("Tags") or [])}
         if "ftp_test" in tags_lower:
             continue
+        # v3.2.0 WATERTIGHT — D3 facts gate (call site 3/3, the auto-sampler
+        # pool build). The slot type a sampled row will SERVE is derived from
+        # the row itself (_session_type_from_row → _make_session_from_row), so
+        # a row inadmissible for its own served type must not enter ANY pool
+        # (hit / endurance / by_class / all_pool — by_class feeds the floor
+        # and Rønnestad swap passes, all_pool the emergency fallback). This is
+        # also where the sprint slot's IF ceiling finally reaches the sampler
+        # (incident 1: a content-IF 0.967 file served into a sprint slot).
+        if not file_admissible(_session_type_from_row(w), w):
+            continue
         score = w.get("Score", 0) or 0
         # v4.6.0: use _content_class_for_row so files with stale/empty
         # ContentClass (post-rename, pre-classify) still bucket by filename.
@@ -4932,10 +5030,16 @@ def sample_week_workouts(
         ]
 
         if not feasible:
-            # Emergency fallback — drop the duration floor & dip into ALL workouts
+            # Emergency fallback — drop the duration floor & dip into ALL workouts.
+            # v3.2.0 WATERTIGHT: all_pool rows already passed the D3 facts gate
+            # at pool build (call site 3/3), so the contract holds here too. The
+            # class-blind dip additionally excludes ftp_test-CLASSED rows: a real
+            # test (tagged ones never enter pools; untagged/misclassified ones
+            # did) must never land on a normal day via the fallback.
             feasible = [
                 w for w in pool_index["all_pool"]
                 if 0 < float(w.get("Duration(min)", 0) or 0) <= max_min + 25
+                and _content_class_for_row(w) != "ftp_test"
             ]
 
         if not feasible:
@@ -5132,8 +5236,33 @@ def sample_week_workouts(
             _eff_cap = _ceiling if max_min <= 0 else min(max_min, _ceiling)
         if _eff_cap > 0 and sess.duration_min > _eff_cap:
             _scale = _eff_cap / float(sess.duration_min)
+            _pre_clamp_dur = sess.duration_min
             sess.tss_estimate = round(sess.tss_estimate * _scale)
             sess.duration_min = _eff_cap
+            # v3.2.0 sprint-fiction FIX 1: the description was built by
+            # _make_session_from_row from the FILE's full duration — after the
+            # clamp it must speak the PLANNED duration or the card narrates a
+            # session that will never happen (the "90-min sprint" fiction).
+            sess.description = (
+                f"{sess.session_type} ({sess.duration_min}min) — sampled from library"
+            )
+            # v3.2.0 sprint-fiction FIX 2 (clamp-then-rematch): when the clamp
+            # cut deep (slot/file ratio < 0.85) the matched ZWO no longer
+            # resembles the planned session — re-match for the clamped duration
+            # through the normal path. On an empty pool KEEP the current file
+            # (a long-but-right-type file beats zwo_file="" fiction).
+            if _pre_clamp_dur > 0 and (_eff_cap / float(_pre_clamp_dur)) < 0.85:
+                try:
+                    match_zwo(sess, library, week_num=week_num, day_idx=off,
+                              used_names=used_names, raise_on_empty=True,
+                              seed_salt=seed_salt)
+                    sess.description = (
+                        f"{sess.session_type} ({sess.duration_min}min) — sampled from library"
+                    )
+                except NoCandidateWorkoutError:
+                    pass  # keep the pre-clamp file; never blank the slot
+                except Exception:
+                    pass
         # v4.5.0 IMPL-PLANNER: pin endurance-slot session_type so a sampled
         # `sweetspot_long_*.zwo` (mixed-content with high Z2) doesn't carry
         # session_type='sweetspot' into a slot the sampler treated as
@@ -8149,6 +8278,14 @@ def reforecast(
                         s.duration_min = max(0, target_min)
                         tss_per_h = TSS_PER_HOUR.get(s.session_type, 45)
                         s.tss_estimate = round(s.duration_min / 60 * tss_per_h)
+                        # v3.2.0 sprint-fiction FIX 1 (reforecast twin): the
+                        # description must speak the NEW duration, not the
+                        # pre-reflow one (mirrors _make_session_from_row's
+                        # "<type> (<N>min)" format).
+                        s.description = (
+                            f"{s.session_type} ({s.duration_min}min) — "
+                            f"availability adjusted"
+                        )
                         # v1.7.2 — when the duration change is meaningful
                         # (>= 15 % shrink OR >= 15 % expand), re-match the
                         # ZWO so the loaded workout actually fits the new

@@ -7,13 +7,13 @@
     <workout>
         <SteadyState Duration="900" Power="0.4" pace="0" />
         <SteadyState Duration="295" Power="0.9" pace="0" />
-        <SteadyState Duration="5" Power="3.0" pace="0" />
+        <SteadyState Duration="5" Power="1.45" pace="0" />
         <SteadyState Duration="300" Power="0.55" pace="0" />
         <SteadyState Duration="295" Power="0.9" pace="0" />
-        <SteadyState Duration="5" Power="3.0" pace="0" />
+        <SteadyState Duration="5" Power="1.45" pace="0" />
         <SteadyState Duration="300" Power="0.55" pace="0" />
         <SteadyState Duration="295" Power="0.9" pace="0" />
-        <SteadyState Duration="5" Power="3.0" pace="0" />
+        <SteadyState Duration="5" Power="1.45" pace="0" />
         <SteadyState Duration="300" Power="0.55" pace="0" />
         <SteadyState Duration="900" Power="0.4" pace="0" />
     </workout>

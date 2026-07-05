@@ -1,0 +1,148 @@
+{
+ "clamp_only": {
+  "over_under_12x3min_51min_renamed_v46_1.zwo": "4x(3x3min@95%) threshold body; 15-30s@200% between-set chasers (same fused pattern as the 6 ledger files)",
+  "over_under_12x3min_51min_renamed_v46_3.zwo": "duplicate of _v46_1",
+  "over_under_3x15s_32min.zwo": "threshold/OU ramps 80-105%; 3x15s@200% chasers",
+  "over_under_3x15s_40min.zwo": "same as 32min variant",
+  "over_under_steady_57min_v2.zwo": "sweet_spot body 3x4min@90%; 3x5s@300% caps",
+  "recovery_spin_60min_v12.zwo": "sweet_spot body (label; filename lies) 3x~5min@90%; 3x5s@300% caps",
+  "sweet_spot_mixed_88min.zwo": "88min SS/z2 body; single 15s@200% closer",
+  "tempo_intervals_5x30s_56min.zwo": "tempo 85-95% wave body; one ~10s >=200% spike",
+  "threshold_10x3min_70min.zwo": "10x3min@105% main set; closing 2x15s@200%",
+  "threshold_2x30s_56min.zwo": "threshold pyramid body; 20s@200% closer",
+  "threshold_3x1min_50min_v2.zwo": "4x5min@85-95% + 3min@105%; 30s@201% capper",
+  "threshold_3x30s_58min.zwo": "threshold/mixed body; 15s@200% (30s@190% below clamp floor stays)",
+  "threshold_3x30s_60min.zwo": "same as 58min variant",
+  "threshold_6x20s_75min.zwo": "threshold/SS blocks; one 20s>=200% spike",
+  "threshold_6x3min_54min.zwo": "threshold pyramid; 20s@200% closer",
+  "threshold_7x6min_70min.zwo": "7x6min@100% (42min FTP); 3x12s@220% closers",
+  "threshold_mixed_58min.zwo": "10min@95% + 15min@105% body; 30s@250% + 60s@200% mid-ride spikes",
+  "vo2max_short_6s_60s_1x_20min.zwo": "threshold_ladder opener ride; 6s@200% stride"
+ },
+ "relabel": {
+  "anaerobic_30s30s_6x_50min.zwo": {
+   "new": "vo2max",
+   "reason": "repeated 30-120s @120% waves, z5+z6+z7 = 580s (>=240s VO2 dose); sweet_spot_ladder label hid a VO2 wave session; filename says anaerobic"
+  },
+  "anaerobic_5x30s_68min.zwo": {
+   "new": "vo2_ladder",
+   "reason": "ladder rungs 80-105% + repeated 30-45s @130% + one 30s@200%; hi dose 485s; threshold_ladder label under-sells VO2 rung content; filename says anaerobic"
+  },
+  "endurance_4x20s_25min.zwo": {
+   "new": "tempo_intervals",
+   "reason": "3x(9x20s waves @75-110%, avg ~93%) + 60s floats; IF 0.82; structured above-Z2 interval blocks, no supra \u2014 endurance label hid sustained tempo/SS-band interval work"
+  },
+  "endurance_short_60s_30s_2x_29min_v2.zwo": {
+   "new": "anaerobic",
+   "reason": "2x(60s@150%/30s) + 10s@150/200/250% sprint ladder on z2 base; 2 reps >=45s@>=130% + t200=20s under an endurance label"
+  },
+  "neuromuscular_12s24s_6x_60min.zwo": {
+   "new": "neuromuscular",
+   "reason": "6x12s @200% sprint sets on SS blocks (2x15min @88/81%); sweet_spot label hid 72s @200%; filename agrees"
+  },
+  "neuromuscular_12s24s_6x_61min.zwo": {
+   "new": "neuromuscular",
+   "reason": "6x12s @200% sprint sets on tempo blocks (84/86%); tempo_intervals label hid 72s @200%; filename agrees"
+  },
+  "neuromuscular_2x10s_59min.zwo": {
+   "new": "vo2max",
+   "reason": "10min@100% + 3min@115% + ladder to 120% + 2x10s@200% + 30s@190%; hi dose 363s; sweet_spot_ladder label hid threshold/VO2 content"
+  },
+  "neuromuscular_4x10s_110min.zwo": {
+   "new": "neuromuscular",
+   "reason": "4x10s @280% + 2x20s@141% on 110min SS/z2 body; t240=40s under sweet_spot label; filename agrees"
+  },
+  "neuromuscular_4x10s_70min.zwo": {
+   "new": "neuromuscular",
+   "reason": "INCIDENT-2 FILE: 4x10s@180% + 2x15s@200% sprints inside SS/tempo blocks; sweet_spot label put ~740W spikes on an SS day; filename agrees"
+  },
+  "neuromuscular_4x10s_70min_renamed_v46_2.zwo": {
+   "new": "neuromuscular",
+   "reason": "4x10s @287% on SS body; t240=40s under sweet_spot label; filename agrees"
+  },
+  "over_under_2x10s_26min.zwo": {
+   "new": "neuromuscular",
+   "reason": "3x10s @300% sprint ladder + one 10min SS block; sweet_spot label hid 300% sprints"
+  },
+  "over_under_2x10s_26min_v2.zwo": {
+   "new": "neuromuscular",
+   "reason": "z2 ride + 3x10s max-sprint ladder @150/200/250%; sprints to 2.5xFTP cannot sit under endurance_intervals"
+  },
+  "over_under_2x1min_36min.zwo": {
+   "new": "anaerobic",
+   "reason": "3x15s@200% + 2x60s@120% deliberate supra sets; only 5min@95% threshold content \u2014 threshold label hid the supra sets"
+  },
+  "over_under_ou_55min.zwo": {
+   "new": "anaerobic",
+   "reason": "60/45/30s @150% descending anaerobic reps between 9min SS ramps; 2 reps >=45s@>=130% under sweet_spot label"
+  },
+  "over_under_steady_54min.zwo": {
+   "new": "anaerobic",
+   "reason": "same structure as over_under_ou_55min: 60/45/30s @150% reps + SS ramps"
+  },
+  "sprints_2x1min_46min.zwo": {
+   "new": "neuromuscular",
+   "reason": "5x10s @265% sprint set + 2x10min SS; 50s @265% under sweet_spot label; filename says sprints"
+  },
+  "sprints_2x30s_34min.zwo": {
+   "new": "neuromuscular",
+   "reason": "3x15s @280% max sprints + tempo ramps; 45s @>=240% under an endurance_intervals label; filename already says sprints"
+  },
+  "sprints_2x45s_30min.zwo": {
+   "new": "anaerobic",
+   "reason": "3x15s@200% + 2x60s@175% + 5min@100%; 2 reps >=45s@>=130%; threshold label hid sprint/anaerobic session; filename says sprints"
+  },
+  "supra_threshold_30min_v3.zwo": {
+   "new": "anaerobic",
+   "reason": "segment-identical to sprints_2x45s_30min (3x15s@200% + 2x60s@175%)"
+  },
+  "supra_threshold_35min_v2.zwo": {
+   "new": "anaerobic",
+   "reason": "segment-identical to over_under_2x1min_36min (3x15s@200% + 2x60s@120%)"
+  },
+  "sweet_spot_2x5min_51min.zwo": {
+   "new": "anaerobic",
+   "reason": "SS/threshold blocks + 3min@110% + 50s@170% rep; 50s sustained supra under sweet_spot label"
+  },
+  "sweet_spot_3x1min_60min.zwo": {
+   "new": "anaerobic",
+   "reason": "3x(60s@150%/180s) anaerobic set + 15min@93%; 3 reps >=45s@>=130% under sweet_spot label"
+  },
+  "sweet_spot_3x1min_65min.zwo": {
+   "new": "anaerobic",
+   "reason": "3x(60s@150%/180s) + 20min@93%; same set as _60min variant"
+  },
+  "sweet_spot_3x30s_35min.zwo": {
+   "new": "anaerobic",
+   "reason": "3x30s@200% + 120s@120% + 60s@140%; 90s @200% under sweet_spot label"
+  },
+  "sweet_spot_3x30s_35min_renamed_v46_1.zwo": {
+   "new": "anaerobic",
+   "reason": "duplicate of sweet_spot_3x30s_35min (3x30s@200%)"
+  },
+  "sweet_spot_6x1min_48min.zwo": {
+   "new": "anaerobic",
+   "reason": "SS ladder + 13x60s@90% + closing 60s@170%; a 1-min @170% anaerobic rep contradicts sweet_spot"
+  },
+  "sweet_spot_6x1min_48min_v2.zwo": {
+   "new": "anaerobic",
+   "reason": "variant of sweet_spot_6x1min_48min with same 60s@170% closer"
+  },
+  "sweet_spot_mixed_49min.zwo": {
+   "new": "anaerobic",
+   "reason": "same family: SS body + 60s@170% closer"
+  },
+  "sweet_spot_short_60s_30s_2x_29min.zwo": {
+   "new": "anaerobic",
+   "reason": "2x(60s@150%/30s) + 3x10s@300%; IF 0.87, t240=30s under sweet_spot label"
+  },
+  "threshold_steady_25min.zwo": {
+   "new": "tempo_intervals",
+   "reason": "segment-identical twin of endurance_4x20s_25min (same 20s-wave blocks); endurance_intervals label + IF 0.82"
+  },
+  "vo2_short_10s10s_12x_57min_renamed_v46_1.zwo": {
+   "new": "vo2_short",
+   "reason": "4x10s/10s micro sets + 30-120s @120% waves; z5+ dose 820s, IF 0.90; sweet_spot_ladder label hid a VO2-short session; filename agrees"
+  }
+ }
+}

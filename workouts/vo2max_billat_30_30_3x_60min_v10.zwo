@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>FTP Test 9x2min (60min)</name>
+    <name>Over-Unders 60min — 9×2min/1min @ 90%</name>
     <description>Intervals: 9 x (2min @ 90% / 1min @ 105%) | Cooldown: 8min @ 40% FTP</description>
     <sportType>bike</sportType>
     <workout>

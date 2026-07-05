@@ -4,6 +4,9 @@
     <name>FTP Test (90min)</name>
     <description>Steady: 22min @ 65% FTP | Steady: 1min @ 80% FTP | Steady: 1min @ 65% FTP | Steady: 1min @ 95% FTP | Steady: 5min @ 65% FTP | Steady: 5min @ 110% FTP | Steady: 10min @ 65% FTP | Steady: 20min @ 100% FTP | Steady: 25min @ 65% FTP</description>
     <sportType>bike</sportType>
+    <tags>
+        <tag name="ftp_test" />
+    </tags>
     <workout>
         <FreeRide Duration="1200" FlatRoad="0" />
         <SteadyState Duration="60" Power="0.65" />

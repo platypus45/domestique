@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <workout_file>
     <author>Domestique Library</author>
-    <name>FTP Test 4 cycles (55min)</name>
+    <name>Threshold Ladder 55min — 85→110% × 3</name>
     <description>Warmup: 6min from 50% to 70% FTP | Over-Under: 4 cycles (alternating above/below threshold) | Cooldown: 6min from 45% to 60% FTP</description>
     <sportType>bike</sportType>
     <workout>

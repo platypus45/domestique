@@ -48,12 +48,36 @@ FLOORS["sprint"][75] = 30
 FLOORS["sprint"][90] = 8
 
 
+# Heal the library in-process (as the app does at boot) so the invariant runs
+# against the RUNTIME view — the committed index is a byte-identical-to-HEAD
+# derived cache (never-commit-index-drift) that still lists the 3 renamed-away
+# files and lacks the new ones; healing reconciles ghosts + new rows so every
+# admitted row resolves to facts. content_classification.json is the committed
+# source of truth. Same pattern as test_canaries_watertight.rows.
+_HEALED: dict = {}
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _heal_library():
+    backup = (WK / ".library_index.json").read_bytes()
+    wf.reset_cache()
+    tp._WORKOUT_LIB_CACHE.clear()
+    tp._WORKOUT_LIB_FAST_VALIDATOR.clear()
+    tp._CONTENT_CLASSIFICATION_CACHE = None
+    _HEALED["rows"] = tp.load_workout_library()
+    _HEALED["facts"] = json.loads((WK / wf.FACTS_FILENAME).read_text())["facts"]
+    yield
+    if (WK / ".library_index.json").read_bytes() != backup:
+        (WK / ".library_index.json").write_bytes(backup)
+    wf.reset_cache()
+
+
 def _rows():
-    return json.loads((WK / ".library_index.json").read_text())["rows"]
+    return _HEALED["rows"]
 
 
 def _facts():
-    return json.loads((WK / wf.FACTS_FILENAME).read_text())["facts"]
+    return _HEALED["facts"]
 
 
 def _bulk_pool(rows, slot, tgt):

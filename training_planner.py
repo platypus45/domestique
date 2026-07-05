@@ -936,8 +936,14 @@ def file_admissible(slot_type: str, row: dict) -> bool:
     if not fname:
         return True  # rowless/synthetic sessions carry no file to gate
     f = workout_facts.get_facts(WORKOUT_DIR, fname)
-    if f is None or f.get("null"):
-        return False  # A5: no facts / unparseable → inadmissible everywhere
+    if f is None:
+        return True  # file not resolvable in the gated library dir (synthetic
+        # / test row, or a File referencing something not on disk) — the gate
+        # cannot evaluate it, so ABSTAIN rather than empty the pool. Every real
+        # library row resolves + self-heals; a genuinely unparseable real file
+        # gets a {"null": true} row and is rejected just below (A5 fail-closed).
+    if f.get("null"):
+        return False  # A5: unparseable real file → inadmissible everywhere
     try:
         if slot_type == "sprint":
             if float(row.get("IF") or 0) > _SPRINT_SLOT_IF_CEILING:

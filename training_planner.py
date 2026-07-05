@@ -9398,6 +9398,26 @@ def recalculate_plan(
     past_weeks = [w for w in current_plan_weeks if w.end < today or (w.start <= today <= w.end)]
     future_weeks = [w for w in current_plan_weeks if w.start > today]
 
+    # §6.12 — gather preserved sessions from the FUTURE weeks before they are
+    # rebuilt from scratch below (same predicate as regenerate_from_today).
+    # past_weeks (which includes the current in-progress week) is kept
+    # verbatim, so only strictly-future dates need the swap; without it the
+    # swap-skip guards downstream never saw a preserved session, and a
+    # user-moved / done / dismissed workout on a future calendar cell was
+    # silently re-prescribed on every weekly recalc.
+    preserved_by_day: dict[date, PlannedSession] = {}
+    for w in future_weeks:
+        for s in w.sessions:
+            preserve = (
+                getattr(s, "adapted", False)
+                or getattr(s, "user_moved", False)
+                or getattr(s, "status", "pending") != "pending"
+                or getattr(s, "dismissed_at", "")
+                or getattr(s, "completion_matches", None)
+            )
+            if preserve:
+                preserved_by_day[s.day] = s
+
     # New phases must start AFTER the current week ends (not mid-week),
     # otherwise we double-cover the current week.
     if past_weeks and past_weeks[-1].start <= today <= past_weeks[-1].end:
@@ -9545,6 +9565,17 @@ def recalculate_plan(
                         s.tss_estimate = round(75 / 60 * TSS_PER_HOUR.get("threshold", 90))
                         break
 
+            # §6.12 — swap preserved (user_moved / done / dismissed) sessions
+            # back into their calendar slots BEFORE the sampler + match_zwo
+            # passes, whose skip-guards key on exactly these attrs (mirrors
+            # regenerate_from_today). Runs after the ftp_test insert so a
+            # rider's edit wins over an auto-scheduled test on the same day.
+            if preserved_by_day:
+                for _i, _s in enumerate(pw.sessions):
+                    _kept = preserved_by_day.get(_s.day)
+                    if _kept is not None:
+                        pw.sessions[_i] = _kept
+
             # Sliding window: remove names used more than 6 weeks ago
             stale = [n for n, wk in used_in_week.items() if week_num - wk >= 6]
             for n in stale:
@@ -9684,6 +9715,22 @@ def recalculate_plan(
                 is_stepback=getattr(_w, "is_stepback", False))
 
     all_weeks = past_weeks + new_weeks
+
+    # Race/taper parity with generate_plan / regenerate_from_today / refit —
+    # the weekly recalc rebuilds future weeks from scratch, so these passes
+    # must re-run here too. Without them a recalc dropped the race-eve guard
+    # (B2), the B/C mini-tapers + openers (F7/SM3) and every B/C race row
+    # (issue #7): pending race rows are NOT preserved by the §6.12 predicate —
+    # they are rebuilt from goal.events, which this path never consulted.
+    # The eve-guard keeps generate_plan's event/ctl gate: non-event recalcs
+    # carry a FABRICATED target_date (caller falls back to +12 weeks), and an
+    # ungated pass would demote hard sessions before that phantom date.
+    if goal.goal_type in ("event", "ctl") and goal.target_date:
+        _enforce_event_taper_eve(all_weeks, goal.target_date)
+    _apply_secondary_event_tapers(all_weeks, goal)  # F7: B/C mini-tapers
+    if goal.goal_type in ("event", "ctl") and goal.target_date:
+        _apply_race_week_shape(all_weeks, goal, library)
+    _mark_race_days(all_weeks, goal)  # issue #7: race day shows the race, not a session
 
     recalc_info = {
         "action": "recalculated",

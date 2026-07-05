@@ -262,5 +262,108 @@ class TestPhaseEditorApi(unittest.TestCase):
         self.assertNotIn("phase_weeks_status", plan)
 
 
+class TestEntryScanEndpoint(unittest.TestCase):
+    """MODE 2 — GET /api/plan/entry-scan (IP B-LOCKED-3): scan→propose is
+    read-only; params mirror /api/plan/preview; missing goal/target params
+    400 cleanly (not 422/500)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="entry_scan_"))
+        self._plan_patch = patch.object(app_module, "_plan_dir",
+                                        return_value=self.tmp)
+        self._plan_patch.start()
+        today = date.today()
+        rides = []
+        for w in range(1, 5):  # 4 whole compliant weeks back from today
+            for days_back in (7 * w, 7 * w - 3):
+                rides.append({
+                    "started_at": (today - timedelta(days=days_back)).isoformat()
+                                  + "T09:00:00",
+                    "tss": None,                 # exercise the cascade …
+                    "icu_training_load": 300.0,  # … icu_training_load fallback
+                })
+        self._rides_patch = patch.object(app_module, "_load_all_rides_safe",
+                                         return_value=rides)
+        self._rides_patch.start()
+        self.client = TestClient(app_module.app)
+
+    def tearDown(self):
+        self._rides_patch.stop()
+        self._plan_patch.stop()
+
+    def test_scan_shape_proposal_and_zero_writes(self):
+        r = self.client.get("/api/plan/entry-scan",
+                            params={"goal": "general", "plan_weeks": 12})
+        self.assertEqual(r.status_code, 200, r.text)
+        d = r.json()
+        self.assertEqual(set(d.keys()), {"proposal_weeks",
+                                         "equivalent_start_date", "capped",
+                                         "weeks"})
+        self.assertEqual(d["proposal_weeks"], 4)
+        self.assertEqual(d["equivalent_start_date"],
+                         (date.today() - timedelta(days=28)).isoformat())
+        self.assertTrue(d["capped"])
+        self.assertEqual(len(d["weeks"]), 4)
+        for row in d["weeks"]:
+            self.assertEqual(set(row.keys()),
+                             {"index", "window_start", "actual_tss",
+                              "target_tss", "qualifies", "shape_note"})
+            self.assertTrue(row["qualifies"])
+        # Zero writes: the scan proposes, only Generate persists.
+        self.assertEqual(list(self.tmp.iterdir()), [])
+
+    def test_scan_event_goal_derives_runway_from_event_date(self):
+        event = date.today() + timedelta(days=84)
+        r = self.client.get("/api/plan/entry-scan",
+                            params={"goal": "event",
+                                    "event_date": event.isoformat()})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["proposal_weeks"], 4)
+
+    def test_scan_400s_on_missing_goal_or_target_params(self):
+        # No goal at all.
+        self.assertEqual(self.client.get("/api/plan/entry-scan").status_code,
+                         400)
+        # Event goal without an event date.
+        self.assertEqual(
+            self.client.get("/api/plan/entry-scan",
+                            params={"goal": "event"}).status_code, 400)
+        # Non-event goal without any week budget or end date.
+        self.assertEqual(
+            self.client.get("/api/plan/entry-scan",
+                            params={"goal": "general",
+                                    "plan_weeks": 0}).status_code, 400)
+
+
+class TestRecognizedEntryModePersistence(unittest.TestCase):
+    """B-LOCKED-7: entry_mode="recognized" is provenance — it must survive
+    generate → plan dict → _goal_from_plan_dict so regenerate reuses the
+    stored anchor instead of silently re-running the recognizer."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="entry_recog_"))
+        self._patch = patch.object(app_module, "_plan_dir",
+                                   return_value=self.tmp)
+        self._patch.start()
+        self.client = TestClient(app_module.app)
+
+    def tearDown(self):
+        self._patch.stop()
+
+    def test_recognized_roundtrip_through_generate(self):
+        start = date.today() - timedelta(days=14)
+        r = self.client.post("/api/plan/generate", json={
+            "goal": "general", "weeks": 10, "hours_per_week": 8.0,
+            "start_date": start.isoformat(), "entry_mode": "recognized",
+        })
+        self.assertEqual(r.status_code, 200, r.text)
+        plan = json.loads((self.tmp / "current_plan.json").read_text())
+        self.assertEqual(plan["goal"].get("entry_mode"), "recognized")
+        self.assertEqual(plan["goal"].get("start_date"), start.isoformat())
+        goal = app_module._goal_from_plan_dict(plan["goal"])
+        self.assertEqual(goal.entry_mode, "recognized")
+        self.assertEqual(goal.start_date, start)
+
+
 if __name__ == "__main__":
     unittest.main()

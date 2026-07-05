@@ -2509,6 +2509,169 @@ def generate_phases(goal: Goal, current_ctl: float,
     return phases
 
 
+# ── MODE 2 — mid-plan entry recognizer (IP_PLAN_CONTINUITY B-D3, B-LOCKED-3) ──
+# "Place me from my rides": hypothesis loop over candidate credits c. Each
+# candidate backdates the start to today−7c, splits phases with the SAME
+# generate_phases the preview/generate use (read-only, zero RNG draws), and
+# scores the claimed weeks against that hypothesis's WEEK-LEVEL tss targets
+# (incl. the ×0.72 stepback discount — plan_week parity). Volume is the only
+# gate; zone shape is an ADVISORY annotation on the evidence rows, never a
+# gate (the repo's own polarized model keeps ~80% LIT in ALL weeks, so shape
+# cannot discriminate base/build). Runs ONCE at scan time — an entry
+# estimator, not a continuous scorer (B-D4).
+
+ENTRY_VOLUME_GATE = 0.6        # week qualifies at actual ≥ 0.6 × week target
+ENTRY_MISS_PER = 4             # tolerate 1 non-qualifying week per 4 (illness)
+
+
+def _entry_week_targets(phases: list) -> list[dict]:
+    """Week-level tss targets for a hypothesis split — mirrors the
+    generate_plan emitter walk (7-day cursor per phase, global-week stepback
+    cadence, taper exempt) and plan_week's ×0.72 discount, WITHOUT building
+    sessions. Pure date math: no RNG, no I/O."""
+    rows = []
+    global_week = 0
+    for phase in phases:
+        cursor = phase.start
+        while cursor <= phase.end:
+            global_week += 1
+            is_sb = (global_week % STEP_BACK_EVERY == 0) and phase.name not in ("taper",)
+            t = float(phase.weekly_tss_target)
+            if is_sb:
+                t = float(round(t * 0.72))
+            rows.append({"start": cursor, "tss_target": t, "phase": phase.name})
+            cursor += timedelta(weeks=1)
+    return rows
+
+
+def _entry_week_actuals(ride_loads: list, today: date):
+    """Bucket recorded rides into WHOLE 7-day windows counted back from
+    ``today`` (window w = [today−7w, today−7(w−1)−1]) — NEVER the partial
+    current week (rides dated today or later are excluded by construction),
+    NEVER ISO-week bucketing. Per-ride load rides the established tss cascade
+    (ride_storage load_all_rides rows carry ``tss`` from icu_training_load /
+    compute_fit_load / compute_hr_tss — hr-only rides are first-class).
+
+    Returns (loads, easy_secs, total_secs, earliest_ride_date) with the first
+    three keyed by window index w ≥ 1."""
+    loads: dict[int, float] = {}
+    easy: dict[int, float] = {}
+    total: dict[int, float] = {}
+    earliest: date | None = None
+    for r in ride_loads or []:
+        d_str = (r.get("started_at") or r.get("date")
+                 or r.get("start_date_local") or "")[:10]
+        if not d_str:
+            continue
+        try:
+            d = date.fromisoformat(d_str)
+        except ValueError:
+            continue
+        if earliest is None or d < earliest:
+            earliest = d
+        delta = (today - d).days
+        if delta <= 0:
+            continue  # today's rides / future: partial current week excluded
+        w = (delta - 1) // 7 + 1
+        tss = r.get("tss")
+        if tss is None:
+            tss = (r.get("summary") or {}).get("tss")
+        if tss is None:
+            tss = r.get("icu_training_load")
+        try:
+            loads[w] = loads.get(w, 0.0) + float(tss or 0)
+        except (TypeError, ValueError):
+            pass
+        # Advisory zone shape: LIT share from power time-in-zone, else HR
+        # zones (both stored as {z1..z7: seconds} dicts on ride rows).
+        tiz = r.get("time_in_zone")
+        if not (isinstance(tiz, dict) and any(tiz.get(f"z{i}") for i in range(1, 8))):
+            tiz = r.get("hr_time_in_zone")
+        if isinstance(tiz, dict) and tiz:
+            zsecs = [float(tiz.get(f"z{i}") or 0) for i in range(1, 8)]
+            if sum(zsecs) > 0:
+                easy[w] = easy.get(w, 0.0) + zsecs[0] + zsecs[1]
+                total[w] = total.get(w, 0.0) + sum(zsecs)
+    return loads, easy, total, earliest
+
+
+def recognize_entry(goal: "Goal", ride_loads: list, current_ctl: float = 50.0) -> dict:
+    """MODE 2 scan: propose an evidence-based entry credit from the ride
+    archive. Zero writes, zero RNG side effects — the caller persists nothing
+    until the user confirms (the result is stored as an equivalent start_date;
+    the recognizer is never silently re-run — B-LOCKED-7).
+
+    ``goal`` is the TODAY-anchored form goal (no start_date). Candidates c run
+    1..min(runway−1, archive_span_weeks); credit = the longest qualifying
+    streak ending at the most recent whole week (descending scan, first
+    accepted c wins). A week qualifies at actual ≥ 0.6 × the hypothesis's
+    week-level target; 1 non-qualifying week per 4 is tolerated, 2 consecutive
+    misses end the streak.
+
+    Returns {proposal_weeks, equivalent_start_date, capped, weeks:[{index,
+    window_start, actual_tss, target_tss, qualifies, shape_note}]}."""
+    today = date.today()
+    loads, easy, total, earliest = _entry_week_actuals(ride_loads, today)
+    archive_span = ((today - earliest).days // 7) if earliest else 0
+    runway_weeks = goal.weeks_available()
+    c_max = min(runway_weeks - 1, archive_span)
+    capped = archive_span < (runway_weeks - 1)
+
+    def _rows_for(c: int, targets: list) -> list[dict]:
+        rows = []
+        for k in range(1, c + 1):
+            w = c - k + 1  # claimed week k ↔ window w counted back from today
+            tgt = targets[k - 1]["tss_target"]
+            actual = round(loads.get(w, 0.0), 1)
+            note = None
+            if total.get(w, 0.0) > 0:
+                note = f"{round(100 * easy.get(w, 0.0) / total[w])}% easy riding"
+            rows.append({
+                "index": k,
+                "window_start": (today - timedelta(days=7 * w)).isoformat(),
+                "actual_tss": actual,
+                "target_tss": round(tgt, 1),
+                "qualifies": tgt <= 0 or actual >= ENTRY_VOLUME_GATE * tgt,
+                "shape_note": note,
+            })
+        return rows
+
+    widest_rows: list[dict] = []
+    for c in range(c_max, 0, -1):
+        hyp_start = today - timedelta(days=7 * c)
+        hyp_weeks = goal.plan_weeks
+        if goal.goal_type in ("event", "event_preparation") and goal.target_date:
+            # H1 parity: the week budget is derived from the anchor→target
+            # span, never trusted from the today-anchored form value.
+            hyp_weeks = max(4, -(-(goal.target_date - hyp_start).days // 7))
+        hyp = replace(goal, start_date=hyp_start, entry_mode=None,
+                      plan_weeks=hyp_weeks)
+        try:
+            targets = _entry_week_targets(generate_phases(hyp, current_ctl))
+        except (ValueError, AssertionError):
+            continue  # unviable hypothesis geometry — not a scan failure
+        if len(targets) <= c:
+            continue  # no schedulable week would remain
+        rows = _rows_for(c, targets)
+        if not widest_rows:
+            widest_rows = rows  # widest evidence, shown when nothing qualifies
+        misses = [r["index"] for r in rows if not r["qualifies"]]
+        consecutive = any(b - a == 1 for a, b in zip(misses, misses[1:]))
+        if len(misses) <= c // ENTRY_MISS_PER and not consecutive:
+            return {
+                "proposal_weeks": c,
+                "equivalent_start_date": hyp_start.isoformat(),
+                "capped": capped,
+                "weeks": rows,
+            }
+    return {
+        "proposal_weeks": 0,
+        "equivalent_start_date": None,
+        "capped": capped,
+        "weeks": widest_rows,
+    }
+
+
 # ── Weekly planner ────────────────────────────────────────────────────────────
 
 def plan_week(

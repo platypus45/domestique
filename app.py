@@ -10561,6 +10561,65 @@ def api_plan_preview(
     }
 
 
+@app.get("/api/plan/entry-scan")
+def api_plan_entry_scan(
+    goal: str | None = Query(None),
+    plan_weeks: int = Query(0),
+    event_date: str | None = Query(None),
+    hours_per_week: float = Query(8.0),
+):
+    """MODE 2 (IP_PLAN_CONTINUITY B-D3/B-LOCKED-3) — "Place me from my rides".
+
+    Scans the ride archive backward from today and proposes an evidence-based
+    entry credit for the plan the query params describe (same shape as
+    /api/plan/preview — the UI's scan→propose→confirm rides the existing
+    refreshPlanPreview pattern). ZERO writes: the proposal only becomes real
+    when the user confirms and Generate persists the equivalent start_date
+    with entry_mode="recognized".
+
+    Params are validated manually so missing goal/target params return a
+    clean 400 (FastAPI's required-Query default would 422)."""
+    if not goal:
+        raise HTTPException(status_code=400, detail="goal is required")
+    goal_type = "event" if goal == "event_preparation" else goal
+
+    target_date = None
+    if event_date:
+        try:
+            target_date = date.fromisoformat(str(event_date)[:10])
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="invalid event_date")
+
+    if goal_type == "event":
+        if target_date is None:
+            raise HTTPException(status_code=400,
+                                detail="event_date is required for an event goal")
+        # H1 parity with preview/generate: the runway is derived from the
+        # today→target span, never trusted from the today-anchored slider.
+        days_to_event = (target_date - date.today()).days
+        plan_weeks = max(4, -(-days_to_event // 7))  # ceil division
+    elif plan_weeks < 1 and target_date is None:
+        raise HTTPException(status_code=400,
+                            detail="plan_weeks or event_date is required")
+    else:
+        plan_weeks = max(4, int(plan_weeks or 0)) if plan_weeks else 0
+
+    g = tp.Goal(
+        goal_type=goal_type,
+        target_date=target_date,
+        hours_per_week=hours_per_week,
+        plan_weeks=plan_weeks,
+    )
+
+    try:
+        training = cached("training", get_today_metrics)
+        current_ctl = float(training.get("ctl") or 37.0)
+    except Exception:
+        current_ctl = 37.0
+
+    return tp.recognize_entry(g, _load_all_rides_safe(), current_ctl=current_ctl)
+
+
 @app.get("/api/event/projection")
 def api_event_projection():
     """v4.6.7 IMPL-CAP: capability projection for the active event-prep plan.

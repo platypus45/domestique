@@ -3585,19 +3585,55 @@ def _class_aware_score_floor(cc: str) -> int:
     rates HIT classes but systematically under-scores the intentionally-simple
     endurance/recovery classes, so the floor is tiered:
         HIT (vo2max/vo2_short/threshold/over_under/anaerobic/neuromuscular/
-             sweet_spot):  ≥ 5   (quality bar)
-        tempo / mixed:     ≥ 4   (light bar)
-        endurance / recovery: ≥ 1 (none)
+             sweet_spot + hard ladders):  ≥ 5   (quality bar)
+        tempo / tempo_intervals / tempo_ladder / mixed: ≥ 4  (light bar)
+        endurance / endurance_intervals / recovery: ≥ 1 (none)
     Keeping this in ONE place stops the pool and the rematcher from drifting:
     the sampler's clamp-then-rematch (~tp:5425) routes through match_zwo, so a
     looser floor there let a below-floor HIT file the pool had rejected leak
     back onto a HIT slot (a score-3 neuromuscular on a clamped sprint slot).
+    v3.2.2 (#14): endurance_intervals joins the no-floor tier (Z2+strides
+    files under-score exactly like plain endurance); the tempo variants join
+    the tempo bar. Hard ladders stay on the default 5.
     """
-    if cc in ("endurance", "recovery"):
+    if cc in ("endurance", "recovery", "endurance_intervals"):
         return 1
-    if cc in ("tempo", "mixed"):
+    if cc in ("tempo", "mixed", "tempo_intervals", "tempo_ladder"):
         return 4
     return 5
+
+
+# v3.2.2 (#15 R1): hoisted from match_zwo locals to module constants so tests
+# consume the REAL slot→class maps instead of hand-rolled mirrors (the
+# exact-duration suite rotted against a stale copy). Pure motion — match_zwo
+# behavior unchanged.
+_TYPE_TO_CONTENT_CLASS = {
+    "z2":         "endurance",
+    "long_z2":    "endurance",
+    "recovery":   "recovery",
+    "sweetspot":  "sweet_spot",
+    "threshold":  "threshold",
+    "vo2max":     "vo2max",
+    "overunder":  "over_under",
+    "tempo":      "tempo",
+    "sprint":     "neuromuscular",
+}
+# Fallback content classes (incl. the matching *_ladder variants so ladder
+# sessions stay reachable). The Score + duration filters + the easy-slot Z3
+# gate (in match_zwo) keep the wrong ones out. v3.2.2 (#14 F4): z2/long_z2
+# gain endurance_intervals — the Z2+strides class was unreachable on easy
+# slots even through the matcher.
+_TYPE_TO_FALLBACK_CLASSES = {
+    "z2":         ["endurance", "endurance_intervals", "recovery"],
+    "long_z2":    ["endurance", "endurance_intervals"],
+    "recovery":   ["recovery", "endurance"],
+    "sweetspot":  ["sweet_spot", "sweet_spot_ladder", "threshold", "tempo"],
+    "threshold":  ["threshold", "threshold_ladder", "sweet_spot", "over_under"],
+    "vo2max":     ["vo2max", "vo2_short", "vo2_ladder", "anaerobic"],
+    "overunder":  ["over_under", "threshold"],
+    "tempo":      ["tempo", "tempo_intervals", "tempo_ladder", "sweet_spot"],
+    "sprint":     ["neuromuscular", "anaerobic", "sprint"],
+}
 
 
 def match_zwo(
@@ -3666,34 +3702,9 @@ def match_zwo(
     # mis-scored those. `cat` is now `_content_class_for_row(w)` (ContentClass with
     # filename fallback — never empty), aligning match_zwo with the v4.5 sampler.
     # Map planner session_types → primary CONTENT class.
-    type_to_category = {
-        "z2":         "endurance",
-        "long_z2":    "endurance",
-        "recovery":   "recovery",
-        "sweetspot":  "sweet_spot",
-        "threshold":  "threshold",
-        "vo2max":     "vo2max",
-        "overunder":  "over_under",
-        "tempo":      "tempo",
-        "sprint":     "neuromuscular",
-    }
-    # Fallback content classes (incl. the matching *_ladder variants so ladder
-    # sessions stay reachable). The Score + duration filters + the easy-slot Z3
-    # gate (below) keep the wrong ones out.
-    type_to_fallback = {
-        "z2":         ["endurance", "recovery"],
-        "long_z2":    ["endurance"],
-        "recovery":   ["recovery", "endurance"],
-        "sweetspot":  ["sweet_spot", "sweet_spot_ladder", "threshold", "tempo"],
-        "threshold":  ["threshold", "threshold_ladder", "sweet_spot", "over_under"],
-        "vo2max":     ["vo2max", "vo2_short", "vo2_ladder", "anaerobic"],
-        "overunder":  ["over_under", "threshold"],
-        "tempo":      ["tempo", "tempo_intervals", "tempo_ladder", "sweet_spot"],
-        "sprint":     ["neuromuscular", "anaerobic", "sprint"],
-    }
-
-    primary_cat = type_to_category.get(session.session_type, "endurance")
-    fallback_cats = type_to_fallback.get(session.session_type, [primary_cat])
+    primary_cat = _TYPE_TO_CONTENT_CLASS.get(session.session_type, "endurance")
+    fallback_cats = _TYPE_TO_FALLBACK_CLASSES.get(
+        session.session_type, [primary_cat])
     # Easy-slot grey-zone ceiling (Z3+Z4+Z5+Z6 %): a z2/recovery slot must not
     # pull a file with a tempo/SS finisher (over-cooks the easy day, breaks
     # polarization). Mirrors the sampler's hard zone gate. None = no gate.
@@ -3742,7 +3753,11 @@ def match_zwo(
             # Score<3 bar let the clamp-then-rematch (~tp:5425) re-admit a
             # below-floor HIT file (score-3 neuromuscular onto a sprint slot)
             # that _build_pool_indexes had already rejected.
-            if cc_row in ("endurance", "recovery"):
+            # v3.2.2 (#14): endurance_intervals shares the easy-tier floor
+            # (1) AND the ≥20min stub guard — 15-16min strides files exist
+            # and the exact_duration closest-tier collapse must not prefer
+            # them on short slots (grill P2 amendment 1).
+            if cc_row in ("endurance", "recovery", "endurance_intervals"):
                 if w["Score"] < 1 or (w["Duration(min)"] or 0) < 20:
                     continue
             elif w["Score"] < _class_aware_score_floor(cc_row):
@@ -3922,7 +3937,9 @@ def match_zwo(
             # coverage fallback can't re-admit an over-cooked sprint candidate.
             if session.session_type == "sprint" and float(w.get("IF") or 0) > _SPRINT_SLOT_IF_CEILING:
                 continue
-            if cc_row in ("endurance", "recovery"):
+            # v3.2.2 (#14): same easy-tier + stub-guard extension as the
+            # main loop (endurance_intervals).
+            if cc_row in ("endurance", "recovery", "endurance_intervals"):
                 if w["Score"] < 1 or (w["Duration(min)"] or 0) < 20:
                     continue
             elif w["Score"] < _class_aware_score_floor(cc_row):
@@ -4105,9 +4122,21 @@ def match_zwo(
 _HIT_CONTENT_CLASSES = frozenset({
     "vo2max", "vo2_short", "threshold", "over_under",
     "anaerobic", "neuromuscular", "sweet_spot", "tempo",
+    # v3.2.2 (#14): the v1.0.4 structural-variant classes were never added
+    # here, so 431 classified rows bucketed into NO pool — their
+    # WORKOUT_MIX_PREFERENCE weight (0.10-0.19 in build/peak rows) was dead
+    # and the share silently redistributed by file count (inflating
+    # threshold/sweet_spot). Ladders only surfaced via the emergency
+    # all_pool fallback (3 picks / 120 repro weeks).
+    "threshold_ladder", "vo2_ladder", "sweet_spot_ladder",
+    "tempo_ladder", "tempo_intervals",
 })
 _ENDURANCE_CONTENT_CLASSES = frozenset({
     "endurance", "recovery",
+    # v3.2.2 (#14): Z2+strides class — listed in the slot-eligible set and
+    # the mix rows since v1.0.4 but never bucketed, so all 156 files were
+    # invisible to the sampler.
+    "endurance_intervals",
 })
 
 # v4.5.0 IMPL-PLANNER Layer 2: per-phase + week_in_phase content_class mix
@@ -4709,6 +4738,14 @@ def _build_pool_indexes(library: list[dict]) -> dict:
         # ContentClass (post-rename, pre-classify) still bucket by filename.
         cc = _content_class_for_row(w)
         by_class.setdefault(cc, []).append(w)
+        # v3.2.2 (#14, grill P1/amendment 5): rows CLASSIFIED ftp_test but
+        # missing the explicit tag slipped past the tag skip above into the
+        # hit/endurance/all pools (13 at baseline, +9 more once the ladder
+        # classes bucket). A test protocol must never land on a normal slot;
+        # the emergency all_pool fallback already excludes the class — align
+        # pool admission with it. by_class keeps them (want_test paths).
+        if cc == "ftp_test":
+            continue
         # v4.6.2 PLANNER-DIVERSITY-PUSH: class-aware score floor. score_workout
         # rewards TSS + Z3+ structure, which fairly rates HIT classes but
         # systematically under-scores endurance and recovery (intentionally
@@ -6709,8 +6746,31 @@ def _enforce_build2_peak_hard_floor(
         # interval classes. ≥1 in build1 AND build2 completes the 4-shape
         # rotation without crowding the other 3 hard types (each floor is
         # filled by swapping the lowest-stimulus steady slots, not the hards).
-        "build1": {"vo2_short": 4, "neuromuscular": 2, "sweet_spot": 1, "over_under": 1},
-        "build2": {"anaerobic": 1, "neuromuscular": 1, "vo2_short": 3, "over_under": 1},
+        # v3.2.2 (#14): threshold joins the build floors — the ORIGINAL
+        # "threshold starved in builds" symptom. The niche-class floors above
+        # force 8-9 swaps across build1+build2 while threshold had NO floor
+        # and (being outside all_targets) its natural picks were even legal
+        # SWAP VICTIMS — on unlucky seeds builds ended with zero threshold
+        # work (pinned seed 12345 reproduced it). ≥1 per build phase keeps
+        # the canonical 4-shape rotation intact and shields threshold picks
+        # from the sibling-floor swap pass.
+        # vo2max gets the same ≥1 shield: fixing threshold alone just moved
+        # the crowd-out to vo2max on the pinned seed — the canonical 4-shape
+        # holds only when ALL four are floor-protected (swap-immune).
+        # Dict ORDER is fill priority (the swap loop walks mins.items() and
+        # per-week hit caps are a shared budget): niche classes with no
+        # natural pick mass fill FIRST; the canonical shields last — they
+        # exist mostly to make natural threshold/vo2max picks swap-immune
+        # (all_targets membership), rarely to force a fill.
+        # The shields live in build1 ONLY: the canonical-4 contract is over
+        # build1+build2 COMBINED, and each extra target class shrinks the
+        # phase's swap-victim pool (all_targets slots are immune) — putting
+        # them in build2 too starved its anaerobic fill (capacity, not
+        # weight). vo2_short leads each dict: it has the least natural pick
+        # mass and loses fills last-in-line.
+        "build1": {"vo2_short": 4, "neuromuscular": 2, "sweet_spot": 1, "over_under": 1,
+                   "threshold": 1, "vo2max": 1},
+        "build2": {"vo2_short": 3, "anaerobic": 1, "neuromuscular": 1, "over_under": 1},
         "peak":   {"anaerobic": 1, "neuromuscular": 1, "vo2_short": 3},
     }
     # F1 (v2.1/B5): when opt-in block periodization is on, REPLACE the flat
@@ -6732,9 +6792,27 @@ def _enforce_build2_peak_hard_floor(
             _H = sum(_week_hit_count(w) for w in _pw)
             if _H <= 0:
                 continue
-            _fmin = max(1, (7 * _H + 9) // 10)  # ceil(0.70 * H)
+            # v3.2.2 (#14): size the floor against the POST-fill total, not
+            # the pre-fill H. Steady-slot fills ADD net HIT (+1 each), so a
+            # floor of ceil(0.70×H0) self-defeats when the natural draw has
+            # few/no focus picks: H0=3, fmin=2 → 2 fills → 2/5 = 0.40 focus
+            # share (< the 0.45 contract). Worst case every fill is a steady
+            # swap (HIT-slot conversions only improve the ratio), so for a
+            # final share ≥ s: F ≥ ceil(s/(1−s) × N0) with N0 = non-focus
+            # HIT already drawn. s=0.45 ⇒ F ≥ ceil(9×N0/11). Keep the legacy
+            # ceil(0.70×H0) as the concentration ambition when the draw
+            # already leans focus-ward. The old min(fmin, H−1) complementary
+            # cap is gone: ≥1 complementary is guaranteed structurally (the
+            # comp class sits in all_targets, which the swap pass never
+            # overwrites, and gets its own ≥1 floor below).
+            _F0 = sum(
+                1 for w in _pw for s in w.sessions
+                if s.session_type != "rest"
+                and _content_class_for_zwo(s.zwo_file or "") == _focus)
+            _N0 = max(0, _H - _F0)
+            _fmin = max(1, (7 * _H + 9) // 10,   # legacy ambition ceil(0.70×H0)
+                        (9 * _N0 + 10) // 11)    # growth-aware ceil(9×N0/11)
             if _H >= 2:
-                _fmin = min(_fmin, _H - 1)       # leave room for ≥1 complementary
                 block_floors[_pn] = {_focus: _fmin, _COMP.get(_focus, "over_under"): 1}
             else:
                 block_floors[_pn] = {_focus: _fmin}

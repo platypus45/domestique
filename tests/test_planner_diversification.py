@@ -194,12 +194,10 @@ def test_only_score_5_plus_workouts_picked(plan_24w_7day, library):
         assert row is not None, f"file not in library: {s.zwo_file}"
         score = int(row.get("Score", 0) or 0)
         cc = _tp._content_class_for_row(row)
-        if cc in ("endurance", "recovery"):
-            floor = 1
-        elif cc in ("tempo", "mixed"):
-            floor = 4
-        else:
-            floor = 5
+        # v3.2.2 (#14): consume the REAL shared floor instead of a hard-coded
+        # mirror — the else→5 copy broke when endurance_intervals/tempo
+        # variants got their own tiers.
+        floor = _tp._class_aware_score_floor(cc)
         assert score >= floor, (
             f"v4.6.2 acceptance: class-aware score floor. "
             f"Got {s.zwo_file} (cc={cc}) score={score}, floor={floor}."

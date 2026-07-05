@@ -25,18 +25,11 @@ WK = ROOT / "workouts"
 pytestmark = pytest.mark.skipif(
     not (WK / wf.FACTS_FILENAME).exists(), reason="facts cache absent")
 
-# match_zwo's own class maps (mirrored; if these drift the test should break)
-CAT = {"z2": "endurance", "long_z2": "endurance", "recovery": "recovery",
-       "sweetspot": "sweet_spot", "threshold": "threshold", "vo2max": "vo2max",
-       "overunder": "over_under", "tempo": "tempo", "sprint": "neuromuscular"}
-FB = {"z2": ["endurance", "recovery"], "long_z2": ["endurance"],
-      "recovery": ["recovery", "endurance"],
-      "sweetspot": ["sweet_spot", "sweet_spot_ladder", "threshold", "tempo"],
-      "threshold": ["threshold", "threshold_ladder", "sweet_spot", "over_under"],
-      "vo2max": ["vo2max", "vo2_short", "vo2_ladder", "anaerobic"],
-      "overunder": ["over_under", "threshold"],
-      "tempo": ["tempo", "tempo_intervals", "tempo_ladder", "sweet_spot"],
-      "sprint": ["neuromuscular", "anaerobic", "sprint"]}
+# v3.2.2 (#15 R1): consume match_zwo's REAL maps (hoisted to module
+# constants) — the mirrored copy silently under-covered whenever the live
+# maps gained a class (e.g. endurance_intervals on z2).
+CAT = tp._TYPE_TO_CONTENT_CLASS
+FB = tp._TYPE_TO_FALLBACK_CLASSES
 EASYC = {"recovery": 25.0, "z2": 40.0, "long_z2": 40.0}
 BUCKETS = (30, 45, 60, 75, 90)
 # P4 floor table (locked): 15 per (type × bucket) cell, except sprint@75: 30
@@ -209,7 +202,11 @@ def test_emergency_fallback_never_serves_ftp_class(tmp_path, monkeypatch):
     pools = tp._build_pool_indexes([mis, tagged])
     assert pools["hit"] == [] and pools["endurance"] == []
     assert tagged not in pools["all_pool"]          # tag skip at pool build
-    assert mis in pools["all_pool"]                 # reachable pre-fix…
+    # v3.2.2 (#14 grill amendment 5): the UNTAGGED ftp_test-classed row is now
+    # excluded at pool admission too (was only caught downstream by the
+    # emergency fallback's class filter) — no pool carries it at all.
+    assert mis not in pools["all_pool"]
+    assert mis in pools["by_class"].get("ftp_test", [])  # want_test paths keep it
     budget = tp.get_budget_for_phase("base")
     phase = type("P", (), {"name": "base"})()
     sessions = tp.sample_week_workouts(

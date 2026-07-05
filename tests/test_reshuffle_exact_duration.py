@@ -1,18 +1,31 @@
-"""v1.8.24 — reshuffle/rematch must return the EXACT (closest-available)
-duration, never a far one.
+"""v3.2.2 (#15) — exact-duration reshuffle contract, re-calibrated.
 
-Regression for the user-reported symptom: reshuffling a 90-min slot returned a
-45-min file. Root cause was match_zwo's score-weighted random pick from the
-top-50 candidates, which could surface a far-duration file that scored high on
-category + evidence despite the proximity penalty. The fix adds
-``exact_duration=True`` (wired into both reshuffle call sites) which collapses
-the candidate pool to the single closest-duration tier BEFORE the variety pick.
+History: the v1.8.24 suite asserted every reshuffle pick lands on the SINGLE
+closest-available duration. Two deliberate engine changes rotted that:
+  (a) v2.2.13 replaced the closest-tier collapse with a VARIETY BAND — all
+      candidates within max(8% of slot, 3 min) are kept (variety among
+      genuinely-close files); the closest-duration tier (+0.5 min epsilon)
+      applies only when the band is empty (training_planner ~tp:3886-3899).
+  (b) v3.2.0 watertight changed the candidate pool itself (facts gate
+      `file_admissible`, class-aware Score floors, ContentClass basis), so
+      the suite's hand-rolled Protocol/Score≥3 pool mirror computed a
+      fictitious "best possible" duration.
+The suite was blanket-xfailed at v3.0.0 (57 tests). This rewrite asserts the
+REAL contract over the REAL admissible pool:
 
-These tests assert the achievable definition of "exact": the returned workout's
-duration is the CLOSEST the library offers for that slot+type — diff 0 when a
-same-duration file exists, and never farther than the closest available. (Plan
-slot durations are non-round from availability scaling, e.g. 122 min, while the
-clean library is round, so literal file==slot is impossible for most slots.)
+    diff(pick) ≤ max(band, best_dedup + 0.5)        (+0.1 float slack)
+
+where band = max(0.08 × slot, 3.0) and best_dedup is the smallest duration
+diff over the per-Name-DEDUPED admissible pool (match_zwo keeps the highest-
+Score row per Name before the band logic — grill P6: computing best on the
+raw pool can false-fail when a same-Name variant sits closer).
+
+The pool mirror consumes the engine's own gates — `file_admissible`,
+`_class_aware_score_floor` (+ the easy-tier ≥20-min stub guard),
+`_TYPE_TO_CONTENT_CLASS` / `_TYPE_TO_FALLBACK_CLASSES` (hoisted in v3.2.2 so
+this mirror can never rot against a stale copy), the ftp_test tag skip, and
+the easy-slot Z3+ ceiling — so engine-gate evolution moves the test's
+expectation automatically instead of breaking it.
 """
 from datetime import date
 
@@ -20,57 +33,66 @@ import pytest
 
 import training_planner as tp
 
-# v3.0.0 gate triage: 57/61 tests here fail IDENTICALLY at the pre-session
-# baseline (v2.4.5, 6ab4806c) — the suite's closest-duration expectations
-# rotted against library/label evolution over multiple releases and were
-# never in any gate. Marked xfail (non-strict) pending a dedicated
-# re-calibration pass of the exact-duration contract (tracked).
-import pytest as _pytest
-pytestmark = _pytest.mark.xfail(
-    strict=False,
-    reason="pre-existing at v2.4.5 baseline: exact-duration expectations "
-           "rotted vs library evolution; re-calibration tracked post-v3.0.0",
-)
+# The 8 slot types the original suite covered (sprint excluded then and now:
+# sprint slots carry their own IF-ceiling contract, pinned elsewhere).
+_SESSION_TYPES = [
+    "z2", "long_z2", "recovery", "sweetspot",
+    "threshold", "vo2max", "overunder", "tempo",
+]
+_SLOTS = [45, 60, 75, 90, 120, 122, 134]
+
+# Mirror of match_zwo's easy-slot grey-zone ceiling (Z3+Z4+Z5+Z6 %).
+_EASY_Z345_CEILING = {"recovery": 25.0, "z2": 40.0, "long_z2": 40.0}
 
 
-# Category pools match_zwo uses per session_type (mirror of the maps in
-# match_zwo so the test can compute the best-possible duration diff itself).
-_TYPE_TO_CAT = {
-    "z2": "Endurance", "long_z2": "Endurance", "recovery": "Recovery",
-    "sweetspot": "Sweet Spot", "threshold": "Threshold", "vo2max": "VO2max",
-    "overunder": "Over-Unders", "tempo": "Tempo",
-}
-_TYPE_TO_FB = {
-    "z2": {"Endurance", "Recovery", "Mixed"},
-    "long_z2": {"Endurance", "Mixed"},
-    "recovery": {"Recovery", "Endurance", "Mixed"},
-    "sweetspot": {"Sweet Spot", "Threshold", "Mixed"},
-    "threshold": {"Threshold", "Sweet Spot", "Over-Unders", "Mixed"},
-    "vo2max": {"VO2max", "Anaerobic", "Mixed"},
-    "overunder": {"Over-Unders", "Threshold", "Mixed"},
-    "tempo": {"Tempo", "Sweet Spot", "Mixed"},
-}
+def _band(slot: float) -> float:
+    """The v2.2.13 variety band: max(8% of slot, 3.0) minutes."""
+    return max(slot * 0.08, 3.0)
 
 
-def _cat_of(w):
-    p = w.get("Protocol", "") or ""
-    return p.split(" — ")[0] if " — " in p else p
+def _z345(w: dict) -> float:
+    return sum(float(w.get(k, 0) or 0) for k in ("Z3%", "Z4%", "Z5%", "Z6%"))
 
 
-def _best_possible_diff(lib, session_type, slot):
-    """Smallest |Duration - slot| over the in-type candidate pool (Score>=3)."""
-    prim = _TYPE_TO_CAT[session_type]
-    fbs = _TYPE_TO_FB[session_type]
-    best = None
+def _admissible_pool(lib, session_type):
+    """Re-derive match_zwo's candidate pool via the engine's OWN gates."""
+    prim = tp._TYPE_TO_CONTENT_CLASS[session_type]
+    fbs = set(tp._TYPE_TO_FALLBACK_CLASSES[session_type])
+    ceiling = _EASY_Z345_CEILING.get(session_type)
+    pool = []
     for w in lib:
-        if (w.get("Score", 0) or 0) < 3:
+        cc = tp._content_class_for_row(w)
+        if not (cc == prim or cc in fbs):
             continue
-        c = _cat_of(w)
-        if not (c == prim or c in fbs):
+        score = int(w.get("Score", 0) or 0)
+        dur = float(w.get("Duration(min)", 0) or 0)
+        if cc in ("endurance", "recovery", "endurance_intervals"):
+            if score < 1 or dur < 20:  # easy tier + stub guard
+                continue
+        elif score < tp._class_aware_score_floor(cc):
             continue
-        d = abs(float(w.get("Duration(min)") or 0) - slot)
-        best = d if best is None else min(best, d)
-    return best
+        tags = {t.lower() for t in (w.get("Tags") or [])}
+        if "ftp_test" in tags:
+            continue
+        if ceiling is not None and _z345(w) > ceiling:
+            continue
+        if not tp.file_admissible(session_type, w):
+            continue
+        pool.append(w)
+    # Per-Name dedup, keep highest Score — mirrors match_zwo's seen_names.
+    best_by_name: dict = {}
+    for w in pool:
+        name = w.get("Name", "")
+        if name not in best_by_name or (w.get("Score", 0) or 0) > (
+                best_by_name[name].get("Score", 0) or 0):
+            best_by_name[name] = w
+    return list(best_by_name.values())
+
+
+def _best_diff(pool, slot: float):
+    if not pool:
+        return None
+    return min(abs(float(w.get("Duration(min)", 0) or 0) - slot) for w in pool)
 
 
 def _reshuffle(lib, session_type, slot, variation):
@@ -95,32 +117,37 @@ def lib():
     return tp.load_workout_library()
 
 
-@pytest.mark.parametrize("session_type", list(_TYPE_TO_CAT))
-@pytest.mark.parametrize("slot", [45, 60, 75, 90, 120, 122, 134])
-def test_reshuffle_returns_closest_available_duration(lib, session_type, slot):
-    """Every reshuffle pick is within +0.6 min of the closest the library
-    offers for that type+slot — i.e. no other in-type file is strictly closer.
-    (Non-round slots like 122/134 still resolve to the nearest round file.)"""
-    best = _best_possible_diff(lib, session_type, slot)
+@pytest.mark.parametrize("session_type", _SESSION_TYPES)
+@pytest.mark.parametrize("slot", _SLOTS)
+def test_reshuffle_pick_within_band_or_closest_tier(lib, session_type, slot):
+    """Every reshuffle pick is inside the variety band around the slot, or —
+    when the admissible pool has nothing that close — within the closest-
+    duration tier (+0.5 epsilon). This IS the engine's band arithmetic
+    (tp ~3886-3899) evaluated against the engine's own pool gates."""
+    pool = _admissible_pool(lib, session_type)
+    best = _best_diff(pool, slot)
     if best is None:
-        pytest.skip(f"no in-type candidates for {session_type}")
+        pytest.skip(f"no admissible candidates for {session_type} "
+                    "(coverage-fallback territory, different contract)")
+    allowed = max(_band(slot), best + 0.5) + 0.1
     for v in range(1, 13):
         try:
             _f, dur = _reshuffle(lib, session_type, slot, v)
         except tp.NoCandidateWorkoutError:
             continue
         diff = abs(dur - slot)
-        assert diff <= best + 0.6, (
+        assert diff <= allowed, (
             f"{session_type} {slot}min slot -> {dur:.0f}min (diff {diff:.1f}) "
-            f"is not the closest available (best possible {best:.1f})"
+            f"outside band {_band(slot):.1f} and closest tier "
+            f"(best {best:.1f} + 0.5)"
         )
 
 
 def test_90min_slot_never_returns_a_45min_file(lib):
-    """The exact reported symptom: a 90-min slot must never resolve to a
+    """The original v1.8.24 symptom: a 90-min slot must never resolve to a
     ~45-min workout when ~90-min files exist in the type."""
     for st in ("sweetspot", "threshold", "vo2max", "tempo"):
-        best = _best_possible_diff(lib, st, 90)
+        best = _best_diff(_admissible_pool(lib, st), 90)
         if best is None or best > 5:
             continue  # type genuinely lacks a ~90-min file; not the symptom
         for v in range(1, 21):
@@ -128,21 +155,20 @@ def test_90min_slot_never_returns_a_45min_file(lib):
             assert dur >= 70, f"{st} 90-min slot returned {dur:.0f}min file"
 
 
-def test_dense_cell_diff_is_essentially_zero(lib):
-    """For a well-covered cell (90-min sweetspot has many same-duration files)
-    every reshuffle pick lands on a ~90-min file (round library → diff ~0)."""
+def test_dense_cell_stays_inside_band(lib):
+    """A well-covered cell (90-min sweetspot) always lands inside the band:
+    8% of 90 = 7.2 min (+0.5 tier epsilon headroom = 7.7)."""
     durations = set()
     for v in range(1, 21):
         _f, dur = _reshuffle(lib, "sweetspot", 90, v)
         durations.add(round(dur))
     assert durations, "no picks"
-    assert all(abs(d - 90) <= 5 for d in durations), f"durations={sorted(durations)}"
+    assert all(abs(d - 90) <= 7.7 for d in durations), f"durations={sorted(durations)}"
 
 
 def test_reshuffle_preserves_variety_on_dense_cell(lib):
-    """Reshuffle must still vary the workout (≥2 distinct files) within the
-    closest-duration tier for a dense cell — exact-duration must not collapse
-    to a single forced pick when many same-duration files exist."""
+    """The band exists FOR variety: reshuffling a dense cell must reach ≥2
+    distinct files across 12 variations."""
     files = set()
     for v in range(1, 13):
         f, _dur = _reshuffle(lib, "threshold", 60, v)
@@ -163,14 +189,12 @@ def test_default_path_unchanged_and_deterministic(lib):
     assert pick() == pick()  # deterministic default path
 
 
-def test_exact_mode_can_differ_from_default_when_far_file_would_win(lib):
-    """Sanity: exact mode and default mode are genuinely different code paths —
-    exact mode never returns a file farther than the closest tier, whereas the
-    default ±25% gate admits a wider band. We only assert exact mode's pick is
-    no farther than default's (closer-or-equal), across several types."""
+def test_exact_mode_no_farther_than_default_beyond_band(lib):
+    """exact mode widens the ±25% gate but shares the band collapse, so its
+    pick may differ from default WITHIN the band — never beyond it when the
+    default already found something closer."""
     for st in ("vo2max", "sweetspot", "threshold"):
         slot = 90
-        # default-mode worst-case distance over a few variations
         s_def = tp.PlannedSession(day=date(2026, 6, 15), day_name="Mon",
                                   session_type=st, duration_min=slot,
                                   tss_estimate=float(slot), description="")
@@ -179,6 +203,7 @@ def test_exact_mode_can_differ_from_default_when_far_file_would_win(lib):
         d_def = abs(float(meta_def.get("Duration(min)") or 0) - slot)
         _f, d_exact_dur = _reshuffle(lib, st, slot, 7)
         d_exact = abs(d_exact_dur - slot)
-        assert d_exact <= d_def + 0.6, (
-            f"{st}: exact mode ({d_exact:.1f}) farther than default ({d_def:.1f})"
+        assert d_exact <= max(_band(slot), d_def) + 0.5, (
+            f"{st}: exact mode ({d_exact:.1f}) beyond band AND farther than "
+            f"default ({d_def:.1f})"
         )

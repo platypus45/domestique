@@ -282,12 +282,9 @@ def test_only_score_5_plus_files_picked():
             continue
         score = int(row.get("Score", 0) or 0)
         cc = tp._content_class_for_row(row)
-        if cc in ("endurance", "recovery"):
-            floor = 1
-        elif cc in ("tempo", "mixed"):
-            floor = 4
-        else:
-            floor = 5
+        # v3.2.2 (#14): use the shared floor — the else→5 mirror broke when
+        # endurance_intervals/tempo variants got their own tiers.
+        floor = tp._class_aware_score_floor(cc)
         if score < floor:
             bad.append(f"{f} (cc={cc}) score={score} floor={floor}")
     assert not bad, "Picked workouts below class-aware score floor:\n" + "\n".join(bad)

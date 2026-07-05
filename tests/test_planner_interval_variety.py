@@ -40,6 +40,20 @@ def _pinned_env(planner_pinned_env):
 _INTERVAL_CCS = {
     "sweet_spot", "threshold", "vo2max", "vo2_short",
     "over_under", "anaerobic", "neuromuscular",
+    # v3.2.2 (#14): the structural-variant classes became sampler-reachable
+    # (pool-bucketing fix) — all interval-shaped by this module's own
+    # definition (ladders = interval progressions, tempo_intervals =
+    # intervals, endurance_intervals = Z2 + strides).
+    "threshold_ladder", "vo2_ladder", "sweet_spot_ladder",
+    "tempo_ladder", "tempo_intervals", "endurance_intervals",
+}
+# v3.2.2 (#14): fold ladder variants onto their canonical parent for the
+# canonical-4 coverage check — a threshold_ladder pick IS threshold-quality
+# interval work.
+_CANONICAL_FOLD = {
+    "threshold_ladder": "threshold",
+    "vo2_ladder": "vo2max",
+    "sweet_spot_ladder": "sweet_spot",
 }
 _INTERVAL_FLAGS = (
     "has_threshold_work", "has_vo2_work", "has_sprints",
@@ -187,6 +201,7 @@ class TestDistinctIntervalShapes:
                 if s.session_type == "rest":
                     continue
                 cc, is_intvl = _classify(s.zwo_file or "")
+                cc = _CANONICAL_FOLD.get(cc, cc)  # v3.2.2: ladder → parent
                 if is_intvl and cc in {"threshold", "vo2max", "sweet_spot", "over_under"}:
                     seen.add(cc)
         missing = {"threshold", "vo2max", "sweet_spot", "over_under"} - seen

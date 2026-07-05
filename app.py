@@ -3748,6 +3748,7 @@ def api_readiness(subjective: float = Query(None)):
         "training": merged_load,
         "sleep": {
             "sleep_h": sleep.get("sleep_h"), "sleep_score": sleep.get("sleep_score"),
+            "sleep_asof": sleep.get("sleep_asof"), "hrv_asof": sleep.get("hrv_asof"),
             "hrv_ms": sleep.get("hrv_ms"), "ln_rmssd_7d": sleep.get("ln_rmssd_7d"),
             "hrv_status": sleep.get("hrv_status"),
             "swc_lower": sleep.get("swc_lower"), "swc_upper": sleep.get("swc_upper"),
@@ -10365,6 +10366,9 @@ def _api_today_session_impl():
             "duration_min": planned.duration_min,
             "tss_estimate": planned.tss_estimate,
             "description": planned.description,
+            # v3.2.1: matched library file so the home card can preview the
+            # actual blocks (same source the day-detail modal charts).
+            "zwo_file": planned_data.get("zwo_file") or None,
         },
         "adjusted": {
             "session_type": adjusted.session_type,

@@ -138,7 +138,30 @@ def compute_sleep_metrics_from_wellness(wellness: list[dict]) -> dict:
          if r["date"] == date.today().isoformat()),
         records[-1] if records else {},
     )
-    sleep_h = today_rec.get("sleep_h")
+
+    # Sleep + HRV last-known fallback — mirror the RHR chain above. Today's
+    # overnight metrics reach intervals.icu hours late (Garmin→ICU sync lag),
+    # so a not-yet-synced night should show the last real reading + the date it
+    # came from, not a bare "—". `*_asof` lets the UI tag a stale value.
+    def _last_nonnull(field):
+        return next(((r[field], r["date"]) for r in reversed(records)
+                     if r.get(field) is not None), (None, None))
+    if today_rec.get("hrv_ms") is not None:
+        hrv_ms, hrv_asof, ln_rmssd_today = (
+            today_rec.get("hrv_ms"), today_rec.get("date"), today_rec.get("ln_rmssd"))
+    else:
+        hrv_ms, hrv_asof = _last_nonnull("hrv_ms")
+        ln_rmssd_today = _ln_rmssd(hrv_ms)
+    if today_rec.get("sleep_h") is not None or today_rec.get("sleep_score") is not None:
+        sleep_rec = today_rec
+    else:
+        sleep_rec = next(
+            (r for r in reversed(records)
+             if r.get("sleep_h") is not None or r.get("sleep_score") is not None),
+            today_rec)
+    sleep_h = sleep_rec.get("sleep_h")
+    sleep_score = sleep_rec.get("sleep_score")
+    sleep_asof = sleep_rec.get("date")
     sleep_status = "?"
     if sleep_h is not None:
         if sleep_h >= config.SLEEP_GREEN:
@@ -162,10 +185,12 @@ def compute_sleep_metrics_from_wellness(wellness: list[dict]) -> dict:
     return {
         "date": today_rec.get("date"),
         "sleep_h": sleep_h,
-        "sleep_score": today_rec.get("sleep_score"),
+        "sleep_score": sleep_score,
+        "sleep_asof": sleep_asof,
         "sleep_status": sleep_status,
-        "hrv_ms": today_rec.get("hrv_ms"),
-        "ln_rmssd_today": today_rec.get("ln_rmssd"),
+        "hrv_ms": hrv_ms,
+        "hrv_asof": hrv_asof,
+        "ln_rmssd_today": ln_rmssd_today,
         "ln_rmssd_7d": ln_7d,
         "hrv_baseline_mean": baseline_mean,
         "hrv_baseline_sd": baseline_sd,

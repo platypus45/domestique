@@ -1439,17 +1439,19 @@ window.addEventListener('unhandledrejection', function(e) {
     <div id="today-verdict" style="margin-top:8px;">
       <div style="font-size:12px;color:var(--text3);">Loading…</div>
     </div>
+    <!-- Leg-check INPUT. loadMorningLog() renders a compact emoji + "Hooper
+         N/28 · Change" once logged, or the 4-question form when nothing is
+         logged yet — so the big form only appears when it's needed. -->
+    <div id="morning-log-content" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;"></div>
     <!-- Prescription: today's planned session. loadTodaySession() owns this;
-         click → openTodaySessionDetail(). -->
+         click → openTodaySessionDetail(). v3.2.1 (owner): moved BELOW the
+         leg-check so the training block sits at the card bottom, directly
+         adjacent to the This Week grid that now follows this card. -->
     <div id="home-recommendation" class="loading" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">Loading...</div>
     <!-- P2.3 (v3.0.0) — FTP/LTHR retest nudge banner. Rendered by
          loadTodaySession() from the /api/today-session retest_nudge flag;
          dismissible (snooze 14d, persisted in athlete.json server-side). -->
     <div id="retest-nudge-host"></div>
-    <!-- Leg-check INPUT. loadMorningLog() renders a compact emoji + "Hooper
-         N/28 · Change" once logged, or the 4-question form when nothing is
-         logged yet — so the big form only appears when it's needed. -->
-    <div id="morning-log-content" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;"></div>
     <details style="margin-top:10px;">
       <summary style="cursor:pointer;font-size:11px;color:var(--text2);">Recovery details</summary>
       <!-- v1.8.8 Bug 3 — last ride DFA α1 snapshot. loadHomeSnapshotDfa(). -->
@@ -1457,26 +1459,9 @@ window.addEventListener('unhandledrejection', function(e) {
     </details>
   </div>
 
-  <!-- v1.7.6 — Last week feedback panel. Reads /api/week-summary?week_offset=-1
-       and surfaces an explicit "you trained X above plan" context next to the
-       readiness card. The readiness score is a downstream signal (HRV + TSB);
-       this panel makes the CAUSE legible so the user knows why today's
-       prescription was adjusted — and one-clicks the tier-down button above
-       when the prior week was an overreach. -->
-  <div class="card" style="margin-bottom:12px;display:none;" id="last-week-feedback-card">
-    <h3>Last week — how the actual load compared</h3>
-    <div id="last-week-feedback-content" style="font-size:12px;color:var(--text2);">
-      Loading…
-    </div>
-  </div>
-
-  <!-- v4.4.0 IMPL-UI: On-track summary bar (closes user bug #4).
-       Shows compliance/CTL/polarized/phase headline + Z1+Z2 / Z3+Z4 / Z5+ / TSS
-       target-vs-actual rails per CONCEPT-UX §4 + MASTER §3. Populated from
-       /api/calendar.summary (server commit ee48619). -->
-  <div id="ontrack-bar-host" style="margin-bottom:12px;"></div>
-
-  <!-- Weekly Mesocycle Plan -->
+  <!-- Weekly Mesocycle Plan. v3.2.1 (owner): moved up to sit DIRECTLY under
+       the Today card — today's training block and the week grid read as one
+       unit; the on-track bar + last-week feedback follow below. -->
   <div class="card" style="margin-bottom:12px;">
     <div style="display:flex;justify-content:space-between;align-items:center;">
       <h3>This Week</h3>
@@ -1490,6 +1475,25 @@ window.addEventListener('unhandledrejection', function(e) {
     <div id="weekly-calendar" style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:8px;"></div>
     <div id="weekly-rollup"></div>
     <div class="weekly-bar" id="weekly-summary" style="margin-top:8px;"></div>
+  </div>
+
+  <!-- v4.4.0 IMPL-UI: On-track summary bar (closes user bug #4).
+       Shows compliance/CTL/polarized/phase headline + Z1+Z2 / Z3+Z4 / Z5+ / TSS
+       target-vs-actual rails per CONCEPT-UX §4 + MASTER §3. Populated from
+       /api/calendar.summary (server commit ee48619). -->
+  <div id="ontrack-bar-host" style="margin-bottom:12px;"></div>
+
+  <!-- v1.7.6 — Last week feedback panel. Reads /api/week-summary?week_offset=-1
+       and surfaces an explicit "you trained X above plan" context next to the
+       readiness card. The readiness score is a downstream signal (HRV + TSB);
+       this panel makes the CAUSE legible so the user knows why today's
+       prescription was adjusted — and one-clicks the tier-down button above
+       when the prior week was an overreach. -->
+  <div class="card" style="margin-bottom:12px;display:none;" id="last-week-feedback-card">
+    <h3>Last week — how the actual load compared</h3>
+    <div id="last-week-feedback-content" style="font-size:12px;color:var(--text2);">
+      Loading…
+    </div>
   </div>
 
   <div class="grid g2">
@@ -6189,26 +6193,36 @@ async function loadHome() {
       try { window._diagFrontendError('E_FRONTEND_READINESS_RENDER', {msg: String(e && e.message || e)}); } catch(_) {}
     }
 
+    // v3.2.1: today's overnight sleep/HRV reach intervals.icu hours late
+    // (Garmin→ICU lag). The backend falls back to the last synced night (with
+    // `*_asof` dates); a fallback value renders AMBER with the night's date
+    // under it so it's unmistakably not today's reading.
+    const _todayISO = new Date().toISOString().slice(0, 10);
+    const _dLbl = d => { const dt = new Date(d + 'T00:00:00');
+      return isNaN(dt) ? d : dt.toLocaleDateString(undefined, {month:'short', day:'numeric'}); };
+    const _hrvStale = !!(s.hrv_asof && s.hrv_asof !== _todayISO && s.hrv_ms != null);
+    const _sleepStale = !!(s.sleep_asof && s.sleep_asof !== _todayISO && (s.sleep_h != null || s.sleep_score != null));
+
     // Sleep metrics with sparklines
     $('sleep-metrics').innerHTML = [
-      {v:s.sleep_h?s.sleep_h+'h':'—',l:'Sleep',c:statusClass(s.hrv_status),t:'sleep'},
-      {v:s.hrv_ms??'—',l:'HRV (ms)',c:'',t:'hrv'},
+      {v:s.sleep_h?s.sleep_h+'h':'—',l:'Sleep',c:statusClass(s.hrv_status),t:'sleep',st:_sleepStale,sd:s.sleep_asof},
+      {v:s.hrv_ms??'—',l:'HRV (ms)',c:'',t:'hrv',st:_hrvStale,sd:s.hrv_asof},
       {v:s.rhr_today?s.rhr_today+'bpm':'—',l:'RHR',c:statusClass(s.rhr_status),t:'rhr'},
       {v:s.hrv_status??'—',l:'HRV status',c:statusClass(s.hrv_status),t:'hrv'},
-      {v:s.sleep_score??'—',l:'Sleep score',c:'',t:'sleep'},
-    ].map(m=>`<div class="metric" data-tip="${m.t}"><div class="mv ${m.c}">${m.v}</div><div class="ml">${m.l}</div></div>`).join('');
+      {v:s.sleep_score??'—',l:'Sleep score',c:'',t:'sleep',st:_sleepStale,sd:s.sleep_asof},
+    ].map(m=>`<div class="metric" data-tip="${m.t}"><div class="mv ${m.c}"${m.st?' style="color:var(--yellow)" title="Last synced night — not today"':''}>${m.v}${m.st&&m.sd?`<span style="display:block;font-size:8px;font-weight:600;color:var(--yellow);opacity:0.9;">${_dLbl(m.sd)}</span>`:''}</div><div class="ml">${m.l}</div></div>`).join('');
 
-    // v3.2.1: today's overnight sleep/HRV usually lands mid-morning. When
-    // today's values are all missing but wellness IS connected (history
-    // exists), say so instead of leaving bare "—" (RHR falls back to the last
-    // day; sleep/HRV intentionally don't, to avoid passing yesterday off as
-    // today). Idempotent across re-renders.
+    // Note under the tiles: stale → say which night you're looking at; no
+    // data at all → point at connecting a source. Idempotent across renders.
     document.getElementById('sleep-today-note')?.remove();
-    const _sleepTodayMissing = (s.sleep_h == null && s.hrv_ms == null && s.sleep_score == null);
-    const _haveWellnessHistory = (wellness || []).some(w => w.hrv != null || w.sleep_score != null);
-    if (_sleepTodayMissing && _haveWellnessHistory) {
+    const _staleAsof = (_hrvStale && s.hrv_asof) || (_sleepStale && s.sleep_asof) || null;
+    const _noData = (s.sleep_h == null && s.hrv_ms == null && s.sleep_score == null);
+    if (_staleAsof) {
       $('sleep-metrics').insertAdjacentHTML('afterend',
-        `<div id="sleep-today-note" style="font-size:10px;color:var(--text3);margin-top:6px;">Waiting on today's sleep &amp; HRV from intervals.icu — overnight data usually lands mid-morning.</div>`);
+        `<div id="sleep-today-note" style="font-size:10px;color:var(--yellow);margin-top:6px;">⏳ Showing your last synced night (${_dLbl(_staleAsof)}) — today's sleep &amp; HRV usually land mid-morning from intervals.icu.</div>`);
+    } else if (_noData) {
+      $('sleep-metrics').insertAdjacentHTML('afterend',
+        `<div id="sleep-today-note" style="font-size:10px;color:var(--text3);margin-top:6px;">No sleep or HRV yet — connect a Garmin/Oura/Whoop source in intervals.icu and it'll show here.</div>`);
     }
 
     // HRV & RHR sparklines from wellness data (last 14 days)
@@ -15512,7 +15526,8 @@ async function loadTodaySession() {
     const adjReason = d.adjustment_reason || d.reason || '';
 
     // Hero: ORIGINAL plan content (Type / Duration / TSS).
-    let html = `<div style="font-size:20px;font-weight:700;margin-bottom:4px;">${planType}</div>`;
+    let html = `<div style="font-size:10px;font-weight:700;letter-spacing:0.8px;color:var(--text3);margin-bottom:6px;">TODAY'S TRAINING</div>`;
+    html += `<div style="font-size:20px;font-weight:700;margin-bottom:4px;">${planType}</div>`;
     html += `<div style="font-size:13px;color:var(--text2);margin-bottom:6px;">${esc(fixZeroMin(d.planned.description) || '')}</div>`;
     // v2.2.5 issue #3 R2 — the readiness number now lives ONLY in the Today
     // verdict above; the prescription line shows just the plan (no /100) so the
@@ -15551,6 +15566,10 @@ async function loadTodaySession() {
       html += '</div>';
     }
 
+    // v3.2.1 (owner): blocks preview — the ACTUAL matched workout profile,
+    // filled in async below so the card never waits on it.
+    html += `<div id="today-blocks-preview"></div>`;
+
     // View Plan link — jumps to the plan grid for context.
     html += `<div style="margin-top:6px;font-size:11px;">
       <a href="javascript:void(0)" onclick="event.stopPropagation();jumpToPlanGrid()"
@@ -15566,6 +15585,32 @@ async function loadTodaySession() {
     } catch (eR) {
       try { window._diagFrontendError('E_FRONTEND_TODAY_SESSION_RENDER', {msg: String(eR && eR.message || eR)}); } catch(_) {}
       throw eR;
+    }
+    // v3.2.1 (owner): fill the blocks preview. Matched .zwo → the REAL
+    // segments (same source the day-detail modal charts); unmatched slot →
+    // the same synthetic per-type shape the modal falls back to, tagged
+    // approximate. pointer-events off so a click still opens the day detail.
+    const _fillBlocksPreview = html2 => {
+      const holder = document.getElementById('today-blocks-preview');
+      if (holder) holder.innerHTML =
+        `<div style="max-width:560px;margin:2px 0 4px;pointer-events:none;">${html2}</div>`;
+    };
+    if (d.planned.zwo_file) {
+      fetch(`/api/workout/all/${encodeURIComponent(d.planned.zwo_file)}`)
+        .then(r => (r.ok ? r.json() : null))
+        .then(sd => {
+          if (!sd || !sd.segments || !sd.segments.length || !sd.ftp) return;
+          _fillBlocksPreview(workoutProfileSVG(sd.segments, sd.ftp, sd.total_seconds,
+            sd.target_mode === 'hr' ? {mode: 'hr', lthr: sd.lthr, maxHr: sd.max_hr, axis: sd.hr_axis} : null));
+        })
+        .catch(() => {});
+    } else if (d.planned.session_type && d.planned.session_type !== 'rest' && d.planned.duration_min) {
+      try {
+        const _ftp = window._athleteFtp || 250;
+        const _blocks = buildPowerBlocks(d.planned.session_type, d.planned.duration_min, _ftp, null);
+        _fillBlocksPreview(renderPowerBlocksSVG(_blocks, _ftp) +
+          `<div style="font-size:9px;color:var(--text3);margin-top:2px;">Approximate shape — ride to the zone targets above.</div>`);
+      } catch (_) {}
     }
     // P2.3 — retest nudge banner (its own host, outside the clickable hero).
     try { renderRetestNudge(d.retest_nudge); } catch (_) {}

@@ -11,8 +11,8 @@
   read the same source.
 - **Sleep & HRV never show a bare "—" anymore.** Until your watch's overnight
   data reaches intervals.icu (usually mid-morning), the tiles show your last
-  synced night in amber with its date, plus a note saying exactly what you're
-  looking at.
+  synced day in italics with its date — color keeps meaning good/bad — plus a
+  note saying exactly what you're looking at. Applies to RHR too.
 - **Preview today's workout on the home page.** The Today card now shows the
   actual interval blocks of today's session — the real workout file when one
   is matched, or an approximate shape for free rides — and the card sits

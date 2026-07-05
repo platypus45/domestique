@@ -882,6 +882,27 @@ class ProfileManager:
         """
         return str(self._athlete.get("pmax_source", "") or "")
 
+    @property
+    def pmax_is_set(self) -> bool:
+        """True only when a TRUSTWORTHY measured Pmax is stored -- i.e.
+        pmax_source is "manual" (rider typed it) or "icu" (ICU power-curve
+        sync). Mirrors ``lthr_is_set`` (line 153): the bare ``pmax_w`` property
+        returns int(ftp * 1.30) when unset (line 232-233), so it can NEVER gate
+        a feature -- every user would appear to "have" a Pmax (the same
+        never-None trap as ``cp`` / lthr=170). "computed" (fitness estimate) and
+        "fallback" are excluded: the measured-capacity short-rep advisory
+        (task #24) only ever fires against a number the rider can trust."""
+        return self.pmax_source in ("manual", "icu")
+
+    @property
+    def cap_short_intervals(self) -> str:
+        """task #24: whether to match a served workout's short reps to the
+        rider's MEASURED power envelope. One of "off" (default), "prompt", "on".
+        Reads degrade to "off" for any unrecognised stored value so a
+        hand-edited athlete.json can't put the app in an unknown posture."""
+        v = str(self._athlete.get("cap_short_intervals", "off") or "off").lower()
+        return v if v in ("off", "prompt", "on") else "off"
+
     def _set_max_hr(self, value: int | float, source: str) -> bool:
         """v1.1.0 IMPL-NORWEGIAN-HR: shared write-path for `max_hr` with
         source tracking. Cloned from `_set_wprime` (v3.6.0-fix26 §4.1).

@@ -2813,6 +2813,22 @@ window.addEventListener('unhandledrejection', function(e) {
           <div id="target-mode-hint" style="font-size:11px;color:var(--text3);margin-top:4px;display:none;"></div>
         </div>
       </div>
+      <!-- task #24: measured-capacity short-rep cap. Usable only with a
+           trustworthy MEASURED Pmax (pmax_is_set from /api/settings — the bare
+           pmax_w is a silent ftp*1.30 fallback when unset). -->
+      <div class="form-row">
+        <div class="form-group">
+          <label>Match short intervals to my measured power
+            <span class="hint" title="When a workout's short hard efforts (≤2 min, above ~120%FTP) ask for more power than your own MEASURED max-power curve says you can do, lower them to your real ceiling. Off: never change a file. Prompt: ask before each download. On: cap silently. Only your MEASURED Pmax (from intervals.icu or typed in Setup) is used — never an estimate." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span>
+          </label>
+          <select id="set-cap-short">
+            <option value="off">Off (never change a file)</option>
+            <option value="prompt">Prompt before each download</option>
+            <option value="on">On (cap automatically)</option>
+          </select>
+          <div id="cap-short-hint" style="font-size:11px;color:var(--text3);margin-top:4px;display:none;"></div>
+        </div>
+      </div>
       <!-- W1: HR workout-target rows (visible in hr mode). These are the
            PRESCRIPTION rows the charts/FIT/chips use — distinct from the Friel
            analysis zones below. Server-validated; Reset restores Coggan. -->
@@ -3780,6 +3796,36 @@ function workoutProfileSVG(segments, ftp, totalSec, hrCtx) {
   </div>`;
 }
 
+// task #24: build the measured-capacity short-rep advisory for the modal.
+// `cc` is d.capacity_cap from the server (a LIVE ZWO parse), or undefined when
+// there is no trustworthy measured Pmax or nothing qualifies. Renders:
+//   off    → factual comparison as info only (no action)
+//   prompt → comparison + APPROVE (re-download capped) / DENY (leave)
+//   on     → "capped to your measured power" confirmation
+function capAdvisoryHtml(cc, category, filename, d) {
+  if (!cc || !cc.pmax_is_set) return '';
+  const reps = cc.n_reps, secs = cc.rep_seconds;
+  const facts = `These ${reps === 1 ? 'effort asks' : reps + ' efforts ask'} for ~${cc.demand_w}W over ${secs}s; your measured ceiling is ~${cc.ceiling_w}W.`;
+  const durMin = Math.round((d.total_seconds || 0) / 60);
+  const nameArg = (d.display_name || d.name || 'workout');
+  if (cc.toggle === 'on') {
+    return `<div style="margin:8px 0 12px;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.4;background:rgba(34,197,94,0.12);border:1px solid var(--green);color:var(--text);">
+      ✓ Short efforts are capped to your measured power (~${cc.cap_w}W). ${esc(facts)} The file below is already adjusted.</div>`;
+  }
+  if (cc.toggle === 'prompt') {
+    return `<div style="margin:8px 0 12px;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.4;background:rgba(234,179,8,0.12);border:1px solid #eab308;color:var(--text);">
+      <div style="margin-bottom:8px;">${esc(facts)} Cap them to ~${cc.cap_w}W?</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-sm btn-primary" onclick="downloadZwo('${escJs(category)}','${escJs(filename)}',true)">Approve — download capped (.zwo)</button>
+        <button class="btn btn-sm" onclick="downloadFIT('z2', ${durMin}, '${escJs(nameArg)}', '${escJs(filename)}', 'power', true)">Approve — capped FIT</button>
+        <button class="btn btn-sm" onclick="downloadZwo('${escJs(category)}','${escJs(filename)}')">Deny — keep as written</button>
+      </div></div>`;
+  }
+  // off → information only
+  return `<div style="margin:8px 0 12px;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.4;background:rgba(59,130,246,0.12);border:1px solid #3b82f6;color:var(--text);">
+    ${esc(facts)} <span style="color:var(--text3);">Turn on "Match short intervals to my measured power" in Settings to cap them.</span></div>`;
+}
+
 async function openWorkoutDetail(category, filename, meta, view) {
   // ``view`` ('hr'|'power') = the modal's ⚡/❤ peek toggle — overrides the
   // global target_mode for this render AND for the FIT download (WYSIWYG).
@@ -3816,11 +3862,17 @@ async function openWorkoutDetail(category, filename, meta, view) {
 
     const zoneHtml = meta ? `<div style="margin:12px 0;">${zoneBar(meta.z1||0,meta.z2||0,meta.z3||0,meta.z4||0,meta.z5||0,meta.z6||0)}</div>` : '';
 
+    // task #24: measured-capacity short-rep advisory. Only present (from the
+    // server's LIVE parse) when a trustworthy MEASURED Pmax exists and the file
+    // has a too-hard qualifying rep. Rendered per the toggle state.
+    const capHtml = capAdvisoryHtml(d.capacity_cap, category, filename, d);
+
     $('modal-content').innerHTML = `
       <h2>${esc(d.display_name || d.name)}</h2>
       ${metaHtml}
       ${chart}
       ${zoneHtml}
+      ${capHtml}
       ${d.description ? (hrCtx
         ? `<details style="margin-top:12px;"><summary style="font-size:11px;color:var(--text3);cursor:pointer;">Power-based file details (targets shown in bpm above)</summary>
              <div style="margin-top:6px;font-size:12px;color:var(--text2);max-height:100px;overflow-y:auto;">${esc(fixZeroMin(d.description) || '').replace(/ \| /g, '<br>')}</div></details>`
@@ -8395,23 +8447,27 @@ function renderLibrary(data) {
   setTimeout(_loadLibrarySvgs, 100);
 }
 
-async function downloadZwo(cat, file) {
+async function downloadZwo(cat, file, cap = false) {
   // v1.6.4 fix: window.open() in WKWebView (packaged DMG) navigates to the
   // ZWO and renders it inline as XML — user sees "Wednesday Z2 bike" on a
   // white screen in Times New Roman instead of a save dialog. Mirror the
   // downloadFIT() / downloadZwoFile() pattern: pywebview bridge first, then
   // fetch() + Blob to force save-as regardless of MIME type.
   let url = `/api/download/zwo/${encodeURIComponent(cat)}/${encodeURIComponent(file)}`;
+  const _q = [];
   let saveName = file;
   // G1 (v2.1): outdoor variant — wrap with off-plan transit warm-up + spin home.
   const _od = document.getElementById('lib-outdoor');
   if (_od && _od.checked) {
     const t = parseInt((document.getElementById('lib-outdoor-transit') || {}).value) || 10;
     const s = parseInt((document.getElementById('lib-outdoor-spin') || {}).value) || 20;
-    url += `?outdoor=1&transit_min=${t}&spin_min=${s}`;
+    _q.push(`outdoor=1`, `transit_min=${t}`, `spin_min=${s}`);
     saveName = file.replace(/\.zwo$/i, '') + '_outdoor.zwo';
   }
-  if (await _saveViaPywebview('zwo', saveName, url, {zwo_file: file})) return;
+  // task #24: cap=1 = PROMPT APPROVE — serve the measured-capacity-capped file.
+  if (cap) _q.push('cap=1');
+  if (_q.length) url += '?' + _q.join('&');
+  if (await _saveViaPywebview('zwo', saveName, url, {zwo_file: file, cap: cap ? 1 : 0})) return;
   try {
     const r = await fetch(url);
     if (!r.ok) {
@@ -13216,6 +13272,28 @@ async function loadSettings() {
       hint.textContent = 'Steady aerobic segments get a bpm range; short/hard efforts are by feel (RPE).';
     }
   }
+  // task #24: measured-capacity short-rep cap. Disabled with a hint until a
+  // trustworthy MEASURED Pmax exists (pmax_is_set); the modal advisory reads
+  // window._pmaxWatts, which stays null when unset (never the ftp*1.30 band).
+  window._capShort = d.cap_short_intervals || 'off';
+  window._pmaxIsSet = !!d.pmax_is_set;
+  window._pmaxWatts = (d.pmax_w != null) ? d.pmax_w : null;
+  const csSel = $('set-cap-short');
+  if (csSel) {
+    csSel.value = window._capShort;
+    csSel.disabled = !window._pmaxIsSet;
+    csSel.style.opacity = window._pmaxIsSet ? '' : '0.5';
+    const csHint = $('cap-short-hint');
+    if (csHint) {
+      if (!window._pmaxIsSet) {
+        csHint.style.display = '';
+        csHint.textContent = 'Needs your measured max power (Pmax) — connect intervals.icu, or type it in Setup. Until then this stays off.';
+      } else {
+        csHint.style.display = window._capShort === 'off' ? 'none' : '';
+        csHint.textContent = 'Your measured ceiling is ~' + window._pmaxWatts + 'W. Only short, very hard efforts above it get lowered.';
+      }
+    }
+  }
   // v4.1.0 U3: render FTP source badge
   renderFtpSourceBadge(d.ftp_source, d.ftp_source_date);
   // v4.1.0 U2: fetch + render FTP history chart (async, non-blocking).
@@ -13646,6 +13724,10 @@ async function saveSettings() {
   // and 400s with a readable message; surfaced via the alert below.
   const tmSel = $('set-target-mode');
   if (tmSel) body.target_mode = tmSel.value;
+  // task #24: measured-capacity short-rep cap posture (only meaningful with a
+  // measured Pmax; the server + serve gate both re-check pmax_is_set).
+  const csSel2 = $('set-cap-short');
+  if (csSel2 && !csSel2.disabled) body.cap_short_intervals = csSel2.value;
   // W1: include hr_rows_custom ONLY when the editor values differ from the
   // server-resolved rows (saving untouched defaults changes nothing — C1+).
   const hre2 = $('hr-rows-editor');
@@ -16321,7 +16403,7 @@ async function downloadZwoFile(filename) {
   }
 }
 
-async function downloadFIT(type, durationMin, name, zwoFile = null, view = null) {
+async function downloadFIT(type, durationMin, name, zwoFile = null, view = null, cap = false) {
   // v1.0.1 fix: pre-fix the button used <a download href=...>.click(), which
   // is fire-and-forget — pywebview's webkit silently swallowed JSON 4xx/5xx
   // responses (no download dialog, no error). fetch() + Blob lets us inspect
@@ -16334,8 +16416,10 @@ async function downloadFIT(type, durationMin, name, zwoFile = null, view = null)
   if (zwoFile) url += `&zwo_file=${encodeURIComponent(zwoFile)}`;
   // modal ⚡/❤ toggle: the FIT matches the view you're looking at (WYSIWYG).
   if (view) url += `&view=${encodeURIComponent(view)}`;
+  // task #24: cap=1 = PROMPT APPROVE — cap short reps to measured power.
+  if (cap) url += `&cap=1`;
   const fitName = name.replace(/[^a-zA-Z0-9]/g, '_') + '.fit';
-  if (await _saveViaPywebview('fit', fitName, url, {session_type: type, duration_min: durationMin, name: name, zwo_file: zwoFile || '', view: view || ''})) return;
+  if (await _saveViaPywebview('fit', fitName, url, {session_type: type, duration_min: durationMin, name: name, zwo_file: zwoFile || '', view: view || '', cap: cap ? 1 : 0})) return;
   try {
     const r = await fetch(url);
     if (!r.ok) {

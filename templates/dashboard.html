@@ -15909,6 +15909,9 @@ async function openDayWorkout(sessionIdx) {
   const matchedFile = (session.zwo_name || '').trim();
 
   let html = `<h2>${session.day_name} — ${esc(heroTitle)}</h2>`;
+  // v3.2.0: FTP-test sessions lead with a ramp-vs-20-min chooser — the rider
+  // picks per test (no global setting), with the trade-offs shown.
+  if (type === 'ftp_test') html += ftpTestChooserHtml(sessionIdx, session.day, session.ftp_test_type || 'coggan_20min');
   if (session.zwo_file && matchedFile) {
     // B7 — direction-aware, non-alarming gap note. The matched .zwo is a guide;
     // a longer file means ride the structure and stop at the slot target, a
@@ -16016,6 +16019,46 @@ async function openDayWorkout(sessionIdx) {
   }
 
   openModal(html);
+}
+
+// v3.2.0 — FTP-test chooser: two cards (ramp / 20-min) with a power-profile
+// sketch and honest pros/cons, shown at the top of an ftp_test session modal.
+// Picking a card swaps THIS session's workout (per-session, no global setting).
+function ftpTestChooserHtml(sessionIdx, day, currentType) {
+  const RAMP_SVG = `<svg viewBox="0 0 120 46" width="120" height="46" aria-hidden="true"><polyline points="0,42 16,42 16,36 34,36 34,29 52,29 52,21 70,21 70,13 88,13 88,6 100,6 101,42 120,42" fill="none" stroke="var(--accent)" stroke-width="2"/></svg>`;
+  const TT_SVG = `<svg viewBox="0 0 120 46" width="120" height="46" aria-hidden="true"><polyline points="0,40 14,30 19,30 21,7 26,7 28,36 40,36 44,36 44,18 108,18 114,40 120,40" fill="none" stroke="var(--accent)" stroke-width="2"/></svg>`;
+  const card = (tt, svg, title, what, pro, con) => {
+    const sel = currentType === tt;
+    return `<div style="flex:1;min-width:190px;border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'};border-radius:8px;padding:10px;background:${sel ? 'var(--surface2)' : 'transparent'};">
+      <div style="font-weight:700;font-size:13px;margin-bottom:4px;">${title}${sel ? ' <span style="color:var(--accent);font-size:11px;">· selected</span>' : ''}</div>
+      ${svg}
+      <div style="font-size:11px;color:var(--text2);margin:6px 0;">${what}</div>
+      <div style="font-size:11px;color:var(--text2);"><b style="color:var(--green,#3a3);">Pro</b> ${pro}</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:2px;"><b style="color:var(--red);">Con</b> ${con}</div>
+      <button class="btn btn-sm" ${sel ? 'disabled' : ''} style="margin-top:8px;font-size:11px;${sel ? 'opacity:0.5;' : ''}" onclick="chooseFtpTest(${sessionIdx}, '${escJs(day)}', '${tt}')">${sel ? 'Current test' : 'Choose this test'}</button>
+    </div>`;
+  };
+  return `<div style="margin:4px 0 14px;">
+    <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px;">Choose your FTP test</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      ${card('ramp', RAMP_SVG, 'Ramp test', 'Power steps up ~20 W every minute until you can\'t hold on; FTP = 75% of your best minute.', 'Quick (~20 min). Pacing is easy — just hold each step to failure.', 'Leans on your anaerobic system near the top, so punchy riders read HIGH. Measures your aerobic ceiling, not threshold directly.')}
+      ${card('coggan_20min', TT_SVG, '20-minute test', 'A 5-min all-out effort drains your sprint reserve, then a 20-min max effort; FTP = 95% of the 20-min average.', 'More accurate for threshold — the depletion effort keeps anaerobic inflation out.', 'Longer (~60 min). Pacing is HARD — go too hard early and you fade, reading LOW.')}
+    </div>
+  </div>`;
+}
+
+async function chooseFtpTest(sessionIdx, day, testType) {
+  try {
+    const r = await fetch('/api/plan/ftp-test-type', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({date: day, test_type: testType}),
+    });
+    const d = await r.json();
+    if (!r.ok || d.error) { alert(d.error || 'Could not switch test'); return; }
+    const s = window._weekPlanSessions?.[sessionIdx];
+    if (s) { s.zwo_file = d.zwo_file; s.zwo_name = d.zwo_name; s.duration_min = d.duration_min; s.ftp_test_type = d.test_type; }
+    openDayWorkout(sessionIdx);   // re-render with the chosen workout
+  } catch (e) { alert('Could not switch test'); }
 }
 
 // ═══ v2.3.0: Swap training type ════════════════════════════════════════════

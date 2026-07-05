@@ -61,6 +61,12 @@ are corrected, the 20-minute test gains its depletion effort, and ~30 new
 sessions land (30/15, 40/20 and microburst ladders, over-unders, a real 2×8
 field test).
 
+**Test your FTP your way.** Open the FTP test in your plan and choose ramp or
+20-minute — a side-by-side chooser shows each option's power profile and honest
+trade-offs (speed and easy pacing vs. threshold accuracy, and the pacing trap
+that reads low). Your tested FTP is now read from the effort itself, so a stray
+sprint in your warm-up can't inflate the ramp result.
+
 **Short intervals to your measured power** (opt-in). If you have a measured
 peak-power number, Domestique can cap a workout's short, very-hard reps to what
 you can actually produce — grounded in critical-power research, using your real

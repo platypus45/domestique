@@ -25,6 +25,19 @@
 - Workout charts label estimates as estimates and never draw a target harder
   than the session really is.
 
+### Test your FTP your way
+- **Choose your test — ramp or 20-minute.** Open the FTP test in your plan and a
+  side-by-side chooser shows both options with their power profiles and honest
+  pros and cons: the ramp is quick with easy pacing but reads high for punchy
+  riders; the 20-minute is more accurate for threshold but longer and needs even
+  pacing. Pick per test — no digging through settings.
+- **Your tested FTP is read from the effort itself.** The ramp now takes your best
+  minute *on the ramp* — a stray sprint in your warm-up or spin-down can't inflate
+  your FTP anymore — and the 20-minute test ignores a finish-line kick. If your
+  measured sprint power suggests the ramp read high, you get a heads-up.
+- The 20-minute test now includes the 5-minute depletion effort that keeps the
+  result honest (this was also mislabelled before — see above).
+
 ### Train to your own numbers
 - **Short intervals, matched to your measured power** (opt-in). If you've got a
   measured peak-power figure, Domestique can cap a workout's short, very-hard

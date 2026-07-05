@@ -15896,6 +15896,63 @@ async def api_plan_swap_type(request: Request):
         return JSONResponse({"detail": "swap-type failed"}, 500)
 
 
+def _ftp_test_family(fname: str) -> "str | None":
+    # ponytail: the filename already partitions ramp vs coggan — no sub-tags.
+    f = (fname or "").lower()
+    if f.startswith("ftp_test_ramp"):
+        return "ramp"
+    if f.startswith("ftp_test_coggan"):
+        return "coggan_20min"
+    return None
+
+
+@app.post("/api/plan/ftp-test-type")
+async def api_plan_ftp_test_type(request: Request):
+    """v3.2.0 — per-session FTP-test choice. The rider picks ramp or 20-min in
+    the workout modal (no global setting); this swaps THAT ftp_test session's
+    workout to a file of the chosen family. Body: {date, test_type}."""
+    body = await _get_json_body(request)
+    day_iso = str(body.get("date") or "").strip()
+    test_type = str(body.get("test_type") or "").strip()
+    if test_type not in ("ramp", "coggan_20min"):
+        return JSONResponse({"error": "test_type must be ramp or coggan_20min"}, 400)
+    try:
+        date.fromisoformat(day_iso)
+    except ValueError:
+        return JSONResponse({"error": "Invalid date"}, 400)
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+        target = next((s for w in plan.get("weeks", [])
+                       for s in w.get("sessions", []) if s.get("day") == day_iso), None)
+        if not target:
+            return JSONResponse({"error": f"No session at {day_iso}"}, 404)
+        if target.get("session_type") != "ftp_test":
+            return JSONResponse({"error": "not an FTP-test session"}, 400)
+        # Pick the chosen family's workout closest to a sensible duration
+        # (ramp ~45min, 20-min ~60min).
+        want_dur = 45 if test_type == "ramp" else 60
+        cands = [w for w in tp.load_workout_library()
+                 if _ftp_test_family(w.get("File", "")) == test_type]
+        if not cands:
+            return JSONResponse({"error": f"no {test_type} workout in library"}, 404)
+        pick = min(cands, key=lambda w: abs((w.get("Duration(min)") or 0) - want_dur))
+        target["zwo_file"] = pick["File"]
+        target["zwo_name"] = pick.get("Name") or pick["File"]
+        target["duration_min"] = int(pick.get("Duration(min)") or want_dur)
+        target["ftp_test_type"] = test_type
+        target["user_swapped"] = True   # the rider's deliberate choice
+        tp.atomic_write_plan(json_path, plan)
+        return {"ok": True, "test_type": test_type, "zwo_file": pick["File"],
+                "zwo_name": target["zwo_name"], "duration_min": target["duration_min"]}
+    except Exception:
+        _log.exception("ftp-test-type swap failed")
+        return JSONResponse({"detail": "ftp-test-type failed"}, 500)
+
+
 @app.post("/api/plan/rematch/{day}")
 async def api_plan_rematch_day(day: str):
     """P6 (v4.1.0) — re-draw a single day's workout.

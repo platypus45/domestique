@@ -53,3 +53,56 @@ def test_coggan_mean_not_np_and_finish_sprint_capped():
     out = fe.coggan_20min_ftp(series)
     assert out is not None
     assert 262 <= out["value"] <= 268   # ~266, kick trimmed; not ~271
+
+
+# ── D4: per-session ramp/20-min chooser endpoint ─────────────────────────────
+import json as _json
+import tempfile
+from datetime import date, timedelta
+from pathlib import Path
+from unittest import mock
+
+import app as app_module
+from fastapi.testclient import TestClient
+
+
+def _plan_with_ftp_test(tmp):
+    day = (date.today() + timedelta(days=3)).isoformat()
+    plan = {"generated": date.today().isoformat(), "weeks": [{
+        "week_num": 1, "start": date.today().isoformat(),
+        "end": (date.today() + timedelta(days=6)).isoformat(),
+        "sessions": [{"day": day, "day_name": "Thu", "session_type": "ftp_test",
+                      "duration_min": 60, "tss_estimate": 90,
+                      "zwo_file": "ftp_test_coggan_20min.zwo", "status": "pending"}],
+    }]}
+    (Path(tmp) / "current_plan.json").write_text(_json.dumps(plan))
+    return day
+
+
+def test_ftp_test_type_endpoint_swaps_family():
+    with tempfile.TemporaryDirectory() as tmp:
+        day = _plan_with_ftp_test(tmp)
+        with mock.patch.object(app_module, "_plan_dir", lambda: Path(tmp)):
+            c = TestClient(app_module.app)
+            # → ramp
+            r = c.post("/api/plan/ftp-test-type", json={"date": day, "test_type": "ramp"})
+            assert r.status_code == 200, r.text
+            assert r.json()["zwo_file"].startswith("ftp_test_ramp")
+            saved = _json.loads((Path(tmp) / "current_plan.json").read_text())
+            s = saved["weeks"][0]["sessions"][0]
+            assert s["zwo_file"].startswith("ftp_test_ramp")
+            assert s["ftp_test_type"] == "ramp"
+            # → back to 20-min
+            r = c.post("/api/plan/ftp-test-type", json={"date": day, "test_type": "coggan_20min"})
+            assert r.json()["zwo_file"].startswith("ftp_test_coggan")
+
+
+def test_ftp_test_type_endpoint_rejects_bad_input():
+    with tempfile.TemporaryDirectory() as tmp:
+        day = _plan_with_ftp_test(tmp)
+        with mock.patch.object(app_module, "_plan_dir", lambda: Path(tmp)):
+            c = TestClient(app_module.app)
+            assert c.post("/api/plan/ftp-test-type", json={"date": day, "test_type": "bogus"}).status_code == 400
+            assert c.post("/api/plan/ftp-test-type", json={"date": "not-a-date", "test_type": "ramp"}).status_code == 400
+            far = (date.today() + timedelta(days=999)).isoformat()
+            assert c.post("/api/plan/ftp-test-type", json={"date": far, "test_type": "ramp"}).status_code == 404

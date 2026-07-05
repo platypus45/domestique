@@ -1,5 +1,26 @@
 # Changelog
 
+## v3.2.2 — Smarter training variety: 597 hidden workouts join the planner (2026-07-05)
+
+- **~600 workouts your plan could never pick are now in rotation.** Ladder
+  intervals (steps up/down through threshold, VO2 and sweet spot), tempo
+  intervals, and endurance rides with sprinkled strides were in the library
+  but invisible to the week planner — it now draws on all of them, so plans
+  get visibly more varied without changing your load targets.
+- **Threshold work can no longer vanish from build weeks.** On unlucky rolls
+  the build phases could end up with zero threshold sessions (everything went
+  to shorter, punchier work). Every build now guarantees the classic four —
+  threshold, VO2max, sweet spot and over-unders.
+- **Block periodization concentrates harder.** When a focus block added
+  sessions of its focus quality, it under-counted how much the week grew —
+  focus share could drop below half. The block math now accounts for that.
+- **FTP-test files can't sneak onto normal training days** through the
+  workout pools anymore (a handful of untagged test files could).
+- Under the hood: the "reshuffle gives you the closest-duration workout"
+  guarantee is now verified against the planner's real selection rules (57
+  long-dormant checks re-enabled and passing).
+
+
 ## v3.2.1 — Analysis-tab fixes: the power curve finally draws (2026-07-05)
 
 - **Power curve now renders.** It could hang indefinitely (blank chart) while it

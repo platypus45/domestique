@@ -1,5 +1,45 @@
 # Changelog
 
+## v3.2.0 — Personalize your plan, and a workout library you can trust (2026-07-05)
+
+### Shape your own plan
+- **Adjust how your weeks are split.** The phase preview is now an editor:
+  drag the week counts for base, build, peak and taper with steppers, within
+  safe limits, or keep the recommendation. No more wondering why an extra week
+  went to base — you decide.
+- **Start a plan from your rides.** Alongside "I've been training since <date>",
+  a new option scans your recent rides and proposes which week you're actually
+  on, so a rebuilt plan drops you in the right place.
+
+### A workout library you can trust
+- **Every session now matches its slot.** Workouts are matched to your plan by
+  what they actually contain, not just their label — so a sprint day gives you
+  sprints and a sweet-spot day stays sweet spot. The two cases a tester hit
+  (a brutal neuromuscular session on an easy day; 700-watt spikes under a
+  sweet-spot title) can't happen anymore.
+- **"FTP test" means an FTP test.** Dozens of workouts mislabelled as tests are
+  reclassified to what they really are, and the 20-minute test now includes the
+  short depletion effort that keeps your result honest.
+- **~30 new sessions**: 30/15, 40/20 and microburst VO2 ladders, threshold
+  over-unders, sweet-spot builds, and a proper 2×8-minute field test.
+- Workout charts label estimates as estimates and never draw a target harder
+  than the session really is.
+
+### Train to your own numbers
+- **Short intervals, matched to your measured power** (opt-in). If you've got a
+  measured peak-power figure, Domestique can cap a workout's short, very-hard
+  reps to what you can actually produce — approve per workout, or leave it off.
+  Grounded in the critical-power research, using your real numbers rather than a
+  model's guess.
+
+### Under the hood
+- Regenerate, add-race and weekly auto-recalc keep every plan setting (intensity
+  distribution, custom bands, races, backdated start) instead of quietly
+  resetting to defaults.
+- Race rows and your completed/moved sessions survive a weekly recalc.
+- First-run setup: inline field checks, a native folder picker, clearer wording,
+  and "from intervals.icu" tags on prefilled values.
+
 ## v3.1.0 — Your plan survives upgrades, and plans can start in the past (2026-07-04)
 
 ### Upgrade no longer loses your training plan

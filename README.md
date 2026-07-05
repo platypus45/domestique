@@ -9,9 +9,9 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.12-blue" alt="Python">
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
-  <img src="https://img.shields.io/badge/Workouts-4232-orange" alt="Workouts">
+  <img src="https://img.shields.io/badge/Workouts-4249-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v3.1.0-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v3.2.0-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-2100%2B-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -46,6 +46,25 @@ Domestique is neither. Every signal that touches the dashboard also has a code-p
 Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus a 1-week consolidation phase at the end of every non-event cycle so people don't ride straight from a peak into a fresh build with elevated fatigue (Mujika 2010).
 
 ---
+
+## What's new in v3.2.0
+
+**Shape your own plan.** The phase preview is now an editor — adjust how your
+weeks split across base, build, peak and taper with steppers (within safe
+limits), or keep the recommendation. And a new "place me from my rides" option
+scans your recent training to propose which week you're actually on.
+
+**A workout library you can trust.** Sessions are matched to your plan by what
+they actually contain, not just their label — a sprint day gives you sprints,
+a sweet-spot day stays sweet spot. Dozens of mislabelled "FTP test" workouts
+are corrected, the 20-minute test gains its depletion effort, and ~30 new
+sessions land (30/15, 40/20 and microburst ladders, over-unders, a real 2×8
+field test).
+
+**Short intervals to your measured power** (opt-in). If you have a measured
+peak-power number, Domestique can cap a workout's short, very-hard reps to what
+you can actually produce — grounded in critical-power research, using your real
+numbers rather than a model's guess.
 
 ## What's new in v3.1.0
 
@@ -487,7 +506,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v3.1.0 — Your plan survives upgrades, and plans can start in the past](https://github.com/platypus45/domestique/releases/latest)** (2026-07-04).
+Latest: **[v3.2.0 — Personalize your plan, and a workout library you can trust](https://github.com/platypus45/domestique/releases/latest)** (2026-07-05).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

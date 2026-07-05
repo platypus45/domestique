@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/Workouts-4249-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
   <img src="https://img.shields.io/badge/Version-v3.2.0-brightgreen" alt="Version">
-  <img src="https://img.shields.io/badge/Tests-2100%2B-success" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-2400%2B-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
 

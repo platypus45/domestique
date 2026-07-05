@@ -2,56 +2,96 @@
 
 ## v3.2.0 — Personalize your plan, and a workout library you can trust (2026-07-05)
 
+The biggest release yet. You get real control over how your plan is shaped and
+how you test your fitness; every workout is now matched by what it actually
+contains rather than the name it was filed under; and a batch of new sessions
+plus a wave of honest fixes land across the board.
+
 ### Shape your own plan
-- **Adjust how your weeks are split.** The phase preview is now an editor:
-  drag the week counts for base, build, peak and taper with steppers, within
-  safe limits, or keep the recommendation. No more wondering why an extra week
-  went to base — you decide.
-- **Start a plan from your rides.** Alongside "I've been training since <date>",
-  a new option scans your recent rides and proposes which week you're actually
-  on, so a rebuilt plan drops you in the right place.
+- **Phase editor — set your own base / build / peak / taper split.** The phase
+  timeline on the Training Plan tab is now interactive: step each phase's week
+  count up or down and the plan redraws as you go. You stay within safe limits
+  (a race taper can't vanish, the peak can't balloon), or press **Recommended**
+  to snap back to the automatic split. Useful when you want, say, an extra base
+  week or a longer peak than the default gives you — previously the split was
+  fixed and could jump around by a week as your event date shifted.
+- **Mid-plan entry — "I've been training already."** When you build or rebuild a
+  plan you can now tell Domestique you didn't start today, two ways:
+  - **I know my start date** — pick the day your block actually began. The plan
+    is laid out over the full runway from that date, the weeks you've already
+    done are marked complete, and you drop in at the week you're really on — no
+    repeating a base phase you already rode.
+  - **Place me from my rides** — Domestique reads your recent training and
+    proposes which week you're on, so a rebuild lands you where your fitness
+    actually is instead of at week one.
 
 ### A workout library you can trust
-- **Every session now matches its slot.** Workouts are matched to your plan by
-  what they actually contain, not just their label — so a sprint day gives you
-  sprints and a sweet-spot day stays sweet spot. The two cases a tester hit
-  (a brutal neuromuscular session on an easy day; 700-watt spikes under a
-  sweet-spot title) can't happen anymore.
-- **"FTP test" means an FTP test.** Dozens of workouts mislabelled as tests are
-  reclassified to what they really are, and the 20-minute test now includes the
-  short depletion effort that keeps your result honest.
-- **~30 new sessions**: 30/15, 40/20 and microburst VO2 ladders, threshold
-  over-unders, sweet-spot builds, and a proper 2×8-minute field test.
-- Workout charts label estimates as estimates and never draw a target harder
-  than the session really is.
+- **Every session matches its slot — by content, not by label.** Workouts are
+  now admitted to a plan slot based on what they actually contain (their real
+  efforts, durations and intensities), not just the category they were filed
+  under. A sprint day gives you sprints; a sweet-spot day stays sweet spot. The
+  two problems a tester hit this week — a brutal neuromuscular session served on
+  an easy day, and 700-watt spikes hiding under a "sweet spot" title — are now
+  impossible by construction, and locked down with tests so they can't return.
+- **The whole 4,000+ workout library was audited and corrected.** Around a
+  hundred files whose label disagreed with their real content were reclassified
+  to the truth, each one checked by hand. The mislabelling had a root cause in
+  the classifier itself (it read a staircase warm-up as a ramp-to-failure, among
+  other slips) — those rules are fixed, so the corrections hold on future
+  updates instead of drifting back.
+- **"FTP test" now actually means an FTP test.** 67 of the 75 workouts filed as
+  "FTP test" weren't tests at all — they were threshold, over-under or sweet-spot
+  sessions wearing the wrong name. They're reclassified, and the real 20-minute
+  test gains the 5-minute all-out effort that drains your sprint reserve first
+  (skipping that is the single biggest cause of an over-read FTP).
+- **~30 new sessions.** VO2 ladders at 30/15, 40/20 and 15/15 microbursts in 2-,
+  3- and 4-set lengths; threshold over-unders; sweet-spot builds; and a proper
+  2×8-minute (CTS-style) field test the library had been missing.
+- **Honest workout charts.** A preview drawn from a generic template (rather than
+  the real file) is now clearly labelled as an estimate, and the chart never
+  draws a target harder than the session really is.
 
 ### Test your FTP your way
-- **Choose your test — ramp or 20-minute.** Open the FTP test in your plan and a
-  side-by-side chooser shows both options with their power profiles and honest
-  pros and cons: the ramp is quick with easy pacing but reads high for punchy
-  riders; the 20-minute is more accurate for threshold but longer and needs even
-  pacing. Pick per test — no digging through settings.
-- **Your tested FTP is read from the effort itself.** The ramp now takes your best
-  minute *on the ramp* — a stray sprint in your warm-up or spin-down can't inflate
-  your FTP anymore — and the 20-minute test ignores a finish-line kick. If your
-  measured sprint power suggests the ramp read high, you get a heads-up.
-- The 20-minute test now includes the 5-minute depletion effort that keeps the
-  result honest (this was also mislabelled before — see above).
+- **Choose ramp or 20-minute — per test.** Open an FTP-test day in your plan and
+  a chooser leads the screen: two cards, each with a sketch of the power profile
+  and honest pros and cons, so you pick with your eyes open.
+  - **Ramp** — power steps up about 20 W a minute until you can't hold on; your
+    FTP is 75% of your best minute. Quick and easy to pace, but it leans on your
+    anaerobic system near the top, so punchy riders tend to read high.
+  - **20-minute** — a 5-minute all-out effort drains your reserve, then a
+    20-minute maximal effort; your FTP is 95% of that average. More accurate for
+    threshold, but longer, and pacing is unforgiving — go out too hard and you
+    fade, reading low.
+  Pick a card and that session's workout swaps to it. There's no global setting
+  to hunt for — you choose in the moment, for that test.
+- **Your FTP is read from the effort itself.** When you finish a test, Domestique
+  works the number out from your actual ride. The ramp takes your best *sustained*
+  minute on the ramp, so a stray sprint in your warm-up or spin-down can no longer
+  inflate the result; the 20-minute test trims a finish-line kick before
+  averaging. It suggests the new FTP and lets you approve it — and if your measured
+  sprint power says the ramp likely read high, it flags that so you can adjust.
 
 ### Train to your own numbers
-- **Short intervals, matched to your measured power** (opt-in). If you've got a
-  measured peak-power figure, Domestique can cap a workout's short, very-hard
-  reps to what you can actually produce — approve per workout, or leave it off.
-  Grounded in the critical-power research, using your real numbers rather than a
-  model's guess.
+- **Short intervals capped to your measured power (opt-in).** If you have a
+  measured peak-power number, Domestique can hold a workout's short, very-hard
+  efforts to what you can actually produce — you approve it per workout, or leave
+  it off entirely. It's grounded in critical-power sports science and uses your
+  real measured numbers, not a model's estimate. (We read the research first and
+  deliberately did *not* ship the tempting-but-unsound version that predicts your
+  interval power from a fatigue model — the literature shows that over-reads at
+  exactly these short durations.)
 
 ### Under the hood
-- Regenerate, add-race and weekly auto-recalc keep every plan setting (intensity
-  distribution, custom bands, races, backdated start) instead of quietly
-  resetting to defaults.
-- Race rows and your completed/moved sessions survive a weekly recalc.
-- First-run setup: inline field checks, a native folder picker, clearer wording,
-  and "from intervals.icu" tags on prefilled values.
+- **Your plan settings survive a rebuild.** Regenerate, add-race and the weekly
+  auto-recalc now keep everything — your intensity distribution, custom zone
+  bands, B/C races and a backdated start — instead of quietly resetting to
+  defaults after an app restart.
+- **Recalc no longer loses your work.** Race days and the sessions you've
+  completed, moved or dismissed now survive a weekly recalculation.
+- **First-run setup polish.** Inline validation as you type, a native folder
+  picker instead of typing paths, clearer wording on the data-folders step, and
+  a small "from intervals.icu" tag on any value that was prefilled from your
+  account.
 
 ## v3.1.0 — Your plan survives upgrades, and plans can start in the past (2026-07-04)
 

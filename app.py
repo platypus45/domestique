@@ -15881,23 +15881,18 @@ def api_plan_auto_recalc():
         # recalculate_plan bare, so it inherited whatever model ran last.
         tp.set_active_distribution(goal.distribution, goal.custom_bands)
 
-        # Reconstruct plan weeks
+        # Reconstruct plan weeks.
+        # v1.8.20 parity — round-trip ALL session fields via the canonical
+        # helper: the old 6-field rebuild zeroed user_moved/status/dismissed_at/
+        # completion_matches/is_race/zwo_file/…, so every weekly recalc write
+        # wiped rider edits + race markers from every week, past ones included.
         old_weeks = []
         for w in plan.get("weeks", []):
-            sessions = []
-            for s in w.get("sessions", []):
-                sessions.append(tp.PlannedSession(
-                    day=date.fromisoformat(s["day"]), day_name=s.get("day_name", ""),
-                    session_type=s.get("session_type", "rest"),
-                    duration_min=s.get("duration_min", 0),
-                    tss_estimate=s.get("tss_estimate", 0),
-                    description=s.get("description", ""),
-                ))
             old_weeks.append(tp.PlannedWeek(
                 week_num=w["week_num"], start=date.fromisoformat(w["start"]),
                 end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
                 tss_target=w.get("tss_target", 0), is_stepback=w.get("is_stepback", False),
-                sessions=sessions,
+                sessions=[_planned_session_from_json(s) for s in w.get("sessions", [])],
             ))
 
         # Get eFTP for drift detection
@@ -15934,39 +15929,37 @@ def api_plan_auto_recalc():
         if recalc_info.get("action") == "no_change":
             return {"action": "no_change", **recalc_info}
 
-        # Save updated plan
-        plan_dict = {
-            "goal": plan.get("goal", {}),
-            "phases": [
+        # Save updated plan — START from a shallow copy of the ORIGINAL plan so
+        # every top-level key survives (availability calendar, adoption/regen
+        # markers, …), mirroring the v1.8.20 regen-path fix. Sessions serialize
+        # via the canonical helper (all 22 fields): the old inline 8-field dict
+        # dropped is_race/race/status/user_moved/dismissed_at/completion_matches
+        # from EVERY week on EVERY weekly recalc write.
+        plan_dict = dict(plan)
+        if new_phases:
+            plan_dict["phases"] = [
                 {"name": p.name, "weeks": p.weeks,
                  "start": p.start.isoformat(), "end": p.end.isoformat(),
                  "weekly_tss": p.weekly_tss_target, "focus": p.focus}
                 for p in new_phases
-            ] if new_phases else plan.get("phases", []),
-            "weeks": [
-                {"week_num": w.week_num, "start": w.start.isoformat(), "end": w.end.isoformat(),
-                 "phase": w.phase, "tss_target": w.tss_target, "is_stepback": w.is_stepback,
-                 "sessions": [
-                     {"day": s.day.isoformat(), "day_name": s.day_name,
-                      "session_type": s.session_type, "duration_min": s.duration_min,
-                      "tss_estimate": s.tss_estimate, "description": s.description,
-                      "zwo_file": getattr(s, "zwo_file", ""), "zwo_name": getattr(s, "zwo_name", "")}
-                     for s in w.sessions
-                 ]}
-                for w in all_weeks
-            ],
-            "generated": plan.get("generated", ""),
-            "recalc_date": datetime.now().isoformat(),
-            "recalc_info": recalc_info,
-            "availability": plan.get("availability", {}),
-            "unavailable_periods": plan.get("unavailable_periods", []),
-        }
-        # Phase-split editor (v3.2.0, A1): fresh rebuild — stamp plan meta
-        # from THIS recalc only (the lossy goal above means None here, i.e.
-        # the phases were rebuilt on the recommendation; no stale badge).
+            ]
+        plan_dict["weeks"] = [
+            {"week_num": w.week_num, "start": w.start.isoformat(), "end": w.end.isoformat(),
+             "phase": w.phase, "tss_target": w.tss_target, "is_stepback": w.is_stepback,
+             "sessions": [_planned_session_to_json(s) for s in w.sessions]}
+            for w in all_weeks
+        ]
+        plan_dict["recalc_date"] = datetime.now().isoformat()
+        plan_dict["recalc_info"] = recalc_info
+        # Phase-split editor (v3.2.0, A1): the overlay copy above keeps every
+        # old top-level key, so the previous rebuild's phase_weeks_status
+        # would survive as a STALE badge — mirror THIS recalc's status: set
+        # when the engine surfaced one, pop when it didn't (no custom split).
         _pws = recalc_info.get("phase_weeks_status")
         if _pws:
             plan_dict["phase_weeks_status"] = _pws
+        else:
+            plan_dict.pop("phase_weeks_status", None)
 
         tp.atomic_write_plan(json_path, plan_dict)
 

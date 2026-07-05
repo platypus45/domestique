@@ -2054,14 +2054,30 @@ window.addEventListener('unhandledrejection', function(e) {
       </div>
       <!-- v3.1.0 (IP_PLAN_CONTINUITY MODE 1): backdated start. Applies to every
            goal type. Checked + a past date ⇒ the plan anchors on that date;
-           weeks already behind you are marked done and you enter mid-plan. -->
+           weeks already behind you are marked done and you enter mid-plan.
+           MODE 2 ("Place me from my rides"): the recognizer scans the ride
+           archive, proposes a credit, and Confirm stores the RESULT as an
+           equivalent start date (entry_mode=recognized). -->
       <div class="form-row">
         <div class="form-group"><label style="display:flex;align-items:center;gap:6px;">
           <input type="checkbox" id="plan-backdate-on" onchange="onBackdateToggle()"> I&rsquo;ve been training already
         </label></div>
         <div class="form-group" id="plan-backdate-wrap" style="display:none;">
-          <label>Training since</label>
-          <input type="date" id="plan-sdate" onchange="refreshPlanPreview()">
+          <div style="display:flex;gap:12px;margin-bottom:4px;">
+            <label style="font-size:12px;display:flex;align-items:center;gap:4px;">
+              <input type="radio" name="plan-entry-mode" value="date" checked onchange="onEntryModeChange()"> I know my start date</label>
+            <label style="font-size:12px;display:flex;align-items:center;gap:4px;">
+              <input type="radio" name="plan-entry-mode" value="scan" onchange="onEntryModeChange()"> Place me from my rides</label>
+          </div>
+          <div id="entry-date-arm">
+            <label>Training since</label>
+            <input type="date" id="plan-sdate" onchange="onEntrySdateEdited()">
+            <span id="entry-recognized-note" style="display:none;font-size:10px;color:var(--text3);margin-left:6px;">placed from your rides</span>
+          </div>
+          <div id="entry-scan-arm" style="display:none;">
+            <button type="button" class="btn btn-sm" onclick="scanEntryRides()">Scan my rides</button>
+            <div id="entry-scan-results" style="margin-top:6px;"></div>
+          </div>
         </div>
       </div>
       <div id="plan-event-fields">
@@ -10031,7 +10047,114 @@ function onBackdateToggle() {
     d.max = y.toISOString().slice(0, 10);
     if (!on) d.value = '';
   }
+  if (!on) {
+    // Stale MODE 2 state can't linger either.
+    _setEntryRecognized(false);
+    const res = $('entry-scan-results'); if (res) res.innerHTML = '';
+  }
   refreshPlanPreview();
+}
+
+// ── MODE 2 — "Place me from my rides" (IP_PLAN_CONTINUITY B-D3) ────────────
+// Provenance flag for the generate payload: true only after the user
+// confirms a scan proposal (entry_mode="recognized"); a manual date edit
+// demotes it back to "declared". The recognizer is never silently re-run.
+window._entryRecognized = false;
+
+function _setEntryRecognized(v) {
+  window._entryRecognized = !!v;
+  const note = $('entry-recognized-note');
+  if (note) note.style.display = v ? '' : 'none';
+}
+
+function _entryMode() {
+  const el = document.querySelector('input[name="plan-entry-mode"]:checked');
+  return el ? el.value : 'date';
+}
+
+function onEntryModeChange() {
+  const scan = _entryMode() === 'scan';
+  const da = $('entry-date-arm'), sa = $('entry-scan-arm');
+  if (da) da.style.display = scan ? 'none' : '';
+  if (sa) sa.style.display = scan ? '' : 'none';
+}
+
+function onEntrySdateEdited() {
+  _setEntryRecognized(false);  // user overrode the recognizer → "declared"
+  refreshPlanPreview();
+}
+
+async function scanEntryRides() {
+  const res = $('entry-scan-results');
+  if (res) res.innerHTML = '<span style="font-size:11px;color:var(--text2);">Scanning your rides…</span>';
+  try {
+    const goal = $('plan-goal').value;
+    const isEvent = _isEventGoal(goal);
+    const params = new URLSearchParams({ goal, plan_weeks: String(parseInt($('plan-weeks').value) || 12) });
+    if (isEvent && $('plan-edate').value) params.set('event_date', $('plan-edate').value);
+    const r = await fetch('/api/plan/entry-scan?' + params.toString());
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      if (res) res.innerHTML = `<span style="font-size:11px;color:var(--red);">${esc(err.detail || 'Scan failed')}</span>`;
+      return;
+    }
+    _renderEntryScan(await r.json());
+  } catch (e) {
+    if (res) res.innerHTML = '<span style="font-size:11px;color:var(--red);">Scan failed</span>';
+  }
+}
+
+function _renderEntryScan(d) {
+  const res = $('entry-scan-results');
+  if (!res || !d) return;
+  let html = '';
+  if (d.capped) {
+    html += '<div style="font-size:10px;color:var(--text3);margin-bottom:4px;">Evidence window limited by your ride history.</div>';
+  }
+  for (const w of (d.weeks || [])) {
+    const mark = w.qualifies
+      ? '<span style="color:var(--green);">&#10003;</span>'
+      : '<span style="color:var(--red);">&#10007;</span>';
+    const shape = w.shape_note ? ` &middot; ${esc(w.shape_note)}` : '';
+    html += `<div style="font-size:11px;color:var(--text2);display:flex;gap:6px;align-items:center;">
+      ${mark} <span>Week ${w.index} &middot; from ${esc(w.window_start)} &middot; ${Math.round(w.actual_tss)} / ${Math.round(w.target_tss)} TSS${shape}</span></div>`;
+  }
+  const c = d.proposal_weeks || 0;
+  if (c > 0) {
+    html += `<div style="font-size:12px;font-weight:600;margin-top:6px;">Credit ${c} week${c > 1 ? 's' : ''} &mdash; start at week ${c + 1}</div>
+      <div style="margin-top:4px;display:flex;gap:8px;align-items:center;">
+        <button type="button" class="btn btn-sm" onclick="confirmEntryScan('${esc(d.equivalent_start_date)}')">Confirm</button>
+        <a href="#" style="font-size:11px;" onclick="useEntryDateInstead(); return false;">Use a date instead</a>
+      </div>`;
+  } else {
+    html += `<div style="font-size:12px;margin-top:6px;">No qualifying weeks found &mdash; start fresh, or
+      <a href="#" onclick="useEntryDateInstead(); return false;">use a date instead</a>.</div>`;
+  }
+  res.innerHTML = html;
+}
+
+// Confirm: store the proposal as the equivalent start date (the single
+// downstream anchor), mark provenance recognized, and refresh the preview so
+// the backdated split is visible BEFORE Generate.
+function confirmEntryScan(startDate) {
+  if (!startDate) return;
+  const d = $('plan-sdate');
+  if (d) d.value = startDate;
+  _setEntryRecognized(true);
+  const res = $('entry-scan-results');
+  if (res) {
+    const note = document.createElement('div');
+    note.style.cssText = 'font-size:11px;color:var(--green);margin-top:4px;';
+    note.textContent = `✓ Placed from your rides — plan starts ${startDate}`;
+    res.appendChild(note);
+  }
+  refreshPlanPreview();
+}
+
+function useEntryDateInstead() {
+  const el = document.querySelector('input[name="plan-entry-mode"][value="date"]');
+  if (el) el.checked = true;
+  onEntryModeChange();
 }
 
 // FS1 — show the template picker only for plan_mode=template.
@@ -10590,8 +10713,10 @@ async function generatePlan() {
     start_date: ((($('plan-backdate-on')||{}).checked) && $('plan-sdate') && $('plan-sdate').value)
       ? $('plan-sdate').value : null,
   };
-  // Provenance for the anchor (MODE 2 "recognized" lands later).
-  body.entry_mode = body.start_date ? 'declared' : null;
+  // Provenance for the anchor: "recognized" when the date came from a
+  // confirmed ride-scan (MODE 2), "declared" for a manually entered date.
+  body.entry_mode = body.start_date
+    ? (window._entryRecognized ? 'recognized' : 'declared') : null;
   if (body.goal === 'event') {
     body.event_date = $('plan-edate').value || null;
     body.event_name = $('plan-ename').value || null;
@@ -12620,6 +12745,10 @@ function populatePlanFormFromGoal(goal) {
     if (wrap) wrap.style.display = goal.start_date ? '' : 'none';
   }
   setVal('plan-sdate', goal.start_date || '');
+  // MODE 2 provenance (B-LOCKED-7): the stored start_date stays the anchor
+  // and the recognizer is NEVER silently re-run — regenerate reuses the date
+  // and keeps entry_mode="recognized", shown as a small provenance note.
+  _setEntryRecognized(goal.entry_mode === 'recognized' && !!goal.start_date);
   setVal('plan-edate', goal.event_date || '');
   setVal('plan-ename', goal.event_name || '');
   if (goal.event_km) setVal('plan-ekm', goal.event_km);

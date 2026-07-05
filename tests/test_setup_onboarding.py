@@ -106,3 +106,180 @@ def test_check_activities_auth_fail(monkeypatch):
 def test_check_activities_needs_key(monkeypatch):
     r = client.post("/api/setup/check-activities", json={})
     assert r.json()["ok"] is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Setup-wizard polish pack: pywebview-native folder browse, inline validation
+# (client mirror of SETUP_LIMITS + lthr<max_hr), intervals.icu prefill tags,
+# step-3 copy.
+# ═══════════════════════════════════════════════════════════════════════════
+import re
+import types
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def _setup_html():
+    with open(os.path.join(REPO, "templates", "setup.html"), encoding="utf-8") as f:
+        return f.read()
+
+
+def _fake_webview(dialog_result, windows=True):
+    """A stand-in webview module: records create_file_dialog calls."""
+    m = types.ModuleType("webview")
+    m.FOLDER_DIALOG = 20
+    m.calls = []
+
+    class _Win:
+        def create_file_dialog(self, dialog_type, **kw):
+            m.calls.append(dialog_type)
+            return dialog_result
+
+    m.windows = [_Win()] if windows else []
+    return m
+
+
+def _fake_tkinter(picked, hits):
+    """Stand-in tkinter + tkinter.filedialog; records askdirectory calls."""
+    tk = types.ModuleType("tkinter")
+    fd = types.ModuleType("tkinter.filedialog")
+
+    class _Tk:
+        def withdraw(self): pass
+        def attributes(self, *a): pass
+        def destroy(self): pass
+
+    tk.Tk = _Tk
+
+    def askdirectory(**kw):
+        hits.append(kw)
+        return picked
+
+    fd.askdirectory = askdirectory
+    tk.filedialog = fd
+    return tk, fd
+
+
+def test_pick_folder_prefers_webview_dialog(monkeypatch):
+    wv = _fake_webview(("/Users/t/Rides",))
+    hits = []
+    tk, fd = _fake_tkinter("/WRONG", hits)
+    monkeypatch.setitem(sys.modules, "webview", wv)
+    monkeypatch.setitem(sys.modules, "tkinter", tk)
+    monkeypatch.setitem(sys.modules, "tkinter.filedialog", fd)
+    r = client.get("/api/setup/pick-folder")
+    assert r.status_code == 200
+    assert r.json() == {"path": "/Users/t/Rides"}   # tuple result normalised
+    assert wv.calls == [wv.FOLDER_DIALOG]
+    assert hits == []                               # tkinter never touched
+
+
+def test_pick_folder_webview_cancel_is_empty_not_tkinter(monkeypatch):
+    wv = _fake_webview(None)                        # user cancelled the dialog
+    hits = []
+    tk, fd = _fake_tkinter("/WRONG", hits)
+    monkeypatch.setitem(sys.modules, "webview", wv)
+    monkeypatch.setitem(sys.modules, "tkinter", tk)
+    monkeypatch.setitem(sys.modules, "tkinter.filedialog", fd)
+    r = client.get("/api/setup/pick-folder")
+    assert r.json() == {"path": ""}
+    assert wv.calls == [wv.FOLDER_DIALOG]
+    assert hits == []                               # cancel must NOT re-prompt
+
+
+def test_pick_folder_falls_back_to_tkinter_without_window(monkeypatch):
+    wv = _fake_webview(("/ignored",), windows=False)  # dev/browser run
+    hits = []
+    tk, fd = _fake_tkinter("/Users/t/GPX", hits)
+    monkeypatch.setitem(sys.modules, "webview", wv)
+    monkeypatch.setitem(sys.modules, "tkinter", tk)
+    monkeypatch.setitem(sys.modules, "tkinter.filedialog", fd)
+    r = client.get("/api/setup/pick-folder")
+    assert r.json() == {"path": "/Users/t/GPX"}
+    assert wv.calls == []
+    assert len(hits) == 1
+
+
+def test_setup_page_render_smoke():
+    r = client.get("/setup")
+    assert r.status_code == 200
+    for anchor in ('id="step-1"', 'id="step-3"', 'id="save-btn"'):
+        assert anchor in r.text
+
+
+# ── Item 1: inline validation mirrors the server rules ──────────────────────
+
+def test_wizard_static_bounds_mirror_server_table():
+    """Parse both sides, assert equal (the static attrs are the offline
+    fallback; applyServerLimits overwrites them from the same table)."""
+    html = _setup_html()
+    ids = {"weight": "s-weight", "ftp": "s-ftp", "lthr": "s-lthr",
+           "max_hr": "s-maxhr", "hours_per_week": "s-hours",
+           "age": "s-age", "cp": "s-cp", "wprime_j": "s-wprime"}
+    for field, iid in ids.items():
+        m = re.search(r'<input[^>]*id="%s"[^>]*>' % re.escape(iid), html)
+        assert m, f"input #{iid} missing"
+        lo = re.search(r'min="([\d.]+)"', m.group(0))
+        hi = re.search(r'max="([\d.]+)"', m.group(0))
+        assert lo and hi, f"input #{iid} lacks min/max"
+        assert [float(lo.group(1)), float(hi.group(1))] == \
+            [float(x) for x in app_module.SETUP_LIMITS[field]], \
+            f"#{iid} bounds drifted from SETUP_LIMITS[{field}]"
+
+
+def test_wizard_inline_validation_wiring():
+    html = _setup_html()
+    # validator + per-field error slots
+    assert "function fieldError" in html
+    assert "function refreshValidation" in html
+    for iid in ("s-weight", "s-ftp", "s-lthr", "s-maxhr",
+                "s-age", "s-cp", "s-wprime", "s-hours"):
+        assert f'id="err-{iid}"' in html, f"missing error div for #{iid}"
+    # validates on blur AND input
+    assert "addEventListener('input', refreshValidation)" in html
+    assert "addEventListener('blur', refreshValidation)" in html
+    # red-at-the-field styling uses the existing vars
+    assert "color: var(--red)" in html
+    # cross-field mirror of the AC5b server check (same phrasing as the 400)
+    assert "must be below max HR" in html
+    # Continue (step 2) + Finish gated while invalid
+    assert 'id="step2-next"' in html
+    assert "n2.disabled = !allOk" in html
+    assert "sv.disabled = !allOk" in html
+    # required-vs-optional visually distinct
+    assert html.count('class="skip-link">(optional)</span>') >= 3  # age, sex, folders
+
+
+def test_wizard_lthr_bound_and_cross_rule_match_server():
+    """The client cross-check exists AND the server still enforces it — the
+    client is a mirror, not a replacement (server rules unchanged)."""
+    html = _setup_html()
+    assert "l >= m" in html                       # client: lthr >= max_hr → error
+    import inspect
+    src = inspect.getsource(app_module.setup_save)
+    assert "must be below max HR" in src          # server: AC5b 400 detail
+
+
+# ── Item 4: intervals.icu prefill tags ───────────────────────────────────────
+
+def test_wizard_icu_prefill_tags_present():
+    html = _setup_html()
+    for iid in ("s-ftp", "s-weight", "s-lthr", "s-maxhr"):
+        assert f'id="icu-tag-{iid}"' in html, f"missing prefill tag for #{iid}"
+    assert html.count("from intervals.icu</span>") == 4
+    # tags refresh from the AC5f origin set, and editing clears them because
+    # _markTouched(id, false) drops the origin before refreshing
+    assert "_icuOrigin.has(id)" in html
+    assert html.count("refreshIcuTags()") >= 2    # _markTouched + restore path
+
+
+# ── Item 3: step-3 copy ──────────────────────────────────────────────────────
+
+def test_step3_copy_plain_english_and_after_finish():
+    html = _setup_html()
+    step3 = html[html.index('id="step-3"'):html.index('id="step-4"')]
+    assert "Virtual Trainer" not in step3         # old jargon gone
+    assert "workout library built in" in step3    # folders are optional
+    assert "When you finish" in step3             # explains what Finish does
+    assert "training plan" in step3
+    assert "intervals.icu" in step3

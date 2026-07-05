@@ -3580,6 +3580,28 @@ class NoCandidateWorkoutError(ValueError):
     """
 
 
+def _class_aware_score_floor(cc: str) -> int:
+    """v3.2.0 WATERTIGHT — the single class-aware Score floor shared by the
+    sampler pool build (``_build_pool_indexes``) and the per-slot matcher
+    (``match_zwo``). score_workout rewards TSS + Z3+ structure, which fairly
+    rates HIT classes but systematically under-scores the intentionally-simple
+    endurance/recovery classes, so the floor is tiered:
+        HIT (vo2max/vo2_short/threshold/over_under/anaerobic/neuromuscular/
+             sweet_spot):  ≥ 5   (quality bar)
+        tempo / mixed:     ≥ 4   (light bar)
+        endurance / recovery: ≥ 1 (none)
+    Keeping this in ONE place stops the pool and the rematcher from drifting:
+    the sampler's clamp-then-rematch (~tp:5425) routes through match_zwo, so a
+    looser floor there let a below-floor HIT file the pool had rejected leak
+    back onto a HIT slot (a score-3 neuromuscular on a clamped sprint slot).
+    """
+    if cc in ("endurance", "recovery"):
+        return 1
+    if cc in ("tempo", "mixed"):
+        return 4
+    return 5
+
+
 def match_zwo(
     session: PlannedSession, library: list[dict],
     week_num: int = 0, day_idx: int = 0, used_names: set = None,
@@ -3716,11 +3738,16 @@ def match_zwo(
             # Duration≥20min so the tiny steady stubs (8-18min, ~empty content,
             # ContentClass-empty → filename fallback "endurance") stay excluded —
             # else exact_duration's closest-tier collapse would prefer a 10-min
-            # stub on a short slot. All other classes keep the Score≥3 bar.
+            # stub on a short slot. Non-easy classes use the class-aware floor
+            # (HIT ≥5, tempo/mixed ≥4) shared with the sampler pool build — see
+            # _class_aware_score_floor. v3.2.0 WATERTIGHT: the previous flat
+            # Score<3 bar let the clamp-then-rematch (~tp:5425) re-admit a
+            # below-floor HIT file (score-3 neuromuscular onto a sprint slot)
+            # that _build_pool_indexes had already rejected.
             if cc_row in ("endurance", "recovery"):
                 if w["Score"] < 1 or (w["Duration(min)"] or 0) < 20:
                     continue
-            elif w["Score"] < 3:
+            elif w["Score"] < _class_aware_score_floor(cc_row):
                 continue
             tags_lower = {t.lower() for t in (w.get("Tags") or [])}
             if "ftp_test" in tags_lower and not want_test:
@@ -3900,7 +3927,7 @@ def match_zwo(
             if cc_row in ("endurance", "recovery"):
                 if w["Score"] < 1 or (w["Duration(min)"] or 0) < 20:
                     continue
-            elif w["Score"] < 3:
+            elif w["Score"] < _class_aware_score_floor(cc_row):
                 continue
             tags_lower = {t.lower() for t in (w.get("Tags") or [])}
             if "ftp_test" in tags_lower and not want_test:
@@ -4695,13 +4722,9 @@ def _build_pool_indexes(library: list[dict]) -> dict:
         #        neuromuscular/sweet_spot): score ≥ 5  — quality bar
         #   tempo / mixed:                                 score ≥ 4  — light bar
         #   endurance / recovery:                          score ≥ 1  — none
-        if cc in ("endurance", "recovery"):
-            score_floor = 1
-        elif cc in ("tempo", "mixed"):
-            score_floor = 4
-        else:
-            score_floor = 5
-        if score < score_floor:
+        # v3.2.0 WATERTIGHT — shared with match_zwo so the rematch path can't
+        # re-admit a file this pool rejected (see _class_aware_score_floor).
+        if score < _class_aware_score_floor(cc):
             continue
         all_pool.append(w)
         z1z2 = float(w.get("Z1%", 0) or 0) + float(w.get("Z2%", 0) or 0)

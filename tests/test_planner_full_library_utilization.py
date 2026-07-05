@@ -223,13 +223,21 @@ def test_population_coverage_across_regenerations():
     # carries a small margin so legitimate library growth doesn't tip a knife-edge
     # ratio; the intent ("the sampler reaches a broad chunk of the pool") holds.
     # W8 measured: 908/2401 = 37.8% under the pinned env (ctl=50,
-    # weekly_tss=650, today=2026-01-05, salts 0-29). 0.35 = measured minus a
-    # small margin (~7%) so deliberate library growth doesn't tip the ratio;
-    # a real coverage regression (>10% relative) still fails. Re-measure
-    # after the event-planner fix wave.
-    assert coverage >= 0.35, (
+    # weekly_tss=650, today=2026-01-05, salts 0-29).
+    # v3.2.0 WATERTIGHT re-measure: 828/2413 = 34.3%. The numerator len(seen)
+    # counts EVERY picked file, so before the facts-gate/score-floor fix it was
+    # inflated by ~19 below-floor HIT files (score-3/4 neuromuscular+anaerobic)
+    # that leaked onto HIT slots through match_zwo's flat Score<3 gate + the
+    # sampler's clamp-then-rematch. Aligning match_zwo's floor with the sampler
+    # pool (_class_aware_score_floor: HIT≥5) removed those; the honest score≥5
+    # coverage (seen∩pool / pool) is UNCHANGED at ~19.9% (478→479 files). The
+    # ~3.5-point len(seen) drop is those illegitimate picks leaving the count.
+    # 0.33 = measured 34.3% minus the same small margin so library growth /
+    # seed variance doesn't tip the knife-edge; a real coverage regression
+    # (>10% relative) still fails.
+    assert coverage >= 0.33, (
         f"Population coverage {len(seen)} of {pool_size} candidate-pool "
-        f"files = {coverage:.1%} across 30 regens, need ≥35%."
+        f"files = {coverage:.1%} across 30 regens, need ≥33%."
     )
 
 

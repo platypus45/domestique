@@ -10042,6 +10042,80 @@ function onPlanModeChange() {
   onTemplateChange();  // readout + custom editor follow mode+template (also refreshes the preview)
 }
 
+// ═══ PHASE-SPLIT EDITOR (v3.2.0) ═════════════════════════════════════════
+// Stepper state lives OUTSIDE the DOM (A6): {state: 'rec'|'custom', values,
+// M}. M only ever comes from the preview RESPONSE echo (d.plan_weeks — the
+// max(4,·) floor is server-side, never client-derived). state 'rec' reseeds
+// from every response; the first stepper click pins to 'custom'; a sum
+// mismatch shows the red banner and blocks Generate (never silently
+// dropped/kept). A monotonic fetch-seq drops stale preview responses.
+let _phaseSplit = { state: 'rec', values: {}, rec: {}, M: 0, lockedWeeks: 0,
+                    disabled: false, disabledReason: '', runwayChanged: false };
+let _planPreviewSeq = 0;
+
+// Rails mirror tp.validate_phase_weeks (A5) for stepper clamping only — the
+// server re-validates everything. base is the unbounded absorber.
+function _pwFloor(name) { return (name === 'peak' || name === 'taper') ? 1 : 0; }
+function _pwCeil(name) {
+  if (name === 'peak' || name === 'taper') return 3;
+  if (name === 'build1' || name === 'build2') return 4;
+  return 999;  // base — absorbs whatever the capped phases can't take
+}
+function _phaseSplitSum() {
+  let n = 0;
+  for (const k in _phaseSplit.values) n += (_phaseSplit.values[k] || 0);
+  return n;
+}
+function _phaseSplitBlocked() {
+  const ps = _phaseSplit;
+  if (ps.disabled || ps.state !== 'custom' || !ps.M) return false;
+  return (_phaseSplitSum() + (ps.lockedWeeks || 0)) !== ps.M;
+}
+// Payload for generatePlan: only when custom AND ≠ recommendation (A3 — an
+// identical vector is not a custom split and must not be sent/stored).
+function _phaseSplitPayload() {
+  const ps = _phaseSplit;
+  if (ps.disabled || ps.state !== 'custom' || !Object.keys(ps.rec || {}).length) return undefined;
+  const keys = Object.keys({ ...ps.rec, ...ps.values });
+  const same = keys.every(k => (ps.rec[k] || 0) === (ps.values[k] || 0));
+  return same ? undefined : { ...ps.values };
+}
+function phaseStepperClick(name, delta) {
+  const ps = _phaseSplit;
+  if (ps.disabled || !(name in (ps.rec || {}))) return;
+  if (ps.state === 'rec') { ps.values = { ...ps.rec }; ps.state = 'custom'; }  // first edit pins
+  const cur = ps.values[name] || 0;
+  const next = Math.max(_pwFloor(name), Math.min(_pwCeil(name), cur + delta));
+  if (next === cur) return;
+  ps.values[name] = next;
+  refreshPlanPreview();  // echo the split back through the server validator
+}
+function phaseSplitReset() {
+  _phaseSplit.state = 'rec';
+  _phaseSplit.values = { ..._phaseSplit.rec };
+  _phaseSplit.runwayChanged = false;
+  refreshPlanPreview();
+}
+function _phaseSplitBadgeHtml() {
+  // Badge source (A1): PLAN meta phase_weeks_status when a plan exists (a
+  // stored split that fell back must not masquerade as applied); the live
+  // form state otherwise.
+  const chip = (txt, col, title) =>
+    `<span title="${esc(title || '')}" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:9px;border:1px solid ${col};color:${col};">${txt}</span>`;
+  if (window._planData && (window._planData.weeks || []).length) {
+    const meta = window._planData.phase_weeks_status || '';
+    if (meta === 'applied') return chip('custom split', 'var(--accent)');
+    if (meta.indexOf('fallback:') === 0)
+      return chip('custom split not applied', 'var(--orange, #e8a13c)', meta.slice(9));
+    return '';
+  }
+  return _phaseSplit.state === 'custom' ? chip('custom split', 'var(--accent)') : '';
+}
+function _syncGenerateBlocked() {
+  const btn = $('btn-generate-plan');
+  if (btn) btn.disabled = _phaseSplitBlocked();
+}
+
 // v4.6.0 B2: live phase preview — call /api/plan/preview so the right
 // panel uses the SAME derive_phases() logic as /api/plan/generate.
 // v1.8.8 Bug 6 — weeks↔event-date single source of truth. Earlier the
@@ -10066,41 +10140,141 @@ async function refreshPlanPreview() {
   //    preview call uses what the user (or the date-derived value) sees.
   const weeks = parseInt(sliderEl.value) || 12;
 
+  const seq = ++_planPreviewSeq;  // v3.2.0 — drop stale responses (A6)
   try {
     const params = new URLSearchParams({ goal, plan_weeks: String(weeks) });
     if (eventDate) params.set('event_date', eventDate);
     // v3.1.0 MODE 1 — preview must show the same backdated split Generate will build.
     const _sdate = (($('plan-backdate-on') || {}).checked && $('plan-sdate')) ? $('plan-sdate').value : '';
     if (_sdate) params.set('start_date', _sdate);
+    // v3.2.0 phase-split editor — echo a pinned custom split through the
+    // server validator so the rendered dates are the ones Generate builds.
+    if (_phaseSplit.state === 'custom' && !_phaseSplit.disabled
+        && Object.keys(_phaseSplit.values).length)
+      params.set('phase_weeks', JSON.stringify(_phaseSplit.values));
     const r = await fetch('/api/plan/preview?' + params.toString());
+    if (seq !== _planPreviewSeq) return;  // a newer preview is in flight
     if (!r.ok) return;
     const d = await r.json();
+    if (seq !== _planPreviewSeq) return;
     if (!d || !Array.isArray(d.phases)) return;
-    _renderPlanPreviewPhases(d.phases, d.plan_weeks || weeks, goal, eventDate);
+
+    // v3.2.0 — stepper state from the RESPONSE (A6): M from d.plan_weeks
+    // only; rec state reseeds every response; custom stays pinned and goes
+    // red via the sum banner when the runway moved (A7 — never auto-rebase).
+    const ps = _phaseSplit;
+    const M = d.plan_weeks || weeks;
+    const rec = d.phase_weeks_rec || null;
+    ps.disabled = !rec;
+    ps.disabledReason = d.phase_weeks_disabled_reason || '';
+    ps.rec = rec || {};
+    if (ps.state === 'custom' && ps.M && M !== ps.M) ps.runwayChanged = true;
+    ps.M = M;
+    ps.lockedWeeks = d.phases.reduce(
+      (s, p) => s + ((rec && !(p.name in rec)) ? (p.weeks || 1) : 0), 0);
+    if (ps.state === 'rec' || ps.disabled) {
+      ps.values = { ...ps.rec };
+      if (ps.state === 'rec') ps.runwayChanged = false;
+    } else {
+      // Pinned custom: rows that left the recommendation aren't editable any
+      // more (the banner/copy surfaces the mismatch — nothing silent).
+      for (const k of Object.keys(ps.values)) if (!(k in ps.rec)) delete ps.values[k];
+      for (const k of Object.keys(ps.rec)) if (!(k in ps.values)) ps.values[k] = ps.rec[k];
+    }
+
+    _renderPlanPreviewPhases(d.phases, M, goal, eventDate, d);
   } catch (e) {
     /* preview-only; failures don't block Generate */
   }
 }
 
-function _renderPlanPreviewPhases(phases, planWeeks, goal, eventDate) {
-  const totalWeeks = phases.reduce((s, p) => s + (p.weeks || 1), 0) || 1;
-  let html = '';
+function _renderPlanPreviewPhases(phases, planWeeks, goal, eventDate, resp) {
+  const ps = _phaseSplit;
+  // v3.2.0 — the preview IS the editor (D4). Aggregate rows by phase name
+  // (A5: a >20-week base renders its blocks as ONE editor row).
+  const agg = []; const byName = {};
   for (const p of phases) {
-    const col = (typeof PHASE_COLORS !== 'undefined' && PHASE_COLORS[p.name]) || 'var(--text3)';
-    const widthPct = ((p.weeks || 1) / totalWeeks * 100);
-    const startFmt = p.start ? new Date(p.start+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : '';
-    const endFmt = p.end ? new Date(p.end+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : '';
+    let row = byName[p.name];
+    if (!row) {
+      row = byName[p.name] = { name: p.name, weeks: 0, start: p.start, end: p.end,
+                               focus: p.focus, tss: p.weekly_tss };
+      agg.push(row);
+    }
+    row.weeks += (p.weeks || 1);
+    if (p.start && (!row.start || p.start < row.start)) row.start = p.start;
+    if (p.end && (!row.end || p.end > row.end)) row.end = p.end;
+  }
+  const totalWeeks = phases.reduce((s, p) => s + (p.weeks || 1), 0) || 1;
+  // Editor is live only when this render came from a preview response with a
+  // recommendation vector (steppers without server rails would lie).
+  const editorOn = !!(resp && !ps.disabled && Object.keys(ps.rec || {}).length);
+  // Evaluator MED-3: the engine omits zero-week phases from `phases`, but a
+  // vanished stepper is a dead-end (base=0 could never be re-grown). When
+  // the editor is live, render the union of the recommendation's keys and
+  // the response rows — zero-week rows appear with val=0, steppers intact.
+  if (editorOn) {
+    const order = ['base', 'build1', 'build2', 'peak', 'taper'];
+    for (const name of Object.keys(ps.rec)) {
+      if (!byName[name]) {
+        const row = { name, weeks: 0, start: '', end: '', focus: '', tss: null };
+        byName[name] = row;
+        const idx = order.indexOf(name);
+        const at = agg.findIndex(r => order.indexOf(r.name) > idx);
+        if (at === -1) agg.push(row); else agg.splice(at, 0, row);
+      }
+    }
+  }
+
+  let html = '';
+  if (editorOn) {
+    const sum = _phaseSplitSum() + (ps.lockedWeeks || 0);
+    const ok = sum === ps.M;
+    html += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+      <div style="font-size:11px;font-weight:700;color:${ok ? 'var(--text2)' : 'var(--red)'};">${sum} of ${ps.M} weeks distributed</div>
+      <div style="display:inline-flex;gap:6px;align-items:center;">${_phaseSplitBadgeHtml()}
+        <button class="btn" style="padding:2px 8px;font-size:11px;" onclick="phaseSplitReset()" ${ps.state === 'custom' ? '' : 'disabled'} title="Reset to the recommended split">Recommended</button>
+      </div>
+    </div>`;
+    if (!ok) html += `<div style="font-size:11px;color:var(--red);margin-bottom:6px;">${ps.runwayChanged
+      ? 'Runway changed — redistribute the weeks or reset to Recommended.'
+      : 'Distribute exactly ' + ps.M + ' weeks to generate (base can absorb the rest).'}</div>`;
+    if (typeof readBcRaces === 'function' && readBcRaces().length)
+      html += `<div style="font-size:10px;color:var(--text3);margin-bottom:6px;">B/C race weeks keep their mini-taper shape whatever the split.</div>`;
+  } else if (resp && ps.disabled) {
+    html += `<div style="font-size:11px;color:var(--text2);margin-bottom:6px;">${esc(ps.disabledReason || 'Race week — the plan shape is fixed.')}</div>`;
+  }
+
+  for (const row of agg) {
+    const col = (typeof PHASE_COLORS !== 'undefined' && PHASE_COLORS[row.name]) || 'var(--text3)';
+    const editable = editorOn && (row.name in ps.rec);
+    const val = editable ? (ps.values[row.name] ?? row.weeks) : row.weeks;
+    const widthPct = ((editable ? Math.max(val, 0.25) : row.weeks) / totalWeeks * 100);
+    const startFmt = row.start ? new Date(row.start + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
+    const endFmt = row.end ? new Date(row.end + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
+    let weeksCell;
+    if (editable) {
+      const lo = _pwFloor(row.name), hi = _pwCeil(row.name);
+      weeksCell = `<span style="display:inline-flex;align-items:center;gap:4px;margin-left:6px;">
+        <button class="btn" style="padding:0 7px;font-size:12px;line-height:18px;" ${val <= lo ? 'disabled' : ''} onclick="phaseStepperClick('${row.name}',-1)" title="One week less">−</button>
+        <span style="font-size:12px;font-weight:700;min-width:14px;text-align:center;">${val}</span>
+        <button class="btn" style="padding:0 7px;font-size:12px;line-height:18px;" ${val >= hi ? 'disabled' : ''} onclick="phaseStepperClick('${row.name}',1)" title="One week more">+</button>
+        <span style="font-size:11px;color:var(--text2);">wk${val === 1 ? '' : 's'}${row.name === 'base' ? ' · absorbs extra weeks' : ''}</span>
+      </span>`;
+    } else {
+      const lockLbl = (editorOn && row.name === 'consolidation') ? ' · locked' : '';
+      weeksCell = `<span style="font-size:11px;color:var(--text2);margin-left:6px;">${row.weeks} week${row.weeks === 1 ? '' : 's'}${lockLbl}</span>`;
+    }
     html += `<div style="padding:8px 10px;border-left:4px solid ${col};background:var(--surface2);border-radius:0 6px 6px 0;margin-bottom:4px;">
       <div style="display:flex;justify-content:space-between;align-items:center;">
-        <div>
-          <span style="font-weight:700;font-size:12px;text-transform:uppercase;color:${col};">${esc(p.name)}</span>
-          <span style="font-size:11px;color:var(--text2);margin-left:6px;">${p.weeks||1} weeks</span>
+        <div style="display:inline-flex;align-items:center;">
+          <span style="font-weight:700;font-size:12px;text-transform:uppercase;color:${col};">${esc(row.name)}</span>
+          ${weeksCell}
         </div>
         <div style="font-size:11px;color:var(--text2);">${startFmt} — ${endFmt}</div>
       </div>
       <div style="display:flex;justify-content:space-between;margin-top:2px;">
-        <div style="font-size:10px;color:var(--text3);">${esc(p.focus || '')}</div>
-        <div style="font-size:10px;color:var(--text2);font-weight:600;">${p.weekly_tss||'—'} TSS/wk</div>
+        <div style="font-size:10px;color:var(--text3);">${esc(row.focus || '')}</div>
+        <div style="font-size:10px;color:var(--text2);font-weight:600;">${row.tss || '—'} TSS/wk</div>
       </div>
       <div style="height:4px;background:var(--surface);border-radius:2px;margin-top:4px;overflow:hidden;">
         <div style="width:${widthPct}%;height:100%;background:${col};border-radius:2px;"></div>
@@ -10108,7 +10282,8 @@ function _renderPlanPreviewPhases(phases, planWeeks, goal, eventDate) {
     </div>`;
   }
   $('plan-phases').innerHTML = html;
-  let summary = `<div style="font-size:12px;color:var(--text2);">Preview &middot; ${phases.length} phases &middot; ${totalWeeks} weeks total</div>`;
+  _syncGenerateBlocked();
+  let summary = `<div style="font-size:12px;color:var(--text2);">Preview &middot; ${agg.length} phases &middot; ${totalWeeks} weeks total</div>`;
   if (eventDate) summary = `<span style="font-size:12px;color:var(--text2);">Event ${eventDate}</span>` + summary;
   $('plan-summary').innerHTML = summary;
 }
@@ -10551,6 +10726,14 @@ async function generatePlan() {
   if (window._planData && (window._planData.weeks || []).length) {
     if (!confirm('Rebuild your plan from your current settings and fitness?\n\nThis replaces the current plan. (Your plan already updates itself automatically after each sync and when you open this tab — you only need this after a goal, event-date, or availability change.)')) return;
   }
+  // v3.2.0 phase-split editor: a mis-summing split never reaches the server —
+  // the banner explains; Generate is blocked ONLY on the sum mismatch.
+  if (_phaseSplitBlocked()) {
+    $('plan-status').textContent = 'Distribute all ' + _phaseSplit.M +
+      ' plan weeks (or reset to Recommended) before generating.';
+    $('plan-status').style.color = 'var(--red)';
+    return;
+  }
   $('plan-status').textContent = 'Generating plan...';
   $('plan-status').style.color = 'var(--accent)';
 
@@ -10589,6 +10772,9 @@ async function generatePlan() {
     // v3.1.0 MODE 1 — backdated start ("I've been training already").
     start_date: ((($('plan-backdate-on')||{}).checked) && $('plan-sdate') && $('plan-sdate').value)
       ? $('plan-sdate').value : null,
+    // v3.2.0 phase-split editor — sent ONLY when custom AND ≠ recommendation
+    // (A3); undefined otherwise so the payload stays byte-identical.
+    phase_weeks: _phaseSplitPayload(),
   };
   // Provenance for the anchor (MODE 2 "recognized" lands later).
   body.entry_mode = body.start_date ? 'declared' : null;
@@ -12647,6 +12833,19 @@ function populatePlanFormFromGoal(goal) {
     const races = (goal.events || []).filter(e => e && e.priority && e.priority !== 'A').length;
     if (races) parts.push(races + ' race' + (races > 1 ? 's' : ''));
     cfgEl.textContent = '⚙ ' + parts.join(' · ');
+  }
+  // v3.2.0 phase-split editor (A6): seed the stepper state from the saved
+  // goal BEFORE the trailing refreshPlanPreview below, so the editor
+  // repaints pinned to the plan's split (steppers + badge restored).
+  if (goal.phase_weeks && typeof goal.phase_weeks === 'object'
+      && Object.keys(goal.phase_weeks).length) {
+    _phaseSplit.state = 'custom';
+    _phaseSplit.values = { ...goal.phase_weeks };
+    _phaseSplit.runwayChanged = false;
+  } else {
+    _phaseSplit.state = 'rec';
+    _phaseSplit.values = {};
+    _phaseSplit.runwayChanged = false;
   }
   try { refreshPlanPreview(); } catch (_) {}
 }

@@ -386,3 +386,128 @@ def test_start_date_roundtrip_through_plan_dict():
                     entry_mode=getattr(src, "entry_mode", None))
     assert clone.start_date == src.start_date
     assert clone.entry_mode == src.entry_mode
+
+
+# ══ GP5 (v3.2.0 phase-split editor) — backdated + custom split ═══════════════
+# GB2/GB4/GB5 patterns re-run with phase_weeks set, including the
+# elapsed>custom-base edge: 4 weeks already elapsed but the custom base is
+# only 3 — entry lands mid-build1; position math, elapsed-strip, race guards
+# and the ICU push window must all hold unchanged.
+
+GP5_CUSTOM = {"base": 3, "build1": 4, "build2": 4, "peak": 3, "taper": 2}
+
+
+@pytest.fixture(scope="module")
+def backdated_custom_event():
+    start = ANCHOR - timedelta(days=28)           # 4 full weeks in (> base 3)
+    target = ANCHOR + timedelta(days=84)          # 12 more weeks to race day
+    goal = tp.Goal(goal_type="event", target_date=target,
+                   event_name="TestFondo", event_km=150.0,
+                   event_climb_m=1500.0, start_date=start,
+                   entry_mode="declared", phase_weeks=dict(GP5_CUSTOM))
+    phases, weeks = _gen(goal)
+    return start, target, goal, phases, weeks
+
+
+def test_gp5_custom_split_applied_over_full_runway(backdated_custom_event):
+    start, target, goal, phases, weeks = backdated_custom_event
+    assert goal._phase_weeks_status == "applied"
+    assert phases[0].start == start
+    by_name = {p.name: p for p in phases}
+    for name in ("base", "build1", "build2", "taper"):
+        assert by_name[name].weeks == GP5_CUSTOM[name], name
+    peak_span = (by_name["peak"].end - by_name["peak"].start).days + 1
+    assert abs(peak_span - 7 * GP5_CUSTOM["peak"]) <= 6   # A4 absorber
+    for a, b in zip(phases, phases[1:]):
+        assert (b.start - a.end).days == 1
+    # Position: today is week 5; base is only 3 weeks, so entry lands
+    # mid-build1 (the elapsed>custom-base edge).
+    cur = [w for w in weeks if w.start <= ANCHOR <= w.end]
+    assert len(cur) == 1 and cur[0].week_num == 5
+    assert cur[0].phase == "build1"
+    assert weeks[0].start == start and weeks[-1].end == target
+
+
+def test_gp5_no_past_sessions_elapsed_rows_keep_tss(backdated_custom_event):
+    start, target, goal, phases, weeks = backdated_custom_event
+    for w in weeks:
+        if w.end < ANCHOR:                      # elapsed row
+            assert w.sessions == []
+        else:
+            for s in w.sessions:
+                assert s.day >= ANCHOR, "scheduled session in the past"
+        assert w.tss_target > 0
+
+
+def test_gp5_taper_race_guards_hold(backdated_custom_event):
+    start, target, goal, phases, weeks = backdated_custom_event
+    tapers = [p for p in phases if p.name == "taper"]
+    assert len(tapers) == 1 and tapers[0].end == target
+    # Custom taper 2 ⇒ exactly 14 days to the target (A4 taper-to-target).
+    assert (tapers[0].end - tapers[0].start).days + 1 == 14
+    all_sessions = [s for w in weeks for s in w.sessions]
+    assert max(s.day for s in all_sessions) <= target
+    assert any(getattr(s, "is_race", False) and s.day == target
+               for s in all_sessions)
+    eve = [s for s in all_sessions if (target - s.day).days == 1]
+    assert eve and any(getattr(s, "is_opener", False) for s in eve)
+
+
+def test_gp5_gb4_push_window_excludes_elapsed(backdated_custom_event,
+                                              tmp_path, monkeypatch):
+    import icu_calendar_push as icp
+    import app as app_module
+
+    start, target, goal, phases, weeks = backdated_custom_event
+    plan = {"weeks": json.loads(_serialize_weeks(weeks).decode())}
+    plan["weeks"][0]["sessions"] = [{
+        "day": (ANCHOR - timedelta(days=21)).isoformat(),
+        "session_type": "endurance", "zwo_file": "ghost.zwo",
+        "duration_min": 60, "tss_estimate": 55,
+    }]
+
+    class _PM:
+        _athlete = {"target_mode": "power"}
+        lthr_is_set = False
+        max_hr = 190
+        lthr = 170
+
+    monkeypatch.setattr(app_module, "WORKOUT_DIR", tmp_path, raising=False)
+    monkeypatch.setattr(icp, "_load_classifications", lambda _d: {})
+
+    events, skipped, broken = icp._desired_events(
+        _PM(), plan, ANCHOR, 14, "prof1")
+    today_iso = ANCHOR.isoformat()
+    for ev in events:
+        assert ev["start_date_local"][:10] >= today_iso
+    for sk in skipped:
+        assert sk["day"] >= today_iso
+    for bid in broken:
+        assert bid.split(":")[2] >= today_iso
+
+
+def test_gp5_gb5_no_missed_storm(backdated_custom_event):
+    import app as app_module
+
+    start, target, goal, phases, weeks = backdated_custom_event
+    plan = {"weeks": json.loads(_serialize_weeks(weeks).decode())}
+    assert app_module._compute_missed_suggestions(plan, ANCHOR) == []
+    assert not any(
+        s.get("status") == "missed"
+        for w in plan["weeks"] for s in w.get("sessions", [])
+    )
+
+
+def test_gp5_phase_weeks_roundtrip_through_plan_dict():
+    """Write-shape (goal block) → _goal_from_plan_dict → Goal.phase_weeks;
+    absent field parses to None (legacy plans untouched)."""
+    import app as app_module
+
+    g = {"type": "event", "event_date": "2026-04-01",
+         "phase_weeks": {"base": 3, "build1": 4, "build2": 4,
+                         "peak": 3, "taper": 2}}
+    goal = app_module._goal_from_plan_dict(g)
+    assert goal.phase_weeks == g["phase_weeks"]
+
+    legacy = app_module._goal_from_plan_dict({"type": "ftp"})
+    assert legacy.phase_weeks is None

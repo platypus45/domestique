@@ -10468,6 +10468,7 @@ def api_plan_preview(
     event_date: str | None = Query(None),
     hours_per_week: float = Query(8.0),
     start_date: str | None = Query(None),
+    phase_weeks: str | None = Query(None),
 ):
     """v4.6.0 IMPL-PLAN-CONFIG-UI: live phase preview for the Plan Configuration
     right-panel. Mirrors /api/plan/generate's phase split so the right panel
@@ -10516,6 +10517,17 @@ def api_plan_preview(
         start_date=start_dt,
     )
 
+    # Phase-split editor (v3.2.0): one URL-encoded JSON object, validity-gated
+    # inside tp.generate_phases — the SAME validator generate uses (A9), so
+    # preview==generate for lengths+dates by construction (A8 parity scope).
+    _pw_req, _pw_parse_err = _parse_phase_weeks(phase_weeks)
+    if _pw_req:
+        g.phase_weeks = _pw_req
+    # The recommendation vector seeds the editor's "rec" state client-side
+    # (labels can drift ±1 at the reconcile seam, so the UI must NOT derive
+    # the vector from the rendered rows — A6). None ⇒ editor disabled.
+    _pw_rec, _pw_rec_reason = tp._recommended_phase_weeks(g)
+
     try:
         training = cached("training", get_today_metrics)
         current_ctl = float(training.get("ctl") or 37.0)
@@ -10523,12 +10535,18 @@ def api_plan_preview(
         current_ctl = 37.0
 
     phases = tp.generate_phases(g, current_ctl)
+    _pw_status = (getattr(g, "_phase_weeks_status", None)
+                  or (f"fallback:{_pw_parse_err}" if _pw_parse_err else None))
     return {
         "ok": True,
         "plan_weeks": plan_weeks,
         "goal": goal_type,
         "event_date": target_date.isoformat() if target_date else None,
         "start_date": start_dt.isoformat() if start_dt else None,  # PART B
+        # Phase-split editor (v3.2.0): "applied" | "fallback:<reason>" | None.
+        "phase_weeks_status": _pw_status,
+        "phase_weeks_rec": _pw_rec,
+        "phase_weeks_disabled_reason": _pw_rec_reason or None,
         "phases": [
             {
                 "name": p.name,
@@ -10726,6 +10744,11 @@ async def api_plan_generate(request: Request):
             _days = (target_date - _anchor_for_weeks).days
             plan_weeks = max(4, -(-_days // 7))  # ceil division
 
+        # Phase-split editor (v3.2.0): user week-vector from the editor. Sent
+        # only when custom AND ≠ recommendation; validity-gated inside
+        # tp.generate_phases against the server-side week count above (A1).
+        _pw_req, _pw_parse_err = _parse_phase_weeks(body.get("phase_weeks"))
+
         goal = tp.Goal(
             goal_type=body.get("goal", "general"),
             target_date=target_date,
@@ -10763,10 +10786,23 @@ async def api_plan_generate(request: Request):
             template_id=("custom" if _parse_custom_bands(body.get("custom_bands"))
                          else str(body.get("template_id", "") or "")),
             custom_bands=_parse_custom_bands(body.get("custom_bands")),  # v2.3.0
+            phase_weeks=_pw_req,  # v3.2.0 phase-split editor
         )
         # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
         if goal.longest_ride_h_90d is None:
             goal.longest_ride_h_90d = _longest_ride_h_90d()
+
+        # Phase-split editor (v3.2.0, A3): a vector identical to the
+        # recommendation is NOT a custom split — store None (no badge, no
+        # status). A VALID custom vector is normalized engine-side; an
+        # invalid one is kept as sent so the form repopulates the user's
+        # numbers while generate_phases falls back + stamps the reason.
+        if goal.phase_weeks:
+            _pw_norm, _pw_reason = tp.validate_phase_weeks(goal, goal.phase_weeks)
+            if _pw_norm is not None:
+                goal.phase_weeks = _pw_norm
+            elif not _pw_reason:
+                goal.phase_weeks = None
 
         # v4.5.0 IMPL-PLANNER: mint a fresh seed_salt so the FIRST plan is no
         # longer deterministic (was missing here — only /api/plan/regenerate
@@ -10882,6 +10918,11 @@ async def api_plan_generate(request: Request):
                 "start_date": (goal.start_date.isoformat()
                                if getattr(goal, "start_date", None) else None),
                 "entry_mode": getattr(goal, "entry_mode", None),
+                # v3.2.0 phase-split editor: the user's week vector (None =
+                # recommendation); round-trips through _goal_from_plan_dict
+                # + form repopulation like start_date.
+                "phase_weeks": (dict(goal.phase_weeks)
+                                if getattr(goal, "phase_weeks", None) else None),
             },
             "phases": [
                 {
@@ -10977,6 +11018,15 @@ async def api_plan_generate(request: Request):
         # v2.3.0 — realized training-type distribution (honest, computed from the
         # generated sessions) for the UI's "% distribution" readout.
         plan_dict["realized_bands"] = tp.realized_band_distribution(plan_dict)
+
+        # Phase-split editor (v3.2.0, A1): stamp plan meta with what actually
+        # happened to the requested split — "applied" | "fallback:<reason>".
+        # The UI badge reads THIS, not the goal (a stored split that fell
+        # back must not masquerade as applied).
+        _pw_status = (getattr(goal, "_phase_weeks_status", None)
+                      or (f"fallback:{_pw_parse_err}" if _pw_parse_err else None))
+        if _pw_status:
+            plan_dict["phase_weeks_status"] = _pw_status
 
         # F4c (v2.5.0, D4): a <14-day runway generates a race-week-only
         # MICRO-PLAN (single taper phase — see tp.generate_phases): rest,
@@ -11432,6 +11482,12 @@ def _regenerate_plan_dict(
         # reshuffled back to mixed HIT by the sampler).
         plan_mode=g.get("plan_mode", "auto"),
         template_id=g.get("template_id", "") or "",
+        # v3.2.0 phase-split editor (A2, documented-lossy): this inline
+        # reconstruction ALREADY drops custom_bands/distribution/etc., and
+        # phase_weeks is deliberately not carried either — absence means the
+        # regen rebuilds on the recommendation, which is exactly the A1
+        # fallback semantics (the stale plan-meta status is cleared below).
+        # The pre-existing field-loss here is a separate task, not this build.
     )
     # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
     if goal.longest_ride_h_90d is None:
@@ -11520,6 +11576,14 @@ def _regenerate_plan_dict(
     ]
     plan_dict["regenerated"] = datetime.now().isoformat()
     plan_dict["regen_info"] = regen_info
+    # Phase-split editor (v3.2.0, A1): the shallow copy above would carry a
+    # STALE phase_weeks_status from the old plan while the phases were just
+    # rebuilt — refresh it from this regen (None ⇒ recommendation ⇒ no key).
+    _pws = regen_info.get("phase_weeks_status")
+    if _pws:
+        plan_dict["phase_weeks_status"] = _pws
+    else:
+        plan_dict.pop("phase_weeks_status", None)
     # v4.3.0 B3: persist the per-regen entropy salt so external readers
     # (UI, tests) can detect that a fresh regen happened.
     plan_dict["last_regen_at"] = seed_salt
@@ -11679,6 +11743,10 @@ def _goal_from_plan_dict(g: dict) -> "tp.Goal":
         plan_mode=g.get("plan_mode", "auto"),  # FS1 — keep fixed plans fixed on refit/reforecast
         template_id=g.get("template_id", "") or "",
         custom_bands=g.get("custom_bands", {}) or {},  # v2.3.0 custom distribution
+        # v3.2.0 phase-split editor (A2): restore the user's week vector so
+        # refit-tier goals carry it; any path that rebuilds phases
+        # validity-gates it against its own runway (A1).
+        phase_weeks=(g.get("phase_weeks") or None),
     )
 
 
@@ -11696,6 +11764,35 @@ def _parse_custom_bands(raw) -> dict:
             v = 0.0
         out[k] = max(0.0, v)
     return out if sum(out.values()) > 0 else {}
+
+
+def _parse_phase_weeks(raw) -> "tuple[dict | None, str]":
+    """Phase-split editor (v3.2.0, A9): accept a dict (POST /api/plan/generate
+    body) or ONE URL-encoded JSON object string (GET /api/plan/preview query
+    param). Shape-only parse — the engine-side tp.validate_phase_weeks owns
+    every rail. Returns (dict|None, reason); reason is non-empty only for an
+    unparseable payload (which the endpoints surface as fallback:<reason>)."""
+    if raw is None or raw == "" or raw == {}:
+        return None, ""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return None, "phase_weeks is not valid JSON"
+    if not isinstance(raw, dict):
+        return None, "phase_weeks must be an object of {phase: weeks}"
+    # Evaluator HIGH-2 (round 2): request.json() accepts bare Infinity/NaN;
+    # an invalid vector is persisted as-sent for form repopulation, and a
+    # non-finite float ANYWHERE in current_plan.json makes every later
+    # response serialization 500 (starlette allow_nan=False) — a stored DoS.
+    # A top-level isfinite walk missed nested shapes ({"base": [Infinity]}),
+    # so probe by serializing the whole payload with allow_nan=False:
+    # rejects non-finite at any depth.
+    try:
+        json.dumps(raw, allow_nan=False)
+    except ValueError:
+        return None, "phase_weeks contains a non-finite number"
+    return dict(raw), ""
 
 
 def _apply_refit_to_plan(plan: dict, today: date) -> "dict | None":
@@ -15779,6 +15876,11 @@ def api_plan_auto_recalc():
             rest_days=g.get("rest_days", [0]),
             longest_ride_h_90d=g.get("longest_ride_h_90d"),
             last_ftp_test_date=g.get("last_ftp_test_date"),
+            # v3.2.0 phase-split editor (A2, documented-lossy): this scheduler
+            # reconstruction already drops custom_bands/plan_mode/etc., and
+            # phase_weeks is deliberately not carried either — absence means
+            # the recalc rebuilds on the recommendation (the A1 fallback
+            # semantics). Pre-existing loss = separate task, not this build.
         )
         # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
         if goal.longest_ride_h_90d is None:
@@ -15864,6 +15966,12 @@ def api_plan_auto_recalc():
             "availability": plan.get("availability", {}),
             "unavailable_periods": plan.get("unavailable_periods", []),
         }
+        # Phase-split editor (v3.2.0, A1): fresh rebuild — stamp plan meta
+        # from THIS recalc only (the lossy goal above means None here, i.e.
+        # the phases were rebuilt on the recommendation; no stale badge).
+        _pws = recalc_info.get("phase_weeks_status")
+        if _pws:
+            plan_dict["phase_weeks_status"] = _pws
 
         tp.atomic_write_plan(json_path, plan_dict)
 

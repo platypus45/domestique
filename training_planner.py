@@ -1269,6 +1269,15 @@ class Goal:
     # "take my word") | "recognized" (MODE 2 — placed from ride evidence).
     # The recognizer is never silently re-run; regenerate reuses start_date.
     entry_mode: "str | None" = None
+    # v3.2.0 (phase-split editor): user-adjusted week distribution, e.g.
+    # {"base": 3, "build1": 2, "build2": 2, "peak": 1, "taper": 2}.
+    # None/absent = recommendation = exact current splitter output (zero
+    # behavior change for existing goals/plans). Applied VALIDITY-GATED
+    # inside generate_phases (A1): the vector must validate against THAT
+    # call's runway via validate_phase_weeks, else the recommendation is
+    # used and the transient ``_phase_weeks_status`` records the reason.
+    # Auto paths never mutate this field.
+    phase_weeks: "dict | None" = None
 
     def max_hours_for_day(self, weekday: int) -> float:
         """Get max training hours for a specific weekday (0=Mon..6=Sun)."""
@@ -1835,6 +1844,170 @@ def _event_demand_targets(goal: "Goal", athlete: dict | None,
 
 # ── Phase generator (backwards periodization) ────────────────────────────────
 
+def _tier_split(remaining_weeks: int) -> tuple[int, int, int, int]:
+    """The recommendation tiers: distribute a remaining-week budget across
+    (base, build1, build2, peak). Extracted verbatim from generate_phases so
+    the phase-split editor's validator (validate_phase_weeks) rails against
+    the exact splitter arithmetic — one source, no drift."""
+    if remaining_weeks >= 14:
+        # Full program: base(4+) + build1(4) + build2(4) + peak(2+)
+        peak_weeks = min(3, max(2, remaining_weeks // 7))
+        build2_weeks = min(4, remaining_weeks - peak_weeks - 8)
+        build1_weeks = min(4, remaining_weeks - peak_weeks - build2_weeks - 4)
+        base_weeks = remaining_weeks - peak_weeks - build2_weeks - build1_weeks
+    elif remaining_weeks >= 10:
+        # Compressed: base(2) + build1(3) + build2(3) + peak(2)
+        peak_weeks = 2
+        build2_weeks = 3
+        build1_weeks = 3
+        base_weeks = remaining_weeks - peak_weeks - build2_weeks - build1_weeks
+    elif remaining_weeks >= 6:
+        # Minimal: build1(3) + build2(2) + peak(1)
+        peak_weeks = 1
+        build2_weeks = 2
+        build1_weeks = 2
+        base_weeks = remaining_weeks - peak_weeks - build2_weeks - build1_weeks
+    else:
+        # Crisis: just build + peak
+        peak_weeks = 1
+        build2_weeks = 0
+        build1_weeks = remaining_weeks - peak_weeks
+        base_weeks = 0
+    return base_weeks, build1_weeks, build2_weeks, peak_weeks
+
+
+# ── Phase-split editor (v3.2.0) — recommendation vector + validator ──────────
+# A9: ONE engine-side validator; /api/plan/preview and /api/plan/generate both
+# reach it through generate_phases, so preview==generate by construction.
+
+_PW_REASON_MICRO = "race is under two weeks away — the race-week plan is fixed"
+_PW_REASON_SHORT = ("under four weeks of runway — too short to redistribute "
+                    "phases")
+# Goal types that get the locked consolidation week (mirror of the splitter's
+# consolidation_weeks arithmetic — keep in sync with generate_phases).
+_PW_CONSOLIDATION_TYPES = ("ftp", "vo2max", "ftp_vo2max", "hybrid",
+                           "general", "endurance", "weight")
+# Tier ceilings/floors (A5). base is the designated unbounded absorber (no
+# ceiling — every sum can be reached without dead-ends).
+_PW_CEILINGS = {"build1": 4, "build2": 4, "peak": 3, "taper": 3}
+_PW_FLOORS = {"peak": 1, "taper": 1}
+
+
+def _recommended_phase_weeks(goal: "Goal") -> "tuple[dict | None, str]":
+    """The RECOMMENDED week vector for this goal's runway — exactly the
+    splitter's labels (taper/consolidation/tier arithmetic mirrored from
+    generate_phases; keep in sync). Keys are limited to phases the
+    recommendation actually contains (zero-weight phases omitted; the locked
+    non-event consolidation week is NOT part of the vector). Returns
+    (vector, "") or (None, reason) when the editor is disabled — the
+    race-week micro-plan owns runways under 14 days (its OWN trigger:
+    runway-from-today, not total runway). Pure: no RNG, no I/O."""
+    total_weeks = goal.weeks_available()
+    _anchor = _entry_anchor(goal) or date.today()
+    target_date = goal.target_date or (_anchor + timedelta(weeks=16))
+
+    taper_weeks = 0
+    if goal.goal_type in ("event", "ctl"):
+        # Mirrors the F4c micro-plan trigger in generate_phases exactly.
+        _micro_start = getattr(goal, "_phase_start_override", None) or date.today()
+        _runway_days = (target_date - date.today()).days
+        if 0 < _runway_days < 14 and _micro_start <= target_date:
+            return None, _PW_REASON_MICRO
+        # Evaluator HIGH-1: for 14-27d real runways the app-side max(4,·)
+        # week floor inflates M to 4 while only 2-3 real weeks exist — a
+        # vector then validates against the inflated budget and the
+        # reconcile pop-loop silently drops requested phases ("applied"
+        # stamp on phases that never materialize). Disable the editor
+        # whenever the floor binds. Anchored on _anchor (not today) so a
+        # backdated plan with a full runway keeps its editor.
+        if (target_date - _anchor).days < 28:
+            return None, _PW_REASON_SHORT
+        taper_start = max(date.today(), target_date - timedelta(days=TAPER_DAYS))
+        _taper_span = (target_date - taper_start).days + 1
+        taper_weeks = max(1, -(-_taper_span // 7))
+
+    consolidation_weeks = 1 if goal.goal_type in _PW_CONSOLIDATION_TYPES else 0
+    remaining_weeks = max(0, total_weeks - taper_weeks - consolidation_weeks)
+    base_w, b1_w, b2_w, peak_w = _tier_split(remaining_weeks)
+
+    vec: dict = {}
+    for name, wks in (("base", base_w), ("build1", b1_w),
+                      ("build2", b2_w), ("peak", peak_w)):
+        if wks > 0:
+            vec[name] = wks
+    if taper_weeks > 0:
+        vec["taper"] = taper_weeks
+    return vec, ""
+
+
+def validate_phase_weeks(goal: "Goal", raw) -> "tuple[dict | None, str]":
+    """Phase-split editor (A5/A9) — validate a user week-vector against THIS
+    goal's runway and recommendation.
+
+    Returns:
+      (dict, "")     — valid CUSTOM split (normalized ints, recommendation
+                       key order/set).
+      (None, "")     — no split requested, or the vector EQUALS the
+                       recommendation (A3: that is not a custom split —
+                       store None, no badge).
+      (None, reason) — invalid; the caller uses the recommendation and
+                       surfaces the reason ("fallback:<reason>").
+
+    Rails (A5): sum == runway of THIS call (non-event goals sum to M−1, the
+    consolidation week is locked); taper 1..3 (event/ctl only); peak 1..3;
+    build1/build2 ≤ 4; base unbounded (the absorber); ints ≥ 0; first
+    non-empty phase ∈ {base, build1}; only phases present in the
+    recommendation are editable (crisis tiers expose fewer). Pure — no RNG
+    draws, no I/O.
+    """
+    if not raw:
+        return None, ""
+    if not isinstance(raw, dict):
+        return None, "phase weeks must be a mapping of phase → whole weeks"
+    rec, rec_reason = _recommended_phase_weeks(goal)
+    if rec is None:
+        return None, rec_reason  # editor disabled (race-week micro-plan)
+    if "consolidation" in raw:
+        return None, "the consolidation week is fixed and not editable"
+    unknown = [k for k in raw if k not in rec]
+    if unknown:
+        return None, f"'{unknown[0]}' is not an adjustable phase of this plan"
+    missing = [k for k in rec if k not in raw]
+    if missing:
+        return None, f"missing a week count for '{missing[0]}'"
+    vec: dict = {}
+    for k in rec:  # recommendation order
+        v = raw[k]
+        if isinstance(v, bool) or not isinstance(v, int):
+            return None, "phase weeks must be whole numbers"
+        if v < 0:
+            return None, "phase weeks cannot be negative"
+        lo = _PW_FLOORS.get(k, 0)
+        if v < lo:
+            return None, f"{k} needs at least {lo} week"
+        hi = _PW_CEILINGS.get(k)
+        if hi is not None and v > hi:
+            return None, f"{k} is capped at {hi} weeks"
+        vec[k] = v
+    first = next((k for k in vec if vec[k] > 0), None)
+    if first not in (None, "base", "build1"):
+        # (all-zero vectors die on the sum rail below)
+        return None, "the plan must open with base or build1"
+    required = goal.weeks_available()
+    if goal.goal_type in _PW_CONSOLIDATION_TYPES:
+        # Locked consolidation week. Evaluator LOW-4: SAME allowlist as the
+        # splitter — unknown goal types get no consolidation, so the
+        # recommendation always validates against itself.
+        required -= 1
+    total = sum(vec.values())
+    if total != required:
+        return None, (f"split totals {total} weeks — this plan needs "
+                      f"exactly {required}")
+    if vec == rec:
+        return None, ""  # A3 — identical to the recommendation: not custom
+    return vec, ""
+
+
 def generate_phases(goal: Goal, current_ctl: float,
                     event_targets: dict | None = None,
                     recent_weekly_tss: float | None = None) -> list[Phase]:
@@ -1931,6 +2104,10 @@ def generate_phases(goal: Goal, current_ctl: float,
         _micro_start = getattr(goal, "_phase_start_override", None) or date.today()
         _runway_days = (target_date - date.today()).days
         if 0 < _runway_days < 14 and _micro_start <= target_date:
+            if getattr(goal, "phase_weeks", None):
+                # Phase-split editor (v3.2.0, GP4): the race-week micro-plan
+                # owns this runway — a custom split is never applied here.
+                goal._phase_weeks_status = f"fallback:{_PW_REASON_MICRO}"
             _span = (target_date - _micro_start).days + 1
             return [Phase(
                 name="taper",
@@ -1976,31 +2153,48 @@ def generate_phases(goal: Goal, current_ctl: float,
     )
     remaining_weeks = max(0, total_weeks - taper_weeks - consolidation_weeks)
 
-    # Distribute remaining weeks across phases
-    if remaining_weeks >= 14:
-        # Full program: base(4+) + build1(4) + build2(4) + peak(2+)
-        peak_weeks = min(3, max(2, remaining_weeks // 7))
-        build2_weeks = min(4, remaining_weeks - peak_weeks - 8)
-        build1_weeks = min(4, remaining_weeks - peak_weeks - build2_weeks - 4)
-        base_weeks = remaining_weeks - peak_weeks - build2_weeks - build1_weeks
-    elif remaining_weeks >= 10:
-        # Compressed: base(2) + build1(3) + build2(3) + peak(2)
-        peak_weeks = 2
-        build2_weeks = 3
-        build1_weeks = 3
-        base_weeks = remaining_weeks - peak_weeks - build2_weeks - build1_weeks
-    elif remaining_weeks >= 6:
-        # Minimal: build1(3) + build2(2) + peak(1)
-        peak_weeks = 1
-        build2_weeks = 2
-        build1_weeks = 2
-        base_weeks = remaining_weeks - peak_weeks - build2_weeks - build1_weeks
-    else:
-        # Crisis: just build + peak
-        peak_weeks = 1
-        build2_weeks = 0
-        build1_weeks = remaining_weeks - peak_weeks
-        base_weeks = 0
+    # Distribute remaining weeks across phases (recommendation tiers).
+    base_weeks, build1_weeks, build2_weeks, peak_weeks = _tier_split(remaining_weeks)
+
+    # ── Phase-split editor (v3.2.0, A1) — validity-gated custom split ──────
+    # Behind `if goal.phase_weeks` so the None path is byte-identical incl.
+    # the global RNG stream (GB1). The vector validates against THIS call's
+    # runway (weeks_available()), so refit/recalc calls whose totals moved
+    # simply fall back to the recommendation — zero special cases. Only the
+    # LENGTHS move: the TSS formulas / z2_pct / session_types / hit caps
+    # below are untouched. The transient ``_phase_weeks_status`` is what the
+    # write-sites stamp into plan meta ("applied" | "fallback:<reason>");
+    # goal.phase_weeks itself is never mutated here.
+    if getattr(goal, "phase_weeks", None):
+        _pw_vec, _pw_reason = validate_phase_weeks(goal, goal.phase_weeks)
+        if _pw_vec is not None:
+            base_weeks = _pw_vec.get("base", 0)
+            build1_weeks = _pw_vec.get("build1", 0)
+            build2_weeks = _pw_vec.get("build2", 0)
+            peak_weeks = _pw_vec.get("peak", 0)
+            if taper_weeks > 0 and _pw_vec.get("taper"):
+                # Re-lay the (already appended) taper: span = 7×requested
+                # weeks ending ON the target (A4 "taper spans to target").
+                # The recommendation's span is TAPER_DAYS+1 = 13d, so a
+                # requested "2" is a real re-lay to 14d — which is why A3
+                # compares vectors, not spans.
+                _t_end = phases[-1].end  # == resolved target date
+                taper_start = max(date.today(),
+                                  _t_end - timedelta(days=7 * _pw_vec["taper"] - 1))
+                _taper_span = (_t_end - taper_start).days + 1
+                taper_weeks = max(1, -(-_taper_span // 7))
+                phases[-1].start = taper_start
+                phases[-1].weeks = taper_weeks
+            goal._phase_weeks_status = "applied"
+        elif _pw_reason:
+            goal._phase_weeks_status = f"fallback:{_pw_reason}"
+            log.warning(f"EVENT=phase_weeks_fallback reason={_pw_reason!r} "
+                        f"goal={goal.goal_type} runway={total_weeks}w")
+        else:
+            # A3: the vector equals the recommendation — not a custom split.
+            goal._phase_weeks_status = None
+    elif getattr(goal, "_phase_weeks_status", None) is not None:
+        goal._phase_weeks_status = None  # clear a stale transient on a reused goal
 
     # Calculate progressive TSS ramp (must be monotonically increasing)
     base_tss   = round(current_ctl * 7 * 1.05)  # slightly above maintenance
@@ -6066,6 +6260,14 @@ def _inject_mid_cycle_ftp_tests(weeks: list, phases: list) -> None:
             test_phase_starts.append(ph.start)
         elif getattr(ph, "name", "") == "peak" and cycle_total_weeks >= 16:
             test_phase_starts.append(ph.start)
+    if not test_phase_starts and cycle_total_weeks >= 8:
+        # Phase-split editor (v3.2.0): a custom split with build2=0 must not
+        # lose the mid-cycle test — retarget it to the peak start. The
+        # recommendation always has a build2 at ≥8 labeled weeks (the crisis
+        # tier tops out at 7 incl. taper/consolidation), so the no-custom
+        # path is untouched (GB1).
+        test_phase_starts = [ph.start for ph in phases
+                             if getattr(ph, "name", "") == "peak"][:1]
     if not test_phase_starts:
         return
     # PART B (B-LOCKED-1, tp FTP-test site): on a backdated plan a test week
@@ -8987,6 +9189,11 @@ def regenerate_from_today(
         # for the next full regenerate).
         start_date=getattr(goal, "start_date", None),
         entry_mode=getattr(goal, "entry_mode", None),
+        # Phase-split editor (v3.2.0, A2): carry the custom split into the
+        # refit; generate_phases validity-gates it against THIS refit's
+        # runway (A1) — the user's stored goal.phase_weeks is never mutated.
+        phase_weeks=(dict(goal.phase_weeks)
+                     if getattr(goal, "phase_weeks", None) else None),
     )
 
     # 10. Generate new phases — offset start by recovery duration to avoid overlap
@@ -9228,6 +9435,9 @@ def regenerate_from_today(
         "taper_compressed": adjusted_taper < original_taper,
         "remaining_build_weeks": build_weeks,
         "gaps": gaps,
+        # Phase-split editor (v3.2.0, A1): "applied" | "fallback:<reason>" |
+        # None (no custom split) — the write-site stamps this into plan meta.
+        "phase_weeks_status": getattr(adjusted_goal, "_phase_weeks_status", None),
     }
 
     # B2 (v2.1.0): re-assert the F4 event-eve taper on this adaptation path too —
@@ -9462,6 +9672,11 @@ def recalculate_plan(
         # (_phase_start_override wins at the splitter per B-LOCKED-5).
         start_date=getattr(goal, "start_date", None),
         entry_mode=getattr(goal, "entry_mode", None),
+        # Phase-split editor (v3.2.0, A2): carry the custom split into the
+        # recalc; generate_phases validity-gates it against THIS call's
+        # runway (A1) — the user's stored goal.phase_weeks is never mutated.
+        phase_weeks=(dict(goal.phase_weeks)
+                     if getattr(goal, "phase_weeks", None) else None),
     )
 
     # v1.11.0 IMPL-EVENT — event demand → plan targets so the event CTL nudge
@@ -9486,6 +9701,11 @@ def recalculate_plan(
             session_types=["z2", "threshold", "vo2max", "sprint", "recovery"],
         )
         new_phases = [taper_phase]
+        if getattr(adjusted_goal, "phase_weeks", None):
+            # Phase-split editor (v3.2.0): the locked taper owns the rest of
+            # the runway — a custom split is never applied on this branch.
+            adjusted_goal._phase_weeks_status = \
+                "fallback:taper locked — race is imminent"
     else:
         # Regenerate phases starting AFTER current week (avoids double-cover)
         adjusted_goal._phase_start_override = regen_start
@@ -9693,6 +9913,9 @@ def recalculate_plan(
         "taper_locked": taper_locked,
         "eftp_drift": _check_eftp_drift(current_eftp),
         "recalc_date": today.isoformat(),
+        # Phase-split editor (v3.2.0, A1): "applied" | "fallback:<reason>" |
+        # None (no custom split) — the write-site stamps this into plan meta.
+        "phase_weeks_status": getattr(adjusted_goal, "_phase_weeks_status", None),
     }
 
     return new_phases, all_weeks, recalc_info

@@ -1935,6 +1935,7 @@ window.addEventListener('unhandledrejection', function(e) {
   <div class="info-popover" id="planpop-update"><strong>Update plan</strong> automatically picks the right adjustment: a structure-preserving <em>rebalance</em> to today's TSB (fatigue), ACWR (load ratio) and availability when you're on track, or a full <em>rebuild with a recovery ramp</em> when you've missed enough to fall behind (Gabbett-safe, never a catch-up spike). Runs automatically after each ride sync too. Won't re-roll past or completed sessions, and won't move a fixed event date.</div>
   <div class="info-popover" id="planpop-availability"><strong>Edit availability</strong> sets per-day training time. Click a date to set hours; right-click to mark unavailable (holiday/injury). <strong>Press the pulsing UPDATE button to apply changes — the plan reflows on click.</strong></div>
   <div class="info-popover" id="planpop-rematch"><strong>Rematch workout</strong> re-rolls only this one day's ZWO file from the matching workout pool. Same intent (intervals, endurance, etc.) — different specific session. Use when the suggested workout doesn't fit your equipment or mood.</div>
+  <div class="info-popover" id="planpop-mode"><strong>Plan style</strong> — how your weekly sessions are chosen.<br><br><strong>Automatic (varied)</strong>: a varied, auto-adapting plan drawn from the full library — different sessions week to week.<br><strong>Fixed-core (repeatable)</strong>: the same weekly shape — one hard session type per phase that progresses by reps, over a Z2 base that scales to your available time.<br><strong>Template</strong>: a ready-made fixed-core blueprint.</div>
 
   <!-- v1.8.25 — "catching up your plan" overlay: greyed backdrop + stepped
        checklist shown on Plan-tab open while runPlanOpenSequence() runs. Click
@@ -2017,7 +2018,7 @@ window.addEventListener('unhandledrejection', function(e) {
       <!-- FS1 (IP_PLANNER_MODES): plan construction mode. -->
       <div class="form-row">
         <div class="form-group"><label>Plan style
-          <span class="hint" title="Automatic: a varied, auto-adapting plan drawn from the full library. Fixed-core (repeatable): the same weekly shape — one hard session type per phase that progresses by reps, with a Z2 base that scales to your time. Template: a ready-made fixed-core blueprint." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span></label>
+          <span class="info-icon" data-popover="planpop-mode" tabindex="0" role="button" aria-label="What do the plan styles mean?" title="Plan styles explained">?</span></label>
           <select id="plan-mode" onchange="onPlanModeChange()">
             <option value="auto" selected>Automatic (varied)</option>
             <option value="fixed_core">Fixed-core (repeatable)</option>
@@ -2059,15 +2060,18 @@ window.addEventListener('unhandledrejection', function(e) {
            archive, proposes a credit, and Confirm stores the RESULT as an
            equivalent start date (entry_mode=recognized). -->
       <div class="form-row">
-        <div class="form-group"><label style="display:flex;align-items:center;gap:6px;">
-          <input type="checkbox" id="plan-backdate-on" onchange="onBackdateToggle()"> I&rsquo;ve been training already
-        </label></div>
-        <div class="form-group" id="plan-backdate-wrap" style="display:none;">
+        <div class="form-group" style="flex:1 1 100%;">
+          <label id="plan-backdate-box" style="display:inline-flex;align-items:center;gap:10px;cursor:pointer;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);font-size:14px;font-weight:600;">
+            <input type="checkbox" id="plan-backdate-on" onchange="onBackdateToggle()" style="width:17px;height:17px;cursor:pointer;"> I&rsquo;ve been training already
+            <span style="font-size:11px;font-weight:400;color:var(--text3);">— start this plan mid-way, not from week&nbsp;1</span>
+          </label>
+        </div>
+        <div class="form-group" id="plan-backdate-wrap" style="display:none;flex:1 1 100%;margin-top:6px;">
           <div style="display:flex;gap:12px;margin-bottom:4px;">
             <label style="font-size:12px;display:flex;align-items:center;gap:4px;">
               <input type="radio" name="plan-entry-mode" value="date" checked onchange="onEntryModeChange()"> I know my start date</label>
             <label style="font-size:12px;display:flex;align-items:center;gap:4px;">
-              <input type="radio" name="plan-entry-mode" value="scan" onchange="onEntryModeChange()"> Place me from my rides</label>
+              <input type="radio" name="plan-entry-mode" value="scan" onchange="onEntryModeChange()"> Find my week from recent rides</label>
           </div>
           <div id="entry-date-arm">
             <label>Training since</label>
@@ -2705,8 +2709,8 @@ window.addEventListener('unhandledrejection', function(e) {
     <details class="fatigue-resistance" id="fatigue-resistance-panel"
              style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;"
              ontoggle="if(this.open)loadFatigueResistance()">
-      <summary style="cursor:pointer;font-size:12px;color:var(--text2);user-select:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-        <span>Fatigue Resistance — robustness index (beta)</span>
+      <summary style="cursor:pointer;color:var(--text2);user-select:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <h3 style="margin:0;font-size:15px;">Fatigue Resistance <span style="font-size:11px;font-weight:400;color:var(--text3);">— robustness index (beta)</span></h3>
         <span id="fatigue-resistance-headline" style="font-size:11px;color:var(--text3);"></span>
         <button id="fatigue-resistance-refresh-btn" class="btn"
                 style="font-size:10px;padding:2px 6px;margin-left:auto;cursor:pointer;"
@@ -4723,6 +4727,21 @@ let _powerCurveYAxis = 'watts';   // 'watts' | 'wkg' | 'pct_ftp'
 let _powerCurveWindow = 90;       // 30 / 90 / 180 / 365 / 'all'
 let _powerCurveBackfillSeen = false;
 let _powerCurveInflight = false;
+let _pcPollTimer = null, _pcPollCount = 0;  // v3.2.1 background-backfill auto-poll
+// v3.2.1 — shared "hydrating from intervals.icu" progress bar. A REAL bar that
+// climbs with the live cached-% (backend reports cached rides / total), not a
+// spinner. Used by the power curve + fatigue resistance while streams cache.
+function backfillBarHtml(pct, label) {
+  pct = Math.max(0, Math.min(100, Math.round(pct || 0)));
+  return `<div style="font-size:12px;color:var(--text2);line-height:1.6;padding:8px 0;">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;">
+      <span>Caching your ${label} from intervals.icu&hellip;</span><b>${pct}%</b></div>
+    <div style="height:8px;background:var(--surface2);border-radius:4px;margin-top:8px;overflow:hidden;">
+      <div style="height:100%;width:${pct}%;background:var(--accent);border-radius:4px;transition:width 0.6s ease;"></div></div>
+    <div style="font-size:10px;color:var(--text3);margin-top:6px;">This fills in on its own as your rides index &mdash; no need to wait here.</div>
+  </div>`;
+}
+
 async function loadPowerCurve(force=false) {
   const meta = document.getElementById('power-curve-meta');
   const canvas = document.getElementById('power-curve-chart');
@@ -4730,6 +4749,7 @@ async function loadPowerCurve(force=false) {
   if (!canvas) return;
   if (_powerCurveInflight && !force) return;
   _powerCurveInflight = true;
+  if (!force) { _pcPollCount = 0; clearTimeout(_pcPollTimer); }  // A2: fresh open re-enables polling
   if (meta) meta.textContent = 'Loading…';
   try {
     const w = (_powerCurveWindow === 'all') ? 3650 : Number(_powerCurveWindow);
@@ -4746,25 +4766,27 @@ async function loadPowerCurve(force=false) {
     const needsBackfill = data.needs_backfill === true;
     if (placeholder) {
       if (nRides === 0 || needsBackfill) {
+        // v3.2.1: the backend now hydrates power streams in the BACKGROUND and
+        // reports live progress — show an animated bar + auto-poll so the curve
+        // appears on its own (it used to block 20-30s and never render).
+        const pct = (data.backfill_progress && data.backfill_progress.pct) || 0;
         placeholder.classList.remove('loading');
-        placeholder.innerHTML = '<div style="font-size:12px;color:var(--text3);line-height:1.5;padding:8px 0;">'
-          + 'No power data cached yet — syncing your rides from intervals.icu. The curve appears once they’re indexed.'
-          + '<div style="margin-top:8px;">'
-          + '<button class="btn" style="font-size:11px;padding:4px 10px;" '
-          + 'onclick="loadPowerCurve(true)">Sync / refresh now</button>'
-          + '</div></div>';
-        // Never leave a bare indefinite "Loading…" — say what's happening.
-        if (meta) meta.textContent = 'Syncing rides from intervals.icu…';
+        placeholder.innerHTML = backfillBarHtml(pct, 'power streams');
+        if (meta) meta.textContent = 'Caching power streams… ' + pct + '%';
+        // Auto-poll: re-fetch every 4s until the curve populates (cap ~2.5min).
+        clearTimeout(_pcPollTimer);
+        if (_pcPollCount < 38) {
+          _pcPollTimer = setTimeout(() => { _pcPollCount++; loadPowerCurve(true); }, 4000);
+        }
       } else {
-        // Data is present — hide the duplicate card (legacy host) so the
-        // primary canvas above is the only Power Curve surface visible.
+        // Data is present — stop polling, hide the duplicate legacy card.
+        clearTimeout(_pcPollTimer); _pcPollCount = 0;
         const card = placeholder.closest('.card');
         if (card) card.style.display = 'none';
         else placeholder.style.display = 'none';
       }
     }
     renderPowerCurve();
-    maybeKickBackfill(data);
   } catch (e) {
     if (meta) meta.innerHTML = '<span style="color:#f97316;">Power curve unavailable in this build.</span>';
     if (canvas && canvas.parentElement) {
@@ -4806,7 +4828,7 @@ function renderPowerCurve() {
   const data = _powerCurveData;
   const yMode = _powerCurveYAxis;
   const yLabel = yMode === 'watts' ? 'watts' : (yMode === 'wkg' ? 'W/kg' : '% FTP');
-  const currentFtp = Number(data.ftp_w || data.current_ftp_w || data.ftp || 0) || null;
+  const currentFtp = Number(data.ftp_w || data.current_ftp_w || data.current_ftp || data.ftp || 0) || null;
   const currentWeight = Number(data.weight_kg || data.current_weight_kg || 0) || null;
   // Rider curve mapping per yMode using PER-RIDE values when available
   // (PATCH G10): each point should carry its own ftp_at_ride + weight_kg.
@@ -5174,15 +5196,10 @@ async function loadFatigueResistance(force=false) {
     const pct = Number((d && d.power_streams_cached_pct) || 0);
     if (triggered || (pct > 0 && pct < 100)) {
       if (!_fatigueResistanceBackfillStart) _fatigueResistanceBackfillStart = Date.now();
-      const pctTxt = isNaN(pct) ? '—' : (pct + '%');
-      // v1.8.9 Bug 4 — show Computing… (Nms) using the backend's compute_ms field.
-      // Old "refresh in 1-2 minutes" copy removed entirely.
-      const cms = Number((d && d.compute_ms) || 0);
-      const cmsTxt = cms > 0 ? `Computing… (${cms}ms)` : 'Computing…';
-      body.innerHTML = `<div style="color:var(--text3);line-height:1.5;">
-        <div>${esc(cmsTxt)}</div>
-        <div style="font-size:11px;margin-top:4px;">Power streams cached: ${esc(pctTxt)}.</div>
-      </div>`;
+      // v3.2.1: a REAL progress bar (same as the power curve) that climbs as
+      // the shared power streams hydrate — replaces the old text-only
+      // "Computing… (Nms) / cached X%" that looked stuck.
+      body.innerHTML = backfillBarHtml(isNaN(pct) ? 0 : pct, 'power streams');
       // Cancel any prior timer before scheduling a fresh poll.
       if (_fatigueResistanceBackfillTimer) {
         try { clearTimeout(_fatigueResistanceBackfillTimer); } catch(_) {}
@@ -5193,7 +5210,7 @@ async function loadFatigueResistance(force=false) {
         _fatigueResistanceBackfillTimer = setTimeout(() => {
           _fatigueResistanceBackfillTimer = null;
           loadFatigueResistance(true);
-        }, 30 * 1000);
+        }, 4000);
       } else {
         // 10-minute ceiling reached — stop polling and surface a note.
         body.innerHTML = `<div style="color:#f97316;line-height:1.5;">
@@ -6180,6 +6197,19 @@ async function loadHome() {
       {v:s.hrv_status??'—',l:'HRV status',c:statusClass(s.hrv_status),t:'hrv'},
       {v:s.sleep_score??'—',l:'Sleep score',c:'',t:'sleep'},
     ].map(m=>`<div class="metric" data-tip="${m.t}"><div class="mv ${m.c}">${m.v}</div><div class="ml">${m.l}</div></div>`).join('');
+
+    // v3.2.1: today's overnight sleep/HRV usually lands mid-morning. When
+    // today's values are all missing but wellness IS connected (history
+    // exists), say so instead of leaving bare "—" (RHR falls back to the last
+    // day; sleep/HRV intentionally don't, to avoid passing yesterday off as
+    // today). Idempotent across re-renders.
+    document.getElementById('sleep-today-note')?.remove();
+    const _sleepTodayMissing = (s.sleep_h == null && s.hrv_ms == null && s.sleep_score == null);
+    const _haveWellnessHistory = (wellness || []).some(w => w.hrv != null || w.sleep_score != null);
+    if (_sleepTodayMissing && _haveWellnessHistory) {
+      $('sleep-metrics').insertAdjacentHTML('afterend',
+        `<div id="sleep-today-note" style="font-size:10px;color:var(--text3);margin-top:6px;">Waiting on today's sleep &amp; HRV from intervals.icu — overnight data usually lands mid-morning.</div>`);
+    }
 
     // HRV & RHR sparklines from wellness data (last 14 days)
     const last14 = wellness.slice(-14);
@@ -10180,11 +10210,11 @@ function _renderEntryScan(d) {
     html += `<div style="font-size:12px;font-weight:600;margin-top:6px;">Credit ${c} week${c > 1 ? 's' : ''} &mdash; start at week ${c + 1}</div>
       <div style="margin-top:4px;display:flex;gap:8px;align-items:center;">
         <button type="button" class="btn btn-sm" onclick="confirmEntryScan('${esc(d.equivalent_start_date)}')">Confirm</button>
-        <a href="#" style="font-size:11px;" onclick="useEntryDateInstead(); return false;">Use a date instead</a>
+        <a href="#" style="font-size:11px;color:var(--accent);font-weight:600;" onclick="useEntryDateInstead(); return false;">Use a date instead</a>
       </div>`;
   } else {
     html += `<div style="font-size:12px;margin-top:6px;">No qualifying weeks found &mdash; start fresh, or
-      <a href="#" onclick="useEntryDateInstead(); return false;">use a date instead</a>.</div>`;
+      <a href="#" style="color:var(--accent);font-weight:600;" onclick="useEntryDateInstead(); return false;">use a date instead</a>.</div>`;
   }
   res.innerHTML = html;
 }
@@ -10411,7 +10441,7 @@ function _renderPlanPreviewPhases(phases, planWeeks, goal, eventDate, resp) {
     html += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
       <div style="font-size:11px;font-weight:700;color:${ok ? 'var(--text2)' : 'var(--red)'};">${sum} of ${ps.M} weeks distributed</div>
       <div style="display:inline-flex;gap:6px;align-items:center;">${_phaseSplitBadgeHtml()}
-        <button class="btn" style="padding:2px 8px;font-size:11px;" onclick="phaseSplitReset()" ${ps.state === 'custom' ? '' : 'disabled'} title="Reset to the recommended split">Recommended</button>
+        <button class="btn" style="padding:3px 10px;font-size:11px;font-weight:600;${ps.state === 'custom' ? 'border-color:var(--accent);color:var(--accent);' : ''}" onclick="phaseSplitReset()" ${ps.state === 'custom' ? '' : 'disabled'} title="Reset to the recommended base/build/peak/taper split">&#8635; Recommended split</button>
       </div>
     </div>`;
     if (!ok) html += `<div style="font-size:11px;color:var(--red);margin-bottom:6px;">${ps.runwayChanged
@@ -15404,6 +15434,16 @@ function openMissedSessionsModal() {
   }, 0);
 }
 
+// v3.2.1 — jump to the Training Plan tab and focus Generate Plan (first-run CTA).
+function goToPlanBuilder() {
+  const t = document.querySelector('.tab[data-tab="plan"]');
+  if (t) t.click();
+  setTimeout(() => {
+    const g = document.getElementById('btn-generate-plan');
+    if (g) { g.scrollIntoView({ behavior: 'smooth', block: 'center' }); g.focus(); }
+  }, 150);
+}
+
 async function loadTodaySession() {
   try {
     let res;
@@ -15421,7 +15461,24 @@ async function loadTodaySession() {
       try { window._diagFrontendError('E_FRONTEND_TODAY_SESSION_PARSE', {msg: String(eP && eP.message || eP), status: res.status}); } catch(_) {}
       throw eP;
     }
-    if (!d.planned) return;
+    if (!d.planned) {
+      // v3.2.1 (bug 3): don't leave the home card blank. First run (no plan
+      // at all) → a clear "create your first plan" CTA; otherwise it's just a
+      // rest / no-session day → say so.
+      const _el = $('home-recommendation');
+      if (_el) {
+        _el.classList.remove('loading');
+        const hasPlan = !!(window._planData && (window._planData.weeks || []).length);
+        _el.innerHTML = hasPlan
+          ? `<div style="font-size:13px;color:var(--text2);padding:8px 0;">Rest day &mdash; no session scheduled today. Enjoy the recovery.</div>`
+          : `<div style="text-align:center;padding:14px 8px;">
+              <div style="font-size:14px;font-weight:600;margin-bottom:4px;">No training plan yet</div>
+              <div style="font-size:12px;color:var(--text2);margin-bottom:12px;">Build one from your goal and available time &mdash; it then adapts to your rides automatically.</div>
+              <button class="btn btn-primary" onclick="goToPlanBuilder()">Create your first training plan</button>
+            </div>`;
+      }
+      return;
+    }
 
     const el = $('home-recommendation');
     // issue #7 — today IS a race: show the race (name/distance/climb), not a

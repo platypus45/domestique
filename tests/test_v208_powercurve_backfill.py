@@ -6,6 +6,7 @@ efforts/streams. Fix (app.py api_profile_power_curve): trigger the backfill
 whenever in-window rides are missing efforts (n_missing>0), even when the curve
 is already non-empty.
 """
+import time
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -16,10 +17,9 @@ class TestPowerCurveSelfHealGate(unittest.TestCase):
     def _hit(self, rider_curve, n_missing):
         import app as appmod
         import power_curve
-        agg = MagicMock(side_effect=[
-            {"rider_curve": rider_curve, "n_rides": 24},   # initial (stale/low)
-            {"rider_curve": [[5, 1055]], "n_rides": 24},   # after backfill (correct)
-        ])
+        appmod._pc_backfill_running.clear()  # v3.2.1: reset single-flight guard
+        appmod._cache.clear(); appmod._cache_ts.clear()  # avoid 24h cross-test cache
+        agg = MagicMock(return_value={"rider_curve": rider_curve, "n_rides": 24})
         with patch.object(power_curve, "aggregate_power_curve", agg), \
              patch.object(power_curve, "count_rides_missing_efforts",
                           return_value=(24, n_missing)), \
@@ -30,18 +30,27 @@ class TestPowerCurveSelfHealGate(unittest.TestCase):
                                         "failed": 0}) as bf, \
              patch.object(power_curve, "release_backfill_lock", return_value=None):
             client = TestClient(appmod.app, raise_server_exceptions=False)
-            client.get("/api/profile/power-curve?window_days=90")
-            return bf
+            resp = client.get("/api/profile/power-curve?window_days=90").json()
+            # v3.2.1: the backfill now runs in a BACKGROUND daemon thread —
+            # poll briefly for it to fire (mocked, so near-instant).
+            for _ in range(50):
+                if bf.called:
+                    break
+                time.sleep(0.02)
+            return bf, resp
 
     def test_backfill_runs_when_curve_nonempty_but_rides_missing_efforts(self):
-        # The C1 fix: a non-empty BUT stale/low curve with rides still missing
-        # efforts must STILL trigger the hydrating backfill (the old gate didn't).
-        bf = self._hit(rider_curve=[[5, 680]], n_missing=24)
+        # C1: rides missing efforts must STILL trigger the hydrating backfill.
+        # v3.2.1: it's kicked in the BACKGROUND (endpoint no longer blocks) and
+        # the response carries backfill_progress so the frontend can poll.
+        bf, resp = self._hit(rider_curve=[[5, 680]], n_missing=24)
         bf.assert_called_once()
+        self.assertIn("backfill_progress", resp)
 
     def test_backfill_skipped_when_no_rides_missing_efforts(self):
-        bf = self._hit(rider_curve=[[5, 1055]], n_missing=0)
+        bf, resp = self._hit(rider_curve=[[5, 1055]], n_missing=0)
         bf.assert_not_called()
+        self.assertNotIn("backfill_progress", resp)
 
 
 if __name__ == "__main__":

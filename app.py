@@ -1993,32 +1993,15 @@ def api_profile_power_curve(window_days: int = Query(90, ge=1, le=3650),
             _log.debug(f"power_curve count_rides_missing_efforts failed: {e}")
             _n_missing = 0
         if _n_missing > 0:
-            acquired, _lock = power_curve.acquire_backfill_lock()
-            if acquired:
-                try:
-                    bf = power_curve.backfill_icu_history(_pid,
-                                                          max_per_second=1,
-                                                          _skip_lock=True)
-                    _log.info(
-                        "power-curve self-heal backfill: "
-                        f"backfilled={bf.get('backfilled')} "
-                        f"already_cached={bf.get('already_cached')} "
-                        f"failed={bf.get('failed')}"
-                    )
-                except Exception as e:
-                    _log.warning(f"power-curve self-heal backfill failed: {e}")
-                finally:
-                    power_curve.release_backfill_lock()
-                # Recompute once now that envelopes are hydrated.
-                try:
-                    result = power_curve.aggregate_power_curve(
-                        _pid, window_days=int(window_days))
-                    try:
-                        n_rides = int(result.get("n_rides") or 0)
-                    except (TypeError, ValueError):
-                        n_rides = 0
-                except Exception as e:
-                    _log.warning(f"power-curve recompute after backfill failed: {e}")
+            # v3.2.1 BUG-FIX: NEVER backfill inline. It fetches ICU streams
+            # rate-limited to 1/s, so ~24 missing rides blocked THIS request for
+            # 20-30s — the power curve (and fatigue resistance, which shares the
+            # streams) timed out and never rendered. Kick it in the background
+            # and return the (possibly empty) curve immediately with
+            # needs_backfill=True + backfill_progress; the frontend polls and
+            # re-fetches when the streams are hydrated.
+            result["backfill_progress"] = _kick_power_curve_backfill(
+                _pid, int(window_days), _n_missing)
     # v1.8.8 Bug 2/11 — surface `needs_backfill` so the dashboard can swap
     # the "Loading…" placeholder for a "Run backfill" button when streams
     # haven't been cached yet. The legacy gate (n_rides==0) silently missed
@@ -2041,6 +2024,46 @@ def api_profile_power_curve(window_days: int = Query(90, ge=1, le=3650),
     return result
 
 
+_pc_backfill_running: set = set()
+_pc_backfill_running_lock = threading.Lock()
+
+
+def _kick_power_curve_backfill(pid, window_days: int, n_missing: int) -> dict:
+    """v3.2.1 — fire-and-forget ICU power-stream backfill so the power-curve /
+    fatigue-resistance endpoints never block on it. Returns the LIVE cached-%
+    (cached rides / in-window rides) for the frontend progress bar; polling the
+    endpoint climbs it as rides hydrate. Single-flight per process; the on-disk
+    G3 lock guards cross-process."""
+    import power_curve
+    key = pid or "_default"
+    with _pc_backfill_running_lock:
+        starting = key not in _pc_backfill_running
+        if starting:
+            _pc_backfill_running.add(key)
+    if starting:
+        def _work():
+            try:
+                acquired, _lk = power_curve.acquire_backfill_lock()
+                if acquired:
+                    try:
+                        power_curve.backfill_icu_history(
+                            pid, max_per_second=2, _skip_lock=True)
+                    finally:
+                        power_curve.release_backfill_lock()
+            except Exception as e:
+                _log.warning(f"background power-curve backfill failed: {e}")
+            finally:
+                with _pc_backfill_running_lock:
+                    _pc_backfill_running.discard(key)
+        threading.Thread(target=_work, daemon=True, name="pc-backfill").start()
+    try:
+        n_win, n_miss = power_curve.count_rides_missing_efforts(int(window_days))
+        pct = round(100 * (n_win - n_miss) / n_win) if n_win else 0
+    except Exception:
+        pct = max(0, 100 - round(100 * n_missing / max(n_missing + 1, 1)))
+    return {"running": True, "pct": max(0, min(99, pct))}
+
+
 def _sync_task_snapshot() -> tuple:
     """AC1: sync-identity snapshot taken at TASK START by app.py's write
     pipelines (lazy icu_sync thread, wellness sync, backfill worker). Passed
@@ -2060,10 +2083,13 @@ def _run_backfill_job(task_id: str) -> None:
     between endpoint-release and worker-acquire could spawn duplicate
     ICU workers.
 
-    AC1 scope-add (A13): the target profile is snapshotted at task start and
-    passed down explicitly — power_curve's per-write gate (CORE) refuses
-    writes once the active profile no longer matches, so a switch mid-backfill
-    yields zero cross-profile files.
+    KNOWN GAP (v3.2.1 correction): the snapshot below is NOT actually enforced.
+    ``power_curve.backfill_icu_history`` ignores its ``profile_id`` arg and
+    writes each envelope into the LIVE active-profile dir with no
+    ``db.sync_write_gate`` — so a profile switch mid-backfill can mis-file
+    envelopes on this path (and the GET-side background kick shares the same
+    gap). Pre-existing; tracked as a separate chip. Do not read the discarded
+    snapshot as a safety guarantee.
     """
     import power_curve
 
@@ -10160,22 +10186,45 @@ def _api_today_session_impl():
     except Exception as _e:
         _log.debug(f"/api/today-session: lazy ICU sync kick swallowed: {_e}")
 
-    # Get weekly plan
+    # week_data (the regenerated Mon–Sun week) is still used below for the
+    # yesterday-TSS-ratio heuristic, so keep it.
     week_data = api_weekly_plan(week_offset=0)
     today_str = date.today().isoformat()
-    planned_data = next(
-        (s for s in week_data["sessions"] if s["day"] == today_str),
-        None,
-    )
+
+    # v3.2.1 BUG-FIX: the home card's LABEL must come from the SAME stored plan
+    # its CLICK opens (/api/calendar → merge_plan_with_rides on
+    # current_plan.json). Previously the label came from api_weekly_plan()'s
+    # REGENERATED week, which diverges from the stored plan whenever the plan's
+    # week boundary isn't a Monday — a Sunday-start plan showed one day's
+    # prescription while the click opened a different stored day (label said
+    # REST, click opened the Z2 ride). Prefer today's session from the stored
+    # plan; fall back to the regenerated week only when it isn't there.
+    planned_data = None
+    try:
+        _jp = _plan_dir() / "current_plan.json"
+        if _jp.exists():
+            with open(_jp, encoding="utf-8") as _f:
+                _stored = json.load(_f)
+            planned_data = next(
+                (s for w in _stored.get("weeks", [])
+                 for s in w.get("sessions", []) if s.get("day") == today_str),
+                None,
+            )
+    except Exception as _e:
+        _log.debug(f"/api/today-session: stored-plan read failed, using regen: {_e}")
+
+    if planned_data is None:
+        planned_data = next(
+            (s for s in week_data["sessions"] if s["day"] == today_str), None)
     if not planned_data:
         return {"planned": None, "adjusted": None, "reason": "No session planned today"}
 
     planned = tp.PlannedSession(
-        day=date.today(), day_name=planned_data["day_name"],
-        session_type=planned_data["session_type"],
-        duration_min=planned_data["duration_min"],
-        tss_estimate=planned_data["tss_estimate"],
-        description=planned_data["description"],
+        day=date.today(), day_name=planned_data.get("day_name", ""),
+        session_type=planned_data.get("session_type", "rest"),
+        duration_min=planned_data.get("duration_min", 0),
+        tss_estimate=planned_data.get("tss_estimate", 0),
+        description=planned_data.get("description", ""),
     )
 
     # Get readiness and HRV data

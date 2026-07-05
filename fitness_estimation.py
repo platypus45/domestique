@@ -291,15 +291,21 @@ def compute_fitness_signature(
 def coggan_20min_ftp(power_series: list[int] | list[float]) -> dict | None:
     """T2 — Coggan 20-min FTP from a ride's 1Hz power series.
 
-    Formula: ``suggested_ftp = 0.95 * mean_power(best_20min_segment)``.
-    Returns None when the ride is shorter than 20 minutes (cannot score a
-    20-min segment). Otherwise returns::
+    Formula: ``suggested_ftp = 0.95 * mean_power(best_20min_segment)`` (exact
+    1200-s window, arithmetic MEAN — never NP). Returns None when the ride is
+    shorter than 20 minutes. A5 (v3.2.0): the max-mean window's final 30 s is
+    capped at that window's own p90 before meaning, removing a finish kick
+    without ever selecting a lower plateau. Additive advisories (never block):
+    ``pacing_drift`` / ``pacing_drift_pct`` when first-vs-second-half drift
+    > 8%, and ``blowout_missing`` when no ≥4-min ≥105% effort precedes the
+    block in the prior ~15 min. Returns::
 
         {
           "type": "coggan_20min",
           "value": int,              # suggested FTP (watts)
           "best_20min": int,         # best 20-min mean power (watts)
-          "formula_used": "0.95 * best_20min",
+          "formula_used": "0.95 * best_20min_mean",
+          # optional: pacing_drift, pacing_drift_pct, blowout_missing
         }
     """
     if not power_series:
@@ -307,47 +313,155 @@ def coggan_20min_ftp(power_series: list[int] | list[float]) -> dict | None:
     n = len(power_series)
     if n < 1200:
         return None
+    powers = [float(p or 0) for p in power_series]
     window = 1200  # 20 min @ 1 Hz
-    cur = sum(float(p or 0) for p in power_series[:window])
+    # Locate the MAX-mean 1200-s window (finds the test block). A5 (v3.2.0):
+    # keep THIS window — the flattest-window search under-reads (proven) — but
+    # cap its final 30 s at the window's OWN p90 before meaning, so a finish
+    # kick can't inflate the mean while a genuine lower plateau is never
+    # substituted (a cap can only lower the tail, never pick a different block).
+    cur = sum(powers[:window])
     best = cur
+    best_idx = 0
     for i in range(1, n - window + 1):
-        cur += float(power_series[i + window - 1] or 0) - float(power_series[i - 1] or 0)
+        cur += powers[i + window - 1] - powers[i - 1]
         if cur > best:
             best = cur
-    best_mean = best / window
-    return {
+            best_idx = i
+    seg = powers[best_idx:best_idx + window]
+    # p90 of the window (linear-interpolated), used to clip the finish tail.
+    srt = sorted(seg)
+    rank = 0.90 * (len(srt) - 1)
+    lo_i = int(rank)
+    frac = rank - lo_i
+    p90 = srt[lo_i] + (srt[min(lo_i + 1, len(srt) - 1)] - srt[lo_i]) * frac
+    capped = seg[:]
+    for k in range(window - 30, window):
+        if capped[k] > p90:
+            capped[k] = p90
+    best_mean = sum(capped) / window  # arithmetic MEAN (NOT NP) — pinned
+
+    out = {
         "type": "coggan_20min",
         "value": int(round(best_mean * 0.95)),
         "best_20min": int(round(best_mean)),
         "formula_used": "0.95 * best_20min_mean",
     }
 
+    # Advisories (ADDITIVE, never block). Built off the RAW window `seg`.
+    # Pacing drift: first-half vs second-half mean of the block > 8%.
+    first_half = sum(seg[:window // 2]) / (window // 2)
+    second_half = sum(seg[window // 2:]) / (window - window // 2)
+    if first_half > 0:
+        drift = abs(first_half - second_half) / first_half
+        if drift > 0.08:
+            out["pacing_drift_pct"] = round(drift * 100.0, 1)
+            out["pacing_drift"] = True
+    # Blow-out presence: a ≥4-min (240 s) effort ≥ 105% of the block mean in
+    # the ~15 min (900 s) BEFORE the block. Absent ⇒ blowout_missing advisory.
+    block_mean_raw = sum(seg) / window
+    pre_lo = max(0, best_idx - 900)
+    pre = powers[pre_lo:best_idx]
+    blowout_present = False
+    if len(pre) >= 240:
+        w4 = 240
+        c = sum(pre[:w4])
+        if c / w4 >= 1.05 * block_mean_raw:
+            blowout_present = True
+        else:
+            for i in range(1, len(pre) - w4 + 1):
+                c += pre[i + w4 - 1] - pre[i - 1]
+                if c / w4 >= 1.05 * block_mean_raw:
+                    blowout_present = True
+                    break
+    if not blowout_present:
+        out["blowout_missing"] = True
 
-def ramp_test_ftp(power_series: list[int] | list[float]) -> dict | None:
+    return out
+
+
+def ramp_test_ftp(
+    power_series: list[int] | list[float],
+    pm=None,
+) -> dict | None:
     """T2 — Ramp-test FTP from a ride's 1Hz power series.
 
-    Formula: ``suggested_ftp = 0.75 * mean_power(best_60s_segment)``.
-    Returns None for rides shorter than 60 s.
+    Formula: ``suggested_ftp = 0.75 * mean_power(best_sustained_60s)`` — the
+    calc TRUSTS ``detect_ftp_test_shape`` already confirmed a ramp. ONE
+    flatness guard keeps a warmup/cooldown spike-and-coast minute from winning:
+    a 60-s window only counts when its mean ≥ 0.70 × its own PEAK 1-s power. A
+    flat ramp step passes (≈1.0); a 30-s-sprint-then-coast minute fails (≈0.56).
+
+    Aborted-ramp self-protection is preserved: the best sustained MINUTE is the
+    scoring quantity, so quitting early scores the last full step reached.
+
+    GF4 advisory (high-W′ / sprinter over-read): when a TRUSTWORTHY measured
+    Pmax is set (``capacity_cap.pmax_is_set``) and measured Pmax/FTP ≥ 1.35,
+    attach ``factor_band=[0.72, 0.77]`` + ``likely_overestimate=True``. This is
+    ADVISORY ONLY — the value stays ``round(0.75 × best_60s)`` (no W′ math, the
+    number is never auto-changed).
     """
     if not power_series:
         return None
     n = len(power_series)
     if n < 60:
         return None
+    powers = [float(p or 0) for p in power_series]
+
     window = 60
-    cur = sum(float(p or 0) for p in power_series[:window])
-    best = cur
-    for i in range(1, n - window + 1):
-        cur += float(power_series[i + window - 1] or 0) - float(power_series[i - 1] or 0)
-        if cur > best:
-            best = cur
-    best_mean = best / window
-    return {
+    best = None
+    cur = sum(powers[:window])
+    for i in range(0, n - window + 1):
+        if i > 0:
+            cur += powers[i + window - 1] - powers[i - 1]
+        mean_i = cur / window
+        # ponytail: flatness guard rejects spike-and-coast; a real ramp step is
+        # near-constant, so mean ≥ 0.70×peak. A warmup/cooldown sprint minute
+        # (30s hard + 30s coast) has mean ≈ 0.56×peak and can never win.
+        peak_i = max(powers[i:i + window])
+        if peak_i > 0 and mean_i < 0.70 * peak_i:
+            continue
+        if best is None or mean_i > best:
+            best = mean_i
+
+    if best is None:
+        # No sustained 60-s window (every minute was spiky) — fall back to the
+        # plain global best-60s so a detected ramp never returns None.
+        cur = sum(powers[:window])
+        best = cur / window
+        for i in range(1, n - window + 1):
+            cur += powers[i + window - 1] - powers[i - 1]
+            if cur / window > best:
+                best = cur / window
+
+    best_mean = best
+    out = {
         "type": "ramp",
         "value": int(round(best_mean * 0.75)),
         "best_60s": int(round(best_mean)),
         "formula_used": "0.75 * best_60s_mean",
     }
+
+    # GF4: high measured-Pmax over-read advisory (advisory only, value fixed).
+    try:
+        import capacity_cap
+        if pm is not None and capacity_cap.pmax_is_set(pm):
+            ftp = float(getattr(pm, "ftp", 0) or 0)
+            pmax = float(getattr(pm, "pmax_w", 0) or 0)
+            if ftp > 0 and pmax > 0 and (pmax / ftp) >= 1.35:
+                out["factor_band"] = [0.72, 0.77]
+                out["likely_overestimate"] = True
+    except Exception:
+        pass
+
+    return out
+
+
+def _minute_averages(powers: list[float]) -> list[float]:
+    """1-minute mean-power ladder for the whole series (drops the ragged tail
+    minute so every entry is a full 60-s average)."""
+    n = len(powers)
+    return [sum(powers[i * 60:(i + 1) * 60]) / 60.0 for i in range(n // 60)]
 
 
 def detect_ftp_test_shape(
@@ -356,17 +470,20 @@ def detect_ftp_test_shape(
 ) -> str | None:
     """T1 — classify a ride's power profile as Coggan 20-min, Ramp, or not a test.
 
-    Filename check first: if ``filename_hint`` contains
-    ``ftp_test_coggan`` or ``ftp_test_ramp`` we trust the tag. Otherwise we
-    run a power-profile heuristic:
+    DETECTION IS STRUCTURED-WORKOUT-PRIMARY (v3.2.0, D3): the filename/tag
+    path is authoritative and returns FIRST — this is exactly how Zwift / TR
+    know a ride is a test (they ran the structured file). Since 3.2.0 ships
+    the tests as tagged workouts, this is the normal path.
 
-      * Coggan: there exists a 20-min window whose mean power is ≥ 95% of
-        the ride's overall best 20-min mean power (i.e. the ride contains a
-        sustained plateau at/near the best-effort level — consistent with
-        the main 20-min test block).
-      * Ramp: the first 15 minutes of 1-min averages form a monotone-rising
-        staircase (each subsequent 1-min average ≥ prev, overall slope
-        positive), with ≥ 15 steps present.
+    The power-shape heuristic is a CONSERVATIVE fallback for free-form rides:
+      * Ramp: a LATE-PEAKING monotone climb — the ride's best-60s sits in the
+        last third AND the last-third mean is ≥ 1.5× the first-third mean. A
+        4×8 threshold ride (peaks spread throughout, first-third ≈ last-third)
+        fails both ⇒ not a ramp.
+      * Coggan: a single sustained ≥18-min plateau ≥ 1.15× ride-mean with NO
+        second comparable plateau (rejects 2×20) and a blow-out shape present.
+
+    Ambiguous → None (never auto-score a random hard ride).
 
     Returns "coggan_20min", "ramp", or None.
     """
@@ -382,12 +499,16 @@ def detect_ftp_test_shape(
     n = len(power_series)
     powers = [float(p or 0) for p in power_series]
 
-    # Coggan heuristic: the ride's best-20min mean exists and a subsequent
-    # 20-min window within 95% of it is present (true for any Coggan ride,
-    # false for most Z2 rides whose power curve is much flatter).
-    coggan_hit = False
-    if n >= 1200:
-        window = 1200
+    # Ramp heuristic (ponytail: two cheap checks, no step-counting): a ramp
+    # peaks LATE and climbs. (a) the best-60s window falls in the last third of
+    # the ride, AND (b) the last-third mean ≥ 1.5× the first-third mean. A 4×8
+    # threshold ride peaks throughout (first-third ≈ last-third) ⇒ fails (b).
+    if n >= 180:
+        third = n // 3
+        first_mean = sum(powers[:third]) / third
+        last_mean = sum(powers[2 * third:]) / (n - 2 * third)
+        # best-60s location
+        window = 60
         cur = sum(powers[:window])
         best = cur
         best_idx = 0
@@ -396,32 +517,52 @@ def detect_ftp_test_shape(
             if cur > best:
                 best = cur
                 best_idx = i
-        best_mean = best / window
-        # Require the best-20 mean to be meaningfully above the ride average
-        # (avoid flagging long Z2 rides whose "best 20" is the ride itself).
+        best_in_last_third = best_idx >= 2 * third
+        if (best_in_last_third and first_mean > 0
+                and last_mean >= 1.5 * first_mean):
+            return "ramp"
+
+    # Coggan heuristic (TIGHTENED, v3.2.0): a single sustained ≥18-min plateau
+    # meaningfully above ride-mean, with NO second comparable plateau elsewhere
+    # (that would be a 2×20 / intervals ride, not a single-block Coggan test),
+    # and a blow-out effort present in the run-up (the mandatory 5-min
+    # depletion). Ambiguous shapes fall through to None.
+    if n >= 1080:  # need ≥18 min for the plateau
         ride_mean = sum(powers) / n
-        if best_mean >= 1.10 * ride_mean and best_mean >= 150:
-            coggan_hit = True
-
-    # Ramp heuristic: first 15 minutes form a mostly-monotonic rising ladder
-    # of 1-min averages — pragmatic threshold: ≥ 12 out of 15 steps are
-    # non-decreasing vs previous and overall range ≥ 50% gain.
-    ramp_hit = False
-    if n >= 900:
-        minutes = [sum(powers[i * 60:(i + 1) * 60]) / 60 for i in range(15)]
-        if minutes[0] > 0:
-            nondec = sum(1 for i in range(1, len(minutes)) if minutes[i] >= minutes[i - 1])
-            overall_gain = (minutes[-1] - minutes[0]) / max(minutes[0], 1.0)
-            if nondec >= 12 and overall_gain >= 0.5:
-                ramp_hit = True
-
-    # Ramp heuristic wins over Coggan if both tripped (a ramp's last minute is
-    # a plateau which satisfies Coggan's 95%-window test). Ramp is the more
-    # specific signature.
-    if ramp_hit:
-        return "ramp"
-    if coggan_hit:
-        return "coggan_20min"
+        minutes = _minute_averages(powers)
+        # Best sustained 18-min plateau mean + its location.
+        pw = 18
+        if len(minutes) >= pw:
+            cur = sum(minutes[:pw])
+            best = cur
+            best_idx = 0
+            for k in range(1, len(minutes) - pw + 1):
+                cur += minutes[k + pw - 1] - minutes[k - 1]
+                if cur > best:
+                    best = cur
+                    best_idx = k
+            best_mean = best / pw
+            if best_mean >= 1.15 * ride_mean and best_mean >= 150:
+                # Reject a SECOND comparable ≥18-min plateau that does not
+                # overlap the first (2×20 / repeat-block ride).
+                second = False
+                for k in range(0, len(minutes) - pw + 1):
+                    if k + pw <= best_idx or k >= best_idx + pw:  # disjoint
+                        seg_mean = sum(minutes[k:k + pw]) / pw
+                        if seg_mean >= 0.95 * best_mean:
+                            second = True
+                            break
+                # Blow-out shape: a ≥4-min effort ≥ 1.05× the plateau mean
+                # somewhere OUTSIDE the plateau (the depletion / VO2 spike).
+                blowout = False
+                for k in range(0, len(minutes) - 4 + 1):
+                    if k + 4 <= best_idx or k >= best_idx + pw:
+                        seg4 = sum(minutes[k:k + 4]) / 4
+                        if seg4 >= 1.05 * best_mean:
+                            blowout = True
+                            break
+                if not second and blowout:
+                    return "coggan_20min"
     return None
 
 

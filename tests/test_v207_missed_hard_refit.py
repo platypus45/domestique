@@ -127,11 +127,18 @@ class TestMissedHardMidWeekRefits(unittest.TestCase):
         # HIT cap invariant.
         cap = tp.get_budget_for_phase(cur.phase).hit_count_max
         self.assertLessEqual(tp._week_hit_count(cur), cap)
-        # 48h spacing invariant across ALL hard days in the (spliced) week.
-        hd = sorted(_hard_days(cur))
+        # 48h spacing invariant across EFFECTIVE-hard days (the v2.0.7
+        # contract this file's own _eff_hard mirrors: a MISSED hard imposed
+        # no load, so it does not constrain spacing — refit may legally
+        # place a new hard adjacent to the missed day). The old blanket
+        # _hard_days assertion included the zero-load missed day and only
+        # held by draw luck; the post-3.2.2 availability tightening shifted
+        # the draw and exposed it.
+        hd = sorted((s.day - cur.start).days
+                    for s in cur.sessions if _eff_hard(s))
         for a, b in zip(hd, hd[1:]):
             self.assertGreaterEqual(b - a, 2,
-                                    f"hard days {a} and {b} within 48h")
+                                    f"effective-hard days {a} and {b} within 48h")
         # A hard session still exists somewhere this week (stimulus not dropped
         # entirely when there's room).
         self.assertGreaterEqual(tp._week_hit_count(cur), 1)

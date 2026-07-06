@@ -3643,6 +3643,7 @@ def match_zwo(
     raise_on_empty: bool = False,
     seed_salt: int = 0,
     exact_duration: bool = False,
+    widen_band: bool = False,
     hr_bias: bool = False,
 ) -> PlannedSession:
     """Find a ZWO workout matching this session, rotating for variety.
@@ -3899,11 +3900,27 @@ def match_zwo(
     # (line ~3029) so reshuffle can reach further when the band is sparse; the
     # collapse itself is now unconditional.
     if candidates:
-        _tight = max(target_dur * 0.08, 3.0)
-        _near = [
-            c for c in candidates
-            if abs(c[1]["Duration(min)"] - target_dur) <= _tight
-        ]
+        # widen_band (tester bug, post-3.2.2): the reshuffle retry loop sets
+        # this once the exact tier is exhausted — a sparse cell (one file in
+        # the 8%/3-min band) otherwise re-offers the SAME "alternative" on
+        # every click. Grill P3: widen DOWNWARD only ([-max(15%,10), +5]) —
+        # the slot already sits at the day's availability cap, so a
+        # symmetric widen would offer 70-min files on 60-min days (the exact
+        # promise the availability clamp enforces). Sparse-cell variety
+        # comes from shorter files (measured ≥11 candidates per sparse cell).
+        if widen_band:
+            _lo = target_dur - max(target_dur * 0.15, 10.0)
+            _hi = target_dur + 5.0
+            _near = [
+                c for c in candidates
+                if _lo <= c[1]["Duration(min)"] <= _hi
+            ]
+        else:
+            _tight = max(target_dur * 0.08, 3.0)
+            _near = [
+                c for c in candidates
+                if abs(c[1]["Duration(min)"] - target_dur) <= _tight
+            ]
         if _near:
             candidates = _near
         else:
@@ -5245,15 +5262,17 @@ def sample_week_workouts(
         is_hit = off in hit_slot_idxs
         candidates = hit_pool if is_hit else endurance_pool
 
-        # v4.6.0 IMPL-PLANNER-UTILIZATION (Pillar B): widen feasibility window
-        # to ±25 min around the slot's max_min so a much larger candidate pool
-        # is reachable per slot. Lower floor still depends on slot kind so a
-        # weekend long-Z2 doesn't admit a 30-min recovery spin, but the upper
-        # ceiling now gives 25 min of headroom (was 5).
+        # Availability is a HARD promise (tester bug, post-3.2.2): v4.6.0's
+        # +25-min upper headroom (pool reach) meant a 60-min day legally drew
+        # 85-min files — and the rematch variety band could stretch that past
+        # 90. The rider's per-day cap wins over pool reach: +5 rounding
+        # tolerance only. Pool reach is now covered by the v3.2.2 bucketing
+        # fix instead (597 extra files). Lower floor still depends on slot
+        # kind so a weekend long-Z2 doesn't admit a 30-min recovery spin.
         min_dur = 35 if is_hit else 45
         feasible = [
             w for w in candidates
-            if min_dur <= float(w.get("Duration(min)", 0) or 0) <= max_min + 25
+            if min_dur <= float(w.get("Duration(min)", 0) or 0) <= max_min + 5
         ]
 
         if not feasible:
@@ -5265,7 +5284,7 @@ def sample_week_workouts(
             # did) must never land on a normal day via the fallback.
             feasible = [
                 w for w in pool_index["all_pool"]
-                if 0 < float(w.get("Duration(min)", 0) or 0) <= max_min + 25
+                if 0 < float(w.get("Duration(min)", 0) or 0) <= max_min + 5
                 and _content_class_for_row(w) != "ftp_test"
             ]
 
@@ -5646,10 +5665,11 @@ def sample_week_workouts(
                 # tagged interval workouts are reachable (they may not pass
                 # the hit_pool eligibility filter on Protocol).
                 source = pool_index.get("all_pool", hit_pool)
-                # v4.6.0: ±25 tolerance, matches main-loop feasibility window.
+                # Availability is a hard promise (tester bug): +5 rounding
+                # tolerance, matching the main-loop feasibility window.
                 interval_feasible = [
                     w for w in source
-                    if 35 <= float(w.get("Duration(min)", 0) or 0) <= max_min + 25
+                    if 35 <= float(w.get("Duration(min)", 0) or 0) <= max_min + 5
                     and _row_is_intvl(w)
                     # v2.0.3 F2: only inject steady-slot interval variety from
                     # classes that are honest at tempo intensity (sweet_spot /
@@ -5787,10 +5807,12 @@ def sample_week_workouts(
             d = week_start + timedelta(days=re_idx)
             wd = d.weekday()
             mm = _max_min_for(wd)
-            # v4.6.0: ±25 tolerance, matches main loop.
+            # Availability is a hard promise (tester bug): +5 tolerance,
+            # matching the main-loop feasibility window. This pass was the
+            # third unclamped emitter (an 80-min z2 on a 60-min day).
             feasible = [
                 w for w in endurance_pool
-                if 45 <= float(w.get("Duration(min)", 0) or 0) <= mm + 25
+                if 45 <= float(w.get("Duration(min)", 0) or 0) <= mm + 5
             ]
             if feasible:
                 # Re-score with current remaining
@@ -5856,6 +5878,28 @@ def sample_week_workouts(
                                 class_session_counts[pick_cc_rr] = class_session_counts.get(pick_cc_rr, 0) + 1
                             if class_distinct_files is not None:
                                 class_distinct_files.setdefault(pick_cc_rr, set()).add(nm)
+
+    # Availability is a HARD promise (tester bug, post-3.2.2): final clamp
+    # sweep. The main slot loop clamps its own picks, but the corrective
+    # passes above (interval-variety swap, TSS-redistribution re-pick — and
+    # any future pass) install _make_session_from_row sessions at the FILE's
+    # full duration. Whatever the path, no emitted session may exceed its
+    # day's cap; TSS scales down proportionally (v1.8.21 semantics).
+    for off, d, day_name, weekday, max_min, is_rest in slots:
+        sess = out[off]
+        if sess is None or is_rest or sess.session_type == "rest":
+            continue
+        if max_min > 0 and (sess.duration_min or 0) > max_min:
+            _scale = max_min / float(sess.duration_min)
+            sess.tss_estimate = round((sess.tss_estimate or 0) * _scale)
+            sess.duration_min = max_min
+            # v3.2.0 sprint-fiction FIX-1 parity (grill P2): the description
+            # was built from the FILE's full duration — refresh it to the
+            # clamped PLANNED duration or the card narrates a session that
+            # will never happen.
+            sess.description = (
+                f"{sess.session_type} ({sess.duration_min}min) — sampled from library"
+            )
 
     return out
 
@@ -6919,11 +6963,25 @@ def _enforce_build2_peak_hard_floor(
                 # Exclude slots whose CURRENT cc is ANY phase target (so a
                 # subsequent vo2_short swap doesn't clobber an anaerobic
                 # slot we just placed for the same phase's anaerobic floor).
+                # Grill P4 blocker fix (post-3.2.2): a target class in
+                # SURPLUS (count strictly above its own floor) is a legal
+                # net-neutral DONOR — without this, tightened availability
+                # windows starved fills entirely (every steady victim was
+                # hit-cap-blocked AND every HIT victim floor-shielded, e.g.
+                # build1 vo2_short 0/4 while sweet_spot sat at 3 vs floor 1).
+                # At-floor classes stay shielded.
+                def _swappable(s):
+                    cc_s = _content_class_for_zwo(s.zwo_file or "")
+                    if cc_s not in all_targets:
+                        return True
+                    if cc_s == cc_target:
+                        return False  # never donate to itself
+                    return counts.get(cc_s, 0) > mins.get(cc_s, 0)
                 sess_list = [
                     (i, s) for i, s in enumerate(w_target.sessions)
                     if s.session_type != "rest"
                     and not _protect_race(s)  # FC3: never swap over the race
-                    and (_content_class_for_zwo(s.zwo_file or "") not in all_targets)
+                    and _swappable(s)
                 ]
                 # Sort: (1) prefer slots whose current file is a duplicate
                 # in the plan (freq>=2), (2) then by swap_priority_types so
@@ -6939,6 +6997,12 @@ def _enforce_build2_peak_hard_floor(
                 for i, s in sess_list:
                     if deficit <= 0:
                         break
+                    # Grill P4: sess_list's surplus check is frozen at list
+                    # build — re-check at swap time so a donor that just hit
+                    # its own floor (earlier swap in this same week) stops
+                    # donating.
+                    if not _swappable(s):
+                        continue
                     # FIX-1a: swapping a *steady* slot into a hard adds NET HIT.
                     # Only do so when the week is under its hit_count_max. A
                     # swap onto an already-HIT slot (e.g. a duplicate non-floor
@@ -6950,7 +7014,12 @@ def _enforce_build2_peak_hard_floor(
                             and _week_hit_count(w_target) >= _phase_budget.hit_count_max):
                         continue
                     # Pick first candidate that fits this slot's duration
-                    slot_max = max(60, int(s.duration_min) + 35)
+                    # Availability promise (tester bug): the OLD slot already
+                    # fits its day, so the replacement may exceed it by the
+                    # +5 rounding tolerance only (was +35, which could put a
+                    # 100-min file on a 60-min day). Keep a 45-min reach
+                    # floor so very short slots still find hard candidates.
+                    slot_max = max(45, int(s.duration_min) + 5)
                     slot_min = 25
                     chosen = None
                     for cand in candidates:
@@ -6985,6 +7054,13 @@ def _enforce_build2_peak_hard_floor(
                     new_sess.nutrition_note = _nutrition_note(
                         w_target.phase, new_sess.session_type
                     )
+                    # Grill P4: keep the per-target ledger true across swaps —
+                    # a surplus DONOR loses one (so it stops donating at its
+                    # own floor) and the filled target gains one.
+                    _donor_cc = _content_class_for_zwo(s.zwo_file or "")
+                    if _donor_cc in counts:
+                        counts[_donor_cc] = max(0, counts.get(_donor_cc, 0) - 1)
+                    counts[cc_target] = counts.get(cc_target, 0) + 1
                     w_target.sessions[i] = new_sess
                     nm = chosen.get("Name", "")
                     fl = chosen.get("File", "") or ""
@@ -7888,7 +7964,13 @@ def _enforce_ronnestad_floor(
                     # else fall back to session_type).
                     cur_ent = cache.get(cur_file) or cache.get(cur_file.split("/")[-1])
                     cur_cc = ((cur_ent.get("primary") if cur_ent else "") or s.session_type).lower()
-                    pool = ronn_by_class.get(cur_cc, [])
+                    # Availability promise (tester bug): the swap installs the
+                    # candidate at its FILE duration, so it must fit the slot
+                    # it replaces (+5 rounding tolerance) — the old slot
+                    # already fits its day.
+                    _dur_cap = (s.duration_min or 0) + 5
+                    pool = [c for c in ronn_by_class.get(cur_cc, [])
+                            if float(c.get("Duration(min)", 0) or 0) <= _dur_cap]
                     cand = next(
                         (c for c in pool
                          if (c.get("File") or "") not in placed_files

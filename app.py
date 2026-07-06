@@ -15598,6 +15598,15 @@ def _pick_redraw_candidate(plan: dict, day_iso: str, exclude_extra: "list[str] |
             raise_on_empty=True,
             hr_bias=_hr_bias(),
             exact_duration=True,  # closest-duration tier (v1.8.24)
+            # Tester bug (post-3.2.2): a sparse cell's 8%/3-min band can
+            # hold ONE alternative — the retry loop then re-offered it
+            # forever. Grill P5: an in-band fresh candidate wins at attempt
+            # 0 (soft −15 penalty never blocks it) and singleton bands never
+            # yield regardless of patience — so widen after 4 attempts, not
+            # 8, leaving 20 attempts in the widened band. Grill P3: the
+            # widened band grows DOWNWARD only (shorter files), upper edge
+            # stays slot+5 — availability holds even on reshuffle.
+            widen_band=(attempt >= 4),
         )
         planned = cand
         if cand.zwo_name and cand.zwo_name not in hard_exclude:

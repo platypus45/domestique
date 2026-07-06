@@ -2,21 +2,36 @@
 
 ## v3.2.3 — Your available time is a hard limit (2026-07-06)
 
-- **Sessions now always fit the time you gave the planner.** Days with 60
-  minutes of availability could receive 80-90-minute workouts through several
-  side doors (variety swaps, load redistribution, floor fills). Every path now
-  respects your per-day cap, with a final safety clamp behind them all.
-- **Reshuffle shows you something new.** On thin slots it could offer the same
-  alternative on every click. After a few tries it now reaches for slightly
-  shorter workouts too — never longer than your day allows.
+Fixes for the three most-reported issues from testers, all in the planner's
+core promise: what lands on your calendar fits the time you said you have.
+
+### Fixed
+- **Workouts now always fit the time you gave the planner.** If you set a day
+  to 60 minutes, you could still find a 90-minute session on it — the cap was
+  enforced on the main selection path but leaked through several side doors
+  (variety swaps, weekly load redistribution, phase-variety fills). Every path
+  now honours your per-day limit, with one final safety clamp behind them all,
+  and the workout card always narrates the duration you'll actually ride.
+- **Reshuffle no longer repeats itself.** On slots with few same-length
+  alternatives, "Reshuffle (try another)" could offer the same workout on
+  every click. After a few attempts it now also reaches for slightly shorter
+  workouts — never longer than your day allows — so you get a genuinely
+  different suggestion.
+- **Updating via Homebrew works again.** `brew upgrade domestique` had failed
+  with a 404 since v3.2.1 — the release file was named differently from what
+  the formula expects. Both affected releases carry the correctly-named file
+  now; no action needed on your side.
+
+### Improved
 - **Recalculated plans keep their variety guarantees.** The automatic weekly
   recalculation quietly skipped the rules that guarantee over-unders, sprints
-  and short-VO2 work each phase; they now run on every recalc, and completed
-  or hand-moved sessions are never touched.
-- **Brew updates work again.** `brew upgrade domestique` failed with a 404
-  since v3.2.1 (release file was named differently than the formula expects).
-- Profile safety: switching rider profiles mid power-data download can no
-  longer file ride data under the wrong profile.
+  and short-VO2 work in every build phase — after a few weeks a recalculated
+  plan could drift into a narrower mix than a freshly generated one. Those
+  rules now run on every recalculation, and your completed or hand-moved
+  sessions are never touched in the process.
+- **Profile safety:** switching rider profiles while ride power data is
+  downloading in the background can no longer file that data under the wrong
+  profile — the download stops cleanly and resumes for the right rider.
 
 
 ## v3.2.2 — Smarter training variety: 597 hidden workouts join the planner (2026-07-05)

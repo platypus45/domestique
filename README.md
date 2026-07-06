@@ -49,6 +49,25 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 
 ## What's new in v3
 
+**Plans that respect your time — and stay interesting.** The training time
+you enter per day is a hard limit: a 60-minute day gets a workout that fits
+it, on every path the planner takes (including variety swaps and weekly
+recalculations). Meanwhile ~600 library workouts that were previously
+unreachable — ladder intervals through threshold, VO2 and sweet spot, tempo
+intervals, endurance rides with strides — joined the rotation, every build
+phase guarantees the classic four hard shapes (threshold, VO2max, sweet
+spot, over-unders), and Reshuffle offers genuinely different alternatives
+instead of repeating itself.
+
+**A home page built around today.** The Today card shows your readiness
+verdict, the morning leg-check and today's session — with a preview of its
+actual interval blocks — directly above the week grid. Sleep, HRV and RHR
+tiles never show a bare dash: until your watch's overnight data reaches
+intervals.icu you see your last synced values in italics with their date,
+while color keeps meaning good or bad. And the Analysis tab's power curve
+and Fatigue Resistance load instantly, filling themselves in with a live
+progress bar while ride data caches in the background.
+
 **Shape your own plan.** The phase preview is now an editor — adjust how your
 weeks split across base, build, peak and taper with steppers (within safe
 limits), or keep the recommendation. And a new "place me from my rides" option

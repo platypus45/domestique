@@ -690,13 +690,23 @@ def release_backfill_lock() -> None:
 def backfill_icu_history(profile_id: "str | None" = None,
                           max_per_second: int = 1,
                           _skip_lock: bool = False,
-                          progress_cb=None) -> dict:
+                          progress_cb=None,
+                          sync_snapshot=None) -> dict:
     """One-shot detail+streams pull for cached-list rides missing efforts.
 
     For each ride file in ``~/.domestique/rides/icu/`` that fails the G15
     coverage check, fetches /activity/<id>/streams from ICU, derives
     efforts at every STANDARD_DURATIONS tier, and persists the augmented
     envelope back to disk via atomic write (G2).
+
+    AC1 profile safety: ``sync_snapshot`` is the 3-tuple from
+    ``db.snapshot_sync_identity()`` taken by the caller at task start. When
+    given, every per-ride envelope write runs inside
+    ``db.sync_write_gate(snapshot)`` — a profile switch/purge mid-backfill
+    raises SyncAborted on the next write attempt and the loop stops cleanly
+    (status "aborted") instead of mis-filing envelopes into whatever profile
+    directory is live by then. None = legacy ungated behaviour (CLI/tests
+    outside the profile system).
 
     Single-flight lock at ``~/.domestique/cache/.backfill.lock`` (G3); a
     second concurrent call returns ``{"status": "already_running",
@@ -740,6 +750,7 @@ def backfill_icu_history(profile_id: "str | None" = None,
     backfilled = 0
     already_cached = 0
     failed = 0
+    aborted = False  # AC1: profile switch mid-loop (sync_write_gate)
 
     try:
         # ICU fetcher — patched in tests.
@@ -811,11 +822,26 @@ def backfill_icu_history(profile_id: "str | None" = None,
             # fatigue panel reports 0% forever.
             data["streams"] = streams
             try:
-                _atomic_write_json(ride_path, data)
+                if sync_snapshot is not None:
+                    import db as _db
+                    with _db.sync_write_gate(sync_snapshot):
+                        _atomic_write_json(ride_path, data)
+                else:
+                    _atomic_write_json(ride_path, data)
             except OSError as e:
                 log.warning(f"backfill: write {ride_path} failed: {e}")
                 failed += 1
                 continue
+            except Exception as e:
+                # AC1: SyncAborted (profile switch/purge since the snapshot)
+                # — stop the whole loop; remaining rides belong to a profile
+                # that is no longer live. Imported lazily above, so match by
+                # name to avoid a hard db dependency for gate-less callers.
+                if type(e).__name__ == "SyncAborted":
+                    log.warning(f"backfill: aborted mid-loop ({e})")
+                    aborted = True
+                    break
+                raise
             backfilled += 1
         if progress_cb:
             try: progress_cb(backfilled + already_cached + failed, _total)
@@ -829,7 +855,7 @@ def backfill_icu_history(profile_id: "str | None" = None,
 
     _done = backfilled + already_cached + failed
     return {
-        "status": "ok",
+        "status": "aborted" if aborted else "ok",
         "task_id": task_id,
         "backfilled": backfilled,
         "already_cached": already_cached,

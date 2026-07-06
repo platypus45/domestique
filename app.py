@@ -2041,13 +2041,19 @@ def _kick_power_curve_backfill(pid, window_days: int, n_missing: int) -> dict:
         if starting:
             _pc_backfill_running.add(key)
     if starting:
+        # AC1 (chip closed): snapshot the sync identity BEFORE the thread
+        # starts; every envelope write inside backfill_icu_history runs under
+        # db.sync_write_gate(snap), so a profile switch mid-backfill aborts
+        # the loop instead of mis-filing envelopes into the new profile.
+        _snap = db.snapshot_sync_identity()
         def _work():
             try:
                 acquired, _lk = power_curve.acquire_backfill_lock()
                 if acquired:
                     try:
                         power_curve.backfill_icu_history(
-                            pid, max_per_second=2, _skip_lock=True)
+                            pid, max_per_second=2, _skip_lock=True,
+                            sync_snapshot=_snap)
                     finally:
                         power_curve.release_backfill_lock()
             except Exception as e:
@@ -2083,13 +2089,13 @@ def _run_backfill_job(task_id: str) -> None:
     between endpoint-release and worker-acquire could spawn duplicate
     ICU workers.
 
-    KNOWN GAP (v3.2.1 correction): the snapshot below is NOT actually enforced.
-    ``power_curve.backfill_icu_history`` ignores its ``profile_id`` arg and
-    writes each envelope into the LIVE active-profile dir with no
-    ``db.sync_write_gate`` — so a profile switch mid-backfill can mis-file
-    envelopes on this path (and the GET-side background kick shares the same
-    gap). Pre-existing; tracked as a separate chip. Do not read the discarded
-    snapshot as a safety guarantee.
+    AC1 (chip closed, post-3.2.2): the snapshot below IS enforced now —
+    passed as ``sync_snapshot`` into ``backfill_icu_history``, which wraps
+    every per-ride envelope write in ``db.sync_write_gate(snap)``. A profile
+    switch/purge mid-backfill raises SyncAborted on the next write and the
+    loop stops with status "aborted" (surfaced in the task entry) instead of
+    mis-filing envelopes into the newly-active profile's dir. The GET-side
+    background kick (_kick_power_curve_backfill) carries the same gate.
     """
     import power_curve
 
@@ -2105,7 +2111,7 @@ def _run_backfill_job(task_id: str) -> None:
     try:
         result = power_curve.backfill_icu_history(
             snap[0] or "default", max_per_second=1, _skip_lock=True,
-            progress_cb=_progress,
+            progress_cb=_progress, sync_snapshot=snap,
         )
         with _backfill_thread_lock:
             _backfill_tasks[task_id] = {

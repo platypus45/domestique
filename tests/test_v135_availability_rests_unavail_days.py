@@ -32,6 +32,21 @@ from fastapi.testclient import TestClient
 import app as app_module
 import training_planner as tp
 
+from conftest import PLANNER_PIN_ANCHOR
+
+# 2026-07-06 fix (Monday flake): same freeze as test_v136 — the real-clock
+# anchor re-pointed at LAST week whenever today was Monday, putting Sat/Sun
+# in the past where the handler rightly refuses to touch them. Frozen
+# Wednesday of the pin week keeps the intended geometry (pw.start < today,
+# weekend in the future) on every real weekday.
+_FROZEN_TODAY = PLANNER_PIN_ANCHOR + timedelta(days=2)  # Wed 2026-01-07
+
+
+class _FrozenWed(date):
+    @classmethod
+    def today(cls):
+        return cls(_FROZEN_TODAY.year, _FROZEN_TODAY.month, _FROZEN_TODAY.day)
+
 
 def _mk_plan_dict(monday: date, weeks_count: int = 2) -> dict:
     """Plan with a real Sat session so availability=0 has something to zero."""
@@ -80,17 +95,16 @@ class CurrentWeekAvailabilityBase(unittest.TestCase):
         self._tmpdir = tempfile.TemporaryDirectory()
         self._tmp = Path(self._tmpdir.name)
 
-        # Anchor on the CURRENT week's Monday — that's the regression. The
-        # v1.3.1 test deliberately picked NEXT Monday to dodge the
-        # ``pw.start < today`` gate; this test reproduces the user-reported
-        # bug by sitting squarely on the gated week.
-        today = date.today()
-        self._monday = today - timedelta(days=today.weekday())
-        # Skip if today *is* Monday — then pw.start == today and the gate
-        # doesn't fire. The bug only shows up when today > Monday.
-        if today == self._monday:
-            self._monday = today - timedelta(days=7)
-            # Now Mon..Sun of last week; pw.start < today still holds.
+        # Anchor on the PIN week's Monday with "today" FROZEN mid-week (Wed)
+        # — pw.start < today (the gated week the original bug lived on)
+        # holds deterministically, and the weekend stays in the future so
+        # the handler may zero it. (The old real-clock anchor + Monday dodge
+        # put the weekend in the PAST every Monday.)
+        self._patch_app_date = patch.object(app_module, "date", _FrozenWed)
+        self._patch_tp_date = patch.object(tp, "date", _FrozenWed)
+        self._patch_app_date.start()
+        self._patch_tp_date.start()
+        self._monday = PLANNER_PIN_ANCHOR
         self._sat = self._monday + timedelta(days=5)
         self._sun = self._monday + timedelta(days=6)
 
@@ -128,6 +142,8 @@ class CurrentWeekAvailabilityBase(unittest.TestCase):
         self._patch_fit_dir_rs.stop()
         self._patch_icu_dir.stop()
         self._patch_fit.stop()
+        self._patch_tp_date.stop()
+        self._patch_app_date.stop()
         tp.PLAN_DIR = self._orig_plan_dir
         self._tmpdir.cleanup()
 

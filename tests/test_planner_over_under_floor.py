@@ -73,7 +73,11 @@ def _classify(zwo_file: str) -> tuple[str, bool]:
 def _build_seen(seed_salt: int) -> set:
     goal = tp.Goal(
         goal_type="event",
-        target_date=date.today() + timedelta(weeks=24),
+        # Anchored to the PIN, not the wall clock: tp.date is frozen at
+        # PLANNER_PIN_ANCHOR by the fixture above, so a real-today target
+        # made the plan span GROW daily (24w + drift since Jan 5) until the
+        # diluted floors tipped the suite red (first seen 2026-07-06).
+        target_date=PLANNER_PIN_ANCHOR + timedelta(weeks=24),
         event_type="sportive",
         event_km=200,
         hours_per_week=8.0,

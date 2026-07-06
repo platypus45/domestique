@@ -22,6 +22,17 @@ import pytest
 
 import training_planner as tp
 
+from conftest import PLANNER_PIN_ANCHOR
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _pinned_env(planner_pinned_env):
+    """W8 pin (2026-07-06 fix): this suite ran generate_plan+recalculate on
+    the LIVE clock with a live-today target date — deterministic-looking
+    until calendar drift (dates run through the real today) tipped it red.
+    Same module-wide freeze as the other planner suites."""
+    yield
+
 
 _INTERVAL_CCS = {
     "sweet_spot", "threshold", "vo2max", "vo2_short",
@@ -54,7 +65,7 @@ def _event_goal() -> tp.Goal:
     return tp.Goal(
         goal_type="event",
         plan_weeks=20,
-        target_date=date.today() + timedelta(weeks=20),
+        target_date=PLANNER_PIN_ANCHOR + timedelta(weeks=20),
         event_km=160,
         event_climb_m=2000,
         event_type="gran_fondo",

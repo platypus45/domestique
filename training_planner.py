@@ -6971,6 +6971,15 @@ def _enforce_build2_peak_hard_floor(
                 # build1 vo2_short 0/4 while sweet_spot sat at 3 vs floor 1).
                 # At-floor classes stay shielded.
                 def _swappable(s):
+                    # §6.12 (recalc parity, 2026-07-06): the floor passes now
+                    # ALSO run on the weekly-recalc path, whose weeks can
+                    # carry preserved DONE / adapted / user-moved sessions —
+                    # athlete history is never a swap victim. (generate_plan
+                    # weeks are all-pending; no behavior change there.)
+                    if getattr(s, "status", "pending") != "pending":
+                        return False
+                    if getattr(s, "adapted", False) or getattr(s, "user_moved", False):
+                        return False
                     cc_s = _content_class_for_zwo(s.zwo_file or "")
                     if cc_s not in all_targets:
                         return True
@@ -6992,7 +7001,14 @@ def _enforce_build2_peak_hard_floor(
                     freq = plan_file_freq.get(fl, 0)
                     pri = (swap_priority_types.index(ss.session_type)
                            if ss.session_type in swap_priority_types else 99)
-                    return (0 if freq >= 2 else 1, pri)
+                    # Availability wave (2026-07-06): slot_max is now the
+                    # replaced slot's duration+5, so SHORT victims can't
+                    # legally take classes whose shortest file is long
+                    # (over_under starts ~66min). Prefer the LONGEST slot
+                    # within the same (dup, priority) tier — weekend steady
+                    # slots hold any class without breaking the day cap.
+                    return (0 if freq >= 2 else 1, pri,
+                            -(ss.duration_min or 0))
                 sess_list.sort(key=_swap_rank)
                 for i, s in sess_list:
                     if deficit <= 0:
@@ -7954,6 +7970,12 @@ def _enforce_ronnestad_floor(
                     if s.session_type not in hit_types:
                         continue
                     if _protect_race(s):  # FC3: never swap the race entry
+                        continue
+                    # §6.12 (recalc parity, 2026-07-06): athlete history is
+                    # never a swap victim (see the build/peak floor pass).
+                    if (getattr(s, "status", "pending") != "pending"
+                            or getattr(s, "adapted", False)
+                            or getattr(s, "user_moved", False)):
                         continue
                     cur_file = s.zwo_file or ""
                     if not cur_file or _is_ronn_file(cur_file):
@@ -10420,6 +10442,22 @@ def recalculate_plan(
                 target_min=int(round(_lr_h * 60)),
                 max_weekend_min=_mw_min,
                 is_stepback=getattr(_w, "is_stepback", False))
+
+    # Floor parity (2026-07-06, F6 completion): the weekly recalc rebuilds
+    # future weeks through the sampler but never ran generate_plan's floor
+    # passes, so a recalc'd plan silently lost the per-phase variety
+    # contract (over_under/anaerobic/neuromuscular/vo2_short floors + the
+    # Rønnestad floor + the weekly HIT cap) — the F6 test only passed while
+    # the raw draw happened to include over_under. Same order and same
+    # blueprint-mode skip as generate_plan; NEW (future) weeks only — the
+    # passes' §6.12 status guards additionally protect any preserved
+    # done/adapted/user-moved session inside them.
+    if getattr(adjusted_goal, "plan_mode", "auto") == "auto" and new_weeks:
+        _enforce_build2_peak_hard_floor(new_weeks, pool_index, plan_pick_counts,
+                                        class_session_counts, class_distinct_files,
+                                        used_names_dict, used_names)
+        _enforce_ronnestad_floor(new_weeks, pool_index, plan_pick_counts)
+        _enforce_weekly_hit_cap(new_weeks, library)
 
     all_weeks = past_weeks + new_weeks
 

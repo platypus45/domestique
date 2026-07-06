@@ -42,6 +42,29 @@ from fastapi.testclient import TestClient
 import app as app_module
 import training_planner as tp
 
+from conftest import PLANNER_PIN_ANCHOR
+
+# 2026-07-06 fix (Monday flake): the suite anchored on the REAL current week
+# and dodged "today is Monday" by re-anchoring to LAST week — which put
+# Saturday in the past, so save-availability's past-day gate correctly
+# refused and sessions_modified == 0 every Monday. Freeze the clock at a
+# fixed WEDNESDAY of the pin week instead (mid-week = the geometry the suite
+# always intended: Monday past, Sat/Sun future).
+_FROZEN_TODAY = PLANNER_PIN_ANCHOR + timedelta(days=2)  # Wed 2026-01-07
+
+
+class _FrozenWed(date):
+    @classmethod
+    def today(cls):
+        return cls(_FROZEN_TODAY.year, _FROZEN_TODAY.month, _FROZEN_TODAY.day)
+
+
+class _FrozenSun(date):
+    """For the Sunday-boundary test (pw.end == today, Sun 2026-01-11)."""
+    @classmethod
+    def today(cls):
+        return cls(2026, 1, 11)
+
 
 def _mk_plan_dict(monday: date, weeks_count: int = 2,
                   weekend_already_rest: bool = False) -> dict:
@@ -98,12 +121,14 @@ class _AvailRestoreBase(unittest.TestCase):
         self._tmpdir = tempfile.TemporaryDirectory()
         self._tmp = Path(self._tmpdir.name)
 
-        # Anchor on the CURRENT week's Monday — same as v1.3.5 — so the
-        # pw.end < today gate is exercised but doesn't fire.
-        today = date.today()
-        self._monday = today - timedelta(days=today.weekday())
-        if today == self._monday:
-            self._monday = today - timedelta(days=7)
+        # Frozen clock (2026-07-06): anchor on the PIN week's Monday with
+        # "today" frozen mid-week (Wed) so the pw.end < today gate is
+        # exercised but doesn't fire — deterministic on every real weekday.
+        self._patch_app_date = patch.object(app_module, "date", _FrozenWed)
+        self._patch_tp_date = patch.object(tp, "date", _FrozenWed)
+        self._patch_app_date.start()
+        self._patch_tp_date.start()
+        self._monday = PLANNER_PIN_ANCHOR
         self._sat = self._monday + timedelta(days=5)
         self._sun = self._monday + timedelta(days=6)
 
@@ -144,6 +169,8 @@ class _AvailRestoreBase(unittest.TestCase):
         self._patch_fit_dir_rs.stop()
         self._patch_icu_dir.stop()
         self._patch_fit.stop()
+        self._patch_tp_date.stop()
+        self._patch_app_date.stop()
         tp.PLAN_DIR = self._orig_plan_dir
         self._tmpdir.cleanup()
 
@@ -259,10 +286,12 @@ class TestSundayBoundary(_AvailRestoreBase):
     """v1.3.6 — pw.end < today gate must not fire when today == pw.end."""
 
     def test_today_is_sunday_at_pw_end(self):
-        if date.today().weekday() != 6:
-            self.skipTest("Only meaningful when today is Sunday")
-        # Ensure pw.end == today (weekly plan ending Sunday).
-        # _monday in setUp was today-weekday() = today-6 = a Monday.
+        # 2026-07-06: was skip-unless-real-Sunday (so it effectively never
+        # ran); now freezes "today" to the pin week's Sunday = pw.end.
+        self._patch_app_date.stop(); self._patch_tp_date.stop()
+        self._patch_app_date = patch.object(app_module, "date", _FrozenSun)
+        self._patch_tp_date = patch.object(tp, "date", _FrozenSun)
+        self._patch_app_date.start(); self._patch_tp_date.start()
         body = {
             "availability": {
                 self._sun.isoformat(): {"hours": 4, "type": "available"},

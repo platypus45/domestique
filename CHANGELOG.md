@@ -1,5 +1,24 @@
 # Changelog
 
+## v3.2.3 — Your available time is a hard limit (2026-07-06)
+
+- **Sessions now always fit the time you gave the planner.** Days with 60
+  minutes of availability could receive 80-90-minute workouts through several
+  side doors (variety swaps, load redistribution, floor fills). Every path now
+  respects your per-day cap, with a final safety clamp behind them all.
+- **Reshuffle shows you something new.** On thin slots it could offer the same
+  alternative on every click. After a few tries it now reaches for slightly
+  shorter workouts too — never longer than your day allows.
+- **Recalculated plans keep their variety guarantees.** The automatic weekly
+  recalculation quietly skipped the rules that guarantee over-unders, sprints
+  and short-VO2 work each phase; they now run on every recalc, and completed
+  or hand-moved sessions are never touched.
+- **Brew updates work again.** `brew upgrade domestique` failed with a 404
+  since v3.2.1 (release file was named differently than the formula expects).
+- Profile safety: switching rider profiles mid power-data download can no
+  longer file ride data under the wrong profile.
+
+
 ## v3.2.2 — Smarter training variety: 597 hidden workouts join the planner (2026-07-05)
 
 - **~600 workouts your plan could never pick are now in rotation.** Ladder

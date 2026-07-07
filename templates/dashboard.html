@@ -801,6 +801,9 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
 .lib-surface-btn.active { border-color: var(--accent); background: rgba(79,108,247,0.15); color: var(--text); }
 .lib-gravel-badge { display: inline-block; font-size: 9px; font-weight: 800; padding: 1px 6px; border-radius: 3px;
   letter-spacing: 0.5px; margin-left: 6px; vertical-align: middle; background: #f9731622; color: #f97316; }
+/* search pass 2: <mark> for matched search tokens in the Name cell — accent
+   tint, no color flip, so the dark theme stays readable. */
+#wk-body mark { background: rgba(79,108,247,0.30); color: inherit; border-radius: 3px; padding: 0 1px; }
 
 /* ─── Library filter chips: color per group with shade per value ─────────
    - Surface: semantic palette (matches the route-detail timeline bar)
@@ -1778,9 +1781,14 @@ window.addEventListener('unhandledrejection', function(e) {
                  onchange="onLibDurationNum('max')" aria-label="Max duration (min)"
                  style="width:72px;min-width:72px;">
         </div></div>
-      <!-- search-by-structure (debounced) -->
+      <!-- search pass 2 (R2 2026-07-07): tokenized cyclist queries — the
+           server parses durations (90min, <60, 60-90), structures (3x16,
+           30/15), intensity (@105%) and synonyms (ss/ou/ronnestad/micro).
+           "/" focuses from anywhere on this tab; Esc clears. -->
       <div class="form-group" style="flex:1.3;min-width:140px;"><label>Search</label>
-        <input type="text" id="wk-search" placeholder="ramp, vo2, ftp_test…" oninput="onLibSearchInput()" style="width:100%;"></div>
+        <input type="text" id="wk-search" placeholder="threshold 3x16, ss 90min, 30/15…"
+               title="Understands durations (90min, 1h30, <60, 60-90), structures (3x16, 30/15), intensity (@105%) and shortcuts (ss, ou, vo2, ronnestad, micro, ladder). Press / to focus, Esc to clear."
+               oninput="onLibSearchInput()" onkeydown="onLibSearchKeydown(event)" style="width:100%;"></div>
       <div class="form-group"><label>Sort</label>
         <!-- R2 (2026-07-07): Score sort options removed with the Score
              column (arbitrary curation heuristic, not user-facing). Default
@@ -1788,7 +1796,11 @@ window.addEventListener('unhandledrejection', function(e) {
              also makes search results visibly change (the old score_desc
              pinned the same score-10 rows on top before AND after a search,
              so searching looked like a no-op). -->
-        <select id="wk-sort" onchange="loadWorkouts()">
+        <!-- search pass 2: Relevance option — auto-selected while a search is
+             active (unless the user explicitly picked a sort; onLibSortChange
+             records the explicit choice), reverts to Duration ▲ on clear. -->
+        <select id="wk-sort" onchange="onLibSortChange()">
+          <option value="relevance">Relevance</option>
           <option value="duration_asc" selected>Duration ▲</option>
           <option value="duration_desc">Duration ▼</option>
           <option value="name_asc">Name A→Z</option>
@@ -8299,6 +8311,12 @@ async function setActivityRace(activityId, isRace, checkboxEl) {
 let _libDurMin = 0, _libDurMax = 240;
 let _libSelectedTags = new Set();
 let _libSearchTimer = null;
+// search pass 2 (R2 2026-07-07): sort auto-flips to Relevance while a search
+// is active — but never over an EXPLICIT dropdown choice (_libSortTouched).
+// Intents/tokens echo back from the server per response (X-Search-* headers).
+let _libSortTouched = false;
+let _libSearchIntents = [];   // parsed-intent labels for the count line
+let _libSearchTokens = [];    // tokens to <mark> in the Name cell
 
 // v1.8.16 — duration filter: typeable min/max fields + two sliders, with
 // clamp-not-swap and split cheap/expensive events.
@@ -8375,8 +8393,45 @@ function onLibDurationNum(which) {
 
 function onLibSearchInput() {
   if (_libSearchTimer) clearTimeout(_libSearchTimer);
-  _libSearchTimer = setTimeout(() => { loadWorkouts(); }, 320);
+  _libSearchTimer = setTimeout(() => { _libAutoSort(); loadWorkouts(); }, 320);
 }
+
+// search pass 2: explicit dropdown choice wins over the auto-flip, for good.
+function onLibSortChange() { _libSortTouched = true; loadWorkouts(); }
+
+// While a query is active and the user never touched Sort: show Relevance;
+// cleared query flips back to Duration ▲ (the no-search default).
+function _libAutoSort() {
+  if (_libSortTouched) return;
+  const el = $('wk-sort'); if (!el) return;
+  const term = ($('wk-search') ? $('wk-search').value : '').trim();
+  el.value = term ? 'relevance' : 'duration_asc';
+}
+
+// Esc inside the search box: clear + refresh immediately (skip the debounce).
+function onLibSearchKeydown(e) {
+  if (e.key !== 'Escape') return;
+  const s = $('wk-search'); if (!s) return;
+  e.stopPropagation();               // keep the global Esc (modal close) out of it
+  if (_libSearchTimer) clearTimeout(_libSearchTimer);
+  s.value = '';
+  _libAutoSort();
+  loadWorkouts();
+}
+
+// "/" focuses the library search from anywhere on the Library tab — unless
+// the user is already typing somewhere (input/textarea/select/contenteditable)
+// or a modal is open.
+document.addEventListener('keydown', e => {
+  if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+  const lib = document.getElementById('sec-library');
+  if (!lib || !lib.classList.contains('active')) return;
+  if (document.querySelector('#modal-overlay.open')) return;
+  const t = e.target, tag = ((t && t.tagName) || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || tag === 'select' || (t && t.isContentEditable)) return;
+  const s = $('wk-search'); if (!s) return;
+  e.preventDefault(); s.focus(); s.select();
+});
 
 async function loadLibraryTags() {
   try {
@@ -8414,6 +8469,7 @@ function clearLibFilters() {
   if ($('wk-content-class')) $('wk-content-class').value = '';
   if ($('wk-search')) $('wk-search').value = '';
   if ($('wk-sort')) $('wk-sort').value = 'duration_asc';
+  _libSortTouched = false;   // search pass 2: re-arm the Relevance auto-flip
   if ($('wk-dur-min')) $('wk-dur-min').value = '0';
   if ($('wk-dur-max')) $('wk-dur-max').value = '240';
   if ($('wk-dur-min-num')) $('wk-dur-min-num').value = '0';
@@ -8480,6 +8536,12 @@ async function loadWorkouts() {
     if (gen !== _libLoadGen) return;   // a newer request superseded this one
     _libTotalCount = parseInt(resp.headers.get('X-Library-Total')) || raw.length;
     _libLastTruncated = raw.length >= _LIB_FETCH_LIMIT;
+    // search pass 2: what the server UNDERSTOOD (count-line echo) and which
+    // tokens to <mark> in the Name cell. Absent headers → empty (no search).
+    try {
+      _libSearchIntents = JSON.parse(resp.headers.get('X-Search-Intents') || '[]');
+      _libSearchTokens = JSON.parse(resp.headers.get('X-Search-Tokens') || '[]');
+    } catch (_e) { _libSearchIntents = []; _libSearchTokens = []; }
     // Deduplicate by File (catch vo2max_lucy_v1 vs vo2max_lucy_v2 as separate entries)
     const seen = new Map();
     for (const w of raw) {
@@ -8521,6 +8583,36 @@ function _libHoverTitle(w) {
   return [proto, dur, tss, zb].filter(Boolean).join(' | ');
 }
 
+// search pass 2: prettify one server intent label for the count line
+// ("3x16" → "3×16"; the rest render as sent: "~90min", "@105%", "30/15").
+function _libPrettyIntent(t) { return String(t).replace(/^(\d+)x(\d+)$/, '$1×$2'); }
+
+// search pass 2: escape-safe <mark> highlighting for the Name cell.
+// Matching runs on the RAW name, then esc() is applied per segment — matched
+// segments get wrapped. Highlighting on an already-escaped string instead
+// would let a token like "amp" chew through "&amp;" entities. Structure
+// tokens are loosened to their display forms ("3x16" also hits "3×16",
+// "30s15s" also hits "30s/15s"); everything else is regex-escaped literally.
+function _libHighlightName(raw) {
+  raw = String(raw == null ? '' : raw);
+  if (!_libSearchTokens.length) return esc(raw);
+  const pats = _libSearchTokens
+    .filter(t => t && String(t).length >= 2)
+    .map(t => {
+      let p = String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      p = p.replace(/^(\d+)x(\d+)/, '$1[x×]$2');
+      p = p.replace(/^(\d+)s(\d+)s$/, '$1s[\\s\\/]?$2s');
+      return p;
+    });
+  if (!pats.length) return esc(raw);
+  try {
+    // ONE alternation pass (no nested re-wrapping); split keeps the matches
+    // at odd indices because the whole pattern is a single capture group.
+    const parts = raw.split(new RegExp('(' + pats.join('|') + ')', 'gi'));
+    return parts.map((p, i) => i % 2 ? '<mark>' + esc(p) + '</mark>' : esc(p)).join('');
+  } catch (_e) { return esc(raw); }
+}
+
 function renderLibrary(data) {
   window._workoutMeta = {};
   const filtered = _libSurfaceFilter === 'gravel' ? data.filter(w => _isLibGravelWorkout(w)) : data;
@@ -8536,6 +8628,11 @@ function renderLibrary(data) {
       ? `Showing all ${total} workouts`
       : `Showing ${filtered.length} of ${total} workouts`;
     if (term) msg += ` for “${term}”`;
+    // search pass 2: intent echo — only when the server parsed real intents
+    // ("understood: threshold · 3×16 · ~90min"). textContent keeps it safe.
+    if (term && _libSearchIntents.length) {
+      msg += ` — understood: ${_libSearchIntents.map(_libPrettyIntent).join(' · ')}`;
+    }
     if (_libSurfaceFilter === 'gravel') msg += ' (Gravel & Cobbles filter on)';
     if (_libLastTruncated) msg += ` — list capped at ${_LIB_FETCH_LIMIT}, narrow the filters to see the rest`;
     countEl.textContent = msg;
@@ -8567,7 +8664,7 @@ function renderLibrary(data) {
     // columns (w.Category still feeds the detail/download URLs below).
     return `<tr style="${rowStyle}" title="${esc(hoverTitle)}" data-zones='${zj}' data-duration="${w['Duration(min)']||0}"
      onclick="openWorkoutDetail('${escJs(w.Category)}','${escJs(w.File)}',window._workoutMeta[${idx}])">
-     <td style="font-weight:500;">${esc(w.display_name || w.Name)}${grvBadge}${ftpBadge}</td>
+     <td style="font-weight:500;">${_libHighlightName(w.display_name || w.Name)}${grvBadge}${ftpBadge}</td>
      <td>${w['Duration(min)']}min</td><td>${w.TSS}</td>
      <td><div class="wk-lib-svg" data-cat="${esc(w.Category)}" data-file="${esc(w.File)}" style="width:140px;height:28px;background:var(--surface2);border-radius:3px;"></div></td>
      <td style="font-size:11px;color:var(--text2);max-width:200px;">${esc((w.Protocol||'').substring(0,45))}</td>

@@ -5,25 +5,25 @@
     <description>Warmup: 10min ramp from 50% to 75% FTP | Intervals: 4 x (2min @ 136% / 0s @ 55%) | Cooldown: 5min from 45% to 75% FTP</description>
     <sportType>bike</sportType>
     <workout>
-        <Warmup Duration="640" PowerLow="0.5" PowerHigh="0.75" /><SteadyState Duration="20" Power="1.3" pace="0" />
+        <Warmup Duration="640" PowerLow="0.5" PowerHigh="0.75" /><SteadyState Duration="20" Power="1.17" pace="0" />
         <SteadyState Duration="120" Power="0.5" pace="0" />
-        <Ramp Duration="120" PowerLow="1.5" PowerHigh="1.21" pace="0" />
-        <SteadyState Duration="20" Power="1.3" pace="0" />
+        <Ramp Duration="120" PowerLow="1.29" PowerHigh="1.12" pace="0" />
+        <SteadyState Duration="20" Power="1.17" pace="0" />
         <SteadyState Duration="120" Power="0.5" pace="0" />
-        <Ramp Duration="120" PowerLow="1.5" PowerHigh="1.21" pace="0" />
-        <SteadyState Duration="20" Power="1.3" pace="0" />
+        <Ramp Duration="120" PowerLow="1.29" PowerHigh="1.12" pace="0" />
+        <SteadyState Duration="20" Power="1.17" pace="0" />
         <SteadyState Duration="120" Power="0.5" pace="0" />
-        <Ramp Duration="120" PowerLow="1.5" PowerHigh="1.21" pace="0" />
-        <SteadyState Duration="20" Power="1.3" pace="0" />
+        <Ramp Duration="120" PowerLow="1.29" PowerHigh="1.12" pace="0" />
+        <SteadyState Duration="20" Power="1.17" pace="0" />
         <SteadyState Duration="120" Power="0.5" pace="0" />
         <SteadyState Duration="300" Power="0.5" pace="0" />
-        <SteadyState Duration="120" Power="1.5" pace="0" />
+        <SteadyState Duration="120" Power="1.29" pace="0" />
         <SteadyState Duration="120" Power="0.5" pace="0" />
-        <SteadyState Duration="120" Power="1.41" pace="0" />
+        <SteadyState Duration="120" Power="1.23" pace="0" />
         <SteadyState Duration="120" Power="0.5" pace="0" />
-        <SteadyState Duration="120" Power="1.32" pace="0" />
+        <SteadyState Duration="120" Power="1.18" pace="0" />
         <SteadyState Duration="120" Power="0.5" pace="0" />
-        <SteadyState Duration="120" Power="1.24" pace="0" />
+        <SteadyState Duration="120" Power="1.13" pace="0" />
         <SteadyState Duration="120" Power="0.5" pace="0" />
         <Cooldown Duration="300" PowerLow="0.45" PowerHigh="0.75" pace="0" />
     </workout>

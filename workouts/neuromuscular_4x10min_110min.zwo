@@ -8,8 +8,8 @@
         <Warmup Duration="720" PowerLow="0.35" PowerHigh="0.9" pace="0" />
         <SteadyState Duration="120" Power="0.5" pace="0" />
         <IntervalsT Repeat="4" OnDuration="600" OffDuration="120" OnPower="0.95" OffPower="0.5" pace="0" />
-        <IntervalsT Repeat="10" OnDuration="15" OffDuration="45" OnPower="2.0" OffPower="0.35" pace="0" />
-        <IntervalsT Repeat="10" OnDuration="30" OffDuration="150" OnPower="2.0" OffPower="0.5" pace="0" />
+        <IntervalsT Repeat="7" OnDuration="15" OffDuration="80" OnPower="2.0" OffPower="0.35" pace="0" />
+        <IntervalsT Repeat="6" OnDuration="30" OffDuration="260" OnPower="2.0" OffPower="0.5" pace="0" />
         <Cooldown Duration="480" PowerLow="0.5" PowerHigh="0.25" pace="0" />
     </workout>
 </workout_file>

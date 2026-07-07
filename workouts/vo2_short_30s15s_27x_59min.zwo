@@ -2,14 +2,14 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>VO2 Short 30s/15s 27x (59min)</name>
-    <description>Warmup: 10min from 41% to 90% FTP | Microintervals: 27 x (30s @ 125% / 15s @ 65%) | Cooldown: 5min 15s from 62% to 25% FTP</description>
+    <description>Warmup: 10min from 41% to 90% FTP | Microintervals: 27 x (30s @ 115% / 15s @ 65%) | Cooldown: 5min 15s from 62% to 25% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="600" PowerLow="0.41" PowerHigh="0.9" pace="0" />
         <SteadyState Duration="60" Power="0.81" pace="0" Cadence="85" />
-        <SteadyState Duration="120" Power="1.01" pace="0" Cadence="70" />
+        <SteadyState Duration="120" Power="1.0" pace="0" Cadence="70" />
         <SteadyState Duration="60" Power="1.0" pace="0" Cadence="120" />
-        <SteadyState Duration="120" Power="1.01" pace="0" Cadence="60" />
+        <SteadyState Duration="120" Power="1.0" pace="0" Cadence="60" />
         <SteadyState Duration="60" Power="1.0" pace="0" Cadence="130" />
         <SteadyState Duration="120" Power="1.0" pace="0" Cadence="50" />
         <SteadyState Duration="60" Power="1.0" pace="0" Cadence="110" />
@@ -17,10 +17,10 @@
         <SteadyState Duration="60" Power="1.0" pace="0" Cadence="130" />
         <SteadyState Duration="120" Power="0.3" pace="0" Cadence="80" />
         <SteadyState Duration="180" Power="0.5" pace="0" Cadence="90" />
-        <IntervalsT Repeat="14" OnDuration="30" OffDuration="15" OnPower="1.25" OffPower="0.65" pace="0" />
+        <IntervalsT Repeat="14" OnDuration="30" OffDuration="15" OnPower="1.15" OffPower="0.65" pace="0" />
         <SteadyState Duration="75" Power="0.33" pace="0" />
         <SteadyState Duration="240" Power="0.5" pace="0" />
-        <IntervalsT Repeat="13" OnDuration="30" OffDuration="15" OnPower="1.25" OffPower="0.65" pace="0" />
+        <IntervalsT Repeat="13" OnDuration="30" OffDuration="15" OnPower="1.15" OffPower="0.65" pace="0" />
         <SteadyState Duration="60" Power="0.3" pace="0" />
         <Cooldown Duration="315" PowerLow="0.62" PowerHigh="0.25" pace="0" />
     </workout>

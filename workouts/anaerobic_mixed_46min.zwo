@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Anaerobic (50min)</name>
-    <description>Warmup: 10min from 45% to 56% FTP | Steady: 5min @ 56% FTP | Steady: 1min @ 40% FTP | Steady: 1min @ 48% FTP | Steady: 1min @ 56% FTP | Steady: 1min @ 64% FTP | Steady: 1min @ 72% FTP | Steady: 1min @ 80% FTP | Steady: 1min @ 88% FTP | Steady: 1min @ 96% FTP | Steady: 1min @ 104% FTP | Steady: 1min @ 112% FTP | Steady: 30s @ 50% FTP | Steady: 1min @ 120% FTP | Steady: 30s @ 50% FTP | Steady: 1min @ 128% FTP | Steady: 30s @ 50% FTP | Steady: 1min @ 136% FTP | Steady: 30s @ 50% FTP | Steady: 1min @ 144% FTP | Steady: 30s @ 50% FTP | Steady: 1min @ 150% FTP | Steady: 1min @ 50% FTP | Steady: 1min @ 150% FTP | Cooldown: 15min from 56% to 40% FTP</description>
+    <description>Warmup: 10min from 45% to 56% FTP | Steady: 5min @ 56% FTP | Steady: 1min @ 40% FTP | Steady: 1min @ 48% FTP | Steady: 1min @ 56% FTP | Steady: 1min @ 64% FTP | Steady: 1min @ 72% FTP | Steady: 1min @ 80% FTP | Steady: 1min @ 88% FTP | Steady: 1min @ 96% FTP | Steady: 1min @ 102% FTP | Steady: 1min @ 108% FTP | Steady: 30s @ 50% FTP | Steady: 1min @ 113% FTP | Steady: 30s @ 50% FTP | Steady: 1min @ 119% FTP | Steady: 30s @ 50% FTP | Steady: 1min @ 124% FTP | Steady: 30s @ 50% FTP | Steady: 1min @ 129% FTP | Steady: 30s @ 50% FTP | Steady: 1min @ 134% FTP | Steady: 1min @ 50% FTP | Steady: 1min @ 134% FTP | Cooldown: 15min from 56% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="600" PowerLow="0.45" PowerHigh="0.56" />
@@ -15,20 +15,20 @@
         <SteadyState Duration="60" Power="0.8" />
         <SteadyState Duration="60" Power="0.88" />
         <SteadyState Duration="60" Power="0.96" />
-        <SteadyState Duration="60" Power="1.04" />
-        <SteadyState Duration="60" Power="1.12" />
+        <SteadyState Duration="60" Power="1.02" />
+        <SteadyState Duration="60" Power="1.08" />
         <SteadyState Duration="30" Power="0.5" pace="0" />
-        <SteadyState Duration="60" Power="1.2" />
+        <SteadyState Duration="60" Power="1.13" />
         <SteadyState Duration="30" Power="0.5" pace="0" />
-        <SteadyState Duration="60" Power="1.28" />
+        <SteadyState Duration="60" Power="1.19" />
         <SteadyState Duration="30" Power="0.5" pace="0" />
-        <SteadyState Duration="60" Power="1.36" />
+        <SteadyState Duration="60" Power="1.24" />
         <SteadyState Duration="30" Power="0.5" pace="0" />
-        <SteadyState Duration="60" Power="1.44" />
+        <SteadyState Duration="60" Power="1.29" />
         <SteadyState Duration="30" Power="0.5" pace="0" />
-        <SteadyState Duration="60" Power="1.5" />
+        <SteadyState Duration="60" Power="1.34" />
         <SteadyState Duration="60" Power="0.5" pace="0" />
-        <SteadyState Duration="60" Power="1.5" />
+        <SteadyState Duration="60" Power="1.34" />
         <Cooldown Duration="900" PowerLow="0.56" PowerHigh="0.40" />
     </workout>
 </workout_file>

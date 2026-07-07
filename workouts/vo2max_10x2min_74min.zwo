@@ -8,25 +8,25 @@
         <Warmup Duration="600" PowerLow="0.25" PowerHigh="0.75" pace="0" />
         <IntervalsT Repeat="3" OnDuration="60" OffDuration="60" OnPower="0.75" OffPower="0.5" pace="0" Cadence="110" CadenceResting="80" />
         <SteadyState Duration="300" Power="0.81" pace="0" />
-        <Ramp Duration="150" PowerLow="1.1" PowerHigh="1.25" pace="0" />
+        <Ramp Duration="150" PowerLow="1.06" PowerHigh="1.17" pace="0" />
         <SteadyState Duration="120" Power="0.65" pace="0" />
-        <Ramp Duration="150" PowerLow="1.1" PowerHigh="1.25" pace="0" />
+        <Ramp Duration="150" PowerLow="1.06" PowerHigh="1.17" pace="0" />
         <SteadyState Duration="120" Power="0.65" pace="0" />
-        <Ramp Duration="150" PowerLow="1.1" PowerHigh="1.25" pace="0" />
+        <Ramp Duration="150" PowerLow="1.06" PowerHigh="1.17" pace="0" />
         <SteadyState Duration="120" Power="0.65" pace="0" />
-        <Ramp Duration="150" PowerLow="1.1" PowerHigh="1.25" pace="0" />
+        <Ramp Duration="150" PowerLow="1.06" PowerHigh="1.17" pace="0" />
         <SteadyState Duration="120" Power="0.65" pace="0" />
-        <Ramp Duration="150" PowerLow="1.1" PowerHigh="1.25" pace="0" />
+        <Ramp Duration="150" PowerLow="1.06" PowerHigh="1.17" pace="0" />
         <SteadyState Duration="120" Power="0.65" pace="0" />
-        <Ramp Duration="150" PowerLow="1.1" PowerHigh="1.25" pace="0" />
+        <Ramp Duration="150" PowerLow="1.06" PowerHigh="1.17" pace="0" />
         <SteadyState Duration="120" Power="0.65" pace="0" />
-        <Ramp Duration="150" PowerLow="1.1" PowerHigh="1.25" pace="0" />
+        <Ramp Duration="150" PowerLow="1.06" PowerHigh="1.17" pace="0" />
         <SteadyState Duration="120" Power="0.65" pace="0" />
-        <Ramp Duration="150" PowerLow="1.1" PowerHigh="1.25" pace="0" />
+        <Ramp Duration="150" PowerLow="1.06" PowerHigh="1.17" pace="0" />
         <SteadyState Duration="120" Power="0.65" pace="0" />
-        <Ramp Duration="150" PowerLow="1.1" PowerHigh="1.25" pace="0" />
+        <Ramp Duration="150" PowerLow="1.06" PowerHigh="1.17" pace="0" />
         <SteadyState Duration="120" Power="0.65" pace="0" />
-        <Ramp Duration="150" PowerLow="1.1" PowerHigh="1.25" pace="0" />
+        <Ramp Duration="150" PowerLow="1.06" PowerHigh="1.17" pace="0" />
         <Cooldown Duration="600" PowerLow="0.75" PowerHigh="0.25" pace="0" />
     </workout>
 </workout_file>

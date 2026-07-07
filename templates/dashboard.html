@@ -3023,6 +3023,12 @@ window.addEventListener('unhandledrejection', function(e) {
   </div>
 </div>
 
+<!-- calendar-push (2026-07-07): shared (?) popover for the "Send to
+     intervals.icu calendar" buttons (library + planner modals). Body-level (a
+     sibling of the modal overlay) so it is never inside a hidden tab; the
+     delegated [data-popover] handler positions + toggles it. -->
+<div class="info-popover" id="calpush-info"><strong>Send to intervals.icu calendar</strong><br><br>Your head unit (Garmin, Wahoo, Hammerhead) and MyWhoosh <strong>auto-pull</strong> the workout — with its power or heart-rate targets — straight from your intervals.icu calendar. No file copy, no manual load: it appears on the day ready to ride, and lands in your intervals.icu training log.<br><br><strong>Library</strong> workouts you send stay until you delete them. <strong>Planned</strong> sessions stay in sync with your plan.</div>
+
 <!-- Zone tooltip (rich) -->
 <div class="zone-tip" id="zone-tip"></div>
 
@@ -3443,6 +3449,73 @@ function showToast(msg, duration=3000, kind=null) {
     if (e.key === 'Escape') closeActive();
   });
 })();
+
+// ═══ calendar-push (2026-07-07): "Send to intervals.icu calendar" ══════════
+// Shared by the library workout-detail modal (user picks a date → a PERMANENT
+// manual entry) and the planner day modal (uses the session's own date). POSTs
+// to /api/calendar/push-workout, which ALWAYS returns HTTP 200 with a data dict
+// ({ok}/{needs_reconnect}/{needs_lthr}/{error}) — the toast branches on those
+// fields, no HTTP-status handling. Reuses showToast + escJs; no new deps.
+function _calLocalIso(dt) {
+  // Local Y-M-D — NOT toISOString(), which is UTC and can slip a day near
+  // midnight (a workout picked "tomorrow" must not land the wrong date).
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, '0');
+  const d = String(dt.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+function _calDateBounds() {
+  const today = new Date();
+  const tmr = new Date(today); tmr.setDate(tmr.getDate() + 1);
+  const p365 = new Date(today); p365.setDate(p365.getDate() + 365);
+  return {today: _calLocalIso(today), tomorrow: _calLocalIso(tmr),
+          plus365: _calLocalIso(p365)};
+}
+async function _pushWorkoutToCalendar(source, zwoFile, dateIso, name) {
+  let r;
+  try {
+    const res = await fetch('/api/calendar/push-workout', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({source, zwo_file: zwoFile, date: dateIso,
+                            name: name || ''})});
+    r = await res.json();
+  } catch (e) { r = {error: 'network'}; }
+  if (r && r.ok) {
+    showToast(`On your intervals.icu calendar for ${dateIso} — Garmin / Wahoo / MyWhoosh will pull it automatically`, 6000, 'success');
+  } else if (r && r.needs_reconnect) {
+    showToast('Reconnect intervals.icu to grant calendar access', 6000, 'warning');
+  } else if (r && r.needs_lthr) {
+    showToast('Set your heart-rate threshold (LTHR) in Settings first — an HR-mode profile needs it to build the workout', 6000, 'warning');
+  } else {
+    showToast('Could not send to intervals.icu — please try again', 5000, 'error');
+  }
+  return r;
+}
+// Library modal: reveal an inline date input (default tomorrow); Confirm posts.
+function calPushLibReveal(btn) {
+  const row = document.getElementById('calpush-lib-row');
+  if (row) row.style.display = 'flex';
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }
+  const inp = document.getElementById('calpush-lib-date');
+  if (inp) inp.focus();
+}
+async function calPushLibConfirm(zwoFile, name) {
+  const inp = document.getElementById('calpush-lib-date');
+  const dateIso = inp ? inp.value : '';
+  if (!dateIso) { showToast('Pick a date first', 3000, 'warning'); return; }
+  const btn = document.getElementById('calpush-lib-confirm');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  await _pushWorkoutToCalendar('library', zwoFile, dateIso, name);
+  if (btn) { btn.disabled = false; btn.textContent = 'Confirm'; }
+}
+// Planner modal: no picker — the session already carries its date.
+async function calPushPlanner(zwoFile, dateIso, name, btn) {
+  if (btn) { btn.dataset._label = btn.textContent; btn.disabled = true;
+             btn.textContent = 'Sending…'; }
+  await _pushWorkoutToCalendar('planner', zwoFile, dateIso, name);
+  if (btn) { btn.disabled = false;
+             btn.textContent = btn.dataset._label || '📅 Send to intervals.icu calendar'; }
+}
 
 // ═══ v2.3.0: missed-session auto-reschedule ════════════════════════════════
 // The old manual "Reschedule missed sessions?" banner + loadMissedSuggestions()
@@ -3897,6 +3970,7 @@ async function openWorkoutDetail(category, filename, meta, view) {
     const hrCtx = d.target_mode === 'hr' ? {mode: 'hr', lthr: d.lthr, maxHr: d.max_hr, axis: d.hr_axis} : null;
     const chart = workoutProfileSVG(d.segments, d.ftp, d.total_seconds, hrCtx);
     const durMin = Math.round(d.total_seconds / 60);
+    const _calBounds = _calDateBounds();   // calendar-push (2026-07-07): picker bounds
     // ⚡/❤ peek toggle — instant swap between watt and HR views; the FIT
     // download follows the active view. Shown whenever an HR view is
     // possible (sane LTHR), regardless of the global target_mode.
@@ -3936,7 +4010,15 @@ async function openWorkoutDetail(category, filename, meta, view) {
              <button class="btn" disabled style="opacity:0.4;cursor:not-allowed;" title="ZWO is a power-only format — it cannot encode heart-rate targets. Only FIT carries your bpm ranges.">ZWO — can't encode HR</button>`
           : `<button class="btn btn-primary" onclick="downloadZwo('${escJs(category)}','${escJs(filename)}')">Open Workout File (.zwo)</button>
              ${d.hr_available ? `<button class="btn" onclick="downloadFIT('z2', ${Math.round(d.total_seconds/60)}, '${escJs((d.display_name || d.name || 'workout'))}', '${escJs(filename)}', 'power')">Download FIT</button>` : ''}`}
+        <button class="btn" onclick="calPushLibReveal(this)" title="Send this workout to your intervals.icu calendar">📅 Send to intervals.icu calendar</button><span class="info-icon" data-popover="calpush-info" tabindex="0" role="button" aria-label="Why send to intervals.icu?" title="What sending to intervals.icu does">?</span>
         <button class="btn" onclick="closeModal()">Close</button>
+      </div>
+      <!-- calendar-push (2026-07-07): revealed by the button above; default
+           TOMORROW, clamped today..+365. Confirm posts source=library. -->
+      <div id="calpush-lib-row" style="display:none;margin-top:10px;align-items:center;gap:8px;flex-wrap:wrap;">
+        <label for="calpush-lib-date" style="font-size:12px;color:var(--text2);">Calendar date:</label>
+        <input type="date" id="calpush-lib-date" value="${_calBounds.tomorrow}" min="${_calBounds.today}" max="${_calBounds.plus365}" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:13px;">
+        <button class="btn btn-primary btn-sm" id="calpush-lib-confirm" onclick="calPushLibConfirm('${escJs(filename)}','${escJs(d.display_name || d.name || 'Workout')}')">Confirm</button>
       </div>
       <div style="margin-top:8px;font-size:11px;color:var(--text3);">${hrCtx
         ? 'HR view: the FIT carries your bpm ranges (and RPE cues for short/hard efforts) — load it on a Garmin / Wahoo / Hammerhead. ZWO is greyed out because the format is power-only and cannot encode heart rate. When you finish, use Import FIT (top right) to post-analyze your ride.'
@@ -16273,7 +16355,14 @@ async function openDayWorkout(sessionIdx) {
     // Generate ZWO on-the-fly only when no matched library file is available.
     _zwoBtn = `<button class="btn btn-primary" onclick="downloadGeneratedZwo('${escJs(type)}', ${session.duration_min}, '${escJs(session.day_name)} ${escJs(typeUpper)}')">Download ZWO (Virtual Trainer)</button>`;
   }
-  html += _hrLead ? (_fitBtn + _zwoBtn) : (_zwoBtn + _fitBtn);
+  // calendar-push (2026-07-07): send THIS planned session to the ICU calendar,
+  // using the session's OWN date (no picker). O3: hidden when the slot has no
+  // matched ZWO (nothing to attach). name is display-only for the planner branch
+  // (the endpoint rebuilds the title from the plan) — passed for symmetry.
+  const _calBtn = session.zwo_file
+    ? `<button class="btn" onclick="calPushPlanner('${escJs(session.zwo_file)}','${escJs(session.day)}','${escJs(fitName)}', this)" title="Send this planned session to your intervals.icu calendar">📅 Send to intervals.icu calendar</button><span class="info-icon" data-popover="calpush-info" tabindex="0" role="button" aria-label="Why send to intervals.icu?" title="What sending to intervals.icu does">?</span>`
+    : '';
+  html += (_hrLead ? (_fitBtn + _zwoBtn) : (_zwoBtn + _fitBtn)) + _calBtn;
   html += '</div>';
   html += _hrLead
     ? '<div style="font-size:10px;color:var(--text3);margin-top:8px;">Heart-rate mode: the <b>FIT</b> carries your bpm ranges (and RPE cues for short/hard efforts) — load it on a Garmin / Wahoo / Hammerhead. ZWO is greyed out because the format is power-only and cannot encode heart rate. Ride it, then Import FIT to analyze.</div>'

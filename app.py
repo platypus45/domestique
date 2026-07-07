@@ -9032,6 +9032,151 @@ def api_icu_push(body: "dict | None" = None):
         return {"ok": False, "error": f"internal:{type(e).__name__}"}
 
 
+@app.post("/api/calendar/push-workout")
+def api_calendar_push_workout(body: "dict | None" = None):
+    """calendar-push (2026-07-07): push ONE workout to the athlete's ICU calendar
+    from a workout-detail modal — the "Send to intervals.icu calendar" button.
+
+    Body: {source:"planner"|"library", zwo_file, date (ISO — REQUIRED for both),
+    name?}. Two shapes:
+      library — a dateless library workout on a user-picked date → a PERMANENT
+        manual entry under the domestique-manual: root the plan-mirror sweep
+        never deletes (distinct prefix; _ours_in_window skips it). Repeated
+        pushes are distinct (uuid8) and coexist by design with a planned session
+        on the same day (different id roots, O4).
+      planner — a planned session on its own date → REUSE _desired_events and
+        push the ONE matching event, inheriting the EXACT domestique:<pid>:<day>:<n>
+        auto-sync would produce (byte-identical → merges, no duplicate). Never a
+        client index or a hand-rolled <n> (grill amendment 2). O1: the horizon is
+        extended to cover a target day beyond the 14-day auto-sync window.
+
+    ALWAYS HTTP 200 with a data dict ({ok,pushed,event_date} / {needs_reconnect}
+    / {needs_lthr} / {error}) — never a 4xx/500, so the shared toast handler reads
+    the fields (amendment 7; mirrors api_icu_push). Guard chain mirrors reconcile
+    (active profile → connection → write_ok); the icu_calendar_sync PREF is
+    deliberately NOT gated — a manual push needs only CALENDAR:WRITE, granted once
+    (D2). HR-mode + broken LTHR → needs_lthr, never a silently-degraded power FIT
+    (amendment 3 / O2)."""
+    import icu_calendar_push as _icp
+    from profile_manager import ProfileManager
+    body = body or {}
+    try:
+        source = str(body.get("source") or "")
+        zwo_file = str(body.get("zwo_file") or "").strip()
+        date_str = str(body.get("date") or "").strip()
+        if source not in ("planner", "library"):
+            return {"error": "bad_source"}
+        if not zwo_file:
+            return {"error": "no_workout_file"}
+
+        # Guard chain, mirroring reconcile (icu_calendar_push.py active-profile →
+        # _connection → write_ok). Order matters: an apikey with no athlete_id is
+        # write_ok yet not usable, so _connection gates FIRST.
+        pm = ProfileManager.get()
+        profile_id = pm.active_id
+        if not profile_id:
+            return {"error": "no_active_profile"}
+        athlete_id, err = _icp._connection(pm)
+        if err:
+            return {"error": err}
+        if not _icp.write_ok(pm):
+            return {"needs_reconnect": True}
+
+        # amendment 3 / O2: raw target_mode (NOT pm.target_mode, which degrades
+        # hr→power on a broken invariant). HR rider + broken/missing LTHR must be
+        # blocked BEFORE any build — never push a power FIT to an HR rider.
+        raw_mode = (pm._athlete.get("target_mode") or "power")
+        hr_mode = raw_mode == "hr"
+        lthr_ok = bool(pm.lthr_is_set and pm.max_hr > pm.lthr)
+        if hr_mode and not lthr_ok:
+            return {"needs_lthr": True}
+
+        # date REQUIRED for both sources (amendment 1): planner needs it to locate
+        # the day; library is the user-picked target. today..+365 — past/garbage
+        # rejected so nothing stale or malformed reaches the calendar.
+        today = date.today()
+        try:
+            target = date.fromisoformat(date_str)
+        except (ValueError, TypeError):
+            return {"error": "bad_date"}
+        if target < today or target > today + timedelta(days=365):
+            return {"error": "date_out_of_range"}
+        date_iso = target.isoformat()
+
+        workout_dir = Path(WORKOUT_DIR)
+        if source == "library":
+            # amendment 5: zwo_file is CLIENT-supplied → reject traversal BEFORE
+            # any read (_safe_path returns None when the resolved path escapes
+            # WORKOUT_DIR, e.g. "../../etc/passwd"). _build_event re-validates too,
+            # but failing fast here gives the clear message.
+            if not _safe_path(workout_dir, zwo_file):
+                return {"error": "invalid_workout_file"}
+            classifications = _icp._load_classifications(workout_dir)
+            # session_type from the content classifier (nested under
+            # "classifications"; flat fallback) — display-only, the attachment is
+            # driven by zwo_file. The frontend's display name is authoritative for
+            # the event title (via zwo_name in the _display_name cascade).
+            entry = (classifications.get("classifications") or {}).get(zwo_file) \
+                or classifications.get(zwo_file) or {}
+            ext_id = f"{_icp._MANUAL_ID_ROOT}{profile_id}:{uuid.uuid4().hex[:8]}"
+            synth = {"zwo_file": zwo_file, "day": date_iso,
+                     "session_type": str(entry.get("primary") or ""),
+                     "zwo_name": str(body.get("name") or "")}
+            event, reason = _icp._build_event(
+                synth, ext_id, pm, classifications, workout_dir,
+                hr_mode, lthr_ok)
+            if event is None:
+                return {"error": reason}
+            events = [event]
+        else:  # planner
+            plan = _icp._load_plan()
+            if plan is None:
+                return {"error": "no_plan"}
+            # O1: extend the horizon so a day beyond the 14-day auto-sync window
+            # is still buildable. _desired_events assigns the exact <n>, so the
+            # selected event is byte-identical to what auto-sync would push.
+            horizon = max(_icp.HORIZON_DAYS, (target - today).days)
+            desired, skipped, _ = _icp._desired_events(
+                pm, plan, today, horizon, profile_id)
+            # Match on (day, filename): filename is the ZWO name (power) or
+            # stem+".fit" (hr) that _build_event emits. Same-zwo-twice-on-a-day →
+            # identical events → the first is correct (harmless).
+            want = (Path(zwo_file).stem + ".fit") if hr_mode \
+                else Path(zwo_file).name
+            event = next(
+                (ev for ev in desired
+                 if ev["start_date_local"][:10] == date_iso
+                 and ev["filename"] == want), None)
+            if event is None:
+                # Defense (the frontend hides the button per O3): a slot with no
+                # ZWO / dismissed / skipped isn't pushable. Surface needs_lthr if
+                # that's why (can't happen here — guarded above — but explicit).
+                reason = next((s["reason"] for s in skipped
+                               if s["day"] == date_iso), None)
+                if reason == "needs_lthr":
+                    return {"needs_lthr": True}
+                return {"error": "not a pushable planned session"}
+            events = [event]
+
+        # ONE bulk upsert (idempotent on external_id) via the engine's own seam —
+        # the SAME transport reconcile uses, so 403-scope maps to needs_reconnect.
+        status, resp = _icp._http(
+            "POST", f"athlete/{athlete_id}/events/bulk?upsert=true",
+            payload=events)
+        if _icp._scope_403(status, resp):
+            return {"needs_reconnect": True}
+        if status == 0:
+            return {"error": "network"}
+        if not (200 <= status < 300):
+            return {"error": f"http_{status}"}
+        _log.info("EVENT=icu_calendar_push_workout source=%s date=%s pushed=1",
+                  source, date_iso)
+        return {"ok": True, "pushed": 1, "event_date": date_iso}
+    except Exception as e:                      # amendment 7: zero 500s, ever
+        _log.exception("calendar push-workout endpoint failed")
+        return {"error": f"internal:{type(e).__name__}"}
+
+
 @app.get("/api/icu/athlete-numbers")
 def api_icu_athlete_numbers():
     """Pull FTP / weight / LTHR / max-HR from the linked intervals.icu athlete so

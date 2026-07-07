@@ -47,6 +47,13 @@ _log = logging.getLogger("domestique.icu_push")
 
 HORIZON_DAYS = 14
 _ID_ROOT = "domestique:"
+# calendar-push (2026-07-07): a DISTINCT root for user-initiated LIBRARY pushes
+# (the workout-detail "Send to intervals.icu calendar" button). Load-bearing on
+# the ":" boundary: "domestique-manual:".startswith("domestique:") is FALSE
+# (index 10 is '-' not ':'), so _ours_in_window skips these BEFORE the foreign
+# counter — a manual entry is never in `ours`, never swept, never counted. This
+# is what makes library pushes PERMANENT (they outlive the plan-mirror sweep).
+_MANUAL_ID_ROOT = "domestique-manual:"
 
 # Raw-int values fit_tool yields when DECODING (profile_type enums encode to
 # these): WorkoutStepTarget.OPEN == 2, WorkoutStepDuration.OPEN == 5.
@@ -169,6 +176,80 @@ def _fit_last_step_is_open(fit_bytes: bytes) -> bool:
             or _enum_val(last.target_type) == _FIT_TARGET_OPEN)
 
 
+def _build_event(s: dict, ext_id: str, pm, classifications: dict,
+                 workout_dir: Path, hr_mode: bool, lthr_ok: bool):
+    """calendar-push (2026-07-07): build ONE ICU bulk-event dict for a session.
+
+    Extracted VERBATIM from the _desired_events per-session body so the plan
+    reconcile AND the single-workout push endpoint share ONE builder — no
+    divergence in name / attachment / filename. Returns ``(event, None)`` on
+    success or ``(None, reason)`` where reason is one of the skip strings the
+    reconcile toast already knows (unmatched / file_missing / needs_lthr /
+    build_failed / trailing_open). The 6 keys are emitted in a FIXED order
+    (start_date_local, category, name, external_id, filename,
+    file_contents_base64) — byte-identical to the pre-extraction output, which
+    is the regression bar (test_icu_push stays green).
+
+    The structured workout rides entirely on filename + file_contents_base64
+    (there is NO description/workout_doc field): a power profile ships the ZWO
+    bytes verbatim (ICU forwards ZWO to Garmin natively); an hr profile ships
+    the transcoded HR-target FIT. ``ext_id`` is passed IN (the caller owns the
+    day-relative <n> for planner events / the manual uuid for library pushes).
+    """
+    import app as _app
+
+    # by_day is keyed on s["day"], so s.get("day") IS this session's day_iso —
+    # deriving it here (vs threading day_iso through) keeps the byte-identical
+    # start_date_local without an extra parameter.
+    day_iso = s.get("day")
+    zwo_file = (s.get("zwo_file") or "").strip()
+    if not zwo_file:                        # unmatched slot (no ZWO to attach)
+        return None, "unmatched"
+    zwo_path = _app._safe_path(workout_dir, zwo_file)
+    if not zwo_path or not zwo_path.exists():
+        return None, "file_missing"
+    name = _display_name(s, classifications)
+    if hr_mode:
+        if not lthr_ok:
+            # Guard BEFORE building: view='hr' silently degrades to a power FIT
+            # when the invariant is broken — surface needs_lthr, never push it.
+            return None, "needs_lthr"
+        try:
+            fit_bytes = _app.build_fit_workout_bytes(
+                s.get("session_type") or "z2",
+                int(s.get("duration_min") or 60),
+                name, zwo_file, view="hr")
+        except Exception as e:
+            _log.warning("icu push: FIT build failed for %s: %s", zwo_file, e)
+            return None, "build_failed"
+        if _fit_last_step_is_open(fit_bytes):
+            return None, "trailing_open"
+        filename = Path(zwo_file).stem + ".fit"
+        contents = fit_bytes
+    else:
+        try:
+            contents = zwo_path.read_bytes()
+            # task #24: when the profile's measured-capacity cap is ON
+            # (pmax_is_set + power mode + toggle "on"), push the CAPPED file --
+            # the workout the rider should actually do. With the cap OFF (or a
+            # no-op) the bytes remain byte-identical to disk. hr branch above is
+            # untouched (target_mode wins).
+            if _app._capacity_cap_active(pm):
+                contents = _app._cap_zwo_bytes(
+                    contents, Path(zwo_file).name, pm)
+        except OSError:
+            return None, "file_missing"
+        filename = Path(zwo_file).name
+    return {
+        "start_date_local": f"{day_iso}T00:00:00",
+        "category": "WORKOUT",
+        "name": name,
+        "external_id": ext_id,
+        "filename": filename,
+        "file_contents_base64": base64.b64encode(contents).decode("ascii"),
+    }, None
+
+
 def _desired_events(pm, plan: dict, today: date, horizon_days: int,
                     profile_id: str):
     """Collect the horizon's pushable sessions as ICU bulk-event payloads.
@@ -219,70 +300,20 @@ def _desired_events(pm, plan: dict, today: date, horizon_days: int,
             status = str(s.get("status") or "")
             if status == "dismissed" or status.startswith("moved_from"):
                 continue                        # not desired → sweep removes
-            zwo_file = (s.get("zwo_file") or "").strip()
+            # calendar-push (2026-07-07): the per-session event body is now
+            # _build_event (shared with the single-workout push endpoint). ext_id
+            # is computed HERE — it needs the day-relative <n> (index among this
+            # day's sessions in plan order, rest/race/dismissed INCLUDED, per the
+            # contract) — and handed in, so a build failure still tags the SAME id
+            # into broken_ids and the sweep spares that slot's prior event.
             ext_id = f"{_ID_ROOT}{profile_id}:{day_iso}:{n}"
-            if not zwo_file:                    # unmatched slot (race days
-                skipped.append({"day": day_iso, "reason": "unmatched"})
-                # Same protection as file_missing/needs_lthr: a transiently
-                # unmatched session must not get its prior event swept.
-                broken_ids.add(ext_id)
-                continue                        # with files were caught above)
-            zwo_path = _app._safe_path(workout_dir, zwo_file)
-            if not zwo_path or not zwo_path.exists():
-                skipped.append({"day": day_iso, "reason": "file_missing"})
+            event, reason = _build_event(
+                s, ext_id, pm, classifications, workout_dir, hr_mode, lthr_ok)
+            if event is None:
+                skipped.append({"day": day_iso, "reason": reason})
                 broken_ids.add(ext_id)
                 continue
-            name = _display_name(s, classifications)
-            if hr_mode:
-                if not lthr_ok:
-                    # Guard BEFORE building: view='hr' silently degrades to a
-                    # power FIT when the invariant is broken.
-                    skipped.append({"day": day_iso, "reason": "needs_lthr"})
-                    broken_ids.add(ext_id)
-                    continue
-                try:
-                    fit_bytes = _app.build_fit_workout_bytes(
-                        s.get("session_type") or "z2",
-                        int(s.get("duration_min") or 60),
-                        name, zwo_file, view="hr")
-                except Exception as e:
-                    _log.warning("icu push: FIT build failed for %s: %s",
-                                 zwo_file, e)
-                    skipped.append({"day": day_iso, "reason": "build_failed"})
-                    broken_ids.add(ext_id)
-                    continue
-                if _fit_last_step_is_open(fit_bytes):
-                    skipped.append({"day": day_iso, "reason": "trailing_open"})
-                    broken_ids.add(ext_id)
-                    continue
-                filename = Path(zwo_file).stem + ".fit"
-                contents = fit_bytes
-            else:
-                try:
-                    contents = zwo_path.read_bytes()
-                    # task #24: when the profile's measured-capacity cap is ON
-                    # (pmax_is_set + power mode + toggle "on"), push the CAPPED
-                    # file -- the workout the rider should actually do. This
-                    # replaces the former "G3: byte-identical" guarantee for
-                    # capped profiles; with the cap OFF (or a no-op) the bytes
-                    # remain byte-identical to disk. hr branch above is untouched
-                    # (target_mode wins).
-                    if _app._capacity_cap_active(pm):
-                        contents = _app._cap_zwo_bytes(
-                            contents, Path(zwo_file).name, pm)
-                except OSError:
-                    skipped.append({"day": day_iso, "reason": "file_missing"})
-                    broken_ids.add(ext_id)
-                    continue
-                filename = Path(zwo_file).name
-            events.append({
-                "start_date_local": f"{day_iso}T00:00:00",
-                "category": "WORKOUT",
-                "name": name,
-                "external_id": ext_id,
-                "filename": filename,
-                "file_contents_base64": base64.b64encode(contents).decode("ascii"),
-            })
+            events.append(event)
     return events, skipped, broken_ids
 
 

@@ -9,6 +9,10 @@
 <style>
 :root {
   --bg: #0a0e14; --surface: #131a24; --surface2: #1a2332; --border: #2d3f52;
+  /* --card was referenced by .info-popover + 3 others but never defined →
+     var(--card) resolved to nothing → transparent popovers, text bleeding
+     through (settings-tab help was unreadable). Opaque elevated surface. */
+  --card: #1a2332;
   --text: #e6edf3; --text2: #b8c8d8; --text3: #8a9bb0;
   --accent: #4f9cf7; --accent2: #6366f1;
   --green: #22c55e; --yellow: #eab308; --orange: #f97316; --red: #ef4444; --purple: #a855f7;
@@ -17,6 +21,7 @@
 }
 [data-theme="light"] {
   --bg: #f1f5f9; --surface: #ffffff; --surface2: #f8fafc; --border: #e2e8f0;
+  --card: #ffffff;  /* opaque — see dark-theme note */
   --text: #1e293b; --text2: #475569; --text3: #64748b;
   --accent: #2563eb; --accent2: #4f46e5;
   --green: #16a34a; --yellow: #ca8a04; --orange: #ea580c; --red: #dc2626; --purple: #9333ea;
@@ -1214,7 +1219,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.5);
   font-size: 12px;
   line-height: 1.45;
   color: var(--text);

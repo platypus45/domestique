@@ -37,18 +37,27 @@ def test_sprint_slot_never_exceeds_if_ceiling():
 def test_over_cooked_neuromuscular_file_unreachable_from_sprint():
     """The specific mislabeled file that triggered this (IF 0.87) must never be
     chosen for a sprint slot, at any duration/seed."""
+    # Re-pinned after the W′-feasibility wave (1de456dd): the live fixture
+    # (IF 0.87) was rest-lengthened to W′ feasibility and its IF fell below
+    # the ceiling, so the live-file precondition can no longer hold. NOTE:
+    # W′ feasibility and this IF ceiling are ORTHOGONAL screens — plenty of
+    # feasible neuromuscular files still average IF>0.82 (the ceiling gate
+    # exists exactly for them). So: resurrect the fixture's old over-cooked
+    # value synthetically (canary pattern) and prove the ceiling still
+    # rejects it end-to-end through match_zwo.
     lib = tp.load_workout_library()
-    over = _row(lib, "neuromuscular_10s16s_60x_110min.zwo")
-    if over is None:
+    base = _row(lib, "neuromuscular_10s16s_60x_110min.zwo")
+    if base is None:
         return  # library variant without this file — nothing to assert
-    assert float(over["IF"]) > tp._SPRINT_SLOT_IF_CEILING  # precondition
+    resurrected = dict(base, IF=0.87)  # pre-amendment over-cooked value
+    doctored = [resurrected if w is base else w for w in lib]
     picks = set()
     for dur in (90, 110):
         for seed in range(16):
             s = tp.PlannedSession(
                 day=date(2026, 6, 16), day_name="Tue", session_type="sprint",
                 duration_min=dur, tss_estimate=140, description="")
-            tp.match_zwo(s, lib, week_num=seed, day_idx=1, seed_salt=seed)
+            tp.match_zwo(s, doctored, week_num=seed, day_idx=1, seed_salt=seed)
             picks.add(s.zwo_file)
     assert "neuromuscular_10s16s_60x_110min.zwo" not in picks
 

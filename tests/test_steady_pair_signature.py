@@ -57,14 +57,18 @@ def test_steady_pair_single_sustained_block_is_not_reps():
 
 
 def test_steady_pair_over_under_dominant_alternation():
-    """over_under_1min_10x_64min: dominant alternation is over 1.05 / under 0.81
-    (under-leg >0.75, so the old off<0.75 gate skipped it and latched a minor
-    1.25/0.65 sub-section reporting reps=3). Must capture the OU cycles."""
+    """over_under_1min_10x_64min: dominant alternation must be captured (the
+    old off<0.75 gate skipped it and latched a minor sub-section, reps=3).
+
+    Re-pinned after the W′-feasibility wave (1de456dd): the overs were
+    scaled 1.05 → 1.02 to bring the file's tank demand feasible; the
+    signature contract (dominant alternation, ~10 reps) is unchanged — only
+    the pinned on-power moved with the amendment."""
     sig = _sig_for("over_under_1min_10x_64min.zwo")
     assert sig is not None
     reps, _on_s, _off_s, on_p = sig
     assert reps >= 9, f"expected ~10 OU reps, got {reps}"
-    assert round(on_p, 2) == 1.05
+    assert round(on_p, 2) == 1.02
 
 
 def test_steady_pair_sweet_spot_wobble_is_not_over_under():

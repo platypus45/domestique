@@ -199,8 +199,14 @@ def test_multitoken_class_kept_intact():
 def test_over_under_steady_pair_uses_ou_descriptor():
     """An over_under body built from SteadyState pairs (no clean IntervalsT
     shape) must use the `ou` descriptor — NOT a false `{N}x` rep count latched
-    from the unreliable steady-pair fallback."""
-    fname = "over_under_1min_10x_64min.zwo"
+    from the unreliable steady-pair fallback.
+
+    Fixture re-pinned after the W′-feasibility wave (1de456dd): the old
+    fixture (over_under_1min_10x_64min) had its overs capped to 1.02 and
+    legitimately reclassified vo2max → it no longer exercises the OU-title
+    path. over_under_steady_55min is the same shape (steady-pair OU body, no
+    IntervalsT) and stays over_under post-wave."""
+    fname = "over_under_steady_55min.zwo"
     _require(fname)
     e = _entry(fname)
     # confirm there's no real IntervalsT block to trust.

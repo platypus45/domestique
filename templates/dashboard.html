@@ -1723,9 +1723,13 @@ window.addEventListener('unhandledrejection', function(e) {
     <!-- v1.10.0 — redesigned library filter. ONE unified Type = the content
          classifier (16 canonical classes, optgroup-grouped); the legacy
          session_type select is gone (content class is the canonical type
-         match_zwo selects on). Duration goes to 180 (we now have 180-min
-         endurance). Min Score / Surface / Tags moved into an Advanced
-         disclosure so the default bar is just Type · Duration · Search · Sort. -->
+         match_zwo selects on). Surface / Tags live in an Advanced
+         disclosure so the default bar is just Type · Duration · Search · Sort.
+         R2 (2026-07-07): Duration goes to 240 (the library has 26 files
+         >180min that were unreachable at the old 180 cap). Score column +
+         Min-score control removed — score_workout is a curation heuristic
+         (TSS + above-Z2 weighting), not a user-facing quality signal; it
+         stays load-bearing internally (planner pool floors) only. -->
     <div class="form-row" style="align-items:flex-end;">
       <div class="form-group" style="flex:1.3;min-width:170px;"><label>Type <span class="hint" title="Content-based primary type from the structure classifier (16 canonical classes). Matches the actual workout structure, not the filename." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span></label>
         <select id="wk-content-class" onchange="loadWorkouts()" style="width:100%;">
@@ -1758,19 +1762,19 @@ window.addEventListener('unhandledrejection', function(e) {
             <option value="ftp_test">FTP Test</option>
           </optgroup>
         </select></div>
-      <!-- Duration range, 0–180 (typeable min/max + clamp-not-swap sliders;
+      <!-- Duration range, 0–240 (typeable min/max + clamp-not-swap sliders;
            cheap label updates live, the re-filter runs only on release). -->
-      <div class="form-group" style="flex:1.8;min-width:240px;"><label>Duration <span id="wk-duration-label" style="color:var(--text2);font-size:11px;">0–180 min</span></label>
+      <div class="form-group" style="flex:1.8;min-width:240px;"><label>Duration <span id="wk-duration-label" style="color:var(--text2);font-size:11px;">0–240 min</span></label>
         <div style="display:flex;gap:6px;align-items:center;padding-top:2px;">
-          <input type="number" id="wk-dur-min-num" min="0" max="180" value="0" step="5"
+          <input type="number" id="wk-dur-min-num" min="0" max="240" value="0" step="5"
                  onchange="onLibDurationNum('min')" aria-label="Min duration (min)"
                  style="width:72px;min-width:72px;">
-          <input type="range" id="wk-dur-min" min="0" max="180" value="0" step="5"
+          <input type="range" id="wk-dur-min" min="0" max="240" value="0" step="5"
                  onchange="onLibDurationChange()" oninput="onLibDurationSlide('min')" style="flex:1;min-width:56px;">
           <span style="color:var(--text3);">–</span>
-          <input type="range" id="wk-dur-max" min="0" max="180" value="180" step="5"
+          <input type="range" id="wk-dur-max" min="0" max="240" value="240" step="5"
                  onchange="onLibDurationChange()" oninput="onLibDurationSlide('max')" style="flex:1;min-width:56px;">
-          <input type="number" id="wk-dur-max-num" min="0" max="180" value="180" step="5"
+          <input type="number" id="wk-dur-max-num" min="0" max="240" value="240" step="5"
                  onchange="onLibDurationNum('max')" aria-label="Max duration (min)"
                  style="width:72px;min-width:72px;">
         </div></div>
@@ -1778,11 +1782,15 @@ window.addEventListener('unhandledrejection', function(e) {
       <div class="form-group" style="flex:1.3;min-width:140px;"><label>Search</label>
         <input type="text" id="wk-search" placeholder="ramp, vo2, ftp_test…" oninput="onLibSearchInput()" style="width:100%;"></div>
       <div class="form-group"><label>Sort</label>
+        <!-- R2 (2026-07-07): Score sort options removed with the Score
+             column (arbitrary curation heuristic, not user-facing). Default
+             is now duration_asc — an honest, self-explanatory order that
+             also makes search results visibly change (the old score_desc
+             pinned the same score-10 rows on top before AND after a search,
+             so searching looked like a no-op). -->
         <select id="wk-sort" onchange="loadWorkouts()">
-          <option value="score_desc" selected>Score ▼</option>
-          <option value="score_asc">Score ▲</option>
+          <option value="duration_asc" selected>Duration ▲</option>
           <option value="duration_desc">Duration ▼</option>
-          <option value="duration_asc">Duration ▲</option>
           <option value="name_asc">Name A→Z</option>
           <option value="name_desc">Name Z→A</option>
         </select></div>
@@ -1791,15 +1799,12 @@ window.addEventListener('unhandledrejection', function(e) {
       <div class="form-group"><label>&nbsp;</label>
         <button class="btn" onclick="clearLibFilters()">Clear</button></div>
     </div>
-    <!-- Advanced disclosure: Min Score + Surface + Tags (hidden by default). -->
+    <!-- Advanced disclosure: Surface + Outdoor + Tags (hidden by default).
+         R2 (2026-07-07): Min-score select removed with the Score column —
+         the min_score API param still works (planner uses it internally),
+         there's just no user-facing score filter any more. -->
     <div id="wk-advanced" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
       <div class="form-row" style="align-items:flex-end;">
-        <div class="form-group"><label>Min score <span class="hint" title="Good 7+, Medium 4-6, Low &lt;4. Quality score (1-10) = 60% TSS volume + 40% above-Z2 time + structure-variety bonus (0-2) + VO2 bonus (+1 if any segment &gt;105% FTP) + aerobic bonus (+0.5 for Z2 ≥50% and ≥75min)." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span></label>
-          <select id="wk-score" onchange="loadWorkouts()">
-            <option value="7">Good (7+)</option>
-            <option value="4">Medium (4+)</option>
-            <option value="0" selected>All</option>
-          </select></div>
         <div class="form-group"><label>Surface</label>
           <div style="display:flex;gap:4px;align-items:center;padding-top:2px;">
             <button class="lib-surface-btn active" id="lib-surf-all" onclick="setLibSurfaceFilter('all',this)">All</button>
@@ -1825,15 +1830,22 @@ window.addEventListener('unhandledrejection', function(e) {
     </div>
   </div>
   <div class="card scroll-x">
+    <!-- R2 (2026-07-07): result-count line — a successful search used to be
+         indistinguishable from "nothing happened" (no count anywhere while
+         3000 rows silently shrank to 828). renderLibrary owns the text. -->
+    <div id="wk-count" style="font-size:12px;color:var(--text2);margin:2px 0 8px;"></div>
+    <!-- R2 (2026-07-07): Score column removed (curation heuristic, not a
+         user-facing quality signal — internal pool floors only). Category
+         column removed too: the backend hardcodes "Workout" for every row
+         (the API field stays — openWorkoutDetail/downloadZwo build URLs
+         from it), so the column was pure noise with a working sort header. -->
     <table><thead><tr>
-      <th style="cursor:pointer;" onclick="sortLibrary('Score')">Score ↕</th>
       <th style="cursor:pointer;" onclick="sortLibrary('Name')">Name ↕</th>
-      <th style="cursor:pointer;" onclick="sortLibrary('Category')">Category ↕</th>
       <th style="cursor:pointer;" onclick="sortLibrary('Duration(min)')">Duration ↕</th>
       <th style="cursor:pointer;" onclick="sortLibrary('TSS')">TSS ↕</th>
       <th style="min-width:150px;">Profile</th>
       <th style="cursor:pointer;" onclick="sortLibrary('Protocol')">Protocol ↕</th><th></th>
-    </tr></thead><tbody id="wk-body"><tr><td colspan="8" class="loading">Click Search</td></tr></tbody></table>
+    </tr></thead><tbody id="wk-body"><tr><td colspan="6" class="loading">No workouts match — clear a filter or broaden your search.</td></tr></tbody></table>
   </div>
 </div>
 
@@ -7336,10 +7348,25 @@ async function runPicker() {
 // ═══ LIBRARY ══════════════════════════════════════════════════════════════
 
 let _libraryWorkouts = [];
-let _librarySortCol = 'Score';
-let _librarySortAsc = false;
+// R2 (2026-07-07): header-click sort defaults follow the Score-column
+// removal — Duration ascending matches the new server-side default sort.
+let _librarySortCol = 'Duration(min)';
+let _librarySortAsc = true;
 let _libSurfaceFilter = 'all';
 let _libSurfaceData = null;
+// R2 (2026-07-07): request-generation counter for loadWorkouts. Without it,
+// a slow broad response (search "t") could land AFTER a fast narrow one
+// ("threshold") and clobber the newer table — the primary "search doesn't
+// work" root cause. Stale responses are discarded by comparing generations.
+let _libLoadGen = 0;
+// R2 (2026-07-07): pre-filter library size from the X-Library-Total response
+// header (+ truncation flag) — feeds the "Showing N of M" line.
+let _libTotalCount = 0;
+let _libLastTruncated = false;
+// Frontend fetch cap. 5000 > the ~4,250-file library, so nothing is silently
+// cut off (the old 3000 cap hid the lowest-scored 1,223 rows); if the library
+// ever outgrows it again, the count line makes the truncation visible.
+const _LIB_FETCH_LIMIT = 5000;
 
 function setLibSurfaceFilter(filter, el) {
   _libSurfaceFilter = filter;
@@ -7368,10 +7395,15 @@ function _isLibGravelWorkout(w) {
   // keep the old name-keyword fall-through for any future gravel-named
   // workouts that get added.
   const proto = (w.Protocol || '').toLowerCase();
-  const GRAVEL_PROTOS = new Set([
-    'tempo', 'sweet spot / threshold', 'sweet spot/threshold', 'endurance',
-  ]);
-  if (GRAVEL_PROTOS.has(proto)) return true;
+  // R2 (2026-07-07): D3 — Protocol vocabulary moved to the content
+  // classifier in v4.1.2 ('Sweet Spot', 'Tempo Intervals', 'Threshold
+  // Ladder', …) but this set still held only the legacy dominant-zone
+  // strings, so all 633 'Sweet Spot' rows (and every Tempo/Threshold
+  // variant) stopped matching — the exact failure mode the comment above
+  // says this function was rewritten to fix. Substring-match against the
+  // family stems so BOTH vocabularies (classifier + legacy fallback) hit.
+  const GRAVEL_PROTO_STEMS = ['tempo', 'sweet spot', 'endurance', 'threshold'];
+  if (GRAVEL_PROTO_STEMS.some(s => proto.includes(s))) return true;
   const nameLC = (w.Name || '').toLowerCase();
   if (nameLC.includes('gravel') || nameLC.includes('cobble') ||
       nameLC.includes('strade') || nameLC.includes('roubaix') ||
@@ -7384,7 +7416,7 @@ function _isLibGravelWorkout(w) {
 
 function sortLibrary(col) {
   if (_librarySortCol === col) _librarySortAsc = !_librarySortAsc;
-  else { _librarySortCol = col; _librarySortAsc = col === 'Name' || col === 'Category' || col === 'Protocol'; }
+  else { _librarySortCol = col; _librarySortAsc = col === 'Name' || col === 'Protocol'; }
   const numCols = new Set(['Score','TSS','Duration(min)','IF','Z1%','Z2%','Z3%','Z4%','Z5%','Z6%']);
   _libraryWorkouts.sort((a, b) => {
     let va = a[col] ?? '', vb = b[col] ?? '';
@@ -8264,7 +8296,7 @@ async function setActivityRace(activityId, isRace, checkboxEl) {
 
 // v4.2.0 IMPL-LIBRARY: client-side state for the new filters (slider /
 // debounced search / tag chip selections). loadWorkouts() reads these.
-let _libDurMin = 0, _libDurMax = 180;
+let _libDurMin = 0, _libDurMax = 240;
 let _libSelectedTags = new Set();
 let _libSearchTimer = null;
 
@@ -8280,7 +8312,9 @@ let _libSearchTimer = null;
 //  • CLAMP, don't swap. Dragging min past max pins min AT max (and vice
 //    versa) instead of swapping the two values — the old swap made the OTHER
 //    slider's number jump around, which read as a bug.
-const _LIB_DUR_MIN = 0, _LIB_DUR_MAX = 180;
+// R2 (2026-07-07): ceiling 180 → 240 — 26 library files (endurance_clean_240min*
+// etc.) were permanently unreachable behind the old cap.
+const _LIB_DUR_MIN = 0, _LIB_DUR_MAX = 240;
 
 function _libClampInt(v, lo, hi) {
   v = Math.round((Number(v) || 0) / 5) * 5;        // snap to step=5
@@ -8377,21 +8411,20 @@ function toggleLibTag(el) {
 }
 
 function clearLibFilters() {
-  if ($('wk-score')) $('wk-score').value = '0';
   if ($('wk-content-class')) $('wk-content-class').value = '';
   if ($('wk-search')) $('wk-search').value = '';
-  if ($('wk-sort')) $('wk-sort').value = 'score_desc';
+  if ($('wk-sort')) $('wk-sort').value = 'duration_asc';
   if ($('wk-dur-min')) $('wk-dur-min').value = '0';
-  if ($('wk-dur-max')) $('wk-dur-max').value = '180';
+  if ($('wk-dur-max')) $('wk-dur-max').value = '240';
   if ($('wk-dur-min-num')) $('wk-dur-min-num').value = '0';
-  if ($('wk-dur-max-num')) $('wk-dur-max-num').value = '180';
-  _libDurMin = 0; _libDurMax = 180;
+  if ($('wk-dur-max-num')) $('wk-dur-max-num').value = '240';
+  _libDurMin = 0; _libDurMax = 240;
   _libSelectedTags.clear();
   document.querySelectorAll('#wk-tags-chips .lib-tag-chip').forEach(c => {
     c.style.background = 'var(--surface2)';
     c.style.color = 'var(--text2)';
   });
-  const lbl = $('wk-duration-label'); if (lbl) lbl.textContent = '0–180 min';
+  const lbl = $('wk-duration-label'); if (lbl) lbl.textContent = '0–240 min';
   loadWorkouts();
 }
 
@@ -8408,13 +8441,20 @@ function toggleLibAdvanced() {
 }
 
 async function loadWorkouts() {
+  // R2 (2026-07-07): stale-response guard. Every keystroke pause fires a
+  // request; without a generation counter the SLOWER broad response (e.g.
+  // "t") could resolve after the faster narrow one ("threshold") and
+  // overwrite it — search looked completely dead. Only the newest
+  // generation is allowed to touch the DOM (including the catch path,
+  // which otherwise clobbers fresh rows with a stale error banner).
+  const gen = ++_libLoadGen;
   try {
-    // v4.x — indeterminate striped loading BAR (not a spinner) while the library
-    // loads. /api/workouts scans the 4,198-file pool (~3s) so the exact % is
-    // unknown — an animated striped sweep reads as "working" without a fake %.
+    // v4.x — indeterminate striped loading BAR (not a spinner) while the
+    // library loads. Cold cache still costs a full-pool scan server-side;
+    // warm requests return in tens of ms so the bar just blinks.
     const wkBody = $('wk-body');
     if (wkBody) wkBody.innerHTML =
-      '<tr><td colspan="8" style="padding:18px 12px;">' +
+      '<tr><td colspan="6" style="padding:18px 12px;">' +
         '<div style="font-size:12px;color:var(--text3);margin-bottom:8px;text-align:center;">Loading workout library…</div>' +
         '<div class="lbar indeterminate"><div class="lbar-fill lbar-striped"></div></div>' +
       '</td></tr>';
@@ -8423,18 +8463,23 @@ async function loadWorkouts() {
       // First-load: populate distinct-tags chip list once.
       loadLibraryTags();
     }
-    const score=$('wk-score') ? $('wk-score').value : '0';
     const cclass=$('wk-content-class') ? $('wk-content-class').value : '';
-    const sortV=$('wk-sort') ? $('wk-sort').value : 'score_desc';
+    const sortV=$('wk-sort') ? $('wk-sort').value : 'duration_asc';
     const search=$('wk-search') ? $('wk-search').value : '';
-    let url=`/api/workouts?min_score=${score}&duration_min=${_libDurMin}&duration_max=${_libDurMax}&limit=3000&sort=${encodeURIComponent(sortV)}`;
+    // R2 (2026-07-07): min_score pinned to 0 — the user-facing score filter
+    // is gone (the API param survives for the planner's internal use).
+    let url=`/api/workouts?min_score=0&duration_min=${_libDurMin}&duration_max=${_libDurMax}&limit=${_LIB_FETCH_LIMIT}&sort=${encodeURIComponent(sortV)}`;
     // v1.10.0 — unified Type = content_class (FTP tests via content_class=ftp_test);
     // the legacy session_type select was removed. Tags still OR-match if selected.
     const urlTags = [..._libSelectedTags];
     if (urlTags.length) url += '&tags=' + encodeURIComponent(urlTags.join(','));
     if (cclass) url += '&content_class=' + encodeURIComponent(cclass);
     if (search && search.trim()) url += '&search=' + encodeURIComponent(search.trim());
-    const raw = await (await fetch(url)).json();
+    const resp = await fetch(url);
+    const raw = await resp.json();
+    if (gen !== _libLoadGen) return;   // a newer request superseded this one
+    _libTotalCount = parseInt(resp.headers.get('X-Library-Total')) || raw.length;
+    _libLastTruncated = raw.length >= _LIB_FETCH_LIMIT;
     // Deduplicate by File (catch vo2max_lucy_v1 vs vo2max_lucy_v2 as separate entries)
     const seen = new Map();
     for (const w of raw) {
@@ -8447,7 +8492,10 @@ async function loadWorkouts() {
     let out = [...seen.values()];
     _libraryWorkouts = out;
     renderLibrary(_libraryWorkouts);
-  } catch(e) { console.error('loadWorkouts failed:', e); $('wk-body').innerHTML = '<tr><td colspan="8" style="color:var(--red);padding:20px;">Failed to load workouts. Check server connection.</td></tr>'; }
+  } catch(e) {
+    if (gen !== _libLoadGen) return;   // stale failure — newer request owns the DOM
+    console.error('loadWorkouts failed:', e); $('wk-body').innerHTML = '<tr><td colspan="6" style="color:var(--red);padding:20px;">Failed to load workouts. Check server connection.</td></tr>';
+  }
 }
 
 // v4.1.0 U7: identify FTP-test rows so the library can style them distinctly.
@@ -8476,9 +8524,25 @@ function _libHoverTitle(w) {
 function renderLibrary(data) {
   window._workoutMeta = {};
   const filtered = _libSurfaceFilter === 'gravel' ? data.filter(w => _isLibGravelWorkout(w)) : data;
+  // R2 (2026-07-07): "Showing N of M" result line — the visible proof that a
+  // search/filter DID something (825 of 4,232 for "threshold"), and the
+  // tripwire that makes fetch-limit truncation loud instead of silent.
+  // textContent (not innerHTML) so the raw search term needs no escaping.
+  const countEl = $('wk-count');
+  if (countEl) {
+    const total = _libTotalCount || data.length;
+    const term = ($('wk-search') ? $('wk-search').value : '').trim();
+    let msg = (filtered.length >= total)
+      ? `Showing all ${total} workouts`
+      : `Showing ${filtered.length} of ${total} workouts`;
+    if (term) msg += ` for “${term}”`;
+    if (_libSurfaceFilter === 'gravel') msg += ' (Gravel & Cobbles filter on)';
+    if (_libLastTruncated) msg += ` — list capped at ${_LIB_FETCH_LIMIT}, narrow the filters to see the rest`;
+    countEl.textContent = msg;
+  }
   if (!filtered.length) {
     // v4.2.0 IMPL-LIBRARY: empty-state message + Clear filters button.
-    $('wk-body').innerHTML = `<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text2);">
+    $('wk-body').innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text2);">
       <div style="margin-bottom:8px;">No workouts match these filters. Try widening the duration range or clearing the type filter.</div>
       <button class="btn btn-sm" onclick="clearLibFilters()">Clear filters</button>
     </td></tr>`;
@@ -8499,10 +8563,11 @@ function renderLibrary(data) {
     // v4.2.0 IMPL-LIBRARY: hover preview via title attribute (MVP — no
     // existing tooltip helper; native title is acceptable per spec §9).
     const hoverTitle = _libHoverTitle(w);
+    // R2 (2026-07-07): Score badge + Category cells removed with their
+    // columns (w.Category still feeds the detail/download URLs below).
     return `<tr style="${rowStyle}" title="${esc(hoverTitle)}" data-zones='${zj}' data-duration="${w['Duration(min)']||0}"
      onclick="openWorkoutDetail('${escJs(w.Category)}','${escJs(w.File)}',window._workoutMeta[${idx}])">
-     <td>${scoreBadge(w.Score)}</td><td style="font-weight:500;">${esc(w.display_name || w.Name)}${grvBadge}${ftpBadge}</td>
-     <td style="color:var(--text2);font-size:12px;">${esc(w.Category)}</td>
+     <td style="font-weight:500;">${esc(w.display_name || w.Name)}${grvBadge}${ftpBadge}</td>
      <td>${w['Duration(min)']}min</td><td>${w.TSS}</td>
      <td><div class="wk-lib-svg" data-cat="${esc(w.Category)}" data-file="${esc(w.File)}" style="width:140px;height:28px;background:var(--surface2);border-radius:3px;"></div></td>
      <td style="font-size:11px;color:var(--text2);max-width:200px;">${esc((w.Protocol||'').substring(0,45))}</td>
@@ -13355,14 +13420,20 @@ async function runPlanOpenSequence() {
     // (a timeout is surfaced as {timeout:true} and handled in step 3).
     const recoveryP = _planStepRace(fetch('/api/readiness'), PLAN_STEP_TIMEOUT_MS, 'recovery')
       .then(r => r.json()).then(rd => ({rd})).catch(e => ({timeout: !!(e && e.name === 'TimeoutError')}));
-    let reconciled = 0;
+    let reconciled = 0, reconTotal = 0;
     try {
       const rres = await _planStepRace(fetch('/api/plan/rematch?apply=1', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}), PLAN_STEP_TIMEOUT_MS, 'reconcile');
       const rj = await rres.json().catch(() => ({}));
-      reconciled = Array.isArray(rj.matches) ? rj.matches.length : 0;
+      // R3 (2026-07-07): `changed` = sessions whose status actually changed
+      // THIS call; `matches` = the week's cumulative pairs. Showing the
+      // cumulative count read as "6 rides reconciled" on every open.
+      reconTotal = Array.isArray(rj.matches) ? rj.matches.length : 0;
+      reconciled = (typeof rj.changed === 'number') ? rj.changed : reconTotal;
     } catch (e) { if (e && e.name === 'TimeoutError') seqError = {key: 'actual', label: STEPS[1].label, e}; }
     if (seqError) { state.actual = {status: 'error', detail: 'reconcile timed out'}; setBar(0.5, true); paint(null); return; }
-    state.actual = {status: 'done', detail: `${reconciled} session(s) matched to rides this week · syncing in background`};
+    state.actual = {status: 'done', detail: reconciled > 0
+      ? `${reconciled} new session(s) matched to rides · syncing in background`
+      : `plan already up to date (${reconTotal} matched this week) · syncing in background`};
     setBar(0.5);
     paint('recovery');
 

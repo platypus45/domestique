@@ -5305,86 +5305,35 @@ def api_workouts_tags():
     return {"tags": _get_library_tags_cached()}
 
 
-# Type-aware library search: when the whole query names a content type, filter
-# by that class exactly instead of a Name substring. Fixes "sprint" returning
-# every workout whose title merely mentions a sprint (threshold/sweet-spot with
-# sprint finishes) while the real Sprint workouts — classed "neuromuscular",
-# titled differently — never showed. Variants (ladders/short/intervals) stay
-# reachable via the Type dropdown.
-_SEARCH_TYPE_ALIASES = {
-    "sprint": "neuromuscular", "sprints": "neuromuscular", "neuromuscular": "neuromuscular",
-    "recovery": "recovery",
-    "endurance": "endurance", "z2": "endurance",
-    "tempo": "tempo",
-    "sweetspot": "sweet_spot", "sweet spot": "sweet_spot", "sweet-spot": "sweet_spot",
-    "threshold": "threshold",
-    "overunder": "over_under", "over under": "over_under", "over-under": "over_under",
-    "vo2max": "vo2max", "vo2 max": "vo2max", "vo2": "vo2max",
-    "anaerobic": "anaerobic",
-    "ftp test": "ftp_test", "ftp_test": "ftp_test",
-}
+# R2 (2026-07-07): S1 — mtime-keyed cache of the fully-parsed library rows.
+# /api/workouts previously re-parsed all ~4,250 ZWO files on EVERY request
+# (0.9-1.5s measured in-process), which is what made library search feel dead
+# (each keystroke pause = full rescan) and armed the stale-response race in
+# the dashboard's loadWorkouts. We cache the PARSE, never per-query results:
+# every filter/sort/limit param still runs per-request over the cached rows.
+_LIBRARY_ROWS_CACHE: tuple[tuple, list[dict]] | None = None
+_LIBRARY_ROWS_LOCK = threading.Lock()
 
 
-@app.get("/api/workouts")
-def api_workouts(
-    min_score: int = Query(0), session_type: str = Query(None),
-    max_duration: int = Query(300), min_duration: int = Query(0),
-    duration_min: int | None = None,
-    duration_max: int | None = None,
-    limit: int = Query(3000), sort: str = Query("score_desc"),
-    tags: str = Query(None),
-    content_class: str | None = None,
-    has_flag: str | None = None,
-    search: str | None = None,
-):
-    """Scan flat workout library (workouts/*.zwo). Extract metadata from each ZWO.
+def _build_library_rows() -> list[dict]:
+    """Parse every ZWO in WORKOUT_DIR into its full, filter-ready library row.
 
-    T5 (v4.1.0): the ``<tags><tag name="…"/></tags>`` block is now parsed
-    and surfaced on each row. Pass ``?tags=ftp_test`` (or any comma-separated
-    list) to filter the library to just tagged workouts — used by the
-    "FTP Tests" tab in the library UI and by the planner to avoid
-    accidentally scheduling a test on a random Tuesday.
-
-    v4.2.0 IMPL-LIBRARY query params:
-      - ``content_class=vo2max`` — exact-match against the 12-rule cascade
-        primary type (recovery, endurance, tempo, sweet_spot, threshold,
-        over_under, vo2max, vo2_short, anaerobic, neuromuscular, ftp_test,
-        mixed).
-      - ``tags=ftp_test,polarized_consistent`` — OR-match (any tag matches).
-      - ``duration_min=30&duration_max=60`` — minutes; either bound optional.
-      - ``has_flag=pattern_over_under`` — secondary-flag boolean filter.
-      - ``search=ramp`` — substring match (case-insensitive) against
-        ``Name`` or ``File``.
-      - ``sort=score_desc|score_asc|duration_desc|duration_asc|name_asc|name_desc``
-        Default ``score_desc``.
+    R2 (2026-07-07): S1 — extracted verbatim from the api_workouts per-file
+    loop so the parse can be cached. Everything computed here is
+    query-INDEPENDENT (name, score, protocol, zones, classification fields);
+    api_workouts applies all query params (min_score / duration / type /
+    tags / flags / search / sort / limit) on top of the cached output.
     """
-    workouts = []
+    rows: list[dict] = []
     if not WORKOUT_DIR.exists():
-        return []
-
-    filter_tags: set[str] = set()
-    if tags:
-        filter_tags = {t.strip().lower() for t in tags.split(",") if t.strip()}
+        return rows
 
     # v4.1.2 IMPL-CLASSIFIER: load the content-classification cache once per
-    # request. Same source as training_planner so the library browser and
+    # rebuild. Same source as training_planner so the library browser and
     # planner agree on protocol categorisation. Empty {} fallback when the
     # cache is missing — the dominant-zone heuristic kicks back in.
     _content_classifications = tp._load_content_classifications()
     _CONTENT_TO_PROTOCOL = tp._CONTENT_TO_PROTOCOL
-
-    # v4.2.0: resolve duration window. The new ``duration_min/max`` params
-    # take precedence over the legacy ``min_duration/max_duration`` aliases
-    # so callers using either spelling get the same behaviour.
-    eff_min_dur = duration_min if duration_min is not None else min_duration
-    eff_max_dur = duration_max if duration_max is not None else max_duration
-
-    search_lower = (search or "").strip().lower()
-    # If the whole search term names a type, match that content class exactly
-    # (type-aware) instead of a Name/title substring.
-    search_class = _SEARCH_TYPE_ALIASES.get(search_lower) if search_lower else None
-    has_flag_key = (has_flag or "").strip()
-    content_class_lower = (content_class or "").strip().lower()
 
     for zwo_path in sorted(WORKOUT_DIR.glob("*.zwo")):
         scan = _scan_zwo_for_library(zwo_path)
@@ -5445,7 +5394,7 @@ def api_workouts(
         if if_val < 0.55 and any(w in name_lower for w in ('vo2', 'threshold', 'supra')):
             name = f"Easy {name}"
 
-        row = {
+        rows.append({
             "Name": name,
             "Category": "Workout",
             "File": zwo_path.name,
@@ -5472,37 +5421,178 @@ def api_workouts(
             # The library/picker UIs render this instead of the ZWO <name> tag,
             # which disagrees with the real content type for ~50% of files.
             "display_name": content_entry.get("display_name") or "",
-        }
+        })
+    return rows
 
-        if score < min_score:
+
+def _get_library_rows_cached() -> list[dict]:
+    """Return the parsed library rows, re-scanning only when the dir drifts.
+
+    R2 (2026-07-07): S1 — key = (dir, max zwo mtime, zwo count). mtime
+    catches edits/additions, count catches deletions (which can only lower
+    the max mtime), dir catches a profile switching workout_dir at runtime
+    (_apply_profile_paths). Parse runs inside the lock — mirrors
+    _get_library_tags_cached — so concurrent cold requests don't duplicate
+    the 1.5s scan. Rows are shared across requests: treat them as read-only.
+    """
+    global _LIBRARY_ROWS_CACHE
+    # os.scandir instead of glob()+Path.stat(): the signature sweep runs on
+    # EVERY request, and pathlib costs ~60ms over 4,250 files vs ~20ms for
+    # scandir (DirEntry.stat avoids re-resolving each path). The dot-file
+    # exclusion mirrors glob("*.zwo") semantics exactly.
+    try:
+        with os.scandir(WORKOUT_DIR) as it:
+            mtimes = [e.stat().st_mtime for e in it
+                      if e.name.endswith(".zwo") and not e.name.startswith(".")]
+    except OSError:
+        mtimes = []
+    sig = (str(WORKOUT_DIR), max(mtimes) if mtimes else 0.0, len(mtimes))
+    with _LIBRARY_ROWS_LOCK:
+        if _LIBRARY_ROWS_CACHE and _LIBRARY_ROWS_CACHE[0] == sig:
+            return _LIBRARY_ROWS_CACHE[1]
+        rows = _build_library_rows()
+        _LIBRARY_ROWS_CACHE = (sig, rows)
+        return rows
+
+
+# Type-aware library search: when the whole query names a content type, filter
+# by that class FAMILY instead of a Name substring. Fixes "sprint" returning
+# every workout whose title merely mentions a sprint (threshold/sweet-spot with
+# sprint finishes) while the real Sprint workouts — classed "neuromuscular",
+# titled differently — never showed.
+# R2 (2026-07-07): values are class-name PREFIXES, not exact classes. A
+# whole-word query must BROADEN to the class family (threshold → threshold +
+# threshold_ladder; vo2 → vo2max + vo2_short + vo2_ladder), never narrow:
+# exact-class match made "threshold" (828 rows) return FEWER than the partial
+# "thresh" (1078) and hid every ladder/short variant — a silent semantic trap.
+_SEARCH_TYPE_ALIASES = {
+    "sprint": "neuromuscular", "sprints": "neuromuscular", "neuromuscular": "neuromuscular",
+    "recovery": "recovery",
+    "endurance": "endurance", "z2": "endurance",
+    "tempo": "tempo",
+    "sweetspot": "sweet_spot", "sweet spot": "sweet_spot", "sweet-spot": "sweet_spot",
+    "threshold": "threshold",
+    "overunder": "over_under", "over under": "over_under", "over-under": "over_under",
+    # "vo2" prefix = the whole family (vo2max + vo2_short + vo2_ladder).
+    # vo2_short even DISPLAYS as "VO2max" in the Protocol column, so a user
+    # typing "vo2max" sees rows labelled VO2max and expects them all.
+    "vo2max": "vo2", "vo2 max": "vo2", "vo2": "vo2",
+    "anaerobic": "anaerobic",
+    "ftp test": "ftp_test", "ftp_test": "ftp_test",
+}
+
+
+@app.get("/api/workouts")
+def api_workouts(
+    # R2 (2026-07-07): injected by FastAPI on HTTP requests; None when the
+    # picker (see ~L6000) calls this function directly from python. The
+    # None default keeps those direct calls working — their except-Exception
+    # wrappers would otherwise swallow a TypeError SILENTLY and the picker
+    # would degrade to empty suggestion lists.
+    response: Response = None,
+    min_score: int = Query(0), session_type: str = Query(None),
+    max_duration: int = Query(300), min_duration: int = Query(0),
+    duration_min: int | None = None,
+    duration_max: int | None = None,
+    limit: int = Query(3000), sort: str = Query("score_desc"),
+    tags: str = Query(None),
+    content_class: str | None = None,
+    has_flag: str | None = None,
+    search: str | None = None,
+):
+    """Scan flat workout library (workouts/*.zwo). Extract metadata from each ZWO.
+
+    T5 (v4.1.0): the ``<tags><tag name="…"/></tags>`` block is now parsed
+    and surfaced on each row. Pass ``?tags=ftp_test`` (or any comma-separated
+    list) to filter the library to just tagged workouts — used by the
+    "FTP Tests" tab in the library UI and by the planner to avoid
+    accidentally scheduling a test on a random Tuesday.
+
+    v4.2.0 IMPL-LIBRARY query params:
+      - ``content_class=vo2max`` — exact-match against the 12-rule cascade
+        primary type (recovery, endurance, tempo, sweet_spot, threshold,
+        over_under, vo2max, vo2_short, anaerobic, neuromuscular, ftp_test,
+        mixed).
+      - ``tags=ftp_test,polarized_consistent`` — OR-match (any tag matches).
+      - ``duration_min=30&duration_max=60`` — minutes; either bound optional.
+      - ``has_flag=pattern_over_under`` — secondary-flag boolean filter.
+      - ``search=ramp`` — substring match (case-insensitive) against
+        ``Name`` / ``File`` / ``display_name``. R2 (2026-07-07): when the
+        whole term names a class family (_SEARCH_TYPE_ALIASES) and no
+        ``content_class`` filter is active, it becomes a class-PREFIX match
+        instead (threshold → threshold + threshold_ladder).
+      - ``sort=score_desc|score_asc|duration_desc|duration_asc|name_asc|name_desc``
+        Default ``score_desc``.
+
+    R2 (2026-07-07): S1 — filters run over the mtime-keyed row cache
+    (_get_library_rows_cached) instead of re-parsing ~4,250 XML files per
+    request (0.9-1.5s → warm requests in the tens of ms). The pre-filter
+    library size is exposed as the ``X-Library-Total`` header so the UI can
+    render "Showing N of M" and surface ``limit`` truncation (D2) instead
+    of silently dropping the tail.
+    """
+    workouts = []
+    if not WORKOUT_DIR.exists():
+        return []
+
+    filter_tags: set[str] = set()
+    if tags:
+        filter_tags = {t.strip().lower() for t in tags.split(",") if t.strip()}
+
+    # v4.2.0: resolve duration window. The new ``duration_min/max`` params
+    # take precedence over the legacy ``min_duration/max_duration`` aliases
+    # so callers using either spelling get the same behaviour.
+    eff_min_dur = duration_min if duration_min is not None else min_duration
+    eff_max_dur = duration_max if duration_max is not None else max_duration
+
+    search_lower = (search or "").strip().lower()
+    content_class_lower = (content_class or "").strip().lower()
+    # If the whole search term names a type FAMILY, match the class-name
+    # prefix (type-aware) instead of a Name/title substring.
+    # R2 (2026-07-07): the alias only fires when no explicit Type filter is
+    # set. Previously Type=threshold + search="vo2" AND-ed exact-class
+    # vo2max onto class threshold → guaranteed 0 rows (silent hijack). With
+    # a Type active the search stays a plain substring, so the two filters
+    # intersect sanely.
+    search_class_prefix = (
+        _SEARCH_TYPE_ALIASES.get(search_lower)
+        if (search_lower and not content_class_lower) else None
+    )
+    has_flag_key = (has_flag or "").strip()
+
+    rows = _get_library_rows_cached()
+    total = len(rows)  # pre-filter library size → X-Library-Total header
+
+    for row in rows:
+        if row["Score"] < min_score:
             continue
-        if not (eff_min_dur <= dur_min <= eff_max_dur):
+        if not (eff_min_dur <= row["Duration(min)"] <= eff_max_dur):
             continue
-        if session_type and session_type.lower() not in protocol.lower():
+        if session_type and session_type.lower() not in row["Protocol"].lower():
             continue
         if filter_tags:
-            row_tags_lower = {t.lower() for t in zwo_tags}
+            row_tags_lower = {t.lower() for t in row["Tags"]}
             if not (filter_tags & row_tags_lower):
                 continue
         # v4.2.0: content_class exact-match. Empty/missing classification
         # never matches a non-empty filter, so the user can't accidentally
         # surface uncategorised files via the dropdown.
         if content_class_lower:
-            if (content_class_val or "").lower() != content_class_lower:
+            if (row["content_class"] or "").lower() != content_class_lower:
                 continue
         # v4.2.0: secondary-flag boolean filter.
         if has_flag_key:
-            if not bool(secondary_flags.get(has_flag_key)):
+            if not bool((row["secondary_flags"] or {}).get(has_flag_key)):
                 continue
         # v4.2.0: search-by-structure substring match against Name + File.
         # v1.8.20: also match display_name so typing the VISIBLE title (which is
         # now display_name, not the <name> tag) returns hits.
         if search_lower:
-            if search_class:
-                if (content_class_val or "").lower() != search_class:
+            if search_class_prefix:
+                if not (row["content_class"] or "").lower().startswith(search_class_prefix):
                     continue
             else:
-                hay = f"{name.lower()} {zwo_path.name.lower()} {(content_entry.get('display_name') or '').lower()}"
+                hay = f"{row['Name'].lower()} {row['File'].lower()} {(row['display_name'] or '').lower()}"
                 if search_lower not in hay:
                     continue
         workouts.append(row)
@@ -5525,7 +5615,18 @@ def api_workouts(
     elif sort == "tss":
         workouts.sort(key=lambda w: -w["TSS"])
 
-    return workouts[:limit]
+    result = workouts[:limit]
+    # R2 (2026-07-07): dual return. Direct python callers (the picker,
+    # ~L6000) get the plain list they always got. HTTP requests (FastAPI
+    # injected `response`) get a pre-serialized JSONResponse instead:
+    # FastAPI's jsonable_encoder walk over ~4,250 cached rows costs ~360ms
+    # per request — 7x the raw json.dumps (~50ms) — and would eat the whole
+    # S1 cache win. The X-Library-Total header must ride on the returned
+    # response object; FastAPI ignores the injected one when a Response is
+    # returned directly.
+    if response is None:
+        return result
+    return JSONResponse(result, headers={"X-Library-Total": str(total)})
 
 
 @app.get("/api/workout/download/{filename}")
@@ -15461,11 +15562,15 @@ async def api_plan_rematch(request: Request, apply: int = Query(0)):
         if not apply:
             return {"ok": True, "apply": False, **preview}
 
-        _apply_rematch_preview_to_plan(plan, week_idx, preview)
+        # R3 (2026-07-07): surface the CHANGED count — the helper always
+        # computed it and the endpoint discarded it, so the UI showed the
+        # week's cumulative match total ("6 rides reconciled") on every
+        # planner open even when nothing new happened.
+        changed = _apply_rematch_preview_to_plan(plan, week_idx, preview)
         plan["last_rematch"] = datetime.now().isoformat()
         tp.atomic_write_plan(json_path, plan)
 
-        return {"ok": True, "apply": True, **preview}
+        return {"ok": True, "apply": True, "changed": changed, **preview}
 
     except Exception:
         _log.exception("Plan rematch failed")

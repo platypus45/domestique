@@ -26,7 +26,7 @@
 
 ## TL;DR
 
-Domestique is a localhost-only cycling planner that ships 4,232 structured ZWO workouts and 622 virtual routes, imports your post-ride FITs, and mutates the next-day prescription from *every* signal the ride exposed — TSS overshoot, polarisation breach, DFA α1, aerobic decoupling, Foster monotony, eFTP drift, Hooper composite. Most "smart" planners stop at the dashboard. Domestique stops at the prescription. Hardware-agnostic: generate ZWO, ride in MyWhoosh / Tacx / Zwift / Hammerhead / outdoors, import the FIT back. No power meter? A heart-rate target mode prescribes bpm ranges instead of watts. Single rider, no telemetry, no cloud.
+Domestique is a localhost-only cycling planner that ships 4,200+ structured ZWO workouts and 622 virtual routes, imports your post-ride FITs, and mutates the next-day prescription from *every* signal the ride exposed — TSS overshoot, polarisation breach, DFA α1, aerobic decoupling, Foster monotony, eFTP drift, Hooper composite, glycolytic overload. Most "smart" planners stop at the dashboard. Domestique stops at the prescription. Hardware-agnostic: generate ZWO, ride in MyWhoosh / Tacx / Zwift / Hammerhead / outdoors, import the FIT back. No power meter? A heart-rate target mode prescribes bpm ranges instead of watts. Single rider, no telemetry, no cloud.
 
 ## Why this exists
 
@@ -41,6 +41,7 @@ Domestique is neither. Every signal that touches the dashboard also has a code-p
 - **Last week's actual TSS > 1.5 x planned** -> next week's TSS budget auto-cuts 15% (Gabbett 2016, ACWR sweet spot 0.8–1.3).
 - **Rolling 48h Z5+ >= 25 min** -> today is forced to Z2 even with positive TSB (Hulin et al. 2014).
 - **DFA alpha1 mean < 0.5 over last 3 rides** -> tomorrow's threshold session auto-swaps to Z2, with a revert button (Rogers et al. 2021).
+- **Yesterday's ride carried >= 8 min in Z6/Z7** (planned or not) -> today's hard session eases one notch — sprint work is glycolytically expensive at low TSS, so the load model alone would miss it. Revertible, with the reason on the card.
 - **Mid-cycle FTP recalibration** at the build1->build2 boundary auto-tests your FTP so the next 4 weeks of TSS targets aren't computed against a stale baseline (Allen & Coggan, *Training and Racing with a Power Meter* 3rd ed.).
 
 Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus a 1-week consolidation phase at the end of every non-event cycle so people don't ride straight from a peak into a fresh build with elevated fatigue (Mujika 2010).
@@ -48,6 +49,22 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 ---
 
 ## What's new in v3
+
+**Every workout is physiologically rideable — verified.** The whole library
+went through a W′-balance audit (critical-power model, generous anaerobic
+reserve): 90 files that demanded more than a human anaerobic tank — think
+24×15s at 300% FTP with token rests — were fixed class-aware (sprint files
+kept their power and gained real recoveries; interval files were re-set to
+protocol-correct intensities). Rønnestad 30/15s now come in literature-true
+set-scaled doses (2 sets @ 115%, 3 @ 110%, 4 @ 106% — not the 130% that
+blows up mid-set), and a new engine gate means a sweet-spot day can never
+be handed a file with sustained over-FTP blocks.
+
+**A search bar that speaks cyclist.** Type "threshold 3x16", "ss 90min",
+">120 vo2", "30/15", "rønnestad" or "@105" — the library search parses
+structure, duration, intensity and class families, tolerates typos, ranks
+by relevance, highlights the match, and tells you what it understood.
+"/" focuses it, Esc clears it. Instant on 4,200+ files.
 
 **Plans that respect your time — and stay interesting.** The training time
 you enter per day is a hard limit: a 60-minute day gets a workout that fits

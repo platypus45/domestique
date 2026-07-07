@@ -1,5 +1,57 @@
 # Changelog
 
+## v3.3.0 — Every workout rideable, a search that speaks cyclist (2026-07-07)
+
+The whole release is built around one tester day: an impossible 3×16min at
+103% FTP landed on a sweet-spot day, the library search felt dead, and a
+brutal sprint session didn't ease the next day's plan.
+
+### New
+- **W′-feasibility audit of the entire library.** Every one of 4,200+
+  workouts was simulated against the critical-power model (generous
+  anaerobic-reserve settings, ramp tests exempt). 90 physiologically
+  impossible files were fixed class-aware: sprint workouts kept their watts
+  and gained real recoveries; interval workouts were re-set to
+  protocol-correct intensities; 3 files had their work/rest encoding
+  inverted and were corrected. 40 borderline files are logged and monitored.
+- **Rønnestad 30/15s in literature-true doses.** New 2/3/4-set variants at
+  115/110/106% — the canonical prescription (~110% for 3×13) instead of the
+  130% pacing that turns the session anaerobic and cuts the VO2max stimulus.
+  The old 130% files were re-set to match.
+- **A search bar that understands you.** "threshold 3x16", "ss 90min",
+  ">120 vo2", "30/15", "rønnestad", "@105" — structure, duration, intensity
+  and class families parsed from free text, typo-tolerant, relevance-ranked,
+  matches highlighted, with a "understood: …" echo. "/" focuses, Esc clears.
+- **Sprint days now echo into tomorrow.** A ride with 8+ minutes in Z6/Z7 —
+  planned or not — eases the next day's hard session one notch, with the
+  reason on the card and a revert button. Low-TSS/high-glycolytic rides were
+  invisible to the load model before.
+
+### Fixed
+- **A sweet-spot day can never serve an over-FTP file again.** New engine
+  gate: files with sustained blocks above FTP are inadmissible for
+  sweet-spot and tempo slots (the workout facts layer now sees intensity
+  from 101% up — it was blind below 130%).
+- **The card, the chips and the file always agree.** A coherence pass at
+  every plan-building tail rematches any session whose file duration drifts
+  from its slot (the "90-minute slot carrying a 118-minute file" class —
+  28/28 fixed on pinned plans, verified stable).
+- **Weekly recalculation respects your daily time limits** (it was the one
+  path without the availability clamp).
+- **Library search actually responds.** Typing was racing itself: every
+  keystroke re-parsed all 4,200 files server-side and a slower earlier response
+  could overwrite the results. Parsing is cached (under 100ms), stale
+  responses are discarded, and a "Showing N of M" line always tells you
+  what happened. Long workouts (up to 240min) are reachable again, the
+  gravel filter finds sweet-spot rides again, and searching "vo2" no longer
+  hides the short/ladder variants.
+- **"6 rides reconciled" on every planner open** — it was the week's total,
+  re-announced. Now it only reports genuinely new matches.
+- The workout table dropped two misleading columns: the constant "Category"
+  and the internal quality score (it rated workouts by intensity, so an
+  impossible file scored 7/10 and a perfect 3-hour Z2 ride scored 2).
+
+
 ## v3.2.3 — Your available time is a hard limit (2026-07-06)
 
 Fixes for the three most-reported issues from testers, all in the planner's

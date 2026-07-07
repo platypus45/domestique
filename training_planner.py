@@ -727,6 +727,39 @@ def _last_48h_z5plus_min(rides: list[dict]) -> float:
     return total_seconds / 60.0
 
 
+# R4/R5 (2026-07-07) — R5 trigger threshold: yesterday's z6+z7 seconds at or
+# above 8 minutes marks a glycolytically heavy day regardless of TSS (the
+# incident: 57-TSS/37-min 130%-FTP 30/15s ride → z6+z7 = 731s; a plain z2 day
+# reads 0). z6+z7 ≈ time above ~120% FTP — the nearest DURABLE equivalent of
+# the IP's "≥8min above 115%": zone edges are athlete-configurable, so a
+# fixed 115% cut is NOT computable from stored time_in_zone (grill P4/A6).
+_GLYCO_DAY_AFTER_Z67_FLOOR_S = 480
+
+
+def _yesterday_glyco_z67_s(rides: list[dict]) -> float:
+    """R5 input — z6+z7 seconds across YESTERDAY's rides (calendar day).
+
+    Reads ONLY the stored ride envelope's ``time_in_zone`` — the single
+    durable per-ride content signal for UNPLANNED rides: execution-scoring
+    facts exist only for completion-MATCHED sessions, and ``intervals[]``
+    (the IP's proposed "≥12 sprints" arm) is wiped by any lazy re-sync from
+    the bare activity GET (observed live during the grill: 53 intervals → 0
+    between two reads; the sprint arm was DROPPED per A6). Rides without
+    time_in_zone (power-less envelopes) contribute 0 — no signal, no gate.
+    """
+    if not rides:
+        return 0.0
+    y_iso = (date.today() - timedelta(days=1)).isoformat()
+    total = 0.0
+    for r in rides:
+        if (r.get("date") or "") != y_iso:
+            continue
+        tiz = r.get("time_in_zone")
+        if isinstance(tiz, dict) and tiz:
+            total += float((tiz.get("z6") or 0) + (tiz.get("z7") or 0))
+    return total
+
+
 def _last_3d_mean_feel(rides: list[dict]) -> float | None:
     """G7 input — mean of `feel`/`perceived_exertion` over last 3 days.
     Foster 1998 session-RPE. Returns None when no signal exists in window.
@@ -904,21 +937,30 @@ _EASY_SLOT_IF_CEILING = 0.78
 #                     sprint reps >= 4   (the IF row is the sampler's sprint
 #                     gate — A7: match_zwo already applies the same constant)
 #   sweetspot/tempo   t200 == 0 AND longest run @>=150% < 45s AND t150 <= 30s
+#                     AND l101 < 300s  (R4/R5 2026-07-07 — see note below)
 #   threshold/overunder  t240 == 0 AND t200 == 0
 #   vo2max            z5+z6+z7 >= 240s (matches the classifier's salvage floor)
 #   z2/long_z2        no rep >=45s @>=130% AND t200 == 0 (keeps IF<=0.78,
 #                     z345 ceiling, SecondaryFlags gates unchanged)
 #   recovery          t130 == 0 (keeps z345<25, IF<=0.78, SF unchanged)
-# F4 design note (deliberate scope boundary, NOT a hole to plug here): the
-# SS/z2/recovery facts rows key on SUPRA-150% burst metrics (t150/t200/
-# n130_45/t130), so a hypothetical file mislabeled sweet_spot that sat at
-# ~115% FTP with ZERO >150% bursts would satisfy BOTH the category pre-filter
-# (label=sweet_spot) and this facts contract. The CATEGORY pre-filter is the
-# backstop for that mid-band regime — the facts gate is scoped to the supra-
-# burst pathology the two live incidents actually were (735-967% spikes on
-# easy/SS days). Verified: no such file exists in the library today (the audit
-# swept every SS/z2/recovery-labeled row). Widening these rows to a mid-band
-# ceiling is #14 slot-demand territory, not a watertightness gap.
+# F4 design note — REVISED R4/R5 (2026-07-07). The original note claimed the
+# CATEGORY pre-filter was the backstop for the mid-band (100-130% FTP, zero
+# >150% bursts) regime. That claim is DISPROVEN by the live Tuesday incident:
+# the SS slot's fallback chain deliberately admits threshold-class files
+# (grill P2: 545/1060 = 51% of the SS-admissible pool is threshold-class —
+# the fallback IS the main SS supply), so a threshold-class 3x16min @1.03 FTP
+# file rode the fallback onto a SWEET SPOT card while satisfying every
+# pre-v2 facts term (1.03 < 1.30 → all burst floors blind; IF 0.806 below
+# many legit SS files). R4b closes the hole with a SUSTAINED supra-FTP
+# ceiling on the shared SS/tempo row: `l101 < 300` (longest contiguous run
+# at >=1.01×FTP under 5min; facts schema v2). Grill-measured: removes
+# 32/1060 SS-admissible files (3.0%), every healthy 30-min duration bucket
+# stays >=50; brief >FTP surges <=180s (strides/openers/bursts on 184
+# legit-SS-class files) ALL stay admissible at the 300s run length; the 5
+# legit-class files it drops each hold a genuine >=5min supra-FTP block —
+# true positives under the contract (sustained >FTP has no place on an
+# SS/tempo slot). TEMPO slots share the row and inherit the ceiling by
+# design (GA2 extended per grill A5).
 # Slot types without a row (ftp_test, double_threshold, …) are ungated here.
 # A file whose facts row is missing/unparseable is INADMISSIBLE (A5 — the
 # only fail-closed class; workout_facts self-heals parseable files inline).
@@ -948,7 +990,12 @@ def file_admissible(slot_type: str, row: dict) -> bool:
                 return False
             return f["t150"] >= 60 and f["sprints"] >= 4
         if slot_type in ("sweetspot", "tempo"):
-            return f["t200"] == 0 and f["l150"] < 45 and f["t150"] <= 30
+            # R4/R5 (2026-07-07): + sustained supra-FTP ceiling (l101 < 300).
+            # Direct key access is correct: a v1 cache is dropped whole on
+            # version mismatch (workout_facts._read_cache_file), and a
+            # malformed row KeyErrors into the fail-closed guard below.
+            return (f["t200"] == 0 and f["l150"] < 45 and f["t150"] <= 30
+                    and f["l101"] < 300)
         if slot_type in ("threshold", "overunder"):
             return f["t240"] == 0 and f["t200"] == 0
         if slot_type == "vo2max":
@@ -6601,6 +6648,13 @@ def generate_plan(
     # freshly-missed → refit storm at entry. start_date None ⇒ no-op.
     _strip_elapsed_sessions(weeks, _entry_anchor(goal))
 
+    # R4/R5 (2026-07-07) — R4a: slot/file coherence invariant, ONCE, LAST
+    # (grill A2: after every clamp/shrink pass so rematch targets FINAL
+    # durations and a down-only residual can never re-breach a budget).
+    _enforce_slot_file_coherence(weeks, library,
+                                 plan_start_date=plan_start_date,
+                                 seed_salt=seed_salt)
+
     return phases, weeks
 
 
@@ -7516,6 +7570,176 @@ def _enforce_easy_slot_content(weeks: list, library: list, plan_start_date,
             # Recompute the slot's TSS from its easy type + final duration so the
             # detail modal's TSS reflects the SLOT, not a leftover file value.
             s.tss_estimate = round((s.duration_min or 0) / 60 * easy_tss_hr[s.session_type])
+
+
+# ── R4/R5 (2026-07-07) — R4a: slot/file coherence invariant ──────────────────
+# The Tuesday incident (SWEET SPOT 90-min card serving a 118-min threshold
+# file) was a DECOUPLING, not a bad match: several passes shrink a slot's
+# duration_min in place while keeping zwo_file (the generate-tail TYPE_CEILING
+# clamp; _enforce_weekly_volume_ceiling; _enforce_stepback_is_lightest; the
+# sampler's 3.2.3 day-cap sweep), so card, chips and file drift apart. The
+# exact historical producer is unknowable from a stored plan — so the fix is
+# an INVARIANT swept once, LAST, at every plan-emitting tail (generate /
+# regenerate_from_today / recalculate_plan / refit_remaining_week), never a
+# point patch on one producer (grill A2).
+#
+# Semantics (grill A1-A3, all measured on 3 pinned 24w plans — 463 filed
+# sessions, 25 trips = 5.4%, ALL file>slot, 25/25 fixed by rematch):
+#   trip     |file_dur − slot| > max(0.08×slot, 3) + 5 (the reshuffle band
+#            + the availability clamp's +5 rounding tolerance)
+#   fix      re-run match_zwo at the SLOT duration (exact_duration=True —
+#            closest-tier collapse; the type/category gates still apply, so
+#            an R4b-cleaned pool can't re-serve a supra-FTP file on SS).
+#   A3       if the returned file is STILL out of band (sparse cell), treat
+#            as NoCandidate: keep the CLOSER of old/new file.
+#   residual DOWN-only re-stamp: slot := min(slot, file_dur). Up-stamping is
+#            FORBIDDEN — it re-breaches the availability/TYPE_CEILING caps
+#            and the weekly taper/stepback TSS budgets those passes just
+#            enforced, and oscillates across recalcs (grill P5: both
+#            oscillation modes are up-stamp modes; down-only + last-position
+#            = monotone single pass, fixpoint in one application). Since
+#            every tail's authoritative clamp ran BEFORE this pass, slot ≤
+#            min(day-cap/override, TYPE_CEILING, stepback 150) already, and
+#            min(slot, file_dur) can only lower it — the full clamp formula
+#            holds without re-deriving caps here.
+#   file>slot residual: keep file + keep slot + narrate (the modal's showGap
+#            banner renders the gap; the card stays honest about PLANNED
+#            time — the rider stops the longer file at the slot budget).
+#   easy residual (z2/long_z2/recovery, file<slot): keep + narrate — slot >
+#            file is the DOCUMENTED extend-on-trainer contract for
+#            unstructured rides (v1.3.4 coverage fallback +
+#            _apply_long_ride_target grow the slot beyond library coverage
+#            by design; down-stamping would silently destroy the event
+#            long-ride progression).
+_COHERENCE_EASY_TYPES = frozenset({"z2", "long_z2", "recovery"})
+
+
+def _slot_file_band_min(slot_min: float) -> float:
+    """R4a trip band (minutes): max(8% of slot, 3) + 5 rounding tolerance."""
+    return max(0.08 * float(slot_min), 3.0) + 5.0
+
+
+def _enforce_slot_file_coherence(weeks: list, library: list,
+                                 plan_start_date=None, seed_salt: int = 0,
+                                 today_floor: "date | None" = None) -> dict:
+    """R4a — rematch-or-narrate every pending slot whose file duration left
+    the band. Runs ONCE, LAST at each plan tail (after the availability
+    clamps, so rematch targets FINAL durations). Returns a stats dict
+    (trips/rematched/restamped_down/kept_narrated) for logging + tests.
+
+    Guards (grill A2, mirroring the regen L3-13 clamp + _protect_race):
+    pending-only; never a race entry, opener, user-moved, adapted or
+    dismissed session. ``today_floor`` (refit only) skips past days — the
+    refit's own frozen-day contract; the other tails pass week sets that are
+    future-only or already elapsed-stripped.
+    """
+    stats = {"trips": 0, "rematched": 0, "restamped_down": 0, "kept_narrated": 0}
+    if not library:
+        return stats
+    dur_by_file: dict[str, float] = {}
+    for w in library:
+        fn = (w.get("File") or "").strip()
+        if not fn:
+            continue
+        try:
+            d = float(w.get("Duration(min)") or 0)
+        except (TypeError, ValueError):
+            continue
+        if d > 0:
+            dur_by_file[fn] = d
+    for wk in weeks:
+        for off, s in enumerate(getattr(wk, "sessions", []) or []):
+            if s is None or s.session_type == "rest":
+                continue
+            fn = (getattr(s, "zwo_file", "") or "").strip()
+            if not fn:
+                continue
+            slot = float(s.duration_min or 0)
+            if slot <= 0:
+                continue
+            if _protect_race(s) or getattr(s, "is_opener", False):
+                continue
+            if getattr(s, "adapted", False) or getattr(s, "user_moved", False):
+                continue
+            if (getattr(s, "status", "pending") != "pending"
+                    or getattr(s, "dismissed_at", "")):
+                continue
+            if today_floor is not None and (
+                    getattr(s, "day", None) is None or s.day < today_floor):
+                continue
+            fd = dur_by_file.get(fn)
+            if fd is None:
+                # Stale file reference (not in the library view) — nothing to
+                # measure against; file_admissible fail-closes at serve time.
+                continue
+            band = _slot_file_band_min(slot)
+            if abs(fd - slot) <= band:
+                continue
+            stats["trips"] += 1
+            old_file, old_name = s.zwo_file, s.zwo_name
+            # CLASS-PRESERVING rematch: restrict the pool to the outgoing
+            # file's content class. The variety floor passes
+            # (_enforce_build2_peak_hard_floor / _enforce_ronnestad_floor)
+            # install their stimulus BY CLASS, and the tail TYPE_CEILING
+            # clamp then shrinks some of those slots (anaerobic ceiling 50
+            # vs 55-76min files) — a class-blind rematch here would swap the
+            # closest-duration file of a SIBLING class and silently void the
+            # phase's floor contract (measured on pinned seed 12345:
+            # build2/peak anaerobic 2 → 0). Same-class rematch fixes the
+            # duration lie while keeping the prescribed stimulus; it is also
+            # exactly the IP's intent for the incident slot (a threshold-
+            # class file may serve SS, but only the sub-1.00 end — the
+            # R4b-gated pool inside match_zwo enforces that). If the class
+            # has no in-band candidate, A3/A1 keep + narrate below.
+            _old_cc = _content_class_for_zwo(fn)
+            _lib_view = library
+            if _old_cc:
+                _same_cc = [r for r in library
+                            if _content_class_for_row(r) == _old_cc]
+                if _same_cc:
+                    _lib_view = _same_cc
+            s.zwo_file = ""
+            s.zwo_name = ""
+            try:
+                match_zwo(s, _lib_view, week_num=getattr(wk, "week_num", 0),
+                          day_idx=off, plan_start_date=plan_start_date,
+                          seed_salt=seed_salt, exact_duration=True,
+                          raise_on_empty=True)
+            except Exception:  # noqa: BLE001 — NoCandidate → keep the old file
+                s.zwo_file, s.zwo_name = old_file, old_name
+            new_fd = dur_by_file.get((s.zwo_file or "").strip())
+            if new_fd is not None and abs(new_fd - slot) <= band:
+                stats["rematched"] += 1
+                continue
+            # A3: rematch landed outside the band too (sparse cell) — keep
+            # whichever file sits closer to the slot.
+            if new_fd is None or abs(fd - slot) <= abs(new_fd - slot):
+                s.zwo_file, s.zwo_name = old_file, old_name
+                kept_fd = fd
+            else:
+                kept_fd = new_fd
+            if kept_fd < slot and s.session_type not in _COHERENCE_EASY_TYPES:
+                # DOWN-only re-stamp: a structured slot claiming more minutes
+                # than its file holds is fiction — align card to file. TSS
+                # scales proportionally (v1.8.21 clamp semantics). min()
+                # guarantees the stamp never raises duration_min.
+                new_dur = min(int(s.duration_min), int(round(kept_fd)))
+                if new_dur > 0 and new_dur < s.duration_min:
+                    _scale = new_dur / float(s.duration_min)
+                    s.tss_estimate = round((s.tss_estimate or 0) * _scale)
+                    s.duration_min = new_dur
+                    stats["restamped_down"] += 1
+                    continue
+            stats["kept_narrated"] += 1
+            log.info(
+                "R4a coherence: kept out-of-band file on %s %s slot "
+                "(slot=%smin file=%s %.0fmin) — narrated via showGap",
+                getattr(s, "day", "?"), s.session_type, s.duration_min,
+                s.zwo_file, kept_fd,
+            )
+    if stats["trips"]:
+        log.info("R4a coherence pass: %s", stats)
+    return stats
 
 
 def _demote_hit_window(weeks: list, center_date, days: int, library=None,
@@ -9994,6 +10218,13 @@ def regenerate_from_today(
     # sums — a strict no-op when the rebuilt span holds no taper rows.
     _enforce_weekly_volume_ceiling(_future_weeks, recent_weekly_tss=_recent_wtss,
                                    goal=adjusted_goal, taper_only=True)
+
+    # R4/R5 (2026-07-07) — R4a: slot/file coherence, ONCE, LAST (grill A2).
+    # Future weeks only; same seed anchor as this path's fallback matches.
+    _enforce_slot_file_coherence(
+        _future_weeks, library,
+        plan_start_date=(phase_start_date if new_phases else today),
+        seed_salt=seed_salt)
     return new_phases, all_weeks, regen_info
 
 
@@ -10477,6 +10708,51 @@ def recalculate_plan(
         _apply_race_week_shape(all_weeks, goal, library)
     _mark_race_days(all_weeks, goal)  # issue #7: race day shows the race, not a session
 
+    # R4/R5 (2026-07-07) — A8: AUTHORITATIVE per-day availability clamp for
+    # the weekly recalc's rebuilt weeks, mirroring generate_plan's final pass
+    # and regenerate_from_today's L3-13 (per-weekday goal cap + per-type
+    # ceiling + stepback long-ride cap). The grill found recalc was the ONE
+    # plan-emitting tail with no final clamp — the sampler's inline sweeps are
+    # day-cap-only and the floor/long-ride/race passes above can leave a
+    # session over its cap (floor swaps are bounded replaced-slot+5, so the
+    # 3.2.3 "one final safety clamp behind them all" release claim did not
+    # hold here). Per-DATE overrides are not visible on this path (not a
+    # recalculate_plan parameter — same documented limitation as the sampler
+    # sweeps); the per-weekday goal caps are authoritative. §6.12 guards:
+    # never rescale a race entry or a preserved (user-moved / non-pending /
+    # dismissed) session.
+    for _w in new_weeks:
+        for _s in _w.sessions:
+            if _s.session_type == "rest" or (_s.duration_min or 0) <= 0:
+                continue
+            if _protect_race(_s):
+                continue
+            if (getattr(_s, "user_moved", False)
+                    or getattr(_s, "dismissed_at", "")
+                    or getattr(_s, "status", "pending") != "pending"):
+                continue
+            _wd = _s.day.weekday() if hasattr(_s.day, "weekday") else 0
+            _cap_min = int(adjusted_goal.max_hours_for_day(_wd) * 60)
+            _cc = _content_class_for_zwo(getattr(_s, "zwo_file", "") or "")
+            _ceil = TYPE_CEILING.get(_cc) or TYPE_CEILING.get(_s.session_type)
+            _eff = _cap_min if _ceil is None else (
+                _ceil if _cap_min <= 0 else min(_cap_min, _ceil))
+            if (getattr(_w, "is_stepback", False)
+                    and (_eff <= 0 or _eff > STEPBACK_LONG_RIDE_CAP_MIN)):
+                _eff = STEPBACK_LONG_RIDE_CAP_MIN
+            if _eff > 0 and _s.duration_min > _eff:
+                _scale = _eff / float(_s.duration_min)
+                _s.tss_estimate = round((_s.tss_estimate or 0) * _scale)
+                _s.duration_min = _eff
+
+    # R4/R5 (2026-07-07) — R4a: slot/file coherence, ONCE, LAST (grill A2 —
+    # AFTER the A8 clamp above, which shrinks slots in place and thereby
+    # CREATES exactly the file>slot decouplings this pass repairs by rematch).
+    _enforce_slot_file_coherence(
+        new_weeks, library,
+        plan_start_date=(new_phases[0].start if new_phases else regen_start),
+        seed_salt=seed_salt)
+
     recalc_info = {
         "action": "recalculated",
         "event_readiness": event_readiness,
@@ -10911,6 +11187,16 @@ def refit_remaining_week(
     _enforce_event_taper_eve(current_plan_weeks, goal.target_date)
     _apply_secondary_event_tapers(current_plan_weeks, goal)  # F7: B/C mini-tapers
     _mark_race_days(current_plan_weeks, goal)  # issue #7: race day shows the race, not a session
+
+    # R4/R5 (2026-07-07) — R4a: slot/file coherence, ONCE, LAST (grill A2).
+    # Refit only rewrites the CURRENT week; today_floor mirrors the
+    # _refit_session_frozen day<today rule so a past (missed-but-unmarked)
+    # session is never rematched into a different historical record.
+    _enforce_slot_file_coherence(
+        [week], library,
+        plan_start_date=(current_plan_weeks[0].start if current_plan_weeks
+                         else week.start),
+        seed_salt=seed_salt, today_floor=today)
     return current_plan_weeks, refit_info
 
 
@@ -11754,6 +12040,8 @@ def adjust_today_session(
       G2  rolling 48h Z5+ >= 25min -> Z2 cap (Hulin 2014); cycling included
       G1  yesterday_tss_ratio > 1.5 -> Z2 (Foster 1998)
       G7  3-day mean RPE >= 7 + HIT today -> drop one tier (Foster 1998)
+      R5  yesterday z6+z7 >= 8min + hard today -> drop one tier
+          (R4/R5 2026-07-07 — day-after glycolytic awareness)
     G3 (polarization breach) lives in reforecast(), not here.
     """
     # v4.6.6 WAVE-4-FIX MEDIUM-2 (TODO LOW): DFA cap currently runs BEFORE
@@ -11953,6 +12241,48 @@ def adjust_today_session(
                 f"G7 3d mean RPE {mean_rpe_3d:.1f} ≥7 → "
                 f"{planned.session_type} dropped to {new_type}"
             )
+
+    # R5 (R4/R5 2026-07-07): day-after glycolytic demotion — one notch.
+    # The TSS axis judges yesterday's ride by LOAD, so a 57-TSS/37-min
+    # 130%-FTP 30/15s day reads "light" and today stays hard — but its
+    # CONTENT (12min of z6/z7) is a heavy glycolytic dose the daily-adapt
+    # tier never saw (the sampler's per-class anti-stacking only shapes
+    # PLANNED weeks). Trigger: yesterday's stored-envelope time_in_zone
+    # z6+z7 ≥ 480s AND today is a hard slot. Deliberately BELOW G2 in the
+    # first-match-wins ladder: a G2-grade 48h dose (≥25min z5-z7) takes the
+    # STRONGER Z2 cap; the incident ride (13.4min z5-z7) leaves G2 silent
+    # while R5 fires. One notch only via the Seiler ladder (never to rest —
+    # the ladder floor is recovery); no double-demotion possible: every
+    # earlier gate already returned, and this recompute is stateless per
+    # request. readiness["cap_reverted_today"] mirrors the DFA auto-swap
+    # revert (FIX-CONTRACT C6): after the rider clicks Revert, the demotion
+    # stays suppressed until the flag auto-clears at midnight.
+    if (planned.session_type in _HARD_SESSION_TYPES
+            and not readiness.get("cap_reverted_today")):
+        glyco_s = _yesterday_glyco_z67_s(rides_recent)
+        if glyco_s >= _GLYCO_DAY_AFTER_Z67_FLOOR_S:
+            new_type = _drop_intensity(planned.session_type)
+            if new_type != planned.session_type:
+                log.info(
+                    f"EVENT=glyco_day_after_r5 z67_yesterday={glyco_s:.0f}s "
+                    f"{planned.session_type} → {new_type}"
+                )
+                return PlannedSession(
+                    day=planned.day, day_name=planned.day_name,
+                    session_type=new_type, duration_min=planned.duration_min,
+                    tss_estimate=round(planned.duration_min / 60
+                                       * TSS_PER_HOUR.get(new_type, 45)),
+                    description=(
+                        f"{new_type} (was {planned.session_type}) — "
+                        f"yesterday's ride was glycolytically heavy "
+                        f"({glyco_s / 60:.0f}min Z6+Z7)."
+                    ),
+                    adapted=True,
+                ), (
+                    f"Yesterday's ride was glycolytically heavy "
+                    f"({glyco_s / 60:.0f}min Z6+Z7 ≥8) → "
+                    f"{planned.session_type} dropped to {new_type}"
+                )
 
     # Readiness ≥80 + Z2 day: KEEP Z2 (never upgrade — Stöggl 2014 black hole)
     return planned, ""

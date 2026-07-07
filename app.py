@@ -10874,6 +10874,12 @@ def _api_today_session_impl():
         daily_log_today = db.get_daily_log_today() or {}
     except Exception:  # noqa: BLE001
         daily_log_today = {}
+    # R4/R5 (2026-07-07): thread the C6 revert flag into the readiness dict so
+    # the R5 glyco day-after demotion honors the SAME rider opt-out as the
+    # DFA/decoupling caps ("revert whatever fired today", auto-clears at
+    # midnight). Carried inside `r` to mirror how dfa_cap reaches the ladder;
+    # the today-session payload only picks named keys, so this stays internal.
+    r["cap_reverted_today"] = _is_readiness_cap_reverted_today()
     adjusted, reason = tp.adjust_today_session(
         planned=planned, readiness=r,
         hrv_streak_below_swc=hrv_streak,

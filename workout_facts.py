@@ -21,6 +21,15 @@ reuses existing classifier feature columns):
   t150/l150 same at >=1.50
   t200/l200 same at >=2.00
   t240/l240 same at >=2.40
+  t101/l101 same at >=1.01 — R4/R5 (2026-07-07): the SS/tempo sustained
+            supra-FTP ceiling (D3 row gains `l101 < 300`). The incident class
+            (3x16min @1.03 FTP served on a SWEET SPOT slot) registers in NO
+            pre-v2 field: 1.03 < 1.30 so every t/l floor is blind, the
+            classifier files it z4/threshold, and its IF (0.806) sits BELOW
+            many legit SS files. 1.01 = strictly-above-FTP semantics (a
+            1.00-exact block stays admissible per the 0.95-1.00 steady-work
+            spec); grill P3: floors 1.005 vs 1.01 change ZERO verdicts at
+            the 300s run length across the whole library.
   n130_45   count of contiguous runs >=45s at >=1.30 (z2 D3 row)
   sprints   the classifier's sprint_segment_count (>=1.50, 5-30s reps)
 Unparseable files get {"sha1": ..., "null": true} — the ONLY fail-closed
@@ -45,7 +54,11 @@ from pathlib import Path
 log = logging.getLogger("workout_facts")
 
 FACTS_FILENAME = ".workout_facts.json"
-_SCHEMA_VERSION = 1
+# R4/R5 (2026-07-07): v2 adds t101/l101 (sustained supra-FTP run metrics for
+# the SS/tempo D3 ceiling). Version mismatch drops the WHOLE cache file
+# (_read_cache_file), so a v1 cache can never leak rows missing the new keys
+# into file_admissible — the committed cache is rebuilt offline and shipped.
+_SCHEMA_VERSION = 2
 
 # In-process cache: {str(workout_dir): {fname: row}} — mirrors the planner's
 # _CONTENT_CLASSIFICATION_CACHE pattern (load once, write-through on heal).
@@ -105,6 +118,10 @@ def compute_facts_row(zwo_path: Path, sha1: str | None = None) -> dict:
         return {"sha1": sha1, "null": True}
     valid = [p for p in power if p >= 0]
     z = feats["z_seconds"]
+    # R4/R5 (2026-07-07): 1.01 floor for the SS/tempo sustained-supra ceiling
+    # (schema v2). Same _runs_at primitive as the burst floors — FreeRide
+    # sentinel seconds still break runs.
+    r101 = _runs_at(power, 1.01)
     r130 = _runs_at(power, 1.30)
     r150 = _runs_at(power, 1.50)
     r200 = _runs_at(power, 2.00)
@@ -116,6 +133,7 @@ def compute_facts_row(zwo_path: Path, sha1: str | None = None) -> dict:
         "tss": round(sum(p * p for p in valid) / 3600.0 * 100.0, 1),
         "if": feats["if_fraction"],                   # A1: classifier RMS
         "hi_s": z["z5"] + z["z6"] + z["z7"],
+        "t101": sum(r101), "l101": max(r101, default=0),
         "t130": sum(r130), "l130": max(r130, default=0),
         "t150": sum(r150), "l150": max(r150, default=0),
         "t200": sum(r200), "l200": max(r200, default=0),

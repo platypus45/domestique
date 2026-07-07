@@ -117,7 +117,9 @@ def _contract_holds(slot, f, row):
         return (float(row.get("IF") or 0) <= tp._SPRINT_SLOT_IF_CEILING
                 and f["t150"] >= 60 and f["sprints"] >= 4)
     if slot in ("sweetspot", "tempo"):
-        return f["t200"] == 0 and f["l150"] < 45 and f["t150"] <= 30
+        # R4/R5 (2026-07-07): + sustained supra-FTP ceiling (facts schema v2).
+        return (f["t200"] == 0 and f["l150"] < 45 and f["t150"] <= 30
+                and f["l101"] < 300)
     if slot in ("threshold", "overunder"):
         return f["t240"] == 0 and f["t200"] == 0
     if slot == "vo2max":

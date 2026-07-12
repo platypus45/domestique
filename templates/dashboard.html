@@ -11818,7 +11818,13 @@ async function pgRedrawSession(dayStr, btnEl) {
     });
     const data = await res.json();
     if (!res.ok || !data.ok) {
-      try { showToast(`Re-draw failed: ${data.error || data.detail || data.action || 'unknown'}`, 3000); } catch(_) {}
+      // 3.3.1 hotfix (B2): pool exhaustion is not a failure — the day is a
+      // legitimate fileless zone-target session (approximate chart + chips),
+      // so say that instead of "failed" and keep the ⚠ affordance.
+      const msg = (data && data.action === 'no_candidate')
+        ? 'No library workout fits this slot — the day keeps its zone targets (ride to the chips).'
+        : `Re-draw failed: ${data.error || data.detail || data.action || 'unknown'}`;
+      try { showToast(msg, 4000); } catch(_) {}
       return;
     }
     // Resolve day-name label for the toast.
@@ -12773,7 +12779,12 @@ async function calRedrawDay(dayStr, btnEl) {
     });
     const data = await res.json();
     if (!res.ok || !data.ok) {
-      try { showToast(`Re-draw failed: ${data.error || data.detail || data.action || 'unknown'}`, 3000); } catch(_) {}
+      // 3.3.1 hotfix (B2): same honest exhaustion message as pgRedrawSession —
+      // a no_candidate day legitimately stays a zone-target session.
+      const msg = (data && data.action === 'no_candidate')
+        ? 'No library workout fits this slot — the day keeps its zone targets (ride to the chips).'
+        : `Re-draw failed: ${data.error || data.detail || data.action || 'unknown'}`;
+      try { showToast(msg, 4000); } catch(_) {}
       return;
     }
     const newName = data.zwo_name || data.zwo_file || 'new workout';
@@ -15849,13 +15860,18 @@ async function loadTodaySession() {
     // segments (same source the day-detail modal charts); unmatched slot →
     // the same synthetic per-type shape the modal falls back to, tagged
     // approximate. pointer-events off so a click still opens the day detail.
+    // 3.3.1 hotfix (B1): the source decision lives in _todayPreviewSource —
+    // the preview must follow the EFFECTIVE session (mod ? adjusted :
+    // planned), so an HRV-capped Z2 day renders a Z2 silhouette, never the
+    // original threshold blocks that contradict the "ride Z2" instruction.
     const _fillBlocksPreview = html2 => {
       const holder = document.getElementById('today-blocks-preview');
       if (holder) holder.innerHTML =
         `<div style="max-width:560px;margin:2px 0 4px;pointer-events:none;">${html2}</div>`;
     };
-    if (d.planned.zwo_file) {
-      fetch(`/api/workout/all/${encodeURIComponent(d.planned.zwo_file)}`)
+    const _prevSrc = _todayPreviewSource(d);
+    if (_prevSrc.kind === 'file') {
+      fetch(`/api/workout/all/${encodeURIComponent(_prevSrc.zwo_file)}`)
         .then(r => (r.ok ? r.json() : null))
         .then(sd => {
           if (!sd || !sd.segments || !sd.segments.length || !sd.ftp) return;
@@ -15863,10 +15879,10 @@ async function loadTodaySession() {
             sd.target_mode === 'hr' ? {mode: 'hr', lthr: sd.lthr, maxHr: sd.max_hr, axis: sd.hr_axis} : null));
         })
         .catch(() => {});
-    } else if (d.planned.session_type && d.planned.session_type !== 'rest' && d.planned.duration_min) {
+    } else if (_prevSrc.kind === 'synthetic') {
       try {
         const _ftp = window._athleteFtp || 250;
-        const _blocks = buildPowerBlocks(d.planned.session_type, d.planned.duration_min, _ftp, null);
+        const _blocks = buildPowerBlocks(_prevSrc.session_type, _prevSrc.duration_min, _ftp, null);
         _fillBlocksPreview(renderPowerBlocksSVG(_blocks, _ftp) +
           `<div style="font-size:9px;color:var(--text3);margin-top:2px;">Approximate shape — ride to the zone targets above.</div>`);
       } catch (_) {}
@@ -15876,6 +15892,28 @@ async function loadTodaySession() {
   } catch(e) {
     $('home-recommendation').innerHTML = '<div style="color:var(--text3);font-size:12px;">Session unavailable</div>';
   }
+}
+
+// 3.3.1 hotfix (B1): ONE decision point for what the today-card blocks
+// preview draws. The card's hero deliberately shows the ORIGINAL plan
+// (v4.6.0 Pillar D) — but the CHART is a riding instruction, so it must
+// follow the session the rider is actually told to ride:
+//   - not adjusted + matched file  → the real segments of the stored zwo;
+//   - adjusted (was_modified)      → synthetic shape of the ADJUSTED type
+//     (adjusted never carries a zwo_file by design — adjust_today_session
+//     is live, never matched), so an HRV-capped Z2 day previews Z2;
+//   - otherwise (fileless planned) → synthetic shape of the planned type.
+// Pure + DOM-free so the node harness can pin the contract.
+function _todayPreviewSource(d) {
+  const planned = (d && d.planned) || {};
+  const mod = !!(d && d.was_modified);
+  const eff = (mod ? (d.adjusted || planned) : planned) || {};
+  if (!mod && planned.zwo_file) return {kind: 'file', zwo_file: planned.zwo_file};
+  if (eff.session_type && eff.session_type !== 'rest' && eff.duration_min) {
+    return {kind: 'synthetic', session_type: eff.session_type,
+            duration_min: eff.duration_min};
+  }
+  return {kind: 'none'};
 }
 
 // ═══ P2.3 (v3.0.0) — FTP/LTHR RETEST NUDGE ═══════════════════════════════
@@ -17036,10 +17074,31 @@ async function downloadGeneratedZwo(type, durationMin, name) {
     }
   }
   xml += '  </workout>\n</workout_file>';
+  const saveName = name.replace(/[^a-zA-Z0-9]/g, '_') + '.zwo';
+  // 3.3.1 hotfix (B4): WKWebView (the packaged DMG) silently ignores
+  // synthetic <a download> clicks — this generated-ZWO path was the ONE
+  // download never migrated to the pywebview bridge (downloadZwoFile and
+  // downloadFIT both were, v1.0.3/v1.6.4), so on a fileless (swapped or
+  // adjusted) day the button did nothing in the app. We already hold the
+  // XML, so hand it straight to the native save dialog; '' as source_file
+  // is fine — launcher.save_zwo only server-reads when content is empty.
+  // The anchor path below stays for real browsers.
+  if (window.pywebview && window.pywebview.api) {
+    try {
+      const res = await window.pywebview.api.save_zwo(saveName, xml, '');
+      if (res && res.ok) { try { showToast(`Saved to ${res.path}`, 4000); } catch(_) {} }
+      else if (res && res.error && res.error !== 'cancelled') {
+        try { showToast(`Save failed: ${res.error}`, 4000); } catch(_) {}
+      }
+    } catch (e) {
+      try { showToast(`Save error: ${e.message || e}`, 4000); } catch(_) {}
+    }
+    return;
+  }
   const blob = new Blob([xml], {type:'application/xml'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = name.replace(/[^a-zA-Z0-9]/g, '_') + '.zwo';
+  a.download = saveName;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }

@@ -288,15 +288,17 @@ class TestFix4AtomicWrites(unittest.TestCase):
         instead of inlining tmp+rename. Count 16 (v1.8.24) → 18 (v3.0.0:
         two new plan-writing endpoints in the hrTSS/event tranches) → 19
         (v3.2.0: /api/plan/ftp-test-type, the per-session ramp/20-min
-        chooser) — all correctly routed through the helper."""
+        chooser) → 20 (3.3.1 hotfix B2: /api/plan/re-draw no longer
+        delegates to the legacy rematch-day endpoint — it persists its own
+        accept-redraw apply, correctly through the helper)."""
         src = APP_PY.read_text()
         helper_calls = re.findall(
             r"tp\.atomic_write_plan\(\s*json_path\s*,\s*(plan|plan_dict)\s*\)",
             src,
         )
         self.assertEqual(
-            len(helper_calls), 19,
-            f"Expected 19 tp.atomic_write_plan() sites, found {len(helper_calls)}",
+            len(helper_calls), 20,
+            f"Expected 20 tp.atomic_write_plan() sites, found {len(helper_calls)}",
         )
 
     def test_no_inline_tmp_rename_pattern(self):

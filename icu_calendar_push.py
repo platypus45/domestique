@@ -130,6 +130,20 @@ def _scope_403(status: int, body: bytes) -> bool:
     return "scope" in text or "calendar:write" in text
 
 
+def _http_error_detail(step: str, status: int, body: bytes) -> str:
+    """3.3.1 hotfix (B3b): one WARNING per non-2xx with step + status +
+    body[:300], returning the excerpt so callers can carry it as
+    ``error_detail``. v3.3.0 logged only ``error=http_422`` — ICU's actual
+    rejection reason (which event, which field) was unrecoverable from the
+    tester's logs, so a persistent 422 silently stalled ALL syncing with no
+    way to diagnose it. The 300-byte cap keeps a pathological body from
+    flooding the log; ICU validation messages fit comfortably."""
+    detail = (body or b"")[:300].decode("utf-8", "replace")
+    _log.warning("EVENT=icu_push_http_error step=%s status=%s body=%s",
+                 step, status, detail)
+    return detail
+
+
 # ── plan → desired events ────────────────────────────────────────────────────
 
 def _load_plan() -> dict | None:
@@ -311,7 +325,20 @@ def _desired_events(pm, plan: dict, today: date, horizon_days: int,
                 s, ext_id, pm, classifications, workout_dir, hr_mode, lthr_ok)
             if event is None:
                 skipped.append({"day": day_iso, "reason": reason})
-                broken_ids.add(ext_id)
+                # 3.3.1 hotfix (B3a): broken_ids exists to spare a previously
+                # pushed event from the sweep when we WANT to push the same
+                # session but temporarily can't (needs_lthr / file_missing /
+                # build hiccup). A FILELESS session whose content was
+                # DELIBERATELY changed — user_swapped (manual type swap,
+                # app.py stamps it) or adapted (readiness tier-down; both can
+                # clear zwo_file on NoCandidate) — is not a transient failure:
+                # protecting it left the STALE old-type event on the athlete's
+                # calendar forever (tester: threshold→z2 swap kept mirroring
+                # THRESHOLD). Deliberate + unmatched ⇒ let the sweep remove
+                # the stale event; every other skip reason stays protected.
+                if not (reason == "unmatched"
+                        and (s.get("user_swapped") or s.get("adapted"))):
+                    broken_ids.add(ext_id)
                 continue
             events.append(event)
     return events, skipped, broken_ids
@@ -346,7 +373,10 @@ def _get_window_events(athlete_id: str, today: date, horizon_days: int):
     if status == 0:
         return None, _result(error="network")
     if not (200 <= status < 300):
-        return None, _result(error=f"http_{status}")
+        # 3.3.1 hotfix (B3b): keep the rejection reason, not just the code.
+        return None, _result(error=f"http_{status}",
+                             error_detail=_http_error_detail(
+                                 "window_get", status, body))
     try:
         events = json.loads(body or b"[]")
     except (json.JSONDecodeError, ValueError):
@@ -437,7 +467,13 @@ def reconcile(horizon_days: int = HORIZON_DAYS) -> dict:
                 result["error"] = "network"
                 return result
             if not (200 <= status < 300):
+                # 3.3.1 hotfix (B3b): a non-2xx here rejects the WHOLE batch
+                # and stalls all syncing (ICU 422s the batch when ONE event
+                # fails validation) — the body names the offending event/field,
+                # so it must reach the log + the result.
                 result["error"] = f"http_{status}"
+                result["error_detail"] = _http_error_detail(
+                    "bulk_upsert", status, body)
                 return result
 
         # G-G: counts from the local diff vs the pre-push GET.
@@ -469,7 +505,11 @@ def reconcile(horizon_days: int = HORIZON_DAYS) -> dict:
             elif _scope_403(status, body):
                 result["needs_reconnect"] = True
             else:
+                # 3.3.1 hotfix (B3b): same body-excerpt treatment as the
+                # upsert — "sweep_failed" alone was undiagnosable.
                 result["error"] = "sweep_failed"
+                result["error_detail"] = _http_error_detail(
+                    "orphan_sweep", status, body)
         _log.info(
             "EVENT=icu_calendar_push pushed=%d updated=%d deleted=%d "
             "skipped=%d horizon=%dd",

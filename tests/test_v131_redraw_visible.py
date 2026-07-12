@@ -190,11 +190,19 @@ class TestRedrawSurfacesInCalendar(RedrawVisibleBase):
                         if s["day"] == self._thu)
         self.assertEqual(thu_sess["zwo_file"], body["zwo_file"],
             "persisted Thursday must match the redrawn zwo_file")
-        # Slot targets unchanged — re-draw replaces the workout, not the
-        # plan's intended duration/TSS.
-        self.assertEqual(thu_sess["duration_min"], 60)
-        self.assertEqual(thu_sess["tss_estimate"], 50)
+        # 3.3.1 hotfix (B2): re-draw now routes through the modern
+        # accept-redraw apply, which — per the v1.7.0 contract — carries the
+        # PICKED file's real duration/TSS into the plan so downstream load
+        # math is truthful (the legacy one-shot kept the slot's stale
+        # estimates; this test used to pin that). The type must not drift;
+        # duration/TSS must match what the endpoint reported for the pick.
         self.assertEqual(thu_sess["session_type"], "z2")
+        self.assertEqual(thu_sess["duration_min"], body["duration_min"])
+        self.assertEqual(thu_sess["tss_estimate"], body["tss_estimate"])
+        # And the pick is still a sane fit for the slot (closest-duration
+        # tier around 60 min — not some random other day's slot).
+        self.assertGreaterEqual(thu_sess["duration_min"], 30)
+        self.assertLessEqual(thu_sess["duration_min"], 90)
 
 
 if __name__ == "__main__":

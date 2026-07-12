@@ -8868,6 +8868,22 @@ ICU_PUSH_DEBOUNCE_S = 30.0
 _icu_push_timer_lock = threading.Lock()
 _icu_push_timer: "threading.Timer | None" = None
 
+# 3.3.1 hotfix (B3b): last reconcile outcome, whatever the trigger (button /
+# debounced / daily). Background runs previously failed SILENTLY — the tester's
+# swap-triggered push 422'd four times and the UI had nothing to show. GET
+# /api/icu/push now carries this so the sync status can surface error +
+# error_detail without waiting for the user to press the button.
+_icu_push_last_result: "dict | None" = None
+
+
+def _icu_push_note_result(res: dict) -> None:
+    """Record a reconcile result (+timestamp) for the status endpoint."""
+    global _icu_push_last_result
+    try:
+        _icu_push_last_result = {"at": datetime.now().isoformat(), **res}
+    except Exception:
+        pass
+
 
 def _icu_push_sync_enabled() -> bool:
     """The Settings toggle 'Keep intervals.icu calendar in sync' (default OFF)."""
@@ -8900,8 +8916,14 @@ def _icu_push_debounced_run(expected_pid: str) -> None:
             return
         import icu_calendar_push
         res = icu_calendar_push.reconcile()
-        _log.info("EVENT=icu_push_debounced pushed=%s updated=%s deleted=%s",
-                  res.get("pushed"), res.get("updated"), res.get("deleted"))
+        _icu_push_note_result(res)
+        # 3.3.1 hotfix (B3b): this line omitted `error` entirely — the
+        # tester's swap-triggered 422 failed with a clean-looking log line.
+        _log.info("EVENT=icu_push_debounced pushed=%s updated=%s deleted=%s "
+                  "needs_reconnect=%s error=%s error_detail=%s",
+                  res.get("pushed"), res.get("updated"), res.get("deleted"),
+                  res.get("needs_reconnect"), res.get("error"),
+                  res.get("error_detail"))
     except Exception:
         _log.warning("debounced ICU calendar push failed", exc_info=True)
 
@@ -8960,12 +8982,16 @@ def _icu_push_daily_from_sync() -> None:
         _icu_push_last_daily = today
         import icu_calendar_push
         res = icu_calendar_push.reconcile()
+        _icu_push_note_result(res)
         if res.get("error"):
             _icu_push_last_daily = None   # transient — retry next sync pass
+        # 3.3.1 hotfix (B3b): + error_detail (the ICU body excerpt) so a
+        # rejected batch is a one-log diagnosis instead of a bare http_422.
         _log.info("EVENT=icu_push_daily pushed=%s updated=%s deleted=%s "
-                  "needs_reconnect=%s error=%s",
+                  "needs_reconnect=%s error=%s error_detail=%s",
                   res.get("pushed"), res.get("updated"), res.get("deleted"),
-                  res.get("needs_reconnect"), res.get("error"))
+                  res.get("needs_reconnect"), res.get("error"),
+                  res.get("error_detail"))
     except Exception:
         _icu_push_last_daily = None
         _log.warning("daily ICU calendar push failed", exc_info=True)
@@ -8994,6 +9020,10 @@ def api_icu_push_status():
         "write_ok": _wok,
         "sync_enabled": sync_enabled,
         "horizon_days": 14,
+        # 3.3.1 hotfix (B3b): outcome of the most recent reconcile (any
+        # trigger), incl. error + error_detail — background pushes are no
+        # longer silent to the UI.
+        "last_result": _icu_push_last_result,
     }
 
 
@@ -9025,6 +9055,7 @@ def api_icu_push(body: "dict | None" = None):
             res = _icp.sweep_all()          # G-A: final forward sweep
             return {"ok": True, "sync_enabled": False, **res}
         res = _icp.reconcile()
+        _icu_push_note_result(res)          # 3.3.1 hotfix (B3b): status parity
         return {"ok": not res.get("error") and not res.get("needs_reconnect"),
                 **res}
     except Exception as e:
@@ -9222,7 +9253,23 @@ def api_icu_athlete_numbers():
                 for w in reversed(wellness):
                     si = w.get("sportInfo", [])
                     if si and si[0].get("eftp"):
-                        out["ftp"] = round(si[0]["eftp"])
+                        _cand = round(si[0]["eftp"])
+                        # 3.3.1 hotfix (B5): sportInfo[0] is sport-UNFILTERED
+                        # (the first entry may be a non-Ride sport) and a
+                        # sparse-data eFTP can be nonsense — this prefill is
+                        # the one path that INVENTS an FTP the rider never
+                        # typed (prime suspect for the tester's ftp=122).
+                        # Implausible → don't prefill; the wizard says
+                        # "enter manually" and manual entry stays ungated.
+                        if not _ftp_auto_ingest_ok(
+                                _cand, getattr(config, "ATHLETE_FTP_W", 0)):
+                            _log.warning(
+                                "EVENT=ftp_auto_ingest_rejected "
+                                "source=athlete_numbers_eftp candidate=%s "
+                                "current=%s", _cand,
+                                getattr(config, "ATHLETE_FTP_W", 0))
+                            break
+                        out["ftp"] = _cand
                         out["ok"] = True
                         break
         except Exception:
@@ -10207,9 +10254,10 @@ def api_weekly_plan(week_offset: int = Query(0)):
                         result["eftp_drift"] = drift
                     break
         # F5 (v4.1.0): 7+-day sustained >3% up-drift triggers auto-apply.
+        # 3.3.1 hotfix (B5): routed through the plausibility guard.
         if wellness_14:
             try:
-                auto = tp.check_and_auto_apply_eftp(wellness_14)
+                auto = _guarded_check_and_auto_apply_eftp(wellness_14)
                 if auto:
                     result["eftp_auto_applied"] = auto
                     clear_cache()
@@ -10220,6 +10268,70 @@ def api_weekly_plan(week_offset: int = Query(0)):
         logging.getLogger(__name__).warning("event_readiness failed: %s", _e)
 
     return result
+
+
+# ── 3.3.1 hotfix (B5) — automatic-FTP plausibility guard ────────────────────
+# Incident: a tester's profile carried ftp=122 while his real FTP ≈258, so
+# every zone chip and watt label scaled off 122 ("Z2 68–92 W"). 122 matched
+# none of his recent eFTP series (195–263) — the plausible landing paths are
+# the sport-UNFILTERED sportInfo[0].eftp prefill/copy chains or an accepted
+# early-halted ramp test. Whatever the entry door, AUTOMATIC ingestion must
+# never swallow a wildly-implausible number silently.
+
+def _ftp_auto_ingest_ok(new_ftp, current_ftp) -> bool:
+    """True when an AUTOMATICALLY-ingested FTP candidate is plausible.
+
+    Reject when the candidate is:
+      - < 100 W absolute (below any plausible adult training FTP — catches
+        unit bugs and wrong-sport eFTP rows), or
+      - < 60% of a real (>0) current FTP (a genuine fitness loss that size
+        doesn't happen between syncs; a wrong-sport eftp does).
+    MANUAL entry (settings form, accepted test results, accept-eFTP buttons)
+    is deliberately NOT gated — the rider may always assert their own
+    number. Callers log + keep the current value on rejection."""
+    try:
+        v = int(new_ftp)
+    except (TypeError, ValueError):
+        return False
+    if v < 100:
+        return False
+    try:
+        cur = int(current_ftp or 0)
+    except (TypeError, ValueError):
+        cur = 0
+    if cur > 0 and v < cur * 0.60:
+        return False
+    return True
+
+
+def _guarded_check_and_auto_apply_eftp(wellness_series):
+    """Plausibility gate in FRONT of the F5 auto-apply (tp owns the engine).
+
+    tp.check_and_auto_apply_eftp applies the NEWEST wellness record's
+    sportInfo[0].eftp after a 7-day sustained up-drift. Pre-validate that
+    exact candidate here (same newest-record read the engine does) so an
+    implausible value is rejected + logged WITHOUT touching the profile —
+    training_planner stays unchanged (parallel-wave file ownership).
+    Fail-open on shape surprises: the engine has its own streak gating."""
+    try:
+        cand = None
+        recs = sorted(wellness_series or [], key=lambda r: r.get("id", ""))
+        if recs:
+            si = recs[-1].get("sportInfo") or []
+            ef = si[0].get("eftp") if si and isinstance(si[0], dict) else None
+            if ef:
+                cand = int(round(float(ef)))
+        cur = int(getattr(config, "ATHLETE_FTP_W", 0) or 0)
+        if cand is not None and not _ftp_auto_ingest_ok(cand, cur):
+            _log.warning(
+                "EVENT=ftp_auto_ingest_rejected source=eftp_auto "
+                "candidate=%s current=%s — implausible automatic FTP update "
+                "rejected; keeping current (set FTP in Settings if real)",
+                cand, cur)
+            return None
+    except Exception:
+        pass  # guard is best-effort; never block the engine on shape quirks
+    return tp.check_and_auto_apply_eftp(wellness_series)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -16154,10 +16266,20 @@ async def api_plan_re_draw(request: Request):
 
     UI U8 contract: body ``{date: "YYYY-MM-DD"}`` (or legacy ``{day: int}``
     as day-of-week index resolved against the current plan start).
-    Thin wrapper around :func:`api_plan_rematch_day` which already does the
-    real work — kept as its own route so the UI primary path ends at ``200
-    {zwo_file, zwo_name, variation}`` instead of 404-ing into the week-level
-    classifier fallback.
+
+    3.3.1 hotfix (B2): now routes through the MODERN retry pair
+    (:func:`_pick_redraw_candidate` — the 24-attempt widen_band ladder —
+    + :func:`_accept_redraw_apply` + reforecast) instead of delegating to
+    the legacy one-shot :func:`api_plan_rematch_day`. The legacy one-shot
+    did a single exact-duration ``match_zwo`` with no widen and no retries,
+    so the calendar/plan-grid ↻ button dead-ended in "no_candidate" on any
+    day the sparse band couldn't serve — while the day-modal Rematch (same
+    intent) happily widened its way to a pick. Response stays a superset of
+    the old contract: ``{ok, action:"redrawn", day, zwo_file, zwo_name,
+    variation}`` on success; ``{ok:false, action:"rest_day"|"no_candidate"}``
+    on benign rejections (test_plan_redraw_endpoint pins these). The
+    path-param ``/api/plan/rematch/{day}`` endpoint is untouched for any
+    external callers.
     """
     try:
         body = await _get_json_body(request)
@@ -16190,8 +16312,41 @@ async def api_plan_re_draw(request: Request):
         date.fromisoformat(day_iso)
     except ValueError:
         return JSONResponse({"error": "Invalid date format (use YYYY-MM-DD)"}, 400)
-    # Delegate to the existing path-param form — same semantics.
-    return await api_plan_rematch_day(day_iso)
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+        try:
+            candidate = _pick_redraw_candidate(plan, day_iso)
+        except tp.NoCandidateWorkoutError:
+            # True exhaustion (widened band included). NOT an error state:
+            # the day legitimately remains a fileless zone-target session —
+            # the UI maps this action to the "keeps its zone targets" toast.
+            return {"ok": False, "action": "no_candidate", "day": day_iso}
+        except ValueError as e:
+            reason = str(e)
+            if reason.startswith("No session at"):
+                return JSONResponse({"error": reason}, 404)
+            # rest_day keeps its legacy action string (test-pinned); other
+            # rejections (e.g. race day) surface their reason in the toast.
+            if reason == "rest_day":
+                return {"ok": False, "action": "rest_day", "day": day_iso}
+            return {"ok": False, "action": "invalid", "error": reason,
+                    "day": day_iso}
+        apply_res = _accept_redraw_apply(plan, day_iso, candidate)
+        tp.atomic_write_plan(json_path, plan)
+        return {"ok": True, "action": "redrawn", "day": day_iso,
+                "zwo_file": candidate["zwo_file"],
+                "zwo_name": candidate["zwo_name"],
+                "variation": candidate["variation"],
+                "duration_min": candidate.get("duration_min"),
+                "tss_estimate": candidate.get("tss_estimate"),
+                "sessions_modified": apply_res.get("sessions_modified", 0)}
+    except Exception:
+        _log.exception("Plan re-draw failed")
+        return JSONResponse({"detail": "Re-draw failed"}, 500)
 
 
 # v1.7.0 — shared helper for the rematch pipeline. preview-redraw picks a
@@ -16266,24 +16421,33 @@ def _pick_redraw_candidate(plan: dict, day_iso: str, exclude_extra: "list[str] |
         )
         variation = base_variation + attempt
         cand.profile_id = f"{variation}"
-        tp.match_zwo(
-            cand, library,
-            week_num=week_num + variation * 100,
-            day_idx=day_idx,
-            used_names=same_week | hard_exclude,
-            raise_on_empty=True,
-            hr_bias=_hr_bias(),
-            exact_duration=True,  # closest-duration tier (v1.8.24)
-            # Tester bug (post-3.2.2): a sparse cell's 8%/3-min band can
-            # hold ONE alternative — the retry loop then re-offered it
-            # forever. Grill P5: an in-band fresh candidate wins at attempt
-            # 0 (soft −15 penalty never blocks it) and singleton bands never
-            # yield regardless of patience — so widen after 4 attempts, not
-            # 8, leaving 20 attempts in the widened band. Grill P3: the
-            # widened band grows DOWNWARD only (shorter files), upper edge
-            # stays slot+5 — availability holds even on reshuffle.
-            widen_band=(attempt >= 4),
-        )
+        try:
+            tp.match_zwo(
+                cand, library,
+                week_num=week_num + variation * 100,
+                day_idx=day_idx,
+                used_names=same_week | hard_exclude,
+                raise_on_empty=True,
+                hr_bias=_hr_bias(),
+                exact_duration=True,  # closest-duration tier (v1.8.24)
+                # Tester bug (post-3.2.2): a sparse cell's 8%/3-min band can
+                # hold ONE alternative — the retry loop then re-offered it
+                # forever. Grill P5: an in-band fresh candidate wins at attempt
+                # 0 (soft −15 penalty never blocks it) and singleton bands never
+                # yield regardless of patience — so widen after 4 attempts, not
+                # 8, leaving 20 attempts in the widened band. Grill P3: the
+                # widened band grows DOWNWARD only (shorter files), upper edge
+                # stays slot+5 — availability holds even on reshuffle.
+                widen_band=(attempt >= 4),
+            )
+        except tp.NoCandidateWorkoutError:
+            # 3.3.1 hotfix (B2): an empty pool at attempts 0-3 must NOT abort
+            # the whole ladder — the widened band (attempt >= 4) is exactly
+            # the rescue for a slot whose exact-duration tier is empty. Keep
+            # climbing; if every attempt (widened included) comes up empty,
+            # `planned` stays None and the post-loop check raises the same
+            # NoCandidateWorkoutError the callers already map to no_candidate.
+            continue
         planned = cand
         if cand.zwo_name and cand.zwo_name not in hard_exclude:
             break  # genuinely new pick

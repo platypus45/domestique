@@ -490,7 +490,15 @@ def fetch_activity_intervals(activity_id: str) -> list | None:
         return None
     try:
         data = _get(f"activity/{activity_id}/intervals")
-    except (ICUAuthError, ICURateLimitError, ICUServerError, ICUNetworkError) as e:
+    except ICUServerError as e:
+        # 3.3.1 hotfix (B3): 422 on /intervals for Strava-origin (numeric-id)
+        # activities is EXPECTED — ICU won't re-share Strava sub-resources
+        # (same policy fetch_activity_streams documents below). The WARNING
+        # here fired every sync pass and misdirected the v3.3.0 incident
+        # triage toward ride-ingest; DEBUG matches the /streams sibling.
+        _log.debug(f"fetch_activity_intervals({activity_id}) — no intervals: {e}")
+        return None
+    except (ICUAuthError, ICURateLimitError, ICUNetworkError) as e:
         _log.warning(f"fetch_activity_intervals({activity_id}) failed: {e}")
         return None
     if isinstance(data, dict):

@@ -26,10 +26,55 @@ catch v1.4.x/v1.5.x-style drifts before they ship.
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 
 import app
+import training_planner as tp
+
+
+@pytest.fixture(autouse=True)
+def _sandbox_plan_dir(tmp_path, monkeypatch):
+    """3.3.1 (gate-red postmortem): these tests read the LIVE profile plan
+    via app._plan_dir() → tp.PLAN_DIR, with no sandbox. Under xdist, any
+    plan-WRITING test in a sibling worker (save-availability, swap-type,
+    reforecast persist) races the two /api/plan calls and the byte-identity
+    assertion fails with a spurious availability/session diff — order-
+    dependent, full-gate-only, solo-green. A synthetic two-week plan in a
+    tmp dir makes the wire-contract checks hermetic; they never needed the
+    real plan, only A plan."""
+    monday = date.today() - timedelta(days=date.today().weekday())
+    weeks = []
+    for w in range(2):
+        start = monday + timedelta(days=7 * w)
+        sessions = []
+        for d in range(7):
+            day = start + timedelta(days=d)
+            stype = "rest" if d in (0, 4) else ("threshold" if d == 2 else "z2")
+            sessions.append({
+                "day": day.isoformat(), "day_name": day.strftime("%a"),
+                "session_type": stype,
+                "duration_min": 0 if stype == "rest" else 60,
+                "tss_estimate": 0 if stype == "rest" else 55,
+                "description": "", "status": "pending",
+                "zwo_file": "", "zwo_name": "",
+            })
+        weeks.append({"start": start.isoformat(),
+                      "end": (start + timedelta(days=6)).isoformat(),
+                      "week_num": w + 1, "phase": "base",
+                      "tss_target": 300, "sessions": sessions})
+    plan = {"goal": {"type": "general", "plan_weeks": 2},
+            "availability": {}, "weeks": weeks,
+            "generated": "2026-01-05T00:00:00"}
+    pdir = tmp_path / "plans"
+    pdir.mkdir()
+    (pdir / "current_plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    monkeypatch.setattr(tp, "PLAN_DIR", pdir)
+    app._ENRICH_CACHE.clear()
+    yield
+    app._ENRICH_CACHE.clear()
 
 
 def test_api_plan_stable_across_two_calls() -> None:

@@ -39,6 +39,13 @@ datas = [
     ("profiles_indexed.json", "."),
     ("surface_types.json", "."),
     ("VERSION", "."),
+    # 3.3.1 hotfix (v3.3.0 storm): workout_facts._clc() loads the classifier
+    # by FILE PATH (Path(__file__).parent / "scripts" / "classify_library_
+    # content.py"), so PyInstaller's import scan never sees it. v3.3.0
+    # shipped without it → every frozen facts recompute raised
+    # FileNotFoundError → all-null facts → planner-wide no-candidates.
+    # Stdlib-only at module level, so bundling the single file suffices.
+    ("scripts/classify_library_content.py", "scripts"),
 ]
 
 # v2.1.0 WIN-TLS-FIX: bundle certifi's CA bundle so urllib (all ICU HTTPS in

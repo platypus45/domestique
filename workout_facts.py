@@ -34,6 +34,11 @@ reuses existing classifier feature columns):
   sprints   the classifier's sprint_segment_count (>=1.50, 5-30s reps)
 Unparseable files get {"sha1": ..., "null": true} — the ONLY fail-closed
 class (A5): file_admissible treats a null row as inadmissible everywhere.
+A5 is strictly PER-FILE: a missing/broken classifier MODULE (packaging bug,
+import error) is an INFRASTRUCTURE failure and must never mint null rows —
+the 3.3.1 hotfix aborts the rebuild and keeps the prior cache instead (the
+v3.3.0 frozen build shipped without scripts/classify_library_content.py and
+nulled all 4,255 rows, persisting the poison as a valid v2 cache).
 
 Cache: workouts/.workout_facts.json keyed by (filename, content sha1).
 Incremental (only new/changed hashes recomputed), byte-deterministic
@@ -63,6 +68,12 @@ _SCHEMA_VERSION = 2
 # In-process cache: {str(workout_dir): {fname: row}} — mirrors the planner's
 # _CONTENT_CLASSIFICATION_CACHE pattern (load once, write-through on heal).
 _FACTS_CACHE: dict[str, dict] = {}
+# 3.3.1 hotfix: version-BLIND rows for classifier-infrastructure-failure
+# degradation only. When the classifier module can't be imported, a rebuild
+# cannot run — serving the old-version rows (v1 lacks t101/l101; those gates
+# fail closed per-file via KeyError) keeps most of the library admissible.
+# Stale facts beat poisoned facts; NEVER written back to disk.
+_STALE_FALLBACK: dict[str, dict] = {}
 _LOCK = threading.RLock()
 
 _CLC = None  # lazily imported scripts/classify_library_content.py module
@@ -84,6 +95,7 @@ def reset_cache() -> None:
     """Drop the in-process cache (tests / after external cache edits)."""
     with _LOCK:
         _FACTS_CACHE.clear()
+        _STALE_FALLBACK.clear()  # 3.3.1 hotfix: fallback rows are cache too
 
 
 def _runs_at(power: list[float], floor: float) -> list[int]:
@@ -104,16 +116,23 @@ def _runs_at(power: list[float], floor: float) -> list[int]:
 
 
 def compute_facts_row(zwo_path: Path, sha1: str | None = None) -> dict:
-    """Facts row for one file. Unparseable → {"sha1":…, "null": true} (A5)."""
+    """Facts row for one file. Unparseable → {"sha1":…, "null": true} (A5).
+
+    RAISES when the classifier module itself can't be imported (3.3.1
+    hotfix): an infrastructure failure is not a property of THIS file, so it
+    must never produce a null row — callers abort/degrade instead (the
+    v3.3.0 storm minted 4,255 nulls from one missing bundled script).
+    """
     if sha1 is None:
         sha1 = hashlib.sha1(zwo_path.read_bytes()).hexdigest()
+    # 3.3.1 hotfix: hoisted OUT of the per-file try — import failure raises.
+    clc = _clc()
     try:
-        clc = _clc()
         power, tags, meta, segments = clc.parse_zwo_full(zwo_path)
         if not power:
             return {"sha1": sha1, "null": True}
         feats = clc.extract_features_v104(power, segments)
-    except Exception as e:  # noqa: BLE001 — any parse failure = null row
+    except Exception as e:  # noqa: BLE001 — any PER-FILE parse failure = null row
         log.debug("facts parse failed for %s: %s", zwo_path.name, e)
         return {"sha1": sha1, "null": True}
     valid = [p for p in power if p >= 0]
@@ -167,6 +186,30 @@ def _read_cache_file(workout_dir: Path) -> dict:
         return {}
 
 
+def _stale_fallback(workout_dir: Path) -> dict:
+    """3.3.1 hotfix: version-BLIND read of the on-disk cache, for classifier-
+    infrastructure-failure degradation ONLY. _read_cache_file drops an
+    old-version cache to force a rebuild — correct when a rebuild is
+    POSSIBLE. When the classifier can't even be imported, the old-version
+    rows are the best facts that exist: v1 rows drive every gate except the
+    v2-only l101 ceiling (which KeyErrors into per-file fail-closed in
+    file_admissible). Never written back; cleared by reset_cache."""
+    key = str(workout_dir)
+    with _LOCK:
+        cached = _STALE_FALLBACK.get(key)
+        if cached is None:
+            cached = {}
+            path = _cache_path(Path(workout_dir))
+            if path.exists():
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                    cached = payload.get("facts", {}) or {}
+                except (OSError, json.JSONDecodeError, ValueError, AttributeError):
+                    cached = {}
+            _STALE_FALLBACK[key] = cached
+        return cached
+
+
 def _write_cache_file(workout_dir: Path, facts: dict) -> None:
     """Atomic best-effort write (read-only dir just means no persistence)."""
     path = _cache_path(workout_dir)
@@ -196,6 +239,19 @@ def ensure_facts(workout_dir: Path, zwo_paths: list[Path] | None = None) -> dict
     (A5) and from the offline builder. Only missing/changed (filename, sha1)
     pairs are recomputed; the cache file is rewritten only when something
     changed. Returns the up-to-date {fname: row} map.
+
+    3.3.1 hotfix, two failure-isolation rules learned from the v3.3.0 storm:
+      * INFRA ABORT — if the classifier module can't be imported (frozen
+        build missing scripts/classify_library_content.py), the whole
+        rebuild ABORTS before computing anything: prior cache kept on disk
+        (even old-version — stale beats poisoned), zero null rows minted,
+        old-version rows served in-memory via _stale_fallback.
+      * NULL-HEAL — a row with {"null": true} is RECOMPUTED even when its
+        sha1 matches (nulls were previously sticky at the sha1-skip): a
+        cache poisoned by the storm heals itself on the first boot with a
+        working classifier. Legit per-file nulls recompute to the same row
+        (≈9ms each, no rewrite), so an unparseable file stays fail-closed
+        without churning the cache file every boot.
     """
     workout_dir = Path(workout_dir)
     if zwo_paths is None:
@@ -203,7 +259,9 @@ def ensure_facts(workout_dir: Path, zwo_paths: list[Path] | None = None) -> dict
     with _LOCK:
         facts = dict(load_facts(workout_dir))
         dirty = False
+        healed = 0
         names = set()
+        clc_ready = False  # probe once, lazily — no import cost on no-op boots
         for p in zwo_paths:
             names.add(p.name)
             try:
@@ -211,10 +269,35 @@ def ensure_facts(workout_dir: Path, zwo_paths: list[Path] | None = None) -> dict
             except OSError:
                 continue
             row = facts.get(p.name)
-            if row is not None and row.get("sha1") == sha1:
+            if row is not None and row.get("sha1") == sha1 and not row.get("null"):
                 continue
-            facts[p.name] = compute_facts_row(p, sha1=sha1)
-            dirty = True
+            if not clc_ready:
+                try:
+                    _clc()
+                    clc_ready = True
+                except Exception as e:  # noqa: BLE001 — INFRA failure, not per-file
+                    log.error(
+                        "E_FACTS_CLASSIFIER_UNAVAILABLE: facts rebuild ABORTED "
+                        "(%s) — keeping prior cache (%d rows in memory); no "
+                        "null rows minted. Fix the install (missing "
+                        "scripts/classify_library_content.py?) to re-enable "
+                        "facts computation.", e, len(facts))
+                    if not facts:
+                        # v-mismatch dropped the whole cache: serve the
+                        # old-version rows rather than an empty map.
+                        facts = dict(_stale_fallback(workout_dir))
+                    _FACTS_CACHE[str(workout_dir)] = facts
+                    return facts
+            new_row = compute_facts_row(p, sha1=sha1)
+            if row is not None and row.get("null") and not new_row.get("null"):
+                healed += 1
+            if new_row != row:
+                facts[p.name] = new_row
+                dirty = True
+        if healed:
+            log.warning(
+                "facts null-heal: %d previously-null row(s) recomputed to real "
+                "facts (poisoned-cache recovery)", healed)
         stale = [fn for fn in facts if fn not in names]
         for fn in stale:
             del facts[fn]
@@ -228,9 +311,11 @@ def ensure_facts(workout_dir: Path, zwo_paths: list[Path] | None = None) -> dict
 def get_facts(workout_dir: Path, fname: str) -> dict | None:
     """Row for one file, self-healing a missing entry inline (~9ms).
 
-    Returns None when the file has no facts and cannot be healed (file gone).
-    A returned row with {"null": true} means unparseable → caller treats as
-    inadmissible (A5 — the only fail-closed class).
+    Returns None when the file has no facts and cannot be healed (file gone,
+    or — 3.3.1 hotfix — classifier module unavailable with no old-version
+    row to fall back on). A returned row with {"null": true} means
+    unparseable → caller treats as inadmissible (A5 — the only fail-closed
+    class).
     """
     facts = load_facts(workout_dir)
     row = facts.get(fname)
@@ -244,7 +329,17 @@ def get_facts(workout_dir: Path, fname: str) -> dict | None:
         row = facts.get(fname)
         if row is not None:
             return row
-        row = compute_facts_row(path)
+        try:
+            row = compute_facts_row(path)
+        except Exception as e:  # noqa: BLE001 — 3.3.1 hotfix: classifier
+            # INFRA failure (compute_facts_row now raises it instead of
+            # nulling). Do NOT mint/persist a null row for a healthy file;
+            # serve the old-version row if one exists (stale beats nothing),
+            # else report missing → per-file fail-closed at the gate.
+            stale = _stale_fallback(workout_dir).get(fname)
+            log.warning("facts heal unavailable for %s (%s) — %s", fname, e,
+                        "serving stale row" if stale else "treating as missing")
+            return stale
         updated = dict(facts)
         updated[fname] = row
         _write_cache_file(workout_dir, updated)

@@ -4866,6 +4866,40 @@ def _build_pool_indexes(library: list[dict]) -> dict:
     }
 
 
+# 3.3.1 hotfix (DIAG_L1 H2) — pool-collapse circuit breaker thresholds.
+# The v3.3.0 facts storm nulled every gated row: a 4,255-file library built
+# pools of hit=22/endurance=0/all_pool=22 (0.5%), and the weekly auto-recalc
+# then "successfully" rebuilt every future week into placeholder Z2 skeletons
+# — a cache fault converted into destruction of a previously-good plan. The
+# breaker rule: a NON-TRIVIAL library whose admissible pool is (near-)empty
+# is an infrastructure fault, never a real library shape — abort the mass
+# rebuild and keep the existing plan. Floors chosen against both regimes:
+# healthy = 3,117/4,252 (73%) admissible; storm = 22/4,255 (0.5%). Small
+# synthetic test libraries (< 100 files) never trip it — slot-gate tests
+# legitimately build tiny single-class libraries.
+_POOL_COLLAPSE_MIN_LIBRARY = 100
+_POOL_COLLAPSE_MIN_FRACTION = 0.02  # storm 0.5% << 2% << healthy 73%
+
+
+def _pool_collapse_reason(pool_index: dict, library: list) -> str:
+    """Reason string when the pool index is 'effectively empty' for a
+    non-trivial library (the storm signature), else '' (healthy)."""
+    lib_n = len(library or [])
+    if lib_n < _POOL_COLLAPSE_MIN_LIBRARY:
+        return ""
+    all_pool = pool_index.get("all_pool") or []
+    hit = pool_index.get("hit") or []
+    endurance = pool_index.get("endurance") or []
+    if not all_pool:
+        return f"all_pool empty (library={lib_n})"
+    if not hit and not endurance:
+        return f"hit+endurance pools both empty (library={lib_n})"
+    if len(all_pool) < lib_n * _POOL_COLLAPSE_MIN_FRACTION:
+        return (f"all_pool collapsed to {len(all_pool)}/{lib_n} "
+                f"(<{_POOL_COLLAPSE_MIN_FRACTION:.0%})")
+    return ""
+
+
 def _session_type_from_row(row: dict) -> str:
     """Derive the planner session_type for a library row.
 
@@ -6700,10 +6734,12 @@ def _inject_mid_cycle_ftp_tests(weeks: list, phases: list) -> None:
         (long-cycle athletes accumulate enough adaptation to warrant
         a second mid-cycle calibration).
 
-    The first non-rest, non-Z2/recovery slot of the target week is converted
-    to ``session_type = "ftp_test"``. ``match_zwo`` finds a Coggan-20 or Ramp
-    ZWO from the library on the next pass; the FIT-import detection at
-    `app.py` then auto-suggests an FTP update via the existing modal.
+    The first non-rest, non-Z2/recovery slot of the target week whose
+    PREVIOUS calendar day is rest/easy (3.3.1 hotfix — cross week boundary;
+    falls back to the first eligible slot) is converted to ``session_type =
+    "ftp_test"``. ``match_zwo`` finds a Coggan-20 or Ramp ZWO from the
+    library on the next pass; the FIT-import detection at `app.py` then
+    auto-suggests an FTP update via the existing modal.
     """
     if not weeks or not phases:
         return
@@ -6739,33 +6775,55 @@ def _inject_mid_cycle_ftp_tests(weeks: list, phases: list) -> None:
             first_sched if ps < first_sched else ps for ps in test_phase_starts
         })
     skip_types = {"rest", "z2", "long_z2", "recovery"}
+    # 3.3.1 hotfix (DIAG_L1 H3): previous-calendar-day awareness. "First hard
+    # slot in calendar order" allowed the test the morning after build1's
+    # final Sunday (commonly the week's biggest ride) — a max-effort protocol
+    # test is only valid on fresh legs. Prefer the first eligible slot whose
+    # PREVIOUS calendar day (cross week boundary — the map spans ALL weeks)
+    # is rest/z2/long_z2/recovery or has no session at all; fall back to the
+    # legacy first-eligible slot when none qualifies (never drop the test).
+    day_type_by_date = {
+        s.day: s.session_type
+        for w in weeks for s in w.sessions
+        if getattr(s, "day", None) is not None
+    }
+
+    def _prev_day_easy(sess) -> bool:
+        d = getattr(sess, "day", None)
+        if d is None:
+            return False
+        prev = day_type_by_date.get(d - timedelta(days=1))
+        return prev is None or prev in skip_types
+
     for week in weeks:
         if getattr(week, "is_stepback", False):
             continue
         if getattr(week, "start", None) not in test_phase_starts:
             continue
-        for s in week.sessions:
-            if s.session_type in skip_types:
-                continue
+        eligible = [
+            s for s in week.sessions
+            if s.session_type not in skip_types
             # PART B: never convert a pre-today slot (the elapsed strip would
             # delete the test); fresh plans have no pre-today slots → no-op.
-            if getattr(s, "day", None) is not None and s.day < today:
-                continue
-            old_type = s.session_type
-            s.session_type = "ftp_test"
-            s.zwo_file = ""           # let match_zwo find a Coggan-20 / Ramp file
-            s.zwo_name = ""
-            s.matched = False
-            s.duration_min = 60
-            s.tss_estimate = 70.0
-            s.description = (
-                f"FTP TEST — Coggan-20 or Ramp protocol. "
-                f"Mid-cycle recalibration (Allen-Coggan TR&P 3rd ed., "
-                f"4-6 week re-test cadence) prevents stale-FTP overload. "
-                f"Originally scheduled as {old_type}; the FTP-test detector "
-                f"on the FIT-import path will suggest an FTP update."
-            )
-            break
+            and not (getattr(s, "day", None) is not None and s.day < today)
+        ]
+        if not eligible:
+            continue
+        s = next((c for c in eligible if _prev_day_easy(c)), eligible[0])
+        old_type = s.session_type
+        s.session_type = "ftp_test"
+        s.zwo_file = ""           # let match_zwo find a Coggan-20 / Ramp file
+        s.zwo_name = ""
+        s.matched = False
+        s.duration_min = 60
+        s.tss_estimate = 70.0
+        s.description = (
+            f"FTP TEST — Coggan-20 or Ramp protocol. "
+            f"Mid-cycle recalibration (Allen-Coggan TR&P 3rd ed., "
+            f"4-6 week re-test cadence) prevents stale-FTP overload. "
+            f"Originally scheduled as {old_type}; the FTP-test detector "
+            f"on the FIT-import path will suggest an FTP update."
+        )
 
 
 # ── SAFETY: weekly HIT-count cap (planner FIX-1) ──────────────────────────────
@@ -6777,6 +6835,12 @@ def _inject_mid_cycle_ftp_tests(weeks: list, phases: list) -> None:
 _HIT_SESSION_TYPES = frozenset({
     "vo2max", "threshold", "overunder", "sweetspot", "sprint",
     "double_threshold",
+    # 3.3.1 hotfix (DIAG_L1 H3): an FTP test is a maximal effort — it must
+    # consume a weekly hard slot (weekly HIT cap) and be visible to the 48h
+    # hard-day spacing/refit passes, else both are blind to it and permit
+    # "4 hard days in a row incl. the test" weeks. The cap pass COUNTS it
+    # but never demotes it (protocol day — see _enforce_weekly_hit_cap).
+    "ftp_test",
 })
 
 
@@ -7034,6 +7098,12 @@ def _enforce_build2_peak_hard_floor(
                         return False
                     if getattr(s, "adapted", False) or getattr(s, "user_moved", False):
                         return False
+                    # 3.3.1 hotfix (DIAG_L1 H3): the injected FTP test is a
+                    # consumed hard slot, never a floor-swap victim (it was
+                    # last-priority before — zwo_file="" → priority 99 — but
+                    # a starved week could still overwrite the test).
+                    if getattr(s, "session_type", "") == "ftp_test":
+                        return False
                     cc_s = _content_class_for_zwo(s.zwo_file or "")
                     if cc_s not in all_targets:
                         return True
@@ -7206,18 +7276,26 @@ def _enforce_weekly_hit_cap(weeks: list, library: list[dict]) -> None:
             ]
             if len(hit_slots) <= cap:
                 break
+            # 3.3.1 hotfix (DIAG_L1 H3): the FTP test now COUNTS toward the
+            # cap (it joined _HIT_SESSION_TYPES) but is never the demotion
+            # VICTIM — the scheduled recalibration test must survive; the
+            # excess hard volume around it is what gets shed.
+            demotable = [(i, s) for i, s in hit_slots
+                         if s.session_type != "ftp_test"]
+            if not demotable:
+                break  # only protocol test(s) left — nothing legal to demote
             # Pick the most-redundant HIT class in this week (the class with
             # the most sessions); demote one of its slots. Tie-break by
             # preferring the longest-duration slot (highest fatigue) so we
             # shed the heaviest redundant dose first.
             class_counts: dict[str, int] = {}
-            for _, s in hit_slots:
+            for _, s in demotable:
                 cc = (_content_class_for_zwo(s.zwo_file or "")
                       or s.session_type or "")
                 class_counts[cc] = class_counts.get(cc, 0) + 1
             redundant_cc = max(class_counts, key=lambda c: class_counts[c])
             demote_candidates = [
-                (i, s) for i, s in hit_slots
+                (i, s) for i, s in demotable
                 if (_content_class_for_zwo(s.zwo_file or "")
                     or s.session_type or "") == redundant_cc
             ]
@@ -9946,6 +10024,24 @@ def regenerate_from_today(
     # 11. Generate new weeks
     library = load_workout_library()
     pool_index = _build_pool_indexes(library)  # v4.5.0 IMPL-PLANNER
+    # 3.3.1 hotfix (DIAG_L1 H2): same pool-collapse circuit breaker as
+    # recalculate_plan — this path rebuilds every future week through the
+    # same sampler, so a storm-collapsed pool would equally Z2-flatten the
+    # plan. ValueError follows the FC5d precedent (passed-event refusal):
+    # every caller catches it BEFORE atomic_write_plan (endpoints → 400 with
+    # this message, ride-sync auto-adapt → "auto-adapt skipped" log), so the
+    # on-disk plan is never touched.
+    _collapse = _pool_collapse_reason(pool_index, library)
+    if _collapse:
+        log.error(
+            "E_REGEN_POOL_COLLAPSE: plan regenerate ABORTED — %s. Existing "
+            "plan kept unchanged.", _collapse)
+        raise ValueError(
+            "Workout library is temporarily unavailable "
+            f"({_collapse}) — plan rebuild aborted to protect the current "
+            "plan. Restart the app to rebuild the workout caches, then try "
+            "again."
+        )
     new_weeks = []
     used_names_dict: dict[str, int] = {}
     used_names_set: set = set()
@@ -10481,6 +10577,29 @@ def recalculate_plan(
     # no salt), same emphasis_profile channel, same event_targets, same
     # plan-wide bookkeeping so diversity caps / novelty carry across weeks.
     pool_index = _build_pool_indexes(library)
+    # 3.3.1 hotfix (DIAG_L1 H2): pool-collapse circuit breaker. Under the
+    # v3.3.0 facts storm every pool came back empty and this auto-fired
+    # rebuild (tab-load recalc) replaced every future week with unmatched
+    # "Z2 steady" placeholders — destroying a good plan over a cache fault.
+    # Abort instead: keep the plan, return the no_change shape (the caller
+    # returns early WITHOUT writing on action == "no_change") with a reason
+    # the UI can surface. recalc_date stays stale so the recalc retries each
+    # boot and resumes automatically once the cache heals.
+    _collapse = _pool_collapse_reason(pool_index, library)
+    if _collapse:
+        log.error(
+            "E_RECALC_POOL_COLLAPSE: weekly recalc ABORTED — %s. Existing "
+            "plan kept unchanged (a cache fault must degrade, not destroy, "
+            "a plan).", _collapse)
+        return ([], current_plan_weeks, {
+            "action": "no_change",
+            "reason": "pool_collapse",
+            "detail": ("Workout library temporarily unavailable "
+                       f"({_collapse}) — plan left unchanged."),
+            "event_readiness": event_readiness,
+            "deviation_pct": round(deviation_pct, 1),
+            "eftp_drift": _check_eftp_drift(current_eftp),
+        })
     seed_salt = 0
     new_weeks = []
     used_names = set()  # track used workouts for variety
@@ -10517,13 +10636,32 @@ def recalculate_plan(
 
             # Insert FTP test session if due. Runs BEFORE the sampler pass so the
             # ftp_test slot is preserved by the session-replacement skip below.
+            # 3.3.1 hotfix (DIAG_L1 H3): mirror the generate-path placement
+            # rule — prefer a slot whose PREVIOUS calendar day (cross week
+            # boundary via prev_week_sessions) is rest/easy or empty; fall
+            # back to the legacy first-hard-slot. Skeleton types only — the
+            # sampler overwrites the surrounding slots after this, so the
+            # guarantee on this path is best-effort by design.
             if ftp_test_week:
-                for s in pw.sessions:
-                    if s.session_type in ("sweetspot", "threshold", "vo2max", "overunder"):
-                        s.session_type = "ftp_test"
-                        s.description = "FTP test — 20min all-out na 10min warmup. Update zones daarna."
-                        s.tss_estimate = round(75 / 60 * TSS_PER_HOUR.get("threshold", 90))
-                        break
+                _easy_rc = {"rest", "z2", "long_z2", "recovery"}
+                _day_types_rc = {
+                    s.day: s.session_type
+                    for s in list(prev_week_sessions or []) + list(pw.sessions)
+                    if getattr(s, "day", None) is not None
+                }
+                _cands_rc = [
+                    s for s in pw.sessions
+                    if s.session_type in ("sweetspot", "threshold", "vo2max", "overunder")
+                ]
+                _pick_rc = next(
+                    (s for s in _cands_rc
+                     if getattr(s, "day", None) is not None
+                     and (_day_types_rc.get(s.day - timedelta(days=1)) or "rest") in _easy_rc),
+                    _cands_rc[0] if _cands_rc else None)
+                if _pick_rc is not None:
+                    _pick_rc.session_type = "ftp_test"
+                    _pick_rc.description = "FTP test — 20min all-out na 10min warmup. Update zones daarna."
+                    _pick_rc.tss_estimate = round(75 / 60 * TSS_PER_HOUR.get("threshold", 90))
 
             # §6.12 — swap preserved (user_moved / done / dismissed) sessions
             # back into their calendar slots BEFORE the sampler + match_zwo

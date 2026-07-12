@@ -30,10 +30,12 @@ placeholders.
   effectively empty, the automatic recalculation now refuses to rebuild and
   keeps your existing plan untouched, telling you why — instead of
   replacing every future session with placeholders.
-- **The mid-plan FTP test now lands on fresh legs.** It could be scheduled
-  the day after a heavy interval session (one tester got it inside a
-  4-hard-days-in-a-row stretch). It now picks a day preceded by a rest or
-  easy day, and it counts as a hard day for spacing and weekly limits.
+- **The mid-plan FTP test is only ever scheduled the day after a rest or
+  easy day.** It could previously land right after a heavy interval session
+  (one tester got it inside a 4-hard-days-in-a-row stretch) — a test on
+  cooked legs reads low and poisons every target built on it. It now also
+  counts as a hard day itself, so the 48-hour spacing rule and the weekly
+  hard-day limit protect the days around it in both directions.
 - **The "adjusted" day card tells one story.** When readiness caps your day
   (say, threshold → Z2), the chart previously still drew the original
   threshold blocks while the targets showed Z2. Chart, chips and label now

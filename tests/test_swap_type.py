@@ -54,10 +54,25 @@ def test_user_swapped_roundtrips_path_a():
 
 # ── the pin survives a low-TSB reforecast (the critical guard) ─────────────────
 
-def test_swapped_day_pinned_through_reforecast():
+# Chip fix (2026-07-12): this test carried a FIXED anchor (2026-06-28) while
+# tp.reforecast() reads LIVE date.today() internally (today_iso never reaches
+# the engine) — so the moment real time crossed the fixed control day the
+# "past-session" protection kicked in and the demotion assertion went red
+# permanently (first seen as a "Sunday flake"; actually calendar decay).
+# Freeze the ENGINE clock to the test's own anchor. Parametrized over a
+# Sunday AND a Wednesday anchor per the boundary-day suspicion — both must
+# hold, proving the invariant is day-of-week independent.
+@pytest.mark.parametrize("anchor", [date(2026, 6, 28),   # Sunday
+                                    date(2026, 7, 1)])   # Wednesday
+def test_swapped_day_pinned_through_reforecast(anchor, monkeypatch):
     # Two future vo2max days, both under deep fatigue (TSB -30): the SWAPPED one
     # must stay vo2max; the control one is free to be auto-downshifted.
-    today = date(2026, 6, 28)
+    class _Frozen(date):
+        @classmethod
+        def today(cls):
+            return cls(anchor.year, anchor.month, anchor.day)
+    monkeypatch.setattr(tp, "date", _Frozen)
+    today = anchor
     d_swapped = today + timedelta(days=10)
     d_control = today + timedelta(days=12)
     wk_start = today + timedelta(days=7)

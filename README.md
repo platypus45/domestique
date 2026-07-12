@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4249-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v3.3.0-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v3.3.1-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-2400%2B-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -121,7 +121,9 @@ where you are — no repeating a base phase you already rode.
 
 **Push to intervals.icu.** Send your planned workouts straight
 to your intervals.icu calendar (one-off button on the Training Plan tab, or an
-optional keep-in-sync setting) so Garmin & MyWhoosh pull them automatically;
+optional keep-in-sync setting) so Garmin & MyWhoosh pull them automatically —
+and any single workout too: every workout detail view (planner or library)
+has a send-to-calendar button, with a date picker for library workouts;
 heart-rate plans push with HR targets. Only Domestique's own entries are ever
 touched — your races and anything you added yourself stay put. Reconnect once
 to grant calendar access.
@@ -544,7 +546,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v3.3.0 — Every workout rideable, a search that speaks cyclist](https://github.com/platypus45/domestique/releases/latest)** (2026-07-07).
+Latest: **[v3.3.1 — Hotfix: upgraded installs could lose workout matching](https://github.com/platypus45/domestique/releases/latest)** (2026-07-12).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

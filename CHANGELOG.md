@@ -1,5 +1,84 @@
 # Changelog
 
+## v3.3.1 — Hotfix: upgraded installs could lose workout matching (2026-07-12)
+
+If you upgraded to v3.3.0 and your plan suddenly filled with identical
+"Z2 steady" placeholder sessions, or Rematch kept saying "no candidate" —
+this release is for you, and it repairs the damage automatically. Huge
+thanks to the tester whose detailed report and log made the diagnosis fast.
+
+### The root cause, honestly
+v3.3.0's app package was missing one internal helper the workout-analysis
+step needs. Fresh installs never noticed (they ship with the analysis
+pre-computed), but on upgraded installs with an existing workout folder the
+app tried to re-analyze the library, failed for every file, and then
+recorded "unusable" for all 4,000+ workouts — permanently. From that moment
+the planner couldn't match ANY workout: every reshuffle failed, and the
+next automatic plan recalculation rebuilt your future weeks as empty Z2
+placeholders.
+
+### Fixed
+- **The missing helper is back in the package**, and the analysis step now
+  treats "the helper itself is broken" as an installation problem instead
+  of a verdict on your workouts: it keeps the previous analysis (slightly
+  stale beats catastrophically wrong) and never again marks the whole
+  library unusable in one sweep.
+- **Poisoned installs heal themselves.** On first launch of 3.3.1 the app
+  detects workouts that were wrongly marked unusable and re-analyzes them.
+  No manual steps, no reinstall.
+- **Plans can no longer be flattened.** If the workout pool ever comes back
+  effectively empty, the automatic recalculation now refuses to rebuild and
+  keeps your existing plan untouched, telling you why — instead of
+  replacing every future session with placeholders.
+- **The mid-plan FTP test now lands on fresh legs.** It could be scheduled
+  the day after a heavy interval session (one tester got it inside a
+  4-hard-days-in-a-row stretch). It now picks a day preceded by a rest or
+  easy day, and it counts as a hard day for spacing and weekly limits.
+- **The "adjusted" day card tells one story.** When readiness caps your day
+  (say, threshold → Z2), the chart previously still drew the original
+  threshold blocks while the targets showed Z2. Chart, chips and label now
+  all describe the session you'll actually ride.
+- **Reshuffle on a thin day retries properly** (same smarter search the
+  preview flow already had) and, when there's genuinely nothing to offer,
+  says the day keeps its zone targets instead of "failed".
+- **Manually changing a day's workout type now updates your intervals.icu
+  calendar.** The old pushed event was being protected as "broken" forever;
+  a deliberate change now sweeps it correctly. Sync errors from
+  intervals.icu are also logged with the actual reason now, so a stuck sync
+  is diagnosable from your log file.
+- **"Download ZWO" works on manually-changed days** (the save dialog never
+  appeared in the desktop app; FIT already worked).
+- **Implausible automatic FTP updates are rejected.** One tester's profile
+  ended up at 122W (real FTP ~258) — every power target scaled off it. An
+  automatic update that drops FTP below 100W or by more than 40% in one
+  step is now refused and logged. Anything you type in yourself is always
+  respected.
+
+### Also in this release
+- **Send any workout to your intervals.icu calendar.** Every workout detail
+  view — in the training planner and in the library — has a "Send to
+  intervals.icu calendar" button. Planned sessions go to their scheduled
+  day with one click; library workouts get a date picker (default:
+  tomorrow) and stay on your calendar permanently, untouched by the plan's
+  automatic sync. Your head unit (Garmin/Wahoo/Hammerhead) and MyWhoosh
+  pull the workout with its full power or heart-rate targets — no file
+  copying. A "?" next to the button explains the flow. Works even with
+  calendar auto-sync switched off (it only needs the calendar permission
+  from Reconnect). Riders on heart-rate targets without a set LTHR get a
+  clear message instead of a wrong-targets file.
+- **Help popovers are readable again.** They were transparent (text from
+  the page bled through — worst on the Settings tab); an undefined style
+  variable was the cause, and fixing it also repaired three other panels
+  that quietly used it.
+
+### For the tester who hit this
+Update, launch once, and your library re-analyzes itself. Then open the
+Training Plan tab and press Generate Plan once to rebuild the flattened
+weeks (your ride history and settings are untouched). If your FTP shows a
+wrong low number, correct it once in Settings — the guard prevents the
+regression from now on.
+
+
 ## v3.3.0 — Every workout rideable, a search that speaks cyclist (2026-07-07)
 
 The whole release is built around one tester day: an impossible 3×16min at

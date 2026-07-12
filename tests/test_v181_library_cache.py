@@ -19,6 +19,8 @@ import os
 import time
 from pathlib import Path
 
+import pytest
+
 import training_planner as tp
 
 
@@ -26,6 +28,33 @@ def _reset_cache() -> None:
     """Clear both cache tiers so the next call is a true cold call."""
     tp._WORKOUT_LIB_CACHE.clear()
     tp._WORKOUT_LIB_FAST_VALIDATOR.clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_library_caches():
+    """3.3.1 (gate-red postmortem): these tests prime tp's cache tiers with a
+    SANDBOX 1-row library under an artificially future-bumped mtime and
+    previously never cleaned up — monkeypatch restores WORKOUT_DIR, but the
+    poisoned tiers survive the test and defeat invalidation for every later
+    library consumer in the same xdist worker (test_library_search_v2 then
+    saw the 1-row library → empty results for every query; failed ONLY in
+    the full parallel gate, never solo — classic order-dependent poison).
+    Reset every tier on the way out, including app's request-layer rows
+    cache, which had latched rows built from the poisoned tp cache.
+
+    The DECISIVE tier (found by cold-app replication): loading the library
+    from the sandbox latches tp._CONTENT_CLASSIFICATION_CACHE as "missing"
+    ({} + loaded), because the sandbox has no classification file. Once
+    latched it is never re-read — so after the dir reverts, every row's
+    content class falls back to filename heuristics and the search's
+    family matching returns zero for everything. Reset it to None so the
+    next consumer re-reads the REAL classification file."""
+    yield
+    _reset_cache()
+    tp._CONTENT_CLASSIFICATION_CACHE = None
+    import app as _app
+    with _app._LIBRARY_ROWS_LOCK:
+        _app._LIBRARY_ROWS_CACHE = None
 
 
 def test_first_call_returns_non_empty_library():

@@ -488,7 +488,9 @@ class TestFilenameFallback(unittest.TestCase):
     def setUp(self):
         import training_planner as tp
         self._saved = tp._CONTENT_CLASSIFICATION_CACHE
-        tp._CONTENT_CLASSIFICATION_CACHE = {}
+        # 3.3.1: cache is dir-keyed now — force "loaded, empty" for the
+        # CURRENT dir so _classify_protocol exercises the filename fallback.
+        tp._CONTENT_CLASSIFICATION_CACHE = {str(tp.WORKOUT_DIR): {}}
 
     def tearDown(self):
         import training_planner as tp

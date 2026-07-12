@@ -158,7 +158,13 @@ _WORKOUT_LIB_FAST_VALIDATOR: dict[str, tuple] = {}
 # (workouts/.content_classification.json, produced by
 #  scripts/classify_library_content.py). Populated lazily on first use.
 # Maps basename → {primary, confidence, secondary_flags, features}.
-_CONTENT_CLASSIFICATION_CACHE: dict[str, dict] | None = None
+# 3.3.1: keyed by str(WORKOUT_DIR) — this was a dir-INDEPENDENT singleton,
+# so one library load with WORKOUT_DIR pointed elsewhere (profile switch, or
+# any test sandbox without a classification file) latched {} permanently and
+# every later consumer in the process fell back to filename heuristics
+# (search family-matching went empty; the parallel gate turned red in
+# order-dependent ways). Keying by dir mirrors _WORKOUT_LIB_CACHE.
+_CONTENT_CLASSIFICATION_CACHE: dict[str, dict[str, dict]] = {}
 _CONTENT_CLASSIFICATION_HASH: str | None = None
 # Mapping from content-classifier primary → existing Protocol enum strings.
 # vo2_short maps to VO2max; secondary_flags carry the sub-type info.
@@ -191,8 +197,14 @@ def _load_content_classifications() -> dict[str, dict]:
     the user knows to run the script after a workout-library change.
     """
     global _CONTENT_CLASSIFICATION_CACHE
-    if _CONTENT_CLASSIFICATION_CACHE is not None:
-        return _CONTENT_CLASSIFICATION_CACHE
+    # Back-compat: tests + scripts/classify_library_content.py reset with
+    # `= None` (pre-3.3.1 sentinel for "unloaded") — treat as full clear.
+    if _CONTENT_CLASSIFICATION_CACHE is None:
+        _CONTENT_CLASSIFICATION_CACHE = {}
+    _dir_key = str(WORKOUT_DIR)
+    cached = _CONTENT_CLASSIFICATION_CACHE.get(_dir_key)
+    if cached is not None:
+        return cached
     cache_path = WORKOUT_DIR / ".content_classification.json"
     if not cache_path.exists():
         log.warning(
@@ -201,8 +213,8 @@ def _load_content_classifications() -> dict[str, dict]:
             "content-based protocol classification (falling back to "
             "filename heuristic for now)"
         )
-        _CONTENT_CLASSIFICATION_CACHE = {}
-        return _CONTENT_CLASSIFICATION_CACHE
+        _CONTENT_CLASSIFICATION_CACHE[_dir_key] = {}
+        return _CONTENT_CLASSIFICATION_CACHE[_dir_key]
     try:
         with cache_path.open(encoding="utf-8") as f:
             payload = json.load(f)
@@ -220,11 +232,11 @@ def _load_content_classifications() -> dict[str, dict]:
                 )
         except Exception:
             pass
-        _CONTENT_CLASSIFICATION_CACHE = payload.get("classifications", {})
+        _CONTENT_CLASSIFICATION_CACHE[_dir_key] = payload.get("classifications", {})
     except (OSError, json.JSONDecodeError) as e:
         log.warning("content_classification cache load failed: %s", e)
-        _CONTENT_CLASSIFICATION_CACHE = {}
-    return _CONTENT_CLASSIFICATION_CACHE
+        _CONTENT_CLASSIFICATION_CACHE[_dir_key] = {}
+    return _CONTENT_CLASSIFICATION_CACHE[_dir_key]
 
 
 def _compute_workouts_dir_hash() -> str:

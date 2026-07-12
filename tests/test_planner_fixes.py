@@ -342,9 +342,10 @@ class TestFixPlannerV411ClassifierPrefixes(unittest.TestCase):
     """
 
     def setUp(self):
-        # Force the filename fallback path by emptying the content cache.
+        # Force the filename fallback path by emptying the content cache
+        # (3.3.1: dir-keyed — empty for the CURRENT dir).
         import training_planner as tp
-        tp._CONTENT_CLASSIFICATION_CACHE = {}
+        tp._CONTENT_CLASSIFICATION_CACHE = {str(tp.WORKOUT_DIR): {}}
 
     def tearDown(self):
         # Reset so subsequent tests get a fresh load.

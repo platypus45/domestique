@@ -1,5 +1,25 @@
 # Changelog
 
+## v3.3.2 — Hotfix: opening the Training Plan tab could flatten your plan (2026-07-12)
+
+Follow-up to this morning's v3.3.1, again from the same tester's report —
+thank you.
+
+### Fixed
+- **Opening the Training Plan tab no longer rebuilds your plan.** For
+  FTP/general/VO2max goals within ~3 weeks of their target date, the weekly
+  auto-recalculation wrongly decided a race taper was due (these goals have
+  no race — but the readiness math didn't know that) and rebuilt the whole
+  remaining plan as one all-Z2 taper block, showing only "Taper" in the
+  overview. Tapers are now reserved for goal types that actually finish
+  with an event, exactly like plan generation always did.
+- **"Regenerate plan" now counts as a recalculation.** It didn't refresh
+  the recalc timestamp, so the tab kept re-triggering the auto-recalc on
+  every visit — which is why the flatten came back each time you fixed it.
+- **A readiness hiccup can't trigger a rebuild.** If the readiness numbers
+  fail to compute on a fresh plan, the tab now just shows the plan.
+
+
 ## v3.3.1 — Hotfix: upgraded installs could lose workout matching (2026-07-12)
 
 If you upgraded to v3.3.0 and your plan suddenly filled with identical

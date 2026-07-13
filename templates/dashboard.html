@@ -547,6 +547,16 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
   box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.3);
   background: rgba(34, 197, 94, 0.06);
 }
+/* 3.3.3 (owner): the green goal ring was misread as the today marker ("the
+   app thinks today is 19 July") — label it instead of restyling. Same pill
+   pattern as .twk-today-badge; text set in renderCalDay: EVENT on event
+   goals, PLAN END otherwise. The red .cal-today ring stays the today marker. */
+.cal-day .cal-goal-badge {
+  align-self: flex-start; background: var(--green, #22c55e); color: #fff;
+  font-size: 8px; font-weight: 700; letter-spacing: 0.06em;
+  padding: 1px 6px; border-radius: 8px; margin-bottom: 1px;
+}
+.cal-day.cal-rest .cal-goal-badge { align-self: center; }
 /* F7c (v2.1) — intermediate B/C races, color-coded by priority. A keeps the
    green event border above; B = amber, C = slate. */
 .cal-day.cal-event-b {
@@ -2193,6 +2203,10 @@ window.addEventListener('unhandledrejection', function(e) {
              auto-sync had throttled. -->
         <button class="btn" id="syncNowBtnPlan" onclick="syncNowAction('syncNowBtnPlan')" style="font-size:11px;" title="Pull latest rides + wellness from intervals.icu now (bypasses 1h throttle)">Sync now &#x21bb;</button>
       </div>
+      <!-- 3.3.3 (owner): mis-summing phase split — the reason Generate is
+           disabled, mirrored HERE next to the button (the editor with the
+           full error lives in the Plan Overview card). -->
+      <div id="plan-generate-error" role="alert" style="display:none;font-size:12px;font-weight:700;color:var(--red);margin-top:8px;"></div>
       <div id="plan-status" style="font-size:12px;color:var(--text2);margin-top:8px;"></div>
       <!-- Active-config summary of the CURRENT plan (populatePlanFormFromGoal). -->
       <div id="plan-active-config" style="font-size:11px;color:var(--text3);margin-top:6px;"></div>
@@ -10564,12 +10578,14 @@ function phaseStepperClick(name, delta) {
   const next = Math.max(_pwFloor(name), Math.min(_pwCeil(name), cur + delta));
   if (next === cur) return;
   ps.values[name] = next;
+  _syncPhaseSplitError();  // 3.3.3 (owner): error line updates on the CLICK
   refreshPlanPreview();  // echo the split back through the server validator
 }
 function phaseSplitReset() {
   _phaseSplit.state = 'rec';
   _phaseSplit.values = { ..._phaseSplit.rec };
   _phaseSplit.runwayChanged = false;
+  _syncPhaseSplitError();  // 3.3.3 (owner): clear the error instantly
   refreshPlanPreview();
 }
 function _phaseSplitBadgeHtml() {
@@ -10587,9 +10603,49 @@ function _phaseSplitBadgeHtml() {
   }
   return _phaseSplit.state === 'custom' ? chip('custom split', 'var(--accent)') : '';
 }
+// 3.3.3 (owner): ONE message for every mis-summing-split surface — the
+// prominent line at the bottom of the editor, the mirror next to Generate,
+// and the generatePlan() click guard. Returns '' when generating is allowed.
+function _phaseSplitErrorText() {
+  if (!_phaseSplitBlocked()) return '';
+  const ps = _phaseSplit;
+  const sum = _phaseSplitSum() + (ps.lockedWeeks || 0);
+  const diff = Math.abs(ps.M - sum);
+  const w = diff === 1 ? 'week' : 'weeks';
+  let msg = (sum < ps.M)
+    ? `Only ${sum} of ${ps.M} weeks distributed — assign ${diff} more ${w} before generating.`
+    : `${sum} of ${ps.M} weeks distributed — remove ${diff} ${w} before generating.`;
+  if (ps.runwayChanged) msg += ' (Plan length changed — redistribute or reset to Recommended.)';
+  return msg;
+}
 function _syncGenerateBlocked() {
+  const blocked = _phaseSplitBlocked();
   const btn = $('btn-generate-plan');
-  if (btn) btn.disabled = _phaseSplitBlocked();
+  if (btn) btn.disabled = blocked;
+  // 3.3.3 (owner): a silently-dead Generate button was the bug — explain it
+  // WHERE the button is (the editor lives in the other card).
+  const near = $('plan-generate-error');
+  if (near) {
+    near.textContent = blocked ? '⚠ ' + _phaseSplitErrorText() : '';
+    near.style.display = blocked ? '' : 'none';
+  }
+}
+// 3.3.3 (owner): live re-sync of counter + error line + button on EVERY
+// stepper click, without waiting for the preview round-trip (which can be
+// slow or fail — the error must never lag the steppers).
+function _syncPhaseSplitError() {
+  const err = _phaseSplitErrorText();
+  const el = $('phase-split-error');
+  if (el) {
+    el.textContent = err ? '⚠ ' + err : '';
+    el.style.display = err ? '' : 'none';
+  }
+  const cnt = $('phase-split-sum');
+  if (cnt) {
+    cnt.textContent = `${_phaseSplitSum() + (_phaseSplit.lockedWeeks || 0)} of ${_phaseSplit.M} weeks distributed`;
+    cnt.style.color = err ? 'var(--red)' : 'var(--text2)';
+  }
+  _syncGenerateBlocked();
 }
 
 // v4.6.0 B2: live phase preview — call /api/plan/preview so the right
@@ -10705,15 +10761,15 @@ function _renderPlanPreviewPhases(phases, planWeeks, goal, eventDate, resp) {
   if (editorOn) {
     const sum = _phaseSplitSum() + (ps.lockedWeeks || 0);
     const ok = sum === ps.M;
+    // 3.3.3 (owner): the red explainer moved from here to a PROMINENT error
+    // line at the BOTTOM of the editor (see below) — the counter keeps its
+    // red tint; both are re-synced live by _syncPhaseSplitError().
     html += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
-      <div style="font-size:11px;font-weight:700;color:${ok ? 'var(--text2)' : 'var(--red)'};">${sum} of ${ps.M} weeks distributed</div>
+      <div id="phase-split-sum" style="font-size:11px;font-weight:700;color:${ok ? 'var(--text2)' : 'var(--red)'};">${sum} of ${ps.M} weeks distributed</div>
       <div style="display:inline-flex;gap:6px;align-items:center;">${_phaseSplitBadgeHtml()}
         <button class="btn" style="padding:3px 10px;font-size:11px;font-weight:600;${ps.state === 'custom' ? 'border-color:var(--accent);color:var(--accent);' : ''}" onclick="phaseSplitReset()" ${ps.state === 'custom' ? '' : 'disabled'} title="Reset to the recommended base/build/peak/taper split">&#8635; Recommended split</button>
       </div>
     </div>`;
-    if (!ok) html += `<div style="font-size:11px;color:var(--red);margin-bottom:6px;">${ps.runwayChanged
-      ? 'Runway changed — redistribute the weeks or reset to Recommended.'
-      : 'Distribute exactly ' + ps.M + ' weeks to generate (base can absorb the rest).'}</div>`;
     if (typeof readBcRaces === 'function' && readBcRaces().length)
       html += `<div style="font-size:10px;color:var(--text3);margin-bottom:6px;">B/C race weeks keep their mini-taper shape whatever the split.</div>`;
   } else if (resp && ps.disabled) {
@@ -10756,6 +10812,14 @@ function _renderPlanPreviewPhases(phases, planWeeks, goal, eventDate, resp) {
         <div style="width:${widthPct}%;height:100%;background:${col};border-radius:2px;"></div>
       </div>
     </div>`;
+  }
+  // 3.3.3 (owner): PROMINENT under/over-distribution error at the BOTTOM of
+  // the editor. Rendered (hidden) whenever the editor is live so stepper
+  // clicks can flip it instantly via _syncPhaseSplitError() — no server
+  // round-trip needed for the message to appear/clear.
+  if (editorOn) {
+    const err = _phaseSplitErrorText();
+    html += `<div id="phase-split-error" role="alert" style="display:${err ? '' : 'none'};margin-top:8px;padding:9px 12px;border:1.5px solid var(--red);border-radius:6px;background:rgba(239,68,68,0.08);color:var(--red);font-size:12.5px;font-weight:700;">${err ? '⚠ ' + err : ''}</div>`;
   }
   $('plan-phases').innerHTML = html;
   _syncGenerateBlocked();
@@ -11204,10 +11268,11 @@ async function generatePlan() {
   }
   // v3.2.0 phase-split editor: a mis-summing split never reaches the server —
   // the banner explains; Generate is blocked ONLY on the sum mismatch.
+  // 3.3.3 (owner): same message as the editor's bottom error line.
   if (_phaseSplitBlocked()) {
-    $('plan-status').textContent = 'Distribute all ' + _phaseSplit.M +
-      ' plan weeks (or reset to Recommended) before generating.';
+    $('plan-status').textContent = _phaseSplitErrorText();
     $('plan-status').style.color = 'var(--red)';
+    _syncPhaseSplitError();
     return;
   }
   $('plan-status').textContent = 'Generating plan...';
@@ -11294,6 +11359,12 @@ async function generatePlan() {
     $('plan-status').textContent = 'Plan generated!';
     $('plan-status').style.color = 'var(--green)';
     await renderPlanJSON(d.plan_json);
+    // 3.3.3 (owner): repaint the Availability Calendar from the FRESH plan.
+    // Generate reseeds plan["availability"] server-side from the wizard's
+    // per-day hours (explicit holiday/injury/illness blocks kept) — but
+    // _availData still cached the pre-generate values, so the calendar (and
+    // the user's trust in the reflow math) kept showing the OLD hours.
+    try { _availData = {}; initAvailCalendar(); } catch(_) {}
     // v2.3.0: show the realized training-type distribution of the new plan.
     try {
       const ro = $('plan-dist-readout');
@@ -12390,8 +12461,13 @@ function renderCalDay(d, wi, di, phaseKey, today) {
       }
     }
     const _restEventCls = (_restEvent && !isToday) ? ' cal-event-day' : '';
+    // 3.3.3 (owner): label the green ring (see .cal-goal-badge CSS) — it was
+    // being misread as the today marker. EVENT / PLAN END mirrors the class
+    // assignment's own goal-type branch.
+    const _restBadge = (_restEvent && !isToday)
+      ? `<div class="cal-goal-badge">${(_g && (_g.type === 'event_preparation' || _g.type === 'event')) ? 'EVENT' : 'PLAN END'}</div>` : '';
     return `<div class="cal-day cal-rest cal-phase-${phaseKey}${isToday ? ' cal-today' : ''}${_restEventCls}" data-cs="rest" data-date="${d.date}">
-      <div class="cal-rest-label" style="font-size:10px;font-weight:700;color:var(--text3);letter-spacing:0.05em;">REST</div>
+      ${_restBadge}<div class="cal-rest-label" style="font-size:10px;font-weight:700;color:var(--text3);letter-spacing:0.05em;">REST</div>
     </div>`;
   }
 
@@ -12480,6 +12556,11 @@ function renderCalDay(d, wi, di, phaseKey, today) {
     }
   }
   if (isEventDay && !isToday) stateCls += ' cal-event-day';
+  // 3.3.3 (owner): label the green goal ring so it can't be misread as the
+  // today marker (that's the red .cal-today ring). Text follows the same
+  // goal-type branch that decided isEventDay: EVENT / PLAN END.
+  const goalBadge = (isEventDay && !isToday)
+    ? `<div class="cal-goal-badge">${(_goal && (_goal.type === 'event_preparation' || _goal.type === 'event')) ? 'EVENT' : 'PLAN END'}</div>` : '';
   // F7c (v2.1) — paint intermediate B/C race days (A handled above; today wins).
   if (!isToday && !isEventDay && _goal && Array.isArray(_goal.events)) {
     const _ev = _goal.events.find(e => e && e.date === d.date && e.priority !== 'A');
@@ -12516,6 +12597,7 @@ function renderCalDay(d, wi, di, phaseKey, today) {
     ondragover="calDragOver(event)" ondragleave="calDragLeave(event)" ondrop="calDrop(event,'${esc(d.date)}',${wi})"
     onclick="calOpenDay('${esc(d.date)}')">
     ${redrawBtn}
+    ${goalBadge}
     ${plannedHtml || (showRestLabel ? '<div style="font-size:10px;font-weight:700;color:var(--text3);">REST</div>' : '')}
     ${actualHtml}
   </div>`;

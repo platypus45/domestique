@@ -11894,6 +11894,16 @@ async def api_plan_generate(request: Request):
         # plan["availability"] entirely → freshly generated plan produced
         # sessions on dates the user had marked as unavailable. Mirrors the
         # /api/plan/reforecast pattern.
+        #
+        # 3.3.3 (owner): only EXPLICIT BLOCKS (holiday/injury/illness/
+        # unavailable) survive as engine overrides. Plain "available"/"rest"
+        # rows are the OLD wizard's defaults densely materialized by the
+        # v1.8.21 rebuild below — feeding them back into generate_plan scaled
+        # the new plan's sessions to the STALE hours (owner set 1h/day, plan
+        # still built 2h sessions) while the rebuilt calendar said otherwise.
+        # This makes the engine input exactly what the rebuilt calendar will
+        # show: new wizard defaults everywhere except explicit blocks.
+        _EXPLICIT_BLOCK = {"holiday", "injury", "illness", "unavailable"}
         json_path = _plan_dir() / "current_plan.json"
         availability_overrides: dict[str, float] = {}
         old_availability_full: dict = {}  # v1.8.21 — keep type info for block-preserve
@@ -11906,6 +11916,7 @@ async def api_plan_generate(request: Request):
                     day_iso: float(entry["hours"])
                     for day_iso, entry in old_availability_full.items()
                     if isinstance(entry, dict) and "hours" in entry
+                    and entry.get("type") in _EXPLICIT_BLOCK
                 }
             except (json.JSONDecodeError, OSError, KeyError, ValueError, TypeError):
                 availability_overrides = {}
@@ -12062,7 +12073,8 @@ async def api_plan_generate(request: Request):
         # new weekly default (goal.daily_max_hours per weekday, else
         # max_weekday/weekend, rest_days → 0), EXCEPT days the user explicitly
         # blocked (holiday / injury / illness / unavailable), which are kept.
-        _EXPLICIT_BLOCK = {"holiday", "injury", "illness", "unavailable"}
+        # (_EXPLICIT_BLOCK defined once above, where the same set gates which
+        # old rows are fed to generate_plan — 3.3.3 keeps both in lockstep.)
         _daily = goal.daily_max_hours or {}
 
         def _default_hours_for_weekday(wd: int) -> float:

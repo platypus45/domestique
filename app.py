@@ -11637,7 +11637,43 @@ def api_plan_entry_scan(
     except Exception:
         current_ctl = 37.0
 
-    return tp.recognize_entry(g, _load_all_rides_safe(), current_ctl=current_ctl)
+    result = tp.recognize_entry(g, _load_all_rides_safe(), current_ctl=current_ctl)
+
+    # 3.3.3 (L4-UX 2): scan-result card support. Pure date math on what the
+    # recognizer already computed — no new engine work. The card's headline
+    # is "Matched your last N weeks — you're at week X of Y":
+    #   N = proposal_weeks, X = entry_week, Y = plan_weeks (returned so the
+    #   client never re-derives the server-side week budget), and the
+    #   consequence line needs weeks_remaining + plan_end_date.
+    proposal = int(result.get("proposal_weeks") or 0)
+    sd_iso = result.get("equivalent_start_date")
+    total_weeks = plan_weeks
+    if goal_type == "event" and target_date is not None and sd_iso:
+        # H1 parity: on a credited entry the week budget is anchor→target,
+        # exactly what generate will recompute (app.py H1 block).
+        try:
+            _anchor = date.fromisoformat(sd_iso)
+            total_weeks = max(4, -(-(target_date - _anchor).days // 7))
+        except (ValueError, TypeError):
+            pass
+    result["plan_weeks"] = total_weeks
+    result["goal"] = goal_type
+    result["entry_week"] = (proposal + 1) if proposal > 0 else None
+    # Wave-A contract field (defensive: fall back to plan-minus-credit when
+    # an older recognizer payload omits it).
+    if result.get("weeks_remaining") is None:
+        result["weeks_remaining"] = max(0, total_weeks - proposal)
+    if goal_type == "event" and target_date is not None:
+        result["plan_end_date"] = target_date.isoformat()
+    elif sd_iso and total_weeks:
+        try:
+            _s = date.fromisoformat(sd_iso)
+            result["plan_end_date"] = (
+                _s + timedelta(days=total_weeks * 7 - 1)
+            ).isoformat()
+        except (ValueError, TypeError):
+            pass
+    return result
 
 
 @app.get("/api/event/projection")

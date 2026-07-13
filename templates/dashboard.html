@@ -557,6 +557,27 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
   padding: 1px 6px; border-radius: 8px; margin-bottom: 1px;
 }
 .cal-day.cal-rest .cal-goal-badge { align-self: center; }
+/* 3.3.3 (L4-UX): recognized-entry scan card. Stale = greyed with a re-scan
+   chip (actions dead, chip alive); the flash lands on TODAY's plan-grid row
+   after a recognized-entry generate. */
+.entry-card-stale { opacity: 0.55; }
+.entry-card-stale .entry-card-actions { pointer-events: none; opacity: 0.5; }
+.entry-rescan-chip {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 10px;
+  border: 1px solid var(--yellow, #eab308); color: var(--yellow, #eab308);
+  background: rgba(234, 179, 8, 0.08);
+}
+.pg-entry-week-flash { animation: pgEntryFlash 1.4s ease-out 2; outline: 2px solid var(--accent); outline-offset: 1px; }
+@keyframes pgEntryFlash {
+  0%, 100% { box-shadow: none; }
+  40% { box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.35); }
+}
+#pg-entry-note {
+  font-size: 12px; font-weight: 600; color: var(--accent);
+  border-left: 3px solid var(--accent); background: rgba(59, 130, 246, 0.07);
+  padding: 6px 10px; border-radius: 0 6px 6px 0; margin-bottom: 8px;
+}
 /* F7c (v2.1) — intermediate B/C races, color-coded by priority. A keeps the
    green event border above; B = amber, C = slate. */
 .cal-day.cal-event-b {
@@ -2122,7 +2143,7 @@ window.addEventListener('unhandledrejection', function(e) {
             <span id="entry-recognized-note" style="display:none;font-size:10px;color:var(--text3);margin-left:6px;">placed from your rides</span>
           </div>
           <div id="entry-scan-arm" style="display:none;">
-            <button type="button" class="btn btn-sm" onclick="scanEntryRides()">Scan my rides</button>
+            <button type="button" id="entry-scan-btn" class="btn btn-sm" onclick="scanEntryRides()">Scan my rides</button>
             <div id="entry-scan-results" style="margin-top:6px;"></div>
           </div>
         </div>
@@ -10417,6 +10438,8 @@ function onBackdateToggle() {
   if (!on) {
     // Stale MODE 2 state can't linger either.
     _setEntryRecognized(false);
+    window._entryScan = null;   // L4-UX 5: drop the card + change-safety arm
+    window._entryArm = null;
     const res = $('entry-scan-results'); if (res) res.innerHTML = '';
   }
   refreshPlanPreview();
@@ -10427,6 +10450,52 @@ function onBackdateToggle() {
 // confirms a scan proposal (entry_mode="recognized"); a manual date edit
 // demotes it back to "declared". The recognizer is never silently re-run.
 window._entryRecognized = false;
+// 3.3.3 (L4-UX): scan-result card state + change-safety arm. _entryScan is
+// the live card ({data, selectedWeeks, whyOpen, stale, done, error,
+// fingerprint, stripCache}); _entryArm covers the CARD-LESS case (a
+// recognized backdate re-armed from the saved plan) so a goal/length/date
+// change can never silently ride a stale recognized start_date into
+// Generate (DIAG L4 holes a+b).
+window._entryScan = null;
+window._entryArm = null;
+
+// Fingerprint of the settings a confirmed scan depends on (L4-UX 5): goal,
+// plan length, event date. For event goals the weeks slider is DERIVED from
+// the event date (refreshPlanPreview rewrites it today-anchored, and a
+// backdated plan persists the anchor-anchored count) — only the date is the
+// user's setting there, so only the date participates.
+function _entryScanFingerprint() {
+  const goal = ($('plan-goal') || {}).value || '';
+  const isEvent = _isEventGoal(goal);
+  const weeks = isEvent ? '' : (($('plan-weeks') || {}).value || '');
+  const edate = isEvent ? (($('plan-edate') || {}).value || '') : '';
+  return goal + '|' + weeks + '|' + edate;
+}
+
+// Called from refreshPlanPreview (which every goal/length/date change
+// funnels through). Fingerprint drift → grey the card with a re-scan chip
+// and clear the armed backdate; the card-less re-arm is cleared outright.
+function _entryScanCheckStale() {
+  const fp = _entryScanFingerprint();
+  const es = window._entryScan;
+  if (es && es.data && !es.stale && !es.done && es.fingerprint !== fp) {
+    es.stale = true;
+    _setEntryRecognized(false);
+    const d = $('plan-sdate'); if (d) d.value = '';
+    window._entryArm = null;
+    _renderEntryScan();
+    return;
+  }
+  const arm = window._entryArm;
+  // Card-less OR done-card (historical, no live proposal): the armed
+  // recognized backdate clears on drift — it must never ride into a
+  // differently-configured Generate.
+  if ((!es || es.done) && arm && arm.fp !== fp) {
+    window._entryArm = null;
+    _setEntryRecognized(false);
+    const d = $('plan-sdate'); if (d) d.value = '';
+  }
+}
 
 function _setEntryRecognized(v) {
   window._entryRecognized = !!v;
@@ -10448,12 +10517,32 @@ function onEntryModeChange() {
 
 function onEntrySdateEdited() {
   _setEntryRecognized(false);  // user overrode the recognizer → "declared"
+  window._entryArm = null;     // L4-UX 5: a typed date is the user's own, not a stored re-arm
   refreshPlanPreview();
 }
 
 async function scanEntryRides() {
   const res = $('entry-scan-results');
-  if (res) res.innerHTML = '<span style="font-size:11px;color:var(--text2);">Scanning your rides…</span>';
+  const btn = $('entry-scan-btn');
+  window._entryScan = null;
+  window._entryArm = null;
+  if (res) res.innerHTML = '';
+  // L4-UX 1 — the button IS the progress surface while the scan runs:
+  // disabled + live ticking label, restored in finally. Never a dead control.
+  const t0 = Date.now();
+  let dots = 0;
+  const label = () => {
+    const s = Math.floor((Date.now() - t0) / 1000);
+    return 'Scanning your rides' + '.'.repeat(1 + (dots++ % 3)) + (s >= 2 ? ' ' + s + 's' : '');
+  };
+  let tick = null;
+  if (btn) {
+    btn.dataset.idleLabel = btn.dataset.idleLabel || btn.textContent;
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    btn.textContent = label();
+    tick = setInterval(() => { btn.textContent = label(); }, 400);
+  }
   try {
     const goal = $('plan-goal').value;
     const isEvent = _isEventGoal(goal);
@@ -10465,20 +10554,58 @@ async function scanEntryRides() {
       if (res) res.innerHTML = `<span style="font-size:11px;color:var(--red);">${esc(err.detail || 'Scan failed')}</span>`;
       return;
     }
-    _renderEntryScan(await r.json());
+    const d = await r.json();
+    window._entryScan = {
+      data: d,
+      selectedWeeks: parseInt(d.plan_weeks) || (parseInt($('plan-weeks').value) || 12),
+      whyOpen: false, stale: false, done: false, error: '', doneNote: '',
+      fingerprint: _entryScanFingerprint(),
+      stripCache: {}, _stripReq: 0,
+    };
+    _renderEntryScan();
   } catch (e) {
     if (res) res.innerHTML = '<span style="font-size:11px;color:var(--red);">Scan failed</span>';
+  } finally {
+    if (tick) clearInterval(tick);
+    if (btn) {
+      btn.disabled = false;
+      btn.removeAttribute('aria-busy');
+      btn.textContent = btn.dataset.idleLabel || 'Scan my rides';
+    }
   }
 }
 
-function _renderEntryScan(d) {
-  const res = $('entry-scan-results');
-  if (!res || !d) return;
+function _entryFmtDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + 'T12:00:00');
+  return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+function _entryEndDateIso(startIso, weeks) {
+  const d = new Date(startIso + 'T12:00:00');
+  if (isNaN(d.getTime())) return '';
+  d.setDate(d.getDate() + weeks * 7 - 1);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+// Weekly TSS trend across the scan rows (index 1 = oldest claimed week,
+// last = most recent) — halves-mean comparison of what recognize_entry
+// already measured. Advisory copy only, no new engine math.
+function _entryTssTrend(rows) {
+  const vals = (rows || []).map(r => Number(r.actual_tss) || 0);
+  if (vals.length < 2) return '';
+  const mid = Math.floor(vals.length / 2);
+  const mean = a => a.reduce((s, v) => s + v, 0) / a.length;
+  const older = mean(vals.slice(0, mid)), recent = mean(vals.slice(mid));
+  const word = recent > older * 1.1 ? 'building' : (recent < older * 0.9 ? 'fading' : 'steady');
+  return `Weekly TSS ${Math.round(older)} → ${Math.round(recent)} (${word})`;
+}
+
+function _entryWhyRowsHtml(rows) {
   let html = '';
-  if (d.capped) {
-    html += '<div style="font-size:10px;color:var(--text3);margin-bottom:4px;">Evidence window limited by your ride history.</div>';
-  }
-  for (const w of (d.weeks || [])) {
+  for (const w of rows) {
     const mark = w.qualifies
       ? '<span style="color:var(--green);">&#10003;</span>'
       : '<span style="color:var(--red);">&#10007;</span>';
@@ -10486,36 +10613,212 @@ function _renderEntryScan(d) {
     html += `<div style="font-size:11px;color:var(--text2);display:flex;gap:6px;align-items:center;">
       ${mark} <span>Week ${w.index} &middot; from ${esc(w.window_start)} &middot; ${Math.round(w.actual_tss)} / ${Math.round(w.target_tss)} TSS${shape}</span></div>`;
   }
-  const c = d.proposal_weeks || 0;
-  if (c > 0) {
-    html += `<div style="font-size:12px;font-weight:600;margin-top:6px;">Credit ${c} week${c > 1 ? 's' : ''} &mdash; start at week ${c + 1}</div>
-      <div style="margin-top:4px;display:flex;gap:8px;align-items:center;">
-        <button type="button" class="btn btn-sm" onclick="confirmEntryScan('${esc(d.equivalent_start_date)}')">Confirm</button>
-        <a href="#" style="font-size:11px;color:var(--accent);font-weight:600;" onclick="useEntryDateInstead(); return false;">Use a date instead</a>
-      </div>`;
-  } else {
-    html += `<div style="font-size:12px;margin-top:6px;">No qualifying weeks found &mdash; start fresh, or
-      <a href="#" style="color:var(--accent);font-weight:600;" onclick="useEntryDateInstead(); return false;">use a date instead</a>.</div>`;
-  }
-  res.innerHTML = html;
+  return html;
 }
 
-// Confirm: store the proposal as the equivalent start date (the single
-// downstream anchor), mark provenance recognized, and refresh the preview so
-// the backdated split is visible BEFORE Generate.
-function confirmEntryScan(startDate) {
-  if (!startDate) return;
-  const d = $('plan-sdate');
-  if (d) d.value = startDate;
-  _setEntryRecognized(true);
+// L4-UX 2 — the scan-result card. States: fresh (headline + why? + length
+// chips + phase strip + one-click Generate), stale (greyed + re-scan chip),
+// error (friendly engine-refusal banner, chips stay usable), done (success
+// line), no-match (start fresh / use a date).
+function _renderEntryScan() {
   const res = $('entry-scan-results');
-  if (res) {
-    const note = document.createElement('div');
-    note.style.cssText = 'font-size:11px;color:var(--green);margin-top:4px;';
-    note.textContent = `✓ Placed from your rides — plan starts ${startDate}`;
-    res.appendChild(note);
+  if (!res) return;
+  const es = window._entryScan;
+  if (!es || !es.data) { res.innerHTML = ''; return; }
+  const d = es.data;
+  const N = parseInt(d.proposal_weeks) || 0;
+
+  if (es.done) {
+    res.innerHTML = `<div style="font-size:12px;color:var(--green);font-weight:600;padding:8px 0;">&#10003; ${esc(es.doneNote || 'Plan generated from your rides.')}</div>`;
+    return;
   }
-  refreshPlanPreview();
+
+  if (!(N > 0)) {
+    let html = '';
+    if (d.capped) html += '<div style="font-size:10px;color:var(--text3);margin-bottom:4px;">Evidence window limited by your ride history.</div>';
+    html += _entryWhyRowsHtml(d.weeks || []);
+    html += `<div style="font-size:12px;margin-top:6px;">No qualifying weeks found &mdash; start fresh, or
+      <a href="#" style="color:var(--accent);font-weight:600;" onclick="useEntryDateInstead(); return false;">use a date instead</a>.</div>`;
+    res.innerHTML = html;
+    return;
+  }
+
+  const goal = ($('plan-goal') || {}).value || '';
+  const isEvent = _isEventGoal(goal);
+  const Y = isEvent ? (parseInt(d.plan_weeks) || es.selectedWeeks) : es.selectedWeeks;
+  const X = Math.min(N + 1, Y);
+  const K = Math.max(0, Y - N);
+  const endIso = isEvent ? (d.plan_end_date || '') : _entryEndDateIso(d.equivalent_start_date, Y);
+  const endFmt = _entryFmtDate(endIso);
+
+  let html = `<div id="entry-scan-card" class="${es.stale ? 'entry-card-stale' : ''}" style="border:1px solid var(--border);border-radius:8px;background:var(--surface2);padding:10px 12px;margin-top:2px;">`;
+
+  // The re-scan chip renders OUTSIDE the deadened action areas — clickable
+  // while everything else on a stale card is greyed (L4-UX 5).
+  if (es.stale) {
+    html += `<div style="margin-bottom:8px;"><span class="entry-rescan-chip" onclick="scanEntryRides()">&#9888; settings changed &mdash; re-scan</span></div>`;
+  }
+
+  // Friendly engine-refusal state (L4-UX 3): never a raw error/toast.
+  if (es.error) {
+    html += `<div id="entry-card-error" role="alert" style="margin-bottom:8px;padding:8px 10px;border:1.5px solid var(--red);border-radius:6px;background:rgba(239,68,68,0.08);">
+      <div style="font-size:12px;font-weight:700;color:var(--red);">This start leaves no trainable weeks &mdash; extend the plan or pick a later date.</div>
+      <div style="font-size:10.5px;color:var(--text2);margin-top:3px;">${esc(es.error)}</div>
+    </div>`;
+  }
+
+  html += `<div style="font-size:13px;font-weight:700;">Matched your last ${N} week${N === 1 ? '' : 's'} &mdash; you&rsquo;re at week ${X} of ${Y}</div>`;
+  if (d.capped) html += `<div style="font-size:10px;color:var(--text3);margin-top:2px;">Evidence window limited by your ride history.</div>`;
+
+  html += `<div style="margin-top:4px;"><a href="#" id="entry-why-toggle" style="font-size:11px;color:var(--accent);font-weight:600;" onclick="entryCardToggleWhy(); return false;">why? ${es.whyOpen ? '&#9652;' : '&#9662;'}</a></div>`;
+  if (es.whyOpen) {
+    const trend = _entryTssTrend(d.weeks);
+    html += `<div id="entry-why-body" style="margin-top:4px;padding:6px 8px;border-left:2px solid var(--border);">`;
+    if (trend) html += `<div style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px;">${esc(trend)}</div>`;
+    html += _entryWhyRowsHtml(d.weeks || []);
+    html += `</div>`;
+  }
+
+  // Consequence line in plan language: the non-event final week is the Z2
+  // consolidation week, so a 1-week remainder is named as exactly that.
+  let consequence;
+  if (K < 1) consequence = 'Generating now leaves no trainable weeks';
+  else if (isEvent) consequence = `Generating now leaves ${K} week${K === 1 ? '' : 's'} to your event`;
+  else if (K === 1) consequence = 'Generating now leaves 1 easy consolidation week';
+  else consequence = `Generating now leaves ${K} trainable weeks`;
+  html += `<div id="entry-consequence" style="font-size:11.5px;color:${K <= 1 ? 'var(--yellow)' : 'var(--text2)'};margin-top:6px;">${consequence}${endFmt ? ' &mdash; plan ends ' + endFmt : ''}.</div>`;
+
+  // Length chips — non-event only (an event plan's length is anchored to
+  // the event date). Selecting one re-renders the strip for that length
+  // from the SAME recognized position; it feeds plan_weeks on Generate.
+  if (!isEvent) {
+    const cur = parseInt(d.plan_weeks) || Y;
+    const presets = [cur];
+    for (const v of [16, 20, 26]) if (!presets.includes(v)) presets.push(v);
+    const minW = Math.max(4, N + 1);
+    let chips = '';
+    for (const v of presets) {
+      const on = v === Y;
+      chips += `<button type="button" class="btn" data-entry-chip="${v}" onclick="entryCardSelectWeeks(${v})"
+        style="padding:2px 10px;font-size:11px;font-weight:700;${on ? 'border-color:var(--accent);color:var(--accent);' : ''}">${v}w${v === cur ? ' (current)' : ''}</button>`;
+    }
+    chips += `<span style="display:inline-flex;align-items:center;gap:4px;margin-left:2px;">
+      <button type="button" class="btn" style="padding:0 8px;font-size:12px;line-height:20px;" ${Y <= minW ? 'disabled' : ''} onclick="entryCardSelectWeeks(${Y - 1})" title="One week shorter">&minus;</button>
+      <span style="font-size:11px;font-weight:700;min-width:30px;text-align:center;">${Y}w</span>
+      <button type="button" class="btn" style="padding:0 8px;font-size:12px;line-height:20px;" ${Y >= 52 ? 'disabled' : ''} onclick="entryCardSelectWeeks(${Y + 1})" title="One week longer">+</button>
+    </span>`;
+    html += `<div id="entry-length-chips" class="entry-card-actions" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px;">
+      <span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;">Plan length</span>${chips}</div>`;
+  }
+
+  // Phase-strip preview for the selected length, from the recognized position.
+  const phases = (es.stripCache || {})[Y];
+  html += `<div id="entry-phase-strip" style="margin-top:10px;">`;
+  html += phases ? _entryStripHtml(phases, N, endIso)
+                 : `<div style="font-size:10px;color:var(--text3);">Loading phase preview&hellip;</div>`;
+  html += `</div>`;
+
+  html += `<div class="entry-card-actions" style="display:flex;gap:10px;align-items:center;margin-top:10px;">
+    <button type="button" id="entry-card-generate" class="btn btn-primary" style="font-size:12px;" onclick="entryCardGenerate()">Generate &mdash; start at week ${X}</button>
+    <a href="#" style="font-size:11px;color:var(--accent);font-weight:600;" onclick="useEntryDateInstead(); return false;">Use a date instead</a>
+  </div>`;
+
+  html += `</div>`;
+  res.innerHTML = html;
+
+  // Kick the strip fetch for this length (sub-second: /api/plan/preview is
+  // pure phase math — no sampler; cached per length client-side).
+  if (!es.stale && !phases && es._stripReq !== Y) {
+    es._stripReq = Y;
+    _entryFetchStrip(Y).then(p => {
+      if (p && window._entryScan === es && es.selectedWeeks === Y && !es.done) _renderEntryScan();
+    });
+  }
+}
+
+function entryCardToggleWhy() {
+  const es = window._entryScan;
+  if (!es || !es.data) return;
+  es.whyOpen = !es.whyOpen;
+  _renderEntryScan();
+}
+
+function entryCardSelectWeeks(v) {
+  const es = window._entryScan;
+  if (!es || !es.data || es.stale || es.done) return;
+  const N = parseInt(es.data.proposal_weeks) || 0;
+  const w = Math.max(Math.max(4, N + 1), Math.min(52, parseInt(v) || 0));
+  if (!w || w === es.selectedWeeks) return;
+  es.selectedWeeks = w;
+  es.error = '';  // new length = new attempt; the old refusal no longer applies
+  _renderEntryScan();
+}
+
+// Strip data: the phase-split editor's own recommendation endpoint
+// (/api/plan/preview — same generate_phases the editor + Generate use),
+// called with the recognized start_date + candidate length.
+async function _entryFetchStrip(weeks) {
+  const es = window._entryScan;
+  if (!es || !es.data || !es.data.equivalent_start_date) return null;
+  try {
+    const goal = ($('plan-goal') || {}).value || 'general';
+    const params = new URLSearchParams({
+      goal, plan_weeks: String(weeks), start_date: es.data.equivalent_start_date,
+    });
+    if (_isEventGoal(goal) && ($('plan-edate') || {}).value) params.set('event_date', $('plan-edate').value);
+    const r = await fetch('/api/plan/preview?' + params.toString());
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (!d || !Array.isArray(d.phases)) return null;
+    es.stripCache = es.stripCache || {};
+    es.stripCache[weeks] = d.phases;
+    return d.phases;
+  } catch (_) { return null; }
+}
+
+// L4-UX 2 — horizontal phase strip: one segment per phase (width ∝ weeks,
+// per-phase week counts), entry-week hatching over the credited span, a
+// "you are here ▼" marker at the entry boundary, end date on the right.
+function _entryStripHtml(phases, elapsedWeeks, endIso) {
+  const total = (phases || []).reduce((s, p) => s + (p.weeks || 1), 0);
+  if (!total) return '';
+  const herePct = Math.max(0, Math.min(100, elapsedWeeks / total * 100));
+  let segs = '';
+  for (const p of phases) {
+    const w = p.weeks || 1;
+    const col = (typeof PHASE_COLORS !== 'undefined' && PHASE_COLORS[p.name]) || '#64748b';
+    const bg = String(col).indexOf('#') === 0 ? col + '26' : 'rgba(100,116,139,0.15)';
+    segs += `<div data-strip-phase="${esc(p.name)}" title="${esc(p.name)} &middot; ${w} week${w === 1 ? '' : 's'}"
+      style="flex:${w} 0 0;background:${bg};border-bottom:3px solid ${col};overflow:hidden;white-space:nowrap;font-size:8px;font-weight:700;color:${col};text-transform:uppercase;text-align:center;line-height:20px;">${esc(p.name)} ${w}w</div>`;
+  }
+  return `<div style="position:relative;padding-top:14px;">
+    <div data-strip-here style="position:absolute;top:0;left:${herePct}%;transform:translateX(-50%);font-size:9px;font-weight:700;color:var(--accent);white-space:nowrap;">you are here &#9660;</div>
+    <div style="display:flex;height:20px;border-radius:4px;overflow:hidden;position:relative;">
+      ${segs}
+      <div data-strip-elapsed style="position:absolute;left:0;top:0;bottom:0;width:${herePct}%;border-right:2px solid var(--accent);background:repeating-linear-gradient(-45deg, rgba(100,116,139,0.35) 0 4px, transparent 4px 8px);"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-top:2px;">
+      <span style="font-size:9px;color:var(--text3);">${elapsedWeeks}w credited</span>
+      <span data-strip-end style="font-size:9px;color:var(--text3);">ends ${esc(_entryFmtDate(endIso) || endIso || '')}</span>
+    </div>
+  </div>`;
+}
+
+// L4-UX 3 — one-click generate from the card: arm the recognized anchor +
+// selected length, then call generatePlan with the card as the error
+// surface. No second confirm dialog.
+async function entryCardGenerate() {
+  const es = window._entryScan;
+  if (!es || !es.data || es.stale || es.done || !(parseInt(es.data.proposal_weeks) > 0)) return;
+  const sd = $('plan-sdate');
+  if (sd) sd.value = es.data.equivalent_start_date || '';
+  _setEntryRecognized(true);
+  const goal = ($('plan-goal') || {}).value || '';
+  const pw = $('plan-weeks');
+  if (pw && !_isEventGoal(goal)) pw.value = es.selectedWeeks;
+  // Arming the form FROM the card is not a user settings change.
+  es.fingerprint = _entryScanFingerprint();
+  await generatePlan({ fromEntryCard: true });
 }
 
 function useEntryDateInstead() {
@@ -10656,6 +10959,10 @@ function _syncPhaseSplitError() {
 // onto the slider, then read it BACK off the slider for the preview call.
 // All downstream code touches `weeks` only after this round-trip.
 async function refreshPlanPreview() {
+  // L4-UX 5 — every goal/length/date change funnels through here: stale the
+  // scan card / clear a re-armed recognized backdate BEFORE the preview
+  // reads plan-sdate, so the right panel never previews a stale anchor.
+  try { _entryScanCheckStale(); } catch (_) {}
   const goal = $('plan-goal').value;
   const isEvent = _isEventGoal(goal);
   const eventDate = isEvent ? $('plan-edate').value : '';
@@ -11259,11 +11566,14 @@ function onTemplateChange() {
   if (typeof refreshPlanPreview === 'function') refreshPlanPreview();
 }
 
-async function generatePlan() {
+async function generatePlan(opts) {
+  opts = opts || {};
   // One build button: when a plan already exists, Generate REBUILDS it (subsumes
   // the old "Rebuild from scratch"). Confirm so a deliberate rebuild can't wipe
   // an adapted plan by accident — the plan otherwise updates itself.
-  if (window._planData && (window._planData.weeks || []).length) {
+  // L4-UX 3: the scan card's Generate is ONE click — the card itself already
+  // showed exactly what will be built (position, length, phases, end date).
+  if (!opts.fromEntryCard && window._planData && (window._planData.weeks || []).length) {
     if (!confirm('Rebuild your plan from your current settings and fitness?\n\nThis replaces the current plan. (Your plan already updates itself automatically after each sync and when you open this tab — you only need this after a goal, event-date, or availability change.)')) return;
   }
   // v3.2.0 phase-split editor: a mis-summing split never reaches the server —
@@ -11350,15 +11660,38 @@ async function generatePlan() {
     const res = await fetch('/api/plan/generate', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
     });
-    const d = await res.json();
-    if (d.error) {
-      $('plan-status').textContent = 'Error: ' + d.error;
+    const d = await res.json().catch(() => null);
+    if (!res.ok || !d || d.error) {
+      // Engine input rejections arrive as 400 {detail} (ValueError → 400 in
+      // app.py). Pre-fix a non-ok response fell through to "Plan generated!".
+      const msg = (d && (d.detail || d.error)) || ('Plan generate failed (HTTP ' + res.status + ')');
+      // L4-UX 3: when the click came from the scan card, the refusal renders
+      // INTO the card as a friendly state — never a raw error/toast.
+      if (opts.fromEntryCard && window._entryScan) {
+        window._entryScan.error = String(msg);
+        _renderEntryScan();
+        $('plan-status').textContent = '';
+        return;
+      }
+      $('plan-status').textContent = 'Error: ' + msg;
       $('plan-status').style.color = 'var(--red)';
       return;
     }
     $('plan-status').textContent = 'Plan generated!';
     $('plan-status').style.color = 'var(--green)';
     await renderPlanJSON(d.plan_json);
+    // L4-UX 4 — recognized-entry landing: scroll the grid to TODAY's week,
+    // highlight it, note "picked up at week X of Y". Never land at week 1.
+    if (body.entry_mode === 'recognized') {
+      try { _pgEntryLanding(d.plan_json); } catch (_) {}
+      if (opts.fromEntryCard && window._entryScan) {
+        const es = window._entryScan;
+        es.done = true;
+        es.doneNote = (_pgEntryNoteText(d.plan_json) || 'Plan generated') + ' — see the plan below.';
+        window._entryArm = { fp: _entryScanFingerprint() };
+        try { _renderEntryScan(); } catch (_) {}
+      }
+    }
     // 3.3.3 (owner): repaint the Availability Calendar from the FRESH plan.
     // Generate reseeds plan["availability"] server-side from the wizard's
     // per-day hours (explicit holiday/injury/illness blocks kept) — but
@@ -11986,6 +12319,42 @@ function pgRenderProgressHeader(plan, currentWeekIdx) {
   host.style.display = 'flex';
 }
 
+// ═══ 3.3.3 (L4-UX 4): recognized-entry landing ════════════════════════════
+// A backdated plan opens with elapsed rows — week 1 is history, not where
+// the rider is. After a recognized-entry generate we land on TODAY's week,
+// flash it, and say so in one line.
+function _pgEntryCurrentIdx(plan) {
+  const weeks = (plan && plan.weeks) || [];
+  const todayStr = new Date().toLocaleDateString('en-CA');
+  for (let i = 0; i < weeks.length; i++) {
+    const w = weeks[i];
+    if (w.start <= todayStr && w.end >= todayStr) return i;
+  }
+  return weeks.length ? weeks.length - 1 : -1;  // fall back to the LAST week, never week 1
+}
+function _pgEntryNoteText(plan) {
+  const weeks = (plan && plan.weeks) || [];
+  const idx = _pgEntryCurrentIdx(plan);
+  if (idx < 0) return '';
+  return `Picked up at week ${idx + 1} of ${weeks.length}`;
+}
+function _pgEntryLanding(plan) {
+  const idx = _pgEntryCurrentIdx(plan);
+  if (idx < 0) return;
+  const host = document.getElementById('plan-calendar');
+  if (!host) return;
+  const note = _pgEntryNoteText(plan);
+  if (note && !document.getElementById('pg-entry-note')) {
+    host.insertAdjacentHTML('afterbegin',
+      `<div id="pg-entry-note">${esc(note)} &mdash; earlier weeks are credited from your rides.</div>`);
+  }
+  const row = host.querySelector(`[data-pg-week-idx="${idx}"]`);
+  if (row) {
+    row.classList.add('pg-entry-week-flash');
+    try { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+  }
+}
+
 // Item 3 — auto-scroll the grid so the current week is in view on first
 // load. Guarded by window._pgDidAutoScroll so subsequent re-renders (e.g.
 // after a re-draw) don't yank the viewport every time.
@@ -12463,9 +12832,11 @@ function renderCalDay(d, wi, di, phaseKey, today) {
     const _restEventCls = (_restEvent && !isToday) ? ' cal-event-day' : '';
     // 3.3.3 (owner): label the green ring (see .cal-goal-badge CSS) — it was
     // being misread as the today marker. EVENT / PLAN END mirrors the class
-    // assignment's own goal-type branch.
+    // assignment's own goal-type branch. L4-UX 6 adds the hover tooltip:
+    // the green ring is the GOAL date; today is always the red ring.
+    const _restIsEventGoal = (_g && (_g.type === 'event_preparation' || _g.type === 'event'));
     const _restBadge = (_restEvent && !isToday)
-      ? `<div class="cal-goal-badge">${(_g && (_g.type === 'event_preparation' || _g.type === 'event')) ? 'EVENT' : 'PLAN END'}</div>` : '';
+      ? `<div class="cal-goal-badge" title="${_restIsEventGoal ? 'Event day — the green ring marks your event, not today' : 'Plan ends here — the green ring marks your goal date, not today'}">${_restIsEventGoal ? 'EVENT' : 'PLAN END'}</div>` : '';
     return `<div class="cal-day cal-rest cal-phase-${phaseKey}${isToday ? ' cal-today' : ''}${_restEventCls}" data-cs="rest" data-date="${d.date}">
       ${_restBadge}<div class="cal-rest-label" style="font-size:10px;font-weight:700;color:var(--text3);letter-spacing:0.05em;">REST</div>
     </div>`;
@@ -12558,9 +12929,11 @@ function renderCalDay(d, wi, di, phaseKey, today) {
   if (isEventDay && !isToday) stateCls += ' cal-event-day';
   // 3.3.3 (owner): label the green goal ring so it can't be misread as the
   // today marker (that's the red .cal-today ring). Text follows the same
-  // goal-type branch that decided isEventDay: EVENT / PLAN END.
+  // goal-type branch that decided isEventDay: EVENT / PLAN END. L4-UX 6
+  // adds the hover tooltip mirroring the rest-branch badge.
+  const _isEventGoalType = (_goal && (_goal.type === 'event_preparation' || _goal.type === 'event'));
   const goalBadge = (isEventDay && !isToday)
-    ? `<div class="cal-goal-badge">${(_goal && (_goal.type === 'event_preparation' || _goal.type === 'event')) ? 'EVENT' : 'PLAN END'}</div>` : '';
+    ? `<div class="cal-goal-badge" title="${_isEventGoalType ? 'Event day — the green ring marks your event, not today' : 'Plan ends here — the green ring marks your goal date, not today'}">${_isEventGoalType ? 'EVENT' : 'PLAN END'}</div>` : '';
   // F7c (v2.1) — paint intermediate B/C race days (A handled above; today wins).
   if (!isToday && !isEventDay && _goal && Array.isArray(_goal.events)) {
     const _ev = _goal.events.find(e => e && e.date === d.date && e.priority !== 'A');
@@ -13409,6 +13782,12 @@ function populatePlanFormFromGoal(goal) {
     if (races) parts.push(races + ' race' + (races > 1 ? 's' : ''));
     cfgEl.textContent = '⚙ ' + parts.join(' · ');
   }
+  // 3.3.3 (L4-UX 5): arm change-safety for the repopulated backdate — any
+  // later goal/length/event-date change clears it instead of silently
+  // riding a stale recognized start_date into the next Generate (kills the
+  // stale re-arm class, DIAG L4 hole b). Seeded AFTER every fingerprint
+  // field above is restored so the arm matches the restored form.
+  window._entryArm = goal.start_date ? { fp: _entryScanFingerprint(), src: 'plan' } : null;
   // v3.2.0 phase-split editor (A6): seed the stepper state from the saved
   // goal BEFORE the trailing refreshPlanPreview below, so the editor
   // repaints pinned to the plan's split (steppers + badge restored).

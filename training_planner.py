@@ -2585,6 +2585,13 @@ def generate_phases(goal: Goal, current_ctl: float,
 
 ENTRY_VOLUME_GATE = 0.6        # week qualifies at actual ≥ 0.6 × week target
 ENTRY_MISS_PER = 4             # tolerate 1 non-qualifying week per 4 (illness)
+# G1 (v3.3.3 L4): trainable-remainder reservation for NON-EVENT scans. A
+# placement at week N-1/N leaves only the Z2 consolidation week — a pointless
+# plan (DIAG L4 scenario D2: 11 empty elapsed rows + one easy week); 4 is the
+# smallest useful build+consolidate block. Event goals are exempt: their
+# remaining runway is calendar-anchored at the target (H1 recomputes the week
+# budget from anchor→target), so scan credit never eats their future weeks.
+MIN_REMAINING_WEEKS = 4
 
 
 def _entry_week_targets(phases: list) -> list[dict]:
@@ -2665,19 +2672,32 @@ def recognize_entry(goal: "Goal", ride_loads: list, current_ctl: float = 50.0) -
     the recognizer is never silently re-run — B-LOCKED-7).
 
     ``goal`` is the TODAY-anchored form goal (no start_date). Candidates c run
-    1..min(runway−1, archive_span_weeks); credit = the longest qualifying
-    streak ending at the most recent whole week (descending scan, first
-    accepted c wins). A week qualifies at actual ≥ 0.6 × the hypothesis's
-    week-level target; 1 non-qualifying week per 4 is tolerated, 2 consecutive
-    misses end the streak.
+    1..min(runway−MIN_REMAINING_WEEKS, archive_span_weeks) for non-event goals
+    (G1: the scan must leave a trainable remainder — events keep the legacy
+    runway−1 cap, their remainder is calendar-anchored at the target); credit
+    = the longest qualifying streak ending at the most recent whole week
+    (descending scan, first accepted c wins). A week qualifies at actual ≥
+    0.6 × the hypothesis's week-level target; 1 non-qualifying week per 4 is
+    tolerated, 2 consecutive misses end the streak.
 
-    Returns {proposal_weeks, equivalent_start_date, capped, weeks:[{index,
-    window_start, actual_tss, target_tss, qualifies, shape_note}]}."""
+    Returns {proposal_weeks, equivalent_start_date, capped, weeks_remaining,
+    weeks:[{index, window_start, actual_tss, target_tss, qualifies,
+    shape_note}]}."""
     today = date.today()
     loads, easy, total, earliest = _entry_week_actuals(ride_loads, today)
     archive_span = ((today - earliest).days // 7) if earliest else 0
     runway_weeks = goal.weeks_available()
-    c_max = min(runway_weeks - 1, archive_span)
+    _is_event = (goal.goal_type in ("event", "event_preparation")
+                 and goal.target_date is not None)
+    if _is_event:
+        # Credit never eats an event's future runway (H1 recomputes the week
+        # budget from anchor→target) — legacy cap stands.
+        c_max = min(runway_weeks - 1, archive_span)
+    else:
+        # G1 (v3.3.3 L4): reserve MIN_REMAINING_WEEKS trainable weeks (floor
+        # 0) so "place me from my rides" can never drop the rider at the
+        # plan's final weeks (elapsed grid + Z2 consolidation week only).
+        c_max = max(0, min(runway_weeks - MIN_REMAINING_WEEKS, archive_span))
     capped = archive_span < (runway_weeks - 1)
 
     def _rows_for(c: int, targets: list) -> list[dict]:
@@ -2703,7 +2723,7 @@ def recognize_entry(goal: "Goal", ride_loads: list, current_ctl: float = 50.0) -
     for c in range(c_max, 0, -1):
         hyp_start = today - timedelta(days=7 * c)
         hyp_weeks = goal.plan_weeks
-        if goal.goal_type in ("event", "event_preparation") and goal.target_date:
+        if _is_event:
             # H1 parity: the week budget is derived from the anchor→target
             # span, never trusted from the today-anchored form value.
             hyp_weeks = max(4, -(-(goal.target_date - hyp_start).days // 7))
@@ -2713,8 +2733,14 @@ def recognize_entry(goal: "Goal", ride_loads: list, current_ctl: float = 50.0) -
             targets = _entry_week_targets(generate_phases(hyp, current_ctl))
         except (ValueError, AssertionError):
             continue  # unviable hypothesis geometry — not a scan failure
-        if len(targets) <= c:
-            continue  # no schedulable week would remain
+        # G1 (v3.3.3 L4): the old guard here only rejected candidates with
+        # ZERO schedulable weeks left — i.e. it ALLOWED entry at the last
+        # week. Non-event candidates must keep MIN_REMAINING_WEEKS (a
+        # degenerate split emitting fewer rows than c_max assumed is caught
+        # here too); events keep the legacy ≥1 floor — a final-week entry
+        # there IS the taper week, which is legitimate.
+        if len(targets) - c < (1 if _is_event else MIN_REMAINING_WEEKS):
+            continue
         rows = _rows_for(c, targets)
         if not widest_rows:
             widest_rows = rows  # widest evidence, shown when nothing qualifies
@@ -2725,12 +2751,16 @@ def recognize_entry(goal: "Goal", ride_loads: list, current_ctl: float = 50.0) -
                 "proposal_weeks": c,
                 "equivalent_start_date": hyp_start.isoformat(),
                 "capped": capped,
+                # G1 (v3.3.3 L4): schedulable weeks left after the credited
+                # entry — the UI narrates it next to the proposal.
+                "weeks_remaining": len(targets) - c,
                 "weeks": rows,
             }
     return {
         "proposal_weeks": 0,
         "equivalent_start_date": None,
         "capped": capped,
+        "weeks_remaining": runway_weeks,  # fresh start ⇒ full runway
         "weeks": widest_rows,
     }
 
@@ -6141,6 +6171,23 @@ def generate_plan(
                 f"Start date {_entry_sd.isoformat()} is on or after the "
                 f"target date {goal.target_date.isoformat()} — no runway left."
             )
+        # G2 (v3.3.3 L4): with NO target date there is no future anchor — the
+        # plan spans start_date .. start_date + weeks_available()×7, so a
+        # backdate ≥ that span used to be accepted silently and persisted a
+        # plan 100% in the past (zero sessions anywhere, DIAG L4 scenario E).
+        # Refuse when not even one schedulable (non-elapsed) week remains —
+        # same user-facing ValueError path as F4b above (app.py → 400).
+        # Short 1..3-week remainders stay ALLOWED; the UI warns instead.
+        if goal.target_date is None:
+            _weeks_total = goal.weeks_available()
+            _weeks_elapsed = (date.today() - _entry_sd).days // 7
+            if _weeks_total - _weeks_elapsed < 1:
+                raise ValueError(
+                    f"Start date {_entry_sd.isoformat()} is {_weeks_elapsed} "
+                    f"weeks back, but the plan is only {_weeks_total} weeks "
+                    "long — every week would already be in the past. Move "
+                    "\"training since\" closer to today or lengthen the plan."
+                )
     # F4d (v2.5.0, SM4): the A race IS the goal (target_date + event_* scalars);
     # a second priority-A entry in events[] was silently dropped by every
     # consumer. Honest refusal beats silent data loss; app.py surfaces 400.

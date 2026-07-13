@@ -206,8 +206,10 @@ def test_archive_shorter_than_runway_capped():
 def test_archive_covering_runway_not_capped():
     res = _scan(_goal(plan_weeks=5), _rides({w: 500 for w in range(1, 9)}))
     assert res["capped"] is False
-    # Credit still leaves ≥1 schedulable week: c ≤ runway−1.
-    assert res["proposal_weeks"] == 4
+    # G1 (v3.3.3 L4): credit reserves a trainable remainder —
+    # c ≤ runway−MIN_REMAINING_WEEKS (was runway−1).
+    assert res["proposal_weeks"] == 5 - tp.MIN_REMAINING_WEEKS
+    assert res["weeks_remaining"] == tp.MIN_REMAINING_WEEKS
 
 
 # ── partial current week — rides today never count toward a week ────────────
@@ -230,7 +232,7 @@ def test_partial_current_week_excluded():
 def test_response_shape_and_window_math():
     res = _scan(_goal(), _rides({w: 500 for w in range(1, 4)}))
     assert set(res.keys()) == {"proposal_weeks", "equivalent_start_date",
-                               "capped", "weeks"}
+                               "capped", "weeks_remaining", "weeks"}
     c = res["proposal_weeks"]
     assert c == 3
     for k, row in enumerate(res["weeks"], start=1):

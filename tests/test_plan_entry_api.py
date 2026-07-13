@@ -296,9 +296,15 @@ class TestEntryScanEndpoint(unittest.TestCase):
                             params={"goal": "general", "plan_weeks": 12})
         self.assertEqual(r.status_code, 200, r.text)
         d = r.json()
+        # 3.3.3 (L4-UX 2): + the scan-result card fields (plan_weeks /
+        # entry_week / plan_end_date / goal) — app-side date math on top of
+        # what recognize_entry computed (tests/test_333_l4_ux.py pins their
+        # values; this stays the canonical key-set pin).
         self.assertEqual(set(d.keys()), {"proposal_weeks",
                                          "equivalent_start_date", "capped",
-                                         "weeks"})
+                                         "weeks_remaining", "weeks",
+                                         "plan_weeks", "entry_week",
+                                         "plan_end_date", "goal"})
         self.assertEqual(d["proposal_weeks"], 4)
         self.assertEqual(d["equivalent_start_date"],
                          (date.today() - timedelta(days=28)).isoformat())

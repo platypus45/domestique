@@ -1,5 +1,29 @@
 # Changelog
 
+## v3.3.3 — Starting mid-season actually works now (2026-07-13)
+
+- **"Find my week from recent rides" no longer parks you at the finish
+  line.** The scan always credited the maximum — week 11 of 12 — leaving one
+  easy wind-down week and an apparently empty future. It now reserves at
+  least 4 trainable weeks, and a start date that would leave nothing to ride
+  is refused with a clear message instead of generating an empty plan.
+- **The scan is a real flow now.** Live progress while scanning; a result
+  card that says where you are ("Matched your last 8 weeks — you're at week
+  9 of 12") with a "why?" breakdown; a consequence line; plan-length choices
+  (16/20/26 weeks or custom) each showing an instant phase-strip preview
+  from your position — you are here, what remains, when it ends; one-click
+  Generate; and afterwards the plan opens on TODAY, not week 1.
+- **Changing your goal or plan length visibly resets the scan** — the old
+  start date can never silently ride along again.
+- **The green ring on the calendar is the plan's last day** (now labelled) —
+  it was never "today"; today keeps its own marker.
+- **Under-distributed custom phase splits (11 of 12 weeks) now show a
+  prominent error** at the bottom of the editor and block Generate until the
+  weeks add up.
+- **Your wizard hours now seed the availability calendar** — saying "1h per
+  day" no longer leaves the calendar at its old 2h.
+
+
 ## v3.3.2 — Hotfix: opening the Training Plan tab could flatten your plan (2026-07-12)
 
 Follow-up to this morning's v3.3.1, again from the same tester's report —

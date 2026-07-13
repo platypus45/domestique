@@ -10503,8 +10503,20 @@ def recalculate_plan(
     weeks_remaining = event_readiness["weeks_remaining"] or len(future_weeks)
     taper_days = event_readiness["taper_days"]
 
-    # Determine if taper should auto-lock
-    taper_locked = event_readiness["taper_action"] in ("full_taper_12d", "compressed_taper_8d", "sharpening_5d")
+    # Determine if taper should auto-lock.
+    # 3.3.2 (Lapo #2, tab-visit flatten): gate on goal_type EXACTLY like the
+    # phase generator (tp "Only create taper for event/ctl goals"). Every
+    # goal persists event_date = target_date, and for non-event goals the
+    # readiness pct formula sits in the needs_adjustment band at ANY CTL —
+    # so once inside 20 days of an FTP/general goal's target, every weekly
+    # recalc taper-locked and rebuilt the WHOLE remaining plan as one taper
+    # phase (all-Z2 weeks, overview showing only "Taper"). A goal type the
+    # generator would never taper must never taper-lock a recalc either.
+    taper_locked = (
+        goal.goal_type in ("event", "ctl")
+        and event_readiness["taper_action"] in (
+            "full_taper_12d", "compressed_taper_8d", "sharpening_5d")
+    )
 
     # 5. Re-generate phases for remaining time
     adjusted_goal = Goal(

@@ -12651,6 +12651,12 @@ def _regenerate_plan_dict(
         for w in all_weeks
     ]
     plan_dict["regenerated"] = datetime.now().isoformat()
+    # 3.3.2 (Lapo #2): a regen is as fresh as a recalc — stamp recalc_date
+    # too. The shallow copy carried the OLD stamp verbatim, so a user whose
+    # recalc_date was stale (3.3.0 storm history) re-armed the auto-recalc
+    # gate on every Plan-tab visit no matter how often they regenerated —
+    # the visit then rebuilt (and, pre-fix, taper-flattened) their fresh plan.
+    plan_dict["recalc_date"] = datetime.now().isoformat()
     plan_dict["regen_info"] = regen_info
     # Phase-split editor (v3.2.0, A1): the shallow copy above would carry a
     # STALE phase_weeks_status from the old plan while the phases were just
@@ -17050,26 +17056,35 @@ def api_plan_auto_recalc():
                     last_dt = last_dt.replace(tzinfo=None)
                 days_since = (datetime.now() - last_dt).days
                 if days_since < 7:
-                    # Still fresh — return event readiness only
-                    training = cached("training", get_today_metrics)
-                    current_ctl = training.get("ctl") or 30
-                    g = plan.get("goal", {})
+                    # Still fresh — return event readiness only.
+                    # 3.3.2 (Lapo #2): readiness is DECORATIVE on this branch —
+                    # its own try, so a readiness/metrics exception can never
+                    # convert a FRESH verdict into a full plan rebuild (the old
+                    # shared except turned any ValueError/TypeError here into a
+                    # silent every-visit recalc).
                     readiness = {}
-                    if g.get("event_date"):
-                        goal = tp.Goal(
-                            goal_type=g.get("type", "general"),
-                            target_date=date.fromisoformat(g["event_date"]),
-                            event_name=g.get("event_name", ""),
-                            event_km=g.get("event_km", 0),
-                            event_climb_m=g.get("event_climb", 0),
-                            event_type=g.get("event_type", "granfondo"),
-                            hours_per_week=g.get("hours_per_week", 8),
-                            longest_ride_h_90d=g.get("longest_ride_h_90d"),
-                            last_ftp_test_date=g.get("last_ftp_test_date"),
-                        )
-                        if goal.longest_ride_h_90d is None:
-                            goal.longest_ride_h_90d = _longest_ride_h_90d()
-                        readiness = tp.compute_event_readiness(goal, current_ctl)
+                    try:
+                        training = cached("training", get_today_metrics)
+                        current_ctl = training.get("ctl") or 30
+                        g = plan.get("goal", {})
+                        if g.get("event_date"):
+                            goal = tp.Goal(
+                                goal_type=g.get("type", "general"),
+                                target_date=date.fromisoformat(g["event_date"]),
+                                event_name=g.get("event_name", ""),
+                                event_km=g.get("event_km", 0),
+                                event_climb_m=g.get("event_climb", 0),
+                                event_type=g.get("event_type", "granfondo"),
+                                hours_per_week=g.get("hours_per_week", 8),
+                                longest_ride_h_90d=g.get("longest_ride_h_90d"),
+                                last_ftp_test_date=g.get("last_ftp_test_date"),
+                            )
+                            if goal.longest_ride_h_90d is None:
+                                goal.longest_ride_h_90d = _longest_ride_h_90d()
+                            readiness = tp.compute_event_readiness(goal, current_ctl)
+                    except Exception:  # noqa: BLE001 — decorative readiness only
+                        _log.exception("auto-recalc: fresh-branch readiness failed (returning fresh)")
+                        readiness = {}
                     return {"action": "fresh", "days_since_recalc": days_since, "event_readiness": readiness}
             except (ValueError, TypeError):
                 pass

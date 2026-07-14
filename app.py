@@ -133,6 +133,7 @@ import config
 import db
 import zones as _zones_mod
 import training_planner as tp  # module-level: every plan endpoint uses tp.plan_write_lock()
+import continuous_policy as cpol  # 3.4.0 W2 — continuous-mode deload + rotation policy
 # v1.6.1 — register _log_error as the planner's observability hook so any
 # planner-internal failure (generate_plan phase build, reforecast, match_zwo
 # library scan) lands in the shared diag ring buffer. Hook indirection
@@ -10947,6 +10948,371 @@ def api_retest_nudge_snooze():
     return {"ok": True, "until": until}
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# 3.4.0 W2 — CONTINUOUS MODE (IP_CONTINUOUS_MODE amendments C + D)
+#
+# C — deload advance: the already-computed monotony/ACWR series (the SAME
+#     daily-TSS series the on-track band reads, and the SAME weekly ACWR
+#     proxy the planner's G4 gate reads) now PULL the scheduled deload into
+#     the current week of a continuous plan when they trip (monotony ≥ 2.0
+#     or ACWR > 1.5 — grill P4). The conversion rides the extend/refit
+#     machinery: tp.plan_week(is_stepback=True) rebuilds the week's shape,
+#     tp._refit_session_frozen freezes past/done/user-touched days, and
+#     tp.match_zwo files the remaining slots. Surfaced on /api/today-session
+#     as a `deload_advance` chip with a revert endpoint mirroring the DFA
+#     auto-swap pattern (FIX-CONTRACT C6): revert restores the snapshot and
+#     latches the week against re-triggering.
+#
+# D — rotation policy: continuous_policy.suggest_today_family (hermetic fn)
+#     exposed as `continuous_suggestion: {family, reason}` on
+#     /api/today-session — additive, continuous goals only.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _plan_is_continuous(plan: "dict | None") -> bool:
+    g = (plan or {}).get("goal") or {}
+    return str(g.get("type", g.get("goal_type", "")) or "") == "continuous"
+
+
+def _ride_tiz_seconds(r: dict) -> dict:
+    """Per-ride time-in-zone seconds {z1..z7}, via the same envelope →
+    zones.power → full-ride chain _polarized_actual_from_rides walks."""
+    tiz = r.get("time_in_zone")
+    if not tiz:
+        zp = (r.get("zones") or {}).get("power") or {}
+        if zp:
+            tiz = {f"z{i}": int(zp.get(f"Z{i}") or 0) for i in range(1, 8)}
+    if not tiz:
+        try:
+            tiz = (_load_full_ride(r) or {}).get("time_in_zone") or {}
+        except Exception:  # noqa: BLE001
+            tiz = {}
+    return tiz if isinstance(tiz, dict) else {}
+
+
+def _days_since_last_anaerobic(rides: list[dict], today: date,
+                               window_days: int = 28) -> "int | None":
+    """Days since the last ride with ≥ ANAEROBIC_Z67_MIN_S of Z6+Z7 time
+    (the sprint contract's t150 bar). None = nothing on record in window."""
+    cutoff = (today - timedelta(days=window_days)).isoformat()
+    newest: "str | None" = None
+    for r in rides or []:
+        d = _ride_started_local_iso_date(r) or ""
+        if not d or d < cutoff or d > today.isoformat():
+            continue
+        if newest is not None and d <= newest:
+            continue
+        tiz = _ride_tiz_seconds(r)
+        z67 = float((tiz.get("z6") or 0) + (tiz.get("z7") or 0))
+        if z67 >= cpol.ANAEROBIC_Z67_MIN_S:
+            newest = d
+    if newest is None:
+        return None
+    try:
+        return (today - date.fromisoformat(newest)).days
+    except ValueError:
+        return None
+
+
+_ANAEROBIC_CONTENT_CLASSES = frozenset({"anaerobic", "neuromuscular", "sprint"})
+_LOW_AEROBIC_SESSION_TYPES = frozenset({"recovery", "z2", "long_z2"})
+
+
+def _continuous_family_deficits(week_json: "dict | None", rides: list[dict],
+                                today: date) -> dict:
+    """This week's planned-minus-actual zone-rail minutes per stimulus family.
+
+    Planned side: each session's minutes are split over the families using
+    its matched library row's Z1%..Z6% zone shares (the honest "zone rail" —
+    a 60min VO2 session is NOT 60 high-aerobic minutes); sessions without a
+    matched row fall back to their session_type's family for the whole
+    duration. Actual side: ride time_in_zone (z1+z2 | z3+z4+z5 | z6+z7).
+    Positive deficit = still owed this week. Advisory precision only.
+    """
+    planned = {f: 0.0 for f in cpol.FAMILIES}
+    actual = {f: 0.0 for f in cpol.FAMILIES}
+    if not week_json:
+        return {f: 0 for f in cpol.FAMILIES}
+    try:
+        lib_by_file = {row.get("File"): row for row in tp.load_workout_library()}
+    except Exception:  # noqa: BLE001
+        lib_by_file = {}
+    for s in week_json.get("sessions", []):
+        st = s.get("session_type") or ""
+        dur = float(s.get("duration_min") or 0)
+        if st == "rest" or dur <= 0:
+            continue
+        row = lib_by_file.get(s.get("zwo_file") or "")
+        zshares = [float(row.get(f"Z{i}%") or 0) for i in range(1, 7)] if row else []
+        if row and sum(zshares) > 0:
+            planned[cpol.FAMILY_LOW] += dur * (zshares[0] + zshares[1]) / 100.0
+            planned[cpol.FAMILY_HIGH] += dur * (zshares[2] + zshares[3] + zshares[4]) / 100.0
+            planned[cpol.FAMILY_ANAEROBIC] += dur * zshares[5] / 100.0
+            continue
+        cc = ""
+        try:
+            cc = tp._content_class_for_zwo(s.get("zwo_file") or "") or ""
+        except Exception:  # noqa: BLE001
+            cc = ""
+        if cc in _ANAEROBIC_CONTENT_CLASSES or st == "sprint":
+            planned[cpol.FAMILY_ANAEROBIC] += dur
+        elif st in _LOW_AEROBIC_SESSION_TYPES:
+            planned[cpol.FAMILY_LOW] += dur
+        else:
+            planned[cpol.FAMILY_HIGH] += dur
+    w_start = week_json.get("start") or ""
+    for r in rides or []:
+        d = _ride_started_local_iso_date(r) or ""
+        if not d or d < w_start or d > today.isoformat():
+            continue
+        tiz = _ride_tiz_seconds(r)
+        if not tiz:
+            continue
+        actual[cpol.FAMILY_LOW] += float((tiz.get("z1") or 0) + (tiz.get("z2") or 0)) / 60.0
+        actual[cpol.FAMILY_HIGH] += float(
+            (tiz.get("z3") or 0) + (tiz.get("z4") or 0) + (tiz.get("z5") or 0)) / 60.0
+        actual[cpol.FAMILY_ANAEROBIC] += float(
+            (tiz.get("z6") or 0) + (tiz.get("z7") or 0)) / 60.0
+    return {f: int(round(planned[f] - actual[f])) for f in cpol.FAMILIES}
+
+
+def _continuous_today_suggestion(plan: dict, sleep: dict, training: dict,
+                                 rides: list[dict],
+                                 today: "date | None" = None) -> dict:
+    """Amendment D wiring: assemble the policy-fn inputs from stored state."""
+    today = today or date.today()
+    today_iso = today.isoformat()
+    cur = next((w for w in plan.get("weeks", [])
+                if (w.get("start") or "") <= today_iso <= (w.get("end") or "")),
+               None)
+    return cpol.suggest_today_family(
+        focus_pref=str((plan.get("goal") or {}).get("focus") or "both"),
+        deficits=_continuous_family_deficits(cur, rides, today),
+        readiness={
+            "ln_rmssd_7d": sleep.get("ln_rmssd_7d"),
+            "swc_lower": sleep.get("swc_lower"),
+            "swc_upper": sleep.get("swc_upper"),
+            "tsb": training.get("tsb"),
+        },
+        days_since_last_anaerobic=_days_since_last_anaerobic(rides, today),
+        # A deload week (scheduled OR just advanced by amendment C) outranks
+        # every hard rung — the suggestion must never contradict the deload.
+        deload_week=bool((cur or {}).get("is_stepback")),
+    )
+
+
+def _deload_chip_payload(rec: dict) -> dict:
+    """The chip-sized view of a deload_advance record (no week snapshot)."""
+    return {k: rec.get(k) for k in
+            ("advanced_on", "week_num", "trigger", "reason", "refit_days",
+             "reverted")}
+
+
+def _continuous_deload_signals(plan: dict, rides: list[dict],
+                               today: date) -> "tuple[float | None, float]":
+    """(monotony, acwr) from the SAME series the rest of the app computes:
+    the on-track band's 7-day daily-TSS window and the planner G4 gate's
+    last-completed-week actual/planned ratio."""
+    monotony = cpol.foster_monotony(_daily_tss_last7(rides, today))
+    dto_weeks = []
+    for w in plan.get("weeks", []):
+        try:
+            dto_weeks.append(tp.PlannedWeek(
+                week_num=w["week_num"], start=date.fromisoformat(w["start"]),
+                end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
+                tss_target=w.get("tss_target", 0),
+                is_stepback=w.get("is_stepback", False), sessions=[],
+            ))
+        except (KeyError, ValueError, TypeError):
+            continue
+    ride_rows = []
+    for r in rides or []:
+        d = _ride_started_local_iso_date(r) or ""
+        if not d:
+            continue
+        ride_rows.append({"date": d, "tss": (
+            r.get("tss") or (r.get("summary") or {}).get("tss")
+            or (r.get("parsed_stats") or {}).get("tss") or 0)})
+    try:
+        acwr = tp._last_completed_week_acwr(dto_weeks, ride_rows)
+    except Exception:  # noqa: BLE001
+        acwr = 0.0
+    return monotony, acwr
+
+
+def _maybe_advance_continuous_deload(plan: dict, json_path: Path,
+                                     today: "date | None" = None) -> "dict | None":
+    """Amendment C: convert the CURRENT continuous week to the deload shape
+    when monotony/ACWR trip. Idempotent per week (latched via the
+    plan["deload_advance"] record, which a revert also latches). Returns the
+    chip payload when a deload advance is active for the current week."""
+    today = today or date.today()
+    weeks_json = plan.get("weeks") or []
+    today_iso = today.isoformat()
+    cur_idx = next((i for i, w in enumerate(weeks_json)
+                    if (w.get("start") or "") <= today_iso <= (w.get("end") or "")),
+                   -1)
+    if cur_idx < 0:
+        return None
+    cur = weeks_json[cur_idx]
+    rec = plan.get("deload_advance") or {}
+    if rec and rec.get("week_num") == cur.get("week_num"):
+        # Already advanced (chip stays up) or reverted (week latched).
+        return None if rec.get("reverted") else _deload_chip_payload(rec)
+    # Never two deloads back-to-back: current already a deload, the week
+    # just ridden was one, or the NEXT week is the scheduled one (relief is
+    # ≤7 days out — advancing would stack deload-on-deload).
+    if cur.get("is_stepback"):
+        return None
+    if cur_idx > 0 and weeks_json[cur_idx - 1].get("is_stepback"):
+        return None
+    if cur_idx + 1 < len(weeks_json) and weeks_json[cur_idx + 1].get("is_stepback"):
+        return None
+    rides = _load_all_rides_safe()
+    monotony, acwr = _continuous_deload_signals(plan, rides, today)
+    trip = cpol.deload_trigger(monotony, acwr)
+    if not trip:
+        return None
+    return _advance_continuous_deload(plan, json_path, cur_idx, trip, today)
+
+
+def _advance_continuous_deload(plan: dict, json_path: Path, cur_idx: int,
+                               trip: dict, today: date) -> "dict | None":
+    """Convert plan["weeks"][cur_idx] to the deload shape via the machinery:
+    tp.plan_week(is_stepback=True) skeleton (×0.72 TSS, easy content) spliced
+    over the remaining non-frozen days + tp.match_zwo for files. Writes the
+    plan atomically and stamps the revertible deload_advance record."""
+    weeks_json = plan.get("weeks") or []
+    cur_json = weeks_json[cur_idx]
+    goal = _goal_from_plan_dict(plan.get("goal", {}) or {})
+    try:
+        cur_dto = tp.PlannedWeek(
+            week_num=cur_json["week_num"],
+            start=date.fromisoformat(cur_json["start"]),
+            end=date.fromisoformat(cur_json["end"]),
+            phase=cur_json.get("phase", "continuous"),
+            tss_target=cur_json.get("tss_target", 0),
+            is_stepback=cur_json.get("is_stepback", False),
+            sessions=[_planned_session_from_json(s)
+                      for s in cur_json.get("sessions", [])],
+        )
+    except (KeyError, ValueError, TypeError):
+        return None
+    # Pool-collapse breaker — same fail-closed rule as the extend append
+    # (3.3.1): a cache fault must degrade (skip the advance), not destroy.
+    library = tp.load_workout_library()
+    _collapse = tp._pool_collapse_reason(tp._build_pool_indexes(library), library)
+    if _collapse:
+        _log.error("E_DELOAD_ADVANCE_POOL_COLLAPSE: skipped — %s", _collapse)
+        return None
+    budget = tp.get_budget_for_phase("continuous")
+    phase = tp.Phase(
+        name="continuous", start=cur_dto.start, end=cur_dto.end, weeks=1,
+        focus="deload (advanced on load trigger)",
+        weekly_tss_target=float(cur_dto.tss_target or 0),
+        z2_pct=budget.polarized_target.get("z1z2_pct", 78),
+        hit_per_week=budget.hit_count_max, session_types=[],
+    )
+    # Deterministic per (week, trigger) — re-running the same advance cannot
+    # re-roll picks (pinned-seeds contract, mirrors _apply_refit_to_plan).
+    salt_basis = f"deload:{cur_dto.start.isoformat()}:{cur_dto.week_num}:{trip['trigger']}"
+    seed_salt = int(hashlib.sha1(salt_basis.encode()).hexdigest()[:12], 16)
+    prev_sessions = None
+    if cur_idx > 0:
+        try:
+            prev_sessions = [_planned_session_from_json(s)
+                             for s in weeks_json[cur_idx - 1].get("sessions", [])]
+        except (KeyError, ValueError, TypeError):
+            prev_sessions = None
+    pw = tp.plan_week(cur_dto.week_num, cur_dto.start, phase, goal, True,
+                      prev_week_sessions=prev_sessions, seed_salt=seed_salt)
+    new_by_day = {s.day: s for s in pw.sessions}
+    used_names = {s.get("zwo_name") for w in weeks_json
+                  for s in w.get("sessions", []) if s.get("zwo_name")}
+    original_week = json.loads(json.dumps(cur_json))  # JSON-safe deep copy
+    refit_days: list[str] = []
+    for off, dto in enumerate(cur_dto.sessions):
+        if getattr(dto, "session_type", "") == "ftp_test":
+            continue  # protocol day survives (extend-path parity)
+        if getattr(dto, "session_type", "") == "rest":
+            continue  # a deload only makes days EASIER — never adds a ride
+        if tp._refit_session_frozen(dto, today):
+            continue  # past / done / user-touched days stay verbatim
+        repl = new_by_day.get(getattr(dto, "day", None))
+        if repl is None:
+            continue
+        if repl.session_type not in ("rest", "recovery"):
+            tp.match_zwo(repl, library, week_num=cur_dto.week_num, day_idx=off,
+                         used_names=used_names, plan_start_date=cur_dto.start,
+                         seed_salt=seed_salt)
+        cur_dto.sessions[off] = repl
+        refit_days.append(repl.day.isoformat())
+    if not refit_days:
+        return None  # week effectively over — nothing left to unload
+    cur_json["sessions"] = [_planned_session_to_json(s) for s in cur_dto.sessions]
+    cur_json["is_stepback"] = True
+    cur_json["tss_target"] = pw.tss_target  # ×0.72 (Issurin unload band)
+    rec = {
+        "advanced_on": today.isoformat(),
+        "week_num": cur_dto.week_num,
+        "trigger": trip,
+        "reason": trip.get("reason", ""),
+        "refit_days": refit_days,
+        "reverted": False,
+        "original_week": original_week,
+    }
+    plan["deload_advance"] = rec
+    tp.atomic_write_plan(json_path, plan)
+    _log.info(
+        f"EVENT=continuous_deload_advanced week={cur_dto.week_num} "
+        f"trigger={trip['trigger']} value={trip['value']} days={len(refit_days)}"
+    )
+    return _deload_chip_payload(rec)
+
+
+@app.post("/api/plan/continuous/deload-revert")
+async def api_continuous_deload_revert(request: Request):
+    """Revert affordance for the advanced deload (mirrors the DFA auto-swap
+    revert): restores the snapshot for the REMAINING days of the week (past
+    days keep what was actually ridden), un-flags the stepback, and latches
+    the week so the trigger cannot re-fire until next week."""
+    try:
+        _ = await _get_json_body(request)  # body optional — accept empty POST
+    except Exception:  # noqa: BLE001
+        pass
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"reverted": False, "reason": "no_plan"}, 404)
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+        rec = plan.get("deload_advance") or {}
+        if not rec or rec.get("reverted"):
+            return {"reverted": False, "reason": "nothing_to_revert"}
+        today = date.today()
+        orig = rec.get("original_week") or {}
+        wj = next((w for w in plan.get("weeks", [])
+                   if w.get("week_num") == rec.get("week_num")), None)
+        if wj is None or (wj.get("end") or "") < today.isoformat():
+            return {"reverted": False, "reason": "week_passed"}
+        by_day = {s.get("day"): s for s in orig.get("sessions", [])}
+        wj["sessions"] = [
+            (by_day.get(sj.get("day"), sj)
+             if (sj.get("day") or "") >= today.isoformat() else sj)
+            for sj in wj.get("sessions", [])
+        ]
+        wj["is_stepback"] = bool(orig.get("is_stepback", False))
+        wj["tss_target"] = orig.get("tss_target", wj.get("tss_target"))
+        rec["reverted"] = True
+        rec["reverted_on"] = today.isoformat()
+        plan["deload_advance"] = rec
+        tp.atomic_write_plan(json_path, plan)
+        _log.info(f"EVENT=continuous_deload_reverted week={rec.get('week_num')}")
+        return {"reverted": True, "week_num": rec.get("week_num")}
+    except Exception:
+        _log.exception("continuous deload revert failed")
+        return JSONResponse({"detail": "revert failed"}, 500)
+
+
 @app.get("/api/today-session")
 def api_today_session():
     """Return today's adjusted session based on readiness + HRV protocol.
@@ -10986,18 +11352,35 @@ def _api_today_session_impl():
     # REST, click opened the Z2 ride). Prefer today's session from the stored
     # plan; fall back to the regenerated week only when it isn't there.
     planned_data = None
+    _stored = None
+    _jp = _plan_dir() / "current_plan.json"
     try:
-        _jp = _plan_dir() / "current_plan.json"
         if _jp.exists():
             with open(_jp, encoding="utf-8") as _f:
                 _stored = json.load(_f)
+    except Exception as _e:
+        _stored = None
+        _log.debug(f"/api/today-session: stored-plan read failed, using regen: {_e}")
+    # 3.4.0 W2 (amendment C): continuous deload advance — the today card IS
+    # the "each app open" surface, so the monotony/ACWR check runs here.
+    # Idempotent (week-latched) and best-effort: a failure must never break
+    # the today card. Runs BEFORE the planned-session pick so a freshly
+    # advanced deload is what the card shows.
+    _deload_chip = None
+    if _plan_is_continuous(_stored):
+        try:
+            _deload_chip = _maybe_advance_continuous_deload(_stored, _jp)
+        except Exception as _e:  # noqa: BLE001
+            _log.warning(f"/api/today-session: continuous deload check failed: {_e}")
+    if _stored:
+        try:
             planned_data = next(
                 (s for w in _stored.get("weeks", [])
                  for s in w.get("sessions", []) if s.get("day") == today_str),
                 None,
             )
-    except Exception as _e:
-        _log.debug(f"/api/today-session: stored-plan read failed, using regen: {_e}")
+        except Exception as _e:
+            _log.debug(f"/api/today-session: stored-plan read failed, using regen: {_e}")
 
     if planned_data is None:
         planned_data = next(
@@ -11151,7 +11534,7 @@ def _api_today_session_impl():
     # adjustment ran; otherwise mirrors `reason` (kept for back-compat).
     adjustment_reason = reason if reason else ""
     from profile_manager import ProfileManager as _PM
-    return {
+    resp = {
         "planned": {
             "session_type": planned.session_type,
             "duration_min": planned.duration_min,
@@ -11188,6 +11571,17 @@ def _api_today_session_impl():
         # on the today card; None when fresh / snoozed / in profile grace.
         "retest_nudge": _retest_nudge_payload(_PM.get()),
     }
+    # 3.4.0 W2 (amendment D + C surfacing) — continuous goals only, additive
+    # keys (absent for finite goals; the response shape never breaks).
+    if _plan_is_continuous(_stored):
+        try:
+            resp["continuous_suggestion"] = _continuous_today_suggestion(
+                _stored, sleep, training, _all_rides)
+        except Exception as _e:  # noqa: BLE001 — advisory only
+            _log.debug(f"/api/today-session: continuous suggestion failed: {_e}")
+        if _deload_chip:
+            resp["deload_advance"] = _deload_chip
+    return resp
 
 
 def _get_soreness_subjective() -> float | None:
@@ -11902,6 +12296,11 @@ async def api_plan_generate(request: Request):
                          else str(body.get("template_id", "") or "")),
             custom_bands=_parse_custom_bands(body.get("custom_bands")),  # v2.3.0
             phase_weeks=_pw_req,  # v3.2.0 phase-split editor
+            # 3.4.0 W2: continuous-mode focus pref; sanitized to the engine's
+            # vocabulary (unknown values fall back to "both").
+            focus=(str(body.get("focus") or "both")
+                   if str(body.get("focus") or "both") in ("ftp", "vo2", "both")
+                   else "both"),
         )
         # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
         if goal.longest_ride_h_90d is None:
@@ -12049,6 +12448,9 @@ async def api_plan_generate(request: Request):
                 # + form repopulation like start_date.
                 "phase_weeks": (dict(goal.phase_weeks)
                                 if getattr(goal, "phase_weeks", None) else None),
+                # 3.4.0 W2: continuous focus pref — persisted so the weekly
+                # extend + rotation policy keep the chosen emphasis.
+                "focus": getattr(goal, "focus", "both") or "both",
             },
             "phases": [
                 {
@@ -12877,6 +13279,10 @@ def _goal_from_plan_dict(g: dict) -> "tp.Goal":
         # refit-tier goals carry it; any path that rebuilds phases
         # validity-gates it against its own runway (A1).
         phase_weeks=(g.get("phase_weeks") or None),
+        # 3.4.0 W2: continuous-mode focus pref (ftp|vo2|both) — without this
+        # every extend/refit rebuilt a continuous plan with the default
+        # emphasis. Ignored by other goal_types (engine contract, W1).
+        focus=str(g.get("focus") or "both"),
     )
 
 
@@ -15445,8 +15851,10 @@ def _hrv_trend_score() -> float | None:
     return 100.0 + (pct / 5.0) * 100.0  # linear -5..0% maps to 0..100
 
 
-def _monotony_score(rides: list[dict], today: date) -> float | None:
-    """Foster monotony score per CONCEPT-SCI §1. 100 = monotony in [1.2, 1.8]."""
+def _daily_tss_last7(rides: list[dict], today: date) -> list[float]:
+    """Per-day TSS over the last 7 calendar days (oldest → newest, today
+    last). 3.4.0 W2: extracted from _monotony_score so the on-track band
+    AND the continuous deload trigger read the SAME series."""
     cutoff = (today - timedelta(days=7)).isoformat()
     daily_tss: list[float] = [0.0] * 7
     for r in rides:
@@ -15466,14 +15874,16 @@ def _monotony_score(rides: list[dict], today: date) -> float | None:
                 daily_tss[6 - delta] += float(tss)
             except (TypeError, ValueError):
                 pass
-    if sum(daily_tss) <= 0:
-        return None
-    mean = sum(daily_tss) / 7.0
-    var = sum((v - mean) ** 2 for v in daily_tss) / 7.0
-    sd = var ** 0.5
-    if sd <= 0:
-        return 0.0  # all-equal = max monotony
-    monotony = mean / sd
+    return daily_tss
+
+
+def _monotony_score(rides: list[dict], today: date) -> float | None:
+    """Foster monotony score per CONCEPT-SCI §1. 100 = monotony in [1.2, 1.8]."""
+    monotony = cpol.foster_monotony(_daily_tss_last7(rides, today))
+    if monotony is None:
+        return None  # no load in window
+    # (all-equal weeks come back as cpol.MONOTONY_CAP → 0.0 below, same as
+    # the pre-W2 inline sd<=0 branch)
     if 1.2 <= monotony <= 1.8:
         return 100.0
     if monotony >= 2.5:
@@ -17151,8 +17561,11 @@ def api_plan_auto_recalc():
         # separate engine issue.
         g = plan.get("goal", {})
         goal = _goal_from_plan_dict(g)
-        if goal.target_date is None:
-            # Non-event goals (FTP, general): use target_date or default 12 weeks out
+        if goal.target_date is None and goal.goal_type != "continuous":
+            # Non-event goals (FTP, general): use target_date or default 12
+            # weeks out. 3.4.0 W2: NOT for continuous — the rolling goal has
+            # no target by definition (grill P1 item 16, the A1 fabrication);
+            # recalculate_plan routes it to the extend path regardless.
             goal.target_date = date.fromisoformat(g["target_date"]) if g.get("target_date") else (date.today() + timedelta(weeks=12))
         # Stale generation-time week count must not outlive the shrinking
         # runway (weeks_available short-circuits on plan_weeks>0 — H1 trap).

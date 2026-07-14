@@ -25,6 +25,7 @@ import os
 import random
 import sys
 import types
+from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
@@ -360,6 +361,22 @@ def _set_measured_pmax(pm, w=650):
     assert pm.pmax_is_set is True
 
 
+class _FrozenDatetime(datetime):
+    """Pin ``app.datetime.now()`` while byte-comparing two FIT builds.
+
+    The FIT builder stamps ``file_id.time_created = datetime.now()`` (required
+    by TrainingPeaks/Garmin importers; fit_tool encodes it at 1 s granularity).
+    Byte-identity across two ``/api/export/fit-workout`` calls is therefore
+    only well-defined with the clock frozen: on a loaded parallel gate the
+    inter-call gap can straddle a tick and flip the encoded second + file CRC.
+    Same order-dependent-flake postmortem family as d472483a / 656a5a7a,
+    third mechanism (unfrozen nondeterministic input, not shared state)."""
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls(2026, 7, 1, 12, 0, 0, tzinfo=tz)
+
+
 def _dl(client, filename, **params):
     return client.get(f"/api/workout/download/{filename}", params=params)
 
@@ -376,10 +393,14 @@ class TestSeamGA1OffByteIdentical:
     def test_off_fit_matches_uncapped(self, stub):
         _set_measured_pmax(stub.pm)
         stub.pm.save_athlete({"cap_short_intervals": "off"})
-        a = stub.client.get("/api/export/fit-workout",
-                            params={"zwo_file": "hard.zwo", "name": "H"})
-        b = stub.client.get("/api/export/fit-workout",
-                            params={"zwo_file": "hard.zwo", "name": "H", "cap": 0})
+        # Freeze the one nondeterministic FIT input (file_id.time_created) so
+        # byte-identity compares the CAP layer, not the wall clock.
+        with mock.patch.object(app_module, "datetime", _FrozenDatetime):
+            a = stub.client.get("/api/export/fit-workout",
+                                params={"zwo_file": "hard.zwo", "name": "H"})
+            b = stub.client.get("/api/export/fit-workout",
+                                params={"zwo_file": "hard.zwo", "name": "H",
+                                        "cap": 0})
         assert a.status_code == 200 and a.content == b.content
 
 

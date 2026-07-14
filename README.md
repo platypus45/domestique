@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4249-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v3.3.3-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v3.4.0-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-2400%2B-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -49,6 +49,15 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 ---
 
 ## What's new in v3
+
+**A plan that never ends (v3.4).** New "Continuous" goal: pick FTP, VO2max
+or both and ride a rolling 4-week cycle that extends itself every week —
+three loading weeks, one recovery week. Each morning the app reads your
+HRV (against your own baseline), form and zone deficits and suggests
+today's stimulus: low-aerobic, high-aerobic or anaerobic — hard days only
+when HRV is in band, per the HRV-guided-training RCTs. Strain spikes pull
+the recovery week forward, announced with a reason and a one-click revert.
+
 
 **Every workout is physiologically rideable — verified.** The whole library
 went through a W′-balance audit (critical-power model, generous anaerobic

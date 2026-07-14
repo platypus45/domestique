@@ -1,5 +1,30 @@
 # Changelog
 
+## v3.4.0 — Continuous training: a plan that never ends (2026-07-13)
+
+- **New goal type: "Continuous — keep improving."** No end date, no taper —
+  pick a focus (FTP, VO2max, or both) and the plan maintains a rolling
+  4-week horizon that extends itself every week: three loading weeks, one
+  recovery week, forever.
+- **It reads your body, not just the calendar.** Each morning the home card
+  suggests today's stimulus — low-aerobic, high-aerobic, or anaerobic —
+  from your HRV (against your own baseline), form, zone deficits and how
+  recently you went hard ("Today: high-aerobic — HRV in band, 32min Z4
+  deficit"). Hard days are only suggested when HRV is in band, following
+  the HRV-guided-training trials this mode is built on.
+- **Recovery arrives when you need it, not just when it's scheduled.** If
+  training strain spikes (Foster monotony ≥2 or sharp load ramps), the
+  recovery week is pulled forward — announced on the today card with the
+  reason and a one-click revert.
+- **Ten new short sprint workouts (33-44min)** with full recoveries, so
+  busy days can still carry real neuromuscular work — the short-sprint
+  shelf had only 3 options.
+- Progress surfaces speak continuous: "Rolling week N · next deload in X
+  days" instead of "Week X of Y", a rolling 4-week phase strip with the
+  recovery week hatched, and deload/retest countdowns. Classic finite
+  plans render exactly as before.
+
+
 ## v3.3.3 — Starting mid-season actually works now (2026-07-13)
 
 - **"Find my week from recent rides" no longer parks you at the finish

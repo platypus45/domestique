@@ -2051,6 +2051,16 @@ window.addEventListener('unhandledrejection', function(e) {
             <option value="vo2max">Improve VO2max (interval focus)</option>
             <option value="ftp_vo2max">Hybrid FTP + VO2max (both)</option>
             <option value="ctl">Build CTL (Fitness)</option>
+            <option value="continuous">Continuous — keep improving</option>
+          </select>
+        </div>
+        <!-- 3.4.0 W3: continuous-mode focus pref (ftp|vo2|both) — shown only
+             for the continuous goal; rides the existing generate params. -->
+        <div class="form-group" id="plan-focus-group" style="display:none;"><label>Focus</label>
+          <select id="plan-focus" onchange="refreshPlanPreview()">
+            <option value="both" selected>FTP + VO2max (both)</option>
+            <option value="ftp">FTP (threshold)</option>
+            <option value="vo2">VO2max (intervals)</option>
           </select>
         </div>
         <div class="form-group"><label>Plan Weeks</label>
@@ -3164,6 +3174,7 @@ const PHASE_COLORS = {
   'peak': '#ef4444',         // red
   'taper': '#a855f7',        // purple
   'recovery': '#64748b',     // gray
+  'continuous': '#0ea5e9',   // sky — 3.4.0 W3 rolling plan (one endless phase)
 };
 
 const today = new Date();
@@ -10402,8 +10413,16 @@ function _syncPlanWeeksToDate() {
 function togglePlanFields() {
   const goal = $('plan-goal').value;
   const isEvent = _isEventGoal(goal);
+  const isContinuous = goal === 'continuous';
   $('plan-event-fields').style.display = isEvent ? 'block' : 'none';
   $('plan-target-fields').style.display = ['ftp','ctl','vo2max','ftp_vo2max'].includes(goal) ? 'block' : 'none';
+  // 3.4.0 W3: focus pref only applies to the open-ended continuous goal.
+  const fg = $('plan-focus-group');
+  if (fg) fg.style.display = isContinuous ? '' : 'none';
+  // 3.4.0 W3: B/C races aren't wired for continuous (generatePlan sends no
+  // events[]) — hide the section rather than show a control that does nothing.
+  const bc = $('plan-bc-races');
+  if (bc) bc.style.display = isContinuous ? 'none' : '';
 
   // v1.8.9 Bug 8 — both inputs are always editable. Date computes weeks
   // and weeks computes date via oninput handlers. No disabled-state.
@@ -10413,6 +10432,13 @@ function togglePlanFields() {
   pw.style.background = '';
   pw.style.cursor = '';
   pw.title = '';
+  if (isContinuous) {
+    // 3.4.0 W3: the engine pins continuous plans to the rolling 4-week
+    // horizon (weeks_available ignores plan_weeks) — an editable length
+    // input would be a lie, so it's the one goal that greys it out.
+    pw.disabled = true;
+    pw.title = 'Continuous plans roll a fixed 4-week horizon — they extend themselves every week.';
+  }
   if (isEvent) {
     // On entering event mode, seed weeks from the current event date.
     const computed = _computePlanWeeksFromEventDate($('plan-edate').value);
@@ -11655,6 +11681,12 @@ async function generatePlan(opts) {
     // as events[] (no A event); the backend applies the B/C mini-tapers.
     const _bc = readBcRaces();
     if (_bc.length) body.events = _bc;
+  } else if (body.goal === 'continuous') {
+    // 3.4.0 W3: open-ended goal — no end date, no events; the focus pref
+    // (ftp|vo2|both) rides the existing generate params (server sanitizes
+    // unknown values back to "both"). plan_weeks is sent but ignored by
+    // the engine (rolling 4-week horizon).
+    body.focus = (($('plan-focus') || {}).value) || 'both';
   }
   try {
     const res = await fetch('/api/plan/generate', {
@@ -11769,6 +11801,39 @@ function _isCyclingSport(sport) {
   return !/run|swim|walk|hike|row|climb|ski|skate|elliptical|yoga|strength|weight|workout|paddle/.test(s);
 }
 
+// 3.4.0 W3 — Plan Overview strip for continuous goals: one segment per
+// generated week of the rolling window (deload weeks hatched, load weeks
+// solid), replacing the finite base/build/peak timeline that has no meaning
+// for an open-ended plan. Pure + DOM-free so the node harness pins it.
+function _continuousPhaseStripHtml(plan) {
+  const weeks = (plan && plan.weeks) || [];
+  if (!weeks.length) return '';
+  const phase = ((plan && plan.phases) || [])[0] || {};
+  const col = (typeof PHASE_COLORS !== 'undefined' && PHASE_COLORS['continuous']) || '#0ea5e9';
+  // Same hatch idiom as the entry-strip's elapsed overlay — one visual
+  // language for "not a normal load week".
+  const hatch = 'repeating-linear-gradient(-45deg, rgba(100,116,139,0.45) 0 4px, transparent 4px 8px)';
+  const fmt = d => d ? new Date(d + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
+  let segs = '';
+  for (const w of weeks) {
+    const sb = !!w.is_stepback;
+    segs += `<div data-cont-week="${w.week_num}" data-cont-deload="${sb ? 1 : 0}"
+      title="Week ${w.week_num} &middot; ${sb ? 'deload' : 'load'} &middot; ${fmt(w.start)} — ${fmt(w.end)}${w.tss_target ? ' &middot; ' + Math.round(w.tss_target) + ' TSS' : ''}"
+      style="flex:1 1 0;padding:5px 4px;text-align:center;background:${col}${sb ? '14' : '26'};${sb ? `background-image:${hatch};` : ''}border-bottom:3px solid ${col};">
+      <div style="font-size:11px;font-weight:700;color:${col};">W${w.week_num}</div>
+      <div style="font-size:8px;font-weight:700;letter-spacing:0.05em;color:${sb ? 'var(--text2)' : 'var(--text3)'};">${sb ? 'DELOAD' : 'LOAD'}</div>
+    </div>`;
+  }
+  return `<div style="padding:8px 10px;border-left:4px solid ${col};background:var(--surface2);border-radius:0 6px 6px 0;margin-bottom:4px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+      <span style="font-weight:700;font-size:12px;text-transform:uppercase;color:${col};">Continuous — rolling ${weeks.length}-week window</span>
+      <span style="font-size:11px;color:var(--text2);">extends weekly &middot; no end date</span>
+    </div>
+    <div style="display:flex;gap:3px;border-radius:4px;overflow:hidden;">${segs}</div>
+    <div style="font-size:10px;color:var(--text3);margin-top:4px;">${esc(phase.focus || '3 load + 1 deload, repeating — deloads pull earlier when load trips the monotony/ACWR guards.')}</div>
+  </div>`;
+}
+
 async function renderPlanJSON(plan) {
   if (!plan) return;
   // Store plan globally for click handlers
@@ -11793,10 +11858,13 @@ async function renderPlanJSON(plan) {
   const phases = plan.phases || [];
   const totalWeeks = phases.reduce((s, p) => s + (p.weeks || 1), 0) || 1;
   const goal = plan.goal || {};
+  // 3.4.0 W3: continuous plans have no base/build/peak macrostructure — the
+  // timeline becomes the rolling load/deload week strip instead.
+  const _isContinuousPlan = String(goal.type || goal.goal_type || '') === 'continuous';
 
   // ── PHASE TIMELINE (enhanced with dates, durations, TSS) ──
   let phaseHtml = '';
-  for (const p of phases) {
+  for (const p of (_isContinuousPlan ? [] : phases)) {
     const col = PHASE_COLORS[p.name] || 'var(--text3)';
     const widthPct = ((p.weeks || 1) / totalWeeks * 100);
     const startFmt = p.start ? new Date(p.start+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : '';
@@ -11842,6 +11910,7 @@ async function renderPlanJSON(plan) {
       </div>
     </div>`;
   }
+  if (_isContinuousPlan) phaseHtml = _continuousPhaseStripHtml(plan);
   $('plan-phases').innerHTML = phaseHtml;
 
   // ── SUMMARY ──
@@ -11849,7 +11918,10 @@ async function renderPlanJSON(plan) {
   if (goal.event_name) summary += `<div style="font-size:14px;font-weight:700;margin-bottom:4px;">${esc(goal.event_name)}</div>`;
   if (goal.event_date) summary += `<span style="font-size:12px;color:var(--text2);">${goal.event_date}</span> `;
   if (goal.event_km) summary += `<span style="font-size:12px;color:var(--text2);">${goal.event_km}km / ${goal.event_climb||0}m</span> `;
-  summary += `<div style="font-size:12px;color:var(--text2);margin-top:4px;">${goal.hours_per_week||8}h/week &middot; ${phases.length} phases &middot; ${totalWeeks} weeks</div>`;
+  summary += `<div style="font-size:12px;color:var(--text2);margin-top:4px;">${goal.hours_per_week||8}h/week &middot; ${
+    _isContinuousPlan
+      ? `rolling ${(plan.weeks || []).length || 4}-week horizon &middot; extends weekly`
+      : `${phases.length} phases &middot; ${totalWeeks} weeks`}</div>`;
   $('plan-summary').innerHTML = summary;
 
   // ── MONTHLY CALENDAR (clickable sessions with power blocks) ──
@@ -12257,6 +12329,44 @@ async function pgRedrawSession(dayStr, btnEl) {
   }
 }
 
+// 3.4.0 W3 — progress-header strings for a CONTINUOUS plan: an open-ended
+// goal has no "Week X of Y", no progress %, no Peak/Taper milestone. The
+// header shows the rolling position + the next deload instead. Pure +
+// DOM-free so the node harness pins it. weeks = plan.weeks (the rolling
+// window), todayStr = local YYYY-MM-DD.
+function _pgContinuousHeaderModel(weeks, currentWeekIdx, todayStr) {
+  const cur = (weeks && weeks[currentWeekIdx]) || {};
+  const weekNum = cur.week_num || (currentWeekIdx + 1);
+  const _noon = s => new Date(s + 'T12:00:00');
+  let remainingText = '';
+  if (cur.is_stepback) {
+    // Scheduled OR advanced (amendment C) — either way today is the deload.
+    remainingText = 'Deload week — recover';
+  } else {
+    let next = null;
+    for (let i = currentWeekIdx + 1; i < weeks.length; i++) {
+      if (weeks[i] && weeks[i].is_stepback) { next = weeks[i]; break; }
+    }
+    if (next && next.start && todayStr) {
+      const days = Math.round((_noon(next.start) - _noon(todayStr)) / 86400000);
+      remainingText = `next deload in ${days} day${days === 1 ? '' : 's'}`;
+    } else if (cur.end && todayStr) {
+      // Defensive: the 4-week window always carries its cadence deload
+      // (week_num % 4 == 0), so this only fires on partial payloads —
+      // answer from the cadence instead of going blank.
+      const weeksAhead = (4 - (weekNum % 4)) % 4 || 4;
+      const days = Math.round((_noon(cur.end) - _noon(todayStr)) / 86400000)
+        + 1 + (weeksAhead - 1) * 7;
+      remainingText = `next deload in ${days} day${days === 1 ? '' : 's'}`;
+    }
+  }
+  return {
+    phaseText: 'Phase: CONTINUOUS',
+    weekText: `Rolling week ${weekNum}`,
+    remainingText,
+  };
+}
+
 // Item 8 — plan-progress header (phase, week index, weeks-to-peak).
 function pgRenderProgressHeader(plan, currentWeekIdx) {
   const host = document.getElementById('pg-progress-header');
@@ -12267,6 +12377,27 @@ function pgRenderProgressHeader(plan, currentWeekIdx) {
     host.style.display = 'none';
     return;
   }
+  // 3.4.0 W3: continuous variant — "Rolling week N · next deload in X days",
+  // progress bar hidden (no end to fill toward). Finite plans fall through
+  // to the legacy path below byte-identical (incl. re-showing the bar).
+  const _goalType = String(((plan && plan.goal) || {}).type
+    || ((plan && plan.goal) || {}).goal_type || '');
+  const _barFill = document.getElementById('pg-progress-bar-fill');
+  const _barWrap = _barFill && _barFill.parentElement;
+  if (_goalType === 'continuous') {
+    const m = _pgContinuousHeaderModel(
+      weeks, currentWeekIdx, new Date().toLocaleDateString('en-CA'));
+    const phaseEl = document.getElementById('pg-progress-phase');
+    const weekEl = document.getElementById('pg-progress-week');
+    const remEl = document.getElementById('pg-progress-remaining');
+    if (phaseEl) phaseEl.textContent = m.phaseText;
+    if (weekEl) weekEl.textContent = m.weekText;
+    if (remEl) remEl.textContent = m.remainingText;
+    if (_barWrap) _barWrap.style.display = 'none';
+    host.style.display = 'flex';
+    return;
+  }
+  if (_barWrap) _barWrap.style.display = '';
   const totalWeeks = weeks.length;
   const oneIdx = currentWeekIdx + 1;
   const cur = weeks[currentWeekIdx];
@@ -12385,6 +12516,7 @@ window._calDidAutoScroll = false;
 const CAL_PHASE_COLORS = {
   base: '#3b82f6', build1: '#10b981', build2: '#f59e0b',
   peak: '#ef4444', taper: '#a855f7', recovery: '#64748b', history: '#475569',
+  continuous: '#0ea5e9',  // 3.4.0 W3 — plan weeks must not wear the history grey
 };
 
 // content_class → human display label, used as the card title (B2 fix).
@@ -12820,9 +12952,11 @@ function renderCalDay(d, wi, di, phaseKey, today) {
   // REST day — planned is null and no activity → just centered REST label.
   if (cs === 'rest' && !actual) {
     // v4.6.7 F4 — event-day marker may land on a rest day.
+    // 3.4.0 W3: a continuous plan has no end — /api/calendar still emits
+    // end_date (the rolling horizon's last day), so gate the ring here.
     const _g = (window._calData && window._calData.goal) || null;
     let _restEvent = false;
-    if (_g) {
+    if (_g && _g.type !== 'continuous') {
       if (_g.type === 'event_preparation' || _g.type === 'event') {
         _restEvent = !!_g.event_date && d.date === _g.event_date;
       } else {
@@ -12917,9 +13051,11 @@ function renderCalDay(d, wi, di, phaseKey, today) {
   // goal.event_date (event_preparation goals) OR goal.end_date (weeks
   // goals). Today-marker takes priority if they coincide (handled by the
   // class application order below).
+  // 3.4.0 W3: continuous plans never mark a goal day — the emitted end_date
+  // is just the rolling horizon's last generated day, not a plan end.
   const _goal = (window._calData && window._calData.goal) || null;
   let isEventDay = false;
-  if (_goal) {
+  if (_goal && _goal.type !== 'continuous') {
     if (_goal.type === 'event_preparation' || _goal.type === 'event') {
       isEventDay = !!_goal.event_date && d.date === _goal.event_date;
     } else {
@@ -13722,6 +13858,10 @@ function populatePlanFormFromGoal(goal) {
   // refreshPlanPreview() at the end repaints with everything restored.
   setVal('plan-goal', goal.type);
   try { togglePlanFields(); } catch (_) {}
+  // 3.4.0 W3: continuous focus pref round-trips like every other setting
+  // (persisted on the goal since W2; harmless no-op for finite goals whose
+  // stored focus is the default "both").
+  if (goal.focus) setVal('plan-focus', goal.focus);
   // Intensity Model no longer carries "custom" (that moved to the Template
   // picker); a saved custom plan persists distribution="custom", so show the
   // model as polarized and restore the real custom split under the template.
@@ -15534,6 +15674,66 @@ function _dayAggregate(dayActs, lthr) {
   };
 }
 
+// 3.4.0 W3 — continuous variant of the event-countdown card: an open-ended
+// plan has no "N weeks / M days remaining", so the panel counts to the NEXT
+// DELOAD (+ the next FTP retest when one sits in the horizon). Returns ''
+// for every finite plan (gated on the unambiguous phase name "continuous",
+// which only continuous plans emit) so the event/er branch is untouched.
+// week = /api/weekly-plan payload; planWeeks = stored plan weeks when loaded
+// (authoritative — includes a monotony/ACWR-advanced deload), else null and
+// the 3-load:1-deload cadence (week_num % 4 == 0) answers. Pure + DOM-free.
+function _continuousCountdownHtml(week, planWeeks, todayStr) {
+  if (!week || String(week.phase || '') !== 'continuous') return '';
+  const _noon = s => new Date(s + 'T12:00:00');
+  const _days = (a, b) => Math.round((_noon(b) - _noon(a)) / 86400000);
+  let deloadLine = '', deloadCol = 'var(--accent)';
+  if (week.is_stepback) {
+    deloadLine = 'Deload week — recover';
+    deloadCol = 'var(--yellow)';
+  } else {
+    let days = null;
+    for (const w of (Array.isArray(planWeeks) ? planWeeks : [])) {
+      if (w && w.is_stepback && w.start && todayStr && w.start > todayStr) {
+        days = _days(todayStr, w.start);
+        break;
+      }
+    }
+    if (days == null && week.week_num && week.end && todayStr) {
+      const weeksAhead = (4 - (week.week_num % 4)) % 4 || 4;
+      days = _days(todayStr, week.end) + 1 + (weeksAhead - 1) * 7;
+    }
+    deloadLine = days != null
+      ? `Next deload in ${days} day${days === 1 ? '' : 's'}`
+      : 'Deloads every 4th week';
+  }
+  // FTP retest: first future ftp_test session in the horizon (the extend
+  // machinery injects one on the ~6-week cadence); line omitted when none.
+  let retestLine = '';
+  const scan = Array.isArray(planWeeks) && planWeeks.length ? planWeeks : [week];
+  for (const w of scan) {
+    for (const s of ((w && w.sessions) || [])) {
+      if (s && s.session_type === 'ftp_test' && s.day && todayStr && s.day >= todayStr) {
+        const rd = _days(todayStr, s.day);
+        retestLine = rd === 0 ? 'FTP retest today'
+          : `FTP retest in ${rd} day${rd === 1 ? '' : 's'}`;
+        break;
+      }
+    }
+    if (retestLine) break;
+  }
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+      <div>
+        <h3 style="margin-bottom:4px;">Continuous training</h3>
+        <div style="font-size:13px;color:var(--text2);">No end date — the plan extends itself every week.</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:11px;color:${deloadCol};font-weight:700;text-transform:uppercase;">${esc(deloadLine)}</div>
+        ${retestLine ? `<div style="font-size:10px;color:var(--text3);">${esc(retestLine)}</div>` : ''}
+      </div>
+    </div>`;
+}
+
 async function loadWeeklyCalendar() {
   try {
     const [weekRes, actRes, settingsRes] = await Promise.all([
@@ -15733,7 +15933,14 @@ async function loadWeeklyCalendar() {
     // Event countdown card
     const er = week.event_readiness;
     const ec = $('event-countdown-card');
-    if (er && er.weeks_remaining !== null && er.weeks_remaining !== undefined && ec) {
+    // 3.4.0 W3: continuous plans repurpose this panel as the next-deload /
+    // FTP-retest countdown ('' for finite plans → the er branch is theirs).
+    const _contPanel = ec ? _continuousCountdownHtml(
+      week, (window._planData && window._planData.weeks) || null, todayStr) : '';
+    if (ec && _contPanel) {
+      ec.style.display = 'block';
+      ec.innerHTML = _contPanel;
+    } else if (er && er.weeks_remaining !== null && er.weeks_remaining !== undefined && ec) {
       const statusCol = er.status === 'on_track' ? 'var(--green)' : er.status === 'at_risk' ? 'var(--yellow)' : er.status === 'behind' ? 'var(--orange)' : 'var(--red)';
       const pct = Math.min(100, Math.round(er.pct_of_target));
       const taperLabel = er.taper_action === 'full_taper_12d' ? 'Full taper (12d)' :
@@ -16258,6 +16465,10 @@ async function loadTodaySession() {
 
     // Hero: ORIGINAL plan content (Type / Duration / TSS).
     let html = `<div style="font-size:10px;font-weight:700;letter-spacing:0.8px;color:var(--text3);margin-bottom:6px;">TODAY'S TRAINING</div>`;
+    // 3.4.0 W3: continuous-mode headline ABOVE the matched session — the
+    // rotation policy's daily verdict frames the day for an open-ended plan.
+    // Empty string for finite goals (the field is continuous-only, additive).
+    html += _continuousSuggestionHtml(d);
     html += `<div style="font-size:20px;font-weight:700;margin-bottom:4px;">${planType}</div>`;
     html += `<div style="font-size:13px;color:var(--text2);margin-bottom:6px;">${esc(fixZeroMin(d.planned.description) || '')}</div>`;
     // v2.2.5 issue #3 R2 — the readiness number now lives ONLY in the Today
@@ -16353,6 +16564,32 @@ async function loadTodaySession() {
   } catch(e) {
     $('home-recommendation').innerHTML = '<div style="color:var(--text3);font-size:12px;">Session unavailable</div>';
   }
+}
+
+// 3.4.0 W3 — continuous-mode today headline ("Today: high-aerobic — HRV in
+// band, 32min Z4 deficit"). Renders the additive `continuous_suggestion`
+// field of /api/today-session ({family, reason}, continuous goals only) in
+// the adjustment-chip skin, tinted by the exposure palette the UI already
+// teaches (weekly-calendar bands / library heat-ramp). Pure + DOM-free so
+// the node harness pins it; absent or malformed → '' so finite plans (and
+// error paths) render byte-identical to before.
+function _continuousSuggestionHtml(d) {
+  const cs = d && d.continuous_suggestion;
+  if (!cs || !cs.family) return '';
+  const FAM = {
+    low_aerobic:  { label: 'low-aerobic',  color: '#22c55e', bg: 'rgba(34,197,94,0.1)' },
+    high_aerobic: { label: 'high-aerobic', color: '#f97316', bg: 'rgba(249,115,22,0.1)' },
+    anaerobic:    { label: 'anaerobic',    color: '#ef4444', bg: 'rgba(239,68,68,0.1)' },
+  };
+  const meta = FAM[String(cs.family)] || {
+    label: String(cs.family).replace(/_/g, '-'),
+    color: 'var(--yellow)', bg: 'rgba(234,179,8,0.1)',
+  };
+  const reason = cs.reason
+    ? ` — <span style="color:var(--text2);">${esc(String(cs.reason))}</span>` : '';
+  return `<div class="cont-suggestion-chip" style="font-size:11px;padding:6px 8px;background:${meta.bg};border-radius:6px;color:${meta.color};margin-bottom:8px;">
+    Today: <b>${esc(meta.label)}</b>${reason}
+  </div>`;
 }
 
 // 3.3.1 hotfix (B1): ONE decision point for what the today-card blocks

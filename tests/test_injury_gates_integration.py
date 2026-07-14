@@ -75,14 +75,24 @@ def _ride(
     }
 
 
-def _stub_today_session_dependencies():
+def _stub_today_session_dependencies(revert_flag_dir: Path):
     """Patch out the readiness/sleep/training network calls used by
     /api/today-session so the test stays deterministic.
+
+    ``revert_flag_dir``: tmp dir for the C6 revert flag file (3.4.2 M7 —
+    the flag path defaults to the LIVE DATA_DIR, so one "Keep original"
+    click on the dev machine suppressed every adjustment and turned the
+    G2/G6 tests red; a nonexistent tmp file deterministically means
+    "not reverted today").
 
     Returns a list of started patchers — caller stops them in tearDown.
     """
     patchers = [
         patch.object(app_module, "_maybe_lazy_icu_sync", return_value=None),
+        patch.object(
+            app_module, "_readiness_revert_flag_path",
+            return_value=revert_flag_dir / "readiness_cap_reverted.json",
+        ),
         patch.object(
             app_module, "get_sleep_metrics",
             return_value={"ln_rmssd_7d": 4.0, "swc_lower": 3.5,
@@ -125,6 +135,12 @@ class _IntegrationBase(unittest.TestCase):
     """
 
     def setUp(self):
+        # 3.4.2 M7 — drop the shared 5-min memo store ("sleep", "training",
+        # "recent_dfa_decoupling", ...) so values cached by an EARLIER test
+        # (or from the live environment) can never bypass this suite's
+        # patched get_sleep_metrics/get_today_metrics in the full gate.
+        app_module.clear_cache()
+
         # Temp sqlite db — isolate from production data.
         self._tmpdb = tempfile.TemporaryDirectory()
         self._db_path = Path(self._tmpdb.name) / "integration.sqlite"
@@ -143,8 +159,8 @@ class _IntegrationBase(unittest.TestCase):
         tp.PLAN_DIR = self._plan_path
         self._write_synth_plan()
 
-        # Stub upstream calls.
-        self._patchers = _stub_today_session_dependencies()
+        # Stub upstream calls (C6 revert flag sandboxed into the tmp plan dir).
+        self._patchers = _stub_today_session_dependencies(self._plan_path)
 
         self.client = TestClient(app_module.app)
 

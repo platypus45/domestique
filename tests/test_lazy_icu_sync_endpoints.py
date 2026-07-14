@@ -153,5 +153,91 @@ class TestForceResyncWhenTodayMissing(_LazySyncBase):
             self.assertGreaterEqual(mock_fetch.call_count, 1)
 
 
+class TestPerProfileSyncMarkers(unittest.TestCase):
+    """v3.4.2 M7 — the last-sync markers are PER-PROFILE.
+
+    ``_icu_sync_state_path`` / ``_icu_wellness_sync_state_path`` resolve
+    through the ride_storage AC2a seams (<profile>/rides/icu/,
+    <profile>/wellness/) — not the legacy global ~/.domestique paths — so a
+    profile switch or db.purge_profile_data (contract A4) takes the throttle
+    state with it. No active profile degrades to None ("never synced").
+    A pre-M7 legacy global marker is MOVED into the profile once.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        base = Path(self._tmp.name)
+        self._prof_icu = base / "prof" / "rides" / "icu"
+        self._prof_well = base / "prof" / "wellness"
+        self._prof_icu.mkdir(parents=True)
+        self._prof_well.mkdir(parents=True)
+        self._legacy_root = base / "global"
+        (self._legacy_root / "rides" / "icu").mkdir(parents=True)
+        (self._legacy_root / "wellness").mkdir(parents=True)
+        self._patches = [
+            patch.object(ride_storage, "_icu_rides_dir", return_value=self._prof_icu),
+            patch.object(ride_storage, "_wellness_dir", return_value=self._prof_well),
+            patch.object(app_module, "_user_data_dir", self._legacy_root),
+        ]
+        for p in self._patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self._patches:
+            p.stop()
+        self._tmp.cleanup()
+
+    def test_markers_resolve_inside_profile_dirs(self):
+        self.assertEqual(
+            app_module._icu_sync_state_path(), self._prof_icu / ".last_sync_at"
+        )
+        self.assertEqual(
+            app_module._icu_wellness_sync_state_path(),
+            self._prof_well / ".last_sync_at",
+        )
+        app_module._write_last_sync_at(42.0)
+        self.assertEqual((self._prof_icu / ".last_sync_at").read_text(), "42.0")
+        # The legacy global tree gains nothing — the dead dirs stay dead.
+        self.assertFalse(
+            (self._legacy_root / "rides" / "icu" / ".last_sync_at").exists()
+        )
+
+    def test_legacy_global_marker_migrates_once_then_unlinked(self):
+        legacy = self._legacy_root / "rides" / "icu" / ".last_sync_at"
+        legacy.write_text("1751500000.0")
+        self.assertEqual(app_module._read_last_sync_at(), 1751500000.0)
+        # MOVED, not copied — a later profile / post-purge state can't inherit.
+        self.assertFalse(legacy.exists())
+        self.assertEqual(
+            (self._prof_icu / ".last_sync_at").read_text(), "1751500000.0"
+        )
+        # One-time: once a profile marker exists a re-planted legacy is inert.
+        legacy.write_text("999.0")
+        self.assertEqual(app_module._read_last_sync_at(), 1751500000.0)
+        self.assertTrue(legacy.exists())
+
+    def test_purged_profile_reads_never_synced(self):
+        app_module._write_last_wellness_sync_at(1751600000.0)
+        # A4 purge nukes the profile archive dirs (incl. the marker) — the
+        # readers must then report "never synced", not a legacy leftover.
+        (self._prof_well / ".last_sync_at").unlink()
+        self.assertIsNone(app_module._read_last_wellness_sync_at())
+
+    def test_no_active_profile_degrades_to_never_synced(self):
+        def _no_profile():
+            raise RuntimeError("no active profile")
+
+        with patch.object(
+            ride_storage, "_icu_rides_dir", side_effect=_no_profile
+        ), patch.object(ride_storage, "_wellness_dir", side_effect=_no_profile):
+            self.assertIsNone(app_module._icu_sync_state_path())
+            self.assertIsNone(app_module._icu_wellness_sync_state_path())
+            self.assertIsNone(app_module._read_last_sync_at())
+            self.assertIsNone(app_module._read_last_wellness_sync_at())
+            # Writers no-op — never raise, never resurrect a global dir.
+            app_module._write_last_sync_at(1.0)
+            app_module._write_last_wellness_sync_at(1.0)
+
+
 if __name__ == "__main__":
     unittest.main()

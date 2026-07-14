@@ -27,6 +27,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 import app as app_module
+import ride_storage
 import training_planner as tp
 
 
@@ -94,22 +95,49 @@ class HomepageTodayConsistencyBase(unittest.TestCase):
         self._orig_plan_dir = tp.PLAN_DIR
         tp.PLAN_DIR = self._tmp
 
-        # Block lazy ICU sync — tests mustn't hit the network.
-        self._patch_lazy = patch.object(
-            app_module, "_maybe_lazy_icu_sync", return_value=None)
-        self._patch_lazy.start()
-
-        # Empty activities so yesterday_tss_ratio = 1.0 (no load trigger
-        # unless explicitly set in the test).
-        self._patch_acts = patch.object(
-            app_module.db, "query_activities", return_value=[])
-        self._patch_acts.start()
+        # ── 3.4.2 M7: hermetic sandbox ────────────────────────────────────
+        # /api/today-session also reads the LIVE dev environment: the ride
+        # archive (G2/G7 rides_recent, the DFA-cap scan, local-load fallback),
+        # the LIVE db daily log (G6/G7 gates + soreness subjective), and the
+        # LIVE C6 revert flag (DATA_DIR/readiness_cap_reverted.json — one
+        # "Keep original" click on the dev machine suppressed EVERY
+        # adjustment and turned this suite red). Pin each input to a tmp/
+        # empty equivalent so the HRV-streak → Z2 condition the tests create
+        # is the ONLY signal. Assertions unchanged.
+        self._fit_dir = self._tmp / "rides"
+        self._icu_dir = self._tmp / "rides" / "icu"
+        self._icu_dir.mkdir(parents=True, exist_ok=True)
+        self._patches = [
+            # Block lazy ICU sync — tests mustn't hit the network.
+            patch.object(app_module, "_maybe_lazy_icu_sync", return_value=None),
+            # Empty activities so yesterday_tss_ratio = 1.0 (no load trigger
+            # unless explicitly set in the test).
+            patch.object(app_module.db, "query_activities", return_value=[]),
+            # Empty ride archive via the ride_storage seams (tmp dirs): no
+            # live ride can fire G2/G7, contribute a DFA cap, or feed the
+            # local-load fallback.
+            patch.object(ride_storage, "_icu_rides_dir", return_value=self._icu_dir),
+            patch.object(ride_storage, "_fit_rides_dir", return_value=self._fit_dir),
+            patch.object(app_module, "_rides_fit_dir", return_value=self._fit_dir),
+            patch.object(ride_storage, "list_rides", return_value=[]),
+            patch.object(app_module, "_load_all_rides_safe", return_value=[]),
+            # No daily log today → G6/G7 quiet, soreness subjective None.
+            patch.object(app_module.db, "get_daily_log_today", return_value=None),
+            # C6 revert flag sandboxed to a nonexistent tmp file: the rider
+            # did NOT click "Keep original" today, so adjustments stand.
+            patch.object(
+                app_module, "_readiness_revert_flag_path",
+                return_value=self._tmp / "readiness_cap_reverted.json",
+            ),
+        ]
+        for p in self._patches:
+            p.start()
 
         self.client = TestClient(app_module.app)
 
     def tearDown(self):
-        self._patch_acts.stop()
-        self._patch_lazy.stop()
+        for p in self._patches:
+            p.stop()
         tp.PLAN_DIR = self._orig_plan_dir
         self._tmpdir.cleanup()
 

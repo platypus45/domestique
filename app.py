@@ -1410,7 +1410,7 @@ def setup_save(body: dict):
                     pass
                 try:
                     p = _icu_wellness_sync_state_path()
-                    if p.exists():
+                    if p is not None and p.exists():
                         p.unlink()
                 except Exception:
                     pass
@@ -18138,17 +18138,78 @@ async def api_ride_import(
 # v4.4.0 — ICU activity sync into local rides store
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Module-level state file for last-sync-at marker. Sits next to the rides dir
-# so a profile reset clears it naturally.
-def _icu_sync_state_path() -> Path:
-    return _user_data_dir / "rides" / "icu" / ".last_sync_at"
+# Last-sync-at markers. v3.4.2 M7: PER-PROFILE — resolved through the
+# ride_storage AC2a seams so the marker sits next to the archive it throttles
+# (<profile>/rides/icu/ and <profile>/wellness/). These were the last two
+# paths still pointing at the legacy GLOBAL ~/.domestique locations, which
+# (a) leaked one athlete's sync timestamp into every other profile — a fresh
+# profile skipped its initial sync for up to 1h, (b) made db.purge_profile_data
+# contract A4 a lie (it wipes <profile>/rides/icu/ incl. .last_sync_at, but
+# the readers looked at the global file), and (c) kept resurrecting the dead
+# global dirs on every stamp.
+def _migrate_legacy_sync_marker(marker: Path, legacy: Path) -> None:
+    """One-time move of a pre-M7 legacy GLOBAL last-sync marker into the
+    active profile's marker location.
+
+    Only fires when the profile marker doesn't exist yet AND the legacy
+    global file does: the profile active at upgrade time inherits the
+    timestamp (existing installs keep their throttle window instead of
+    mass re-syncing), then the legacy file is unlinked so a later-created
+    profile — or a post-purge re-resolve — can never inherit another
+    athlete's timestamp. Best-effort: any failure degrades to
+    "never synced", never raises.
+    """
+    try:
+        if marker.exists() or not legacy.exists():
+            return
+        marker.write_text(
+            legacy.read_text(encoding="utf-8").strip(), encoding="utf-8"
+        )
+        try:
+            legacy.unlink()
+        except OSError:
+            pass
+        _log.info(f"migrated legacy sync marker {legacy} -> {marker}")
+    except Exception as e:
+        _log.debug(f"legacy sync marker migration skipped: {e}")
 
 
-def _icu_wellness_sync_state_path() -> Path:
+def _icu_sync_state_path() -> Path | None:
+    """Marker for the last rides sync — ``<profile>/rides/icu/.last_sync_at``
+    via ride_storage._icu_rides_dir (single AC2a source of truth), so a
+    profile switch or purge takes its throttle state with it.
+
+    No active profile → None ("never synced"); readers/writers no-op —
+    this path must NEVER raise (it sits under every lazy-sync hook).
+    """
+    try:
+        import ride_storage as _rs_m7
+        marker = _rs_m7._icu_rides_dir() / ".last_sync_at"
+    except Exception:
+        return None
+    _migrate_legacy_sync_marker(
+        marker, _user_data_dir / "rides" / "icu" / ".last_sync_at"
+    )
+    return marker
+
+
+def _icu_wellness_sync_state_path() -> Path | None:
     """v4.5.0 — separate marker for last wellness sync (rides + wellness
     have different cadence requirements: rides matter ASAP after a ride,
-    wellness is daily)."""
-    return _user_data_dir / "wellness" / ".last_sync_at"
+    wellness is daily).
+
+    v3.4.2 M7: per-profile ``<profile>/wellness/.last_sync_at`` via
+    ride_storage._wellness_dir — same contract as _icu_sync_state_path
+    (None when no active profile; one-time legacy-global move-in)."""
+    try:
+        import ride_storage as _rs_m7
+        marker = _rs_m7._wellness_dir() / ".last_sync_at"
+    except Exception:
+        return None
+    _migrate_legacy_sync_marker(
+        marker, _user_data_dir / "wellness" / ".last_sync_at"
+    )
+    return marker
 
 
 def _icu_credentials_present() -> bool:
@@ -18172,7 +18233,7 @@ def _icu_credentials_present() -> bool:
 
 def _read_last_sync_at() -> float | None:
     p = _icu_sync_state_path()
-    if not p.exists():
+    if p is None or not p.exists():
         return None
     try:
         return float(p.read_text(encoding="utf-8").strip())
@@ -18182,6 +18243,9 @@ def _read_last_sync_at() -> float | None:
 
 def _write_last_sync_at(ts: float) -> None:
     p = _icu_sync_state_path()
+    if p is None:
+        _log.debug("_write_last_sync_at skipped: no active profile")
+        return
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(str(ts), encoding="utf-8")
@@ -18191,7 +18255,7 @@ def _write_last_sync_at(ts: float) -> None:
 
 def _read_last_wellness_sync_at() -> float | None:
     p = _icu_wellness_sync_state_path()
-    if not p.exists():
+    if p is None or not p.exists():
         return None
     try:
         return float(p.read_text(encoding="utf-8").strip())
@@ -18201,6 +18265,9 @@ def _read_last_wellness_sync_at() -> float | None:
 
 def _write_last_wellness_sync_at(ts: float) -> None:
     p = _icu_wellness_sync_state_path()
+    if p is None:
+        _log.debug("_write_last_wellness_sync_at skipped: no active profile")
+        return
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(str(ts), encoding="utf-8")

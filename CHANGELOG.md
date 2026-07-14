@@ -1,5 +1,32 @@
 # Changelog
 
+## v3.4.2 — DFA is back, clearer choices, and a wizard that asks the right question first (2026-07-14)
+
+- **DFA α1 works again on the home card and the DFA tab.** The readings could
+  vanish entirely; both surfaces now show your values, a live progress state
+  while rides index or compute, and an honest empty state only when there's
+  genuinely nothing.
+- **Adjustment choices name the actual workouts.** Instead of "keep original?"
+  you now see "Planned: SWEET SPOT — Sweet Spot Steady, 80min → Now: Z2,
+  60min" with buttons that say exactly what each does: "✓ Ride the easier Z2
+  (60min)" or "Ride the original SWEET SPOT anyway".
+- **The plan wizard asks the big question first:** 🎯 Train toward a goal, or
+  ♾ Train continuously — two cards at the top. Continuous mode then shows
+  only what applies: no misleading weeks number (a rolling-horizon note
+  instead), and the "I've been training already" scan explains that
+  continuous plans place themselves from your rides automatically.
+- **Changing a workout speaks rider:** one "Change this workout" menu —
+  "Give me a different workout", "Change the type…", "Make it easier today" —
+  plus "Skip today" with what happens next ("the week re-fits — nothing
+  piles up"). Same actions, no more planner jargon.
+- **Fatigue Resistance has a "?"** explaining what it measures and why some
+  rides are excluded.
+- **Profile hygiene:** each rider profile now keeps its own sync timestamps —
+  switching profiles can no longer skip a fresh profile's first sync, and
+  disconnecting an account truly resets it. Existing installs keep their
+  sync state (no mass re-download).
+
+
 ## v3.4.1 — Honest loading, and the card and the click finally agree (2026-07-14)
 
 - **Fatigue Resistance can't get stuck at 93% anymore.** Rides that

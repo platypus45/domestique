@@ -2251,9 +2251,17 @@ def _run_dfa_backfill_job(task_id: str, force: bool = False,
     import json as _json
     from datetime import datetime as _dt
     started = time.time()
-    icu_dir = _user_data_dir / "rides" / "icu"
     paths: list[Path] = []
     try:
+        # 3.4.2 — same v3.0.0 AC2a miss as _iter_icu_dfa_rides: scan the
+        # ACTIVE profile's archive, not the legacy global dir (empty since
+        # the migration), which made every backfill a 0-candidate no-op —
+        # and killed the progress strip on both surfaces (terminal state +
+        # candidates===0 renders nothing). Resolved INSIDE the try so a
+        # no-active-profile raise degrades to an honest empty pass instead
+        # of crashing the worker before the lock-releasing finally below.
+        from ride_storage import _icu_rides_dir as _rs_icu_rides_dir
+        icu_dir = _rs_icu_rides_dir()
         if icu_dir.exists():
             paths = sorted(icu_dir.glob("*.json"))
     except Exception:
@@ -2630,7 +2638,7 @@ def api_profile_dfa_alpha1():
     so the homepage snapshot card can render a readable line without
     a 404 dance.
 
-    v1.8.10 Bug B — also scans ``~/.domestique/rides/icu/*.json`` so ICU
+    v1.8.10 Bug B — also scans the profile's ``rides/icu/*.json`` so ICU
     rides with computed DFA aren't ignored (the previous version read
     only ``~/.domestique/profiles/<id>/rides/`` via ride_storage.list_rides,
     which misses every ICU-synced ride and therefore the entire DFA
@@ -3283,7 +3291,7 @@ def profile_setup_page(request: Request):
 def _iter_icu_dfa_rides() -> list[dict]:
     """v1.8.10 Bug B — yield wrapped ICU ride records for DFA scanning.
 
-    ICU sync writes flat envelopes to ``~/.domestique/rides/icu/*.json``
+    ICU sync writes flat envelopes to ``<profile>/rides/icu/*.json``
     (dfa_alpha1_avg, dfa_alpha1_status, rr_intervals_count at the top
     level — no ``summary`` nesting). ``ride_storage.list_rides()`` reads
     the FIT-import dir only, so any DFA scan based on it misses ICU
@@ -3293,7 +3301,16 @@ def _iter_icu_dfa_rides() -> list[dict]:
     import json as _json
     out: list[dict] = []
     try:
-        icu_dir = _user_data_dir / "rides" / "icu"
+        # 3.4.2 — the v3.0.0 AC2a migration moved the ICU envelope archive to
+        # <profile>/rides/icu/, but this reader kept scanning the legacy
+        # global ~/.domestique/rides/icu/ (empty post-migration), so every
+        # DFA surface (home card, DFA tab, readiness DFA cap) went silently
+        # blank. Resolve through ride_storage._icu_rides_dir — the single
+        # source of truth the sync WRITER already uses. A no-active-profile
+        # RuntimeError is swallowed by the enclosing except → empty list,
+        # same degraded shape as before.
+        from ride_storage import _icu_rides_dir as _rs_icu_rides_dir
+        icu_dir = _rs_icu_rides_dir()
         if not icu_dir.exists():
             return out
         for f in sorted(icu_dir.glob("*.json")):

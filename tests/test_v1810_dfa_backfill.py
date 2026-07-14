@@ -147,11 +147,15 @@ class TestDfaBackfillEndpoint(unittest.TestCase):
 
     def setUp(self):
         self._tmp = Path(tempfile.mkdtemp(prefix="dfa_bf_ep_"))
-        # Redirect _user_data_dir → tmp so rides/icu/ resolves into our fixture.
-        self._patch_data_dir = patch.object(_app_mod, "_user_data_dir",
-                                              self._tmp)
+        # 3.4.2 — the worker scans ride_storage._icu_rides_dir() (the
+        # per-profile archive; the old app._user_data_dir global path has
+        # been dead since the v3.0.0 AC2a migration), so patch THAT seam.
+        import ride_storage as _rs_mod
+        self._icu_dir = self._tmp / "rides" / "icu"
+        self._icu_dir.mkdir(parents=True, exist_ok=True)
+        self._patch_data_dir = patch.object(_rs_mod, "_icu_rides_dir",
+                                              return_value=self._icu_dir)
         self._patch_data_dir.start()
-        (self._tmp / "rides" / "icu").mkdir(parents=True, exist_ok=True)
         # Clear in-memory task table between tests.
         with _app_mod._dfa_backfill_thread_lock:
             _app_mod._dfa_backfill_tasks.clear()
@@ -270,10 +274,15 @@ class TestDfaRidesEndpoint(unittest.TestCase):
 
     def setUp(self):
         self._tmp = Path(tempfile.mkdtemp(prefix="dfa_rides_"))
-        self._patch = patch.object(_app_mod, "_user_data_dir", self._tmp)
-        self._patch.start()
+        # 3.4.2 — /api/profile/dfa-rides scans ride_storage._icu_rides_dir()
+        # (per-profile archive; the global app._user_data_dir path is dead
+        # since the v3.0.0 AC2a migration), so patch THAT seam.
+        import ride_storage as _rs_mod
         self._icu = self._tmp / "rides" / "icu"
         self._icu.mkdir(parents=True, exist_ok=True)
+        self._patch = patch.object(_rs_mod, "_icu_rides_dir",
+                                    return_value=self._icu)
+        self._patch.start()
         self._client = TestClient(_app_mod.app)
 
     def tearDown(self):

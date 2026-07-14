@@ -1,0 +1,24 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Neuromuscular 4x15s Standing Starts (34min)</name>
+    <description>Warmup: 7min from 45% to 75% FTP + 2 openers | Standing starts: 2 sets of 2 x (15s @ 230% / 3min @ 55%) from low speed in a big gear, 4min @ 55% between sets | Finish: 5min @ 86% tempo | Max torque from the first stroke, upshift as cadence climbs - the set break keeps every start explosive | Cooldown: 5min from 55% to 40% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="420" PowerLow="0.45" PowerHigh="0.75" pace="0" />
+        <SteadyState Duration="15" Power="1.1" pace="0" />
+        <SteadyState Duration="90" Power="0.55" pace="0" />
+        <SteadyState Duration="15" Power="1.2" pace="0" />
+        <SteadyState Duration="75" Power="0.55" pace="0" />
+        <SteadyState Duration="15" Power="2.3" pace="0" />
+        <SteadyState Duration="180" Power="0.55" pace="0" />
+        <SteadyState Duration="15" Power="2.3" pace="0" />
+        <SteadyState Duration="240" Power="0.55" pace="0" />
+        <SteadyState Duration="15" Power="2.3" pace="0" />
+        <SteadyState Duration="180" Power="0.55" pace="0" />
+        <SteadyState Duration="15" Power="2.3" pace="0" />
+        <SteadyState Duration="180" Power="0.55" pace="0" />
+        <SteadyState Duration="300" Power="0.86" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.55" PowerHigh="0.4" pace="0" />
+    </workout>
+</workout_file>

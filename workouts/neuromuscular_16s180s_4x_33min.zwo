@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Neuromuscular 4x16s Big-Gear Sprints (33min)</name>
+    <description>Warmup: 7min from 45% to 75% FTP + 2 openers | Big-gear sprints: 4 x (16s @ 225% / 3min @ 55%) seated, one gear taller than feels right | Finish: 5min @ 86% tempo | Seated torque work - drive the pedals over the top, full recovery between efforts | Cooldown: 5min from 55% to 40% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="420" PowerLow="0.45" PowerHigh="0.75" pace="0" />
+        <SteadyState Duration="15" Power="1.1" pace="0" />
+        <SteadyState Duration="90" Power="0.55" pace="0" />
+        <SteadyState Duration="15" Power="1.2" pace="0" />
+        <SteadyState Duration="75" Power="0.55" pace="0" />
+        <IntervalsT Repeat="4" OnDuration="16" OffDuration="180" OnPower="2.25" OffPower="0.55" pace="0" />
+        <SteadyState Duration="300" Power="0.86" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.55" PowerHigh="0.4" pace="0" />
+    </workout>
+</workout_file>

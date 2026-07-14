@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Neuromuscular 4x15s Sprints (33min)</name>
+    <description>Warmup: 7min from 45% to 75% FTP + 2 openers | Sprints: 4 x (15s @ 220% / 3min @ 55%) with full recoveries | Finish: 5min @ 85% tempo | Go all-in from the first pedal stroke - full recovery between efforts keeps every sprint maximal quality | Cooldown: 5min from 55% to 40% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="420" PowerLow="0.45" PowerHigh="0.75" pace="0" />
+        <SteadyState Duration="15" Power="1.1" pace="0" />
+        <SteadyState Duration="90" Power="0.55" pace="0" />
+        <SteadyState Duration="15" Power="1.2" pace="0" />
+        <SteadyState Duration="75" Power="0.55" pace="0" />
+        <IntervalsT Repeat="4" OnDuration="15" OffDuration="180" OnPower="2.2" OffPower="0.55" pace="0" />
+        <SteadyState Duration="300" Power="0.85" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.55" PowerHigh="0.4" pace="0" />
+    </workout>
+</workout_file>

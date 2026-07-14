@@ -1,0 +1,28 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Neuromuscular 6x12s Descending Sprints (41min)</name>
+    <description>Warmup: 7min from 45% to 75% FTP + 2 openers | Descending sprints: 2 sets of (12s @ 240%, 12s @ 220%, 12s @ 200%), 3min @ 55% after each sprint, 5min @ 55% between sets | Finish: 5min @ 85% tempo | Start at peak power and step down - hit each target ceiling, never dribble over it | Cooldown: 5min from 55% to 40% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="420" PowerLow="0.45" PowerHigh="0.75" pace="0" />
+        <SteadyState Duration="15" Power="1.1" pace="0" />
+        <SteadyState Duration="90" Power="0.55" pace="0" />
+        <SteadyState Duration="15" Power="1.2" pace="0" />
+        <SteadyState Duration="75" Power="0.55" pace="0" />
+        <SteadyState Duration="12" Power="2.4" pace="0" />
+        <SteadyState Duration="180" Power="0.55" pace="0" />
+        <SteadyState Duration="12" Power="2.2" pace="0" />
+        <SteadyState Duration="180" Power="0.55" pace="0" />
+        <SteadyState Duration="12" Power="2.0" pace="0" />
+        <SteadyState Duration="300" Power="0.55" pace="0" />
+        <SteadyState Duration="12" Power="2.4" pace="0" />
+        <SteadyState Duration="180" Power="0.55" pace="0" />
+        <SteadyState Duration="12" Power="2.2" pace="0" />
+        <SteadyState Duration="180" Power="0.55" pace="0" />
+        <SteadyState Duration="12" Power="2.0" pace="0" />
+        <SteadyState Duration="180" Power="0.55" pace="0" />
+        <SteadyState Duration="300" Power="0.85" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.55" PowerHigh="0.4" pace="0" />
+    </workout>
+</workout_file>

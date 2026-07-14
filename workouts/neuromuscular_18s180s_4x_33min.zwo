@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Neuromuscular 4x18s Sprints (33min)</name>
+    <description>Warmup: 7min from 45% to 75% FTP + 2 openers | Sprints: 4 x (18s @ 205% / 3min @ 55%) with full recoveries | Finish: 5min @ 84% tempo | Slightly longer sprints - hold form as the legs flood in the final seconds | Cooldown: 5min from 55% to 40% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="420" PowerLow="0.45" PowerHigh="0.75" pace="0" />
+        <SteadyState Duration="15" Power="1.1" pace="0" />
+        <SteadyState Duration="90" Power="0.55" pace="0" />
+        <SteadyState Duration="15" Power="1.2" pace="0" />
+        <SteadyState Duration="75" Power="0.55" pace="0" />
+        <IntervalsT Repeat="4" OnDuration="18" OffDuration="180" OnPower="2.05" OffPower="0.55" pace="0" />
+        <SteadyState Duration="300" Power="0.84" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.55" PowerHigh="0.4" pace="0" />
+    </workout>
+</workout_file>

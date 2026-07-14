@@ -16769,6 +16769,20 @@ async function revertDeloadAdvance() {
   try { if (typeof loadPlanGrid === 'function') loadPlanGrid(); } catch (_) {}
 }
 
+// 3.4.1 M3 — THE effective-session decision, ONE function for BOTH surfaces.
+// /api/today-session carries planned (the stored plan) + adjusted (the live
+// HRV/readiness/glyco-capped session) + was_modified. Everything that tells
+// the rider what to ride today must key off the SAME choice:
+//   - the today-card blocks preview (via _todayPreviewSource, 3.3.1 B1);
+//   - the day modal (via _dayModalModel, 3.4.1 M3 — pre-M3 the modal
+//     rendered the stored original, contradicting the card one click deep).
+// Pure + DOM-free so the node harness pins the contract.
+function _effectiveTodaySession(d) {
+  const planned = (d && d.planned) || {};
+  const mod = !!(d && d.was_modified);
+  return {mod, planned, eff: (mod ? (d.adjusted || planned) : planned) || {}};
+}
+
 // 3.3.1 hotfix (B1): ONE decision point for what the today-card blocks
 // preview draws. The card's hero deliberately shows the ORIGINAL plan
 // (v4.6.0 Pillar D) — but the CHART is a riding instruction, so it must
@@ -16778,11 +16792,11 @@ async function revertDeloadAdvance() {
 //     (adjusted never carries a zwo_file by design — adjust_today_session
 //     is live, never matched), so an HRV-capped Z2 day previews Z2;
 //   - otherwise (fileless planned) → synthetic shape of the planned type.
+// 3.4.1 M3: the mod?adjusted:planned choice moved to _effectiveTodaySession
+// so the day modal consumes the identical decision. Semantics unchanged.
 // Pure + DOM-free so the node harness can pin the contract.
 function _todayPreviewSource(d) {
-  const planned = (d && d.planned) || {};
-  const mod = !!(d && d.was_modified);
-  const eff = (mod ? (d.adjusted || planned) : planned) || {};
+  const {mod, planned, eff} = _effectiveTodaySession(d);
   if (!mod && planned.zwo_file) return {kind: 'file', zwo_file: planned.zwo_file};
   if (eff.session_type && eff.session_type !== 'rest' && eff.duration_min) {
     return {kind: 'synthetic', session_type: eff.session_type,
@@ -17049,9 +17063,207 @@ async function dismissSession(day) {
   } catch(_) {}
 }
 
+// ═══ 3.4.1 M3 — adjustment-aware day modal ═════════════════════════════════
+// Owner incident: the home card showed the EFFECTIVE session (HRV/glyco-
+// adjusted Z2) but clicking it opened this modal rendering the ORIGINAL
+// stored session (Sweet Spot, 95% FTP ramps) with zero trace of the
+// adjustment. The modal now consumes the SAME decision the card uses
+// (_effectiveTodaySession): when an adjustment is pending on the opened day,
+// it LEADS with the adjusted session and demotes the original to a labeled
+// secondary block, with explicit accept / keep-original actions.
+
+// Pure + DOM-free (node harness): decide what the day modal renders.
+// Adjustments are live and today-only, so any other day — and any day
+// without a pending was_modified — renders the original, exactly as before.
+function _dayModalModel(session, todayData, todayIso) {
+  const t = _effectiveTodaySession(todayData);
+  if (!session || !t.mod) return {lead: 'original'};
+  if (String(session.day) !== String(todayIso)) return {lead: 'original'};
+  const eff = t.eff;
+  if (!eff.session_type) return {lead: 'original'};
+  return {
+    lead: 'adjusted',
+    rest: eff.session_type === 'rest',
+    reason: String(todayData.adjustment_reason || todayData.reason || ''),
+    // Session-shaped so the existing modal body renders it unchanged. The
+    // adjusted session is fileless BY DESIGN (adjust_today_session is live,
+    // never matched) — the modal's existing fileless branch then serves the
+    // approximate synthetic shape + generated-ZWO / synthesized-FIT
+    // downloads for the ADJUSTED targets, and hides the calendar-push.
+    effSession: {
+      day: session.day, day_name: session.day_name,
+      session_type: eff.session_type,
+      content_class: '',
+      duration_min: eff.duration_min || 0,
+      tss_estimate: eff.tss_estimate || 0,
+      zwo_file: '', zwo_name: '',
+      display_name: '', zwo_duration_min: 0,
+      description: eff.description || '',
+      zone_dist: null,
+      status: session.status || 'pending',
+    },
+    original: session,
+  };
+}
+
+// Async wrapper: resolve today's adjustment state for a session about to be
+// opened. Non-today days return null without any fetch (zero behavior change
+// for the rest of the calendar). Uses the payload the home card already
+// cached; falls back to one /api/today-session fetch when opened cold.
+async function _todayDayModalModel(session) {
+  const todayIso = new Date().toLocaleDateString('en-CA');
+  if (!session || String(session.day) !== todayIso) return null;
+  let d = window._todaySessionData;
+  if (!d || !d.planned) {
+    try {
+      const r = await fetch('/api/today-session');
+      if (r.ok) { d = await r.json(); window._todaySessionData = d; }
+    } catch (_) { return null; }
+  }
+  if (!d) return null;
+  return _dayModalModel(session, d, todayIso);
+}
+
+// Banner leading the adjusted view: what changed, why, and the two actions.
+function _adjBannerHtml(model) {
+  const eff = model.effSession || {};
+  const label = CAL_SESSION_LABEL[eff.session_type]
+             || String(eff.session_type || '').toUpperCase().replace('_', ' ');
+  const reason = model.reason
+    ? ` — <span style="color:var(--text2);">${esc(model.reason)}</span>` : '';
+  const acceptLabel = model.rest ? 'Take the rest day' : `Ride the ${esc(label)} version`;
+  return `<div class="adj-modal-banner" style="padding:8px 12px;background:rgba(234,179,8,0.1);border-radius:8px;color:var(--yellow);margin-bottom:12px;font-size:12px;">
+    ⚠️ <b>Today is adjusted to ${esc(label)}</b>${reason}. Below is the adjusted session.
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+      <button class="btn btn-primary" style="font-size:12px;" onclick="acceptTodayAdjustment()">${acceptLabel}</button>
+      <button class="btn" style="font-size:12px;" onclick="keepOriginalToday()">Keep original</button>
+    </div>
+  </div>`;
+}
+
+// The stored plan, demoted to a clearly-labeled collapsed block. No chart:
+// the lead chart is the riding instruction — repainting the original's hard
+// blocks below it would re-create the contradiction at smaller scale.
+function _adjOriginalBlockHtml(orig) {
+  if (!orig) return '';
+  const label = CAL_CONTENT_LABEL[orig.content_class]
+             || CAL_SESSION_LABEL[orig.session_type]
+             || String(orig.session_type || 'Session').toUpperCase();
+  const name = (orig.zwo_name || '').trim();
+  const dur = Number(orig.zwo_duration_min) || Number(orig.duration_min) || 0;
+  const spec = `${esc(label)}${dur ? ` · ${dur}min` : ''}${orig.tss_estimate ? ` · ${orig.tss_estimate} TSS` : ''}`;
+  const fileLine = name
+    ? `<div style="font-size:11px;color:var(--text3);font-style:italic;margin-top:4px;">Matched library file: ${esc(name)}</div>` : '';
+  // ZWO is power-only — mirror the modal's hr-mode demotion (no button).
+  const dlBtn = (orig.zwo_file && window._targetMode !== 'hr')
+    ? `<div style="margin-top:8px;"><button class="btn" style="font-size:12px;" onclick="downloadZwoFile('${escJs(orig.zwo_file)}')">Original workout (ZWO)</button></div>`
+    : '';
+  return `<details class="adj-original-block" style="margin-top:14px;border:1px solid var(--border);border-radius:8px;padding:8px 12px;">
+    <summary style="cursor:pointer;font-size:12px;color:var(--text2);">Original plan: <b style="color:var(--text);">${esc(name || label)}</b></summary>
+    <div style="font-size:12px;color:var(--text2);margin-top:8px;">
+      <div>${spec}</div>
+      ${fileLine}
+      <div style="font-size:11px;color:var(--text3);margin-top:4px;">Kept in your plan — “Keep original” above restores it for today.</div>
+      ${dlBtn}
+    </div>
+  </details>`;
+}
+
+// [Ride the … version] — persist the adjusted session into the plan via the
+// EXISTING accept machinery: /api/today-session/persist (F6, v4.1.0) writes
+// type/duration/TSS/description + adapted_reason and clears the stale ZWO;
+// /api/plan/re-draw (the widen-band rematch) then matches a real file for
+// the new type (no_candidate is benign — the day keeps its zone targets).
+async function acceptTodayAdjustment() {
+  const d = window._todaySessionData;
+  const t = _effectiveTodaySession(d);
+  if (!t.mod || !t.eff.session_type) { closeModal(); return; }
+  const eff = t.eff;
+  try {
+    const res = await fetch('/api/today-session/persist', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        reason: (d.adjustment_reason || d.reason || 'adapted'),
+        session_type: eff.session_type,
+        duration_min: eff.duration_min,
+        tss_estimate: eff.tss_estimate,
+        description: eff.description || '',
+      }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || j.error) {
+      try { showToast('Could not apply: ' + (j.error || ('HTTP ' + res.status)), 4000); } catch (_) {}
+      return;
+    }
+    if (eff.session_type !== 'rest') {
+      // Rematch a real file for the adjusted type; failures are benign.
+      try {
+        await fetch('/api/plan/re-draw', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({date: j.day}),
+        });
+      } catch (_) {}
+    }
+    const label = CAL_SESSION_LABEL[eff.session_type] || String(eff.session_type).toUpperCase();
+    try { showToast(`Applied — today is now ${label}`, 3500); } catch (_) {}
+  } catch (e) {
+    try { showToast('Could not apply: network error', 4000); } catch (_) {}
+    return;
+  }
+  closeModal();
+  await _refreshAfterAdjustAction();
+}
+
+// [Keep original] — the EXISTING C6 rider opt-out (/api/readiness/revert-cap,
+// the DFA-banner Revert): one-day flag, auto-clears at midnight. The server
+// now suppresses the whole live adjustment while the flag is set (3.4.1 M3),
+// so card + modal + grid all read the original after this.
+async function keepOriginalToday() {
+  try {
+    const res = await fetch('/api/readiness/revert-cap', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({signal: 'any'}),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    try { showToast('Keeping the original session — adjustment dismissed for today', 3500); } catch (_) {}
+  } catch (e) {
+    try { showToast('Could not keep original: ' + (e && e.message || e), 4000); } catch (_) {}
+    return;
+  }
+  closeModal();
+  await _refreshAfterAdjustAction();
+}
+
+// After either action: card + calendar + plan grid refresh consistently
+// (same block applyReadinessTierDown uses).
+async function _refreshAfterAdjustAction() {
+  try { await loadTodaySession(); } catch (_) {}
+  try { await loadCalendar(); } catch (_) {}
+  try { await loadPlan(); } catch (_) {}
+  try { loadWeeklyCalendar(); } catch (_) {}
+}
+
 async function openDayWorkout(sessionIdx) {
-  const session = window._weekPlanSessions?.[sessionIdx];
+  let session = window._weekPlanSessions?.[sessionIdx];
   if (!session || session.session_type === 'rest') return;
+
+  // 3.4.1 M3 — when TODAY carries a pending live adjustment, render the
+  // ADJUSTED session through the body below (its fileless branch serves the
+  // approximate shape + adjusted-target downloads) and demote the original.
+  let _adjModel = null;
+  try { _adjModel = await _todayDayModalModel(session); } catch (_) {}
+  const _adjLead = !!(_adjModel && _adjModel.lead === 'adjusted');
+  const _origSession = session;
+  if (_adjLead && _adjModel.rest) {
+    // Adjusted to REST: nothing to chart or download — banner + original.
+    let html = _adjBannerHtml(_adjModel);
+    html += `<h2>${session.day_name} — Rest day</h2>`;
+    html += `<div style="font-size:13px;color:var(--text2);margin:8px 0;">${esc(fixZeroMin(_adjModel.effSession.description) || 'Full rest — no session today.')}</div>`;
+    html += _adjOriginalBlockHtml(_origSession);
+    openModal(html);
+    return;
+  }
+  if (_adjLead) session = _adjModel.effSession;
 
   const ftp = 250;
   let settingsFtp = ftp;
@@ -17182,7 +17394,10 @@ async function openDayWorkout(sessionIdx) {
   const showGap = gapPct > 0.10;
   const matchedFile = (session.zwo_name || '').trim();
 
-  let html = `<h2>${session.day_name} — ${esc(heroTitle)}</h2>`;
+  // 3.4.1 M3: adjusted-lead modal opens with the banner (what changed, why,
+  // accept / keep-original) so the click can never contradict the card.
+  let html = (_adjLead ? _adjBannerHtml(_adjModel) : '');
+  html += `<h2>${session.day_name} — ${esc(heroTitle)}</h2>`;
   // v3.2.0: FTP-test sessions lead with a ramp-vs-20-min chooser — the rider
   // picks per test (no global setting), with the trade-offs shown.
   if (type === 'ftp_test') html += ftpTestChooserHtml(sessionIdx, session.day, session.ftp_test_type || 'coggan_20min');
@@ -17280,6 +17495,17 @@ async function openDayWorkout(sessionIdx) {
   html += _hrLead
     ? '<div style="font-size:10px;color:var(--text3);margin-top:8px;">Heart-rate mode: the <b>FIT</b> carries your bpm ranges (and RPE cues for short/hard efforts) — load it on a Garmin / Wahoo / Hammerhead. ZWO is greyed out because the format is power-only and cannot encode heart rate. Ride it, then Import FIT to analyze.</div>'
     : '<div style="font-size:10px;color:var(--text3);margin-top:8px;">Same workout, two formats — pick whichever your tool reads. <b>ZWO</b> is the structured-workout file for indoor trainer apps (MyWhoosh / Zwift / Tacx / Golden Cheetah); it drives ERG with smooth power ramps. <b>FIT</b> is the structured-workout file for bike computers and workout platforms (TrainingPeaks, Vekta, and head units). Many devices read either (a Hammerhead takes both). Ride it, then Import FIT to analyze.</div>';
+
+  // 3.4.1 M3: adjusted-lead — the stored original becomes the labeled
+  // secondary block, and the rematch/swap/dismiss row (which operates on the
+  // STORED session) stays out until the pending adjustment is resolved via
+  // the banner's accept / keep-original. Unadjusted days render exactly as
+  // before.
+  if (_adjLead) {
+    html += _adjOriginalBlockHtml(_origSession);
+    openModal(html);
+    return;
+  }
 
   // v4.1.0 U8: per-session rematch button. Calls /api/plan/re-draw first
   // (FIX-SERVER P6) and animates the new workout inline; falls back to the

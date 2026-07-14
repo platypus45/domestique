@@ -202,7 +202,10 @@ def test_preview_chart_axis_labels_bumped_scoped_and_theme_safe():
 @needs_node
 def test_banner_renders_reason_exactly_once_no_notation():
     src = _src()
+    # 3.4.1 M3: _todayPreviewSource consumes the shared _effectiveTodaySession
+    # (one decision fn for card + day modal) — extract it too.
     fns = (_extract_js_function(src, "loadTodaySession")
+           + _extract_js_function(src, "_effectiveTodaySession")
            + _extract_js_function(src, "_todayPreviewSource"))
     harness = _ESC_STUB + """
 // The screenshot case with the 3.4.1 engine copy (⑨b zone-accurate: the

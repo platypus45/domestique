@@ -95,7 +95,11 @@ def _run_node(harness: str) -> None:
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_b1_preview_source_follows_effective_session():
     src = DASHBOARD.read_text(encoding="utf-8")
-    fn = _extract_js_function(src, "_todayPreviewSource")
+    # 3.4.1 M3: the mod?adjusted:planned choice moved into the shared
+    # _effectiveTodaySession (one decision fn for card + day modal) —
+    # extract it too; every B1 assertion below is unchanged.
+    fn = (_extract_js_function(src, "_effectiveTodaySession") + "\n"
+          + _extract_js_function(src, "_todayPreviewSource"))
     harness = fn + """
 // The tester's exact incident: HRV-capped threshold→z2 day. The stored plan
 // still says threshold (and here even has a matched file) — the preview must

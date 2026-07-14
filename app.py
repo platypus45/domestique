@@ -11540,6 +11540,16 @@ def _api_today_session_impl():
         rides_recent=rides_recent,
         daily_log_today=daily_log_today,
     )
+    # 3.4.1 M3 — the C6 rider opt-out ("Keep original" in the day modal, the
+    # DFA-banner Revert) must suppress the WHOLE live adjustment for today,
+    # not only the R5 glyco gate + the /api/readiness banner booleans.
+    # Pre-M3 the flag left HRV-streak / readiness-score / DFA / injury-gate
+    # adjustments standing, so clicking Revert visibly did nothing on the
+    # today card. Same C6 semantics: one day, auto-clears at midnight.
+    if reason and r["cap_reverted_today"]:
+        _log.info(
+            f"EVENT=today_adjustment_reverted suppressed_reason={reason!r}")
+        adjusted, reason = planned, ""
 
     # v4.6.0 IMPL-HOMEPAGE-CONSISTENCY §3 Pillar D: surface adjustment_reason
     # explicitly so the homepage chip can render "Adjusted to {type} due to

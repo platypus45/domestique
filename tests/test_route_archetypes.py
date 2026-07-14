@@ -8,6 +8,7 @@ yields the intended spread.
 from __future__ import annotations
 
 import math
+import zlib
 import statistics
 
 import pytest
@@ -72,7 +73,7 @@ def test_max_grade_sd_across_archetypes_exceeds_4():
     """Routes from different archetypes must cover a wide grade range."""
     max_grades = []
     for name, spec in ARCHETYPE_REGISTRY.items():
-        seed = hash(name) & 0xFFFFFFFF
+        seed = zlib.crc32(name.encode()) & 0xFFFFFFFF  # salt-stable (PYTHONHASHSEED flake fix)
         dist = (spec.dist_min_km + spec.dist_max_km) / 2
         _, grades = _processed(spec, dist, seed)
         max_grades.append(max(grades))
@@ -86,7 +87,7 @@ def test_max_grade_sd_across_archetypes_exceeds_4():
 
 def _shape_sanity(name: str):
     spec = ARCHETYPE_REGISTRY[name]
-    seed = hash(name) & 0xFFFFFFFF
+    seed = zlib.crc32(name.encode()) & 0xFFFFFFFF  # salt-stable (PYTHONHASHSEED flake fix)
     dist = (spec.dist_min_km + spec.dist_max_km) / 2
     out, grades = _processed(spec, dist, seed)
     # segs and grades have same length
@@ -226,7 +227,7 @@ def test_surface_segments_tile_total_distance():
             # cobble_rolling intentionally seeds a short wall that doesn't
             # emit a surface segment; tiling check is N/A for that archetype.
             continue
-        seed = hash(name) & 0xFFFFFFFF
+        seed = zlib.crc32(name.encode()) & 0xFFFFFFFF  # salt-stable (PYTHONHASHSEED flake fix)
         dist = (spec.dist_min_km + spec.dist_max_km) / 2
         out = spec.fn(dist, seed)
         actual_dist = sum(out.segs)
@@ -341,7 +342,7 @@ def test_lap_rolling_has_oscillation():
 def test_each_archetype_fn_is_deterministic():
     """Calling the same archetype fn twice with the same seed yields identical output."""
     for name, spec in ARCHETYPE_REGISTRY.items():
-        seed = hash(name) & 0xFFFFFFFF
+        seed = zlib.crc32(name.encode()) & 0xFFFFFFFF  # salt-stable (PYTHONHASHSEED flake fix)
         dist = (spec.dist_min_km + spec.dist_max_km) / 2
         a = spec.fn(dist, seed)
         b = spec.fn(dist, seed)

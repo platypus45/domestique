@@ -178,27 +178,35 @@ def test_one_shared_decision_fn_feeds_both_surfaces():
 
 @requires_node
 def test_banner_text_and_actions():
+    """3.4.2 M5 §1 — the banner names BOTH workouts and the actions are
+    verb+named-workout (no bare "original"/"Keep original" pronouns)."""
     src = DASHBOARD.read_text(encoding="utf-8")
     harness = _STUBS + _fns(
-        src, "_effectiveTodaySession", "_dayModalModel", "_adjBannerHtml"
+        src, "_sessTypeLabel", "_adjPlannedNowHtml", "_effectiveTodaySession",
+        "_dayModalModel", "_adjBannerHtml"
     ) + _TODAY_FIXTURE + """
 const m = _dayModalModel(SESSION, TODAY_D, new Date().toLocaleDateString('en-CA'));
 const html = _adjBannerHtml(m);
-if (!html.includes('Today is adjusted to')) throw new Error('banner lead missing');
-if (!html.includes('Z2')) throw new Error('banner must name the adjusted type');
+if (!html.includes('Planned: <b>SWEET SPOT — Sweet Spot Steady, 80min</b>'))
+  throw new Error('banner must name the PLANNED workout: ' + html);
+if (!html.includes('Now: <b>Z2, 60min · 42 TSS</b>'))
+  throw new Error('banner must name the ADJUSTED workout: ' + html);
 if (!html.includes('Below is the adjusted session')) throw new Error('banner body missing');
 if (!html.includes('easing today to Z2')) throw new Error('banner must carry the engine reason');
-if (!html.includes('Ride the Z2 version')) throw new Error('accept action label missing');
-if (!html.includes('Keep original')) throw new Error('keep-original action missing');
+if (!html.includes('✓ Ride the easier Z2 (60min)')) throw new Error('accept action label missing');
+if (!html.includes('Ride the original SWEET SPOT anyway')) throw new Error('keep-original action missing');
+if (html.includes('>Keep original<')) throw new Error('nameless keep-original must be gone');
 if (!html.includes('acceptTodayAdjustment()')) throw new Error('accept not wired');
 if (!html.includes('keepOriginalToday()')) throw new Error('keep-original not wired');
 
-// Rest adjustment gets a truthful accept label.
+// Rest adjustment gets a truthful accept label; keep-original stays named.
 const mr = _dayModalModel(SESSION, {...TODAY_D,
   adjusted: {session_type: 'rest', duration_min: 0, tss_estimate: 0, description: ''}},
   new Date().toLocaleDateString('en-CA'));
-if (!_adjBannerHtml(mr).includes('Take the rest day'))
+if (!_adjBannerHtml(mr).includes('✓ Take the rest day'))
   throw new Error('rest accept label missing');
+if (!_adjBannerHtml(mr).includes('Ride the original SWEET SPOT anyway'))
+  throw new Error('rest keep-original must name the workout');
 console.log('OK');
 """
     _run_node(harness)
@@ -207,7 +215,7 @@ console.log('OK');
 @requires_node
 def test_original_plan_secondary_block():
     src = DASHBOARD.read_text(encoding="utf-8")
-    harness = _STUBS + _fns(src, "_adjOriginalBlockHtml") + """
+    harness = _STUBS + _fns(src, "_sessTypeLabel", "_adjOriginalBlockHtml") + """
 global.window = {_targetMode: 'power'};
 let html = _adjOriginalBlockHtml({
   session_type: 'sweetspot', content_class: '', duration_min: 80,
@@ -308,7 +316,8 @@ def test_accept_calls_existing_persist_then_redraw():
 def test_keep_original_calls_existing_revert_cap():
     src = DASHBOARD.read_text(encoding="utf-8")
     harness = _STUBS + _ACTION_STUBS + _fns(
-        src, "keepOriginalToday", "_refreshAfterAdjustAction") + """
+        src, "_sessTypeLabel", "_effectiveTodaySession", "keepOriginalToday",
+        "_refreshAfterAdjustAction") + """
 (async () => {
   global.window = {};
   global.fetch = async (url, opts) => {
@@ -354,7 +363,8 @@ global.openModal = h => { modalHtml = h; };
 def test_modal_renders_adjusted_lead_and_effective_downloads():
     src = DASHBOARD.read_text(encoding="utf-8")
     harness = _MODAL_STUBS + _fns(
-        src, "_effectiveTodaySession", "_dayModalModel", "_todayDayModalModel",
+        src, "_sessTypeLabel", "_adjPlannedNowHtml", "_effectiveTodaySession",
+        "_dayModalModel", "_todayDayModalModel",
         "_adjBannerHtml", "_adjOriginalBlockHtml", "openDayWorkout"
     ) + _TODAY_FIXTURE + """
 (async () => {
@@ -366,9 +376,12 @@ def test_modal_renders_adjusted_lead_and_effective_downloads():
   };
   await openDayWorkout(0);
   if (!modalHtml) throw new Error('modal did not open');
-  // Leads with the banner + the ADJUSTED hero.
-  if (!modalHtml.includes('Today is adjusted to')) throw new Error('banner missing');
-  if (modalHtml.indexOf('Today is adjusted to') > modalHtml.indexOf('<h2>'))
+  // Leads with the banner (both workouts NAMED, 3.4.2 M5 §1) + ADJUSTED hero.
+  if (!modalHtml.includes('Planned: <b>SWEET SPOT — Sweet Spot Steady, 80min</b>'))
+    throw new Error('banner missing / planned workout unnamed');
+  if (!modalHtml.includes('Now: <b>Z2, 60min · 42 TSS</b>'))
+    throw new Error('banner must name the adjusted workout');
+  if (modalHtml.indexOf('Planned: <b>') > modalHtml.indexOf('<h2>'))
     throw new Error('banner must LEAD the modal');
   if (!modalHtml.includes('Monday — Z2 (60min)')) throw new Error('hero must be the ADJUSTED session: ' + modalHtml.match(/<h2>[^<]*<\\/h2>/));
   // The approximate adjusted shape (synthetic — fileless by design).
@@ -386,10 +399,12 @@ def test_modal_renders_adjusted_lead_and_effective_downloads():
   if (!modalHtml.includes('Original plan:')) throw new Error('original secondary block missing');
   if (!modalHtml.includes('Sweet Spot Steady 80min')) throw new Error('original name missing');
   if (!modalHtml.includes('Original workout (ZWO)')) throw new Error('original download missing');
-  // Rematch/swap/dismiss stay out until the adjustment is resolved.
-  if (modalHtml.includes('Rematch workout')) throw new Error('rematch must hide while pending');
-  if (modalHtml.includes('Swap type')) throw new Error('swap must hide while pending');
-  if (modalHtml.includes('Dismiss this session')) throw new Error('dismiss must hide while pending');
+  // The Change-this-workout cluster (rematch/swap/easier) + skip stay out
+  // until the adjustment is resolved (3.4.2 M6 §6 verbs).
+  if (modalHtml.includes('Give me a different workout')) throw new Error('rematch must hide while pending');
+  if (modalHtml.includes('Change the type')) throw new Error('swap must hide while pending');
+  if (modalHtml.includes('Make it easier today')) throw new Error('tier-down must hide while pending');
+  if (modalHtml.includes('Skip today')) throw new Error('skip must hide while pending');
 
   // Adjusted to REST → compact banner + original, no chart/downloads.
   modalHtml = null;
@@ -398,7 +413,7 @@ def test_modal_renders_adjusted_lead_and_effective_downloads():
       adjusted: {session_type: 'rest', duration_min: 0, tss_estimate: 0,
                  description: 'Forced rest — HRV below SWC for 3+ days (Plews protocol).'}}};
   await openDayWorkout(0);
-  if (!modalHtml.includes('Take the rest day')) throw new Error('rest accept missing');
+  if (!modalHtml.includes('✓ Take the rest day')) throw new Error('rest accept missing');
   if (!modalHtml.includes('Rest day')) throw new Error('rest hero missing');
   if (modalHtml.includes('downloadFIT') || modalHtml.includes('downloadGeneratedZwo'))
     throw new Error('rest day has nothing to download');
@@ -411,12 +426,14 @@ def test_modal_renders_adjusted_lead_and_effective_downloads():
 
 @requires_node
 def test_unadjusted_day_renders_exactly_as_before():
-    """Pin: was_modified=false (same day, same session) → the pre-M3 modal:
-    no banner, original hero + matched-file line, original-file downloads,
-    calendar-push, rematch/swap/dismiss all present."""
+    """Pin: was_modified=false (same day, same session) → the unadjusted
+    modal: no banner, original hero + matched-file line, original-file
+    downloads, calendar-push, the full Change-this-workout cluster + skip
+    (3.4.2 M6 §6 rider verbs) all present."""
     src = DASHBOARD.read_text(encoding="utf-8")
     harness = _MODAL_STUBS + _fns(
-        src, "_effectiveTodaySession", "_dayModalModel", "_todayDayModalModel",
+        src, "_sessTypeLabel", "_adjPlannedNowHtml", "_effectiveTodaySession",
+        "_dayModalModel", "_todayDayModalModel",
         "_adjBannerHtml", "_adjOriginalBlockHtml", "openDayWorkout"
     ) + _TODAY_FIXTURE + """
 (async () => {
@@ -431,7 +448,7 @@ def test_unadjusted_day_renders_exactly_as_before():
   };
   await openDayWorkout(0);
   if (!modalHtml) throw new Error('modal did not open');
-  if (modalHtml.includes('Today is adjusted to')) throw new Error('unadjusted day must not banner');
+  if (modalHtml.includes('Planned: <b>')) throw new Error('unadjusted day must not banner');
   if (modalHtml.includes('Original plan:')) throw new Error('no secondary block when unadjusted');
   if (!modalHtml.includes('Monday — SWEET SPOT (80min)')) throw new Error('hero must be the stored session: ' + modalHtml.match(/<h2>[^<]*<\\/h2>/));
   if (!modalHtml.includes('Matched library file:')) throw new Error('matched-file line missing');
@@ -440,19 +457,24 @@ def test_unadjusted_day_renders_exactly_as_before():
   if (!/downloadFIT\\('sweetspot', 80, '[^']*', 'sweet_spot_steady_80\\.zwo'\\)/.test(modalHtml))
     throw new Error('FIT must transcode the matched file when unadjusted');
   if (!modalHtml.includes('calPushPlanner')) throw new Error('calendar-push missing when unadjusted');
-  if (!modalHtml.includes('Rematch workout')) throw new Error('rematch missing when unadjusted');
-  if (!modalHtml.includes('Swap type')) throw new Error('swap missing when unadjusted');
-  if (!modalHtml.includes('Dismiss this session')) throw new Error('dismiss missing when unadjusted');
+  if (!modalHtml.includes('Change this workout')) throw new Error('action cluster missing when unadjusted');
+  if (!modalHtml.includes('Give me a different workout')) throw new Error('rematch missing when unadjusted');
+  if (!modalHtml.includes('Change the type')) throw new Error('swap missing when unadjusted');
+  if (!modalHtml.includes('Make it easier today')) throw new Error('tier-down missing on today+sweetspot');
+  if (!modalHtml.includes('Skip today')) throw new Error('skip missing when unadjusted');
 
   // A DIFFERENT (non-today) day never consults today-session at all: same
-  // pre-M3 render even while today IS adjusted.
+  // unadjusted render even while today IS adjusted — and the today-only
+  // verbs speak honestly ("Skip this day", no "easier today").
   modalHtml = null;
   const other = {...SESSION, day: '2000-01-01'};
   global.window = {_weekPlanSessions: [other], _targetMode: 'power',
                    _todaySessionData: TODAY_D};
   await openDayWorkout(0);
-  if (modalHtml.includes('Today is adjusted to')) throw new Error('other days must not banner');
-  if (!modalHtml.includes('Rematch workout')) throw new Error('other days keep the full action row');
+  if (modalHtml.includes('Planned: <b>')) throw new Error('other days must not banner');
+  if (!modalHtml.includes('Give me a different workout')) throw new Error('other days keep the full action row');
+  if (modalHtml.includes('Make it easier today')) throw new Error('tier-down is today-only');
+  if (!modalHtml.includes('Skip this day')) throw new Error('non-today skip label');
   console.log('OK');
 })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
 """

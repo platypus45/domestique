@@ -165,8 +165,8 @@ def test_today_card_contrast_pins():
     # Planned duration line at --text2.
     assert ('color:var(--text2);margin-bottom:8px;">'
             '${d.planned.duration_min}min') in src
-    # Banner Now-line at --text2.
-    assert '<span style="color:var(--text2);">Now: ${adj.duration_min}min' in src
+    # Chip reason at --text2 (the named Planned→Now line stays --yellow).
+    assert '${adjReason ? ` — <span style="color:var(--text2);">${esc(adjReason)}</span>` : \'\'}' in src
     # "Approximate shape" caption at --text2.
     assert 'color:var(--text2);margin-top:2px;">Approximate shape' in src
     # "Recovery details" header + planned-description subtitle read at
@@ -206,7 +206,10 @@ def test_banner_renders_reason_exactly_once_no_notation():
     # (one decision fn for card + day modal) — extract it too.
     fns = (_extract_js_function(src, "loadTodaySession")
            + _extract_js_function(src, "_effectiveTodaySession")
-           + _extract_js_function(src, "_todayPreviewSource"))
+           + _extract_js_function(src, "_todayPreviewSource")
+           + _extract_js_function(src, "_sessTypeLabel")
+           + _extract_js_function(src, "_adjPlannedNowHtml")
+           + _extract_js_function(src, "_todayPlannedZwoName"))
     harness = _ESC_STUB + """
 // The screenshot case with the 3.4.1 engine copy (⑨b zone-accurate: the
 // z6-dominant VO2max day reads "very hard riding", not "sprint intensity"):
@@ -257,23 +260,24 @@ const openTodayRich = () => {};
   }
 
   // Chip head + em-dash joiner (the "due to" scaffold read badly against a
-  // full sentence and is gone).
-  if (html.indexOf('Adjusted to <b>Z2</b>') < 0)
-    throw new Error('chip must lead with the adjusted type');
+  // full sentence and is gone). 3.4.2 M5 §1: the chip names BOTH workouts
+  // (no fixture zwo_name/week cache here → label + duration name them).
+  if (html.indexOf('Planned: <b>TEMPO, 80min</b>') < 0)
+    throw new Error('chip must name the planned workout: ' + html);
+  if (html.indexOf('Now: <b>Z2, 80min · 60 TSS</b>') < 0)
+    throw new Error('chip must name the adjusted workout: ' + html);
+  if (html.indexOf('Adjusted to <b>') >= 0)
+    throw new Error('nameless chip lead must be gone');
   if (html.indexOf(' due to ') >= 0)
     throw new Error('"due to" joiner must be gone');
-
-  // Now-line: adjusted spec + type change only — never the reason again.
-  if (html.indexOf('Now: 80min · 60 TSS — z2 (was tempo)') < 0)
-    throw new Error('Now-line must carry the adjusted spec + type change');
 
   // Contrast (item 3) on the LIVE render: kicker + duration + Now-line.
   if (html.indexOf(`color:var(--text2);margin-bottom:6px;">TODAY'S TRAINING`) < 0)
     throw new Error('kicker must render at --text2');
   if (html.indexOf('color:var(--text2);margin-bottom:8px;">80min · 68 TSS') < 0)
     throw new Error('duration line must render at --text2');
-  if (html.indexOf('<span style="color:var(--text2);">Now: 80min') < 0)
-    throw new Error('Now-line must render at --text2');
+  if (html.indexOf('<span style="color:var(--text2);">' + REASON) < 0)
+    throw new Error('chip reason must render at --text2');
 
   // Centered preview (item 2) on the LIVE render: the synthetic branch
   // filled the holder with the centered wrapper + the approximate caption.
@@ -299,7 +303,8 @@ def test_banner_template_reason_once_source_pin():
     fn = _extract_js_function(src, "loadTodaySession")
     assert fn.count("${esc(adjReason)}") == 1
     assert " due to " not in fn
-    assert "Now: ${adj.duration_min}min · ${adj.tss_estimate} TSS" in fn
+    # 3.4.2 M5 §1: the chip line is the shared named builder.
+    assert "${_adjPlannedNowHtml(d.planned, adj, _todayPlannedZwoName(d))}" in fn
 
 
 # ═══════════════════════════════════════════════════════════════════════════

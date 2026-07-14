@@ -592,7 +592,7 @@ def test_3_one_click_generate_and_friendly_engine_refusal():
                "_entryFmtDate", "_entryEndDateIso", "_entryTssTrend",
                "_entryWhyRowsHtml", "_renderEntryScan", "_entryStripHtml",
                "entryCardGenerate", "_pgEntryCurrentIdx", "_pgEntryNoteText",
-               "generatePlan")
+               "_planTrainingMode", "_planGoalValue", "generatePlan")
     harness = _CARD_STUBS + """
 els['plan-status'] = { textContent: '', style: {} };
 els['plan-distribution'] = { value: 'polarized' };
@@ -601,7 +601,8 @@ els['plan-mode'] = { value: 'auto' };
 els['plan-tdate'] = { value: '' };
 els['plan-backdate-on'] = { checked: true };
 const window = { _entryRecognized: false, _planData: { weeks: [{}, {}] } };
-const document = { querySelectorAll: () => [] };
+// 3.4.2 M6 §5: generatePlan reads the mode cards; none stubbed = goal mode.
+const document = { querySelectorAll: () => [], getElementById: () => null };
 const confirm = () => { throw new Error('one-click: confirm() must NOT fire from the card'); };
 const readBcRaces = () => [];
 const _phaseSplitBlocked = () => false;

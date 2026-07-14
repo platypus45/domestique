@@ -1998,7 +1998,7 @@ window.addEventListener('unhandledrejection', function(e) {
   <details class="plan-help-panel" style="margin-bottom:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;">
     <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--text);">How your plan updates</summary>
     <div style="margin-top:8px;font-size:12px;line-height:1.5;color:var(--text2);">
-      <strong>Generate Plan</strong> is the one button — it builds your plan, and rebuilds it from your current settings + fitness if one already exists (use it after a goal, event-date, or big training-time change). After that your plan <strong>updates itself</strong>: automatically after every ride sync and each time you open this tab. It rebalances load to today's fitness and fatigue, or — if you've missed enough training to fall behind — rebuilds with a safe recovery ramp (no catch-up spike); the status line shows what changed. The <strong>Availability Calendar</strong> edits which days you can train; click a day to set hours, right-click to mark unavailable, then press the pulsing UPDATE button to reflow. <strong>Rematch workout</strong> (in any day's detail view) re-rolls only that single workout at the same duration if the suggestion doesn't fit. Don't manually edit unless something's clearly wrong — the planner already accounts for fatigue and load.
+      <strong>Generate Plan</strong> is the one button — it builds your plan, and rebuilds it from your current settings + fitness if one already exists (use it after a goal, event-date, or big training-time change). After that your plan <strong>updates itself</strong>: automatically after every ride sync and each time you open this tab. It rebalances load to today's fitness and fatigue, or — if you've missed enough training to fall behind — rebuilds with a safe recovery ramp (no catch-up spike); the status line shows what changed. The <strong>Availability Calendar</strong> edits which days you can train; click a day to set hours, right-click to mark unavailable, then press the pulsing UPDATE button to reflow. <strong>Give me a different workout</strong> (in any day's detail view) re-rolls only that single workout at the same duration if the suggestion doesn't fit. Don't manually edit unless something's clearly wrong — the planner already accounts for fatigue and load.
     </div>
   </details>
 
@@ -2009,7 +2009,7 @@ window.addEventListener('unhandledrejection', function(e) {
        .info-popover toggles via .open from the delegated handler below. -->
   <div class="info-popover" id="planpop-update"><strong>Update plan</strong> automatically picks the right adjustment: a structure-preserving <em>rebalance</em> to today's TSB (fatigue), ACWR (load ratio) and availability when you're on track, or a full <em>rebuild with a recovery ramp</em> when you've missed enough to fall behind (Gabbett-safe, never a catch-up spike). Runs automatically after each ride sync too. Won't re-roll past or completed sessions, and won't move a fixed event date.</div>
   <div class="info-popover" id="planpop-availability"><strong>Edit availability</strong> sets per-day training time. Click a date to set hours; right-click to mark unavailable (holiday/injury). <strong>Press the pulsing UPDATE button to apply changes — the plan reflows on click.</strong></div>
-  <div class="info-popover" id="planpop-rematch"><strong>Rematch workout</strong> re-rolls only this one day's ZWO file from the matching workout pool. Same intent (intervals, endurance, etc.) — different specific session. Use when the suggested workout doesn't fit your equipment or mood.</div>
+  <div class="info-popover" id="planpop-rematch"><strong>Give me a different workout</strong> re-rolls only this one day's workout from the matching pool. Same intent (intervals, endurance, etc.) — different specific session. Use when the suggested workout doesn't fit your equipment or mood.</div>
   <div class="info-popover" id="planpop-mode"><strong>Plan style</strong> — how your weekly sessions are chosen.<br><br><strong>Automatic (varied)</strong>: a varied, auto-adapting plan drawn from the full library — different sessions week to week.<br><strong>Fixed-core (repeatable)</strong>: the same weekly shape — one hard session type per phase that progresses by reps, over a Z2 base that scales to your available time.<br><strong>Template</strong>: a ready-made fixed-core blueprint.</div>
 
   <!-- v1.8.25 — "catching up your plan" overlay: greyed backdrop + stepped
@@ -2053,8 +2053,31 @@ window.addEventListener('unhandledrejection', function(e) {
   <div class="grid g2" style="margin-bottom:12px;">
     <div class="card" id="plan-config">
       <h3>Plan Configuration</h3>
+      <!-- 3.4.2 M6 §5 — dichotomous MODE chooser leads the form. "Continuous"
+           left the Goal dropdown: the two cards are the goal-vs-continuous
+           decision, and togglePlanFields() filters the fields below to the
+           selected mode. Default = goal mode; populatePlanFormFromGoal
+           selects the continuous card for a stored continuous plan. -->
+      <div id="plan-mode-cards" style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
+        <div class="plan-mode-card" id="plan-mode-card-goal" data-mode="goal" data-selected="1"
+             role="button" tabindex="0" aria-pressed="true"
+             onclick="selectPlanMode('goal')"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectPlanMode('goal');}"
+             style="flex:1;min-width:210px;border:1px solid var(--accent);border-radius:8px;padding:10px 12px;cursor:pointer;background:var(--surface2);">
+          <div style="font-weight:700;font-size:13px;">🎯 Train toward a goal</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:3px;">Set weeks or an event date — classic base→build→peak.</div>
+        </div>
+        <div class="plan-mode-card" id="plan-mode-card-continuous" data-mode="continuous" data-selected="0"
+             role="button" tabindex="0" aria-pressed="false"
+             onclick="selectPlanMode('continuous')"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectPlanMode('continuous');}"
+             style="flex:1;min-width:210px;border:1px solid var(--border);border-radius:8px;padding:10px 12px;cursor:pointer;background:transparent;">
+          <div style="font-weight:700;font-size:13px;">♾ Train continuously</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:3px;">No end date — reads your rides &amp; readiness daily, extends itself weekly.</div>
+        </div>
+      </div>
       <div class="form-row">
-        <div class="form-group"><label>Goal</label>
+        <div class="form-group" id="plan-goal-group"><label>Goal</label>
           <select id="plan-goal" onchange="togglePlanFields()">
             <option value="general">General Fitness</option>
             <option value="event" selected>Event Preparation</option>
@@ -2062,11 +2085,10 @@ window.addEventListener('unhandledrejection', function(e) {
             <option value="vo2max">Improve VO2max (interval focus)</option>
             <option value="ftp_vo2max">Hybrid FTP + VO2max (both)</option>
             <option value="ctl">Build CTL (Fitness)</option>
-            <option value="continuous">Continuous — keep improving</option>
           </select>
         </div>
         <!-- 3.4.0 W3: continuous-mode focus pref (ftp|vo2|both) — shown only
-             for the continuous goal; rides the existing generate params. -->
+             in continuous mode; rides the existing generate params. -->
         <div class="form-group" id="plan-focus-group" style="display:none;"><label>Focus</label>
           <select id="plan-focus" onchange="refreshPlanPreview()">
             <option value="both" selected>FTP + VO2max (both)</option>
@@ -2074,9 +2096,12 @@ window.addEventListener('unhandledrejection', function(e) {
             <option value="vo2">VO2max (intervals)</option>
           </select>
         </div>
-        <div class="form-group"><label>Plan Weeks</label>
+        <div class="form-group" id="plan-weeks-group"><label>Plan Weeks</label>
           <!-- v1.8.9 Bug 8 — oninput syncs to plan-edate via _syncPlanWeeksToDate(). -->
           <input type="number" id="plan-weeks" value="12" min="4" max="52" style="width:70px;" oninput="_syncPlanWeeksToDate();" onchange="refreshPlanPreview()"></div>
+        <!-- 3.4.2 M5 §2 — continuous replaces the weeks stepper (which the
+             engine ignores: rolling 4-week horizon) with the honest note. -->
+        <div class="form-group" id="plan-horizon-note" style="display:none;align-self:center;font-size:12px;color:var(--text2);">Rolling 4-week horizon — extends itself weekly</div>
       </div>
       <!-- Plan configuration — Plan style / periodization / intensity model,
            grouped + labelled so they're discoverable (they round-trip from the
@@ -2144,7 +2169,7 @@ window.addEventListener('unhandledrejection', function(e) {
            MODE 2 ("Place me from my rides"): the recognizer scans the ride
            archive, proposes a credit, and Confirm stores the RESULT as an
            equivalent start date (entry_mode=recognized). -->
-      <div class="form-row">
+      <div class="form-row" id="plan-entry-block">
         <div class="form-group" style="flex:1 1 100%;">
           <label id="plan-backdate-box" style="display:inline-flex;align-items:center;gap:10px;cursor:pointer;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);font-size:14px;font-weight:600;">
             <input type="checkbox" id="plan-backdate-on" onchange="onBackdateToggle()" style="width:17px;height:17px;cursor:pointer;"> I&rsquo;ve been training already
@@ -2169,6 +2194,10 @@ window.addEventListener('unhandledrejection', function(e) {
           </div>
         </div>
       </div>
+      <!-- 3.4.2 M5 §3 — continuous: the entry path (scan + backdate) dead-ends
+           by design, so the block above greys out and this note says why.
+           Sibling of the block so the opacity dim can't grey the note too. -->
+      <div id="plan-entry-note" style="display:none;font-size:11px;color:var(--text2);margin:0 0 10px;">Continuous plans place themselves — your recent rides and readiness are read automatically, every day.</div>
       <div id="plan-event-fields">
         <div class="form-row">
           <!-- v1.8.9 Bug 8 — oninput syncs to plan-weeks via _syncPlanDateToWeeks(). -->
@@ -2800,9 +2829,14 @@ window.addEventListener('unhandledrejection', function(e) {
        Mateo-March 2022 / Maturana 2025). Each toggle re-fetches with
        kj_threshold= query param (per PATCH G4 cache key). Empty state
        honours threshold context. Feature flag: window.FEATURES.fatigue_resistance. -->
+  <!-- 3.4.2 M5 §4 — "what IS this panel" explainer: a ? info-icon on the h3
+       via the standard [data-popover]/.info-popover pattern (opaque since
+       the --card fix). The existing (i) icon next to the threshold toggle
+       keeps its narrower kJ-threshold literature popover. -->
+  <div class="info-popover" id="frpop-what"><strong>Fatigue resistance</strong> — how much punch you keep after hard work. Measures how far your best 5s–5min power drops after 1,000/1,500/2,000 kJ of riding — the number that decides finales in long races. Computed from your own rides; rides without power data are excluded and noted. Higher = you fade less.</div>
   <div class="card fatigue-resistance" id="fatigue-resistance-panel" style="margin-bottom:12px;">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-        <h3 style="margin:0;font-size:15px;">Fatigue Resistance <span style="font-size:11px;font-weight:400;color:var(--text3);">— robustness index (beta)</span></h3>
+        <h3 style="margin:0;font-size:15px;">Fatigue Resistance <span style="font-size:11px;font-weight:400;color:var(--text3);">— robustness index (beta)</span><span class="info-icon" data-popover="frpop-what" tabindex="0" role="button" aria-label="What is fatigue resistance?" title="What is fatigue resistance?">?</span></h3>
         <span id="fatigue-resistance-headline" style="font-size:11px;color:var(--text3);"></span>
         <button id="fatigue-resistance-refresh-btn" class="btn"
                 style="font-size:10px;padding:2px 6px;margin-left:auto;cursor:pointer;"
@@ -10541,13 +10575,51 @@ function _syncPlanWeeksToDate() {
   } finally { _planSyncing = false; }
 }
 
+// ── 3.4.2 M6 §5 — training-mode chooser (goal vs continuous) ────────────────
+// The two PLAN CONFIGURATION cards are the goal-vs-continuous decision;
+// "continuous" left the Goal dropdown. DOM is the source of truth
+// (data-selected on the cards) so the selection survives re-renders and
+// round-trips from populatePlanFormFromGoal. Cards absent (harness / legacy
+// markup) ⇒ goal mode.
+function _planTrainingMode() {
+  const el = document.getElementById('plan-mode-card-continuous');
+  return (el && el.dataset && el.dataset.selected === '1') ? 'continuous' : 'goal';
+}
+
+// The ONE mode-aware goal read: continuous card selected ⇒ 'continuous'
+// (the option is no longer in the dropdown), else the dropdown value.
+// generatePlan / refreshPlanPreview consume this so their payloads stay
+// byte-identical to the dropdown era.
+function _planGoalValue() {
+  return _planTrainingMode() === 'continuous'
+    ? 'continuous' : (($('plan-goal') || {}).value || '');
+}
+
+function selectPlanMode(mode) {
+  for (const m of ['goal', 'continuous']) {
+    const el = document.getElementById('plan-mode-card-' + m);
+    if (!el) continue;
+    const sel = m === mode;
+    if (el.dataset) el.dataset.selected = sel ? '1' : '0';
+    try { el.setAttribute('aria-pressed', sel ? 'true' : 'false'); } catch (_) {}
+    el.style.border = '1px solid ' + (sel ? 'var(--accent)' : 'var(--border)');
+    el.style.background = sel ? 'var(--surface2)' : 'transparent';
+  }
+  try { togglePlanFields(); } catch (_) {}
+}
+
 function togglePlanFields() {
-  const goal = $('plan-goal').value;
-  const isEvent = _isEventGoal(goal);
-  const isContinuous = goal === 'continuous';
+  // 3.4.2 M6 §5: the goal-vs-continuous split is the MODE CARD selection —
+  // the dropdown only ever holds finite goals now.
+  const isContinuous = _planTrainingMode() === 'continuous';
+  const goal = isContinuous ? 'continuous' : $('plan-goal').value;
+  const isEvent = !isContinuous && _isEventGoal(goal);
   $('plan-event-fields').style.display = isEvent ? 'block' : 'none';
-  $('plan-target-fields').style.display = ['ftp','ctl','vo2max','ftp_vo2max'].includes(goal) ? 'block' : 'none';
-  // 3.4.0 W3: focus pref only applies to the open-ended continuous goal.
+  $('plan-target-fields').style.display = (!isContinuous && ['ftp','ctl','vo2max','ftp_vo2max'].includes(goal)) ? 'block' : 'none';
+  // Continuous mode has no goal list — the mode card already answered it.
+  const gg = $('plan-goal-group');
+  if (gg) gg.style.display = isContinuous ? 'none' : '';
+  // 3.4.0 W3: focus pref only applies to the open-ended continuous mode.
   const fg = $('plan-focus-group');
   if (fg) fg.style.display = isContinuous ? '' : 'none';
   // 3.4.0 W3: B/C races aren't wired for continuous (generatePlan sends no
@@ -10555,21 +10627,39 @@ function togglePlanFields() {
   const bc = $('plan-bc-races');
   if (bc) bc.style.display = isContinuous ? 'none' : '';
 
-  // v1.8.9 Bug 8 — both inputs are always editable. Date computes weeks
-  // and weeks computes date via oninput handlers. No disabled-state.
+  // 3.4.2 M5 §2 — continuous: the engine pins a rolling 4-week horizon
+  // (weeks_available ignores plan_weeks), so the PLAN WEEKS label+stepper
+  // HIDE entirely behind the horizon note. Pre-3.4.2 the input was only
+  // disabled=true — with all visual styling reset it LOOKED live. Finite
+  // goals restore the stepper (both inputs editable, v1.8.9 Bug 8).
   const pw = $('plan-weeks');
-  pw.disabled = false;
-  pw.style.opacity = '';
-  pw.style.background = '';
-  pw.style.cursor = '';
-  pw.title = '';
-  if (isContinuous) {
-    // 3.4.0 W3: the engine pins continuous plans to the rolling 4-week
-    // horizon (weeks_available ignores plan_weeks) — an editable length
-    // input would be a lie, so it's the one goal that greys it out.
-    pw.disabled = true;
-    pw.title = 'Continuous plans roll a fixed 4-week horizon — they extend themselves every week.';
+  const pwg = $('plan-weeks-group');
+  const hz = $('plan-horizon-note');
+  if (pwg) pwg.style.display = isContinuous ? 'none' : '';
+  if (hz) hz.style.display = isContinuous ? '' : 'none';
+  pw.disabled = isContinuous;
+
+  // 3.4.2 M5 §3 — continuous: the "I've been training already" entry path
+  // (scan + backdate) legitimately dead-ends — the engine reads recent rides
+  // + readiness itself, every day. Grey/disable the whole block with the
+  // teaching note; restore for finite. A checked backdate clears on entry so
+  // a stale start_date can never ride into a continuous Generate.
+  const eb = $('plan-entry-block');
+  const en = $('plan-entry-note');
+  const bd = $('plan-backdate-on');
+  if (eb) {
+    eb.style.opacity = isContinuous ? '0.45' : '';
+    eb.style.pointerEvents = isContinuous ? 'none' : '';
   }
+  if (en) en.style.display = isContinuous ? '' : 'none';
+  if (bd) {
+    bd.disabled = isContinuous;
+    if (isContinuous && bd.checked) {
+      bd.checked = false;
+      try { onBackdateToggle(); } catch (_) {}
+    }
+  }
+
   if (isEvent) {
     // On entering event mode, seed weeks from the current event date.
     const computed = _computePlanWeeksFromEventDate($('plan-edate').value);
@@ -11120,7 +11210,8 @@ async function refreshPlanPreview() {
   // scan card / clear a re-armed recognized backdate BEFORE the preview
   // reads plan-sdate, so the right panel never previews a stale anchor.
   try { _entryScanCheckStale(); } catch (_) {}
-  const goal = $('plan-goal').value;
+  // 3.4.2 M6 §5: mode-aware goal (continuous card ⇒ 'continuous').
+  const goal = _planGoalValue();
   const isEvent = _isEventGoal(goal);
   const eventDate = isEvent ? $('plan-edate').value : '';
   const sliderEl = $('plan-weeks');
@@ -11761,7 +11852,9 @@ async function generatePlan(opts) {
   const maxWeekend = Math.max(dailyHours[5] || 0, dailyHours[6] || 0, 0.5);
 
   const body = {
-    goal: $('plan-goal').value,
+    // 3.4.2 M6 §5: mode-aware goal — 'continuous' comes from the mode card
+    // (no longer a dropdown option); payload otherwise byte-identical.
+    goal: _planGoalValue(),
     hours_per_week: totalHours,
     max_weekday: maxWeekday,
     max_weekend: maxWeekend,
@@ -12164,7 +12257,7 @@ async function renderPlanJSON(plan) {
                             : cardState === 'missing_workout' ? ' cal-missing'
                             : '';
         const stateWarn = cardState === 'missing_workout'
-          ? '<span title="Workout missing — click Re-draw to assign one." style="position:absolute;top:1px;right:18px;color:var(--yellow);font-weight:800;font-size:10px;">⚠</span>'
+          ? '<span title="Workout missing — click ⟳ to assign one." style="position:absolute;top:1px;right:18px;color:var(--yellow);font-weight:800;font-size:10px;">⚠</span>'
           : '';
         // v4.2.0 IMPL-WEEKLY item 3: today-marker class
         const todayCls = isToday ? ' pg-today-session' : '';
@@ -12216,7 +12309,7 @@ async function renderPlanJSON(plan) {
           ? 'pg-redraw-btn cal-redraw-prominent'
           : 'pg-redraw-btn';
         const redrawBtn = canRedraw
-          ? `<span class="${redrawCls}" title="Re-draw this workout" onclick="event.stopPropagation();pgRedrawSession('${dayStr}', this);">⟳</span>`
+          ? `<span class="${redrawCls}" title="Give me a different workout" onclick="event.stopPropagation();pgRedrawSession('${dayStr}', this);">⟳</span>`
           : '';
 
         // v4.2.0 IMPL-WEEKLY item 4: drag-drop with drop-target feedback
@@ -12430,7 +12523,7 @@ async function pgRedrawSession(dayStr, btnEl) {
       // so say that instead of "failed" and keep the ⚠ affordance.
       const msg = (data && data.action === 'no_candidate')
         ? 'No library workout fits this slot — the day keeps its zone targets (ride to the chips).'
-        : `Re-draw failed: ${data.error || data.detail || data.action || 'unknown'}`;
+        : `Couldn't get a different workout: ${data.error || data.detail || data.action || 'unknown'}`;
       try { showToast(msg, 4000); } catch(_) {}
       return;
     }
@@ -12447,14 +12540,14 @@ async function pgRedrawSession(dayStr, btnEl) {
       }
     } catch(_) {}
     const newName = data.zwo_name || data.zwo_file || 'new workout';
-    try { showToast(`Re-drew ${dayLabel}: now ${newName}`, 3000); } catch(_) {}
+    try { showToast(`Different workout for ${dayLabel}: ${newName}`, 3000); } catch(_) {}
     // Re-render the plan to pick up the new ZWO + score for the card.
     await loadPlan();
     // v4.3.0 IMPL-UI: also refresh the new calendar overlay so cards
     // stay in sync regardless of which view the user is on.
     try { window._calDidAutoScroll = true; await loadCalendar(); } catch(_) {}
   } catch(err) {
-    try { showToast('Re-draw failed: network error', 3000); } catch(_) {}
+    try { showToast("Couldn't get a different workout: network error", 3000); } catch(_) {}
   } finally {
     if (btnEl && btnEl.classList) btnEl.classList.remove('is-spinning');
   }
@@ -13125,7 +13218,7 @@ function renderCalDay(d, wi, di, phaseKey, today) {
     }
     let warn = '';
     if (cs === 'missing_workout') {
-      warn = '<span class="cal-planned-warn" title="Workout missing — click Re-draw to assign one.">⚠</span>';
+      warn = '<span class="cal-planned-warn" title="Workout missing — click ⟳ to assign one.">⚠</span>';
     }
     plannedHtml = `<div class="cal-planned">
       <span class="cal-planned-type ${cssCls}">${esc(title)}</span>
@@ -13170,7 +13263,7 @@ function renderCalDay(d, wi, di, phaseKey, today) {
   let redrawBtn = '';
   if (cs === 'planned' || cs === 'missing_workout') {
     const cls = cs === 'missing_workout' ? 'cal-redraw-btn cal-redraw-prominent' : 'cal-redraw-btn';
-    redrawBtn = `<span class="${cls}" title="Re-draw this workout"
+    redrawBtn = `<span class="${cls}" title="Give me a different workout"
       onclick="event.stopPropagation();calRedrawDay('${esc(d.date)}', this);">⟳</span>`;
   }
 
@@ -13410,7 +13503,7 @@ async function calOpenDay(dateStr) {
   // info exists (session_type, duration, description) still opens in the
   // modal. The yellow ⟳ stays as an indicator and the click works.
   if (cs === 'missing_workout') {
-    _calShowMismatchBanner(`No workout assigned to ${dateStr}. Click ⟳ to re-draw.`);
+    _calShowMismatchBanner(`No workout assigned to ${dateStr}. Click ⟳ to assign one.`);
     // intentional fall-through
   }
 
@@ -13440,11 +13533,11 @@ async function calOpenDay(dateStr) {
   // when planned/zwo_file is absent: caller has already shown the banner.
   if (!planned || !planned.zwo_file) {
     if (cs !== 'missing_workout') {
-      _calShowMismatchBanner(`No ZWO file assigned to ${dateStr}. Click ⟳ to re-draw.`);
+      _calShowMismatchBanner(`No ZWO file assigned to ${dateStr}. Click ⟳ to assign one.`);
       return;
     }
   } else if (!calContentMatches(planned)) {
-    _calShowMismatchBanner(`⚠ Workout assignment mismatch — re-draw`);
+    _calShowMismatchBanner(`⚠ Workout assignment mismatch — click ⟳ for a different workout`);
     return;
   }
   // Open the planned workout via the existing modal flow. The session
@@ -13505,19 +13598,19 @@ async function calRedrawDay(dayStr, btnEl) {
       // a no_candidate day legitimately stays a zone-target session.
       const msg = (data && data.action === 'no_candidate')
         ? 'No library workout fits this slot — the day keeps its zone targets (ride to the chips).'
-        : `Re-draw failed: ${data.error || data.detail || data.action || 'unknown'}`;
+        : `Couldn't get a different workout: ${data.error || data.detail || data.action || 'unknown'}`;
       try { showToast(msg, 4000); } catch(_) {}
       return;
     }
     const newName = data.zwo_name || data.zwo_file || 'new workout';
-    try { showToast(`Re-drew ${dayStr}: now ${newName}`, 3000); } catch(_) {}
+    try { showToast(`Different workout for ${dayStr}: ${newName}`, 3000); } catch(_) {}
     // Refresh both the calendar overlay and the legacy grid so all views
     // reflect the same new pick.
     window._calDidAutoScroll = true;  // don't yank viewport on reload
     await loadCalendar();
     try { await loadPlan(); } catch(_) {}
   } catch (err) {
-    try { showToast('Re-draw failed: network error', 3000); } catch(_) {}
+    try { showToast("Couldn't get a different workout: network error", 3000); } catch(_) {}
   } finally {
     if (btnEl && btnEl.classList) btnEl.classList.remove('is-spinning');
   }
@@ -13747,7 +13840,7 @@ function renderThisWeekFromCalendar(data) {
       const title = calCardTitleWithStructure(planned);
       const cssCls = calContentCss(planned.content_class, planned.session_type);
       const warn = cs === 'missing_workout'
-        ? '<span style="color:var(--yellow);font-weight:700;" title="Workout missing — click Re-draw to assign one.">⚠</span>'
+        ? '<span style="color:var(--yellow);font-weight:700;" title="Workout missing — click ⟳ to assign one.">⚠</span>'
         : '';
       plannedHtml = `<div class="twk-planned" style="border-left-color:${phaseCol};">
         <div class="wc-type ${cssCls}" style="font-size:10px;padding:1px 3px;">${esc(title)}</div>
@@ -13944,7 +14037,7 @@ function openPlanDayWorkout(weekIdx, dayIdx) {
     content_class: session.content_class || '',
   };
   if (!calContentMatches(synthetic)) {
-    try { showToast('⚠ Workout assignment mismatch — click ⟳ to re-draw', 4000); } catch(_) {}
+    try { showToast('⚠ Workout assignment mismatch — click ⟳ for a different workout', 4000); } catch(_) {}
     return;
   }
   // Reuse the same openDayWorkout but pass session directly
@@ -13987,7 +14080,12 @@ function populatePlanFormFromGoal(goal) {
   // goals, and edate is still empty here so that recompute is a no-op (running
   // it AFTER the restore would clobber the restored weeks). The final
   // refreshPlanPreview() at the end repaints with everything restored.
-  setVal('plan-goal', goal.type);
+  // 3.4.2 M6 §5 — restore the MODE CARD first: a stored continuous plan
+  // selects the continuous card ("continuous" is no longer a dropdown
+  // option); finite plans select the goal card + restore the dropdown.
+  const _contGoal = String(goal.type || '') === 'continuous';
+  try { selectPlanMode(_contGoal ? 'continuous' : 'goal'); } catch (_) {}
+  if (!_contGoal) setVal('plan-goal', goal.type);
   try { togglePlanFields(); } catch (_) {}
   // 3.4.0 W3: continuous focus pref round-trips like every other setting
   // (persisted on the goal since W2; harmless no-op for finite goals whose
@@ -14014,17 +14112,20 @@ function populatePlanFormFromGoal(goal) {
   // v3.1.0 MODE 1 — repopulate the backdate so a manual Regenerate (which
   // rebuilds the payload from the FORM) preserves the plan's anchor instead
   // of silently dropping it back to today.
+  // 3.4.2 M5 §3 — the entry block is disabled in continuous mode: never
+  // re-arm a (rogue) stored start_date under the greyed block.
+  const _bdOn = !_contGoal && !!goal.start_date;
   const _bd = $('plan-backdate-on');
   if (_bd) {
-    _bd.checked = !!goal.start_date;
+    _bd.checked = _bdOn;
     const wrap = $('plan-backdate-wrap');
-    if (wrap) wrap.style.display = goal.start_date ? '' : 'none';
+    if (wrap) wrap.style.display = _bdOn ? '' : 'none';
   }
-  setVal('plan-sdate', goal.start_date || '');
+  setVal('plan-sdate', _bdOn ? goal.start_date : '');
   // MODE 2 provenance (B-LOCKED-7): the stored start_date stays the anchor
   // and the recognizer is NEVER silently re-run — regenerate reuses the date
   // and keeps entry_mode="recognized", shown as a small provenance note.
-  _setEntryRecognized(goal.entry_mode === 'recognized' && !!goal.start_date);
+  _setEntryRecognized(goal.entry_mode === 'recognized' && _bdOn);
   setVal('plan-edate', goal.event_date || '');
   setVal('plan-ename', goal.event_name || '');
   if (goal.event_km) setVal('plan-ekm', goal.event_km);
@@ -14058,7 +14159,7 @@ function populatePlanFormFromGoal(goal) {
   // riding a stale recognized start_date into the next Generate (kills the
   // stale re-arm class, DIAG L4 hole b). Seeded AFTER every fingerprint
   // field above is restored so the arm matches the restored form.
-  window._entryArm = goal.start_date ? { fp: _entryScanFingerprint(), src: 'plan' } : null;
+  window._entryArm = _bdOn ? { fp: _entryScanFingerprint(), src: 'plan' } : null;
   // v3.2.0 phase-split editor (A6): seed the stepper state from the saved
   // goal BEFORE the trailing refreshPlanPreview below, so the editor
   // repaints pinned to the plan's split (steppers + badge restored).
@@ -16588,7 +16689,6 @@ async function loadTodaySession() {
     // — "if the grid says Tempo, today's spec should say Tempo" — while
     // still surfacing readiness-driven adjustments when they apply.
     const planType = (d.planned.session_type || '').toUpperCase().replace('_', ' ');
-    const adjType = (adj.session_type || '').toUpperCase().replace('_', ' ');
     const hr = d.hr_target || {};
     const pw = d.power_target || {};
     // adjustment_reason is the canonical field; fall back to legacy `reason`.
@@ -16613,12 +16713,13 @@ async function loadTodaySession() {
     // Adjustment chip — only when actually adjusted.
     // 3.4.1 M2: the engine reason is ONE plain sentence now (no "≥8"-style
     // notation) — render it once behind an em-dash ("due to" read badly
-    // against a full sentence), and the Now-line carries only the adjusted
-    // spec (the demoted description no longer repeats the reason).
+    // against a full sentence).
+    // 3.4.2 M5 §1: the chip names BOTH workouts ("Planned: TEMPO — file,
+    // 80min → Now: Z2, 60min · 42 TSS") via the same builder the day-modal
+    // banner uses — never a bare "Adjusted to Z2" with the original unnamed.
     if (mod) {
       html += `<div style="font-size:11px;padding:6px 8px;background:rgba(234,179,8,0.1);border-radius:6px;color:var(--yellow);margin-bottom:8px;">
-        ⚠️ Adjusted to <b>${esc(adjType)}</b>${adjReason ? ` — <span style="color:var(--text2);">${esc(adjReason)}</span>` : ''}<br>
-        <span style="color:var(--text2);">Now: ${adj.duration_min}min · ${adj.tss_estimate} TSS — ${esc(fixZeroMin(adj.description) || '')}</span>
+        ⚠️ ${_adjPlannedNowHtml(d.planned, adj, _todayPlannedZwoName(d))}${adjReason ? ` — <span style="color:var(--text2);">${esc(adjReason)}</span>` : ''}
       </div>`;
     }
 
@@ -16767,6 +16868,58 @@ async function revertDeloadAdvance() {
   }
   try { loadTodaySession(); } catch (_) {}
   try { if (typeof loadPlanGrid === 'function') loadPlanGrid(); } catch (_) {}
+}
+
+// 3.4.2 M5 §1 — session-type label with the CAL_SESSION_LABEL vocabulary
+// ("SWEET SPOT", "OVER/UNDER"), uppercase fallback for anything off-map.
+// typeof-guarded so pure-extract node harnesses don't need the map stubbed.
+function _sessTypeLabel(t) {
+  const m = (typeof CAL_SESSION_LABEL !== 'undefined' && CAL_SESSION_LABEL) || {};
+  return m[t] || String(t || 'session').toUpperCase().replace(/_/g, ' ');
+}
+
+// 3.4.2 M5 §1 — name-the-workout: ONE builder for every adjustment surface
+// (today-card chip + day-modal banner). Names BOTH sessions — the planned
+// label + matched file name + duration, then the adjusted label + duration
+// (+ TSS) — so no surface ever says "original"/"the other one" without a
+// name. Pure + DOM-free for the node harness.
+function _adjPlannedNowHtml(planned, adjusted, zwoName) {
+  const p = planned || {}, a = adjusted || {};
+  // Names often embed the file duration ("Sweet Spot Steady 80min") — strip
+  // it (same pattern the modal title cascade uses, v1.3.2) so exactly ONE
+  // canonical ", Nmin" suffix renders.
+  const name = String(zwoName || '').replace(/\s*\b\d+\s*min\b/i, '')
+    .replace(/\s+—\s*$/, '').trim();
+  const pDur = Number(p.zwo_duration_min) || Number(p.duration_min) || 0;
+  const aDur = Number(a.duration_min) || 0;
+  const aTss = Number(a.tss_estimate) || 0;
+  const plannedTxt = `${esc(_sessTypeLabel(p.session_type))}${name ? ` — ${esc(name)}` : ''}${pDur ? `, ${pDur}min` : ''}`;
+  const nowTxt = a.session_type === 'rest'
+    ? 'Rest day'
+    : `${esc(_sessTypeLabel(a.session_type))}${aDur ? `, ${aDur}min` : ''}${aTss ? ` · ${aTss} TSS` : ''}`;
+  return `Planned: <b>${plannedTxt}</b> → Now: <b>${nowTxt}</b>`;
+}
+
+// 3.4.2 M5 §1 — resolve TODAY's matched library-file name for the card chip:
+// /api/today-session's planned block doesn't carry zwo_name, so read it off
+// whichever week payload is already cached. '' when nothing matches
+// (fileless slot / nothing loaded yet) — the chip then names by type +
+// duration only.
+function _todayPlannedZwoName(d) {
+  const direct = d && d.planned && d.planned.zwo_name;
+  if (direct) return String(direct);
+  const todayIso = new Date().toLocaleDateString('en-CA');
+  const pools = [];
+  try { if (Array.isArray(window._weekPlanSessions)) pools.push(window._weekPlanSessions); } catch (_) {}
+  try {
+    for (const wk of ((window._planData && window._planData.weeks) || []))
+      if (Array.isArray(wk.sessions)) pools.push(wk.sessions);
+  } catch (_) {}
+  for (const pool of pools) {
+    const s = pool.find(x => x && String(x.day) === todayIso);
+    if (s && s.zwo_name) return String(s.zwo_name);
+  }
+  return '';
 }
 
 // 3.4.1 M3 — THE effective-session decision, ONE function for BOTH surfaces.
@@ -17058,7 +17211,8 @@ async function dismissSession(day) {
         if (s.day === day) { dayLabel = s.day_name || day; break; }
       }
     } catch(_) {}
-    try { showToast(`Dismissed ${dayLabel}'s session`, 3000); } catch(_) {}
+    // 3.4.2 M6 §6: "Skip" verb + the consequence (matches the modal button).
+    try { showToast(`Skipped ${dayLabel} — the week re-fits around it`, 3000); } catch(_) {}
     loadWeeklyCalendar();
   } catch(_) {}
 }
@@ -17124,19 +17278,26 @@ async function _todayDayModalModel(session) {
   return _dayModalModel(session, d, todayIso);
 }
 
-// Banner leading the adjusted view: what changed, why, and the two actions.
+// Banner leading the adjusted view: BOTH workouts named (what was planned,
+// what to ride now), why, and the two actions as verb+named-workout labels
+// (3.4.2 M5 §1 — no bare "original"/"the other one" pronouns anywhere).
 function _adjBannerHtml(model) {
   const eff = model.effSession || {};
-  const label = CAL_SESSION_LABEL[eff.session_type]
-             || String(eff.session_type || '').toUpperCase().replace('_', ' ');
+  const orig = model.original || {};
+  const aLabel = _sessTypeLabel(eff.session_type);
+  const pLabel = _sessTypeLabel(orig.session_type);
+  const namedLine = _adjPlannedNowHtml(orig, eff, orig.zwo_name);
   const reason = model.reason
     ? ` — <span style="color:var(--text2);">${esc(model.reason)}</span>` : '';
-  const acceptLabel = model.rest ? 'Take the rest day' : `Ride the ${esc(label)} version`;
+  const acceptLabel = model.rest
+    ? '✓ Take the rest day'
+    : `✓ Ride the easier ${esc(aLabel)}${eff.duration_min ? ` (${eff.duration_min}min)` : ''}`;
+  const keepLabel = `Ride the original ${esc(pLabel)} anyway`;
   return `<div class="adj-modal-banner" style="padding:8px 12px;background:rgba(234,179,8,0.1);border-radius:8px;color:var(--yellow);margin-bottom:12px;font-size:12px;">
-    ⚠️ <b>Today is adjusted to ${esc(label)}</b>${reason}. Below is the adjusted session.
+    ⚠️ ${namedLine}${reason}. Below is the adjusted session.
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
       <button class="btn btn-primary" style="font-size:12px;" onclick="acceptTodayAdjustment()">${acceptLabel}</button>
-      <button class="btn" style="font-size:12px;" onclick="keepOriginalToday()">Keep original</button>
+      <button class="btn" style="font-size:12px;" onclick="keepOriginalToday()">${keepLabel}</button>
     </div>
   </div>`;
 }
@@ -17163,7 +17324,7 @@ function _adjOriginalBlockHtml(orig) {
     <div style="font-size:12px;color:var(--text2);margin-top:8px;">
       <div>${spec}</div>
       ${fileLine}
-      <div style="font-size:11px;color:var(--text3);margin-top:4px;">Kept in your plan — “Keep original” above restores it for today.</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px;">Kept in your plan — “Ride the original ${esc(_sessTypeLabel(orig.session_type))} anyway” above restores it for today.</div>
       ${dlBtn}
     </div>
   </details>`;
@@ -17214,18 +17375,24 @@ async function acceptTodayAdjustment() {
   await _refreshAfterAdjustAction();
 }
 
-// [Keep original] — the EXISTING C6 rider opt-out (/api/readiness/revert-cap,
+// [Ride the original … anyway] — the EXISTING C6 rider opt-out (/api/readiness/revert-cap,
 // the DFA-banner Revert): one-day flag, auto-clears at midnight. The server
 // now suppresses the whole live adjustment while the flag is set (3.4.1 M3),
 // so card + modal + grid all read the original after this.
 async function keepOriginalToday() {
+  // 3.4.2 M5 §1: name the workout being kept (no bare "original session").
+  let pLabel = 'session';
+  try {
+    const t = _effectiveTodaySession(window._todaySessionData);
+    if (t.planned && t.planned.session_type) pLabel = _sessTypeLabel(t.planned.session_type);
+  } catch (_) {}
   try {
     const res = await fetch('/api/readiness/revert-cap', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({signal: 'any'}),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    try { showToast('Keeping the original session — adjustment dismissed for today', 3500); } catch (_) {}
+    try { showToast(`Keeping the planned ${pLabel} — adjustment dismissed for today`, 3500); } catch (_) {}
   } catch (e) {
     try { showToast('Could not keep original: ' + (e && e.message || e), 4000); } catch (_) {}
     return;
@@ -17507,22 +17674,35 @@ async function openDayWorkout(sessionIdx) {
     return;
   }
 
-  // v4.1.0 U8: per-session rematch button. Calls /api/plan/re-draw first
-  // (FIX-SERVER P6) and animates the new workout inline; falls back to the
-  // week-level classifier rematch if re-draw isn't available yet.
+  // v4.1.0 U8: per-session rematch button. Calls /api/plan/preview-redraw
+  // first (FIX-SERVER P6) and animates the new workout inline; falls back to
+  // the week-level classifier rematch if re-draw isn't available yet.
+  // 3.4.2 M6 §6 — rider-verb action IA: ONE "Change this workout" cluster.
+  // Renames only — same handlers/endpoints as before. "Make it easier
+  // today" = the EXISTING readiness tier-down apply, shown only where the
+  // endpoint can act (today + a type the intensity ladder can drop:
+  // rest/recovery → already_easy, z2/long_z2 → already_at_bottom).
   html += `<div id="rematch-result-${session.day}" style="margin-top:16px;"></div>`;
   html += `<div id="swap-result-${session.day}" style="margin-top:8px;"></div>`;
-  html += `<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-    <button class="btn" onclick="rematchDaySession('${session.day}')" style="font-size:12px;">&#x21bb; Rematch workout</button><span class="info-icon" data-popover="planpop-rematch" tabindex="0" role="button" aria-label="What does Rematch workout do?" title="Re-rolls only this one day's ZWO from the matching workout pool.">i</span>
-    <button class="btn" onclick="swapTypeOpen('${session.day}')" style="font-size:12px;">&#x21c4; Swap type</button><span class="info-icon" tabindex="0" role="button" aria-label="What does Swap type do?" title="Change this day to a different training type (e.g. a VO2max in a base week) — matches a workout and rebalances the rest of the plan. Rematch still works after.">i</span>
+  const _isTodaySession = String(session.day) === new Date().toLocaleDateString('en-CA');
+  const curStatus = session.status || 'pending';
+  const _canEase = _isTodaySession && curStatus !== 'dismissed'
+    && ['sprint', 'vo2max', 'threshold', 'overunder', 'sweetspot', 'tempo'].includes(type);
+  html += `<div style="margin-top:12px;">
+    <div style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Change this workout</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <button class="btn" onclick="rematchDaySession('${session.day}')" style="font-size:12px;">&#x21bb; Give me a different workout</button><span class="info-icon" data-popover="planpop-rematch" tabindex="0" role="button" aria-label="What does &quot;Give me a different workout&quot; do?" title="Re-rolls only this one day's workout from the matching pool.">i</span>
+      <button class="btn" onclick="swapTypeOpen('${session.day}')" style="font-size:12px;">&#x21c4; Change the type&hellip;</button><span class="info-icon" tabindex="0" role="button" aria-label="What does &quot;Change the type&quot; do?" title="Change this day to a different training type (e.g. a VO2max in a base week) — matches a workout and rebalances the rest of the plan. You can still ask for a different workout after.">i</span>
+      ${_canEase ? `<button class="btn" onclick="applyReadinessTierDown();closeModal()" style="font-size:12px;">&#x21e3; Make it easier today</button>` : ''}
+    </div>
   </div>`;
 
-  // fix26 §6.8 — Dismiss / Un-dismiss action surfaces in the day modal
-  const curStatus = session.status || 'pending';
+  // fix26 §6.8 — Skip (dismiss) / Un-dismiss action surfaces in the day
+  // modal. 3.4.2 M6 §6: "Skip" verb + the consequence spelled out.
   if (curStatus === 'dismissed') {
     html += `<div style="margin-top:12px;"><button class="btn" onclick="undismissSession('${session.day}');closeModal()">Un-dismiss (restore to pending)</button></div>`;
   } else {
-    html += `<div style="margin-top:12px;"><button class="btn" style="font-size:11px;color:var(--text3);" onclick="dismissSession('${session.day}');closeModal()">Dismiss this session</button></div>`;
+    html += `<div style="margin-top:12px;"><button class="btn" style="font-size:11px;color:var(--text3);" onclick="dismissSession('${session.day}');closeModal()">${_isTodaySession ? 'Skip today' : 'Skip this day'}</button><span style="font-size:10px;color:var(--text3);margin-left:8px;">the week re-fits around it — nothing piles up</span></div>`;
   }
 
   openModal(html);

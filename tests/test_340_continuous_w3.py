@@ -101,7 +101,9 @@ def _iso(days_from_today: int) -> str:
 
 def test_w_wizard_markup_has_continuous_option_and_focus_select():
     src = _src()
-    assert '<option value="continuous">Continuous — keep improving</option>' in src
+    # 3.4.2 M6 §5: continuous is a MODE CARD now, not a dropdown option.
+    assert '<option value="continuous">' not in src
+    assert 'id="plan-mode-card-continuous"' in src
     assert 'id="plan-focus-group"' in src
     # Focus vocabulary matches the engine's (ftp | vo2 | both).
     focus_block = src[src.index('id="plan-focus"'):]
@@ -114,47 +116,73 @@ def test_w_wizard_markup_has_continuous_option_and_focus_select():
 
 @needs_node
 def test_w_toggle_plan_fields_continuous_vs_finite():
+    """3.4.2 M5 §2/§3 + M6 §5: continuous comes from the MODE CARD; the weeks
+    stepper hides behind the horizon note; the entry block greys out."""
     src = _src()
-    fn = _extract_js_function(src, "togglePlanFields")
+    fn = (_extract_js_function(src, "_planTrainingMode")
+          + _extract_js_function(src, "_planGoalValue")
+          + _extract_js_function(src, "selectPlanMode")
+          + _extract_js_function(src, "togglePlanFields"))
     harness = """
 const els = {};
-const mk = () => ({ style: {}, value: '', disabled: false, title: '' });
+const mk = () => ({ style: {}, value: '', disabled: false, checked: false,
+                    title: '', dataset: {}, setAttribute(){} });
 for (const id of ['plan-event-fields','plan-target-fields','plan-focus-group',
-                  'plan-bc-races','plan-weeks','plan-edate','plan-goal'])
+                  'plan-bc-races','plan-weeks','plan-weeks-group',
+                  'plan-horizon-note','plan-goal-group','plan-edate',
+                  'plan-goal','plan-entry-block','plan-entry-note',
+                  'plan-backdate-on'])
   els[id] = mk();
+const mkCard = sel => ({ style: {}, dataset: { selected: sel }, setAttribute(){} });
+els['plan-mode-card-goal'] = mkCard('1');
+els['plan-mode-card-continuous'] = mkCard('0');
 const $ = id => els[id];
+const document = { getElementById: id => els[id] || null };
 const _isEventGoal = g => g === 'event' || g === 'event_preparation';
 const _computePlanWeeksFromEventDate = () => null;
+const onBackdateToggle = () => {};
 let previews = 0;
 const refreshPlanPreview = () => { previews++; };
 """ + fn + """
-// Continuous: focus shown, B/C hidden, plan-weeks greyed with the horizon note.
-els['plan-goal'].value = 'continuous';
-togglePlanFields();
+// Continuous (via the mode card): focus shown, B/C hidden, weeks stepper
+// HIDDEN behind the horizon note, entry block greyed.
+els['plan-goal'].value = 'ftp';
+selectPlanMode('continuous');
 if (els['plan-focus-group'].style.display !== '')
   throw new Error('focus select must show for continuous');
 if (els['plan-bc-races'].style.display !== 'none')
   throw new Error('B/C races must hide for continuous (not wired)');
+if (els['plan-weeks-group'].style.display !== 'none')
+  throw new Error('plan-weeks group must HIDE for continuous');
+if (els['plan-horizon-note'].style.display !== '')
+  throw new Error('horizon note must show for continuous');
 if (els['plan-weeks'].disabled !== true)
-  throw new Error('plan-weeks must grey out for continuous');
-if (els['plan-weeks'].title.indexOf('4-week') < 0)
-  throw new Error('plan-weeks title must explain the rolling horizon');
+  throw new Error('hidden plan-weeks stays inert for continuous');
+if (els['plan-goal-group'].style.display !== 'none')
+  throw new Error('goal dropdown must hide for continuous');
+if (els['plan-entry-block'].style.opacity !== '0.45')
+  throw new Error('entry block must grey for continuous');
 if (els['plan-event-fields'].style.display !== 'none')
   throw new Error('event fields must hide for continuous');
 if (els['plan-target-fields'].style.display !== 'none')
   throw new Error('target fields must hide for continuous');
 
 // Finite regression — ftp: target fields back, focus hidden, weeks editable.
-els['plan-goal'].value = 'ftp';
-togglePlanFields();
+selectPlanMode('goal');
 if (els['plan-target-fields'].style.display !== 'block')
   throw new Error('ftp goal must show target fields');
 if (els['plan-focus-group'].style.display !== 'none')
   throw new Error('focus select must hide for finite goals');
 if (els['plan-bc-races'].style.display !== '')
   throw new Error('B/C races must return for finite goals');
-if (els['plan-weeks'].disabled !== false || els['plan-weeks'].title !== '')
+if (els['plan-weeks'].disabled !== false)
   throw new Error('plan-weeks must be editable again for finite goals');
+if (els['plan-weeks-group'].style.display !== '')
+  throw new Error('plan-weeks group must return for finite goals');
+if (els['plan-horizon-note'].style.display !== 'none')
+  throw new Error('horizon note must hide for finite goals');
+if (els['plan-entry-block'].style.opacity !== '')
+  throw new Error('entry block must restore for finite goals');
 
 // Finite regression — event: event fields shown.
 els['plan-goal'].value = 'event';
@@ -172,11 +200,17 @@ console.log('OK');
 @needs_node
 def test_w_generate_body_wires_focus_for_continuous_only():
     src = _src()
-    fn = _extract_js_function(src, "generatePlan")
+    fn = (_extract_js_function(src, "_planTrainingMode")
+          + _extract_js_function(src, "_planGoalValue")
+          + _extract_js_function(src, "generatePlan"))
     harness = """
 const els = {};
 const mk = v => ({ style: {}, value: v == null ? '' : v, checked: false });
-els['plan-goal'] = mk('continuous');
+// 3.4.2 M6 §5: continuous is the MODE CARD; the dropdown holds a finite goal.
+const mkCard = sel => ({ style: {}, dataset: { selected: sel }, setAttribute(){} });
+els['plan-mode-card-goal'] = mkCard('0');
+els['plan-mode-card-continuous'] = mkCard('1');
+els['plan-goal'] = mk('ftp');
 els['plan-weeks'] = mk('12');
 els['plan-distribution'] = mk('polarized');
 els['plan-block-periodization'] = { checked: false };
@@ -193,10 +227,13 @@ els['plan-eclimb'] = mk('');
 els['plan-etype'] = mk('granfondo');
 els['plan-focus'] = mk('vo2');
 const $ = id => els[id];
-const document = { querySelectorAll: sel => {
-  if (sel !== '.plan-day-mins') return [];
-  return [0,1,2,3,4,5,6].map(d => ({ dataset: { day: String(d) }, value: '60' }));
-}};
+const document = {
+  getElementById: id => els[id] || null,
+  querySelectorAll: sel => {
+    if (sel !== '.plan-day-mins') return [];
+    return [0,1,2,3,4,5,6].map(d => ({ dataset: { day: String(d) }, value: '60' }));
+  },
+};
 const window = { _planData: null, _entryRecognized: false };
 const _phaseSplitBlocked = () => false;
 const _phaseSplitErrorText = () => '';
@@ -223,9 +260,10 @@ const fetch = async (url, opts) => {
     throw new Error('continuous must not attach B/C events');
 
   // Finite regression — ftp body is byte-compatible with pre-W3: no focus
-  // key, end date from plan-tdate, same core fields.
+  // key, end date from plan-tdate, same core fields. Switch = the mode card.
   captured = null;
-  els['plan-goal'].value = 'ftp';
+  els['plan-mode-card-continuous'].dataset.selected = '0';
+  els['plan-mode-card-goal'].dataset.selected = '1';
   await generatePlan();
   if (captured.goal !== 'ftp') throw new Error('ftp goal body');
   if ('focus' in captured)

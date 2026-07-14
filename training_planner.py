@@ -847,6 +847,16 @@ MIN_BUILD_WEEKS  = 4
 MIN_PEAK_WEEKS   = 2
 TAPER_DAYS       = 12    # Mujika 2003: 8-14 days optimal
 STEP_BACK_EVERY  = 4     # Rønnestad: 3 load + 1 recovery
+# ── 3.4.0 W1 (IP_CONTINUOUS_MODE A) — open-ended "continuous" goal ────────────
+# Rolling generation horizon: the plan always keeps this many weeks ahead
+# (3 load + 1 deload — the deload rides the existing STEP_BACK_EVERY cadence,
+# no separate scaffold). The weekly recalc EXTENDS (drop elapsed, append) via
+# extend_continuous_plan instead of regenerating toward a target date.
+CONTINUOUS_HORIZON_WEEKS = 4
+# Focus preference (Goal.focus) → GOAL_CLASS_EMPHASIS profile. The continuous
+# goal has no phase progression to express focus through, so the pref maps
+# straight onto the existing sampler emphasis channel.
+CONTINUOUS_FOCUS_EMPHASIS = {"ftp": "ftp", "vo2": "vo2max", "both": "ftp_vo2max"}
 # v2.1.0 (E1) — acute:chronic workload upper bound (Gabbett 2016: sweet spot
 # 0.8-1.3, >1.5 doubles injury risk). Caps the generation-time weekly volume
 # at ≤1.3× the rider's recent mean weekly TSS so a fresh plan ramps from real
@@ -1410,6 +1420,11 @@ class Goal:
     # used and the transient ``_phase_weeks_status`` records the reason.
     # Auto paths never mutate this field.
     phase_weeks: "dict | None" = None
+    # 3.4.0 W1 (continuous mode): focus preference for goal_type "continuous"
+    # — "ftp" | "vo2" | "both" (default). Maps onto the existing
+    # GOAL_CLASS_EMPHASIS profiles via CONTINUOUS_FOCUS_EMPHASIS at the
+    # sampler seam; ignored by every other goal_type.
+    focus: str = "both"
 
     def max_hours_for_day(self, weekday: int) -> float:
         """Get max training hours for a specific weekday (0=Mon..6=Sun)."""
@@ -1419,7 +1434,14 @@ class Goal:
         return self.max_weekend_hours if weekday >= 5 else self.max_weekday_hours
 
     def weeks_available(self) -> int:
-        if self.plan_weeks > 0:
+        # 3.4.0 W1: an open-ended continuous goal has no end to count toward —
+        # the horizon is always the rolling window, regardless of plan_weeks /
+        # target_date (P1 items 1-2).
+        if self.goal_type == "continuous":
+            return CONTINUOUS_HORIZON_WEEKS
+        # P1 item 2 guard: app callers may thread plan_weeks=None (optional
+        # Query param) — treat it as "not set" instead of TypeError-ing.
+        if (self.plan_weeks or 0) > 0:
             return self.plan_weeks
         if self.target_date is not None:
             # PART B: a backdated start_date anchors the FULL runway (the
@@ -1758,6 +1780,13 @@ def get_budget_for_phase(phase_name: str) -> "IntensityBudget":
     v2.3.0 custom supported).
     """
     table = _active_budget_table()
+    if phase_name == "continuous":
+        # 3.4.0 W1: the continuous rolling block uses the build1 budget (the
+        # sustainable steady-state: 2-3 HIT/wk, polarized 78/6/16). Mapping
+        # HERE keeps it correct under every distribution model (the derived
+        # pyramidal/threshold/custom tables rebuild build1, and an alias
+        # entry would silently keep pointing at the polarized object).
+        phase_name = "build1"
     return table.get(phase_name, table["base"])
 
 
@@ -2015,6 +2044,9 @@ def _tier_split(remaining_weeks: int) -> tuple[int, int, int, int]:
 _PW_REASON_MICRO = "race is under two weeks away — the race-week plan is fixed"
 _PW_REASON_SHORT = ("under four weeks of runway — too short to redistribute "
                     "phases")
+# 3.4.0 W1: continuous plans have no base/build/peak macrostructure to edit.
+_PW_REASON_CONTINUOUS = ("a continuous plan has no phase split — it rolls "
+                         "3 load + 1 deload weeks indefinitely")
 # Goal types that get the locked consolidation week (mirror of the splitter's
 # consolidation_weeks arithmetic — keep in sync with generate_phases).
 _PW_CONSOLIDATION_TYPES = ("ftp", "vo2max", "ftp_vo2max", "hybrid",
@@ -2034,6 +2066,9 @@ def _recommended_phase_weeks(goal: "Goal") -> "tuple[dict | None, str]":
     (vector, "") or (None, reason) when the editor is disabled — the
     race-week micro-plan owns runways under 14 days (its OWN trigger:
     runway-from-today, not total runway). Pure: no RNG, no I/O."""
+    if goal.goal_type == "continuous":
+        # 3.4.0 W1: no macrostructure → the editor is disabled outright.
+        return None, _PW_REASON_CONTINUOUS
     total_weeks = goal.weeks_available()
     _anchor = _entry_anchor(goal) or date.today()
     target_date = goal.target_date or (_anchor + timedelta(weeks=16))
@@ -2140,6 +2175,87 @@ def validate_phase_weeks(goal: "Goal", raw) -> "tuple[dict | None, str]":
     return vec, ""
 
 
+# ── 3.4.0 W1 (IP_CONTINUOUS_MODE A) — continuous rolling block ────────────────
+# goal_type "continuous": no target date, no taper, no base/build/peak
+# macrostructure. The plan is ONE rolling CONTINUOUS_HORIZON_WEEKS-week block;
+# the 3-load:1-deload microcycle rides the existing STEP_BACK_EVERY stepback
+# cadence (week_num % 4 == 0 → deload, ×0.72 TSS — nothing new to wire). The
+# weekly recalc EXTENDS the block (extend_continuous_plan) instead of
+# regenerating toward an end.
+
+def _continuous_session_types(goal: "Goal") -> list[str]:
+    """Skeleton session types for a continuous load block, by focus pref.
+
+    Mirrors the build1 rows of the corresponding finite goals (ftp / vo2max /
+    ftp_vo2max) so plan_week's structural skeleton stays in known territory;
+    the sampler's class mix is steered separately via _continuous_emphasis."""
+    focus = getattr(goal, "focus", "both") or "both"
+    if focus == "ftp":
+        return ["z2", "sweetspot", "threshold", "vo2max", "overunder", "long_z2"]
+    if focus == "vo2":
+        return ["z2", "vo2max", "sweetspot", "threshold", "long_z2"]
+    return ["z2", "sweetspot", "threshold", "vo2max", "overunder", "long_z2"]
+
+
+def _continuous_emphasis(goal: "Goal") -> "str | None":
+    """Sampler emphasis_profile for a continuous goal (else None).
+
+    Maps the focus pref onto the EXISTING GOAL_CLASS_EMPHASIS profiles
+    ("ftp" | "vo2max" | "ftp_vo2max") — the same channel event_climb uses, so
+    the class-mix bias needs no new sampler machinery."""
+    if getattr(goal, "goal_type", "") != "continuous":
+        return None
+    return CONTINUOUS_FOCUS_EMPHASIS.get(
+        getattr(goal, "focus", "") or "both", "ftp_vo2max")
+
+
+def _continuous_weekly_tss(goal: "Goal", current_ctl: float,
+                           recent_weekly_tss: "float | None" = None) -> float:
+    """Sustainable rolling weekly TSS: maintenance + one safe ramp step,
+    bounded by the same ACWR / availability ceilings generate_phases applies
+    (Gabbett 2016). Recomputed on every extend, so the rolling load follows
+    the rider's actual CTL instead of a generation-time snapshot."""
+    weekly = (current_ctl + safe_ramp_rate(current_ctl)) * 7
+    if recent_weekly_tss and recent_weekly_tss > 0:
+        weekly = min(weekly, recent_weekly_tss * ACWR_CEILING)
+    else:
+        weekly = min(weekly, goal.hours_per_week * 65)
+    return round(weekly)
+
+
+def _continuous_phases(goal: "Goal", current_ctl: float,
+                       recent_weekly_tss: "float | None" = None,
+                       start: "date | None" = None,
+                       weeks: "int | None" = None) -> list[Phase]:
+    """The single rolling Phase for a continuous goal.
+
+    Phase name "continuous" reuses the build1 machinery where tables are
+    keyed by name (budget lookup maps it in get_budget_for_phase; the mix
+    table carries an alias row; HIT_VARIANTS already falls back to build1) —
+    build1 is the sustainable steady-state budget (2-3 HIT/wk, polarized
+    78/6/16). No taper, no consolidation — extending the 3.3.2 rule that
+    only event/ctl goals taper."""
+    start = start or (getattr(goal, "_phase_start_override", None)
+                      or _entry_anchor(goal) or date.today())
+    weeks = weeks or CONTINUOUS_HORIZON_WEEKS
+    focus = getattr(goal, "focus", "both") or "both"
+    label = {"ftp": "FTP", "vo2": "VO2max",
+             "both": "FTP + VO2max"}.get(focus, "FTP + VO2max")
+    return [Phase(
+        name="continuous",
+        start=start,
+        end=start + timedelta(weeks=weeks) - timedelta(days=1),
+        weeks=weeks,
+        focus=(f"Rolling {weeks}-week block — 3 load + 1 deload, {label} "
+               "focus. No end date: the plan extends itself every week."),
+        weekly_tss_target=_continuous_weekly_tss(goal, current_ctl,
+                                                 recent_weekly_tss),
+        z2_pct=78,
+        hit_per_week=2,
+        session_types=_continuous_session_types(goal),
+    )]
+
+
 def generate_phases(goal: Goal, current_ctl: float,
                     event_targets: dict | None = None,
                     recent_weekly_tss: float | None = None) -> list[Phase]:
@@ -2152,6 +2268,17 @@ def generate_phases(goal: Goal, current_ctl: float,
     v2.1.0 (E1): ``recent_weekly_tss`` (rider's recent mean weekly TSS from the
     full ride archive) sets a LOAD-based weekly volume ceiling instead of the
     availability sum. None → fall back to the legacy ``hours_per_week×65`` cap."""
+    # ── 3.4.0 W1: continuous goal — single rolling block, nothing backward-
+    # planned (no target to plan backward FROM). No taper (goal_type gate
+    # extended per 3.3.2), no consolidation, no tier split.
+    if goal.goal_type == "continuous":
+        if getattr(goal, "phase_weeks", None):
+            # Phase-split editor: nothing to redistribute on a rolling block.
+            goal._phase_weeks_status = f"fallback:{_PW_REASON_CONTINUOUS}"
+        elif getattr(goal, "_phase_weeks_status", None) is not None:
+            goal._phase_weeks_status = None  # clear stale transient
+        return _continuous_phases(goal, current_ctl,
+                                  recent_weekly_tss=recent_weekly_tss)
     total_weeks = goal.weeks_available()
     # PART B: no-target default runway hangs off the plan anchor (backdated
     # start_date when set and no refit override, else today — unchanged).
@@ -3160,7 +3287,8 @@ def _nutrition_note(phase_name: str, session_type: str) -> str:
         if session_type in ("z2", "long_z2"):
             return "Train-low option: fasted or low-carb Z2 (fat oxidation)"
         return "Normally fueled (4g/kg carbs)"
-    if phase_name in ("build1", "build2"):
+    # 3.4.0 W1: the continuous rolling block fuels like a build phase.
+    if phase_name in ("build1", "build2", "continuous"):
         if session_type in ("vo2max", "threshold", "overunder", "sweetspot", "sprint"):
             return "Fuel the work: 6-7g/kg carbs, fueled before the session"
         return "Moderate carbs (4-5g/kg)"
@@ -4324,6 +4452,10 @@ WORKOUT_MIX_PREFERENCE: dict[str, list[dict[str, float]]] = {
          "tempo_intervals": 0.05},
     ],
 }
+# 3.4.0 W1: the continuous rolling block samples with the build1 mix (the
+# sustainable steady-state rows; rotation across the 3 rows continues via
+# week_in_phase % len). Alias, not copy — read-only at sample time.
+WORKOUT_MIX_PREFERENCE["continuous"] = WORKOUT_MIX_PREFERENCE["build1"]
 
 # Slot kind → which content_classes are eligible for this slot. Layer 2 row
 # entries outside this set are filtered out before sampling.
@@ -6342,10 +6474,13 @@ def generate_plan(
                 phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
                 # v1.11.0 (P4) — climbing specificity ONLY in build2/peak (research:
                 # race-specific work belongs in build+peak, not base). None elsewhere.
-                _emph = ("event_climb"
-                         if (event_targets and event_targets.get("climbing_bias")
-                             and phase.name in ("build2", "peak"))
-                         else None)
+                # 3.4.0 W1: continuous goals steer the class mix by focus pref
+                # instead (event_targets is None for them — mutually exclusive).
+                _emph = (_continuous_emphasis(goal)
+                         or ("event_climb"
+                             if (event_targets and event_targets.get("climbing_bias")
+                                 and phase.name in ("build2", "peak"))
+                             else None))
                 # F1 (v2.1/B2): block focus for this week (None unless opt-in).
                 # FS1 (D4): a blueprint mode owns its own per-phase focus → no
                 # block-periodization concentration on top.
@@ -8255,7 +8390,10 @@ def _enforce_ronnestad_floor(
     so distinct-file count holds.
     """
     cache = _load_content_classifications() or {}
-    target_phases = ("build1", "build2", "peak")
+    # 3.4.0 W1: "continuous" added — the rolling block is a build-grade phase
+    # and gets the same ≥1-Rønnestad guarantee. Weeks of other plans never
+    # carry the phase label, so existing plans are untouched.
+    target_phases = ("build1", "build2", "peak", "continuous")
     by_class = pool_index.get("by_class") or {}
 
     def _is_ronn_file(zwo_file: str) -> bool:
@@ -10064,6 +10202,8 @@ def regenerate_from_today(
         # runway (A1) — the user's stored goal.phase_weeks is never mutated.
         phase_weeks=(dict(goal.phase_weeks)
                      if getattr(goal, "phase_weeks", None) else None),
+        # 3.4.0 W1: carry the continuous focus pref through the regen.
+        focus=getattr(goal, "focus", "both") or "both",
     )
 
     # 10. Generate new phases — offset start by recovery duration to avoid overlap
@@ -10164,10 +10304,12 @@ def regenerate_from_today(
             phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
             # v1.11.0 (P4) — climbing specificity ONLY in build2/peak (mirrors
             # generate_plan's _emph). None elsewhere / for non-event regens.
-            _emph = ("event_climb"
-                     if (event_targets and event_targets.get("climbing_bias")
-                         and phase.name in ("build2", "peak"))
-                     else None)
+            # 3.4.0 W1: continuous regens keep the focus-pref emphasis too.
+            _emph = (_continuous_emphasis(adjusted_goal)
+                     or ("event_climb"
+                         if (event_targets and event_targets.get("climbing_bias")
+                             and phase.name in ("build2", "peak"))
+                         else None))
             # F1 (v2.1/B6): keep blocks on the recalc path — recompute focus from
             # the (adjusted) goal + phase so a recalc'd block plan stays blocked.
             # None unless goal.block_periodization is on (default-off parity).
@@ -10394,7 +10536,22 @@ def compute_event_readiness(goal: Goal, current_ctl: float) -> dict:
     Peak CTL should be 2-3 weeks before event (Friel, TrainingPeaks).
     """
     if not goal.target_date:
-        return {"status": "no_event", "weeks_remaining": None}
+        # 3.4.0 W1 (P1 item 6, None-target guard): return the COMPLETE shape.
+        # recalculate_plan indexes pct_of_target/taper_days directly, so the
+        # old 2-key stub KeyError'd any no-target caller — which is every
+        # continuous goal (no target_date by definition) and the A1 case
+        # before the app fabricates one. Neutral values: on-target, no taper.
+        return {
+            "status": "no_event", "weeks_remaining": None,
+            "days_remaining": None, "target_ctl": None,
+            "current_ctl": round(current_ctl, 1), "pct_of_target": 100.0,
+            "gap": 0.0, "taper_action": "none", "taper_days": 0,
+            "safe_ramp": safe_ramp_rate(current_ctl), "needed_ramp": 0,
+            "ramp_feasible": True,
+            "projected_peak_ctl": round(current_ctl, 1),
+            "projected_event_ctl": round(current_ctl, 1),
+            "event_name": goal.event_name, "event_date": None,
+        }
 
     today = date.today()
     remaining_days = (goal.target_date - today).days
@@ -10496,6 +10653,17 @@ def recalculate_plan(
     Javaloyes 2018: HRV-guided > fixed plans (+5-7% outcomes)
     Couzens: 3:1 loading cycles, safe ramp 3-7 CTL/week
     """
+    # ── 3.4.0 W1 (grill P2): a continuous goal never regenerates-to-target —
+    # the rolling horizon EXTENDS instead (drop elapsed, append). Routed HERE
+    # so every existing recalc caller (auto-recalc gate included) gets the
+    # extend behavior without a callsite change; the check is on goal_type,
+    # not target_date, so a caller-fabricated target can't force a rebuild.
+    if getattr(goal, "goal_type", "") == "continuous":
+        return extend_continuous_plan(
+            goal, current_plan_weeks, current_ctl,
+            recent_activities=recent_activities,
+            current_eftp=current_eftp, athlete=athlete)
+
     today = date.today()
     today_str = today.isoformat()
 
@@ -10604,6 +10772,8 @@ def recalculate_plan(
         # runway (A1) — the user's stored goal.phase_weeks is never mutated.
         phase_weeks=(dict(goal.phase_weeks)
                      if getattr(goal, "phase_weeks", None) else None),
+        # 3.4.0 W1: carry the continuous focus pref (parity with regen).
+        focus=getattr(goal, "focus", "both") or "both",
     )
 
     # v1.11.0 IMPL-EVENT — event demand → plan targets so the event CTL nudge
@@ -10976,6 +11146,320 @@ def recalculate_plan(
     }
 
     return new_phases, all_weeks, recalc_info
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CONTINUOUS ROLLING EXTEND (3.4.0 W1) — IP_CONTINUOUS_MODE §2, grill P2/B
+# ══════════════════════════════════════════════════════════════════════════════
+
+def extend_continuous_plan(
+    goal: Goal,
+    current_plan_weeks: list[PlannedWeek],
+    current_ctl: float,
+    recent_activities: list[dict] | None = None,
+    current_eftp: float | None = None,
+    athlete: dict | None = None,
+    recent_weekly_tss: float | None = None,
+    seed_salt: int = 0,
+) -> tuple[list, list[PlannedWeek], dict]:
+    """Weekly rolling EXTEND for a continuous goal: drop elapsed, append.
+
+    The finite-goal recalc regenerates the remaining span toward a fixed
+    target and truncates past it — a continuous plan has no target, so the
+    horizon must roll instead: every existing week is KEPT verbatim (past
+    AND future — an extend never rewrites what the rider already sees), and
+    enough new weeks are appended to keep CONTINUOUS_HORIZON_WEEKS ahead of
+    today. The 3-load:1-deload cadence continues positionally
+    (week_num % STEP_BACK_EVERY), and the mid-cycle FTP retest keeps the
+    recalc path's 6-week cadence (IP §5).
+
+    Same return shape as recalculate_plan — (new_phases, all_weeks, info) —
+    so the existing auto-recalc write-site works unchanged; recalculate_plan
+    routes continuous goals here itself. info["action"]: "extended" when
+    weeks were appended, else "no_change" (+ reason).
+
+    The 3.3.1 pool-collapse circuit breaker guards the append exactly like
+    the mass rebuild (grill P2): a collapsed pool aborts with no_change so a
+    cache fault degrades the horizon (temporarily shorter) instead of
+    appending placeholder junk; recalc_date stays stale so it retries.
+    """
+    today = date.today()
+    event_readiness = compute_event_readiness(goal, current_ctl)  # no_event
+
+    def _no_change(reason: str, detail: str = "") -> tuple:
+        info = {
+            "action": "no_change",
+            "reason": reason,
+            "event_readiness": event_readiness,
+            "deviation_pct": 0.0,
+            "eftp_drift": _check_eftp_drift(current_eftp),
+        }
+        if detail:
+            info["detail"] = detail
+        return ([], current_plan_weeks, info)
+
+    if not current_plan_weeks:
+        # First generation belongs to generate_plan — nothing to extend.
+        return _no_change("no_plan",
+                          "No existing weeks to extend — generate a plan first.")
+
+    # "Drop elapsed": weeks that ended before today no longer count toward
+    # the horizon (they stay in all_weeks — plan history is never discarded).
+    ahead = [w for w in current_plan_weeks if w.end >= today]
+    deficit = CONTINUOUS_HORIZON_WEEKS - len(ahead)
+    if deficit <= 0:
+        return _no_change("horizon_full")
+
+    # ── Pool-collapse circuit breaker (3.3.1, DIAG_L1 H2) on the APPEND ─────
+    library = load_workout_library()
+    pool_index = _build_pool_indexes(library)
+    _collapse = _pool_collapse_reason(pool_index, library)
+    if _collapse:
+        log.error(
+            "E_EXTEND_POOL_COLLAPSE: continuous extend ABORTED — %s. Existing "
+            "plan kept unchanged (a cache fault must degrade, not destroy, "
+            "a plan).", _collapse)
+        return _no_change(
+            "pool_collapse",
+            f"Workout library temporarily unavailable ({_collapse}) — "
+            "plan left unchanged.")
+
+    # Load-based sizing (mirrors generate_plan's self-fetch + CTL proxy).
+    if recent_weekly_tss is None:
+        try:
+            import ride_storage as _rs
+            recent_weekly_tss = _rs.recent_mean_weekly_tss()
+        except Exception as _e:
+            log.debug(f"recent_mean_weekly_tss fetch failed: {_e}")
+    if recent_weekly_tss is None and current_ctl and current_ctl > 0:
+        recent_weekly_tss = round(current_ctl * 7)
+
+    # ── Append anchor: contiguous with the last existing week ───────────────
+    last_end = max(w.end for w in current_plan_weeks)
+    last_num = max(w.week_num for w in current_plan_weeks)
+    append_start = last_end + timedelta(days=1)
+    # Absence gap (plan fully elapsed): skip dead past weeks, keeping the
+    # plan's weekday alignment — the appended horizon must serve TODAY on.
+    while append_start + timedelta(days=6) < today:
+        append_start += timedelta(days=7)
+
+    # ONE rolling Phase spanning the visible window (kept-ahead + appended):
+    # the write-site replaces plan["phases"] with new_phases, so the window
+    # phase keeps every ahead week covered by a phase row. TSS target is
+    # recomputed from TODAY's CTL — the rolling load follows the rider.
+    window_start = min((w.start for w in ahead), default=append_start)
+    window_weeks = len(ahead) + deficit
+    phase = _continuous_phases(
+        goal, current_ctl, recent_weekly_tss,
+        start=window_start, weeks=window_weeks)[0]
+    phase.end = append_start + timedelta(days=7 * deficit - 1)
+
+    # ── Sampler bookkeeping, seeded from the KEPT weeks ─────────────────────
+    # A weekly extend appends ONE week at a time, so cross-week variety can't
+    # emerge within the batch like a mass rebuild — seed recency from the
+    # existing plan instead (rolling-window semantics identical to recalc's
+    # eviction loop below).
+    used_names: set = set()
+    used_in_week: dict[str, int] = {}
+    used_names_dict: dict[str, int] = {}
+    for w in current_plan_weeks:
+        for s in w.sessions:
+            nm = getattr(s, "zwo_name", "") or ""
+            if nm:
+                used_names_dict[nm] = max(used_names_dict.get(nm, 0), w.week_num)
+                used_in_week[nm] = used_names_dict[nm]
+                used_names.add(nm)
+    recent_hit: list[str] = []
+    for w in sorted(current_plan_weeks, key=lambda w: w.start):
+        for s in w.sessions:
+            if _session_is_hit(s):
+                recent_hit.append(
+                    _content_class_for_zwo(getattr(s, "zwo_file", "") or "")
+                    or s.session_type)
+    if len(recent_hit) > 12:
+        del recent_hit[: len(recent_hit) - 12]
+    seen_cc_dur_tuples: set = set()
+    plan_pick_counts: dict[str, int] = {}
+    class_session_counts: dict[str, int] = {}
+    class_distinct_files: dict[str, set] = {}
+    _last_week = max(current_plan_weeks, key=lambda w: w.end)
+    prev_week_sessions: list | None = _last_week.sessions
+
+    budget = get_budget_for_phase("continuous")
+    _emph = _continuous_emphasis(goal)
+    _bp_mode = getattr(goal, "plan_mode", "auto") in ("fixed_core", "template")
+
+    new_weeks: list[PlannedWeek] = []
+    week_num = last_num + 1
+    cursor = append_start
+    for _ in range(deficit):
+        # 3-load:1-deload rides the positional stepback cadence (no taper to
+        # exempt on this path).
+        is_stepback = (week_num % STEP_BACK_EVERY == 0)
+        # IP §5: mid-cycle FTP retest on the recalc path's 6-week cadence.
+        ftp_test_week = (week_num % 6 == 0 and not is_stepback)
+
+        pw = plan_week(week_num, cursor, phase, goal, is_stepback,
+                       prev_week_sessions=prev_week_sessions,
+                       seed_salt=seed_salt)
+
+        # FTP test placement — mirrors recalculate_plan (prev-day-easy rule,
+        # 3.3.1 H3; runs before the sampler pass so the slot is preserved).
+        if ftp_test_week:
+            _easy_cx = {"rest", "z2", "long_z2", "recovery"}
+            _day_types_cx = {
+                s.day: s.session_type
+                for s in list(prev_week_sessions or []) + list(pw.sessions)
+                if getattr(s, "day", None) is not None
+            }
+            _cands_cx = [
+                s for s in pw.sessions
+                if s.session_type in ("sweetspot", "threshold", "vo2max", "overunder")
+            ]
+            _pick_cx = next(
+                (s for s in _cands_cx
+                 if getattr(s, "day", None) is not None
+                 and (_day_types_cx.get(s.day - timedelta(days=1)) or "rest") in _easy_cx),
+                _cands_cx[0] if _cands_cx else None)
+            if _pick_cx is not None:
+                _pick_cx.session_type = "ftp_test"
+                _pick_cx.description = ("FTP test — 20min all-out na 10min "
+                                        "warmup. Update zones daarna.")
+                _pick_cx.tss_estimate = round(
+                    75 / 60 * TSS_PER_HOUR.get("threshold", 90))
+
+        # Rolling eviction (same windows as recalculate_plan).
+        stale = [n for n, wk in used_in_week.items() if week_num - wk >= 6]
+        for n in stale:
+            used_names.discard(n)
+            del used_in_week[n]
+        stale_d = [n for n, wk in used_names_dict.items()
+                   if week_num - wk >= _USED_NAMES_ROLLING_WEEKS]
+        for n in stale_d:
+            used_names_dict.pop(n, None)
+
+        if _bp_mode:
+            # FS1 parity: a fixed/template plan extends deterministically too.
+            sampled = expand_blueprint_week(
+                phase=phase, budget=budget, week_num=week_num, week_start=cursor,
+                available_days=goal.available_days,
+                rest_days=goal.rest_days,
+                daily_max_hours=goal.daily_max_hours,
+                max_weekday_hours=goal.max_weekday_hours,
+                max_weekend_hours=goal.max_weekend_hours,
+                is_stepback=is_stepback,
+                week_in_phase=week_num - 1, goal=goal,
+            )
+        else:
+            sampled = sample_week_workouts(
+                phase=phase, budget=budget, library=library,
+                used_names=used_names_dict,
+                week_num=week_num, seed_salt=seed_salt,
+                week_start=cursor,
+                available_days=goal.available_days,
+                rest_days=goal.rest_days,
+                daily_max_hours=goal.daily_max_hours,
+                max_weekday_hours=goal.max_weekday_hours,
+                max_weekend_hours=goal.max_weekend_hours,
+                is_stepback=is_stepback,
+                pool_index=pool_index,
+                # week_in_phase continues the rolling stream (generate emits
+                # week_num N at week_in_phase N-1 for the single continuous
+                # phase — identical indexing keeps the mix-row rotation).
+                week_in_phase=week_num - 1,
+                recent_hit_types=recent_hit,
+                seen_cc_dur_tuples=seen_cc_dur_tuples,
+                plan_pick_counts=plan_pick_counts,
+                class_session_counts=class_session_counts,
+                class_distinct_files=class_distinct_files,
+                plan_total_weeks=CONTINUOUS_HORIZON_WEEKS,
+                goal_type="continuous",
+                emphasis_profile=_emph,
+                block_focus=None,
+            )
+        if len(recent_hit) > 12:
+            del recent_hit[: len(recent_hit) - 12]
+        for nm in used_names_dict:
+            used_names.add(nm)
+
+        # Replace skeleton slots with the sampled set, preserving ftp_test
+        # (appended weeks are brand-new, but keep the recalc guard shape).
+        for off, legacy_s in enumerate(pw.sessions):
+            if getattr(legacy_s, "session_type", "") == "ftp_test":
+                continue
+            if 0 <= off < len(sampled) and sampled[off] is not None:
+                pw.sessions[off] = sampled[off]
+
+        # Fallback match_zwo for any slot the sampler left unfilled (recalc
+        # parity). Anchor the seed on the append start so re-running the same
+        # extend is deterministic (pinned-seeds contract).
+        for day_idx, s in enumerate(pw.sessions):
+            if s.session_type in ("rest", "recovery", "ftp_test"):
+                continue
+            if getattr(s, "zwo_file", ""):
+                continue
+            before = len(used_names)
+            match_zwo(s, library, week_num=week_num, day_idx=day_idx,
+                      used_names=used_names, plan_start_date=append_start,
+                      seed_salt=seed_salt)
+            if len(used_names) > before:
+                for n in used_names - set(used_in_week.keys()):
+                    used_in_week[n] = week_num
+                    used_names_dict[n] = week_num
+
+        _clip_week_to_phase(pw, phase, cursor)
+        new_weeks.append(pw)
+        prev_week_sessions = pw.sessions
+        cursor += timedelta(weeks=1)
+        week_num += 1
+
+    # ── Post passes, NEW weeks only (recalc parity minus event passes) ──────
+    # The build2/peak hard floor is phase-keyed and can't match "continuous";
+    # the Rønnestad floor now covers the continuous phase (3.4.0 W1).
+    if not _bp_mode and new_weeks:
+        _enforce_ronnestad_floor(new_weeks, pool_index, plan_pick_counts)
+    _enforce_weekly_hit_cap(new_weeks, library)
+
+    # Authoritative per-day availability clamp (recalc A8 parity).
+    for _w in new_weeks:
+        for _s in _w.sessions:
+            if _s.session_type == "rest" or (_s.duration_min or 0) <= 0:
+                continue
+            _wd = _s.day.weekday() if hasattr(_s.day, "weekday") else 0
+            _cap_min = int(goal.max_hours_for_day(_wd) * 60)
+            _cc = _content_class_for_zwo(getattr(_s, "zwo_file", "") or "")
+            _ceil = TYPE_CEILING.get(_cc) or TYPE_CEILING.get(_s.session_type)
+            _eff = _cap_min if _ceil is None else (
+                _ceil if _cap_min <= 0 else min(_cap_min, _ceil))
+            if (getattr(_w, "is_stepback", False)
+                    and (_eff <= 0 or _eff > STEPBACK_LONG_RIDE_CAP_MIN)):
+                _eff = STEPBACK_LONG_RIDE_CAP_MIN
+            if _eff > 0 and _s.duration_min > _eff:
+                _scale = _eff / float(_s.duration_min)
+                _s.tss_estimate = round((_s.tss_estimate or 0) * _scale)
+                _s.duration_min = _eff
+
+    # Slot/file coherence, ONCE, LAST (R4a parity — after the clamp).
+    _enforce_slot_file_coherence(
+        new_weeks, library, plan_start_date=append_start, seed_salt=seed_salt)
+
+    all_weeks = list(current_plan_weeks) + new_weeks
+
+    info = {
+        "action": "extended",
+        "goal_mode": "continuous",
+        "event_readiness": event_readiness,
+        "deviation_pct": 0.0,
+        "weeks_appended": len(new_weeks),
+        "appended_span": [new_weeks[0].start.isoformat(),
+                          new_weeks[-1].end.isoformat()],
+        "horizon_weeks": CONTINUOUS_HORIZON_WEEKS,
+        "taper_locked": False,
+        "eftp_drift": _check_eftp_drift(current_eftp),
+        "recalc_date": today.isoformat(),
+        "phase_weeks_status": None,
+    }
+    return [phase], all_weeks, info
 
 
 # ══════════════════════════════════════════════════════════════════════════════

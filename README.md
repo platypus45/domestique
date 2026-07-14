@@ -562,7 +562,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v3.3.2 — Hotfix: opening the Training Plan tab could flatten your plan](https://github.com/platypus45/domestique/releases/latest)** (2026-07-12).
+Latest: **[v3.4.1 — Honest loading, and the card and the click finally agree](https://github.com/platypus45/domestique/releases/latest)** (2026-07-14).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

@@ -25,3 +25,19 @@ def test_readme_version_badge_matches_version_file():
         f"README version badge is stale — expected the shields.io badge to read "
         f"v{ver} (matching the VERSION file). Bump it on every release."
     )
+
+
+def test_readme_latest_line_matches_version_file():
+    """v3.4.1 incident: the release chains' 'Latest:' replace was a plain
+    str.replace with NO assert — one exact-string mismatch (at 3.3.3) made it
+    a silent no-op, and every later release chained replaces against lines
+    that no longer existed. The badge advanced (covered by the test above),
+    the Latest line sat at v3.3.2 for three releases. Pin BOTH so drift in
+    either direction goes red."""
+    ver = _version()
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert f"Latest: **[v{ver} — " in readme, (
+        f"README 'Latest:' line is stale — expected it to lead with v{ver} "
+        f"(matching the VERSION file). The release chain's replace must "
+        f"assert, not silently no-op."
+    )

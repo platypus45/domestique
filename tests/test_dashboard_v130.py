@@ -55,7 +55,10 @@ def test_power_curve_panel_present():
 
 def test_fatigue_resistance_panel_present():
     html = _html()
-    assert '<details class="fatigue-resistance"' in html
+    # 3.4.1 M2 — own always-open card (the <details>/<summary> fold and its
+    # ontoggle lazy loader are retired; loadAnalysisTab loads the card).
+    assert '<div class="card fatigue-resistance"' in html
+    assert '<details class="fatigue-resistance"' not in html
     assert 'id="fatigue-resistance-panel"' in html
     # Two-button kJ threshold toggle (default 1500, strict 2000)
     assert 'id="fr-kj-1500"' in html

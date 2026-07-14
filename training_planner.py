@@ -748,8 +748,9 @@ def _last_48h_z5plus_min(rides: list[dict]) -> float:
 _GLYCO_DAY_AFTER_Z67_FLOOR_S = 480
 
 
-def _yesterday_glyco_z67_s(rides: list[dict]) -> float:
-    """R5 input — z6+z7 seconds across YESTERDAY's rides (calendar day).
+def _yesterday_glyco_z67_s(rides: list[dict]) -> tuple[float, float]:
+    """R5 input — ``(z6+z7 seconds, z7-only seconds)`` across YESTERDAY's
+    rides (calendar day).
 
     Reads ONLY the stored ride envelope's ``time_in_zone`` — the single
     durable per-ride content signal for UNPLANNED rides: execution-scoring
@@ -758,18 +759,25 @@ def _yesterday_glyco_z67_s(rides: list[dict]) -> float:
     the bare activity GET (observed live during the grill: 53 intervals → 0
     between two reads; the sprint arm was DROPPED per A6). Rides without
     time_in_zone (power-less envelopes) contribute 0 — no signal, no gate.
+
+    3.4.1 ⑨b — the z7-only share is returned alongside so the user-facing
+    reason can say "sprint intensity" only when sprints actually dominate
+    the dose (a z6-dominant VO2max day must not be called sprints).
     """
     if not rides:
-        return 0.0
+        return 0.0, 0.0
     y_iso = (date.today() - timedelta(days=1)).isoformat()
     total = 0.0
+    z7_total = 0.0
     for r in rides:
         if (r.get("date") or "") != y_iso:
             continue
         tiz = r.get("time_in_zone")
         if isinstance(tiz, dict) and tiz:
-            total += float((tiz.get("z6") or 0) + (tiz.get("z7") or 0))
-    return total
+            z7_s = float(tiz.get("z7") or 0)
+            total += float(tiz.get("z6") or 0) + z7_s
+            z7_total += z7_s
+    return total, z7_total
 
 
 def _last_3d_mean_feel(rides: list[dict]) -> float | None:
@@ -12952,29 +12960,38 @@ def adjust_today_session(
     # stays suppressed until the flag auto-clears at midnight.
     if (planned.session_type in _HARD_SESSION_TYPES
             and not readiness.get("cap_reverted_today")):
-        glyco_s = _yesterday_glyco_z67_s(rides_recent)
+        glyco_s, glyco_z7_s = _yesterday_glyco_z67_s(rides_recent)
         if glyco_s >= _GLYCO_DAY_AFTER_Z67_FLOOR_S:
             new_type = _drop_intensity(planned.session_type)
             if new_type != planned.session_type:
                 log.info(
                     f"EVENT=glyco_day_after_r5 z67_yesterday={glyco_s:.0f}s "
+                    f"z7={glyco_z7_s:.0f}s "
                     f"{planned.session_type} → {new_type}"
                 )
+                # 3.4.1 M2 — user-facing strings: the reason is ONE plain
+                # sentence (no "Z6+Z7 ≥8"-style internal notation — the log
+                # line above keeps the raw numbers), and the description
+                # carries only the type change so the today-card banner's
+                # Now-line doesn't repeat the reason.
+                # ⑨b — zone-accurate wording: claim "sprint intensity" only
+                # when z7 dominates the dose; a z6-dominant day (VO2max
+                # session) reads "very hard riding (Z6/Z7)".
+                _kind = ("at sprint intensity"
+                         if glyco_z7_s > glyco_s / 2
+                         else "of very hard riding (Z6/Z7)")
+                _disp = {"z2": "Z2", "long_z2": "long Z2"}.get(
+                    new_type, new_type)
                 return PlannedSession(
                     day=planned.day, day_name=planned.day_name,
                     session_type=new_type, duration_min=planned.duration_min,
                     tss_estimate=round(planned.duration_min / 60
                                        * TSS_PER_HOUR.get(new_type, 45)),
-                    description=(
-                        f"{new_type} (was {planned.session_type}) — "
-                        f"yesterday's ride was glycolytically heavy "
-                        f"({glyco_s / 60:.0f}min Z6+Z7)."
-                    ),
+                    description=f"{new_type} (was {planned.session_type})",
                     adapted=True,
                 ), (
-                    f"Yesterday's ride was glycolytically heavy "
-                    f"({glyco_s / 60:.0f}min Z6+Z7 ≥8) → "
-                    f"{planned.session_type} dropped to {new_type}"
+                    f"Yesterday had {glyco_s / 60:.0f} minutes {_kind} "
+                    f"— easing today to {_disp}"
                 )
 
     # Readiness ≥80 + Z2 day: KEEP Z2 (never upgrade — Stöggl 2014 black hole)

@@ -574,6 +574,12 @@ def _needs_refetch(ride_path: Path) -> bool:
     stuck on 0%. Re-tightening the gate forces a one-time refetch of
     every ride lacking streams; subsequent calls go fast.
 
+    3.4.1 ① — a ``no_streams_available: true`` envelope is TERMINAL:
+    intervals.icu has no per-second power for it (Strava-origin empty
+    envelope, deleted FIT, no power meter). Returning False here is what
+    kills the infinite relaunch loop where every power-curve GET re-kicked
+    a backfill that re-fetched the same dead rides forever.
+
     Re-reads the file each call (cheap; one stat + one parse per ride).
     """
     try:
@@ -586,6 +592,8 @@ def _needs_refetch(ride_path: Path) -> bool:
         data = json.loads(ride_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return True
+    if data.get("no_streams_available") is True:
+        return False  # 3.4.1 ① — permanently unfetchable, never refetch
     efforts = data.get("efforts") or []
     cached_secs = {e.get("secs") for e in efforts if isinstance(e, dict)}
     if not cached_secs.issuperset(set(_SD)):
@@ -645,6 +653,36 @@ def _extract_efforts_from_streams(streams: dict) -> list[dict]:
                                        # based filter uses this (G16).
         })
     return out
+
+
+def _mark_no_streams(ride_path: Path, data: dict, sync_snapshot=None) -> None:
+    """3.4.1 ① — persist a TERMINAL ``no_streams_available`` marker on the
+    envelope when a backfill pass could not derive efforts for the ride
+    (fetch raised / ICU returned an empty envelope / no watts channel).
+
+    ``_needs_refetch`` returns False for marked rides and
+    ``count_rides_missing_efforts`` counts them as done, so the cached-%
+    reaches an honest 100 instead of asymptoting below it forever — and the
+    background backfill stops relaunching for the same dead rides on every
+    power-curve GET. ``streams_fetch_failed_at`` records when, for a future
+    retry-after policy.
+
+    Best-effort: any write failure (including a SyncAborted from the AC1
+    profile gate — the gate already refused the write, so nothing can land
+    in the wrong profile) just leaves the ride unmarked for the next pass.
+    """
+    data["no_streams_available"] = True
+    data["streams_fetch_failed_at"] = time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    try:
+        if sync_snapshot is not None:
+            import db as _db
+            with _db.sync_write_gate(sync_snapshot):
+                _atomic_write_json(ride_path, data)
+        else:
+            _atomic_write_json(ride_path, data)
+    except Exception as e:  # noqa: BLE001 — marker is best-effort
+        log.debug(f"backfill: no-streams marker write {ride_path} failed: {e}")
 
 
 def acquire_backfill_lock() -> tuple[bool, dict]:
@@ -795,24 +833,38 @@ def backfill_icu_history(profile_id: "str | None" = None,
                 time.sleep(wait)
             last_call = time.time()
 
+            # 3.4.1 ① — all three failure paths below persist the terminal
+            # no_streams_available marker so the ride counts as DONE from
+            # now on (see _mark_no_streams). Previously nothing was written:
+            # the ride stayed "needs refetch" forever, the cached-% never
+            # reached 100, and every GET relaunched the worker over the
+            # same dead rides.
             streams = None
             if fetch_activity_streams is not None:
                 try:
                     streams = fetch_activity_streams(str(ext))
                 except Exception as e:
                     log.warning(f"backfill: streams fetch {ext} failed: {e}")
+                    _mark_no_streams(ride_path, data, sync_snapshot)
                     failed += 1
                     continue
             if not isinstance(streams, dict) or not streams:
+                _mark_no_streams(ride_path, data, sync_snapshot)
                 failed += 1
                 continue
 
             efforts = _extract_efforts_from_streams(streams)
             if not efforts:
+                _mark_no_streams(ride_path, data, sync_snapshot)
                 failed += 1
                 continue
 
             data["efforts"] = efforts
+            # 3.4.1 ① — a fetch that succeeds heals any stale terminal marker
+            # (e.g. the ICU sync refreshed the envelope after the ride gained
+            # a power stream server-side).
+            data.pop("no_streams_available", None)
+            data.pop("streams_fetch_failed_at", None)
             # v1.8.10 Bug A — persist the full ICU streams dict, not just
             # the derived efforts. _ride_power_stream() (and therefore
             # compute_fatigue_resistance, the homepage power-curve render,
@@ -896,6 +948,11 @@ def count_rides_missing_efforts(window_days: int = 90) -> tuple[int, int]:
     ``needs_backfill = (n_rides == 0)`` gate missed this entirely: 51 cached
     summary-only rides all reported efforts==[] yet n_rides==51, so the
     dashboard never offered a backfill and the curve stayed blank forever.
+
+    3.4.1 ① — rides carrying the terminal ``no_streams_available`` marker
+    count as DONE (not missing): they can never hydrate, so counting them
+    missing kept ``n_missing > 0`` forever and made the power-curve GET
+    relaunch the backfill worker over the same dead rides on every poll.
     """
     rides = _filter_rides_by_window(_load_cached_rides(), window_days)
     n_cycling = 0
@@ -906,6 +963,8 @@ def count_rides_missing_efforts(window_days: int = 90) -> tuple[int, int]:
         n_cycling += 1
         efforts = r.get("efforts")
         if not (isinstance(efforts, list) and efforts):
+            if r.get("no_streams_available") is True:
+                continue  # terminal — treated as done
             missing += 1
     return n_cycling, missing
 
@@ -1122,6 +1181,11 @@ def compute_fatigue_resistance(profile_id: "str | None" = None,
         "window_days": int(window_days),
         "n_long_rides": 0,
         "n_long_rides_with_streams": 0,
+        # 3.4.1 ① — long rides whose envelope carries the terminal
+        # no_streams_available marker (intervals.icu has no power data for
+        # them). ADD-only; the endpoint folds these into the cached-% so it
+        # terminates at 100 and surfaces the count to the UI.
+        "n_long_rides_unfetchable": 0,
         "fit_status": "insufficient_data",
         "reason": None,
         "kj_threshold": int(kj_threshold),
@@ -1146,6 +1210,7 @@ def compute_fatigue_resistance(profile_id: "str | None" = None,
     scatter: list[dict] = []
     n_long_rides = 0  # rides whose summary kJ ≥ threshold (any source)
     n_long_rides_with_streams = 0  # rides we can ACTUALLY compute peaks for
+    n_long_rides_unfetchable = 0  # 3.4.1 ① — terminal no-streams long rides
 
     for r in rides:
         ride_id = r.get("ride_id") or ""
@@ -1171,6 +1236,10 @@ def compute_fatigue_resistance(profile_id: "str | None" = None,
             # ride STILL counts toward the diagnostic n_long_rides so the
             # response can explain to the user *why* the score is missing
             # (W2B-G2: avoid silently misleading insufficient_data).
+            # 3.4.1 ① — terminally-unfetchable long rides are counted so the
+            # endpoint's cached-% treats them as done (honest 100).
+            if is_long and r.get("no_streams_available") is True:
+                n_long_rides_unfetchable += 1
             continue
 
         if is_long:
@@ -1202,6 +1271,7 @@ def compute_fatigue_resistance(profile_id: "str | None" = None,
         out = dict(insufficient_dict)
         out["n_long_rides"] = n_long_rides
         out["n_long_rides_with_streams"] = n_long_rides_with_streams
+        out["n_long_rides_unfetchable"] = n_long_rides_unfetchable
         out["reason"] = "fewer_than_4_long_rides"
         return out
 
@@ -1212,6 +1282,7 @@ def compute_fatigue_resistance(profile_id: "str | None" = None,
         out = dict(insufficient_dict)
         out["n_long_rides"] = n_long_rides
         out["n_long_rides_with_streams"] = n_long_rides_with_streams
+        out["n_long_rides_unfetchable"] = n_long_rides_unfetchable
         out["reason"] = "streams_not_hydrated_run_backfill"
         return out
 
@@ -1240,6 +1311,7 @@ def compute_fatigue_resistance(profile_id: "str | None" = None,
         out = dict(insufficient_dict)
         out["n_long_rides"] = n_long_rides
         out["n_long_rides_with_streams"] = n_long_rides_with_streams
+        out["n_long_rides_unfetchable"] = n_long_rides_unfetchable
         out["reason"] = "no_fresh_tired_overlap"
         return out
 
@@ -1249,6 +1321,7 @@ def compute_fatigue_resistance(profile_id: "str | None" = None,
         "window_days": int(window_days),
         "n_long_rides": int(n_long_rides),
         "n_long_rides_with_streams": int(n_long_rides_with_streams),
+        "n_long_rides_unfetchable": int(n_long_rides_unfetchable),
         "fit_status": "success",
         "reason": None,
         "kj_threshold": int(kj_threshold),

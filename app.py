@@ -2559,10 +2559,23 @@ def api_profile_fatigue_resistance(window_days: int = Query(365, ge=1, le=3650),
             n_with_streams = int(result.get("n_long_rides_with_streams") or 0)
         except (TypeError, ValueError):
             n_with_streams = 0
-        pct = int(round(100.0 * n_with_streams / n_long)) if n_long > 0 else 0
+        try:
+            n_unfetchable = int(result.get("n_long_rides_unfetchable") or 0)
+        except (TypeError, ValueError):
+            n_unfetchable = 0
+        # 3.4.1 ② — terminally-unfetchable rides (no power data on
+        # intervals.icu, marker persisted by the backfill) count toward
+        # DONE: the pct now reaches an honest 100 instead of asymptoting
+        # at e.g. 93 forever while the frontend re-polled + re-kicked the
+        # backfill for rides that can never hydrate. `n_unfetchable` is
+        # ADD-only for the UI's "N rides have no power data" note.
+        pct = (int(round(100.0 * min(n_long, n_with_streams + n_unfetchable)
+                         / n_long))
+               if n_long > 0 else 0)
         result["power_streams_cached_pct"] = pct
+        result["n_unfetchable"] = n_unfetchable
         auto_triggered = False
-        if n_with_streams == 0 and n_long >= 1:
+        if n_with_streams == 0 and n_long >= 1 and pct < 100:
             # Fire-and-forget: try acquiring the single-flight backfill lock
             # and spawn the worker. Already-running case is fine — we just
             # report the existing task implicitly via the lock.

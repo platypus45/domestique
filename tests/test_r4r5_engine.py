@@ -527,7 +527,14 @@ def _yesterday_iso() -> str:
 def test_r5_720s_z67_demotes_one_notch_with_chip_reason():
     """720s of z6+z7 yesterday (the incident ride's class: low TSS, heavy
     glycolytic content) → one Seiler-ladder notch + the adjustment-chip
-    reason; never to rest."""
+    reason; never to rest.
+
+    3.4.1 M2 — the user-facing reason is ONE plain sentence ("Yesterday had
+    12 minutes of very hard riding (Z6/Z7) — easing today to …"): no
+    internal "Z6+Z7 ≥8"-style notation, and the demoted description carries
+    only the type change (the banner's Now-line must not repeat the reason).
+    ⑨b — this fixture is z6-DOMINANT (a VO2max day), so the wording must be
+    the neutral "very hard riding", never "sprint intensity"."""
     planned = _planned_hard("threshold")
     adj, reason = tp.adjust_today_session(
         planned, _fresh_readiness(),
@@ -535,11 +542,51 @@ def test_r5_720s_z67_demotes_one_notch_with_chip_reason():
                        "time_in_zone": {"z6": 700, "z7": 20}}],
         daily_log_today={},
     )
-    assert adj.session_type == tp._drop_intensity("threshold")
+    new_type = tp._drop_intensity("threshold")
+    assert adj.session_type == new_type
     assert adj.session_type not in ("rest",)
     assert adj.adapted is True
-    assert "glycolytically heavy" in reason
-    assert "12min Z6+Z7" in reason
+    assert "Yesterday had 12 minutes of very hard riding (Z6/Z7)" in reason
+    assert "easing today to" in reason
+    assert "sprint" not in reason, "z6-dominant day must not claim sprints"
+    # No internal notation leaks into the user-visible strings.
+    for leaked in ("≥", "Z6+Z7", "glycolytically", "→"):
+        assert leaked not in reason, f"{leaked!r} leaked into reason"
+    # Description = type change only — the reason lives ONLY in `reason`.
+    assert adj.description == f"{new_type} (was threshold)"
+
+
+def test_r5_reason_copy_tempo_case_matches_banner_sentence():
+    """3.4.1 M2 — exact user-facing copy for the screenshot case (tempo day
+    after a 12-min z6-dominant ride): one plain sentence with the
+    display-cased Z2, and a description that carries only the type change."""
+    planned = _planned_hard("tempo")
+    adj, reason = tp.adjust_today_session(
+        planned, _fresh_readiness(),
+        rides_recent=[{"date": _yesterday_iso(),
+                       "time_in_zone": {"z6": 700, "z7": 20}}],
+        daily_log_today={},
+    )
+    assert adj.session_type == "z2"
+    assert reason == ("Yesterday had 12 minutes of very hard riding (Z6/Z7) "
+                      "— easing today to Z2")
+    assert adj.description == "z2 (was tempo)"
+
+
+def test_r5_z7_dominant_day_reads_sprint_intensity():
+    """⑨b — "sprint intensity" is reserved for a genuinely z7-dominant dose
+    (z7 seconds > half the z6+z7 total); anything else is "very hard
+    riding (Z6/Z7)"."""
+    planned = _planned_hard("tempo")
+    adj, reason = tp.adjust_today_session(
+        planned, _fresh_readiness(),
+        rides_recent=[{"date": _yesterday_iso(),
+                       "time_in_zone": {"z6": 100, "z7": 500}}],
+        daily_log_today={},
+    )
+    assert adj.session_type == "z2"
+    assert reason == ("Yesterday had 10 minutes at sprint intensity "
+                      "— easing today to Z2")
 
 
 def test_r5_300s_z67_stays_untouched():

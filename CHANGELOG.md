@@ -1,5 +1,39 @@
 # Changelog
 
+## v3.4.1 — Honest loading, and the card and the click finally agree (2026-07-14)
+
+- **Fatigue Resistance can't get stuck at 93% anymore.** Rides that
+  permanently lack power data (some Strava-imported rides, empty records)
+  were being retried forever, holding the progress bar hostage — while your
+  computed score sat hidden behind it. Those rides now count as done, the
+  bar reaches an honest 100% with a small "N rides have no power data"
+  note, and your results show even while caching is still running.
+- **The power-curve progress bar is back.** It had been rendering into a
+  part of the page that no longer exists (since June), so the chart just
+  appeared "after a while" with no feedback. The bar and its auto-refresh
+  live again in the chart card.
+- **"No rides indexed yet" became a live progress bar.** The home Recovery
+  section now shows the actual intervals.icu sync ("Indexing rides… 39 of
+  45") and refreshes itself when done. The DFA tab shows its update strip
+  while computing, too.
+- **Fatigue Resistance and Recovery details are always open** — real
+  panels, no more hidden fold.
+- **Clicking an adjusted day now shows the adjusted session.** The home
+  card could say "Z2 today" while the click opened the original sweet-spot
+  workout with 95% ramps and no explanation. The day view now leads with
+  the session you're actually meant to ride, shows why, keeps the original
+  plan in a labeled fold-out, and gives you the choice: ride the adjusted
+  version or keep the original. Downloads and calendar pushes follow your
+  choice — never the workout the app just told you to skip.
+- **"Keep original" and the DFA banner's Revert now actually revert** all
+  adjustment types (previously only some — for the rest the button was a
+  silent no-op).
+- Progress bars no longer flash to "Loading…" between refreshes; the
+  adjustment banner says its reason once, in plain zone-accurate language;
+  today's workout preview is centered; text contrast improved in both
+  themes.
+
+
 ## v3.4.0 — Continuous training: a plan that never ends (2026-07-13)
 
 - **New goal type: "Continuous — keep improving."** No end date, no taper —

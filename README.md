@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4249-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v3.4.0-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v3.4.1-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-2400%2B-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -84,6 +84,13 @@ intervals, endurance rides with strides — joined the rotation, every build
 phase guarantees the classic four hard shapes (threshold, VO2max, sweet
 spot, over-unders), and Reshuffle offers genuinely different alternatives
 instead of repeating itself.
+
+**A home page built around today — and it never lies to you.** When
+readiness adjusts your day, the day view leads with the adjusted session and
+gives you the choice (ride it, or keep the original — downloads follow your
+pick); analysis panels load with live progress bars that reach an honest
+100%, and ride indexing from intervals.icu shows its progress right on the
+home card.
 
 **A home page built around today.** The Today card shows your readiness
 verdict, the morning leg-check and today's session — with a preview of its

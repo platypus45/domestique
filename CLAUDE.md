@@ -77,6 +77,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 These guidelines layer on top of the four principles above:
 
 - **Multi-wave agent pattern:** large features go through Wave 0 research → Wave 1/2 grill+impl → Wave 3 QA → Wave 4 fix-forward → Wave 5 ship+tag+DMG. Don't dispatch agents ad-hoc.
+- **Agent lifecycle (no senseless waiting):** implementation briefs MUST order gate + commit in the SAME agent turn (foreground pytest, never "arm a monitor and wait" — that's the waiter-death mode). Never kill or take over an agent on quiet-file/idle-CPU heuristics; the completion notification is the only end-of-agent truth. Takeover only when processes exited + no commit ≥5min + finished work visible in the tree — then the coordinator commits the tree itself. One watchdog max per agent (post-gate commit window only), stopped when answered. Single-writer-per-file checked at dispatch. Full rules: multi-wave-agents skill "Agent lifecycle" + memory dispatch-in-turn-lesson.
 - **Sparse coordinator output:** when an agent reports back, give the user a one-line status — never echo the agent's full report. Full detail goes to `/tmp/*.md`.
 - **MASTER_DECISIONS docs override per-domain plans on conflict.** Write to `/tmp/MASTER_DECISIONS_*.md` and force agents to read it first.
 - **File ownership contracts:** when parallel agents touch overlapping areas, lock who owns which file BEFORE Wave 2. No two agents edit the same file in the same wave.

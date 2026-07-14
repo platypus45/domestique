@@ -16469,6 +16469,7 @@ async function loadTodaySession() {
     // rotation policy's daily verdict frames the day for an open-ended plan.
     // Empty string for finite goals (the field is continuous-only, additive).
     html += _continuousSuggestionHtml(d);
+    html += _deloadAdvanceChipHtml(d);
     html += `<div style="font-size:20px;font-weight:700;margin-bottom:4px;">${planType}</div>`;
     html += `<div style="font-size:13px;color:var(--text2);margin-bottom:6px;">${esc(fixZeroMin(d.planned.description) || '')}</div>`;
     // v2.2.5 issue #3 R2 — the readiness number now lives ONLY in the Today
@@ -16590,6 +16591,43 @@ function _continuousSuggestionHtml(d) {
   return `<div class="cont-suggestion-chip" style="font-size:11px;padding:6px 8px;background:${meta.bg};border-radius:6px;color:${meta.color};margin-bottom:8px;">
     Today: <b>${esc(meta.label)}</b>${reason}
   </div>`;
+}
+
+// 3.4.0 W2-chip (chip task_0bd7be3c): the monotony/ACWR-advanced deload was
+// engine-visible only — the week silently turned easy with no explanation
+// and no undo. Renders /api/today-session's additive `deload_advance`
+// payload ({reason, trigger, week_num, reverted}) in the adjustment-chip
+// skin with the DFA-swap-style revert. Pure + DOM-free for the node
+// harness; absent/reverted payload → '' (finite plans byte-identical).
+function _deloadAdvanceChipHtml(d) {
+  const da = d && d.deload_advance;
+  if (!da || da.reverted || !da.reason) return '';
+  return `<div class="deload-advance-chip" style="font-size:11px;padding:6px 8px;background:rgba(168,85,247,0.1);border-radius:6px;color:var(--purple);margin-bottom:8px;">
+    🛏 <b>Recovery week pulled forward</b> — <span style="color:var(--text2);">${esc(String(da.reason))}</span>
+    <a href="javascript:void(0)" onclick="event.stopPropagation();revertDeloadAdvance()"
+       style="color:var(--accent);margin-left:6px;text-decoration:none;">Revert</a>
+  </div>`;
+}
+
+// Revert → engine restores the pre-advance week shape (server latches the
+// record so the same trip can't immediately re-advance); refresh the two
+// surfaces that show it.
+async function revertDeloadAdvance() {
+  try {
+    const r = await fetch('/api/plan/continuous/deload-revert', {method: 'POST'});
+    const j = await r.json().catch(() => ({}));
+    if (j && j.reverted) {
+      showToast('Recovery week reverted — original week restored');
+    } else {
+      showToast(j && j.reason === 'week_passed'
+        ? 'That week has already passed — nothing to revert'
+        : 'Could not revert — see log');
+    }
+  } catch (_) {
+    showToast('Could not revert — network error');
+  }
+  try { loadTodaySession(); } catch (_) {}
+  try { if (typeof loadPlanGrid === 'function') loadPlanGrid(); } catch (_) {}
 }
 
 // 3.3.1 hotfix (B1): ONE decision point for what the today-card blocks

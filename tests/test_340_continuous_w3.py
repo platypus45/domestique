@@ -718,3 +718,59 @@ def test_x_continuous_surfaces_are_all_gated():
     assert "_goal.type !== 'continuous'" in src                # ring (main branch)
     assert "d && d.continuous_suggestion" in src               # today card
     assert re.search(r"_isContinuousPlan\s*=\s*String\(goal\.type", src)  # strip
+
+
+# ── W2-chip follow-up (task_0bd7be3c): deload-advance chip + revert ─────────
+
+def test_t_deload_advance_chip_renders_reason_revert_and_escapes():
+    src = _src()
+    fn = _extract_js_function(src, "_deloadAdvanceChipHtml")
+    harness = _ESC_STUB + fn + """
+let html = _deloadAdvanceChipHtml({ deload_advance: {
+  reason: 'Training strain high (monotony 2.3) — deload advanced to this week',
+  trigger: 'monotony', week_num: 7, reverted: false } });
+if (html.indexOf('Recovery week pulled forward') < 0) throw new Error('headline missing');
+if (html.indexOf('monotony 2.3') < 0) throw new Error('reason missing');
+if (html.indexOf('revertDeloadAdvance()') < 0) throw new Error('revert affordance missing');
+if (html.indexOf('deload-advance-chip') < 0) throw new Error('chip class missing');
+
+// Reverted / absent / reason-less ⇒ '' — finite cards byte-identical.
+if (_deloadAdvanceChipHtml({ deload_advance: { reason: 'x', reverted: true } }) !== '')
+  throw new Error('reverted record must render nothing');
+if (_deloadAdvanceChipHtml({ planned: { session_type: 'z2' } }) !== '')
+  throw new Error('absent payload must render nothing');
+if (_deloadAdvanceChipHtml(null) !== '') throw new Error('null-safe');
+
+// Server text escaped.
+html = _deloadAdvanceChipHtml({ deload_advance: { reason: '<script>x</script>' } });
+if (html.indexOf('<script>') >= 0) throw new Error('reason must be escaped');
+console.log('OK');
+"""
+    _run_node(harness)
+
+
+def test_t_deload_chip_wired_into_today_card_and_revert_posts():
+    src = _src()
+    load = _extract_js_function(src, "loadTodaySession")
+    assert "_deloadAdvanceChipHtml(d)" in load, \
+        "loadTodaySession must render the deload chip"
+    assert load.index("_continuousSuggestionHtml(d)") < load.index(
+        "_deloadAdvanceChipHtml(d)"), "chip sits under the suggestion headline"
+    fn = _extract_js_function(src, "revertDeloadAdvance")
+    harness = """
+let posted = null, toasts = [];
+const fetch = (url, opts) => { posted = {url, method: (opts||{}).method};
+  return Promise.resolve({ json: () => Promise.resolve({reverted: true}) }); };
+const showToast = (m) => toasts.push(m);
+const loadTodaySession = () => { toasts.push('__reloaded__'); };
+""" + fn + """
+revertDeloadAdvance().then(() => {
+  if (!posted || posted.url !== '/api/plan/continuous/deload-revert')
+    throw new Error('must POST the revert endpoint, got ' + JSON.stringify(posted));
+  if (posted.method !== 'POST') throw new Error('method must be POST');
+  if (!toasts.some(t => /reverted/i.test(t))) throw new Error('success toast missing');
+  if (toasts.indexOf('__reloaded__') < 0) throw new Error('today card must reload');
+  console.log('OK');
+}).catch(e => { console.error(e.message); process.exit(1); });
+"""
+    _run_node(harness)

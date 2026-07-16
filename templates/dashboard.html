@@ -1262,6 +1262,15 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
   color: var(--text);
 }
 .info-popover.open { display: block; }
+/* 3.4.3 B1 — day-modal relative-day pill ("in 3 days" / "yesterday") so a
+   non-today day can never read as today. Sits inline after the h2 title. */
+.day-rel-pill {
+  display: inline-block; margin-left: 8px; padding: 2px 8px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.4px;
+  color: var(--text2); background: var(--surface2);
+  border: 1px solid var(--border); border-radius: 999px;
+  vertical-align: middle; white-space: nowrap;
+}
 /* v1.8.9 Bug 5 — global chevron marker for every <details> summary.
    Replaces the native triangle (which is invisible on some themes / Safari).
    Rotates 90° when the panel is open. */
@@ -2009,7 +2018,12 @@ window.addEventListener('unhandledrejection', function(e) {
        .info-popover toggles via .open from the delegated handler below. -->
   <div class="info-popover" id="planpop-update"><strong>Update plan</strong> automatically picks the right adjustment: a structure-preserving <em>rebalance</em> to today's TSB (fatigue), ACWR (load ratio) and availability when you're on track, or a full <em>rebuild with a recovery ramp</em> when you've missed enough to fall behind (Gabbett-safe, never a catch-up spike). Runs automatically after each ride sync too. Won't re-roll past or completed sessions, and won't move a fixed event date.</div>
   <div class="info-popover" id="planpop-availability"><strong>Edit availability</strong> sets per-day training time. Click a date to set hours; right-click to mark unavailable (holiday/injury). <strong>Press the pulsing UPDATE button to apply changes — the plan reflows on click.</strong></div>
-  <div class="info-popover" id="planpop-rematch"><strong>Give me a different workout</strong> re-rolls only this one day's workout from the matching pool. Same intent (intervals, endurance, etc.) — different specific session. Use when the suggested workout doesn't fit your equipment or mood.</div>
+  <div class="info-popover" id="planpop-rematch"><strong>Give me a different workout</strong> swaps in another workout of the same type and duration — your plan's load stays the same.</div>
+  <!-- 3.4.3 B2 — each button in the day-modal "Change this workout" cluster
+       gets its own (i). These two were missing (the swap icon had no
+       data-popover at all, so the delegated handler ignored it). -->
+  <div class="info-popover" id="planpop-swaptype"><strong>Change the type</strong> — pick a different training type for this day — the week re-balances around it.</div>
+  <div class="info-popover" id="planpop-easier"><strong>Make it easier today</strong> — drops today one intensity notch (e.g. threshold → sweet spot) — use when you're not feeling it.</div>
   <div class="info-popover" id="planpop-mode"><strong>Plan style</strong> — how your weekly sessions are chosen.<br><br><strong>Automatic (varied)</strong>: a varied, auto-adapting plan drawn from the full library — different sessions week to week.<br><strong>Fixed-core (repeatable)</strong>: the same weekly shape — one hard session type per phase that progresses by reps, over a Z2 base that scales to your available time.<br><strong>Template</strong>: a ready-made fixed-core blueprint.</div>
 
   <!-- v1.8.25 — "catching up your plan" overlay: greyed backdrop + stepped
@@ -13118,7 +13132,9 @@ function renderCalendar(data) {
   if (!window._calDidAutoScroll && curIdx >= 0) {
     requestAnimationFrame(() => {
       try {
-        const todayStr = new Date().toISOString().slice(0, 10);
+        // 3.4.3 B3 — server-truth today (never toISOString: UTC shifts the
+        // date around midnight in TZ+, landing on yesterday's cell).
+        const todayStr = _calTodayStr();
         const cell = document.querySelector(`#cal-rows [data-date="${todayStr}"]`);
         if (cell && cell.offsetParent !== null) {
           window._calDidAutoScroll = true;
@@ -13359,34 +13375,76 @@ function calSwitchView(view) {
   });
 }
 
+function _calTodayStr() {
+  // 3.4.3 B1/B3 — the ONE definition of "today" for the calendar jump and
+  // the day modal: the server-provided date (/api/calendar `today` — the
+  // same value that painted the is_today markers), falling back to the
+  // browser's LOCAL date. Never toISOString(): that's UTC, which shifts
+  // the date for the hours around midnight in TZ+ zones (owner runs CEST),
+  // so a jump keyed on it lands on YESTERDAY's cell while the today ring
+  // sits on the server-marked day.
+  try {
+    const t = window._calData && window._calData.today;
+    if (typeof t === 'string' && /^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10);
+  } catch(_) {}
+  return new Date().toLocaleDateString('en-CA');
+}
+
 function calJumpToToday(behavior) {
   // behavior: 'auto' (instant — tab-open auto-jump) | default 'smooth'
   // (the header button). 3.4.3: the plan-tab open sequence calls this so
   // the calendar lands on today instead of months in the past.
-  const b = behavior === 'auto' ? 'auto' : 'smooth';
+  const instant = behavior === 'auto';
+  const scroller = document.getElementById('cal-body');
+  if (!scroller) return;
+  let target = null;
   try {
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const cell = document.querySelector(`#cal-rows [data-date="${todayStr}"]`);
-    if (cell) {
-      cell.scrollIntoView({ behavior: b, block: 'center' });
-      return;
-    }
+    target = document.querySelector(`#cal-rows [data-date="${_calTodayStr()}"]`);
   } catch(_) {}
-  // fallback: scroll to current week row
-  const data = window._calData;
-  if (!data || !data.weeks) return;
-  let curIdx = -1;
-  for (let i = 0; i < data.weeks.length; i++) {
-    if (data.weeks[i].is_current) { curIdx = i; break; }
+  if (!target) {
+    // fallback: the current week row
+    const data = window._calData;
+    if (!data || !data.weeks) return;
+    let curIdx = -1;
+    for (let i = 0; i < data.weeks.length; i++) {
+      if (data.weeks[i].is_current) { curIdx = i; break; }
+    }
+    if (curIdx < 0) return;
+    try {
+      target = document.querySelector(`#cal-rows [data-cal-week-idx="${curIdx}"]`);
+    } catch(_) {}
   }
-  if (curIdx < 0) return;
+  if (!target) return;
+  // 3.4.3 root fix — scroll the CONTAINER, never cell.scrollIntoView().
+  // #cal-body has CSS scroll-behavior:smooth; in the embedded webview that
+  // made scrollIntoView a NO-OP on the nested scroller (it dragged the
+  // whole page instead) and swallowed bare scrollTop= assignments, so the
+  // committed auto-jump never landed. scrollTo with an explicit behavior
+  // is the reliable primitive; 'instant' also beats the CSS smooth for the
+  // tab-open jump.
   try {
-    const row = document.querySelector(`#cal-rows [data-cal-week-idx="${curIdx}"]`);
-    const scroller = document.getElementById('cal-body');
-    if (row && scroller) {
-      scroller.scrollTop = Math.max(0, row.offsetTop - scroller.clientHeight / 2 + row.clientHeight / 2);
+    const top = Math.max(0,
+      scroller.scrollTop + target.getBoundingClientRect().top
+      - scroller.getBoundingClientRect().top
+      - (scroller.clientHeight - target.clientHeight) / 2);
+    const from = scroller.scrollTop;
+    scroller.scrollTo({ top: top, behavior: instant ? 'instant' : 'smooth' });
+    if (!instant) {
+      // Embedded webviews (the shipped app) swallow SMOOTH programmatic
+      // scrolls on this container entirely (verified live: scrollTop never
+      // moves). Verify movement shortly after and land instant if the
+      // smooth animation never started, so the header button always works.
+      setTimeout(() => {
+        try {
+          if (Math.abs(scroller.scrollTop - from) < 2 && Math.abs(top - from) >= 2) {
+            scroller.scrollTo({ top: top, behavior: 'instant' });
+          }
+        } catch(_e) {}
+      }, 250);
     }
-  } catch(_) {}
+  } catch(_) {
+    try { scroller.scrollTop = Math.max(0, target.offsetTop - scroller.clientHeight / 2); } catch(_e) {}
+  }
 }
 
 // B2 + B6: click handler that respects card_state and uses content_class
@@ -17420,6 +17478,32 @@ async function _refreshAfterAdjustAction() {
   try { loadWeeklyCalendar(); } catch (_) {}
 }
 
+// 3.4.3 B1 — day-modal title identity. Today reads "Today — …"; any other
+// day reads "Thursday 17 Jul — …" plus a relative pill ("in 3 days" /
+// "yesterday"), so a non-today day can never be mistaken for today (the
+// owner read a Thursday modal as today's session). Server-truth today via
+// _calTodayStr(); date math at local noon (DST-safe).
+function _dayModalTitle(day, dayNameFallback) {
+  const fb = String(dayNameFallback || day || '');
+  const dstr = String(day || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dstr)) return { label: fb, pill: '' };
+  const todayStr = _calTodayStr();
+  if (dstr === todayStr) return { label: 'Today', pill: '' };
+  const d = new Date(dstr + 'T12:00:00');
+  if (isNaN(d.getTime())) return { label: fb, pill: '' };
+  const label = d.toLocaleDateString('en-US', { weekday: 'long' }) + ' '
+              + d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  let pill = '';
+  const t0 = new Date(todayStr + 'T12:00:00');
+  if (!isNaN(t0.getTime())) {
+    const days = Math.round((d.getTime() - t0.getTime()) / 86400000);
+    const rel = days === 1 ? 'tomorrow' : days === -1 ? 'yesterday'
+              : days > 1 ? `in ${days} days` : days < -1 ? `${-days} days ago` : '';
+    if (rel) pill = `<span class="day-rel-pill">${rel}</span>`;
+  }
+  return { label, pill };
+}
+
 async function openDayWorkout(sessionIdx) {
   let session = window._weekPlanSessions?.[sessionIdx];
   if (!session || session.session_type === 'rest') return;
@@ -17431,10 +17515,13 @@ async function openDayWorkout(sessionIdx) {
   try { _adjModel = await _todayDayModalModel(session); } catch (_) {}
   const _adjLead = !!(_adjModel && _adjModel.lead === 'adjusted');
   const _origSession = session;
+  // 3.4.3 B1 — title identity from the STORED session's date (adjusted
+  // sessions are same-day, and effSession may not carry `day`).
+  const _title = _dayModalTitle(_origSession.day, _origSession.day_name);
   if (_adjLead && _adjModel.rest) {
     // Adjusted to REST: nothing to chart or download — banner + original.
     let html = _adjBannerHtml(_adjModel);
-    html += `<h2>${session.day_name} — Rest day</h2>`;
+    html += `<h2>${esc(_title.label)} — Rest day${_title.pill}</h2>`;
     html += `<div style="font-size:13px;color:var(--text2);margin:8px 0;">${esc(fixZeroMin(_adjModel.effSession.description) || 'Full rest — no session today.')}</div>`;
     html += _adjOriginalBlockHtml(_origSession);
     openModal(html);
@@ -17574,7 +17661,7 @@ async function openDayWorkout(sessionIdx) {
   // 3.4.1 M3: adjusted-lead modal opens with the banner (what changed, why,
   // accept / keep-original) so the click can never contradict the card.
   let html = (_adjLead ? _adjBannerHtml(_adjModel) : '');
-  html += `<h2>${session.day_name} — ${esc(heroTitle)}</h2>`;
+  html += `<h2>${esc(_title.label)} — ${esc(heroTitle)}${_title.pill}</h2>`;
   // v3.2.0: FTP-test sessions lead with a ramp-vs-20-min chooser — the rider
   // picks per test (no global setting), with the trade-offs shown.
   if (type === 'ftp_test') html += ftpTestChooserHtml(sessionIdx, session.day, session.ftp_test_type || 'coggan_20min');
@@ -17694,16 +17781,16 @@ async function openDayWorkout(sessionIdx) {
   // rest/recovery → already_easy, z2/long_z2 → already_at_bottom).
   html += `<div id="rematch-result-${session.day}" style="margin-top:16px;"></div>`;
   html += `<div id="swap-result-${session.day}" style="margin-top:8px;"></div>`;
-  const _isTodaySession = String(session.day) === new Date().toLocaleDateString('en-CA');
+  const _isTodaySession = String(session.day) === _calTodayStr();
   const curStatus = session.status || 'pending';
   const _canEase = _isTodaySession && curStatus !== 'dismissed'
     && ['sprint', 'vo2max', 'threshold', 'overunder', 'sweetspot', 'tempo'].includes(type);
   html += `<div style="margin-top:12px;">
     <div style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Change this workout</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-      <button class="btn" onclick="rematchDaySession('${session.day}')" style="font-size:12px;">&#x21bb; Give me a different workout</button><span class="info-icon" data-popover="planpop-rematch" tabindex="0" role="button" aria-label="What does &quot;Give me a different workout&quot; do?" title="Re-rolls only this one day's workout from the matching pool.">i</span>
-      <button class="btn" onclick="swapTypeOpen('${session.day}')" style="font-size:12px;">&#x21c4; Change the type&hellip;</button><span class="info-icon" tabindex="0" role="button" aria-label="What does &quot;Change the type&quot; do?" title="Change this day to a different training type (e.g. a VO2max in a base week) — matches a workout and rebalances the rest of the plan. You can still ask for a different workout after.">i</span>
-      ${_canEase ? `<button class="btn" onclick="applyReadinessTierDown();closeModal()" style="font-size:12px;">&#x21e3; Make it easier today</button>` : ''}
+      <button class="btn" onclick="rematchDaySession('${session.day}')" style="font-size:12px;">&#x21bb; Give me a different workout</button><span class="info-icon" data-popover="planpop-rematch" tabindex="0" role="button" aria-label="What does &quot;Give me a different workout&quot; do?" title="Swaps in another workout of the same type and duration.">i</span>
+      <button class="btn" onclick="swapTypeOpen('${session.day}')" style="font-size:12px;">&#x21c4; Change the type&hellip;</button><span class="info-icon" data-popover="planpop-swaptype" tabindex="0" role="button" aria-label="What does &quot;Change the type&quot; do?" title="Pick a different training type for this day.">i</span>
+      ${_canEase ? `<button class="btn" onclick="applyReadinessTierDown();closeModal()" style="font-size:12px;">&#x21e3; Make it easier today</button><span class="info-icon" data-popover="planpop-easier" tabindex="0" role="button" aria-label="What does &quot;Make it easier today&quot; do?" title="Drops today one intensity notch.">i</span>` : ''}
     </div>
   </div>`;
 

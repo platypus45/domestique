@@ -364,8 +364,9 @@ def test_modal_renders_adjusted_lead_and_effective_downloads():
     src = DASHBOARD.read_text(encoding="utf-8")
     harness = _MODAL_STUBS + _fns(
         src, "_sessTypeLabel", "_adjPlannedNowHtml", "_effectiveTodaySession",
-        "_dayModalModel", "_todayDayModalModel",
-        "_adjBannerHtml", "_adjOriginalBlockHtml", "openDayWorkout"
+        "_dayModalModel", "_todayDayModalModel", "_calTodayStr",
+        "_dayModalTitle", "_adjBannerHtml", "_adjOriginalBlockHtml",
+        "openDayWorkout"
     ) + _TODAY_FIXTURE + """
 (async () => {
   global.window = {_weekPlanSessions: [SESSION], _todaySessionData: TODAY_D,
@@ -383,7 +384,7 @@ def test_modal_renders_adjusted_lead_and_effective_downloads():
     throw new Error('banner must name the adjusted workout');
   if (modalHtml.indexOf('Planned: <b>') > modalHtml.indexOf('<h2>'))
     throw new Error('banner must LEAD the modal');
-  if (!modalHtml.includes('Monday — Z2 (60min)')) throw new Error('hero must be the ADJUSTED session: ' + modalHtml.match(/<h2>[^<]*<\\/h2>/));
+  if (!modalHtml.includes('Today — Z2 (60min)')) throw new Error('hero must be the ADJUSTED session: ' + modalHtml.match(/<h2>[^<]*<\\/h2>/));
   // The approximate adjusted shape (synthetic — fileless by design).
   if (!modalHtml.includes('data-blocks="z2"')) throw new Error('chart must be the adjusted synthetic shape');
   if (!modalHtml.includes('Approximate preview')) throw new Error('synthetic shape must be labeled approximate');
@@ -433,8 +434,9 @@ def test_unadjusted_day_renders_exactly_as_before():
     src = DASHBOARD.read_text(encoding="utf-8")
     harness = _MODAL_STUBS + _fns(
         src, "_sessTypeLabel", "_adjPlannedNowHtml", "_effectiveTodaySession",
-        "_dayModalModel", "_todayDayModalModel",
-        "_adjBannerHtml", "_adjOriginalBlockHtml", "openDayWorkout"
+        "_dayModalModel", "_todayDayModalModel", "_calTodayStr",
+        "_dayModalTitle", "_adjBannerHtml", "_adjOriginalBlockHtml",
+        "openDayWorkout"
     ) + _TODAY_FIXTURE + """
 (async () => {
   global.window = {_weekPlanSessions: [SESSION], _targetMode: 'power',
@@ -450,7 +452,7 @@ def test_unadjusted_day_renders_exactly_as_before():
   if (!modalHtml) throw new Error('modal did not open');
   if (modalHtml.includes('Planned: <b>')) throw new Error('unadjusted day must not banner');
   if (modalHtml.includes('Original plan:')) throw new Error('no secondary block when unadjusted');
-  if (!modalHtml.includes('Monday — SWEET SPOT (80min)')) throw new Error('hero must be the stored session: ' + modalHtml.match(/<h2>[^<]*<\\/h2>/));
+  if (!modalHtml.includes('Today — SWEET SPOT (80min)')) throw new Error('hero must be the stored session: ' + modalHtml.match(/<h2>[^<]*<\\/h2>/));
   if (!modalHtml.includes('Matched library file:')) throw new Error('matched-file line missing');
   if (!modalHtml.includes('data-real="1"')) throw new Error('real segment chart missing');
   if (!modalHtml.includes("downloadZwoFile('sweet_spot_steady_80.zwo')")) throw new Error('original ZWO download missing');

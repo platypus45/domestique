@@ -22,12 +22,35 @@ import training_planner as tp
 
 _ATHLETE = {"ftp": 250, "weight_kg": 70}
 
+# Chip fix (2026-07-16): these tests ran on the LIVE clock — the weekday of
+# "today" shifts which regenerated weeks pass the ramp-eligibility filters
+# (w.start > today, target−start > 21d), and on some weekdays the elapsed-3
+# vs elapsed-7 comparison legitimately inverts (seen: 290 vs 177 on a
+# Thursday, green on earlier weekdays). Frozen anchors per the established
+# per-module pattern, parametrized over a Monday AND a Thursday so the
+# invariant is proven weekday-independent. Assertions untouched.
+_ANCHORS = [date(2026, 1, 5),   # Monday
+            date(2026, 1, 8)]   # Thursday
 
-def _event_goal(weeks_out: int) -> tp.Goal:
+
+@pytest.fixture(params=_ANCHORS, ids=["mon-anchor", "thu-anchor"])
+def frozen_today(request, monkeypatch):
+    anchor = request.param
+
+    class _Frozen(date):
+        @classmethod
+        def today(cls):
+            return cls(anchor.year, anchor.month, anchor.day)
+
+    monkeypatch.setattr(tp, "date", _Frozen)
+    return anchor
+
+
+def _event_goal(weeks_out: int, today: date) -> tp.Goal:
     return tp.Goal(
         goal_type="event",
         plan_weeks=weeks_out,
-        target_date=date.today() + timedelta(weeks=weeks_out),
+        target_date=today + timedelta(weeks=weeks_out),
         event_km=160,
         event_climb_m=2000,
         event_type="gran_fondo",
@@ -50,6 +73,27 @@ def _long_ride_min(week) -> int:
     return best
 
 
+def _riding_evidence(weeks, today):
+    """Synthetic ~on-plan activities for every already-elapsed week.
+
+    Chip fix (2026-07-16): without these, ≥6-7 rideless elapsed weeks cross
+    the absence-detection threshold (Mujika tiering) on SOME weekday
+    geometries and regenerate_from_today correctly rebuilds with the
+    recovery ramp — a deliberate safety behavior that legitimately breaks
+    the ramp-offset monotonicity these tests measure. The tests are about
+    the OFFSET (athlete kept riding, plan regenerated mid-arc), so give the
+    detector what the premise assumes: rides in every elapsed week."""
+    acts = []
+    for w in weeks:
+        if w.start >= today:
+            continue
+        planned = sum((s.tss_estimate or 0) for s in w.sessions
+                      if s.session_type != "rest")
+        acts.append({"date": w.start.isoformat(),
+                     "tss": max(1, int(planned))})
+    return acts
+
+
 def _shift_back(weeks, n_weeks: int):
     delta = timedelta(weeks=n_weeks)
     for w in weeks:
@@ -60,10 +104,10 @@ def _shift_back(weeks, n_weeks: int):
                 s.day = s.day - delta
 
 
-def test_mid_plan_regen_continues_long_ride_ramp():
+def test_mid_plan_regen_continues_long_ride_ramp(frozen_today):
     """First ramp-eligible regenerated week's long ride is far above the floor."""
-    today = date.today()
-    goal = _event_goal(weeks_out=14)
+    today = frozen_today
+    goal = _event_goal(weeks_out=14, today=today)
     _phases, weeks = tp.generate_plan(goal, athlete=_ATHLETE)
 
     targets = tp._event_demand_targets(goal, _ATHLETE, {"current_ctl": 45.0})
@@ -76,6 +120,7 @@ def test_mid_plan_regen_continues_long_ride_ramp():
 
     _np, all_weeks, _info = tp.regenerate_from_today(
         goal, weeks, current_ctl=45.0, athlete=_ATHLETE,
+        activities=_riding_evidence(weeks, today),
     )
 
     # Ramp-eligible future weeks: strictly after today, in a build/base phase
@@ -104,18 +149,19 @@ def test_mid_plan_regen_continues_long_ride_ramp():
     )
 
 
-def test_more_elapsed_weeks_ramps_higher():
+def test_more_elapsed_weeks_ramps_higher(frozen_today):
     """Monotonicity: regenerating later in the plan (more elapsed weeks) yields
     a higher (or capped-equal) first long ride than regenerating earlier — the
     offset tracks elapsed time."""
-    today = date.today()
+    today = frozen_today
 
     def _first_eligible_long(elapsed: int) -> int:
-        goal = _event_goal(weeks_out=16)
+        goal = _event_goal(weeks_out=16, today=today)
         _p, weeks = tp.generate_plan(goal, athlete=_ATHLETE)
         _shift_back(weeks, elapsed)
         _np, all_weeks, _info = tp.regenerate_from_today(
             goal, weeks, current_ctl=45.0, athlete=_ATHLETE,
+            activities=_riding_evidence(weeks, today),
         )
         elig = [
             w for w in all_weeks

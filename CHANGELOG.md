@@ -1,5 +1,26 @@
 # Changelog
 
+## v3.4.3 — The calendar lands on today, and every day says whose day it is (2026-07-16)
+
+- **The Training Plan calendar opens on today.** No more scrolling through
+  past weeks — it lands on the current week automatically (and the "Jump to
+  today" button now works reliably too; it previously scrolled the page
+  instead of the calendar, and could aim at yesterday shortly after
+  midnight).
+- **Every day view says which day it is.** "Today — SWEET SPOT (60min)" vs
+  "Saturday 18 Jul — TEMPO (38min) · in 2 days" — clicking around past and
+  future weeks can never read as today again.
+- **The home card can no longer show a stale session.** Opening the plan tab
+  can rewrite today (missed-session re-fit); the home card now refreshes
+  itself right after, so Home and Plan always tell the same story.
+- **All three "change this workout" buttons have working explainers.**
+- **First plan on a fresh install works.** Generating could fail with an
+  error on brand-new installs (a summary file was written before its folder
+  existed).
+- Under the hood: the test suite is now fully isolated from your real data
+  (a development-only hazard), and the dev preview runs on a sandbox copy.
+
+
 ## v3.4.2 — DFA is back, clearer choices, and a wizard that asks the right question first (2026-07-14)
 
 - **DFA α1 works again on the home card and the DFA tab.** The readings could

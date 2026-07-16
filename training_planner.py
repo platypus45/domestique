@@ -13081,6 +13081,12 @@ def export_plan_md(
             its session descriptions to a newer FTP.
     """
     path = PLAN_DIR / f"plan_{date.today().isoformat()}.md"
+    # First-write mkdir per the deferred-PLAN_DIR contract (see the PLAN_DIR
+    # note ~tp:119): every other writer creates the dir; this bare open()
+    # 500'd the whole /api/plan/generate on a FRESH install (no plans/ yet).
+    # Masked for years because the real ~/.domestique/plans always existed —
+    # the hermetic test sandbox (9e9aff3d) finally exposed it.
+    path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(path, "w", encoding="utf-8") as f:
         f.write(f"# Training Plan — {goal.goal_type.upper()}\n\n")

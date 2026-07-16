@@ -56,6 +56,17 @@ def stub(tmp_path):
     old_workout_dir = app_module.WORKOUT_DIR
     old_gpx_dir = app_module.GPX_DIR
     old_environ = {k: os.environ.get(k) for k in _ENV_KEYS}
+    # Isolation fix (post-2fbfeb62): ProfileManager activation rewrites
+    # training_planner.PLAN_DIR / WORKOUT_DIR to the active profile's dirs
+    # (profile_manager.py:658) — this fixture activated profiles under a
+    # tmp_path home and never restored those TP globals, so every LATER
+    # test in the same worker process read/wrote plans in a DELETED tmp
+    # dir (the "future dismissed day missing" parallel-gate red in
+    # test_recalc_preserves_state, and the sequential hermetic-home escape
+    # via app._plan_dir()).
+    import training_planner as _tp
+    old_tp_plan_dir = _tp.PLAN_DIR
+    old_tp_workout_dir = _tp.WORKOUT_DIR
 
     ProfileManager._instance = None
     app_module.DATA_DIR = home / ".domestique"
@@ -76,6 +87,8 @@ def stub(tmp_path):
         db_module._sync_stop.clear()
         app_module._icu_oauth_states.clear()
         app_module.clear_cache()
+        _tp.PLAN_DIR = old_tp_plan_dir
+        _tp.WORKOUT_DIR = old_tp_workout_dir
         for k, v in old_environ.items():
             if v is None:
                 os.environ.pop(k, None)

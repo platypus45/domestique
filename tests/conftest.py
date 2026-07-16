@@ -137,6 +137,29 @@ def planner_pinned_env():
 
 
 @pytest.fixture(autouse=True)
+def _restore_tp_profile_dirs():
+    """Order-independence guard for training_planner.PLAN_DIR / WORKOUT_DIR.
+
+    ProfileManager activation rewrites BOTH module globals to the active
+    profile's dirs (profile_manager.py:658). Nine suites reset the
+    ProfileManager singleton under a tmp_path home; any test that activates
+    a profile there leaves the TP globals pointing into a DELETED tmp dir
+    for every later test in the same worker process — the
+    test_recalc_preserves_state parallel-gate red ("future dismissed day
+    missing": plans written to a vanished dir) and the sequential
+    hermetic-home escape both traced to this one leak. Snap both back after
+    every test, mirroring _restore_db_path below.
+    """
+    import training_planner as _tp
+    plan_dir, workout_dir = _tp.PLAN_DIR, _tp.WORKOUT_DIR
+    yield
+    if _tp.PLAN_DIR != plan_dir:
+        _tp.PLAN_DIR = plan_dir
+    if _tp.WORKOUT_DIR != workout_dir:
+        _tp.WORKOUT_DIR = workout_dir
+
+
+@pytest.fixture(autouse=True)
 def _restore_db_path():
     """Order-independence guard for the db.DB_PATH global.
 

@@ -101,11 +101,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from training import get_today_metrics, fetch_wellness, fetch_activities
 import config
+from user_home import domestique_home
 
 # Workout library — flat directory of .zwo files (metadata extracted by parsing XML)
 WORKOUT_DIR = Path(__file__).parent / "workouts"
 # Allow user override via user_paths.json (matches app.py behavior)
-for _upf in [Path.home() / ".domestique" / "user_paths.json",
+for _upf in [domestique_home() / "user_paths.json",
              Path(__file__).parent / "user_paths.json"]:
     if _upf.exists():
         try:
@@ -116,7 +117,7 @@ for _upf in [Path.home() / ".domestique" / "user_paths.json",
             pass
         break
 # Plans must be written to user data dir (not the read-only app bundle)
-PLAN_DIR = Path.home() / ".domestique" / "plans"
+PLAN_DIR = domestique_home() / "plans"
 # NOTE: PLAN_DIR creation deferred to first write so the v3 data-dir
 # migration in profile_manager._maybe_migrate_data_dir can race-free
 # detect a fresh install vs. a pre-existing legacy dir. Callers that

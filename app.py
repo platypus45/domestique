@@ -148,7 +148,8 @@ except Exception:
 # profile_manager._maybe_migrate_data_dir has had a chance to rename a
 # legacy ~/.chickencycling/ dir into place). _plan_dir() below mkdirs
 # on demand, so deferring this is safe.
-_user_data_dir = Path.home() / ".domestique"
+from user_home import domestique_home
+_user_data_dir = domestique_home()  # 3.4.3: DOMESTIQUE_HOME-aware
 
 COURSE_DIR    = Path(__file__).parent / "courses"
 _DEFAULT_PLAN_DIR = _user_data_dir / "plans"
@@ -1175,7 +1176,7 @@ _setup_lock = threading.Lock()
 
 _SETUP_PATH_ALLOWED_BASES = [
     Path.home(),
-    Path.home() / ".domestique",
+    domestique_home(),  # 3.4.3: sandbox-aware
     Path("/tmp"),
     Path("/private/tmp"),  # macOS symlink target
 ]
@@ -1640,7 +1641,7 @@ def api_profiles():
                 athlete_path = pm._profiles_dir / pid / "athlete.json" if hasattr(pm, '_profiles_dir') else None
                 if not athlete_path or not athlete_path.exists():
                     # Fallback to best-known home path if internal attribute missing
-                    athlete_path = Path.home() / ".domestique" / "profiles" / pid / "athlete.json"
+                    athlete_path = domestique_home() / "profiles" / pid / "athlete.json"
                 if athlete_path.exists():
                     data = json.loads(athlete_path.read_text(encoding="utf-8"))
                     if "ftp" in data:
@@ -8385,7 +8386,7 @@ def api_logs(lines: int = Query(100)):
     Hard-capped at 2000 lines via seek-from-end tailing so that a bloated
     log file (many MB) can't OOM the process when the debug viewer opens.
     """
-    log_path = Path.home() / ".domestique" / "logs" / "domestique.log"
+    log_path = domestique_home() / "logs" / "domestique.log"
     if not log_path.exists():
         return {"lines": [], "path": str(log_path), "exists": False}
     try:
@@ -8415,7 +8416,7 @@ def api_version():
         "version": _VERSION,
         "python": platform.python_version(),
         "frozen": getattr(sys, "frozen", False),
-        "data_dir": str(Path.home() / ".domestique"),
+        "data_dir": str(domestique_home()),
     }
 
 
@@ -18941,7 +18942,7 @@ def _pr_toast_queue_path() -> Path:
     that landed major PRs since the last dashboard open. Drained by the GET
     /api/ride/.../prs/toast-queue endpoint.
     """
-    return Path.home() / ".domestique" / "last_pr_toast.json"
+    return domestique_home() / "last_pr_toast.json"
 
 
 def _read_pr_toast_queue() -> list[dict]:

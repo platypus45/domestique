@@ -4,13 +4,17 @@
     {
       "name": "domestique",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["app.py"],
+      "runtimeArgs": [
+        "app.py"
+      ],
       "port": 8080
     },
     {
       "name": "domestique-preview",
       "runtimeExecutable": "python3.12",
-      "runtimeArgs": ["-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", "8090", "--log-level", "warning"],
+      "runtimeArgs": [
+        "scripts/dev_preview.py"
+      ],
       "port": 8090,
       "autoPort": false
     }

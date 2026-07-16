@@ -37,6 +37,7 @@ import time
 import uuid
 from datetime import date, timedelta
 from pathlib import Path
+from user_home import domestique_home
 from typing import Optional
 
 log = logging.getLogger("domestique.power_curve")
@@ -70,7 +71,7 @@ _PG_2011_W_PER_KG: dict[int, float] = {
 
 
 def _profile_dir() -> Path:
-    return Path.home() / ".domestique" / "cache"
+    return domestique_home() / "cache"
 
 
 def _backfill_lock_path() -> Path:

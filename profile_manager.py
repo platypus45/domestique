@@ -32,6 +32,7 @@ import time
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from user_home import domestique_home
 from typing import Callable, Optional
 
 log = logging.getLogger("domestique.profiles")
@@ -73,7 +74,7 @@ class ProfileManager:
     _instance: Optional["ProfileManager"] = None
 
     def __init__(self):
-        self._base = Path.home() / ".domestique"
+        self._base = domestique_home()  # 3.4.3: DOMESTIQUE_HOME-aware
         self._profiles_dir = self._base / "profiles"
         self._registry_path = self._base / "profiles.json"
         self._active_id: Optional[str] = None
@@ -106,9 +107,8 @@ class ProfileManager:
             atomic on the same filesystem (typical $HOME case) — either the
             old name or the new name exists, never both.
         """
-        home = Path.home()
-        new = home / ".domestique"
-        old = home / ".chickencycling"
+        new = domestique_home()
+        old = new.parent / ".chickencycling"
         if new.exists():
             return  # Already migrated (or fresh v3 install)
         if not old.exists():

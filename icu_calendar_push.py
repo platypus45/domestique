@@ -42,6 +42,7 @@ from pathlib import Path
 
 import config
 import training as _training
+from user_home import domestique_home
 
 _log = logging.getLogger("domestique.icu_push")
 
@@ -148,7 +149,7 @@ def _http_error_detail(step: str, status: int, body: bytes) -> str:
 
 def _load_plan() -> dict | None:
     import training_planner as tp
-    p = Path(getattr(tp, "PLAN_DIR", Path.home() / ".domestique" / "plans")) / "current_plan.json"
+    p = Path(getattr(tp, "PLAN_DIR", domestique_home() / "plans")) / "current_plan.json"
     try:
         plan = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValueError):

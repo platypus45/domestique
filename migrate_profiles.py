@@ -19,6 +19,7 @@ import shutil
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from user_home import domestique_home
 
 log = logging.getLogger(__name__)
 
@@ -182,7 +183,7 @@ def migrate_to_v4(profile_dir: Path) -> bool:
 
 
 def migrate_to_profiles() -> None:
-    base = Path.home() / ".domestique"
+    base = domestique_home()
     registry = base / "profiles.json"
 
     # ── Idempotent guard ────────────────────────────────────────────────
@@ -407,7 +408,7 @@ def migrate_archives_to_profiles(base: "Path | None" = None) -> dict:
     call directly (tests pass an explicit ``base``). Returns a stats dict:
     {"ran": bool, "icu": n, "wellness": n, "loose": n, "unmatched": n}.
     """
-    base = Path(base) if base is not None else Path.home() / ".domestique"
+    base = Path(base) if base is not None else domestique_home()
     global_rides = base / "rides"
     global_icu = global_rides / "icu"
     global_wellness = base / "wellness"

@@ -58,7 +58,8 @@ import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 
-LOG_DIR = Path.home() / ".domestique" / "logs"
+from user_home import domestique_home
+LOG_DIR = domestique_home() / "logs"
 
 # v4.0.0-alpha (FIX-SERVER): primary log file is boot-stamped
 # ``domestique_<iso>.log`` (was a single ``domestique.log``). Each uvicorn

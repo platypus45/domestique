@@ -3430,6 +3430,12 @@ document.querySelectorAll('.tab[data-tab]').forEach(t => {
                        // before initAvailCalendar reads the availability dict (the
                        // v1.6.4 ordering requirement).
                        await runPlanOpenSequence();
+                       // 3.4.3 (owner): the calendar spans months of past
+                       // weeks — opening the tab used to land at the top and
+                       // demand a long scroll. Jump straight to today once
+                       // the rows exist ('auto' = instant on open; the
+                       // header button keeps its smooth scroll).
+                       calJumpToToday('auto');
                        loadPlanMetrics();
                        initAvailCalendar();
                        loadCapabilityProjection();
@@ -13353,12 +13359,16 @@ function calSwitchView(view) {
   });
 }
 
-function calJumpToToday() {
+function calJumpToToday(behavior) {
+  // behavior: 'auto' (instant — tab-open auto-jump) | default 'smooth'
+  // (the header button). 3.4.3: the plan-tab open sequence calls this so
+  // the calendar lands on today instead of months in the past.
+  const b = behavior === 'auto' ? 'auto' : 'smooth';
   try {
     const todayStr = new Date().toISOString().slice(0, 10);
     const cell = document.querySelector(`#cal-rows [data-date="${todayStr}"]`);
     if (cell) {
-      cell.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      cell.scrollIntoView({ behavior: b, block: 'center' });
       return;
     }
   } catch(_) {}

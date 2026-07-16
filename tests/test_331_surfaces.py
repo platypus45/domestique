@@ -490,6 +490,12 @@ class TestB5FtpAutoIngestGuard:
         implausible value; a plausible one still prefills."""
         _apikey(stub)
         stub.pm.save_athlete({"ftp": 258})
+        # 3.4.3 hermetic-fs gate: the guard compares against the GLOBAL
+        # config.ATHLETE_FTP_W, which earlier tests mutate via /api/settings.
+        # The dev machine's real settings used to make 122 implausible in
+        # every ordering; pin it like the sibling tests do so the assertion
+        # is order-independent.
+        monkeypatch.setattr(config, "ATHLETE_FTP_W", 258, raising=False)
         monkeypatch.setattr(app_module, "fetch_wellness",
                             lambda days: _wellness_with_eftp(122))
         app_module.clear_cache()

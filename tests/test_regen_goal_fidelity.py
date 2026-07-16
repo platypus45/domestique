@@ -47,6 +47,13 @@ class TestRegenGoalFidelity(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="regenfid_"))
         self._patch = patch.object(app_module, "_plan_dir", return_value=self.tmp)
         self._patch.start()
+        # 3.4.3 hermetic-fs gate: export_plan_md writes plan_<date>.md via
+        # tp.PLAN_DIR (NOT app._plan_dir) — unpatched, this suite was
+        # writing into the machine's REAL profile plan dir on every gate
+        # run (masked because that dir always existed; the sandbox home
+        # surfaced it as ENOENT). Patch both roots to the same tmp.
+        self._patch_tp = patch.object(tp, "PLAN_DIR", self.tmp)
+        self._patch_tp.start()
         self.client = TestClient(app_module.app)
         # B race on a Sunday ~4-5 weeks out: always a trainable day (rest_days
         # =[0] Monday), well inside the plan and outside any taper span.
@@ -54,6 +61,7 @@ class TestRegenGoalFidelity(unittest.TestCase):
 
     def tearDown(self):
         self._patch.stop()
+        self._patch_tp.stop()
         # Never leak a pinned model into other suites.
         tp.set_active_distribution("polarized", None)
 

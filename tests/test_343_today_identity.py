@@ -147,3 +147,23 @@ def test_delegated_handler_covers_dynamic_modal_content():
     assert "document.addEventListener('click'" in block
     assert "closest('[data-popover]')" in block.replace('e.target.closest && e.target.closest', "closest"), \
         "delegated handler must resolve icons via closest([data-popover])"
+
+
+def test_plan_open_sequence_refreshes_today_session():
+    # B1 root fix (owner incident, forensics 2026-07-16): the plan-open
+    # sequence's step 4 can REWRITE today's session (missed-hard refit /
+    # rebuild / rebalance) — observed live as home card VO2MAX (pre-refit
+    # generation) vs plan-modal THRESHOLD (post-refit) for the SAME day.
+    # The sequence must re-pull /api/today-session afterwards so the home
+    # card and window._todaySessionData can never keep serving the
+    # pre-update generation. Pinned in BOTH finally branches.
+    i = SRC.index("async function runPlanOpenSequence")
+    j = SRC.index("\n// v1.8.24 — ONE adaptation path for the UI", i)
+    body = SRC[i:j]
+    fin = body[body.index("} finally {"):]
+    assert fin.count("loadTodaySession()") >= 2, (
+        "runPlanOpenSequence must refresh today-session after the plan "
+        "update in both finally branches (stale home-card divergence)")
+    # On success the refresh lands before the overlay dismisses.
+    ok_branch = fin[fin.index("} else {"):]
+    assert ok_branch.index("loadTodaySession()") < ok_branch.index("dismissPlanCatchup()")

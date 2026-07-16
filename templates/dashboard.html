@@ -14589,8 +14589,17 @@ async function runPlanOpenSequence() {
       if (footerEl) footerEl.style.display = 'block';
       if (ov) ov.style.display = 'flex';  // ensure still visible
       try { await loadCalendar(); } catch (_) {}  // best-effort repaint of whatever we have
+      try { await loadTodaySession(); } catch (_) {}  // 3.4.3 — see below
     } else {
       try { await loadCalendar(); } catch (_) {}
+      // 3.4.3 B1 root fix (owner incident): step 4 can REWRITE today's
+      // session (missed-hard refit / rebuild / rebalance), but the HOME
+      // today-card and window._todaySessionData were rendered from the
+      // PRE-update generation and never re-fetched — so Home kept showing
+      // e.g. VO2MAX while the plan tab's modal showed the freshly-refit
+      // THRESHOLD for the same day. Re-pull /api/today-session after the
+      // sequence so every surface reads the same plan generation.
+      try { await loadTodaySession(); } catch (_) {}
       dismissPlanCatchup();
     }
   }

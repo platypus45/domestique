@@ -483,10 +483,14 @@ def test_state_matrix_exhaustive(tmp_path):
     assert ran == 3 * len(_STATES) ** 2  # 108 enumerated cases
 
 
+# 3.4.3 hermetic-fs gate: HOME is sandboxed suite-wide; the dry run READS
+# the machine's real ~/.domestique via DOMESTIQUE_REAL_HOME (never writes).
+_REAL_HOME_DIR = Path(os.environ.get("DOMESTIQUE_REAL_HOME") or str(Path.home()))
+
 # ── OWNER HARDENING — real-home dry run (sandboxed copy, read-only source) ──
 
 @pytest.mark.skipif(
-    not (Path.home() / ".domestique" / "profiles").is_dir(),
+    not (_REAL_HOME_DIR / ".domestique" / "profiles").is_dir(),
     reason="no real ~/.domestique on this machine (CI)")
 def test_real_home_dry_run(tmp_path):
     """Copy the dev machine's real ~/.domestique into a sandbox and run the
@@ -494,7 +498,7 @@ def test_real_home_dry_run(tmp_path):
     those depend on the machine): skip family ⇒ zero writes; adopt ⇒ no byte
     string lost. The real home is never opened for writing."""
     import shutil as _sh
-    src = Path.home() / ".domestique"
+    src = _REAL_HOME_DIR / ".domestique"
     home = tmp_path / "dot"
     _sh.copytree(src, home, ignore=_sh.ignore_patterns(
         "*.db", "*.db-shm", "*.db-wal", "rides", "wellness", "__pycache__"))

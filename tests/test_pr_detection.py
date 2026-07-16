@@ -331,7 +331,8 @@ class RealDataRoundTripTests(_IsolatedRideDirMixin, unittest.TestCase):
         injected, and verify compute_ride_prs finds at least one PR."""
         # The archive is per-profile (profiles/<id>/rides/icu/) since the
         # profile move; fall back to the legacy global path for old layouts.
-        _dom = Path.home() / ".domestique"
+        # 3.4.3 hermetic-fs gate: read-only real-archive lookup via real home.
+        _dom = Path(os.environ.get("DOMESTIQUE_REAL_HOME") or str(Path.home())) / ".domestique"
         candidates = sorted(
             _dom.glob("profiles/*/rides/icu/i145626886.json")
         ) + [_dom / "rides" / "icu" / "i145626886.json"]

@@ -82,9 +82,28 @@ class TestV134NoYellowOnGenerate(unittest.TestCase):
 
     def test_high_volume_availability_under_5pct_yellow(self):
         """User repro: realistic heavy availability → <5% missing_workout."""
-        if not self.plan_path.exists():
-            self.skipTest("no current plan to seed availability into")
-        _seed_high_volume_availability(self.plan_path)
+        # 3.4.3 hermetic-fs gate: HOME is sandboxed, so no ambient plan
+        # exists. This test used to piggyback on the machine's REAL
+        # current_plan.json (and its generate below CLOBBERED the owner's
+        # live plan when a run died before tearDownClass). Self-seed a plan
+        # in the sandbox instead of skipping. tp.PLAN_DIR is read LAZILY:
+        # the TestClient lifespan boot activates the profile and rebinds it
+        # (the setUpClass snapshot predates that rebind).
+        plan_path = tp.PLAN_DIR / "current_plan.json"
+        if not plan_path.exists():
+            today = date.today()
+            with _client() as client:
+                seed = client.post("/api/plan/generate", json={
+                    "goal": "event", "plan_weeks": 12, "hours_per_week": 14,
+                    "event_date": (today + timedelta(weeks=12)).isoformat(),
+                    "event_name": "v134-seed", "event_km": 200,
+                    "event_climb": 1500, "event_type": "gran fondo",
+                })
+            self.assertEqual(seed.status_code, 200, seed.text[:300])
+            plan_path = tp.PLAN_DIR / "current_plan.json"
+            self.assertTrue(plan_path.exists(),
+                            f"seed generate did not persist at {plan_path}")
+        _seed_high_volume_availability(plan_path)
 
         today = date.today()
         with _client() as client:

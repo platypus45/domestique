@@ -40,7 +40,10 @@ import power_curve
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-REAL_RIDE_PATH = Path.home() / ".domestique" / "rides" / "icu" / "i144492547.json"
+# 3.4.3 hermetic-fs gate: HOME is sandboxed suite-wide; this READ-ONLY
+# validation keeps using the machine's real archive via DOMESTIQUE_REAL_HOME.
+REAL_RIDE_PATH = (Path(os.environ.get("DOMESTIQUE_REAL_HOME") or str(Path.home()))
+                  / ".domestique" / "rides" / "icu" / "i144492547.json")
 
 
 # ── synthetic ride builders ────────────────────────────────────────────────────

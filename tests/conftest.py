@@ -25,13 +25,72 @@ after every test so the singleton can never leak across test boundaries.
 """
 from __future__ import annotations
 
+import os
+import tempfile
 import threading
 from datetime import date
+
+# ── 3.4.3 HERMETIC-FS GATE (root fix for the owner-plan clobber) ─────────────
+# The suite sandboxed NETWORK (fixtures below) but never the FILESYSTEM: every
+# data path in the app resolves through Path.home()/.domestique at import time
+# (app._user_data_dir, training_planner.PLAN_DIR — which profile_manager
+# rebinds to the ACTIVE PROFILE's plan dir — db, logs). Any test that hit
+# /api/plan/generate via TestClient or a planner save path therefore wrote the
+# USER'S REAL plan store: a gate run replaced the owner's live
+# profiles/<name>/plans/current_plan.json with a fixture plan (observed:
+# goal.event_name == "v134-test" from test_v134_generate_plan_no_yellow).
+#
+# Point HOME at a per-process sandbox BEFORE any project import, so every
+# Path.home()/expanduser resolution lands in the sandbox — one choke point, no
+# per-module patch list to drift. Each xdist worker imports its own conftest →
+# its own sandbox; subprocesses spawned by tests inherit the env. The real
+# home is kept in DOMESTIQUE_REAL_HOME for tests that need to LOOK at it.
+_SANDBOX_HOME = tempfile.mkdtemp(prefix="domestique-test-home-")
+# Idempotent across nested interpreters: xdist WORKERS inherit the
+# controller's env with HOME already swapped — only the first process in
+# the chain records the true real home; every process still gets its OWN
+# fresh sandbox below (per-worker isolation).
+_REAL_HOME = os.environ.get("DOMESTIQUE_REAL_HOME") or os.environ.get("HOME", "")
+os.environ["DOMESTIQUE_REAL_HOME"] = _REAL_HOME
+# Child interpreters (xdist workers, test-spawned subprocesses) recompute the
+# per-user site-packages from HOME at startup (macOS: ~/Library/Python/…).
+# When pytest/xdist are pip-installed --user, the sandbox HOME would hide
+# them ("No module named '_pytest'" worker deaths) — capture the REAL
+# user-site now and keep it importable via PYTHONPATH.
+import site  # noqa: E402
+
+_REAL_USER_SITE = site.getusersitepackages()
+if _REAL_USER_SITE and os.path.isdir(_REAL_USER_SITE):
+    os.environ["PYTHONPATH"] = _REAL_USER_SITE + (
+        os.pathsep + os.environ["PYTHONPATH"]
+        if os.environ.get("PYTHONPATH") else "")
+os.environ["HOME"] = _SANDBOX_HOME
 
 import pytest
 
 import app as app_module
 import training_planner as _tp
+
+# Bootstrap the sandbox home exactly like a FIRST APP BOOT (lifespan order:
+# migrate_to_profiles() creates the `default` profile + profiles.json, then
+# ProfileManager.get() activates it). Profile-writing suites (creds
+# alignment, athlete-id, settings hot-reload, plan entry…) require an ACTIVE
+# profile; on the dev machine the owner's real registry silently provided
+# one — the sandbox must provide its own or every profile writer raises
+# "no active profile".
+from migrate_profiles import migrate_to_profiles as _bootstrap_profiles  # noqa: E402
+
+_bootstrap_profiles()
+from profile_manager import ProfileManager as _PM  # noqa: E402
+
+_PM.get()
+# …and the DB schema (lifespan calls db.init_db() after profile activation).
+# Non-lifespan TestClients hit endpoints directly; on the dev machine the
+# owner's real database supplied the tables ("no such table: activities"
+# in the sandbox otherwise).
+import db as _db_boot  # noqa: E402
+
+_db_boot.init_db()
 
 # ── W8 (v2.5.0): shared planner-environment pinning ─────────────────────────
 # generate_plan is DETERMINISTIC under a fixed seed_salt; the historic planner
@@ -105,6 +164,19 @@ def _reset_icu_sync_singleton():
         if t.name == "domestique.icu_sync" and t.is_alive():
             t.join(timeout=5.0)
     app_module._icu_sync_in_progress.clear()
+    # 3.4.3 — db._sync_stop is a module-GLOBAL Event: any TestClient
+    # lifespan shutdown (app shutdown calls db.stop_sync()) leaves it SET,
+    # and every later db write gate in the same process then raises
+    # SyncAborted ("hr mirror skipped: sync stop requested while waiting
+    # for write gate"). A latent order-dependence — reproduced at clean
+    # HEAD with test_v134_generate_plan_no_yellow →
+    # test_lthr_icu_mirror — that xdist chunking detonated across ~15
+    # files once new test files shifted the distribution. shutdown_sync()
+    # is db's documented reset for exactly this (joins any sync thread,
+    # then swaps in a fresh unset Event).
+    import db as _db
+    if _db._sync_stop.is_set():
+        _db.shutdown_sync(timeout=5.0)
 
 
 @pytest.fixture(autouse=True)

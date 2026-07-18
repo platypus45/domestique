@@ -4653,7 +4653,37 @@ def _wellness_record_to_api_dict(w: dict) -> dict:
 
 
 @app.get("/api/wellness")
-def api_wellness(days: int = Query(28)):
+def api_wellness(days: int = Query(28),
+                 date_from: str | None = Query(None, alias="from"),
+                 date_to: str | None = Query(None, alias="to")):
+    # 3.4.4: optional inclusive ISO date-range params (`from`/`to`) for the
+    # Analysis Fitness & Form filter. When present, `days` is widened so the
+    # upstream fetch reaches back to `from`, then the serialized records are
+    # sliced to [from, to]. Records carry pre-computed per-day CTL/ATL, so
+    # slicing never changes values — only which days are returned. Legacy
+    # days-only callers (home boot ?days=90, default 28) are untouched.
+    f_iso = t_iso = None
+    if date_from or date_to:
+        try:
+            f = date.fromisoformat(date_from) if date_from else None
+            t = date.fromisoformat(date_to) if date_to else None
+        except ValueError:
+            raise HTTPException(status_code=422,
+                                detail="from/to must be ISO dates (YYYY-MM-DD)")
+        if f and t and f > t:
+            raise HTTPException(status_code=422, detail="from must be <= to")
+        if f:
+            days = max(days, (date.today() - f).days + 1)
+        f_iso = f.isoformat() if f else None
+        t_iso = t.isoformat() if t else None
+
+    def _window(out: list[dict]) -> list[dict]:
+        if f_iso is None and t_iso is None:
+            return out
+        return [r for r in out
+                if (f_iso is None or (r.get("date") or "") >= f_iso)
+                and (t_iso is None or (r.get("date") or "") <= t_iso)]
+
     # v1.6.1: outer-fn try wraps the whole compute path so any unexpected
     # throw lands in the diag ring as E_WELLNESS_FETCH_FAILED before being
     # re-raised. Inner branches keep their own narrower fallbacks (cached
@@ -4666,7 +4696,7 @@ def api_wellness(days: int = Query(28)):
             # CP / W' / Pmax fitness curves and stamp them onto the records the
             # dashboard energy-system chart reads.
             _augment_wellness_with_3d_fitness(data)
-            return [_wellness_record_to_api_dict(w) for w in data]
+            return _window([_wellness_record_to_api_dict(w) for w in data])
         # v4.5.0: local file store fallback. If empty AND ICU creds available,
         # do a one-shot fetch + persist before returning.
         try:
@@ -4685,7 +4715,7 @@ def api_wellness(days: int = Query(28)):
             # local records are newest-first; API contract is unspecified order so
             # leave as-is.
             _augment_wellness_with_3d_fitness(local)
-            return [_wellness_record_to_api_dict(w) for w in local]
+            return _window([_wellness_record_to_api_dict(w) for w in local])
         # Fallback to SQLite — reshape into the ICU-record shape the augmenter
         # expects (id-keyed) before convolving, then project the API dict.
         rows = db.query_wellness(days)
@@ -4703,7 +4733,7 @@ def api_wellness(days: int = Query(28)):
             for r in rows
         ]
         _augment_wellness_with_3d_fitness(shaped)
-        return [_wellness_record_to_api_dict(w) for w in shaped]
+        return _window([_wellness_record_to_api_dict(w) for w in shaped])
     except Exception as _e:
         _log_error(error_codes.Codes.WELLNESS_FETCH_FAILED, exc=_e, days=days)
         raise

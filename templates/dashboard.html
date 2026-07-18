@@ -295,6 +295,31 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
   transition:all 0.15s; }
 .date-range-btns button:hover { border-color:var(--accent); color:var(--text); }
 .date-range-btns button.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+/* 3.4.4 — FF date-range calendar popover (intervals.icu-style two-month
+   pair). Panel chrome cloned from .info-popover: opaque var(--card), same
+   border/shadow so it reads as the app's standard floating card. */
+.ff-cal-pop { display:none; position:absolute; top:calc(100% + 6px); right:0; z-index:10000;
+  padding:12px; background:var(--card); border:1px solid var(--border); border-radius:8px;
+  box-shadow:0 8px 28px rgba(0,0,0,0.5); }
+.ff-cal-panels { display:flex; gap:16px; }
+.ff-cal-head { display:flex; align-items:center; gap:4px; margin-bottom:6px; justify-content:center; }
+.ff-cal-head select { background:var(--surface2); color:var(--text); border:1px solid var(--border);
+  border-radius:4px; font-size:11px; padding:2px 4px; }
+.ff-cal-chev { background:none; border:1px solid var(--border); border-radius:4px; color:var(--text2);
+  font-size:12px; line-height:1; padding:2px 7px; cursor:pointer; }
+.ff-cal-chev:hover { border-color:var(--accent); color:var(--text); }
+.ff-cal-grid { display:grid; grid-template-columns:repeat(7, 26px); gap:1px; }
+.ff-cal-dow { font-size:9px; color:var(--text3); text-align:center; padding:2px 0; font-weight:700; }
+.ff-cal-day { font-size:11px; color:var(--text); text-align:center; line-height:24px; height:24px;
+  border-radius:50%; cursor:pointer; user-select:none; }
+.ff-cal-day:hover { background:var(--surface2); }
+.ff-cal-out { color:var(--text3); opacity:0.45; }
+.ff-cal-in { background:var(--accent); opacity:0.22; border-radius:0; }
+.ff-cal-sel { background:var(--accent); color:#fff; font-weight:700; }
+.ff-cal-sel:hover { background:var(--accent); }
+.ff-cal-links { display:flex; gap:14px; margin-top:10px; border-top:1px solid var(--border); padding-top:8px; }
+.ff-cal-links a { font-size:11px; color:var(--accent); text-decoration:none; }
+.ff-cal-links a:hover { text-decoration:underline; }
 .chart-legend { display:flex; gap:16px; font-size:11px; color:var(--text2); align-items:center; }
 .chart-legend span { display:flex; align-items:center; gap:4px; }
 .chart-legend .dot { width:10px; height:3px; border-radius:1px; }
@@ -2718,12 +2743,23 @@ window.addEventListener('unhandledrejection', function(e) {
           <span><span class="dot" style="background:var(--green);"></span> TSB (Form)</span>
         </div>
       </div>
-      <div class="date-range-btns" style="flex-wrap:wrap;">
-        <button onclick="loadFitnessChart(30)" id="dr-30">1M</button>
-        <button onclick="loadFitnessChart(90)" id="dr-90" class="active">90d</button>
-        <button onclick="loadFitnessChart(180)" id="dr-180">180d</button>
-        <button onclick="loadFitnessChart(365)" id="dr-365">1Y</button>
-        <button onclick="loadFitnessChart(0)" id="dr-0">All</button>
+      <!-- 3.4.4 — ICU-style range control: label button opens the two-month
+           calendar popover; preset + per-year chips select directly. The
+           selection persists per profile (ffRange:<profile> in localStorage);
+           default stays the pre-3.4.4 90-day window. -->
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;position:relative;">
+        <div class="date-range-btns" style="flex-wrap:wrap;justify-content:flex-end;">
+          <button onclick="ffToggleCal()" id="ff-range-label" title="Pick a custom date range">Date range ▾</button>
+          <button onclick="ffSelectDays(30)" id="dr-30">1m</button>
+          <button onclick="ffSelectDays(42)" id="dr-42">42d</button>
+          <button onclick="ffSelectDays(90)" id="dr-90" class="active">3m</button>
+          <button onclick="ffSelectDays(180)" id="dr-180">6m</button>
+          <button onclick="ffSelectDays(365)" id="dr-365">1y</button>
+          <button onclick="ffSelectDays(0)" id="dr-0">All</button>
+          <span id="ff-year-chips" style="display:contents;"></span>
+        </div>
+        <span id="ff-clamp-note" style="font-size:10px;color:var(--text3);display:none;"></span>
+        <div id="ff-cal-pop" class="ff-cal-pop"></div>
       </div>
     </div>
     <div id="fitness-chart" style="min-height:320px;"></div>
@@ -4732,21 +4768,339 @@ function compBar(label, value, weight, color) {
 
 let _wellnessCache = null;
 
-async function loadFitnessChart(days=90) {
-  // Update active button
-  document.querySelectorAll('.date-range-btns button').forEach(b => b.classList.remove('active'));
-  const btn = $('dr-'+days);
-  if (btn) btn.classList.add('active');
+// ═══ FF DATE-RANGE (3.4.4) — pure helpers ═══════════════════════════════════
+// intervals.icu-style range filtering for the Fitness & Form chart. This block
+// is pure (no DOM): node-harness tests extract it verbatim between the two
+// block markers, stubbing only localStorage + _profileLsKey. Keep it that way.
+
+const _FF_MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+const _FF_RANGE_LS_BASE = 'ffRange';  // AC2d per-profile via _profileLsKey
+
+// '2026-07-18' → '18 JUL 2026' (pure string math — locale/TZ-proof).
+function ffFmtDMY(iso) {
+  const [y, m, d] = String(iso).split('-').map(Number);
+  return `${String(d).padStart(2, '0')} ${_FF_MONTHS[m - 1]} ${y}`;
+}
+// ICU-style label: '03 JAN 2023 – 18 JUL 2026'.
+function ffRangeLabel(fromIso, toIso) { return `${ffFmtDMY(fromIso)} – ${ffFmtDMY(toIso)}`; }
+
+// Calendar years present in [firstIso, lastIso], newest first → [2026, 2025, …].
+function ffYearChips(firstIso, lastIso) {
+  const y0 = Number(String(firstIso).slice(0, 4));
+  const y1 = Number(String(lastIso).slice(0, 4));
+  const out = [];
+  if (!Number.isFinite(y0) || !Number.isFinite(y1) || y0 > y1) return out;
+  for (let y = y1; y >= y0; y--) out.push(y);
+  return out;
+}
+// Year chip → Jan 1..Dec 31 of that year, clamped to available data.
+function ffYearRange(year, firstIso, lastIso) {
+  let from = `${year}-01-01`, to = `${year}-12-31`;
+  if (firstIso && from < firstIso) from = firstIso;
+  if (lastIso && to > lastIso) to = lastIso;
+  return {from, to};
+}
+// Clamp an arbitrary range to the available data span. Returns null when the
+// range lies entirely outside the data; clampedTo flags the future-end case
+// (drives the "showing through <last data day>" note — future prediction is
+// out of scope).
+function ffClampRange(from, to, firstIso, lastIso) {
+  let f = from, t = to, clampedFrom = false, clampedTo = false;
+  if (firstIso && f < firstIso) { f = firstIso; clampedFrom = true; }
+  if (lastIso && t > lastIso) { t = lastIso; clampedTo = true; }
+  if (f > t) return null;
+  return {from: f, to: t, clampedFrom, clampedTo};
+}
+
+// 42 cells (6 Monday-first weeks) covering `month` (1-12) of `year`.
+// Each cell: {iso, day, inMonth}. Pure UTC arithmetic — DST-proof.
+function ffCalGrid(year, month) {
+  const dow = (new Date(Date.UTC(year, month - 1, 1)).getUTCDay() + 6) % 7;  // Mon=0
+  const start = Date.UTC(year, month - 1, 1 - dow);
+  const cells = [];
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start + i * 86400000);
+    cells.push({iso: d.toISOString().slice(0, 10), day: d.getUTCDate(),
+                inMonth: d.getUTCMonth() === month - 1});
+  }
+  return cells;
+}
+// Month navigation: ffCalNav(2026, 1, -1) → {y:2025, m:12}.
+function ffCalNav(y, m, delta) {
+  const t = y * 12 + (m - 1) + delta;
+  return {y: Math.floor(t / 12), m: ((t % 12) + 12) % 12 + 1};
+}
+// Click-start-then-end state machine. sel = {start, end}. First pick (or a
+// pick after a complete pair) restarts; second pick completes — picking an
+// end BEFORE the start swaps the two.
+function ffCalPick(sel, iso) {
+  if (!sel || !sel.start || sel.end) return {start: iso, end: null, complete: false};
+  if (iso < sel.start) return {start: iso, end: sel.start, complete: true};
+  return {start: sel.start, end: iso, complete: true};
+}
+
+// Quick-link ranges (popover footer). All pure on todayIso; the caller clamps
+// against the data span via ffClampRange.
+function ffPrevMonthRange(todayIso) {
+  const [y, m] = String(todayIso).split('-').map(Number);
+  const p = ffCalNav(y, m, -1);
+  const lastDay = new Date(Date.UTC(p.y, p.m, 0)).getUTCDate();
+  const mm = String(p.m).padStart(2, '0');
+  return {from: `${p.y}-${mm}-01`, to: `${p.y}-${mm}-${String(lastDay).padStart(2, '0')}`};
+}
+function ffThisYearRange(todayIso) {
+  return {from: `${String(todayIso).slice(0, 4)}-01-01`, to: String(todayIso)};
+}
+// Cycling season = 1 Nov → 31 Oct. "Last season" = the season before the one
+// containing today: on 2026-07-18 that's 2024-11-01 → 2025-10-31.
+function ffLastSeasonRange(todayIso) {
+  const [y, m] = String(todayIso).split('-').map(Number);
+  const curSeasonStartYear = (m >= 11) ? y : y - 1;
+  return {from: `${curSeasonStartYear - 1}-11-01`, to: `${curSeasonStartYear}-10-31`};
+}
+
+// Selection persistence — {type:'days',days:N} (presets; 0 = All) or
+// {type:'range',from,to,label} (year chips / calendar). Default = the
+// pre-3.4.4 90-day window so riders who never touch the control see no change.
+function ffSaveRange(sel) {
+  try { localStorage.setItem(_profileLsKey(_FF_RANGE_LS_BASE), JSON.stringify(sel)); } catch (_) {}
+}
+function ffLoadRange() {
   try {
-    const fetchDays = days === 0 ? 1825 : days; // 0 = all → fetch 5 years
+    const raw = localStorage.getItem(_profileLsKey(_FF_RANGE_LS_BASE));
+    if (raw) {
+      const s = JSON.parse(raw);
+      if (s && s.type === 'days' && Number.isFinite(s.days) && s.days >= 0) return s;
+      if (s && s.type === 'range'
+          && /^\d{4}-\d{2}-\d{2}$/.test(String(s.from)) && /^\d{4}-\d{2}-\d{2}$/.test(String(s.to))
+          && s.from <= s.to) return s;
+    }
+  } catch (_) {}
+  return {type: 'days', days: 90};
+}
+// Selection → /api/wellness query string (days=0 = All → 5y, pre-3.4.4 contract).
+function ffRangeQuery(sel) {
+  if (sel.type === 'range') return `from=${sel.from}&to=${sel.to}`;
+  return `days=${sel.days === 0 ? 1825 : sel.days}`;
+}
+
+// ═══ FF DATE-RANGE — UI wiring ══════════════════════════════════════════════
+
+let _ffSpan = null;        // {first, last} — full available-data span (probe)
+let _ffCurSel = null;      // selection currently rendered
+let _ffLabelRange = null;  // {from, to} actually on screen (label source)
+let _ffCal = null;         // open popover: {panels:[{y,m},{y,m}], pick:{start,end}}
+let _ffCalDocKey = null, _ffCalDocClose = null;
+
+function _ffTodayIso() { return new Date().toISOString().slice(0, 10); }
+
+function ffSelectDays(days) { ffApplySelection({type: 'days', days}); }
+
+function ffSelectYear(year) {
+  if (!_ffSpan) return;
+  const r = ffYearRange(year, _ffSpan.first, _ffSpan.last);
+  ffApplySelection({type: 'range', from: r.from, to: r.to, label: 'y' + year});
+}
+
+function ffApplySelection(sel, clampNote) {
+  ffSaveRange(sel);
+  const note = $('ff-clamp-note');
+  if (note) {
+    note.textContent = clampNote || '';
+    note.style.display = clampNote ? 'inline' : 'none';
+  }
+  loadFitnessChart(sel);
+}
+
+function ffHighlightChip(sel) {
+  document.querySelectorAll('.date-range-btns button').forEach(b => b.classList.remove('active'));
+  let id = null;
+  if (sel.type === 'days') id = 'dr-' + sel.days;
+  else if (sel.label && /^y\d{4}$/.test(sel.label)) id = 'dr-' + sel.label;
+  const el = id ? $(id) : null;
+  if (el) el.classList.add('active');  // calendar ranges: no chip active (label shows the range)
+}
+
+function ffRenderYearChips(span) {
+  const wrap = $('ff-year-chips');
+  if (!wrap || !span) return;
+  wrap.innerHTML = ffYearChips(span.first, span.last)
+    .map(y => `<button onclick="ffSelectYear(${y})" id="dr-y${y}">${y}</button>`).join('');
+  if (_ffCurSel) ffHighlightChip(_ffCurSel);
+}
+
+// One-time probe of the full window (server-side cached) → data span for the
+// year chips + calendar bounds. When the current fetch already covers the full
+// window (All), its payload is reused instead of a second round-trip.
+function _ffEnsureSpan(fullData) {
+  if (_ffSpan) return Promise.resolve(_ffSpan);
+  const use = rows => {
+    const ds = (rows || []).map(r => r && r.date).filter(Boolean);
+    if (!ds.length) return null;
+    _ffSpan = {first: ds.reduce((a, b) => a < b ? a : b), last: ds.reduce((a, b) => a > b ? a : b)};
+    ffRenderYearChips(_ffSpan);
+    return _ffSpan;
+  };
+  if (fullData) return Promise.resolve(use(fullData));
+  return fetch('/api/wellness?days=1825').then(r => r.json()).then(use).catch(() => null);
+}
+
+function ffUpdateLabel(data) {
+  const el = $('ff-range-label');
+  if (!el) return;
+  const ds = (data || []).map(r => r && r.date).filter(Boolean);
+  if (!ds.length) { el.textContent = 'Date range ▾'; _ffLabelRange = null; return; }
+  const f = ds.reduce((a, b) => a < b ? a : b), t = ds.reduce((a, b) => a > b ? a : b);
+  _ffLabelRange = {from: f, to: t};
+  el.textContent = ffRangeLabel(f, t) + ' ▾';
+}
+
+// ── Calendar popover (two-month pair, ICU-style) ──
+function ffToggleCal() {
+  const pop = $('ff-cal-pop');
+  if (!pop) return;
+  if (pop.style.display === 'block') ffCloseCal(); else ffOpenCal();
+}
+
+function ffOpenCal() {
+  const pop = $('ff-cal-pop');
+  if (!pop) return;
+  const cur = (_ffCurSel && _ffCurSel.type === 'range') ? {start: _ffCurSel.from, end: _ffCurSel.to}
+            : (_ffLabelRange ? {start: _ffLabelRange.from, end: _ffLabelRange.to} : {start: null, end: null});
+  const endIso = cur.end || _ffTodayIso();
+  const startIso = cur.start || endIso;
+  const [sy, sm] = startIso.split('-').map(Number);
+  const [ey, em] = endIso.split('-').map(Number);
+  const right = {y: ey, m: em};
+  const left = (sy === ey && sm === em) ? ffCalNav(ey, em, -1) : {y: sy, m: sm};
+  _ffCal = {panels: [left, right], pick: {start: cur.start, end: cur.end}};
+  ffRenderCal();
+  pop.style.display = 'block';
+  // Esc / outside-click close — handlers bound on open, removed on close so
+  // repeated open/close cycles never stack document listeners.
+  _ffCalDocKey = e => { if (e.key === 'Escape') ffCloseCal(); };
+  _ffCalDocClose = e => {
+    const t = e.target;
+    if (t && t.closest && (t.closest('#ff-cal-pop') || t.closest('#ff-range-label'))) return;
+    ffCloseCal();
+  };
+  document.addEventListener('keydown', _ffCalDocKey);
+  document.addEventListener('mousedown', _ffCalDocClose);
+}
+
+function ffCloseCal() {
+  const pop = $('ff-cal-pop');
+  if (pop) pop.style.display = 'none';
+  if (_ffCalDocKey) { document.removeEventListener('keydown', _ffCalDocKey); _ffCalDocKey = null; }
+  if (_ffCalDocClose) { document.removeEventListener('mousedown', _ffCalDocClose); _ffCalDocClose = null; }
+  _ffCal = null;
+}
+
+function ffRenderCal() {
+  const pop = $('ff-cal-pop');
+  if (!pop || !_ffCal) return;
+  const today = _ffTodayIso();
+  const span = _ffSpan || (_ffLabelRange ? {first: _ffLabelRange.from, last: _ffLabelRange.to} : null);
+  const yearLo = span ? Number(span.first.slice(0, 4)) : Number(today.slice(0, 4)) - 5;
+  const yearHi = Number(((span && span.last > today) ? span.last : today).slice(0, 4));
+  const pick = _ffCal.pick;
+  const panels = _ffCal.panels.map((p, idx) => {
+    const monthOpts = _FF_MONTHS.map((mn, i) =>
+      `<option value="${i + 1}"${i + 1 === p.m ? ' selected' : ''}>${mn[0] + mn.slice(1).toLowerCase()}</option>`).join('');
+    let yearOpts = '';
+    for (let y = yearHi; y >= yearLo; y--) yearOpts += `<option value="${y}"${y === p.y ? ' selected' : ''}>${y}</option>`;
+    const dayCells = ffCalGrid(p.y, p.m).map(c => {
+      const isSel = (pick.start && c.iso === pick.start) || (pick.end && c.iso === pick.end);
+      const inRange = pick.start && pick.end && c.iso > pick.start && c.iso < pick.end;
+      const cls = ['ff-cal-day', c.inMonth ? '' : 'ff-cal-out',
+                   isSel ? 'ff-cal-sel' : '', inRange ? 'ff-cal-in' : ''].filter(Boolean).join(' ');
+      return `<div class="${cls}" onclick="ffCalCell('${c.iso}')">${c.day}</div>`;
+    }).join('');
+    return `<div class="ff-cal-panel">
+      <div class="ff-cal-head">
+        <button class="ff-cal-chev" onclick="ffCalShift(${idx}, -1)" aria-label="Previous month">‹</button>
+        <select onchange="ffCalSetMonth(${idx}, this.value)">${monthOpts}</select>
+        <select onchange="ffCalSetYear(${idx}, this.value)">${yearOpts}</select>
+        <button class="ff-cal-chev" onclick="ffCalShift(${idx}, 1)" aria-label="Next month">›</button>
+      </div>
+      <div class="ff-cal-grid">
+        ${['M', 'T', 'W', 'T', 'F', 'S', 'S'].map(d => `<div class="ff-cal-dow">${d}</div>`).join('')}
+        ${dayCells}
+      </div>
+    </div>`;
+  }).join('');
+  pop.innerHTML = `
+    <div class="ff-cal-panels">${panels}</div>
+    <div class="ff-cal-links">
+      <a href="#" onclick="ffQuickRange('prev-month');return false;">Previous month</a>
+      <a href="#" onclick="ffQuickRange('this-year');return false;">This year</a>
+      <a href="#" onclick="ffQuickRange('last-season');return false;">Last season</a>
+    </div>`;
+}
+
+function ffCalShift(idx, delta) {
+  if (!_ffCal) return;
+  const p = _ffCal.panels[idx];
+  _ffCal.panels[idx] = ffCalNav(p.y, p.m, delta);
+  ffRenderCal();
+}
+function ffCalSetMonth(idx, m) {
+  if (!_ffCal) return;
+  _ffCal.panels[idx] = {y: _ffCal.panels[idx].y, m: Number(m)};
+  ffRenderCal();
+}
+function ffCalSetYear(idx, y) {
+  if (!_ffCal) return;
+  _ffCal.panels[idx] = {y: Number(y), m: _ffCal.panels[idx].m};
+  ffRenderCal();
+}
+
+function ffCalCell(iso) {
+  if (!_ffCal) return;
+  const next = ffCalPick(_ffCal.pick, iso);
+  _ffCal.pick = {start: next.start, end: next.end};
+  if (!next.complete) { ffRenderCal(); return; }
+  ffApplyCalRange(next.start, next.end);
+}
+
+function ffQuickRange(kind) {
+  const today = _ffTodayIso();
+  const r = kind === 'prev-month' ? ffPrevMonthRange(today)
+          : kind === 'this-year' ? ffThisYearRange(today)
+          : ffLastSeasonRange(today);
+  ffApplyCalRange(r.from, r.to);
+}
+
+function ffApplyCalRange(from, to) {
+  const r = ffClampRange(from, to, _ffSpan && _ffSpan.first, _ffSpan && _ffSpan.last);
+  ffCloseCal();
+  if (!r) {
+    const note = $('ff-clamp-note');
+    if (note) { note.textContent = 'No data in that range.'; note.style.display = 'inline'; }
+    return;
+  }
+  ffApplySelection({type: 'range', from: r.from, to: r.to, label: 'custom'},
+                   r.clampedTo ? `showing through ${ffFmtDMY(r.to)}` : null);
+}
+
+async function loadFitnessChart(sel) {
+  // 3.4.4: selection object {type:'days',days:N} | {type:'range',from,to,label}.
+  // Numeric arg = legacy preset signature; no arg = persisted per-profile
+  // selection (default 90d — the pre-3.4.4 behavior).
+  if (typeof sel === 'number') sel = {type: 'days', days: sel};
+  if (!sel || !sel.type) sel = ffLoadRange();
+  _ffCurSel = sel;
+  ffHighlightChip(sel);
+  try {
+    const qs = ffRangeQuery(sel);
     let wRes;
-    try { wRes = await fetch(`/api/wellness?days=${fetchDays}`); }
+    try { wRes = await fetch(`/api/wellness?${qs}`); }
     catch (eF) {
-      try { window._diagFrontendError('E_FRONTEND_FITNESS_FETCH', {msg: String(eF && eF.message || eF), days: fetchDays}); } catch(_) {}
+      try { window._diagFrontendError('E_FRONTEND_FITNESS_FETCH', {msg: String(eF && eF.message || eF), range: qs}); } catch(_) {}
       throw eF;
     }
     if (!wRes.ok) {
-      try { window._diagFrontendError('E_FRONTEND_FITNESS_FETCH', {status: wRes.status, days: fetchDays}); } catch(_) {}
+      try { window._diagFrontendError('E_FRONTEND_FITNESS_FETCH', {status: wRes.status, range: qs}); } catch(_) {}
     }
     let data;
     try { data = await wRes.json(); }
@@ -4754,16 +5108,22 @@ async function loadFitnessChart(days=90) {
       try { window._diagFrontendError('E_FRONTEND_FITNESS_PARSE', {msg: String(eP && eP.message || eP), status: wRes.status}); } catch(_) {}
       throw eP;
     }
-    if (days === 90) _wellnessCache = data;
+    if (sel.type === 'days' && sel.days === 90) _wellnessCache = data;
     try { fitnessChart(data, 'fitness-chart'); }
     catch (eR) {
       try { window._diagFrontendError('E_FRONTEND_FITNESS_RENDER', {msg: String(eR && eR.message || eR)}); } catch(_) {}
     }
     // v1.0.6 IMPL-3D-DASHBOARD: also render the secondary energy-system
     // breakdown (lazy — only paints into the <details> body, which stays
-    // collapsed by default so the primary CTL/ATL/TSB view leads).
+    // collapsed by default so the primary CTL/ATL/TSB view leads). It shares
+    // this payload, so the date-range filter applies to it too (intended).
     try { energySystemChart(data, 'energy-system-chart'); }
     catch(eE) { try { window._diagFrontendError('E_FRONTEND_ENERGY_SYS_RENDER', {msg: String(eE && eE.message || eE)}); } catch(_) {} }
+    // 3.4.4: label button shows the window actually on screen; the one-time
+    // span probe feeds year chips + calendar bounds (reuses this payload when
+    // the selection is already the full window).
+    ffUpdateLabel(data);
+    _ffEnsureSpan((sel.type === 'days' && sel.days === 0) ? data : null);
     // P3.1 — the Power Curve no longer chains off this wellness fetch: the
     // Analysis tab loader (loadAnalysisTab) owns loadPowerCurve() on tab open.
   } catch(e) { console.error(e); }
@@ -4774,7 +5134,7 @@ async function loadFitnessChart(days=90) {
 // .active BEFORE loaders fire, so the power-curve Chart.js canvas (responsive)
 // measures a real layout box — at boot, inside the display:none section, it
 // would render 0×0. Re-opens refresh data but preserve the user's selections:
-// the fitness range is read back from the active dr-* button, and
+// the fitness range is restored from its per-profile localStorage key, and
 // loadPowerCurve respects _powerCurveWindow/_powerCurveYAxis (single-flight
 // guarded). The τ-fit / model-accuracy <details> panels keep their own lazy
 // ontoggle loaders. 3.4.1 M2: fatigue resistance is an always-open card now
@@ -4782,15 +5142,10 @@ async function loadFitnessChart(days=90) {
 function loadAnalysisTab() {
   // Fitness & Form + energy-system breakdown: one /api/wellness round-trip
   // via loadFitnessChart (renders both; seeds _wellnessCache at 90d).
-  let days = 90;
-  try {
-    const active = document.querySelector('#sec-analysis .date-range-btns button.active');
-    if (active && active.id && active.id.startsWith('dr-')) {
-      const n = Number(active.id.slice(3));
-      if (Number.isFinite(n)) days = n;
-    }
-  } catch (_) {}
-  try { loadFitnessChart(days); } catch (_) {}
+  // 3.4.4: the range selection (preset/year/calendar) persists per profile —
+  // the no-arg call restores it (default 90d), replacing the old
+  // active-button readback.
+  try { loadFitnessChart(); } catch (_) {}
   // Power curve (+ its backfill toast machinery via maybeKickBackfill).
   try { if (typeof loadPowerCurve === 'function') loadPowerCurve(); } catch (_) {}
   // 3.4.1 M2 — fatigue resistance card (always open; was lazy ontoggle).

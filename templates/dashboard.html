@@ -4566,8 +4566,22 @@ function fitnessChart(data, containerId) {
   const cross = $('chart-cross');
   const tt = $('chart-tt');
   svg.addEventListener('mousemove', e => {
-    const rect = svg.getBoundingClientRect();
-    const svgX = ((e.clientX - rect.left) / rect.width) * W;
+    // 3.4.4 (tester report): this svg uses preserveAspectRatio="meet" with
+    // width:100% + a fixed px height, so the 900×320 viewBox letterboxes
+    // INSIDE the element (centered, side gutters) whenever the rendered
+    // aspect differs. The old linear map (clientX/rect.width×W) assumed the
+    // viewBox spans the full element, so the crosshair started left of the
+    // plot and finished right of it. getScreenCTM().inverse() is the exact
+    // screen→viewBox transform for ANY preserveAspectRatio; fall back to
+    // the linear map only if the CTM is unavailable (detached svg).
+    let svgX;
+    const ctm = svg.getScreenCTM && svg.getScreenCTM();
+    if (ctm) {
+      svgX = (e.clientX - ctm.e) / ctm.a;
+    } else {
+      const rect = svg.getBoundingClientRect();
+      svgX = ((e.clientX - rect.left) / rect.width) * W;
+    }
     const idx = Math.round(((svgX - PAD_L) / cw) * (data.length - 1));
     if (idx < 0 || idx >= data.length) { cross.style.display = 'none'; tt.style.display = 'none'; return; }
     const x = xPos(idx);

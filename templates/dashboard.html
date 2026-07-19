@@ -2032,23 +2032,20 @@ window.addEventListener('unhandledrejection', function(e) {
   <details class="plan-help-panel" style="margin-bottom:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;">
     <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--text);">How your plan updates</summary>
     <div style="margin-top:8px;font-size:12px;line-height:1.5;color:var(--text2);">
-      <strong>Generate Plan</strong> is the one button — it builds your plan, and rebuilds it from your current settings + fitness if one already exists (use it after a goal, event-date, or big training-time change). After that your plan <strong>updates itself</strong>: automatically after every ride sync and each time you open this tab. It rebalances load to today's fitness and fatigue, or — if you've missed enough training to fall behind — rebuilds with a safe recovery ramp (no catch-up spike); the status line shows what changed. The <strong>Availability Calendar</strong> edits which days you can train; click a day to set hours, right-click to mark unavailable, then press the pulsing UPDATE button to reflow. <strong>Give me a different workout</strong> (in any day's detail view) re-rolls only that single workout at the same duration if the suggestion doesn't fit. Don't manually edit unless something's clearly wrong — the planner already accounts for fatigue and load.
+      <strong>Generate Plan</strong> is the one button — it builds your plan, and rebuilds it from your current settings + fitness if one already exists (use it after a goal, event-date, or big training-time change). After that your plan <strong>updates itself</strong>: automatically after every ride sync and each time you open this tab. It rebalances load to today's fitness and fatigue, or — if you've missed enough training to fall behind — rebuilds with a safe recovery ramp (no catch-up spike); the status line shows what changed. The <strong>Availability Calendar</strong> edits which days you can train; click a day to set hours, right-click to mark unavailable, then press the pulsing UPDATE button to reflow. <strong>Swap workout</strong> (in any day's detail view) re-rolls only that single workout at the same duration if the suggestion doesn't fit. Don't manually edit unless something's clearly wrong — the planner already accounts for fatigue and load.
     </div>
   </details>
 
   <!-- v2.3.0 — the manual "Reschedule missed sessions?" banner was removed;
        missed sessions are now auto-rescheduled server-side. -->
 
-  <!-- v1.0.3 IMPL-UI: hidden info-popovers for the four (i) icons. Class
-       .info-popover toggles via .open from the delegated handler below. -->
+  <!-- v1.0.3 IMPL-UI: hidden info-popovers for the Plan-tab (i) icons. Class
+       .info-popover toggles via .open from the delegated handler below.
+       ONLY popovers whose icons render statically INSIDE this section belong
+       here — popovers referenced from modal-rendered content live at body
+       level next to the modal overlay (see calpush-info). -->
   <div class="info-popover" id="planpop-update"><strong>Update plan</strong> automatically picks the right adjustment: a structure-preserving <em>rebalance</em> to today's TSB (fatigue), ACWR (load ratio) and availability when you're on track, or a full <em>rebuild with a recovery ramp</em> when you've missed enough to fall behind (Gabbett-safe, never a catch-up spike). Runs automatically after each ride sync too. Won't re-roll past or completed sessions, and won't move a fixed event date.</div>
   <div class="info-popover" id="planpop-availability"><strong>Edit availability</strong> sets per-day training time. Click a date to set hours; right-click to mark unavailable (holiday/injury). <strong>Press the pulsing UPDATE button to apply changes — the plan reflows on click.</strong></div>
-  <div class="info-popover" id="planpop-rematch"><strong>Give me a different workout</strong> swaps in another workout of the same type and duration — your plan's load stays the same.</div>
-  <!-- 3.4.3 B2 — each button in the day-modal "Change this workout" cluster
-       gets its own (i). These two were missing (the swap icon had no
-       data-popover at all, so the delegated handler ignored it). -->
-  <div class="info-popover" id="planpop-swaptype"><strong>Change the type</strong> — pick a different training type for this day — the week re-balances around it.</div>
-  <div class="info-popover" id="planpop-easier"><strong>Make it easier today</strong> — drops today one intensity notch (e.g. threshold → sweet spot) — use when you're not feeling it.</div>
   <div class="info-popover" id="planpop-mode"><strong>Plan style</strong> — how your weekly sessions are chosen.<br><br><strong>Automatic (varied)</strong>: a varied, auto-adapting plan drawn from the full library — different sessions week to week.<br><strong>Fixed-core (repeatable)</strong>: the same weekly shape — one hard session type per phase that progresses by reps, over a Z2 base that scales to your available time.<br><strong>Template</strong>: a ready-made fixed-core blueprint.</div>
 
   <!-- v1.8.25 — "catching up your plan" overlay: greyed backdrop + stepped
@@ -3170,6 +3167,17 @@ window.addEventListener('unhandledrejection', function(e) {
      sibling of the modal overlay) so it is never inside a hidden tab; the
      delegated [data-popover] handler positions + toggles it. -->
 <div class="info-popover" id="calpush-info"><strong>Send to intervals.icu calendar</strong><br><br>Your head unit (Garmin, Wahoo, Hammerhead) and MyWhoosh <strong>auto-pull</strong> the workout — with its power or heart-rate targets — straight from your intervals.icu calendar. No file copy, no manual load: it appears on the day ready to ride, and lands in your intervals.icu training log.<br><br><strong>Library</strong> workouts you send stay until you delete them. <strong>Planned</strong> sessions stay in sync with your plan.</div>
+
+<!-- 3.4.3 owner fix — day-modal "Change this workout" (i) popovers. MUST be
+     body-level (siblings of the modal overlay), NOT inside a .section: the
+     day modal also opens from the Home today-card, where #sec-plan is
+     display:none — a popover parked in there gets .open added but renders
+     0x0 (the B2 "wired + live-proven" pass only tested from the Plan tab).
+     Same invariant as calpush-info above; pinned by
+     tests/test_343_today_identity.py (section-burial structural test). -->
+<div class="info-popover" id="planpop-rematch"><strong>Swap workout</strong> — swaps in another workout of the same type and duration — your plan's load stays the same.</div>
+<div class="info-popover" id="planpop-swaptype"><strong>Change training type</strong> — pick a different training type for this day — the week re-balances around it.</div>
+<div class="info-popover" id="planpop-easier"><strong>Make it easier today</strong> — drops today one intensity notch (e.g. threshold → sweet spot) — use when you're not feeling it.</div>
 
 <!-- Zone tooltip (rich) -->
 <div class="zone-tip" id="zone-tip"></div>
@@ -12698,7 +12706,7 @@ async function renderPlanJSON(plan) {
           ? 'pg-redraw-btn cal-redraw-prominent'
           : 'pg-redraw-btn';
         const redrawBtn = canRedraw
-          ? `<span class="${redrawCls}" title="Give me a different workout" onclick="event.stopPropagation();pgRedrawSession('${dayStr}', this);">⟳</span>`
+          ? `<span class="${redrawCls}" title="Swap workout — same type, different session" onclick="event.stopPropagation();pgRedrawSession('${dayStr}', this);">⟳</span>`
           : '';
 
         // v4.2.0 IMPL-WEEKLY item 4: drag-drop with drop-target feedback
@@ -13654,7 +13662,7 @@ function renderCalDay(d, wi, di, phaseKey, today) {
   let redrawBtn = '';
   if (cs === 'planned' || cs === 'missing_workout') {
     const cls = cs === 'missing_workout' ? 'cal-redraw-btn cal-redraw-prominent' : 'cal-redraw-btn';
-    redrawBtn = `<span class="${cls}" title="Give me a different workout"
+    redrawBtn = `<span class="${cls}" title="Swap workout — same type, different session"
       onclick="event.stopPropagation();calRedrawDay('${esc(d.date)}', this);">⟳</span>`;
   }
 
@@ -18157,6 +18165,9 @@ async function openDayWorkout(sessionIdx) {
   // today" = the EXISTING readiness tier-down apply, shown only where the
   // endpoint can act (today + a type the intensity ladder can drop:
   // rest/recovery → already_easy, z2/long_z2 → already_at_bottom).
+  // 3.4.3 owner relabel — buttons self-explanatory WITHOUT the (i)s:
+  // "Swap workout — same type, different session" / "Change training type
+  // (VO2, tempo, …)". Icons + popovers kept.
   html += `<div id="rematch-result-${session.day}" style="margin-top:16px;"></div>`;
   html += `<div id="swap-result-${session.day}" style="margin-top:8px;"></div>`;
   const _isTodaySession = String(session.day) === _calTodayStr();
@@ -18166,9 +18177,9 @@ async function openDayWorkout(sessionIdx) {
   html += `<div style="margin-top:12px;">
     <div style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Change this workout</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-      <button class="btn" onclick="rematchDaySession('${session.day}')" style="font-size:12px;">&#x21bb; Give me a different workout</button><span class="info-icon" data-popover="planpop-rematch" tabindex="0" role="button" aria-label="What does &quot;Give me a different workout&quot; do?" title="Swaps in another workout of the same type and duration.">i</span>
-      <button class="btn" onclick="swapTypeOpen('${session.day}')" style="font-size:12px;">&#x21c4; Change the type&hellip;</button><span class="info-icon" data-popover="planpop-swaptype" tabindex="0" role="button" aria-label="What does &quot;Change the type&quot; do?" title="Pick a different training type for this day.">i</span>
-      ${_canEase ? `<button class="btn" onclick="applyReadinessTierDown();closeModal()" style="font-size:12px;">&#x21e3; Make it easier today</button><span class="info-icon" data-popover="planpop-easier" tabindex="0" role="button" aria-label="What does &quot;Make it easier today&quot; do?" title="Drops today one intensity notch.">i</span>` : ''}
+      <button class="btn" onclick="rematchDaySession('${session.day}')" style="font-size:12px;">&#x21bb; Swap workout — same type, different session</button><span class="info-icon" data-popover="planpop-rematch" tabindex="0" role="button" aria-label="What does &quot;Swap workout&quot; do?" title="Swaps in another workout of the same type and duration.">i</span>
+      <button class="btn" onclick="swapTypeOpen('${session.day}')" style="font-size:12px;">&#x21c4; Change training type (VO2, tempo, &hellip;)</button><span class="info-icon" data-popover="planpop-swaptype" tabindex="0" role="button" aria-label="What does &quot;Change training type&quot; do?" title="Pick a different training type for this day.">i</span>
+      ${_canEase ? `<button class="btn" onclick="applyReadinessTierDown();closeModal()" style="font-size:12px;">&#x2193; Make it easier today</button><span class="info-icon" data-popover="planpop-easier" tabindex="0" role="button" aria-label="What does &quot;Make it easier today&quot; do?" title="Drops today one intensity notch.">i</span>` : ''}
     </div>
   </div>`;
 

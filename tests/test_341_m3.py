@@ -402,8 +402,8 @@ def test_modal_renders_adjusted_lead_and_effective_downloads():
   if (!modalHtml.includes('Original workout (ZWO)')) throw new Error('original download missing');
   // The Change-this-workout cluster (rematch/swap/easier) + skip stay out
   // until the adjustment is resolved (3.4.2 M6 §6 verbs).
-  if (modalHtml.includes('Give me a different workout')) throw new Error('rematch must hide while pending');
-  if (modalHtml.includes('Change the type')) throw new Error('swap must hide while pending');
+  if (modalHtml.includes('Swap workout')) throw new Error('rematch must hide while pending');
+  if (modalHtml.includes('Change training type')) throw new Error('swap must hide while pending');
   if (modalHtml.includes('Make it easier today')) throw new Error('tier-down must hide while pending');
   if (modalHtml.includes('Skip today')) throw new Error('skip must hide while pending');
 
@@ -460,8 +460,8 @@ def test_unadjusted_day_renders_exactly_as_before():
     throw new Error('FIT must transcode the matched file when unadjusted');
   if (!modalHtml.includes('calPushPlanner')) throw new Error('calendar-push missing when unadjusted');
   if (!modalHtml.includes('Change this workout')) throw new Error('action cluster missing when unadjusted');
-  if (!modalHtml.includes('Give me a different workout')) throw new Error('rematch missing when unadjusted');
-  if (!modalHtml.includes('Change the type')) throw new Error('swap missing when unadjusted');
+  if (!modalHtml.includes('Swap workout')) throw new Error('rematch missing when unadjusted');
+  if (!modalHtml.includes('Change training type')) throw new Error('swap missing when unadjusted');
   if (!modalHtml.includes('Make it easier today')) throw new Error('tier-down missing on today+sweetspot');
   if (!modalHtml.includes('Skip today')) throw new Error('skip missing when unadjusted');
 
@@ -474,7 +474,7 @@ def test_unadjusted_day_renders_exactly_as_before():
                    _todaySessionData: TODAY_D};
   await openDayWorkout(0);
   if (modalHtml.includes('Planned: <b>')) throw new Error('other days must not banner');
-  if (!modalHtml.includes('Give me a different workout')) throw new Error('other days keep the full action row');
+  if (!modalHtml.includes('Swap workout')) throw new Error('other days keep the full action row');
   if (modalHtml.includes('Make it easier today')) throw new Error('tier-down is today-only');
   if (!modalHtml.includes('Skip this day')) throw new Error('non-today skip label');
   console.log('OK');

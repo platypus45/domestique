@@ -106,10 +106,13 @@ def test_modal_h2_sites_use_title_helper():
 def test_all_three_cluster_icons_wired_to_existing_popovers():
     # Each button is immediately followed by an info-icon whose data-popover
     # names a popover div that actually exists (the dead-icon root cause was
-    # the swap icon carrying NO data-popover at all).
+    # the swap icon carrying NO data-popover at all). 3.4.3 owner relabel:
+    # buttons self-explanatory without the (i)s.
     for btn, pop in (
-        ("Give me a different workout</button>", "planpop-rematch"),
-        ("Change the type&hellip;</button>", "planpop-swaptype"),
+        ("Swap workout — same type, different session</button>",
+         "planpop-rematch"),
+        ("Change training type (VO2, tempo, &hellip;)</button>",
+         "planpop-swaptype"),
         ("Make it easier today</button>", "planpop-easier"),
     ):
         i = SRC.index(btn)
@@ -121,6 +124,92 @@ def test_all_three_cluster_icons_wired_to_existing_popovers():
     cluster = SRC[ci:ci + 1400]
     for chunk in cluster.split('class="info-icon"')[1:]:
         assert "data-popover=" in chunk[:120], "cluster info-icon without data-popover (dead icon)"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 3.4.3 owner fix — structural popover invariants (the CLASS of bug, not the
+# instance): (a) no data-popover may dangle (its target div must exist);
+# (b) a popover referenced from JS-rendered content (the modal) must live at
+# BODY level, never inside a .section — sections are display:none when their
+# tab is inactive, so a section-buried popover gets .open added but renders
+# 0x0 (owner incident: the swap-type (i) was dead when the day modal was
+# opened from the Home today-card; from the Plan tab it "live-proved" fine).
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _popover_refs_by_context():
+    """All data-popover refs in the template, split into (static-HTML refs,
+    refs inside <script> blocks — i.e. rendered into modals/dynamic DOM)."""
+    import re
+    script_spans = [m.span() for m in
+                    re.finditer(r"<script\b.*?</script>", SRC, re.S)]
+
+    def _in_script(pos):
+        return any(a <= pos < b for a, b in script_spans)
+
+    static, scripted = set(), set()
+    for m in re.finditer(r'data-popover="([^"]+)"', SRC):
+        (scripted if _in_script(m.start()) else static).add(m.group(1))
+    assert static and scripted, "popover refs vanished — pattern drifted"
+    return static, scripted
+
+
+def _section_spans():
+    """Byte spans of every <div class="section" ...> block, matched by real
+    div nesting. Div tags INSIDE <script> blocks (JS template literals full
+    of html += '<div…>') are skipped — they aren't static DOM and would
+    corrupt the nesting stack."""
+    import re
+    script_spans = [m.span() for m in
+                    re.finditer(r"<script\b.*?</script>", SRC, re.S)]
+
+    def _in_script(pos):
+        return any(a <= pos < b for a, b in script_spans)
+
+    spans = []
+    opens = []  # stack of (offset, is_section) per open static <div>
+    for m in re.finditer(r"<div\b[^>]*>|</div\s*>", SRC):
+        if _in_script(m.start()):
+            continue
+        tag = m.group(0)
+        if tag.startswith("</"):
+            if opens:
+                start, is_sec = opens.pop()
+                if is_sec:
+                    spans.append((start, m.end()))
+        else:
+            is_sec = bool(re.search(r'class="[^"]*\bsection\b', tag))
+            opens.append((m.start(), is_sec))
+    assert spans, "no .section blocks found — selector drifted"
+    return spans
+
+
+def test_no_dangling_popover_refs():
+    # EVERY data-popover="X" — static or modal-rendered — must have a
+    # matching id="X" div. A dangling ref fails silently in the delegated
+    # handler (getElementById → null → return), so only a test catches it.
+    static, scripted = _popover_refs_by_context()
+    for ref in sorted(static | scripted):
+        assert f'id="{ref}"' in SRC, f"data-popover={ref!r} dangles (no div)"
+
+
+def test_modal_referenced_popovers_are_body_level_not_section_buried():
+    # Popovers referenced from <script> template strings render inside the
+    # fixed modal overlay, which is visible from EVERY tab — their target
+    # divs must therefore sit outside all .section containers (precedent:
+    # calpush-info). A section-buried target is the invisible-open bug.
+    _, scripted = _popover_refs_by_context()
+    spans = _section_spans()
+    for ref in sorted(scripted):
+        i = SRC.index(f'id="{ref}"')
+        buried = [s for s, e in spans if s <= i < e]
+        assert not buried, (
+            f"popover {ref!r} is inside a .section (display:none when that "
+            f"tab is inactive) but is referenced from modal-rendered JS — "
+            f"move its div next to the modal overlay (see calpush-info)")
+    # The three cluster popovers are modal-referenced — keep them covered by
+    # this invariant forever (they were the section-buried instance).
+    for pid in ("planpop-rematch", "planpop-swaptype", "planpop-easier"):
+        assert pid in scripted, f"{pid} no longer referenced from the modal?"
 
 
 def test_cluster_popover_copy_locked():

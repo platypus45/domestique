@@ -682,9 +682,9 @@ def test_6_change_workout_cluster_rider_verbs_and_wiring():
   if (!modalHtml) throw new Error('modal did not open');
   // ONE cluster with the rider verbs, wired to the SAME handlers.
   if (!modalHtml.includes('Change this workout')) throw new Error('cluster header missing');
-  if (!modalHtml.includes('Give me a different workout')) throw new Error('rematch verb missing');
+  if (!modalHtml.includes('Swap workout — same type, different session')) throw new Error('rematch verb missing');
   if (!modalHtml.includes(`rematchDaySession('${SESSION.day}')`)) throw new Error('rematch handler unchanged');
-  if (!modalHtml.includes('Change the type&hellip;')) throw new Error('swap verb missing');
+  if (!modalHtml.includes('Change training type (VO2, tempo, &hellip;)')) throw new Error('swap verb missing');
   if (!modalHtml.includes(`swapTypeOpen('${SESSION.day}')`)) throw new Error('swap handler unchanged');
   // Today + sweetspot (on the ladder) → the tier-down verb shows, wired to
   // the EXISTING apply.
@@ -695,8 +695,9 @@ def test_6_change_workout_cluster_rider_verbs_and_wiring():
   if (!modalHtml.includes('the week re-fits around it — nothing piles up'))
     throw new Error('consequence line missing');
   if (!modalHtml.includes(`dismissSession('${SESSION.day}')`)) throw new Error('dismiss handler unchanged');
-  // Old labels are gone.
-  for (const old of ['Rematch workout', 'Swap type', 'Dismiss this session'])
+  // Old labels are gone (M6 originals + the 3.4.3 pre-relabel verbs).
+  for (const old of ['Rematch workout', 'Swap type', 'Dismiss this session',
+                     'Give me a different workout', 'Change the type&hellip;'])
     if (modalHtml.includes(old)) throw new Error('old label leaked: ' + old);
   // The rematch info icon keeps the planpop-rematch popover.
   if (!modalHtml.includes('data-popover="planpop-rematch"')) throw new Error('rematch popover unwired');
@@ -720,7 +721,7 @@ def test_6_change_workout_cluster_rider_verbs_and_wiring():
   await openDayWorkout(0);
   if (modalHtml.includes('Make it easier today'))
     throw new Error('z2 is already the bottom — no easier verb');
-  if (!modalHtml.includes('Give me a different workout'))
+  if (!modalHtml.includes('Swap workout — same type, different session'))
     throw new Error('rematch verb must stay for z2');
 
   // Dismissed day: un-dismiss branch, no skip, no easier.
@@ -740,8 +741,8 @@ def test_6_change_workout_cluster_rider_verbs_and_wiring():
 
 def test_6_one_name_everywhere_grid_tooltip_toast_popover():
     src = _src()
-    # Plan-grid + calendar ⟳ tooltips carry the ONE name.
-    assert src.count('title="Give me a different workout"') == 2
+    # Plan-grid + calendar ⟳ tooltips carry the ONE name (3.4.3 relabel).
+    assert src.count('title="Swap workout — same type, different session"') == 2
     assert 'title="Re-draw this workout"' not in src
     # Success toasts speak the same language (no "Re-drew").
     assert "Different workout for ${dayLabel}: ${newName}" in src
@@ -750,8 +751,10 @@ def test_6_one_name_everywhere_grid_tooltip_toast_popover():
     # The rematch popover explains under the new name.
     pop = src[src.index('id="planpop-rematch"'):]
     pop = pop[:pop.index("</div>")]
-    assert "<strong>Give me a different workout</strong>" in pop
+    assert "<strong>Swap workout</strong>" in pop
     assert "Rematch workout" not in src, "old feature name must be fully retired"
+    assert "Give me a different workout" not in src, \
+        "pre-3.4.3 verb must be fully retired (buttons, tooltips, help prose)"
     # Modal cluster + skip consequence (source-level pins).
     assert "Change this workout" in src
     assert "Skip today" in src and "Skip this day" in src

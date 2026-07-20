@@ -41,8 +41,20 @@ Basis selection (G3 — basis follows DATA present, prescription follows mode):
   power TiZ present  -> basis "power" (even when the app is in hr mode);
   else hr TiZ present AND the type is HR-guidable -> basis "hr";
   else -> basis "load_only" (duration + load axes only).
+
+Structure fidelity (advisory axis, additive — see structure_fidelity.py):
+  score_ride's result carries a "fidelity" key comparing the prescribed
+  .zwo segment timeline against the delivered 1 Hz watts trace (per-rep
+  completion + on-target accounting). It is computed ONLY when the caller
+  provides planned_segments (parse_zwo_text output — this module stays
+  I/O-free) plus a watts trace and FTP, either as keyword args or embedded
+  in the ride record (ride["streams"]["watts"|"power"], ride["ftp_at_ride"]
+  / ["eftp_at_ride"]); otherwise it is None. It NEVER contributes to
+  score/verdict — those semantics stay locked.
 """
 from __future__ import annotations
+
+from structure_fidelity import score_structure
 
 __all__ = [
     "score_ride",
@@ -186,7 +198,28 @@ def _verdict(ratios: "list[float]") -> str:
     return "on_target"
 
 
-def score_ride(planned: dict, ride: dict, mode: str) -> dict:
+def _embedded_watts(ride: dict):
+    """1 Hz watts list from the v1.0.6 streams envelope, or None."""
+    streams = ride.get("streams")
+    if not isinstance(streams, dict):
+        return None
+    w = streams.get("watts") or streams.get("power")
+    return w if isinstance(w, list) and w else None
+
+
+def _ride_ftp(ride: dict) -> "float | None":
+    for key in ("ftp_at_ride", "eftp_at_ride"):
+        try:
+            f = float(ride.get(key))
+        except (TypeError, ValueError):
+            continue
+        if f > 0:
+            return f
+    return None
+
+
+def score_ride(planned: dict, ride: dict, mode: str, *,
+               planned_segments=None, watts=None, ftp=None) -> dict:
     """Score a completed ride against its planned session.
 
     Args:
@@ -194,17 +227,28 @@ def score_ride(planned: dict, ride: dict, mode: str) -> dict:
             ``tss_estimate``.
         ride: full ride record (ride_storage shape) — reads ``duration_min``
             / ``moving_s`` / ``duration_s``, ``tss``, ``time_in_zone``,
-            ``hr_time_in_zone``.
+            ``hr_time_in_zone``; plus ``streams``/``ftp_at_ride``/
+            ``eftp_at_ride`` as fidelity fallbacks (see below).
         mode: athlete target_mode, "power" or "hr" (prescription frame; the
             intensity BASIS still follows the data present, per G3).
+        planned_segments: optional prescribed timeline for the advisory
+            fidelity axis (structure_fidelity.parse_zwo_text output). This
+            module is I/O-free, so the CALLER parses the .zwo.
+        watts: optional 1 Hz power trace; falls back to
+            ``ride["streams"]["watts"|"power"]`` when omitted.
+        ftp: optional FTP watts; falls back to ``ride["ftp_at_ride"]`` then
+            ``ride["eftp_at_ride"]`` when omitted.
 
     Returns:
         {"score": int|None, "basis": "power"|"hr"|"load_only",
          "components": {"duration": {...}|None, "load": {...}|None,
                         "intensity": {...}|None},
-         "verdict": "on_target"|"under"|"over"|"off_plan"}
+         "verdict": "on_target"|"under"|"over"|"off_plan",
+         "fidelity": dict|None}
         ``score`` is None only when NO axis is computable (callers skip
-        persisting in that case).
+        persisting in that case). ``fidelity`` (structure_fidelity result
+        shape) is ADVISORY: present only when planned_segments + a watts
+        trace + FTP were all resolvable, and never affects score/verdict.
 
     Pure + deterministic (G3). Components are capped at 1 for the score;
     verdicts derive from the uncapped ratios.
@@ -237,15 +281,22 @@ def score_ride(planned: dict, ride: dict, mode: str) -> dict:
 
     components = {"duration": duration, "load": load, "intensity": intensity}
 
+    # ── Advisory structure-fidelity axis (never touches score/verdict) ──────
+    fidelity = None
+    fid_watts = watts if watts is not None else _embedded_watts(ride)
+    fid_ftp = ftp if ftp is not None else _ride_ftp(ride)
+    if planned_segments and fid_watts and fid_ftp:
+        fidelity = score_structure(planned_segments, fid_watts, fid_ftp)
+
     # ── Weighted score over present axes (renormalized) ─────────────────────
     present = {k: v for k, v in components.items() if v is not None}
     if not present:
         return {"score": None, "basis": basis, "components": components,
-                "verdict": "off_plan"}
+                "verdict": "off_plan", "fidelity": fidelity}
     wsum = sum(WEIGHTS[k] for k in present)
     score = round(100 * sum(WEIGHTS[k] * present[k]["score"] for k in present)
                   / wsum)
 
     verdict = _verdict([v["ratio"] for v in present.values()])
     return {"score": score, "basis": basis, "components": components,
-            "verdict": verdict}
+            "verdict": verdict, "fidelity": fidelity}

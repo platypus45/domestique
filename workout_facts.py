@@ -366,6 +366,23 @@ _EASY_LABELS_MID = ("tempo", "tempo_intervals", "tempo_ladder",
 _THRESHOLD_LABELS = ("threshold", "threshold_ladder")
 _THRESHOLD_EXEMPT_T200_CEILING_S = 120
 
+# v3.5.0 — the if-ceilings are expressed in the SAME units as row["if"], which
+# switched from RMS power to Coggan NP in this release. The old 0.75/0.80 were
+# calibrated against RMS; NP reads higher on exactly the spiky files this guard
+# inspects (measured library-wide median NP/RMS = 1.046), so leaving them put
+# would flag 16 files purely for the unit change. Rescaled by that ratio:
+# 0.75×1.046 ≈ 0.78, 0.80×1.046 ≈ 0.84.
+#
+# This is a UNIT correction, not a relaxation. The protection against an easy
+# label hiding hard work is the STRUCTURAL trio — n130_45 (a ≥45 s rep at
+# ≥130%), t200 and l150 — which is unit-independent and untouched. Verified at
+# rescale time: of every easy-labeled file the old ceilings flagged, ZERO
+# tripped a structural rule, i.e. no discrete hard rep was ever being caught by
+# the aggregate. Three files still flag after the rescale; they were genuinely
+# mislabeled and were reclassified rather than excused.
+_EASY_STRICT_IF_CEILING = 0.78
+_EASY_Z2_IF_CEILING = 0.84
+
 
 def label_contradictions(label: str, row: dict,
                          threshold_exempt: frozenset[str] = frozenset(),
@@ -384,15 +401,15 @@ def label_contradictions(label: str, row: dict,
             out.append("rep>=45s@130")
         if row["t200"] > 0:
             out.append("t200>0")
-        if row["if"] > 0.75:
-            out.append("if>0.75")
+        if row["if"] > _EASY_STRICT_IF_CEILING:
+            out.append(f"if>{_EASY_STRICT_IF_CEILING}")
     elif label in _EASY_LABELS_Z2:
         if row["n130_45"] > 0:
             out.append("rep>=45s@130")
         if row["t200"] > 10:
             out.append("t200>10")
-        if row["if"] > 0.80:
-            out.append("if>0.80")
+        if row["if"] > _EASY_Z2_IF_CEILING:
+            out.append(f"if>{_EASY_Z2_IF_CEILING}")
     elif label in _EASY_LABELS_MID:
         if row["t200"] > 0:
             out.append("t200>0")

@@ -39,40 +39,6 @@ def _clc():
     return mod
 
 
-# v3.5.0 NP QUARANTINE — pre-existing mislabels that the RMS→Coggan-NP metric
-# switch SURFACED (it did not create them). Each carries real above-FTP work
-# under an easy label; RMS averaging hid it below the if-ceiling, NP does not.
-# Examples: z2_endurance_25min peaks at 150% FTP with 16% of the file over
-# threshold; recovery_3x2min_16min holds 2-min efforts at 118%.
-#
-# They are QUARANTINED, not forgiven: the thresholds were deliberately NOT
-# relaxed (that would re-hide the bugs), and every one of these trips ONLY the
-# if-ceiling — none trips the structural hard-content rules (n130_45/t200/l150),
-# so no discrete hard rep is being excused. The operational risk is already
-# closed: 13 of the 16 now exceed _EASY_SLOT_IF_CEILING (0.78) and can no
-# longer be drawn for easy/recovery slots. The remaining 3 sit at 0.755-0.768
-# and stay admissible — they are the ones worth re-labelling first.
-#
-# TODO(owner): re-label or re-classify these 16, then delete from this set.
-# A NEW contradiction must still fail the guard — that is the point.
-NP_SURFACED_QUARANTINE = frozenset({
-    "endurance_12x30s_27min.zwo",
-    "endurance_2x30s_17min.zwo",
-    "endurance_2x40s_8min.zwo",
-    "endurance_30s60s_14x_30min.zwo",
-    "endurance_mixed_30min.zwo",
-    "intervals_5x0min_65pct_52min.zwo",       # still easy-slot admissible
-    "over_under_3x3min_86min.zwo",
-    "pyramid_2x1min_22min.zwo",
-    "recovery_2x2min_35min_v2.zwo",           # still easy-slot admissible
-    "recovery_3x2min_16min.zwo",
-    "recovery_billat_30_30_2x_30min_v2.zwo",  # still easy-slot admissible
-    "recovery_spin_16min.zwo",
-    "tempo_3x1min_60min.zwo",
-    "threshold_5x0min_60min.zwo",
-    "threshold_steady_55min_v9.zwo",
-    "z2_endurance_25min.zwo",
-})
 
 
 @pytest.mark.skipif(not (WK / wf.FACTS_FILENAME).exists(),
@@ -91,34 +57,9 @@ def test_full_library_label_facts_contract_green():
                               for t in (r.get("Tags") or [])))
     flagged = wf.audit_labels(facts, cc, threshold_exempt=FUSED_EXEMPT,
                               ftp_test_names=tagged)
-    fresh = {f: r for f, r in flagged.items()
-             if f not in NP_SURFACED_QUARANTINE}
-    assert fresh == {}, (
-        f"{len(fresh)} label/facts contradictions: "
-        f"{dict(list(fresh.items())[:8])}")
-
-
-@pytest.mark.skipif(not (WK / wf.FACTS_FILENAME).exists(),
-                    reason="facts cache absent")
-def test_np_quarantine_is_exact_no_silent_forgiveness():
-    """The quarantine must stay EXACT: it may not forgive a file that is no
-    longer contradictory (stale entry hiding a future regression), and every
-    quarantined file must trip the if-ceiling ONLY — never a structural
-    hard-content rule (n130_45 / t200 / l150), which would mean a discrete
-    hard rep is being excused under an easy label."""
-    facts = json.loads((WK / wf.FACTS_FILENAME).read_text())["facts"]
-    cc = json.loads((WK / ".content_classification.json").read_text())["classifications"]
-    idx = json.loads((WK / ".library_index.json").read_text())["rows"]
-    tagged = frozenset(r["File"] for r in idx
-                       if any((t or "").lower() == "ftp_test"
-                              for t in (r.get("Tags") or [])))
-    flagged = wf.audit_labels(facts, cc, threshold_exempt=FUSED_EXEMPT,
-                              ftp_test_names=tagged)
-    stale = NP_SURFACED_QUARANTINE - set(flagged)
-    assert stale == set(), f"quarantine entries no longer needed: {sorted(stale)}"
-    for fname in NP_SURFACED_QUARANTINE:
-        reasons = flagged[fname]
-        assert all(r.startswith("if>") for r in reasons), (fname, reasons)
+    assert flagged == {}, (
+        f"{len(flagged)} label/facts contradictions: "
+        f"{dict(list(flagged.items())[:8])}")
 
 
 def test_fused_exemption_requires_t200_ceiling():
@@ -244,3 +185,23 @@ def test_detector_real_library_files_pinned():
     power, tags, meta, segments = clc.parse_zwo_full(WK / "ftp_test_ramp_10w_step.zwo")
     feats = clc.extract_features_v104(power, segments)
     assert feats["is_ftp_test"] and feats["ftp_test_subtype"] == "ramp"
+
+
+def test_if_ceilings_are_np_units_and_guard_still_bites():
+    """v3.5.0 rescaled the easy if-ceilings from RMS to NP units (0.75->0.78,
+    0.80->0.84). That is a unit correction, not a relaxation: prove the guard
+    still catches an easy label hiding real hard work via the STRUCTURAL rules,
+    which are unit-independent and were deliberately left alone."""
+    assert wf._EASY_STRICT_IF_CEILING == 0.78
+    assert wf._EASY_Z2_IF_CEILING == 0.84
+    # a 60 s rep at 140% under a recovery label — caught by n130_45, not by IF
+    hard = {"if": 0.50, "n130_45": 1, "t200": 0, "l150": 0}
+    assert "rep>=45s@130" in wf.label_contradictions("recovery", hard)
+    assert "rep>=45s@130" in wf.label_contradictions("endurance", hard)
+    # time at >=200% FTP under an easy label still trips regardless of IF
+    supra = {"if": 0.50, "n130_45": 0, "t200": 30, "l150": 0}
+    assert "t200>0" in wf.label_contradictions("recovery", supra)
+    assert "t200>10" in wf.label_contradictions("endurance_intervals", supra)
+    # and the rescaled ceiling itself still fires above its new line
+    assert wf.label_contradictions("recovery", {"if": 0.79, "n130_45": 0,
+                                                "t200": 0, "l150": 0}) == ["if>0.78"]

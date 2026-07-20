@@ -1,5 +1,22 @@
 # Changelog
 
+## v3.4.4 — Pick your window, and a plan grid that tells you things (2026-07-20)
+
+- **Filter Fitness & Form by any date range** — intervals.icu-style: preset
+  chips (1m/42d/3m/6m/1y/All), one chip per year of your data, and a
+  two-month calendar picker with quick links. Your choice is remembered.
+- **The chart's hover/drag now lines up with the graph** (it was offset
+  left and right of the plot).
+- **The plan grid speaks again:** each card shows the workout's actual
+  structure name, duration · TSS, and missed/done at full prominence — and
+  its mini power sprite always shows the file you'll actually ride. An
+  internal quality number that leaked onto the cards is gone.
+- **Workout buttons say what they do:** "↻ Swap workout — same type,
+  different session" and "⇄ Change training type (VO2, tempo, …)" — and
+  their info popups now open from the home page too (they only worked from
+  the Plan tab).
+
+
 ## v3.4.3 — The calendar lands on today, and every day says whose day it is (2026-07-16)
 
 - **The Training Plan calendar opens on today.** No more scrolling through

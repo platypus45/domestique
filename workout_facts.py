@@ -63,7 +63,9 @@ FACTS_FILENAME = ".workout_facts.json"
 # the SS/tempo D3 ceiling). Version mismatch drops the WHOLE cache file
 # (_read_cache_file), so a v1 cache can never leak rows missing the new keys
 # into file_admissible — the committed cache is rebuilt offline and shipped.
-_SCHEMA_VERSION = 2
+# v3.5.0: v3 switches tss/if from RMS power to Coggan NP (np_fraction) so
+# facts match the loaders and ride-side TSS. Same drop-the-whole-file rule.
+_SCHEMA_VERSION = 3
 
 # In-process cache: {str(workout_dir): {fname: row}} — mirrors the planner's
 # _CONTENT_CLASSIFICATION_CACHE pattern (load once, write-through on heal).
@@ -149,8 +151,8 @@ def compute_facts_row(zwo_path: Path, sha1: str | None = None) -> dict:
         "sha1": sha1,
         "dur_s": len(power),                          # A1: INCL FreeRide
         "fr_s": len(power) - len(valid),
-        "tss": round(sum(p * p for p in valid) / 3600.0 * 100.0, 1),
-        "if": feats["if_fraction"],                   # A1: classifier RMS
+        "tss": round(len(valid) / 3600.0 * feats["np_fraction"] ** 2 * 100.0, 1),
+        "if": feats["np_fraction"],                   # v3.5.0: Coggan NP (was RMS)
         "hi_s": z["z5"] + z["z6"] + z["z7"],
         "t101": sum(r101), "l101": max(r101, default=0),
         "t130": sum(r130), "l130": max(r130, default=0),

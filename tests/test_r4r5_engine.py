@@ -174,11 +174,13 @@ def test_sub_098_and_brief_surge_and_exact_100_stay_admissible(r4b_lib):
 
 @pytest.mark.skipif(not (WK / wf.FACTS_FILENAME).exists(),
                     reason="facts cache absent")
-def test_committed_facts_cache_is_schema_v2():
-    """The shipped cache must be the v2 rebuild (users never pay the ~45s
-    offline rebuild; a v1 cache would be dropped whole at load)."""
+def test_committed_facts_cache_is_current_schema():
+    """The shipped cache must be the CURRENT-version rebuild (users never pay
+    the ~45s offline rebuild; an out-of-version cache is dropped whole at
+    load). Tracks wf._SCHEMA_VERSION rather than a literal so a schema bump
+    fails loudly here only when the committed cache was not regenerated."""
     payload = json.loads((WK / wf.FACTS_FILENAME).read_text(encoding="utf-8"))
-    assert payload.get("version") == 2
+    assert payload.get("version") == wf._SCHEMA_VERSION
     rows = payload.get("facts") or {}
     assert rows, "committed cache is empty"
     non_null = [r for r in rows.values() if not r.get("null")]

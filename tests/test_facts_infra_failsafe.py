@@ -198,14 +198,14 @@ def test_poisoned_all_null_v2_cache_heals_on_next_boot(storm_lib):
     poison = {fn: {"sha1": r["sha1"], "null": True}
               for fn, r in payload["facts"].items()}
     (lib / wf.FACTS_FILENAME).write_text(
-        json.dumps({"version": 2, "facts": poison},
+        json.dumps({"version": wf._SCHEMA_VERSION, "facts": poison},
                    sort_keys=True, separators=(",", ":")))
     wf.reset_cache()
 
     healed = wf.ensure_facts(lib)
     assert _null_count(healed) == 0, "null rows must heal, not stick"
     on_disk = json.loads((lib / wf.FACTS_FILENAME).read_text())
-    assert on_disk["version"] == 2
+    assert on_disk["version"] == wf._SCHEMA_VERSION
     assert _null_count(on_disk["facts"]) == 0
     # …and the gates open again end-to-end.
     matched = _match_types(rows)

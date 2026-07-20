@@ -142,7 +142,7 @@ _CLASSIFIER_VERSION = 3  # v4.1.2 IMPL-CLASSIFIER: content-based 12-rule cascade
 # the index) on any mismatch. The builder lives in
 # scripts/classify_library_content.py (run via --all). Bump _INDEX_SCHEMA_VERSION
 # whenever the row shape changes so stale on-disk indexes are rejected.
-_INDEX_SCHEMA_VERSION = 2  # v2.0.6: ramp zone-integration fix changed stored Z% data → invalidate cached indexes
+_INDEX_SCHEMA_VERSION = 3  # v3.5.0: TSS/IF switched from RMS power to Coggan NP (README's documented formula) → invalidate cached indexes
 _LIBRARY_INDEX_FILENAME = ".library_index.json"
 _WORKOUT_LIB_CACHE: dict[str, tuple] = {}
 # v1.8.1 SPEED-A: fast hot-path validator keyed by str(WORKOUT_DIR).
@@ -3490,6 +3490,29 @@ def _classify_protocol(
     return protocol_map.get(dom_idx, "Mixed")
 
 
+def _np_fraction_from_samples(samples: "list[float]") -> float:
+    """Coggan NP as an FTP fraction over a 1 Hz planned-power series.
+
+    30-s simple rolling mean, full windows only (first value covers samples
+    [0, 30) — no zero-pad, no expanding mean), 4th-power mean, 4th root.
+    Matches ride_storage.compute_power_tss windowing exactly, so planned
+    library TSS and ridden TSS are in the same units (README documents the
+    NP formula; the pre-v3.5.0 parser computed RMS power instead).
+    Returns 0.0 for series shorter than one window (NP undefined).
+    """
+    n = len(samples)
+    if n < 30:
+        return 0.0
+    s = sum(samples[:30])
+    p4 = (s / 30.0) ** 4
+    count = 1
+    for i in range(30, n):
+        s += samples[i] - samples[i - 30]
+        p4 += (s / 30.0) ** 4
+        count += 1
+    return (p4 / count) ** 0.25
+
+
 def load_workout_library() -> list[dict]:
     """Scan WORKOUT_DIR (flat) and extract metadata by parsing each ZWO XML.
 
@@ -3591,7 +3614,6 @@ def load_workout_library() -> list[dict]:
 
         total_sec = 0
         z1_sec = z2_sec = z3_sec = z4_sec = z5_sec = z6_sec = 0
-        tss_accum = 0.0
         max_power = 0.0
         # FIX-CONTRACT C8: structure-bonus inputs. Collect the distinct
         # above-Z2 power targets (rounded to 1% FTP bins) so the score
@@ -3603,6 +3625,9 @@ def load_workout_library() -> list[dict]:
         # for the +1 VO2 bonus.
         distinct_high_targets: set = set()
         has_vo2_intensity = False
+        # v3.5.0: 1 Hz planned-power series (FTP fractions) for Coggan NP.
+        # Replaces the per-segment RMS accumulation the old TSS used.
+        samples: list = []
 
         def _acc_zone(power_pct: float, dur_s: int):
             # Half-open buckets: [low, high). Value at boundary → next zone up.
@@ -3629,13 +3654,7 @@ def load_workout_library() -> list[dict]:
                 plo = float(seg.get("PowerLow", 0.5))
                 phi = float(seg.get("PowerHigh", 0.7))
                 total_sec += dur
-                # TSS for a linear power ramp from a→b over duration T (hours):
-                #   TSS = (1/T) ∫₀ᵀ (a + (b-a)·t/T)² · 100 dt · T
-                #       = (a² + a·b + b²)/3 · T · 100
-                # For a constant (a==b) this reduces to a²·T·100 as expected.
-                # Using mean² underestimates when a≠b (e.g. 0.5→0.9 gives
-                # mean²=0.49 but true integral 0.5033 → ~2.7% high on TSS).
-                tss_accum += (plo * plo + plo * phi + phi * phi) / 3 * (dur / 3600) * 100
+                samples.extend(plo + (phi - plo) * (t + 0.5) / dur for t in range(dur))
                 max_power = max(max_power, plo, phi)
                 # v2.0.6 — integrate the ramp across the zones it SWEEPS, not one
                 # avg-power bucket. Binning the whole duration at mean power dumped
@@ -3653,7 +3672,7 @@ def load_workout_library() -> list[dict]:
                 dur = int(float(seg.get("Duration", 0)))
                 p = float(seg.get("Power", 0.65))
                 total_sec += dur
-                tss_accum += dur / 3600 * (p ** 2) * 100
+                samples.extend([p] * dur)
                 max_power = max(max_power, p)
                 _acc_zone(p * 100, dur)
                 _acc_structure(p * 100)
@@ -3664,8 +3683,7 @@ def load_workout_library() -> list[dict]:
                 on_p = float(seg.get("OnPower", 1.0))
                 off_p = float(seg.get("OffPower", 0.5))
                 total_sec += reps * (on_s + off_s)
-                tss_accum += reps * on_s / 3600 * (on_p ** 2) * 100
-                tss_accum += reps * off_s / 3600 * (off_p ** 2) * 100
+                samples.extend(([on_p] * on_s + [off_p] * off_s) * reps)
                 max_power = max(max_power, on_p, off_p)
                 _acc_zone(on_p * 100, reps * on_s)
                 _acc_zone(off_p * 100, reps * off_s)
@@ -3675,14 +3693,17 @@ def load_workout_library() -> list[dict]:
                 dur = int(float(seg.get("Duration", 0)))
                 total_sec += dur
                 # Assume ~Z2 effort for FreeRide
-                tss_accum += dur / 3600 * (0.65 ** 2) * 100
+                samples.extend([0.65] * dur)
                 _acc_zone(65, dur)
 
         dur_min = total_sec / 60
-        if dur_min == 0:
+        if total_sec < 30:
+            # NP is undefined below one 30-s window; a <30 s "workout" is
+            # unusable anyway — skip the file rather than emit TSS=0 rows.
             continue
 
-        if_val = (tss_accum / (dur_min / 60)) ** 0.5 / 10 if dur_min > 0 else 0.5
+        if_val = _np_fraction_from_samples(samples)
+        tss_np = (total_sec / 3600) * (if_val ** 2) * 100
         zp = lambda s: round(s / total_sec * 100, 1) if total_sec else 0.0
 
         protocol = _classify_protocol(
@@ -3727,7 +3748,7 @@ def load_workout_library() -> list[dict]:
         # /api/workouts and the planner rank workouts identically (closes
         # v4.1.1 Bug C PARTIAL — distinct_high_targets vs zone-count drift).
         score = max(1, min(10, int(round(score_workout({
-            "tss": tss_accum,
+            "tss": tss_np,
             "total_sec": total_sec,
             "z1_sec": z1_sec, "z2_sec": z2_sec, "z3_sec": z3_sec,
             "z4_sec": z4_sec, "z5_sec": z5_sec, "z6_sec": z6_sec,
@@ -3750,7 +3771,7 @@ def load_workout_library() -> list[dict]:
             "Category": "Workout",
             "File": zwo_path.name,
             "Duration(min)": round(dur_min, 1),
-            "TSS": round(tss_accum, 1),
+            "TSS": round(tss_np, 1),
             "IF": round(if_val, 3),
             "Score": score,
             "Protocol": protocol,

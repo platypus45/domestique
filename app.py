@@ -5205,6 +5205,27 @@ def api_hrv_recording_dismiss(payload: dict = Body(...)):
 # v4.2.0 IMPL-LIBRARY: helper to scan a single ZWO into the structural
 # metrics the score helper + filters need. Extracted so /api/workouts and
 # /api/workouts/tags can share the parse without duplicating XML walking.
+def _np_fraction_from_samples(samples: "list[float]") -> float:
+    """Coggan NP as an FTP fraction over a 1 Hz planned-power series.
+
+    30-s simple rolling mean, full windows only (first value covers samples
+    [0, 30)), 4th-power mean, 4th root. Byte-identical to the planner's
+    training_planner._np_fraction_from_samples — the two scanners must stay
+    in lockstep (v4.1.1 Bug C / score_sync contract).
+    """
+    n = len(samples)
+    if n < 30:
+        return 0.0
+    s = sum(samples[:30])
+    p4 = (s / 30.0) ** 4
+    count = 1
+    for i in range(30, n):
+        s += samples[i] - samples[i - 30]
+        p4 += (s / 30.0) ** 4
+        count += 1
+    return (p4 / count) ** 0.25
+
+
 def _scan_zwo_for_library(zwo_path: Path) -> dict | None:
     """Parse one ZWO file → metrics dict, or None on parse error / empty.
 
@@ -5233,9 +5254,11 @@ def _scan_zwo_for_library(zwo_path: Path) -> dict | None:
 
     total_sec = 0
     z1_sec = z2_sec = z3_sec = z4_sec = z5_sec = z6_sec = 0
-    tss_accum = 0.0
     distinct_high_targets: set = set()
     has_vo2_intensity = False
+    # v3.5.0: 1 Hz planned-power series (FTP fractions) for Coggan NP —
+    # replaces the per-segment RMS accumulation (mirrors the planner).
+    samples: list = []
 
     def _acc_zone(power_pct: float, dur_s: int):
         nonlocal z1_sec, z2_sec, z3_sec, z4_sec, z5_sec, z6_sec
@@ -5260,8 +5283,7 @@ def _scan_zwo_for_library(zwo_path: Path) -> dict | None:
             plo = float(seg.get("PowerLow", 0.5))
             phi = float(seg.get("PowerHigh", 0.7))
             total_sec += dur
-            # Linear-ramp TSS integral (matches planner).
-            tss_accum += (plo * plo + plo * phi + phi * phi) / 3 * (dur / 3600) * 100
+            samples.extend(plo + (phi - plo) * (t + 0.5) / dur for t in range(dur))
             # v2.1.0: slice the ramp across the zones it SWEEPS, mirroring the
             # planner's load_workout_library parse (training_planner.py, v2.0.6).
             # Binning the whole duration at mean power here (while the planner
@@ -5275,7 +5297,7 @@ def _scan_zwo_for_library(zwo_path: Path) -> dict | None:
             dur = int(float(seg.get("Duration", 0)))
             p = float(seg.get("Power", 0.65))
             total_sec += dur
-            tss_accum += dur / 3600 * (p ** 2) * 100
+            samples.extend([p] * dur)
             _acc_zone(p * 100, dur)
             _acc_structure(p * 100)
         elif tag == "IntervalsT":
@@ -5285,8 +5307,7 @@ def _scan_zwo_for_library(zwo_path: Path) -> dict | None:
             on_p = float(seg.get("OnPower", 1.0))
             off_p = float(seg.get("OffPower", 0.5))
             total_sec += reps * (on_s + off_s)
-            tss_accum += reps * on_s / 3600 * (on_p ** 2) * 100
-            tss_accum += reps * off_s / 3600 * (off_p ** 2) * 100
+            samples.extend(([on_p] * on_s + [off_p] * off_s) * reps)
             _acc_zone(on_p * 100, reps * on_s)
             _acc_zone(off_p * 100, reps * off_s)
             _acc_structure(on_p * 100)
@@ -5294,16 +5315,17 @@ def _scan_zwo_for_library(zwo_path: Path) -> dict | None:
         elif tag == "FreeRide":
             dur = int(float(seg.get("Duration", 0)))
             total_sec += dur
-            tss_accum += dur / 3600 * (0.65 ** 2) * 100
+            samples.extend([0.65] * dur)
             _acc_zone(65, dur)
 
-    if total_sec == 0:
+    if total_sec < 30:
+        # NP is undefined below one 30-s window (mirrors the planner's skip).
         return None
-    dur_min = total_sec / 60
-    if_val = (tss_accum / (dur_min / 60)) ** 0.5 / 10 if dur_min > 0 else 0.5
+    if_val = _np_fraction_from_samples(samples)
+    tss_np = (total_sec / 3600) * (if_val ** 2) * 100
     return {
         "name": name, "description": description,
-        "total_sec": total_sec, "tss": tss_accum, "if_val": if_val,
+        "total_sec": total_sec, "tss": tss_np, "if_val": if_val,
         "z1_sec": z1_sec, "z2_sec": z2_sec, "z3_sec": z3_sec,
         "z4_sec": z4_sec, "z5_sec": z5_sec, "z6_sec": z6_sec,
         "distinct_high_targets": distinct_high_targets,

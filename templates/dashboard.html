@@ -14049,6 +14049,7 @@ async function calOpenDay(dateStr) {
     // content classifier reads as "Endurance 60min — Z2".
     display_name: p.display_name || '',
     zwo_duration_min: p.zwo_duration_min || 0,
+    zwo_tss: p.zwo_tss || 0,
     description: p.name || day.description || '',
     zone_dist: p.zone_dist || null,  // v4.4.2 B4: pass through for waveform
     score: p.score,
@@ -17747,7 +17748,7 @@ function _dayModalModel(session, todayData, todayIso) {
       duration_min: eff.duration_min || 0,
       tss_estimate: eff.tss_estimate || 0,
       zwo_file: '', zwo_name: '',
-      display_name: '', zwo_duration_min: 0,
+      display_name: '', zwo_duration_min: 0, zwo_tss: 0,
       description: eff.description || '',
       zone_dist: null,
       status: session.status || 'pending',
@@ -17930,6 +17931,24 @@ function _dayModalTitle(day, dayNameFallback) {
     if (rel) pill = `<span class="day-rel-pill">${rel}</span>`;
   }
   return { label, pill };
+}
+
+// v3.4.5 — day-modal TSS honesty. The TSS stat shows the matched FILE's TSS
+// (what the rider downloads, charts and rides — same decision as the v2.2.12
+// Duration stat). The planner's slot budget is demoted to a small labeled
+// secondary line, shown only when it disagrees with the file by more than
+// 10 TSS (owner case: slot said 94, file was 75 — the modal claimed 94).
+// Fileless sessions (adjusted/live or missing_workout) fall back to the slot
+// estimate with no secondary line.
+function dayModalTssStat(session) {
+  const fileTss = Math.round(Number(session.zwo_tss) || 0);
+  const slotTss = Math.round(Number(session.tss_estimate) || 0);
+  const dispTss = fileTss > 0 ? fileTss : slotTss;
+  const showSlot = fileTss > 0 && slotTss > 0 && Math.abs(slotTss - fileTss) > 10;
+  const slotNote = showSlot
+    ? `<div style="font-size:10px;color:var(--text3);">plan slot: ${slotTss} TSS</div>`
+    : '';
+  return `<div class="metric"><div class="mv">${dispTss}</div><div class="ml">TSS</div>${slotNote}</div>`;
 }
 
 async function openDayWorkout(sessionIdx) {
@@ -18117,7 +18136,8 @@ async function openDayWorkout(sessionIdx) {
   // planner's slot target is shown on the "Matched library file" note above.
   html += '<div style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0;">';
   html += `<div class="metric"><div class="mv">${dispDur}min</div><div class="ml">Duration</div></div>`;
-  html += `<div class="metric"><div class="mv">${session.tss_estimate}</div><div class="ml">TSS</div></div>`;
+  // v3.4.5 — file-first TSS stat (slot budget demoted to a labeled secondary).
+  html += dayModalTssStat(session);
   if (haveBreakdown) {
     html += `<div class="metric" title="Warmup + main set + cooldown — the planner budgets the warmup inside the slot"><div class="mv" style="font-size:14px;">${wuMin}·${mainMin}·${cdMin}</div><div class="ml">Warm·Main·Cool</div></div>`;
   }

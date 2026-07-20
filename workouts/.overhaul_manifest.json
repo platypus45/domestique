@@ -1433,9 +1433,9 @@
     },
     {
       "old_filename": "anaerobic_4x3min_76min.zwo",
-      "new_filename": "anaerobic_4x3min_76min.zwo",
+      "new_filename": "anaerobic_4x3min_67min.zwo",
       "old_name": "VO2max 4x3min (71min)",
-      "new_name": "VO2max 4x3min (71min)",
+      "new_name": "Threshold 4x3min (67min)",
       "old_class_implied": "anaerobic",
       "new_class": "vo2max",
       "had_zero_min_bug": false

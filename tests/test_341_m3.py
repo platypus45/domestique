@@ -366,7 +366,7 @@ def test_modal_renders_adjusted_lead_and_effective_downloads():
         src, "_sessTypeLabel", "_adjPlannedNowHtml", "_effectiveTodaySession",
         "_dayModalModel", "_todayDayModalModel", "_calTodayStr",
         "_dayModalTitle", "_adjBannerHtml", "_adjOriginalBlockHtml",
-        "openDayWorkout"
+        "dayModalTssStat", "openDayWorkout"
     ) + _TODAY_FIXTURE + """
 (async () => {
   global.window = {_weekPlanSessions: [SESSION], _todaySessionData: TODAY_D,
@@ -436,7 +436,7 @@ def test_unadjusted_day_renders_exactly_as_before():
         src, "_sessTypeLabel", "_adjPlannedNowHtml", "_effectiveTodaySession",
         "_dayModalModel", "_todayDayModalModel", "_calTodayStr",
         "_dayModalTitle", "_adjBannerHtml", "_adjOriginalBlockHtml",
-        "openDayWorkout"
+        "dayModalTssStat", "openDayWorkout"
     ) + _TODAY_FIXTURE + """
 (async () => {
   global.window = {_weekPlanSessions: [SESSION], _targetMode: 'power',

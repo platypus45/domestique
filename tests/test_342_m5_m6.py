@@ -661,7 +661,7 @@ global.openModal = h => { modalHtml = h; };
 _MODAL_FNS = ("_sessTypeLabel", "_adjPlannedNowHtml", "_effectiveTodaySession",
               "_dayModalModel", "_todayDayModalModel", "_calTodayStr",
               "_dayModalTitle", "_adjBannerHtml",
-              "_adjOriginalBlockHtml", "openDayWorkout")
+              "_adjOriginalBlockHtml", "dayModalTssStat", "openDayWorkout")
 
 
 @requires_node

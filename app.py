@@ -10262,9 +10262,13 @@ def api_weekly_plan(week_offset: int = Query(0)):
             }
             out["score"] = meta.get("Score")
             out["protocol"] = meta.get("Protocol")
+            # v3.4.5 — matched FILE's TSS (index row), so the day modal can show
+            # what the rider actually rides; tss_estimate stays the slot budget.
+            out["zwo_tss"] = meta.get("TSS")
         else:
             out["zone_dist"] = None
             out["score"] = None
+            out["zwo_tss"] = None
         return out
 
     result = {
@@ -15220,7 +15224,7 @@ SESSION_FIELDS_LOCKED: frozenset[str] = frozenset({
     "profile_id",
     # enriched (added by _enrich_plan_for_response)
     "card_state", "card_state_v2", "content_class", "display_name",
-    "zone_dist", "score", "protocol", "zwo_duration_min",
+    "zone_dist", "score", "protocol", "zwo_duration_min", "zwo_tss",
     # availability (v1.3.5+)
     "availability_hours", "availability_type",
 })
@@ -15363,7 +15367,7 @@ def _enrich_plan_for_response(plan_dict: dict, today_iso: str) -> dict:
 # Snapshot/apply on the cache hot path uses this list.
 _ENRICH_FIELDS = (
     "display_name", "zwo_duration_min", "zone_dist", "score", "protocol",
-    "content_class", "card_state", "card_state_v2",
+    "content_class", "card_state", "card_state_v2", "zwo_tss",
 )
 
 
@@ -15447,10 +15451,13 @@ def _enrich_plan_for_response_uncached(plan_dict: dict, today_iso: str) -> dict:
                 s["score"] = meta.get("Score")
                 s["protocol"] = meta.get("Protocol")
                 s["content_class"] = meta.get("content_class") or ""
+                # v3.4.5 — matched FILE's TSS for the day-modal TSS stat.
+                s["zwo_tss"] = meta.get("TSS")
             else:
                 s.setdefault("zone_dist", None)
                 s.setdefault("score", None)
                 s.setdefault("content_class", "")
+                s.setdefault("zwo_tss", None)
             _has_actual = bool(rides_by_date.get(s.get("day", "")))
             # Legacy 4-state on wire (back-compat); v2 alongside for migration.
             s["card_state"] = _classify_card_state(
@@ -16387,6 +16394,9 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
                     "zwo_duration_min": _zdur,
                     "duration_min": sess.get("duration_min") or 0,
                     "tss": sess.get("tss_estimate") or 0,
+                    # v3.4.5 — matched FILE's TSS so the day modal opened from a
+                    # calendar cell shows the file's load, not the slot budget.
+                    "zwo_tss": (lib_by_file.get(_zwo) or {}).get("TSS"),
                     "score": sess.get("score"),
                     "zwo_file": _zwo,
                     "is_race": bool(sess.get("is_race")),

@@ -191,8 +191,26 @@ class TestDistinctIntervalShapes:
     def test_all_four_canonical_hard_types_appear_in_build1_build2(self, plan_24w):
         """{threshold, vo2max, sweet_spot, over_under} must each appear at
         least once in build1+build2 combined — these are the canonical
-        4-shape rotation the user wants visibly in the build phases."""
+        4-shape rotation the user wants visibly in the build phases.
+
+        v3.4.5 — a canonical shape is credited by EITHER axis:
+          (a) a pick whose folded content primary IS the shape (original
+              rule), or
+          (b) a SLOT of that type served interval-shaped content (the
+              planner schedules the rotation via slot types; the served
+              file's primary is subject to the sanctioned fallback classes
+              in tp._TYPE_TO_FALLBACK_CLASSES, and slot/file coherence is
+              pinned separately by test_slot_contracts).
+        Pre-amendment the check counted axis (a) only, and passed on
+        cross-pick luck (e.g. an over_under SLOT drawing a threshold-primary
+        file) — a 3-file library repair that never touched the sampler
+        flipped the pinned-seed draw and unmasked it (same knife-edge family
+        as the planner-test-nondeterminism baseline; the weekly-hit-cap
+        precedent applies: mirror the enforcement reality, don't chase the
+        sampler)."""
         _, weeks = plan_24w
+        slot_to_canon = {"threshold": "threshold", "vo2max": "vo2max",
+                         "sweetspot": "sweet_spot", "overunder": "over_under"}
         seen = set()
         for w in weeks:
             if w.phase not in ("build1", "build2"):
@@ -204,6 +222,9 @@ class TestDistinctIntervalShapes:
                 cc = _CANONICAL_FOLD.get(cc, cc)  # v3.2.2: ladder → parent
                 if is_intvl and cc in {"threshold", "vo2max", "sweet_spot", "over_under"}:
                     seen.add(cc)
+                slot_canon = slot_to_canon.get(s.session_type)
+                if slot_canon and is_intvl:
+                    seen.add(slot_canon)
         missing = {"threshold", "vo2max", "sweet_spot", "over_under"} - seen
         assert not missing, (
             f"canonical hard types missing from build1+build2: {sorted(missing)}"

@@ -382,6 +382,9 @@ const calCellTooltip = () => '';
 const calActualClass = () => '';
 const _calMatchBadge = () => '';
 const _classifColor = () => null;
+// v3.4.4 — renderCalDay sources card content from the shared helper.
+const plannedCardParts = (p, cs) => ({ title: calCardTitleWithStructure(p),
+  cssCls: calContentCss(), metaText: '', warn: '' });
 """
 
 

@@ -427,10 +427,13 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
 .pg-score-low    { background: #475569; color: #e2e8f0; }
 
 .pg-redraw-btn {
-  position: absolute; bottom: 2px; left: 2px;
-  font-size: 11px; line-height: 1; padding: 1px 4px; border-radius: 3px;
+  /* v3.4.4 parity — same corner + sizing as the calendar's .cal-redraw-btn
+     (was bottom-left 11px, which put the two views' ⟳ in different places). */
+  position: absolute; top: 1px; right: 1px;
+  font-size: 9px; line-height: 1; padding: 1px 4px; border-radius: 3px;
   background: var(--surface2); color: var(--text2); border: 1px solid var(--border);
   opacity: 0.6; cursor: pointer; user-select: none; transition: opacity 0.15s;
+  z-index: 2;
 }
 .pg-redraw-btn:hover { opacity: 1; color: var(--accent); border-color: var(--accent); }
 .pg-redraw-btn.is-spinning { opacity: 1; pointer-events: none; animation: pg-redraw-spin 0.8s linear infinite; }
@@ -439,6 +442,24 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
 /* Drag-drop feedback (item 4) */
 .wc-day.pg-dropping-valid    { outline: 2px dashed var(--green, #22c55e); background: rgba(34,197,94,0.08); }
 .wc-day.pg-dropping-invalid  { outline: 2px dashed var(--red, #ef4444); opacity: 0.4; cursor: not-allowed; }
+
+/* v3.4.4 grid/calendar parity — compact card content. Same information as
+   the calendar cells (title, "NNm · NN TSS", done/missed line), denser type.
+   Title = the matched workout's display/structure name, clamped to 2 lines
+   (full text in the title attr). */
+.wc-day .wc-type.pg-card-title {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; font-size: 8px; line-height: 1.25; padding: 1px 3px;
+  text-align: left; letter-spacing: 0.02em; word-break: break-word;
+}
+.wc-day .pg-card-meta   { font-size: 8px; color: var(--text2); margin-top: 1px; }
+.wc-day .pg-card-actual { font-size: 8px; font-weight: 600; margin-top: 1px; }
+.wc-day .pg-card-sprite { min-height: 18px; }
+.wc-day .cal-planned-warn { font-size: 9px; color: var(--yellow); font-weight: 700; }
+/* Done/missed cell tints at calendar prominence (the .cal-day-scoped rules
+   above don't reach the grid's .wc-day cells). */
+.wc-day.cal-completed { background: rgba(34,197,94,0.05); }
+.wc-day.cal-missing   { background: rgba(239,68,68,0.06); }
 
 /* Plan-progress header (item 8) */
 .pg-progress-header {
@@ -12553,11 +12574,6 @@ async function renderPlanJSON(plan) {
     rest:'REST', recovery:'REC', z2:'Z2', long_z2:'LONG', tempo:'TEMPO',
     sweetspot:'SS', threshold:'FTP', vo2max:'VO2', overunder:'Over-Under',
   };
-  const SESSION_CSS = {
-    rest:'wc-rest-type', recovery:'wc-z2', z2:'wc-z2', long_z2:'wc-long',
-    sweetspot:'wc-hit', threshold:'wc-hit', vo2max:'wc-hit',
-    overunder:'wc-hit', tempo:'wc-z2',
-  };
 
   let cal = '';
   // Fixed Mon–Sun headers. Each session is placed in its actual weekday
@@ -12642,59 +12658,60 @@ async function renderPlanJSON(plan) {
       const SPORT_ICON = {Ride:'🚴',VirtualRide:'🚴',GravelRide:'🚴',Run:'🏃',TrailRun:'🏃',RockClimbing:'🧗',Hike:'🥾',Workout:'🏋️',IceSkate:'⛸️',Swim:'🏊'};
 
       if (s && s.session_type !== 'rest') {
-        // v4.3.0 B2 — title sourced from content_class first, fallback to
-        // session_type. SESSION_SHORT remains the visual short-label since
-        // the per-card cell is small; the content_class is also encoded
-        // in a data attribute so the click handler can verify the match.
-        const short = SESSION_SHORT[s.session_type] || (s.session_type || '').toUpperCase();
-        const cssCls = SESSION_CSS[s.session_type] || 'wc-z2';
         // v4.3.0 B6 — card_state (server-emitted) drives styling.
         const cardState = s.card_state || (s.session_type === 'rest' ? 'rest' : 'planned');
         const stateExtraCls = cardState === 'completed' ? ' cal-completed'
                             : cardState === 'missing_workout' ? ' cal-missing'
                             : '';
-        const stateWarn = cardState === 'missing_workout'
-          ? '<span title="Workout missing — click ⟳ to assign one." style="position:absolute;top:1px;right:18px;color:var(--yellow);font-weight:800;font-size:10px;">⚠</span>'
-          : '';
         // v4.2.0 IMPL-WEEKLY item 3: today-marker class
         const todayCls = isToday ? ' pg-today-session' : '';
+
+        // v3.4.4 grid/calendar parity — card content (resolved workout
+        // title, content-class color, "NNm · NN TSS", ⚠ warn) comes from
+        // plannedCardParts, the SAME helper renderCalDay uses. The grid
+        // stays the dense view: same information, smaller type. The v4.2.0
+        // score number badge is GONE — that was score_workout's 1-10
+        // curation heuristic leaking into the UI (removed from the library
+        // table for the same reason, 2026-07-07).
+        const parts = plannedCardParts({
+          session_type: s.session_type, content_class: s.content_class || '',
+          display_name: s.display_name || '', zwo_name: s.zwo_name || '',
+          name: s.zwo_name || s.description || '',
+          duration_min: s.duration_min, tss: s.tss_estimate,
+        }, cardState);
 
         // Mini power block SVG. v4.1.1 FIX-PLANNER B: prefer the
         // per-session zone_dist from the ACTUAL ZWO (surfaced on /api/plan
         // + /api/weekly-plan) so weeks with different ZWOs render visually
-        // different mini-graphs. Fallback to stock session_type silhouette
-        // when zone_dist is absent (e.g. a just-regenerated week before the
-        // library index lookup succeeds).
-        const blocks = (s.zone_dist && Object.values(s.zone_dist).some(v => v > 0))
+        // different mini-graphs. v3.4.4 sprite-source sanity: zone_dist is
+        // only trusted when the session actually HAS a matched file (a
+        // fileless slot can carry stale zone_dist — the sprite then showed
+        // one workout while the card named another). The session_type
+        // silhouette fallback is labeled as approximate in the tooltip so
+        // it can't silently pose as the matched file's structure.
+        const zdOk = !!(s.zwo_file && s.zone_dist
+                        && Object.values(s.zone_dist).some(v => v > 0));
+        const blocks = zdOk
           ? buildPowerBlocksFromZoneDist(s.zone_dist, s.duration_min)
           : buildPowerBlocks(s.session_type, s.duration_min, 250, s.secondary_flags || null);
-        const miniSvg = miniPowerBlockSVG(blocks);
+        const spriteTip = zdOk
+          ? pgZoneTooltip(s.zone_dist)
+          : `Typical ${SESSION_SHORT[s.session_type] || (s.session_type || '').toUpperCase()} shape (approximate — matched file structure unavailable)`;
+        const miniSvg = `<div class="pg-card-sprite" title="${esc(spriteTip)}">${miniPowerBlockSVG(blocks)}</div>`;
 
-        // Actual activity overlay for past days
+        // Actual activity overlay for past days — calendar prominence:
+        // done shows duration · TSS (green), missed mirrors the calendar's
+        // italic red "missed".
         let actualOverlay = '';
         let dayCompleted = false;
         if (isPast && dayActuals.length) {
           const icons = dayActuals.map(a => SPORT_ICON[a.sport] || '🏃').join('');
           const actTss = dayActuals.reduce((s,a) => s + (a.tss||0), 0);
           const actDur = dayActuals.reduce((s,a) => s + (a.duration_min||0), 0);
-          actualOverlay = `<div style="font-size:7px;color:var(--green);font-weight:600;margin-top:1px;">${icons} ${actDur}m</div>`;
+          actualOverlay = `<div class="pg-card-actual" style="color:var(--green);">${icons} ${actDur}m${actTss ? ' · ' + Math.round(actTss) + ' TSS' : ''}</div>`;
           dayCompleted = true;
         } else if (isPast && !dayActuals.length) {
-          actualOverlay = '<div style="font-size:7px;color:var(--red);font-weight:600;">MISSED</div>';
-        }
-
-        // v4.2.0 IMPL-WEEKLY item 1: score badge (Gold 7+, Med 4-6, Low <4
-        // per MASTER §3 tier mapping. Sprint-A scoreBadge() maps Gold≥9 /
-        // Good≥7 / Med≥4 / Low — for the per-card grid badge we collapse
-        // Gold+Good into "GOLD" tier visual since the card is small.)
-        let scoreBadgeHtml = '';
-        if (typeof s.score === 'number') {
-          const sc = Math.round(s.score);
-          let cls = 'pg-score-low', label = 'LOW';
-          if (sc >= 7) { cls = 'pg-score-gold'; label = sc; }
-          else if (sc >= 4) { cls = 'pg-score-medium'; label = sc; }
-          else { cls = 'pg-score-low'; label = sc; }
-          scoreBadgeHtml = `<span class="pg-score-badge ${cls}" title="Score ${sc}/10 — ${sc>=7?'Good':sc>=4?'Medium':'Low'}">${label}</span>`;
+          actualOverlay = '<div class="pg-card-actual" style="font-style:italic;color:var(--red);">missed</div>';
         }
 
         // v4.2.0 IMPL-WEEKLY item 2 + v4.3.0 §6: re-draw button visibility
@@ -12717,13 +12734,12 @@ async function renderPlanJSON(plan) {
           : '';
 
         cal += `<div class="wc-day${todayCls}${stateExtraCls}" data-pg-day="${dayStr}" data-pg-week-idx="${wi}" data-pg-completed="${dayCompleted ? '1' : '0'}" data-pg-rest="0" data-cs="${cardState}" data-content-class="${esc(s.content_class || '')}" style="cursor:pointer;min-height:55px;padding:3px;position:relative;" ${dragAttrs} ondragover="pgDragOver(event)" ondragleave="pgDragLeave(event)" ondrop="pgDrop(event,'${dayStr}',${wi})" onclick="openOverviewDay(${wi},${d},'${dayStr}')">
-          <div class="wc-type ${cssCls}" style="font-size:10px;padding:1px 3px;">${short}</div>
-          <div style="font-size:8px;color:var(--text2);">${s.duration_min}m</div>
+          <div class="wc-type ${parts.cssCls} pg-card-title" title="${esc(parts.title)}">${esc(parts.title)}</div>
+          ${parts.warn}
+          <div class="pg-card-meta">${parts.metaText}</div>
           ${miniSvg}
           ${actualOverlay}
           ${redrawBtn}
-          ${scoreBadgeHtml}
-          ${stateWarn}
         </div>`;
       } else {
         // REST day — but check if athlete did something anyway (spontaneous activity)
@@ -12732,7 +12748,7 @@ async function renderPlanJSON(plan) {
           const icons = dayActuals.map(a => SPORT_ICON[a.sport] || '🏃').join('');
           const actTss = dayActuals.reduce((s,a) => s + (a.tss||0), 0);
           const actDur = dayActuals.reduce((s,a) => s + (a.duration_min||0), 0);
-          spontaneous = `<div style="font-size:7px;color:var(--yellow);font-weight:600;margin-top:2px;">${icons} ${actDur}m</div>`;
+          spontaneous = `<div class="pg-card-actual" style="color:var(--yellow);">${icons} ${actDur}m${actTss ? ' · ' + Math.round(actTss) + ' TSS' : ''}</div>`;
         }
         const todayCls = isToday ? ' pg-today-session' : '';
         cal += `<div class="wc-day wc-rest${todayCls}" data-pg-day="${dayStr || ''}" data-pg-week-idx="${wi}" data-pg-rest="1" style="min-height:55px;padding:3px;position:relative;">
@@ -13245,6 +13261,36 @@ function calCellTooltip(planned, actual) {
   return parts.join(' · ');
 }
 
+// ── v3.4.4 grid/calendar parity — single planned-card content source ─────
+// Both plan views (calendar renderCalDay + grid renderPlanJSON) build their
+// planned-session card from these parts, so the two views can never drift on
+// WHAT a card says: resolved title (display-name/structure cascade), content-
+// class color bucket, "NNm · NN TSS" meta line and the ⚠ missing-workout
+// warn. Each view keeps its own layout/density (the grid stays compact).
+function plannedCardParts(planned, cardState) {
+  const title = calCardTitleWithStructure(planned);
+  const cssCls = calContentCss(planned.content_class, planned.session_type);
+  const dur = planned.duration_min ? `${Math.round(planned.duration_min)}m` : '';
+  const metaText = `${dur}${planned.tss ? ' · ' + Math.round(planned.tss) + ' TSS' : ''}`;
+  const warn = cardState === 'missing_workout'
+    ? '<span class="cal-planned-warn" title="Workout missing — click ⟳ to assign one.">⚠</span>'
+    : '';
+  return { title, cssCls, metaText, warn };
+}
+
+// v3.4.4 — tooltip for the grid mini-sprite: names the zones it shows, from
+// the MATCHED file's zone distribution (same per-file source as the title).
+function pgZoneTooltip(zd) {
+  const NAMES = { z1: 'Z1 recovery', z2: 'Z2 endurance', z3: 'Z3 tempo',
+                  z4: 'Z4 threshold', z5: 'Z5 VO2', z6: 'Z6 anaerobic' };
+  const parts = [];
+  for (const k of ['z1', 'z2', 'z3', 'z4', 'z5', 'z6']) {
+    const v = Math.round((zd && zd[k]) || 0);
+    if (v > 0) parts.push(`${NAMES[k]} ${v}%`);
+  }
+  return parts.length ? `Matched workout zone mix — ${parts.join(' · ')}` : '';
+}
+
 // content_class consistency check used by the click handler — defense in
 // depth so a planner-mismatch never silently opens the wrong workout.
 function calContentMatches(planned) {
@@ -13603,9 +13649,9 @@ function renderCalDay(d, wi, di, phaseKey, today) {
   let plannedHtml = '';
   if (planned) {
     // v4.5.1 FIX-UI variety — title now includes structure suffix.
-    const title = calCardTitleWithStructure(planned);
-    const cssCls = calContentCss(planned.content_class, planned.session_type);
-    const dur = planned.duration_min ? `${Math.round(planned.duration_min)}m` : '';
+    // v3.4.4 — title/css/meta/warn come from plannedCardParts (shared with
+    // the plan grid); rendered output is unchanged.
+    const parts = plannedCardParts(planned, cs);
     let scoreBadge = '';
     if (typeof planned.score === 'number') {
       const sc = Math.round(planned.score);
@@ -13615,14 +13661,10 @@ function renderCalDay(d, wi, di, phaseKey, today) {
       const tier = sc >= 7 ? 'Good' : sc >= 4 ? 'Medium' : 'Low';
       scoreBadge = `<span class="pg-score-badge ${sCls}" title="Score ${sc}/10 — ${tier}">${sc}</span>`;
     }
-    let warn = '';
-    if (cs === 'missing_workout') {
-      warn = '<span class="cal-planned-warn" title="Workout missing — click ⟳ to assign one.">⚠</span>';
-    }
     plannedHtml = `<div class="cal-planned">
-      <span class="cal-planned-type ${cssCls}">${esc(title)}</span>
-      ${warn}
-      <div class="cal-planned-meta">${dur}${planned.tss ? ' · ' + Math.round(planned.tss) + ' TSS' : ''}</div>
+      <span class="cal-planned-type ${parts.cssCls}">${esc(parts.title)}</span>
+      ${parts.warn}
+      <div class="cal-planned-meta">${parts.metaText}</div>
     </div>`;
     if (scoreBadge) plannedHtml += scoreBadge;
   }

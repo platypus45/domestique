@@ -2,38 +2,12 @@
 
 ## v3.5.0 — Honest numbers, and hard days that stay off your easy days (2026-07-21)
 
-- **Your workout TSS numbers are correct now — and most of them go up.**
-  Domestique was measuring a workout's intensity with a formula that
-  under-read anything with intervals or surges in it, while your *rides*
-  were measured the standard way. Planned and completed training were in
-  different units, which also skewed the safety check that compares this
-  week's load against your recent training. Both now use the same
-  industry-standard method (the one intervals.icu and TrainingPeaks use).
-  Expect about +9% on a typical workout, more on sharp interval sessions,
-  and almost no change on steady endurance rides. Nothing about your past
-  rides or completed weeks was rewritten.
-- **Hard sessions can no longer land on your recovery days.** Because the
-  old measurement flattened out spikes, genuinely hard workouts were
-  slipping under the "easy enough for a rest day" line — most over/unders
-  and two-thirds of anaerobic sessions were eligible for recovery slots.
-  They aren't any more.
-- **A workout that emptied the tank is fixed.** One anaerobic session ended
-  each half with two back-to-back 2-minute efforts at 120% — a 4-minute
-  wall that was never intended: an old safety pass had flattened a rising
-  finisher into two identical blocks. It's now a single 2-minute effort per
-  half, and three other workouts carrying the same scar were repaired too.
-- **Workout names tell the truth.** A file claiming to be 76 minutes was
-  67. Three more were labelled as recovery or endurance while containing
-  efforts at up to 150% — including one "recovery spin" that ends with a
-  minute at 118%. All corrected.
-- **Session details show the real workout's load,** not the planner's
-  estimate for that slot. The two can differ; you now see the workout's own
-  number, with the plan's target as a footnote only when they genuinely
-  disagree.
-- Under the hood: Domestique can now compare a workout you were prescribed
-  against the power you actually delivered, rep by rep — groundwork for
-  telling you whether a session was truly completed, not just whether the
-  total looked right.
+- **Workout TSS is correct now — and most numbers go up.** Workouts were scored with a formula that under-read intervals and surges, while your *rides* were scored the standard way — so planned and completed training were in different units, which also skewed the load-ramp safety check. Both now use the method intervals.icu and TrainingPeaks use. Expect ~+9% on a typical workout, more on sharp intervals, almost nothing on steady endurance. Past rides and completed weeks were not rewritten.
+- **Hard sessions can no longer land on your recovery days.** The old scoring flattened spikes, so genuinely hard workouts slipped under the "easy enough to rest on" line — most over/unders and two-thirds of anaerobic sessions were eligible for recovery slots. Not any more.
+- **A workout that emptied the tank is fixed.** One anaerobic session ended each half with two back-to-back 2-minute efforts at 120% — a 4-minute wall nobody intended, left behind when an old safety pass flattened a rising finisher into two identical blocks. Now a single 2-minute effort per half. Three other workouts had the same scar and were repaired too.
+- **Workout names tell the truth.** A file claiming 76 minutes was 67. Three more were labelled recovery or endurance while holding efforts up to 150% — including a "recovery spin" that ends with a minute at 118%.
+- **Session details show the real workout's load,** not the planner's estimate for that slot. The plan's target appears as a footnote only when the two genuinely disagree.
+- Under the hood: Domestique can now compare a prescribed workout against the power you actually delivered, rep by rep — groundwork for judging whether a session was really completed, not just whether the total looked right.
 
 ## v3.4.4 — Pick your window, and a plan grid that tells you things (2026-07-20)
 

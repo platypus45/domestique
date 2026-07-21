@@ -806,9 +806,14 @@ app.add_middleware(GZipMiddleware, minimum_size=10_000)
 # outweighs the marginal benefit for a localhost-only single-user app.
 # Requests with no Origin header (curl, pywebview, server-to-server) are
 # allowed since CSRF requires a browser.
+# v3.5.1: allow ANY port on localhost/127.0.0.1, not just :8080. The check
+# exists to block cross-SITE requests (a hostile web page's Origin is its own
+# https://… host); pinning the port added no CSRF protection while silently
+# 403-ing every mutating POST when the app serves off-default (dev preview on
+# :8090 had every button's POST rejected — the UI just looked dead).
 _ALLOWED_ORIGIN_PREFIXES = (
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
+    "http://localhost:",
+    "http://127.0.0.1:",
 )
 
 

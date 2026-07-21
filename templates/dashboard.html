@@ -17816,15 +17816,52 @@ function _adjOriginalBlockHtml(orig) {
   const dlBtn = (orig.zwo_file && window._targetMode !== 'hr')
     ? `<div style="margin-top:8px;"><button class="btn" style="font-size:12px;" onclick="downloadZwoFile('${escJs(orig.zwo_file)}')">Original workout (ZWO)</button></div>`
     : '';
-  return `<details class="adj-original-block" style="margin-top:14px;border:1px solid var(--border);border-radius:8px;padding:8px 12px;">
-    <summary style="cursor:pointer;font-size:12px;color:var(--text2);">Original plan: <b style="color:var(--text);">${esc(name || label)}</b></summary>
+  // 3.5.1 — preview-before-revert: expanding the block lazily renders the
+  // original file's REAL segment chart (same /api/workout/all +
+  // workoutProfileSVG pair the lead chart uses), so the rider can see what
+  // "Ride the original … anyway" commits them to before pressing it. Chart
+  // only paints inside the user-opened <details> — the M3 rule (never repaint
+  // the original's hard blocks alongside the adjusted lead chart) still holds
+  // for the collapsed default.
+  const chartBox = orig.zwo_file
+    ? `<div class="adj-orig-chart" data-zwo="${esc(orig.zwo_file)}" style="margin-top:8px;"></div>`
+    : '';
+  return `<details class="adj-original-block" style="margin-top:14px;border:1px solid var(--border);border-radius:8px;padding:8px 12px;" ontoggle="_loadAdjOrigPreview(this)">
+    <summary style="cursor:pointer;font-size:12px;color:var(--text2);">Original plan: <b style="color:var(--text);">${esc(name || label)}</b> <span style="color:var(--text3);">— open to preview</span></summary>
     <div style="font-size:12px;color:var(--text2);margin-top:8px;">
       <div>${spec}</div>
       ${fileLine}
       <div style="font-size:11px;color:var(--text3);margin-top:4px;">Kept in your plan — “Ride the original ${esc(_sessTypeLabel(orig.session_type))} anyway” above restores it for today.</div>
+      ${chartBox}
       ${dlBtn}
     </div>
   </details>`;
+}
+
+// 3.5.1 — lazy one-shot loader for the original-plan preview chart above.
+// Fetches the matched file's real segments on first expand; further toggles
+// are no-ops (data-loaded guard). Failure degrades to a quiet caption — the
+// download button and spec line still describe the session.
+async function _loadAdjOrigPreview(det) {
+  try {
+    if (!det || !det.open) return;
+    const box = det.querySelector('.adj-orig-chart');
+    if (!box || box.dataset.loaded) return;
+    box.dataset.loaded = '1';
+    const zwo = box.dataset.zwo || '';
+    if (!zwo) return;
+    const res = await fetch(`/api/workout/all/${encodeURIComponent(zwo)}`);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const d = await res.json();
+    if (!d || !d.segments || !d.segments.length) throw new Error('no segments');
+    const svg = workoutProfileSVG(d.segments, d.ftp || settingsFtp, d.total_seconds,
+      d.target_mode === 'hr' ? {mode: 'hr', lthr: d.lthr, maxHr: d.max_hr, axis: d.hr_axis} : null);
+    box.innerHTML = svg +
+      `<div style="font-size:10px;color:var(--text3);margin-top:2px;">This is what “Ride the original … anyway” restores for today.</div>`;
+  } catch (_) {
+    const box = det && det.querySelector('.adj-orig-chart');
+    if (box) box.innerHTML = `<div style="font-size:11px;color:var(--text3);">(preview unavailable — see the workout name and download above)</div>`;
+  }
 }
 
 // [Ride the … version] — persist the adjusted session into the plan via the

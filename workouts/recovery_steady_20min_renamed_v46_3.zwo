@@ -2,10 +2,10 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Mixed Steady (20min)</name>
-    <description>Warmup: 10min from 25% to 59% FTP | Cooldown: 10min from 25% to 60% FTP</description>
+    <description>Warmup: 10min from 25% to 59% FTP | Cooldown: 10min from 60% to 25% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="600" PowerLow="0.25" PowerHigh="0.59" pace="0" />
-        <Cooldown Duration="600" PowerLow="0.25" PowerHigh="0.6" pace="0" />
+        <Cooldown Duration="600" PowerLow="0.6" PowerHigh="0.25" pace="0" />
     </workout>
 </workout_file>

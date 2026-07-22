@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Sweet Spot 20s/0s 6x (56min)</name>
-    <description>Warmup: 8min from 55% to 75% FTP | Microintervals: 6 x (20s @ 140% / 0s @ 55%) | Cooldown: 10min from 45% to 60% FTP</description>
+    <description>Warmup: 8min from 55% to 75% FTP | Microintervals: 6 x (20s @ 140% / 0s @ 55%) | Cooldown: 10min from 60% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="480" PowerLow="0.55" PowerHigh="0.75" pace="0" />
@@ -24,6 +24,6 @@
         <SteadyState Duration="120" Power="0.5" pace="0" />
         <SteadyState Duration="20" Power="1.4" pace="0" />
         <SteadyState Duration="60" Power="1.1" pace="0" />
-        <Cooldown Duration="600" PowerLow="0.45" PowerHigh="0.6" pace="0" />
+        <Cooldown Duration="600" PowerLow="0.6" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

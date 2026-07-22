@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>VO2 Ladder 36min — 85→120% × 3</name>
-    <description>Warmup: 5min from 55% to 75% FTP | Over-Under: 6 cycles (alternating above/below threshold) | Cooldown: 5min from 35% to 55% FTP</description>
+    <description>Warmup: 5min from 55% to 75% FTP | Over-Under: 6 cycles (alternating above/below threshold) | Cooldown: 5min from 55% to 35% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="300" PowerLow="0.55" PowerHigh="0.75" pace="0" />
@@ -22,6 +22,6 @@
         <SteadyState Duration="60" Power="0.95" pace="0" />
         <SteadyState Duration="45" Power="1.1" pace="0" />
         <SteadyState Duration="45" Power="1.2" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.35" PowerHigh="0.55" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.55" PowerHigh="0.35" pace="0" />
     </workout>
 </workout_file>

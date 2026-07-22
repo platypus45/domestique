@@ -6,6 +6,6 @@
     <sportType>bike</sportType>
     <workout>
         <SteadyState Duration="120" Power="0.5" pace="0" />
-        <Cooldown Duration="180" PowerLow="0.3" PowerHigh="0.5" pace="0" />
+        <Cooldown Duration="180" PowerLow="0.5" PowerHigh="0.3" pace="0" />
     </workout>
 </workout_file>

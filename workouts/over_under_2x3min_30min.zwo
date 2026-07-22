@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>VO2max (30min)</name>
-    <description>Warmup: 3min from 55% to 75% FTP | Steady: 2min @ 50% FTP | Steady: 3min @ 85% FTP | Steady: 2min @ 50% FTP | Steady: 1min @ 95% FTP | Steady: 1min @ 50% FTP | Steady: 2min @ 95% FTP | Steady: 2min @ 50% FTP | Steady: 2min @ 102% FTP | Steady: 2min @ 50% FTP | Steady: 1min @ 110% FTP | Steady: 2min @ 50% FTP | Steady: 2min @ 110% FTP | Steady: 2min @ 50% FTP | Cooldown: 3min from 45% to 65% FTP</description>
+    <description>Warmup: 3min from 55% to 75% FTP | Steady: 2min @ 50% FTP | Steady: 3min @ 85% FTP | Steady: 2min @ 50% FTP | Steady: 1min @ 95% FTP | Steady: 1min @ 50% FTP | Steady: 2min @ 95% FTP | Steady: 2min @ 50% FTP | Steady: 2min @ 102% FTP | Steady: 2min @ 50% FTP | Steady: 1min @ 110% FTP | Steady: 2min @ 50% FTP | Steady: 2min @ 110% FTP | Steady: 2min @ 50% FTP | Cooldown: 3min from 65% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="180" PowerLow="0.55" PowerHigh="0.75" pace="0" />
@@ -19,6 +19,6 @@
         <SteadyState Duration="120" Power="0.5" pace="0" />
         <SteadyState Duration="120" Power="1.1" pace="0" />
         <SteadyState Duration="120" Power="0.5" pace="0" />
-        <Cooldown Duration="180" PowerLow="0.45" PowerHigh="0.65" pace="0" />
+        <Cooldown Duration="180" PowerLow="0.65" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

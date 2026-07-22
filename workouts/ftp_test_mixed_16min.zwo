@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Tempo 16min — Z1</name>
-    <description>Warmup: 5min from 35% to 55% FTP | Steady: 2min @ 60% FTP | Steady: 2min @ 70% FTP | Steady: 2min @ 85% FTP | Steady: 1min @ 100% FTP | Steady: 30s @ 110% FTP | Steady: 2min @ 55% FTP | Cooldown: 1min from 35% to 55% FTP</description>
+    <description>Warmup: 5min from 35% to 55% FTP | Steady: 2min @ 60% FTP | Steady: 2min @ 70% FTP | Steady: 2min @ 85% FTP | Steady: 1min @ 100% FTP | Steady: 30s @ 110% FTP | Steady: 2min @ 55% FTP | Cooldown: 1min from 55% to 35% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="300" PowerLow="0.35" PowerHigh="0.55" pace="0" />
@@ -12,6 +12,6 @@
         <SteadyState Duration="60" Power="1" pace="0" />
         <SteadyState Duration="30" Power="1.1" pace="0" />
         <SteadyState Duration="120" Power="0.55" pace="0" />
-        <Cooldown Duration="60" PowerLow="0.35" PowerHigh="0.55" pace="0" />
+        <Cooldown Duration="60" PowerLow="0.55" PowerHigh="0.35" pace="0" />
     </workout>
 </workout_file>

@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Mixed 7x1min (60min)</name>
-    <description>Warmup: 5min from 40% to 60% FTP | Intervals: 7 x (1min @ 95% / 1min @ 55%) | Cooldown: 5min from 40% to 60% FTP</description>
+    <description>Warmup: 5min from 40% to 60% FTP | Intervals: 7 x (1min @ 95% / 1min @ 55%) | Cooldown: 5min from 60% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="300" PowerLow="0.4" PowerHigh="0.6" pace="0" />
@@ -33,6 +33,6 @@
         <Ramp Duration="30" PowerLow="0.95" PowerHigh="1.2" pace="0" />
         <SteadyState Duration="60" Power="0.55" pace="0" />
         <SteadyState Duration="300" Power="0.6" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.4" PowerHigh="0.6" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.6" PowerHigh="0.4" pace="0" />
     </workout>
 </workout_file>

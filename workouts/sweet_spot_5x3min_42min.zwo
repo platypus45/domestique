@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Sweet Spot (42min)</name>
-    <description>Warmup: 10min from 40% to 73% FTP | Steady: 2min @ 53% FTP | Steady: 3min @ 86% FTP | Steady: 3min @ 89% FTP | Steady: 3min @ 53% FTP | Steady: 3min @ 89% FTP | Steady: 3min @ 86% FTP | Steady: 3min @ 53% FTP | Steady: 3min @ 86% FTP | Steady: 3min @ 89% FTP | Steady: 3min @ 53% FTP | Cooldown: 3min from 40% to 53% FTP</description>
+    <description>Warmup: 10min from 40% to 73% FTP | Steady: 2min @ 53% FTP | Steady: 3min @ 86% FTP | Steady: 3min @ 89% FTP | Steady: 3min @ 53% FTP | Steady: 3min @ 89% FTP | Steady: 3min @ 86% FTP | Steady: 3min @ 53% FTP | Steady: 3min @ 86% FTP | Steady: 3min @ 89% FTP | Steady: 3min @ 53% FTP | Cooldown: 3min from 53% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="600" PowerLow="0.4" PowerHigh="0.73" pace="0" />
@@ -16,6 +16,6 @@
         <SteadyState Duration="180" Power="0.86" pace="0" />
         <SteadyState Duration="180" Power="0.89" pace="0" />
         <SteadyState Duration="180" Power="0.53" pace="0" />
-        <Cooldown Duration="180" PowerLow="0.4" PowerHigh="0.53" pace="0" />
+        <Cooldown Duration="180" PowerLow="0.53" PowerHigh="0.4" pace="0" />
     </workout>
 </workout_file>

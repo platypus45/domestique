@@ -1,5 +1,10 @@
 # Changelog
 
+## v3.5.1 — One press to ride the original, and see it first (2026-07-21)
+
+- **"Ride the original … anyway" works on the first press.** A security check pinned the app to its default port; served on any other port, every button press was silently rejected — the modal just stayed open. The check now accepts any local port (and still blocks anything that isn't your own machine).
+- **Preview before you commit.** The adjusted-day modal's "Original plan" block now opens into a real chart of the workout it would restore — the actual intervals at your watts, captioned as exactly what "Ride the original anyway" brings back. Collapsed by default so the adjusted session stays the riding instruction.
+
 ## v3.5.0 — Honest numbers, and hard days that stay off your easy days (2026-07-21)
 
 - **Workout TSS is correct now — and most numbers go up.** Workouts were scored with a formula that under-read intervals and surges, while your *rides* were scored the standard way — so planned and completed training were in different units, which also skewed the load-ramp safety check. Both now use the method intervals.icu and TrainingPeaks use. Expect ~+9% on a typical workout, more on sharp intervals, almost nothing on steady endurance. Past rides and completed weeks were not rewritten.

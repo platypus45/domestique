@@ -1,5 +1,9 @@
 # Changelog
 
+## v3.5.2 — Cooldowns that actually cool down (2026-07-21)
+
+- **776 workouts ended with a "cooldown" that ramped UP.** The chart drew it descending, but the file told chronological trainer apps (MyWhoosh, Tacx) to ramp from 25% to 75% FTP at the end of the ride — one tester finished a VO2max session with an unplanned climb to threshold. All 776 now genuinely descend, matching the 2,873 workouts that were already authored correctly, and the descriptions say what the file does. One bonus find: a 30-second "cooldown" to 130% FTP. A permanent test keeps ascending cooldowns out of the library for good.
+
 ## v3.5.1 — One press to ride the original, and see it first (2026-07-21)
 
 - **"Ride the original … anyway" works on the first press.** A security check pinned the app to its default port; served on any other port, every button press was silently rejected — the modal just stayed open. The check now accepts any local port (and still blocks anything that isn't your own machine).

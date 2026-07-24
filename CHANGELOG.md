@@ -1,5 +1,12 @@
 # Changelog
 
+## v3.5.3 — A hike is not a ride (2026-07-24)
+
+- **Cross-training no longer completes your cycling sessions.** A hike, run, climb or ski day used to appear on the calendar with a green ✓ as if you had done the planned ride — and its time and TSS were counted as the day's training. Non-cycling activities now stay what they are: visible, weighted into recovery, but the planned session waits until you actually ride it. Your existing history is retagged automatically.
+- **Opening the app now syncs only what's new.** Every open used to re-download the full 90-day activity window — and quietly threw away the detailed power streams it had fetched before, re-downloading those too. Sync is now incremental since your last sync, keeps the streams it already has, and retries transient failures instead of giving up on a ride forever. "Sync now" in Settings still does a full 90-day pass — use it if a ride was uploaded late or edited on intervals.icu.
+- **Your theme choice sticks.** The app wiped its own browser storage on every launch, so it always reopened in dark mode (and forgot things like your chart date-range). Storage is persistent now — close in light mode, reopen in light mode.
+- Also: all of intervals.icu's cycling types (gravel, MTB, e-bike…) now count as riding everywhere — previously a gravel ride could be discounted as cross-training in the recovery math.
+
 ## v3.5.2 — Cooldowns that actually cool down (2026-07-21)
 
 - **776 workouts ended with a "cooldown" that ramped UP.** The chart drew it descending, but the file told chronological trainer apps (MyWhoosh, Tacx) to ramp from 25% to 75% FTP at the end of the ride — one tester finished a VO2max session with an unplanned climb to threshold. All 776 now genuinely descend, matching the 2,873 workouts that were already authored correctly, and the descriptions say what the file does. One bonus find: a 30-second "cooldown" to 130% FTP. A permanent test keeps ascending cooldowns out of the library for good.

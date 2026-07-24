@@ -18740,8 +18740,8 @@ def _sync_icu_activities_locked(force: bool = False) -> dict:
             "last_sync_at": _read_last_sync_at(),
         }
 
+    last = _read_last_sync_at()
     if not force:
-        last = _read_last_sync_at()
         if last is not None and (time.time() - last) < 3600:
             return {
                 "added": 0, "updated": 0,
@@ -18759,8 +18759,17 @@ def _sync_icu_activities_locked(force: bool = False) -> dict:
     # network fetch stays OUTSIDE any lock; each write below is gated.
     _snap = _sync_task_snapshot()
 
+    # v3.5.3 — incremental window. .last_sync_at was only a 1-hour throttle;
+    # the fetch itself always pulled the full 90-day window and re-persisted
+    # every activity in it, so every app open looked (and cost) like a full
+    # resync. Bound the window by time-since-last-sync instead: 7-day floor
+    # because ICU's window filters on activity START date, not upload time
+    # (a ride uploaded days late must still fall inside), +2d slack, 90-day
+    # cap preserves first-sync and post-OAuth-reset (_write_last_sync_at(0))
+    # behavior unchanged.
+    _sync_days = 90 if not last else min(90, max(7, int((time.time() - last) / 86400) + 2))
     try:
-        activities = _training.fetch_recent_activities(days=90)
+        activities = _training.fetch_recent_activities(days=_sync_days)
     except Exception as e:
         _log.warning(f"_sync_icu_activities: fetch failed: {e}")
         return {
@@ -18860,6 +18869,19 @@ def _sync_icu_activities_locked(force: bool = False) -> dict:
             _write_last_sync_at(now)
     except db.SyncAborted:
         _log.info("_sync_icu_activities: last_sync_at stamp skipped (profile switched)")
+    # v3.5.3 — one-time sport backfill for ICU envelopes OUTSIDE the (now
+    # incremental) fetch window. The sport key only started persisting in
+    # v3.5.3, and the bounded window above means old files would never be
+    # re-fetched to pick it up — leaving historical hikes/runs mislabeled as
+    # rides forever. db.activities.id IS the ICU id and its sport column was
+    # always mapped correctly, so copy it across once (marker-guarded).
+    try:
+        with db.sync_write_gate(_snap):
+            _rs.backfill_icu_sports_from_db()
+    except db.SyncAborted:
+        pass
+    except Exception as e:  # noqa: BLE001 — best-effort heal, never break sync
+        _log.debug(f"sport backfill swallowed: {e}")
     # v2.2.6 perf — new/updated rides were just written to disk; drop the
     # memoised archive caches (cached("all_rides") + cached("recent_dfa_
     # decoupling")) so the `total` below — and every downstream reader on this

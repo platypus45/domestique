@@ -761,7 +761,19 @@ def main():
             js_api=JsApi(),  # WKWebView ignores <a download>; JS calls
                              # window.pywebview.api.save_zwo/save_fit instead.
         )
-        webview.start()  # blocks until the window closes
+        # v3.5.3 — pywebview defaults to private_mode=True; on macOS the
+        # cocoa backend implements that by WIPING the default
+        # WKWebsiteDataStore at every window creation, so ALL localStorage
+        # (theme choice, volume-unit toggle, FF date range, DFA throttle
+        # stamps) died between launches — the app always reopened in dark
+        # mode. private_mode=False keeps the persistent store, unwiped.
+        # storage_path pins the Windows WebView2 profile inside the
+        # Domestique data dir (ignored by the cocoa backend).
+        from user_home import domestique_home as _dh
+        webview.start(  # blocks until the window closes
+            private_mode=False,
+            storage_path=str(_dh() / "webview"),
+        )
 
     # v2.2.x WIN-CLR-COLDSTART: on a COLD first Windows launch the pythonnet CLR
     # can fail to resolve ("Failed to resolve Python.Runtime.Loader.Initialize

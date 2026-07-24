@@ -26,6 +26,18 @@ _DFA_CARRY_KEYS = (
     "dfa_algo_version", "dfa_timeout_count",
 )
 
+# v3.5.3 — locally-hydrated stream state the ICU payload never carries. The
+# power-curve backfill writes ride["streams"] (+ terminal markers) into the
+# persisted envelope; re-persisting on the hourly re-sync used to overwrite
+# the file WITHOUT them, flipping power_curve's needs-refetch back on and
+# re-downloading per-activity streams for the whole window every open (and
+# starving every streams consumer — fidelity axis, fatigue resistance —
+# down to whatever the last backfill managed). Same carry-forward pattern
+# as _DFA_CARRY_KEYS: norm never contains these keys, so setdefault fills.
+_BACKFILL_CARRY_KEYS = (
+    "streams", "no_streams_available", "streams_fetch_failed_at",
+)
+
 
 def _active_profile_dir() -> Path:
     """AC2a: the ACTIVE profile's directory — every archive dir hangs off it.
@@ -317,6 +329,13 @@ def _normalize_icu_activity(a: dict) -> dict:
         "ride_id": f"icu_{icu_id}",
         "source": "icu",
         "external_id": icu_id,
+        # v3.5.3 — persist ICU's activity type ("Hike", "Ride", "VirtualRide",
+        # …). Same source fields db.py uses for the activities table. Without
+        # this every ICU record was sport-less, and _is_cycling_sport("")'s
+        # deliberate empty→cycling default (for untagged local FITs) let a
+        # HIKE become the calendar day's "actual" ride — green ✓ on a planned
+        # cycling session the rider never did.
+        "sport": _pick("type", "sport_type") or "",
         "name": name,
         "started_at": started_at,
         "duration_s": int(duration or 0),
@@ -354,6 +373,58 @@ def _normalize_icu_activity(a: dict) -> dict:
         "polarization": polarization,
         "samples_url": f"/api/ride/icu_{icu_id}/detail?include=samples",
     }
+
+
+def backfill_icu_sports_from_db() -> int:
+    """v3.5.3 one-shot: copy ``sport`` from db.activities into ICU envelopes
+    that predate the sport key (older than the incremental sync window, so
+    they will never be re-fetched to heal themselves).
+
+    db.activities.id is the ICU id verbatim and its sport column was always
+    mapped from the same payload fields, so this is a pure key copy. Marker-
+    guarded per profile ICU dir; returns the number of files healed (0 on
+    marker present / nothing to do). Best-effort per file.
+    """
+    icu_dir = _icu_rides_dir()
+    marker = icu_dir / ".sport_backfill_done"
+    if marker.exists():
+        return 0
+    try:
+        import db as _db
+        rows = _db.get_db().execute(
+            "SELECT id, sport FROM activities WHERE sport IS NOT NULL AND sport != ''"
+        ).fetchall()
+    except Exception as e:  # noqa: BLE001 — no db, nothing to copy from
+        log.debug(f"sport backfill: db read failed: {e}")
+        return 0
+    sport_by_id = {str(r[0]): str(r[1]) for r in rows}
+    if not sport_by_id:
+        # Nothing to copy from — do NOT stamp the marker: an empty read can
+        # mean "wrong db context" (profile not active yet) rather than "no
+        # sports exist"; leaving the marker off lets a later, correctly-
+        # contexted sync heal.
+        return 0
+    healed = 0
+    for p in icu_dir.glob("*.json"):
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or data.get("sport"):
+                continue
+            sport = sport_by_id.get(str(data.get("external_id") or p.stem))
+            if not sport:
+                continue
+            data["sport"] = sport
+            p.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            healed += 1
+        except Exception as e:  # noqa: BLE001 — skip the file, heal the rest
+            log.debug(f"sport backfill: {p.name}: {e}")
+    try:
+        marker.write_text("v3.5.3\n", encoding="utf-8")
+    except OSError:
+        pass
+    if healed:
+        log.info(f"sport backfill: healed {healed} ICU envelope(s) from db")
+    return healed
 
 
 def persist_icu_activity(activity: dict) -> Path | None:
@@ -395,6 +466,16 @@ def persist_icu_activity(activity: dict) -> Path | None:
                 for k in _DFA_CARRY_KEYS:
                     if prior.get(k) is not None:
                         prior_dfa[k] = prior[k]
+                for k in _BACKFILL_CARRY_KEYS:
+                    if prior.get(k) is not None:
+                        prior_dfa[k] = prior[k]
+                # `efforts` IS a norm key (ICU intervals-derived), so
+                # setdefault can't carry it — but the backfill's version
+                # (derived from full 1 Hz streams) is strictly richer than
+                # a fresh payload's empty list. Only prefer prior when the
+                # fresh normalization produced nothing.
+                if prior.get("efforts") and not norm.get("efforts"):
+                    norm["efforts"] = prior["efforts"]
         except (json.JSONDecodeError, OSError) as e:
             log.debug(f"persist_icu_activity({icu_id}) prior read: {e}")
     if prior_prs is not None:

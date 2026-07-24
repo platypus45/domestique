@@ -26,17 +26,22 @@ _DFA_CARRY_KEYS = (
     "dfa_algo_version", "dfa_timeout_count",
 )
 
-# v3.5.3 — locally-hydrated stream state the ICU payload never carries. The
-# power-curve backfill writes ride["streams"] (+ terminal markers) into the
-# persisted envelope; re-persisting on the hourly re-sync used to overwrite
-# the file WITHOUT them, flipping power_curve's needs-refetch back on and
-# re-downloading per-activity streams for the whole window every open (and
-# starving every streams consumer — fidelity axis, fatigue resistance —
-# down to whatever the last backfill managed). Same carry-forward pattern
-# as _DFA_CARRY_KEYS: norm never contains these keys, so setdefault fills.
-_BACKFILL_CARRY_KEYS = (
-    "streams", "no_streams_available", "streams_fetch_failed_at",
-)
+# v3.5.3 — locally-hydrated stream data the ICU payload never carries. The
+# power-curve backfill writes ride["streams"] into the persisted envelope;
+# re-persisting on the hourly re-sync used to overwrite the file WITHOUT it,
+# flipping power_curve's needs-refetch back on and re-downloading per-
+# activity streams for the whole window every open (and starving every
+# streams consumer — fidelity axis, fatigue resistance — down to whatever
+# the last backfill managed). Same carry-forward pattern as _DFA_CARRY_KEYS.
+#
+# DELIBERATELY NOT carried: the terminal markers no_streams_available /
+# streams_fetch_failed_at. Carrying them made a TRANSIENT failure permanent
+# (an ICU 429 mid-backfill stamped the marker, every future re-persist kept
+# it, _needs_refetch never fired again, and no reader implements a retry-
+# after). Letting the re-persist clear them restores the pre-v3.5.3 retry
+# semantics — a genuinely streamless ride is re-probed at most once per
+# backfill pass, which is exactly what the hourly wipe used to cost.
+_BACKFILL_CARRY_KEYS = ("streams",)
 
 
 def _active_profile_dir() -> Path:
@@ -418,16 +423,28 @@ def backfill_icu_sports_from_db() -> int:
             healed += 1
         except Exception as e:  # noqa: BLE001 — skip the file, heal the rest
             log.debug(f"sport backfill: {p.name}: {e}")
+    # Stamp the marker only when every envelope now carries a sport — a
+    # partially-healed dir (rows missing from db) stays retryable: a later
+    # sync may know more, and the sweep itself is milliseconds for ~100
+    # files, so retrying until clean is cheaper than permanent misclass.
     try:
-        marker.write_text("v3.5.3\n", encoding="utf-8")
-    except OSError:
-        pass
+        unhealed = sum(
+            1 for p in icu_dir.glob("*.json")
+            if not (json.loads(p.read_text(encoding="utf-8")) or {}).get("sport")
+        )
+    except Exception:  # noqa: BLE001
+        unhealed = 1  # unknown state — do not stamp
+    if unhealed == 0:
+        try:
+            marker.write_text("v3.5.3\n", encoding="utf-8")
+        except OSError:
+            pass
     if healed:
         log.info(f"sport backfill: healed {healed} ICU envelope(s) from db")
     return healed
 
 
-def persist_icu_activity(activity: dict) -> Path | None:
+def persist_icu_activity(activity: dict, carry_hydrated: bool = True) -> Path | None:
     """v4.4.0 — write a normalized ICU activity record to the ICU rides dir.
 
     Idempotent: overwrites an existing file with the same id. Returns the
@@ -466,16 +483,17 @@ def persist_icu_activity(activity: dict) -> Path | None:
                 for k in _DFA_CARRY_KEYS:
                     if prior.get(k) is not None:
                         prior_dfa[k] = prior[k]
-                for k in _BACKFILL_CARRY_KEYS:
-                    if prior.get(k) is not None:
-                        prior_dfa[k] = prior[k]
-                # `efforts` IS a norm key (ICU intervals-derived), so
-                # setdefault can't carry it — but the backfill's version
-                # (derived from full 1 Hz streams) is strictly richer than
-                # a fresh payload's empty list. Only prefer prior when the
-                # fresh normalization produced nothing.
-                if prior.get("efforts") and not norm.get("efforts"):
-                    norm["efforts"] = prior["efforts"]
+                if carry_hydrated:
+                    for k in _BACKFILL_CARRY_KEYS:
+                        if prior.get(k) is not None:
+                            prior_dfa[k] = prior[k]
+                    # `efforts` IS a norm key (ICU intervals-derived), so
+                    # setdefault can't carry it — but the backfill's version
+                    # (derived from full 1 Hz streams) is strictly richer
+                    # than a fresh payload's empty list. Only prefer prior
+                    # when the fresh normalization produced nothing.
+                    if prior.get("efforts") and not norm.get("efforts"):
+                        norm["efforts"] = prior["efforts"]
         except (json.JSONDecodeError, OSError) as e:
             log.debug(f"persist_icu_activity({icu_id}) prior read: {e}")
     if prior_prs is not None:

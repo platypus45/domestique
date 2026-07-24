@@ -10482,7 +10482,14 @@ def _classify_exposure(activity: dict, lthr: float) -> str:
     return "low_aerobic"
 
 
-_CYCLING_SPORTS = frozenset({"Ride", "VirtualRide", "EBikeRide"})
+# v3.5.3 — full ICU cycling taxonomy. The old 3-entry set predated sport
+# being persisted on ICU envelopes; once envelopes carry real types, the
+# offline /api/activities fallback feeds typed GravelRide/MountainBikeRide
+# records here, and a genuine ride must never fail the planned-day match.
+_CYCLING_SPORTS = frozenset({
+    "Ride", "VirtualRide", "EBikeRide", "GravelRide", "MountainBikeRide",
+    "EMountainBikeRide", "Handcycle", "Velomobile",
+})
 
 
 # Map planned session_type → expected exposure band (used by /api/week-summary
@@ -11518,6 +11525,7 @@ def _api_today_session_impl():
     # Sport recovery multipliers: running=1.2x, climbing=0.6x, strength=0.5x, hiking=0.4x
     SPORT_RECOVERY_WEIGHT = {
         "Ride": 1.0, "VirtualRide": 1.0, "GravelRide": 1.0,
+        "MountainBikeRide": 1.0, "EBikeRide": 1.0, "EMountainBikeRide": 1.0,
         "Run": 1.2, "TrailRun": 1.3,  # higher muscular load
         "RockClimbing": 0.6,  # grip/upper body, less cardio fatigue
         "Hike": 0.4,  # low intensity
@@ -18767,7 +18775,11 @@ def _sync_icu_activities_locked(force: bool = False) -> dict:
     # (a ride uploaded days late must still fall inside), +2d slack, 90-day
     # cap preserves first-sync and post-OAuth-reset (_write_last_sync_at(0))
     # behavior unchanged.
-    _sync_days = 90 if not last else min(90, max(7, int((time.time() - last) / 86400) + 2))
+    # force=True ("Sync Now", the today-missing kick) gets the FULL window —
+    # it is the user's escape hatch for late-uploaded rides and ICU-side
+    # edits older than the incremental window; without it a ride recorded
+    # 10 days ago but uploaded today would be silently unreachable forever.
+    _sync_days = 90 if (force or not last) else min(90, max(7, int((time.time() - last) / 86400) + 2))
     try:
         activities = _training.fetch_recent_activities(days=_sync_days)
     except Exception as e:
@@ -19701,7 +19713,11 @@ def _maybe_enrich_icu_record(rec: dict) -> dict:
             if full:
                 try:
                     import ride_storage as _rs
-                    new_path = _rs.persist_icu_activity(full)
+                    # carry_hydrated=False: this endpoint IS the per-ride
+                    # refresh — a fresh detail fetch must be able to replace
+                    # stale carried streams/efforts (ICU re-processed the
+                    # activity), not be setdefault-blocked by them.
+                    new_path = _rs.persist_icu_activity(full, carry_hydrated=False)
                     if new_path is not None:
                         new_rec = _rs.get_icu_ride(str(ext))
                         if new_rec:

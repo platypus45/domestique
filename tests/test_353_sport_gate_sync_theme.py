@@ -87,7 +87,7 @@ def test_hike_does_not_complete_a_planned_cycling_day():
 
 def test_ride_and_empty_sport_still_complete_the_day():
     today = date.today().isoformat()
-    for sport in ("Ride", "VirtualRide", ""):
+    for sport in ("Ride", "VirtualRide", "GravelRide", "MountainBikeRide", ""):
         payload = app_module.merge_plan_with_rides(
             _plan_week(), [_activity("icu_r", today, 3600, 50, sport)])
         wk = next(w for w in payload["weeks"] if w.get("is_current"))
@@ -118,6 +118,40 @@ def test_sport_backfill_heals_from_db_and_marks_once(tmp_path, monkeypatch):
     assert json.loads((icu / "i2.json").read_text())["sport"] == "Ride"  # untouched
     assert (icu / ".sport_backfill_done").exists()
     assert rs.backfill_icu_sports_from_db() == 0  # marker no-op
+
+
+def test_full_cycling_taxonomy_matches_planned():
+    """The offline /api/activities fallback now feeds typed envelopes into
+    _matches_planned — every real cycling type must count as the planned
+    session ridden; cross-sport must not."""
+    for sport in ("Ride", "VirtualRide", "EBikeRide", "GravelRide",
+                  "MountainBikeRide", "EMountainBikeRide"):
+        assert app_module._matches_planned([{"sport": sport}], "z2"), sport
+    for sport in ("Hike", "Run", "RockClimbing", "NordicSki"):
+        assert not app_module._matches_planned([{"sport": sport}], "z2"), sport
+
+
+def test_sport_backfill_partial_heal_does_not_stamp_marker(tmp_path, monkeypatch):
+    """One envelope healable, one not in db — marker must NOT stamp, so a
+    later sync (when db knows more) can finish the job."""
+    import db
+    icu = tmp_path / "icu"
+    icu.mkdir()
+    (icu / "i1.json").write_text(json.dumps({"external_id": "i1"}))
+    (icu / "i9.json").write_text(json.dumps({"external_id": "i9"}))  # not in db
+    monkeypatch.setattr(rs, "_icu_rides_dir", lambda: icu)
+    dbfile = tmp_path / "t.db"
+    monkeypatch.setattr(db, "DB_PATH", dbfile)
+    db.init_db()
+    db.get_db().execute(
+        "INSERT INTO activities (id, date, name, sport, duration_sec, tss) "
+        "VALUES ('i1','2026-01-01','x','Hike',100,5)")
+    db.get_db().commit()
+    assert rs.backfill_icu_sports_from_db() == 1
+    assert not (icu / ".sport_backfill_done").exists()
+    # retry heals nothing new but still doesn't stamp
+    assert rs.backfill_icu_sports_from_db() == 0
+    assert not (icu / ".sport_backfill_done").exists()
 
 
 def test_sport_backfill_empty_db_does_not_stamp_marker(tmp_path, monkeypatch):
@@ -154,14 +188,23 @@ def test_persist_carries_streams_and_markers_forward(tmp_path, monkeypatch):
     p2 = rs.persist_icu_activity(payload)
     fresh = json.loads(p2.read_text())
     assert fresh.get("streams") == {"watts": [200, 210]}
-    assert fresh.get("no_streams_available") is False
     assert fresh.get("efforts") == [{"duration": 60, "watts": 250}]
+    # Terminal markers are DELIBERATELY not carried: a transient 429 must
+    # stay retryable, not become a permanent streams blackout.
+    assert "no_streams_available" not in fresh
+    # The per-ride refresh endpoint bypasses the carry entirely so a fresh
+    # detail fetch can replace stale streams (ICU re-processed the ride).
+    p3 = rs.persist_icu_activity(payload, carry_hydrated=False)
+    assert "streams" not in json.loads(p3.read_text())
 
 
 def test_sync_window_bounds_and_source_pin():
     src = Path(app_module.__file__).read_text()
     assert "fetch_recent_activities(days=_sync_days)" in src
     assert "fetch_recent_activities(days=90)" not in src
+    # force=True ("Sync Now") is the escape hatch for late uploads and
+    # ICU-side edits beyond the incremental window — full window restored.
+    assert "90 if (force or not last)" in src
     # The formula: first sync (no marker) = 90d; steady state = small window.
     import time
     now = time.time()

@@ -11547,7 +11547,21 @@ def extend_continuous_plan(
     # rolling recalc, not just fresh generation. The Rønnestad floor still
     # covers the continuous phase separately (3.4.0 W1).
     if not _bp_mode and new_weeks:
-        _rolling_window = (current_plan_weeks or []) + new_weeks
+        # The window must be a TRAILING one. Passing the whole plan made a
+        # single anaerobic session in ANY past week satisfy the floor forever
+        # (measured: 12 successive weekly rollovers on the owner's real plan
+        # left FUTURE anaerobic at 0 every time — he'd get one session, ever).
+        # Take only the most recent kept weeks so kept + new == the horizon, so
+        # an exposure correctly AGES OUT after ~4 weeks and the cadence
+        # sustains. Position-based, not date-based, to keep the pass
+        # deterministic (the suite pins planner output); sorted explicitly
+        # because extend does not guarantee week order.
+        _keep_n = max(0, CONTINUOUS_HORIZON_WEEKS - len(new_weeks))
+        _kept_sorted = sorted(current_plan_weeks or [], key=lambda w: w.start)
+        # NB: `_kept_sorted[-0:]` would return the WHOLE list, silently
+        # restoring the count-all-history bug — guard the zero case.
+        _rolling_window = (
+            (_kept_sorted[-_keep_n:] if _keep_n > 0 else []) + new_weeks)
         _enforce_build2_peak_hard_floor(
             new_weeks, pool_index, plan_pick_counts,
             class_session_counts, class_distinct_files,

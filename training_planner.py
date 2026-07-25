@@ -5147,7 +5147,21 @@ def _session_type_from_row(row: dict) -> str:
     if fname.startswith("z2_") or fname.startswith("endurance_"):
         return "z2"
     if fname.startswith("ftp_test_"):
-        return "ftp_test"
+        # v3.5.4 — the NAME alone must not mint a maximal test. 28 rows are
+        # named ftp_test_* while their CONTENT is ordinary hard work (e.g.
+        # ftp_test_3x2min_42min.zwo classifies threshold_ladder — a 3x2min
+        # ladder is no FTP protocol). Stamped ftp_test by prefix alone, any of
+        # them can be drawn by the sampler into a hard slot and become an
+        # UNPLANNED maximal test: it bypasses _inject_mid_cycle_ftp_tests,
+        # which owns placement and only schedules a test where the previous
+        # calendar day is rest/easy, and it double-counts the retest cadence.
+        # Require the content to agree, per the project's content-based
+        # classification rule; otherwise fall through to content_class below.
+        # Genuine tests (Coggan-20, ramp) classify ftp_test and are unaffected.
+        _cc_ft = (row.get("ContentClass") or "").strip().lower()
+        _tags_ft = {str(t).strip().lower() for t in (row.get("Tags") or [])}
+        if _cc_ft == "ftp_test" or "ftp_test" in _tags_ft:
+            return "ftp_test"
 
     # Fallback: content_class
     cc = (row.get("ContentClass") or "").lower()

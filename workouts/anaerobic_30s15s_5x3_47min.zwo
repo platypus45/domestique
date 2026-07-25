@@ -1,0 +1,31 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Anaerobic 30s/15s 5x3 (47min)</name>
+    <description>Warmup: 7min ramp from 45% to 75% FTP, 3 x 30s fast-pedal drill @ 82%, primer 1min @ 88% + 1min @ 102% | Supramaximal microintervals: 5 sets x 3 x (30s @ 135% / 15s @ 45%), 3min 45s between sets | Cooldown: 5min from 65% to 45% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="420" PowerLow="0.45" PowerHigh="0.75" pace="0" />
+        <SteadyState Duration="30" Power="0.82" pace="0" Cadence="110" />
+        <SteadyState Duration="30" Power="0.45" pace="0" Cadence="85" />
+        <SteadyState Duration="30" Power="0.82" pace="0" Cadence="110" />
+        <SteadyState Duration="30" Power="0.45" pace="0" Cadence="85" />
+        <SteadyState Duration="30" Power="0.82" pace="0" Cadence="110" />
+        <SteadyState Duration="30" Power="0.45" pace="0" Cadence="85" />
+        <SteadyState Duration="60" Power="0.88" pace="0" />
+        <SteadyState Duration="60" Power="0.48" pace="0" />
+        <SteadyState Duration="60" Power="1.02" pace="0" />
+        <SteadyState Duration="60" Power="0.48" pace="0" />
+        <SteadyState Duration="105" Power="0.45" pace="0" />
+        <IntervalsT Repeat="3" OnDuration="30" OffDuration="15" OnPower="1.35" OffPower="0.45" pace="0" Cadence="95" CadenceResting="85" />
+        <SteadyState Duration="225" Power="0.45" pace="0" />
+        <IntervalsT Repeat="3" OnDuration="30" OffDuration="15" OnPower="1.35" OffPower="0.45" pace="0" Cadence="95" CadenceResting="85" />
+        <SteadyState Duration="225" Power="0.45" pace="0" />
+        <IntervalsT Repeat="3" OnDuration="30" OffDuration="15" OnPower="1.35" OffPower="0.45" pace="0" Cadence="95" CadenceResting="85" />
+        <SteadyState Duration="225" Power="0.45" pace="0" />
+        <IntervalsT Repeat="3" OnDuration="30" OffDuration="15" OnPower="1.35" OffPower="0.45" pace="0" Cadence="95" CadenceResting="85" />
+        <SteadyState Duration="225" Power="0.45" pace="0" />
+        <IntervalsT Repeat="3" OnDuration="30" OffDuration="15" OnPower="1.35" OffPower="0.45" pace="0" Cadence="95" CadenceResting="85" />
+        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+    </workout>
+</workout_file>

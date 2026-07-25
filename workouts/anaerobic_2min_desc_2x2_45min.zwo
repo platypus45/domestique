@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Anaerobic 2min descending 4x (45min)</name>
+    <description>Warmup: 7min ramp from 45% to 75% FTP, 3 x 30s fast-pedal drill @ 82%, primer 1min @ 88% + 1min @ 102% | Descending duration at rising power: 2 x (2min @ 132%) then 2 x (90s @ 140%), 5-6min recoveries | Cooldown: 5min from 65% to 45% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="420" PowerLow="0.45" PowerHigh="0.75" pace="0" />
+        <SteadyState Duration="30" Power="0.82" pace="0" Cadence="110" />
+        <SteadyState Duration="30" Power="0.45" pace="0" Cadence="85" />
+        <SteadyState Duration="30" Power="0.82" pace="0" Cadence="110" />
+        <SteadyState Duration="30" Power="0.45" pace="0" Cadence="85" />
+        <SteadyState Duration="30" Power="0.82" pace="0" Cadence="110" />
+        <SteadyState Duration="30" Power="0.45" pace="0" Cadence="85" />
+        <SteadyState Duration="60" Power="0.88" pace="0" />
+        <SteadyState Duration="60" Power="0.48" pace="0" />
+        <SteadyState Duration="60" Power="1.02" pace="0" />
+        <SteadyState Duration="60" Power="0.48" pace="0" />
+        <SteadyState Duration="105" Power="0.45" pace="0" />
+        <SteadyState Duration="120" Power="1.32" pace="0" />
+        <SteadyState Duration="360" Power="0.45" pace="0" />
+        <SteadyState Duration="120" Power="1.32" pace="0" />
+        <SteadyState Duration="360" Power="0.45" pace="0" />
+        <SteadyState Duration="90" Power="1.4" pace="0" />
+        <SteadyState Duration="300" Power="0.45" pace="0" />
+        <SteadyState Duration="90" Power="1.4" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+    </workout>
+</workout_file>

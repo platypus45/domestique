@@ -10504,6 +10504,16 @@ _SESSION_TYPE_TO_BAND = {
     "threshold":      "high_aerobic",
     "vo2max":         "anaerobic",
     "overunder":      "anaerobic",
+    # v3.5.4 — sprint/neuromuscular/anaerobic were MISSING, so a scheduled
+    # sprint session contributed 0 planned minutes to every exposure band and
+    # the week-summary bars read as if the day were empty. The planner's own
+    # SESSION_TYPE_TO_BAND (training_planner.py:1811) has always carried them;
+    # only this copy drifted. "sprint" is the emitted session_type;
+    # "neuromuscular"/"anaerobic" are content-class labels that reach here via
+    # adjusted/effective sessions.
+    "sprint":         "anaerobic",
+    "neuromuscular":  "anaerobic",
+    "anaerobic":      "anaerobic",
 }
 
 

@@ -1,0 +1,31 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Anaerobic 3min-to-45s rising ladder 5x (45min)</name>
+    <description>Warmup: 5min ramp from 45% to 75% FTP, 3 x 30s fast-pedal drill @ 82%, primer 1min @ 88% + 1min @ 102% | Duration falls as power rises: 3min @ 108%, 2min @ 116%, 1min 40s @ 126%, 1min 10s @ 138%, 45s @ 154% FTP, recoveries widening 3min 25s / 4min 15s / 4min 55s / 5min 20s @ 45% | Every rung is shorter and harder than the one before, and the recovery grows with it, so the ladder walks from VO2 power up past 150% of FTP with each rung still ridden fresh enough to hit its number | Cooldown: 5min from 65% to 45% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="300" PowerLow="0.45" PowerHigh="0.75" pace="0" />
+        <SteadyState Duration="30" Power="0.82" pace="0" Cadence="110" />
+        <SteadyState Duration="30" Power="0.45" pace="0" Cadence="85" />
+        <SteadyState Duration="30" Power="0.82" pace="0" Cadence="110" />
+        <SteadyState Duration="30" Power="0.45" pace="0" Cadence="85" />
+        <SteadyState Duration="30" Power="0.82" pace="0" Cadence="110" />
+        <SteadyState Duration="30" Power="0.45" pace="0" Cadence="85" />
+        <SteadyState Duration="60" Power="0.88" pace="0" />
+        <SteadyState Duration="60" Power="0.48" pace="0" />
+        <SteadyState Duration="60" Power="1.02" pace="0" />
+        <SteadyState Duration="60" Power="0.48" pace="0" />
+        <SteadyState Duration="90" Power="0.45" pace="0" />
+        <SteadyState Duration="180" Power="1.08" pace="0" />
+        <SteadyState Duration="205" Power="0.45" pace="0" />
+        <SteadyState Duration="120" Power="1.16" pace="0" />
+        <SteadyState Duration="255" Power="0.45" pace="0" />
+        <SteadyState Duration="100" Power="1.26" pace="0" />
+        <SteadyState Duration="295" Power="0.45" pace="0" />
+        <SteadyState Duration="70" Power="1.38" pace="0" />
+        <SteadyState Duration="320" Power="0.45" pace="0" />
+        <SteadyState Duration="45" Power="1.54" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+    </workout>
+</workout_file>

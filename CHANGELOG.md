@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.5.4 — Sprint and anaerobic work, actually scheduled (2026-07-25)
+
+- **You will now see sprint and anaerobic sessions.** If your plan has no end date it never scheduled them at all — 58% of freshly built plans contained zero, and the count was never more than one. Every rolling four-week block now carries at least one anaerobic and one sprint session, and it keeps coming back as each one ages out instead of appearing once and never again.
+- **23 new sprint and anaerobic workouts.** The library had almost nothing genuinely above threshold: no short supramaximal microintervals at all, two files in the entire 90-second band, and every "1-minute" session capped at 130% FTP. The additions cover 30s/15s and 40s/20s microintervals, 45-second and 1-minute efforts up to 168%, a descending 2-minute ladder, a race-style attack / hold / finishing-kick session, and four sprint sets including a ramped lead-out and a pre-fatigued sprint. All are fixed power targets your trainer holds directly — no guesswork about how hard "hard" is. A second batch adds shapes the library had no example of at all: a set whose recovery shrinks rep by rep at unchanged power, paired efforts with the rest collapsing toward nothing, a ladder stepping *down* in power at constant rep length, an inverse ladder where the reps get shorter as the power climbs, a full-recovery sprint set, a session contrasting low-cadence torque against high-cadence spinning at matched watts, descending microbursts, reps that fade under their own fatigue, and two easy endurance rides carrying real sprints at almost no training cost.
+- **Recovery weeks stay easy.** A deload week could pull in a 100-minute sweet-spot ride worth more than a third of the week's entire target — the opposite of recovery. Deload days now draw only genuinely easy rides.
+- **Sprint sessions appear in your week summary.** They were counting as zero planned minutes, so the exposure bars read as though the day were empty.
+- **No more surprise FTP tests.** A workout merely *named* like a test could be picked as an ordinary hard session, landing a maximal effort on a day with no easy day before it. Tests are only scheduled deliberately now.
+
 ## v3.5.3 — A hike is not a ride (2026-07-24)
 
 - **Cross-training no longer completes your cycling sessions.** A hike, run, climb or ski day used to appear on the calendar with a green ✓ as if you had done the planned ride — and its time and TSS were counted as the day's training. Non-cycling activities now stay what they are: visible, weighted into recovery, but the planned session waits until you actually ride it. Your existing history is retagged automatically.

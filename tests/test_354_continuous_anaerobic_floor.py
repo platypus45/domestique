@@ -93,6 +93,74 @@ def test_deload_week_carries_no_hard_session():
             assert not hard, f"seed {seed} deload wk{w.week_num} carried hard work: {hard}"
 
 
+def test_deload_pool_excludes_files_with_embedded_supra_work():
+    """v3.5.5 — class + aggregate IF are both blind to embedded sprints.
+
+    28 library files pass the class filter AND the deload IF ceiling while
+    carrying >=130% FTP work — some named recovery_* with 60s at >=150%, and the
+    sprint-in-endurance files sit at IF 0.73 with 8x10s @185%. A deload day
+    drawing one delivers real supramaximal reps in an unload week. The guard
+    must use the structural fact (t130), not just the aggregate.
+    """
+    import workout_facts as wf
+    W = Path(tp.__file__).resolve().parent / "workouts"
+    lib = tp.load_workout_library()
+    leaks = []
+    for row in lib:
+        if tp._content_class_for_row(row) not in tp._STEPBACK_EASY_CONTENT_CLASSES:
+            continue
+        if float(row.get("IF", 0) or 0) > tp._STEPBACK_MAX_IF:
+            continue
+        f = wf.get_facts(W, row.get("File") or "") or {}
+        if (f.get("t130") or 0) > 0:
+            leaks.append((row["File"], row["IF"], f.get("t130"), f.get("t150")))
+    # These rows still exist in the library — the point is the SAMPLER must not
+    # be able to draw them into a stepback week. Pin the predicate the sampler
+    # uses, so a future refactor that drops the facts check fails here.
+    src = Path(tp.__file__).read_text()
+    block = src[src.index("def _deload_ok(w):"):]
+    block = block[:block.index("endurance_pool = [w for w in endurance_pool if _deload_ok(w)]")]
+    assert '(f.get("t130") or 0) <= 0' in block, (
+        "deload guard lost its structural facts check — class + IF alone let "
+        f"{len(leaks)} files with >=130% FTP work into unload weeks")
+    assert "_STEPBACK_EASY_CONTENT_CLASSES" in block
+    assert "_STEPBACK_MAX_IF" in block
+
+
+def test_new_supra_files_are_not_deload_eligible():
+    """The three v3.5.4 files this pins were the ones that exposed the leak."""
+    import workout_facts as wf
+    W = Path(tp.__file__).resolve().parent / "workouts"
+    lib = {r["File"]: r for r in tp.load_workout_library()}
+    for fn in ("endurance_12s348s_6x_60min.zwo",
+               "endurance_10s380s_8x_84min.zwo",
+               "neuromuscular_30s360s_4x_41min.zwo"):
+        row = lib.get(fn)
+        if row is None:
+            continue  # file retired later; nothing to assert
+        f = wf.get_facts(W, fn) or {}
+        cls_ok = tp._content_class_for_row(row) in tp._STEPBACK_EASY_CONTENT_CLASSES
+        if_ok = float(row.get("IF", 0) or 0) <= tp._STEPBACK_MAX_IF
+        t130_ok = (f.get("t130") or 0) <= 0
+        assert not (cls_ok and if_ok and t130_ok), (
+            f"{fn} is deload-eligible but carries {f.get('t130')}s at >=130% FTP")
+
+
+def test_sprint_slot_files_keep_real_if_headroom():
+    """v3.5.5 — a file sitting 0.002 under the sprint-slot IF ceiling is
+    correct today and silently unroutable after any metric drift. Require real
+    headroom on the neuromuscular files authored for that slot."""
+    lib = {r["File"]: r for r in tp.load_workout_library()}
+    row = lib.get("neuromuscular_30s360s_4x_41min.zwo")
+    if row is None:
+        pytest.skip("file retired")
+    margin = tp._SPRINT_SLOT_IF_CEILING - float(row["IF"])
+    assert margin >= 0.010, (
+        f"IF {row['IF']:.4f} leaves only {margin:+.4f} under the "
+        f"{tp._SPRINT_SLOT_IF_CEILING} sprint ceiling — too brittle")
+    assert tp.file_admissible("sprint", row), "must still serve a sprint slot"
+
+
 def _elapse_one_week(weeks):
     """Shift every week back 7 days == one real week passing. The ONLY way to
     make extend_continuous_plan actually append; without this the horizon is

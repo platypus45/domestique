@@ -5465,11 +5465,25 @@ def sample_week_workouts(
         # draws only genuinely easy rides. 0.75 sits below the sweet-spot floor
         # and above the median easy-strides ride (0.68), keeping ~127 endurance_
         # intervals + the whole endurance/recovery pool eligible.
-        endurance_pool = [
-            w for w in endurance_pool
-            if _content_class_for_row(w) in _STEPBACK_EASY_CONTENT_CLASSES
-            and float(w.get("IF", 0) or 0) <= _STEPBACK_MAX_IF
-        ]
+        # v3.5.5 — class + aggregate IF are BOTH blind to embedded sprints. 28
+        # files pass those two filters while carrying >=130% FTP work, some
+        # literally named recovery_* with 60s at >=150% (and the new
+        # sprint-in-endurance files sit at IF 0.73 with 8x10s @185%). A deload
+        # day drawing one of those delivers real supramaximal reps in an unload
+        # week. Structural facts are the sound signal — same lesson as the
+        # label/facts guard: an aggregate never sees a discrete hard rep. Pool
+        # cost is negligible (872 -> 844 eligible files).
+        def _deload_ok(w):
+            if _content_class_for_row(w) not in _STEPBACK_EASY_CONTENT_CLASSES:
+                return False
+            if float(w.get("IF", 0) or 0) > _STEPBACK_MAX_IF:
+                return False
+            f = workout_facts.get_facts(WORKOUT_DIR, w.get("File") or "") or {}
+            # Any time at/above 130% FTP disqualifies a deload draw. Missing
+            # facts (unparseable file) fail OPEN to the IF/class verdict above
+            # so a facts hiccup can't empty the deload pool.
+            return (f.get("t130") or 0) <= 0
+        endurance_pool = [w for w in endurance_pool if _deload_ok(w)]
 
     # Resolve per-day max minutes
     def _max_min_for(weekday: int) -> int:

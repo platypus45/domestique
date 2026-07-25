@@ -1,6 +1,6 @@
 {
  "version": 1,
- "workouts_dir_hash": "60d35f004f2abadccd58be6db07e31b80f04a7f5a44fdca8298f11adc027b7eb",
+ "workouts_dir_hash": "70184d148398a49468fa2e3b25cd313e9b2d2184361ca4aa9aa66e84e5890764",
  "count": 4285,
  "classifications": {
   "anaerobic_10x15s_59min.zwo": {
@@ -220023,7 +220023,7 @@
   "neuromuscular_30s360s_4x_41min.zwo": {
    "file": "neuromuscular_30s360s_4x_41min.zwo",
    "primary": "neuromuscular",
-   "display_name": "Neuromuscular 41min \u2014 4\u00d730s/6min @ 190%",
+   "display_name": "Neuromuscular 41min \u2014 4\u00d730s/6min @ 182%",
    "confidence": 0.6,
    "secondary_flags": {
     "has_threshold_work": false,
@@ -220053,9 +220053,9 @@
     "hard_segment_count": 5,
     "longest_hard_segment_s": 60,
     "sprint_segment_count": 4,
-    "np_fraction": 0.8185,
-    "if_fraction": 0.6798,
-    "peak_power_fraction": 1.9,
+    "np_fraction": 0.7948,
+    "if_fraction": 0.6691,
+    "peak_power_fraction": 1.82,
     "ou_transitions": 0,
     "micro_cycles": 0,
     "is_ladder": false,

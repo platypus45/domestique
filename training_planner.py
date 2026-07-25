@@ -4516,6 +4516,17 @@ _ENDURANCE_SLOT_CONTENT_CLASSES = frozenset({
     "sweet_spot", "recovery",
 })
 
+# v3.5.4 — the subset of endurance-slot classes that are genuinely EASY
+# (≤ upper-Z2 / low-Z3 aerobic). A stepback/deload week draws its endurance
+# slots from THIS set only, so Z3 tempo and Z3/Z4 sweet-spot content can't
+# sneak a hard session into an unload week.
+_STEPBACK_EASY_CONTENT_CLASSES = frozenset({
+    "endurance", "endurance_intervals", "recovery",
+})
+# v3.5.4 — deload-week IF ceiling (Coggan NP). Files above this are too dense
+# for an unload week even if their content class is nominally easy.
+_STEPBACK_MAX_IF = 0.75
+
 # v4.5.4 FIX-PLANNER-INTERVALS: classes whose .zwo files contain interval
 # shapes (4×8, 5×3, 30/30, sprints) — used to enforce a per-week interval
 # floor so the plan visibly mixes blocks instead of cycling through steady-
@@ -5423,6 +5434,28 @@ def sample_week_workouts(
     # by down-weighting workouts whose Z3+/Z4+ minutes blow the remaining
     # budget. Strict pool was tried; it caps distinct files at ~120.
     endurance_pool = pool_index["endurance"]
+    # v3.5.4 — stepback/deload intensity guard. hit_count=0 on a stepback week,
+    # so every non-rest slot is an endurance slot drawing from
+    # _ENDURANCE_SLOT_CONTENT_CLASSES — which includes `tempo` and `sweet_spot`
+    # (Z3/Z4 content). With no easy-only restriction a deload day could pull a
+    # 100-min sweet-spot ride (TSS 103) into a week targeting only 268 TSS, i.e.
+    # 38% of the "unload" week in one hard session — the opposite of Issurin
+    # unloading. Restrict the deload endurance pool to genuinely easy classes.
+    # endurance + endurance_intervals + recovery is a 400+ file pool, so this
+    # never starves the draw. (Load weeks are unchanged.)
+    if is_stepback:
+        # Class filter alone is too coarse: filenames lie, so an
+        # "endurance_intervals"-classed file can still carry sweet-spot-density
+        # work (e.g. sweetspot_5x0min_60min_v5.zwo, IF 0.795, TSS 64 in 61min,
+        # derives session_type="sweetspot"). Add an IF ceiling so a deload day
+        # draws only genuinely easy rides. 0.75 sits below the sweet-spot floor
+        # and above the median easy-strides ride (0.68), keeping ~127 endurance_
+        # intervals + the whole endurance/recovery pool eligible.
+        endurance_pool = [
+            w for w in endurance_pool
+            if _content_class_for_row(w) in _STEPBACK_EASY_CONTENT_CLASSES
+            and float(w.get("IF", 0) or 0) <= _STEPBACK_MAX_IF
+        ]
 
     # Resolve per-day max minutes
     def _max_min_for(weekday: int) -> int:
@@ -7107,6 +7140,7 @@ def _enforce_build2_peak_hard_floor(
     class_distinct_files: dict[str, set],
     used_names_dict: dict[str, int],
     used_names_set: set,
+    count_weeks: "list | None" = None,
 ) -> None:
     """v4.6.1 PLANNER-VARIETY+RONNESTAD — hard floor on build2 + peak phases.
 
@@ -7158,6 +7192,20 @@ def _enforce_build2_peak_hard_floor(
                    "threshold": 1, "vo2max": 1},
         "build2": {"vo2_short": 3, "anaerobic": 1, "neuromuscular": 1, "over_under": 1},
         "peak":   {"anaerobic": 1, "neuromuscular": 1, "vo2_short": 3},
+        # v3.5.4 — continuous plans are a single rolling "continuous" phase and
+        # were the ONLY plan type this floor never touched (it is phase-keyed to
+        # build/peak). Result: 58% of fresh continuous plans had ZERO anaerobic
+        # AND ZERO neuromuscular, despite the owner explicitly wanting sprint /
+        # anaerobic-capacity work for his group riding. ≥1 anaerobic + ≥1
+        # neuromuscular per 4-week rolling block ≈ one supra-threshold exposure
+        # every ~2 weeks — evidence-bounded (research caps anaerobic-family work
+        # at ≤1 quality session/wk; ANAEROBIC_OVERDUE_DAYS=7 in continuous_policy
+        # is the intent bar), never forced in the stepback week (excluded at the
+        # phase_weeks filter), and it displaces a low-stimulus steady slot rather
+        # than a hard aerobic session. The neuromuscular 6×4-8s "sprints inside
+        # easy rides" backbone is a separate, lighter mechanism (endurance_
+        # intervals content) — this floor guarantees the DEDICATED sessions.
+        "continuous": {"anaerobic": 1, "neuromuscular": 1},
     }
     # F1 (v2.1/B5): when opt-in block periodization is on, REPLACE the flat
     # forced-4-shape floor with a BLOCK-AWARE floor — concentrate ~≥70% of each
@@ -7214,9 +7262,22 @@ def _enforce_build2_peak_hard_floor(
         phase_weeks = [w for w in weeks if w.phase == phase_name and not w.is_stepback]
         if not phase_weeks:
             continue
-        # Count current per-class picks
+        # Count current per-class picks. v3.5.4: when `count_weeks` is given
+        # (the extend_continuous_plan rolling-window path), the DEFICIT is
+        # counted over that wider window — kept weeks + the newly appended
+        # week — while the SWAP below still only touches `phase_weeks` (from
+        # `weeks`). extend appends ONE week at a time; counting only the new
+        # week would force 1 anaerobic + 1 neuromuscular EVERY week (spam that
+        # fights the weekly HIT cap). Counting over the 4-week rolling window
+        # yields the intended ~1-per-2-weeks cadence. Default None = count over
+        # `weeks`, so generate_plan / recalculate_plan callers are unchanged.
+        _count_src = count_weeks if count_weeks is not None else weeks
+        _count_weeks = [
+            w for w in _count_src
+            if w.phase == phase_name and not w.is_stepback
+        ]
         counts: dict[str, int] = {cc: 0 for cc in mins}
-        for w in phase_weeks:
+        for w in _count_weeks:
             for s in w.sessions:
                 if s.session_type == "rest":
                     continue
@@ -7241,10 +7302,18 @@ def _enforce_build2_peak_hard_floor(
             # whose by_class bucket is anaerobic but whose cache primary
             # is neuromuscular, the deficit count would be wrong on
             # downstream verification.
+            # v3.5.4 — respect the class-aware score floor here, not a flat 4.
+            # The plan-wide contract (test_only_score_5_plus_files_picked) is
+            # that no picked file scores below _class_aware_score_floor(cc), and
+            # vo2_short/anaerobic have a floor of 5. The old hard-coded `< 4`
+            # let this swap pass place a score-4 vo2_short — invisible while the
+            # floor never ran on continuous plans, now reachable via the new
+            # continuous row. Use the same floor the verifier uses.
+            _cc_floor = _class_aware_score_floor(cc_target)
             candidates = []
             cache_local = _load_content_classifications() or {}
             for w in by_class.get(cc_target) or []:
-                if (w.get("Score", 0) or 0) < 4:
+                if (w.get("Score", 0) or 0) < _cc_floor:
                     continue
                 fl = (w.get("File") or "")
                 ent = cache_local.get(fl) or cache_local.get(fl.split("/")[-1])
@@ -7258,7 +7327,7 @@ def _enforce_build2_peak_hard_floor(
             if not candidates:
                 candidates = [
                     w for w in (by_class.get(cc_target) or [])
-                    if (w.get("Score", 0) or 0) >= 4
+                    if (w.get("Score", 0) or 0) >= _cc_floor
                 ]
             if not candidates:
                 continue
@@ -7483,9 +7552,16 @@ def _enforce_weekly_hit_cap(weeks: list, library: list[dict]) -> None:
         return None
 
     for wk in weeks:
-        if getattr(wk, "is_stepback", False):
-            continue
-        cap = get_budget_for_phase(wk.phase).hit_count_max
+        # v3.5.4 — a stepback/deload week must carry ZERO HIT (Issurin
+        # unloading). Previously this pass SKIPPED stepback weeks, assuming
+        # plan_week's _pick_session left them HIT-free — but the sampler and
+        # the R4a/rematch coherence passes can inject a HIT-derived session
+        # (a tempo/sweet-spot file) into a stepback week that no later pass
+        # scrubbed. Enforce cap=0 here instead of skipping: this is the single
+        # place that already owns HIT demotion, so it catches every injection
+        # path. Non-stepback behaviour is unchanged.
+        _is_sb = getattr(wk, "is_stepback", False)
+        cap = 0 if _is_sb else get_budget_for_phase(wk.phase).hit_count_max
         # Recompute on each removal — demoting changes counts. The guard bounds
         # the loop to the number of sessions so a pathological library (no
         # non-HIT match for any slot) can't spin forever.
@@ -7497,6 +7573,15 @@ def _enforce_weekly_hit_cap(weeks: list, library: list[dict]) -> None:
                 (i, s) for i, s in enumerate(wk.sessions)
                 if _session_is_hit(s) and not getattr(s, "is_opener", False)
                 and not _protect_race(s)
+                # v3.5.4 — never demote a preserved rider-state session. This
+                # pass now also runs on stepback weeks (cap=0), whose future
+                # instances on the recalc path can carry done / dismissed /
+                # adapted / user-moved status; _demote_slot mints a fresh
+                # PlannedSession and would drop that status. §6.12 parity with
+                # the floor pass's _swappable guard.
+                and getattr(s, "status", "pending") == "pending"
+                and not getattr(s, "adapted", False)
+                and not getattr(s, "user_moved", False)
             ]
             if len(hit_slots) <= cap:
                 break
@@ -7527,8 +7612,10 @@ def _enforce_weekly_hit_cap(weeks: list, library: list[dict]) -> None:
             # Tempo keeps a touch of stimulus for longer slots; z2 is the safe
             # fallback (its match pool is endurance/recovery only — never HIT
             # content). Both paths are verified non-HIT by _demote_slot.
+            # On a stepback week demote straight to z2 — never tempo, which is
+            # itself a HIT type and would leave the deload week non-easy.
             matched = None
-            if slot.duration_min >= 60:
+            if not _is_sb and slot.duration_min >= 60:
                 matched = _demote_slot(slot, "tempo")
             if matched is None:
                 matched = _demote_slot(slot, "z2")
@@ -8446,7 +8533,14 @@ def _enforce_ronnestad_floor(
                 continue
             if not _is_ronn_file(fl):
                 continue
-            if (w.get("Score", 0) or 0) < 4:
+            # v3.5.4 — respect the class-aware score floor (was a flat < 4).
+            # The plan-wide contract forbids any picked file below
+            # _class_aware_score_floor(cc); a Rønnestad-tagged vo2_short at
+            # score 4 (floor 5) slipped in here. Surfaced once the continuous
+            # anaerobic floor + tightened build-floor thresholds shifted the
+            # per-phase deficit onto this pass.
+            _cc = _content_class_for_row(w)
+            if (w.get("Score", 0) or 0) < _class_aware_score_floor(_cc):
                 continue
             seen_files.add(fl)
             ronn_candidates.append(w)
@@ -11444,9 +11538,21 @@ def extend_continuous_plan(
         week_num += 1
 
     # ── Post passes, NEW weeks only (recalc parity minus event passes) ──────
-    # The build2/peak hard floor is phase-keyed and can't match "continuous";
-    # the Rønnestad floor now covers the continuous phase (3.4.0 W1).
+    # v3.5.4 — the hard floor now HAS a "continuous" row, so it applies here
+    # too. Swap only in the appended weeks (`new_weeks`) but count the deficit
+    # over the 4-week rolling window (kept weeks + new) via count_weeks — so a
+    # single appended week doesn't get an anaerobic AND neuromuscular forced
+    # into it every extend (that would spam and blow the weekly HIT cap). This
+    # is what makes the anaerobic/neuromuscular guarantee SURVIVE the weekly
+    # rolling recalc, not just fresh generation. The Rønnestad floor still
+    # covers the continuous phase separately (3.4.0 W1).
     if not _bp_mode and new_weeks:
+        _rolling_window = (current_plan_weeks or []) + new_weeks
+        _enforce_build2_peak_hard_floor(
+            new_weeks, pool_index, plan_pick_counts,
+            class_session_counts, class_distinct_files,
+            used_names_dict, used_names,
+            count_weeks=_rolling_window)
         _enforce_ronnestad_floor(new_weeks, pool_index, plan_pick_counts)
     _enforce_weekly_hit_cap(new_weeks, library)
 

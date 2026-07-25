@@ -1,5 +1,10 @@
 # Changelog
 
+## v3.5.5 — Recovery weeks that are actually recovery (2026-07-26)
+
+- **Sprints can no longer hide inside a recovery week.** v3.5.4 stopped deload weeks pulling in hard *sessions*, but it judged a ride by its overall intensity — which is blind to short sprints buried in an otherwise-easy ride. 28 workouts slipped through that way, including several named "recovery" that hold a full minute above 150% FTP. A recovery week now excludes any ride containing supra-threshold efforts at all, however short.
+- **One sprint session retuned.** Its efforts sat a hair under the limit that decides whether a workout can be scheduled as sprint work — correct, but close enough that any future change to how intensity is measured would have silently made it unusable. Efforts eased from 190% to 182% FTP, keeping the same session with far more headroom.
+
 ## v3.5.4 — Sprint and anaerobic work, actually scheduled (2026-07-25)
 
 - **You will now see sprint and anaerobic sessions.** If your plan has no end date it never scheduled them at all — 58% of freshly built plans contained zero, and the count was never more than one. Every rolling four-week block now carries at least one anaerobic and one sprint session, and it keeps coming back as each one ages out instead of appearing once and never again.

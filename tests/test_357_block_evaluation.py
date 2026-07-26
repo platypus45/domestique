@@ -215,3 +215,118 @@ def test_laps_survive_a_resync(tmp_path, monkeypatch):
 def test_locked_lap_constants():
     assert sf.LAP_SHORT_FRAC == 0.80
     assert sf.LAP_POWER_TOL_FRAC == 0.10
+
+
+# ── alignment: the prescription and the head unit disagree about "work" ──────
+
+_Z_10x1 = """<workout_file><workout>
+  <Warmup Duration="600" PowerLow="0.50" PowerHigh="0.75"/>
+  <IntervalsT Repeat="10" OnDuration="60" OffDuration="120" OnPower="1.25" OffPower="0.50"/>
+  <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.45"/>
+</workout></workout_file>"""
+
+
+def _segs10():
+    return sf.parse_zwo_text(_Z_10x1)
+
+
+def _w(dur, pct=125.0):
+    return {"type": "WORK", "duration_s": dur, "ftp_pct": pct,
+            "avg_power_w": int(FTP * pct / 100)}
+
+
+def _r(dur):
+    return {"type": "RECOVERY", "duration_s": dur, "ftp_pct": 50.0}
+
+
+def _ride(works):
+    out = [_r(600)]
+    for w in works:
+        out += [w, _r(120)]
+    return out
+
+
+def test_a_perfect_ride_grades_as_completed():
+    r = sf.score_blocks(_segs10(), _ride([_w(60)] * 10), FTP)
+    assert r["outcome"] == "completed"
+    assert (r["reps_done"], r["reps_missed"]) == (10, 0)
+
+
+def test_a_warmup_ramp_typed_WORK_does_not_shift_every_block():
+    """The defect this alignment replaced: `_prescribed_reps` counts only the
+    file's declared intervals, but a head unit types a lap WORK on intensity
+    alone — so a warm-up ramp arrives as extra WORK laps. Pairing lap i with
+    rep i then graded a 60 s rep against a 200 s lead-in and cascaded down the
+    whole session. Measured on the library: 350 of 1925 interval workouts
+    misgraded a PERFECT ride, and reported it with a green tick."""
+    laps = ([_w(200, 80.0), _w(200, 95.0), _w(200, 109.0)]
+            + _ride([_w(60)] * 10)[1:])
+    r = sf.score_blocks(_segs10(), laps, FTP)
+    assert r["outcome"] == "completed", r["reps"]
+    assert r["reps_done"] == 10
+
+
+def test_alignment_preserves_order():
+    """A rider cannot ride block 5 before block 4, so the assignment must be
+    monotone — otherwise it could 'explain' any session by reshuffling."""
+    reps = sf._prescribed_reps(_segs10(), FTP)
+    wl = sf._work_laps(_ride([_w(60)] * 8))
+    idx = [j for j in sf._align_laps(reps, wl) if j is not None]
+    assert idx == sorted(idx)
+    assert len(set(idx)) == len(idx), "a lap must not grade two reps"
+
+
+def test_token_lap_taps_are_not_blocks_you_rode():
+    """One-second laps on every block: 'all blocks done' with a green tick on
+    1.7% of the prescribed work was the old verdict."""
+    r = sf.score_blocks(_segs10(), _ride([_w(1)] * 10), FTP)
+    assert r["outcome"] == "not_attempted"
+    assert r["reps_done"] == 0 and r["reps_missed"] == 10
+    assert r["work_fraction"] < 0.05
+
+
+def test_stray_taps_after_stopping_still_read_as_stopping():
+    """Stopped after 8 of 10, then double-tapped the lap button twice. Counting
+    those as blocks reported all ten attempted."""
+    r = sf.score_blocks(_segs10(), _ride([_w(60)] * 8 + [_w(5), _w(5)]), FTP)
+    assert r["outcome"] == "cut_short"
+    assert r["stopped_after"] == 8
+    assert r["reps_done"] == 8 and r["reps_missed"] == 2
+
+
+def test_a_genuine_early_stop_is_unchanged():
+    r = sf.score_blocks(_segs10(), _ride([_w(60)] * 8), FTP)
+    assert r["outcome"] == "cut_short" and r["stopped_after"] == 8
+
+
+def test_every_block_ridden_short_is_short_blocks_not_missing():
+    r = sf.score_blocks(_segs10(), _ride([_w(47)] * 10), FTP)
+    assert r["outcome"] == "short_blocks"
+    assert r["reps_missed"] == 0 and r["reps_partial"] == 10
+
+
+def test_the_whole_library_grades_a_perfect_ride_as_completed():
+    """The regression guard for the alignment. Every interval workout in the
+    library, ridden exactly as prescribed with a lap per block the head unit
+    would call work: anything other than 'completed' is a misgrade."""
+    import glob
+    bad = []
+    for path in sorted(glob.glob("workouts/*.zwo")):
+        try:
+            segs = sf.parse_zwo_file(path)
+        except Exception:
+            continue
+        if not segs or not any(s.get("kind") == "interval_on" for s in segs):
+            continue
+        laps = []
+        for s in segs:
+            mid = sf._seg_frac_at(s, s["dur_s"] // 2) if s.get("dur_s") else None
+            if mid is None:
+                continue
+            laps.append({
+                "type": "WORK" if mid >= sf.WORK_FLOOR_FRAC else "RECOVERY",
+                "duration_s": s["dur_s"], "ftp_pct": round(mid * 100, 1)})
+        res = sf.score_blocks(segs, laps, FTP)
+        if res and res["outcome"] != "completed":
+            bad.append((path.split("/")[-1], res["outcome"]))
+    assert not bad, f"{len(bad)} workouts misgrade a perfect ride: {bad[:5]}"

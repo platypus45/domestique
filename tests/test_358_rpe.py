@@ -192,3 +192,49 @@ def test_an_unknown_fit_is_still_404(tmp_path, monkeypatch):
     client = TestClient(app_module.app)
     r = client.post("/api/ride/fit_nope/rpe", json={"rpe": 5}, headers=_LOCAL)
     assert r.status_code == 404
+
+
+def test_a_fit_rating_survives_the_ride_reaching_intervals_icu(tmp_path, monkeypatch):
+    """A FIT-only rider rates a ride, then the importer relays that same file
+    to intervals.icu. From then on the ICU twin wins the FIT/ICU dedupe — and
+    the rating vanished from every reader, including the 3-day gate. Nothing
+    else can regenerate it."""
+    icu_dir = tmp_path / "icu"
+    icu_dir.mkdir()
+    fit = tmp_path / "20260726T200000.fit"
+    fit.write_bytes(b"x")
+    monkeypatch.setattr(rs, "_fit_rides_dir", lambda: tmp_path)
+    monkeypatch.setattr(rs, "_icu_rides_dir", lambda: icu_dir)
+    monkeypatch.setattr(rs, "compute_fit_load", lambda p: {
+        "tss": 60, "load_source": "hr", "duration_s": 3600,
+        "started_at": "2026-07-26T20:00:00"})
+    monkeypatch.setattr(rs, "_fit_iso_started_at",
+                        lambda p: "2026-07-26T20:00:00")
+    assert rs.set_fit_rpe("20260726T200000", 8, "2026-07-26T21:00:00")
+    assert [e.get("rpe") for e in rs.load_all_rides()] == [8]
+    # …the ICU twin appears for the same ride.
+    (icu_dir / "999.json").write_text(json.dumps({
+        "ride_id": "icu_999", "source": "icu", "external_id": "999",
+        "started_at": "2026-07-26T20:00:00", "duration_s": 3600}))
+    after = rs.load_all_rides()
+    assert [e["ride_id"] for e in after] == ["icu_999"]      # deduped
+    assert after[0].get("rpe") == 8, "the rating must survive the dedupe"
+
+
+def test_an_icu_rating_wins_over_a_carried_fit_one(tmp_path, monkeypatch):
+    """ICU is the newer edit surface, so its own value is not overwritten."""
+    icu_dir = tmp_path / "icu"
+    icu_dir.mkdir()
+    fit = tmp_path / "20260726T200000.fit"
+    fit.write_bytes(b"x")
+    monkeypatch.setattr(rs, "_fit_rides_dir", lambda: tmp_path)
+    monkeypatch.setattr(rs, "_icu_rides_dir", lambda: icu_dir)
+    monkeypatch.setattr(rs, "compute_fit_load", lambda p: {
+        "tss": 60, "duration_s": 3600, "started_at": "2026-07-26T20:00:00"})
+    monkeypatch.setattr(rs, "_fit_iso_started_at",
+                        lambda p: "2026-07-26T20:00:00")
+    rs.set_fit_rpe("20260726T200000", 8, "2026-07-26T21:00:00")
+    (icu_dir / "999.json").write_text(json.dumps({
+        "ride_id": "icu_999", "source": "icu", "external_id": "999",
+        "started_at": "2026-07-26T20:00:00", "duration_s": 3600, "rpe": 4}))
+    assert rs.load_all_rides()[0]["rpe"] == 4

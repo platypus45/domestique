@@ -642,12 +642,24 @@ def load_all_rides() -> list[dict]:
             return (s, 0)
 
     icu_keys = {_bucket(r) for r in icu if r.get("started_at")}
+    icu_by_key = {_bucket(r): r for r in icu if r.get("started_at")}
 
     merged: list[dict] = list(icu)
     for r in fits:
         # If a FIT clearly maps to an existing ICU activity, skip it.
         bk = _bucket(r)
         if bk[0] and bk in icu_keys:
+            # …but carry the rider's own input across first. A FIT-only rider
+            # rates a ride, then the importer relays that same file to
+            # intervals.icu; from then on the ICU twin wins the dedupe and the
+            # rating would simply vanish from every reader, including the
+            # 3-day gate. Nothing else can regenerate it. ICU's own value wins
+            # if it has one — that surface is the newer edit.
+            twin = icu_by_key.get(bk)
+            if twin is not None:
+                for k in _RIDER_INPUT_CARRY_KEYS:
+                    if r.get(k) is not None and twin.get(k) is None:
+                        twin[k] = r[k]
             continue
         merged.append(r)
 

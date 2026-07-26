@@ -138,8 +138,7 @@ def test_one_optional_tap_cannot_cancel_the_worst_hooper_answer(monkeypatch):
 
 
 def test_hooper_stays_the_dominant_term(monkeypatch):
-    """Bounded influence, both directions: the rating shifts the channel by at
-    most a quarter of the 1-10 axis."""
+    """Bounded influence, both directions."""
     for rtt, direction in ((1, -1), (10, 1)):
         monkeypatch.setattr(app_module.db, "get_daily_log_today",
                             lambda: {"soreness": 4, "fatigue": 4, "stress": 4,
@@ -154,12 +153,78 @@ def test_hooper_stays_the_dominant_term(monkeypatch):
         assert abs(moved - base) <= 2.5
 
 
-def test_readiness_alone_still_produces_a_channel(monkeypatch):
-    """A rider who only answers the readiness slider must still get a
-    subjective score — previously the channel needed Hooper items."""
-    monkeypatch.setattr(app_module.db, "get_daily_log_today",
-                        lambda: {"readiness_to_train": 7})
-    assert app_module._get_soreness_subjective() == 7.0
+def test_the_rating_is_asymmetric_because_the_evidence_is(monkeypatch):
+    """Ten Haaf 2017 found readiness-to-train discriminating on the LOW side;
+    the upward direction has no such support and one direct contradiction
+    (Sansone 2023 — better wellness produced HIGHER effort because riders did
+    more work). So a low rating pulls at full weight and a high one nudges."""
+    def _s(rtt):
+        monkeypatch.setattr(app_module.db, "get_daily_log_today",
+                            lambda: {"soreness": 4, "fatigue": 4, "stress": 4,
+                                     "sleep_quality": 4,
+                                     **({"readiness_to_train": rtt}
+                                        if rtt is not None else {})})
+        return app_module._get_soreness_subjective()
+    base = _s(None)
+    assert abs(_s(1) - base) > abs(_s(10) - base), (
+        "an unready rating must carry more weight than a ready one")
+
+
+def test_the_documented_bound_holds_across_every_hooper_answer(monkeypatch):
+    """The promise made in the code comment, asserted: at most 0.9 up and 2.25
+    down on the 1-10 channel, over the whole Hooper grid."""
+    up = down = 0.0
+    for a in range(1, 8):
+        for b in range(1, 8):
+            log = {"sleep_quality": a, "fatigue": b, "stress": 4, "soreness": 4}
+            monkeypatch.setattr(app_module.db, "get_daily_log_today",
+                                lambda l=log: l)
+            base = app_module._get_soreness_subjective()
+            for r in range(1, 11):
+                monkeypatch.setattr(
+                    app_module.db, "get_daily_log_today",
+                    lambda l=log, rr=r: {**l, "readiness_to_train": rr})
+                d = app_module._get_soreness_subjective() - base
+                up, down = max(up, d), min(down, d)
+    assert up <= 0.9 + 1e-9, up
+    assert down >= -2.25 - 1e-9, down
+
+
+def test_a_mid_range_rating_cannot_lift_a_rest_day_into_riding(monkeypatch):
+    """The case that failed the first fix: Hooper answers that trip neither the
+    soreness cap nor the Hooper-sum gate, with the objective channels already
+    poor. A rating of 7 turned forced rest into a Z2 ride."""
+    import readiness as R
+
+    def _score(rtt):
+        monkeypatch.setattr(
+            app_module.db, "get_daily_log_today",
+            lambda: {"sleep_quality": 1, "fatigue": 1, "soreness": 1,
+                     "stress": 4,
+                     **({"readiness_to_train": rtt} if rtt else {})})
+        sub = app_module._get_soreness_subjective()
+        return R.compute_readiness(
+            ln_rmssd_7d=2.95, swc_lower=3.0, swc_upper=3.4, tsb=-12.0,
+            sleep_h=5.5, rhr_delta=3.0, subjective=sub)["score"]
+
+    assert _score(None) < 40, "precondition: this day is a forced-rest day"
+    assert _score(7) < 40, "a mid-range rating must not lift it out of rest"
+
+
+def test_readiness_alone_still_produces_a_channel_but_pulled_to_neutral(monkeypatch):
+    """A rider with only the readiness slider still gets a subjective score,
+    but an un-anchored self-rating must not drive the channel to an extreme on
+    its own — so it is pulled toward neutral. (Not reachable through
+    /api/daily-log, which requires all four Hooper items; guarded so a future
+    caller cannot hand one optional slider the whole channel.)"""
+    def _s(rtt):
+        monkeypatch.setattr(app_module.db, "get_daily_log_today",
+                            lambda: {"readiness_to_train": rtt})
+        return app_module._get_soreness_subjective()
+    assert _s(7) is not None
+    assert 5.5 < _s(7) < 7.0          # moved up from neutral, not all the way
+    assert 1.0 < _s(1) < 5.5          # and down, likewise
+    assert _s(10) > _s(1)
 
 
 def test_no_input_returns_none(monkeypatch):

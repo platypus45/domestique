@@ -95,6 +95,11 @@ MISSING_TARGET_FRAC = 0.90      # floor also capped at 90 % of the rep target
 # hands them back already labelled type=WORK|RECOVERY with a per-lap ftp_pct,
 # which is why this grader needs neither the 1 Hz trace nor even an FTP value.
 LAP_SHORT_FRAC = 0.80           # delivered lap < this × prescribed ⇒ "partial"
+# Below this the lap is not a rep the rider rode — a double-tapped lap button,
+# a 5-second false start. It is recorded truthfully (delivered_s is kept) but it
+# must not read as "you did this block", or stopping after 8 of 10 with two
+# stray taps reports as all ten done.
+LAP_TRIVIAL_FRAC = 0.25
 LAP_POWER_TOL_FRAC = 0.10       # |lap mean − target| within this ⇒ on target
 
 
@@ -406,6 +411,85 @@ def _work_laps(laps) -> "list[dict]":
     return out
 
 
+def _lap_match_score(rep, lap) -> float:
+    """How well one lap matches one prescribed rep: 0 (implausible) to 1 (exact).
+
+    Duration carries most of the signal — a 30-second opener and a 4-minute
+    threshold block are never confusable — with intensity as a tiebreak for
+    same-length blocks at different targets.
+    """
+    presc = float(rep["dur_s"]) or 1.0
+    deliv = float(lap.get("duration_s") or 0)
+    dur_sim = max(0.0, 1.0 - abs(deliv - presc) / presc)
+    if dur_sim <= 0.0:
+        return 0.0
+    pct = lap.get("ftp_pct")
+    try:
+        pct = float(pct) / 100.0 if pct is not None else None
+    except (TypeError, ValueError):
+        pct = None
+    if pct is None:
+        return dur_sim
+    tgt = max(rep.get("target_frac") or 0.0, 0.01)
+    pow_sim = max(0.0, 1.0 - abs(pct - tgt) / tgt)
+    return 0.75 * dur_sim + 0.25 * pow_sim
+
+
+def _align_laps(reps, wl) -> "list[int | None]":
+    """Assign each prescribed rep the lap the rider actually rode for it.
+
+    Positional pairing (rep *i* ↔ lap *i*) was wrong, and wrong in a way that
+    looked plausible. The prescription and the head unit disagree about what
+    counts as work: ``_prescribed_reps`` counts ONLY the file's declared
+    intervals once any exist, so a warm-up fast-pedal drill is not rep 1, while
+    a head unit types a lap WORK on intensity alone — a warm-up ramp at
+    81/95/109% FTP arrives as three WORK laps, and files that declare their
+    warm-up drills as intervals add more in the middle. Measured on the
+    library: **350 of 1925** interval workouts misgraded a PERFECT ride, and
+    reported it with a green tick.
+
+    So align instead of index. This is an order-preserving best-match
+    assignment (the classic sequence alignment recurrence): laps may be skipped
+    (a warm-up block the prescription does not count) and reps may go unmatched
+    (the rider genuinely did not ride them), and the assignment that explains
+    the most of the session wins. Order is preserved because a rider cannot
+    ride block 5 before block 4.
+
+    Returns one entry per rep: the index into ``wl``, or None when no lap
+    plausibly matches it.
+    """
+    n, m = len(reps), len(wl)
+    if not n or not m:
+        return [None] * n
+    # best[i][j] = best achievable score for reps[i:] against wl[j:]
+    best = [[0.0] * (m + 1) for _ in range(n + 1)]
+    # choice: "pair" | "skip_lap" | "skip_rep"
+    choice = [[None] * (m + 1) for _ in range(n + 1)]
+    for i in range(n - 1, -1, -1):
+        for j in range(m - 1, -1, -1):
+            pair = _lap_match_score(reps[i], wl[j])
+            opts = [(best[i + 1][j], "skip_rep"), (best[i][j + 1], "skip_lap")]
+            if pair > 0.0:
+                # Pairing wins ties: a plausible match is preferred over
+                # explaining the session by omission.
+                opts.insert(0, (pair + best[i + 1][j + 1], "pair"))
+            score, which = max(opts, key=lambda t: t[0])
+            best[i][j], choice[i][j] = score, which
+    out: "list[int | None]" = [None] * n
+    i = j = 0
+    while i < n and j < m:
+        which = choice[i][j]
+        if which == "pair":
+            out[i] = j
+            i += 1
+            j += 1
+        elif which == "skip_lap":
+            j += 1
+        else:
+            i += 1
+    return out
+
+
 def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
     """Grade which prescribed BLOCKS the rider actually completed, from laps.
 
@@ -441,13 +525,15 @@ def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
     wl = _work_laps(laps)
     if not reps or not wl:
         return None
+    lap_for_rep = _align_laps(reps, wl)
 
     rows: list[dict] = []
     done = partial = missed = 0
     deliv_s = 0.0
     presc_s = float(sum(r["dur_s"] for r in reps))
     for i, r in enumerate(reps):
-        lap = wl[i] if i < len(wl) else None
+        _j = lap_for_rep[i]
+        lap = wl[_j] if _j is not None else None
         row = {"index": i + 1, "set": r.get("set", 0) + 1,
                "prescribed_s": r["dur_s"],
                "target_pct": round(100.0 * r["target_frac"], 1),
@@ -472,9 +558,15 @@ def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
             if d >= LAP_SHORT_FRAC * r["dur_s"]:
                 row["status"] = "done"
                 done += 1
-            else:
+            elif d >= LAP_TRIVIAL_FRAC * r["dur_s"]:
                 row["status"] = "partial"
                 partial += 1
+            else:
+                # A token delivery. Kept visible in delivered_s, but counted as
+                # not ridden: two stray lap taps after stopping at block 8 read
+                # as "stopped after 8", not as "all 10 blocks, cut short".
+                row["status"] = "missed"
+                missed += 1
         rows.append(row)
 
     # Where did the rider get to? Last rep with any delivery.

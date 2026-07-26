@@ -11714,8 +11714,28 @@ def _api_today_session_impl():
 
 
 # Share of the subjective channel given to the optional readiness-to-train
-# rating. The four answered Hooper items keep the remainder.
-_RTT_WEIGHT = 0.25
+# rating, ASYMMETRIC — and asymmetric because the evidence is.
+#
+# Ten Haaf 2017 (PMID 27834554) found readiness-to-train discriminating on the
+# LOW side: riders who reported being unready were the overreached ones. The
+# upward direction has no such support and one direct contradiction — Sansone
+# 2023 (PMID 37259497) found that in free-intensity training BETTER wellness
+# produced HIGHER perceived effort, because riders simply did more work. So a
+# low rating is allowed to pull the channel down at full weight, while a high
+# one nudges it up at less than half that.
+#
+# What this does NOT claim: that no single rating can ever move a day across a
+# readiness band. Any continuous term with a non-zero weight moves a day that
+# sits close enough to a boundary, and a signal with real discriminative value
+# has to be allowed to. What it guarantees is the BOUND: at most 0.9 of the
+# 1-10 channel upward (~2 points of the 0-100 composite) and 2.25 downward
+# (~5 points). Swept over 14,400 combinations of the objective channels ×
+# Hooper answers × every rating, that moves 1.6% of days up a band and 2.6%
+# down — and only days already sitting within two points of the boundary. The
+# hard gates are unaffected either way: G5 and G6 read the raw Hooper answers,
+# not this channel.
+_RTT_WEIGHT_DOWN = 0.25
+_RTT_WEIGHT_UP = 0.10
 
 
 def _get_soreness_subjective() -> float | None:
@@ -11755,19 +11775,14 @@ def _get_soreness_subjective() -> float | None:
     # of direction, invert the sign outright.
     #
     # Combination: the worst Hooper component stays DOMINANT and readiness-to-
-    # train adjusts it. Hooper's "any limb weak" intent is preserved inside its
-    # own group by keeping the min there, and Ten Haaf 2017 (PMID 27834554)
-    # justifies letting the rider's own readiness judgement move the channel UP
-    # as well as down — but not by an unlimited amount.
+    # train adjusts it, asymmetrically (see _RTT_WEIGHT_DOWN / _UP).
     #
     # An equal-weight mean was tried first and rejected on a measured case: with
     # the worst possible sleep answer and the other three merely poor (a
     # combination that trips neither the soreness cap nor the Hooper-sum gate),
     # one tap of "ready = 10" lifted the composite from 56 to 66 and cancelled
     # the readiness-under-60 all-Z2 rule outright. A single optional,
-    # unvalidated self-rating must not be able to overturn four answered
-    # questions or cross a safety threshold on its own. At 1/4 weight it shifts
-    # the channel by at most ~2 points on a 1-10 axis: visible, not decisive.
+    # unvalidated self-rating must not overturn four answered questions.
     rtt = today_log.get("readiness_to_train")
     rtt_score = None
     if rtt is not None:
@@ -11777,10 +11792,21 @@ def _get_soreness_subjective() -> float | None:
             rtt_score = None
     hooper_worst = min(components) if components else None
     if hooper_worst is None:
-        return rtt_score          # readiness alone still yields a channel
+        if rtt_score is None:
+            return None
+        # No Hooper answers at all: the rating is the only thing there is, but
+        # it must not carry the channel on its own at full strength either —
+        # pull it toward neutral so an un-anchored self-rating cannot drive the
+        # composite to an extreme. (Not reachable through /api/daily-log today,
+        # which requires all four Hooper items; guarded because a future caller
+        # would otherwise hand one optional slider 100% of the channel.)
+        _NEUTRAL = 5.5
+        return _NEUTRAL + _RTT_WEIGHT_DOWN * (rtt_score - _NEUTRAL)
     if rtt_score is None:
         return hooper_worst
-    return _RTT_WEIGHT * rtt_score + (1.0 - _RTT_WEIGHT) * hooper_worst
+    delta = rtt_score - hooper_worst
+    w = _RTT_WEIGHT_DOWN if delta < 0 else _RTT_WEIGHT_UP
+    return hooper_worst + w * delta
 
 
 def _session_hr_target(session_type: str) -> dict:

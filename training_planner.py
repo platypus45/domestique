@@ -690,15 +690,23 @@ def _deescalated_load(old_duration_min, new_type: str,
         # Never LENGTHEN either: `max(floor, trimmed)` alone turned a 20-minute
         # session into a 30-minute one, which is the same failure in the other
         # axis. Clamp on both sides.
-        # ponytail: the floor wins over the trim for sessions under roughly
-        # `_DEESCALATION_MIN_MIN * tss_per_h / 60` TSS, so a very short hard
-        # session can still land a few TSS above where it started. Measured on
-        # the live plan: 28 of 45 hard sessions needed the trim, 0 were short
-        # enough to hit that residual (shortest hard session is 45 min). Fix
-        # by letting the caller step further down the ladder if it ever bites.
-        dur = min(dur, max(_DEESCALATION_MIN_MIN,
-                           int(round(old_tss / tss_per_h * 60))))
-        tss = round(dur / 60 * tss_per_h)
+        #
+        # Both conversions round DOWN. Rounding to nearest looks harmless and
+        # is not: `round(old_tss/per_h*60)` rounding a minute up, then rounding
+        # the recomputed estimate up again, put 48 of 68 de-escalations on the
+        # live plans a TSS or two ABOVE where they started — a protective gate
+        # adding load, from nothing but arithmetic.
+        trimmed = int(old_tss / tss_per_h * 60)          # floor
+        dur = min(dur, max(_DEESCALATION_MIN_MIN, trimmed))
+        tss = int(dur / 60 * tss_per_h)                  # floor
+        # ponytail: for a session under `_DEESCALATION_MIN_MIN * tss_per_h / 60`
+        # TSS the floor beats the trim, so the estimate can still land above
+        # where it started. Measured across both plan files on this machine:
+        # 28 of 45 hard sessions need the trim, 0 land above (the shortest hard
+        # sessions are 45 and 49 min, well clear of the bound). Upgrade path is
+        # to let the caller step further down the ladder instead of trimming.
+        # Bound asserted in tests, not here — a load estimate must never be the
+        # thing that raises mid-plan-generation.
     return dur, tss
 
 

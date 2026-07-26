@@ -304,7 +304,7 @@ Every completed session gets an execution score from 0–100 against its prescri
 
 **Which blocks you actually did.** Duration, load and intensity can all look fine while the session itself came apart — eight of thirteen intervals ridden, or every rep two minutes short. So if you press the lap button on your intervals (most riders already do), Domestique reads those laps and grades the *structure*: "stopped after block 8 of 13", set by set, with each rep marked done, partial or missed, and how much of the prescribed work you completed. No extra device setup, no manual entry — it uses the laps your head unit already recorded.
 
-One honest limit: laps are matched in order, so skipping a rep in the middle of a set and stopping one rep early look the same to it. It will tell you how many reps you completed, not which one you dropped.
+Two honest limits. Laps are matched in order, so skipping a rep in the middle of a set and stopping one rep early look the same to it — it tells you how many reps you completed, not which one you dropped. And it has to work out which of your laps correspond to which prescribed blocks, because your head unit marks a warm-up ramp as work while the plan does not count it as a block; that matching is by block length and intensity, so a session whose blocks are all the same length as its recoveries gives it less to go on.
 
 ---
 

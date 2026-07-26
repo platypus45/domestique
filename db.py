@@ -332,6 +332,11 @@ def init_db():
     # Migrate existing activities tables: add new columns if they don't exist.
     # SQLite's ALTER TABLE ADD COLUMN raises OperationalError on duplicates;
     # _maybe_add_column swallows that specific case.
+    # NOTE: SQLite cannot add a CHECK constraint to an existing table, so an
+    # UPGRADED install gets a bare INTEGER where a fresh install has
+    # CHECK(readiness_to_train BETWEEN 1 AND 10). Benign — upsert_daily_log
+    # validates the range in Python on every write, which is the only path that
+    # writes this column — and not worth rebuilding a table of rider history for.
     _maybe_add_column(db, "daily_log", "readiness_to_train", "INTEGER")
     _maybe_add_column(db, "activities", "distance_km", "REAL")
     _maybe_add_column(db, "activities", "kilojoules", "REAL")
@@ -999,6 +1004,11 @@ def upsert_daily_log(dt: str, sleep_quality: int, fatigue: int, soreness: int,
     # readiness_to_train (the Hooper form posting without it) would NULL a
     # rating the rider already gave. Carry the stored value forward when the
     # caller passes None.
+    #
+    # Consequence, deliberate: `None` means "omitted", so there is no value a
+    # caller can pass to CLEAR a rating. Nothing exposes clearing today — the
+    # form only ever adds the key, and re-rating overwrites. If a clear
+    # affordance is ever added it needs its own sentinel, not None.
     if readiness_to_train is None:
         try:
             prior = db.execute(

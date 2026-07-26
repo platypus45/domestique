@@ -488,6 +488,12 @@ def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
         outcome = "not_attempted"
     elif missed == 0 and partial == 0:
         outcome = "completed"
+    elif missed == 0:
+        # Every prescribed block was ridden; some just ran short. Without this
+        # branch it fell through to "off_plan", and the rider who rode all ten
+        # blocks at 78% length was told "blocks missing · 0/10" — both halves
+        # of that wrong. Nothing is missing and nothing was skipped.
+        outcome = "short_blocks"
     elif stopped_after is not None and missed and all(
             r["status"] == "missed" for r in rows[stopped_after:]):
         # Every gap is at the END ⇒ the rider stopped, rather than skipping

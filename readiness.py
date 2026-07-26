@@ -86,17 +86,34 @@ def check_aerobic_decoupling(last_decoupling_pct: float | None,
     auto-swap — decoupling is less reliable than DFA α1 and is confounded by
     ride duration, heat and fuelling.
 
-    v1.8.16 gates (the live bug: a 5-day-old 9.9% reading advised Z2 while
-    TSB was +17, readiness GOOD, DFA healthy α1=1.126):
+    The v1.8.16 live bug: a 5-day-old 9.9% reading advised Z2 while TSB was +17,
+    readiness GOOD, DFA healthy α1=1.126. The defect was that a days-old number
+    presented itself as *current* ("Recent ride showed…"). v1.8.16 fixed it by
+    discarding anything over 2 days old; v3.6.0 fixes it by saying how old it is.
 
-      1. RECENCY — only advise if the source ride is ≤ 2 days old. KNOWN-stale
-         (>2d) → drop. Unknown age → keep (fail toward warning).
-      2. FORM VETO **gated on DFA corroboration** — suppress the advisory when
-         form is fresh (``tsb ≥ +5`` OR status ∈ {GOOD, EXCELLENT}) **AND** DFA
-         independently confirms freshness (``dfa_present_and_healthy``). When
-         DFA is ABSENT/insufficient — the common case, most rides have no RR —
-         decoupling is the ONLY acute signal and TSB lags acute fatigue ~7d, so
-         a fresh TSB alone is NOT grounds to silence it.
+    Gates (v3.6.0):
+
+      1. RECENCY, graded. Over ``_DECOUPLING_MAX_AGE_DAYS`` (10) → dropped as
+         ``stale``. Inside it, ``confidence`` is ``fresh`` (≤3d), ``aging``
+         (≤10d) or ``unknown`` (age not known → keep, fail toward warning), and
+         an ``aging`` reading is phrased with its age so it can never read as
+         today's. The old 2-day cut silenced the signal after a single rest day,
+         which is exactly when a fatigue reading is worth seeing.
+      2. FORM VETO — **fresh readings only**, and **gated on DFA corroboration**:
+         suppress when form is fresh (``tsb ≥ +5`` OR status ∈ {GOOD, EXCELLENT})
+         AND DFA independently confirms freshness (``dfa_present_and_healthy``).
+         Two deliberate restrictions:
+           * When DFA is ABSENT/insufficient — the common case, most rides have
+             no RR — decoupling is the only acute signal and TSB lags acute
+             fatigue ~7d, so a fresh TSB alone is NOT grounds to silence it.
+           * An ``aging`` reading is not vetoed at all. Vetoing it would make
+             the wider window pointless: the cases the window exists to surface
+             are exactly the ones a good TSB would have hidden.
+
+    Display-only in every path: no caller mutates a plan from this result
+    (verified across the planner, the continuous policy, the calendar push and
+    the live-session module). The v1.8.16 note that this "advised Z2" describes
+    the banner copy, not a plan change.
     """
     if last_decoupling_pct is None:
         return {"advisory": False, "decoupling_pct": None, "reason": ""}

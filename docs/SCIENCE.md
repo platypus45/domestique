@@ -138,7 +138,7 @@ Session-RPE is the cheapest signal in the stack and the easiest to over-trust. W
 
 | Claim | Evidence | What Domestique does |
 |---|---|---|
-| Session-RPE is a valid internal-load measure | [Foster 1998](https://pubmed.ncbi.nlm.nih.gov/9662690/) — modified CR-10, the scale the whole session-RPE base is built on | Foster CR-10 (0–10) with verbal anchors on every value; the scale id is stored on each rating so a future scale change can never silently re-interpret old numbers |
+| Session-RPE is a valid internal-load measure | [Foster 1998](https://pubmed.ncbi.nlm.nih.gov/9662690/) — modified CR-10, the scale the whole session-RPE base is built on | Foster CR-10 (0–10) with verbal anchors on every value. The scale id is stored alongside each rating, so if the scale ever changes, old numbers can be identified rather than silently re-read — the stored id is a record, not an enforced check |
 | A single rating is noisy | [Wallace et al. 2014](https://pubmed.ncbi.nlm.nih.gov/24662229/) — sRPE test-retest **CV 28.1%** | No rule reacts to a one-unit move. G7 uses a 3-day mean at Foster's published ≥7 threshold |
 | RPE catches what power and HR miss in overreached riders | [Sanders et al. 2018](https://pubmed.ncbi.nlm.nih.gov/29016241/) — RPE:power, RPE:HR and sRPE:TSS decoupling d = 0.79–1.79 vs 0.03–0.41 for objective-only ratios | Collected and displayed; it is the only channel that needs no power meter and no 40-minute steady block |
 | Pre-session fatigue + readiness-to-train discriminate functional overreaching | [Ten Haaf et al. 2017](https://pubmed.ncbi.nlm.nih.gov/27834554/), n=30 cyclists — 78% correct at 3 days | Both are collected in the morning check-in; readiness-to-train was added in v3.6.0 because it is not one of Hooper's four items |

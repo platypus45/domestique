@@ -658,6 +658,12 @@ def _drop_intensity(level: str) -> str:
     return _INTENSITY_LADDER[min(i + 1, len(_INTENSITY_LADDER) - 1)]
 
 
+# Shortest session a de-escalation may trim to. Deliberately separate from
+# _VOLUME_MIN_SESSION_MIN (30, a volume-planning floor): reusing that value
+# lengthened every sub-30-minute session it touched.
+_DEESCALATION_MIN_MIN = 20
+
+
 def _deescalated_load(old_duration_min, new_type: str,
                       old_tss=None, default_tss_per_h: float = 45):
     """Duration + TSS for a session that just stepped DOWN the intensity ladder.
@@ -681,7 +687,17 @@ def _deescalated_load(old_duration_min, new_type: str,
     dur = int(old_duration_min or 0)
     tss = round(dur / 60 * tss_per_h)
     if isinstance(old_tss, (int, float)) and old_tss > 0 and tss > old_tss:
-        dur = max(_VOLUME_MIN_SESSION_MIN, int(round(old_tss / tss_per_h * 60)))
+        # Never LENGTHEN either: `max(floor, trimmed)` alone turned a 20-minute
+        # session into a 30-minute one, which is the same failure in the other
+        # axis. Clamp on both sides.
+        # ponytail: the floor wins over the trim for sessions under roughly
+        # `_DEESCALATION_MIN_MIN * tss_per_h / 60` TSS, so a very short hard
+        # session can still land a few TSS above where it started. Measured on
+        # the live plan: 28 of 45 hard sessions needed the trim, 0 were short
+        # enough to hit that residual (shortest hard session is 45 min). Fix
+        # by letting the caller step further down the ladder if it ever bites.
+        dur = min(dur, max(_DEESCALATION_MIN_MIN,
+                           int(round(old_tss / tss_per_h * 60))))
         tss = round(dur / 60 * tss_per_h)
     return dur, tss
 
@@ -818,8 +834,9 @@ def _last_3d_mean_feel(rides: list[dict]) -> float | None:
     different scales):
       1. `rpe`   — the rating the rider gave in THIS app, Foster CR-10 0-10.
       2. `perceived_exertion` — an imported CR-10 1-10 rating.
-      3. `feel`  — a 1-5 "how did it go" rating, rescaled ×2 as a rough
-         approximation because it measures satisfaction, not effort.
+      3. `feel`  — a 1-5 rating (1 = easy … 5 = very hard), rescaled ×2 as a
+         rough approximation onto the 0-10 axis. Same direction as RPE, but a
+         5-point scale carries far less resolution, hence fallback only.
     """
     if not rides:
         return None

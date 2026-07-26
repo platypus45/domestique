@@ -110,6 +110,50 @@ def test_hooper_min_semantics_preserved_within_its_own_group(monkeypatch):
     assert one_bad < all_good
 
 
+def test_one_optional_tap_cannot_cancel_the_worst_hooper_answer(monkeypatch):
+    """Caught by an adversarial pass before shipping. With an equal-weight mean,
+    the worst possible sleep answer plus three merely-poor ones — a combination
+    that trips neither the soreness cap nor the Hooper-sum gate — was lifted
+    from readiness 56 to 66 by a single tap of "ready = 10", cancelling the
+    readiness-under-60 all-Z2 rule. One optional, unvalidated self-rating must
+    not overturn four answered questions."""
+    import readiness as R
+
+    def _score(sub):
+        return R.compute_readiness(
+            ln_rmssd_7d=3.2, swc_lower=3.0, swc_upper=3.4, tsb=-4.0,
+            sleep_h=6.5, rhr_delta=1.0, subjective=sub)["score"]
+
+    monkeypatch.setattr(app_module.db, "get_daily_log_today",
+                        lambda: {"soreness": 3, "fatigue": 3, "stress": 3,
+                                 "sleep_quality": 7})
+    worst = app_module._get_soreness_subjective()
+    monkeypatch.setattr(app_module.db, "get_daily_log_today",
+                        lambda: {"soreness": 3, "fatigue": 3, "stress": 3,
+                                 "sleep_quality": 7, "readiness_to_train": 10})
+    tapped = app_module._get_soreness_subjective()
+    assert tapped > worst, "it must still be able to move the channel up"
+    assert _score(worst) < 60 and _score(tapped) < 60, (
+        "a single rating must not carry the score across the all-Z2 threshold")
+
+
+def test_hooper_stays_the_dominant_term(monkeypatch):
+    """Bounded influence, both directions: the rating shifts the channel by at
+    most a quarter of the 1-10 axis."""
+    for rtt, direction in ((1, -1), (10, 1)):
+        monkeypatch.setattr(app_module.db, "get_daily_log_today",
+                            lambda: {"soreness": 4, "fatigue": 4, "stress": 4,
+                                     "sleep_quality": 4})
+        base = app_module._get_soreness_subjective()
+        monkeypatch.setattr(app_module.db, "get_daily_log_today",
+                            lambda r=rtt: {"soreness": 4, "fatigue": 4,
+                                           "stress": 4, "sleep_quality": 4,
+                                           "readiness_to_train": r})
+        moved = app_module._get_soreness_subjective()
+        assert (moved - base) * direction > 0
+        assert abs(moved - base) <= 2.5
+
+
 def test_readiness_alone_still_produces_a_channel(monkeypatch):
     """A rider who only answers the readiness slider must still get a
     subjective score — previously the channel needed Hooper items."""

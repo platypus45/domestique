@@ -14034,15 +14034,17 @@ function calJumpToToday(behavior) {
 function _blockEvalHtml(b) {
   if (!b || !b.reps_prescribed) return '';
   const OUT = {
-    completed:     ['\u2713 all blocks done',     'var(--green)'],
-    cut_short:     ['\u26a0 stopped early',        'var(--yellow)'],
-    off_plan:      ['\u26a0 blocks missing',       'var(--yellow)'],
-    not_attempted: ['\u2715 no blocks ridden',     'var(--text3)'],
+    completed:     ['\u2713 all blocks done',       'var(--green)'],
+    short_blocks:  ['\u2713 all blocks, cut short', 'var(--yellow)'],
+    cut_short:     ['\u26a0 stopped early',          'var(--yellow)'],
+    off_plan:      ['\u26a0 blocks missing',         'var(--yellow)'],
+    not_attempted: ['\u2715 no blocks ridden',       'var(--text3)'],
   };
   const o = OUT[b.outcome] || [esc(String(b.outcome || '')), 'var(--text2)'];
+  const _ridden = (b.reps_done || 0) + (b.reps_partial || 0);
   const bits = [`<b style="color:${o[1]};">${o[0]}</b>`,
-                `${b.reps_done}/${b.reps_prescribed} blocks`];
-  if (b.reps_partial) bits.push(`${b.reps_partial} partial`);
+                `${_ridden}/${b.reps_prescribed} blocks ridden`];
+  if (b.reps_partial) bits.push(`${b.reps_done} at full length, ${b.reps_partial} short`);
   if (b.outcome === 'cut_short' && b.stopped_after)
     bits.push(`stopped after block ${b.stopped_after}`);
   if (typeof b.work_fraction === 'number')
@@ -15809,6 +15811,11 @@ async function loadReadinessActionBanner() {
   // v1.8.16 — truthful action copy. Only the STRONG DFA α1 cap (and injury
   // gates) actually swap the session in the planner; the WEAK decoupling
   // signal is advisory-only. Don't claim "auto-downgraded" for an advisory.
+  // v3.6.0 — and therefore: no Revert button on an advisory-only banner. There
+  // is nothing to revert (nothing changed), and Revert suppresses the WHOLE
+  // day's adjustment, so offering it here would let one advisory cancel the
+  // real safety gates. Widening the decoupling window to 10 days would have
+  // put that button in front of the rider far more often.
   const action = r.dfa_cap_applied
     ? `Today's ${esc(originalType)} session has been <b>auto-downgraded to Z2</b>.`
     : `<b>Z2 recommended</b> for today's ${esc(originalType)} session (advisory — not enforced).`;
@@ -15826,7 +15833,7 @@ async function loadReadinessActionBanner() {
       <b style="color:#eab308;">&#9888;</b> ${esc(rideRef)} showed <b>${esc(signal)}</b>. ${action}${esc(attrNote)}
     </div>
     <div style="display:flex;gap:8px;">
-      <button class="btn btn-sm" onclick="revertReadinessCap('${esc(signalKey)}')" style="background:var(--accent);color:#fff;border-color:var(--accent);">Revert</button>
+      ${r.dfa_cap_applied ? `<button class="btn btn-sm" onclick="revertReadinessCap('${esc(signalKey)}')" style="background:var(--accent);color:#fff;border-color:var(--accent);">Revert</button>` : ''}
       <button class="btn btn-sm" onclick="dismissReadinessBanner('${esc(dismissKey)}')">Dismiss</button>
     </div>
   </div>`;
@@ -20318,13 +20325,18 @@ function renderActivityModal(p) {
     html += dfaHtml;
   }
 
+  // v3.5.6 — optional session-RPE, right where the rider already lands after a
+  // ride. Rendered for EVERY ride: a rating is the one thing no device can
+  // supply, so it must not depend on stream hydration. The current value
+  // pre-selects so it reads as an answer, not a fresh ask.
+  const _rid = p.ride_id || p.id || '';
+  if (_rid) {
+    html += _rpeHtml(_rid, (typeof p.rpe === 'number' ? p.rpe : null));
+  }
+
   // Sparklines (power + HR overlay)
   const samples = p.samples || null;
   if (samples && samples.t_s && samples.t_s.length) {
-    // v3.5.6 — optional session-RPE, right where the rider already lands
-    // after a ride. Rendered for every ride (rating is never required); the
-    // current value pre-selects so it reads as an answer, not a fresh ask.
-    html += _rpeHtml(rideId, (typeof d.rpe === 'number' ? d.rpe : null));
     html += `<div style="background:var(--surface2);border-radius:8px;padding:10px;margin-bottom:12px;">
       <div style="font-size:11px;color:var(--text2);margin-bottom:4px;">Power (W) · HR (bpm)</div>
       ${_actModalSparklines(samples)}

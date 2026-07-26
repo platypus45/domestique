@@ -4055,7 +4055,10 @@ async def api_readiness_apply_tier_down(request: Request):
             "new_type": new_type,
             "old_tss": old_tss,
             "new_tss": new_tss,
-            "duration_min": old_duration,
+            # The stored duration, not the one we started from — a tier-down
+            # trims duration to hold the load, so reporting the old value made
+            # the response disagree with the plan it had just written.
+            "duration_min": new_duration,
             "zwo_file": target.get("zwo_file", ""),
             "zwo_name": target.get("zwo_name", ""),
         }
@@ -4245,7 +4248,11 @@ async def api_plan_auto_adjust(request: Request):
                             day=date.fromisoformat(today_iso),
                             day_name=target.get("day_name", ""),
                             session_type=new_type,
-                            duration_min=old_duration,
+                            # v3.6.0: match on the NEW duration. The tier-down
+                            # now trims duration to hold the load, so matching
+                            # on the old one attached a workout longer than the
+                            # session it was attached to.
+                            duration_min=new_duration,
                             tss_estimate=new_tss,
                             description=target.get("description", ""),
                         )
@@ -4275,7 +4282,7 @@ async def api_plan_auto_adjust(request: Request):
                     actions.append({
                         "day": today_iso,
                         "before": {"type": old_type, "duration_min": old_duration, "tss": old_tss},
-                        "after": {"type": new_type, "duration_min": old_duration, "tss": new_tss},
+                        "after": {"type": new_type, "duration_min": new_duration, "tss": new_tss},
                         "rematched": rematched,
                         "zwo_cleared": zwo_cleared,
                     })
@@ -11706,6 +11713,11 @@ def _api_today_session_impl():
     return resp
 
 
+# Share of the subjective channel given to the optional readiness-to-train
+# rating. The four answered Hooper items keep the remainder.
+_RTT_WEIGHT = 0.25
+
+
 def _get_soreness_subjective() -> float | None:
     """Auto-feed daily-log into readiness subjective score (1-10).
 
@@ -11742,13 +11754,20 @@ def _get_soreness_subjective() -> float | None:
     # determinant of the channel (min is a one-way ratchet) and, on a mis-read
     # of direction, invert the sign outright.
     #
-    # Combination: mean of (worst Hooper component, readiness-to-train). Hooper's
-    # "any limb weak" intent is preserved inside its own group by keeping the
-    # min there; the rider's own readiness judgement then gets equal say rather
-    # than being able only to drag the score down. Ten Haaf 2017 (PMID
-    # 27834554) found readiness-to-train carried real discriminative signal for
-    # functional overreaching in cyclists, so it should be able to move the
-    # channel UP as well as down.
+    # Combination: the worst Hooper component stays DOMINANT and readiness-to-
+    # train adjusts it. Hooper's "any limb weak" intent is preserved inside its
+    # own group by keeping the min there, and Ten Haaf 2017 (PMID 27834554)
+    # justifies letting the rider's own readiness judgement move the channel UP
+    # as well as down — but not by an unlimited amount.
+    #
+    # An equal-weight mean was tried first and rejected on a measured case: with
+    # the worst possible sleep answer and the other three merely poor (a
+    # combination that trips neither the soreness cap nor the Hooper-sum gate),
+    # one tap of "ready = 10" lifted the composite from 56 to 66 and cancelled
+    # the readiness-under-60 all-Z2 rule outright. A single optional,
+    # unvalidated self-rating must not be able to overturn four answered
+    # questions or cross a safety threshold on its own. At 1/4 weight it shifts
+    # the channel by at most ~2 points on a 1-10 axis: visible, not decisive.
     rtt = today_log.get("readiness_to_train")
     rtt_score = None
     if rtt is not None:
@@ -11757,10 +11776,11 @@ def _get_soreness_subjective() -> float | None:
         except (TypeError, ValueError):
             rtt_score = None
     hooper_worst = min(components) if components else None
-    parts = [v for v in (hooper_worst, rtt_score) if v is not None]
-    if not parts:
-        return None
-    return sum(parts) / len(parts)
+    if hooper_worst is None:
+        return rtt_score          # readiness alone still yields a channel
+    if rtt_score is None:
+        return hooper_worst
+    return _RTT_WEIGHT * rtt_score + (1.0 - _RTT_WEIGHT) * hooper_worst
 
 
 def _session_hr_target(session_type: str) -> dict:

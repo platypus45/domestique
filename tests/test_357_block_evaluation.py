@@ -97,8 +97,37 @@ def test_a_short_rep_is_partial_not_done():
     r = sf.score_blocks(_segs(), laps, FTP)
     assert r["reps_partial"] == 1
     assert r["reps"][2]["status"] == "partial"
-    assert r["outcome"] == "off_plan"      # a hole mid-session, not a clean stop
+    # v3.6.0: "off_plan" was the wrong verdict here and the UI copy proved it —
+    # a rider who rode all nine blocks with one cut short was shown "blocks
+    # missing / 0 of 9". Nothing is missing when nothing was skipped.
+    assert r["outcome"] == "short_blocks"
+    assert r["reps_missed"] == 0
     assert r["work_fraction"] < 1.0
+
+
+def test_all_blocks_ridden_short_is_not_reported_as_missing():
+    # The case that exposed it: every prescribed block attempted, all of them
+    # under length. Anything that reads as "you skipped blocks" is a lie.
+    laps = _laps(9)
+    for lap in laps:
+        if lap["type"] == "WORK":
+            lap["duration_s"] = int(lap["duration_s"] * 0.6)
+    r = sf.score_blocks(_segs(), laps, FTP)
+    assert r["outcome"] == "short_blocks"
+    assert r["reps_missed"] == 0
+    assert r["reps_partial"] == r["reps_prescribed"]
+    assert r["reps_done"] == 0            # none at FULL length...
+    assert r["stopped_after"] == r["reps_prescribed"]   # ...but they finished
+
+
+def test_ui_counts_ridden_blocks_not_only_full_length_ones():
+    from pathlib import Path
+    import app as app_module
+    src = (Path(app_module.__file__).parent / "templates" / "dashboard.html"
+           ).read_text(encoding="utf-8")
+    assert "blocks ridden" in src
+    assert "at full length" in src
+    assert "all blocks, cut short" in src
 
 
 def test_a_missing_middle_lap_is_attributed_to_the_end():

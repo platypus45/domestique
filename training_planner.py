@@ -809,19 +809,27 @@ def _last_3d_mean_feel(rides: list[dict]) -> float | None:
                 raw = rj
             feel = raw.get("feel") if feel is None else feel
             rpe = raw.get("perceivedExertion") if rpe is None else rpe
-        per_ride: list[float] = []
-        if feel is not None:
-            try:
-                per_ride.append(float(feel) * 2.0)
-            except (TypeError, ValueError):
-                pass
+        # v3.5.6 — STRICT PRECEDENCE, never an average. Averaging `feel × 2`
+        # with `perceived_exertion` mixed two different scales into one number:
+        # ICU's `feel` is a 1-5 "how did it go" rating while
+        # perceived_exertion is a 1-10 CR-10 effort rating. A rider entering
+        # feel=4 alone produced 8.0 and tripped the G7 ≥7 auto-downgrade, while
+        # 4 on the CR-10 scale means "somewhat hard" and should trip nothing.
+        # A true CR-10 RPE wins outright; `feel` is only a fallback when no RPE
+        # exists, and its ×2 rescale is an approximation flagged as such.
+        val = None
         if rpe is not None:
             try:
-                per_ride.append(float(rpe))
+                val = float(rpe)
             except (TypeError, ValueError):
-                pass
-        if per_ride:
-            samples.append(sum(per_ride) / len(per_ride))
+                val = None
+        if val is None and feel is not None:
+            try:
+                val = float(feel) * 2.0
+            except (TypeError, ValueError):
+                val = None
+        if val is not None:
+            samples.append(val)
     if not samples:
         return None
     return sum(samples) / len(samples)

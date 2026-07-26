@@ -43,6 +43,19 @@ _DFA_CARRY_KEYS = (
 # backfill pass, which is exactly what the hourly wipe used to cost.
 _BACKFILL_CARRY_KEYS = ("streams",)
 
+# v3.5.6 — the rider's OWN post-ride input. Never present in any ICU payload,
+# so a re-sync would silently erase it (the laps/streams lesson). Carried
+# unconditionally: unlike streams there is no "fresh payload wins" case,
+# because ICU can never supply these.
+#   rpe        — Foster CR-10 integer 0-10 (the scale the whole session-RPE
+#                evidence base uses; Borg 6-20 / CR-100 are statistically
+#                interchangeable but produce different absolute numbers, which
+#                would break every published threshold).
+#   rpe_at     — ISO timestamp of the rating, so staleness is auditable.
+#   rpe_scale  — pinned scale id; a future scale change must not silently
+#                reinterpret old ratings.
+_RIDER_INPUT_CARRY_KEYS = ("rpe", "rpe_at", "rpe_scale")
+
 
 def _active_profile_dir() -> Path:
     """AC2a: the ACTIVE profile's directory — every archive dir hangs off it.
@@ -494,6 +507,25 @@ def persist_icu_activity(activity: dict, carry_hydrated: bool = True) -> Path | 
                     # when the fresh normalization produced nothing.
                     if prior.get("efforts") and not norm.get("efforts"):
                         norm["efforts"] = prior["efforts"]
+                    # v3.5.6 — same for `intervals` (the rider's Garmin laps).
+                    # Laps only arrive via the /intervals subpath on a DETAIL
+                    # fetch (fetch_activity_full); the activity-LIST payload the
+                    # hourly sync uses has none. So a re-sync used to overwrite
+                    # a lap-carrying envelope with an empty list and silently
+                    # destroy them — measured: a 61-lap ride went to 0 laps on
+                    # one forced sync. Laps are the primary signal for
+                    # block-by-block ride evaluation, so losing them is not
+                    # cosmetic. Prefer prior only when the fresh payload brought
+                    # nothing, so a genuine detail refresh still wins.
+                    if prior.get("intervals") and not norm.get("intervals"):
+                        norm["intervals"] = prior["intervals"]
+                # The rider's own RPE always survives — carried even when
+                # carry_hydrated is False (that flag exists so a fresh DETAIL
+                # fetch can replace stale ICU-derived data; it must never
+                # discard something only the rider could provide).
+                for k in _RIDER_INPUT_CARRY_KEYS:
+                    if prior.get(k) is not None:
+                        norm.setdefault(k, prior[k])
         except (json.JSONDecodeError, OSError) as e:
             log.debug(f"persist_icu_activity({icu_id}) prior read: {e}")
     if prior_prs is not None:

@@ -16715,8 +16715,40 @@ def _execution_for_match(s_json: dict, activity_id) -> "dict | None":
         return None
     if result.get("score") is None:
         return None
-    return {**result, "activity_id": activity_id,
-            "computed_at": datetime.now().isoformat()}
+    # v3.5.6 — ADDITIVE block evaluation: "which prescribed blocks did I
+    # actually do?" The three locked axes (duration/load/intensity) cannot see
+    # structure — stopping after 10 of 13 reps survives TSS and time-in-zone
+    # nearly intact. The rider marks a lap per interval, so the laps are exact
+    # block boundaries; grade against those. Never affects score/verdict (both
+    # pinned by tests) and never raises: a ride with no laps, or a session with
+    # no matched file, simply has no "blocks" key.
+    blocks = _block_eval_for(s_json, ride)
+    out = {**result, "activity_id": activity_id,
+           "computed_at": datetime.now().isoformat()}
+    if blocks is not None:
+        out["blocks"] = blocks
+    return out
+
+
+def _block_eval_for(s_json: dict, ride: dict) -> "dict | None":
+    """Lap-based block grading for a matched session. None when not gradeable."""
+    try:
+        laps = ride.get("intervals") or []
+        zwo = (s_json.get("zwo_file") or "").strip()
+        if not laps or not zwo:
+            return None
+        import structure_fidelity as _sf
+        path = WORKOUT_DIR / os.path.basename(zwo)
+        if not path.exists():
+            return None
+        segs = _sf.parse_zwo_file(path)
+        if not segs:
+            return None
+        ftp = ride.get("ftp_at_ride") or config.ATHLETE_FTP_W
+        return _sf.score_blocks(segs, laps, ftp)
+    except Exception as e:  # noqa: BLE001 — advisory axis, never break scoring
+        _log.debug(f"block eval skipped: {e}")
+        return None
 
 
 def _apply_rematch_preview_to_plan(plan: dict, week_idx: int, preview: dict) -> int:
@@ -19112,6 +19144,62 @@ def _maybe_queue_pr_toasts(added_paths: list[Path]) -> None:
         })
         seen.add(ride_id)
     _write_pr_toast_queue(queue)
+
+
+@app.post("/api/ride/{ride_id}/rpe")
+async def api_ride_rpe(ride_id: str, request: Request):
+    """v3.5.6 — store the rider's session RPE for a ride.
+
+    Foster modified CR-10 (0-10 integer). That scale is used because the whole
+    session-RPE evidence base is built on it; Borg 6-20 and CR-100 are
+    statistically interchangeable but produce different ABSOLUTE numbers, which
+    would silently break every published threshold. ``rpe_scale`` is pinned on
+    the record so a future scale change cannot reinterpret old ratings.
+
+    Optional by design: never required, never blocks ride ingestion, and
+    ``DELETE``-like clearing is supported by posting ``null``. Timing is
+    deliberately permissive — the popular "wait 30 minutes" rule is NOT
+    supported by the evidence that tested it (session-RPE is stable from ~5 min
+    to 24 h post-exercise), so we accept whenever the rider gets to it and let
+    readers judge staleness from ``rpe_at``.
+    """
+    if not isinstance(ride_id, str) or not re.match(r"^[\w\-]+$", ride_id or ""):
+        return JSONResponse({"error": "bad ride_id"}, 400)
+    try:
+        body = await _get_json_body(request)
+    except Exception:
+        body = {}
+    raw = body.get("rpe", None)
+    if raw is None:
+        rpe = None
+    else:
+        try:
+            rpe = int(round(float(raw)))
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "rpe must be a number 0-10"}, 400)
+        if not (0 <= rpe <= 10):
+            return JSONResponse({"error": "rpe out of range 0-10"}, 400)
+    import ride_storage as _rs
+    ext = ride_id[4:] if ride_id.startswith("icu_") else ride_id
+    path = _rs._icu_rides_dir() / f"{ext}.json"
+    if not path.exists():
+        return JSONResponse({"error": "unknown ride"}, 404)
+    try:
+        rec = json.loads(path.read_text(encoding="utf-8"))
+        if rpe is None:
+            for k in ("rpe", "rpe_at", "rpe_scale"):
+                rec.pop(k, None)
+        else:
+            rec["rpe"] = rpe
+            rec["rpe_at"] = datetime.now().isoformat()
+            rec["rpe_scale"] = "foster_cr10"
+        path.write_text(json.dumps(rec, indent=2), encoding="utf-8")
+    except (OSError, json.JSONDecodeError) as e:
+        _log.warning(f"rpe write failed for {ext}: {e}")
+        return JSONResponse({"error": "write failed"}, 500)
+    clear_cache()
+    return {"ok": True, "ride_id": ride_id, "rpe": rpe,
+            "scale": "foster_cr10" if rpe is not None else None}
 
 
 @app.get("/api/ride/{ride_id}/prs")

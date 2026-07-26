@@ -74,9 +74,10 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 
 __all__ = [
-    "parse_zwo_text", "parse_zwo_file", "score_structure",
+    "parse_zwo_text", "parse_zwo_file", "score_structure", "score_blocks",
     "WORK_FLOOR_FRAC", "TOL_FRAC", "TOL_MIN_W", "TRANSIENT_GRACE_S",
     "ALIGN_MAX_OFFSET_S", "MISSING_BELOW_FLOOR_FRAC", "MISSING_TARGET_FRAC",
+    "LAP_SHORT_FRAC", "LAP_POWER_TOL_FRAC",
 ]
 
 # ── Locked fidelity constants (documented in the module docstring) ──────────
@@ -87,6 +88,14 @@ TRANSIENT_GRACE_S = 3           # ERG step-response seconds excluded per rep
 ALIGN_MAX_OFFSET_S = 120        # global alignment search, ±s at 1 s steps
 MISSING_BELOW_FLOOR_FRAC = 0.5  # absent/below-floor > this ⇒ rep missing
 MISSING_TARGET_FRAC = 0.90      # floor also capped at 90 % of the rep target
+
+# ── Lap-based block grading (score_blocks) ──────────────────────────────────
+# The rider marks a Garmin lap per interval, so the laps ARE the block
+# boundaries — no alignment search, no correlation, no guessing. intervals.icu
+# hands them back already labelled type=WORK|RECOVERY with a per-lap ftp_pct,
+# which is why this grader needs neither the 1 Hz trace nor even an FTP value.
+LAP_SHORT_FRAC = 0.80           # delivered lap < this × prescribed ⇒ "partial"
+LAP_POWER_TOL_FRAC = 0.10       # |lap mean − target| within this ⇒ on target
 
 
 def _attr_f(el, name) -> "float | None":
@@ -302,4 +311,207 @@ def score_structure(planned_segments, watts, ftp) -> "dict | None":
         "alignment_offset_s": offset,
         "worst_segment": dict(worst) if worst is not None else None,
         "segments": rows,
+    }
+
+
+# ── Lap-based block grading ─────────────────────────────────────────────────
+
+def _prescribed_reps(planned_segments, ftp) -> "list[dict]":
+    """Work reps from the prescription, in order, grouped into sets.
+
+    A "set" boundary is a recovery gap materially longer than the in-set
+    recoveries — that is what separates 3×13 from 39 straight reps, and it is
+    how the rider thinks about the session ("10 of 13 in each set").
+    """
+    # WHICH segments are reps. The rider laps the WORK intervals, so the
+    # prescription's own structure must decide — not an intensity floor.
+    # A 30/15 float session has its OFF legs at 89 % FTP and its lead-in ramp
+    # at 97 %, both above WORK_FLOOR_FRAC; grading those as reps mis-numbered
+    # every block and compared a 30 s rep against a 180 s ramp. When the file
+    # declares intervals (IntervalsT → "interval_on"), those ARE the reps and
+    # nothing else is. Only files with no declared intervals fall back to
+    # steady blocks above the floor (a tempo/threshold session lapped per
+    # block).
+    kinds = {seg.get("kind") for seg in planned_segments}
+    explicit = "interval_on" in kinds
+
+    def _is_rep(seg, mid) -> bool:
+        # The intensity floor applies in BOTH modes: a warmup fast-pedal drill
+        # is also an IntervalsT ("5 × 30 s @ 65 %"), and counting those as reps
+        # numbered the blocks from the warmup instead of the main set.
+        if mid is None or mid < WORK_FLOOR_FRAC:
+            return False
+        if explicit:
+            return seg.get("kind") == "interval_on"
+        return seg.get("kind") == "steady"
+
+    reps: list[dict] = []
+    gaps: list[float] = []
+    prev_end = None
+    for seg in planned_segments:
+        mid = _seg_frac_at(seg, seg["dur_s"] // 2) if seg["dur_s"] else None
+        if not _is_rep(seg, mid):
+            continue
+        if mid is None:
+            continue
+        if prev_end is not None:
+            gaps.append(max(0.0, seg["start_s"] - prev_end))
+        reps.append({"dur_s": seg["dur_s"], "target_frac": mid,
+                     "target_w": (mid * ftp) if ftp else None,
+                     "start_s": seg["start_s"]})
+        prev_end = seg["start_s"] + seg["dur_s"]
+    if not reps:
+        return []
+    # Set split: a gap ≥ 2× the median in-set gap (and ≥ 60 s) starts a new set.
+    set_idx = 0
+    if gaps:
+        ordered = sorted(gaps)
+        med = ordered[len(ordered) // 2] or 0.0
+        thresh = max(60.0, 2.0 * med) if med else None
+    else:
+        thresh = None
+    reps[0]["set"] = 0
+    for i in range(1, len(reps)):
+        g = gaps[i - 1] if i - 1 < len(gaps) else 0.0
+        if thresh is not None and g >= thresh:
+            set_idx += 1
+        reps[i]["set"] = set_idx
+    return reps
+
+
+def _work_laps(laps) -> "list[dict]":
+    """The rider's WORK laps in order. intervals.icu labels them; fall back to
+    a power/ftp_pct heuristic for laps that carry no type."""
+    out: list[dict] = []
+    for lap in (laps or []):
+        if not isinstance(lap, dict):
+            continue
+        dur = lap.get("duration_s") or 0
+        if not dur:
+            continue
+        t = str(lap.get("type") or "").strip().upper()
+        pct = lap.get("ftp_pct")
+        if t == "WORK":
+            is_work = True
+        elif t in ("RECOVERY", "REST"):
+            is_work = False
+        else:
+            # Untyped lap: grade on intensity, same floor as the prescription.
+            try:
+                is_work = pct is not None and float(pct) / 100.0 >= WORK_FLOOR_FRAC
+            except (TypeError, ValueError):
+                is_work = False
+        if is_work:
+            out.append(lap)
+    return out
+
+
+def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
+    """Grade which prescribed BLOCKS the rider actually completed, from laps.
+
+    Answers the question a load number cannot: "I stopped early — which blocks
+    did I do?" Laps are explicit boundaries the rider set, so this is a direct
+    positional comparison rather than the trace alignment ``score_structure``
+    has to do. Returns None when it cannot honestly grade (no prescribed reps,
+    no usable laps).
+
+    KNOWN LIMIT — matching is positional, so a rep skipped in the MIDDLE is
+    indistinguishable from stopping one rep earlier: no lap exists either way.
+    The count stays correct (8 of 9) but the missing block is attributed to the
+    end. Distinguishing the two needs cumulative lap timing against the
+    prescribed schedule; deliberately not built (pinned by
+    tests/test_357_block_evaluation.py).
+
+    Result::
+
+      {
+        "outcome":        "completed"|"cut_short"|"off_plan"|"not_attempted",
+        "reps_prescribed": int,
+        "reps_done":       int,   # delivered at ~full prescribed duration
+        "reps_partial":    int,   # started but materially short
+        "reps_missed":     int,
+        "work_fraction":   float, # delivered work seconds / prescribed
+        "stopped_after":   int|None,   # 1-based rep index the rider got to
+        "sets":            list[dict], # per set: prescribed/done/partial
+        "reps":            list[dict], # per rep: index, set, status, …
+        "basis":           "laps",
+      }
+    """
+    reps = _prescribed_reps(planned_segments or [], ftp)
+    wl = _work_laps(laps)
+    if not reps or not wl:
+        return None
+
+    rows: list[dict] = []
+    done = partial = missed = 0
+    deliv_s = 0.0
+    presc_s = float(sum(r["dur_s"] for r in reps))
+    for i, r in enumerate(reps):
+        lap = wl[i] if i < len(wl) else None
+        row = {"index": i + 1, "set": r.get("set", 0) + 1,
+               "prescribed_s": r["dur_s"],
+               "target_pct": round(100.0 * r["target_frac"], 1),
+               "delivered_s": None, "delivered_pct": None,
+               "on_target": None, "status": "missed"}
+        if lap is None:
+            missed += 1
+        else:
+            d = float(lap.get("duration_s") or 0)
+            row["delivered_s"] = int(d)
+            deliv_s += min(d, r["dur_s"])
+            pct = lap.get("ftp_pct")
+            try:
+                pct = float(pct) if pct is not None else None
+            except (TypeError, ValueError):
+                pct = None
+            row["delivered_pct"] = pct
+            if pct is not None:
+                row["on_target"] = bool(
+                    abs(pct / 100.0 - r["target_frac"])
+                    <= LAP_POWER_TOL_FRAC * max(r["target_frac"], 0.01))
+            if d >= LAP_SHORT_FRAC * r["dur_s"]:
+                row["status"] = "done"
+                done += 1
+            else:
+                row["status"] = "partial"
+                partial += 1
+        rows.append(row)
+
+    # Where did the rider get to? Last rep with any delivery.
+    stopped_after = None
+    for row in rows:
+        if row["status"] in ("done", "partial"):
+            stopped_after = row["index"]
+
+    n = len(reps)
+    if done + partial == 0:
+        outcome = "not_attempted"
+    elif missed == 0 and partial == 0:
+        outcome = "completed"
+    elif stopped_after is not None and missed and all(
+            r["status"] == "missed" for r in rows[stopped_after:]):
+        # Every gap is at the END ⇒ the rider stopped, rather than skipping
+        # blocks in the middle (which is a different, off-plan story).
+        outcome = "cut_short"
+    else:
+        outcome = "off_plan"
+
+    sets: dict[int, dict] = {}
+    for row in rows:
+        s = sets.setdefault(row["set"], {"set": row["set"], "prescribed": 0,
+                                        "done": 0, "partial": 0, "missed": 0})
+        s["prescribed"] += 1
+        s[row["status"]] = s.get(row["status"], 0) + 1
+
+    return {
+        "outcome": outcome,
+        "reps_prescribed": n,
+        "reps_done": done,
+        "reps_partial": partial,
+        "reps_missed": missed,
+        "work_fraction": round(deliv_s / presc_s, 3) if presc_s else None,
+        "stopped_after": stopped_after,
+        "sets": [sets[k] for k in sorted(sets)],
+        "reps": rows,
+        "basis": "laps",
     }

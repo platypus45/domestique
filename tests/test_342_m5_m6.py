@@ -439,7 +439,11 @@ def test_4_fr_info_popover_present_and_wired():
 def test_5_mode_cards_markup_and_dropdown_lost_continuous():
     src = _src()
     # Two selectable cards lead PLAN CONFIGURATION, with the locked copy.
-    cfg = src.index("<h3>Plan Configuration</h3>")
+    # v3.5.6 — the bare <h3> heading became the fold-out's clickable header
+    # bar (owner: "it should be clear where to open it"). The assertion below
+    # is about ORDER — the heading leads, then the mode cards, then the goal
+    # row — and that contract is unchanged.
+    cfg = src.index('id="plan-config-header"')
     cards = src.index('id="plan-mode-cards"')
     goal_row = src.index('id="plan-goal-group"')
     assert cfg < cards < goal_row, "mode cards must LEAD the form"

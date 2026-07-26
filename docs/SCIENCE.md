@@ -22,6 +22,8 @@ The peer-reviewed evidence supporting TSS as a *quantifier of training that was 
 
 **How Domestique mitigates** without replacing TSS as the primary load currency: the seven injury-prevention guardrails (G1–G7) layered on top of TSS-driven planning capture several of the failure modes Vermeire flags — see [§0b](#0b-literature-wired-into-the-planner) below.
 
+**One failure mode no load metric can cover.** All of the above measures the dose delivered. None of it measures the athlete's *response* to that dose, and the response is where overreaching announces itself first. In the one cyclist study that tested this directly ([Ten Haaf et al. 2017](https://pubmed.ncbi.nlm.nih.gov/27834554/), n=30), accumulated session-RPE load did **not** discriminate functional overreaching — but two subjective items, pre-session fatigue and readiness-to-train, classified it correctly in 78% of riders at three days (sens 79%, spec 77%). Perceived-effort measures also decouple from power and heart rate far more sharply in overreached riders (d = 0.79–1.79) than objective ratios do on their own (d = 0.03–0.41; [Sanders et al. 2018](https://pubmed.ncbi.nlm.nih.gov/29016241/)). That is the specific gap [§0f](#0f-subjective-load-what-rpe-and-wellness-ratings-can-and-cannot-do) covers, and the reason both items are collected.
+
 ### 0b. Literature wired into the planner
 
 | Critique area / failure mode | Mitigation in Domestique | Source |
@@ -130,6 +132,34 @@ The 3-dimensional impulse-response model from [Kontro/Mastracci/Cheung/MacInnis 
 
 **Why TSS stays primary:** the Kontro paper is intentionally additive — its authors keep the conventional Banister/CTL framework alongside the 3D decomposition. Domestique mirrors that. The 3D model adds resolution for athletes who want to see which energy system was stressed, but the planner still picks workouts based on the existing TSS-driven taxonomy the rider is already used to.
 
+### 0f. Subjective load: what RPE and wellness ratings can and cannot do
+
+Session-RPE is the cheapest signal in the stack and the easiest to over-trust. What the literature supports, and where Domestique stops:
+
+| Claim | Evidence | What Domestique does |
+|---|---|---|
+| Session-RPE is a valid internal-load measure | [Foster 1998](https://pubmed.ncbi.nlm.nih.gov/9662690/) — modified CR-10, the scale the whole session-RPE base is built on | Foster CR-10 (0–10) with verbal anchors on every value; the scale id is stored on each rating so a future scale change can never silently re-interpret old numbers |
+| A single rating is noisy | [Wallace et al. 2014](https://pubmed.ncbi.nlm.nih.gov/24662229/) — sRPE test-retest **CV 28.1%** | No rule reacts to a one-unit move. G7 uses a 3-day mean at Foster's published ≥7 threshold |
+| RPE catches what power and HR miss in overreached riders | [Sanders et al. 2018](https://pubmed.ncbi.nlm.nih.gov/29016241/) — RPE:power, RPE:HR and sRPE:TSS decoupling d = 0.79–1.79 vs 0.03–0.41 for objective-only ratios | Collected and displayed; it is the only channel that needs no power meter and no 40-minute steady block |
+| Pre-session fatigue + readiness-to-train discriminate functional overreaching | [Ten Haaf et al. 2017](https://pubmed.ncbi.nlm.nih.gov/27834554/), n=30 cyclists — 78% correct at 3 days | Both are collected in the morning check-in; readiness-to-train was added in v3.6.0 because it is not one of Hooper's four items |
+| Poor sleep raises perceived effort at a fixed workload | [Temesi et al. 2013](https://pubmed.ncbi.nlm.nih.gov/23760468/); Kong 2025 sleep-restriction meta-analysis, SMD 0.39 | Wellness ratings **attribute** an elevated fatigue signal rather than casting a second weighted vote for it — two readings of one cause must not be counted twice |
+| Better wellness can produce *higher* RPE | [Sansone et al. 2023](https://pubmed.ncbi.nlm.nih.gov/37259497/) — in free-intensity training, riders who felt better simply did more work | RPE never enters the readiness composite as a linear term. A naive weighted sum can invert the sign of the very thing it is trying to measure |
+| No composite can *diagnose* overreaching | [Meeusen et al. 2013](https://pubmed.ncbi.nlm.nih.gov/23247672/) (ECSS/ACSM consensus) — diagnosis requires a controlled performance test | Nothing in Domestique says "you are overreached". The ceiling on the language is *flag*, and the ceiling on the action is one tier down |
+| HRV reflects overreaching | **Not supported** — [Roete et al. 2021](https://pubmed.ncbi.nlm.nih.gov/34108275/) found HRV does not reflect overreaching in endurance athletes; HRV was never measured in Ten Haaf 2017 | HRV keeps its own role (day-to-day autonomic state, against the rider's own baseline). It is not presented as an overreaching test |
+
+**What is deliberately not built:** an RPE-derived readiness weight, and a per-band RPE-vs-power residual trend. Both were designed and then held: with one rated session in the archive there is nothing to fit, and the residual design had two faults worth re-deriving before it ships (a work-matched comparison needs enough matched sessions per intensity band, and `RPE / IF` leaves a large within-band intensity gradient that re-admits exactly the sign inversion it was meant to remove).
+
+**Aerobic decoupling recency (v3.6.0).** The Pw:Hr advisory used to be discarded once the source ride was more than two days old. One rest day was enough to erase it — precisely when a fatigue signal is worth reading. It now stays visible to ten days carrying an explicit confidence (`fresh` ≤3 d, `aging` ≤10 d, `stale` beyond) and its age in the copy, which is the actual fix for the original bug (a days-old number reading as today's). The advisory is display-only in every path; it never reaches the plan.
+
+### 0g. The readiness weights are an assumption
+
+`compute_readiness()` weights HRV 30% / TSB 20% / subjective 20% / sleep 15% / RHR 15%. **No published trial fixes those numbers.** They are a reasoned prior: HRV highest because it is the only continuously-measured autonomic channel; TSB next because the dose model is independently validated as a *descriptor*; the subjective channel equal to TSB on the strength of Ten Haaf 2017 and [Saw et al. 2016](https://pubmed.ncbi.nlm.nih.gov/26423706/); sleep and RHR lowest because both are largely downstream of the first three.
+
+Two consequences worth stating plainly:
+
+- **Re-weighting is a preference change, not a bug fix.** Moving weight between channels changes which days read green without any new evidence arriving, so it needs the before/after shown over the rider's own history — not a plausible argument.
+- **A fitted alternative exists but is not the home-page score.** A separate composite (`readiness_composite`) computes component z-scores against the rider's own 60-day rolling baseline (Plews 2018 / Buchheit 2017) and, once ≥60 days of wellness data exist, collapses the rolling correlation matrix into ridge-regression weights clipped to [0.05, 0.50]. It ships as an API and is not yet surfaced in the interface; the fixed-weight score above is what the dashboard shows.
+
 ### 1. Periodisation engine
 
 **Phases.** Standard Base -> Build1 -> Build2 -> Peak -> Taper for event-prep goals, or Base -> Build1 -> Build2 -> Peak -> **Consolidation** for non-event goals (FTP / VO2max / hybrid / general / endurance). Sized from `target_ctl` and `target_date` (Coggan & Allen, *Training and Racing with a Power Meter* 3rd ed.).
@@ -230,7 +260,7 @@ for each PlannedWeek in plan:
 
 **Daily adaptation** runs every time the dashboard loads:
 1. `compute_today_metrics()` — pulls CTL/ATL/TSB + last-3-day decoupling + last-3-day DFA alpha1 + today's daily_log Hooper composite.
-2. `compute_readiness()` — produces a 0-100 score weighted HRV 40% / TSB 20% / Hooper 20% / sleep 10% / RHR 10%.
+2. `compute_readiness()` — produces a 0-100 score weighted HRV 30% / TSB 20% / subjective 20% / sleep 15% / RHR 15%. Components that are missing drop out and the remainder are re-normalised; fewer than 3 available components returns `INSUFFICIENT_DATA` rather than a score. The weights themselves are an assumption — see [§0g](#0g-the-readiness-weights-are-an-assumption).
 3. `adjust_today_session(planned, readiness, recent_rides)` — runs the G1–G7 priority chain. First gate that fires sets the description, marks `s.adapted=True`, and returns. If no gate fires, the planned session ships unchanged.
 
 **Re-forecast and regen:**
@@ -275,6 +305,13 @@ consolidated source list. Textbook / coaching references
 | Subjective wellness > wearables | self-report responsiveness | [Saw et al. 2016](https://pubmed.ncbi.nlm.nih.gov/26423706/) |
 | DOMS protective downshift | peripheral fatigue 24–72h post-eccentric | [Cheung et al. 2003](https://pubmed.ncbi.nlm.nih.gov/12617692/) |
 | TSS ↔ performance evidence | correlational, mixed (see §0a) | [Sanders 2017](https://pubmed.ncbi.nlm.nih.gov/28095061/), [Wallace 2014](https://pubmed.ncbi.nlm.nih.gov/24662229/), [Vermeire 2021](https://pubmed.ncbi.nlm.nih.gov/31498226/) |
+| Readiness-to-train + pre-session fatigue | the pair that discriminated functional overreaching in cyclists (see §0f) | [Ten Haaf et al. 2017](https://pubmed.ncbi.nlm.nih.gov/27834554/) |
+| Session-RPE reliability ceiling | test-retest CV 28.1% — why no rule reacts to one unit | [Wallace et al. 2014](https://pubmed.ncbi.nlm.nih.gov/24662229/) |
+| RPE decoupling from power/HR | d = 0.79–1.79 in overreached riders vs 0.03–0.41 objective-only | [Sanders et al. 2018](https://pubmed.ncbi.nlm.nih.gov/29016241/) |
+| Sleep loss raises RPE at fixed workload | why wellness attributes a signal instead of double-counting it | [Temesi et al. 2013](https://pubmed.ncbi.nlm.nih.gov/23760468/) |
+| RPE sign inversion in free-intensity training | better wellness → more work done → higher RPE | [Sansone et al. 2023](https://pubmed.ncbi.nlm.nih.gov/37259497/) |
+| Overreaching cannot be diagnosed from a composite | ceiling on the language is *flag*, not diagnose | [Meeusen et al. 2013](https://pubmed.ncbi.nlm.nih.gov/23247672/) |
+| HRV does **not** track overreaching | why HRV is not presented as an overreaching test | [Roete et al. 2021](https://pubmed.ncbi.nlm.nih.gov/34108275/) |
 | Nutrition | Duration-gated carb targets | Jeukendrup 2014, ACSM 2016 (position stand) |
 
 ---

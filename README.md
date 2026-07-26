@@ -302,6 +302,10 @@ Every number shows **where it came from and when** — measured, estimated, or s
 
 Every completed session gets an execution score from 0–100 against its prescription: did you ride the planned duration, deliver the planned load, at the planned intensity? Scored from power when you have it, from heart rate when you don't — so HR-mode riders get the same feedback loop. The score lives on the day, so a week of "done" ticks also tells you *how* done they were.
 
+**Which blocks you actually did.** Duration, load and intensity can all look fine while the session itself came apart — eight of thirteen intervals ridden, or every rep two minutes short. So if you press the lap button on your intervals (most riders already do), Domestique reads those laps and grades the *structure*: "stopped after block 8 of 13", set by set, with each rep marked done, partial or missed, and how much of the prescribed work you completed. No extra device setup, no manual entry — it uses the laps your head unit already recorded.
+
+One honest limit: laps are matched in order, so skipping a rep in the middle of a set and stopping one rep early look the same to it. It will tell you how many reps you completed, not which one you dropped.
+
 ---
 
 ## Retest reminders
@@ -318,11 +322,13 @@ Every threshold cited below is inline in the code. The deep dive — full math a
 
 Canonical Banister 1975 impulse-response + Coggan/Allen refinement. **TSS** = `(duration_s x NP x IF) / (FTP x 3600) x 100` — 1h at FTP = 100 TSS by definition. **CTL** ("fitness") is a 42-day EWMA of daily TSS; **ATL** ("fatigue") is the 7-day EWMA; **TSB** ("form") = CTL − ATL. Time constants 42/7 are the conventional defaults — Domestique acknowledges they aren't validated per-athlete, and the [Analysis tab](#analysis-tab--rider-profile) fits per-athlete time constants and shows the model's accuracy against your own history ([Hellard et al. 2017](https://pubmed.ncbi.nlm.nih.gov/28651061/), Kontro 2026). When ICU is unreachable Domestique recomputes CTL from your local FIT archive with the same EWMA.
 
+The same caveat applies to the readiness score's weights (HRV 30% / form 20% / how-you-feel 20% / sleep 15% / resting HR 15%): they are a stated assumption, not a validated per-rider truth — no published trial fixes those numbers. They are written down rather than buried so you can judge them. See [docs/SCIENCE.md](docs/SCIENCE.md) for what each channel is and is not evidence for.
+
 ### HRV — resting (morning) vs DFA alpha1 (in-ride)
 
 Two separate signals, same hardware (chest strap recording RR-intervals).
 
-**Resting HRV (rMSSD overnight)** lands automatically via the ICU wellness sync if Garmin Connect is linked to ICU — `wellness.hrv` is the input for the readiness composite (HRV 40% / TSB 20% / Hooper 20% / sleep 10% / RHR 10%).
+**Resting HRV (rMSSD overnight)** lands automatically via the ICU wellness sync if Garmin Connect is linked to ICU — `wellness.hrv` is the input for the readiness composite (HRV 30% / form 20% / how-you-feel 20% / sleep 15% / resting HR 15%; missing inputs drop out and the rest are re-weighted, and a score needs at least three of them).
 
 **DFA alpha1** is the autonomic-balance scaling exponent computed *post-ride* from beat-to-beat RR-intervals ([Peng 1995](https://pubmed.ncbi.nlm.nih.gov/11538314/) algorithm; sanity range [0.30, 1.60] per Gronwald & Hoos 2020). [Rogers et al. 2021](https://pubmed.ncbi.nlm.nih.gov/33519504/) shows alpha1 < 0.75 marks the aerobic-threshold (LT1) drift and < 0.5 marks sustained sympathetic dominance — Domestique feeds it as a fatigue signal that downshifts tomorrow's intensity.
 
@@ -382,7 +388,23 @@ A dedicated **"DFA alpha1" tab** surfaces all of the above: an aggregate↔per-r
 
 Four 5-button questions on the home page: **sleep / energy / stress / soreness**, each 1–5. [Hooper & Mackinnon 1995](https://pubmed.ncbi.nlm.nih.gov/7898325/) (*J Sci Med Sport*) showed the *composite* (4-field sum, range 4–28) predicts overtraining better than any single component — a rider can have crushed legs but score "fine" on subjective fatigue; a sleep-deprived rider can have fresh legs. [Saw et al. 2016](https://pubmed.ncbi.nlm.nih.gov/26423706/) (*Br J Sports Med*) is the modern reinforcement: subjective wellness questionnaires correlate *better* with training response than any wearable HRV/RHR/sleep-score metric.
 
+**Plus one question that isn't Hooper's: "ready to train?" (1–10, optional).** Pre-session fatigue *together with* readiness-to-train is the pair that actually separated the overreached cyclists from the coping ones in a 30-rider training study — and readiness-to-train is not one of Hooper's four items, so it was missing. It's optional, never pre-filled, and it moves the score in both directions: a high rating can lift the day, where the four Hooper items can only ever be dragged down by their worst answer.
+
 Wires into the planner at three points: 20% weight in `readiness_score`; **G5** hard gate (`soreness >= 6` forces recovery, bypassing the composite — peripheral fatigue is real even when central HRV looks fine, Cheung 2003); **G6** hard gate (`sleep + fatigue + stress + soreness >= 18` forces Z2). Form pre-defaults each field to "3 — Normal" so a user who only taps soreness still posts a sane composite (~6s tap time).
+
+### Session RPE — how hard did that actually feel
+
+Hooper asks how you feel *before* you ride. This asks how the ride turned out, which is not the same question: a session can feel fine on the start line and empty you anyway.
+
+After any ride you can rate it 0–10 on Foster's category-ratio scale, with the wording attached to each number ("somewhat hard", "very hard", "maximal") rather than bare digits — the anchors are what make your 7 today mean the same as your 7 last month. It's optional, it takes one tap, and a rating you've given is never overwritten by a re-sync.
+
+What it does: your three-day mean feeds the **G7** guardrail, which eases a hard day when that mean hits 7 or above. Nothing else. That restraint is deliberate:
+
+- A single rating is noisy. Repeat measurements of the same session vary by around 28% ([Wallace et al. 2014](https://pubmed.ncbi.nlm.nih.gov/24662229/)), so no rule here reacts to a one-point move — G7 works on a three-day mean at a published threshold.
+- The effect is one-directional. A high rating can talk the planner out of intensity; nothing you enter can talk it into more. That asymmetry is on purpose.
+- No trial has shown that steering an endurance plan by RPE improves any outcome. So Domestique captures it, shows it, and lets one published gate use it — it does not invent new automatic plan changes around it.
+
+The honest counterpart: perceived effort is where the objective signals are blind. A drifting heart rate needs a power meter and 40 minutes; RPE needs neither, and it decouples from power and heart rate far more sharply in overreached riders than any objective measure does on its own ([Sanders et al. 2018](https://pubmed.ncbi.nlm.nih.gov/29016241/)).
 
 ### Treff polarisation index + 80/0/20 distribution
 
@@ -400,7 +422,7 @@ Pre-v4.6.6 the planner detected fatigue/overload/soreness signals but never muta
 | **G4** | ACWR weekly scaling | last week `actual_tss / planned_tss > 1.5` | `next_week.tss_target x 0.85`, hit_per_week − 1 | [Gabbett 2016](https://pubmed.ncbi.nlm.nih.gov/26758673/) |
 | **G5** | Soreness peripheral cap | `daily_log.soreness >= 6` | force today -> recovery (overrides HRV/TSB) | [Hooper 1995](https://pubmed.ncbi.nlm.nih.gov/7898325/) + [Cheung 2003](https://pubmed.ncbi.nlm.nih.gov/12617692/) |
 | **G6** | Hooper composite gate | `sleep + fatigue + stress + soreness >= 18` | force today -> Z2 | [Hooper & Mackinnon 1995](https://pubmed.ncbi.nlm.nih.gov/7898325/) |
-| **G7** | 3-day mean RPE drops HIT | `mean(feel, last 3d) >= 7` AND today is HIT | drop today one tier | [Foster 1998](https://pubmed.ncbi.nlm.nih.gov/9662690/) session-RPE |
+| **G7** | 3-day mean session-RPE drops HIT | `mean(session-RPE, last 3d) >= 7` AND today is HIT | drop today one tier | [Foster 1998](https://pubmed.ncbi.nlm.nih.gov/9662690/) session-RPE |
 
 Each fired gate sets `s.adapted = True` and writes its citation into the session description so the rider sees *why* the prescription changed.
 
@@ -412,7 +434,7 @@ Five additional signals that mutate the *next-day or next-week* plan rather than
 |---|---|---|---|
 | **DFA alpha1** | mean over last 3 rides < 0.5 | tomorrow's threshold -> Z2 (revert button) | [Rogers et al. 2021](https://pubmed.ncbi.nlm.nih.gov/33519504/) |
 | **DFA HRVT1/HRVT2** (beta) | alpha1 crosses 0.75 / 0.50 on a ramp ride | display-only LT1/LT2 HR+power anchors + 3-zone model (never overwrites FTP) | [Rogers 2021 — LT1](https://pmc.ncbi.nlm.nih.gov/articles/PMC7845545/) + [LT2](https://pubmed.ncbi.nlm.nih.gov/33925974/), [Schaffarczyk et al. 2022](https://pmc.ncbi.nlm.nih.gov/articles/PMC9894976/) |
-| **Aerobic decoupling** (HR drift vs power) | > 5% on last ride | next-day "Z2 recommended" advisory banner | [Coyle & González-Alonso 2001](https://pubmed.ncbi.nlm.nih.gov/11337829/) |
+| **Aerobic decoupling** (HR drift vs power) | > 5% on a ride in the last 10 days | "Z2 recommended" advisory banner, carrying how old the reading is and whether your own wellness ratings explain it | [Coyle & González-Alonso 2001](https://pubmed.ncbi.nlm.nih.gov/11337829/) |
 | **Foster monotony** (weekly load SD/mean) | > 2.0 over 14 days | next week `tss_target x 0.85`, hit_per_week − 1 | [Foster 1998](https://pubmed.ncbi.nlm.nih.gov/9662690/) |
 | **eFTP drift** (Intervals.icu) | > 3% above set FTP for 7+ consecutive days | FTP auto-applied with 48h revert toast | Allen & Coggan eFTP definition |
 | **Local CTL fallback** | ICU unreachable | 42-day EWMA over imported FIT rides | Coggan/Allen tau=42 |

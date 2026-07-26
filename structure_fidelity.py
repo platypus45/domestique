@@ -100,6 +100,20 @@ LAP_SHORT_FRAC = 0.80           # delivered lap < this × prescribed ⇒ "partia
 # must not read as "you did this block", or stopping after 8 of 10 with two
 # stray taps reports as all ten done.
 LAP_TRIVIAL_FRAC = 0.25
+# A pairing is ADMISSIBLE or it does not exist. Soft scoring was the mistake:
+# leaving a rep unmatched scores exactly 0, so any spare work lap of vaguely
+# similar length always beat "the rider did not ride this block" — and a rider
+# who skipped a whole set was told "all blocks done, 100% of the work", with the
+# warm-up fast-pedal laps consumed as supramaximal reps. Certifying work that
+# was never done is worse than the misgrade it replaced.
+LAP_MATCH_MIN = 0.60            # combined score below this ⇒ not this block
+LAP_POWER_VETO_FRAC = 0.20      # |lap − target| beyond this ⇒ not this block
+LAP_OVERLONG_FRAC = 1.50        # lap longer than this × prescribed ⇒ not this block
+# How far a lap may sit from where its block is prescribed, after allowing for
+# the drift already accumulated. Generous: riders extend recoveries and warm up
+# longer. It exists to reject the absurd (a warm-up block standing in for the
+# ninth rep), not to demand ERG-exact timing.
+LAP_TIME_VETO_S = 900.0
 LAP_POWER_TOL_FRAC = 0.10       # |lap mean − target| within this ⇒ on target
 
 
@@ -385,15 +399,30 @@ def _prescribed_reps(planned_segments, ftp) -> "list[dict]":
 
 
 def _work_laps(laps) -> "list[dict]":
-    """The rider's WORK laps in order. intervals.icu labels them; fall back to
-    a power/ftp_pct heuristic for laps that carry no type."""
+    """The rider's WORK laps in order, each stamped with where it sits on the
+    ride clock. intervals.icu labels them; fall back to a power/ftp_pct
+    heuristic for laps that carry no type.
+
+    The ``_t0`` stamp is the missing information that makes grading possible.
+    Laps carry no timestamps, but they are contiguous and ordered, so summing
+    the durations of ALL laps (recoveries included) recovers each one's start.
+    Without it, a warm-up block that happens to share a prescribed rep's shape
+    is indistinguishable from that rep — which is how a rider who skipped an
+    entire set came to be told "all blocks done, 100% of the work".
+    """
     out: list[dict] = []
+    clock = 0.0
     for lap in (laps or []):
         if not isinstance(lap, dict):
             continue
         dur = lap.get("duration_s") or 0
         if not dur:
             continue
+        t0 = clock
+        try:
+            clock += float(dur)
+        except (TypeError, ValueError):
+            pass
         t = str(lap.get("type") or "").strip().upper()
         pct = lap.get("ftp_pct")
         if t == "WORK":
@@ -407,32 +436,62 @@ def _work_laps(laps) -> "list[dict]":
             except (TypeError, ValueError):
                 is_work = False
         if is_work:
-            out.append(lap)
+            out.append({**lap, "_t0": t0})
     return out
 
 
-def _lap_match_score(rep, lap) -> float:
-    """How well one lap matches one prescribed rep: 0 (implausible) to 1 (exact).
+def _lap_match_score(rep, lap, drift: float = 0.0) -> float:
+    """How well one lap matches one prescribed rep: 0 (inadmissible) to 1 (exact).
 
-    Duration carries most of the signal — a 30-second opener and a 4-minute
-    threshold block are never confusable — with intensity as a tiebreak for
-    same-length blocks at different targets.
+    Intensity VETOES rather than nudges. As a 0.25-weight term it could cost a
+    mismatch at most 0.09, so a 60 s lap at 60% FTP outscored the correct 45 s
+    lap at 120% and stole the rep — the block was then reported "done" with its
+    own row showing on_target=False. A lap at half the prescribed power is not
+    that block, at any duration.
+
+    Over-delivery is not a mismatch. Riding 8 minutes of a 7-minute block is
+    doing the block; only a lap so long it must be a DIFFERENT block (or a
+    merged pair) is rejected. Scoring |deliv − presc| symmetrically meant a
+    block ridden at 2× graded "missed".
     """
     presc = float(rep["dur_s"]) or 1.0
     deliv = float(lap.get("duration_s") or 0)
-    dur_sim = max(0.0, 1.0 - abs(deliv - presc) / presc)
-    if dur_sim <= 0.0:
+    if deliv <= 0:
         return 0.0
+    if deliv > LAP_OVERLONG_FRAC * presc:
+        return 0.0                      # too long to be this block
     pct = lap.get("ftp_pct")
     try:
         pct = float(pct) / 100.0 if pct is not None else None
     except (TypeError, ValueError):
         pct = None
-    if pct is None:
-        return dur_sim
     tgt = max(rep.get("target_frac") or 0.0, 0.01)
-    pow_sim = max(0.0, 1.0 - abs(pct - tgt) / tgt)
-    return 0.75 * dur_sim + 0.25 * pow_sim
+    if pct is not None and abs(pct - tgt) / tgt > LAP_POWER_VETO_FRAC:
+        return 0.0                      # wrong intensity to be this block
+    # WHERE on the ride this lap sits, against where the block is prescribed.
+    # `drift` is how far the rider is already running from the plan's clock
+    # (longer warm-up, extra recovery), so only the RESIDUAL counts as evidence.
+    t0 = lap.get("_t0")
+    rep_t0 = rep.get("start_s")
+    if t0 is not None and rep_t0 is not None:
+        off = abs(float(t0) - (float(rep_t0) + drift))
+        if off > LAP_TIME_VETO_S:
+            return 0.0                  # wrong part of the ride to be this block
+        time_sim = max(0.0, 1.0 - off / LAP_TIME_VETO_S)
+    else:
+        time_sim = None
+    if deliv >= presc:
+        dur_sim = 1.0                   # full credit; over-delivery is not error
+    else:
+        dur_sim = max(0.0, 1.0 - (presc - deliv) / presc)
+    if pct is None:
+        score = dur_sim
+    else:
+        pow_sim = max(0.0, 1.0 - abs(pct - tgt) / tgt)
+        score = 0.75 * dur_sim + 0.25 * pow_sim
+    if time_sim is not None:
+        score = 0.7 * score + 0.3 * time_sim
+    return score if score >= LAP_MATCH_MIN else 0.0
 
 
 def _align_laps(reps, wl) -> "list[int | None]":
@@ -461,33 +520,84 @@ def _align_laps(reps, wl) -> "list[int | None]":
     n, m = len(reps), len(wl)
     if not n or not m:
         return [None] * n
-    # best[i][j] = best achievable score for reps[i:] against wl[j:]
-    best = [[0.0] * (m + 1) for _ in range(n + 1)]
-    # choice: "pair" | "skip_lap" | "skip_rep"
-    choice = [[None] * (m + 1) for _ in range(n + 1)]
-    for i in range(n - 1, -1, -1):
-        for j in range(m - 1, -1, -1):
-            pair = _lap_match_score(reps[i], wl[j])
-            opts = [(best[i + 1][j], "skip_rep"), (best[i][j + 1], "skip_lap")]
-            if pair > 0.0:
-                # Pairing wins ties: a plausible match is preferred over
-                # explaining the session by omission.
-                opts.insert(0, (pair + best[i + 1][j + 1], "pair"))
-            score, which = max(opts, key=lambda t: t[0])
-            best[i][j], choice[i][j] = score, which
-    out: "list[int | None]" = [None] * n
-    i = j = 0
-    while i < n and j < m:
-        which = choice[i][j]
-        if which == "pair":
-            out[i] = j
-            i += 1
-            j += 1
-        elif which == "skip_lap":
-            j += 1
-        else:
-            i += 1
-    return out
+
+    def _solve(drift: float) -> "list[int | None]":
+        # best[i][j] = best achievable score for reps[i:] against wl[j:]
+        best = [[0.0] * (m + 1) for _ in range(n + 1)]
+        choice = [[None] * (m + 1) for _ in range(n + 1)]
+        for i in range(n - 1, -1, -1):
+            for j in range(m - 1, -1, -1):
+                pair = _lap_match_score(reps[i], wl[j], drift)
+                opts = [(best[i + 1][j], "skip_rep"), (best[i][j + 1], "skip_lap")]
+                if pair > 0.0:
+                    # Pairing wins ties: a plausible match is preferred over
+                    # explaining the session by omission.
+                    opts.insert(0, (pair + best[i + 1][j + 1], "pair"))
+                score, which = max(opts, key=lambda t: t[0])
+                best[i][j], choice[i][j] = score, which
+        out: "list[int | None]" = [None] * n
+        i = j = 0
+        while i < n and j < m:
+            which = choice[i][j]
+            if which == "pair":
+                out[i] = j
+                i += 1
+                j += 1
+            elif which == "skip_lap":
+                j += 1
+            else:
+                i += 1
+        return out
+
+    # Two passes. The rider's clock runs behind the plan's from the first longer
+    # recovery onward, so a fixed time window would reject every later block of
+    # a session that started slowly. Pass 1 finds the pairs, their median
+    # residual IS the drift, and pass 2 re-solves against the rider's own clock.
+    first = _solve(0.0)
+    residuals = [float(wl[j]["_t0"]) - float(reps[i]["start_s"])
+                 for i, j in enumerate(first)
+                 if j is not None and wl[j].get("_t0") is not None
+                 and reps[i].get("start_s") is not None]
+    if not residuals:
+        return first
+    residuals.sort()
+    drift = residuals[len(residuals) // 2]
+    return _solve(drift)
+
+
+def _session_is_ambiguous(planned_segments, reps, ftp) -> bool:
+    """Can this session be block-graded from laps at all?
+
+    Not every session can. A head unit types a lap WORK on intensity alone, so
+    a warm-up ramp step, a fast-pedal drill or a float leg above the work floor
+    all arrive looking like work — and if one of them has the same shape and
+    sits near the same part of the ride as a prescribed block, then no amount of
+    inference can tell "that lap was the block" from "the block was skipped and
+    that lap was the warm-up". The information is not in the data.
+
+    This is decided from the FILE, before the rider's laps are even considered,
+    which is what makes it honest rather than a guess about a particular ride.
+    Three attempts to infer past this (positional, shape-matched, then
+    time-anchored) each produced confident wrong answers on hundreds of library
+    workouts — the worst telling a rider who abandoned a whole set that they had
+    done every block and 100% of the work. A missing verdict is recoverable; a
+    false green tick is not.
+    """
+    rep_starts = {r.get("start_s") for r in reps}
+    for seg in planned_segments:
+        if seg.get("start_s") in rep_starts:
+            continue
+        dur = seg.get("dur_s") or 0
+        if not dur:
+            continue
+        mid = _seg_frac_at(seg, dur // 2)
+        if mid is None or mid < WORK_FLOOR_FRAC:
+            continue                    # a head unit would not call this work
+        ghost = {"duration_s": dur, "ftp_pct": mid * 100.0,
+                 "_t0": seg.get("start_s")}
+        if any(_lap_match_score(r, ghost) > 0.0 for r in reps):
+            return True
+    return False
 
 
 def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
@@ -509,7 +619,11 @@ def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
     Result::
 
       {
-        "outcome":        "completed"|"cut_short"|"off_plan"|"not_attempted",
+        "outcome":        "completed"    — every block, full length
+                          | "short_blocks" — every block, some ran short
+                          | "cut_short"    — stopped; all gaps at the end
+                          | "off_plan"     — gap(s) in the middle
+                          | "not_attempted"— nothing materially delivered,
         "reps_prescribed": int,
         "reps_done":       int,   # delivered at ~full prescribed duration
         "reps_partial":    int,   # started but materially short
@@ -526,6 +640,28 @@ def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
     if not reps or not wl:
         return None
     lap_for_rep = _align_laps(reps, wl)
+
+    # AMBIGUITY GATE — the honest limit of this whole feature.
+    #
+    # A lap list carries no labels, so when a block has no lap of its own AND a
+    # spare lap exists that could plausibly have been it, there is no way to
+    # tell "you skipped that block" from "that lap WAS that block". Three
+    # successive attempts to infer it (positional, shape-matched, then
+    # time-anchored) each produced confident wrong answers on hundreds of
+    # library workouts — including telling a rider who abandoned an entire set
+    # that they had done every block and 100% of the work.
+    #
+    # So: grade when the laps determine the answer, and say nothing when they
+    # do not. A missing feature is recoverable; a false green tick is not.
+    if _session_is_ambiguous(planned_segments or [], reps, ftp):
+        return None
+    # Belt and braces on the ride side: if more laps are plausible candidates
+    # than there are blocks to fill, some block is being credited to a lap that
+    # might belong to another and the solver cannot know which.
+    candidates = {j for j in range(len(wl))
+                  if any(_lap_match_score(r, wl[j]) > 0.0 for r in reps)}
+    if len(candidates) > len(reps):
+        return None
 
     rows: list[dict] = []
     done = partial = missed = 0
@@ -586,10 +722,16 @@ def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
         # blocks at 78% length was told "blocks missing · 0/10" — both halves
         # of that wrong. Nothing is missing and nothing was skipped.
         outcome = "short_blocks"
-    elif stopped_after is not None and missed and all(
+    elif stopped_after is not None and stopped_after < n and all(
             r["status"] == "missed" for r in rows[stopped_after:]):
         # Every gap is at the END ⇒ the rider stopped, rather than skipping
         # blocks in the middle (which is a different, off-plan story).
+        #
+        # `stopped_after < n` matters: without it the slice is empty whenever
+        # the LAST block was ridden, all() on nothing is True, and a hole at
+        # block 2 of 12 reported "stopped early — stopped after block 12".
+        # That also made off_plan unreachable, so no mid-session skip could
+        # ever be named one.
         outcome = "cut_short"
     else:
         outcome = "off_plan"
@@ -597,9 +739,15 @@ def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
     sets: dict[int, dict] = {}
     for row in rows:
         s = sets.setdefault(row["set"], {"set": row["set"], "prescribed": 0,
-                                        "done": 0, "partial": 0, "missed": 0})
+                                        "done": 0, "partial": 0, "missed": 0,
+                                        "ridden": 0})
         s["prescribed"] += 1
         s[row["status"]] = s.get(row["status"], 0) + 1
+        # `ridden` = done + partial. The set line used to print `done` only, so
+        # a set whose blocks all ran a little short read "0/1" on the same line
+        # that called them ridden — visible on the one real lapped ride here.
+        if row["status"] in ("done", "partial"):
+            s["ridden"] += 1
 
     return {
         "outcome": outcome,

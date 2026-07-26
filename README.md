@@ -304,7 +304,9 @@ Every completed session gets an execution score from 0–100 against its prescri
 
 **Which blocks you actually did.** Duration, load and intensity can all look fine while the session itself came apart — eight of thirteen intervals ridden, or every rep two minutes short. So if you press the lap button on your intervals (most riders already do), Domestique reads those laps and grades the *structure*: "stopped after block 8 of 13", set by set, with each rep marked done, partial or missed, and how much of the prescribed work you completed. No extra device setup, no manual entry — it uses the laps your head unit already recorded.
 
-Two honest limits. Laps are matched in order, so skipping a rep in the middle of a set and stopping one rep early look the same to it — it tells you how many reps you completed, not which one you dropped. And it has to work out which of your laps correspond to which prescribed blocks, because your head unit marks a warm-up ramp as work while the plan does not count it as a block; that matching is by block length and intensity, so a session whose blocks are all the same length as its recoveries gives it less to go on.
+**It stays quiet rather than guess.** Your laps carry no labels, and your head unit marks a warm-up ramp or a hard float leg as "work" even though the plan does not count those as blocks. For most sessions the block lengths, intensities and positions make the matching unambiguous. For some — where a warm-up block has the same shape as a real interval and sits near it — nothing in the data can tell "that lap was the block" from "the block was skipped and that lap was the warm-up". Those sessions get no block report at all instead of a confident guess: about one interval workout in five in the library, and you simply see the execution score without the block breakdown.
+
+The one limit that remains where it does report: matching preserves order but cannot distinguish skipping a rep in the middle of a set from stopping one rep early when both fit equally well. It tells you how many blocks you rode; on that specific ambiguity it attributes the gap to the end.
 
 ---
 
@@ -400,7 +402,7 @@ After any ride you can rate it 0–10 on Foster's category-ratio scale, with the
 
 What it does: your three-day mean feeds the **G7** guardrail, which eases a hard day when that mean hits 7 or above. Nothing else. That restraint is deliberate:
 
-- A single rating is noisy. Repeat measurements of the same session vary by around 28% ([Wallace et al. 2014](https://pubmed.ncbi.nlm.nih.gov/24662229/)), so no rule here reacts to a one-point move — G7 works on a three-day mean at a published threshold.
+- A single rating is noisy. Repeat measurements of the same session vary by around 28% ([Wallace et al. 2014](https://pubmed.ncbi.nlm.nih.gov/24662229/)), so the gate works on a three-day mean at a published threshold rather than on today's number. Worth knowing: if that window holds only one rated ride, the mean *is* that rating — the averaging only protects you once you rate regularly.
 - The effect is one-directional. A high rating can talk the planner out of intensity; nothing you enter can talk it into more. That asymmetry is on purpose.
 - No trial has shown that steering an endurance plan by RPE improves any outcome. So Domestique captures it, shows it, and lets one published gate use it — it does not invent new automatic plan changes around it.
 

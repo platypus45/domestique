@@ -14053,8 +14053,11 @@ function _blockEvalHtml(b) {
   // set" is how the rider thinks about it.
   let sets = '';
   if (Array.isArray(b.sets) && b.sets.length > 1) {
+    // v3.6.0 — `ridden` (done + partial), not `done`. Printing `done` alone
+    // made a set whose blocks all ran a little short read "0/1" on the same
+    // line that called them ridden — seen on a real lapped ride here.
     sets = '<div style="color:var(--text3);margin-top:2px;">sets: '
-         + b.sets.map(s => `${s.done}/${s.prescribed}`).join(' \u00b7 ') + '</div>';
+         + b.sets.map(s => `${s.ridden != null ? s.ridden : s.done}/${s.prescribed}`).join(' \u00b7 ') + '</div>';
   }
   return `<div style="margin-top:4px;">${bits.join(' \u00b7 ')}${sets}</div>`;
 }
@@ -14065,8 +14068,12 @@ function _blockEvalHtml(b) {
 // would break every published threshold. Anchors are shown, not just numbers,
 // because the anchor wording is what makes the rating reproducible.
 const RPE_ANCHORS = {
+  // Foster's modified CR-10 verbal descriptors. Every value carries one: the
+  // anchors are what make a 7 today mean the same as a 7 last month, and three
+  // of these were blank while the docs promised wording on all of them.
   0: 'Rest', 1: 'Very easy', 2: 'Easy', 3: 'Moderate', 4: 'Somewhat hard',
-  5: 'Hard', 6: '', 7: 'Very hard', 8: '', 9: '', 10: 'Maximal',
+  5: 'Hard', 6: 'Harder', 7: 'Very hard', 8: 'Very very hard',
+  9: 'Near maximal', 10: 'Maximal',
 };
 function _rpeHtml(rideId, current) {
   const btns = [];
@@ -14078,7 +14085,7 @@ function _rpeHtml(rideId, current) {
   }
   const anchors = Object.entries(RPE_ANCHORS).filter(e => e[1])
     .map(e => `${e[0]} ${e[1]}`).join(' \u00b7 ');
-  return `<div style="margin-top:10px;padding:8px 10px;background:var(--surface2);border-radius:6px;">
+  return `<div id="rpe-row-${esc(rideId)}" style="margin-top:10px;padding:8px 10px;background:var(--surface2);border-radius:6px;">
     <div style="font-size:12px;color:var(--text2);margin-bottom:5px;">
       How hard did that feel? <span style="color:var(--text3);">(optional)</span>
     </div>
@@ -14093,6 +14100,15 @@ async function setRideRpe(rideId, rpe) {
       body: JSON.stringify({rpe: rpe}),
     });
     if (!r.ok) throw new Error('HTTP ' + r.status);
+    // v3.6.0 — reflect the saved value locally. The modal caches its payload,
+    // so without this the control re-rendered unselected on the next open and
+    // the rider could not see what they had already answered.
+    try {
+      const cached = window._activityModalCache && window._activityModalCache.get(rideId);
+      if (cached) cached.rpe = rpe;
+      const host = document.getElementById('rpe-row-' + rideId);
+      if (host) host.outerHTML = _rpeHtml(rideId, rpe);
+    } catch (_) {}
     try { showToast(`Effort saved: ${rpe}${RPE_ANCHORS[rpe] ? ' \u2014 ' + RPE_ANCHORS[rpe] : ''}`, 2500); } catch (_) {}
   } catch (e) {
     try { showToast('Could not save effort rating', 3000); } catch (_) {}
@@ -16439,6 +16455,10 @@ document.addEventListener('mouseout', e => {
 async function loadMorningLog() {
   try {
     const d = await (await fetch('/api/daily-log')).json();
+    // v3.6.0 — keep today's stored answers so the form can pre-select them.
+    // Without this the readiness-to-train row re-rendered blank after a save,
+    // and the rider could not see the rating that was already in the database.
+    window._todayLog = (d && d.today) || null;
     // v4.6.6 IMPL-C — Hooper composite (Hooper & Mackinnon 1995): show "logged"
     // when ANY of the 4 fields is recorded. Submitting all 4 lights up G6.
     if (d.today && (d.today.sleep_quality || d.today.fatigue || d.today.stress || d.today.soreness)) {
@@ -16460,10 +16480,10 @@ async function loadMorningLog() {
             <div style="font-size:14px;font-weight:600;color:${soreCol};">${SORE_LABEL[s5] || 'Normal'}</div>
             <div style="font-size:10px;color:var(--text3);">Hooper <span style="color:${hooperCol};font-weight:600;">${hooper}</span>/28 logged today</div>
           </div>
-          <button class="btn btn-sm" onclick="showMorningForm()" style="margin-left:auto;">Change</button>
+          <button class="btn btn-sm" onclick="showMorningForm(window._todayLog)" style="margin-left:auto;">Change</button>
         </div>`;
     } else {
-      showMorningForm();
+      showMorningForm(d.today);
     }
   } catch(e) { showMorningForm(); }
 }
@@ -16551,7 +16571,18 @@ function setReadinessToTrain(v) {
   catch (_) { showMorningForm(); }
 }
 
-function showMorningForm() {
+function showMorningForm(stored) {
+  // Pre-select from what is stored (the DB keeps a 1-7 scale; the buttons are
+  // 1-5). readiness_to_train is stored on its own 1-10 axis, unmapped.
+  if (stored) {
+    const to5 = v => Math.min(5, Math.max(1, Math.round(Number(v) * 5 / 7)));
+    ['sleep_quality', 'fatigue', 'stress', 'soreness'].forEach(f => {
+      if (stored[f] != null) _hooperDraft[f] = to5(stored[f]);
+    });
+    if (stored.readiness_to_train != null) {
+      _hooperDraft.readiness_to_train = Number(stored.readiness_to_train);
+    }
+  }
   // v4.6.6 IMPL-C — full Hooper composite (4 questions). Single Submit at
   // the bottom. Compact mobile-friendly rows. Wearables can't measure these
   // (Saw et al. 2016) so user input remains the only path.

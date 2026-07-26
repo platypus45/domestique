@@ -569,6 +569,31 @@ def load_icu_rides() -> list[dict]:
     return out
 
 
+def _persist_rider_input(external_id, values: dict) -> None:
+    """Write carried rider input onto the ICU record on disk (best effort).
+
+    Called when a rated FIT import is deduped into its intervals.icu twin.
+    Silent on failure: a listing must never break because a convenience write
+    could not land — the value is still on the returned dict for this call.
+    """
+    if not external_id or not values:
+        return
+    try:
+        path = _icu_rides_dir() / f"{external_id}.json"
+        if not path.exists():
+            return
+        rec = json.loads(path.read_text(encoding="utf-8"))
+        changed = False
+        for k, v in values.items():
+            if rec.get(k) is None:
+                rec[k] = v
+                changed = True
+        if changed:
+            path.write_text(json.dumps(rec, indent=2), encoding="utf-8")
+    except (OSError, json.JSONDecodeError, ValueError) as e:
+        log.debug(f"_persist_rider_input({external_id}) skipped: {e}")
+
+
 def load_all_rides() -> list[dict]:
     """v4.4.0 — return ICU-synced records + raw FIT imports as one merged
     flat list, deduped (ICU preferred when both have the same activity).
@@ -657,9 +682,19 @@ def load_all_rides() -> list[dict]:
             # if it has one — that surface is the newer edit.
             twin = icu_by_key.get(bk)
             if twin is not None:
+                moved = {}
                 for k in _RIDER_INPUT_CARRY_KEYS:
                     if r.get(k) is not None and twin.get(k) is None:
                         twin[k] = r[k]
+                        moved[k] = r[k]
+                if moved:
+                    # PERSIST it onto the ICU record, don't just patch the dict
+                    # we happen to be returning. The ride-detail modal is the
+                    # only surface that renders the rating control, and it reads
+                    # the record straight off disk — so an in-memory carry left
+                    # the rider looking at their own rating missing. Writing it
+                    # once also stops the FIT sidecar being the only copy.
+                    _persist_rider_input(twin.get("external_id"), moved)
             continue
         merged.append(r)
 

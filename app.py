@@ -9879,13 +9879,34 @@ async def api_daily_log_post(request: Request):
             # v3.6.0 — optional, 1-10, HIGH = ready. Omitted rather than
             # defaulted: a default would invent a rating the rider never gave,
             # and upsert_daily_log carries a previously-stored value forward.
-            readiness_to_train=(
-                int(body["readiness_to_train"])
-                if body.get("readiness_to_train") not in (None, "") else None),
+            readiness_to_train=_parse_rtt(body.get("readiness_to_train")),
         )
     except (ValueError, TypeError) as e:
         return JSONResponse({"error": str(e)}, 400)
     return {"ok": True, "entry": entry}
+
+
+def _parse_rtt(raw):
+    """Parse an optional readiness-to-train rating: an int 1-10, or None.
+
+    A bare ``int(raw)`` truncated instead of rejecting — 5.5 stored as 5 and
+    "8" as 8 — so the range was enforced but the type was not. An upgraded
+    install has no CHECK constraint on this column (SQLite cannot add one), so
+    this is the only place the shape is guarded.
+    """
+    if raw in (None, ""):
+        return None
+    if isinstance(raw, bool):
+        raise ValueError("readiness_to_train must be a whole number 1-10")
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float):
+        if not raw.is_integer():
+            raise ValueError("readiness_to_train must be a whole number 1-10")
+        return int(raw)
+    if isinstance(raw, str) and raw.strip().isdigit():
+        return int(raw.strip())
+    raise ValueError("readiness_to_train must be a whole number 1-10")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

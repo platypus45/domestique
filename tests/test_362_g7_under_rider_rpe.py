@@ -144,9 +144,11 @@ def test_stepping_down_the_ladder_never_raises_the_load_estimate():
 def test_the_load_is_held_by_trimming_time_not_by_lying_about_it():
     """Clamping the number while keeping the duration would leave an
     inconsistent record (75 min of threshold labelled as 95 TSS). The
-    duration moves so type × duration × TSS still agree."""
+    duration moves so type × duration × TSS still agree — flooring, because
+    rounding to nearest was itself putting 48 de-escalations a TSS or two ABOVE
+    where they started."""
     dur, tss = tp._deescalated_load(75, "threshold", 95)
-    assert tss == round(dur / 60 * tp.TSS_PER_HOUR["threshold"])
+    assert tss == int(dur / 60 * tp.TSS_PER_HOUR["threshold"])
     assert dur < 75
 
 

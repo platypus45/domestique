@@ -22,10 +22,44 @@ from readiness import check_aerobic_decoupling, check_dfa_stress_cap  # noqa: E4
 
 class TestDecouplingGating(unittest.TestCase):
     def test_stale_source_ride_no_advisory(self):
-        # 5-day-old reading (the live bug) → dropped regardless of form.
-        out = check_aerobic_decoupling(9.9, source_age_days=5)
+        # v3.6.0 — the v1.8.16 bug was a stale reading advising AS IF CURRENT
+        # ("Recent ride ... Z2 recommended" from a days-old number). The
+        # original fix truncated at 2 days, which also silenced the signal
+        # after a single rest day. The bug is now fixed by LABELLING instead:
+        # past the outer window it is still dropped, and inside it the age
+        # travels with the advisory so it can never read as this morning's.
+        # Verified before the change: `decoupling_advisory` never reaches
+        # training_planner.py — this gates a message, not a plan change.
+        out = check_aerobic_decoupling(9.9, source_age_days=15)
         self.assertFalse(out["advisory"])
         self.assertIn("stale", out["reason"])
+        self.assertEqual(out["confidence"], "stale")
+
+    def test_aging_reading_is_shown_but_labelled_with_its_age(self):
+        """The actual v1.8.16 protection: a 5-day-old reading must never
+        present itself as current."""
+        out = check_aerobic_decoupling(9.9, source_age_days=5)
+        self.assertTrue(out["advisory"])
+        self.assertEqual(out["confidence"], "aging")
+        self.assertIn("5d ago", out["reason"])
+        self.assertNotIn("Recent ride", out["reason"])
+
+    def test_fresh_reading_still_reads_as_recent(self):
+        out = check_aerobic_decoupling(9.9, source_age_days=1)
+        self.assertTrue(out["advisory"])
+        self.assertEqual(out["confidence"], "fresh")
+        self.assertIn("Recent ride", out["reason"])
+
+    def test_form_veto_no_longer_silences_an_aging_reading(self):
+        """A wider window that good form still vetoes would be pointless — the
+        cases it exists to surface are exactly the ones TSB would silence."""
+        fresh = check_aerobic_decoupling(
+            9.9, source_age_days=1, tsb=12.0, dfa_present_and_healthy=True)
+        self.assertFalse(fresh["advisory"])          # fresh + good form → vetoed
+        aging = check_aerobic_decoupling(
+            9.9, source_age_days=6, tsb=12.0, dfa_present_and_healthy=True)
+        self.assertTrue(aging["advisory"])           # aging → still surfaced
+        self.assertEqual(aging["confidence"], "aging")
 
     def test_recent_not_fresh_advises(self):
         # Yesterday's decoupled ride, form NOT fresh, no DFA → advisory fires.

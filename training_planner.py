@@ -658,6 +658,35 @@ def _drop_intensity(level: str) -> str:
     return _INTENSITY_LADDER[min(i + 1, len(_INTENSITY_LADDER) - 1)]
 
 
+def _deescalated_load(old_duration_min, new_type: str,
+                      old_tss=None, default_tss_per_h: float = 45):
+    """Duration + TSS for a session that just stepped DOWN the intensity ladder.
+
+    Guarantees the load estimate never RISES. It could: ``TSS_PER_HOUR`` is
+    ordered by sustainable hourly load, not by intensity — threshold is 90/h
+    against VO2max's 75/h, because threshold work is continuous where VO2max
+    work is intermittent. The ladder is ordered by intensity, correctly. So
+    recomputing the estimate from the easier type at an UNCHANGED duration
+    turned every vo2max→threshold de-escalation into a ~20% load INCREASE:
+    a gate whose whole job is to protect the rider handing them more work.
+
+    The fix is the one already shipped for the manual tier-down path — trim
+    the duration so the load holds — lifted here so every gate that walks the
+    ladder behaves identically instead of only the path that got reported.
+
+    Returns:
+        (duration_min:int, tss_estimate:int)
+    """
+    tss_per_h = TSS_PER_HOUR.get(new_type, default_tss_per_h)
+    dur = int(old_duration_min or 0)
+    tss = round(dur / 60 * tss_per_h)
+    if isinstance(old_tss, (int, float)) and old_tss > 0 and tss > old_tss:
+        dur = max(_VOLUME_MIN_SESSION_MIN, int(round(old_tss / tss_per_h * 60)))
+        tss = round(dur / 60 * tss_per_h)
+    return dur, tss
+
+
+
 # v4.6.6 IMPL-B INJURY-GATES helpers — signatures locked in MASTER_DECISIONS §4.
 
 def _hooper_index_today() -> int:
@@ -782,9 +811,15 @@ def _yesterday_glyco_z67_s(rides: list[dict]) -> tuple[float, float]:
 
 
 def _last_3d_mean_feel(rides: list[dict]) -> float | None:
-    """G7 input — mean of `feel`/`perceived_exertion` over last 3 days.
-    Foster 1998 session-RPE. Returns None when no signal exists in window.
-    `feel` (ICU 1-5) rescaled to 1-10 axis via *2.
+    """G7 input — mean session-RPE over the last 3 days (Foster 1998).
+    Returns None when no signal exists in the window.
+
+    Three possible sources, in strict precedence (never averaged — they are
+    different scales):
+      1. `rpe`   — the rating the rider gave in THIS app, Foster CR-10 0-10.
+      2. `perceived_exertion` — an imported CR-10 1-10 rating.
+      3. `feel`  — a 1-5 "how did it go" rating, rescaled ×2 as a rough
+         approximation because it measures satisfaction, not effort.
     """
     if not rides:
         return None
@@ -796,7 +831,13 @@ def _last_3d_mean_feel(rides: list[dict]) -> float | None:
         if not d or d < cutoff_iso:
             continue
         feel = r.get("feel")
-        rpe = r.get("perceived_exertion")
+        # v3.6.0 — the rider's own post-ride rating lives under `rpe` (written
+        # by the ride-detail RPE control). G7 only ever looked at ICU's
+        # imported fields, so a rating given here reached nothing: the "feed
+        # RPE back into the planner" loop was open at this one line.
+        rpe = r.get("rpe")
+        if rpe is None:
+            rpe = r.get("perceived_exertion")
         if feel is None and rpe is None:
             raw = {}
             rj = r.get("raw_json")
@@ -808,7 +849,10 @@ def _last_3d_mean_feel(rides: list[dict]) -> float | None:
             elif isinstance(rj, dict):
                 raw = rj
             feel = raw.get("feel") if feel is None else feel
-            rpe = raw.get("perceivedExertion") if rpe is None else rpe
+            if rpe is None:
+                rpe = raw.get("rpe")
+            if rpe is None:
+                rpe = raw.get("perceivedExertion")
         # v3.5.6 — STRICT PRECEDENCE, never an average. Averaging `feel × 2`
         # with `perceived_exertion` mixed two different scales into one number:
         # ICU's `feel` is a 1-5 "how did it go" rating while
@@ -8799,17 +8843,10 @@ def apply_week_tier_down(
 
             old_duration = int(sess.get("duration_min", 0) or 0)
             old_tss = float(sess.get("tss_estimate", 0) or 0)
-            tss_per_h = TSS_PER_HOUR.get(new_type, 45)
-            new_duration = old_duration
-            new_tss = round(old_duration / 60 * tss_per_h, 1)
-            # issue #3: a tier-DOWN must never INCREASE load. The Seiler ladder can
-            # step to a type with higher TSS/h (vo2max 75 → threshold 90), so at the
-            # same duration TSS would RISE (rider saw 64 → 76.5, +13). Cap the
-            # duration so the adjusted session's TSS is <= the original.
-            if old_tss > 0 and new_tss > old_tss:
-                new_duration = max(_VOLUME_MIN_SESSION_MIN,
-                                   int(round(old_tss / tss_per_h * 60)))
-                new_tss = round(new_duration / 60 * tss_per_h, 1)
+            # issue #3: a tier-DOWN must never INCREASE load — see
+            # _deescalated_load, which now owns this rule for every gate.
+            new_duration, new_tss = _deescalated_load(
+                old_duration, new_type, old_tss)
 
             before = {"type": old_type, "duration_min": old_duration,
                       "tss": old_tss}
@@ -9367,8 +9404,8 @@ def reforecast(
                     new_type = _drop_intensity(s.session_type)
                     if new_type != s.session_type:
                         s.session_type = new_type
-                        new_tss_per_h = TSS_PER_HOUR.get(new_type, 45)
-                        s.tss_estimate = round(s.duration_min / 60 * new_tss_per_h)
+                        s.duration_min, s.tss_estimate = _deescalated_load(
+                            s.duration_min, new_type, s.tss_estimate)
                         s.description = f"Reforecast: TSB {tsb:.0f} → {new_type}"
                         s.adapted = True
                         # Force a library re-match downstream by clearing ZWO.
@@ -9441,8 +9478,8 @@ def reforecast(
                     continue
                 old_type = s.session_type
                 s.session_type = new_type
-                new_tss_per_h = TSS_PER_HOUR.get(new_type, 45)
-                s.tss_estimate = round(s.duration_min / 60 * new_tss_per_h)
+                s.duration_min, s.tss_estimate = _deescalated_load(
+                    s.duration_min, new_type, s.tss_estimate)
                 s.description = (
                     f"G3 polarization breach: {old_type} → {new_type} "
                     f"(Seiler/Stöggl/Treff)"
@@ -12154,12 +12191,13 @@ def daily_adapt_plan(
             if s.session_type in hard_types:
                 new_type = _drop_intensity(s.session_type)
                 if new_type != s.session_type:
-                    new_tss_per_h = TSS_PER_HOUR.get(new_type, 45)
+                    _pd, _ptss = _deescalated_load(
+                        s.duration_min, new_type, s.tss_estimate)
                     tsb_deload_projected.append({
                         "date": s.day.isoformat(),
                         "from_type": s.session_type,
                         "to_type": new_type,
-                        "projected_tss": round(s.duration_min / 60 * new_tss_per_h),
+                        "projected_tss": _ptss,
                         "reason": f"TSB {tsb:.0f} — projected de-load",
                     })
 
@@ -13102,15 +13140,16 @@ def adjust_today_session(
     ):
         new_type = _drop_intensity(planned.session_type)
         if new_type != planned.session_type:
-            new_tss_per_h = TSS_PER_HOUR.get(new_type, 45)
+            _g7_dur, _g7_tss = _deescalated_load(
+                planned.duration_min, new_type, planned.tss_estimate)
             log.info(
                 f"EVENT=injury_gate_g7 mean_rpe_3d={mean_rpe_3d:.1f} "
                 f"{planned.session_type} → {new_type}"
             )
             return PlannedSession(
                 day=planned.day, day_name=planned.day_name,
-                session_type=new_type, duration_min=planned.duration_min,
-                tss_estimate=round(planned.duration_min / 60 * new_tss_per_h),
+                session_type=new_type, duration_min=_g7_dur,
+                tss_estimate=_g7_tss,
                 description=(
                     f"{new_type} (was {planned.session_type}) — 3d mean "
                     f"RPE {mean_rpe_3d:.1f}/10 ≥7 (Foster 1998 session-RPE)."
@@ -13160,11 +13199,12 @@ def adjust_today_session(
                          else "of very hard riding (Z6/Z7)")
                 _disp = {"z2": "Z2", "long_z2": "long Z2"}.get(
                     new_type, new_type)
+                _r5_dur, _r5_tss = _deescalated_load(
+                    planned.duration_min, new_type, planned.tss_estimate)
                 return PlannedSession(
                     day=planned.day, day_name=planned.day_name,
-                    session_type=new_type, duration_min=planned.duration_min,
-                    tss_estimate=round(planned.duration_min / 60
-                                       * TSS_PER_HOUR.get(new_type, 45)),
+                    session_type=new_type, duration_min=_r5_dur,
+                    tss_estimate=_r5_tss,
                     description=f"{new_type} (was {planned.session_type})",
                     adapted=True,
                 ), (

@@ -304,6 +304,13 @@ def init_db():
             soreness       INTEGER CHECK(soreness BETWEEN 1 AND 7),
             stress         INTEGER CHECK(stress BETWEEN 1 AND 7),
             mood           INTEGER CHECK(mood BETWEEN 1 AND 7),
+            -- v3.6.0: readiness-to-train, 1-10 where HIGH = READY (the
+            -- opposite direction to the Hooper items above, where high = bad).
+            -- Ten Haaf 2017 (PMID 27834554): pre-session fatigue +
+            -- readiness-to-train discriminated functional overreaching in 30
+            -- cyclists at 3 days (78% correct); it is NOT one of the four
+            -- Hooper items, so it needs its own column and its own direction.
+            readiness_to_train INTEGER CHECK(readiness_to_train BETWEEN 1 AND 10),
             hooper_index   REAL,
             notes          TEXT,
             created_at     TEXT DEFAULT (datetime('now'))
@@ -325,6 +332,7 @@ def init_db():
     # Migrate existing activities tables: add new columns if they don't exist.
     # SQLite's ALTER TABLE ADD COLUMN raises OperationalError on duplicates;
     # _maybe_add_column swallows that specific case.
+    _maybe_add_column(db, "daily_log", "readiness_to_train", "INTEGER")
     _maybe_add_column(db, "activities", "distance_km", "REAL")
     _maybe_add_column(db, "activities", "kilojoules", "REAL")
     _maybe_add_column(db, "activities", "calories", "REAL")
@@ -965,7 +973,8 @@ def query_metrics_latest() -> dict:
 # ── Daily Log (Morning Questionnaire) ────────────────────────────────────────
 
 def upsert_daily_log(dt: str, sleep_quality: int, fatigue: int, soreness: int,
-                     stress: int, mood: int, notes: str = None) -> dict:
+                     stress: int, mood: int, notes: str = None,
+                     readiness_to_train: int = None) -> dict:
     """Insert or update daily wellness log. Returns the entry.
 
     v4.6.6 IMPL-C: hooper_index = sleep_quality + fatigue + stress + soreness
@@ -980,19 +989,39 @@ def upsert_daily_log(dt: str, sleep_quality: int, fatigue: int, soreness: int,
                   ("soreness", soreness), ("stress", stress), ("mood", mood)):
         if not isinstance(v, int) or not (1 <= v <= 7):
             raise ValueError(f"{nm} must be int 1..7, got {v!r}")
+    if readiness_to_train is not None:
+        if not isinstance(readiness_to_train, int) or not (1 <= readiness_to_train <= 10):
+            raise ValueError(
+                f"readiness_to_train must be int 1..10, got {readiness_to_train!r}")
     hooper = sleep_quality + fatigue + stress + soreness
     db = get_db()
+    # v3.6.0 — INSERT OR REPLACE rewrites the WHOLE row, so a save that omits
+    # readiness_to_train (the Hooper form posting without it) would NULL a
+    # rating the rider already gave. Carry the stored value forward when the
+    # caller passes None.
+    if readiness_to_train is None:
+        try:
+            prior = db.execute(
+                "SELECT readiness_to_train FROM daily_log WHERE date = ?", (dt,)
+            ).fetchone()
+            if prior is not None and prior[0] is not None:
+                readiness_to_train = int(prior[0])
+        except sqlite3.Error:
+            pass
     db.execute(
         """INSERT OR REPLACE INTO daily_log
-           (date, sleep_quality, fatigue, soreness, stress, mood, hooper_index, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (dt, sleep_quality, fatigue, soreness, stress, mood, hooper, notes),
+           (date, sleep_quality, fatigue, soreness, stress, mood, hooper_index,
+            notes, readiness_to_train)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (dt, sleep_quality, fatigue, soreness, stress, mood, hooper, notes,
+         readiness_to_train),
     )
     db.commit()
     return {
         "date": dt, "sleep_quality": sleep_quality, "fatigue": fatigue,
         "soreness": soreness, "stress": stress, "mood": mood,
         "hooper_index": hooper, "notes": notes,
+        "readiness_to_train": readiness_to_train,
     }
 
 

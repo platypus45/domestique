@@ -16,7 +16,14 @@ def _normalize(value: float, low: float, high: float) -> float:
 # from days ago must not drive TODAY's session (the live bug: a 5-day-old
 # decoupling reading downgraded a hard session while TSB was +17 / fresh).
 _DFA_CAP_MAX_AGE_DAYS = 2          # newest DFA ride must be ≤ this old to cap
-_DECOUPLING_MAX_AGE_DAYS = 2       # source ride must be ≤ this old to advise
+# v3.6.0 — the old `_DECOUPLING_MAX_AGE_DAYS = 2` silenced the signal after a
+# SINGLE rest day, which is exactly when a fatigue signal is worth seeing. The
+# v1.8.16 bug it was patching was a stale reading advising *as if current* —
+# truncation was the wrong fix for that, labelling is the right one. Verified
+# before changing it: `decoupling_advisory` never reaches training_planner.py,
+# so this gates a message, not a plan change.
+_DECOUPLING_FRESH_DAYS = 3         # full-confidence window
+_DECOUPLING_MAX_AGE_DAYS = 10      # still shown, labelled "aging", age in copy
 # Form-freshness thresholds for the decoupling veto (weak signal only).
 _DECOUPLING_VETO_TSB = 5.0         # TSB ≥ this = peaked/fresh
 
@@ -101,26 +108,76 @@ def check_aerobic_decoupling(last_decoupling_pct: float | None,
     if pct <= 5.0:
         return {"advisory": False, "decoupling_pct": pct_r, "reason": ""}
 
-    # Gate 1 — recency. KNOWN-stale source ride is not actionable for today.
-    if source_age_days is not None and source_age_days > _DECOUPLING_MAX_AGE_DAYS:
+    # Gate 1 — recency, now graded instead of binary. Past the outer window the
+    # reading is genuinely not about today; inside it, age travels WITH the
+    # advisory so a 5-day-old number can never read as this morning's.
+    age = source_age_days
+    if age is not None and age > _DECOUPLING_MAX_AGE_DAYS:
         return {"advisory": False, "decoupling_pct": pct_r,
-                "reason": f"decoupling_stale (source ride {source_age_days}d old)"}
+                "confidence": "stale",
+                "reason": f"decoupling_stale (source ride {age}d old)"}
+    if age is None:
+        confidence = "unknown"
+    elif age <= _DECOUPLING_FRESH_DAYS:
+        confidence = "fresh"
+    else:
+        confidence = "aging"
 
-    # Gate 2 — form veto, ONLY when DFA corroborates freshness.
+    # Gate 2 — form veto, ONLY when DFA corroborates freshness, and ONLY for a
+    # fresh reading. Vetoing an aging one too would have made widening the
+    # window pointless: the cases the wider window exists to surface are
+    # exactly the ones a good TSB would have silenced.
     form_fresh = (
         (isinstance(tsb, (int, float)) and tsb >= _DECOUPLING_VETO_TSB)
         or (str(readiness_status or "").upper() in ("GOOD", "EXCELLENT"))
     )
-    if form_fresh and dfa_present_and_healthy:
+    if form_fresh and dfa_present_and_healthy and confidence == "fresh":
         return {"advisory": False, "decoupling_pct": pct_r,
+                "confidence": confidence,
                 "reason": ("decoupling_vetoed_by_form "
                            f"(TSB/readiness fresh + DFA healthy; {pct_r}% noted)")}
 
+    when = ("Recent ride" if confidence in ("fresh", "unknown")
+            else f"A ride {age}d ago")
     return {
         "advisory": True,
         "decoupling_pct": pct_r,
-        "reason": f"Recent ride Pa:Hr decoupling {pct_r}% > 5% — Z2 recommended (advisory)",
+        "confidence": confidence,
+        "reason": f"{when} Pa:Hr decoupling {pct_r}% > 5% — Z2 recommended (advisory)",
     }
+
+
+def attribute_fatigue_signal(signal_elevated: bool,
+                            subjective_score: float | None) -> str:
+    """C6 (v3.6.0) — use the rider's own wellness ratings to ATTRIBUTE an
+    elevated fatigue signal, not to add a second weighted vote for it.
+
+    Poor sleep and high stress raise perceived effort and cardiac drift at a
+    FIXED workload (Temesi 2013 PMID 23760468; Kong 2025 sleep-restriction SMD
+    0.39). So an objective fatigue signal and a poor wellness rating are often
+    two readings of ONE cause — weighting both independently double-counts it.
+    Labelling instead: "explained" means the rider already told us why, so
+    there is nothing new to escalate; "unexplained" means the body is drifting
+    while the rider feels fine, which is the case actually worth surfacing.
+
+    NOTE: the attribution rule itself is untested inference. No trial has
+    validated this split, so it labels a message and never changes a plan.
+    The 40 cut is the composite's own existing poor-channel boundary (the
+    MODERATE/POOR band edge), not a new tuned number.
+
+    Args:
+        signal_elevated: an objective fatigue signal fired (today: decoupling).
+        subjective_score: the composite's 0-100 subjective component, or None
+            when the rider logged nothing.
+
+    Returns:
+        "none" | "explained" | "unexplained" | "unattributed"
+    """
+    if not signal_elevated:
+        return "none"
+    if subjective_score is None:
+        return "unattributed"
+    return "explained" if subjective_score < 40 else "unexplained"
 
 
 def compute_readiness(
@@ -268,6 +325,11 @@ def compute_readiness(
         readiness_status=status,
         dfa_present_and_healthy=dfa_present_and_healthy,
     )
+
+    # C6 — attribute the weak signal against the rider's own wellness rating
+    # rather than adding a second weighted vote for the same cause.
+    dec_info["attribution"] = attribute_fatigue_signal(
+        bool(dec_info.get("advisory")), components.get("subjective"))
 
     return {
         "score": score,

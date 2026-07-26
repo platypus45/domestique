@@ -8459,7 +8459,7 @@ async function openRideDetail(rideId) {
       <div style="background:var(--surface2);padding:12px;border-radius:10px;text-align:center;" title="Weighted Power (equivalent to TrainingPeaks NP&reg;)">
         <div style="font-size:24px;font-weight:900;">${wp || '---'}W</div><div style="font-size:10px;color:var(--text3);">WP</div></div>
       <div style="background:var(--surface2);padding:12px;border-radius:10px;text-align:center;">
-        <div style="font-size:24px;font-weight:900;color:${dcColor(s.decoupling_color)}">${s.decoupling_pct != null ? s.decoupling_pct + '%' : '---'}</div><div style="font-size:10px;color:var(--text3);">DECOUPLING</div></div>
+        <div title="${s.decoupling_pct != null ? 'Pw:Hr decoupling (aerobic drift across the ride)' : ((s.weighted_power != null || s.normalized_power != null || s.avg_power != null) ? 'Not computed for this ride' : 'No power recorded — decoupling needs power and heart rate')}" style="font-size:24px;font-weight:900;color:${dcColor(s.decoupling_color)}">${s.decoupling_pct != null ? s.decoupling_pct + '%' : '---'}</div><div style="font-size:10px;color:var(--text3);">DECOUPLING</div></div>
     </div>`;
 
     // v1.0.7 IMPL-NP-ALT: "Two lenses" comparison block — Coggan 2003
@@ -8872,10 +8872,18 @@ async function openRideDetail(rideId) {
       const srvPct = s.decoupling_pct;
       const decPctTxt = (srvPct != null) ? `${Number(srvPct).toFixed(1)}%` : '---';
       const decPctColor = dcColor(s.decoupling_color);
+      // v3.6.0 C4' — name the ACTUAL reason. Measured on the live archive:
+      // every ride missing a decoupling number was missing POWER, not samples.
+      // "Not enough valid samples" sent the rider looking for a data bug that
+      // wasn't there; Pw:Hr needs both channels, and one of them is absent.
+      const _hasPower = (s.weighted_power != null || s.normalized_power != null
+                         || s.avg_power != null);
       const decTooltip = (srvPct == null)
-        ? (s.decoupling_reason === 'ride_too_short'
-            ? 'Decoupling requires ≥ 40 min of filtered samples.'
-            : 'Not enough valid samples to compute decoupling.')
+        ? (!_hasPower
+            ? 'No power recorded for this ride — Pw:Hr decoupling compares power against heart rate, so it needs both.'
+            : s.decoupling_reason === 'ride_too_short'
+              ? 'Decoupling requires ≥ 40 min of filtered samples.'
+              : 'Not enough valid samples to compute decoupling.')
         : 'Server-computed NP-per-half decoupling. Positive = aerobic drift (fatigue); negative = HR suppression.';
       // Footnote colour-keyword drives off server decoupling_color so there
       // is only one source of truth.
@@ -15768,9 +15776,15 @@ async function loadReadinessActionBanner() {
   const signalKey = r.dfa_cap_applied ? 'dfa' : 'decoupling';
   const dismissKey = `readiness-banner-dismissed-${todayStr}-${signalKey}`;
   try { if (sessionStorage.getItem(dismissKey)) { banner.style.display = 'none'; return; } } catch(_) {}
+  // v3.6.0 C1 — decoupling is now surfaced out to 10 days instead of being
+  // silenced after 2, so the CONFIDENCE has to travel with it. An aging
+  // reading is still worth seeing; it just isn't a statement about today.
+  const _decConf = (r.decoupling_advisory_detail || {}).confidence;
   const signal = r.dfa_cap_applied
     ? 'high aerobic stress (DFA α1 below threshold)'
-    : 'decoupling above advisory (likely aerobic fatigue)';
+    : (_decConf === 'aging'
+        ? 'decoupling above advisory (likely aerobic fatigue — older reading, lower confidence)'
+        : 'decoupling above advisory (likely aerobic fatigue)');
   // v1.8.15 — name the REAL trigger ride. The advisory source ride is often
   // not "yesterday" (the most recent day may have been a rest day / unindexed
   // ride), so hardcoding "Yesterday's ride" was frequently wrong. Use the
@@ -15798,9 +15812,18 @@ async function loadReadinessActionBanner() {
   const action = r.dfa_cap_applied
     ? `Today's ${esc(originalType)} session has been <b>auto-downgraded to Z2</b>.`
     : `<b>Z2 recommended</b> for today's ${esc(originalType)} session (advisory — not enforced).`;
+  // v3.6.0 C6 — attribution, not a second vote. If the rider already logged
+  // poor sleep/stress, the drift is explained and there is nothing new to
+  // report; if they logged feeling fine, that mismatch is the useful part.
+  const _attr = (r.decoupling_advisory_detail || {}).attribution;
+  const attrNote = (!r.dfa_cap_applied && _attr === 'explained')
+    ? ' Your own sleep/stress ratings already point the same way, so this is likely the same cause rather than something new.'
+    : (!r.dfa_cap_applied && _attr === 'unexplained')
+      ? ' Your wellness ratings look normal, so this drift is unexplained — worth a closer look.'
+      : '';
   banner.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
     <div>
-      <b style="color:#eab308;">&#9888;</b> ${esc(rideRef)} showed <b>${esc(signal)}</b>. ${action}
+      <b style="color:#eab308;">&#9888;</b> ${esc(rideRef)} showed <b>${esc(signal)}</b>. ${action}${esc(attrNote)}
     </div>
     <div style="display:flex;gap:8px;">
       <button class="btn btn-sm" onclick="revertReadinessCap('${esc(signalKey)}')" style="background:var(--accent);color:#fff;border-color:var(--accent);">Revert</button>
@@ -16459,7 +16482,10 @@ const HOOPER_QUESTIONS = [
 
 // In-memory selections for the 4-row form. Default 3 (Normal) so a user who
 // only taps soreness still posts a sane Hooper composite.
-let _hooperDraft = { sleep_quality: 3, fatigue: 3, stress: 3, soreness: 3 };
+let _hooperDraft = { sleep_quality: 3, fatigue: 3, stress: 3, soreness: 3,
+                     // v3.6.0 — null, not a default: a pre-filled value
+                     // would invent a rating the rider never gave.
+                     readiness_to_train: null };
 
 function _renderHooperRow(field, prompt, choices) {
   const cur = _hooperDraft[field];
@@ -16487,6 +16513,37 @@ function setHooperField(field, value) {
   showMorningForm(); // re-render to update highlight
 }
 
+// v3.6.0 — "how ready do you feel to train?", 1-10, HIGH = ready.
+// Deliberately NOT a fifth Hooper item: the Hooper four run 1=best/7=worst and
+// are combined with a min() ("any limb weak"), so a high-is-good slider dropped
+// in there would have inverted the sign and let one answer decide the channel.
+// It is its own term on its own scale — see _get_soreness_subjective.
+// Ten Haaf 2017: readiness-to-train was half the model that actually
+// discriminated functional overreaching in cyclists.
+function _renderReadinessRow() {
+  const cur = _hooperDraft.readiness_to_train;
+  let btns = '';
+  for (let i = 1; i <= 10; i++) {
+    const on = (cur === i);
+    btns += `<button onclick="setReadinessToTrain(${i})"
+      style="min-width:24px;padding:3px 5px;font-size:11px;border-radius:5px;cursor:pointer;
+             border:1px solid var(--border);
+             ${on ? 'background:var(--accent);color:#fff;border-color:var(--accent);'
+                  : 'background:var(--surface2);color:var(--text2);'}">${i}</button>`;
+  }
+  return `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
+    <div style="font-size:11px;color:var(--text2);margin-bottom:4px;">
+      \u{1F6B4} Ready to train? <span style="color:var(--text3);">(1 = not at all, 10 = fully ready \u00b7 optional)</span>
+    </div>
+    <div style="display:flex;gap:2px;flex-wrap:wrap;">${btns}</div>
+  </div>`;
+}
+function setReadinessToTrain(v) {
+  _hooperDraft.readiness_to_train = v;
+  try { $('morning-log-content').querySelector('div[style*="border-top"]').outerHTML = _renderReadinessRow(); }
+  catch (_) { showMorningForm(); }
+}
+
 function showMorningForm() {
   // v4.6.6 IMPL-C — full Hooper composite (4 questions). Single Submit at
   // the bottom. Compact mobile-friendly rows. Wearables can't measure these
@@ -16494,6 +16551,7 @@ function showMorningForm() {
   $('morning-log-content').innerHTML = `
     <div style="margin-bottom:8px;font-size:12px;color:var(--text2);font-weight:600;">Morning leg-check (Hooper)</div>
     ${HOOPER_QUESTIONS.map(([f,p,c]) => _renderHooperRow(f,p,c)).join('')}
+    ${_renderReadinessRow()}
     <div style="display:flex;gap:6px;align-items:center;margin-top:6px;">
       <button class="btn btn-sm" onclick="submitHooper()"
         style="padding:5px 12px;font-size:11px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;">
@@ -16513,6 +16571,12 @@ async function submitHooper() {
     soreness:      map(_hooperDraft.soreness),
     mood:          4,
   };
+  // v3.6.0 — readiness-to-train rides along on the SAME submit (one button, as
+  // before). Sent only when the rider actually set it; the server carries a
+  // previously-stored value forward rather than nulling it.
+  if (_hooperDraft.readiness_to_train != null) {
+    payload.readiness_to_train = _hooperDraft.readiness_to_train;
+  }
   try {
     const res = await fetch('/api/daily-log', {
       method:'POST', headers:{'Content-Type':'application/json'},

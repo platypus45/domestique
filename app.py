@@ -3961,15 +3961,10 @@ async def api_readiness_apply_tier_down(request: Request):
 
         old_duration = int(target.get("duration_min", 0) or 0)
         old_tss = float(target.get("tss_estimate", 0) or 0)
-        tss_per_h = tp.TSS_PER_HOUR.get(new_type, 45)
-        new_duration = old_duration
-        new_tss = round(old_duration / 60 * tss_per_h, 1)
-        # issue #3: a tier-DOWN must never INCREASE load. The Seiler ladder can
-        # step to a higher-TSS/h type (vo2max 75 → threshold 90); cap the duration
-        # so the new TSS <= the original (rider saw 64 → 76.5).
-        if old_tss > 0 and new_tss > old_tss:
-            new_duration = max(20, int(round(old_tss / tss_per_h * 60)))
-            new_tss = round(new_duration / 60 * tss_per_h, 1)
+        # issue #3: a tier-DOWN must never INCREASE load. The rule now lives in
+        # tp._deescalated_load so every gate that walks the ladder shares it.
+        new_duration, new_tss = tp._deescalated_load(
+            old_duration, new_type, old_tss)
         target["session_type"] = new_type
         target["duration_min"] = new_duration
         target["tss_estimate"] = new_tss
@@ -4232,9 +4227,10 @@ async def api_plan_auto_adjust(request: Request):
                     new_type = tp._drop_intensity(old_type)
                     old_duration = int(target.get("duration_min", 0) or 0)
                     old_tss = float(target.get("tss_estimate", 0) or 0)
-                    tss_per_h = tp.TSS_PER_HOUR.get(new_type, 45)
-                    new_tss = round(old_duration / 60 * tss_per_h, 1)
+                    new_duration, new_tss = tp._deescalated_load(
+                        old_duration, new_type, old_tss)
                     target["session_type"] = new_type
+                    target["duration_min"] = new_duration
                     target["tss_estimate"] = new_tss
                     target["adapted"] = True
                     target["adapted_reason"] = (
@@ -9873,6 +9869,12 @@ async def api_daily_log_post(request: Request):
             stress=int(body.get("stress", 4)),
             mood=int(body.get("mood", 4)),
             notes=body.get("notes"),
+            # v3.6.0 — optional, 1-10, HIGH = ready. Omitted rather than
+            # defaulted: a default would invent a rating the rider never gave,
+            # and upsert_daily_log carries a previously-stored value forward.
+            readiness_to_train=(
+                int(body["readiness_to_train"])
+                if body.get("readiness_to_train") not in (None, "") else None),
         )
     except (ValueError, TypeError) as e:
         return JSONResponse({"error": str(e)}, 400)
@@ -11733,11 +11735,32 @@ def _get_soreness_subjective() -> float | None:
         except (TypeError, ValueError):
             continue
         components.append(max(1.0, min(10.0, 10.0 - (iv - 1) * 1.5)))
-    if not components:
+    # v3.6.0 — readiness-to-train enters as its OWN term, never into the min()
+    # above. Direction matters: the four Hooper items are 1=best/7=worst and get
+    # inverted by the mapping, while readiness-to-train is 1-10 where HIGH =
+    # READY. Dropping it into the same min() would have made one slider the sole
+    # determinant of the channel (min is a one-way ratchet) and, on a mis-read
+    # of direction, invert the sign outright.
+    #
+    # Combination: mean of (worst Hooper component, readiness-to-train). Hooper's
+    # "any limb weak" intent is preserved inside its own group by keeping the
+    # min there; the rider's own readiness judgement then gets equal say rather
+    # than being able only to drag the score down. Ten Haaf 2017 (PMID
+    # 27834554) found readiness-to-train carried real discriminative signal for
+    # functional overreaching in cyclists, so it should be able to move the
+    # channel UP as well as down.
+    rtt = today_log.get("readiness_to_train")
+    rtt_score = None
+    if rtt is not None:
+        try:
+            rtt_score = max(1.0, min(10.0, float(rtt)))
+        except (TypeError, ValueError):
+            rtt_score = None
+    hooper_worst = min(components) if components else None
+    parts = [v for v in (hooper_worst, rtt_score) if v is not None]
+    if not parts:
         return None
-    # Use the MIN (worst) so any single bad component drags the score —
-    # matches Hooper's "any limb weak" intent better than averaging.
-    return min(components)
+    return sum(parts) / len(parts)
 
 
 def _session_hr_target(session_type: str) -> dict:

@@ -19223,6 +19223,19 @@ async def api_ride_rpe(ride_id: str, request: Request):
         if not (0 <= rpe <= 10):
             return JSONResponse({"error": "rpe out of range 0-10"}, 400)
     import ride_storage as _rs
+    # v3.6.0 — a FIT-only rider (no intervals.icu account) has no ICU record to
+    # hold rider input, so their rating goes in the FIT's load sidecar. The
+    # control renders for every ride, so both id forms must work; before this
+    # it 404'd for `fit_` and the rating silently failed.
+    if ride_id.startswith("fit_"):
+        ok = _rs.set_fit_rpe(
+            ride_id[4:], rpe,
+            datetime.now().isoformat() if rpe is not None else None)
+        if not ok:
+            return JSONResponse({"error": "unknown ride"}, 404)
+        clear_cache()
+        return {"ok": True, "ride_id": ride_id, "rpe": rpe,
+                "scale": "foster_cr10" if rpe is not None else None}
     ext = ride_id[4:] if ride_id.startswith("icu_") else ride_id
     path = _rs._icu_rides_dir() / f"{ext}.json"
     if not path.exists():

@@ -131,3 +131,64 @@ def test_ui_uses_the_foster_anchors_and_posts_to_the_endpoint():
     assert "/rpe" in src and "setRideRpe" in src
     assert "How hard did that feel?" in src
     assert "(optional)" in src, "rating must read as optional"
+
+
+# ── FIT-only riders (no intervals.icu account) ──────────────────────────────
+
+def test_a_fit_import_can_be_rated_and_the_planner_sees_it(tmp_path, monkeypatch):
+    """The RPE control renders for every ride, so it must work for a FIT
+    import too — those riders have no ICU record to hold rider input, and no
+    ICU-side rating field either, so this is the only way they can rate at all.
+    It 404'd before v3.6.0."""
+    fit = tmp_path / "20260726T100000.fit"
+    fit.write_bytes(b"not-a-real-fit")
+    monkeypatch.setattr(rs, "_fit_rides_dir", lambda: tmp_path)
+    monkeypatch.setattr(rs, "compute_fit_load", lambda p: {"tss": 60,
+                                                          "load_source": "hr",
+                                                          "duration_s": 3600,
+                                                          "started_at": "2026-07-26T10:00:00"})
+    client = TestClient(app_module.app)
+    r = client.post("/api/ride/fit_20260726T100000/rpe", json={"rpe": 8},
+                    headers=_LOCAL)
+    assert r.status_code == 200 and r.json()["rpe"] == 8
+    side = json.loads((tmp_path / "20260726T100000.load.json").read_text())
+    assert side["rpe"] == 8 and side["rpe_scale"] == "foster_cr10" and side["rpe_at"]
+    # …and it reaches the gate's input, not just the disk.
+    entry = [e for e in rs.load_all_rides()
+             if e.get("ride_id") == "fit_20260726T100000"]
+    assert entry and entry[0]["rpe"] == 8
+
+
+def test_a_reimport_does_not_wipe_a_fit_rating(tmp_path, monkeypatch):
+    """`write_fit_load_sidecar` recomputes the whole file and a re-import calls
+    it eagerly — the same shape as the laps/streams loss."""
+    fit = tmp_path / "20260726T100000.fit"
+    fit.write_bytes(b"not-a-real-fit")
+    monkeypatch.setattr(rs, "_fit_rides_dir", lambda: tmp_path)
+    monkeypatch.setattr(rs, "compute_fit_load", lambda p: {"tss": 60,
+                                                          "load_source": "hr"})
+    assert rs.set_fit_rpe("20260726T100000", 7, "2026-07-26T12:00:00")
+    rs.write_fit_load_sidecar(fit)                     # re-import
+    side = json.loads((tmp_path / "20260726T100000.load.json").read_text())
+    assert side["rpe"] == 7, "a recompute must not erase rider input"
+
+
+def test_a_fit_rating_can_be_cleared(tmp_path, monkeypatch):
+    fit = tmp_path / "20260726T100000.fit"
+    fit.write_bytes(b"x")
+    monkeypatch.setattr(rs, "_fit_rides_dir", lambda: tmp_path)
+    monkeypatch.setattr(rs, "compute_fit_load", lambda p: {"tss": 60})
+    rs.set_fit_rpe("20260726T100000", 7, "2026-07-26T12:00:00")
+    client = TestClient(app_module.app)
+    r = client.post("/api/ride/fit_20260726T100000/rpe", json={"rpe": None},
+                    headers=_LOCAL)
+    assert r.status_code == 200
+    side = json.loads((tmp_path / "20260726T100000.load.json").read_text())
+    assert "rpe" not in side and "rpe_scale" not in side
+
+
+def test_an_unknown_fit_is_still_404(tmp_path, monkeypatch):
+    monkeypatch.setattr(rs, "_fit_rides_dir", lambda: tmp_path)
+    client = TestClient(app_module.app)
+    r = client.post("/api/ride/fit_nope/rpe", json={"rpe": 5}, headers=_LOCAL)
+    assert r.status_code == 404

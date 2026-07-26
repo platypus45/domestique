@@ -624,6 +624,12 @@ def load_all_rides() -> list[dict]:
             if load.get("tss") is not None:
                 entry["tss"] = load["tss"]
                 entry["load_source"] = load.get("load_source")
+            # v3.6.0 — the rider's own session-RPE lives in the sidecar for a
+            # FIT import (there is no ICU record to hold it). Surface it so the
+            # G7 3-day-mean gate sees a FIT-only rider's ratings too.
+            for k in ("rpe", "rpe_at", "rpe_scale"):
+                if load.get(k) is not None:
+                    entry[k] = load[k]
         fits.append(entry)
 
     # Dedupe: index ICU rides by (date-prefix, duration-bucket).
@@ -876,11 +882,47 @@ def write_fit_load_sidecar(fit_path: Path) -> dict | None:
     if load is None:
         return None
     side = _fit_load_sidecar_path(fit_path)
+    # v3.6.0 — the sidecar now also holds the rider's own session-RPE, and this
+    # function RECOMPUTES the whole file (a re-import calls it eagerly). Carry
+    # rider input forward: it is the one thing no recompute can regenerate.
+    # Same lesson as the laps/streams carry on the ICU path.
+    prior = read_fit_load_sidecar(fit_path)
+    if isinstance(prior, dict):
+        for k in _RIDER_INPUT_CARRY_KEYS:
+            if prior.get(k) is not None:
+                load.setdefault(k, prior[k])
     try:
         side.write_text(json.dumps(load, indent=2), encoding="utf-8")
     except OSError as e:
         log.warning(f"write_fit_load_sidecar({fit_path.name}) failed: {e}")
     return load
+
+
+def set_fit_rpe(stem: str, rpe: int | None, rpe_at: str | None) -> bool:
+    """v3.6.0 — store (or clear) a session-RPE for an imported FIT.
+
+    FIT-only riders have no ICU record to hold rider input, so it goes in the
+    ``<stem>.load.json`` sidecar, which ``load_all_rides`` already attaches to
+    the FIT entry. Returns False when the FIT does not exist.
+    """
+    fit_path = _fit_rides_dir() / f"{stem}.fit"
+    if not fit_path.exists():
+        return False
+    load = read_fit_load_sidecar(fit_path) or write_fit_load_sidecar(fit_path) or {}
+    if rpe is None:
+        for k in ("rpe", "rpe_at", "rpe_scale"):
+            load.pop(k, None)
+    else:
+        load["rpe"] = int(rpe)
+        load["rpe_at"] = rpe_at
+        load["rpe_scale"] = "foster_cr10"
+    try:
+        _fit_load_sidecar_path(fit_path).write_text(
+            json.dumps(load, indent=2), encoding="utf-8")
+    except OSError as e:
+        log.warning(f"set_fit_rpe({stem}) failed: {e}")
+        return False
+    return True
 
 
 def read_fit_load_sidecar(fit_path: Path) -> dict | None:

@@ -47,6 +47,14 @@ def _run_node(harness: str) -> None:
 _JUMP_FNS = (_extract_js_function(SRC, "_calTodayStr") + "\n"
              + _extract_js_function(SRC, "calJumpToToday"))
 
+# v3.5.6 — calJumpToToday now defers the tab-open jump until #cal-body is
+# actually on screen (it was scrolling the container while it sat below the
+# fold, which left WebKit's hit-test regions stale — clicks landed a couple of
+# rows high). This file tests the SCROLL MATH; the visibility gate has its own
+# tests in tests/test_356_planfold_and_caljump.py. Stub it to "visible" so the
+# unit under test here is isolated, exactly as before the gate existed.
+_JUMP_FNS = "function _calJumpWhenVisible() { return true; }\n" + _JUMP_FNS
+
 # Fake #cal-rows with yesterday / today / tomorrow cells + a #cal-body
 # scroller. The clock is pinned to a TZ+ zone just after local midnight:
 # toISOString() reads YESTERDAY (2026-07-15) while the local date — and the

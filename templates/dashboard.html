@@ -527,6 +527,41 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
 }
 .cal-toolbar .cal-jump-btn:hover { background: var(--accent); color: #fff; }
 
+/* 3.5.6 — Plan-configurator foldout bar. Deliberately heavier than a chevron:
+   full-width, bordered, tinted, hover-lit, with a spelled-out action on the
+   right. The owner's complaint was that a small arrow is not discoverable, so
+   the whole bar is the hit target and the hint text names what happens. */
+.planfold-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 13px; margin: -4px -4px 0;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface2); cursor: pointer;
+  user-select: none; transition: background .12s, border-color .12s;
+}
+.planfold-bar:hover { background: var(--accent); border-color: var(--accent); }
+.planfold-bar:hover .planfold-title,
+.planfold-bar:hover .planfold-hint,
+.planfold-bar:hover .planfold-chev { color: #fff; }
+.planfold-bar:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.planfold-chev {
+  font-size: 13px; line-height: 1; color: var(--text2);
+  transition: transform .15s; flex: 0 0 auto;
+}
+.planfold-bar[aria-expanded="false"] .planfold-chev { transform: rotate(-90deg); }
+.planfold-title {
+  font-size: 12px; font-weight: 700; color: var(--text);
+  text-transform: uppercase; letter-spacing: .5px; flex: 1 1 auto;
+}
+.planfold-hint {
+  font-size: 11px; font-weight: 600; color: var(--accent);
+  flex: 0 0 auto; white-space: nowrap;
+}
+#plan-config-body { margin-top: 14px; }
+#plan-config-body[hidden] { display: none; }
+/* Collapsed, the card must shrink to the bar — otherwise the g2 grid stretches
+   it to match Plan Overview and leaves a large dead panel under the bar. */
+#plan-config { align-self: start; }
+
 .cal-scroll {
   max-height: 70vh; overflow-y: auto; overflow-x: hidden;
   padding: 0 2px; scroll-behavior: smooth;
@@ -2109,7 +2144,21 @@ window.addEventListener('unhandledrejection', function(e) {
 
   <div class="grid g2" style="margin-bottom:12px;">
     <div class="card" id="plan-config">
-      <h3>Plan Configuration</h3>
+      <!-- 3.5.6 (owner) — the configurator is a foldout. It must be OBVIOUS
+           that it opens: a full-width clickable bar with an explicit verb, not
+           a bare chevron. Expanded by default when NO plan exists (it is the
+           only thing to do on a fresh install); collapsed once a plan exists so
+           the calendar leads — but the bar still says what opens, so
+           regenerating is discoverable. State persists per profile. -->
+      <div id="plan-config-header" class="planfold-bar" role="button" tabindex="0"
+           aria-expanded="true" aria-controls="plan-config-body"
+           onclick="togglePlanConfig()"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();togglePlanConfig();}">
+        <span class="planfold-chev" id="plan-config-chev">▾</span>
+        <span class="planfold-title">Plan Configuration</span>
+        <span class="planfold-hint" id="plan-config-hint">Hide</span>
+      </div>
+      <div id="plan-config-body">
       <!-- 3.4.2 M6 §5 — dichotomous MODE chooser leads the form. "Continuous"
            left the Goal dropdown: the two cards are the goal-vs-continuous
            decision, and togglePlanFields() filters the fields below to the
@@ -2338,6 +2387,7 @@ window.addEventListener('unhandledrejection', function(e) {
       <div id="plan-status" style="font-size:12px;color:var(--text2);margin-top:8px;"></div>
       <!-- Active-config summary of the CURRENT plan (populatePlanFormFromGoal). -->
       <div id="plan-active-config" style="font-size:11px;color:var(--text3);margin-top:6px;"></div>
+      </div><!-- /#plan-config-body -->
     </div>
     <div class="card">
       <h3>Plan Overview</h3>
@@ -13809,6 +13859,79 @@ function _calTodayStr() {
   return new Date().toLocaleDateString('en-CA');
 }
 
+// ── 3.5.6 Plan-configurator foldout ─────────────────────────────────────────
+// Default: OPEN when no plan exists (nothing else to do on a fresh install),
+// CLOSED once a plan exists (the calendar is the point by then). An explicit
+// user toggle is remembered per profile and wins over the default from then on.
+function _planCfgSet(open) {
+  const bar = document.getElementById('plan-config-header');
+  const body = document.getElementById('plan-config-body');
+  const hint = document.getElementById('plan-config-hint');
+  if (!bar || !body) return;
+  body.hidden = !open;
+  bar.setAttribute('aria-expanded', open ? 'true' : 'false');
+  // Name the ACTION, not the state — "a small arrow" was the complaint.
+  if (hint) hint.textContent = open ? 'Hide' : '⚙ Change settings / regenerate';
+}
+
+function togglePlanConfig() {
+  const body = document.getElementById('plan-config-body');
+  if (!body) return;
+  const open = !!body.hidden;          // hidden now → we are opening
+  _planCfgSet(open);
+  _lsSet(_profileLsKey('planCfgOpen'), open ? '1' : '0');
+}
+
+// Called by the plan loader once it knows whether a plan exists. Honours a
+// stored user preference; otherwise falls back to has-plan.
+function planConfigApplyDefault(hasPlan) {
+  const stored = _lsGet(_profileLsKey('planCfgOpen'));
+  if (stored === '1' || stored === '0') { _planCfgSet(stored === '1'); return; }
+  _planCfgSet(!hasPlan);
+}
+
+// 3.5.6 — gate the container auto-jump on the container actually being on
+// screen. Returns true = proceed now; false = deferred (we re-call ourselves
+// once it becomes visible). The header button always proceeds: the user clicked
+// it, so the calendar is on screen by definition and they expect an immediate
+// scroll. Uses IntersectionObserver when available and falls back to a bounded
+// rAF poll, so no new dependency and no unbounded timer.
+function _calJumpWhenVisible(scroller, behavior) {
+  if (behavior !== 'auto') return true;          // explicit user action
+  const onScreen = () => {
+    const r = scroller.getBoundingClientRect();
+    const vh = window.innerHeight || document.documentElement.clientHeight;
+    return r.height > 0 && r.top < vh && r.bottom > 0;
+  };
+  if (onScreen()) return true;
+  if (scroller.__calJumpPending) return false;   // already waiting
+  scroller.__calJumpPending = true;
+  const fire = () => {
+    scroller.__calJumpPending = false;
+    try { calJumpToToday('auto'); } catch (_) {}
+  };
+  if (typeof IntersectionObserver === 'function') {
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some(e => e.isIntersecting)) { io.disconnect(); fire(); }
+    }, { threshold: 0.01 });
+    io.observe(scroller);
+    // Safety valve: never leave the jump permanently unarmed if the user
+    // simply never scrolls down to the calendar.
+    setTimeout(() => { try { io.disconnect(); } catch (_) {}
+      if (scroller.__calJumpPending) { scroller.__calJumpPending = false; } }, 30000);
+  } else {
+    let tries = 0;
+    const poll = () => {
+      if (!scroller.__calJumpPending) return;
+      if (onScreen()) { fire(); return; }
+      if (++tries > 600) { scroller.__calJumpPending = false; return; }  // ~10s
+      requestAnimationFrame(poll);
+    };
+    requestAnimationFrame(poll);
+  }
+  return false;
+}
+
 function calJumpToToday(behavior) {
   // behavior: 'auto' (instant — tab-open auto-jump) | default 'smooth'
   // (the header button). 3.4.3: the plan-tab open sequence calls this so
@@ -13816,6 +13939,20 @@ function calJumpToToday(behavior) {
   const instant = behavior === 'auto';
   const scroller = document.getElementById('cal-body');
   if (!scroller) return;
+  // 3.5.6 (owner: "sometimes when I reopen the app I can't click the training
+  // — the one 2 rows above my mouse opens; after I scroll the page it works").
+  // Root cause: this scrolls the INNER container, and on a fresh app open the
+  // container is still BELOW THE FOLD (measured: page scrollY 0, #cal-body top
+  // at y≈1435 in a 720px window). WebKit does not reliably re-map hit-test
+  // regions for an overflow scroller it scrolled while off-screen, so the rows
+  // paint scrolled but clicks resolve against the pre-scroll geometry — an
+  // offset of about the sticky header + a row. The user's manual page scroll is
+  // what finally invalidates it. Fix: don't scroll it while it is off-screen —
+  // defer to the first moment it is actually visible, then scroll and force one
+  // hit-test invalidation. Deliberately NOT a scrollIntoView on the page: that
+  // would yank the viewport on every tab open, which the owner has objected to
+  // before for other surfaces.
+  if (!_calJumpWhenVisible(scroller, behavior)) return;
   let target = null;
   try {
     target = document.querySelector(`#cal-rows [data-date="${_calTodayStr()}"]`);
@@ -13848,6 +13985,12 @@ function calJumpToToday(behavior) {
       - (scroller.clientHeight - target.clientHeight) / 2);
     const from = scroller.scrollTop;
     scroller.scrollTo({ top: top, behavior: instant ? 'instant' : 'smooth' });
+    // 3.5.6 — force WebKit to re-map hit-test regions after a programmatic
+    // scroll of this overflow container. Reading a layout property flushes
+    // pending layout; the sticky header inside the scroller is what makes the
+    // stale-region case visible (clicks landing a couple of rows high). Cheap,
+    // and a no-op in engines that already invalidate correctly.
+    if (instant) { void scroller.offsetHeight; void scroller.scrollTop; }
     if (!instant) {
       // Embedded webviews (the shipped app) swallow SMOOTH programmatic
       // scrolls on this container entirely (verified live: scrollTop never
@@ -14737,6 +14880,9 @@ async function loadPlan() {
     $('plan-content').innerHTML = '<div style="color:var(--red);padding:20px;">Failed to load plan. Check server connection.</div>';
     return;
   }
+  // 3.5.6 — fold the configurator by has-plan (a stored user toggle wins).
+  // One call site: loadPlan owns the exists/doesn't-exist decision.
+  try { planConfigApplyDefault(!!d.plan_json); } catch (_) {}
   if (d.plan_json) {
     await renderPlanJSON(d.plan_json);
     try { populatePlanFormFromGoal(d.plan_json.goal); } catch (_) {}

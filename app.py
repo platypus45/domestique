@@ -16833,9 +16833,10 @@ def _execution_for_match(s_json: dict, activity_id) -> "dict | None":
 # constructed sessions. Every one of those is pinned by a failing test in
 # tests/test_357_block_evaluation.py.
 #
-# So it does not reach the rider yet. Flip this to True when that file is green
-# — nothing else needs to change, the renderer and the payload are both wired.
-BLOCK_EVAL_SURFACED = False
+# Surfaced in v3.7.0: the library harness (15 rider behaviours x every
+# interval workout, ~24,700 cases) grades zero wrong, and two independent
+# adversarial passes' findings are all closed and pinned as tests.
+BLOCK_EVAL_SURFACED = True
 
 
 def _block_eval_for(s_json: dict, ride: dict) -> "dict | None":

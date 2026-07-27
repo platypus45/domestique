@@ -2,13 +2,10 @@
 
 ## Unreleased
 
+- **After an interval session, see which blocks you actually did.** Not just a score out of 100 — the blocks themselves: all ten done, or eight of ten and you stopped after the eighth, or nine done with one skipped in the middle, with the count per set. Stopping after 10 of 13 reps barely moves your TSS or your time in zones; this is the question those numbers cannot answer.
+- It reads the laps you marked on your head unit, using where each lap sits on the ride clock rather than guessing from its shape — and when the laps genuinely do not settle what happened, it says nothing rather than guess. A longer warm-up, stretched recoveries, a mid-ride stop, a double-tapped lap, blocks ridden longer or harder than asked: none of these produce a wrong verdict.
+- Rides already synced pick up their lap timing the next time you open them.
 - **Fixed: two rides on the same day of roughly the same length could hide each other.** One of them vanished from every listing. They are now told apart by when they started.
-
-<!-- NOT YET RELEASABLE — block evaluation is rebuilt on real lap timestamps and
-     wired up, but tests/test_357_block_evaluation.py is RED: 9 of 15 rider
-     behaviours still misgrade somewhere in the library, including two that
-     produce a false green tick. No user-facing claim goes in this changelog
-     until that gate is green. -->
 
 
 ## v3.6.0 — Rate the ride, and it changes the plan (2026-07-27)

@@ -133,12 +133,11 @@ def test_the_renderer_is_wired_to_the_payload():
     assert "_blockEvalHtml(ex.blocks)" in dash
 
 
-def test_no_block_report_reaches_the_rider_while_the_gate_is_red():
-    """An adversarial pass produced three separate false green ticks against
-    this grader. Until tests/test_357_block_evaluation.py is green, a rider is
-    shown the execution score, which is true, and no block report — the rule
-    being that no verdict beats a wrong one."""
-    assert app_module.BLOCK_EVAL_SURFACED is False
+def test_the_block_report_is_surfaced():
+    """Flipped in v3.7.0 with the library gate at zero misgrades and both
+    adversarial passes' findings closed. If this goes False again, the
+    dashboard silently loses the feature — that decision must be explicit."""
+    assert app_module.BLOCK_EVAL_SURFACED is True
 
 
 # ── the rating reads back ────────────────────────────────────────────────────

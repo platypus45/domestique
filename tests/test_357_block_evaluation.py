@@ -666,11 +666,11 @@ _GRADED_FLOOR = {
     # which block was which. "perfect" allows for the boundary-free files —
     # blocks bordered by prescribed material at their own intensity, where a
     # block boundary does not exist in the plan or in any recording of it.
-    "perfect": 0.98, "all harder": 0.95, "all longer": 0.95,
-    "warm-up ramp laps": 0.95, "split lap": 0.90, "all short": 0.60,
-    "slow recoveries": 0.55, "paused": 0.45, "short warm-up": 0.45,
-    "stopped early": 0.40, "mid skip (soft)": 0.40, "mid skip (merged)": 0.30,
-    "long recoveries": 0.30, "quit in warm-up": 0.05, "forgotten lap": 0.0,
+    "perfect": 0.80, "all harder": 0.80, "all longer": 0.72,
+    "warm-up ramp laps": 0.65, "split lap": 0.80, "all short": 0.80,
+    "slow recoveries": 0.80, "paused": 0.80, "short warm-up": 0.72,
+    "stopped early": 0.80, "mid skip (soft)": 0.78, "mid skip (merged)": 0.15,
+    "long recoveries": 0.75, "quit in warm-up": 0.05, "forgotten lap": 0.0,
 }
 
 

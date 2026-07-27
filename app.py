@@ -11748,13 +11748,18 @@ def _api_today_session_impl():
 # What this does NOT claim: that no single rating can ever move a day across a
 # readiness band. Any continuous term with a non-zero weight moves a day that
 # sits close enough to a boundary, and a signal with real discriminative value
-# has to be allowed to. What it guarantees is the BOUND: at most 0.9 of the
-# 1-10 channel upward (~2 points of the 0-100 composite) and 2.25 downward
-# (~5 points). Swept over 14,400 combinations of the objective channels ×
-# Hooper answers × every rating, that moves 1.6% of days up a band and 2.6%
-# down — and only days already sitting within two points of the boundary. The
-# hard gates are unaffected either way: G5 and G6 read the raw Hooper answers,
-# not this channel.
+# has to be allowed to. The BOUND on this channel is firm: at most 0.9 of the
+# 1-10 axis upward and 2.25 downward.
+#
+# Its effect on the 0-100 composite is NOT fixed, and the first version of this
+# comment wrongly said it was. The composite re-normalises over whatever
+# channels are present, so the subjective channel's share grows as others go
+# missing: ~2 points up / ~5 points down with all five channels, but up to
+# ~10 points down when only three are available. Fewer than three channels
+# returns no score at all, which is the real floor on this.
+#
+# The hard gates are unaffected either way: G5 and G6 read the raw Hooper
+# answers, not this channel.
 _RTT_WEIGHT_DOWN = 0.25
 _RTT_WEIGHT_UP = 0.10
 
@@ -16805,40 +16810,24 @@ def _execution_for_match(s_json: dict, activity_id) -> "dict | None":
         return None
     if result.get("score") is None:
         return None
-    # v3.5.6 — ADDITIVE block evaluation: "which prescribed blocks did I
-    # actually do?" The three locked axes (duration/load/intensity) cannot see
-    # structure — stopping after 10 of 13 reps survives TSS and time-in-zone
-    # nearly intact. The rider marks a lap per interval, so the laps are exact
-    # block boundaries; grade against those. Never affects score/verdict (both
-    # pinned by tests) and never raises: a ride with no laps, or a session with
-    # no matched file, simply has no "blocks" key.
-    blocks = _block_eval_for(s_json, ride)
-    out = {**result, "activity_id": activity_id,
-           "computed_at": datetime.now().isoformat()}
-    if blocks is not None:
-        out["blocks"] = blocks
-    return out
-
-
-def _block_eval_for(s_json: dict, ride: dict) -> "dict | None":
-    """Lap-based block grading for a matched session. None when not gradeable."""
-    try:
-        laps = ride.get("intervals") or []
-        zwo = (s_json.get("zwo_file") or "").strip()
-        if not laps or not zwo:
-            return None
-        import structure_fidelity as _sf
-        path = WORKOUT_DIR / os.path.basename(zwo)
-        if not path.exists():
-            return None
-        segs = _sf.parse_zwo_file(path)
-        if not segs:
-            return None
-        ftp = ride.get("ftp_at_ride") or config.ATHLETE_FTP_W
-        return _sf.score_blocks(segs, laps, ftp)
-    except Exception as e:  # noqa: BLE001 — advisory axis, never break scoring
-        _log.debug(f"block eval skipped: {e}")
-        return None
+    # v3.6.0 — block evaluation ("which prescribed blocks did I actually do?")
+    # is BUILT BUT NOT SURFACED, deliberately. The three locked axes cannot see
+    # structure, so the question is worth answering — but a lap list carries no
+    # labels, and four successive attempts to infer the answer from one
+    # (positional, shape-matched, ride-clock-anchored, then gated on a
+    # file-level decidability test) each shipped a different class of confident
+    # wrong verdict under adversarial review: certifying a session the rider
+    # abandoned, calling a block ridden harder than asked "not ridden", and
+    # naming a completed block "missing" when the recoveries ran long.
+    #
+    # The grader and its tests stay in the tree (structure_fidelity.score_blocks)
+    # because the harness that measured all of the above is worth keeping. It
+    # gets surfaced when it is driven by real lap TIMESTAMPS rather than inferred
+    # from shape — intervals.icu exposes them on the raw activity, they are just
+    # not persisted yet. Until then the rider sees the execution score, which is
+    # true, instead of a block report that is sometimes a lie.
+    return {**result, "activity_id": activity_id,
+            "computed_at": datetime.now().isoformat()}
 
 
 def _apply_rematch_preview_to_plan(plan: dict, week_idx: int, preview: dict) -> int:
@@ -20021,7 +20010,22 @@ def _build_fit_normalized(fit_path: Path, ride_id: str) -> dict:
     except Exception as e:
         _log.debug(f"_build_fit_normalized device-info read failed: {e}")
 
+    # v3.6.0 — a FIT rider's own session-RPE lives in the load sidecar (there is
+    # no ICU record to hold it). Without this the rating saved fine and then read
+    # back blank on the one screen that renders the control, which to the rider
+    # is indistinguishable from it never having saved.
+    rider_input = {}
+    try:
+        import ride_storage as _rs
+        side = _rs.read_fit_load_sidecar(fit_path) or {}
+        for k in ("rpe", "rpe_at", "rpe_scale"):
+            if side.get(k) is not None:
+                rider_input[k] = side[k]
+    except Exception as e:  # noqa: BLE001 — never break a ride view for this
+        _log.debug(f"fit rider-input read skipped: {e}")
+
     return {
+        **rider_input,
         "ride_id": ride_id,
         "source": "fit",
         "external_id": None,

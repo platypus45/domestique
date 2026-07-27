@@ -1,16 +1,15 @@
 # Changelog
 
-## v3.6.0 — Rate the ride, and it changes the plan (2026-07-26)
+## v3.6.0 — Rate the ride, and it changes the plan (2026-07-27)
 
 - **After a ride, rate how hard it felt — and the plan listens.** One tap, 0 to 10, with the wording attached to each number so your 7 today means the same as your 7 last month. If your last three days average 7 or above, a hard day ahead eases itself. It is deliberately one-directional: a high rating can talk the planner out of intensity, never into more of it. And a rating you have given is never wiped by a re-sync.
-- **See which blocks you actually did.** Duration, load and intensity can all look fine while the session came apart — eight of thirteen intervals, or every rep two minutes short. If you press the lap button on your intervals, your ride now gets graded on structure: which blocks you rode, which ran short, which you never started, and how much of the prescribed work you completed. No extra setup — it reads the laps your head unit already recorded. Where a session's own structure makes the laps genuinely ambiguous — a warm-up block shaped exactly like one of its intervals — you get no block report rather than a confident guess.
 - **"Ready to train?" joins the morning check-in.** Optional, 1 to 10. Pre-session fatigue together with readiness-to-train is the pair that actually separated overreached riders from coping ones in a study of 30 cyclists, and it is not one of the four questions that were already there. Unlike those four — where the worst answer decides the day — a good rating can also lift it, within limits.
 - **A fatigue signal no longer disappears after one rest day.** Heart-rate drift from a recent ride used to be discarded once the ride was more than two days old, which is exactly when it is worth knowing. It now stays visible for ten days, and it tells you how old the reading is instead of presenting a five-day-old number as this morning's. If you already logged poor sleep or high stress, it says the drift is explained rather than raising a second alarm about the same cause; if you logged feeling fine, that mismatch is what it flags.
 - **Easing a hard day no longer secretly made it harder.** Stepping a session down a tier could hand you *more* work than the original — on a real plan that was 28 of its 45 hard sessions. Every path that eases a session now holds the load, in the plan, in the response and in the workout file attached to the day, which previously could all disagree.
 - **A missing heart-rate-drift number now says why.** Every ride missing one turned out to be a ride without a power meter, and "not enough valid samples" sent people looking for a bug that was not there.
 - **Rating works without an intervals.icu account.** Riders who import their files directly had no way to record how a session felt — the rating simply failed to save. It now saves alongside the imported ride and feeds the same three-day gate as everyone else's.
 - **Fixed: the ride detail view could hang on "Loading activity…".** Introduced during this release's own work and caught before shipping, but it would have affected every ride with recorded data.
-- Also: the documentation had the readiness score's weights wrong; a finished session could be labelled "blocks missing"; and the Revert button no longer appears on advisories, where there was never anything to revert.
+- Also: the documentation had the readiness score's weights wrong, and the Revert button no longer appears on advisories, where there was never anything to revert.
 
 ## v3.5.5 — Recovery weeks that are actually recovery (2026-07-26)
 

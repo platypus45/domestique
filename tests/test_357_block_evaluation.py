@@ -152,14 +152,21 @@ def test_all_blocks_ridden_short_is_not_reported_as_missing():
     assert r["stopped_after"] == r["reps_prescribed"]   # ...but they finished
 
 
-def test_ui_counts_ridden_blocks_not_only_full_length_ones():
+def test_the_grader_is_not_surfaced_in_this_release():
+    """Deliberate: the grader is kept and measured, not shown. Four attempts to
+    infer which blocks a rider did from an unlabelled lap list each shipped a
+    different class of confident wrong verdict. If a future change wires it back
+    in, this test should fail and force the decision to be made explicitly."""
     from pathlib import Path
     import app as app_module
-    src = (Path(app_module.__file__).parent / "templates" / "dashboard.html"
-           ).read_text(encoding="utf-8")
-    assert "blocks ridden" in src
-    assert "at full length" in src
-    assert "all blocks, cut short" in src
+    app_src = Path(app_module.__file__).read_text(encoding="utf-8")
+    dash = (Path(app_module.__file__).parent / "templates" / "dashboard.html"
+            ).read_text(encoding="utf-8")
+    # the comment explaining the decision mentions the name; no CALL may exist
+    assert "_sf.score_blocks(" not in app_src
+    assert "score_blocks(segs" not in app_src
+    assert '"blocks"] = ' not in app_src
+    assert "_blockEvalHtml(" not in dash
 
 
 def test_a_missing_middle_lap_is_attributed_to_the_end():

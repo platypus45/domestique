@@ -14025,42 +14025,11 @@ function calJumpToToday(behavior) {
 // Open the SCHEDULED workout for a date straight from the plan data (so the full
 // modal with Rematch + downloads shows). Keyed by date, robust to calendar-vs-plan
 // week indexing differences.
-// v3.5.6 — block evaluation: which prescribed BLOCKS did the rider do?
-// The three execution axes (duration/load/intensity) cannot see structure —
-// stopping after 10 of 13 reps survives TSS and time-in-zone nearly intact.
-// The rider marks a Garmin lap per interval, so laps are exact block
-// boundaries. Renders nothing when the ride carries no laps or the session had
-// no matched file (the key is simply absent then).
-function _blockEvalHtml(b) {
-  if (!b || !b.reps_prescribed) return '';
-  const OUT = {
-    completed:     ['\u2713 all blocks done',       'var(--green)'],
-    short_blocks:  ['\u2713 all blocks, cut short', 'var(--yellow)'],
-    cut_short:     ['\u26a0 stopped early',          'var(--yellow)'],
-    off_plan:      ['\u26a0 blocks missing',         'var(--yellow)'],
-    not_attempted: ['\u2715 no blocks ridden',       'var(--text3)'],
-  };
-  const o = OUT[b.outcome] || [esc(String(b.outcome || '')), 'var(--text2)'];
-  const _ridden = (b.reps_done || 0) + (b.reps_partial || 0);
-  const bits = [`<b style="color:${o[1]};">${o[0]}</b>`,
-                `${_ridden}/${b.reps_prescribed} blocks ridden`];
-  if (b.reps_partial) bits.push(`${b.reps_done} at full length, ${b.reps_partial} short`);
-  if (b.outcome === 'cut_short' && b.stopped_after)
-    bits.push(`stopped after block ${b.stopped_after}`);
-  if (typeof b.work_fraction === 'number')
-    bits.push(`${Math.round(b.work_fraction * 100)}% of the work`);
-  // Per-set line only when the session actually has sets — "10 of 13 in each
-  // set" is how the rider thinks about it.
-  let sets = '';
-  if (Array.isArray(b.sets) && b.sets.length > 1) {
-    // v3.6.0 — `ridden` (done + partial), not `done`. Printing `done` alone
-    // made a set whose blocks all ran a little short read "0/1" on the same
-    // line that called them ridden — seen on a real lapped ride here.
-    sets = '<div style="color:var(--text3);margin-top:2px;">sets: '
-         + b.sets.map(s => `${s.ridden != null ? s.ridden : s.done}/${s.prescribed}`).join(' \u00b7 ') + '</div>';
-  }
-  return `<div style="margin-top:4px;">${bits.join(' \u00b7 ')}${sets}</div>`;
-}
+// v3.6.0 — the block-evaluation renderer was removed with the feature it drew.
+// The grader is still in the tree (structure_fidelity.score_blocks) but is not
+// surfaced: inferring which blocks a rider did from an unlabelled lap list
+// produced confident wrong verdicts in four different ways. It returns when it
+// can be driven by real lap timestamps instead of block shapes.
 
 // v3.5.6 — optional session-RPE capture. Foster modified CR-10 with the
 // standard verbal anchors: that is the scale the entire session-RPE evidence
@@ -14173,7 +14142,6 @@ function _calOpenDayChooser(day, sec, showPlanned) {
     else if (ex.basis === 'load_only') parts.push('intensity n/a');
     execRow = `<div style="font-size:12px;color:var(--text2);margin:0 0 10px;padding:6px 10px;background:var(--surface2);border-radius:6px;">
       Execution <b style="color:var(--text);">${Math.round(ex.score)}</b>/100 — ${parts.join(' · ')} <span style="color:var(--text3);">(${esc(String(ex.verdict || '').replace('_', ' '))})</span>
-      ${_blockEvalHtml(ex.blocks)}
     </div>`;
   }
   openModal(`<div class="modal-body">

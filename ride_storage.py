@@ -569,6 +569,35 @@ def load_icu_rides() -> list[dict]:
     return out
 
 
+_SAME_RIDE_START_TOLERANCE_S = 300.0
+
+
+def _same_ride_start(a: dict, b: dict) -> bool:
+    """Are these two records the same ride, judged on when they started?
+
+    The dedupe bucket rounds to the day and the whole minute, which is fine for
+    deciding "don't list this twice" and NOT fine for moving rider data between
+    records. Unknown or unparseable timestamps answer False: refusing to carry a
+    rating is recoverable, attaching it to the wrong ride is not.
+    """
+    import datetime as _dt
+
+    def _parse(rec):
+        raw = rec.get("started_at") or rec.get("start_date_local") or ""
+        try:
+            return _dt.datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+
+    ta, tb = _parse(a), _parse(b)
+    if ta is None or tb is None:
+        return False
+    if (ta.tzinfo is None) != (tb.tzinfo is None):
+        ta = ta.replace(tzinfo=None)
+        tb = tb.replace(tzinfo=None)
+    return abs((ta - tb).total_seconds()) <= _SAME_RIDE_START_TOLERANCE_S
+
+
 def _persist_rider_input(external_id, values: dict) -> None:
     """Write carried rider input onto the ICU record on disk (best effort).
 
@@ -681,7 +710,14 @@ def load_all_rides() -> list[dict]:
             # 3-day gate. Nothing else can regenerate it. ICU's own value wins
             # if it has one — that surface is the newer edit.
             twin = icu_by_key.get(bk)
-            if twin is not None:
+            # The bucket is only (date, whole minutes) — two different rides on
+            # one day with the same rounded duration share it. That was harmless
+            # while the dedupe merely dropped the FIT entry; carrying rider input
+            # across it wrote one ride's rating onto ANOTHER ride, and persisting
+            # made that permanent. It reached a real record here before a
+            # verification pass caught it. Require the start times to actually
+            # agree before treating them as the same ride.
+            if twin is not None and _same_ride_start(r, twin):
                 moved = {}
                 for k in _RIDER_INPUT_CARRY_KEYS:
                     if r.get(k) is not None and twin.get(k) is None:
@@ -689,11 +725,9 @@ def load_all_rides() -> list[dict]:
                         moved[k] = r[k]
                 if moved:
                     # PERSIST it onto the ICU record, don't just patch the dict
-                    # we happen to be returning. The ride-detail modal is the
-                    # only surface that renders the rating control, and it reads
-                    # the record straight off disk — so an in-memory carry left
-                    # the rider looking at their own rating missing. Writing it
-                    # once also stops the FIT sidecar being the only copy.
+                    # we happen to be returning. The ride-detail modal reads the
+                    # record straight off disk, so an in-memory carry left the
+                    # rider looking at their own rating missing.
                     _persist_rider_input(twin.get("external_id"), moved)
             continue
         merged.append(r)

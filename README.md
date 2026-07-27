@@ -302,12 +302,6 @@ Every number shows **where it came from and when** — measured, estimated, or s
 
 Every completed session gets an execution score from 0–100 against its prescription: did you ride the planned duration, deliver the planned load, at the planned intensity? Scored from power when you have it, from heart rate when you don't — so HR-mode riders get the same feedback loop. The score lives on the day, so a week of "done" ticks also tells you *how* done they were.
 
-**Which blocks you actually did.** Duration, load and intensity can all look fine while the session itself came apart — eight of thirteen intervals ridden, or every rep two minutes short. So if you press the lap button on your intervals (most riders already do), Domestique reads those laps and grades the *structure*: "stopped after block 8 of 13", set by set, with each rep marked done, partial or missed, and how much of the prescribed work you completed. No extra device setup, no manual entry — it uses the laps your head unit already recorded.
-
-**It stays quiet rather than guess.** Your laps carry no labels, and your head unit marks a warm-up ramp or a hard float leg as "work" even though the plan does not count those as blocks. For most sessions the block lengths, intensities and positions make the matching unambiguous. For some — where a warm-up block has the same shape as a real interval and sits near it — nothing in the data can tell "that lap was the block" from "the block was skipped and that lap was the warm-up". Those sessions get no block report at all instead of a confident guess: about one interval workout in five in the library, and you simply see the execution score without the block breakdown.
-
-The one limit that remains where it does report: matching preserves order but cannot distinguish skipping a rep in the middle of a set from stopping one rep early when both fit equally well. It tells you how many blocks you rode; on that specific ambiguity it attributes the gap to the end.
-
 ---
 
 ## Retest reminders
@@ -586,7 +580,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v3.6.0 — Rate the ride, and it changes the plan](https://github.com/platypus45/domestique/releases/latest)** (2026-07-26).
+Latest: **[v3.6.0 — Rate the ride, and it changes the plan](https://github.com/platypus45/domestique/releases/latest)** (2026-07-27).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

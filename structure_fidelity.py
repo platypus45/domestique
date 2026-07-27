@@ -616,11 +616,15 @@ def _pairing(rep, run) -> "float | None":
     # can land anywhere in the admissibility band.
     if run["dur"] > 1.25 * presc and abs(run["frac"] - tgt) > 0.05 * tgt:
         return None
-    q_int = max(0.0, 1.0 - abs(run["frac"] - tgt) / tgt)
+    # Intensity similarity is STEEP: at 15 % off the block's target a run is
+    # worth almost nothing as that block. The gentle slope let a session's
+    # opener at 100 % stand in for a 120 % block at 90 % of full value, and
+    # one such claim let a whole uniform grid slide by a slot.
+    q_int = max(0.0, 1.0 - (abs(run["frac"] - tgt) / tgt) / 0.15)
     # The flat term keeps a 10-second sprint's anchor worth claiming against
     # honest clock noise — position error is not proportional to block
     # length, so the value of pinning the clock is not either.
-    return (min(run["dur"], presc) + 20.0) * (0.25 + 0.75 * q_int)
+    return (min(run["dur"], presc) + 20.0) * (0.15 + 0.85 * q_int)
 
 
 # ── Anchoring: which run IS which block, where that is certain ──────────────
@@ -652,10 +656,30 @@ def _anchor(reps, runs, pace, bands, segn, holes=(), weight=1.0) -> "list[int | 
     lw = LAP_GAP_COST_W * weight
     S = LAP_GAP_SOFTEN_S
 
+    def _expl(run) -> bool:
+        t = _band_tol(run["frac"])
+        for a, b, lo, hi in bands:
+            if not (lo - t <= run["frac"] <= hi + t):
+                continue
+            if _overlap(a, b, run["t0"], run["end"]) < 0.5 * run["dur"]:
+                continue
+            if run["dur"] >= 0.4 * (b - a):
+                return True
+        return False
+
+    # Claiming a run the plan explains at its own position UNEXPLAINS the
+    # plan: if that run was block 4, then nobody rode the prescribed lead
+    # that sits exactly there. The charge is what let "rode the lead and
+    # quit before the last block" stop reading as "started one lead early
+    # and finished everything".
+    expl_cost = [0.4 * runs[j]["dur"] if _expl(runs[j]) else 0.0
+                 for j in range(m)]
+
     adm: "list[list[tuple[int, float]]]" = []
     for i, rep in enumerate(reps):
-        row = [(j, v) for j in range(m)
-               if (v := _pairing(rep, runs[j])) is not None]
+        row = [(j, v - expl_cost[j]) for j in range(m)
+               if (v := _pairing(rep, runs[j])) is not None
+               and v - expl_cost[j] > 0.0]
         if len(row) > LAP_ADM_TRIGGER:
             # Plausibility cap, so a wall of stray admissible runs cannot turn
             # the alignment quadratic. By ORDINAL among NEAR-TARGET runs, not
@@ -702,7 +726,8 @@ def _anchor(reps, runs, pace, bands, segn, holes=(), weight=1.0) -> "list[int | 
               for j in range(m)]
     admdur = [0.0] * (m + 1)      # prefix sum of strandable-run seconds
     for j in range(m):
-        admdur[j + 1] = admdur[j] + (runs[j]["dur"] if strand[j] else 0.0)
+        admdur[j + 1] = admdur[j] + ((runs[j]["dur"] + 20.0)
+                                     if strand[j] else 0.0)
 
     starts = [float(r["start_s"]) for r in reps]
     durs = [float(r["dur_s"]) for r in reps]
@@ -740,9 +765,14 @@ def _anchor(reps, runs, pace, bands, segn, holes=(), weight=1.0) -> "list[int | 
         latedur[j + 1] = latedur[j] + (runs[j]["dur"] if late[j] else 0.0)
 
     def origin_cost(i, j) -> float:
+        # Real seconds, softened only a little by how much warm-up there was
+        # to flex: dividing by the whole prescribed start let an alignment
+        # slide the entire session onto the openers for pennies. Every
+        # reading of a genuinely-shifted session pays this equally, so it
+        # decides nothing there — it only punishes readings that shift when
+        # the ride did not.
         d = runs[j]["t0"] - starts[i]
-        w = LAP_ORIGIN_W_POS if d > 0 else LAP_ORIGIN_W_NEG
-        return (w * lw * abs(d) / (starts[i] + S)
+        return (lw * abs(d) / (S + 0.1 * starts[i])
                 + LAP_ORPHAN_W * latedur[j])
 
     # F[(i, j)] = best score of an alignment whose LAST anchor reads block i
@@ -1036,6 +1066,32 @@ def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
             live = [r if k not in banned else {**r, "frac": -1.0}
                     for k, r in enumerate(runs)]
             anchors, _sc = _anchor(reps, live, pace2, bands, segn, holes)
+
+        # A reading that leaves blocks unanchored may simply be the wrong
+        # pace: seven sprints at doubled rests read as "rode every other
+        # sprint" at face pace. Try stretched paces; a better story wins, a
+        # tied-but-different story is a coin flip and silences.
+        if sum(1 for j in anchors if j is None) >= 2:
+            live0 = [r if k not in banned else {**r, "frac": -1.0}
+                     for k, r in enumerate(runs)]
+            _b0, base_sc = _anchor(reps, live0, pace2, bands, segn, holes)
+            for seed in ((1.6, 0.0), (2.2, 0.0)):
+                anc, _s1 = _anchor(reps, live0, seed, bands, segn, holes)
+                pc = seed
+                for _ in range(3):
+                    pc = _fit_pace(reps, live0, anc, segn)
+                    anc2, sc2 = _anchor(reps, live0, pc, bands, segn, holes)
+                    if anc2 == anc:
+                        break
+                    anc = anc2
+                if anc == anchors:
+                    continue
+                if sc2 > base_sc + 40.0:
+                    anchors, pace2, base_sc = anc, pc, sc2
+                elif sc2 >= base_sc - 40.0:
+                    keep = [j is not None for j in anchors]
+                    if [j is not None for j in anc] != keep:
+                        return None
 
         # Two-readings trial: if every plan-explained anchor is removed and
         # the alignment re-solves to a materially different reading at nearly

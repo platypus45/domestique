@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Neuromuscular pre-fatigue 6x (44min)</name>
-    <description>Warmup: 7min ramp from 45% to 75% FTP, 3 x 30s fast-pedal drill @ 82%, primer 1min @ 88% + 1min @ 102% | Pre-fatigued sprint: 6 x (15s @ 125%, 20s @ 80%, 20s @ 180%), 3min 30s between | Cooldown: 5min from 65% to 45% FTP</description>
+    <description>Warmup: 7min ramp from 45% to 75% FTP, 3 x 30s fast-pedal drill @ 82%, primer 1min @ 88% + 1min @ 102% | Pre-fatigued sprint: 6 x (15s @ 125%, 20s @ 80%, 20s @ 180%), 3min 30s between | Cooldown: 5min from 60% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="420" PowerLow="0.45" PowerHigh="0.75" pace="0" />
@@ -40,6 +40,6 @@
         <SteadyState Duration="15" Power="1.25" pace="0" />
         <SteadyState Duration="20" Power="0.8" pace="0" />
         <SteadyState Duration="20" Power="1.8" pace="0" Cadence="100" />
-        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.60" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

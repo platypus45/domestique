@@ -2,11 +2,11 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Over-Under 12x2min (45min)</name>
-    <description>Warmup: 11min from 50% to 75% FTP | Intervals: 12 x (1min 30s @ 90% / 45s @ 105%) | Cooldown: 7min from 65% to 45% FTP</description>
+    <description>Warmup: 11min from 50% to 75% FTP | Intervals: 12 x (1min 30s @ 90% / 45s @ 105%) | Cooldown: 7min from 60% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="660" PowerLow="0.50" PowerHigh="0.75" pace="0" />
         <IntervalsT Repeat="12" OnDuration="90" OffDuration="45" OnPower="0.9" OffPower="1.05" pace="0" />
-        <Cooldown Duration="420" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="420" PowerLow="0.60" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Mixed 20s/3min 8x (65min)</name>
-    <description>Warmup: 8min ramp from 50% to 75% FTP | Microintervals: 8 x (20s @ 125% / 3min 20s @ 65%) | Cooldown: 10min from 65% to 25% FTP</description>
+    <description>Warmup: 8min ramp from 50% to 75% FTP | Microintervals: 8 x (20s @ 125% / 3min 20s @ 65%) | Cooldown: 10min from 60% to 25% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="490" PowerLow="0.5" PowerHigh="0.75" /><SteadyState Duration="20" Power="1.25" pace="0" />
@@ -41,6 +41,6 @@
         <SteadyState Duration="20" Power="1.25" pace="0" />
         <SteadyState Duration="20" Power="1.4" pace="0" />
         <SteadyState Duration="180" Power="0.7" pace="0" />
-        <Cooldown Duration="600" PowerLow="0.65" PowerHigh="0.25" pace="0" />
+        <Cooldown Duration="600" PowerLow="0.60" PowerHigh="0.25" pace="0" />
     </workout>
 </workout_file>

@@ -1375,8 +1375,56 @@ def _work_zone_seconds(power: list[float], segments: list[dict]) -> dict:
     return z
 
 
+def _mask_cooldown(power: list[float], segments: list[dict]) -> list[float]:
+    """Blank the trailing cooldown out of the sample array for classification.
+
+    v3.7.0. What a workout IS must not depend on how it ramps home. Whole-ride
+    zone accounting made cooldown power a classification input: easing every
+    cooldown moves its seconds from z2 to z1, z1 overtakes z2, and files change
+    class — real training sessions relabelled ``recovery`` and routed onto
+    recovery days — while their actual stimulus never changed.
+
+    Cooldown samples take the FreeRide sentinel (-1), which every zone gate in
+    this module already skips. One edit, and every gate at once: dominance,
+    the dose floors, the salvage guard and the percentages all stop seeing it,
+    with no site left behind to rediscover the coupling later.
+
+    NOT WIRED IN as of v3.7.0. Blanking the cooldown out of zone accounting
+    is the right shape — cooldown power should never decide what a workout is
+    — but it re-promotes ``neuromuscular_4x30s_144min.zwo`` to neuromuscular,
+    undoing a deliberate v2.4.5 demotion (4x30s inside a 144-minute ride is
+    not a neuromuscular session). Overriding a curated correction to land a
+    cooldown change is the wrong trade, so the coupling stays and the cooldown
+    values were chosen to sit inside it instead. Kept here, with the reason,
+    because the decoupling is still the correct end state and the next attempt
+    should start from a plan for that file rather than rediscovering it.
+
+    The warmup is deliberately left in place — re-baselining it is a separate
+    decision with its own blast radius.
+    """
+    out = list(power)
+    t = 0
+    for seg in segments:
+        dur = int(seg.get("duration_s") or 0)
+        if dur <= 0:
+            continue
+        if seg.get("kind") == "cooldown":
+            for k in range(t, min(t + dur, len(out))):
+                out[k] = -1.0
+        t += dur
+    return out
+
+
 def extract_features_v104(power: list[float], segments: list[dict]) -> dict:
-    """Compute legacy + v1.0.4 features in one merged dict."""
+    """Compute legacy + v1.0.4 features in one merged dict.
+
+    The zone accounting that DECIDES a workout's class is computed with the
+    trailing cooldown blanked out (:func:`_mask_cooldown`); the metrics that
+    DESCRIBE the workout — NP, IF, TSS, duration — are computed from the whole
+    ride, because that is what the rider actually does. Blanking the cooldown
+    for both raised the flagship's IF from 0.819 to 0.846 and its TSS from 75
+    to 80, which would have inflated planned load right across the library.
+    """
     legacy = extract_features(power, cooldown_s=sum(
         int(sg.get("duration_s") or 0) for sg in segments
         if sg.get("kind") == "cooldown"))

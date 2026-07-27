@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Over-Under 4x1min (59min)</name>
-    <description>Warmup: 10min from 25% to 75% FTP | Intervals: 4 x (1min @ 105% / 56s @ 65%) | Cooldown: 5min from 65% to 25% FTP</description>
+    <description>Warmup: 10min from 25% to 75% FTP | Intervals: 4 x (1min @ 105% / 56s @ 65%) | Cooldown: 5min from 60% to 25% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="600" PowerLow="0.25" PowerHigh="0.75" pace="0" />
@@ -41,6 +41,6 @@
         <Ramp Duration="30" PowerLow="0.65" PowerHigh="1.04" pace="0" />
         <SteadyState Duration="240" Power="1.04" pace="0" />
         <Ramp Duration="60" PowerLow="1.04" PowerHigh="1.2" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.25" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.60" PowerHigh="0.25" pace="0" />
     </workout>
 </workout_file>

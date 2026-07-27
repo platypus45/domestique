@@ -6792,6 +6792,7 @@ def generate_plan(
     # budget). Demotes any excess HIT to a real endurance/tempo library file
     # so no non-stepback week exceeds get_budget_for_phase(phase).hit_count_max.
     _enforce_weekly_hit_cap(weeks, library)
+    _ensure_fresh_legs_before_ftp_tests(weeks)
 
     # ── v1.3.2 IMPL-AVAILABILITY-IN-GENERATE ──────────────────────────────
     # Apply persisted per-DATE availability overrides AFTER bulk planning so
@@ -7615,6 +7616,38 @@ def _enforce_build2_peak_hard_floor(
                         if nm:
                             class_distinct_files.setdefault(cc_target, set()).add(nm)
                     deficit -= 1
+
+
+def _ensure_fresh_legs_before_ftp_tests(weeks: list) -> None:
+    """A maximal test is only valid on fresh legs — enforced LAST.
+
+    v3.7.0. _inject_mid_cycle_ftp_tests already prefers a slot whose previous
+    day is easy, but it runs before the build2/peak variety floors, which
+    inject extra HIT sessions and can land one the day before the test. The
+    test then reads a depressed FTP — and that number becomes every zone and
+    every session of the next cycle. This is the one session that must not be
+    ridden dirty, so the guard runs after every pass that can move a day.
+    """
+    easy = {"rest", "z2", "long_z2", "recovery"}
+    by_day = {s.day: s for w in weeks for s in w.sessions
+              if getattr(s, "day", None) is not None}
+    for day, sess in sorted(by_day.items()):
+        if getattr(sess, "session_type", "") != "ftp_test":
+            continue
+        prev = by_day.get(day - timedelta(days=1))
+        if prev is None or prev.session_type in easy:
+            continue
+        prev.session_type = "recovery"
+        prev.zwo_file = ""
+        prev.zwo_name = ""
+        prev.matched = False
+        prev.duration_min = min(getattr(prev, "duration_min", 45) or 45, 45)
+        prev.tss_estimate = min(getattr(prev, "tss_estimate", 30.0) or 30.0,
+                                30.0)
+        prev.description = (
+            "Recovery — eased to leave fresh legs for tomorrow's FTP test. "
+            "A maximal protocol read off a fatigued day sets a wrong FTP for "
+            "the whole cycle.")
 
 
 def _enforce_weekly_hit_cap(weeks: list, library: list[dict]) -> None:

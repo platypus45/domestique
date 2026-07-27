@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Endurance 12s/5min48 6x (60min)</name>
-    <description>Warmup: 8min from 58% to 72% FTP | Aerobic primer: 2min30 @ 78% FTP, 5min from 80% to 88% FTP, 2min30 @ 90% FTP | Sprints: 6 x (12s @ 195% / 5min48 @ 70% FTP) | Cooldown: 6min from 65% to 45% FTP</description>
+    <description>Warmup: 8min from 58% to 72% FTP | Aerobic primer: 2min30 @ 78% FTP, 5min from 80% to 88% FTP, 2min30 @ 90% FTP | Sprints: 6 x (12s @ 195% / 5min48 @ 70% FTP) | Cooldown: 6min from 60% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="480" PowerLow="0.58" PowerHigh="0.72" pace="0" />
@@ -10,6 +10,6 @@
         <Ramp Duration="300" PowerLow="0.8" PowerHigh="0.88" pace="0" />
         <SteadyState Duration="150" Power="0.9" pace="0" />
         <IntervalsT Repeat="6" OnDuration="12" OffDuration="348" OnPower="1.95" OffPower="0.7" pace="0" />
-        <Cooldown Duration="360" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="360" PowerLow="0.60" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

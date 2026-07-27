@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Sweet Spot (29min)</name>
-    <description>Warmup: 4min from 50% to 70% FTP | Steady: 1min @ 79% FTP | Steady: 1min @ 81% FTP | Steady: 1min @ 83% FTP | Steady: 1min @ 85% FTP | Steady: 1min @ 87% FTP | Steady: 1min @ 89% FTP | Steady: 2min @ 50% FTP | Steady: 5min @ 91% FTP | Steady: 2min @ 50% FTP | Steady: 1min @ 86% FTP | Steady: 1min @ 88% FTP | Steady: 1min @ 90% FTP | Steady: 1min @ 92% FTP | Steady: 1min @ 94% FTP | Steady: 1min @ 96% FTP | Cooldown: 4min from 65% to 45% FTP</description>
+    <description>Warmup: 4min from 50% to 70% FTP | Steady: 1min @ 79% FTP | Steady: 1min @ 81% FTP | Steady: 1min @ 83% FTP | Steady: 1min @ 85% FTP | Steady: 1min @ 87% FTP | Steady: 1min @ 89% FTP | Steady: 2min @ 50% FTP | Steady: 5min @ 91% FTP | Steady: 2min @ 50% FTP | Steady: 1min @ 86% FTP | Steady: 1min @ 88% FTP | Steady: 1min @ 90% FTP | Steady: 1min @ 92% FTP | Steady: 1min @ 94% FTP | Steady: 1min @ 96% FTP | Cooldown: 4min from 60% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="240" PowerLow="0.5" PowerHigh="0.7" pace="0" Cadence="85" />
@@ -25,6 +25,6 @@
         <Ramp Duration="60" PowerLow="0.91" PowerHigh="0.93" pace="0" Cadence="100" />
         <Ramp Duration="60" PowerLow="0.93" PowerHigh="0.95" pace="0" Cadence="85" />
         <Ramp Duration="60" PowerLow="0.94" PowerHigh="0.97" pace="0" Cadence="105" />
-        <Cooldown Duration="240" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="240" PowerLow="0.60" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

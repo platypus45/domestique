@@ -15,5 +15,5 @@
         <IntervalsT Repeat="3" OnDuration="120" OffDuration="180" OnPower="0.94" OffPower="0.86" pace="0" Cadence="90" CadenceResting="90" />
         <SteadyState Duration="180" Power="0.55" pace="0" Cadence="85" />
         <Ramp Duration="720" PowerLow="0.75" PowerHigh="0.9" pace="0" />
-        <Cooldown Duration="180" PowerLow="0.65" PowerHigh="0.40" /></workout>
+        <Cooldown Duration="180" PowerLow="0.60" PowerHigh="0.40" /></workout>
 </workout_file>

@@ -177,7 +177,7 @@ def _emit_steady(blocks: list[tuple[int, float]], total_min: int) -> "str | None
 # first lactate threshold; Devlin 2014 PMID 24739289) and never above the power
 # the rider was just held at. Ending at 0.45 keeps the whole ramp above the
 # "no better than sitting still" floor of ~40 % of LT1.
-CD_START_MAX = 0.65
+CD_START_MAX = 0.60
 CD_END = 0.45
 
 

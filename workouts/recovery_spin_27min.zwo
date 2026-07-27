@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Tempo 29min — 60→120% × 2</name>
-    <description>Steady: 2min @ 60% FTP | Steady: 2min 30s @ 70% FTP | Steady: 3min @ 80% FTP | Steady: 3min 30s @ 90% FTP | Steady: 45s @ 120% FTP | Steady: 4min @ 45% FTP | Steady: 2min @ 60% FTP | Steady: 2min 30s @ 75% FTP | Steady: 3min @ 85% FTP | Steady: 3min 30s @ 95% FTP | Cooldown: 2min ramp from 65% to 40% FTP</description>
+    <description>Steady: 2min @ 60% FTP | Steady: 2min 30s @ 70% FTP | Steady: 3min @ 80% FTP | Steady: 3min 30s @ 90% FTP | Steady: 45s @ 120% FTP | Steady: 4min @ 45% FTP | Steady: 2min @ 60% FTP | Steady: 2min 30s @ 75% FTP | Steady: 3min @ 85% FTP | Steady: 3min 30s @ 95% FTP | Cooldown: 2min ramp from 60% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <SteadyState Duration="120" Power="0.6" pace="0" />
@@ -15,5 +15,5 @@
         <SteadyState Duration="150" Power="0.75" pace="0" />
         <SteadyState Duration="180" Power="0.85" pace="0" />
         <SteadyState Duration="210" Power="0.95" pace="0" />
-        <Cooldown Duration="135" PowerLow="0.65" PowerHigh="0.40" /></workout>
+        <Cooldown Duration="135" PowerLow="0.60" PowerHigh="0.40" /></workout>
 </workout_file>

@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Anaerobic 5x30s (54min)</name>
-    <description>Warmup: 10min from 25% to 75% FTP | Intervals: 5 x (30s @ 150% / 0s @ 55%) | Cooldown: 10min from 65% to 25% FTP</description>
+    <description>Warmup: 10min from 25% to 75% FTP | Intervals: 5 x (30s @ 150% / 0s @ 55%) | Cooldown: 10min from 60% to 25% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="600" PowerLow="0.25" PowerHigh="0.75" pace="0" />
@@ -25,6 +25,6 @@
         <SteadyState Duration="30" Power="1.5" pace="0" />
         <SteadyState Duration="180" Power="1.05" pace="0" />
         <SteadyState Duration="10" Power="1.5" pace="0" />
-        <Cooldown Duration="600" PowerLow="0.65" PowerHigh="0.25" pace="0" />
+        <Cooldown Duration="600" PowerLow="0.60" PowerHigh="0.25" pace="0" />
     </workout>
 </workout_file>

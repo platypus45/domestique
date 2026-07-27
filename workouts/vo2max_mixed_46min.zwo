@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Mixed (51min)</name>
-    <description>Steady: 2min @ 50% FTP | Steady: 2min @ 60% FTP | Steady: 2min @ 70% FTP | Steady: 1min @ 90% FTP | Steady: 8min @ 65% FTP | Steady: 2min @ 95% FTP | Steady: 3min @ 103% FTP | Steady: 2min @ 111% FTP | Steady: 3min @ 65% FTP | Steady: 10min @ 105% FTP | Steady: 5min @ 65% FTP | Steady: 2min @ 140% FTP | Cooldown: 5min ramp from 65% to 40% FTP</description>
+    <description>Steady: 2min @ 50% FTP | Steady: 2min @ 60% FTP | Steady: 2min @ 70% FTP | Steady: 1min @ 90% FTP | Steady: 8min @ 65% FTP | Steady: 2min @ 95% FTP | Steady: 3min @ 103% FTP | Steady: 2min @ 111% FTP | Steady: 3min @ 65% FTP | Steady: 10min @ 105% FTP | Steady: 5min @ 65% FTP | Steady: 2min @ 140% FTP | Cooldown: 5min ramp from 60% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="600" PowerLow="0.5" PowerHigh="0.75" /><SteadyState Duration="60" Power="0.9" pace="0" />
@@ -15,5 +15,5 @@
         <SteadyState Duration="600" Power="1.05" pace="0" />
         <SteadyState Duration="300" Power="0.65" pace="0" />
         <SteadyState Duration="120" Power="1.4" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.40" /></workout>
+        <Cooldown Duration="300" PowerLow="0.60" PowerHigh="0.40" /></workout>
 </workout_file>

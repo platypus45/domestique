@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>VO2max 4min ramp-down 4x (49min)</name>
-    <description>Warmup: 7min ramp from 45% to 75% FTP, 3 x 30s fast-pedal drill @ 82%, primer 1min @ 88% + 2min @ 106% | Descending-target reps: 4 x (4min falling steadily from 120% down to 95% FTP), 4min @ 50% between reps — the target drops as fatigue builds, so the rep holds to the last second instead of fading unplanned | Cooldown: 5min from 65% to 45% FTP</description>
+    <description>Warmup: 7min ramp from 45% to 75% FTP, 3 x 30s fast-pedal drill @ 82%, primer 1min @ 88% + 2min @ 106% | Descending-target reps: 4 x (4min falling steadily from 120% down to 95% FTP), 4min @ 50% between reps — the target drops as fatigue builds, so the rep holds to the last second instead of fading unplanned | Cooldown: 5min from 60% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="420" PowerLow="0.45" PowerHigh="0.75" pace="0" />
@@ -23,6 +23,6 @@
         <Ramp Duration="240" PowerLow="1.2" PowerHigh="0.95" pace="0" Cadence="85" />
         <SteadyState Duration="240" Power="0.5" pace="0" />
         <Ramp Duration="240" PowerLow="1.2" PowerHigh="0.95" pace="0" Cadence="85" />
-        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.60" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Anaerobic 2x45s (35min)</name>
-    <description>Warmup: 8min from 40% to 80% FTP | Intervals: 2 x (45s @ 130% / 45s @ 55%) | Cooldown: 5min ramp from 65% to 40% FTP</description>
+    <description>Warmup: 8min from 40% to 80% FTP | Intervals: 2 x (45s @ 130% / 45s @ 55%) | Cooldown: 5min ramp from 60% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="480" PowerLow="0.4" PowerHigh="0.8" pace="0" />
@@ -14,5 +14,5 @@
         <IntervalsT Repeat="1" OnDuration="30" OffDuration="30" OnPower="1.3" OffPower="0.55" pace="0" />
         <SteadyState Duration="300" Power="0.55" pace="0" />
         <SteadyState Duration="420" Power="0.9" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.40" /></workout>
+        <Cooldown Duration="300" PowerLow="0.60" PowerHigh="0.40" /></workout>
 </workout_file>

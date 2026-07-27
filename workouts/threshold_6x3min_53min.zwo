@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Threshold 6x3min (60min)</name>
-    <description>Intervals: 6 x (3min @ 98% / 1min @ 62%) | Cooldown: 10min from 62% to 45% FTP</description>
+    <description>Intervals: 6 x (3min @ 98% / 1min @ 62%) | Cooldown: 10min from 60% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="600" PowerLow="0.5" PowerHigh="0.75" /><IntervalsT Repeat="2" OnDuration="60" OffDuration="60" OnPower="0.75" OffPower="0.5" pace="0" />
@@ -11,6 +11,6 @@
         <IntervalsT Repeat="3" OnDuration="180" OffDuration="60" OnPower="0.98" OffPower="0.62" pace="0" />
         <SteadyState Duration="300" Power="0.5" pace="0" />
         <IntervalsT Repeat="3" OnDuration="180" OffDuration="60" OnPower="0.98" OffPower="0.62" pace="0" />
-        <Cooldown Duration="600" PowerLow="0.62" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="600" PowerLow="0.60" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

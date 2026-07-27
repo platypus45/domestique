@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Endurance (8min)</name>
-    <description>Warmup: 2min from 65% to 70% FTP | Steady: 1min @ 95% FTP | Steady: 40s @ 70% FTP | Steady: 1min @ 98% FTP | Steady: 40s @ 70% FTP | Steady: 1min @ 101% FTP | Cooldown: 2min from 65% to 45% FTP</description>
+    <description>Warmup: 2min from 65% to 70% FTP | Steady: 1min @ 95% FTP | Steady: 40s @ 70% FTP | Steady: 1min @ 98% FTP | Steady: 40s @ 70% FTP | Steady: 1min @ 101% FTP | Cooldown: 2min from 60% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="120" PowerLow="0.65" PowerHigh="0.7" pace="0" />
@@ -11,6 +11,6 @@
         <Ramp Duration="60" PowerLow="0.9" PowerHigh="1.05" pace="0" />
         <SteadyState Duration="40" Power="0.7" pace="0" />
         <Ramp Duration="60" PowerLow="0.92" PowerHigh="1.1" pace="0" />
-        <Cooldown Duration="120" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="120" PowerLow="0.60" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

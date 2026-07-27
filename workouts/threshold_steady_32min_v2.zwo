@@ -10,5 +10,5 @@
         <Ramp Duration="240" PowerLow="0.95" PowerHigh="1.04" pace="0" />
         <SteadyState Duration="300" Power="0.5" pace="0" />
         <Ramp Duration="240" PowerLow="0.95" PowerHigh="1.05" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.40" /></workout>
+        <Cooldown Duration="300" PowerLow="0.60" PowerHigh="0.40" /></workout>
 </workout_file>

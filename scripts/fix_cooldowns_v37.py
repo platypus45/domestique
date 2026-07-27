@@ -19,12 +19,17 @@ THROUGH). Under that definition the pre-fix step-up count is 1647 — an earlier
 figure of 1596 came from a different prev_end convention and is retired.
 
 WHY THESE NUMBERS
-  start 0.65 — blood-lactate clearance is fastest at 80-100% of the first
+  start 0.60 — blood-lactate clearance is fastest at 80-100% of the first
     lactate threshold and is no better than sitting still at 40% of it
     (Devlin 2014 PMID 24739289, Menzies 2010 PMID 20544484). LT1 sits near
     0.80 x FTP in trained cyclists, putting the clearance optimum around
-    0.64 FTP. 0.65 is the top of that band and the library's own dominant
-    existing value, so the change is a correction rather than a churn.
+    0.64 FTP. 0.60 sits just under that centre, which is the deliberate
+    choice: vagal reactivation is essentially abolished at and above the
+    first threshold, and individual LT1 scatters +/-10-15 points of FTP, so
+    the cheaper error is to be slightly too easy. It costs almost nothing
+    measurable — the whole segment stays inside the clearance band — and it
+    keeps a rider whose LT1 is at the low end from doing tempo work at the
+    end of a session that already emptied them.
   end 0.45 — 40% of LT1 (~0.32 FTP) is statistically indistinguishable from
     passive rest, so the whole segment stays above the "no better than
     stopping" floor.
@@ -53,7 +58,7 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-CD_START_MAX = 0.65
+CD_START_MAX = 0.60
 CD_END = 0.45
 
 _CD_ATTRS = re.compile(

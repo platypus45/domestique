@@ -1,10 +1,12 @@
 # Changelog
 
-## Unreleased
+## v3.7.0 — Which blocks did you actually do, and cooldowns that are cooldowns (2026-07-27)
 
 - **After an interval session, see which blocks you actually did.** Not just a score out of 100 — the blocks themselves: all ten done, or eight of ten and you stopped after the eighth, or nine done with one skipped in the middle, with the count per set. Stopping after 10 of 13 reps barely moves your TSS or your time in zones; this is the question those numbers cannot answer.
 - It reads the laps you marked on your head unit, using where each lap sits on the ride clock rather than guessing from its shape — and when the laps genuinely do not settle what happened, it says nothing rather than guess. A longer warm-up, stretched recoveries, a mid-ride stop, a double-tapped lap, blocks ridden longer or harder than asked: none of these produce a wrong verdict.
 - Rides already synced pick up their lap timing the next time you open them.
+- **Cooldowns are easy again.** A hard session could end with a ramp that stepped *up*: finish a 6×2 min VO2max set soft-pedalling and the "cooldown" would begin at 75% of your FTP — for a 248 W rider, 186 W onto legs that were already done. 1,647 of 3,672 workouts did this, a few starting above 100% FTP. Every cooldown now starts at or below 60% FTP and never above the power you were just holding; if you are already easier than that it simply becomes a flat easy spin. Nothing got longer or shorter, so your plan and your session lengths are untouched.
+- **Why 60%, and how long.** Lactate clears fastest a little under your first threshold — go above it and the muscle is still making lactate, which is the one job a cooldown reliably does. Five minutes is the floor, ten after threshold work or harder; under three minutes the cooldown ends before lactate has even peaked, and past fifteen there is nothing measurable left to gain. Cooldown length follows how *hard* the session was, not how long. The sources, and the honest list of what a cooldown does *not* do — it will not stop you being sore, and indoors the thing that actually cools you is a fan — are in the science notes.
 - **Fixed: two rides on the same day of roughly the same length could hide each other.** One of them vanished from every listing. They are now told apart by when they started.
 
 

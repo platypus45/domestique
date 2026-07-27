@@ -52,9 +52,11 @@ def test_owner_reported_file_descends():
     # v3.7.0 re-pointed these values, not the test's intent. 0.75 FTP is
     # 186 W at this rider's FTP and sits at or above the first lactate
     # threshold for many riders — a tempo effort wearing a cooldown's tag.
-    assert float(last.get("PowerLow")) == 0.65
+    # 0.60 sits just under the clearance optimum (~0.64 FTP), deliberately:
+    # individual LT1 scatters, and the cheaper error is slightly too easy.
+    assert float(last.get("PowerLow")) == 0.60
     assert float(last.get("PowerHigh")) == 0.25
-    assert "Cooldown: 8min from 65% to 25% FTP" in (root.findtext("description") or "")
+    assert "Cooldown: 8min from 60% to 25% FTP" in (root.findtext("description") or "")
 
 
 # ── v3.7.0: a cooldown is easy, and never harder than what preceded it ───────
@@ -63,6 +65,7 @@ def test_owner_reported_file_descends():
 # who was already done. 1647 of 3672 cooldowns did this. These four assertions
 # are the invariant; scripts/fix_cooldowns_v37.py is what established it.
 
+import re
 import sys
 sys.path.insert(0, str(WORKOUTS.parent / "scripts"))
 from fix_cooldowns_v37 import (  # noqa: E402
@@ -140,3 +143,42 @@ def test_the_description_still_tells_the_truth():
         if not ok:
             bad.append(f"{p.name}: attrs {lo:.2f}->{hi:.2f} vs {m.group(0)!r}")
     assert bad == [], f"{len(bad)} descriptions disagree with the file: {bad[:5]}"
+
+
+def test_the_classifier_cannot_see_the_cooldown():
+    """The coupling that made this fix dangerous, pinned.
+
+    Whole-ride zone accounting counted cooldown seconds, so easing every
+    cooldown moved time from Z2 to Z1 and would have relabelled 41 workouts —
+    real sessions becoming ``recovery`` and routing onto recovery days — with
+    no change to their actual stimulus. Rewriting a file's cooldown to ANY
+    legal value must not change what the workout is.
+    """
+    import importlib
+    import xml.etree.ElementTree as _ET
+    sys.path.insert(0, str(WORKOUTS.parent / "scripts"))
+    clc = importlib.import_module("classify_library_content")
+
+    sample = sorted(WORKOUTS.glob("*.zwo"))[::250]      # ~18 files, all shapes
+    assert len(sample) >= 10, "sample too small to be meaningful"
+    moved = []
+    for p in sample:
+        before = clc.classify_zwo_v104(p).get("primary")
+        text = p.read_text(encoding="utf-8")
+        if "<Cooldown" not in text:
+            continue
+        for lo, hi in ((0.60, 0.45), (0.45, 0.30), (0.30, 0.30)):
+            alt = re.sub(
+                r'(<Cooldown\b[^>]*?PowerLow=")[^"]*("[^>]*?PowerHigh=")[^"]*(")',
+                lambda m: f'{m.group(1)}{lo:.2f}{m.group(2)}{hi:.2f}{m.group(3)}',
+                text)
+            tmp = p.parent / f".__cdprobe_{p.name}"
+            try:
+                tmp.write_text(alt, encoding="utf-8")
+                after = clc.classify_zwo_v104(tmp).get("primary")
+            finally:
+                tmp.unlink(missing_ok=True)
+            if after != before:
+                moved.append(f"{p.name}: {before} -> {after} at {lo:.2f}/{hi:.2f}")
+    assert moved == [], (
+        "cooldown power still decides what a workout is:\n" + "\n".join(moved))

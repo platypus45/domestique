@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Threshold (180min)</name>
-    <description>Warmup: 10min from 25% to 75% FTP | Steady: 6min @ 50% FTP | Steady: 30min @ 65% FTP | Steady: 20min @ 100% FTP | Steady: 10min @ 50% FTP | Steady: 30min @ 65% FTP | Steady: 20min @ 100% FTP | Steady: 10min @ 50% FTP | Steady: 30min @ 77% FTP | Cooldown: 14min from 65% to 25% FTP</description>
+    <description>Warmup: 10min from 25% to 75% FTP | Steady: 6min @ 50% FTP | Steady: 30min @ 65% FTP | Steady: 20min @ 100% FTP | Steady: 10min @ 50% FTP | Steady: 30min @ 65% FTP | Steady: 20min @ 100% FTP | Steady: 10min @ 50% FTP | Steady: 30min @ 77% FTP | Cooldown: 14min from 60% to 25% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="600" PowerLow="0.25" PowerHigh="0.75" pace="0" />
@@ -14,6 +14,6 @@
         <SteadyState Duration="1200" Power="1.0" pace="0" />
         <SteadyState Duration="600" Power="0.5" pace="0" />
         <SteadyState Duration="1800" Power="0.77" pace="0" />
-        <Cooldown Duration="840" PowerLow="0.65" PowerHigh="0.25" pace="0" />
+        <Cooldown Duration="840" PowerLow="0.60" PowerHigh="0.25" pace="0" />
     </workout>
 </workout_file>

@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Recovery (17min)</name>
-    <description>Warmup: 4min ramp from 50% to 70% FTP | Steady: 20s @ 110% FTP | Steady: 1min @ 65% FTP | Steady: 20s @ 110% FTP | Steady: 2min @ 77% FTP | Steady: 1min @ 50% FTP | Steady: 50s @ 95% FTP | Steady: 1min @ 105% FTP | Steady: 30s @ 50% FTP | Steady: 30s @ 110% FTP | Steady: 30s @ 50% FTP | Steady: 20s @ 120% FTP | Steady: 30s @ 50% FTP | Steady: 20s @ 120% FTP | Cooldown: 3min from 65% to 40% FTP</description>
+    <description>Warmup: 4min ramp from 50% to 70% FTP | Steady: 20s @ 110% FTP | Steady: 1min @ 65% FTP | Steady: 20s @ 110% FTP | Steady: 2min @ 77% FTP | Steady: 1min @ 50% FTP | Steady: 50s @ 95% FTP | Steady: 1min @ 105% FTP | Steady: 30s @ 50% FTP | Steady: 30s @ 110% FTP | Steady: 30s @ 50% FTP | Steady: 20s @ 120% FTP | Steady: 30s @ 50% FTP | Steady: 20s @ 120% FTP | Cooldown: 3min from 60% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="290" PowerLow="0.5" PowerHigh="0.7" /><SteadyState Duration="20" Power="1.1" pace="0" />
@@ -18,6 +18,6 @@
         <SteadyState Duration="20" Power="1.2" pace="0" />
         <SteadyState Duration="30" Power="0.5" pace="0" />
         <SteadyState Duration="20" Power="1.2" pace="0" />
-        <Cooldown Duration="180" PowerLow="0.65" PowerHigh="0.4" pace="0" />
+        <Cooldown Duration="180" PowerLow="0.60" PowerHigh="0.40" pace="0" />
     </workout>
 </workout_file>

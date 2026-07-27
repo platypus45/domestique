@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Anaerobic (90min)</name>
-    <description>Warmup: 20min from 25% to 75% FTP | Steady: 5min @ 125% FTP | Steady: 55min @ 65% FTP | Cooldown: 10min from 65% to 25% FTP</description>
+    <description>Warmup: 20min from 25% to 75% FTP | Steady: 5min @ 125% FTP | Steady: 55min @ 65% FTP | Cooldown: 10min from 60% to 25% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="1200" PowerLow="0.25" PowerHigh="0.75" pace="0" />
@@ -10,6 +10,6 @@
         <SteadyState Duration="900" Power="0.65" pace="0" />
         <FreeRide Duration="1200" FlatRoad="0" />
         <SteadyState Duration="1200" Power="0.65" pace="0" />
-        <Cooldown Duration="600" PowerLow="0.65" PowerHigh="0.25" pace="0" />
+        <Cooldown Duration="600" PowerLow="0.60" PowerHigh="0.25" pace="0" />
     </workout>
 </workout_file>

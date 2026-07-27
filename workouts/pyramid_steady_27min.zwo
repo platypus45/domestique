@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Endurance 8 cycles (27min)</name>
-    <description>Warmup: 4min from 60% to 70% FTP | Over-Under: 8 cycles (alternating above/below threshold) | Cooldown: 3min from 65% to 45% FTP</description>
+    <description>Warmup: 4min from 60% to 70% FTP | Over-Under: 8 cycles (alternating above/below threshold) | Cooldown: 3min from 60% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="240" PowerLow="0.6" PowerHigh="0.7" pace="0" />
@@ -53,6 +53,6 @@
         <SteadyState Duration="10" Power="1.1" pace="0" />
         <SteadyState Duration="20" Power="0.95" pace="0" />
         <SteadyState Duration="40" Power="0.85" pace="0" />
-        <Cooldown Duration="180" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="180" PowerLow="0.60" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

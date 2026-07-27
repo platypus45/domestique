@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4249-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v3.6.0-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v3.7.0-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-2400%2B-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -49,6 +49,24 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 ---
 
 ## What's new in v3
+
+**Which blocks did you actually do? (v3.7).** After an interval session the app
+now tells you the blocks, not just a score: all ten done, or eight of ten and
+you stopped after the eighth, or nine done with one skipped in the middle —
+with the count per set. Stopping after 10 of 13 reps barely moves your TSS or
+your time in zones, so this is the question those numbers cannot answer. It
+reads the laps you marked on your head unit, using *where each lap sits on the
+ride clock* rather than guessing from its shape — and where the laps genuinely
+do not settle what happened, it says nothing rather than guess.
+
+**Cooldowns that are actually cooldowns (v3.7).** A hard session used to end
+with a ramp that stepped *up* — one rider finished a 6×2 min VO2max set at 28 %
+FTP and was handed a "cooldown" beginning at 75 %. That was 1,647 of 3,672
+workouts. Every cooldown now starts at or below 60 % FTP and never above the
+power you were just holding; when you are already easier than that it becomes a
+flat easy spin. Nothing got longer or shorter. The reasoning, sources and the
+honest list of what a cooldown does *not* do are in
+[docs/SCIENCE.md](docs/SCIENCE.md).
 
 **A plan that never ends (v3.4).** New "Continuous" goal: pick FTP, VO2max
 or both and ride a rolling 4-week cycle that extends itself every week —
@@ -301,6 +319,16 @@ Every number shows **where it came from and when** — measured, estimated, or s
 ## Execution scores
 
 Every completed session gets an execution score from 0–100 against its prescription: did you ride the planned duration, deliver the planned load, at the planned intensity? Scored from power when you have it, from heart rate when you don't — so HR-mode riders get the same feedback loop. The score lives on the day, so a week of "done" ticks also tells you *how* done they were.
+
+**Block-by-block, when the laps can prove it.** If you marked laps on your head
+unit, an interval session also gets the blocks themselves: `✓ all blocks done`,
+or `⚠ stopped early — stopped after block 8`, or `⚠ blocks missing` with the
+per-set counts. It reads the offset on the ride clock where each lap started,
+so a longer warm-up, recoveries running minutes over, a mid-ride stop, a
+double-tapped lap button or blocks ridden longer or harder than asked all read
+correctly. Where the laps genuinely do not settle it — a forgotten lap press,
+a plan whose blocks blend into the riding around them — no block report
+appears at all. A missing report is recoverable; a false green tick is not.
 
 ---
 
@@ -580,7 +608,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v3.6.0 — Rate the ride, and it changes the plan](https://github.com/platypus45/domestique/releases/latest)** (2026-07-27).
+Latest: **[v3.7.0 — Which blocks did you actually do, and cooldowns that are cooldowns](https://github.com/platypus45/domestique/releases/latest)** (2026-07-27).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
 

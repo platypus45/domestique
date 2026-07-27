@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed: two rides on the same day of roughly the same length could hide each other.** One of them vanished from every listing. They are now told apart by when they started.
+
+<!-- NOT YET RELEASABLE — block evaluation is rebuilt on real lap timestamps and
+     wired up, but tests/test_357_block_evaluation.py is RED: 9 of 15 rider
+     behaviours still misgrade somewhere in the library, including two that
+     produce a false green tick. No user-facing claim goes in this changelog
+     until that gate is green. -->
+
+
 ## v3.6.0 — Rate the ride, and it changes the plan (2026-07-27)
 
 - **After a ride, rate how hard it felt — and the plan listens.** One tap, 0 to 10, with the wording attached to each number so your 7 today means the same as your 7 last month. If your last three days average 7 or above, a hard day ahead eases itself. It is deliberately one-directional: a high rating can talk the planner out of intensity, never into more of it. And a rating you have given is never wiped by a re-sync.

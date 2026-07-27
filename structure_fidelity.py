@@ -68,6 +68,36 @@ Result dict (field names are the contract, pinned by tests):
 :func:`score_structure` returns None when it cannot honestly grade:
 no segments, no watts, unusable FTP, or a timeline with zero work
 segments (pure endurance rides have no reps to count).
+
+Block grading — :func:`score_blocks`:
+  A different question, off different data: "which prescribed BLOCKS did I
+  actually do?" The rider marks a lap per block and intervals.icu returns
+  each lap with the offset on the ride clock where it started, so no 1 Hz
+  trace and no FTP value are needed.
+
+  Four earlier versions inferred which lap was which block from the shape of
+  the lap alone, and each shipped a different class of confident wrong
+  verdict — an abandoned session certified complete, a block ridden harder
+  than asked reported unridden, a completed block called missing because the
+  recoveries ran long. All of those readings are admissible from shape. The
+  offsets are what rules them out, and they are the whole difference.
+
+  The alignment runs over SLOTS — the blocks plus every other prescribed
+  stretch at or above the work floor, since a head unit types a lead-in
+  effort or a warm-up ramp step "work" too and a block will otherwise steal
+  its lap. It scores block-seconds explained (above a quality floor, so a
+  poor pairing is worth less than none) less a cost per step for the gap
+  between one slot and the next running differently from the plan. That cost
+  is measured against the pace THIS rider is keeping — fitted once from the
+  session's own recoveries — so stretching every recovery costs nothing,
+  while stretching one costs, which is what a block gone by looks like.
+
+  Then four gates, any of which returns None rather than a verdict: a block
+  whose reading is not decisively better than the opposite reading; a block
+  called unridden with a lap that could have been it sitting spare; a lap
+  read as one block while it sits on top of another; and a lap spanning a
+  run of blocks, which is a lap-button press that never happened and cannot
+  be recovered. A missing report is recoverable. A false green tick is not.
 """
 from __future__ import annotations
 
@@ -77,7 +107,8 @@ __all__ = [
     "parse_zwo_text", "parse_zwo_file", "score_structure", "score_blocks",
     "WORK_FLOOR_FRAC", "TOL_FRAC", "TOL_MIN_W", "TRANSIENT_GRACE_S",
     "ALIGN_MAX_OFFSET_S", "MISSING_BELOW_FLOOR_FRAC", "MISSING_TARGET_FRAC",
-    "LAP_SHORT_FRAC", "LAP_POWER_TOL_FRAC",
+    "LAP_SHORT_FRAC", "LAP_POWER_TOL_FRAC", "LAP_BAND_UNDER",
+    "LAP_BAND_GRAY",
 ]
 
 # ── Locked fidelity constants (documented in the module docstring) ──────────
@@ -90,31 +121,98 @@ MISSING_BELOW_FLOOR_FRAC = 0.5  # absent/below-floor > this ⇒ rep missing
 MISSING_TARGET_FRAC = 0.90      # floor also capped at 90 % of the rep target
 
 # ── Lap-based block grading (score_blocks) ──────────────────────────────────
-# The rider marks a Garmin lap per interval, so the laps ARE the block
-# boundaries — no alignment search, no correlation, no guessing. intervals.icu
-# hands them back already labelled type=WORK|RECOVERY with a per-lap ftp_pct,
-# which is why this grader needs neither the 1 Hz trace nor even an FTP value.
-LAP_SHORT_FRAC = 0.80           # delivered lap < this × prescribed ⇒ "partial"
-# Below this the lap is not a rep the rider rode — a double-tapped lap button,
-# a 5-second false start. It is recorded truthfully (delivered_s is kept) but it
-# must not read as "you did this block", or stopping after 8 of 10 with two
-# stray taps reports as all ten done.
-LAP_TRIVIAL_FRAC = 0.25
-# A pairing is ADMISSIBLE or it does not exist. Soft scoring was the mistake:
-# leaving a rep unmatched scores exactly 0, so any spare work lap of vaguely
-# similar length always beat "the rider did not ride this block" — and a rider
-# who skipped a whole set was told "all blocks done, 100% of the work", with the
-# warm-up fast-pedal laps consumed as supramaximal reps. Certifying work that
-# was never done is worse than the misgrade it replaced.
-LAP_MATCH_MIN = 0.60            # combined score below this ⇒ not this block
-LAP_POWER_VETO_FRAC = 0.20      # |lap − target| beyond this ⇒ not this block
-LAP_OVERLONG_FRAC = 1.50        # lap longer than this × prescribed ⇒ not this block
-# How far a lap may sit from where its block is prescribed, after allowing for
-# the drift already accumulated. Generous: riders extend recoveries and warm up
-# longer. It exists to reject the absurd (a warm-up block standing in for the
-# ninth rep), not to demand ERG-exact timing.
-LAP_TIME_VETO_S = 900.0
-LAP_POWER_TOL_FRAC = 0.10       # |lap mean − target| within this ⇒ on target
+# The rider marks a lap per block, and intervals.icu returns each lap with the
+# offset on the ride clock where it STARTED (moving seconds — see
+# ride_storage._normalize_icu_activity). Those offsets turn the lap list into a
+# TIMELINE, and the timeline is what gets graded: each block is judged by the
+# work delivered in the window where it was expected, never by which lap "won"
+# it. Five generations of this feature failed by letting lap identity decide a
+# block's fate; identity now only pins the clock.
+
+LAP_SHORT_FRAC = 0.80           # window coverage < this ⇒ "partial"
+LAP_COV_DONE = LAP_SHORT_FRAC   # …the same number, named for what it does now
+LAP_TRIVIAL_FRAC = 0.25         # coverage below this ⇒ not ridden
+LAP_TRIVIAL_LAP_S = 5.0         # below this, a lap with no power is noise
+LAP_POWER_TOL_FRAC = 0.10       # |delivered − target| within this ⇒ on target
+
+# The intensity bands, all relative to the block's own target. AT-TARGET work
+# (≥ 0.90×) counts toward a block; an over/under's 90 % leg is 0.86 of its
+# 105 % block and correctly does not. There is no upper bound for crediting —
+# harder is doing the block — only a sanity cap on identity (2×). Between the
+# gray floor and the at-target floor is the band the recording cannot answer:
+# a flat 85 % ride against a 105 % plan (0.81) and a forgotten lap that
+# smeared a block with its recoveries (~0.70) both land here, and the session
+# goes ungraded rather than guessed. Below the gray floor is clear absence —
+# a 50 % soft-pedal where a block should be is a block not ridden.
+LAP_BAND_UNDER = 0.90
+# Coverage (grading a block with no anchor of its own) demands more than
+# admissibility: a merged lap diluted to exactly 90 % of target is
+# indistinguishable from a skip plus a hot neighbour, and it graded one
+# "done". Identity can carry a 0.90 run; coverage alone cannot.
+LAP_BAND_COVER = 0.95
+LAP_BAND_GRAY = 0.60
+LAP_BAND_OVER_X = 1.20
+
+# Runs: adjacent laps at the same intensity are one effort (a double-tapped
+# lap button splits a block without changing what was ridden).
+LAP_RUN_MERGE_GAP_S = 3.0
+LAP_RUN_MERGE_FRAC = 0.03
+
+# Anchoring cost model. A step between anchors is charged for its drift
+# RESIDUAL — how far the delivered gap differs from the prescribed one after
+# allowing the pace this rider keeps (fitted from the session's own
+# recoveries: delivered rest ≈ rho × prescribed + extra). A rider who
+# stretches every recovery pays ~nothing; an anchor one leg out of place pays
+# its displacement. Any number of blocks may be skipped between anchors —
+# bounding that jump once made a six-block skip inexpressible and slid the
+# whole report by a slot.
+LAP_GAP_COST_W = 60.0
+LAP_GAP_SOFTEN_S = 120.0
+LAP_REST_SLOP = 0.10            # residual tolerance grows with the rest a step
+                                # spans (pace-fit error is proportional to it)
+LAP_RESID_POS_CAP = 480.0       # a LONGER gap than expected is life — a stop
+                                # at the lights, a gel, a phone call — and one
+                                # stop is one event however long it ran. A
+                                # SHORTER gap than prescribed is not: that is
+                                # what sliding the session onto the wrong runs
+                                # looks like, and it pays in full.
+LAP_DRIFT_PASS_W = 0.4          # gap weight while measuring the rider's pace
+LAP_ORIGIN_W_NEG = 0.3          # first anchor EARLY: mostly a shorter warm-up
+LAP_ORIGIN_W_POS = 1.0          # first anchor LATE: charged in full — sliding
+                                # the whole session onto later runs starts here
+LAP_BLOCK_WINDOW = 16           # skipped blocks allowed per step (a bound only
+                                # so the DP terminates on absurd inputs)
+LAP_ADM_TRIGGER = 40            # cap engages only past this — a normal
+                                # session never reaches it
+LAP_ADM_CAP = 12                # admissible runs considered per block, by
+                                # distance from where the block was prescribed.
+                                # Any number of runs may sit between adjacent
+                                # anchors — a prescribed tempo section between
+                                # the main set and the finisher blocks is ten
+                                # runs of plan the alignment must hop in one
+                                # step; an index window here forced the slide
+                                # it existed to prevent.
+LAP_REST_RATIO_MIN = 0.5        # pace-fit clamps
+LAP_REST_RATIO_MAX = 5.0
+LAP_REST_EXTRA_MIN = -120.0
+LAP_REST_EXTRA_MAX = 1800.0
+
+# How far from a missed block's window unclaimed at-target work may sit before
+# the miss is judged unsettled (the mapping may be off by a leg).
+LAP_NEAR_FRAC = 0.75
+LAP_NEAR_S = 60.0
+# A recovery ridden at block intensity AND materially over what the plan put
+# there erases the boundary the grading depends on.
+LAP_HOT_MARGIN = 0.10
+# A run that could be SOME block but is claimed by none, sitting after the
+# first anchor, is evidence against the alignment that strands it — without
+# this charge a mid-ride pause was cheaper to explain by sliding every later
+# block one run over (stranding the last run) than by paying for the pause.
+LAP_ORPHAN_W = 0.5
+# A single anchor far from where its block was prescribed is not a mapping —
+# it is one lap of the right shape somewhere in a ride. Kept only when it sits
+# near its block; otherwise the session grades as unanchored.
+LAP_LONE_ANCHOR_S = 60.0
 
 
 def _attr_f(el, name) -> "float | None":
@@ -351,6 +449,10 @@ def _prescribed_reps(planned_segments, ftp) -> "list[dict]":
     # nothing else is. Only files with no declared intervals fall back to
     # steady blocks above the floor (a tempo/threshold session lapped per
     # block).
+    try:
+        ftp = float(ftp) if ftp else None
+    except (TypeError, ValueError):
+        ftp = None                      # target_w is advisory; never raise here
     kinds = {seg.get("kind") for seg in planned_segments}
     explicit = "interval_on" in kinds
 
@@ -398,225 +500,411 @@ def _prescribed_reps(planned_segments, ftp) -> "list[dict]":
     return reps
 
 
-def _work_laps(laps) -> "list[dict]":
-    """The rider's WORK laps in order, each stamped with where it sits on the
-    ride clock. intervals.icu labels them; fall back to a power/ftp_pct
-    heuristic for laps that carry no type.
+def _normalised_laps(laps, ftp) -> "list[dict] | None":
+    """Every lap, in ride-clock order, as {t0, dur, frac, pct}.
 
-    The ``_t0`` stamp is the missing information that makes grading possible.
-    Laps carry no timestamps, but they are contiguous and ordered, so summing
-    the durations of ALL laps (recoveries included) recovers each one's start.
-    Without it, a warm-up block that happens to share a prescribed rep's shape
-    is indistinguishable from that rep — which is how a rider who skipped an
-    entire set came to be told "all blocks done, 100% of the work".
+    Returns None — grade nothing — rather than guess, when the lap list cannot
+    carry the question:
+
+    * a lap with no ``start_s``. Earlier versions recovered a clock by summing
+      the durations of the laps before it, which is the same number only while
+      the laps tile the ride with no gaps and the rider never stops. A pause
+      slides every later lap and the summed clock never notices.
+    * a lap of real length with no usable intensity. Every admissibility test
+      below is an intensity test; without one the grader is matching on
+      duration alone, which is how a 60 s soft-pedal came to stand in for a
+      45 s VO2 rep.
     """
+    if not isinstance(laps, (list, tuple)) or not laps:
+        return None
+    try:
+        ftp_f = float(ftp) if ftp else None
+    except (TypeError, ValueError):
+        ftp_f = None
     out: list[dict] = []
-    clock = 0.0
-    for lap in (laps or []):
+    for lap in laps:
         if not isinstance(lap, dict):
-            continue
-        dur = lap.get("duration_s") or 0
-        if not dur:
-            continue
-        t0 = clock
+            return None
         try:
-            clock += float(dur)
+            dur = float(lap.get("duration_s") or 0)
         except (TypeError, ValueError):
-            pass
-        t = str(lap.get("type") or "").strip().upper()
+            return None
+        if dur <= 0:
+            continue
+        t0 = lap.get("start_s")
+        if t0 is None:
+            return None
+        try:
+            t0 = float(t0)
+        except (TypeError, ValueError):
+            return None
         pct = lap.get("ftp_pct")
-        if t == "WORK":
-            is_work = True
-        elif t in ("RECOVERY", "REST"):
-            is_work = False
-        else:
-            # Untyped lap: grade on intensity, same floor as the prescription.
+        try:
+            frac = float(pct) / 100.0 if pct is not None else None
+        except (TypeError, ValueError):
+            frac = None
+        if frac is None and ftp_f:
             try:
-                is_work = pct is not None and float(pct) / 100.0 >= WORK_FLOOR_FRAC
-            except (TypeError, ValueError):
-                is_work = False
-        if is_work:
-            out.append({**lap, "_t0": t0})
+                w = lap.get("avg_power_w")
+                frac = float(w) / ftp_f if w is not None else None
+            except (TypeError, ValueError, ZeroDivisionError):
+                frac = None
+        if frac is None:
+            if dur >= LAP_TRIVIAL_LAP_S:
+                return None
+            continue                    # a 1 s tap with no power: ignorable
+        out.append({"t0": t0, "dur": dur, "frac": frac,
+                    "pct": round(frac * 100.0, 1),
+                    "work": (str(lap.get("type") or "").strip().upper() == "WORK"
+                             or frac >= WORK_FLOOR_FRAC)})
+    out.sort(key=lambda r: r["t0"])
     return out
 
 
-def _lap_match_score(rep, lap, drift: float = 0.0) -> float:
-    """How well one lap matches one prescribed rep: 0 (inadmissible) to 1 (exact).
 
-    Intensity VETOES rather than nudges. As a 0.25-weight term it could cost a
-    mismatch at most 0.09, so a 60 s lap at 60% FTP outscored the correct 45 s
-    lap at 120% and stole the rep — the block was then reported "done" with its
-    own row showing on_target=False. A lap at half the prescribed power is not
-    that block, at any duration.
+# ── Runs: the delivered timeline in graded units ────────────────────────────
 
-    Over-delivery is not a mismatch. Riding 8 minutes of a 7-minute block is
-    doing the block; only a lap so long it must be a DIFFERENT block (or a
-    merged pair) is rejected. Scoring |deliv − presc| symmetrically meant a
-    block ridden at 2× graded "missed".
+def _runs(all_laps) -> "list[dict]":
+    """Adjacent laps at the same intensity, merged into one effort.
+
+    A double-tapped lap button splits one block into two laps of identical
+    intensity back to back; the run is the effort the rider actually made.
+    Laps at different intensities never merge — a block and the float after
+    it are two runs — and a gap in the tiling (a stop with the recorder off)
+    ends a run.
     """
-    presc = float(rep["dur_s"]) or 1.0
-    deliv = float(lap.get("duration_s") or 0)
-    if deliv <= 0:
-        return 0.0
-    if deliv > LAP_OVERLONG_FRAC * presc:
-        return 0.0                      # too long to be this block
-    pct = lap.get("ftp_pct")
-    try:
-        pct = float(pct) / 100.0 if pct is not None else None
-    except (TypeError, ValueError):
-        pct = None
-    tgt = max(rep.get("target_frac") or 0.0, 0.01)
-    if pct is not None and abs(pct - tgt) / tgt > LAP_POWER_VETO_FRAC:
-        return 0.0                      # wrong intensity to be this block
-    # WHERE on the ride this lap sits, against where the block is prescribed.
-    # `drift` is how far the rider is already running from the plan's clock
-    # (longer warm-up, extra recovery), so only the RESIDUAL counts as evidence.
-    t0 = lap.get("_t0")
-    rep_t0 = rep.get("start_s")
-    if t0 is not None and rep_t0 is not None:
-        off = abs(float(t0) - (float(rep_t0) + drift))
-        if off > LAP_TIME_VETO_S:
-            return 0.0                  # wrong part of the ride to be this block
-        time_sim = max(0.0, 1.0 - off / LAP_TIME_VETO_S)
-    else:
-        time_sim = None
-    if deliv >= presc:
-        dur_sim = 1.0                   # full credit; over-delivery is not error
-    else:
-        dur_sim = max(0.0, 1.0 - (presc - deliv) / presc)
-    if pct is None:
-        score = dur_sim
-    else:
-        pow_sim = max(0.0, 1.0 - abs(pct - tgt) / tgt)
-        score = 0.75 * dur_sim + 0.25 * pow_sim
-    if time_sim is not None:
-        score = 0.7 * score + 0.3 * time_sim
-    return score if score >= LAP_MATCH_MIN else 0.0
+    runs: list[dict] = []
+    for lap in all_laps:
+        if runs:
+            prev = runs[-1]
+            if (lap["t0"] - prev["end"] <= LAP_RUN_MERGE_GAP_S
+                    and abs(lap["frac"] - prev["frac"]) <= LAP_RUN_MERGE_FRAC):
+                d = prev["dur"] + lap["dur"]
+                prev["frac"] = (prev["frac"] * prev["dur"]
+                                + lap["frac"] * lap["dur"]) / d
+                prev["dur"] = d
+                prev["end"] = lap["t0"] + lap["dur"]
+                prev["pct"] = round(prev["frac"] * 100.0, 1)
+                continue
+        runs.append({"t0": lap["t0"], "dur": lap["dur"],
+                     "end": lap["t0"] + lap["dur"],
+                     "frac": lap["frac"], "pct": lap["pct"]})
+    return runs
 
 
-def _align_laps(reps, wl) -> "list[int | None]":
-    """Assign each prescribed rep the lap the rider actually rode for it.
+def _pairing(rep, run) -> "float | None":
+    """Value of reading ``run`` as the block ``rep`` — or None, not this block.
 
-    Positional pairing (rep *i* ↔ lap *i*) was wrong, and wrong in a way that
-    looked plausible. The prescription and the head unit disagree about what
-    counts as work: ``_prescribed_reps`` counts ONLY the file's declared
-    intervals once any exist, so a warm-up fast-pedal drill is not rep 1, while
-    a head unit types a lap WORK on intensity alone — a warm-up ramp at
-    81/95/109% FTP arrives as three WORK laps, and files that declare their
-    warm-up drills as intervals add more in the middle. Measured on the
-    library: **350 of 1925** interval workouts misgraded a PERFECT ride, and
-    reported it with a green tick.
-
-    So align instead of index. This is an order-preserving best-match
-    assignment (the classic sequence alignment recurrence): laps may be skipped
-    (a warm-up block the prescription does not count) and reps may go unmatched
-    (the rider genuinely did not ride them), and the assignment that explains
-    the most of the session wins. Order is preserved because a rider cannot
-    ride block 5 before block 4.
-
-    Returns one entry per rep: the index into ``wl``, or None when no lap
-    plausibly matches it.
+    A run materially UNDER the block's target cannot be that block: an
+    over/under's 90 % leg is not its 105 % block, and a flat 85 % tempo ride is
+    not a VO2 session however its head unit lapped it. There is deliberately no
+    upper duration bound — a block held longer than asked was still ridden, and
+    vetoing it reported the rider as having SKIPPED the block they overdid.
     """
-    n, m = len(reps), len(wl)
+    tgt = max(float(rep["target_frac"]), 0.01)
+    presc = max(float(rep["dur_s"]), 1.0)
+    if run["frac"] < LAP_BAND_UNDER * tgt:
+        return None
+    if run["frac"] > LAP_BAND_OVER_X * tgt:
+        return None
+    if run["dur"] < LAP_TRIVIAL_FRAC * presc:
+        return None
+    # A run much LONGER than the block and UNDER its target is not the block
+    # ridden long — riding long happens at target. It is the signature of a
+    # skip smeared together with a hot neighbour, whose mix can land exactly
+    # on the admissibility edge.
+    if run["dur"] > 1.25 * presc and run["frac"] < 0.95 * tgt:
+        return None
+    q_int = max(0.0, 1.0 - abs(run["frac"] - tgt) / tgt)
+    # The flat term keeps a 10-second sprint's anchor worth claiming against
+    # honest clock noise — position error is not proportional to block
+    # length, so the value of pinning the clock is not either.
+    return (min(run["dur"], presc) + 20.0) * (0.25 + 0.75 * q_int)
+
+
+# ── Anchoring: which run IS which block, where that is certain ──────────────
+
+def _anchor(reps, runs, pace, bands, segn, holes=(), weight=1.0) -> "list[int | None]":
+    """Order-preserving assignment of runs to blocks, for the time MAPPING.
+
+    This no longer decides any block's fate — statuses come from the timeline
+    (:func:`_grade`). It only pins down where the rider's clock sits against
+    the plan's, so it needs to be right where it is confident and absent where
+    it is not; an unanchored block is graded from its predicted window.
+
+    Score: the pairing value less a charge for the step's drift RESIDUAL —
+    how far the gap from the previous anchor differs from the prescribed gap
+    after allowing the pace this rider is keeping (``pace`` = (rho, extra):
+    delivered rest ≈ rho × prescribed rest + extra per gap, fitted from the
+    session itself). A rider who stretches every recovery pays ~nothing; an
+    anchor one leg out of place pays its full displacement.
+
+    Any number of blocks may be skipped between anchors (a rider who
+    soft-pedals six blocks mid-session resumes at block nine — a bounded jump
+    made that inexpressible and slid the whole report by a slot). The run
+    window only limits how many spare runs sit between anchors.
+    """
+    n, m = len(reps), len(runs)
     if not n or not m:
-        return [None] * n
+        return [None] * n, 0.0
+    rho, extra = pace
+    lw = LAP_GAP_COST_W * weight
+    S = LAP_GAP_SOFTEN_S
 
-    def _solve(drift: float) -> "list[int | None]":
-        # best[i][j] = best achievable score for reps[i:] against wl[j:]
-        best = [[0.0] * (m + 1) for _ in range(n + 1)]
-        choice = [[None] * (m + 1) for _ in range(n + 1)]
-        for i in range(n - 1, -1, -1):
-            for j in range(m - 1, -1, -1):
-                pair = _lap_match_score(reps[i], wl[j], drift)
-                opts = [(best[i + 1][j], "skip_rep"), (best[i][j + 1], "skip_lap")]
-                if pair > 0.0:
-                    # Pairing wins ties: a plausible match is preferred over
-                    # explaining the session by omission.
-                    opts.insert(0, (pair + best[i + 1][j + 1], "pair"))
-                score, which = max(opts, key=lambda t: t[0])
-                best[i][j], choice[i][j] = score, which
-        out: "list[int | None]" = [None] * n
-        i = j = 0
-        while i < n and j < m:
-            which = choice[i][j]
-            if which == "pair":
-                out[i] = j
-                i += 1
-                j += 1
-            elif which == "skip_lap":
-                j += 1
-            else:
-                i += 1
-        return out
+    adm: "list[list[tuple[int, float]]]" = []
+    for i, rep in enumerate(reps):
+        row = [(j, v) for j in range(m)
+               if (v := _pairing(rep, runs[j])) is not None]
+        if len(row) > LAP_ADM_TRIGGER:
+            # Plausibility cap, so a wall of stray admissible runs cannot turn
+            # the alignment quadratic. By ORDINAL among NEAR-TARGET runs, not
+            # by clock distance and not by list position: the k-th block of a
+            # given intensity is ridden as roughly the k-th run NEAR that
+            # intensity, however far the rider's recoveries have pushed the
+            # clock. A distance cap dropped the true runs of every late block
+            # in a long slow session; a list-position cap spent the budget on
+            # admissible-but-off-target runs (a session's hot finisher taps)
+            # and did the same. Off-target and clock-nearest entries are kept
+            # in small fixed numbers.
+            tgt = float(rep["target_frac"])
+            st = float(rep["start_s"])
+            near = [jv for jv in row
+                    if abs(runs[jv[0]]["frac"] - tgt) <= 0.15 * tgt]
+            far = [jv for jv in row
+                   if abs(runs[jv[0]]["frac"] - tgt) > 0.15 * tgt]
+            rank = sum(1 for k in range(i)
+                       if abs(float(reps[k]["target_frac"]) - tgt)
+                       <= 0.10 * tgt)
+            half = LAP_ADM_CAP
+            keep = {jv[0] for jv in near[max(0, rank - half):rank + half + 1]}
+            keep.update(jv[0] for jv in sorted(
+                near, key=lambda jv: abs(runs[jv[0]]["t0"] - st))[:4])
+            keep.update(jv[0] for jv in sorted(
+                far, key=lambda jv: abs(runs[jv[0]]["t0"] - st))[:4])
+            row = [jv for jv in row if jv[0] in keep]
+        adm.append(row)
+    if not any(adm):
+        return [None] * n, 0.0
+    run_is_adm = [False] * m
+    for row in adm:
+        for j, _v in row:
+            run_is_adm[j] = True
+    # A run whose intensity the plan prescribes SOMEWHERE outside the blocks
+    # is not evidence when stranded — the rider may simply have ridden that
+    # part of the plan. Charging it pushed anchors onto a sweet-spot file's
+    # own tempo section.
+    def _plan_explains(frac: float) -> bool:
+        t = _band_tol(frac)
+        return any(lo - t <= frac <= hi + t for _a, _b, lo, hi in bands)
 
-    # Two passes. The rider's clock runs behind the plan's from the first longer
-    # recovery onward, so a fixed time window would reject every later block of
-    # a session that started slowly. Pass 1 finds the pairs, their median
-    # residual IS the drift, and pass 2 re-solves against the rider's own clock.
-    first = _solve(0.0)
-    residuals = [float(wl[j]["_t0"]) - float(reps[i]["start_s"])
-                 for i, j in enumerate(first)
-                 if j is not None and wl[j].get("_t0") is not None
-                 and reps[i].get("start_s") is not None]
-    if not residuals:
-        return first
-    residuals.sort()
-    drift = residuals[len(residuals) // 2]
-    return _solve(drift)
+    strand = [run_is_adm[j] and not _plan_explains(runs[j]["frac"])
+              for j in range(m)]
+    admdur = [0.0] * (m + 1)      # prefix sum of strandable-run seconds
+    for j in range(m):
+        admdur[j + 1] = admdur[j] + (runs[j]["dur"] if strand[j] else 0.0)
+
+    starts = [float(r["start_s"]) for r in reps]
+    durs = [float(r["dur_s"]) for r in reps]
+    cumdur = [0.0] * (n + 1)
+    for i in range(n):
+        cumdur[i + 1] = cumdur[i] + durs[i]
+
+    def step_cost(i1, j1, i2, j2) -> float:
+        deliv = runs[j2]["t0"] - runs[j1]["t0"]
+        # A gap in the lap tiling is the recorder switched off — a pause.
+        # That time did not happen as far as the workout is concerned, so it
+        # is not evidence of anything; without this, a ten-minute stop looked
+        # exactly like ten minutes of skipped plan.
+        for h_lo, h_hi in holes:
+            if runs[j1]["end"] <= h_lo and h_hi <= runs[j2]["t0"]:
+                deliv -= (h_hi - h_lo)
+        block = cumdur[i2] - cumdur[i1]          # blocks i1..i2-1
+        rest = max(0.0, starts[i2] - starts[i1] - block)
+        expect = block + rho * rest + extra * (segn[i2] - segn[i1])
+        resid = deliv - max(block, expect)
+        if resid > 0:
+            resid = min(resid, LAP_RESID_POS_CAP)
+        gap = lw * abs(resid) / (S + LAP_REST_SLOP * rest)
+        # Admissible runs this step strands, charged at LAP_ORPHAN_W.
+        return gap + LAP_ORPHAN_W * (admdur[j2] - admdur[j1 + 1])
+
+    # Admissible runs that start at-or-after the first block's prescribed
+    # start: stranding one of these BEFORE the first anchor is the signature
+    # of the whole session sliding one run over (the pause exploit). Runs
+    # before that point are the warm-up and stay free.
+    late = [strand[j] and runs[j]["t0"] >= starts[0] - 30.0
+            for j in range(m)]
+    latedur = [0.0] * (m + 1)
+    for j in range(m):
+        latedur[j + 1] = latedur[j] + (runs[j]["dur"] if late[j] else 0.0)
+
+    def origin_cost(i, j) -> float:
+        d = runs[j]["t0"] - starts[i]
+        w = LAP_ORIGIN_W_POS if d > 0 else LAP_ORIGIN_W_NEG
+        return (w * lw * abs(d) / (starts[i] + S)
+                + LAP_ORPHAN_W * latedur[j])
+
+    # F[(i, j)] = best score of an alignment whose LAST anchor reads block i
+    # from run j. States are only the admissible pairs — tight bands plus the
+    # positional cap keep this small even on a 96-block session.
+    F: dict = {}
+    back: dict = {}
+    order = [(i, j, v) for i in range(n) for (j, v) in adm[i]]
+    for i, j, v in order:
+        best, bp = v - origin_cost(i, j), None
+        for i1 in range(max(0, i - LAP_BLOCK_WINDOW), i):
+            for j1, _v1 in adm[i1]:
+                if j1 >= j:
+                    continue
+                f1 = F.get((i1, j1))
+                if f1 is None:
+                    continue
+                cand = f1 + v - step_cost(i1, j1, i, j)
+                if cand > best:
+                    best, bp = cand, (i1, j1)
+        F[(i, j)] = best
+        back[(i, j)] = bp
+    best_state, best_val = None, 0.0
+    for st, val in F.items():
+        # Admissible runs stranded AFTER the last anchor count too — the same
+        # evidence, at the same price.
+        val = val - LAP_ORPHAN_W * (admdur[m] - admdur[st[1] + 1])
+        if val > best_val:
+            best_state, best_val = st, val
+    out: "list[int | None]" = [None] * n
+    st = best_state
+    while st is not None:
+        out[st[0]] = st[1]
+        st = back[st]
+    return out, best_val
 
 
-def _session_is_ambiguous(planned_segments, reps, ftp) -> bool:
-    """Can this session be block-graded from laps at all?
+def _fit_pace(reps, runs, anchors, segn) -> "tuple[float, float]":
+    """(rho, extra): delivered rest ≈ rho × prescribed rest + extra per easy
+    SEGMENT of the plan, fitted by median over the anchored steps. Per
+    segment, not per block: a rider stretches each recovery they take, and a
+    gap holding two easy segments stretches twice. This is how a rider who
+    takes half again as long between every block, or a flat extra minute at
+    each one, costs nothing — the stretch is the session's own norm."""
+    pts = []
+    loose = []
+    prev = None
+    for i, j in enumerate(anchors):
+        if j is None:
+            continue
+        if prev is not None:
+            i1, j1 = prev
+            block = sum(float(reps[k]["dur_s"]) for k in range(i1, i))
+            rest = max(0.0, float(reps[i]["start_s"])
+                       - float(reps[i1]["start_s"]) - block)
+            deliv_rest = runs[j]["t0"] - runs[j1]["t0"] - block
+            nseg = max(1, segn[i] - segn[i1])
+            if rest >= 5.0:
+                loose.append((rest, deliv_rest, nseg))
+                # Steps between ADJACENT blocks only: a step spanning skipped
+                # blocks measures the skip, not the rider's pace, and one bad
+                # first-pass alignment then poisons the model the second pass
+                # corrects with.
+                if i - i1 == 1:
+                    pts.append((rest, deliv_rest, nseg))
+        prev = (i, j)
+    if len(pts) < 2:
+        pts = loose
+    if len(pts) < 3:
+        # One or two steps cannot carry a two-parameter model — on a
+        # three-block session with a skip, the fit was pure noise and the
+        # noise then decided which block "moved".
+        return 1.0, 0.0
 
-    Not every session can. A head unit types a lap WORK on intensity alone, so
-    a warm-up ramp step, a fast-pedal drill or a float leg above the work floor
-    all arrive looking like work — and if one of them has the same shape and
-    sits near the same part of the ride as a prescribed block, then no amount of
-    inference can tell "that lap was the block" from "the block was skipped and
-    that lap was the warm-up". The information is not in the data.
+    def med(xs):
+        xs = sorted(xs)
+        h = len(xs) // 2
+        return xs[h] if len(xs) % 2 else 0.5 * (xs[h - 1] + xs[h])
 
-    This is decided from the FILE, before the rider's laps are even considered,
-    which is what makes it honest rather than a guess about a particular ride.
-    Three attempts to infer past this (positional, shape-matched, then
-    time-anchored) each produced confident wrong answers on hundreds of library
-    workouts — the worst telling a rider who abandoned a whole set that they had
-    done every block and 100% of the work. A missing verdict is recoverable; a
-    false green tick is not.
+    cands = [(1.0, med([(b - r) / g for r, b, g in pts])),
+             (min(LAP_REST_RATIO_MAX,
+                  max(LAP_REST_RATIO_MIN,
+                      med([b / r for r, b, _g in pts]))), 0.0)]
+    slopes = [(b2 - b1) / (r2 - r1) for x, (r1, b1, _s1) in enumerate(pts)
+              for r2, b2, _s2 in pts[x + 1:] if abs(r2 - r1) >= 5.0]
+    if slopes:
+        rho = min(LAP_REST_RATIO_MAX, max(LAP_REST_RATIO_MIN, med(slopes)))
+        cands.append((rho, med([(b - rho * r) / g for r, b, g in pts])))
+    best = min(cands, key=lambda c: sum(
+        abs(b - (c[0] * r + c[1] * g)) for r, b, g in pts) / len(pts))
+    return best[0], min(LAP_REST_EXTRA_MAX,
+                        max(LAP_REST_EXTRA_MIN, best[1]))
+
+
+# ── Grading: what the timeline shows in each block's window ─────────────────
+
+def _windows(reps, runs, anchors) -> "list[tuple[float, float]]":
+    """Each block's expected place on the ride clock.
+
+    An anchored block's window is its own run's start — exact. An unanchored
+    block interpolates the drift of the anchors around it (a rider who is
+    three minutes behind at block 4 and four at block 7 is ~3.3 behind at
+    block 5), holding the nearest anchor's drift before the first and after
+    the last. This is what makes a mid-session skip land where it happened
+    instead of sliding every later block by one.
     """
-    rep_starts = {r.get("start_s") for r in reps}
-    for seg in planned_segments:
-        if seg.get("start_s") in rep_starts:
+    n = len(reps)
+    drift: "list[float | None]" = [None] * n
+    for i, j in enumerate(anchors):
+        if j is not None:
+            drift[i] = runs[j]["t0"] - float(reps[i]["start_s"])
+    idx = [i for i in range(n) if drift[i] is not None]
+    for i in range(n):
+        if drift[i] is not None:
             continue
-        dur = seg.get("dur_s") or 0
-        if not dur:
-            continue
-        mid = _seg_frac_at(seg, dur // 2)
-        if mid is None or mid < WORK_FLOOR_FRAC:
-            continue                    # a head unit would not call this work
-        ghost = {"duration_s": dur, "ftp_pct": mid * 100.0,
-                 "_t0": seg.get("start_s")}
-        if any(_lap_match_score(r, ghost) > 0.0 for r in reps):
-            return True
-    return False
+        before = [k for k in idx if k < i]
+        after = [k for k in idx if k > i]
+        if before and after:
+            a, b = before[-1], after[0]
+            ta, tb = float(reps[a]["start_s"]), float(reps[b]["start_s"])
+            t = float(reps[i]["start_s"])
+            w = (t - ta) / (tb - ta) if tb > ta else 0.0
+            drift[i] = drift[a] + w * (drift[b] - drift[a])
+        elif before:
+            drift[i] = drift[before[-1]]
+        elif after:
+            drift[i] = drift[after[0]]
+        else:
+            drift[i] = 0.0
+    return [(float(r["start_s"]) + drift[i],
+             float(r["start_s"]) + drift[i] + float(r["dur_s"]))
+            for i, r in enumerate(reps)]
+
+
+def _overlap(lo1, hi1, lo2, hi2) -> float:
+    return max(0.0, min(hi1, hi2) - max(lo1, lo2))
 
 
 def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
     """Grade which prescribed BLOCKS the rider actually completed, from laps.
 
     Answers the question a load number cannot: "I stopped early — which blocks
-    did I do?" Laps are explicit boundaries the rider set, so this is a direct
-    positional comparison rather than the trace alignment ``score_structure``
-    has to do. Returns None when it cannot honestly grade (no prescribed reps,
-    no usable laps).
+    did I do?" Laps carry the offset on the ride clock where each one started
+    (persisted from intervals.icu), so the delivered ride is a timeline the
+    prescription can be checked against.
 
-    KNOWN LIMIT — matching is positional, so a rep skipped in the MIDDLE is
-    indistinguishable from stopping one rep earlier: no lap exists either way.
-    The count stays correct (8 of 9) but the missing block is attributed to the
-    end. Distinguishing the two needs cumulative lap timing against the
-    prescribed schedule; deliberately not built (pinned by
-    tests/test_357_block_evaluation.py).
+    The rule that survived six generations of this feature: a block gets a
+    verdict on IDENTITY or on PROOF OF ABSENCE, and on nothing else.
 
-    Result::
+    * Identity: an anchored block — its own run, at its intensity, where the
+      session's clock puts it — is ridden, and its run's length says done or
+      partial. Over-length and over-intensity stay "done": harder or longer
+      is still doing the block.
+    * Proof of absence: an unanchored block is "missed" only when its window
+      shows nothing but clearly-easy riding (below 60 % of the block's
+      target) or lies beyond the end of the ride, AND no unclaimed run
+      anywhere order-consistent could have been the block.
+    * Anything else — a window in the gray band, a spare run that fits, a
+      clock that reads two ways — is a question the recording does not
+      answer, and the whole session goes ungraded. A missing report is
+      recoverable; a false green tick is not.
+
+    Returns None whenever the laps do not determine the answer. Result::
 
       {
         "outcome":        "completed"    — every block, full length
@@ -635,129 +923,411 @@ def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
         "basis":           "laps",
       }
     """
-    reps = _prescribed_reps(planned_segments or [], ftp)
-    wl = _work_laps(laps)
-    if not reps or not wl:
-        return None
-    lap_for_rep = _align_laps(reps, wl)
+    try:
+        reps = _prescribed_reps(planned_segments or [], ftp)
+        all_laps = _normalised_laps(laps, ftp)
+        if not reps or not all_laps:
+            return None
+        runs = _runs(all_laps)
+        bands = _plan_bands(planned_segments, reps)
+        rep_starts = {r["start_s"] for r in reps}
+        easy_starts = sorted(
+            float(seg["start_s"]) for seg in (planned_segments or [])
+            if (seg.get("dur_s") or 0)
+            and seg.get("start_s") not in rep_starts)
+        import bisect as _bisect
+        segn = [_bisect.bisect_left(easy_starts, float(r["start_s"]))
+                for r in reps]
+        holes = []
+        for l1, l2 in zip(all_laps, all_laps[1:]):
+            gap = l2["t0"] - (l1["t0"] + l1["dur"])
+            if gap > 45.0:
+                holes.append((l1["t0"] + l1["dur"], l2["t0"]))
 
-    # AMBIGUITY GATE — the honest limit of this whole feature.
-    #
-    # A lap list carries no labels, so when a block has no lap of its own AND a
-    # spare lap exists that could plausibly have been it, there is no way to
-    # tell "you skipped that block" from "that lap WAS that block". Three
-    # successive attempts to infer it (positional, shape-matched, then
-    # time-anchored) each produced confident wrong answers on hundreds of
-    # library workouts — including telling a rider who abandoned an entire set
-    # that they had done every block and 100% of the work.
-    #
-    # So: grade when the laps determine the answer, and say nothing when they
-    # do not. A missing feature is recoverable; a false green tick is not.
-    if _session_is_ambiguous(planned_segments or [], reps, ftp):
-        return None
-    # Belt and braces on the ride side: if more laps are plausible candidates
-    # than there are blocks to fill, some block is being credited to a lap that
-    # might belong to another and the solver cannot know which.
-    candidates = {j for j in range(len(wl))
-                  if any(_lap_match_score(r, wl[j]) > 0.0 for r in reps)}
-    if len(candidates) > len(reps):
-        return None
-
-    rows: list[dict] = []
-    done = partial = missed = 0
-    deliv_s = 0.0
-    presc_s = float(sum(r["dur_s"] for r in reps))
-    for i, r in enumerate(reps):
-        _j = lap_for_rep[i]
-        lap = wl[_j] if _j is not None else None
-        row = {"index": i + 1, "set": r.get("set", 0) + 1,
-               "prescribed_s": r["dur_s"],
-               "target_pct": round(100.0 * r["target_frac"], 1),
-               "delivered_s": None, "delivered_pct": None,
-               "on_target": None, "status": "missed"}
-        if lap is None:
-            missed += 1
+        anchors, _sc = _anchor(reps, runs, (1.0, 0.0), bands, segn, holes,
+                               LAP_DRIFT_PASS_W)
+        pace2 = (1.0, 0.0)
+        for _ in range(4):
+            pace2 = _fit_pace(reps, runs, anchors, segn)
+            again, _sc = _anchor(reps, runs, pace2, bands, segn, holes)
+            if again == anchors:
+                break
+            anchors = again
         else:
-            d = float(lap.get("duration_s") or 0)
-            row["delivered_s"] = int(d)
-            deliv_s += min(d, r["dur_s"])
-            pct = lap.get("ftp_pct")
-            try:
-                pct = float(pct) if pct is not None else None
-            except (TypeError, ValueError):
-                pct = None
-            row["delivered_pct"] = pct
-            if pct is not None:
+            # No fixed point: the reading depends on where you start
+            # measuring from — the laps do not determine it.
+            return None
+
+        # An anchor whose run sits where the PLAN put a non-block segment of
+        # that intensity is the rider riding that part of the plan, not a
+        # block. The plan's material sits at the SESSION'S drift, not at
+        # zero: a rider who cut the warm-up short moved every prescribed
+        # segment with them. Zero is still tested while the session is near
+        # schedule — a rider who quit during the warm-up has no honest
+        # drift, only fake anchors defining one. Scrubbing can un-slide the
+        # chain behind it, so the alignment is re-solved without the
+        # scrubbed runs until it settles.
+        def _explained_here(run) -> bool:
+            """Band-explained at the run's OWN position: the rider riding that
+            part of the plan, on schedule."""
+            t = _band_tol(run["frac"])
+            for a, b, lo, hi in bands:
+                if not (lo - t <= run["frac"] <= hi + t):
+                    continue
+                if _overlap(a, b, run["t0"], run["end"]) < 0.5 * run["dur"]:
+                    continue
+                # The run must plausibly BE that segment — a 2-minute block
+                # run is not the 10-minute tempo section it happens to sit
+                # inside once the session has drifted.
+                if run["dur"] >= 0.4 * (b - a):
+                    return True
+            return False
+
+        # An anchor whose run is the plan's own non-block material, ridden on
+        # schedule, is the rider following the plan — not a block. But a
+        # whole session legitimately shifts (a short warm-up moves every true
+        # block run onto some earlier segment's old position), so being
+        # explained is only damning when the anchor's drift DISAGREES with
+        # the session's (it reached for material the rest of the ride says is
+        # not where its block went), or when most anchors are explained (no
+        # honest session is mostly plan-material — that is a warm-up ridden
+        # and a session abandoned). Scrubbing can un-slide the chain behind
+        # it, so the alignment is re-solved without the scrubbed runs.
+        banned: set = set()
+        for _ in range(3):
+            placed_now = [(i, j) for i, j in enumerate(anchors)
+                          if j is not None]
+            if not placed_now:
+                break
+            drifts = sorted(runs[j]["t0"] - float(reps[i]["start_s"])
+                            for i, j in placed_now)
+            med = drifts[len(drifts) // 2]
+            expl = {j: _explained_here(runs[j]) for _i, j in placed_now}
+            mostly = sum(expl.values()) >= 0.5 * len(placed_now)
+            dirty = False
+            for i, j in placed_now:
+                if not expl[j]:
+                    continue
+                outlier = abs((runs[j]["t0"] - float(reps[i]["start_s"]))
+                              - med) > 90.0 + 0.25 * float(reps[i]["dur_s"])
+                if outlier or mostly:
+                    banned.add(j)
+                    dirty = True
+            if not dirty:
+                break
+            live = [r if k not in banned else {**r, "frac": -1.0}
+                    for k, r in enumerate(runs)]
+            anchors, _sc = _anchor(reps, live, pace2, bands, segn, holes)
+
+        placed = [(i, j) for i, j in enumerate(anchors) if j is not None]
+        if len(placed) == 1:
+            i, j = placed[0]
+            tol = 0.5 * LAP_LONE_ANCHOR_S + 0.25 * float(reps[i]["dur_s"])
+            if abs(runs[j]["t0"] - float(reps[i]["start_s"])) > tol \
+                    or runs[j]["dur"] < 0.5 * float(reps[i]["dur_s"]):
+                anchors = [None] * len(reps)
+                placed = []
+        if not placed:
+            # No mapping at all. Grade only when the ride plainly contains
+            # nothing that could have been a block — a rider who quit in the
+            # warm-up after a hot lead-in effort gets silence, not a verdict
+            # hung on one unplaced lap.
+            if any(_pairing(rep, run) is not None
+                   for rep in reps for run in runs):
+                return None
+
+        # A block bordered by prescribed material AT ITS OWN INTENSITY has no
+        # boundary in the plan. It can be graded by IDENTITY (the rider's own
+        # lap press marks it); left unanchored, no recording can say whether
+        # it was ridden, cut short, or skipped.
+        for i, rep in enumerate(reps):
+            if anchors[i] is not None:
+                continue
+            tgt = max(float(rep["target_frac"]), 0.01)
+            presc = max(float(rep["dur_s"]), 1.0)
+            n_lo = float(rep["start_s"]) - presc
+            n_hi = float(rep["start_s"]) + 2.0 * presc
+            for a_b, b_b, lo_b, hi_b in bands:
+                if _overlap(a_b, b_b, n_lo, n_hi) <= 0.0:
+                    continue
+                if lo_b - 0.10 * tgt <= tgt <= hi_b + 0.10 * tgt:
+                    return None
+
+        wins = _windows(reps, runs, anchors)
+        ride_end = max(l["t0"] + l["dur"] for l in all_laps)
+
+        n = len(reps)
+        rows: list[dict] = []
+        done = partial = missed = 0
+        deliv_s = 0.0
+        presc_s = float(sum(r["dur_s"] for r in reps))
+
+        for i, rep in enumerate(reps):
+            tgt = max(float(rep["target_frac"]), 0.01)
+            presc = max(float(rep["dur_s"]), 1.0)
+            lo, hi = wins[i]
+            j = anchors[i]
+            row = {"index": i + 1, "set": rep.get("set", 0) + 1,
+                   "prescribed_s": rep["dur_s"],
+                   "target_pct": round(100.0 * tgt, 1),
+                   "delivered_s": None, "delivered_pct": None,
+                   "on_target": None, "status": "missed"}
+
+            if j is not None:
+                run = runs[j]
+                cov = min(run["dur"], presc) / presc
+                row["delivered_s"] = int(run["dur"])
+                row["delivered_pct"] = run["pct"]
                 row["on_target"] = bool(
-                    abs(pct / 100.0 - r["target_frac"])
-                    <= LAP_POWER_TOL_FRAC * max(r["target_frac"], 0.01))
-            if d >= LAP_SHORT_FRAC * r["dur_s"]:
-                row["status"] = "done"
-                done += 1
-            elif d >= LAP_TRIVIAL_FRAC * r["dur_s"]:
-                row["status"] = "partial"
-                partial += 1
+                    abs(run["frac"] - tgt) <= LAP_POWER_TOL_FRAC * tgt)
+                deliv_s += min(run["dur"], presc)
+                if cov >= LAP_COV_DONE:
+                    row["status"] = "done"
+                    done += 1
+                elif cov >= LAP_TRIVIAL_FRAC:
+                    row["status"] = "partial"
+                    partial += 1
+                else:
+                    row["status"] = "missed"
+                    missed += 1
             else:
-                # A token delivery. Kept visible in delivered_s, but counted as
-                # not ridden: two stray lap taps after stopping at block 8 read
-                # as "stopped after 8", not as "all 10 blocks, cut short".
+                # Unanchored: only PROVEN absence grades. Every second of
+                # the window must be beyond the ride or under clearly-easy
+                # riding; one second in the gray band and the session is
+                # silent.
+                for lap in all_laps:
+                    ov = _overlap(lo, hi, lap["t0"], lap["t0"] + lap["dur"])
+                    # A stray tap of a few seconds is not evidence the block
+                    # was ridden — the double-tap after stopping at block 8
+                    # must not turn blocks 9 and 10 into open questions.
+                    if ov < max(LAP_TRIVIAL_LAP_S, 0.15 * presc):
+                        continue
+                    if lap["frac"] >= LAP_BAND_GRAY * tgt:
+                        return None
+                covered = sum(
+                    _overlap(lo, hi, lap["t0"], lap["t0"] + lap["dur"])
+                    for lap in all_laps)
+                beyond = max(0.0, hi - max(lo, ride_end))
+                if covered + beyond < 0.8 * presc:
+                    # A stretch of the window is unaccounted for — a hole in
+                    # the recording is not proof of anything.
+                    if beyond <= 0.0:
+                        return None
                 row["status"] = "missed"
                 missed += 1
-        rows.append(row)
+            rows.append(row)
 
-    # Where did the rider get to? Last rep with any delivery.
-    stopped_after = None
-    for row in rows:
-        if row["status"] in ("done", "partial"):
-            stopped_after = row["index"]
+        # A block called unridden while the LAP over its window is energy-rich
+        # enough to CONTAIN it is a forgotten lap-button press, not a skip: a
+        # 4-minute lap at 72 % where the plan says two 15-second sprints,
+        # their rest and a 65 % lead-in holds exactly the sprints' energy, and
+        # whether they were ridden is not in the recording. A lap at the
+        # skipped-expectation's own intensity is a genuine skip and stays
+        # missed — the energy is measurably absent.
+        for i, row in enumerate(rows):
+            if row["status"] != "missed":
+                continue
+            rep = reps[i]
+            tgt = max(float(rep["target_frac"]), 0.01)
+            presc = max(float(rep["dur_s"]), 1.0)
+            lo, hi = wins[i]
+            d_i = lo - float(rep["start_s"])
+            for lap in all_laps:
+                ov = _overlap(lo, hi, lap["t0"], lap["t0"] + lap["dur"])
+                if ov < max(LAP_TRIVIAL_LAP_S, 0.15 * presc):
+                    continue
+                if lap["frac"] >= LAP_BAND_UNDER * tgt:
+                    continue
+                mu_rest = _plan_rest_frac(planned_segments, reps,
+                                          lap["t0"] - d_i,
+                                          lap["t0"] + lap["dur"] - d_i)
+                span = max(lap["dur"], presc)
+                mu_with = (presc * tgt
+                           + max(0.0, span - presc) * mu_rest) / span
+                if mu_with - mu_rest < 0.03:
+                    return None       # the two stories are indistinguishable
+                if lap["frac"] >= mu_rest + 0.6 * (mu_with - mu_rest):
+                    return None
 
-    n = len(reps)
-    if done + partial == 0:
-        outcome = "not_attempted"
-    elif missed == 0 and partial == 0:
-        outcome = "completed"
-    elif missed == 0:
-        # Every prescribed block was ridden; some just ran short. Without this
-        # branch it fell through to "off_plan", and the rider who rode all ten
-        # blocks at 78% length was told "blocks missing · 0/10" — both halves
-        # of that wrong. Nothing is missing and nothing was skipped.
-        outcome = "short_blocks"
-    elif stopped_after is not None and stopped_after < n and all(
-            r["status"] == "missed" for r in rows[stopped_after:]):
-        # Every gap is at the END ⇒ the rider stopped, rather than skipping
-        # blocks in the middle (which is a different, off-plan story).
-        #
-        # `stopped_after < n` matters: without it the slice is empty whenever
-        # the LAST block was ridden, all() on nothing is True, and a hole at
-        # block 2 of 12 reported "stopped early — stopped after block 12".
-        # That also made off_plan unreachable, so no mid-session skip could
-        # ever be named one.
-        outcome = "cut_short"
-    else:
-        outcome = "off_plan"
+        # A block called unridden while a run that could have BEEN it sits
+        # claimed by nothing, order-consistent with the anchors around it, is
+        # not a settled question — the alignment may simply have slid. This
+        # gate deliberately does NOT reuse the identity band: a run vetoed
+        # for being too hot is exactly the kind the gate exists to see (the
+        # block ridden 40 % over is not "missed" — it is unsettled). Runs the
+        # plan itself explains, at their own position or at the session's
+        # drift, are the rider riding the plan and prove nothing.
+        claimed_j = {j for j in anchors if j is not None}
+        anchor_ds = sorted(runs[j]["t0"] - float(reps[i]["start_s"])
+                           for i, j in enumerate(anchors) if j is not None)
+        sess_d = anchor_ds[len(anchor_ds) // 2] if anchor_ds else 0.0
 
-    sets: dict[int, dict] = {}
-    for row in rows:
-        s = sets.setdefault(row["set"], {"set": row["set"], "prescribed": 0,
-                                        "done": 0, "partial": 0, "missed": 0,
-                                        "ridden": 0})
-        s["prescribed"] += 1
-        s[row["status"]] = s.get(row["status"], 0) + 1
-        # `ridden` = done + partial. The set line used to print `done` only, so
-        # a set whose blocks all ran a little short read "0/1" on the same line
-        # that called them ridden — visible on the one real lapped ride here.
-        if row["status"] in ("done", "partial"):
-            s["ridden"] += 1
+        def _plan_material(run) -> bool:
+            if _explained_here(run):
+                return True
+            if abs(sess_d) < 30.0:
+                return False
+            shifted = {**run, "t0": run["t0"] - sess_d,
+                       "end": run["end"] - sess_d}
+            return _explained_here(shifted)
 
-    return {
-        "outcome": outcome,
-        "reps_prescribed": n,
-        "reps_done": done,
-        "reps_partial": partial,
-        "reps_missed": missed,
-        "work_fraction": round(deliv_s / presc_s, 3) if presc_s else None,
-        "stopped_after": stopped_after,
-        "sets": [sets[k] for k in sorted(sets)],
-        "reps": rows,
-        "basis": "laps",
-    }
+        for i, row in enumerate(rows):
+            if row["status"] != "missed":
+                continue
+            tgt = max(float(reps[i]["target_frac"]), 0.01)
+            presc = max(float(reps[i]["dur_s"]), 1.0)
+            prev_t = max((runs[anchors[k]]["end"] for k in range(i)
+                          if anchors[k] is not None), default=float("-inf"))
+            next_t = min((runs[anchors[k]]["t0"] for k in range(i + 1, n)
+                          if anchors[k] is not None), default=float("inf"))
+            for j, run in enumerate(runs):
+                if j in claimed_j:
+                    continue
+                if run["frac"] < LAP_BAND_UNDER * tgt \
+                        or run["dur"] < LAP_TRIVIAL_FRAC * presc:
+                    continue
+                if not (prev_t - LAP_NEAR_S <= run["t0"]
+                        <= next_t + LAP_NEAR_S):
+                    continue
+                if _plan_material(run):
+                    continue
+                return None
+
+        # A rider who rode the RECOVERIES at block intensity erased the
+        # boundaries the grading depends on: a steady threshold hour against
+        # an interval file covers every window without the pattern ever
+        # being executed. "Hot" is relative to what the recovery PRESCRIBED.
+        hot = 0
+        checked = 0
+        for i in range(n - 1):
+            if reps[i].get("set") != reps[i + 1].get("set"):
+                continue
+            g_lo, g_hi = wins[i][1], wins[i + 1][0]
+            if g_hi - g_lo < 5.0:
+                continue
+            checked += 1
+            presc_gap_frac = _prescribed_gap_frac(planned_segments, reps, i)
+            tgt = min(float(reps[i]["target_frac"]),
+                      float(reps[i + 1]["target_frac"]))
+            hot_secs = 0.0
+            for run in runs:
+                ov = _overlap(g_lo, g_hi, run["t0"], run["end"])
+                if ov <= 0.0:
+                    continue
+                if (run["frac"] >= LAP_BAND_UNDER * tgt
+                        and run["frac"] >= presc_gap_frac + LAP_HOT_MARGIN):
+                    hot_secs += ov
+            if hot_secs >= 0.6 * (g_hi - g_lo):
+                hot += 1
+        if checked and hot >= max(2, int(0.34 * checked) + 1):
+            return None
+
+        # Where did the rider get to? Last rep with any delivery.
+        stopped_after = None
+        for row in rows:
+            if row["status"] in ("done", "partial"):
+                stopped_after = row["index"]
+
+        if done + partial == 0:
+            outcome = "not_attempted"
+        elif missed == 0 and partial == 0:
+            outcome = "completed"
+        elif missed == 0:
+            outcome = "short_blocks"
+        elif stopped_after is not None and stopped_after < n and all(
+                r["status"] == "missed" for r in rows[stopped_after:]):
+            outcome = "cut_short"
+        else:
+            outcome = "off_plan"
+
+        sets: dict[int, dict] = {}
+        for row in rows:
+            st = sets.setdefault(row["set"], {"set": row["set"],
+                                              "prescribed": 0, "done": 0,
+                                              "partial": 0, "missed": 0,
+                                              "ridden": 0})
+            st["prescribed"] += 1
+            st[row["status"]] = st.get(row["status"], 0) + 1
+            if row["status"] in ("done", "partial"):
+                st["ridden"] += 1
+
+        return {
+            "outcome": outcome,
+            "reps_prescribed": n,
+            "reps_done": done,
+            "reps_partial": partial,
+            "reps_missed": missed,
+            "work_fraction": round(deliv_s / presc_s, 3) if presc_s else None,
+            "stopped_after": stopped_after,
+            "sets": [sets[k] for k in sorted(sets)],
+            "reps": rows,
+            "basis": "laps",
+        }
+    except Exception:
+        # Grading is advisory; a shape this code does not understand must
+        # read as "no verdict", never as a crash in the ride view.
+        return None
+
+
+def _prescribed_gap_frac(planned_segments, reps, i) -> float:
+    """Highest intensity the PLAN itself puts between block i and block i+1."""
+    lo = float(reps[i]["start_s"]) + float(reps[i]["dur_s"])
+    hi = float(reps[i + 1]["start_s"])
+    out = 0.0
+    for seg in (planned_segments or []):
+        d = seg.get("dur_s") or 0
+        st = float(seg.get("start_s") or 0)
+        if not d or st + d <= lo or st >= hi:
+            continue
+        f = _seg_frac_at(seg, int(d) // 2)
+        if f is not None and f > out:
+            out = float(f)
+    return out
+
+
+def _plan_rest_frac(planned_segments, reps, lo: float, hi: float) -> float:
+    """Time-weighted prescribed intensity over plan interval [lo, hi],
+    counting non-block segments only (block seconds contribute nothing —
+    they are the thing whose presence is being tested)."""
+    rep_starts = {r["start_s"] for r in reps}
+    acc = dur = 0.0
+    for seg in (planned_segments or []):
+        d = seg.get("dur_s") or 0
+        st = float(seg.get("start_s") or 0)
+        if not d or st + d <= lo or st >= hi:
+            continue
+        ov = min(hi, st + d) - max(lo, st)
+        if seg.get("start_s") in rep_starts:
+            dur += ov          # block time inside the span, at zero
+            continue
+        f = _seg_frac_at(seg, int(d) // 2)
+        acc += ov * (f if f is not None else 0.5)
+        dur += ov
+    return acc / dur if dur > 0 else 0.5
+
+
+def _plan_bands(planned_segments, reps) -> "list[tuple[float, float, float, float]]":
+    """(start_s, end_s, lo_frac, hi_frac) of every prescribed NON-block segment.
+
+    The prescription itself puts work-intensity riding outside the blocks — a
+    tempo section after the main set, an over/under's hot off-legs, a lead-in
+    effort. Runs delivered there are the rider following the plan, and nothing
+    about them may count against an alignment or a verdict.
+    """
+    rep_starts = {r["start_s"] for r in reps}
+    out = []
+    for seg in (planned_segments or []):
+        d = seg.get("dur_s") or 0
+        if not d or seg.get("start_s") in rep_starts:
+            continue
+        lo, hi = seg.get("lo"), seg.get("hi")
+        if lo is None or hi is None:
+            continue
+        lo, hi = float(lo), float(hi)
+        out.append((float(seg["start_s"]), float(seg["start_s"]) + d,
+                    min(lo, hi), max(lo, hi)))
+    return out
+
+
+def _band_tol(frac: float) -> float:
+    return max(0.05, 0.08 * frac)

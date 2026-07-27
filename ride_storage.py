@@ -123,6 +123,23 @@ def _wellness_dir() -> Path:
     return base
 
 
+def _first_num(d: dict, *keys) -> "int | None":
+    """First of ``keys`` present on ``d`` as an int; None if none are usable.
+
+    0 is a real offset (the first lap starts there), so this cannot use the
+    usual ``or`` chain.
+    """
+    for k in keys:
+        v = d.get(k)
+        if isinstance(v, bool) or v is None:
+            continue
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def _normalize_icu_activity(a: dict) -> dict:
     """v4.4.0 — translate an ICU activity dict to the §3 normalized shape.
 
@@ -264,6 +281,13 @@ def _normalize_icu_activity(a: dict) -> dict:
     # has to hit the /intervals subpath to populate. We accept both shapes.
     intervals_out: list[dict] = []
     iv = _pick("icu_intervals", "intervals")
+    # ONE clock for the whole activity. start_index counts moving seconds and
+    # start_time elapsed ones; they part company the moment the rider stops, so
+    # taking whichever each interval happens to carry mixes the two and can
+    # hand a later lap an EARLIER offset than the one before it.
+    _use_index = (isinstance(iv, list) and iv
+                  and all(isinstance(x, dict) and x.get("start_index") is not None
+                          for x in iv))
     if isinstance(iv, list):
         for i, ivd in enumerate(iv):
             if not isinstance(ivd, dict):
@@ -281,6 +305,20 @@ def _normalize_icu_activity(a: dict) -> dict:
                     )
                 except (TypeError, ValueError, ZeroDivisionError):
                     ftp_pct = None
+            # v3.7.0 — WHERE on the ride this lap sits, not just how long it
+            # was. ICU carries two clocks: start_index/end_index index the
+            # sample stream (moving seconds), start_time/end_time are the
+            # elapsed wall clock. They agree until the rider stops — measured
+            # on a real ride here, 2717 s of moving time inside 2721 s
+            # elapsed. Block grading uses the MOVING clock, because that is
+            # the one that keeps running with the workout: a five-minute stop
+            # at the lights must not read as five minutes of the plan gone by.
+            # Without this the only clock available was the sum of the lap
+            # durations before it, which is the same number only while nobody
+            # pauses and the laps tile with no gaps.
+            start_s = (_first_num(ivd, "start_index") if _use_index
+                       else _first_num(ivd, "start_time"))
+            elapsed_start_s = _first_num(ivd, "start_time", "start_index")
             ivobj = {
                 "id": ivd.get("id") if ivd.get("id") is not None else i,
                 "name": (
@@ -291,6 +329,8 @@ def _normalize_icu_activity(a: dict) -> dict:
                     or f"Interval {i+1}"
                 ),
                 "type": ivd.get("type"),
+                "start_s": start_s,
+                "elapsed_start_s": elapsed_start_s,
                 "duration_s": int(
                     ivd.get("moving_time")
                     or ivd.get("elapsed_time")
@@ -695,40 +735,39 @@ def load_all_rides() -> list[dict]:
         except (TypeError, ValueError):
             return (s, 0)
 
-    icu_keys = {_bucket(r) for r in icu if r.get("started_at")}
-    icu_by_key = {_bucket(r): r for r in icu if r.get("started_at")}
+    # The bucket is only (date, whole minutes), so it narrows the search — it
+    # does not decide identity. Two different rides on one day of the same
+    # rounded length land in the same bucket, and treating that as "same ride"
+    # made one of them disappear from every listing. _same_ride_start is the
+    # predicate that decides; the bucket may hold several candidates.
+    icu_by_key: dict = {}
+    for r in icu:
+        if r.get("started_at"):
+            icu_by_key.setdefault(_bucket(r), []).append(r)
 
     merged: list[dict] = list(icu)
     for r in fits:
-        # If a FIT clearly maps to an existing ICU activity, skip it.
         bk = _bucket(r)
-        if bk[0] and bk in icu_keys:
-            # …but carry the rider's own input across first. A FIT-only rider
-            # rates a ride, then the importer relays that same file to
-            # intervals.icu; from then on the ICU twin wins the dedupe and the
-            # rating would simply vanish from every reader, including the
-            # 3-day gate. Nothing else can regenerate it. ICU's own value wins
-            # if it has one — that surface is the newer edit.
-            twin = icu_by_key.get(bk)
-            # The bucket is only (date, whole minutes) — two different rides on
-            # one day with the same rounded duration share it. That was harmless
-            # while the dedupe merely dropped the FIT entry; carrying rider input
-            # across it wrote one ride's rating onto ANOTHER ride, and persisting
-            # made that permanent. It reached a real record here before a
-            # verification pass caught it. Require the start times to actually
-            # agree before treating them as the same ride.
-            if twin is not None and _same_ride_start(r, twin):
-                moved = {}
-                for k in _RIDER_INPUT_CARRY_KEYS:
-                    if r.get(k) is not None and twin.get(k) is None:
-                        twin[k] = r[k]
-                        moved[k] = r[k]
-                if moved:
-                    # PERSIST it onto the ICU record, don't just patch the dict
-                    # we happen to be returning. The ride-detail modal reads the
-                    # record straight off disk, so an in-memory carry left the
-                    # rider looking at their own rating missing.
-                    _persist_rider_input(twin.get("external_id"), moved)
+        twin = next((t for t in icu_by_key.get(bk, []) if _same_ride_start(r, t)),
+                    None) if bk[0] else None
+        if twin is not None:
+            # Carry the rider's own input across before dropping the FIT. A
+            # FIT-only rider rates a ride, then the importer relays that same
+            # file to intervals.icu; from then on the ICU twin wins the dedupe
+            # and the rating would simply vanish from every reader, including
+            # the 3-day gate. Nothing else can regenerate it. ICU's own value
+            # wins if it has one — that surface is the newer edit.
+            moved = {}
+            for k in _RIDER_INPUT_CARRY_KEYS:
+                if r.get(k) is not None and twin.get(k) is None:
+                    twin[k] = r[k]
+                    moved[k] = r[k]
+            if moved:
+                # PERSIST it onto the ICU record, don't just patch the dict
+                # we happen to be returning. The ride-detail modal reads the
+                # record straight off disk, so an in-memory carry left the
+                # rider looking at their own rating missing.
+                _persist_rider_input(twin.get("external_id"), moved)
             continue
         merged.append(r)
 

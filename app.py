@@ -16810,24 +16810,60 @@ def _execution_for_match(s_json: dict, activity_id) -> "dict | None":
         return None
     if result.get("score") is None:
         return None
-    # v3.6.0 — block evaluation ("which prescribed blocks did I actually do?")
-    # is BUILT BUT NOT SURFACED, deliberately. The three locked axes cannot see
-    # structure, so the question is worth answering — but a lap list carries no
-    # labels, and four successive attempts to infer the answer from one
-    # (positional, shape-matched, ride-clock-anchored, then gated on a
-    # file-level decidability test) each shipped a different class of confident
-    # wrong verdict under adversarial review: certifying a session the rider
-    # abandoned, calling a block ridden harder than asked "not ridden", and
-    # naming a completed block "missing" when the recoveries ran long.
-    #
-    # The grader and its tests stay in the tree (structure_fidelity.score_blocks)
-    # because the harness that measured all of the above is worth keeping. It
-    # gets surfaced when it is driven by real lap TIMESTAMPS rather than inferred
-    # from shape — intervals.icu exposes them on the raw activity, they are just
-    # not persisted yet. Until then the rider sees the execution score, which is
-    # true, instead of a block report that is sometimes a lie.
-    return {**result, "activity_id": activity_id,
-            "computed_at": datetime.now().isoformat()}
+    # ADDITIVE block evaluation: "which prescribed blocks did I actually do?"
+    # The three locked axes (duration/load/intensity) cannot see structure —
+    # stopping after 10 of 13 reps survives TSS and time-in-zone nearly intact.
+    # Never affects score/verdict (both pinned by tests) and never raises: a
+    # ride with no laps, a session with no matched file, or laps that do not
+    # settle the question simply has no "blocks" key.
+    blocks = _block_eval_for(s_json, ride) if BLOCK_EVAL_SURFACED else None
+    out = {**result, "activity_id": activity_id,
+           "computed_at": datetime.now().isoformat()}
+    if blocks is not None:
+        out["blocks"] = blocks
+    return out
+
+
+# The grader is rebuilt on real lap timestamps and reads the one real lapped
+# ride here correctly — but an independent adversarial pass then produced three
+# separate false green ticks against it (an abandoned over/under certified
+# complete off its 90 % under-legs; a block ridden as two halves with a five
+# minute rest reported done in full; a flat 85 % FTP ride with auto-lap read as
+# eighteen VO2 blocks), and the library harness still misgrades about 1 % of
+# constructed sessions. Every one of those is pinned by a failing test in
+# tests/test_357_block_evaluation.py.
+#
+# So it does not reach the rider yet. Flip this to True when that file is green
+# — nothing else needs to change, the renderer and the payload are both wired.
+BLOCK_EVAL_SURFACED = False
+
+
+def _block_eval_for(s_json: dict, ride: dict) -> "dict | None":
+    """Lap-based block grading for a matched session. None when not gradeable.
+
+    v3.7.0 — restored, now that laps carry the offset on the ride clock where
+    each of them started (ride_storage persists ICU's start_index). Four
+    earlier versions inferred that offset from block shapes and each shipped a
+    different class of confident wrong verdict; score_blocks stays silent
+    unless the laps settle every block.
+    """
+    try:
+        laps = ride.get("intervals") or []
+        zwo = (s_json.get("zwo_file") or "").strip()
+        if not laps or not zwo:
+            return None
+        import structure_fidelity as _sf
+        path = WORKOUT_DIR / os.path.basename(zwo)
+        if not path.exists():
+            return None
+        segs = _sf.parse_zwo_file(path)
+        if not segs:
+            return None
+        ftp = ride.get("ftp_at_ride") or config.ATHLETE_FTP_W
+        return _sf.score_blocks(segs, laps, ftp)
+    except Exception as e:  # noqa: BLE001 — advisory axis, never break scoring
+        _log.debug(f"block eval skipped: {e}")
+        return None
 
 
 def _apply_rematch_preview_to_plan(plan: dict, week_idx: int, preview: dict) -> int:
@@ -19880,7 +19916,13 @@ def _maybe_enrich_icu_record(rec: dict) -> dict:
         polarization = rec.get("polarization")
 
         needs_zones = tiz_total == 0
-        needs_intervals = not intervals
+        # v3.7.0 — a record written before laps carried their position on the
+        # ride clock needs one re-fetch to gain it (block grading is silent
+        # without it). The normalizer always writes the key now, even when ICU
+        # had no offset to give, so a re-fetch that comes back without one
+        # still settles instead of re-firing on every open.
+        needs_intervals = not intervals or all(
+            isinstance(iv, dict) and "start_s" not in iv for iv in intervals)
         needs_hr = hr_tiz is None
         # v4.5.5: also recompute when the cached polarization predates
         # REFINE-CLASSIFY (i.e. is missing the new "confidence" key).

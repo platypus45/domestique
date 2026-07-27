@@ -208,7 +208,7 @@ LAP_HOT_MARGIN = 0.10
 # first anchor, is evidence against the alignment that strands it — without
 # this charge a mid-ride pause was cheaper to explain by sliding every later
 # block one run over (stranding the last run) than by paying for the pause.
-LAP_ORPHAN_W = 0.5
+LAP_ORPHAN_W = 0.6
 # A single anchor far from where its block was prescribed is not a mapping —
 # it is one lap of the right shape somewhere in a ride. Kept only when it sits
 # near its block; otherwise the session grades as unanchored.
@@ -754,15 +754,16 @@ def _anchor(reps, runs, pace, bands, segn, holes=(), weight=1.0) -> "list[int | 
         # Admissible runs this step strands, charged at LAP_ORPHAN_W.
         return gap + LAP_ORPHAN_W * (admdur[j2] - admdur[j1 + 1])
 
-    # Admissible runs that start at-or-after the first block's prescribed
-    # start: stranding one of these BEFORE the first anchor is the signature
-    # of the whole session sliding one run over (the pause exploit). Runs
-    # before that point are the warm-up and stay free.
-    late = [strand[j] and runs[j]["t0"] >= starts[0] - 30.0
-            for j in range(m)]
+    # Stranding an admissible, unexplained run ANYWHERE is the signature of
+    # a reading that ignores work the rider plainly did — before the first
+    # anchor included: a session ridden with a short warm-up delivers its
+    # first blocks before their prescribed starts, and exempting that region
+    # let "on schedule, quit two early" outscore "shifted six minutes,
+    # finished everything".
     latedur = [0.0] * (m + 1)
     for j in range(m):
-        latedur[j + 1] = latedur[j] + (runs[j]["dur"] if late[j] else 0.0)
+        latedur[j + 1] = latedur[j] + ((runs[j]["dur"] + 20.0)
+                                       if strand[j] else 0.0)
 
     def origin_cost(i, j) -> float:
         # Real seconds, softened only a little by how much warm-up there was
@@ -842,9 +843,17 @@ def _fit_pace(reps, runs, anchors, segn) -> "tuple[float, float]":
     if len(pts) < 2:
         pts = loose
     if len(pts) < 3:
-        # One or two steps cannot carry a two-parameter model — on a
-        # three-block session with a skip, the fit was pure noise and the
-        # noise then decided which block "moved".
+        # Too few steps for a two-parameter model — on a three-block session
+        # with a skip the fit was pure noise, and the noise then decided
+        # which block "moved". Two steps that AGREE are not noise: a
+        # three-block session with both recoveries stretched the same +180 s
+        # is exactly the flat-surcharge story, and refusing to hear it read
+        # the middle block as skipped.
+        if len(pts) == 2:
+            e1, e2 = ((b - r) / g for r, b, g in pts)
+            if abs(e1 - e2) <= max(30.0, 0.3 * max(abs(e1), abs(e2))):
+                return 1.0, min(LAP_REST_EXTRA_MAX,
+                                max(LAP_REST_EXTRA_MIN, 0.5 * (e1 + e2)))
         return 1.0, 0.0
 
     def med(xs):
@@ -1119,7 +1128,7 @@ def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
             i, j = placed[0]
             tol = 0.5 * LAP_LONE_ANCHOR_S + 0.25 * float(reps[i]["dur_s"])
             if abs(runs[j]["t0"] - float(reps[i]["start_s"])) > tol \
-                    or runs[j]["dur"] < 0.5 * float(reps[i]["dur_s"]):
+                    or runs[j]["dur"] < 0.6 * float(reps[i]["dur_s"]):
                 anchors = [None] * len(reps)
                 placed = []
         if not placed:
@@ -1132,12 +1141,12 @@ def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
                 return None
 
         # A block bordered by prescribed material AT ITS OWN INTENSITY has no
-        # boundary in the plan. It can be graded by IDENTITY (the rider's own
-        # lap press marks it); left unanchored, no recording can say whether
-        # it was ridden, cut short, or skipped.
+        # boundary — in the plan, or in any recording of it. A 60 s "block"
+        # at 75 % inside a continuous 75 % stretch is an administrative line
+        # on the planner's side: every lap in the stretch is interchangeable
+        # with the block, so an anchor there certifies nothing, and a skip
+        # there is invisible. The session is not block-gradeable.
         for i, rep in enumerate(reps):
-            if anchors[i] is not None:
-                continue
             tgt = max(float(rep["target_frac"]), 0.01)
             presc = max(float(rep["dur_s"]), 1.0)
             n_lo = float(rep["start_s"]) - presc

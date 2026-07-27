@@ -609,11 +609,12 @@ def _pairing(rep, run) -> "float | None":
         return None
     if run["dur"] < LAP_TRIVIAL_FRAC * presc:
         return None
-    # A run much LONGER than the block and UNDER its target is not the block
-    # ridden long — riding long happens at target. It is the signature of a
-    # skip smeared together with a hot neighbour, whose mix can land exactly
-    # on the admissibility edge.
-    if run["dur"] > 1.25 * presc and run["frac"] < 0.95 * tgt:
+    # A run much LONGER than the block must be AT the block's intensity to be
+    # the block ridden long — riding long happens at target. Off-target and
+    # long is the signature of the block smeared with a neighbour (a skip
+    # merged into a hot leg, a short drill glued to its recovery), whose mix
+    # can land anywhere in the admissibility band.
+    if run["dur"] > 1.25 * presc and abs(run["frac"] - tgt) > 0.05 * tgt:
         return None
     q_int = max(0.0, 1.0 - abs(run["frac"] - tgt) / tgt)
     # The flat term keeps a 10-second sprint's anchor worth claiming against
@@ -817,9 +818,13 @@ def _fit_pace(reps, runs, anchors, segn) -> "tuple[float, float]":
         return 1.0, 0.0
 
     def med(xs):
+        # Lower quartile, not median: a step that contains a skipped block
+        # carries the skip's extra seconds, and with few steps the median
+        # happily adopts it — the slide then justifies itself through the
+        # pace it fitted. The rider's true pace is the SMALLEST stretch the
+        # honest steps show; overruns beyond it are cheap (capped) anyway.
         xs = sorted(xs)
-        h = len(xs) // 2
-        return xs[h] if len(xs) % 2 else 0.5 * (xs[h - 1] + xs[h])
+        return xs[max(0, (len(xs) - 1) // 4)]
 
     cands = [(1.0, med([(b - r) / g for r, b, g in pts])),
              (min(LAP_REST_RATIO_MAX,
@@ -929,6 +934,19 @@ def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
         if not reps or not all_laps:
             return None
         runs = _runs(all_laps)
+        # The rider's own lap edges are evidence the merge must not erase: a
+        # hot final warm-up step flowing into block 1 at the same intensity
+        # merges into one run, and the block's true boundary — the lap press
+        # at its start — vanishes. Both readings are offered; identity picks
+        # whichever fits.
+        merged_keys = {(r["t0"], r["end"]) for r in runs}
+        for lap in all_laps:
+            key = (lap["t0"], lap["t0"] + lap["dur"])
+            if key not in merged_keys:
+                runs.append({"t0": lap["t0"], "dur": lap["dur"],
+                             "end": lap["t0"] + lap["dur"],
+                             "frac": lap["frac"], "pct": lap["pct"]})
+        runs.sort(key=lambda r: (r["t0"], r["end"]))
         bands = _plan_bands(planned_segments, reps)
         rep_starts = {r["start_s"] for r in reps}
         easy_starts = sorted(
@@ -1018,6 +1036,27 @@ def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
             live = [r if k not in banned else {**r, "frac": -1.0}
                     for k, r in enumerate(runs)]
             anchors, _sc = _anchor(reps, live, pace2, bands, segn, holes)
+
+        # Two-readings trial: if every plan-explained anchor is removed and
+        # the alignment re-solves to a materially different reading at nearly
+        # the same score, the session reads two ways — "started the blocks
+        # early" and "rode the openers and quit" explain the same runs — and
+        # whatever is reported would be a coin-flip.
+        expl_js = {j for i, j in enumerate(anchors)
+                   if j is not None and _explained_here(runs[j])}
+        if expl_js:
+            live = [r if k not in expl_js and k not in banned
+                    else {**r, "frac": -1.0} for k, r in enumerate(runs)]
+            alt, alt_sc = _anchor(reps, live, pace2, bands, segn, holes)
+            _b, base_sc = _anchor(reps, [r if k not in banned
+                                         else {**r, "frac": -1.0}
+                                         for k, r in enumerate(runs)],
+                                  pace2, bands, segn, holes)
+            if alt != anchors and alt_sc >= base_sc - 40.0:
+                keep = [j is not None for j in anchors]
+                keep_alt = [j is not None for j in alt]
+                if keep != keep_alt:
+                    return None
 
         placed = [(i, j) for i, j in enumerate(anchors) if j is not None]
         if len(placed) == 1:

@@ -519,6 +519,8 @@ def _normalised_laps(laps, ftp) -> "list[dict] | None":
         return None
     try:
         ftp_f = float(ftp) if ftp else None
+        if ftp_f is not None and not ftp_f > 0:
+            ftp_f = None          # a negative FTP is not a scale, it is noise
     except (TypeError, ValueError):
         ftp_f = None
     out: list[dict] = []
@@ -553,6 +555,8 @@ def _normalised_laps(laps, ftp) -> "list[dict] | None":
             if dur >= LAP_TRIVIAL_LAP_S:
                 return None
             continue                    # a 1 s tap with no power: ignorable
+        if out and t0 < out[-1]["t0"] + out[-1]["dur"] - 1.0:
+            return None           # overlapping or duplicated laps: corrupt
         out.append({"t0": t0, "dur": dur, "frac": frac,
                     "pct": round(frac * 100.0, 1),
                     "work": (str(lap.get("type") or "").strip().upper() == "WORK"
@@ -577,7 +581,7 @@ def _runs(all_laps) -> "list[dict]":
     for lap in all_laps:
         if runs:
             prev = runs[-1]
-            if (lap["t0"] - prev["end"] <= LAP_RUN_MERGE_GAP_S
+            if (0.0 - 1.0 <= lap["t0"] - prev["end"] <= LAP_RUN_MERGE_GAP_S
                     and abs(lap["frac"] - prev["frac"]) <= LAP_RUN_MERGE_FRAC):
                 d = prev["dur"] + lap["dur"]
                 prev["frac"] = (prev["frac"] * prev["dur"]
@@ -1000,6 +1004,15 @@ def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
             gap = l2["t0"] - (l1["t0"] + l1["dur"])
             if gap > 45.0:
                 holes.append((l1["t0"] + l1["dur"], l2["t0"]))
+        span = (all_laps[-1]["t0"] + all_laps[-1]["dur"]) - all_laps[0]["t0"]
+        if holes and span > 0 and (
+                len(holes) > 20
+                or sum(b - a for a, b in holes) > 0.3 * span):
+            # A recording that is mostly holes (work laps only, recoveries
+            # never recorded) frees the alignment to slide across the gaps —
+            # every step is hole-dominated and position stops meaning
+            # anything. Too sparse to grade.
+            return None
 
         anchors, _sc = _anchor(reps, runs, (1.0, 0.0), bands, segn, holes,
                                LAP_DRIFT_PASS_W)
@@ -1143,6 +1156,42 @@ def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
                 < LAP_SHORT_FRAC * float(reps[-1]["dur_s"]))
             if early >= 2 or (early >= 1 and last_bad):
                 return None
+            # The mirror ambiguity needs no stranded run at all: an
+            # unprescribed hard opener in the warm-up, claimed as block 1,
+            # translates every anchor early by one grid step and the LAST
+            # block's absence is the only trace. "Shortened the warm-up and
+            # skipped the last block" produces the identical recording, so
+            # neither reading may be asserted.
+            ds = sorted(runs[j]["t0"] - float(reps[i]["start_s"])
+                        for i, j in enumerate(anchors) if j is not None)
+            med_d = ds[len(ds) // 2] if ds else 0.0
+            # CONSTANT early drift only — a translation shifts every anchor
+            # by the same grid step. Drift that grows block over block is a
+            # session compressing (short blocks, short rests): a different,
+            # legible story.
+            spread = (ds[-1] - ds[0]) if ds else 0.0
+            if med_d < -(30.0 + 0.25 * float(reps[0]["dur_s"])) \
+                    and spread <= max(30.0, 0.5 * float(reps[0]["dur_s"])):
+                if last_bad:
+                    return None
+                # Every block "found", every anchor early by one grid step,
+                # and MORE ride left after the last block than the plan put
+                # there: the surplus is exactly a skipped final block's time.
+                # An unprescribed opener in the warm-up plus a quit produces
+                # this recording; so does a short warm-up with everything
+                # ridden. Nothing in the laps chooses.
+                last_j = max(j for j in anchors if j is not None)
+                deliv_tail = (all_laps[-1]["t0"] + all_laps[-1]["dur"]
+                              - runs[last_j]["end"])
+                plan_end = max(float(seg["start_s"]) + float(seg["dur_s"])
+                               for seg in planned_segments
+                               if seg.get("dur_s"))
+                last_rep = reps[-1]
+                presc_tail = plan_end - (float(last_rep["start_s"])
+                                         + float(last_rep["dur_s"]))
+                if deliv_tail > presc_tail + max(
+                        30.0, 0.5 * float(last_rep["dur_s"])):
+                    return None
 
         placed = [(i, j) for i, j in enumerate(anchors) if j is not None]
         if len(placed) == 1:
@@ -1256,22 +1305,24 @@ def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
             tgt = max(float(rep["target_frac"]), 0.01)
             presc = max(float(rep["dur_s"]), 1.0)
             lo, hi = wins[i]
-            d_i = lo - float(rep["start_s"])
             for lap in all_laps:
                 ov = _overlap(lo, hi, lap["t0"], lap["t0"] + lap["dur"])
                 if ov < max(LAP_TRIVIAL_LAP_S, 0.15 * presc):
                     continue
                 if lap["frac"] >= LAP_BAND_UNDER * tgt:
                     continue
-                mu_rest = _plan_rest_frac(planned_segments, reps,
-                                          lap["t0"] - d_i,
-                                          lap["t0"] + lap["dur"] - d_i)
-                span = max(lap["dur"], presc)
-                mu_with = (presc * tgt
-                           + max(0.0, span - presc) * mu_rest) / span
-                if mu_with - mu_rest < 0.03:
-                    return None       # the two stories are indistinguishable
-                if lap["frac"] >= mu_rest + 0.6 * (mu_with - mu_rest):
+                if lap["dur"] < presc + 30.0:
+                    # A lap the SIZE of the block is the block's own slot,
+                    # already judged by identity — its low intensity is a
+                    # skip, not a forgotten button. Only a lap spanning the
+                    # block AND its surroundings can hide one.
+                    continue
+                # An opaque lap's internal allocation is unknowable: if its
+                # ENERGY covers the block, "rode the block and coasted the
+                # rest" and "skipped the block and rode the rest easy" are
+                # the same number, and neither may be asserted. Only a lap
+                # too dilute to contain the block proves the skip.
+                if lap["frac"] * lap["dur"] >= 0.85 * presc * tgt:
                     return None
 
         # A block called unridden while a run that could have BEEN it sits

@@ -669,7 +669,7 @@ _GRADED_FLOOR = {
     "perfect": 0.80, "all harder": 0.80, "all longer": 0.72,
     "warm-up ramp laps": 0.65, "split lap": 0.80, "all short": 0.80,
     "slow recoveries": 0.80, "paused": 0.80, "short warm-up": 0.72,
-    "stopped early": 0.80, "mid skip (soft)": 0.78, "mid skip (merged)": 0.15,
+    "stopped early": 0.80, "mid skip (soft)": 0.78, "mid skip (merged)": 0.0,
     "long recoveries": 0.75, "quit in warm-up": 0.05, "forgotten lap": 0.0,
 }
 

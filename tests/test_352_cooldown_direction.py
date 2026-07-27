@@ -49,6 +49,94 @@ def test_owner_reported_file_descends():
     root = ET.parse(p).getroot()
     last = list(root.find("workout"))[-1]
     assert last.tag == "Cooldown"
-    assert float(last.get("PowerLow")) == 0.75
+    # v3.7.0 re-pointed these values, not the test's intent. 0.75 FTP is
+    # 186 W at this rider's FTP and sits at or above the first lactate
+    # threshold for many riders — a tempo effort wearing a cooldown's tag.
+    assert float(last.get("PowerLow")) == 0.65
     assert float(last.get("PowerHigh")) == 0.25
-    assert "Cooldown: 8min from 75% to 25% FTP" in (root.findtext("description") or "")
+    assert "Cooldown: 8min from 65% to 25% FTP" in (root.findtext("description") or "")
+
+
+# ── v3.7.0: a cooldown is easy, and never harder than what preceded it ───────
+# The rider's report: after 6x2min VO2max the session finished at 28 % FTP and
+# the "cooldown" ramp began at 75 % — 186 W, a step UP of 117 W onto a rider
+# who was already done. 1647 of 3672 cooldowns did this. These four assertions
+# are the invariant; scripts/fix_cooldowns_v37.py is what established it.
+
+import sys
+sys.path.insert(0, str(WORKOUTS.parent / "scripts"))
+from fix_cooldowns_v37 import (  # noqa: E402
+    CD_START_MAX, CD_END, prev_end_power, _CD_CLAUSE)
+
+
+def _cooldown_files():
+    for p in sorted(WORKOUTS.glob("*.zwo")):
+        try:
+            root = ET.parse(p).getroot()
+        except ET.ParseError:
+            continue
+        w = root.find("workout")
+        if w is None:
+            continue
+        els = list(w)
+        cds = [i for i, e in enumerate(els) if e.tag == "Cooldown"]
+        if not cds:
+            continue
+        yield p, root, els, cds
+
+
+def test_no_cooldown_steps_up_from_the_segment_before_it():
+    """The rider's actual complaint. A segment that RAISES your power is not a
+    cooldown, whatever the tag says — this is the one rule here with no
+    research caveat attached."""
+    bad = []
+    for p, _root, els, cds in _cooldown_files():
+        i = cds[-1]
+        lo = float(els[i].get("PowerLow"))
+        prev = prev_end_power(els, i)
+        if prev is not None and lo > prev + 1e-9:
+            bad.append(f"{p.name}: {prev:.2f} -> {lo:.2f}")
+    assert bad == [], f"{len(bad)} cooldowns step UP (was 1647): {bad[:8]}"
+
+
+def test_cooldowns_are_actually_easy():
+    """Start at or below the top of the clearance-optimal band and end at or
+    below 0.45. Above the first lactate threshold the muscle is still net
+    PRODUCING lactate, so a hot cooldown is worse at the one job a cooldown
+    reliably does (Devlin 2014 PMID 24739289, Menzies 2010 PMID 20544484)."""
+    hot = []
+    for p, _root, els, cds in _cooldown_files():
+        i = cds[-1]
+        lo, hi = float(els[i].get("PowerLow")), float(els[i].get("PowerHigh"))
+        if lo > CD_START_MAX + 1e-9 or hi > CD_END + 1e-9:
+            hot.append(f"{p.name}: {lo:.2f}->{hi:.2f}")
+    assert hot == [], f"{len(hot)} cooldowns too hard (was 1296): {hot[:8]}"
+
+
+def test_exactly_one_cooldown_and_it_is_last():
+    """What makes "the segment before the cooldown" well defined."""
+    bad = []
+    for p, _root, els, cds in _cooldown_files():
+        if len(cds) > 1 or cds[-1] != len(els) - 1:
+            bad.append(p.name)
+    assert bad == [], f"cooldown not the single final segment: {bad[:8]}"
+
+
+def test_the_description_still_tells_the_truth():
+    """The prose is shown in trainer apps and pushed to intervals.icu. A power
+    edit without a prose edit ships a user-visible lie."""
+    bad = []
+    for p, root, els, cds in _cooldown_files():
+        text = root.findtext("description") or ""
+        m = _CD_CLAUSE.search(text)
+        if not m:
+            continue
+        lo, hi = float(els[cds[-1]].get("PowerLow")), float(els[cds[-1]].get("PowerHigh"))
+        if m.group("flat"):
+            ok = abs(lo - hi) < 0.02 and round(hi * 100) == int(m.group("flat"))
+        else:
+            ok = (round(lo * 100) == int(m.group("a"))
+                  and round(hi * 100) == int(m.group("b")))
+        if not ok:
+            bad.append(f"{p.name}: attrs {lo:.2f}->{hi:.2f} vs {m.group(0)!r}")
+    assert bad == [], f"{len(bad)} descriptions disagree with the file: {bad[:5]}"

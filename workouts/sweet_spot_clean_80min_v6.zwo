@@ -2,11 +2,11 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Sweet Spot 2x25min (80min)</name>
-    <description>Warmup: 12min from 50% to 75% FTP | Intervals: 2 x (25min @ 90% / 5min @ 55%) | Cooldown: 8min from 65% to 45% FTP</description>
+    <description>Warmup: 12min from 50% to 75% FTP | Intervals: 2 x (25min @ 90% / 5min @ 55%) | Cooldown: 8min from 55% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="720" PowerLow="0.50" PowerHigh="0.75" pace="0" />
         <IntervalsT Repeat="2" OnDuration="1500" OffDuration="300" OnPower="0.9" OffPower="0.55" pace="0" />
-        <Cooldown Duration="480" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="480" PowerLow="0.55" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

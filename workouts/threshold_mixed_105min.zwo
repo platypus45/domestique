@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Threshold (105min)</name>
-    <description>Warmup: 10min from 50% to 55% FTP | Steady: 20min @ 40% FTP | Steady: 15min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 15min @ 100% FTP | Cooldown: 15min from 55% to 50% FTP</description>
+    <description>Warmup: 10min from 50% to 55% FTP | Steady: 20min @ 40% FTP | Steady: 15min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 1min @ 88% FTP | Steady: 2min @ 73% FTP | Steady: 15min @ 100% FTP | Cooldown: 15min from 55% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="600" PowerLow="0.5" PowerHigh="0.55" pace="0" />
@@ -38,6 +38,6 @@
         <SteadyState Duration="60" Power="0.88" pace="0" />
         <SteadyState Duration="120" Power="0.73" pace="0" />
         <SteadyState Duration="900" Power="1.0" pace="0" />
-        <Cooldown Duration="900" PowerLow="0.55" PowerHigh="0.5" pace="0" />
+        <Cooldown Duration="900" PowerLow="0.55" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

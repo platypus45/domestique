@@ -12,5 +12,5 @@
         <SteadyState Duration="120" Power="0.96" pace="0" />
         <FreeRide Duration="120" FlatRoad="0" />
         <IntervalsT Repeat="6" OnDuration="360" OffDuration="120" OnPower="0.9" OffPower="0.3" pace="0" />
-    <Cooldown Duration="180" PowerLow="0.75" PowerHigh="0.4" /></workout>
+    <Cooldown Duration="180" PowerLow="0.30" PowerHigh="0.30" /></workout>
 </workout_file>

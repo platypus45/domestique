@@ -8,5 +8,5 @@
         <Warmup Duration="600" PowerLow="0.5" PowerHigh="0.75" /><SteadyState Duration="180" Power="1.2" pace="0" Cadence="100" />
         <IntervalsT Repeat="8" OnDuration="60" OffDuration="60" OnPower="0.7" OffPower="1.1" pace="0" Cadence="85" CadenceResting="95" />
         <SteadyState Duration="60" Power="1.2" pace="0" Cadence="100" />
-        <Cooldown Duration="300" PowerLow="0.75" PowerHigh="0.4" /></workout>
+        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.40" /></workout>
 </workout_file>

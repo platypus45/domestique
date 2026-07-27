@@ -2,11 +2,11 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>VO2max 5x5min (60min)</name>
-    <description>Warmup: 10min from 25% to 75% FTP | Intervals: 5 x (5min @ 106% / 3min @ 47%) | Cooldown: 10min from 75% to 25% FTP</description>
+    <description>Warmup: 10min from 25% to 75% FTP | Intervals: 5 x (5min @ 106% / 3min @ 47%) | Cooldown: 10min from 47% to 25% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="600" PowerLow="0.25" PowerHigh="0.75" pace="0" />
         <IntervalsT Repeat="5" OnDuration="300" OffDuration="180" OnPower="1.06" OffPower="0.47" pace="0" />
-        <Cooldown Duration="600" PowerLow="0.75" PowerHigh="0.25" pace="0" />
+        <Cooldown Duration="600" PowerLow="0.47" PowerHigh="0.25" pace="0" />
     </workout>
 </workout_file>

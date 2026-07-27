@@ -17,5 +17,5 @@
         <IntervalsT Repeat="1" OnDuration="60" OffDuration="45" OnPower="0.9" OffPower="0.55" pace="0" Cadence="85" CadenceResting="85" />
         <IntervalsT Repeat="1" OnDuration="120" OffDuration="45" OnPower="0.8" OffPower="0.55" pace="0" Cadence="85" CadenceResting="85" />
         <IntervalsT Repeat="1" OnDuration="180" OffDuration="45" OnPower="0.7" OffPower="0.55" pace="0" Cadence="85" CadenceResting="85" />
-        <Cooldown Duration="350" PowerLow="0.7" PowerHigh="0.4" /></workout>
+        <Cooldown Duration="350" PowerLow="0.55" PowerHigh="0.40" /></workout>
 </workout_file>

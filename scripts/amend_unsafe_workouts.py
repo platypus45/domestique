@@ -85,7 +85,9 @@ def pd_ceiling(dur_s):
 
 # recovery / warmup / cooldown anchors
 WU_LO, WU_HI = 0.50, 0.75          # rule 1 target ramp
-CD_HI, CD_LO = 0.65, 0.40          # rule 2 target ramp
+CD_HI, CD_LO = 0.65, 0.45          # rule 2 target ramp (v3.7.0:
+                                   # end 0.45 — 40 % of LT1 is no
+                                   # better than sitting still)
 REC_CEIL = 0.60                    # rule 4 recovery power ceiling
 WORK_REC_THRESH = 1.20             # rule 4 trigger
 HARD_REC_THRESH = 1.50             # rule 4: needs >=1.0x rest above this

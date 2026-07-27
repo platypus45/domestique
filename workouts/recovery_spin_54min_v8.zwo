@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Recovery (54min)</name>
-    <description>Warmup: 9min from 50% to 80% FTP | Steady: 2min @ 55% FTP | Steady: 1min @ 95% FTP | Steady: 1min @ 100% FTP | Steady: 1min @ 105% FTP | Steady: 7min @ 55% FTP | Steady: 1min 10s @ 65% FTP | Steady: 3min @ 55% FTP | Steady: 1min 10s @ 65% FTP | Steady: 3min @ 55% FTP | Steady: 1min 10s @ 65% FTP | Steady: 3min @ 55% FTP | Steady: 1min 10s @ 65% FTP | Steady: 5min @ 55% FTP | Steady: 1min 10s @ 65% FTP | Steady: 5min @ 55% FTP | Steady: 1min 20s @ 65% FTP | Cooldown: 7min from 65% to 35% FTP</description>
+    <description>Warmup: 9min from 50% to 80% FTP | Steady: 2min @ 55% FTP | Steady: 1min @ 95% FTP | Steady: 1min @ 100% FTP | Steady: 1min @ 105% FTP | Steady: 7min @ 55% FTP | Steady: 1min 10s @ 65% FTP | Steady: 3min @ 55% FTP | Steady: 1min 10s @ 65% FTP | Steady: 3min @ 55% FTP | Steady: 1min 10s @ 65% FTP | Steady: 3min @ 55% FTP | Steady: 1min 10s @ 65% FTP | Steady: 5min @ 55% FTP | Steady: 1min 10s @ 65% FTP | Steady: 5min @ 55% FTP | Steady: 1min 20s @ 65% FTP | Cooldown: 7min from 55% to 35% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="540" PowerLow="0.5" PowerHigh="0.8" pace="0" Cadence="90" />
@@ -34,6 +34,6 @@
         <FreeRide Duration="30" FlatRoad="0" />
         <FreeRide Duration="20" FlatRoad="0" />
         <FreeRide Duration="30" FlatRoad="0" />
-        <Cooldown Duration="420" PowerLow="0.65" PowerHigh="0.35" pace="0" Cadence="90" />
+        <Cooldown Duration="420" PowerLow="0.55" PowerHigh="0.35" pace="0" Cadence="90" />
     </workout>
 </workout_file>

@@ -21,5 +21,5 @@
         <SteadyState Duration="180" Power="0.85" pace="0" Cadence="85" />
         <SteadyState Duration="60" Power="1.05" pace="0" Cadence="100" />
         <SteadyState Duration="30" Power="1.5" pace="0" Cadence="110" />
-        <Cooldown Duration="180" PowerLow="0.75" PowerHigh="0.4" /></workout>
+        <Cooldown Duration="180" PowerLow="0.65" PowerHigh="0.40" /></workout>
 </workout_file>

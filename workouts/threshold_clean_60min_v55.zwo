@@ -2,11 +2,11 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Threshold 4x6min (60min)</name>
-    <description>Warmup: 12min from 50% to 75% FTP | Intervals: 4 x (6min @ 97% / 4min @ 55%) | Cooldown: 8min from 65% to 45% FTP</description>
+    <description>Warmup: 12min from 50% to 75% FTP | Intervals: 4 x (6min @ 97% / 4min @ 55%) | Cooldown: 8min from 55% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="720" PowerLow="0.50" PowerHigh="0.75" pace="0" />
         <IntervalsT Repeat="4" OnDuration="360" OffDuration="240" OnPower="0.97" OffPower="0.55" pace="0" />
-        <Cooldown Duration="480" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="480" PowerLow="0.55" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

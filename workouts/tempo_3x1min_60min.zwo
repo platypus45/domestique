@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Endurance 3x1min (60min)</name>
-    <description>Warmup: 8min from 45% to 75% FTP | Intervals: 3 x (1min @ 118% / 5min @ 67%) | Cooldown: 8min from 95% to 30% FTP</description>
+    <description>Warmup: 8min from 45% to 75% FTP | Intervals: 3 x (1min @ 118% / 5min @ 67%) | Cooldown: 8min from 65% to 30% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="480" PowerLow="0.45" PowerHigh="0.75" pace="0" />
@@ -14,6 +14,6 @@
         <SteadyState Duration="30" Power="1.4" pace="0" />
         <FreeRide Duration="300" FlatRoad="0" />
         <SteadyState Duration="30" Power="1.45" pace="0" />
-        <Cooldown Duration="480" PowerLow="0.95" PowerHigh="0.3" pace="0" />
+        <Cooldown Duration="480" PowerLow="0.65" PowerHigh="0.30" pace="0" />
     </workout>
 </workout_file>

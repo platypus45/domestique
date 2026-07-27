@@ -2,11 +2,11 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Neuromuscular 15s/2min 12x (45min)</name>
-    <description>Warmup: 12min from 50% to 75% FTP | Microintervals: 12 x (15s @ 200% / 1min 45s @ 50%) | Cooldown: 8min 30s from 65% to 45% FTP</description>
+    <description>Warmup: 12min from 50% to 75% FTP | Microintervals: 12 x (15s @ 200% / 1min 45s @ 50%) | Cooldown: 8min 30s from 50% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="750" PowerLow="0.50" PowerHigh="0.75" pace="0" />
         <IntervalsT Repeat="12" OnDuration="15" OffDuration="105" OnPower="2" OffPower="0.5" pace="0" />
-        <Cooldown Duration="510" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="510" PowerLow="0.50" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

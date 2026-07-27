@@ -2,11 +2,11 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Recovery Steady (30min)</name>
-    <description>Warmup: 15min from 45% to 65% FTP | Steady: 5min @ 52% FTP | Cooldown: 10min from 65% to 45% FTP</description>
+    <description>Warmup: 15min from 45% to 65% FTP | Steady: 5min @ 52% FTP | Cooldown: 10min from 52% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="900" PowerLow="0.45" PowerHigh="0.65" pace="0" />
         <SteadyState Duration="300" Power="0.52" pace="0" />
-        <Cooldown Duration="600" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="600" PowerLow="0.52" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

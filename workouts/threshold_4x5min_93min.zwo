@@ -13,5 +13,5 @@
         <SteadyState Duration="300" Power="0.5" pace="0" />
         <IntervalsT Repeat="2" OnDuration="720" OffDuration="480" OnPower="0.81" OffPower="0.5" pace="0" />
         <IntervalsT Repeat="4" OnDuration="300" OffDuration="120" OnPower="0.95" OffPower="0.5" pace="0" />
-    <Cooldown Duration="300" PowerLow="0.75" PowerHigh="0.4" /></workout>
+    <Cooldown Duration="300" PowerLow="0.50" PowerHigh="0.40" /></workout>
 </workout_file>

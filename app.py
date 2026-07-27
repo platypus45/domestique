@@ -8070,7 +8070,11 @@ def _build_climb_zwo(points: list[dict], course_name: str, warmup_min: int = 10)
         duration_sec = max(30, int(dist_km / speed_kmh * 3600))
         segments_xml += f'    <SteadyState Duration="{duration_sec}" Power="{power_pct:.2f}"/>\n'
 
-    segments_xml += '    <Cooldown Duration="300" PowerLow="0.40" PowerHigh="0.60"/>\n'
+    # v3.7.0 — a Cooldown ramps PowerLow -> PowerHigh, so 0.40 -> 0.60 was an
+    # ascending "cooldown": it finished the rider at 60 % FTP. Same defect the
+    # library carried; invisible to the library test because this is generated
+    # into an HTTP response rather than written to workouts/.
+    segments_xml += '    <Cooldown Duration="300" PowerLow="0.60" PowerHigh="0.45"/>\n'
 
     from xml.sax.saxutils import escape as xml_escape
     desc = f"Climb simulation: {course_name}. {total_dist:.1f}km, {total_climb:.0f}m elevation."
@@ -8348,7 +8352,11 @@ def api_climb_zwo(region: str, filename: str, warmup: int = Query(10)):
         segments_xml += f'    <SteadyState Duration="{duration_sec}" Power="{power_pct:.2f}"/>\n'
 
     # Cooldown
-    segments_xml += '    <Cooldown Duration="300" PowerLow="0.40" PowerHigh="0.60"/>\n'
+    # v3.7.0 — a Cooldown ramps PowerLow -> PowerHigh, so 0.40 -> 0.60 was an
+    # ascending "cooldown": it finished the rider at 60 % FTP. Same defect the
+    # library carried; invisible to the library test because this is generated
+    # into an HTTP response rather than written to workouts/.
+    segments_xml += '    <Cooldown Duration="300" PowerLow="0.60" PowerHigh="0.45"/>\n'
 
     from xml.sax.saxutils import escape as xml_escape
     desc = f"Climb simulation: {course_name}. {total_dist:.1f}km, {total_climb:.0f}m elevation."

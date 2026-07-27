@@ -71,8 +71,7 @@ def _emit_intervals(intended_label: str, reps: int, on_s: int, off_s: int,
         f'        <Warmup Duration="{wu}" PowerLow="0.50" PowerHigh="0.75" pace="0" />\n'
         f'        <IntervalsT Repeat="{reps}" OnDuration="{on_s}" OffDuration="{off_s}" '
         f'OnPower="{_fmt_pw(on_pw)}" OffPower="{_fmt_pw(off_pw)}" pace="0" />\n'
-        f'        <Cooldown Duration="{cd}" PowerLow="0.65" PowerHigh="0.45" pace="0" />\n'
-    )
+    ) + _cooldown(cd, off_pw)
     return _wrap(body)
 
 
@@ -101,7 +100,7 @@ def _emit_blocks(reps: int, on_s: int, off_s: int, on_pw: float, off_pw: float,
         if b < n_blocks - 1:
             body += (f'        <SteadyState Duration="{block_rec_s}" '
                      f'Power="{_fmt_pw(0.50)}" pace="0" />\n')  # easy between blocks
-    body += f'        <Cooldown Duration="{cd}" PowerLow="0.65" PowerHigh="0.45" pace="0" />\n'
+    body += _cooldown(cd, off_pw)
     return _wrap(body)
 
 
@@ -123,7 +122,7 @@ def _emit_pyramid(on_list: list, rec_s: int, on_pw: float, off_pw: float,
         body += (f'        <SteadyState Duration="{d}" Power="{_fmt_pw(on_pw)}" pace="0" />\n')
         if i < len(on_list) - 1:
             body += (f'        <SteadyState Duration="{rec_s}" Power="{_fmt_pw(off_pw)}" pace="0" />\n')
-    body += f'        <Cooldown Duration="{cd}" PowerLow="0.65" PowerHigh="0.45" pace="0" />\n'
+    body += _cooldown(cd, off_pw)
     return _wrap(body)
 
 
@@ -169,8 +168,24 @@ def _emit_steady(blocks: list[tuple[int, float]], total_min: int) -> "str | None
     body = f'        <Warmup Duration="{wu}" PowerLow="0.45" PowerHigh="0.65" pace="0" />\n'
     for d, p in blocks:
         body += f'        <SteadyState Duration="{d}" Power="{_fmt_pw(p)}" pace="0" />\n'
-    body += f'        <Cooldown Duration="{cd}" PowerLow="0.60" PowerHigh="0.40" pace="0" />\n'
+    body += _cooldown(cd, off_pw)
     return _wrap(body)
+
+
+# v3.7.0 — shared with scripts/fix_cooldowns_v37.py. A cooldown starts at or
+# below the top of the clearance-optimal band (~0.65 FTP, i.e. 80-100 % of the
+# first lactate threshold; Devlin 2014 PMID 24739289) and never above the power
+# the rider was just held at. Ending at 0.45 keeps the whole ramp above the
+# "no better than sitting still" floor of ~40 % of LT1.
+CD_START_MAX = 0.65
+CD_END = 0.45
+
+
+def _cooldown(cd: int, prev_end: float) -> str:
+    start = min(CD_START_MAX, prev_end)
+    end = min(CD_END, start)
+    return (f'        <Cooldown Duration="{cd}" PowerLow="{start:.2f}" '
+            f'PowerHigh="{end:.2f}" pace="0" />\n')
 
 
 def _wrap(body: str) -> str:

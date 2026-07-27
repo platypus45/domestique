@@ -2,11 +2,11 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Anaerobic 30s/4min 6x (50min)</name>
-    <description>Warmup: 14min from 50% to 75% FTP | Microintervals: 6 x (30s @ 150% / 4min @ 45%) | Cooldown: 9min from 65% to 45% FTP</description>
+    <description>Warmup: 14min from 50% to 75% FTP | Microintervals: 6 x (30s @ 150% / 4min @ 45%) | Cooldown: 9min @ 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="840" PowerLow="0.50" PowerHigh="0.75" pace="0" />
         <IntervalsT Repeat="6" OnDuration="30" OffDuration="240" OnPower="1.5" OffPower="0.45" pace="0" />
-        <Cooldown Duration="540" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="540" PowerLow="0.45" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

@@ -2,11 +2,11 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>SST Short 4x5min (50min)</name>
-    <description>Warmup: 5min ramp from 40% to 85% FTP | Main: 4 x (5min @ 96% / 5min @ 89%) — 40min continuous sweet spot oscillating just below threshold and upper sweet spot | Cooldown: 5min ramp from 75% to 55% FTP</description>
+    <description>Warmup: 5min ramp from 40% to 85% FTP | Main: 4 x (5min @ 96% / 5min @ 89%) — 40min continuous sweet spot oscillating just below threshold and upper sweet spot | Cooldown: 5min ramp from 65% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="300" PowerLow="0.4" PowerHigh="0.85" pace="0" />
         <IntervalsT Repeat="4" OnDuration="300" OffDuration="300" OnPower="0.96" OffPower="0.89" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.75" PowerHigh="0.55" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

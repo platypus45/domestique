@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Over-Under 20s/40s 10x (62min)</name>
-    <description>Warmup: 10min from 40% to 74% FTP | Microintervals: 10 x (20s @ 125% / 40s @ 65%) | Cooldown: 5min from 74% to 35% FTP</description>
+    <description>Warmup: 10min from 40% to 74% FTP | Microintervals: 10 x (20s @ 125% / 40s @ 65%) | Cooldown: 5min from 65% to 35% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="600" PowerLow="0.4" PowerHigh="0.74" pace="0" />
@@ -43,6 +43,6 @@
         <SteadyState Duration="60" Power="1.08" pace="0" />
         <SteadyState Duration="90" Power="0.5" pace="0" />
         <SteadyState Duration="600" Power="0.8" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.74" PowerHigh="0.35" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.35" pace="0" />
     </workout>
 </workout_file>

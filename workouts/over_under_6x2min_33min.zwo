@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Over-Unders 6x2min (33min)</name>
-    <description>Warmup: 5min ramp from 40% to 105% FTP + 2min @ 50% | Main: 2 sets of 3 x (2min over @ 105% / 1min under @ 90-91%), 3min @ 51% between sets — classic over-under lactate shuttling | Cooldown: 5min ramp from 70% to 40% FTP</description>
+    <description>Warmup: 5min ramp from 40% to 105% FTP + 2min @ 50% | Main: 2 sets of 3 x (2min over @ 105% / 1min under @ 90-91%), 3min @ 51% between sets — classic over-under lactate shuttling | Cooldown: 5min ramp from 65% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="300" PowerLow="0.4" PowerHigh="1.05" pace="0" />
@@ -10,6 +10,6 @@
         <IntervalsT Repeat="3" OnDuration="120" OffDuration="60" OnPower="1.05" OffPower="0.9" pace="0" />
         <SteadyState Duration="180" Power="0.51" pace="0" />
         <IntervalsT Repeat="3" OnDuration="120" OffDuration="60" OnPower="1.05" OffPower="0.91" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.7" PowerHigh="0.4" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.40" pace="0" />
     </workout>
 </workout_file>

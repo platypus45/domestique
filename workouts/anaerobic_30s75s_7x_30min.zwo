@@ -2,12 +2,12 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>VO2max 30s/1min 7x (35min)</name>
-    <description>Warmup: 10min ramp from 50% to 60% FTP | Microintervals: 7 x (30s @ 120% / 1min 15s @ 41%) | Cooldown: 5min from 65% to 35% FTP</description>
+    <description>Warmup: 10min ramp from 50% to 60% FTP | Microintervals: 7 x (30s @ 120% / 1min 15s @ 41%) | Cooldown: 5min from 40% to 35% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="600" PowerLow="0.5" PowerHigh="0.6" /><IntervalsT Repeat="7" OnDuration="45" OffDuration="30" OnPower="0.4" OffPower="1.2" pace="0" />
         <SteadyState Duration="255" Power="0.46" pace="0" />
         <IntervalsT Repeat="7" OnDuration="45" OffDuration="15" OnPower="0.75" OffPower="0.4" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.35" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.40" PowerHigh="0.35" pace="0" />
     </workout>
 </workout_file>

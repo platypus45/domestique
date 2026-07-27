@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>VO2max 30s/15s 3x13 (57min)</name>
-    <description>Warmup: 12min from 45% to 75% FTP + 2min @ 55% | Rønnestad 30/15: 3 sets of 13 x (30s @ 110% / 15s @ 50%), 3min @ 55% between sets — the canonical Rønnestad 2020 dose | Pace the bursts so all three sets finish at the same power — accumulate time near 90% VO2max; hotter than ~115% turns the work anaerobic and cuts the stimulus | Cooldown: 8min from 55% to 40% FTP</description>
+    <description>Warmup: 12min from 45% to 75% FTP + 2min @ 55% | Rønnestad 30/15: 3 sets of 13 x (30s @ 110% / 15s @ 50%), 3min @ 55% between sets — the canonical Rønnestad 2020 dose | Pace the bursts so all three sets finish at the same power — accumulate time near 90% VO2max; hotter than ~115% turns the work anaerobic and cuts the stimulus | Cooldown: 8min from 50% to 40% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="720" PowerLow="0.45" PowerHigh="0.75" pace="0" />
@@ -12,6 +12,6 @@
         <IntervalsT Repeat="13" OnDuration="30" OffDuration="15" OnPower="1.10" OffPower="0.5" pace="0" />
         <SteadyState Duration="180" Power="0.55" pace="0" />
         <IntervalsT Repeat="13" OnDuration="30" OffDuration="15" OnPower="1.10" OffPower="0.5" pace="0" />
-        <Cooldown Duration="480" PowerLow="0.55" PowerHigh="0.40" pace="0" />
+        <Cooldown Duration="480" PowerLow="0.50" PowerHigh="0.40" pace="0" />
     </workout>
 </workout_file>

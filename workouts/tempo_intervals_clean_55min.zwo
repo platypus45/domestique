@@ -2,11 +2,11 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Mixed 3x10min (55min)</name>
-    <description>Warmup: 9min 30s from 50% to 75% FTP | Intervals: 3 x (10min @ 85% / 3min @ 55%) | Cooldown: 6min 30s from 65% to 45% FTP</description>
+    <description>Warmup: 9min 30s from 50% to 75% FTP | Intervals: 3 x (10min @ 85% / 3min @ 55%) | Cooldown: 6min 30s from 55% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="570" PowerLow="0.50" PowerHigh="0.75" pace="0" />
         <IntervalsT Repeat="3" OnDuration="600" OffDuration="180" OnPower="0.85" OffPower="0.55" pace="0" />
-        <Cooldown Duration="390" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="390" PowerLow="0.55" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

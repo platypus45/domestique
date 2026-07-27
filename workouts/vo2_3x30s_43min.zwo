@@ -35,5 +35,5 @@
         <SteadyState Duration="60" Power="0.85" pace="0" />
         <SteadyState Duration="60" Power="0.5" pace="0" />
         <SteadyState Duration="60" Power="0.75" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.75" PowerHigh="0.4" /></workout>
+        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.40" /></workout>
 </workout_file>

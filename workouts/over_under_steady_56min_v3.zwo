@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Recovery (56min)</name>
-    <description>Warmup: 6min from 45% to 75% FTP | Steady: 1min @ 50% FTP | Steady: 1min @ 109% FTP | Steady: 2min @ 50% FTP | Steady: 3min @ 67% FTP | Steady: 4min @ 85% FTP | Steady: 3min @ 50% FTP | Steady: 45s @ 105% FTP | Steady: 30s @ 50% FTP | Steady: 2min @ 63% FTP | Steady: 30s @ 50% FTP | Steady: 45s @ 105% FTP | Steady: 30s @ 50% FTP | Steady: 2min @ 63% FTP | Steady: 5min @ 50% FTP | Steady: 1min @ 98% FTP | Steady: 30s @ 50% FTP | Steady: 3min @ 64% FTP | Steady: 30s @ 50% FTP | Steady: 1min @ 98% FTP | Steady: 30s @ 50% FTP | Steady: 3min @ 63% FTP | Steady: 4min @ 50% FTP | Steady: 4min @ 63% FTP | Steady: 2min @ 50% FTP | Cooldown: 5min from 63% to 45% FTP</description>
+    <description>Warmup: 6min from 45% to 75% FTP | Steady: 1min @ 50% FTP | Steady: 1min @ 109% FTP | Steady: 2min @ 50% FTP | Steady: 3min @ 67% FTP | Steady: 4min @ 85% FTP | Steady: 3min @ 50% FTP | Steady: 45s @ 105% FTP | Steady: 30s @ 50% FTP | Steady: 2min @ 63% FTP | Steady: 30s @ 50% FTP | Steady: 45s @ 105% FTP | Steady: 30s @ 50% FTP | Steady: 2min @ 63% FTP | Steady: 5min @ 50% FTP | Steady: 1min @ 98% FTP | Steady: 30s @ 50% FTP | Steady: 3min @ 64% FTP | Steady: 30s @ 50% FTP | Steady: 1min @ 98% FTP | Steady: 30s @ 50% FTP | Steady: 3min @ 63% FTP | Steady: 4min @ 50% FTP | Steady: 4min @ 63% FTP | Steady: 2min @ 50% FTP | Cooldown: 5min from 50% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="360" PowerLow="0.45" PowerHigh="0.75" pace="0" />
@@ -32,6 +32,6 @@
         <SteadyState Duration="240" Power="0.63" pace="0" />
         <SteadyState Duration="60" Power="0.5" pace="0" />
         <SteadyState Duration="60" Power="0.5" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.63" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.50" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

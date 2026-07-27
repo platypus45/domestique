@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Neuromuscular 4x30s (144min)</name>
-    <description>Warmup: 35min from 55% to 72% FTP | Intervals: 4 x (30s @ 160% / 1min 30s @ 72%) | Cooldown: 8min from 75% to 60% FTP</description>
+    <description>Warmup: 35min from 55% to 72% FTP | Intervals: 4 x (30s @ 160% / 1min 30s @ 72%) | Cooldown: 8min from 65% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="2100" PowerLow="0.55" PowerHigh="0.72" pace="0" />
@@ -19,6 +19,6 @@
         <SteadyState Duration="1080" Power="0.95" pace="0" />
         <SteadyState Duration="600" Power="0.72" pace="0" />
         <IntervalsT Repeat="4" OnDuration="30" OffDuration="90" OnPower="1.6" OffPower="0.72" pace="0" />
-        <Cooldown Duration="480" PowerLow="0.75" PowerHigh="0.6" pace="0" />
+        <Cooldown Duration="480" PowerLow="0.65" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

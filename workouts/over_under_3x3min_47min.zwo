@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Over-Under 30s/3min 6x (47min)</name>
-    <description>Microintervals: 6 x (30s @ 113% / 3min @ 83%) | Cooldown: 5min from 70% to 45% FTP</description>
+    <description>Microintervals: 6 x (30s @ 113% / 3min @ 83%) | Cooldown: 5min from 65% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <SteadyState Duration="180" Power="0.5" pace="0" />
@@ -23,6 +23,6 @@
         <Ramp Duration="180" PowerLow="0.76" PowerHigh="0.9" pace="0" />
         <Ramp Duration="30" PowerLow="1.06" PowerHigh="1.2" pace="0" />
         <Ramp Duration="180" PowerLow="0.76" PowerHigh="0.9" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.7" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

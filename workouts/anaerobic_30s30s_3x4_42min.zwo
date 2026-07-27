@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Anaerobic 30s/30s 3x4 (42min)</name>
-    <description>Warmup: 7min ramp from 45% to 75% FTP, 3 x 30s fast-pedal drill @ 82%, primer 1min @ 88% + 1min @ 102% | Supramaximal microintervals: 3 sets x 4 x (30s @ 138% / 30s @ 50%), 4min 30s between sets | Cooldown: 5min from 65% to 45% FTP</description>
+    <description>Warmup: 7min ramp from 45% to 75% FTP, 3 x 30s fast-pedal drill @ 82%, primer 1min @ 88% + 1min @ 102% | Supramaximal microintervals: 3 sets x 4 x (30s @ 138% / 30s @ 50%), 4min 30s between sets | Cooldown: 5min from 50% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="420" PowerLow="0.45" PowerHigh="0.75" pace="0" />
@@ -22,6 +22,6 @@
         <IntervalsT Repeat="4" OnDuration="30" OffDuration="30" OnPower="1.38" OffPower="0.5" pace="0" Cadence="95" CadenceResting="90" />
         <SteadyState Duration="270" Power="0.45" pace="0" />
         <IntervalsT Repeat="4" OnDuration="30" OffDuration="30" OnPower="1.38" OffPower="0.5" pace="0" Cadence="95" CadenceResting="90" />
-        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.50" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

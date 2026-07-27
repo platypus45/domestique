@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Anaerobic 2min 3x (41min)</name>
-    <description>Warmup: 7min ramp from 45% to 75% FTP, 3 x 30s fast-pedal drill @ 82%, primer 1min @ 88% + 1min @ 102% | Sustained supra-threshold: 3 x (2min @ 132% / 6min 30s @ 45%) | Cooldown: 6min from 70% to 45% FTP</description>
+    <description>Warmup: 7min ramp from 45% to 75% FTP, 3 x 30s fast-pedal drill @ 82%, primer 1min @ 88% + 1min @ 102% | Sustained supra-threshold: 3 x (2min @ 132% / 6min 30s @ 45%) | Cooldown: 6min from 65% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="420" PowerLow="0.45" PowerHigh="0.75" pace="0" />
@@ -22,6 +22,6 @@
         <SteadyState Duration="120" Power="1.32" pace="0" />
         <SteadyState Duration="390" Power="0.45" pace="0" />
         <SteadyState Duration="120" Power="1.32" pace="0" />
-        <Cooldown Duration="360" PowerLow="0.7" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="360" PowerLow="0.65" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

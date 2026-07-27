@@ -2,10 +2,10 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Mixed 5x5min (53min)</name>
-    <description>Warmup: 8min ramp from 50% to 75% FTP | Intervals: 5 x (5min @ 85% / 3min @ 55%) | Cooldown: 5min from 65% to 45% FTP</description>
+    <description>Warmup: 8min ramp from 50% to 75% FTP | Intervals: 5 x (5min @ 85% / 3min @ 55%) | Cooldown: 5min from 55% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="480" PowerLow="0.5" PowerHigh="0.75" /><IntervalsT Repeat="5" OnDuration="300" OffDuration="180" OnPower="0.85" OffPower="0.55" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.45" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.55" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

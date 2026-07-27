@@ -24,5 +24,5 @@
         <IntervalsT Repeat="1" OnDuration="20" OffDuration="40" OnPower="1.3" OffPower="0.6" pace="0" />
         <IntervalsT Repeat="1" OnDuration="20" OffDuration="40" OnPower="1.3" OffPower="0.6" pace="0" />
         <IntervalsT Repeat="1" OnDuration="20" OffDuration="40" OnPower="1.3" OffPower="0.6" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.75" PowerHigh="0.4" /></workout>
+        <Cooldown Duration="300" PowerLow="0.60" PowerHigh="0.40" /></workout>
 </workout_file>

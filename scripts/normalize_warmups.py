@@ -180,9 +180,14 @@ def process(path: str, classes: dict, apply: bool):
     if cool_ok:
         new_children.extend(els[n - tail:] if tail else [])
     else:
-        start = min(max(last_p, 0.55), cap)
+        # v3.7.0 — never above the power the rider was just held at. The old
+        # `max(last_p, 0.55)` raised the floor to 55 % even for a rider
+        # finishing at 28 %, which is the step-up defect this release removed
+        # from the library; rebuilding it here would silently restore it.
+        start = min(last_p, cap)
         cd_el = ET.Element("Cooldown", {
-            "Duration": str(cool_need), "PowerLow": _fmt(start), "PowerHigh": "0.4"})
+            "Duration": str(cool_need), "PowerLow": _fmt(start),
+            "PowerHigh": _fmt(min(0.45, start))})
         new_children.append(cd_el)
 
     # Snap the new TOTAL to a whole minute by nudging the ramp we added (cooldown

@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Anaerobic 15s/45s 6x (45min)</name>
-    <description>Microintervals: 6 x (15s @ 140% / 45s @ 55%) | Cooldown: 5min from 65% to 50% FTP</description>
+    <description>Microintervals: 6 x (15s @ 140% / 45s @ 55%) | Cooldown: 5min from 55% to 45% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <SteadyState Duration="180" Power="0.5" pace="0" />
@@ -19,6 +19,6 @@
         <IntervalsT Repeat="3" OnDuration="15" OffDuration="45" OnPower="1.4" OffPower="0.55" pace="0" />
         <SteadyState Duration="180" Power="0.55" pace="0" />
         <IntervalsT Repeat="3" OnDuration="15" OffDuration="45" OnPower="1.4" OffPower="0.55" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.5" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.55" PowerHigh="0.45" pace="0" />
     </workout>
 </workout_file>

@@ -602,7 +602,8 @@ def detect_microinterval_pattern(power: list[float]) -> tuple[bool, int]:
     return is_micro, cycle_count
 
 
-def detect_ftp_test(power: list[float], z6_z7_s: int = 0, sprint_count: int = 0) -> tuple[bool, str]:
+def detect_ftp_test(power: list[float], z6_z7_s: int = 0, sprint_count: int = 0,
+                    cooldown_s: int = 0) -> tuple[bool, str]:
     """Return (is_ftp_test, subtype).
 
     Two patterns:
@@ -658,8 +659,18 @@ def detect_ftp_test(power: list[float], z6_z7_s: int = 0, sprint_count: int = 0)
                 run_end = steps[j][0] + steps[j][1]
                 if run >= DOSE_FTP_TEST_RAMP_STEPS and peak >= DOSE_FTP_TEST_RAMP_PEAK_FRAC:
                     # To-failure: nothing but recovery (≤60% / FreeRide)
-                    # after the ascending chain's last step.
-                    if all(p < 0 or p <= 0.60 for p in power[run_end:]):
+                    # after the ascending chain's last step — and the
+                    # PRESCRIBED COOLDOWN IS NOT EVIDENCE OF FAILURE. Every
+                    # workout ends with an easy ramp; reading it as the
+                    # collapse after a maximal effort turned six ordinary
+                    # interval sessions into "FTP tests" the moment their
+                    # cooldowns were eased to 0.60. The tail is what remains
+                    # after the cooldown, and an EMPTY tail fails: a ramp
+                    # that runs straight into the cooldown was never ridden
+                    # to failure.
+                    tail = power[run_end:len(power) - max(0, cooldown_s)]
+                    if (len(tail) >= 60
+                            and all(p < 0 or p <= 0.60 for p in tail)):
                         return True, "ramp"
             else:
                 run = 1
@@ -747,7 +758,7 @@ def detect_ftp_test(power: list[float], z6_z7_s: int = 0, sprint_count: int = 0)
     return False, ""
 
 
-def extract_features(power: list[float]) -> dict:
+def extract_features(power: list[float], cooldown_s: int = 0) -> dict:
     """Compute zone times, peak metrics, and structural detectors."""
     duration_s = len(power)
     valid = [p for p in power if p >= 0]
@@ -790,6 +801,7 @@ def extract_features(power: list[float]) -> dict:
     # sustained ≥92% block.
     is_ftp_test, ftp_subtype = detect_ftp_test(
         power, z6_z7_s=z_sec["z6"] + z_sec["z7"], sprint_count=len(sprint_segs),
+        cooldown_s=cooldown_s,
     )
 
     def pct(s: int) -> float:
@@ -1332,9 +1344,42 @@ def _peak_band_features(power: list[float], segments: list[dict]) -> dict:
     }
 
 
+def _work_zone_seconds(power: list[float], segments: list[dict]) -> dict:
+    """Time-in-zone over the WORK portion only — warmup and cooldown excluded.
+
+    v3.7.0. What a workout IS must not depend on how its warmup and cooldown
+    are prescribed. Whole-ride zone dominance made cooldown power a
+    classification input: easing every cooldown from 0.65 to 0.60 FTP moves
+    those seconds from z2 to z1, z1 overtakes z2, and 49 files change class —
+    25 real training sessions relabelled ``recovery`` and routed onto recovery
+    days, five ``threshold`` files becoming ``vo2max``. The stimulus did not
+    change; only the ramp home did.
+    """
+    z: dict[str, int] = {f"z{i}": 0 for i in range(1, 8)}
+    t = 0
+    for seg in segments:
+        dur = int(seg.get("duration_s") or 0)
+        if dur <= 0:
+            continue
+        if seg.get("kind") not in ("warmup", "cooldown"):
+            for p in power[t:t + dur]:
+                if p >= 0:
+                    z[_zone_for_power(p)] += 1
+        t += dur
+    if not any(z.values()):
+        # No labelled segments (or all of them warmup/cooldown): fall back to
+        # the whole ride rather than declaring the workout zoneless.
+        for p in power:
+            if p >= 0:
+                z[_zone_for_power(p)] += 1
+    return z
+
+
 def extract_features_v104(power: list[float], segments: list[dict]) -> dict:
     """Compute legacy + v1.0.4 features in one merged dict."""
-    legacy = extract_features(power)
+    legacy = extract_features(power, cooldown_s=sum(
+        int(sg.get("duration_s") or 0) for sg in segments
+        if sg.get("kind") == "cooldown"))
     ladder = detect_ladder(segments)
     peak = _peak_band_features(power, segments)
     legacy.update({
@@ -1352,6 +1397,7 @@ def extract_features_v104(power: list[float], segments: list[dict]) -> dict:
         "longest_z4plus_block_s": peak["longest_z4plus_block_s"],
         "z4plus_in_work_pct": peak["z4plus_in_work_pct"],
         "work_dur_s": peak["work_dur_s"],
+        "z_seconds_work": _work_zone_seconds(power, segments),
     })
     return legacy
 

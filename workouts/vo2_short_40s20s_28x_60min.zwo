@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>VO2 Short 40s/20s 28x (64min)</name>
-    <description>Warmup: 10min ramp from 50% to 75% FTP | Microintervals: 28 x (40s @ 117% / 20s @ 50%) | Cooldown: 5min 15s from 70% to 35% FTP</description>
+    <description>Warmup: 10min ramp from 50% to 75% FTP | Microintervals: 28 x (40s @ 117% / 20s @ 50%) | Cooldown: 5min 15s from 50% to 35% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="600" PowerLow="0.5" PowerHigh="0.75" /><IntervalsT Repeat="5" OnDuration="15" OffDuration="30" OnPower="1.3" OffPower="0.5" pace="0" />
@@ -14,6 +14,6 @@
         <IntervalsT Repeat="6" OnDuration="40" OffDuration="20" OnPower="1.17" OffPower="0.5" pace="0" />
         <SteadyState Duration="300" Power="0.6" pace="0" />
         <IntervalsT Repeat="4" OnDuration="40" OffDuration="20" OnPower="1.17" OffPower="0.5" pace="0" />
-        <Cooldown Duration="315" PowerLow="0.7" PowerHigh="0.35" pace="0" />
+        <Cooldown Duration="315" PowerLow="0.50" PowerHigh="0.35" pace="0" />
     </workout>
 </workout_file>

@@ -2,7 +2,7 @@
 <workout_file>
     <author>Domestique Library</author>
     <name>Neuromuscular 30s/3-4min 7x (46min)</name>
-    <description>Warmup: 10min ramp from 50% to 75% FTP | Microintervals: 7 x (30s @ 205% / 3-4min @ 50%) | Cooldown: 5min from 70% to 30% FTP</description>
+    <description>Warmup: 10min ramp from 50% to 75% FTP | Microintervals: 7 x (30s @ 205% / 3-4min @ 50%) | Cooldown: 5min from 50% to 30% FTP</description>
     <sportType>bike</sportType>
     <workout>
         <Warmup Duration="615" PowerLow="0.5" PowerHigh="0.75" /><SteadyState Duration="30" Power="2.05" pace="0" />
@@ -19,6 +19,6 @@
         <SteadyState Duration="200" Power="0.5" pace="0" />
         <SteadyState Duration="30" Power="2.05" pace="0" />
         <SteadyState Duration="195" Power="0.5" pace="0" />
-        <Cooldown Duration="300" PowerLow="0.7" PowerHigh="0.3" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.50" PowerHigh="0.30" pace="0" />
     </workout>
 </workout_file>

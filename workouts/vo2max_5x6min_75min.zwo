@@ -19,5 +19,5 @@
         <SteadyState Duration="360" Power="1.10" />
         <FreeRide Duration="300" FlatRoad="0" />
         <SteadyState Duration="360" Power="1.10" />
-    <Cooldown Duration="300" PowerLow="0.75" PowerHigh="0.4" /></workout>
+    <Cooldown Duration="300" PowerLow="0.65" PowerHigh="0.40" /></workout>
 </workout_file>

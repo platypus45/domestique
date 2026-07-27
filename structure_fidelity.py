@@ -614,7 +614,7 @@ def _pairing(rep, run) -> "float | None":
     # long is the signature of the block smeared with a neighbour (a skip
     # merged into a hot leg, a short drill glued to its recovery), whose mix
     # can land anywhere in the admissibility band.
-    if run["dur"] > 1.25 * presc and abs(run["frac"] - tgt) > 0.05 * tgt:
+    if run["dur"] > 1.25 * presc and abs(run["frac"] - tgt) > 0.04 * tgt:
         return None
     # Intensity similarity is STEEP: at 15 % off the block's target a run is
     # worth almost nothing as that block. The gentle slope let a session's
@@ -1122,6 +1122,27 @@ def score_blocks(planned_segments, laps, ftp=None) -> "dict | None":
                 keep_alt = [j is not None for j in alt]
                 if keep != keep_alt:
                     return None
+
+        # Two or more unclaimed could-be-block runs BEFORE the first anchor:
+        # the whole reading may be the same session translated one grid step
+        # — "on schedule, quit early" over "started early, finished" — and on
+        # a uniform grid the recording does not choose between them.
+        placed_js = sorted(j for j in anchors if j is not None)
+        if placed_js:
+            def _strandable(run):
+                if not any(_pairing(rep, run) is not None for rep in reps):
+                    return False
+                return not _explained_here(run)
+            early = sum(1 for j2 in range(placed_js[0])
+                        if j2 not in banned and _strandable(runs[j2]))
+            # One stranded candidate in front plus a missing or short LAST
+            # block is the exact signature of the translation: the same runs
+            # read one grid step later. Either story fits; neither is safe.
+            last_bad = anchors[-1] is None or (
+                runs[anchors[-1]]["dur"]
+                < LAP_SHORT_FRAC * float(reps[-1]["dur_s"]))
+            if early >= 2 or (early >= 1 and last_bad):
+                return None
 
         placed = [(i, j) for i, j in enumerate(anchors) if j is not None]
         if len(placed) == 1:

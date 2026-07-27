@@ -33,7 +33,9 @@ cask "domestique" do
     strategy :github_latest
   end
 
-  depends_on macos: ">= :big_sur"
+  # Homebrew 6 deprecated the string-comparison form; a bare symbol already
+  # means "this version or newer", which is what ">= :big_sur" meant.
+  depends_on macos: :big_sur
 
   app "Domestique.app"
 

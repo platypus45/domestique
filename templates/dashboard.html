@@ -556,6 +556,40 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
   font-size: 11px; font-weight: 600; color: var(--accent);
   flex: 0 0 auto; white-space: nowrap;
 }
+/* v3.7.1 — COLLAPSED, this bar is the only way back to the goal, event date
+   and weekly hours, and it read as a muted divider: same surface as the card
+   behind it, 12px uppercase, and a 13px chevron. People did not know it
+   opened. Expanded it stays quiet (the panel below it is the content); it is
+   only the collapsed state that has to advertise itself. */
+.planfold-bar[aria-expanded="false"] {
+  background: var(--accent); border-color: var(--accent);
+  padding: 14px 15px;
+}
+.planfold-bar[aria-expanded="false"] .planfold-title {
+  font-size: 14px; letter-spacing: .6px; color: #fff;
+}
+.planfold-bar[aria-expanded="false"] .planfold-chev {
+  font-size: 16px; color: #fff;
+}
+.planfold-bar[aria-expanded="false"] .planfold-hint {
+  font-size: 12px; color: #fff;
+  border: 1px solid rgba(255,255,255,0.55); border-radius: 999px;
+  padding: 2px 9px;
+}
+/* Hover must still change something once the collapsed bar is already
+   accent-coloured, or it looks inert. */
+.planfold-bar[aria-expanded="false"]:hover { filter: brightness(1.12); }
+@media (prefers-reduced-motion: no-preference) {
+  /* One slow pulse on the border only — enough to catch the eye without the
+     jitter of an animated background. */
+  .planfold-bar[aria-expanded="false"] {
+    animation: planfoldNudge 2.4s ease-in-out 3;
+  }
+}
+@keyframes planfoldNudge {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59,130,246,0.0); }
+  50%      { box-shadow: 0 0 0 4px rgba(59,130,246,0.28); }
+}
 #plan-config-body { margin-top: 14px; }
 #plan-config-body[hidden] { display: none; }
 /* Collapsed, the card must shrink to the bar — otherwise the g2 grid stretches

@@ -1355,8 +1355,16 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
 /* v1.8.9 Bug 5 — global chevron marker for every <details> summary.
    Replaces the native triangle (which is invisible on some themes / Safari).
    Rotates 90° when the panel is open. */
-details > summary { position: relative; padding-left: 18px; cursor: pointer; }
-details > summary::before { content: "\25B6"; position: absolute; left: 4px; transition: transform 0.15s; color: var(--text2); }
+/* v3.7.1 — `list-style: none` is what actually suppresses the native
+   disclosure triangle. ::-webkit-details-marker is a legacy pseudo the
+   current engine no longer honours and ::marker { content: "" } does not
+   remove the marker box, so BOTH the native triangle and the ::before one
+   rendered: "How your plan updates" showed two arrows side by side.
+   The glyph is U+25B8 (SMALL right-pointing triangle) to match
+   .planfold-chev's U+25BE at the same 13px — U+25B6 is a noticeably larger
+   glyph, which is why the two collapsers looked different sizes. */
+details > summary { position: relative; padding-left: 18px; cursor: pointer; list-style: none; }
+details > summary::before { content: "\25B8"; position: absolute; left: 4px; font-size: 13px; line-height: inherit; transition: transform 0.15s; color: var(--text2); }
 details[open] > summary::before { transform: rotate(90deg); }
 details > summary::-webkit-details-marker { display: none; }
 details > summary::marker { content: ""; }
@@ -16940,6 +16948,12 @@ async function loadWeeklyCalendar() {
         ? `<div style="font-size:8px;color:#60a5fa;font-style:italic;margin-top:2px;">moved</div>`
         : '';
 
+      // v3.7.1 — key the click by DATE, not by an index into
+      // window._weekPlanSessions. That global is reassigned from four places
+      // (the home calendar, the today-adjustment synth, the week grid), so a
+      // row rendered against one week could resolve into another week's
+      // array — the rider clicked a VO2max card and got the row above it,
+      // a different day's tempo session, with no sign anything was wrong.
       const sIdx = _sessIdxByDay.get(s.day);
       const draggable = (s.session_type !== 'rest' && rawStatus === 'pending') ? 'true' : 'false';
       html += `<div class="${cls}" data-day="${s.day}" data-session-type="${s.session_type}" data-status="${rawStatus}"
@@ -16949,7 +16963,7 @@ async function loadWeeklyCalendar() {
         ondragleave="onPlanDragLeave(event)"
         ondrop="onPlanDrop(event,'${s.day}')"
         style="cursor:pointer;position:relative;${dismissedStyle}"
-        onclick="openDayWorkout(${sIdx})">
+        onclick="openDayWorkout(${sIdx}, '${s.day}')">
         ${statusBadge}
         ${dragHandle}
         ${undismissBtn}
@@ -18310,8 +18324,25 @@ function dayModalTssStat(session) {
   return `<div class="metric"><div class="mv">${dispTss}</div><div class="ml">TSS</div>${slotNote}</div>`;
 }
 
-async function openDayWorkout(sessionIdx) {
+async function openDayWorkout(sessionIdx, day) {
   let session = window._weekPlanSessions?.[sessionIdx];
+  // v3.7.1 — the DATE wins whenever the caller supplies one. The index is a
+  // position in a global that other renders overwrite, so it can silently
+  // address a different week; the date cannot. Callers that still pass only
+  // an index keep working unchanged.
+  if (day) {
+    let found = (window._weekPlanSessions || []).find(s => s && s.day === day);
+    if (!found) {
+      // The global belongs to another week — recover the right one and adopt
+      // it, so the modal's own actions (test switch, swap, rematch) operate
+      // on the week the rider is actually looking at.
+      for (const wk of (window._calData?.weeks || [])) {
+        const hit = (wk.sessions || []).find(s => s && s.day === day);
+        if (hit) { window._weekPlanSessions = wk.sessions; found = hit; break; }
+      }
+    }
+    if (found) session = found;
+  }
   if (!session || session.session_type === 'rest') return;
 
   // 3.4.1 M3 — when TODAY carries a pending live adjustment, render the

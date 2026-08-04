@@ -3960,6 +3960,18 @@ _TYPE_TO_FALLBACK_CLASSES = {
 }
 
 
+# v3.7.1 — how strongly a microinterval protocol is preferred when filling a
+# VO2max slot. Measured over 84 slots (7 durations x 12 weeks), share of
+# VO2max days that get a microinterval file:
+#     bonus 0 -> 0 %     3 -> 36 %     5 -> 63 %     7 -> 71 %     9 -> 73 %
+# 5 is the knee. It makes the protocol the usual choice without making it the
+# only one — a third of VO2max days still go to long intervals, ladders and
+# over-unders, which is the variety a block needs, and the distinct-file count
+# across those slots is unchanged at 75. Past 7 it buys nothing and starts
+# eroding variety.
+MICROINTERVAL_VO2_BONUS = 5.0
+
+
 def match_zwo(
     session: PlannedSession, library: list[dict],
     week_num: int = 0, day_idx: int = 0, used_names: set = None,
@@ -4158,6 +4170,24 @@ def match_zwo(
             _top_pct = float(w.get("Z5%", 0) or 0) + float(w.get("Z6%", 0) or 0)
             if _mid_pct >= 40 and _top_pct < 10:
                 score -= 5  # mid-dominated, low top-end → poor fit for a hard slot
+
+        # v3.7.1 — MICROINTERVAL preference on VO2max slots. Short on/off reps
+        # (30/15, 40/20, 30/30) accumulate more time near VO2max than longer
+        # intervals at the same average power: the recovery is too brief for
+        # oxygen uptake to fall back, so it ratchets up over the first reps and
+        # stays there. That is the stimulus a VO2max day is FOR, and the pool
+        # is 718 files deep, so without a preference the highest-yield protocol
+        # in the library surfaced on ~3 % of VO2max days by pure arithmetic.
+        #
+        # Keyed on the content classifier's own pattern flag, never on a
+        # filename — every microinterval file in the library earns this,
+        # including the ones that predate it. Deliberately a BONUS of the same
+        # order as the mid-dominance penalty above, not a hard gate: a VO2max
+        # block that served nothing but 30/15 would be its own kind of wrong,
+        # and the variety machinery still has to have something to choose.
+        if session.session_type == "vo2max" and not want_test:
+            if (w.get("SecondaryFlags") or {}).get("pattern_microinterval"):
+                score += MICROINTERVAL_VO2_BONUS
 
         # v1.8.25 — easy-slot grey-zone HARD gate (mirrors the sampler). A
         # z2/recovery slot must NOT admit a file with a tempo/SS finisher

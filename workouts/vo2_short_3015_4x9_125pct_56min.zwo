@@ -1,0 +1,32 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Rønnestad 30/15 VO2max — 4x9 @ 125% (56 min)</name>
+    <description>4 series of 9 x (30s @ 125% FTP / 15s easy), 3 min easy between series. The hard end of the family. 125% FTP would be anaerobic if you held it, but a 30-second rep is too short to be limited by anaerobic capacity and the 15 s recovery is too short for oxygen uptake to fall — so this is still VO2max work, which is why it carries 9 reps per series rather than thirteen. Fresh legs only. The percentage is a STARTING POINT, not the protocol: the source studies prescribed no percentage at all — ride the highest power you can repeat in the LAST series and adjust between series. RPE 16-18. A session you fade through trains fading. Warmup: 12min from 45% to 80% FTP | Microintervals: 4 x 9 x (30s @ 125% / 15s @ 62%) | Cooldown: 8min from 60% to 45% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="720" PowerLow="0.45" PowerHigh="0.80" pace="0" Cadence="90" />
+        <IntervalsT Repeat="9" OnDuration="30" OffDuration="15" OnPower="1.25" OffPower="0.62" pace="0" Cadence="100" CadenceResting="85">
+            <textevent timeoffset="0" message="Series 1 of 4 — 9 x 30/15. Settle on a power you can repeat to the end." />
+        </IntervalsT>
+        <SteadyState Duration="180" Power="0.62" pace="0" Cadence="90">
+            <textevent timeoffset="0" message="Easy 3 min — spin, stay rolling." />
+        </SteadyState>
+        <IntervalsT Repeat="9" OnDuration="30" OffDuration="15" OnPower="1.25" OffPower="0.62" pace="0" Cadence="100" CadenceResting="85">
+            <textevent timeoffset="0" message="Series 2 of 4 — 9 x 30/15. Same power as series 1." />
+        </IntervalsT>
+        <SteadyState Duration="180" Power="0.62" pace="0" Cadence="90">
+            <textevent timeoffset="0" message="Easy 3 min — spin, stay rolling." />
+        </SteadyState>
+        <IntervalsT Repeat="9" OnDuration="30" OffDuration="15" OnPower="1.25" OffPower="0.62" pace="0" Cadence="100" CadenceResting="85">
+            <textevent timeoffset="0" message="Series 3 of 4 — 9 x 30/15. Same power as series 1." />
+        </IntervalsT>
+        <SteadyState Duration="180" Power="0.62" pace="0" Cadence="90">
+            <textevent timeoffset="0" message="Easy 3 min — spin, stay rolling." />
+        </SteadyState>
+        <IntervalsT Repeat="9" OnDuration="30" OffDuration="15" OnPower="1.25" OffPower="0.62" pace="0" Cadence="100" CadenceResting="85">
+            <textevent timeoffset="0" message="Series 4 of 4 — 9 x 30/15. Same power as series 1." />
+        </IntervalsT>
+        <Cooldown Duration="480" PowerLow="0.60" PowerHigh="0.45" pace="0" Cadence="90" />
+    </workout>
+</workout_file>

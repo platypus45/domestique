@@ -230,9 +230,15 @@ chmod +x "$APPDIR/AppRun"
 # 7. Assert the graphics stack really is gone. Step 4 removes what PyInstaller
 # collects today; this catches the day it starts collecting something new.
 echo "[7/9] Asserting no bundled graphics/runtime libraries..."
-LEAKED="$(find "$APPDIR" -type f \( -name 'libGL*' -o -name 'libEGL*' \
-    -o -name 'libdrm*' -o -name 'libgbm*' -o -name 'libstdc++*' \
-    -o -name 'libgcc_s*' \) 2>/dev/null || true)"
+# Match real system SONAMEs (libfoo.so.N), not any file whose name merely
+# starts with the same letters. The greedy globs flagged
+# PySide6/Qt/plugins/wayland-graphics-integration-client/libdrm-egl-server.so
+# — a Qt plugin that happens to be called libdrm-egl-server, not the system
+# libdrm.so.2 this gate exists to keep out.
+LEAKED="$(find "$APPDIR" -type f \( -name 'libGL.so.*' -o -name 'libGLX.so.*' \
+    -o -name 'libEGL.so.*' -o -name 'libdrm.so.*' -o -name 'libgbm.so.*' \
+    -o -name 'libstdc++.so.*' \
+    -o -name 'libgcc_s.so.*' \) 2>/dev/null || true)"
 if [ -n "$LEAKED" ]; then
     echo "✗ FATAL: bundled libraries that must come from the host:" >&2
     echo "$LEAKED" >&2

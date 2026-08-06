@@ -1511,6 +1511,14 @@ class Goal:
     # GOAL_CLASS_EMPHASIS profiles via CONTINUOUS_FOCUS_EMPHASIS at the
     # sampler seam; ignored by every other goal_type.
     focus: str = "both"
+    # v3.7.1 — VO2max sessions restricted to the microinterval protocol
+    # (short on/off reps: 30/15, 40/20, 30/30). Default OFF: the evidence
+    # supports microintervals as an excellent VO2max stimulus, not as the
+    # only defensible one, so the rider opts in rather than out. Applied as
+    # a HARD filter on VO2max slots in match_zwo — with a fallback, because
+    # a plan that cannot fill a day is worse than one that fills it with a
+    # long interval.
+    vo2_microintervals_only: bool = False
 
     def max_hours_for_day(self, weekday: int) -> float:
         """Get max training hours for a specific weekday (0=Mon..6=Sun)."""
@@ -1800,6 +1808,11 @@ BUDGETS_BY_MODEL: dict[str, "dict[str, IntensityBudget]"] = {
 }
 
 _ACTIVE_DISTRIBUTION = "polarized"
+# v3.7.1 — rider opted into microintervals-only for VO2max days. Generation-
+# scoped state, set from the goal at exactly the sites that set the active
+# distribution, and ALWAYS set explicitly (including to False) so it can never
+# go stale between plans — the failure mode a sticky module global invites.
+_VO2_MICRO_ONLY = False
 # v2.3.0: per-phase budget table for the "custom" distribution, built on demand
 # by set_active_distribution from goal.custom_bands. None ⇒ no custom plan active.
 _ACTIVE_CUSTOM_BUDGETS: "dict[str, IntensityBudget] | None" = None
@@ -1819,6 +1832,22 @@ def _custom_model_budgets(bands: dict) -> "dict[str, IntensityBudget]":
     if (z3w + z4w + z5w) <= 0:
         z3w, z4w, z5w = 34.0, 33.0, 33.0  # safe default if the user zeroed it
     return _model_budgets(z3w, z4w, z5w)
+
+
+def set_vo2_micro_only(flag) -> bool:
+    """Set (and return) the microintervals-only preference for VO2max slots.
+
+    Deliberately takes a plain bool rather than reading a goal: the swap and
+    rematch paths carry the preference without a Goal object, and a setter
+    that can only be fed one shape is a setter that some path will skip.
+    """
+    global _VO2_MICRO_ONLY
+    _VO2_MICRO_ONLY = bool(flag)
+    return _VO2_MICRO_ONLY
+
+
+def get_vo2_micro_only() -> bool:
+    return _VO2_MICRO_ONLY
 
 
 def set_active_distribution(model: "str | None", custom_bands: "dict | None" = None) -> str:
@@ -3970,6 +3999,11 @@ _TYPE_TO_FALLBACK_CLASSES = {
 # across those slots is unchanged at 75. Past 7 it buys nothing and starts
 # eroding variety.
 MICROINTERVAL_VO2_BONUS = 5.0
+# v3.7.1 — penalty applied to a NON-microinterval file on a VO2max slot when
+# the rider has opted into microintervals only. Large enough to lose to any
+# microinterval file that fits, small enough that the slot still fills when
+# none does.
+MICROINTERVAL_ONLY_PENALTY = 500.0
 
 
 def match_zwo(
@@ -3981,6 +4015,7 @@ def match_zwo(
     exact_duration: bool = False,
     widen_band: bool = False,
     hr_bias: bool = False,
+    micro_only: bool = False,
 ) -> PlannedSession:
     """Find a ZWO workout matching this session, rotating for variety.
 
@@ -4188,6 +4223,13 @@ def match_zwo(
         if session.session_type == "vo2max" and not want_test:
             if (w.get("SecondaryFlags") or {}).get("pattern_microinterval"):
                 score += MICROINTERVAL_VO2_BONUS
+            elif micro_only or _VO2_MICRO_ONLY:
+                # Rider asked for microintervals only. Heavy penalty rather
+                # than exclusion: if no microinterval file fits the slot's
+                # duration the day still fills, because an unfillable day is
+                # a worse outcome than a long interval the rider did not ask
+                # for. The caller reports which way it went.
+                score -= MICROINTERVAL_ONLY_PENALTY
 
         # v1.8.25 — easy-slot grey-zone HARD gate (mirrors the sampler). A
         # z2/recovery slot must NOT admit a file with a tempo/SS finisher
@@ -6530,6 +6572,7 @@ def generate_plan(
 
     # J1 (v2.1.0): honor the goal's chosen intensity-distribution model for every
     # get_budget_for_phase lookup in this run (default "polarized" → unchanged).
+    set_vo2_micro_only(getattr(goal, "vo2_microintervals_only", False))
     set_active_distribution(getattr(goal, "distribution", "polarized"),
                             getattr(goal, "custom_bands", None))
     # v3.0.0: only self-fetch when the caller didn't supply CTL — `metrics`

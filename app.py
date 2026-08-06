@@ -12508,6 +12508,9 @@ async def api_plan_generate(request: Request):
                           else body.get("distribution", _prefs.get("distribution", "polarized"))),
             # F1 (v2.1): opt-in block periodization (default off).
             block_periodization=bool(body.get("block_periodization", _prefs.get("block_periodization", False))),
+            vo2_microintervals_only=bool(body.get(
+                "vo2_microintervals_only",
+                _prefs.get("vo2_microintervals_only", False))),
             events=_events_from_dicts(body.get("events")),  # F7 (A + optional B/C)
             # FS1 — plan construction mode (auto | fixed_core | template).
             # v2.3.0: a custom-bands payload drives the dynamic custom blueprint,
@@ -12656,6 +12659,8 @@ async def api_plan_generate(request: Request):
                 # rebuild with the same model (else they'd revert to polarized).
                 "distribution": getattr(goal, "distribution", "polarized"),
                 "block_periodization": getattr(goal, "block_periodization", False),  # F1
+                "vo2_microintervals_only": getattr(
+                    goal, "vo2_microintervals_only", False),
                 "events": _events_to_dicts(getattr(goal, "events", [])),  # F7
                 "plan_mode": getattr(goal, "plan_mode", "auto"),  # FS1
                 "template_id": getattr(goal, "template_id", "") or "",  # FS1
@@ -12959,6 +12964,7 @@ async def api_plan_reforecast():
             # distribution model (also sets the active model for this recalc's
             # budget lookups) so a pyramidal/threshold plan isn't judged against
             # the polarized ceiling. Default polarized → unchanged.
+            tp.set_vo2_micro_only((plan.get("goal", {}) or {}).get("vo2_microintervals_only", False))
             tp.set_active_distribution(
                 (plan.get("goal", {}) or {}).get("distribution", "polarized"),
                 (plan.get("goal", {}) or {}).get("custom_bands"))
@@ -13240,6 +13246,7 @@ def _regenerate_plan_dict(
     # lookups (mirrors generate_plan) — /api/plan/regenerate and add-race call
     # this core bare, so after an app restart the process default (polarized)
     # silently rebudgeted non-polarized plans.
+    tp.set_vo2_micro_only(getattr(goal, "vo2_microintervals_only", False))
     tp.set_active_distribution(goal.distribution, goal.custom_bands)
 
     # Reconstruct PlannedWeek list.
@@ -13494,6 +13501,7 @@ def _goal_from_plan_dict(g: dict) -> "tp.Goal":
         last_ftp_test_date=g.get("last_ftp_test_date"),
         distribution=g.get("distribution", "polarized"),  # J1
         block_periodization=bool(g.get("block_periodization", False)),  # F1
+        vo2_microintervals_only=bool(g.get("vo2_microintervals_only", False)),
         events=_events_from_dicts(g.get("events")),  # F7
         plan_mode=g.get("plan_mode", "auto"),  # FS1 — keep fixed plans fixed on refit/reforecast
         template_id=g.get("template_id", "") or "",
@@ -13658,6 +13666,7 @@ def _apply_plan_update(
     # J1 (v2.1.0): pin the active intensity-distribution model to the plan's
     # persisted choice so every tier (rebuild / missed-hard refit / reforecast)
     # rebuilds with the same model rather than reverting to polarized.
+    tp.set_vo2_micro_only((plan.get("goal", {}) or {}).get("vo2_microintervals_only", False))
     tp.set_active_distribution((plan.get("goal", {}) or {}).get("distribution", "polarized"),
                                (plan.get("goal", {}) or {}).get("custom_bands"))
 
@@ -17861,6 +17870,7 @@ def api_plan_auto_recalc():
         # J1: pin the active intensity-distribution model for this recalc's
         # budget lookups (mirrors generate_plan) — this scheduler called
         # recalculate_plan bare, so it inherited whatever model ran last.
+        tp.set_vo2_micro_only(getattr(goal, "vo2_microintervals_only", False))
         tp.set_active_distribution(goal.distribution, goal.custom_bands)
 
         # Reconstruct plan weeks.

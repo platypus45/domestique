@@ -334,6 +334,41 @@ def wait_for_server(timeout=30):
     return False
 
 
+def _open_url(url, platform=None):
+    """Open `url` in the user's default browser. The ONLY webbrowser entry point.
+
+    LINUX-APPIMAGE (master decisions §12): PyInstaller's bootloader prepends the
+    bundle's own lib dir to LD_LIBRARY_PATH, and every process we spawn inherits
+    it — so the user's Firefox/Chrome would link against OUR Qt/glibc-era
+    libraries and die on launch. The bootloader stashes the pre-launch value in
+    LD_LIBRARY_PATH_ORIG (absent when the user had none), so restore that around
+    the spawn. Mutating os.environ is the only lever here: webbrowser.open()
+    offers no `env` hook, and the child inherits at fork time.
+
+    Non-Linux platforms have no such variable and take the untouched
+    `webbrowser.open(url)` — macOS/Windows behaviour is byte-identical.
+    """
+    plat = platform if platform is not None else sys.platform
+    if plat != "linux":
+        webbrowser.open(url)
+        return
+    orig = os.environ.get("LD_LIBRARY_PATH_ORIG")
+    saved = os.environ.get("LD_LIBRARY_PATH")
+    if orig is None:
+        os.environ.pop("LD_LIBRARY_PATH", None)
+    else:
+        os.environ["LD_LIBRARY_PATH"] = orig
+    try:
+        webbrowser.open(url)
+    finally:
+        # Restore ours immediately — the bundled Qt window is still running in
+        # this process and needs the bundle's libs for anything it loads lazily.
+        if saved is None:
+            os.environ.pop("LD_LIBRARY_PATH", None)
+        else:
+            os.environ["LD_LIBRARY_PATH"] = saved
+
+
 def run_with_tray():
     """Run system tray icon (requires pystray + Pillow)."""
     try:
@@ -347,7 +382,7 @@ def run_with_tray():
         draw.text((22, 16), "H", fill="white")
 
         def open_browser(icon, item):
-            webbrowser.open(URL)
+            _open_url(URL)
 
         def quit_app(icon, item):
             _shutdown_event.set()
@@ -563,6 +598,90 @@ class JsApi:
         )
 
 
+def _linux_gui_fatal(reason: str) -> None:
+    """Linux: a dead GUI backend is FATAL and VISIBLE. Never returns.
+
+    LINUX-QT (master decisions §7). The browser fallback below is a *worse than
+    useless* outcome on Linux, and it was the DEFAULT one: pywebview's guilib
+    raises WebViewException (not ImportError) → the generic handler in main()
+    → _fallback_to_browser() → a print to a frozen build's dead stdout, a
+    MessageBox that is win32-guarded, then run_with_tray(), where pystray's
+    ImportError blocks on _shutdown_event.wait() forever. A live process
+    holding :8080 with no window, no tray, no error and no exit.
+
+    The native window IS the product on Linux, so a failure to open one is not
+    a degraded mode to limp along in — it is a crash, and it must look like a
+    crash on all three channels a Linux user might be watching: a file they can
+    attach to a bug report, a dialog if a desktop session is there to show one,
+    and stderr for anyone who launched from a terminal. Then exit non-zero.
+    """
+    import traceback
+    # Called from inside the except block, so this is the live backend failure.
+    detail = traceback.format_exc()
+    msg = f"Domestique could not open its window: {reason}"
+
+    # guilib swallows the backend's real ImportError and re-raises a generic
+    # WebViewException, so the one fact worth having — WHICH library is missing,
+    # e.g. "libxcb-cursor.so.0: cannot open shared object file" — is absent from
+    # `detail`. Redo the import here, where the side effects no longer matter
+    # because we are on our way out.
+    try:
+        import webview.platforms.qt  # noqa: F401
+    except Exception:
+        detail += "\nBackend import:\n" + traceback.format_exc()
+
+    crash = None
+    try:
+        from user_home import domestique_home
+        crash = domestique_home() / "startup_crash.txt"
+        crash.parent.mkdir(parents=True, exist_ok=True)
+        crash.write_text(f"{msg}\n\n{detail}", encoding="utf-8")
+    except Exception:
+        crash = None  # a report we can't write must not mask the real failure
+
+    log = _log()
+    if log is not None:
+        log.error("%s\n%s", msg, detail)
+
+    # stderr BEFORE the dialog: constructing a QApplication without a usable
+    # platform plugin makes Qt abort() the process outright — not something we
+    # can catch — so anything we want the user to read has to be out first.
+    print(msg, file=sys.stderr)
+    if crash is not None:
+        print(f"Details: {crash}", file=sys.stderr)
+    print(detail, file=sys.stderr)
+
+    # An AppImage launched from a desktop icon has no terminal, so a dialog is
+    # the only channel the user actually sees. Best-effort by necessity: when
+    # Qt itself is what failed to load, this fails too.
+    try:
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        _qapp = QApplication.instance() or QApplication([])  # bound: must outlive the box
+        box = QMessageBox()
+        box.setIcon(QMessageBox.Icon.Critical)
+        # NOT "Domestique": the CI smoke test proves a native window exists
+        # by searching X for a mapped window of that name, and this dialog
+        # would satisfy it — the release would go green while the app was
+        # dying in front of it. The title must be one no success path emits.
+        box.setWindowTitle("Domestique — startup failure")
+        box.setText(msg)
+        box.setInformativeText(
+            f"Details written to {crash}." if crash is not None
+            else "Run Domestique from a terminal to see the full error."
+        )
+        box.setDetailedText(detail)
+        # Auto-close: a modal nobody is there to dismiss (CI under Xvfb, a
+        # headless session) would block here forever — re-creating the exact
+        # zero-UI hang this function exists to prevent. Long enough to read.
+        QTimer.singleShot(60_000, box.close)
+        box.exec()
+    except Exception:
+        pass
+
+    sys.exit(1)
+
+
 def _fallback_to_browser(reason: str) -> None:
     """Open the dashboard in the default browser when the native window fails.
 
@@ -574,14 +693,19 @@ def _fallback_to_browser(reason: str) -> None:
       2. The browser is opened.
       3. On Windows ONLY, a native MessageBox tells the user where the UI
          went, so the launch never *looks* like a no-op. The message box is
-         best-effort (guarded by try/except) and is skipped on macOS/Linux,
-         whose paths are deliberately left unchanged.
+         best-effort (guarded by try/except) and is skipped on macOS, whose
+         path is deliberately left unchanged.
+
+    Linux never reaches any of that: the guard below is the single choke point
+    keeping every caller — present and future — out of the fallback there.
     """
+    if sys.platform == "linux":
+        _linux_gui_fatal(reason)  # never returns
     print(f"({reason} — opening in browser)")
     log = _log()
     if log is not None:
         log.error("native window unavailable (%s); opened browser at %s", reason, URL)
-    webbrowser.open(URL)
+    _open_url(URL)
     if sys.platform == "win32":
         try:
             import ctypes
@@ -615,7 +739,13 @@ def main():
         # process but something else is holding the port), open the browser so
         # the user can at least reach the UI.
         print(f"Domestique already running → {URL}")
-        webbrowser.open(URL)
+        # Linux: the native window IS the product. A browser tab here is
+        # the exact degradation this release forbids, and it is the
+        # DEFAULT path when a user double-clicks the AppImage twice.
+        # Focusing the existing window is out of scope, so do nothing
+        # rather than something wrong. macOS/Windows keep the tab.
+        if not sys.platform.startswith("linux"):
+            _open_url(URL)
         return
 
     print(f"Starting Domestique on {URL}...")
@@ -751,6 +881,12 @@ def main():
         # Cocoa backend (no CLR), so its path is unchanged.
         if sys.platform == "win32":
             importlib.import_module("webview.platforms.edgechromium")
+        # LINUX-QT: deliberately NO equivalent pre-import of the Qt backend here.
+        # webview/platforms/qt.py freezes its persistent-storage path from
+        # _state['storage_path'] at MODULE IMPORT time, and start() only populates
+        # that state further down — so importing it early would silently discard
+        # the storage_path below and scatter localStorage into ~/.pywebview.
+        # _linux_gui_fatal() digs out the real backend error instead.
         # pywebview requires the main thread — skip pystray (tray not needed when
         # the app has its own window; closing the window exits the app).
         webview.create_window(
@@ -769,8 +905,14 @@ def main():
         # mode. private_mode=False keeps the persistent store, unwiped.
         # storage_path pins the Windows WebView2 profile inside the
         # Domestique data dir (ignored by the cocoa backend).
+        # LINUX-QT (§1): pin the backend instead of letting guilib pick. Its
+        # Linux default tries GTK/WebKitGTK first, which we deliberately do not
+        # bundle; leaving the choice to import-failure ordering would mean a dev
+        # box with PyGObject installed runs a backend no user ever gets.
+        # gui=None is pywebview's own default, so macOS/Windows are unchanged.
         from user_home import domestique_home as _dh
         webview.start(  # blocks until the window closes
+            gui="qt" if sys.platform == "linux" else None,
             private_mode=False,
             storage_path=str(_dh() / "webview"),
         )

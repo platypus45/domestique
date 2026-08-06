@@ -1,0 +1,288 @@
+#!/bin/bash
+# ═══════════════════════════════════════════════════════════════
+# Domestique Linux AppImage Builder
+# ═══════════════════════════════════════════════════════════════
+# Usage:  ./build_linux.sh
+# Output: dist/Domestique-v<VERSION>-x86_64.AppImage
+#
+# The artifact carries pywebview's Qt/PySide6 backend, not GTK: QtWebEngine
+# ships its own Chromium, so there is no host WebKitGTK to bundle, patch or
+# track across the 4.0 -> 4.1 -> 6.0 churn. It costs ~272 MB and buys a
+# download-and-run binary that is not tied to the Debian/Ubuntu family.
+#
+# Build host MUST be old enough for the reach we claim: build inside
+# ubuntu:22.04 (glibc 2.35), never on whatever the runner happens to be.
+# Building on 24.04 produces a binary 22.04 cannot load and buys nothing.
+#
+#   docker run --rm -v "$PWD":/src -w /src ubuntu:22.04 bash build_linux.sh
+#
+# The gates below exist because none of this is provable from a Mac: the
+# glibc/GLIBCXX/CXXABI floors, the "no bundled graphics stack" assertion and
+# the mechanical ldd host-dependency list are the only things standing between
+# a green build and an AppImage that dies on a user's desktop.
+# ═══════════════════════════════════════════════════════════════
+
+set -e
+cd "$(dirname "$0")"
+
+# The developer works on macOS; fail immediately and usefully rather than
+# part-building something unusable.
+if [ "$(uname -s)" != "Linux" ]; then
+    echo "✗ build_linux.sh must run on Linux (found: $(uname -s))."
+    echo ""
+    echo "  Build it in the pinned container instead:"
+    echo "    docker run --rm -v \"\$PWD\":/src -w /src ubuntu:22.04 bash build_linux.sh"
+    echo ""
+    echo "  macOS DMG:   ./build_dmg.sh"
+    echo "  Windows EXE: built in CI"
+    exit 1
+fi
+
+VERSION="$(tr -d '[:space:]' < VERSION)"
+APP_NAME="Domestique"
+DIST="dist/${APP_NAME}"
+APPDIR="build/${APP_NAME}.AppDir"
+# Frozen literal — the picker tests and the update-checker pin this exact
+# shape. The v1.8.8 DMG incident came from a bare, versionless asset name.
+ARTIFACT="dist/${APP_NAME}-v${VERSION}-x86_64.AppImage"
+
+# Floors = what the OLDEST host we claim to support actually provides.
+# Ubuntu 22.04 ships glibc 2.35 and GCC 12's libstdc++ (GLIBCXX_3.4.30 /
+# CXXABI_1.3.13). Overridable ONLY so the gate itself can be sanity-checked
+# by deliberately failing it once, e.g. GLIBC_FLOOR=2.17 ./build_linux.sh
+GLIBC_FLOOR="${GLIBC_FLOOR:-2.35}"
+GLIBCXX_FLOOR="${GLIBCXX_FLOOR:-3.4.30}"
+CXXABI_FLOOR="${CXXABI_FLOOR:-1.3.13}"
+
+echo "=== Domestique Linux AppImage Build (v${VERSION}) ==="
+
+for tool in objdump ldd appimagetool; do
+    if ! command -v "$tool" &> /dev/null; then
+        echo "✗ Required tool missing: $tool"
+        case "$tool" in
+            objdump|ldd) echo "  apt-get install -y binutils libc-bin" ;;
+            appimagetool)
+                echo "  Download appimagetool-x86_64.AppImage from"
+                echo "  github.com/AppImage/AppImageKit/releases, chmod +x it,"
+                echo "  and put it on PATH as 'appimagetool'."
+                ;;
+        esac
+        exit 1
+    fi
+done
+
+# 1. Dependencies. PySide6 comes in via requirements.txt's sys_platform ==
+# "linux" marker, so macOS/Windows resolve byte-identically to today.
+echo "[1/9] Installing dependencies..."
+pip3 install -r requirements.txt pyinstaller
+
+# 2. Freeze. onedir (the spec's exclude_binaries + COLLECT shape) — NOT
+# onefile: onefile re-extracts ~360 MB to /tmp on every launch.
+echo "[2/9] Building with PyInstaller..."
+pyinstaller domestique.spec --clean --noconfirm 2>&1 | tail -3
+[ -x "${DIST}/${APP_NAME}" ] || { echo "✗ FATAL: ${DIST}/${APP_NAME} not produced"; exit 1; }
+
+# 3. Version smoke-test — the bundled app must ship its own VERSION file with
+# the right contents, else the running app misreports itself and the in-app
+# updater shows a perpetual "upgrade" prompt against an artifact whose very
+# filename embeds this number.
+BUNDLED_VER_FILE="$(find "$DIST" -name VERSION -type f 2>/dev/null | head -1)"
+BUNDLED_VER="$(tr -d '[:space:]' < "$BUNDLED_VER_FILE" 2>/dev/null)"
+if [ -z "$BUNDLED_VER_FILE" ] || [ "$BUNDLED_VER" != "$VERSION" ]; then
+    echo "✗ FATAL: bundled VERSION ('$BUNDLED_VER') != repo VERSION ('$VERSION')" >&2
+    exit 1
+fi
+echo "[3/9] Version smoke-test OK — bundle reports $BUNDLED_VER"
+
+# 4. Strip the host graphics/runtime libraries PyInstaller helpfully collected.
+# It bundles libstdc++/libgcc_s/libgbm but EXCLUDES libGL/libEGL/libdrm, so the
+# bundled halves and the host's halves get mixed at runtime — the canonical
+# AppImage GPU crash, and worse here because §6 builds on an older host than
+# the user runs. Take all of them from the host, consistently.
+echo "[4/9] Stripping bundled graphics/runtime libraries..."
+for lib in 'libstdc++.so.6*' 'libgcc_s.so.1*' 'libgbm.so.1*' 'libxshmfence.so.1*'; do
+    find "$DIST" -type f -name "$lib" -print -delete
+done
+
+# 5. Symbol-version gate. Walk the WHOLE tree: under PyInstaller 6 the payload
+# lives in _internal/, so the obvious `objdump -T dist/Domestique/*.so*` matches
+# nothing and passes unconditionally. Each family is maxed and compared
+# SEPARATELY — GLIBCXX_3.4.30 is not comparable to GLIBC_2.35.
+echo "[5/9] Symbol-version gate (glibc >= floors of the oldest supported host)..."
+SYMS="$(mktemp)"
+trap 'rm -f "$SYMS"' EXIT
+find "$DIST" -type f \( -name '*.so*' -o -perm -u+x \) -exec objdump -T {} + \
+    > "$SYMS" 2>/dev/null || true
+# A sweep that found nothing means the glob missed the tree — which is exactly
+# how the plan's original gate passed unconditionally. An empty sweep is a
+# broken gate, not a clean build.
+if [ ! -s "$SYMS" ]; then
+    echo "  \u2717 FATAL: symbol sweep produced no output \u2014 the gate is not looking at the binaries" >&2
+    exit 1
+fi
+
+gate_family() {
+    # $1 = symbol prefix (GLIBC_/GLIBCXX_/CXXABI_), $2 = floor version
+    local prefix="$1" floor="$2" max highest
+    max="$(grep -oE "${prefix}[0-9]+(\.[0-9]+)+" "$SYMS" | sed "s/^${prefix}//" \
+           | sort -V | tail -1)"
+    if [ -z "$max" ]; then
+        # Reachable only for a family genuinely absent from every binary
+        # (e.g. CXXABI_ in a pure-C tree). The empty-sweep case is fatal above.
+        echo "  ${prefix%_}: none referenced"
+        return 0
+    fi
+    # sort -V puts the larger last; if that is not the floor, we exceeded it.
+    highest="$(printf '%s\n%s\n' "$max" "$floor" | sort -V | tail -1)"
+    if [ "$highest" != "$floor" ]; then
+        echo "  ✗ ${prefix%_}: needs $max, floor is $floor" >&2
+        # Name the offenders — "something needs 2.38" is not actionable.
+        find "$DIST" -type f \( -name '*.so*' -o -perm -u+x \) -print0 \
+            | while IFS= read -r -d '' f; do
+                objdump -T "$f" 2>/dev/null | grep -q "${prefix}${max}" \
+                    && echo "      $f"
+              done | head -10
+        return 1
+    fi
+    echo "  ✓ ${prefix%_}: needs $max, floor is $floor"
+}
+
+GATE_FAIL=0
+gate_family "GLIBC_"   "$GLIBC_FLOOR"   || GATE_FAIL=1
+gate_family "GLIBCXX_" "$GLIBCXX_FLOOR" || GATE_FAIL=1
+gate_family "CXXABI_"  "$CXXABI_FLOOR"  || GATE_FAIL=1
+if [ "$GATE_FAIL" -ne 0 ]; then
+    echo "✗ FATAL: the binary requires newer runtime symbols than the oldest" >&2
+    echo "  host we promise to support. Build in ubuntu:22.04, or lower the" >&2
+    echo "  promise — do not raise the floor to make this pass." >&2
+    exit 1
+fi
+
+# 6. Assemble the AppDir. appimagetool requires an AppRun, exactly one
+# .desktop in the root, and a root icon named EXACTLY the .desktop's Icon=
+# value; the usr/share copies are what desktop environments read after
+# integration.
+echo "[6/9] Assembling AppDir..."
+rm -rf "$APPDIR"
+mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons"
+cp -a "$DIST/." "$APPDIR/usr/bin/"
+cp -a assets/linux/hicolor "$APPDIR/usr/share/icons/"
+cp assets/linux/domestique.png "$APPDIR/domestique.png"
+
+cat > "$APPDIR/domestique.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Domestique
+Comment=Cycling training planner, workout library and ride viewer
+Exec=Domestique
+Icon=domestique
+Categories=Education;Sports;
+Terminal=false
+StartupWMClass=Domestique
+DESKTOP
+cp "$APPDIR/domestique.desktop" "$APPDIR/usr/share/applications/"
+
+# A missing Chromium helper is a white window, not an error — find it now and
+# bake the path in, rather than letting Qt's compiled-in guess miss inside a
+# relocated AppDir.
+QTWEP="$(find "$APPDIR/usr/bin" -type f -name QtWebEngineProcess | head -1)"
+if [ -z "$QTWEP" ]; then
+    echo "✗ FATAL: QtWebEngineProcess not in the bundle — the window would" >&2
+    echo "  open blank. Check the PySide6.QtWebEngineCore hidden imports." >&2
+    exit 1
+fi
+QTWEP_REL="${QTWEP#"$APPDIR"/}"
+echo "  QtWebEngineProcess: $QTWEP_REL"
+
+cat > "$APPDIR/AppRun" <<APPRUN
+#!/bin/sh
+# AppRun is the SOLE owner of Qt environment for the shipped artifact:
+# launcher.py sets no Qt variables and CI sets none of these, so the config a
+# user runs is exactly the config the smoke test exercises. Every assignment
+# below defers to a value the user or distro already set.
+APPDIR="\$(dirname "\$(readlink -f "\$0")")"
+
+# QtWebEngine's Chromium sandbox needs either a setuid helper or unprivileged
+# user namespaces. An AppImage has neither reliably — Ubuntu 24.04's AppArmor
+# policy denies the latter outright — and the render process then dies before
+# painting anything.
+export QTWEBENGINE_DISABLE_SANDBOX="\${QTWEBENGINE_DISABLE_SANDBOX:-1}"
+
+# Chromium spawns its helper by absolute path; baked in at build time.
+export QTWEBENGINEPROCESS_PATH="\${QTWEBENGINEPROCESS_PATH:-\$APPDIR/${QTWEP_REL}}"
+
+# Deliberately NOT setting LD_LIBRARY_PATH. The PyInstaller bootloader sets it
+# and stashes the caller's value in LD_LIBRARY_PATH_ORIG, which launcher.py
+# restores before handing a URL to the host browser. Prepending AppDir paths
+# here would poison that saved copy and break every browser we open.
+
+exec "\$APPDIR/usr/bin/${APP_NAME}" "\$@"
+APPRUN
+chmod +x "$APPDIR/AppRun"
+
+# 7. Assert the graphics stack really is gone. Step 4 removes what PyInstaller
+# collects today; this catches the day it starts collecting something new.
+echo "[7/9] Asserting no bundled graphics/runtime libraries..."
+LEAKED="$(find "$APPDIR" -type f \( -name 'libGL*' -o -name 'libEGL*' \
+    -o -name 'libdrm*' -o -name 'libgbm*' -o -name 'libstdc++*' \
+    -o -name 'libgcc_s*' \) 2>/dev/null || true)"
+if [ -n "$LEAKED" ]; then
+    echo "✗ FATAL: bundled libraries that must come from the host:" >&2
+    echo "$LEAKED" >&2
+    echo "  Add them to the step-4 strip list — mixing bundled and host halves" >&2
+    echo "  of the graphics stack crashes on the user's GPU driver." >&2
+    exit 1
+fi
+echo "  ✓ none present"
+
+# 8. Host dependencies, derived MECHANICALLY. Anything the AppDir needs that
+# does NOT resolve inside the AppDir is a runtime requirement on the user's
+# distro, and this list is the only honest source for the release notes and
+# for CI's apt line. Never hand-maintained.
+echo "[8/9] Deriving host dependencies via ldd..."
+DEPS="dist/host-deps.txt"
+LDD_OUT="$(find "$APPDIR" -type f \( -name '*.so*' -o -perm -u+x \) \
+    -exec ldd {} + 2>/dev/null || true)"
+
+MISSING="$(printf '%s\n' "$LDD_OUT" | awk '/=> not found/ {print $1}' | sort -u)"
+if [ -n "$MISSING" ]; then
+    echo "✗ FATAL: NEEDED libraries unresolved on the build host:" >&2
+    printf '%s\n' "$MISSING" >&2
+    echo "  apt-get install the packages providing these in the build" >&2
+    echo "  container AND declare them as host dependencies." >&2
+    exit 1
+fi
+
+printf '%s\n' "$LDD_OUT" \
+    | awk -v appdir="$(cd "$APPDIR" && pwd)/" \
+        '$2 == "=>" && $3 ~ /^\// && index($3, appdir) != 1 {print $1}' \
+    | sort -u > "$DEPS"
+echo "  $(wc -l < "$DEPS" | tr -d ' ') host libraries required — see $DEPS"
+if command -v dpkg &> /dev/null; then
+    # Package names only exist on the Debian-family build container; the
+    # soname list above is the portable, authoritative form.
+    while IFS= read -r soname; do
+        # Leading-slash arguments are looked up as exact paths and a bare
+        # soname is not one; the wildcard makes dpkg treat it as a pattern.
+        pkg="$(dpkg -S "*/$soname" 2>/dev/null | head -1 | cut -d: -f1)"
+        [ -n "$pkg" ] && echo "$pkg"
+    done < "$DEPS" | sort -u > "dist/host-deps-debian.txt"
+    echo "  Debian/Ubuntu packages — see dist/host-deps-debian.txt"
+fi
+
+# 9. Wrap it. --no-appstream: we ship no AppStream metainfo, and appimagetool
+# otherwise hard-depends on appstreamcli being installed.
+echo "[9/9] Building AppImage..."
+rm -f "$ARTIFACT"
+ARCH=x86_64 appimagetool --no-appstream "$APPDIR" "$ARTIFACT"
+[ -f "$ARTIFACT" ] || { echo "✗ FATAL: appimagetool produced no artifact"; exit 1; }
+chmod +x "$ARTIFACT"
+
+SIZE=$(du -h "$ARTIFACT" | cut -f1)
+echo ""
+echo "=== Build complete ==="
+echo "AppImage: $ARTIFACT ($SIZE)"
+echo "Host deps: $DEPS"
+echo ""
+echo "NOT verified by this script: that the window renders. Run the AppImage"
+echo "on a real desktop before calling it released."

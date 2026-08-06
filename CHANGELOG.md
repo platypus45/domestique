@@ -1,5 +1,14 @@
 # Changelog
 
+## v3.8.0 — Domestique on Linux (2026-08-06)
+
+- **Domestique now runs on Linux.** One file you download, make executable and run — no installer, no package manager, nothing to uninstall. It is the same app you get on macOS and Windows: the same native window, the same plans, the same rides, the same local-only data in your home folder. Sign-in, sync, planning and FIT import all work exactly as they do elsewhere.
+- **Linux ships as a PRE-RELEASE, and the label is meant literally.** It is built against Ubuntu 22.04 and the automated checks are designed to confirm that the app starts, answers, and opens a window — but no build had completed at the time these notes were written, so treat every one of those as intended rather than observed. Nothing verifies by machine what the window actually *draws*, on any platform. No other distribution has been tried. If you are the first person to run this on your desktop, you are genuinely the first: please report what you see.
+- **What it needs.** A 64-bit x86 desktop with a reasonably current system (Ubuntu 22.04, Debian 12, Fedora 36 or newer, and their derivatives). There is no ARM build. The download is around 360 MB, because the window brings its own browser engine rather than borrowing whatever your distribution ships — that is what makes one file behave the same on every desktop, and it is the entire cost.
+- **If the window cannot open, it tells you and stops.** You get a dialog where the desktop can show one, the reason on the terminal, and the full detail written next to your data. It never quietly opens a browser tab instead, and it never leaves an invisible process running.
+- **The update notice knows about Linux.** New releases now offer Linux users the Linux download instead of nothing.
+- macOS and Windows are untouched by all of this: the three builds are produced independently, and a Linux problem cannot delay or damage either of them.
+
 ## v3.7.0 — Which blocks did you actually do, and cooldowns that are cooldowns (2026-07-27)
 
 - **After an interval session, see which blocks you actually did.** Not just a score out of 100 — the blocks themselves: all ten done, or eight of ten and you stopped after the eighth, or nine done with one skipped in the middle, with the count per set. Stopping after 10 of 13 reps barely moves your TSS or your time in zones; this is the question those numbers cannot answer.

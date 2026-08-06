@@ -8530,7 +8530,8 @@ def _select_platform_asset(assets, plat):
     macOS (`darwin`) → `.dmg`, prefer plain `Domestique.dmg` over decorated
     variants like `Domestique-1.0.3.dmg` so the canonical asset wins.
     Windows (`win32`) → prefer `.exe`, fall back to `.zip`.
-    Anything else (Linux, BSD) → no asset; banner falls back to release_url.
+    Linux → `.AppImage` (released as `Domestique-v<VERSION>-x86_64.AppImage`).
+    Anything else (BSD) → no asset; banner falls back to release_url.
     """
     if not isinstance(assets, list):
         return None, None
@@ -8557,6 +8558,15 @@ def _select_platform_asset(assets, plat):
         if zips:
             return _url(zips[0]) or None, _name(zips[0]) or None
         return None, None
+
+    if plat == "linux":
+        # One AppImage per release, and it always carries the version token —
+        # unlike the DMG, whose bare name caused the v1.8.8 mix-up. No
+        # canonical-name preference is needed because there is only ever one.
+        imgs = [a for a in assets if _name(a).lower().endswith(".appimage")]
+        if not imgs:
+            return None, None
+        return _url(imgs[0]) or None, _name(imgs[0]) or None
 
     return None, None
 

@@ -8,10 +8,10 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.12-blue" alt="Python">
-  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
+  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4249-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v3.7.0-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v3.8.0-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-2400%2B-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -49,6 +49,15 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 ---
 
 ## What's new in v3
+
+**Domestique on Linux (v3.8).** One download-and-run file for 64-bit x86
+desktops, next to the macOS and Windows builds — the same app, the same
+native window, the same local-only data. It is genuinely new and far less
+exercised than the other two — it ships as a **pre-release**. It is built
+against Ubuntu 22.04 and no other distribution has been tried. The automated
+checks are designed to confirm a window opens; nothing can confirm by machine
+what that window draws. Read [Installing on Linux](#installing-on-linux)
+before you download it.
 
 **Which blocks did you actually do? (v3.7).** After an interval session the app
 now tells you the blocks, not just a score: all ten done, or eight of ten and
@@ -192,7 +201,7 @@ TrainingPeaks / Vekta / Garmin.
 
 ## Quick start
 
-1. **Install** — macOS users have two paths: `brew tap platypus45/tap && brew install --cask domestique` (no Gatekeeper prompts) OR grab `Domestique-vX.Y.Z.dmg` from the [latest release](https://github.com/platypus45/domestique/releases/latest) and right-click → Open on first launch. Windows users grab `Domestique-Windows.zip`, unzip, run `Domestique.exe`. See [Installing on macOS](#installing-on-macos) for details.
+1. **Install** — macOS users have two paths: `brew tap platypus45/tap && brew install --cask domestique` (no Gatekeeper prompts) OR grab `Domestique-vX.Y.Z.dmg` from the [latest release](https://github.com/platypus45/domestique/releases/latest) and right-click → Open on first launch. Windows users grab `Domestique-Windows.zip`, unzip, run `Domestique.exe`. Linux users grab the `.AppImage`, `chmod +x` it and run it — see [Installing on Linux](#installing-on-linux) first, it is new. See [Installing on macOS](#installing-on-macos) for details.
 2. **Connect Intervals.icu** — the first-run wizard walks you through it: click **Sign in to intervals.icu**, log in + approve in your browser (OAuth — no API keys to copy, athlete auto-detected), then optionally enable Garmin Connect on Intervals.icu so rides sync automatically. While your history indexes, a top-bar strip shows live first-sync progress. No intervals.icu account? It's free and you can sign in with Garmin or Strava. Whole step is skippable — without ICU, Domestique falls back to local CTL from your imported FITs. (Already linked with an API key from an older version? You'll be prompted to switch to sign-in.)
 3. **Generate a plan** — pick a goal type (event prep / FTP / VO2max / hybrid / general / endurance), target date, target CTL, hours/week, and a [planner mode](#planner-modes) (auto / fixed-core / template). The planner sizes Base / Build1 / Build2 / Peak / (Taper or Consolidation) phases, draws 150 distinct ZWO files across a 24-week plan, and adapts daily to your readiness.
 
@@ -216,6 +225,32 @@ brew install --cask domestique
 ### Installing on Windows (SmartScreen)
 
 The Windows EXE is also unsigned. On first run, SmartScreen shows a blue "Windows protected your PC" dialog. Click **More info -> Run anyway**.
+
+### Installing on Linux
+
+**New in v3.8.0, and the least-tested of the three platforms — read this section before you download.**
+
+Grab `Domestique-vX.Y.Z-x86_64.AppImage` from the [latest release](https://github.com/platypus45/domestique/releases/latest), make it executable, run it:
+
+```bash
+chmod +x Domestique-v3.8.0-x86_64.AppImage
+./Domestique-v3.8.0-x86_64.AppImage
+```
+
+There is nothing to install and nothing to uninstall — the file *is* the app. Your data lives in `~/.domestique/` exactly as on macOS and Windows, so deleting the file leaves your plan and rides intact.
+
+- **64-bit x86 only.** No ARM build (a Raspberry Pi or an ARM laptop will not run it).
+- **glibc 2.35 or newer** — Ubuntu 22.04+, Debian 12+, Fedora 36+ and their derivatives. Older distributions are out of reach for this build.
+- **~360 MB.** The window carries its own browser engine instead of borrowing the distribution's, which is what makes one file behave the same on every desktop. That is the whole cost, and it is not hidden.
+- **If the window cannot open, the app says so and exits** — a dialog if your desktop can show one, the reason on stderr, and the full detail written to `~/.domestique/startup_crash.txt`. It will never quietly fall back to a browser tab or sit there holding the port with nothing on screen.
+
+**Host packages.** Almost everything travels inside the file. The graphics and X11 client libraries deliberately do not: a bundled copy of those is the classic way an AppImage dies on a machine whose drivers differ from the build host's. A normal desktop install already has them; a minimal or headless system may not.
+
+The exact package names differ by distribution. Every Linux build writes the
+list it actually resolved to `dist/host-deps-debian.txt` (Debian/Ubuntu names)
+and `dist/host-deps.txt` (portable sonames); the release notes for each version
+carry the current list. If the app starts but no window appears, install your
+distribution's Qt xcb platform packages — that is nearly always the cause.
 
 ### First-run secrets
 
@@ -608,9 +643,9 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v3.7.0 — Which blocks did you actually do, and cooldowns that are cooldowns](https://github.com/platypus45/domestique/releases/latest)** (2026-07-27).
+Latest: **[v3.8.0 — Domestique on Linux](https://github.com/platypus45/domestique/releases/latest)** (2026-08-06).
 
-GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
+GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE + Linux AppImage on every tagged release. The three jobs are independent: a Linux failure cannot hold up or damage the macOS and Windows artifacts.
 
 **Highlights since v1.8.5** (see [CHANGELOG.md](CHANGELOG.md) for every shipped tag):
 
@@ -648,9 +683,10 @@ pytest -q                            # ~2,300 tests pass on clean-main
 ```bash
 ./build_dmg.sh                       # macOS — writes ~/Desktop/Domestique.dmg
 build_win.bat                        # Windows — writes dist\Domestique\Domestique.exe
+./build_linux.sh                     # Linux — writes dist/Domestique-vX.Y.Z-x86_64.AppImage
 ```
 
-GitHub Actions ([.github/workflows/release.yml](.github/workflows/release.yml)) builds both on every tagged release.
+GitHub Actions ([.github/workflows/release.yml](.github/workflows/release.yml)) builds all three on every tagged release.
 
 ### Workout library
 

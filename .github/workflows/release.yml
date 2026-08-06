@@ -1,8 +1,9 @@
 name: Build release artifacts
 
-# Builds a macOS DMG and a Windows EXE on every tag push (v*.*.*) and
-# uploads both to the matching GitHub Release. Runs also on manual dispatch.
-# Binaries live in Release assets — never in git — so the repo stays lean.
+# Builds a macOS DMG, a Windows EXE and a Linux AppImage on every tag push
+# (v*.*.*) and uploads them to the matching GitHub Release. Runs also on
+# manual dispatch. Binaries live in Release assets — never in git — so the
+# repo stays lean.
 
 on:
   push:
@@ -364,3 +365,445 @@ jobs:
         with:
           files: Domestique-Windows.zip
           fail_on_unmatched_files: true
+
+  # ───────────────────────────────────────────────────────────────────
+  # Linux AppImage — ADDITIVE AND NON-BLOCKING
+  #
+  # Nothing here may cost the macOS or Windows ship. No `needs:` couples this
+  # job to build-macos/build-windows in either direction, and
+  # continue-on-error keeps a red Linux build from failing the workflow run —
+  # a broken AppImage must still leave a complete macOS+Windows release. The
+  # price is that failures show as a warning rather than a red X, so every
+  # gate below emits a ::error:: annotation that survives into the summary.
+  #
+  # runs-on is the moving `ubuntu-latest` label, but the build happens inside
+  # an ubuntu:22.04 *container*: the label may roll freely while the container
+  # is what the binary links against (glibc floor 2.35). Pinning the
+  # `ubuntu-22.04` runner label instead starts brownout-failing 2026-09-17,
+  # and building on 24.04 would raise the floor to glibc 2.39 and lock out
+  # 22.04 users. A container image is neither.
+  # ───────────────────────────────────────────────────────────────────
+  build-linux:
+    name: Build Linux AppImage
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04
+    continue-on-error: true
+    timeout-minutes: 90
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      TZ: UTC
+    steps:
+      # A container job starts from the bare image: none of the runner image's
+      # toolchain exists — no git, no curl, no ca-certificates, no sudo — so
+      # this has to come before actions/checkout, which would otherwise fall
+      # back to the REST tarball and leave no .git behind.
+      - name: Install toolchain (the bare container has none)
+        run: |
+          set -eux
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl wget git file xz-utils zsync jq \
+            build-essential pkg-config \
+            software-properties-common gnupg python3-launchpadlib \
+            desktop-file-utils libfuse2 \
+            iproute2 procps psmisc \
+            xvfb x11-utils xdotool imagemagick openbox \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-sync1 libxcb-util1 \
+            libxcb-xfixes0 libxcb-xkb1 libxcb-cursor0 libxkbcommon-x11-0 \
+            libgl1 libegl1 libopengl0 libgbm1 libdrm2 libxshmfence1 \
+            libglib2.0-0 libdbus-1-3 libnss3 libnspr4 libasound2 \
+            libxcomposite1 libxdamage1 libxrandr2 libxtst6 libxi6 \
+            libxfixes3 libxrender1 libxext6 libfontconfig1 libfreetype6 \
+            fonts-dejavu-core
+          # 3.12 is not in the jammy archive; deadsnakes carries it, and the
+          # PPA route needs launchpadlib, which --no-install-recommends drops.
+          add-apt-repository -y ppa:deadsnakes/ppa
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            python3.12 python3.12-venv python3.12-dev
+
+      # build_linux.sh calls `pip3` and `python3`; both must be 3.12, and
+      # deadsnakes ships neither pip nor a `python3` alias. A PATH shim rather
+      # than update-alternatives: rewiring /usr/bin/python3 on Ubuntu breaks
+      # apt's own tooling, which is bound to 3.10.
+      - name: Put python3.12 (and its pip) first on PATH
+        run: |
+          set -eux
+          python3.12 -m ensurepip --upgrade
+          mkdir -p /opt/py312
+          ln -sf /usr/bin/python3.12 /opt/py312/python3
+          ln -sf /usr/bin/python3.12 /opt/py312/python
+          for p in pip pip3; do
+            printf '#!/bin/sh\nexec /usr/bin/python3.12 -m pip "$@"\n' > "/opt/py312/$p"
+            chmod +x "/opt/py312/$p"
+          done
+          echo /opt/py312 >> "$GITHUB_PATH"
+
+      # build_linux.sh requires appimagetool on PATH and refuses to start
+      # without it. There is no apt package; the tool is itself an AppImage.
+      - name: Install appimagetool
+        run: |
+          set -eux
+          curl -fsSL -o /usr/local/bin/appimagetool \
+            https://github.com/AppImage/AppImageKit/releases/download/13/appimagetool-x86_64.AppImage
+          chmod +x /usr/local/bin/appimagetool
+
+      - uses: actions/checkout@v4
+
+      # The checkout is owned by a different uid than the container's root in
+      # some runner configurations; git refuses to read it without this.
+      - name: Trust the checkout
+        run: git config --global --add safe.directory '*'
+
+      # Same reasoning as the Windows job: the OAuth client_secret lives in the
+      # gitignored .oauth.env, so a CI checkout doesn't have it and the build
+      # would ship an empty secret with a broken intervals.icu token exchange.
+      - name: Write OAuth client secret (.oauth.env)
+        env:
+          ICU_OAUTH_CLIENT_ID: ${{ secrets.ICU_OAUTH_CLIENT_ID }}
+          ICU_OAUTH_CLIENT_SECRET: ${{ secrets.ICU_OAUTH_CLIENT_SECRET }}
+        run: |
+          if [ -z "${ICU_OAUTH_CLIENT_SECRET}" ]; then
+            echo "::error::ICU_OAUTH_CLIENT_SECRET repo secret is not set — OAuth would ship broken."; exit 1
+          fi
+          printf 'ICU_OAUTH_CLIENT_ID=%s\nICU_OAUTH_CLIENT_SECRET=%s\n' \
+            "${ICU_OAUTH_CLIENT_ID:-511}" "${ICU_OAUTH_CLIENT_SECRET}" > .oauth.env
+          echo "wrote .oauth.env ($(wc -c < .oauth.env) bytes)"
+
+      - name: Build AppImage
+        env:
+          # appimagetool is itself an AppImage and a GitHub job container has
+          # no /dev/fuse, so it has to unpack itself instead of mounting.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          # build_linux.sh pip-installs into the container's system python on
+          # purpose (it is a throwaway container, not a developer machine);
+          # PEP 668 would otherwise refuse, and the flag is not ours to add to
+          # build_linux.sh's pip line.
+          PIP_BREAK_SYSTEM_PACKAGES: "1"
+        run: |
+          set -eux
+          chmod +x build_linux.sh
+          ./build_linux.sh
+
+      - name: Locate the AppImage
+        run: |
+          set -eu
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          # Frozen literal. The version token is deliberate: the bare-name
+          # Domestique.dmg once out-sorted the good asset in the update picker.
+          NAME="Domestique-v${VERSION}-x86_64.AppImage"
+          FOUND="$(find . -maxdepth 3 -type f -name "$NAME" -print -quit)"
+          if [ -z "$FOUND" ]; then
+            echo "::error::build_linux.sh produced no $NAME"
+            find . -maxdepth 3 -name '*.AppImage' -print || true
+            exit 1
+          fi
+          mkdir -p dist_linux
+          cp "$FOUND" dist_linux/
+          chmod +x "dist_linux/$NAME"
+          # The host-dependency lists are derived mechanically by build_linux.sh
+          # (ldd over the AppDir after the graphics stack is stripped): sonames
+          # in host-deps.txt, Debian package names in host-deps-debian.txt. The
+          # clean-container job installs exactly the latter and nothing else —
+          # a list retyped into CI would drift from the artifact in silence.
+          if [ -f dist/host-deps-debian.txt ]; then
+            cp dist/host-deps.txt dist/host-deps-debian.txt dist_linux/
+          else
+            echo "::warning::build_linux.sh emitted no dist/host-deps-debian.txt — the clean-container check cannot run"
+          fi
+          echo "APPIMAGE=dist_linux/$NAME" >> "$GITHUB_ENV"
+          echo "EXPECTED_VERSION=$VERSION" >> "$GITHUB_ENV"
+          ls -la dist_linux
+
+      # Gate the build the way the Windows job does, plus the assertion that is
+      # the entire point of this release: a real, mapped, native window. Two
+      # stages share one port, so stage A is killed and :8080 drained before
+      # stage B starts — otherwise _ensure_port_free_or_die kills stage B.
+      - name: "Smoke-test: AppImage serves the right version and opens a real window"
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          # Only what CI genuinely lacks and a real desktop genuinely has.
+          # Deliberately NOT QTWEBENGINE_DISABLE_SANDBOX and NOT
+          # QT_QPA_PLATFORM: the shipped AppRun owns every Qt variable, and
+          # this test exists to prove the *shipped* values work. Setting them
+          # here would certify a configuration no user ever runs.
+          DISPLAY: ":99"
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set -u
+
+          dump_diagnostics() {
+            echo "===== DIAGNOSTICS ====="
+            for f in headless.log gui.log xvfb.log openbox.log wininfo.txt; do
+              echo "--- $f ---"; cat "$f" 2>/dev/null || echo "(none)"
+            done
+            echo "--- startup_crash.txt ---"
+            cat "$HOME/.domestique/startup_crash.txt" 2>/dev/null || echo "(none)"
+            echo "--- launcher logs ---"
+            for f in "$HOME"/.domestique/logs/*.log; do
+              [ -f "$f" ] || continue
+              echo "=== $f ==="; cat "$f"
+            done
+            echo "--- listeners ---"; ss -ltnp 2>/dev/null || true
+            echo "--- processes ---"; ps -ef || true
+            echo "===== END DIAGNOSTICS ====="
+          }
+          fail() { echo "::error::$1"; dump_diagnostics; exit 1; }
+
+          echo "Expected version from VERSION file: $EXPECTED_VERSION"
+
+          # ---- Stage A: headless HTTP -------------------------------------
+          echo "===== STAGE A: headless ====="
+          DOMESTIQUE_SERVER_ONLY=1 "./$APPIMAGE" > headless.log 2>&1 &
+          A_PID=$!
+          served=""
+          for _ in $(seq 30); do
+            body="$(curl -fsS --max-time 5 http://127.0.0.1:8080/api/version 2>/dev/null || true)"
+            if [ -n "$body" ]; then served="$(printf '%s' "$body" | jq -r .version)"; fi
+            [ -n "$served" ] && [ "$served" != "null" ] && break
+            served=""
+            sleep 3
+          done
+          [ -n "$served" ] || fail "AppImage never served /api/version within 90s (headless)"
+          [ "$served" = "$EXPECTED_VERSION" ] || fail "Version mismatch: served '$served' != VERSION '$EXPECTED_VERSION'"
+          echo "Stage A passed: served version $served"
+
+          kill "$A_PID" 2>/dev/null || true
+          sleep 2
+          pkill -9 -f 'Domestique' 2>/dev/null || true
+          for _i in $(seq 1 30); do ss -ltn 2>/dev/null | grep -q ':8080 ' || break; sleep 1; done
+          ss -ltn 2>/dev/null | grep -q ':8080 ' && { echo 'FAIL: :8080 never drained'; exit 1; } || true
+          echo ":8080 is clear"
+
+          # ---- Stage B: native window under Xvfb --------------------------
+          echo "===== STAGE B: native window ====="
+          Xvfb :99 -screen 0 1600x1000x24 -ac +extension GLX +render -noreset > xvfb.log 2>&1 &
+          XVFB_PID=$!
+          for _ in $(seq 30); do xdpyinfo -display :99 >/dev/null 2>&1 && break; sleep 1; done
+          xdpyinfo -display :99 >/dev/null 2>&1 || fail "Xvfb never came up on :99"
+          openbox > openbox.log 2>&1 &
+          sleep 2
+
+          "./$APPIMAGE" > gui.log 2>&1 &
+          B_PID=$!
+          sleep 25
+
+          # 1. still alive. An exited-but-unreaped child answers kill -0, so
+          #    the zombie state has to be checked separately.
+          kill -0 "$B_PID" 2>/dev/null || fail "AppImage exited within 25s of GUI launch"
+          case "$(ps -o stat= -p "$B_PID" 2>/dev/null)" in
+            Z*) fail "AppImage process died within 25s of GUI launch (zombie)" ;;
+          esac
+
+          # 2. a MAPPED window. This is the assertion the release is about: a
+          #    browser tab would satisfy every HTTP check below it.
+          WID=""
+          for _ in $(seq 20); do
+            WID="$(xdotool search --onlyvisible --name 'Domestique' 2>/dev/null | head -1)"
+            [ -n "$WID" ] && break
+            sleep 3
+          done
+          [ -n "$WID" ] || fail "no mapped window named 'Domestique' — the native window did not open"
+          xwininfo -id "$WID" > wininfo.txt 2>&1 || fail "xwininfo could not read window $WID"
+          cat wininfo.txt
+          grep -q 'Map State: IsViewable' wininfo.txt || fail "window $WID exists but is not viewable"
+
+          # 3. localhost verbatim — the window loads http://localhost:8080, so
+          #    an assertion that only ever hits 127.0.0.1 would sail past a
+          #    hostname-resolution break the user would hit immediately.
+          body="$(curl -fsS --max-time 5 http://localhost:8080/api/version)" \
+            || fail "the GUI instance did not answer on http://localhost:8080"
+          served="$(printf '%s' "$body" | jq -r .version)"
+          [ "$served" = "$EXPECTED_VERSION" ] || fail "GUI served '$served' != VERSION '$EXPECTED_VERSION'"
+
+          #    ...and the listener must BE the GUI process, not a stage-A leftover.
+          PORT_PID="$(ss -ltnp 2>/dev/null | awk '/:8080 /{ if (match($0, /pid=[0-9]+/)) print substr($0, RSTART+4, RLENGTH-4) }' | head -1)"
+          [ -n "$PORT_PID" ] || fail "nothing is listening on :8080"
+          p="$PORT_PID"; owner=""
+          while [ -n "$p" ] && [ "$p" != "1" ] && [ "$p" != "0" ]; do
+            if [ "$p" = "$B_PID" ]; then owner="yes"; break; fi
+            p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
+          done
+          [ -n "$owner" ] || fail ":8080 is held by PID $PORT_PID, which is not the GUI process ($B_PID) nor a descendant"
+
+          # 4. the browser fallback is a spec violation on Linux, and its worst
+          #    shape is a live process holding :8080 with no window — which
+          #    every check above would still pass if the server came up.
+          if grep -REn '_fallback_to_browser|opening in browser' \
+          # The grep above is a belt: on Linux the fatal path diverts before
+          # either string is emitted, so it can never fire. The braces are
+          # the crash file the fatal path DOES write, and the exit code.
+          if [ -f "$HOME/.domestique/startup_crash.txt" ]; then
+            echo "FAIL: startup_crash.txt written — the GUI backend died"; cat "$HOME/.domestique/startup_crash.txt"; exit 1
+          fi
+               gui.log "$HOME/.domestique/logs" 2>/dev/null; then
+            fail "the AppImage fell back to a browser — a native window is a hard requirement"
+          fi
+
+          # 5. something was actually drawn. A mapped window can still be a
+          #    blank rectangle if the web engine failed to paint.
+          import -window root screenshot.png || fail "could not capture the root window"
+          SD="$(identify -format '%[fx:standard_deviation]' screenshot.png)"
+          echo "screenshot standard deviation: $SD"
+          awk -v sd="$SD" 'BEGIN { exit !(sd > 0.01) }' \
+            || fail "screenshot is blank (standard deviation $SD) — nothing was drawn"
+
+          echo "Smoke-test passed: version $served, mapped window $WID, screenshot sd=$SD"
+          kill "$B_PID" 2>/dev/null || true
+          pkill -9 -f 'Domestique' 2>/dev/null || true
+          kill "$XVFB_PID" 2>/dev/null || true
+
+      # CI cannot prove the window RENDERS correctly — a human still has to
+      # look. This is the picture they look at.
+      - name: Upload smoke-test screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Domestique-Linux-smoke-screenshot
+          path: screenshot.png
+          retention-days: 7
+          if-no-files-found: warn
+
+      # Uploaded on every trigger (not just workflow_dispatch, unlike the
+      # Windows zip) because verify-linux-clean-container consumes it.
+      - name: Upload AppImage artifact
+        if: env.APPIMAGE != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: Domestique-Linux-AppImage
+          path: dist_linux/
+          retention-days: 7
+
+      - name: Attach AppImage to release
+        if: startsWith(github.ref, 'refs/tags/v') && env.APPIMAGE != ''
+        # Belt and braces on top of the job-level flag: a flaky asset upload
+        # must not be able to take the macOS/Windows release down with it.
+        continue-on-error: true
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.APPIMAGE }}
+          fail_on_unmatched_files: true
+
+  # ───────────────────────────────────────────────────────────────────
+  # Linux clean-room check — also non-blocking, also uncoupled from mac/win.
+  #
+  # The build container has a full desktop toolchain installed, so it cannot
+  # prove the claim the release actually makes: download and run on a stock
+  # distro. This runs the built AppImage in a bare debian:12-slim carrying
+  # ONLY the mechanically-derived host dependencies. It needs a plain runner
+  # rather than a `container:` job because it drives the docker CLI, which a
+  # job container has no socket for.
+  # ───────────────────────────────────────────────────────────────────
+  verify-linux-clean-container:
+    name: Verify Linux AppImage on a clean distro
+    needs: build-linux
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Domestique-Linux-AppImage
+          path: appimage
+
+      - name: Run the AppImage on a stock debian:12-slim
+        run: |
+          set -eu
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [ ! -f appimage/host-deps-debian.txt ]; then
+            echo "::error::no host-deps-debian.txt in the artifact — cannot prove the declared host deps are sufficient"
+            exit 1
+          fi
+          echo "Declared host dependencies (packages):"; cat appimage/host-deps-debian.txt
+          echo "Declared host dependencies (sonames):";  cat appimage/host-deps.txt
+          chmod +x "appimage/Domestique-v${VERSION}-x86_64.AppImage"
+          # --shm-size=1g because a real desktop has a real /dev/shm and
+          # Chromium needs one. Docker's 64 MB default would only be papered
+          # over with --disable-dev-shm-usage, which no user runs.
+          # APPIMAGE_EXTRACT_AND_RUN because CI has no /dev/fuse; the shipped
+          # AppRun and the shipped payload still run, which is what this
+          # proves.
+          docker run --rm --shm-size=1g \
+            -v "$PWD/appimage:/ai:ro" \
+            -e APPIMAGE_EXTRACT_AND_RUN=1 \
+            -e DEBIAN_FRONTEND=noninteractive \
+            -e "EXPECTED=$VERSION" \
+            debian:12-slim bash -euc '
+              apt-get update -qq
+              # Test tooling first, then the declared host deps and nothing else.
+              apt-get install -y --no-install-recommends curl procps > /dev/null
+              # One at a time: the package NAMES were derived on jammy and a
+              # handful differ on bookworm, which would abort a single batch
+              # install and hide the real answer. The ldd sweep below is the
+              # verdict — an unresolvable name only matters if a library it
+              # would have supplied is actually missing.
+              while IFS= read -r pkg; do
+                [ -n "$pkg" ] || continue
+                apt-get install -y --no-install-recommends "$pkg" < /dev/null > /dev/null 2>&1 \
+                  || echo "::warning::debian:12 has no package named $pkg (jammy-derived name)"
+              done < /ai/host-deps-debian.txt
+
+              cp /ai/Domestique-*.AppImage /tmp/app.AppImage
+              chmod +x /tmp/app.AppImage
+              cd /tmp && ./app.AppImage --appimage-extract > /dev/null
+
+              echo "===== the payload resolves against the declared deps alone ====="
+              missing="$(find squashfs-root -type f \( -name "*.so*" -o -perm -u+x \) \
+                -exec ldd {} + 2>/dev/null | grep "not found" | sort -u || true)"
+              if [ -n "$missing" ]; then
+                echo "::error::unresolved libraries under the declared host deps — this is the crash a user gets on a stock distro"
+                echo "$missing"
+                exit 1
+              fi
+              echo "OK: no unresolved libraries"
+
+              # Same gate the Windows job runs: prove the OAuth secret survived
+              # into the bundle rather than shipping broken sign-in.
+              oauth="$(find squashfs-root -name .oauth.env -print -quit)"
+              [ -n "$oauth" ] || { echo "::error::.oauth.env not bundled in the AppImage — OAuth sign-in would fail"; exit 1; }
+              grep -q "ICU_OAUTH_CLIENT_SECRET=." "$oauth" \
+                || { echo "::error::bundled .oauth.env has an empty ICU_OAUTH_CLIENT_SECRET"; exit 1; }
+              echo "OK: .oauth.env bundled with a non-empty secret"
+
+              # Xvfb goes in only AFTER the ldd sweep — it drags in half the X
+              # stack and would mask a host dep the AppImage failed to declare.
+              # It stands in for the user'"'"'s X server, not for an app dependency.
+              apt-get install -y --no-install-recommends xvfb > /dev/null
+              Xvfb :99 -screen 0 1600x1000x24 -ac -noreset > /tmp/xvfb.log 2>&1 &
+              sleep 3
+              export DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1
+
+              /tmp/app.AppImage > /tmp/run.log 2>&1 &
+              pid=$!
+              served=""
+              for _ in $(seq 30); do
+                served="$(curl -fsS --max-time 5 http://localhost:8080/api/version 2>/dev/null || true)"
+                [ -n "$served" ] && break
+                sleep 3
+              done
+              if [ -z "$served" ]; then
+                echo "::error::AppImage never served /api/version on a stock debian:12-slim"
+                cat /tmp/run.log; cat ~/.domestique/startup_crash.txt 2>/dev/null || true
+                exit 1
+              fi
+              kill -0 "$pid" 2>/dev/null || { echo "::error::AppImage exited on a stock debian:12-slim"; cat /tmp/run.log; exit 1; }
+              compact="$(printf "%s" "$served" | tr -d " \n")"
+              case "$compact" in
+                *"\"version\":\"$EXPECTED\""*) echo "OK: served version $EXPECTED" ;;
+                *) echo "::error::version mismatch on the clean container: $served"; exit 1 ;;
+              esac
+              if grep -REn "_fallback_to_browser|opening in browser" /tmp/run.log ~/.domestique/logs 2>/dev/null; then
+              # The grep above is a belt: on Linux the fatal path diverts before
+              # either string is emitted, so it can never fire. The braces are
+              # the crash file the fatal path DOES write, and the exit code.
+              if [ -f "$HOME/.domestique/startup_crash.txt" ]; then
+                echo "FAIL: startup_crash.txt written — the GUI backend died"; cat "$HOME/.domestique/startup_crash.txt"; exit 1
+              fi
+                echo "::error::the AppImage fell back to a browser on a stock distro"
+                exit 1
+              fi
+              echo "Clean-container check passed."
+            '

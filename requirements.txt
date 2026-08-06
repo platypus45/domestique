@@ -54,6 +54,21 @@ pywebview>=5.0
 # *runtime* is a separate OS prerequisite (the Evergreen redistributable; it
 # ships preinstalled on Windows 11 but must be installed on older Windows 10).
 pythonnet>=3.0; sys_platform == "win32"
+# LINUX-QT (first Linux release): pywebview's Linux default is GTK/WebKitGTK,
+# which cannot be honestly bundled — PyInstaller has no WebKit2 hook and
+# WebKitGTK hardcodes its helper-process directory at compile time, so a frozen
+# copy execs the *host's* helpers and dies wherever the layout differs. The Qt
+# backend ships its own Chromium and depends on no host engine, at the cost of
+# ~270 MB. PySide6 deliberately, NOT PyQt6: PySide6 is LGPLv3 (dynamic linking
+# leaves this Apache-2.0 project's terms intact) where PyQt6 is GPLv3 and would
+# force the Linux binary to GPL — which is also why we must never install via
+# pywebview's own `qt`/`qt6` extras, as those pull PyQt6.
+# qtpy is NOT optional: webview/platforms/qt.py does `from qtpy import QtCore`
+# at module top, so the backend won't even import without it.
+# As with pythonnet above, the marker keeps pip from ever pulling Qt on
+# macOS/Windows, so the DMG and EXE builds resolve exactly as they do today.
+PySide6>=6.8,<7 ; sys_platform == "linux"
+qtpy>=2.4 ; sys_platform == "linux"
 
 # Build (not needed at runtime)
 # pyinstaller>=6.0.0

@@ -238,6 +238,40 @@ chmod +x "$APPDIR/AppRun"
 
 # 7. Assert the graphics stack really is gone. Step 4 removes what PyInstaller
 # collects today; this catches the day it starts collecting something new.
+# Qt ships optional plugins we never load, and they drag in whole stacks: the
+# GTK platform-theme plugin NEEDs gtk-3/gdk/pango/cairo/atk/gdk_pixbuf, print
+# support NEEDs cups, and the multimedia plugins NEED pulse. Keeping them would
+# make a Qt application depend on GTK3 at runtime — which is the dependency we
+# picked Qt to escape. The app draws with the xcb platform plugin and prints
+# nothing, so they are dead weight with a large dependency tail.
+#
+# The Wayland platform plugins go for the same reason: this release targets X11
+# via xcb (Wayland-native is out of scope), and the plugins NEED
+# libwayland-cursor/egl. Under a Wayland session the app still runs through
+# XWayland, which is what the xcb plugin talks to.
+echo "[6b/9] Pruning unused Qt plugins (GTK theme, print, multimedia)..."
+_QTPLUG="$APPDIR/usr/bin/_internal/PySide6/Qt/plugins"
+_QTROOT="$APPDIR/usr/bin/_internal/PySide6/Qt"
+for _p in "plugins/platformthemes/libqgtk3.so" "plugins/printsupport" \
+          "plugins/multimedia" "plugins/mediaservice" "plugins/texttospeech" \
+          "qml/QtMultimedia" "qml/QtQuick3D/SpatialAudio" \
+          "qml/QtQuick/VirtualKeyboard" \
+          "lib/libQt6Multimedia.so.6" "plugins/imageformats/libqtiff.so" \
+          "plugins/platforms/libqwayland.so" \
+          "plugins/platforms/libqwayland-egl.so" \
+          "plugins/platforms/libqwayland-generic.so" \
+          "plugins/wayland-decoration-client" \
+          "plugins/wayland-graphics-integration-client" \
+          "plugins/wayland-shell-integration" \
+          "qml/QtWayland" \
+          "lib/libQt6WaylandClient.so.6" "lib/libQt6WlShellIntegration.so.6" \
+          "lib/libQt6WaylandEglClientHwIntegration.so.6"; do
+    if [ -e "$_QTROOT/$_p" ]; then
+        echo "  - $_p"
+        rm -rf "${_QTROOT:?}/$_p"
+    fi
+done
+
 echo "[7/9] Asserting no bundled graphics/runtime libraries..."
 # Match real system SONAMEs (libfoo.so.N), not any file whose name merely
 # starts with the same letters. The greedy globs flagged
@@ -266,7 +300,17 @@ DEPS="dist/host-deps.txt"
 LDD_OUT="$(find "$APPDIR" -type f \( -name '*.so*' -o -perm -u+x \) \
     -exec ldd {} + 2>/dev/null || true)"
 
-MISSING="$(printf '%s\n' "$LDD_OUT" | awk '/=> not found/ {print $1}' | sort -u)"
+# A NEEDED entry that ldd cannot resolve on the BUILD HOST is still fine if the
+# library ships inside the AppDir — auditwheel-repaired wheels carry their own
+# copies under mangled names (libquadmath-96973f99.so.0.0.0), and those are
+# found at runtime via RPATH, not via the host's loader cache. Only entries
+# absent from both the host and the bundle are genuinely missing.
+MISSING="$(printf '%s\n' "$LDD_OUT" | awk '/=> not found/ {print $1}' | sort -u \
+    | while read -r _lib; do
+        [ -z "$_lib" ] && continue
+        find "$APPDIR" -name "$_lib" -print -quit 2>/dev/null | grep -q . \
+            || printf '%s\n' "$_lib"
+      done)"
 if [ -n "$MISSING" ]; then
     echo "✗ FATAL: NEEDED libraries unresolved on the build host:" >&2
     printf '%s\n' "$MISSING" >&2

@@ -411,6 +411,7 @@ jobs:
             libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
             libxcb-render-util0 libxcb-shape0 libxcb-sync1 libxcb-util1 \
             libxcb-xfixes0 libxcb-xkb1 libxcb-cursor0 libxkbcommon-x11-0 \
+            libfontconfig1 libfreetype6 libglib2.0-0 libxkbfile1 \
             libgl1 libegl1 libopengl0 libgbm1 libdrm2 libxshmfence1 \
             libglib2.0-0 libdbus-1-3 libnss3 libnspr4 libasound2 \
             libxcomposite1 libxdamage1 libxrandr2 libxtst6 libxi6 \

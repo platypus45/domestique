@@ -411,7 +411,7 @@ jobs:
             libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
             libxcb-render-util0 libxcb-shape0 libxcb-sync1 libxcb-util1 \
             libxcb-xfixes0 libxcb-xkb1 libxcb-cursor0 libxkbcommon-x11-0 \
-            libfontconfig1 libfreetype6 libglib2.0-0 libxkbfile1 \
+            libfontconfig1 libfreetype6 libglib2.0-0 libxkbfile1 psmisc \
             libgl1 libegl1 libopengl0 libgbm1 libdrm2 libxshmfence1 \
             libglib2.0-0 libdbus-1-3 libnss3 libnspr4 libasound2 \
             libxcomposite1 libxdamage1 libxrandr2 libxtst6 libxi6 \
@@ -598,8 +598,19 @@ jobs:
             # held; it does NOT let us bind past an active listener.
             python3 -c "import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(('127.0.0.1', 8080)); s.close()" 2>/dev/null
           }
-          for _i in $(seq 1 30); do port_free && break; sleep 1; done
-          port_free || { echo "FAIL: :8080 still held after 30s"; ps aux | grep -i domestiq | grep -v grep; exit 1; }
+          # Killing $A_PID is not enough: that is the AppImage wrapper, and the
+          # extracted binary it exec'd keeps the listener. Kill whoever actually
+          # HOLDS the port, then require the port to test free TWICE a second
+          # apart — a single probe can catch the gap between the old listener
+          # closing and a surviving child re-binding, which is how the previous
+          # attempt reported success and then handed stage B a busy port.
+          for _i in $(seq 1 30); do
+            fuser -k -TERM 8080/tcp >/dev/null 2>&1 || true
+            sleep 1
+            if port_free; then sleep 1; port_free && break; fi
+            fuser -k -KILL 8080/tcp >/dev/null 2>&1 || true
+          done
+          port_free || { echo "FAIL: :8080 still held after 30s"; fuser -v 8080/tcp 2>&1 || true; ps -ef | grep -i domestiq | grep -v grep; exit 1; }
           echo "Stage A torn down; :8080 is bindable"
           echo ":8080 is clear"
 

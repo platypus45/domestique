@@ -61,6 +61,32 @@ datas = [
 from PyInstaller.utils.hooks import collect_data_files
 datas += collect_data_files("certifi")
 
+binaries: list = []
+
+if _LINUX:
+    # QtWebEngine is a multi-process engine: the window is drawn by a SEPARATE
+    # helper binary, plus its .pak resources and locale files. PyInstaller's
+    # PySide6 hook is supposed to collect these, and on one build host it did
+    # while on another it silently did not — leaving a bundle with every
+    # libQt6WebEngine*.so present and no QtWebEngineProcess to run them. The
+    # window then opens and renders nothing, which is the one failure this
+    # whole release exists to avoid. Collect them explicitly instead of
+    # depending on hook behaviour.
+    import PySide6 as _ps6
+    _qt = Path(_ps6.__file__).parent / "Qt"
+    _helper = _qt / "libexec" / "QtWebEngineProcess"
+    if not _helper.exists():
+        raise SystemExit(
+            f"FATAL: {_helper} missing from the PySide6 wheel — a Linux build "
+            "without it produces a window that draws nothing.")
+    binaries += [(str(_helper), "PySide6/Qt/libexec")]
+    for _sub in ("resources", "translations/qtwebengine_locales"):
+        _d = _qt / _sub
+        if _d.is_dir():
+            for _f in _d.rglob("*"):
+                if _f.is_file():
+                    datas.append((str(_f), str(Path("PySide6/Qt") / _sub)))
+
 # Add profiles directory if it exists (per-user data, optional)
 if os.path.exists("profiles"):
     datas.append(("profiles", "profiles"))
@@ -84,7 +110,7 @@ if os.path.exists(".oauth.env"):
 a = Analysis(
     ["launcher.py"],
     pathex=["."],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=[
         "certifi",  # v2.1.0 WIN-TLS-FIX — urllib CA bundle (see datas + launcher)

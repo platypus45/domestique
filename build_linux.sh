@@ -85,8 +85,17 @@ pip3 install -r requirements.txt pyinstaller
 
 # 2. Freeze. onedir (the spec's exclude_binaries + COLLECT shape) — NOT
 # onefile: onefile re-extracts ~360 MB to /tmp on every launch.
+# A dist/ left by a previous macOS or Windows build would otherwise survive a
+# failed run and be measured by the version gate below — which is exactly how a
+# 3.7.0 bundle got checked against a 3.8.0 repo.
+rm -rf dist build/Domestique
 echo "[2/9] Building with PyInstaller..."
+# NOT piped into tail: the pipeline's exit status would be tail's, which is
+# always 0, so `set -e` never saw a failed build — the script carried on and
+# version-checked whatever happened to be in dist/ already.
+set -o pipefail
 pyinstaller domestique.spec --clean --noconfirm 2>&1 | tail -3
+set +o pipefail
 [ -x "${DIST}/${APP_NAME}" ] || { echo "✗ FATAL: ${DIST}/${APP_NAME} not produced"; exit 1; }
 
 # 3. Version smoke-test — the bundled app must ship its own VERSION file with

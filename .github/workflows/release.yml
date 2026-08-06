@@ -421,12 +421,15 @@ jobs:
           add-apt-repository -y ppa:deadsnakes/ppa
           apt-get update -qq
           apt-get install -y --no-install-recommends \
-            python3.12 python3.12-venv python3.12-dev
+            python3.12 python3.12-venv python3.12-dev libpython3.12
 
       # build_linux.sh calls `pip3` and `python3`; both must be 3.12, and
       # deadsnakes ships neither pip nor a `python3` alias. A PATH shim rather
       # than update-alternatives: rewiring /usr/bin/python3 on Ubuntu breaks
       # apt's own tooling, which is bound to 3.10.
+      # PyInstaller needs libpython3.X.so.1.0 to freeze a binary; without it the
+      # build dies with "Python shared library was not found". The -dev package
+      # does not reliably carry it on deadsnakes.
       - name: Put python3.12 (and its pip) first on PATH
         run: |
           set -eux

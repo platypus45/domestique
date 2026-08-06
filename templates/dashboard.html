@@ -2273,6 +2273,13 @@ window.addEventListener('unhandledrejection', function(e) {
           <span class="hint" title="Concentrate each build/peak phase on ONE quality per ~3-4 week block (VO2 block then threshold block toward your event) instead of mixing every hard type weekly. Evidence is strongest for trained cyclists with adequate volume; default OFF." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span>
         </label></div>
       </div>
+      <!-- v3.7.1: VO2max protocol preference (default off). -->
+      <div class="form-row">
+        <div class="form-group"><label>
+          <input type="checkbox" id="plan-vo2-micro-only" onchange="refreshPlanPreview()" style="vertical-align:middle;"> VO2max: microintervals only
+          <span class="info-icon" data-popover="planpop-vo2micro" tabindex="0" role="button" aria-label="What does microintervals only mean?" title="What this does, and what the evidence says">i</span>
+        </label></div>
+      </div>
       <!-- FS1 (IP_PLANNER_MODES): plan construction mode. -->
       <div class="form-row">
         <div class="form-group"><label>Plan style
@@ -3288,6 +3295,11 @@ window.addEventListener('unhandledrejection', function(e) {
      0x0 (the B2 "wired + live-proven" pass only tested from the Plan tab).
      Same invariant as calpush-info above; pinned by
      tests/test_343_today_identity.py (section-burial structural test). -->
+<div class="info-popover" id="planpop-vo2micro"><strong>VO2max: microintervals only</strong> — every VO2max day becomes a short on/off session (30s on / 15s off and relatives) instead of longer 4-8 minute intervals.
+<br><br><strong>Is this the best VO2max protocol?</strong> Not established — and the honest answer matters here. The short-interval format is genuinely potent and easy to hit high power in, but every training study showing it beat a structured comparator in cyclists comes from <em>one</em> research group, with 7-9 riders per arm and no independent replication. Within those studies VO2max itself improved significantly more in only two of four; the flagship elite-cyclist trial reported no group difference in VO2max at all. The trials matched effort rather than work, so the short-interval riders also produced more power for the same perceived effort.
+<br><br><strong>What the wider field shows.</strong> Independent labs comparing short against long intervals have found no difference, or an advantage for long. The largest single result in this space is 4x8 minutes, which beat both 4x4 and 4x16 by roughly double over seven weeks — and has never been tested against 30/15. Meta-analyses pooling the field either find nothing or lean toward work bouts of two minutes and up.
+<br><br><strong>So use this as a preference, not a verdict.</strong> Leave it off and you get a mix — microintervals are already preferred on VO2max days, they just are not the only thing served. Turn it on if you like the format and want to train it consistently; it is a good session and you will not be doing anything unsupported. What you give up is variety, and variety is the one thing the evidence cannot rule against.
+<br><br>Off by default. If no microinterval session fits a day's length, that day still gets a VO2max workout rather than nothing.</div>
 <div class="info-popover" id="planpop-rematch"><strong>Swap workout</strong> — swaps in another workout of the same type and duration — your plan's load stays the same.</div>
 <div class="info-popover" id="planpop-swaptype"><strong>Change training type</strong> — pick a different training type for this day — the week re-balances around it.</div>
 <div class="info-popover" id="planpop-easier"><strong>Make it easier today</strong> — drops today one intensity notch (e.g. threshold → sweet spot) — use when you're not feeling it.</div>
@@ -12381,6 +12393,7 @@ async function generatePlan(opts) {
     daily_availability: dailyHours,
     distribution: ($('plan-distribution') || {}).value || 'polarized',  // J1
     block_periodization: (($('plan-block-periodization') || {}).checked) || false,  // F1
+    vo2_microintervals_only: (($('plan-vo2-micro-only') || {}).checked) || false,
     plan_mode: ($('plan-mode') || {}).value || 'auto',  // FS1
     template_id: (($('plan-mode') || {}).value === 'template')
       ? (($('plan-template') || {}).value || '') : '',  // FS1
@@ -14869,6 +14882,7 @@ function populatePlanFormFromGoal(goal) {
   // model as polarized and restore the real custom split under the template.
   setVal('plan-distribution', (goal.distribution === 'custom') ? 'polarized' : (goal.distribution || 'polarized'));
   const bp = $('plan-block-periodization'); if (bp) bp.checked = !!goal.block_periodization;
+  const vm = $('plan-vo2-micro-only'); if (vm) vm.checked = !!goal.vo2_microintervals_only;
   setVal('plan-mode', goal.plan_mode || 'auto');
   if (goal.template_id) setVal('plan-template', goal.template_id);
   // v2.3.0: a custom plan round-trips as template_id=custom — present it as
@@ -14922,6 +14936,7 @@ function populatePlanFormFromGoal(goal) {
     const parts = [distLbl, modeLbl];
     if (goal.hours_per_week) parts.push(goal.hours_per_week + 'h/wk');
     if (goal.block_periodization) parts.push('Block periodization');
+    if (goal.vo2_microintervals_only) parts.push('VO2max: microintervals only');
     if (goal.plan_mode === 'template' && goal.template_id) parts.push(String(goal.template_id).replace(/_/g, ' '));
     const races = (goal.events || []).filter(e => e && e.priority && e.priority !== 'A').length;
     if (races) parts.push(races + ' race' + (races > 1 ? 's' : ''));
@@ -18734,13 +18749,40 @@ function swapTypeOpen(day) {
   el.innerHTML = `<div style="padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);">
     <div style="font-size:12px;font-weight:600;margin-bottom:6px;">Swap to a different training type</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
-      <select id="swap-type-${day}" style="font-size:12px;">${types.map(t=>`<option value="${t[0]}">${t[1]}</option>`).join('')}</select>
+      <select id="swap-type-${day}" style="font-size:12px;" onchange="swapTypeToggleMicro('${day}')">${types.map(t=>`<option value="${t[0]}">${t[1]}</option>`).join('')}</select>
       <select id="swap-dur-${day}" style="font-size:12px;">${durs.map(d=>`<option value="${d}"${d===60?' selected':''}>${d} min</option>`).join('')}</select>
+      <label id="swap-micro-wrap-${day}" style="font-size:11px;display:none;align-items:center;gap:4px;white-space:nowrap;">
+        <input type="checkbox" id="swap-micro-${day}" style="vertical-align:middle;"> microintervals only
+      </label>
       <button class="btn btn-primary" style="font-size:12px;" onclick="swapTypeApply('${day}')">Apply</button>
       <button class="btn" style="font-size:12px;" onclick="document.getElementById('swap-result-${day}').innerHTML=''">Cancel</button>
     </div>
     <div style="font-size:10px;color:var(--text3);">Matches a workout for the new type and rebalances the rest of your plan. Long durations are capped to what each type allows.</div>
+    <div id="swap-micro-note-${day}" style="font-size:10px;color:var(--text3);margin-top:4px;display:none;">Short on/off reps (30s/15s and relatives) rather than 4-8 minute intervals. A preference, not a verdict — see Plan Configuration for what the evidence does and does not show. If none fits this length you still get a VO2max session.</div>
   </div>`;
+  swapTypeToggleMicro(day);
+}
+
+// v3.7.1 — the microinterval choice only means anything on a VO2max slot, so
+// it appears only when VO2max is selected rather than sitting there greyed
+// out next to seven types it does not apply to. Seeded from the plan-level
+// preference so the per-swap control agrees with the plan by default.
+function swapTypeToggleMicro(day) {
+  const sel = document.getElementById('swap-type-' + day);
+  const wrap = document.getElementById('swap-micro-wrap-' + day);
+  const note = document.getElementById('swap-micro-note-' + day);
+  if (!sel || !wrap) return;
+  const isVo2 = sel.value === 'vo2max';
+  wrap.style.display = isVo2 ? 'inline-flex' : 'none';
+  if (note) note.style.display = isVo2 ? 'block' : 'none';
+  const box = document.getElementById('swap-micro-' + day);
+  if (box && isVo2 && box.dataset.seeded !== '1') {
+    try {
+      const g = (window._calData && window._calData.goal) || {};
+      box.checked = !!g.vo2_microintervals_only;
+    } catch (_) {}
+    box.dataset.seeded = '1';
+  }
 }
 async function swapTypeApply(day) {
   const t = (document.getElementById('swap-type-' + day) || {}).value;
@@ -18750,7 +18792,8 @@ async function swapTypeApply(day) {
   try {
     const res = await fetch('/api/plan/swap-type', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({date: day, session_type: t, duration_min: d}),
+      body: JSON.stringify({date: day, session_type: t, duration_min: d,
+        microintervals_only: !!(document.getElementById('swap-micro-' + day) || {}).checked}),
     });
     const j = await res.json();
     if (!res.ok || j.error) {

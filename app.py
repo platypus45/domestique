@@ -17537,6 +17537,11 @@ async def api_plan_swap_type(request: Request):
         return JSONResponse({"error": "Invalid date format"}, 400)
     if new_type not in _SWAP_TYPES:
         return JSONResponse({"error": f"Unknown session_type: {new_type}"}, 400)
+    # v3.7.1 — per-swap VO2max protocol choice. Absent key ⇒ fall back to the
+    # plan's own preference, so a swap made without touching the control does
+    # what the plan would have done. Only meaningful on a VO2max slot; the
+    # planner ignores it elsewhere.
+    micro_raw = body.get("microintervals_only")
     # Clamp duration to the type ceiling (e.g. vo2max ≤75, sprint ≤45); floor 30.
     ceil = tp.TYPE_CEILING.get(new_type)
     new_dur = new_dur or 60
@@ -17550,6 +17555,10 @@ async def api_plan_swap_type(request: Request):
     try:
         with open(json_path, encoding="utf-8") as f:
             plan = json.load(f)
+        _micro = (bool(micro_raw) if micro_raw is not None
+                  else bool((plan.get("goal", {}) or {})
+                            .get("vo2_microintervals_only", False)))
+        tp.set_vo2_micro_only(_micro)
         result = _swap_session_type_apply(plan, day_iso, new_type, new_dur)
         tp.atomic_write_plan(json_path, plan)
         return result

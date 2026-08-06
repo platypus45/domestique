@@ -3753,8 +3753,31 @@ def load_workout_library() -> list[dict]:
             if power_pct > 105:  # VO2 floor (Coggan Z5 edge)
                 has_vo2_intensity = True
 
+        # v3.7.1 — the length of the session's WORK REPS, measured from the
+        # prescription. The classifier's pattern_microinterval flag says a
+        # microinterval pattern occurs SOMEWHERE in the file, which a warm-up
+        # fast-pedal drill is enough to trip: a 10x2min session carries it, and
+        # a "microintervals only" preference built on that flag served exactly
+        # the long-rep sessions it was meant to exclude. This measures the main
+        # set instead — the shortest ON leg the file actually repeats at
+        # intensity.
+        _micro_work_s = 0      # seconds in reps at or under the micro ceiling
+        _long_work_s = 0       # seconds in reps above it
+
         for seg in workout_el:
             tag = seg.tag
+            if tag == "IntervalsT":
+                try:
+                    _on = int(float(seg.get("OnDuration", 0) or 0))
+                    _onp = float(seg.get("OnPower", 0) or 0)
+                    _rep = int(float(seg.get("Repeat", 0) or 0))
+                except (TypeError, ValueError):
+                    _on = _rep = 0; _onp = 0.0
+                if _on > 0 and _rep >= 4 and _onp >= 1.00:
+                    if _on <= MICROINTERVAL_MAX_REP_S:
+                        _micro_work_s += _on * _rep
+                    else:
+                        _long_work_s += _on * _rep
             if tag in ("Warmup", "Cooldown", "Ramp"):
                 dur = int(float(seg.get("Duration", 0)))
                 plo = float(seg.get("PowerLow", 0.5))
@@ -3891,6 +3914,13 @@ def load_workout_library() -> list[dict]:
             # has_vo2_work, has_sprints, has_sweet_spot_work,
             # pattern_over_under, pattern_microinterval, polarized_consistent,
             # pyramidal_consistent). Empty when the content cache is absent.
+            # v3.7.1 — share of the file's repeated at-intensity work that
+            # sits in SHORT reps. Time-weighted, not a median: a 10x2min
+            # session with an 8x40s finisher has a median rep of 40 s and is
+            # emphatically not a microinterval session. None when the file
+            # declares no repeated work set at all.
+            "MicroFrac": (round(_micro_work_s / (_micro_work_s + _long_work_s), 3)
+                          if (_micro_work_s + _long_work_s) > 0 else None),
             "ContentClass": content_class,
             "ContentConfidence": content_confidence,
             "SecondaryFlags": secondary_flags,
@@ -4004,6 +4034,13 @@ MICROINTERVAL_VO2_BONUS = 5.0
 # microinterval file that fits, small enough that the slot still fills when
 # none does.
 MICROINTERVAL_ONLY_PENALTY = 500.0
+# The ON leg at or under which a repeated effort is a MICROinterval. 60 s is
+# the natural break: the protocols in this family run 30 s and 40 s, while the
+# formats they are contrasted against in the literature start at 2 minutes.
+MICROINTERVAL_MAX_REP_S = 60
+# …and the share of repeated work that must sit in those short reps for the
+# session to BE a microinterval session rather than merely contain some.
+MICROINTERVAL_MIN_FRAC = 0.5
 
 
 def match_zwo(
@@ -4221,7 +4258,14 @@ def match_zwo(
         # block that served nothing but 30/15 would be its own kind of wrong,
         # and the variety machinery still has to have something to choose.
         if session.session_type == "vo2max" and not want_test:
-            if (w.get("SecondaryFlags") or {}).get("pattern_microinterval"):
+            _mf = w.get("MicroFrac")
+            _is_micro = (_mf is not None and _mf >= MICROINTERVAL_MIN_FRAC)
+            if _mf is None:
+                # No declared work set to measure — fall back to the
+                # classifier's pattern flag rather than assuming either way.
+                _is_micro = bool((w.get("SecondaryFlags") or {})
+                                 .get("pattern_microinterval"))
+            if _is_micro:
                 score += MICROINTERVAL_VO2_BONUS
             elif micro_only or _VO2_MICRO_ONLY:
                 # Rider asked for microintervals only. Heavy penalty rather

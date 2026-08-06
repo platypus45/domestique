@@ -445,9 +445,19 @@ jobs:
       - name: Install appimagetool
         run: |
           set -eux
+          # AppImageKit is deprecated and its release-13 assets were RENAMED to
+          # obsolete-* upstream, so the old pinned URL now 404s. The maintained
+          # tool lives in AppImage/appimagetool under the rolling `continuous`
+          # tag — there is no versioned release to pin to.
           curl -fsSL -o /usr/local/bin/appimagetool \
-            https://github.com/AppImage/AppImageKit/releases/download/13/appimagetool-x86_64.AppImage
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x /usr/local/bin/appimagetool
+          # appimagetool is itself an AppImage and mounts via FUSE, which a
+          # container does not have. This is the supported way to run one
+          # without it; without this the next step dies on "fuse: device not
+          # found" rather than anything to do with our build.
+          echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
+          APPIMAGE_EXTRACT_AND_RUN=1 appimagetool --version
 
       - uses: actions/checkout@v4
 

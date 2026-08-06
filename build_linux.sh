@@ -56,13 +56,20 @@ CXXABI_FLOOR="${CXXABI_FLOOR:-1.3.13}"
 
 echo "=== Domestique Linux AppImage Build (v${VERSION}) ==="
 
+# appimagetool ships as an AppImage and mounts itself via FUSE. Containers and
+# most CI have no FUSE, and the failure ("fuse: device not found") reads like a
+# problem with OUR build rather than with the tool. Exporting this makes it
+# extract-and-run instead; harmless on a desktop that does have FUSE.
+export APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}"
+
 for tool in objdump ldd appimagetool; do
     if ! command -v "$tool" &> /dev/null; then
         echo "✗ Required tool missing: $tool"
         case "$tool" in
             objdump|ldd) echo "  apt-get install -y binutils libc-bin" ;;
             appimagetool)
-                echo "  Download appimagetool-x86_64.AppImage from"
+                echo "  Download appimagetool-x86_64.AppImage from the"
+                echo "  AppImage/appimagetool repo's 'continuous' release"
                 echo "  github.com/AppImage/AppImageKit/releases, chmod +x it,"
                 echo "  and put it on PATH as 'appimagetool'."
                 ;;

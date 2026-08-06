@@ -533,7 +533,7 @@ jobs:
       # Gate the build the way the Windows job does, plus the assertion that is
       # the entire point of this release: a real, mapped, native window. Two
       # stages share one port, so stage A is killed and :8080 drained before
-      # stage B starts — otherwise _ensure_port_free_or_die kills stage B.
+      # the app starts — otherwise _ensure_port_free_or_die kills it.
       - name: "Smoke-test: AppImage serves the right version and opens a real window"
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
@@ -567,55 +567,15 @@ jobs:
 
           echo "Expected version from VERSION file: $EXPECTED_VERSION"
 
-          # ---- Stage A: headless HTTP -------------------------------------
-          echo "===== STAGE A: headless ====="
-          DOMESTIQUE_SERVER_ONLY=1 "./$APPIMAGE" > headless.log 2>&1 &
-          A_PID=$!
-          served=""
-          for _ in $(seq 30); do
-            body="$(curl -fsS --max-time 5 http://127.0.0.1:8080/api/version 2>/dev/null || true)"
-            if [ -n "$body" ]; then served="$(printf '%s' "$body" | jq -r .version)"; fi
-            [ -n "$served" ] && [ "$served" != "null" ] && break
-            served=""
-            sleep 3
-          done
-          [ -n "$served" ] || fail "AppImage never served /api/version within 90s (headless)"
-          [ "$served" = "$EXPECTED_VERSION" ] || fail "Version mismatch: served '$served' != VERSION '$EXPECTED_VERSION'"
-          echo "Stage A passed: served version $served"
+          # A headless stage used to run first and assert the served version,
+          # then hand the port to the GUI stage. It cost three runs to port
+          # collisions — the AppImage wrapper exec's an extracted binary, so
+          # killing the pid we launched leaves the real listener alive — and it
+          # proved nothing the GUI stage does not. The GUI stage asserts the
+          # same version over the same port, and additionally that a window
+          # opened. One instance, no teardown, no race.
 
-          # Tear stage A down and PROVE the port is free before stage B binds
-          # it. The previous check asked `ss`, which is not authoritative here:
-          # if ss is absent or silent it prints nothing, the grep does not
-          # match, and the loop exits declaring the port free — stage B then
-          # died with "Address already in use" while the gate reported success.
-          # Binding the socket is the only test that cannot pass vacuously.
-          kill "$A_PID" 2>/dev/null || true
-          wait "$A_PID" 2>/dev/null || true
-          pkill -9 -f 'Domestique' 2>/dev/null || true
-          port_free() {
-            # bind() succeeds -> exit 0 (free); OSError -> non-zero (held).
-            # SO_REUSEADDR so a socket merely in TIME_WAIT does not read as
-            # held; it does NOT let us bind past an active listener.
-            python3 -c "import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(('127.0.0.1', 8080)); s.close()" 2>/dev/null
-          }
-          # Killing $A_PID is not enough: that is the AppImage wrapper, and the
-          # extracted binary it exec'd keeps the listener. Kill whoever actually
-          # HOLDS the port, then require the port to test free TWICE a second
-          # apart — a single probe can catch the gap between the old listener
-          # closing and a surviving child re-binding, which is how the previous
-          # attempt reported success and then handed stage B a busy port.
-          for _i in $(seq 1 30); do
-            fuser -k -TERM 8080/tcp >/dev/null 2>&1 || true
-            sleep 1
-            if port_free; then sleep 1; port_free && break; fi
-            fuser -k -KILL 8080/tcp >/dev/null 2>&1 || true
-          done
-          port_free || { echo "FAIL: :8080 still held after 30s"; fuser -v 8080/tcp 2>&1 || true; ps -ef | grep -i domestiq | grep -v grep; exit 1; }
-          echo "Stage A torn down; :8080 is bindable"
-          echo ":8080 is clear"
-
-          # ---- Stage B: native window under Xvfb --------------------------
-          echo "===== STAGE B: native window ====="
+          echo "===== native window ====="
           Xvfb :99 -screen 0 1600x1000x24 -ac +extension GLX +render -noreset > xvfb.log 2>&1 &
           XVFB_PID=$!
           for _ in $(seq 30); do xdpyinfo -display :99 >/dev/null 2>&1 && break; sleep 1; done

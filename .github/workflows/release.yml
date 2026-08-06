@@ -583,11 +583,24 @@ jobs:
           [ "$served" = "$EXPECTED_VERSION" ] || fail "Version mismatch: served '$served' != VERSION '$EXPECTED_VERSION'"
           echo "Stage A passed: served version $served"
 
+          # Tear stage A down and PROVE the port is free before stage B binds
+          # it. The previous check asked `ss`, which is not authoritative here:
+          # if ss is absent or silent it prints nothing, the grep does not
+          # match, and the loop exits declaring the port free — stage B then
+          # died with "Address already in use" while the gate reported success.
+          # Binding the socket is the only test that cannot pass vacuously.
           kill "$A_PID" 2>/dev/null || true
-          sleep 2
+          wait "$A_PID" 2>/dev/null || true
           pkill -9 -f 'Domestique' 2>/dev/null || true
-          for _i in $(seq 1 30); do ss -ltn 2>/dev/null | grep -q ':8080 ' || break; sleep 1; done
-          ss -ltn 2>/dev/null | grep -q ':8080 ' && { echo 'FAIL: :8080 never drained'; exit 1; } || true
+          port_free() {
+            # bind() succeeds -> exit 0 (free); OSError -> non-zero (held).
+            # SO_REUSEADDR so a socket merely in TIME_WAIT does not read as
+            # held; it does NOT let us bind past an active listener.
+            python3 -c "import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(('127.0.0.1', 8080)); s.close()" 2>/dev/null
+          }
+          for _i in $(seq 1 30); do port_free && break; sleep 1; done
+          port_free || { echo "FAIL: :8080 still held after 30s"; ps aux | grep -i domestiq | grep -v grep; exit 1; }
+          echo "Stage A torn down; :8080 is bindable"
           echo ":8080 is clear"
 
           # ---- Stage B: native window under Xvfb --------------------------

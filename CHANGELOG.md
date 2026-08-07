@@ -1,13 +1,15 @@
 # Changelog
 
-## v3.8.0 — Domestique on Linux (2026-08-06)
+## v3.8.0 — Short-interval VO2max, and a Windows setup that finishes (2026-08-07)
 
-- **Domestique now runs on Linux.** One file you download, make executable and run — no installer, no package manager, nothing to uninstall. It is the same app you get on macOS and Windows: the same native window, the same plans, the same rides, the same local-only data in your home folder. Sign-in, sync, planning and FIT import all work exactly as they do elsewhere.
-- **Linux ships as a PRE-RELEASE, and the label is meant literally.** It is built against Ubuntu 22.04 and the automated checks are designed to confirm that the app starts, answers, and opens a window — but no build had completed at the time these notes were written, so treat every one of those as intended rather than observed. Nothing verifies by machine what the window actually *draws*, on any platform. No other distribution has been tried. If you are the first person to run this on your desktop, you are genuinely the first: please report what you see.
-- **What it needs.** A 64-bit x86 desktop with a reasonably current system (Ubuntu 22.04, Debian 12, Fedora 36 or newer, and their derivatives). There is no ARM build. The download is around 360 MB, because the window brings its own browser engine rather than borrowing whatever your distribution ships — that is what makes one file behave the same on every desktop, and it is the entire cost.
-- **If the window cannot open, it tells you and stops.** You get a dialog where the desktop can show one, the reason on the terminal, and the full detail written next to your data. It never quietly opens a browser tab instead, and it never leaves an invisible process running.
-- **The update notice knows about Linux.** New releases now offer Linux users the Linux download instead of nothing.
-- macOS and Windows are untouched by all of this: the three builds are produced independently, and a Linux problem cannot delay or damage either of them.
+- **Twenty-one new short-interval VO2max sessions.** The 30/15 microinterval protocol — thirty seconds hard, fifteen easy, repeated — in every length from 33 to 82 minutes and at a range of intensities, with a plain warm-up ramp and no drills. Reps come down as the target goes up, so every session is meant to be finishable to the last one.
+- **A new switch: VO2max — microintervals only.** In Plan Configuration, and again on any day you swap the workout type. Turn it on and your VO2max days become short on/off sessions instead of four-to-eight-minute intervals.
+- **The switch explains itself honestly, and the answer is not what you might expect.** Is the short-interval protocol the best way to train VO2max? Not established. Every study showing it beating a structured comparator in cyclists comes from one research group, with seven to nine riders per arm and no independent replication; VO2max itself improved significantly more in only two of four, and the flagship elite trial found no VO2max difference at all. It is a good session and you will not be doing anything unsupported — but it is a preference, not a verdict, so it is off by default and the explainer says all of this in plain language.
+- **Fixed, Windows: setup could not be completed.** "Complete Setup" failed with a message about folders you had never chosen, on a field you had never typed in. The app was auto-filling its own workout folder and then rejecting it, because on Windows that folder sits in the install location rather than under your home folder. Onboarding now finishes.
+- **Fixed: clicking a day in the training planner could open a different day.** The card you clicked and the session you got could disagree — and the buttons inside that view acted on the wrong day too, not just the header. Hovering could highlight the wrong row for the same reason.
+- **Fixed: the "How your plan updates" panel drew two arrows**, at a different size from the one next to Plan Configuration.
+- **Plan Configuration is findable when collapsed.** It is the only way back to your goal, event date and weekly hours, and it looked like a divider. Folded, it now looks like the button it is.
+- **Linux is in testing.** A native-window build exists and is available as a pre-release for anyone willing to try it; it is not part of this release and nobody is offered it automatically. macOS and Windows are unaffected.
 
 ## v3.7.0 — Which blocks did you actually do, and cooldowns that are cooldowns (2026-07-27)
 

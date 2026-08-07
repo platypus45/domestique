@@ -50,14 +50,18 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 
 ## What's new in v3
 
-**Domestique on Linux (v3.8).** One download-and-run file for 64-bit x86
-desktops, next to the macOS and Windows builds — the same app, the same
-native window, the same local-only data. It is genuinely new and far less
-exercised than the other two — it ships as a **pre-release**. It is built
-against Ubuntu 22.04 and no other distribution has been tried. The automated
-checks are designed to confirm a window opens; nothing can confirm by machine
-what that window draws. Read [Installing on Linux](#installing-on-linux)
-before you download it.
+**Short-interval VO2max (v3.8).** Twenty-one 30/15 microinterval sessions —
+thirty seconds hard, fifteen easy, repeated — from 33 to 82 minutes, plus a
+switch that makes every VO2max day one of them. The switch explains what the
+evidence does and does not show: this protocol is well supported but *not*
+established as the best way to train VO2max, so it is off by default. See
+[docs/SCIENCE.md](docs/SCIENCE.md).
+
+**Linux is in testing.** A native-window build for 64-bit x86 exists as a
+**pre-release** — genuinely new, built against Ubuntu 22.04, no other
+distribution tried, and nothing can confirm by machine what the window draws.
+It is not part of the v3.8 release and nobody is offered it automatically. If
+you want to try it, read [Installing on Linux](#installing-on-linux) first.
 
 **Which blocks did you actually do? (v3.7).** After an interval session the app
 now tells you the blocks, not just a score: all ten done, or eight of ten and

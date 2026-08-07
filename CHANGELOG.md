@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.8.1 — Indoor rides that arrive via Strava (2026-08-07)
+
+- **Fixed: rides that reach intervals.icu through Strava came in blank.** They showed in the calendar as a row called "Activity" with every field empty. If your indoor rides go Zwift → Strava → intervals.icu and your outdoor rides come straight from a head unit, this looked exactly like "indoor rides are broken" — same app, two different routes in. intervals.icu does not pass on Strava's data, so what arrives is a placeholder with no name, no duration and no numbers; Domestique now recognises that and declines it instead of writing an empty ride. Blank rows already saved are cleaned up on the next sync.
+- **Fixed: importing the FIT file could not repair such a ride.** The imported file was matched to the blank entry and then discarded in favour of it, because the intervals.icu copy normally has more detail — true of every case except this one. Importing the file now works, and is the way to get those rides back with their full data.
+- **Fixed: average power was missing from every ride.** It was being read from a field intervals.icu does not send. Normalised power was always correct, which is why this went unnoticed — but average power was blank everywhere, and it also decides whether a ride counts as power-based or heart-rate-based.
+
+Reported in [#9](https://github.com/platypus45/domestique/issues/9).
+
 ## v3.8.0 — Short-interval VO2max, and a Windows setup that finishes (2026-08-07)
 
 - **Twenty-one new short-interval VO2max sessions.** The 30/15 microinterval protocol — thirty seconds hard, fifteen easy, repeated — in every length from 33 to 82 minutes and at a range of intensities, with a plain warm-up ramp and no drills. Reps come down as the target goes up, so every session is meant to be finishable to the last one.

@@ -19115,6 +19115,10 @@ def _sync_icu_activities_locked(force: bool = False) -> dict:
     try:
         with db.sync_write_gate(_snap):
             _rs.backfill_icu_sports_from_db()
+            # v3.8.1 (issue #9) — drop blank records a Strava-origin stub wrote
+            # before the guard existed. Cheap, idempotent, and it is what lets
+            # the rider's own FIT import finally win the dedupe.
+            _rs.purge_stub_icu_records()
     except db.SyncAborted:
         pass
     except Exception as e:  # noqa: BLE001 — best-effort heal, never break sync

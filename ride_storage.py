@@ -123,6 +123,15 @@ def _wellness_dir() -> Path:
     return base
 
 
+def _pick_first(d: dict, *keys):
+    """First of ``keys`` present on ``d`` with a truthy value, else None."""
+    for k in keys:
+        v = d.get(k)
+        if v:
+            return v
+    return None
+
+
 def _first_num(d: dict, *keys) -> "int | None":
     """First of ``keys`` present on ``d`` as an int; None if none are usable.
 
@@ -157,6 +166,35 @@ def _normalize_icu_activity(a: dict) -> dict:
         return {}
     icu_id = str(icu_id)
 
+    # v3.8.1 — a STUB is not a ride. For an activity that reached
+    # intervals.icu via Strava, ICU returns five keys and nothing else: id,
+    # source="STRAVA", start_date_local, and two nulls. It does not re-share
+    # Strava's data. Taken at face value that became a record with no name and
+    # every number zero, which the calendar drew as a row called "Activity"
+    # with empty fields — a ride the rider appears to have done with no data.
+    #
+    # Worse, it could not be repaired: importing the real FIT deduped INTO the
+    # stub, and the ICU side wins that dedupe by design ("ICU is richer"),
+    # which is true of every ICU record except this one. So the rider's own
+    # file was discarded in favour of a blank.
+    #
+    # Refusing the stub fixes all three: nothing blank is written, the FIT has
+    # no twin to lose to, and the dedupe rule needs no exception. The ride is
+    # absent rather than wrong — and absent is recoverable by importing the
+    # file, which now works.
+    # All three absent. A stub has NOTHING — the real one carries only id,
+    # source and a start time. Requiring a missing name too is what keeps a
+    # genuine ride that merely lacks a type (an untagged local FIT relayed to
+    # ICU) from being thrown away with it.
+    if (not _pick_first(a, "name")
+            and not _pick_first(a, "type", "sport_type")
+            and not _pick_first(a, "elapsed_time", "moving_time", "duration",
+                                "icu_distance", "distance")):
+        log.info("ICU activity %s is a %s stub (no type, no duration) — not "
+                 "persisting; import the FIT to get this ride",
+                 icu_id, a.get("source") or "source-less")
+        return {}
+
     # Distance comes in meters from ICU.
     distance_m = a.get("distance")
     distance_km = None
@@ -189,7 +227,16 @@ def _normalize_icu_activity(a: dict) -> dict:
                 return raw[k]
         return None
 
-    avg_power = _pick("icu_pm_p_avg", "average_watts", "avg_watts")
+    # v3.8.1 — icu_average_watts FIRST. The other three names are not returned
+    # by intervals.icu at all: probed live against both an indoor and an
+    # outdoor activity, icu_pm_p_avg / average_watts / avg_watts were absent on
+    # both while icu_average_watts carried the value. So avg_power_w has been
+    # None on every ICU ride ever synced. It went unnoticed because np_w reads
+    # icu_weighted_avg_watts and is correct, and that is the number most views
+    # show — but this field also decides load_source, so a power ride could be
+    # tagged as HR-derived.
+    avg_power = _pick("icu_average_watts", "icu_pm_p_avg",
+                      "average_watts", "avg_watts")
     np_w = _pick(
         "icu_weighted_avg_watts",
         "weighted_average_watts",
@@ -431,6 +478,44 @@ def _normalize_icu_activity(a: dict) -> dict:
         "polarization": polarization,
         "samples_url": f"/api/ride/icu_{icu_id}/detail?include=samples",
     }
+
+
+def purge_stub_icu_records() -> int:
+    """v3.8.1 — delete blank records a Strava-origin stub already wrote.
+
+    The guard in _normalize_icu_activity stops new ones, but a rider who
+    synced before the fix still has rows in their calendar called "Activity"
+    with every field empty — and those rows still out-rank the rider's own FIT
+    in the dedupe, so importing the real file cannot repair them.
+
+    Only a record with NO name AND no duration AND no load is removed: that
+    combination cannot describe a ride anyone actually did, and the ride
+    returns intact the moment the FIT is imported. Returns the count removed.
+    """
+    removed = 0
+    try:
+        icu_dir = _icu_rides_dir()
+    except RuntimeError:
+        return 0
+    for f in icu_dir.glob("*.json"):
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not isinstance(d, dict):
+            continue
+        if (not (d.get("name") or "").strip()
+                and not (d.get("duration_s") or 0)
+                and d.get("tss") is None
+                and d.get("avg_power_w") is None):
+            try:
+                f.unlink()
+                removed += 1
+            except OSError as e:
+                log.debug("purge_stub_icu_records(%s) skipped: %s", f.name, e)
+    if removed:
+        log.info("purged %d blank ICU stub record(s)", removed)
+    return removed
 
 
 def backfill_icu_sports_from_db() -> int:

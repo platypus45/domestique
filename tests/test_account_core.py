@@ -204,8 +204,12 @@ def test_a3_profile_b_starts_clean_roundtrip_preserves_a(tmp_path):
     pm.switch(a)
     pm.save_env("i111", "key_a")
     pm.save_icu_token("tok_a", "i111", "Alice A")
-    rs.persist_icu_activity({"id": "111",
-                             "start_date_local": "2026-07-01T10:00:00"})
+    # v3.8.1: a bare {id, start_date_local} is the Strava-origin stub shape
+    # and is no longer written as a ride (issue #9) — these fixtures exist to
+    # create a real archive record, so they carry a type and a duration.
+    rs.persist_icu_activity({"id": "111", "type": "Ride", "name": "111",
+                             "start_date_local": "2026-07-01T10:00:00",
+                             "elapsed_time": 3600})
     rs.persist_wellness({"id": "2026-07-01", "ctl": 1.0, "atl": 2.0})
     custom = tmp_path / "custom_lib"
     custom.mkdir()
@@ -257,8 +261,14 @@ def test_a10_purge_wipes_and_aborts_inflight_snapshot(tmp_path):
     conn.execute("INSERT INTO athlete_metrics (date, metric, value, source) "
                  "VALUES ('2026-07-01', 'vo2max', 55, 'manual')")
     conn.commit()
-    rs.persist_icu_activity({"id": "x1",
-                             "start_date_local": "2026-07-01T10:00:00"})
+    # v3.8.1: needs a type and a duration. Bare {id, start_date_local} is the
+    # exact shape intervals.icu returns for a Strava-origin activity it cannot
+    # share, and that is now refused rather than written as an empty ride
+    # (issue #9) — so as a bare dict this never created the archive file the
+    # purge count below is about.
+    rs.persist_icu_activity({"id": "x1", "type": "Ride", "name": "x1",
+                             "start_date_local": "2026-07-01T10:00:00",
+                             "elapsed_time": 3600})
     rs.persist_wellness({"id": "2026-07-01", "ctl": 1.0, "atl": 2.0})
     # icu-sourced mirror must reset; manual mirror must survive
     assert pm._set_max_hr(190, "icu") is True
@@ -493,8 +503,12 @@ def test_a12_delete_last_then_create_no_resurrection(tmp_path):
     a = pm.create_profile("Solo")
     pm.switch(a)
     pm.save_env("i111", "key")
-    rs.persist_icu_activity({"id": "s1",
-                             "start_date_local": "2026-07-01T10:00:00"})
+    # v3.8.1: a bare {id, start_date_local} is the Strava-origin stub shape
+    # and is no longer written as a ride (issue #9) — these fixtures exist to
+    # create a real archive record, so they carry a type and a duration.
+    rs.persist_icu_activity({"id": "s1", "type": "Ride", "name": "s1",
+                             "start_date_local": "2026-07-01T10:00:00",
+                             "elapsed_time": 3600})
     profiles_root = tmp_path / ".domestique" / "profiles"
     assert (profiles_root / "solo" / "health_tracker.db").exists()
 

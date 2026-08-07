@@ -1179,12 +1179,42 @@ def setup_icu_hr(athlete_id: str = Query(""), api_key: str = Query("")):
 _setup_lock = threading.Lock()
 
 
-_SETUP_PATH_ALLOWED_BASES = [
-    Path.home(),
-    domestique_home(),  # 3.4.3: sandbox-aware
-    Path("/tmp"),
-    Path("/private/tmp"),  # macOS symlink target
-]
+def _setup_path_allowed_bases() -> "list[Path]":
+    """Where a setup-supplied path may point (SEC4).
+
+    Computed per call rather than frozen at import: the app's OWN directories
+    are on this list, and on Windows they live wherever the user installed to
+    — which import order cannot know.
+
+    The guard exists to stop a hostile setup-save pointing the server at
+    arbitrary filesystem locations. It was never meant to reject the
+    application's own bundled workout library, but that is exactly what it did
+    on Windows: the wizard auto-detects the bundled path, pre-fills it, marks
+    it touched (deliberately — an auto-detected path is a proposal the user
+    accepts by clicking through), and submits it. Under Program Files that
+    is not below $HOME, so "Complete Setup" failed with a message about
+    directories the rider had never chosen and could not act on.
+    """
+    bases = [Path.home(), domestique_home()]
+    # The app's own directories. Trusted by definition — this is where the
+    # library ships, and on a frozen build it is inside the install location.
+    for own in (_BUNDLED_WORKOUT_DIR, _BUNDLED_GPX_DIR):
+        try:
+            bases.append(own)
+            bases.append(own.parent)
+        except Exception:  # noqa: BLE001 — a bad base must never break setup
+            pass
+    if sys.platform == "win32":
+        # Windows equivalents of /tmp; %TEMP% is also where a frozen onefile
+        # build unpacks itself.
+        for env in ("TEMP", "TMP", "LOCALAPPDATA", "APPDATA"):
+            v = os.environ.get(env)
+            if v:
+                bases.append(Path(v))
+    else:
+        bases.append(Path("/tmp"))
+        bases.append(Path("/private/tmp"))  # macOS symlink target
+    return bases
 
 
 def _setup_path_allowed(p: Path) -> bool:
@@ -1198,7 +1228,7 @@ def _setup_path_allowed(p: Path) -> bool:
         resolved = p.resolve()
     except (OSError, RuntimeError):
         return False
-    for base in _SETUP_PATH_ALLOWED_BASES:
+    for base in _setup_path_allowed_bases():
         try:
             rb = base.resolve()
         except (OSError, RuntimeError):

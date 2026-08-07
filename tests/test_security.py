@@ -131,3 +131,47 @@ def test_no_inbound_network_server_entitlement():
         pytest.skip("no entitlements.plist")
     text = ent.read_text()
     assert "network.server" not in text, "inbound network.server entitlement would allow remote access"
+
+
+# ── the Windows onboarding block (v3.8.0) ────────────────────────────────────
+
+def test_setup_accepts_the_apps_own_bundled_directories():
+    """A Windows 10 tester could not finish onboarding: "Complete Setup" failed
+    with "workout_dir must be under $HOME, ~/.domestique, or /tmp".
+
+    Nothing was wrong with their input. The wizard AUTO-DETECTS the bundled
+    workout library, pre-fills it and marks it touched on purpose (an
+    auto-detected path is a proposal the rider accepts by clicking through), so
+    the app submits its own path to itself. On a frozen Windows install that
+    path sits under the install directory, not below $HOME — so the guard
+    rejected the application's own library, naming three directories the rider
+    had never chosen and could not act on.
+    """
+    import app as app_module
+    assert app_module._setup_path_allowed(app_module._BUNDLED_WORKOUT_DIR)
+    assert app_module._setup_path_allowed(app_module._BUNDLED_GPX_DIR)
+
+
+@pytest.mark.parametrize("hostile", ["/etc", "/", "/usr/lib", "/etc/passwd"])
+def test_setup_still_rejects_paths_outside_the_allow_list(hostile):
+    """SEC4's actual purpose survives the fix: a setup-save must not be able to
+    point the server at arbitrary filesystem locations."""
+    import app as app_module
+    assert not app_module._setup_path_allowed(Path(hostile))
+
+
+def test_setup_rejects_traversal_out_of_an_allowed_base():
+    """`~/../../etc` resolves outside home and must not pass on the strength of
+    its prefix."""
+    import app as app_module
+    assert not app_module._setup_path_allowed(Path.home() / ".." / ".." / "etc")
+
+
+def test_the_allow_list_is_computed_not_frozen_at_import():
+    """It must be a call, not a module constant: the app's own directories are
+    on the list and on Windows they live wherever the user installed to, which
+    import order cannot know."""
+    import app as app_module
+    assert callable(getattr(app_module, "_setup_path_allowed_bases", None))
+    assert not hasattr(app_module, "_SETUP_PATH_ALLOWED_BASES"), (
+        "the frozen constant is back; Windows installs will break again")

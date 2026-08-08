@@ -151,6 +151,27 @@ def test_the_oauth_callback_follows_the_bound_port(monkeypatch):
         importlib.reload(config)
 
 
+def test_ci_smoke_tests_poll_the_port_the_app_serves():
+    """CI must curl the port the build actually listens on.
+
+    Moving the app off 8080 without moving the release workflow with it failed
+    the Windows AND Linux smoke tests simultaneously — each polled a port
+    nothing was on, and the clean-distro job then failed for want of an
+    artifact. Three red jobs, one stale literal.
+    """
+    import re
+    from pathlib import Path
+    wf = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "release.yml"
+    if not wf.exists():
+        return
+    text = wf.read_text(encoding="utf-8")
+    polled = set(re.findall(r"(?:127\.0\.0\.1|localhost):(\d{2,5})/api/version", text))
+    assert polled, "no /api/version poll found in the release workflow"
+    assert polled == {str(launcher.DEFAULT_PORT)}, (
+        f"the release workflow polls {sorted(polled)} but the app serves on "
+        f"{launcher.DEFAULT_PORT} — the smoke tests would fail on every platform")
+
+
 def test_remember_port_survives_an_unwritable_home(monkeypatch, tmp_path):
     """A URL we cannot remember is not worth failing a launch over."""
     def _boom():

@@ -317,7 +317,7 @@ jobs:
             $deadline = (Get-Date).AddSeconds(90)
             while ((Get-Date) -lt $deadline) {
               try {
-                $resp = Invoke-RestMethod -Uri "http://127.0.0.1:8080/api/version" -TimeoutSec 5
+                $resp = Invoke-RestMethod -Uri "http://127.0.0.1:22400/api/version" -TimeoutSec 5
                 $served = $resp.version
                 Write-Host "Server responded; version=$served"
                 break
@@ -532,7 +532,7 @@ jobs:
 
       # Gate the build the way the Windows job does, plus the assertion that is
       # the entire point of this release: a real, mapped, native window. Two
-      # stages share one port, so stage A is killed and :8080 drained before
+      # stages share one port, so stage A is killed and :22400 drained before
       # the app starts — otherwise _ensure_port_free_or_die kills it.
       - name: "Smoke-test: AppImage serves the right version and opens a real window"
         env:
@@ -607,26 +607,26 @@ jobs:
           cat wininfo.txt
           grep -q 'Map State: IsViewable' wininfo.txt || fail "window $WID exists but is not viewable"
 
-          # 3. localhost verbatim — the window loads http://localhost:8080, so
+          # 3. localhost verbatim — the window loads http://127.0.0.1:22400, so
           #    an assertion that only ever hits 127.0.0.1 would sail past a
           #    hostname-resolution break the user would hit immediately.
-          body="$(curl -fsS --max-time 5 http://localhost:8080/api/version)" \
-            || fail "the GUI instance did not answer on http://localhost:8080"
+          body="$(curl -fsS --max-time 5 http://localhost:22400/api/version)" \
+            || fail "the GUI instance did not answer on http://localhost:22400"
           served="$(printf '%s' "$body" | jq -r .version)"
           [ "$served" = "$EXPECTED_VERSION" ] || fail "GUI served '$served' != VERSION '$EXPECTED_VERSION'"
 
           #    ...and the listener must BE the GUI process, not a stage-A leftover.
-          PORT_PID="$(ss -ltnp 2>/dev/null | awk '/:8080 /{ if (match($0, /pid=[0-9]+/)) print substr($0, RSTART+4, RLENGTH-4) }' | head -1)"
-          [ -n "$PORT_PID" ] || fail "nothing is listening on :8080"
+          PORT_PID="$(ss -ltnp 2>/dev/null | awk '/:22400 /{ if (match($0, /pid=[0-9]+/)) print substr($0, RSTART+4, RLENGTH-4) }' | head -1)"
+          [ -n "$PORT_PID" ] || fail "nothing is listening on :22400"
           p="$PORT_PID"; owner=""
           while [ -n "$p" ] && [ "$p" != "1" ] && [ "$p" != "0" ]; do
             if [ "$p" = "$B_PID" ]; then owner="yes"; break; fi
             p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
           done
-          [ -n "$owner" ] || fail ":8080 is held by PID $PORT_PID, which is not the GUI process ($B_PID) nor a descendant"
+          [ -n "$owner" ] || fail ":22400 is held by PID $PORT_PID, which is not the GUI process ($B_PID) nor a descendant"
 
           # 4. the browser fallback is a spec violation on Linux, and its worst
-          #    shape is a live process holding :8080 with no window — which
+          #    shape is a live process holding :22400 with no window — which
           #    every check above would still pass if the server came up.
           if grep -REn '_fallback_to_browser|opening in browser' \
           # The grep above is a belt: on Linux the fatal path diverts before
@@ -805,7 +805,7 @@ jobs:
               pid=$!
               served=""
               for _ in $(seq 30); do
-                served="$(curl -fsS --max-time 5 http://localhost:8080/api/version 2>/dev/null || true)"
+                served="$(curl -fsS --max-time 5 http://localhost:22400/api/version 2>/dev/null || true)"
                 [ -n "$served" ] && break
                 sleep 3
               done

@@ -356,13 +356,20 @@ def test_the_crash_dialog_cannot_satisfy_the_native_window_check():
     mapped window titled "Domestique". The startup-failure dialog is a real Qt
     window, so if it carried that title the release would go green while the app
     was dying in front of it — every assertion in the job passes off the dialog.
-    Its title must be one no success path can emit."""
+    Its title must be one no success path can emit.
+
+    Reads _fatal_report, which owns the dialog for BOTH startup deaths — the
+    dead GUI backend this was written for, and a foreign server holding :8080.
+    """
     src = (ROOT / "launcher.py").read_text(encoding="utf-8")
-    i = src.index("_linux_gui_fatal")
+    i = src.index("def _fatal_report")
     body = src[i:i + 4000]
     assert 'setWindowTitle("Domestique")' not in body, (
         "the fatal dialog is titled exactly like the real window")
     assert "startup failure" in body
+    # Both fatal paths must go through it, or one of them is silent again.
+    assert src.count("_fatal_report(") >= 3, (
+        "a startup death stopped routing through the visible reporter")
 
 
 def test_a_second_linux_launch_does_not_open_a_browser():

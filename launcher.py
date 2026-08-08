@@ -80,13 +80,147 @@ def configure_tls_ca(platform=None, frozen=None):
 
 configure_tls_ca()
 
-# Port 8080 is PINNED for single-instance hygiene: the tray icon + existing
-# instance guard both assume localhost:8080. If we let uvicorn float the
-# port, the single-instance detection breaks and desktop shortcuts that
-# point at :8080 stop working across restarts.
-# (Master decisions §3 — fail loudly if 8080 is busy.)
-PORT = 8080
-URL = f"http://localhost:{PORT}"
+# PORT SELECTION. 8080 was pinned so single-instance detection always knew
+# where to look; the cost was that 8080 is one of the most contested ports on
+# a Linux desktop, and losing it meant Domestique showed a stranger's web UI
+# (a Pop!_OS tester got a camera app's page) or refused to start.
+#
+# The pin is no longer needed: /api/version answers {"app": "domestique"}, so
+# the launcher can positively identify its own instance and a fallback is safe
+# rather than ambiguous.
+#
+# WHY THESE NUMBERS, AND WHY NOT SOMETHING HIGHER. Picking a "high, out of the
+# way" port is the intuitive move and the wrong one. Outbound connections draw
+# a source port from the OS ephemeral pool, so a listener inside that pool
+# fails to bind whenever a connection happens to hold it — an intermittent
+# failure that survives every "the port was free when I checked" test. The
+# default pools are 32768-60999 (Linux ip_local_port_range) and 49152-65535
+# (macOS ip.portrange.first, Windows dynamic range), so the band safe on all
+# three is 1024-32767. All three candidates sit well inside it.
+#
+# 22400 is IANA-unassigned on TCP and UDP, absent from nmap-services (whose
+# neighbours 22406/22408/22412 DO carry observed frequencies, so that silence
+# is data and not a coverage hole), and no software was found binding it. The
+# memorable constants were all worse: 31415 is MATLAB Connector's default,
+# 14142 is IANA-assigned to icpp, 16180 is the Ingen synthesis host.
+PORT_CANDIDATES = (22400, 21055, 26214)
+DEFAULT_PORT = PORT_CANDIDATES[0]
+
+
+def is_domestique_at(url: str) -> bool:
+    """True only if the server answering ``url`` is actually Domestique.
+
+    A bare "did something answer on 8080?" is not an identity check, and on a
+    Linux desktop 8080 is a crowded port. A tester on Pop!_OS had a camera
+    web UI there: the probe got its 200, we declared ourselves already
+    running, and pointed the window at it — so Domestique's own window showed
+    someone else's app, with no intervals.icu prompt, no error and no crash
+    file, because from the launcher's point of view nothing had gone wrong.
+
+    ``app == "domestique"`` is the marker. Instances predating it are still
+    recognised by the shape of /api/version (version + data_dir), so a new
+    launcher probing an older running instance does not mistake it for a
+    stranger and refuse to start.
+    """
+    import json
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"{url}/api/version", timeout=2) as r:
+            body = json.loads(r.read().decode("utf-8", "replace"))
+    except Exception:
+        return False
+    if not isinstance(body, dict):
+        return False
+    return (body.get("app") == "domestique"
+            or ("version" in body and "data_dir" in body))
+
+
+def _port_memo():
+    """Where the last successfully-bound port is remembered."""
+    from user_home import domestique_home
+    return domestique_home() / "port.txt"
+
+
+def _port_is_available(port: int) -> bool:
+    """Free, or already serving Domestique.
+
+    "Already ours" counts as available on purpose: it is what keeps
+    single-instance detection working. Without it, launching a second copy
+    while the first holds 22400 would skip to 21055 and start a SECOND server
+    instead of focusing the running window.
+
+    No SO_REUSEADDR — uvicorn does not set it either, so probing without it
+    means a successful probe predicts a successful bind.
+    """
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", port))
+        return True
+    except OSError:
+        return is_domestique_at(f"http://127.0.0.1:{port}")
+    finally:
+        try:
+            s.close()
+        except OSError:
+            pass
+
+
+def _resolve_port() -> int:
+    """The port to serve on. Never asks the user; never blocks startup.
+
+    Order: an explicit DOMESTIQUE_PORT wins outright (a deliberate override
+    must not be silently overruled, so it gets no fallback). Otherwise the
+    port we bound last time is tried first — a stable URL is what makes
+    bookmarks and desktop shortcuts survive restarts — then the candidates in
+    order. If every one is taken we still return the default so the caller
+    reaches _ensure_port_free_or_die() and reports the failure properly,
+    rather than dying here with no diagnostics.
+    """
+    env = os.environ.get("DOMESTIQUE_PORT", "").strip()
+    if env:
+        try:
+            return int(env)
+        except ValueError:
+            pass  # a typo'd override falls through to the normal search
+
+    order = list(PORT_CANDIDATES)
+    try:
+        remembered = int(_port_memo().read_text(encoding="utf-8").strip())
+        if remembered not in order:
+            order.insert(0, remembered)
+        else:
+            order.remove(remembered)
+            order.insert(0, remembered)
+    except (OSError, ValueError):
+        pass
+
+    for port in order:
+        if _port_is_available(port):
+            return port
+    return DEFAULT_PORT
+
+
+def _remember_port(port: int) -> None:
+    """Persist the bound port so the next launch reuses the same URL."""
+    try:
+        memo = _port_memo()
+        memo.parent.mkdir(parents=True, exist_ok=True)
+        if memo.read_text(encoding="utf-8").strip() != str(port):
+            memo.write_text(f"{port}\n", encoding="utf-8")
+    except OSError:
+        pass  # a URL we cannot remember is not worth failing a launch over
+
+
+PORT = _resolve_port()
+# 127.0.0.1, not localhost. RFC 8252 §8.3 calls the localhost form NOT
+# RECOMMENDED for OAuth loopback redirects: it can resolve to a non-loopback
+# interface, and it breaks on a mangled hosts file or a client firewall. The
+# IP literal is also the form §7.3's "MUST allow any port" is scoped to.
+URL = f"http://127.0.0.1:{PORT}"
+# The one source of truth for every child: app.py's config reads this to build
+# the OAuth redirect URI, so the callback always matches the port we bound.
+os.environ["DOMESTIQUE_PORT"] = str(PORT)
 
 
 def _log():
@@ -121,13 +255,14 @@ def _is_server_only() -> bool:
 
 
 def _ensure_port_free_or_die() -> None:
-    """Refuse to start if another process is already bound to port 8080.
+    """Last line of defence: die visibly if the resolved port is taken.
 
-    The single-instance branch in `main()` handles the "Domestique already
-    running" case before this gets called — so any other listener on 8080
-    here is some unrelated app squatting the port. Exit with a clear
-    message rather than silently picking another port (which would break
-    single-instance detection and any saved :8080 shortcuts).
+    _resolve_port() has already walked the candidate list, so reaching this
+    with a busy port means EVERY candidate was occupied, or an explicit
+    DOMESTIQUE_PORT override points at something in use. The single-instance
+    branch in `main()` has also already run, so a listener here is not another
+    Domestique — it is an unrelated app. Report it properly instead of
+    floating to an unbounded port nobody can find afterwards.
 
     NOTE — we deliberately do NOT set SO_REUSEADDR on this probe. With
     REUSEADDR a Linux TIME_WAIT socket from a prior crashed instance lets
@@ -145,18 +280,25 @@ def _ensure_port_free_or_die() -> None:
     try:
         s.bind(("127.0.0.1", PORT))
     except OSError as e:
+        tried = ", ".join(str(p) for p in PORT_CANDIDATES)
         msg = (
-            f"FATAL: cannot bind 127.0.0.1:{PORT} ({e}). "
-            f"Domestique requires port {PORT} for single-instance detection. "
-            f"Stop the conflicting process and try again."
+            f"Domestique could not find a free port.\n\n"
+            f"It tried {tried}, and something is using all of them.\n\n"
+            f"Close whatever is using them and start Domestique again."
         )
-        print(f"\n{msg}\n")
-        # v2.0.2 WIN-START-FIX: a windowed build's stdout is dead, so this
-        # sys.exit(2) would otherwise be a silent death. Leave a trace.
-        log = _log()
-        if log is not None:
-            log.error(msg)
-        sys.exit(2)
+        detail = (
+            f"cannot bind 127.0.0.1:{PORT} ({e})\n\n"
+            f"Tried in order: {tried}.\n"
+            f"Set DOMESTIQUE_PORT to choose one yourself, e.g.\n"
+            f"  DOMESTIQUE_PORT=23500 domestique\n\n"
+            f"To see what holds a port:\n"
+            f"  Linux/macOS:  ss -ltnp | grep {PORT}   (or lsof -i :{PORT})\n"
+            f"  Windows:      netstat -ano | findstr :{PORT}\n"
+        )
+        # A windowed build's stdout is dead and a desktop launch has no
+        # terminal, so print + sys.exit(2) was an invisible death — the exact
+        # shape of the Pop!_OS report. Route it through every channel.
+        _fatal_report(msg, detail)
     finally:
         try:
             s.close()
@@ -408,17 +550,21 @@ def run_with_tray():
 
 
 def is_already_running():
-    """Check if another instance is already serving on our port.
+    """Check if another DOMESTIQUE instance is already serving on our port.
 
     Differentiates failure modes so operators can distinguish:
       - URLError: connection refused → port is free, not already running.
       - PermissionError (EACCES): firewall / app-sandbox blocks localhost.
+
+    A foreign server on the port returns False here, which drops through to
+    _ensure_port_free_or_die() and its FATAL message — the loud failure
+    master decisions §3 asks for, rather than silently adopting its UI.
     """
     import urllib.request
     import urllib.error
     try:
         urllib.request.urlopen(URL, timeout=1)
-        return True
+        return is_domestique_at(URL)
     except urllib.error.URLError as e:
         reason = getattr(e, "reason", e)
         if isinstance(reason, PermissionError):
@@ -630,6 +776,19 @@ def _linux_gui_fatal(reason: str) -> None:
     except Exception:
         detail += "\nBackend import:\n" + traceback.format_exc()
 
+    _fatal_report(msg, detail)
+
+
+def _fatal_report(msg: str, detail: str) -> "None":
+    """Report a startup death on every channel, then exit non-zero.
+
+    Split out of _linux_gui_fatal because a dead GUI backend is not the only
+    way to die before there is a window: a foreign server squatting :8080 kills
+    startup just as dead, and its only channels were a print to a frozen
+    build's dead stdout and sys.exit(2) — invisible from a desktop icon. Same
+    three channels either way: a file to attach to a bug report, a dialog if a
+    desktop session can show one, and stderr for a terminal launch.
+    """
     crash = None
     try:
         from user_home import domestique_home
@@ -774,9 +933,8 @@ def main():
     if sys.platform != "win32":
         signal.signal(signal.SIGTERM, signal_handler)
 
-    # Pinned-port guard: bail out NOW if 8080 is held by an unrelated process.
-    # We refuse to silently float to a different port — single-instance
-    # detection and any saved :8080 shortcuts would break (master decisions §3).
+    # Bail out NOW if even the resolved port is held. The fallback list has
+    # already been walked at import; this only fires when all of it is taken.
     _ensure_port_free_or_die()
 
     # Start server in background thread
@@ -785,6 +943,10 @@ def main():
     # Wait for server to respond, then open window
     server_up = wait_for_server()
     if server_up:
+        # Only now is the port known-good. Remembering it here (rather than at
+        # resolve time) means a port that looked free but failed to serve is
+        # never written back as the preferred one.
+        _remember_port(PORT)
         print(f"Server ready → {URL}")
     else:
         log = _log()

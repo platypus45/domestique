@@ -2,7 +2,7 @@
 Domestique Dashboard v2 — local web interface.
 
 Run: python3 app.py
-Open: http://localhost:8080
+Open: http://127.0.0.1:22400  (or $DOMESTIQUE_PORT, if set)
 
 Pure HTML + CSS + vanilla JS. No npm, no frameworks.
 """
@@ -8511,6 +8511,10 @@ def api_version():
     """
     import platform
     return {
+        # Identity marker, not decoration: the launcher's single-instance probe
+        # uses it to tell a running Domestique from any other server that
+        # happens to hold :8080. Do not rename or remove.
+        "app": "domestique",
         "version": _VERSION,
         "python": platform.python_version(),
         "frozen": getattr(sys, "frozen", False),
@@ -12889,8 +12893,6 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
     import responses must stay clean even if adaptation errors.
     """
     try:
-        if new_rides <= 0:
-            return
         json_path = _plan_dir() / "current_plan.json"
         if not json_path.exists():
             return
@@ -12902,6 +12904,21 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
             with open(json_path, encoding="utf-8") as f:
                 plan = json.load(f)
 
+            # A MISS IS THE ABSENCE OF A RIDE. Gating this whole chain on
+            # new_rides > 0 meant the one thing it most needs to react to was
+            # the one thing that skipped it: stop riding and nothing marks the
+            # sessions missed, so reconcile never runs, the refit tier is
+            # handed an empty missed list, and the week keeps the shape it was
+            # born with until the rider notices and presses Update plan by
+            # hand. A rider who stops riding is exactly the rider who never
+            # presses it. Rides arriving still drive it immediately; otherwise
+            # it runs once per day so a day that passed unridden is seen.
+            today = date.today()
+            stamped = plan.get("reconcile_date") != today.isoformat()
+            if new_rides <= 0 and not stamped:
+                return
+            plan["reconcile_date"] = today.isoformat()
+
             activities = db.query_activities(days=120)
             training = cached("training", get_today_metrics)
 
@@ -12909,13 +12926,16 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
                 plan,
                 training=training,
                 activities=activities,
-                today=date.today(),
+                today=today,
                 allow_regen=True,
                 gap_debounce=True,
                 reforecast_min_interval_iso=plan.get("reforecast_date"),
             )
-            if action == "skipped":
-                return  # reforecast tier debounced (<5 min) — nothing to write
+            # "skipped" means the reforecast tier debounced. The daily stamp
+            # still has to land, or every sync for the rest of the day re-runs
+            # the full chain.
+            if action == "skipped" and not stamped:
+                return
 
             tp.atomic_write_plan(json_path, plan_dict)
     except Exception as e:  # noqa: BLE001
@@ -13715,8 +13735,15 @@ def _apply_plan_update(
     # every sync / Update-plan (no manual "Reconcile Week" click). Idempotent
     # (dedup by activity_id). Runs before regen/reforecast so the regen path's
     # v1.8.20 preservation carries the freshly-marked done/missed statuses.
+    # ``reconciled`` counts what the two bookkeeping passes below changed. The
+    # reforecast tier can debounce out and return "skipped", and its caller
+    # takes that as "nothing to write" — which silently threw away the misses
+    # these passes had just marked, so a rider who synced twice inside five
+    # minutes ended the day with a plan that still called every past session
+    # pending. Bookkeeping is not reforecast work and must survive that gate.
+    reconciled = 0
     try:
-        _reconcile_current_week(plan, today)
+        reconciled += _reconcile_current_week(plan, today)[0] or 0
     except Exception:  # noqa: BLE001 — reconcile is best-effort; never block adapt
         _log.exception("auto-reconcile skipped")
 
@@ -13727,7 +13754,7 @@ def _apply_plan_update(
     # redistribute it; misses with no free in-week slot stay missed and fall
     # through to the refit tier as before.
     try:
-        _auto_apply_missed_moves(plan, today)
+        reconciled += len(_auto_apply_missed_moves(plan, today) or ())
     except Exception:  # noqa: BLE001 — best-effort; never block adapt
         _log.exception("auto-reschedule skipped")
 
@@ -13864,6 +13891,12 @@ def _apply_plan_update(
         try:
             last_dt = datetime.fromisoformat(reforecast_min_interval_iso)
             if (datetime.now() - last_dt).total_seconds() < 300:
+                # "reconciled" when the bookkeeping passes above actually
+                # changed something: the debounce is about reforecast churn,
+                # and callers treat only "skipped" as nothing-to-write, so a
+                # bare "skipped" here would discard those marks.
+                if reconciled:
+                    return plan, "reconciled", {"gaps": gaps}, ""
                 return plan, "skipped", {"gaps": gaps}, ""
         except (ValueError, TypeError):
             pass
@@ -13898,7 +13931,7 @@ def _apply_plan_update(
         for day_iso, entry in plan.get("availability", {}).items()
         if isinstance(entry, dict) and "hours" in entry
     }
-    plan, _modified, reforecast_info = tp.reforecast_dict(
+    plan, modified, reforecast_info = tp.reforecast_dict(
         plan,
         today_iso=today.isoformat(),
         tsb_series=tsb_series,
@@ -13919,8 +13952,17 @@ def _apply_plan_update(
                                     "at": now_iso, "behind_plan": True}
         info = {"gaps": gaps, "taper_blocked": True}
         return plan, "rebalanced", info, status
-    status = "Plan rebalanced to today's fitness."
-    plan["last_update_info"] = {"action": "rebalanced", "message": status, "at": now_iso}
+    # Every mutator in the reforecast tier is downward-only and none of them
+    # read status=="missed", so an absence lands here and changes nothing —
+    # yet the rider was told "Plan rebalanced to today's fitness", which reads
+    # as "we adjusted for the days you missed" when the plan is byte-identical.
+    # Say which of the two actually happened.
+    if modified or reconciled:
+        status = "Plan rebalanced to today's fitness."
+    else:
+        status = "Plan checked — no change needed."
+    plan["last_update_info"] = {"action": "rebalanced", "message": status,
+                                "at": now_iso, "modified": bool(modified)}
     info = {"gaps": gaps, "reforecast_info": reforecast_info}
     return plan, "rebalanced", info, status
 
@@ -21208,6 +21250,10 @@ if __name__ == "__main__":
         "Domestique requires single-worker uvicorn — see launcher.py / README "
         "for the reason (per-process caches, DB sync thread)."
     )
-    print("Domestique Dashboard - http://localhost:8080")
-    uvicorn.run(app, host="127.0.0.1", port=8080, log_level="warning",
+    # Follows the launcher's choice so a standalone `python app.py` lands on
+    # the same URL the desktop app uses. 22400 only applies when nothing set
+    # DOMESTIQUE_PORT — i.e. app.py run directly, without the launcher.
+    _port = int(os.environ.get("DOMESTIQUE_PORT") or 22400)
+    print(f"Domestique Dashboard - http://127.0.0.1:{_port}")
+    uvicorn.run(app, host="127.0.0.1", port=_port, log_level="warning",
                 workers=_UVICORN_WORKERS)

@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4249-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v3.8.1-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v3.9.0-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-2400%2B-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -647,7 +647,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v3.8.1 — Indoor rides that arrive via Strava import correctly](https://github.com/platypus45/domestique/releases/latest)** (2026-08-07).
+Latest: **[v3.9.0 — Workout names that tell you what they are](https://github.com/platypus45/domestique/releases/latest)** (2026-08-08).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE + Linux AppImage on every tagged release. The three jobs are independent: a Linux failure cannot hold up or damage the macOS and Windows artifacts.
 
@@ -708,7 +708,15 @@ Nothing is scraped or reconstructed from any third-party workout site.
 
 Domestique is a **single-user, local-first desktop app**. The security model follows from that: everything runs on your machine, and the only data that leaves it is what you choose to sync to your *own* intervals.icu / Strava account. There is no Domestique-operated server and no telemetry.
 
-**Network exposure — no remote access.** The bundled API server binds to `127.0.0.1` only — there is no `0.0.0.0` bind anywhere in the codebase, and the notarized macOS build ships no inbound-network (`com.apple.security.network.server`) entitlement, so nothing on your LAN or the internet can reach it. The local endpoints are **unauthenticated by design**: they trust the localhost boundary for single-user use. Do not manually rebind to `0.0.0.0` or expose port 8080 without adding your own authentication layer. Outbound connections are made only to **intervals.icu** (and **Strava**, if configured) over HTTPS, using your own credentials.
+**Network exposure — no remote access.** The bundled API server binds to `127.0.0.1` only — there is no `0.0.0.0` bind anywhere in the codebase, and the notarized macOS build ships no inbound-network (`com.apple.security.network.server`) entitlement, so nothing on your LAN or the internet can reach it. The local endpoints are **unauthenticated by design**: they trust the localhost boundary for single-user use. Do not manually rebind to `0.0.0.0` or expose the app's port without adding your own authentication layer. Outbound connections are made only to **intervals.icu** (and **Strava**, if configured) over HTTPS, using your own credentials.
+
+**Which port it uses.** Domestique serves on `http://127.0.0.1:22400`. You never have to configure this — if something else already holds that port, it tries `21055`, then `26214`, and remembers whichever one worked so the address stays the same next time you launch. To force a specific port, set `DOMESTIQUE_PORT`:
+
+```bash
+DOMESTIQUE_PORT=23500 domestique
+```
+
+The ports are chosen to stay out of the way: all three sit below `32768`, which is where Linux, macOS and Windows start handing out temporary ports for outgoing connections. A listener inside that range binds fine most of the time and fails unpredictably the rest — so the app deliberately avoids the "high and out of the way" numbers that look safest. Earlier versions pinned `8080`, which is heavily contested on Linux desktops; if another program had it, Domestique could end up showing that program's page instead of its own.
 
 **Input handling — path-traversal protection.** Every file-download endpoint (workouts, courses, GPX) routes the user-supplied path segments through a single `_safe_path()` guard: it resolves the full path and verifies it stays inside the intended base directory (`pathlib.Path.is_relative_to`), rejecting `../` climb-outs, an absolute-path segment, and symlink escapes. A request that tries to escape the base returns 404 — never the target file. This is covered by `tests/test_security.py` (see below).
 

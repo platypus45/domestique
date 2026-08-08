@@ -49,7 +49,22 @@ ICU_OAUTH_CLIENT_ID = os.environ.get("ICU_OAUTH_CLIENT_ID", "511")
 ICU_OAUTH_CLIENT_SECRET = os.environ.get("ICU_OAUTH_CLIENT_SECRET", "")
 ICU_OAUTH_AUTHORIZE_URL = "https://intervals.icu/oauth/authorize"
 ICU_OAUTH_TOKEN_URL = "https://intervals.icu/api/oauth/token"
-ICU_OAUTH_REDIRECT_URI = "http://localhost:8080/oauth/icu/callback"  # port pinned (launcher.py)
+# The callback has to land on whatever port we actually bound, so this follows
+# DOMESTIQUE_PORT (set by launcher.py once the port is resolved) rather than
+# naming one. Safe to vary: intervals.icu ignores the port on loopback
+# redirects entirely — their own app-management page says "http://localhost/*
+# is always allowed, no need to add it", and probing their validator confirms
+# any port and path is accepted for both `localhost` and `127.0.0.1`, on every
+# client_id, not just ours. So no re-registration is needed when it changes.
+#
+# 127.0.0.1 rather than localhost: RFC 8252 §8.3 calls the localhost form NOT
+# RECOMMENDED (it can resolve to a non-loopback interface and is vulnerable to
+# a mangled hosts file or a client firewall), and §7.3's "MUST allow any port"
+# guarantee is scoped to the IP literal. Do NOT switch to [::1] — intervals.icu
+# rejects it — and keep the host lowercase, as their matching is case-sensitive.
+ICU_OAUTH_REDIRECT_URI = (
+    f"http://127.0.0.1:{os.environ.get('DOMESTIQUE_PORT') or '22400'}"
+    f"/oauth/icu/callback")
 # CALENDAR:WRITE (v3.0.1, IP_ICU_PUSH): lets the push engine upsert planned
 # workouts onto the athlete's ICU calendar. Pre-existing connections granted
 # only the READ set keep working read-only; the UI offers a one-click

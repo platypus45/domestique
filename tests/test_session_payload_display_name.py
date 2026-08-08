@@ -56,7 +56,7 @@ import training_planner as tp
 # matched (without display_name in the JSON to assert the empty-fallback path).
 
 _FAKE_CLASSIFICATIONS = {
-    "tempo_steady_57min.zwo": {
+    "tempo_4x150s_85pct_63min.zwo": {
         # MASTER §3 canary: this file's stem says "tempo" but the content is
         # actually a threshold ladder. The display_name is the truth.
         "primary": "threshold_ladder",
@@ -71,7 +71,7 @@ _FAKE_CLASSIFICATIONS = {
 
 _FAKE_LIBRARY = [
     {
-        "File": "tempo_steady_57min.zwo",
+        "File": "tempo_4x150s_85pct_63min.zwo",
         "Name": "Tempo (58min)",  # mis-leading <name> tag — the canary
         "Duration(min)": 58.0,
         "TSS": 70.0, "IF": 0.85, "Score": 7,
@@ -104,7 +104,7 @@ def _build_plan_with_sessions(monday: date) -> dict:
             "duration_min": 60,
             "tss_estimate": 65,
             "description": "tempo 60min",
-            "zwo_file": "tempo_steady_57min.zwo",
+            "zwo_file": "tempo_4x150s_85pct_63min.zwo",
             "zwo_name": "Tempo (58min)",
             "status": "pending",
         },
@@ -242,7 +242,7 @@ class TestPlanPayloadUsesClassificationDisplayName(_BasePayloadTest):
         self.assertEqual(mon["zwo_duration_min"], 58)
         # Sanity: zwo_file is the matched file, zwo_name is the misleading
         # ZWO <name> tag — display_name is the truth.
-        self.assertEqual(mon["zwo_file"], "tempo_steady_57min.zwo")
+        self.assertEqual(mon["zwo_file"], "tempo_4x150s_85pct_63min.zwo")
         self.assertEqual(mon["zwo_name"], "Tempo (58min)")
         self.assertNotEqual(mon["display_name"], mon["zwo_name"])
 

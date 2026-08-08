@@ -357,7 +357,7 @@ class TestFixPlannerV411ClassifierPrefixes(unittest.TestCase):
         # zone split is dominant Z1 (would mis-classify as Recovery under
         # the old heuristic) — prefix must still force VO2max.
         self.assertEqual(
-            _classify_protocol(600, 0, 0, 0, 0, 0, 1.2, "vo2_2x10min_60min.zwo"),
+            _classify_protocol(600, 0, 0, 0, 0, 0, 1.2, "vo2_ladder5_120pct_60min.zwo"),
             "VO2max",
         )
 
@@ -371,7 +371,7 @@ class TestFixPlannerV411ClassifierPrefixes(unittest.TestCase):
     def test_sprints_prefix_classifies_as_sprint(self):
         from training_planner import _classify_protocol
         self.assertEqual(
-            _classify_protocol(900, 0, 0, 0, 0, 60, 1.5, "sprints_5x2min_53min.zwo"),
+            _classify_protocol(900, 0, 0, 0, 0, 60, 1.5, "sprints_5x2min-1min_105pct_59min.zwo"),
             "Sprint",
         )
 
@@ -401,7 +401,7 @@ class TestFixPlannerV411ClassifierPrefixes(unittest.TestCase):
     def test_ftp_test_prefix_classifies_as_ftp_test(self):
         from training_planner import _classify_protocol
         self.assertEqual(
-            _classify_protocol(0, 0, 600, 600, 0, 0, 1.05, "ftp_test_coggan_20min.zwo"),
+            _classify_protocol(0, 0, 600, 600, 0, 0, 1.05, "ftp_test_coggan_3x1min-1min_95pct_59min.zwo"),
             "FTP Test",
         )
 
@@ -427,12 +427,12 @@ class TestFixPlannerV411SessionStaleDetection(unittest.TestCase):
 
     def test_subdir_scrape_slug_is_stale(self):
         from training_planner import _session_is_stale
-        lib = {"tempo_steady_57min.zwo"}
+        lib = {"tempo_4x150s_85pct_63min.zwo"}
         self.assertTrue(_session_is_stale("z2", "ftp-builder/week-6-day-3.zwo", lib))
 
     def test_basename_not_in_library_is_stale(self):
         from training_planner import _session_is_stale
-        lib = {"tempo_steady_57min.zwo"}
+        lib = {"tempo_4x150s_85pct_63min.zwo"}
         self.assertTrue(_session_is_stale("z2", "z2_endurance_77min.zwo", lib))
 
     def test_resolved_file_is_not_stale_even_with_mismatched_prefix(self):

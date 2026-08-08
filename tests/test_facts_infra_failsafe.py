@@ -46,18 +46,18 @@ WK = ROOT / "workouts"
 # hi_s>=240; recovery: t130==0). Real files keep the storm test honest about
 # score floors / classification / category fallbacks in match_zwo.
 STORM_FILES = [
-    "threshold_10s120s_12x_53min.zwo",
-    "threshold_10x1min_56min.zwo",
-    "threshold_10x2min_60min_renamed_v46_1.zwo",
-    "endurance_10s240s_9x_62min.zwo",
-    "endurance_1min_6x_60min_renamed_v46_1.zwo",
-    "endurance_20s129s_6x_60min.zwo",
-    "vo2max_10x1min_49min.zwo",
-    "vo2max_10x2min_42min.zwo",
-    "vo2max_10x2min_60min.zwo",
-    "recovery_10x30s_60min.zwo",
-    "recovery_2x0min_52min.zwo",
-    "recovery_3x0min_67min.zwo",
+    "threshold_13x2min_100pct_53min.zwo",
+    "threshold_10x1min_100pct_63min.zwo",
+    "threshold_10x2min_100pct_60min.zwo",
+    "endurance_9x10s-4min_150pct_62min.zwo",
+    "endurance_2x3x1min-30s_110pct_60min.zwo",
+    "endurance_6x130s_80pct_60min.zwo",
+    "vo2max_10x1min-3min_117pct_55min.zwo",
+    "vo2max_10x2min-30s_109pct_45min.zwo",
+    "vo2max_10x2min-2min_113pct_60min.zwo",
+    "recovery_10x30s-30s_100pct_60min.zwo",
+    "recovery_2x30s-150s_125pct_52min.zwo",
+    "recovery_3x30s-150s_123pct_67min.zwo",
 ]
 GATED_TYPES = ("threshold", "vo2max", "z2", "recovery")
 
@@ -169,8 +169,8 @@ def test_infra_failure_get_facts_never_persists_nulls(storm_lib, monkeypatch):
     # Known file → served from the stale v1 fallback.
     assert wf.get_facts(lib, STORM_FILES[0]) is not None
     # Brand-new file (no v1 row) → None, and NOTHING persisted.
-    shutil.copy2(WK / "ftp_test_coggan_20min.zwo", lib / "ftp_test_coggan_20min.zwo")
-    assert wf.get_facts(lib, "ftp_test_coggan_20min.zwo") is None
+    shutil.copy2(WK / "ftp_test_coggan_3x1min-1min_95pct_59min.zwo", lib / "ftp_test_coggan_3x1min-1min_95pct_59min.zwo")
+    assert wf.get_facts(lib, "ftp_test_coggan_3x1min-1min_95pct_59min.zwo") is None
     assert (lib / wf.FACTS_FILENAME).read_bytes() == before
 
 

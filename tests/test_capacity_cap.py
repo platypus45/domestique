@@ -131,7 +131,7 @@ class TestCapZwoTextPure:
 
     def test_multi_rep_file_caps_each_qualifying_rep(self):
         # neuromuscular 30s@2.0 x6 — every rep qualifies for a modest rider.
-        f = LIB / "neuromuscular_30s180s_6x_46min.zwo"
+        f = LIB / "neuromuscular_6x30s-3min_200pct_46min.zwo"
         if not f.exists():
             pytest.skip("fixture file absent")
         txt = f.read_text(encoding="utf-8")
@@ -143,7 +143,7 @@ class TestCapZwoTextPure:
         assert out.count('Power="') == txt.count('Power="')
 
     def test_cap_monotone_in_pmax_on_hard_file(self):
-        f = LIB / "neuromuscular_30s180s_6x_46min.zwo"
+        f = LIB / "neuromuscular_6x30s-3min_200pct_46min.zwo"
         if not f.exists():
             pytest.skip("fixture file absent")
         txt = f.read_text(encoding="utf-8")
@@ -155,8 +155,8 @@ class TestCapZwoTextPure:
             assert hi["new_ratio"] >= lo["new_ratio"] - 1e-9
 
     def test_ramp_tests_exempt(self):
-        for name in ("ftp_test_ramp.zwo", "ftp_test_ramp_10w_step.zwo",
-                     "ftp_test_ramp_20w_step.zwo"):
+        for name in ("ftp_test_ramp_ladder21_200pct_35min.zwo", "ftp_test_ramp_10w_step_ladder20_152pct_52min.zwo",
+                     "ftp_test_ramp_20w_step_ladder23_256pct_43min.zwo"):
             f = LIB / name
             if not f.exists():
                 continue
@@ -165,7 +165,7 @@ class TestCapZwoTextPure:
             assert n == 0 and out is txt, f"ramp test not exempt: {name}"
 
     def test_exempt_flag_forces_passthrough(self):
-        f = LIB / "neuromuscular_30s180s_6x_46min.zwo"
+        f = LIB / "neuromuscular_6x30s-3min_200pct_46min.zwo"
         if not f.exists():
             pytest.skip("fixture file absent")
         txt = f.read_text(encoding="utf-8")
@@ -318,9 +318,9 @@ def stub(tmp_path):
     workouts.mkdir()
     (workouts / "hard.zwo").write_text(HARD_ZWO, encoding="utf-8")
     (workouts / "easy.zwo").write_text(EASY_ZWO, encoding="utf-8")
-    ramp = REPO / "workouts" / "ftp_test_ramp_20w_step.zwo"
+    ramp = REPO / "workouts" / "ftp_test_ramp_20w_step_ladder23_256pct_43min.zwo"
     if ramp.exists():
-        (workouts / "ftp_test_ramp_20w_step.zwo").write_bytes(ramp.read_bytes())
+        (workouts / "ftp_test_ramp_20w_step_ladder23_256pct_43min.zwo").write_bytes(ramp.read_bytes())
     app_module.WORKOUT_DIR = workouts
     tp.WORKOUT_DIR = workouts
 
@@ -449,13 +449,13 @@ class TestSeamOnCaps:
         assert _dl(stub.client, "easy.zwo").content == disk
 
     def test_on_ramp_test_exempt_byte_identical(self, stub):
-        f = stub.workouts / "ftp_test_ramp_20w_step.zwo"
+        f = stub.workouts / "ftp_test_ramp_20w_step_ladder23_256pct_43min.zwo"
         if not f.exists():
             pytest.skip("ramp fixture absent")
         _set_measured_pmax(stub.pm)
         stub.pm.save_athlete({"cap_short_intervals": "on"})
         disk = f.read_bytes()
-        assert _dl(stub.client, "ftp_test_ramp_20w_step.zwo").content == disk
+        assert _dl(stub.client, "ftp_test_ramp_20w_step_ladder23_256pct_43min.zwo").content == disk
 
     def test_fit_path_caps_when_on(self, stub):
         _set_measured_pmax(stub.pm)
@@ -574,12 +574,12 @@ class TestSeamModalAdvisory:
         assert "capacity_cap" not in d
 
     def test_no_advisory_for_ramp_test(self, stub):
-        f = stub.workouts / "ftp_test_ramp_20w_step.zwo"
+        f = stub.workouts / "ftp_test_ramp_20w_step_ladder23_256pct_43min.zwo"
         if not f.exists():
             pytest.skip("ramp fixture absent")
         _set_measured_pmax(stub.pm, 650)
         stub.pm.save_athlete({"cap_short_intervals": "on"})
-        d = self._detail(stub.client, "ftp_test_ramp_20w_step.zwo")
+        d = self._detail(stub.client, "ftp_test_ramp_20w_step_ladder23_256pct_43min.zwo")
         assert "capacity_cap" not in d
 
 

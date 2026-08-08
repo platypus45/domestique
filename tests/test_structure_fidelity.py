@@ -121,7 +121,7 @@ def test_parse_expands_intervals_and_builds_contiguous_timeline():
 
 
 def test_parse_real_library_file_30_15():
-    segs = sf.parse_zwo_file(ROOT / "workouts" / "vo2_short_30s15s_13x_59min.zwo")
+    segs = sf.parse_zwo_file(ROOT / "workouts" / "vo2_short_2x5min-1min_95pct_59min.zwo")
     assert segs is not None
     ons = _on_windows(segs)
     assert len(ons) == 13                     # IntervalsT Repeat="13"

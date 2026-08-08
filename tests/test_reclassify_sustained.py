@@ -83,7 +83,7 @@ def test_correction_excludes_recovery_prefix(labels):
 def test_strides_example_intact(classifications):
     """The canonical 'Z2 + short strides' example stays endurance_intervals (it is
     genuinely short pops on an aerobic base — the correct half of the fix)."""
-    e = classifications.get("endurance_20s129s_6x_60min.zwo", {})
+    e = classifications.get("endurance_6x130s_80pct_60min.zwo", {})
     assert e.get("primary") == "endurance_intervals"
 
 
@@ -116,7 +116,7 @@ def test_classifier_code_no_longer_routes_corrected_files_to_easy(_classifier, l
 def test_classifier_code_keeps_short_strides_as_intervals(_classifier):
     """The salvage must NOT pull genuine short strides (all hard efforts <30 s on
     an aerobic base) into a hard band — they route to endurance_intervals."""
-    live = _classifier.classify_zwo_v104(WK / "endurance_20s129s_6x_60min.zwo").get("primary")
+    live = _classifier.classify_zwo_v104(WK / "endurance_6x130s_80pct_60min.zwo").get("primary")
     assert live == "endurance_intervals", f"strides example live={live}"
 
 
@@ -131,7 +131,7 @@ def test_classifier_no_sweetspot_or_tempo_promoted_to_threshold(_classifier):
     """C15 (grill D2) — a sweet-spot / tempo ride whose Z4 time is mostly 91-94%
     (little ≥95% FTP) must NOT salvage to threshold; the threshold rung gates on
     true-threshold (z4_upper) only, matching the main cascade."""
-    for fn in ("tempo_steady_45min_v3.zwo", "tempo_progression_42min_v3.zwo"):
+    for fn in ("tempo_ladder7_149pct_45min.zwo", "tempo_progression_2x20s-30s_125pct_46min.zwo"):
         if not (WK / fn).exists():
             continue
         live = _classifier.classify_zwo_v104(WK / fn).get("primary")
@@ -142,7 +142,7 @@ def test_classifier_ramp_not_counted_as_tempo_block(_classifier):
     """C16 (grill D3) — a warm-up/ramp whose AVERAGE power lands in the tempo band
     must not count as a sustained tempo block (the salvage tempo fallback is
     steady-only). over_under_2x10s_26min_v2 is 3 sprints on a long ramp."""
-    fn = "over_under_2x10s_26min_v2.zwo"
+    fn = "over_under_ladder3_250pct_26min.zwo"
     if (WK / fn).exists():
         live = _classifier.classify_zwo_v104(WK / fn).get("primary")
         assert live != "tempo", f"ramp-average mislabelled tempo (live={live})"
@@ -159,9 +159,9 @@ def test_classifier_ramp_not_counted_as_tempo_block(_classifier):
 # above (unchanged).
 
 P13_FALSE_POSITIVES = (  # verified keep-easy (re-grill 2026-07-02; w6 verdicts)
-    "threshold_steady_37min.zwo",   # longest ≥0.95 run: 46 s
-    "recovery_spin_46min_v3.zwo",   # 51 s
-    "endurance_2x30s_17min.zwo",    # 56 s
+    "threshold_4x2min-3min_100pct_37min.zwo",   # longest ≥0.95 run: 46 s
+    "recovery_3x10s-30s_120pct_46min.zwo",   # 51 s
+    "endurance_2x1min_80pct_22min.zwo",    # 56 s
 )
 
 
@@ -291,22 +291,22 @@ def test_p14_demotion_keeps_has_sprints_flag(_classifier):
 
 P14_SLICE = {  # independently reviewed: 7/8 DEFENSIBLE applied; the z7≤120 cap
     # excludes the one WRONG verdict (285 s / 14-effort sprint session)
-    "neuromuscular_15s0s_7x_60min.zwo": "threshold",
-    "neuromuscular_15s0s_8x_60min.zwo": "threshold",
-    "neuromuscular_15s0s_8x_60min_renamed_v46_1.zwo": "threshold",
-    "neuromuscular_15s300s_6x_74min.zwo": "threshold",
-    "neuromuscular_4x30s_144min.zwo": "threshold",
-    "sprints_5x2min_53min.zwo": "threshold",
-    "sprints_6x15s_58min.zwo": "threshold",
+    "neuromuscular_7x15s_140pct_62min.zwo": "threshold",
+    "neuromuscular_5x150s_80pct_62min.zwo": "threshold",
+    "neuromuscular_5x150s_80pct_62min_v2.zwo": "threshold",
+    "neuromuscular_3x12min_100pct_77min.zwo": "threshold",
+    "neuromuscular_4x30s-90s_160pct_144min.zwo": "threshold",
+    "sprints_5x2min-1min_105pct_59min.zwo": "threshold",
+    "sprints_7x15s_140pct_60min.zwo": "threshold",
 }
 
 P14_STAY_NM = (  # review verdict: a real sprint set, must stay neuromuscular
-    "neuromuscular_5x30s_46min.zwo",   # z7=285 s, 14 max efforts — cap-excluded
+    "neuromuscular_5x30s-2min_175pct_46min.zwo",   # z7=285 s, 14 max efforts — cap-excluded
 )
 
 
 @pytest.mark.xfail(
-    reason="v3.7.0 KNOWN CONFLICT, one file: neuromuscular_4x30s_144min.zwo. "
+    reason="v3.7.0 KNOWN CONFLICT, one file: neuromuscular_4x30s-90s_160pct_144min.zwo. "
            "Its v2.4.5 demotion to `threshold` was propped up by cooldown "
            "seconds — easing that file's cooldown from 0.75 to 0.60 FTP (the "
            "library-wide fix) tips whole-ride zone dominance and the live "
@@ -335,8 +335,8 @@ def test_p14_genuine_neuromuscular_stays(_classifier):
     """Genuine sprint sessions keep neuromuscular: a real Z7 dose (z7 ≥ 300 s,
     despite high RMS + long mid block) and a high-RMS session with NO sustained
     mid block (the ~64-file clientele the v2.0.6 matcher ceiling still guards)."""
-    for fn in ("neuromuscular_30s60s_10x_63min_renamed_v46_1.zwo",  # z7=360
-               "neuromuscular_10s0s_15x_48min.zwo",                 # mid=0, if=0.826
+    for fn in ("neuromuscular_10x1min_90pct_66min.zwo",  # z7=360
+               "neuromuscular_10x1min-55s_120pct_60min.zwo",                 # mid=0, if=0.826
                *P14_STAY_NM):                                       # reviewed keep-NM
         live = _classifier.classify_zwo_v104(WK / fn).get("primary")
         assert live == "neuromuscular", f"{fn}: live={live}, must stay NM"

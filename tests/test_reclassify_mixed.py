@@ -108,7 +108,7 @@ def test_recovery_prefix_stays_safe():
     # Without filename hint: would go to threshold
     assert promote_mixed(entry) == "threshold"
     # With recovery_* filename: must stay safe
-    assert promote_mixed(entry, filename="recovery_spin_60min.zwo") == "mixed"
+    assert promote_mixed(entry, filename="recovery_ladder6_109pct_63min.zwo") == "mixed"
 
 
 # ── Rønnestad-detection tests ────────────────────────────────────────────────
@@ -116,7 +116,7 @@ def test_recovery_prefix_stays_safe():
 
 def test_ronnestad_30_15_detected_in_real_file():
     """A known Rønnestad-style 30/15 file in the spec band (95-115% FTP)."""
-    fn = WORKOUTS_DIR / "over_under_30s15s_10x_60min.zwo"
+    fn = WORKOUTS_DIR / "over_under_4x3min_92pct_65min.zwo"
     if not fn.exists():
         pytest.skip(f"{fn.name} not in library")
     ronn = detect_ronnestad(fn)
@@ -127,8 +127,8 @@ def test_ronnestad_30_15_detected_in_real_file():
 
 
 def test_ronnestad_40_20_detected_in_real_file():
-    """vo2_short_40s20s_24x_60min.zwo is a known Rønnestad 40/20 file."""
-    fn = WORKOUTS_DIR / "vo2_short_40s20s_24x_60min.zwo"
+    """vo2_short_2x12x40s-20s_110pct_60min.zwo is a known Rønnestad 40/20 file."""
+    fn = WORKOUTS_DIR / "vo2_short_2x12x40s-20s_110pct_60min.zwo"
     if not fn.exists():
         pytest.skip(f"{fn.name} not in library")
     ronn = detect_ronnestad(fn)
@@ -191,8 +191,8 @@ def test_post_run_total_unchanged(classifications):
 def test_ronnestad_files_tagged(classifications):
     """At least the known Rønnestad-named files are tagged is_ronnestad."""
     expected = [
-        "vo2_short_30s15s_13x_61min.zwo",
-        "vo2_short_40s20s_24x_60min.zwo",
+        "vo2_short_13x30s-15s_120pct_64min.zwo",
+        "vo2_short_2x12x40s-20s_110pct_60min.zwo",
     ]
     tagged = 0
     for fn in expected:

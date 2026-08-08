@@ -1,9 +1,9 @@
 """P5 — canaries: both live incidents reproduced-and-rejected, plus the
 owner's 4×13 30/15 file admitted exactly where its content belongs.
 
-Incident 1 (sampler): neuromuscular_15s25s_30x_90min.zwo (content-IF 0.967)
+Incident 1 (sampler): neuromuscular_6x5min_95pct_88min.zwo (content-IF 0.967)
 was served into a sprint slot — the auto-sampler pool build had no IF gate.
-Incident 2 (match_zwo): neuromuscular_4x10s_70min.zwo carried a sweet_spot
+Incident 2 (match_zwo): neuromuscular_3x5min_89pct_75min.zwo carried a sweet_spot
 label (sub-dose → zone-dominance fallback) and legally matched an SS slot,
 landing ~740W spikes on an SS day.
 
@@ -24,9 +24,9 @@ import training_planner as tp  # noqa: E402
 import workout_facts as wf  # noqa: E402
 
 WK = ROOT / "workouts"
-INCIDENT_SAMPLER = "neuromuscular_15s25s_30x_90min.zwo"
-INCIDENT_MATCH = "neuromuscular_4x10s_70min.zwo"
-NEW_4X13 = "vo2_short_30s15s_4x13_64min.zwo"
+INCIDENT_SAMPLER = "neuromuscular_6x5min_95pct_88min.zwo"
+INCIDENT_MATCH = "neuromuscular_3x5min_89pct_75min.zwo"
+NEW_4X13 = "vo2_short_4x13x30s-15s_106pct_64min.zwo"
 
 pytestmark = pytest.mark.skipif(
     not (WK / wf.FACTS_FILENAME).exists(), reason="facts cache absent")

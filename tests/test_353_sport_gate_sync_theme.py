@@ -51,7 +51,7 @@ def _plan_week():
     sessions = [{
         "day": (monday + timedelta(days=off)).isoformat(), "day_name": "X",
         "session_type": "z2", "duration_min": 60, "tss_estimate": 50,
-        "status": "pending", "zwo_file": "endurance_clean_60min.zwo",
+        "status": "pending", "zwo_file": "endurance_steady_65pct_60min.zwo",
         "zwo_name": "Endurance 60", "description": "",
     } for off in range(7)]
     return {

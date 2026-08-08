@@ -40,7 +40,7 @@ class TestCardStateRestWithActual(unittest.TestCase):
 
     def test_planned_with_actual_returns_completed(self):
         # Case 3: planned z2 day, ride present → completed (regression check).
-        session = {"session_type": "z2", "zwo_file": "z2_endurance_120min.zwo"}
+        session = {"session_type": "z2", "zwo_file": "z2_steady_68pct_120min.zwo"}
         state = app_module._classify_card_state(session, has_actual=True, library_lookup=None)
         self.assertEqual(state, "completed",
                          "planned day with attached actual must classify as completed")

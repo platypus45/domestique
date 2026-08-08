@@ -5342,7 +5342,7 @@ def _session_type_from_row(row: dict) -> str:
     if fname.startswith("ftp_test_"):
         # v3.5.4 — the NAME alone must not mint a maximal test. 28 rows are
         # named ftp_test_* while their CONTENT is ordinary hard work (e.g.
-        # ftp_test_3x2min_42min.zwo classifies threshold_ladder — a 3x2min
+        # ftp_test_3x2min_82pct_42min.zwo classifies threshold_ladder — a 3x2min
         # ladder is no FTP protocol). Stamped ftp_test by prefix alone, any of
         # them can be drawn by the sampler into a hard slot and become an
         # UNPLANNED maximal test: it bypasses _inject_mid_cycle_ftp_tests,
@@ -5653,7 +5653,7 @@ def sample_week_workouts(
     if is_stepback:
         # Class filter alone is too coarse: filenames lie, so an
         # "endurance_intervals"-classed file can still carry sweet-spot-density
-        # work (e.g. sweetspot_5x0min_60min_v5.zwo, IF 0.795, TSS 64 in 61min,
+        # work (e.g. sweetspot_8x40s-20s_115pct_61min.zwo, IF 0.795, TSS 64 in 61min,
         # derives session_type="sweetspot"). Add an IF ceiling so a deload day
         # draws only genuinely easy rides. 0.75 sits below the sweet-spot floor
         # and above the median easy-strides ride (0.68), keeping ~127 endurance_
@@ -7355,6 +7355,66 @@ def _protect_race(s) -> bool:
     return bool(getattr(s, "is_race", False))
 
 
+# Hard per-phase HIT-class floors. Module-level because two passes need
+# them: _enforce_build2_peak_hard_floor PLACES these sessions, and
+# _enforce_weekly_hit_cap must not silently DEMOTE what that pass just
+# placed -- it used to, whenever every HIT class in the week sat at count 1
+# and dict order alone chose the victim.
+_PHASE_HARD_FLOORS = {
+    # build1 is a 4-week phase; we ask for 4 vo2_short + 2 neuromuscular
+    # so the across-plan target ≥10 vo2_short / ≥4 neuromuscular is reached.
+    # v4.6.2 PLANNER-DIVERSITY-PUSH: also enforce 1 sweet_spot in build1
+    # so the canonical {threshold, vo2max, sweet_spot, over_under} 4-shape
+    # rotation is visible in every build phase regardless of seed (the
+    # strong novelty boost can salt-bias sweet_spot to zero in build1+
+    # build2 if it happened to fill base-phase slots first).
+    # v2.0.3 F1: over_under sits at mix weight ~0.09 → E[picks]≈1 → rounds
+    # to 0 in build, so it needs the SAME hard-floor as the other protected
+    # interval classes. ≥1 in build1 AND build2 completes the 4-shape
+    # rotation without crowding the other 3 hard types (each floor is
+    # filled by swapping the lowest-stimulus steady slots, not the hards).
+    # v3.2.2 (#14): threshold joins the build floors — the ORIGINAL
+    # "threshold starved in builds" symptom. The niche-class floors above
+    # force 8-9 swaps across build1+build2 while threshold had NO floor
+    # and (being outside all_targets) its natural picks were even legal
+    # SWAP VICTIMS — on unlucky seeds builds ended with zero threshold
+    # work (pinned seed 12345 reproduced it). ≥1 per build phase keeps
+    # the canonical 4-shape rotation intact and shields threshold picks
+    # from the sibling-floor swap pass.
+    # vo2max gets the same ≥1 shield: fixing threshold alone just moved
+    # the crowd-out to vo2max on the pinned seed — the canonical 4-shape
+    # holds only when ALL four are floor-protected (swap-immune).
+    # Dict ORDER is fill priority (the swap loop walks mins.items() and
+    # per-week hit caps are a shared budget): niche classes with no
+    # natural pick mass fill FIRST; the canonical shields last — they
+    # exist mostly to make natural threshold/vo2max picks swap-immune
+    # (all_targets membership), rarely to force a fill.
+    # The shields live in build1 ONLY: the canonical-4 contract is over
+    # build1+build2 COMBINED, and each extra target class shrinks the
+    # phase's swap-victim pool (all_targets slots are immune) — putting
+    # them in build2 too starved its anaerobic fill (capacity, not
+    # weight). vo2_short leads each dict: it has the least natural pick
+    # mass and loses fills last-in-line.
+    "build1": {"vo2_short": 4, "neuromuscular": 2, "sweet_spot": 1, "over_under": 1,
+               "threshold": 1, "vo2max": 1},
+    "build2": {"vo2_short": 3, "anaerobic": 1, "neuromuscular": 1, "over_under": 1},
+    "peak":   {"anaerobic": 1, "neuromuscular": 1, "vo2_short": 3},
+    # v3.5.4 — continuous plans are a single rolling "continuous" phase and
+    # were the ONLY plan type this floor never touched (it is phase-keyed to
+    # build/peak). Result: 58% of fresh continuous plans had ZERO anaerobic
+    # AND ZERO neuromuscular, despite the owner explicitly wanting sprint /
+    # anaerobic-capacity work for his group riding. ≥1 anaerobic + ≥1
+    # neuromuscular per 4-week rolling block ≈ one supra-threshold exposure
+    # every ~2 weeks — evidence-bounded (research caps anaerobic-family work
+    # at ≤1 quality session/wk; ANAEROBIC_OVERDUE_DAYS=7 in continuous_policy
+    # is the intent bar), never forced in the stepback week (excluded at the
+    # phase_weeks filter), and it displaces a low-stimulus steady slot rather
+    # than a hard aerobic session. The neuromuscular 6×4-8s "sprints inside
+    # easy rides" backbone is a separate, lighter mechanism (endurance_
+    # intervals content) — this floor guarantees the DEDICATED sessions.
+    "continuous": {"anaerobic": 1, "neuromuscular": 1},
+}
+
 def _enforce_build2_peak_hard_floor(
     weeks: list,
     pool_index: dict,
@@ -7376,60 +7436,7 @@ def _enforce_build2_peak_hard_floor(
     # v4.6.1: build2+peak each must have ≥1 anaerobic + ≥1 neuromuscular +
     # ≥2 vo2_short. We also enforce a softer build1 floor for vo2_short
     # (≥2) so the across-plan ≥10 vo2_short headline target is reachable.
-    phase_floors = {
-        # build1 is a 4-week phase; we ask for 4 vo2_short + 2 neuromuscular
-        # so the across-plan target ≥10 vo2_short / ≥4 neuromuscular is reached.
-        # v4.6.2 PLANNER-DIVERSITY-PUSH: also enforce 1 sweet_spot in build1
-        # so the canonical {threshold, vo2max, sweet_spot, over_under} 4-shape
-        # rotation is visible in every build phase regardless of seed (the
-        # strong novelty boost can salt-bias sweet_spot to zero in build1+
-        # build2 if it happened to fill base-phase slots first).
-        # v2.0.3 F1: over_under sits at mix weight ~0.09 → E[picks]≈1 → rounds
-        # to 0 in build, so it needs the SAME hard-floor as the other protected
-        # interval classes. ≥1 in build1 AND build2 completes the 4-shape
-        # rotation without crowding the other 3 hard types (each floor is
-        # filled by swapping the lowest-stimulus steady slots, not the hards).
-        # v3.2.2 (#14): threshold joins the build floors — the ORIGINAL
-        # "threshold starved in builds" symptom. The niche-class floors above
-        # force 8-9 swaps across build1+build2 while threshold had NO floor
-        # and (being outside all_targets) its natural picks were even legal
-        # SWAP VICTIMS — on unlucky seeds builds ended with zero threshold
-        # work (pinned seed 12345 reproduced it). ≥1 per build phase keeps
-        # the canonical 4-shape rotation intact and shields threshold picks
-        # from the sibling-floor swap pass.
-        # vo2max gets the same ≥1 shield: fixing threshold alone just moved
-        # the crowd-out to vo2max on the pinned seed — the canonical 4-shape
-        # holds only when ALL four are floor-protected (swap-immune).
-        # Dict ORDER is fill priority (the swap loop walks mins.items() and
-        # per-week hit caps are a shared budget): niche classes with no
-        # natural pick mass fill FIRST; the canonical shields last — they
-        # exist mostly to make natural threshold/vo2max picks swap-immune
-        # (all_targets membership), rarely to force a fill.
-        # The shields live in build1 ONLY: the canonical-4 contract is over
-        # build1+build2 COMBINED, and each extra target class shrinks the
-        # phase's swap-victim pool (all_targets slots are immune) — putting
-        # them in build2 too starved its anaerobic fill (capacity, not
-        # weight). vo2_short leads each dict: it has the least natural pick
-        # mass and loses fills last-in-line.
-        "build1": {"vo2_short": 4, "neuromuscular": 2, "sweet_spot": 1, "over_under": 1,
-                   "threshold": 1, "vo2max": 1},
-        "build2": {"vo2_short": 3, "anaerobic": 1, "neuromuscular": 1, "over_under": 1},
-        "peak":   {"anaerobic": 1, "neuromuscular": 1, "vo2_short": 3},
-        # v3.5.4 — continuous plans are a single rolling "continuous" phase and
-        # were the ONLY plan type this floor never touched (it is phase-keyed to
-        # build/peak). Result: 58% of fresh continuous plans had ZERO anaerobic
-        # AND ZERO neuromuscular, despite the owner explicitly wanting sprint /
-        # anaerobic-capacity work for his group riding. ≥1 anaerobic + ≥1
-        # neuromuscular per 4-week rolling block ≈ one supra-threshold exposure
-        # every ~2 weeks — evidence-bounded (research caps anaerobic-family work
-        # at ≤1 quality session/wk; ANAEROBIC_OVERDUE_DAYS=7 in continuous_policy
-        # is the intent bar), never forced in the stepback week (excluded at the
-        # phase_weeks filter), and it displaces a low-stimulus steady slot rather
-        # than a hard aerobic session. The neuromuscular 6×4-8s "sprints inside
-        # easy rides" backbone is a separate, lighter mechanism (endurance_
-        # intervals content) — this floor guarantees the DEDICATED sessions.
-        "continuous": {"anaerobic": 1, "neuromuscular": 1},
-    }
+    phase_floors = dict(_PHASE_HARD_FLOORS)
     # F1 (v2.1/B5): when opt-in block periodization is on, REPLACE the flat
     # forced-4-shape floor with a BLOCK-AWARE floor — concentrate ~≥70% of each
     # phase-block's HIT on its focus class and RETAIN ≥1 complementary quality
@@ -7519,7 +7526,7 @@ def _enforce_build2_peak_hard_floor(
             # Source candidates: workouts whose CACHE primary is cc_target
             # (NOT the by_class filename-prefix bucketing — that bucket
             # mixes files whose name starts with the class prefix but whose
-            # content is something else, e.g. anaerobic_3x25s_54min.zwo
+            # content is something else, e.g. anaerobic_ladder7_180pct_59min.zwo
             # is content-classified as neuromuscular). The post-pass count
             # check uses the cache primary too, so if we swap in a file
             # whose by_class bucket is anaerobic but whose cache primary
@@ -7857,7 +7864,18 @@ def _enforce_weekly_hit_cap(weeks: list, library: list[dict]) -> None:
                 cc = (_content_class_for_zwo(s.zwo_file or "")
                       or s.session_type or "")
                 class_counts[cc] = class_counts.get(cc, 0) + 1
-            redundant_cc = max(class_counts, key=lambda c: class_counts[c])
+            # max() on a dict returns the FIRST-INSERTED key when values tie,
+            # so in a week whose HIT classes all sit at count 1 the victim was
+            # simply whichever HIT slot came earliest — and this pass runs AFTER
+            # the hard-floor pass, so it would demote the single over_under that
+            # pass had just placed, leaving the plan with none at all. Spare a
+            # class that is sitting exactly ON its phase floor; it stays a
+            # PREFERENCE, so the cap still binds when every candidate is floored.
+            floors = _PHASE_HARD_FLOORS.get(getattr(wk, "phase", "") or "", {})
+            def _victim_rank(c: str) -> tuple:
+                at_floor = c in floors and class_counts[c] <= floors[c]
+                return (class_counts[c], not at_floor)
+            redundant_cc = max(class_counts, key=_victim_rank)
             demote_candidates = [
                 (i, s) for i, s in demotable
                 if (_content_class_for_zwo(s.zwo_file or "")
@@ -8477,6 +8495,15 @@ def _make_opener_session(day, day_name, library) -> "PlannedSession":
             continue
         dur = float(row.get("Duration(min)") or 0)
         if not (35 <= dur <= 50):  # the ~40-50min opener window (≤50 hard)
+            continue
+        # An opener carries a short-surge file on a z2 slot by design, but
+        # "short surges" is not "any hard session that happens to be 45min".
+        # 22 of the 42 files tied at exactly 45min are over the easy ceiling,
+        # so which one won was decided by the alphabet — and a library rename
+        # duly handed race eve a 0.83-IF / 52-TSS anaerobic ladder. The
+        # aggregate-load ceiling match_zwo already applies (line 4150) belongs
+        # here too; is_opener still exempts the file from being re-matched away.
+        if float(row.get("IF") or 0) > _EASY_SLOT_IF_CEILING:
             continue
         key = (abs(dur - _OPENER_DURATION_MIN), row.get("File") or "")
         if best is None or key < best[0]:

@@ -183,7 +183,7 @@ def test_no_single_file_exceeds_diversity_cap():
         cap = max(1, math.ceil(cls_n / tp._DIVERSITY_BUDGET_DIVISOR))
         # Tolerate +2 (W8-recalibrated). Measured under the pinned env
         # (ctl=50, weekly_tss=650, today=2026-01-05, default seed_salt=0):
-        # worst offender is z2_endurance_61min.zwo (test-side cc=recovery via
+        # worst offender is z2_steady_54pct_61min.zwo (test-side cc=recovery via
         # cache primary, class_n=23 → cap=1) picked 3× = cap+2; two more
         # files sit at cap+1 (corrective swaps + budget re-roll add picks
         # after the cap check). cap+3 would flag a real cap regression.

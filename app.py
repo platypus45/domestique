@@ -5326,7 +5326,7 @@ def _scan_zwo_for_library(zwo_path: Path) -> dict | None:
             # planner's load_workout_library parse (training_planner.py, v2.0.6).
             # Binning the whole duration at mean power here (while the planner
             # sliced) drifted the two scanners' zone seconds → score_sync mismatch
-            # (e.g. neuromuscular_30s120s_9x_52min.zwo scored 5 vs 6).
+            # (e.g. neuromuscular_9x30s-2min_175pct_52min.zwo scored 5 vs 6).
             _RAMP_SLICES = 20
             for _i in range(_RAMP_SLICES):
                 _acc_zone((plo + (phi - plo) * (_i + 0.5) / _RAMP_SLICES) * 100, dur / _RAMP_SLICES)
@@ -5616,7 +5616,7 @@ def _search_normalize(s: str) -> str:
     """Shared normalizer: lowercase, transliterate, [-_/]→space, collapse ws.
 
     Collapsing separators is what lets one token grammar span filenames
-    (threshold_3x16min_118min.zwo), ZWO names (Threshold 3x16min) and
+    (threshold_2x16min-10min_98pct_118min.zwo), ZWO names (Threshold 3x16min) and
     display names (Threshold 118min — 3×16min @ 91%).
     """
     s = (s or "").lower().translate(_SEARCH_TRANSLIT)

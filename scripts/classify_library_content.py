@@ -1391,7 +1391,7 @@ def _mask_cooldown(power: list[float], segments: list[dict]) -> list[float]:
 
     NOT WIRED IN as of v3.7.0. Blanking the cooldown out of zone accounting
     is the right shape — cooldown power should never decide what a workout is
-    — but it re-promotes ``neuromuscular_4x30s_144min.zwo`` to neuromuscular,
+    — but it re-promotes ``neuromuscular_4x30s-90s_160pct_144min.zwo`` to neuromuscular,
     undoing a deliberate v2.4.5 demotion (4x30s inside a 144-minute ride is
     not a neuromuscular session). Overriding a curated correction to land a
     cooldown change is the wrong trade, so the coupling stays and the cooldown

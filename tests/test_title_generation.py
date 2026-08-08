@@ -67,11 +67,11 @@ def _require(fname: str):
 # ── (a) Gate A — verified multi-block rep sums ────────────────────────────────
 
 @pytest.mark.parametrize("fname,expected_reps", [
-    ("anaerobic_1min_15x_72min.zwo", 15),
-    ("anaerobic_1min_18x_97min.zwo", 18),
-    ("anaerobic_1min_20x_96min.zwo", 20),
-    ("over_under_10x3min_80min.zwo", 10),
-    ("anaerobic_10x3min_90min.zwo", 10),
+    ("anaerobic_3x5x1min_121pct_75min.zwo", 15),
+    ("anaerobic_3x6x1min-1min_120pct_106min.zwo", 18),
+    ("anaerobic_2x10x1min-1min_120pct_105min.zwo", 20),
+    ("over_under_2x5x3min_90pct_80min.zwo", 10),
+    ("anaerobic_10x3min_88pct_91min.zwo", 10),
 ])
 def test_gate_a_multiblock_rep_sum(fname, expected_reps):
     """Reps must SUM across recovery-separated identical blocks, not report a
@@ -84,9 +84,9 @@ def test_gate_a_multiblock_rep_sum(fname, expected_reps):
 
 def test_gate_a_signature_sums_directly():
     """Unit-level: the signature helper itself returns the summed rep count."""
-    _require("anaerobic_1min_15x_72min.zwo")
+    _require("anaerobic_3x5x1min_121pct_75min.zwo")
     _power, _t, _m, segs = clc.parse_zwo_full(
-        WORKOUTS / "anaerobic_1min_15x_72min.zwo")
+        WORKOUTS / "anaerobic_3x5x1min_121pct_75min.zwo")
     sig = clc._detect_interval_signature(segs)
     assert sig is not None and sig[0] == 15
 
@@ -97,7 +97,7 @@ def test_garbage_threshold_2x4min_gets_truthful_title():
     """`threshold_2x4min_30min` body is two 30s @95% surges over a Z2/Z3 base
     (classed endurance, conf 0.55). The regenerated title must NOT keep the
     bogus '2x4min' interval token and must NOT claim 'threshold'."""
-    fname = "threshold_2x4min_30min.zwo"
+    fname = "threshold_2x3min_85pct_30min.zwo"
     _require(fname)
     e = _entry(fname)
     assert e["confidence"] < CONF_GATE  # the file is genuinely low-confidence
@@ -122,7 +122,7 @@ def test_ramp_descriptor_word():
 def test_mixed_descriptor_word():
     """A body with ≥2 distinct hard interval shapes earns the `mixed`
     descriptor."""
-    fname = "anaerobic_mixed_34min.zwo"
+    fname = "anaerobic_2x45s-1min_150pct_38min.zwo"
     _require(fname)
     name = _name(fname)
     assert "_mixed_" in name, f"{name} should carry the mixed descriptor"
@@ -154,7 +154,7 @@ def test_descriptor_words_are_from_existing_vocabulary():
 def test_low_confidence_uses_soft_token():
     """conf < 0.6 must yield a generic/soft class token, never a precise
     pattern claim it isn't confident about."""
-    fname = "threshold_2x4min_30min.zwo"
+    fname = "threshold_2x3min_85pct_30min.zwo"
     _require(fname)
     e = _entry(fname)
     assert e["confidence"] < CONF_GATE
@@ -186,7 +186,7 @@ def test_no_low_confidence_file_claims_precise_pattern():
 def test_multitoken_class_kept_intact():
     """An over_under file (conf ≥ 0.6) keeps the full two-word class token —
     never `split('_')[0]` (which would yield a bare 'over')."""
-    fname = "over_under_10x3min_80min.zwo"
+    fname = "over_under_2x5x3min_90pct_80min.zwo"
     _require(fname)
     e = _entry(fname)
     assert e["primary"] == "over_under" and e["confidence"] >= CONF_GATE
@@ -206,7 +206,7 @@ def test_over_under_steady_pair_uses_ou_descriptor():
     legitimately reclassified vo2max → it no longer exercises the OU-title
     path. over_under_steady_55min is the same shape (steady-pair OU body, no
     IntervalsT) and stays over_under post-wave."""
-    fname = "over_under_steady_55min.zwo"
+    fname = "over_under_2x1min_110pct_55min.zwo"
     _require(fname)
     e = _entry(fname)
     # confirm there's no real IntervalsT block to trust.
@@ -220,7 +220,7 @@ def test_over_under_steady_pair_uses_ou_descriptor():
 def test_over_under_real_intervals_keeps_rep_count():
     """An over_under body with genuine IntervalsT blocks keeps its faithful
     `{N}x{ON}` token (not downgraded to `ou`)."""
-    fname = "over_under_10x3min_80min.zwo"
+    fname = "over_under_2x5x3min_90pct_80min.zwo"
     _require(fname)
     name = _name(fname)
     assert _reps_in(name) == 10, f"{name} lost the real 10x interval count"
@@ -252,9 +252,9 @@ def test_regression_correct_nx_names_reproduced():
     full SUM rather than a single block's count.
     """
     verified = {
-        "anaerobic_1min_15x_72min.zwo": 15,
-        "anaerobic_1min_18x_97min.zwo": 18,
-        "anaerobic_1min_20x_96min.zwo": 20,
+        "anaerobic_3x5x1min_121pct_75min.zwo": 15,
+        "anaerobic_3x6x1min-1min_120pct_106min.zwo": 18,
+        "anaerobic_2x10x1min-1min_120pct_105min.zwo": 20,
     }
     for fname, reps in verified.items():
         _require(fname)
@@ -306,7 +306,7 @@ def test_regression_correct_nx_names_reproduced():
 # ── purity / determinism ──────────────────────────────────────────────────────
 
 def test_namer_is_deterministic():
-    fname = "anaerobic_1min_15x_72min.zwo"
+    fname = "anaerobic_3x5x1min_121pct_75min.zwo"
     _require(fname)
     e = _entry(fname)
     p = WORKOUTS / fname
@@ -316,7 +316,7 @@ def test_namer_is_deterministic():
 
 
 def test_namer_does_not_mutate_inputs():
-    fname = "over_under_10x3min_80min.zwo"
+    fname = "over_under_2x5x3min_90pct_80min.zwo"
     _require(fname)
     e = _entry(fname)
     feats_before = dict(e["features"])

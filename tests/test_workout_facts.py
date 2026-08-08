@@ -58,7 +58,7 @@ def _basic_files() -> dict[str, str]:
         "sprints_4x10s_40min.zwo": _zwo("SP", WARMUP.format(d=300, lo=0.4, hi=0.6)
                                         + INTER.format(r=4, on=10, off=170, onp=2.5, offp=0.5)
                                         + STEADY.format(d=1200, p=0.6)),
-        "vo2_5x3min_45min.zwo": _zwo("V", WARMUP.format(d=300, lo=0.4, hi=0.7)
+        "vo2_5x3min-3min_108pct_45min.zwo": _zwo("V", WARMUP.format(d=300, lo=0.4, hi=0.7)
                                      + INTER.format(r=5, on=180, off=180, onp=1.12, offp=0.5)),
     }
 
@@ -89,9 +89,9 @@ def test_facts_incremental_and_prune(tmplib):
     # edit ONE file, delete another
     (tmplib / "z2_endurance_45min.zwo").write_text(
         _zwo("Z2", STEADY.format(d=2400, p=0.70)), encoding="utf-8")
-    (tmplib / "vo2_5x3min_45min.zwo").unlink()
+    (tmplib / "vo2_5x3min-3min_108pct_45min.zwo").unlink()
     facts2 = wf.ensure_facts(tmplib)
-    assert "vo2_5x3min_45min.zwo" not in facts2  # pruned
+    assert "vo2_5x3min-3min_108pct_45min.zwo" not in facts2  # pruned
     assert facts2["z2_endurance_45min.zwo"]["sha1"] != sha_before["z2_endurance_45min.zwo"]
     for fn in ("sweetspot_2x15min_45min.zwo", "sprints_4x10s_40min.zwo"):
         assert facts2[fn]["sha1"] == sha_before[fn]  # untouched rows stable

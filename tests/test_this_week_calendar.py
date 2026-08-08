@@ -38,7 +38,7 @@ def _plan_with_today():
         sessions.append({
             "day": d, "day_name": "X", "session_type": "z2",
             "duration_min": 60, "tss_estimate": 50, "status": "pending",
-            "zwo_file": "endurance_clean_60min.zwo", "zwo_name": "Endurance 60",
+            "zwo_file": "endurance_steady_65pct_60min.zwo", "zwo_name": "Endurance 60",
             "description": "",
         })
     return {

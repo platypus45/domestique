@@ -120,7 +120,7 @@ def test_target_mode_degrades_to_power_on_broken_invariant():
 
 # ── C17 (detail endpoint): hr payload present in hr mode, absent in power ────
 
-ZWO = "threshold_steady_56min.zwo"
+ZWO = "threshold_2x3min-3min_95pct_56min.zwo"
 
 
 def test_detail_power_mode_has_no_hr_fields(client, monkeypatch):

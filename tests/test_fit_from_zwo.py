@@ -2,7 +2,7 @@
 ZWO library file when ``zwo_file`` is supplied.
 
 User report: clicking Download FIT for a session that resolved to
-``tempo_steady_57min.zwo`` (a 21-block ladder) was returning a generic Tempo
+``tempo_4x150s_85pct_63min.zwo`` (a 21-block ladder) was returning a generic Tempo
 block keyed only on ``(session_type, duration_min)`` — the ZWO and the FIT
 were therefore the same workout in name only. These tests pin that the new
 ``zwo_file=`` query parameter:
@@ -29,7 +29,7 @@ import app as app_module
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKOUTS_DIR = REPO_ROOT / "workouts"
-TEMPO_FILE = "tempo_steady_57min.zwo"
+TEMPO_FILE = "tempo_4x150s_85pct_63min.zwo"
 
 
 def _zwo_element_min_steps(zwo_path: Path) -> int:

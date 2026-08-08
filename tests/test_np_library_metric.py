@@ -24,7 +24,7 @@ import training_planner as tp
 import workout_facts as wf
 
 REPO = Path(__file__).resolve().parent.parent
-FLAGSHIP = "anaerobic_4x3min_67min.zwo"
+FLAGSHIP = "anaerobic_4x3min_98pct_67min.zwo"
 
 
 def _np(samples):

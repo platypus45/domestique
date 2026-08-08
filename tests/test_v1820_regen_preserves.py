@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 def _session(day, st="z2", **extra):
     s = {"day": day, "day_name": "Mon", "session_type": st, "duration_min": 60,
-         "tss_estimate": 50, "description": "x", "zwo_file": "z2_endurance_60min.zwo",
+         "tss_estimate": 50, "description": "x", "zwo_file": "z2_steady_56pct_60min.zwo",
          "zwo_name": "Z2"}
     s.update(extra)
     return s
@@ -129,7 +129,7 @@ class TestRegenGatherBroadened(unittest.TestCase):
                 tp.PlannedSession(
                     day=wstart + timedelta(days=d), day_name="D",
                     session_type="z2", duration_min=60, tss_estimate=50,
-                    description="x", zwo_file="z2_endurance_60min.zwo", zwo_name="Z2",
+                    description="x", zwo_file="z2_steady_56pct_60min.zwo", zwo_name="Z2",
                 )
                 for d in range(7)
             ]

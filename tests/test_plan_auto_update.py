@@ -37,7 +37,7 @@ def test_auto_adapt_reconciles_current_week(monkeypatch):
         "sessions": [{
             "day": today_iso, "day_name": "X", "session_type": "z2",
             "duration_min": 60, "tss_estimate": 50, "status": "pending",
-            "zwo_file": "endurance_clean_60min.zwo", "zwo_name": "E60",
+            "zwo_file": "endurance_steady_65pct_60min.zwo", "zwo_name": "E60",
             "description": "",
         }],
     }])
@@ -246,18 +246,18 @@ def test_rebuild_preserves_top_level_keys_and_past_weeks():
 def test_microinterval_preference_measures_the_main_set_not_a_finisher():
     """The classifier's pattern_microinterval flag fires when a microinterval
     pattern occurs ANYWHERE, which a warm-up drill or a short finisher is enough
-    to do — vo2_short_10x2min_81min.zwo carries it while being a 10x2min
+    to do — vo2_short_2x5x2min_115pct_81min.zwo carries it while being a 10x2min
     session. A preference built on that flag served exactly the long-rep
     sessions it was meant to exclude, so the row now carries the time-weighted
     share of repeated work sitting in short reps."""
     lib = tp.load_workout_library()
     by = {w["File"]: w for w in lib}
-    tenx2 = by.get("vo2_short_10x2min_81min.zwo")
+    tenx2 = by.get("vo2_short_2x5x2min_115pct_81min.zwo")
     if tenx2 is not None:
         assert tenx2.get("MicroFrac") is not None
         assert tenx2["MicroFrac"] < tp.MICROINTERVAL_MIN_FRAC, (
             "a 10x2min session must not read as a microinterval session")
-    ron = by.get("vo2_short_3015_3x13_113pct_55min.zwo")
+    ron = by.get("vo2_short_3x13x30s-15s_113pct_55min.zwo")
     if ron is not None:
         assert ron.get("MicroFrac") == 1.0
 

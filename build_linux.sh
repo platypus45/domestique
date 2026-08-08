@@ -255,8 +255,10 @@ _QTROOT="$APPDIR/usr/bin/_internal/PySide6/Qt"
 for _p in "plugins/platformthemes/libqgtk3.so" "plugins/printsupport" \
           "plugins/multimedia" "plugins/mediaservice" "plugins/texttospeech" \
           "qml/QtMultimedia" "qml/QtQuick3D/SpatialAudio" \
-          "qml/QtQuick/VirtualKeyboard" \
-          "lib/libQt6Multimedia.so.6" "plugins/imageformats/libqtiff.so" \
+          "qml/QtQuick/VirtualKeyboard" "qml/QtTextToSpeech" \
+          "lib/libQt6Multimedia.so.6" "lib/libQt6MultimediaQuick.so.6" \
+          "lib/libQt6SpatialAudio.so.6" "lib/libQt6Quick3DSpatialAudio.so.6" \
+          "lib/libQt6TextToSpeech.so.6" "plugins/imageformats/libqtiff.so" \
           "plugins/platforms/libqwayland.so" \
           "plugins/platforms/libqwayland-egl.so" \
           "plugins/platforms/libqwayland-generic.so" \
@@ -271,6 +273,40 @@ for _p in "plugins/platformthemes/libqgtk3.so" "plugins/printsupport" \
         rm -rf "${_QTROOT:?}/$_p"
     fi
 done
+
+# 6c. Those plugins did not arrive alone. PyInstaller collects the whole NEEDED
+# closure of everything it freezes, so libqtiff.so brought _internal/libtiff.so.5
+# and libqgtk3.so brought _internal/libgdk_pixbuf-2.0.so.0 — and BOTH of those
+# NEED libjpeg.so.8, so that came too. Deleting the plugin leaves its libraries
+# behind with nothing in the bundle referencing them: Qt's own libqjpeg.so links
+# libjpeg-turbo statically, and Pillow carries auditwheel copies under mangled
+# names (libjpeg-31e2ca52.so.62.4.0), so no code path loses a JPEG decoder.
+#
+# They are worse than dead weight. Step 8 resolves a bundled orphan's NEEDED
+# against the BUILD HOST, where jammy does have libjpeg.so.8, so a library we
+# already ship got published as a host requirement and dpkg named it
+# libjpeg-turbo8 — a name Debian does not have, and whose libjpeg62-turbo
+# provides a DIFFERENT soname (libjpeg.so.62). The clean-distro job then failed
+# on the apt name and reported "not found" for a file inside the AppImage.
+#
+# Exact filenames, never a libjpeg*/libtiff* glob: a glob takes Pillow's
+# mangled auditwheel copies with it.
+echo "[6c/9] Removing libraries orphaned by the plugin prune..."
+_INT="$APPDIR/usr/bin/_internal"
+for _o in "libtiff.so.5" "libgdk_pixbuf-2.0.so.0" "libjpeg.so.8"; do
+    if [ -e "$_INT/$_o" ]; then
+        echo "  - $_o"
+        rm -f "$_INT/$_o"
+    fi
+done
+
+# PyInstaller publishes every Qt library a second time as _internal/<soname>, a
+# SYMLINK into PySide6/Qt/lib. Pruning the target leaves the link dangling, and
+# step 8's "does it ship inside the AppDir?" exemption matches a dangling link
+# by NAME — which is how a bundle missing libQt6Multimedia.so.6 shipped under a
+# green build. Delete the links the prune just broke: a library that is gone
+# must LOOK gone to the gate below.
+find "$APPDIR" -xtype l -print -delete
 
 echo "[7/9] Asserting no bundled graphics/runtime libraries..."
 # Match real system SONAMEs (libfoo.so.N), not any file whose name merely

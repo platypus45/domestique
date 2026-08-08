@@ -749,8 +749,35 @@ jobs:
               cd /tmp && ./app.AppImage --appimage-extract > /dev/null
 
               echo "===== the payload resolves against the declared deps alone ====="
+              # ldd must be handed the SAME library search path the app runs
+              # with, or it judges the payload against a loader environment that
+              # never exists. PyInstaller collects system libraries into
+              # _internal/ and nothing in the tree has an RPATH pointing there;
+              # the bootloader exports LD_LIBRARY_PATH=<payload>/_internal at
+              # startup instead (visible in /proc/<pid>/environ of the running
+              # app). A bare ldd skipped every bundled copy and re-resolved
+              # against the host, which is how the bundled jammy libnss3.so
+              # (NSS >= 3.94) got paired with bookworms libnssutil3.so (3.87)
+              # and reported a phantom NSSUTIL_3.94 failure for a pairing the
+              # loader never makes.
+              #
+              # Deliberately NOT a name-match exemption. Asking "does a file by
+              # this name exist under the payload?" excuses two things it must
+              # not: a copy buried somewhere the loader never searches, and a
+              # DANGLING SYMLINK. Both were live here -- _internal is full of
+              # symlinks into PySide6/Qt/lib, and pruning a Qt library leaves
+              # the link behind, so a name match happily excused a
+              # libQt6Multimedia.so.6 that resolves to nothing. Letting the
+              # real loader answer gets both right for free.
+              #
+              # env, not export: scoping it to the sweep keeps the later
+              # AppImage launch exercising the shipped AppRun, which is the
+              # only thing proving the artifact self-configures.
+              INTERNAL="$(find squashfs-root -type d -name _internal -print -quit)"
+              [ -n "$INTERNAL" ] || { echo "::error::no _internal/ directory in the extracted payload — the bundle layout changed and this sweep is looking at the wrong tree"; exit 1; }
               missing="$(find squashfs-root -type f \( -name "*.so*" -o -perm -u+x \) \
-                -exec ldd {} + 2>/dev/null | grep "not found" | sort -u || true)"
+                -exec env LD_LIBRARY_PATH="$PWD/$INTERNAL" ldd {} + 2>/dev/null \
+                | grep "not found" | sort -u || true)"
               if [ -n "$missing" ]; then
                 echo "::error::unresolved libraries under the declared host deps — this is the crash a user gets on a stock distro"
                 echo "$missing"

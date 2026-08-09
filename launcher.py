@@ -59,14 +59,36 @@ _harden_std_streams()
 # SSL_CERT_FILE on frozen Windows AND frozen macOS; dev macOS/Linux keep the system
 # store. Must run before any HTTPS call (before start_server) — top-level guarantees it.
 def configure_tls_ca(platform=None, frozen=None):
-    """Set SSL_CERT_FILE/SSL_CERT_DIR to certifi's CA bundle on frozen Windows /
-    frozen macOS builds so urllib can verify HTTPS. Returns the CA path set, or
-    None when not applicable. setdefault respects a user-provided SSL_CERT_FILE."""
+    """Set SSL_CERT_FILE/SSL_CERT_DIR to certifi's CA bundle on every FROZEN
+    build so urllib can verify HTTPS. Returns the CA path set, or None when not
+    applicable. setdefault respects a user-provided SSL_CERT_FILE.
+
+    LINUX WAS EXCLUDED HERE ON A FALSE PREMISE — "the system store works". It
+    works on the distro we BUILD on, which is the trap. The AppImage ships its
+    own libcrypto, PyInstaller puts _internal on LD_LIBRARY_PATH so that copy
+    wins over the host's, and its compiled-in OPENSSLDIR is Debian's
+    /usr/lib/ssl. That path does not exist on Fedora, RHEL, Rocky, Alma
+    (certs live under /etc/pki), and differs again on Arch and openSUSE — so
+    urllib fails cert verification on those distros even with an up-to-date
+    ca-certificates installed.
+
+    The failure was ugly precisely because it was PARTIAL: the OAuth token
+    exchange runs on httpx, which carries its own certifi and succeeds, so the
+    app reported "intervals.icu connected" — and then every sync, FIT upload
+    and calendar push, all of which go through urllib, failed forever with
+    CERTIFICATE_VERIFY_FAILED. Connected, and permanently empty.
+
+    Measured A/B on one binary in a container: no reachable CA store gives
+    CERTIFICATE_VERIFY_FAILED, a reachable one gives a clean HTTP 401 from the
+    bogus test key. Pointing urllib at the bundle's own certifi removes the
+    host CA store from the picture entirely, on all three platforms.
+    """
     plat = platform if platform is not None else sys.platform
     froz = frozen if frozen is not None else getattr(sys, "frozen", False)
-    # win32: patch always (frozen + dev — harmless). darwin: only the frozen
-    # .app (dev macOS has the system store). Linux: never (system store works).
-    if not (plat == "win32" or (plat == "darwin" and froz)):
+    # win32: patch always (frozen + dev — harmless). Everything else: only when
+    # frozen, because a dev checkout runs on the system Python whose OpenSSL
+    # paths match the machine it is running on.
+    if not (plat == "win32" or froz):
         return None
     try:
         import certifi

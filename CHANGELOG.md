@@ -1,5 +1,9 @@
 # Changelog
 
+## v3.9.1 — Linux: intervals.icu syncs on every distro (2026-08-09)
+
+- **Fixed: on Linux, intervals.icu could connect and then never sync.** Sign-in succeeded and the app said it was connected, but no ride, wellness entry or planned workout ever moved — permanently. It looked like an account problem and was not. Only Linux was affected, and only on distributions that keep their certificates somewhere other than where Debian and Ubuntu keep them — Fedora, RHEL, Rocky, Alma, Arch and openSUSE among them. Sign-in used one part of the app that carries its own copy of the internet's certificate list; everything after it used another part that went looking for the system's copy in a place those distributions do not use. Both now use the copy shipped inside the app, so nothing depends on how the distribution is laid out.
+
 ## v3.9.0 — Workout names that tell you what they are (2026-08-08)
 
 - **Every workout is now named for its structure.** The library had 408 files called `threshold_clean_<N>min` and 234 called `endurance_clean_<N>min`, told apart only by their length — sorted in a folder they were indistinguishable, and the one thing you want from a name was the one thing missing. All 4,306 workouts now read like `threshold_4x8min-4min_98pct_62min`: the class, the structure, the intensity, the duration. The worst pile of identical names went from 86 files to 8.

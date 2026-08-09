@@ -9851,8 +9851,18 @@ def update_custom_zones(body: dict):
 
 @app.post("/api/sync")
 def api_sync():
-    """Manually trigger a sync from Intervals.icu."""
+    """Manually trigger a sync from Intervals.icu.
+
+    A manual sync that SUCCEEDS proves the credential is alive, so it clears
+    the auth-disable latch and restarts the background loop. The latch is
+    one-way otherwise — it returns out of _sync_loop and only a reconnect or an
+    app restart resets it — and now that a single 401 sets it, a one-off 401
+    from ICU must not cost the rider background sync for the rest of the
+    session. run_sync re-raises on failure, so this only runs on success.
+    """
     result = db.run_sync(days=90)
+    if db._auth_disabled:
+        db.restart_sync()
     return result
 
 

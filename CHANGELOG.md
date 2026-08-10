@@ -1,6 +1,13 @@
 # Changelog
 
-## v3.9.1 — Linux: intervals.icu syncs on every distro (2026-08-09)
+## v3.9.1 — Linux, properly (2026-08-09)
+
+Domestique now runs on Linux as a normal desktop app, alongside macOS and Windows.
+
+- **Fixed: on Linux, intervals.icu could connect and then never sync.** Sign-in succeeded and the app said it was connected, but no ride, wellness entry or planned workout ever moved — it looked like an account problem and was not. This affected distributions that keep their certificates somewhere other than Debian and Ubuntu do: Fedora, RHEL, Rocky, Alma, Arch and openSUSE among them.
+- **Fixed: the Linux window used a smaller typeface than the same app on macOS and Windows.** The interface is now the same size on all three.
+- **Fixed: the programme summary opened as an empty box.** With no plan yet, or a plan you have not ridden, it showed a heading and six blank frames and explained nothing. It now says what is missing and when it will fill in — and if you have an FTP or VO2max change on record, it shows that even before your first ride of the plan.
+- **Fixed: the end-of-plan summary could fail to appear at all.** It opened invisibly when you were on any tab other than Plan, and counted itself as already shown.
 
 - **Fixed: on Linux, intervals.icu could connect and then never sync.** Sign-in succeeded and the app said it was connected, but no ride, wellness entry or planned workout ever moved — permanently. It looked like an account problem and was not. Only Linux was affected, and only on distributions that keep their certificates somewhere other than where Debian and Ubuntu keep them — Fedora, RHEL, Rocky, Alma, Arch and openSUSE among them. Sign-in used one part of the app that carries its own copy of the internet's certificate list; everything after it used another part that went looking for the system's copy in a place those distributions do not use. Both now use the copy shipped inside the app, so nothing depends on how the distribution is laid out.
 

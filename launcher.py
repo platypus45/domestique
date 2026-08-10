@@ -1073,9 +1073,25 @@ def main():
         # _linux_gui_fatal() digs out the real backend error instead.
         # pywebview requires the main thread — skip pystray (tray not needed when
         # the app has its own window; closing the window exits the app).
+        # LINUX-UI-SCALE: the AppImage's AppRun sets QT_SCALE_FACTOR (see
+        # build_linux.sh) because Qt 6 hands X11 sessions a flat 96 dpi, so the
+        # UI was drawn at 1 CSS px per physical pixel — the "font too small"
+        # report — while macOS and Windows both scale it. Qt multiplies WINDOW
+        # geometry by that same factor, which would open this window at
+        # 1750x1125 and hang it off the bottom of a 1080p screen, so divide it
+        # back out: same window in physical pixels, contents 25% larger.
+        # min_size is deliberately NOT divided — below ~840 CSS px the tab strip
+        # clips, so 1000x600 is a real layout floor and the same one macOS and
+        # Windows enforce.
+        _scale = 1.0
+        if sys.platform == "linux":
+            try:
+                _scale = max(1.0, float(os.environ.get("QT_SCALE_FACTOR", "1")))
+            except ValueError:
+                _scale = 1.0  # a junk value is Qt's to complain about, not ours
         webview.create_window(
             "Domestique", URL,
-            width=1400, height=900,
+            width=round(1400 / _scale), height=round(900 / _scale),
             min_size=(1000, 600),
             x=100, y=50,  # position near top-left, not bottom
             js_api=JsApi(),  # WKWebView ignores <a download>; JS calls

@@ -20579,6 +20579,9 @@ def _build_programme_summary(plan: dict) -> dict:
         return {
             "plan_id": "current",
             "start_date": None, "end_date": None, "weeks": 0,
+            # The modal keys its empty state off "rides": zero rides must read
+            # as "nothing ridden yet", never as measured zeros.
+            "rides": 0,
             "ftp_delta": {}, "eftp_delta": {}, "vo2max_delta": {},
             "ctl_gain": {}, "intensity_dist": {}, "pol_index": {},
             "monotony_max": None, "strain_max": None, "compliance": [],
@@ -20963,6 +20966,7 @@ def _build_programme_summary(plan: dict) -> dict:
         "start_date": start_date,
         "end_date": end_date,
         "weeks": n_weeks,
+        "rides": len(in_window),
         "ftp_delta": _delta(ftp_start, ftp_end),
         "eftp_delta": _delta(eftp_start_w, eftp_end_w),
         "vo2max_delta": _delta_float(vo2_start, vo2_end),

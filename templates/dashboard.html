@@ -2459,8 +2459,9 @@ window.addEventListener('unhandledrejection', function(e) {
           <button class="btn" onclick="hideProgrammeSummary()" aria-label="Close">Close</button>
         </div>
       </div>
+      <div id="ps-empty" style="display:none;font-size:14px;color:var(--text2);line-height:1.6;margin-bottom:18px;"></div>
       <div id="ps-kpi-row" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px;"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">
+      <div id="ps-charts" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">
         <div class="card" style="margin:0;"><h4 style="margin:0 0 8px 0;font-size:13px;">Intensity distribution</h4><canvas id="ps-chart-intensity" height="160"></canvas><div style="font-size:10px;color:var(--text3);margin-top:4px;">Stöggl & Sperlich 2014 — POL 80/0/20 target</div></div>
         <div class="card" style="margin:0;"><h4 style="margin:0 0 8px 0;font-size:13px;">Polarization index</h4><canvas id="ps-chart-pol" height="160"></canvas><div style="font-size:10px;color:var(--text3);margin-top:4px;">Treff et al. 2019 — PI > 2.0 polarized</div></div>
         <div class="card" style="margin:0;"><h4 style="margin:0 0 8px 0;font-size:13px;">Compliance per phase</h4><canvas id="ps-chart-compliance" height="160"></canvas></div>
@@ -2476,21 +2477,70 @@ window.addEventListener('unhandledrejection', function(e) {
   <script>
   window._psCharts = {};
   function _psDestroyCharts(){ try { Object.values(window._psCharts || {}).forEach(c => { if (c && c.destroy) c.destroy(); }); } catch (_) {} window._psCharts = {}; }
+  // A fresh install reported the summary as "blank": with no plan (404) the
+  // only thing written was one line into #ps-window, leaving four empty metric
+  // grids and six empty chart frames behind it. Both that case and "plan but no
+  // rides yet" now say what is missing and when it fills in, and hide the metric
+  // grid so empty frames cannot be read as a broken feature. Explicit display
+  // values on restore — these are grids, and clearing the property would drop
+  // grid-template-columns with it.
+  const _PS_BLOCKS = {'ps-kpi-row':'grid', 'ps-charts':'grid', 'ps-totals':'grid', 'ps-monotony':'block'};
+  function _psShowEmpty(msg){
+    if (typeof _psDestroyCharts === 'function') _psDestroyCharts();
+    const n = document.getElementById('ps-empty');
+    if (n) { n.textContent = msg; n.style.display = 'block'; }
+    Object.keys(_PS_BLOCKS).forEach(id => { const e = document.getElementById(id); if (e) e.style.display = 'none'; });
+    // The PNG of a summary with nothing in it is six empty frames too.
+    const link = document.getElementById('ps-png-link');
+    if (link) link.style.display = 'none';
+    const cites = document.getElementById('ps-citations');
+    if (cites) cites.textContent = '';
+  }
+  function _psHideEmpty(){
+    const n = document.getElementById('ps-empty');
+    if (n) { n.textContent = ''; n.style.display = 'none'; }
+    Object.entries(_PS_BLOCKS).forEach(([id, disp]) => { const e = document.getElementById(id); if (e) e.style.display = disp; });
+    const link = document.getElementById('ps-png-link');
+    if (link) link.style.display = '';
+  }
+  // Not every tile needs a ride: FTP and VO2max come from the metrics ledger
+  // and the Hooper trend from the daily log, so a plan with no stored rides can
+  // still carry real measurements. Blanking on the ride count alone would hide
+  // a measured FTP gain, so that case gets a note ABOVE a live panel.
+  function _psNote(msg){
+    _psHideEmpty();
+    const n = document.getElementById('ps-empty');
+    if (n) { n.textContent = msg; n.style.display = 'block'; }
+  }
   async function showProgrammeSummary(planId){
     planId = planId || 'current';
     const overlay = document.getElementById('programme-summary-modal');
     if (!overlay) return;
+    // The modal markup sits inside #sec-plan, which is display:none unless the
+    // Plan tab is open — so the end-of-plan auto-open (which fires on Home)
+    // laid out a 0x0 box: nothing visible, body scroll still locked, and the
+    // once-only "shown" flag burned. Hoist it to <body> on first open.
+    if (overlay.parentElement !== document.body) document.body.appendChild(overlay);
     overlay.style.display = 'block';
     document.body.style.overflow = 'hidden';
+    document.getElementById('ps-window').textContent = '';
     try {
       const res = await fetch('/api/programme/summary?plan_id=' + encodeURIComponent(planId));
-      if (!res.ok) { document.getElementById('ps-window').textContent = 'No active plan to summarise yet.'; return; }
+      if (!res.ok) {
+        _psShowEmpty(res.status === 404
+          ? 'No training plan yet. This is a recap of a plan you have ridden — generate a plan on this tab, and it starts filling in from your first ride.'
+          : 'The summary could not be loaded (HTTP ' + res.status + ').');
+        return;
+      }
       const d = await res.json();
       _psRender(d);
       const link = document.getElementById('ps-png-link');
       if (link) link.href = '/api/programme/summary/png?plan_id=' + encodeURIComponent(planId);
       try { localStorage.setItem('summary_shown_' + planId, '1'); } catch (_) {}
-    } catch (e) { console.warn('programme summary load failed', e); }
+    } catch (e) {
+      console.warn('programme summary load failed', e);
+      _psShowEmpty('The summary could not be loaded — the local Domestique server did not answer.');
+    }
   }
   function hideProgrammeSummary(){
     const overlay = document.getElementById('programme-summary-modal');
@@ -2508,6 +2558,21 @@ window.addEventListener('unhandledrejection', function(e) {
   }
   function _psRender(d){
     document.getElementById('ps-window').textContent = `${d.start_date || '—'}  →  ${d.end_date || '—'}  ·  ${d.weeks || 0} weeks`;
+    if (!d.weeks) {
+      _psShowEmpty('This plan has no weeks to summarise yet — generate a plan on this tab, and the summary starts filling in from your first ride.');
+      return;
+    }
+    const _psMeasured = b => !!b && (b.start != null || b.end != null);
+    if (!d.rides) {
+      if (!_psMeasured(d.ftp_delta) && !_psMeasured(d.vo2max_delta)
+          && !(d.hooper_trend || []).length) {
+        _psShowEmpty('Nothing measured in this plan window yet — no rides, and no FTP, VO2max or daily-log entries either. Sync from intervals.icu or import a FIT file, and the summary fills in from your first ride.');
+        return;
+      }
+      _psNote('No rides found in this plan window, so the ride-based figures — totals, intensity distribution, compliance, monotony and the decoupling trend — all read zero. FTP, VO2max and the Hooper trend come from your metrics ledger and daily log, so those are measured.');
+    } else {
+      _psHideEmpty();
+    }
     const kpi = document.getElementById('ps-kpi-row');
     if (kpi) {
       const tiles = [

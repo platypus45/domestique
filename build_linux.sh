@@ -227,6 +227,19 @@ export QTWEBENGINE_DISABLE_SANDBOX="\${QTWEBENGINE_DISABLE_SANDBOX:-1}"
 # Chromium spawns its helper by absolute path; baked in at build time.
 export QTWEBENGINEPROCESS_PATH="\${QTWEBENGINEPROCESS_PATH:-\$APPDIR/${QTWEP_REL}}"
 
+# Qt 6 reads its DPI from the X session (Xft/DPI, then Xft.dpi) and falls back
+# to 96 — it never looks at the panel the way Qt 5 did — so under XWayland one
+# CSS pixel lands on one physical pixel. Measured: devicePixelRatio 1.0 in the
+# Linux smoke screenshot against 2.0 in the macOS window, and every font size in
+# the app is an absolute px, which is why the first Linux tester's verdict was
+# "could really use a bigger font". launcher.py divides the window geometry back
+# out, so the window keeps its size in physical pixels and only the contents
+# grow. Deferring to a value the user already set, like every assignment here:
+# QT_SCALE_FACTOR=1 restores the old rendering, and a larger value is the
+# power-user escape hatch. Above ~1.4 the window stops holding its physical
+# size — launcher.py's min_size clamps first.
+export QT_SCALE_FACTOR="\${QT_SCALE_FACTOR:-1.25}"
+
 # Deliberately NOT setting LD_LIBRARY_PATH. The PyInstaller bootloader sets it
 # and stashes the caller's value in LD_LIBRARY_PATH_ORIG, which launcher.py
 # restores before handing a URL to the host browser. Prepending AppDir paths

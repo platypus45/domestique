@@ -647,7 +647,7 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Releases
 
-Latest: **[v3.9.1 — Linux: intervals.icu syncs on every distro](https://github.com/platypus45/domestique/releases/latest)** (2026-08-09).
+Latest: **[v3.9.1 — Linux, properly](https://github.com/platypus45/domestique/releases/latest)** (2026-08-09).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE + Linux AppImage on every tagged release. The three jobs are independent: a Linux failure cannot hold up or damage the macOS and Windows artifacts.
 

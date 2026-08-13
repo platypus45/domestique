@@ -9,10 +9,10 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.12-blue" alt="Python">
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-green" alt="Platform">
-  <img src="https://img.shields.io/badge/Workouts-4249-orange" alt="Workouts">
+  <img src="https://img.shields.io/badge/Workouts-4306-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
   <img src="https://img.shields.io/badge/Version-v3.9.1-brightgreen" alt="Version">
-  <img src="https://img.shields.io/badge/Tests-2400%2B-success" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-3216-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
 
@@ -205,7 +205,7 @@ TrainingPeaks / Vekta / Garmin.
 
 ## Quick start
 
-1. **Install** — macOS users have two paths: `brew tap platypus45/tap && brew install --cask domestique` (no Gatekeeper prompts) OR grab `Domestique-vX.Y.Z.dmg` from the [latest release](https://github.com/platypus45/domestique/releases/latest) and right-click → Open on first launch. Windows users grab `Domestique-Windows.zip`, unzip, run `Domestique.exe`. Linux users grab the `.AppImage`, `chmod +x` it and run it — see [Installing on Linux](#installing-on-linux) first, it is new. See [Installing on macOS](#installing-on-macos) for details.
+1. **Install** — macOS users have two paths: `brew tap platypus45/tap && brew install --cask domestique` (no Gatekeeper prompts) OR grab `Domestique-vX.Y.Z.dmg` from the [latest release](https://github.com/platypus45/domestique/releases/latest) and right-click → Open on first launch. Windows users grab `Domestique-Windows.zip`, unzip, run `Domestique.exe`. Linux users grab the `.AppImage`, `chmod +x` it and run it — see [Installing on Linux](#installing-on-linux). See [Installing on macOS](#installing-on-macos) for details.
 2. **Connect Intervals.icu** — the first-run wizard walks you through it: click **Sign in to intervals.icu**, log in + approve in your browser (OAuth — no API keys to copy, athlete auto-detected), then optionally enable Garmin Connect on Intervals.icu so rides sync automatically. While your history indexes, a top-bar strip shows live first-sync progress. No intervals.icu account? It's free and you can sign in with Garmin or Strava. Whole step is skippable — without ICU, Domestique falls back to local CTL from your imported FITs. (Already linked with an API key from an older version? You'll be prompted to switch to sign-in.)
 3. **Generate a plan** — pick a goal type (event prep / FTP / VO2max / hybrid / general / endurance), target date, target CTL, hours/week, and a [planner mode](#planner-modes) (auto / fixed-core / template). The planner sizes Base / Build1 / Build2 / Peak / (Taper or Consolidation) phases, draws 150 distinct ZWO files across a 24-week plan, and adapts daily to your readiness.
 
@@ -232,20 +232,21 @@ The Windows EXE is also unsigned. On first run, SmartScreen shows a blue "Window
 
 ### Installing on Linux
 
-**New in v3.8.0, and the least-tested of the three platforms — read this section before you download.**
-
 Grab `Domestique-vX.Y.Z-x86_64.AppImage` from the [latest release](https://github.com/platypus45/domestique/releases/latest), make it executable, run it:
 
 ```bash
-chmod +x Domestique-v3.8.0-x86_64.AppImage
-./Domestique-v3.8.0-x86_64.AppImage
+chmod +x Domestique-v3.9.1-x86_64.AppImage
+./Domestique-v3.9.1-x86_64.AppImage
 ```
 
 There is nothing to install and nothing to uninstall — the file *is* the app. Your data lives in `~/.domestique/` exactly as on macOS and Windows, so deleting the file leaves your plan and rides intact.
 
+The app opens its own window and serves on `http://127.0.0.1:22400`. If something else already holds that port it moves to the next free one on its own and remembers the choice; set `DOMESTIQUE_PORT` to pick one yourself.
+
 - **64-bit x86 only.** No ARM build (a Raspberry Pi or an ARM laptop will not run it).
 - **glibc 2.35 or newer** — Ubuntu 22.04+, Debian 12+, Fedora 36+ and their derivatives. Older distributions are out of reach for this build.
-- **~360 MB.** The window carries its own browser engine instead of borrowing the distribution's, which is what makes one file behave the same on every desktop. That is the whole cost, and it is not hidden.
+- **~260 MB.** The window carries its own browser engine instead of borrowing the distribution's, which is what makes one file behave the same on every desktop. That is the whole cost, and it is not hidden.
+- **Text too small or too large?** The interface is sized to match macOS and Windows. Your desktop's own scaling is not always readable from inside an AppImage, so if it looks wrong, `QT_SCALE_FACTOR=1.5 ./Domestique-v3.9.1-x86_64.AppImage` (or `=1` for the smallest) sets it explicitly.
 - **If the window cannot open, the app says so and exits** — a dialog if your desktop can show one, the reason on stderr, and the full detail written to `~/.domestique/startup_crash.txt`. It will never quietly fall back to a browser tab or sit there holding the port with nothing on screen.
 
 **Host packages.** Almost everything travels inside the file. The graphics and X11 client libraries deliberately do not: a bundled copy of those is the classic way an AppImage dies on a machine whose drivers differ from the build host's. A normal desktop install already has them; a minimal or headless system may not.

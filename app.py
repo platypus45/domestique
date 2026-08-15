@@ -20755,6 +20755,14 @@ def _build_programme_summary(plan: dict) -> dict:
                 "elevation_gain_m": _r.get("elevation_m"),
                 "decoupling_pct": _r.get("decoupling_pct"),
             }
+        # Same shape trap for zone time: FIT records call it "zones", ICU
+        # records "time_in_zone" — so the intensity-distribution and
+        # polarization charts stayed empty for a fully-synced rider. The "ss"
+        # entry is ICU's sweet-spot overlay spanning parts of z3/z4; summing
+        # it alongside the real zones would double-count those seconds.
+        if not _r.get("zones") and isinstance(_r.get("time_in_zone"), dict):
+            _r["zones"] = {k: v for k, v in _r["time_in_zone"].items()
+                           if k != "ss"}
     in_window = []
     for r in all_rides:
         d = _ride_started_iso_date(r)

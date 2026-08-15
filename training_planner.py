@@ -10409,8 +10409,46 @@ def detect_plan_gaps(
                 "status": status,
             })
 
-    # Calculate absence in days (consecutive missed weeks × 7)
+    # The CURRENT week used to contribute nothing — the loop above stops at
+    # the first week whose end >= today — so a rider who went dark could not
+    # complete a 2-week streak until the following Monday, days after the
+    # pattern was already plain. The current week now joins PRO-RATA: planned
+    # TSS scaled to the days already elapsed, counted only from day 4 and
+    # only at the substantially-missed tier. On its own it still cannot
+    # trigger a rebuild (the regen gate needs a streak of 2, so a fully
+    # missed PAST week must anchor it) — it exists to finish a streak early,
+    # not to start one.
+    cur_partial_elapsed = 0
+    cur_week = next((w for w in plan_weeks
+                     if w.start.isoformat() <= today_str <= w.end.isoformat()),
+                    None)
+    if cur_week is not None and (cur_week.tss_target or 0) > 0:
+        elapsed_d = (today - cur_week.start).days
+        planned_to_date = cur_week.tss_target * (elapsed_d / 7.0)
+        # >= 50 planned TSS so a tiny plan's early week cannot count on noise.
+        if elapsed_d >= 4 and planned_to_date >= 50:
+            actual = actual_by_week.get(cur_week.week_num, 0)
+            if actual / planned_to_date < 0.50:
+                consecutive_missed += 1
+                if consecutive_missed > max_consecutive:
+                    max_consecutive = consecutive_missed
+                    cur_partial_elapsed = elapsed_d
+                gap_weeks.append({
+                    "week_num": cur_week.week_num,
+                    "phase": cur_week.phase,
+                    "planned_tss": round(planned_to_date),
+                    "actual_tss": round(actual),
+                    "ratio": round(actual / planned_to_date, 2),
+                    "status": "substantially_missed",
+                    "partial_week": True,
+                })
+
+    # Absence in days: full missed weeks x 7, and the current week counts
+    # only its elapsed days — the ramp must not be sized as if days that
+    # have not happened yet were already missed.
     absence_days = max_consecutive * 7
+    if cur_partial_elapsed:
+        absence_days -= (7 - cur_partial_elapsed)
 
     # Expected CTL from plan progression
     past_weeks_count = sum(1 for w in plan_weeks if w.end.isoformat() < today_str)

@@ -15055,7 +15055,8 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
         return cc in tp._HIT_SLOT_CONTENT_CLASSES
 
     def _is_available_slot(d_iso: str, missed_iso: str,
-                           missed_sess: "dict | None" = None) -> bool:
+                           missed_sess: "dict | None" = None,
+                           easy_takeover: bool = False) -> bool:
         try:
             d = date.fromisoformat(d_iso)
         except ValueError:
@@ -15088,8 +15089,31 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
         sess = sess_by_day.get(d_iso)
         if sess is None:
             return False
-        if sess.get("session_type") != "rest":
-            return False
+        stype = sess.get("session_type")
+        if stype != "rest":
+            # The first-fit allowed only empty rest slots, so a rider whose
+            # week had none lost the missed session entirely — dropped without
+            # a word, and the week rode out on its easy back-half. The
+            # redistribution evidence (SCIENCE.md) supports exactly one
+            # narrower move: ONE missed HARD session may take over a remaining
+            # EASY day. A move, never an addition; the displaced easy volume
+            # is written off, because missed z2 is not worth compensating and
+            # intensity is what preserves adaptation (Hickson 1985). Easy
+            # misses never take over anything.
+            if not easy_takeover:
+                return False
+            if stype not in ("recovery", "z2", "endurance", "long_z2"):
+                return False
+            # >=48h from any other hard day (the evidence's spacing bound,
+            # approximated as no hard neighbour on the adjacent days). A
+            # missed or dismissed neighbour does not count — it will not be
+            # ridden.
+            for nb in (d - timedelta(days=1), d + timedelta(days=1)):
+                nb_sess = sess_by_day.get(nb.isoformat())
+                if (nb_sess and _sess_is_hard(nb_sess)
+                        and (nb_sess.get("status") or "pending")
+                        not in ("missed", "dismissed")):
+                    return False
         stat = (sess.get("status") or "")
         if stat in ("done", "done_partial", "ambiguous"):
             return False
@@ -15114,6 +15138,7 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
     misses.sort(key=lambda s: s.get("day", ""))
 
     used: set[str] = set()
+    takeover_weeks: set = set()   # at most ONE easy-day takeover per ISO week
     suggestions: list[dict] = []
     for miss in misses:
         missed_iso = miss.get("day", "")
@@ -15143,6 +15168,23 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
             cand_sess = sess_by_day.get(cand_iso, {})
             chosen_reason = "rest_slot" if cand_sess.get("session_type") == "rest" else "unfilled_available_day"
             break
+        if chosen is None and _sess_is_hard(miss) \
+                and (iso_year, iso_week) not in takeover_weeks:
+            # Second chance for a missed HARD session in a week with no free
+            # rest slot: take over an easy day. Capped at one per week so a
+            # badly-missed week never converts its whole back half to
+            # intensity — the cap comes from the same evidence as the move.
+            for cand_iso in same_week_dates:
+                if cand_iso in used:
+                    continue
+                if not _is_available_slot(cand_iso, missed_iso,
+                                          missed_sess=miss,
+                                          easy_takeover=True):
+                    continue
+                chosen = cand_iso
+                chosen_reason = "easy_day_takeover"
+                takeover_weeks.add((iso_year, iso_week))
+                break
         if chosen is None:
             continue
 

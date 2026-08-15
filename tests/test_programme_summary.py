@@ -159,7 +159,7 @@ class ProgrammeSummaryEndpointTests(unittest.TestCase):
                           "z5": 0, "z6": 0, "z7": 0},
             },
         ]
-        with patch("ride_storage.list_rides", return_value=synth_rides):
+        with patch("ride_storage.load_all_rides", return_value=synth_rides):
             r = self.client.get("/api/programme/summary",
                                 params={"plan_id": "test"})
         self.assertEqual(r.status_code, 200, r.text)
@@ -193,7 +193,7 @@ class ProgrammeSummaryEndpointTests(unittest.TestCase):
                           "z5": 0, "z6": 0, "z7": 0},
             })
 
-        with patch("ride_storage.list_rides", return_value=synth_rides):
+        with patch("ride_storage.load_all_rides", return_value=synth_rides):
             r = self.client.get("/api/programme/summary",
                                 params={"plan_id": "test"})
         self.assertEqual(r.status_code, 200, r.text)

@@ -499,6 +499,15 @@ class TestAppTierLatch(unittest.TestCase):
         monday = _this_monday()
         today = monday + timedelta(days=2)  # Wed
         plan = self._plan_dict(monday)
+        # Pin Sat/Sun user_moved: the easy-day takeover would otherwise
+        # relocate the miss before the refit tier ever saw it — the move is
+        # the PREFERRED outcome (it preserves the session; the refit only
+        # resizes what is left), but this test is about the LATCH. Pinned
+        # days are excluded from both the takeover and the refit; Wed and
+        # Fri remain refittable, which is all the refit tier needs to fire.
+        for s in plan["weeks"][0]["sessions"]:
+            if s["day"] >= (monday + timedelta(days=5)).isoformat():
+                s["user_moved"] = True
 
         # First adapt: empty activities so reconcile is a no-op and our
         # pre-marked 'missed' status drives the tier. No gap (1 missed day in a

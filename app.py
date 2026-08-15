@@ -20594,6 +20594,23 @@ def _build_programme_summary(plan: dict) -> dict:
     end_date = weeks[-1].get("end") or weeks[-1].get("day")
     n_weeks = len(weeks)
 
+    # A CONTINUOUS plan regenerates on a rolling basis, so "plan start" is
+    # whenever the last regeneration happened — possibly yesterday. Summarising
+    # from there produces a recap of nothing: a rider with a 213-TSS ride five
+    # days ago saw zeros everywhere because the window had just reset behind
+    # it. A rolling plan has no end to recap, so its summary is a trailing
+    # 28-day one instead, extended to the plan window when that is longer.
+    goal_type = str(((plan.get("goal") or {}).get("goal_type")) or "").lower()
+    is_continuous = goal_type == "continuous" or any(
+        (w.get("phase") or "") == "continuous" for w in weeks[:1])
+    if is_continuous and start_date:
+        from datetime import date as _date, timedelta as _td
+        trailing = (_date.today() - _td(days=28)).isoformat()
+        if trailing < start_date:
+            start_date = trailing
+        if end_date:
+            end_date = min(end_date, _date.today().isoformat())
+
     # ── FTP / VO2max ledger lookups ────────────────────────────────────────
     def _value_at_or_before(metric: str, target_date: str) -> float | None:
         try:
@@ -20653,9 +20670,27 @@ def _build_programme_summary(plan: dict) -> dict:
     # ── Rides in window ────────────────────────────────────────────────────
     try:
         import ride_storage as _rs
-        all_rides = _rs.list_rides()
+        # load_all_rides, not list_rides: list_rides globs ride_*.json — FIT
+        # imports only. A rider whose rides all arrive by intervals.icu sync
+        # (the icu/i*.json cache) summed to zero rides here, so the recap
+        # showed zeros over a window with a 213-TSS ride sitting in it.
+        all_rides = _rs.load_all_rides()
     except Exception:
         all_rides = []
+    # load_all_rides mixes two record shapes: FIT imports nest their numbers
+    # under "summary", ICU sync records are flat. Every aggregate below reads
+    # the summary shape, so a flat record gets one synthesized — otherwise an
+    # ICU-only rider counts rides but sums zero km, zero hours, zero kJ.
+    for _r in all_rides:
+        if not _r.get("summary"):
+            _r["summary"] = {
+                "tss": _r.get("tss"),
+                "distance_km": _r.get("distance_km"),
+                "duration_sec": _r.get("duration_s") or _r.get("moving_s"),
+                "kj_mechanical": _r.get("kj"),
+                "elevation_gain_m": _r.get("elevation_m"),
+                "decoupling_pct": _r.get("decoupling_pct"),
+            }
     in_window = []
     for r in all_rides:
         d = _ride_started_iso_date(r)

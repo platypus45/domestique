@@ -12281,10 +12281,15 @@ function _toggleUnavailable(dateKey, checked) {
     _availData[dateKey] = { hours: 0, type: 'holiday' };
     renderAvailCalendar();
   } else {
-    // Restore to default from weekly grid
+    // Restore to default from weekly grid. The grid's class is plan-day-mins
+    // and its values are MINUTES — this selector previously named a
+    // .plan-day-hours class that exists nowhere, so the querySelector was
+    // always null and every un-marked day "restored" to 0 hours, i.e. became
+    // a rest day. Quietly zeroing days is exactly the shape of the "my
+    // availability didn't stick" reports.
     const d = new Date(dateKey + 'T12:00:00');
     const weekday = d.getDay() === 0 ? 6 : d.getDay() - 1;
-    const defaultH = parseFloat(document.querySelector(`.plan-day-hours[data-day="${weekday}"]`)?.value) || 0;
+    const defaultH = (parseFloat(document.querySelector(`.plan-day-mins[data-day="${weekday}"]`)?.value) || 0) / 60;
     _availData[dateKey] = { hours: defaultH, type: defaultH > 0 ? 'available' : 'rest' };
     renderAvailCalendar();
   }

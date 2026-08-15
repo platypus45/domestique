@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.10.0 — The plan reacts like a coach would (2026-08-15)
+
+- **Missing a hard session no longer means losing it.** When a quality session goes unridden and the week has no free rest day, it now takes over one of the remaining easy days — once per week, never back-to-back with another hard day, and never close to a race. Before, a missed interval day in a full week simply vanished, and the rest of the week rode out on easy spins. Missed easy days are still written off on purpose: there is no evidence that making up easy volume helps, and the fatigue cost is real.
+- **Coming back from a few days off starts with real training, not a recovery spin.** After 4–7 days off the bike, the first session back now carries the week's planned intervals at reduced length. Research is clear that a short break leaves you rested, not detrained — what you briefly lose (blood plasma volume) is restored by one solid session, not by an easy hour. After 8–14 days, quality resumes but the hardest efforts wait a week. Longer gaps keep the gradual rebuild. And if you come back still fatigued, the cautious version stands, because a "rest week" that leaves you tired often was not rest. Full sources in the science documentation.
+- **Fixed: the programme summary showed zeros for riders whose rides come from intervals.icu.** It only counted rides imported as files, so a fully synced rider saw an empty recap over weeks of real riding. It now reads the same merged ride store as the rest of the app.
+- **Fixed: on a continuous plan the summary reset itself at every regeneration.** A rolling plan restarts its window whenever it re-plans — sometimes daily — so the recap was forever summarising a day-old window. It now looks back over the last four weeks.
+- **Fixed: un-marking a day in the availability calendar quietly turned it into a rest day.** Restoring a day now brings back your weekly default hours instead of zero. If your weekly availability ever seemed to not stick, this was likely why.
+
 ## v3.9.1 — Linux, properly (2026-08-09)
 
 Domestique now runs on Linux as a normal desktop app, alongside macOS and Windows.

@@ -6,7 +6,9 @@ Five tests cover the read-only suggestions endpoint:
   2. test_single_miss_with_rest_slot    — one miss + one rest slot in same week
                                           → one suggestion, ``reason="rest_slot"``
   3. test_two_misses_greedy_first_fit   — two misses race for one slot →
-                                          first-by-date wins, second skips
+                                          first-by-date wins the rest slot; a
+                                          HARD second miss rescues itself via
+                                          the easy-day takeover
   4. test_miss_with_only_past_slots     — slots in the same week but all past
                                           → no suggestion emitted
   5. test_unavailable_day_excluded      — ``availability[D].type == "unavailable"``
@@ -210,13 +212,21 @@ class TestTwoMissesGreedyFirstFit(MissedSuggestionsBase):
         resp = self.client.get("/api/plan/missed-suggestions")
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
-        # Greedy first-fit: only Monday's miss gets the Wednesday slot;
-        # Tuesday's miss is skipped (no remaining slot).
-        self.assertEqual(len(body["suggestions"]), 1)
-        s = body["suggestions"][0]
-        self.assertEqual(s["missed_date"], self._monday.isoformat())
-        self.assertEqual(s["suggested_date"],
+        # Greedy first-fit still hands Monday's miss the only rest slot. The
+        # Tuesday THRESHOLD used to be dropped outright — the week's quality
+        # lost to date order. It now rescues itself via the easy-day takeover
+        # (one per week, hard misses only).
+        self.assertEqual(len(body["suggestions"]), 2)
+        first, second = body["suggestions"]
+        self.assertEqual(first["missed_date"], self._monday.isoformat())
+        self.assertEqual(first["suggested_date"],
                          (self._monday + timedelta(days=2)).isoformat())
+        self.assertEqual(first["reason"], "rest_slot")
+        self.assertEqual(second["missed_date"],
+                         (self._monday + timedelta(days=1)).isoformat())
+        self.assertEqual(second["reason"], "easy_day_takeover")
+        self.assertEqual(second["suggested_date"],
+                         (self._monday + timedelta(days=3)).isoformat())
 
 
 class TestMissWithOnlyPastSlots(MissedSuggestionsBase):

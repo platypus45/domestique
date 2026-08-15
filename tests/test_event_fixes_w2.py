@@ -370,7 +370,16 @@ def test_l3_1_missed_hard_never_auto_moved_into_event_window():
         _race_jsess(race_d),
     ])
     moves = app_module._auto_apply_missed_moves(plan, today)
-    assert moves == [], f"hard session auto-moved into T-2..T+0: {moves}"
+    # The race-eve rest slot is refused (FC5a) — that is the invariant this
+    # test exists for. The miss no longer dies for it, though: the easy-day
+    # takeover lands it on Thursday, T-3, the same day the sibling test below
+    # blesses as a legal auto-move target. Assert the WINDOW stays clean
+    # rather than that nothing moves at all.
+    protected = {(race_d - timedelta(days=k)).isoformat() for k in (0, 1, 2)}
+    assert all(m["to"] not in protected for m in moves), (
+        f"hard session auto-moved into T-2..T+0: {moves}")
+    assert moves == [{"from": (ANCHOR + timedelta(days=1)).isoformat(),
+                      "to": today.isoformat()}]
     eve = next(s for w in plan["weeks"] for s in w["sessions"]
                if s["day"] == (race_d - timedelta(days=1)).isoformat())
     assert eve["session_type"] == "rest", "race eve no longer a rest slot"

@@ -15104,6 +15104,13 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
                 return False
             if stype not in ("recovery", "z2", "endurance", "long_z2"):
                 return False
+            # Only a day still being ridden can be taken over. The generic
+            # status checks below reject done/moved/dismissed but let
+            # "missed" through — and a missed easy day is exactly the day
+            # the rider is NOT riding; landing the quality there loses it
+            # twice over.
+            if (sess.get("status") or "pending") != "pending":
+                return False
             # >=48h from any other hard day (the evidence's spacing bound,
             # approximated as no hard neighbour on the adjacent days). A
             # missed or dismissed neighbour does not count — it will not be

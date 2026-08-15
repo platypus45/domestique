@@ -12676,12 +12676,34 @@ async def api_plan_generate(request: Request):
         except Exception:
             recent_weekly_tss = None
 
+        # Re-entry shaping inputs (SCIENCE.md "Returning after a break"):
+        # how long since the last ride, and TSB now. Best-effort — None keeps
+        # generate_plan's legacy behaviour.
+        days_since_last_ride = None
+        tsb_at_generation = None
+        try:
+            import ride_storage as _rs2
+            from datetime import date as _date
+            last = max((r.get("started_at") or "")[:10]
+                       for r in _rs2.load_all_rides())
+            if last:
+                days_since_last_ride = (_date.today()
+                                        - _date.fromisoformat(last)).days
+        except Exception:
+            days_since_last_ride = None
+        try:
+            tsb_at_generation = training.get("tsb")
+        except Exception:
+            tsb_at_generation = None
+
         phases, weeks = tp.generate_plan(
             goal, seed_salt=seed_salt,
             availability_overrides=availability_overrides or None,
             athlete=athlete,
             current_ctl=current_ctl,
             recent_weekly_tss=recent_weekly_tss,
+            days_since_last_ride=days_since_last_ride,
+            tsb_at_generation=tsb_at_generation,
         )
         plan_path = tp.export_plan_md(goal, phases, weeks)
 

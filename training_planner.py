@@ -6534,6 +6534,8 @@ def generate_plan(
     athlete: dict | None = None,
     current_ctl: float | None = None,
     recent_weekly_tss: float | None = None,
+    days_since_last_ride: "int | None" = None,
+    tsb_at_generation: "float | None" = None,
 ) -> tuple[list[Phase], list[PlannedWeek]]:
     """Generate the full training plan.
 
@@ -7053,6 +7055,11 @@ def generate_plan(
     if goal.goal_type in ("event", "ctl") and goal.target_date:
         _apply_race_week_shape(weeks, goal, library)
     _mark_race_days(weeks, goal)  # issue #7: race day shows the race, not a session
+    # Re-entry after a short break (SCIENCE.md): a 4-14 day gap reshapes the
+    # first week — planned intensity forward, volume trimmed — instead of
+    # opening on the lightest session in the library. No-op when the caller
+    # does not know the gap (tests, legacy paths).
+    _apply_reentry_shape(weeks, days_since_last_ride, tsb_at_generation, library)
 
     # F4c (v2.5.0, D4): a race-week-only MICRO-PLAN (single taper phase — see
     # generate_phases) keeps at most ONE hard touch total, excluding the
@@ -8468,6 +8475,122 @@ _OPENER_CLASSES = ("vo2_short", "neuromuscular", "anaerobic")
 _RACE_T2_MAX_MIN = 45          # T-2: rest or ≤45min z1
 _RACE_FINAL3_MAX_MIN = 75      # cap for any ride inside T-1..T-3 (<90 invariant)
 _RACE_WEEK_MIN_REST = 3        # FC2a: ≥3 rest days in the race week
+
+# ── Re-entry after a short break (docs/SCIENCE.md "Returning after a break") ─
+# A rider back from 4-7 days of complete rest is neither peaked nor detrained
+# but RESTED AND UNPRIMED: glycogen-replete, fatigue-free, ~5% down on plasma
+# volume — all of it lost within 48h and flat thereafter (Cullinane 1986,
+# PMID 3747802) — with VO2max intact out to 10 days and economy intact at 14
+# (Houmard 1992, PMID 1487339). Complete rest is the one taper variant that
+# does NOT supercompensate: in Shepley 1992's crossover (PMID 1559951) 7 days
+# of rest-only was -3% against +22% for high-intensity/low-volume. And a
+# single intense session restores the plasma volume the break cost within 24h
+# (Gillen 1991, PMID 1761491) — so the lightest session in the library is
+# precisely the one least able to fix the actual deficit. The first session
+# back is therefore TAPER-SHAPED: the planned intensity, at reduced volume
+# (Bosquet 2007 meta, PMID 17762369: taper = cut volume, hold intensity).
+_REENTRY_MIN_GAP_D = 4         # 1-3 days off costs nothing: ride the plan
+_REENTRY_MID_GAP_D = 8         # 8-14: quality capped at threshold
+_REENTRY_MAX_GAP_D = 15        # beyond: the gap-regen recovery ramp owns it
+_REENTRY_VOL_SHORT = 0.70      # 4-7d: volume x0.70 — inside Bosquet's 41-60%
+                               # cut read against a single session; extrapolated
+_REENTRY_VOL_MID = 0.60        # 8-14d: deeper cut, ceiling one notch down
+_REENTRY_EASY_TYPES = ("recovery", "z2", "endurance", "long_z2")
+_REENTRY_CAPPED_TYPES = ("vo2max", "overunder", "anaerobic", "sprint")
+
+
+def _reentry_scale(s, factor: float, lib) -> None:
+    """Cut a session's volume, keep its type, re-match the file."""
+    dur = int(round((s.duration_min or 60) * factor / 5.0) * 5)
+    s.duration_min = max(30, dur)
+    s.tss_estimate = round(s.duration_min / 60 * TSS_PER_HOUR.get(s.session_type, 45))
+    s.description = (f"{s.session_type} ({s.duration_min}min) — first session "
+                     "back: planned intensity, volume trimmed")
+    s.zwo_file = ""
+    s.zwo_name = ""
+    try:
+        match_zwo(s, lib)
+    except Exception:  # noqa: BLE001
+        log.debug("re-entry re-match failed", exc_info=True)
+
+
+def _apply_reentry_shape(weeks: list, gap_days: "int | None",
+                         tsb: "float | None", library=None) -> None:
+    """Shape the first week back after a short complete break.
+
+    4-7 days off: the first non-rest day carries the week's first QUALITY
+    session at ~70% volume — swapped forward if an easy day sat in front of
+    it. 8-14 days: week-1 quality is capped at threshold and the first quality
+    day is cut to ~60%. Under 4 days this is a no-op (ride the plan); 15+ is
+    the gap-regen ramp's territory, not ours.
+
+    TSB still NEGATIVE after days of rest means the pre-break hole was deep or
+    the break was not rest at all (illness is the case the planner cannot
+    see) — leave the conservative layout standing. A TSB a few points either
+    side of zero is model noise (Busso 2023, PMID 36791017), so only a clearly
+    negative reading blocks.
+    """
+    if gap_days is None or gap_days < _REENTRY_MIN_GAP_D \
+            or gap_days >= _REENTRY_MAX_GAP_D or not weeks:
+        return
+    if tsb is not None and tsb < -5:
+        log.info("EVENT=reentry_blocked gap=%sd tsb=%.1f (still fatigued — "
+                 "keeping the conservative first week)", gap_days, tsb)
+        return
+    lib = library if library is not None else load_workout_library()
+    wk = weeks[0]
+    sessions = [s for s in wk.sessions
+                if getattr(s, "session_type", "rest") != "rest"
+                and not _race_shape_frozen(s)]
+    if not sessions:
+        return
+
+    if gap_days < _REENTRY_MID_GAP_D:
+        first = sessions[0]
+        if first.session_type in _REENTRY_EASY_TYPES:
+            quality = next((s for s in sessions[1:]
+                            if s.session_type not in _REENTRY_EASY_TYPES), None)
+            if quality is None:
+                return  # an all-easy week (stepback) is not ours to harden
+            # Swap the TYPES between the two days; each keeps its day and its
+            # availability-sized duration until the scale below.
+            first.session_type, quality.session_type = (
+                quality.session_type, first.session_type)
+            quality.tss_estimate = round(
+                (quality.duration_min or 60) / 60
+                * TSS_PER_HOUR.get(quality.session_type, 45))
+            quality.description = f"{quality.session_type} — moved back in the week"
+            quality.zwo_file = ""
+            quality.zwo_name = ""
+            try:
+                match_zwo(quality, lib)
+            except Exception:  # noqa: BLE001
+                log.debug("re-entry easy-day re-match failed", exc_info=True)
+        _reentry_scale(first, _REENTRY_VOL_SHORT, lib)
+        log.info("EVENT=reentry_shape gap=%sd first=%s dur=%smin",
+                 gap_days, first.session_type, first.duration_min)
+        return
+
+    # 8-14 days: hold quality, drop the ceiling one notch. VO2max is intact at
+    # 10 days (Cullinane) but time-to-exhaustion is -9% by 14 (Houmard), so
+    # threshold work stands while the max-aerobic top end waits a week.
+    scaled_one = False
+    for s in sessions:
+        if s.session_type in _REENTRY_CAPPED_TYPES:
+            s.session_type = "threshold"
+            s.zwo_file = ""
+            s.zwo_name = ""
+            s.tss_estimate = round((s.duration_min or 60) / 60
+                                   * TSS_PER_HOUR["threshold"])
+            s.description = "threshold — first week back: top end waits"
+            try:
+                match_zwo(s, lib)
+            except Exception:  # noqa: BLE001
+                log.debug("re-entry cap re-match failed", exc_info=True)
+        if not scaled_one and s.session_type not in _REENTRY_EASY_TYPES:
+            _reentry_scale(s, _REENTRY_VOL_MID, lib)
+            scaled_one = True
+    log.info("EVENT=reentry_shape gap=%sd ceiling=threshold", gap_days)
 
 
 def _race_shape_frozen(s) -> bool:

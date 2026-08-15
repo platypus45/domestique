@@ -206,6 +206,28 @@ Synthesised from Seiler 2010, Mujika 2010, Ronnestad 2014, and Coggan/Allen for 
 
 **CTL ramp safety.** The planner refuses to ramp CTL faster than `ramp_rate(current_ctl)` (steeper at low CTL, plateaus at high CTL). Override gate: TSB < −30 deep into a build phase pulls back the next week's `tss_target x 0.85` (Coggan/Allen overload threshold).
 
+### 1b. Returning after a break — why the first session back keeps its intensity
+
+**The state a short break leaves you in is neither peaked nor detrained.** After 4–7 days of complete rest a trained rider is glycogen-replete and fatigue-free, but ~5 % down on plasma volume — a loss fully incurred within the first 48 hours and flat thereafter ([Cullinane 1986](https://pubmed.ncbi.nlm.nih.gov/3747802/): 10 days of cessation, PV −5.0 % by day 2, VO2max *unchanged*). VO2max holds out to 10 days; by 14 days it is −4 % with citrate synthase −25 % and time-to-exhaustion −9 %, while running economy and fibre size are untouched ([Houmard 1992](https://pubmed.ncbi.nlm.nih.gov/1487339/)). The early loss is a filling-pressure problem, not a lost adaptation — restoring blood volume by infusion restores stroke volume and VO2max almost completely ([Coyle 1986](https://pubmed.ncbi.nlm.nih.gov/3944049/)).
+
+**Complete rest is the one taper variant that does not supercompensate.** [Shepley 1992](https://pubmed.ncbi.nlm.nih.gov/1559951/) ran the three 7-day tapers head-to-head in the same highly trained runners: high-intensity/low-volume **+22 %** time-to-fatigue, low-intensity moderate-volume +6 % (ns), rest-only **−3 %** with citrate synthase and blood volume down. A rider at positive TSB after a week off is therefore *not* peaked — the freshness is real but the priming is gone.
+
+**What restores the deficit is intensity, not ease.** A single session of 8×4 min at 85 % VO2max expands plasma volume **+10 % within 24 h** ([Gillen 1991](https://pubmed.ncbi.nlm.nih.gov/1761491/)); the taper literature's one consistent instruction is cut volume, hold intensity ([Bosquet 2007 meta-analysis](https://pubmed.ncbi.nlm.nih.gov/17762369/), [Mujika & Padilla 2003](https://pubmed.ncbi.nlm.nih.gov/12840640/)); and cutting intensity is the one reduction that loses adaptations ([Hickson 1985](https://pubmed.ncbi.nlm.nih.gov/3156841/)). A 30-TSS recovery spin as the first day back is the session *least* able to fix what the break actually cost. The "must ramp gently or injury" premise also lacks the evidence base it is assumed to have ([Impellizzeri 2020](https://pubmed.ncbi.nlm.nih.gov/32502973/)) — and it is a running/impact literature besides.
+
+**What the planner does** (`_apply_reentry_shape`, applied at generation when the gap and TSB are known):
+
+| Gap | First week back |
+|---|---|
+| 1–3 days | Unchanged — three days off costs nothing. |
+| 4–7 days | The week's planned quality moves to the first non-rest day at **~70 % volume**; the displaced easy day takes its slot. Intensity kept, ride shortened. |
+| 8–14 days | Quality stands but the ceiling drops to threshold (TTE is measurably down by 14 d; the max-aerobic top end waits a week). First quality day at ~60 % volume. |
+| ≥15 days | The gap-regen recovery ramp owns it (Mujika/Gabbett — unchanged behaviour). |
+| Any gap, TSB still < −5 | Conservative layout left standing, because a rider still fatigued after days of "rest" was probably not resting — illness is the case the planner cannot see. |
+
+No FTP haircut for gaps ≤10 days (VO2max intact — Cullinane); expect submaximal HR to read 6–11 bpm high on the first ride back (Cullinane, Houmard), which the HR-target path should not mistake for over-cooking.
+
+**Honest negatives.** There is no direct evidence on what the first session after a short break should be — zero studies; every branch above is inference from cessation, taper and reduced-training literature. No study measures complete rest shorter than 7 days in trained endurance athletes, none of the anchor studies used cyclists, and none started from an accumulated-fatigue state — the exact use case. The freshness/detraining crossover ("roughly 7–14 days") has never been titrated; the ±4-day uncertainty is real. The 70 %/60 % volume figures are extrapolated from taper volume cuts, not measured optima. TSB near zero is inside model noise ([Busso 2023](https://pubmed.ncbi.nlm.nih.gov/36791017/): best impulse-response models predict at 2–2.7 % MAPE, "not satisfactory for individual training planning"), which is why it gates only at a clearly negative reading and never drives a branch on its own. And no wellness signal here is medical clearance: the illness caution rests on animal models and case series, and every graduated-return protocol is expert consensus.
+
 ### 2. FTP detection from a regular FIT
 
 Ride a Coggan 20-min test or a Ramp test in any app, import the FIT:

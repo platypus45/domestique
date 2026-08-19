@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.10.1 — Honest tables, tidy deletions, and a proper look at the app (2026-08-20)
+
+- **Deleting a ride on intervals.icu now deletes it here too.** Upload a ride twice — say a head unit and a watch both recorded it — delete one copy on intervals.icu, resync, and the calendar kept showing both. Sync now notices upstream deletions and removes the local copy, carefully: only rides inside the just-synced window, never your own imported files, and never in bulk — a sync that suddenly claims everything vanished is treated as a broken connection, not a purge.
+- **The DFA α1 table explains itself.** Rides with no beat-to-beat data were silently missing — up to a third of the table for riders whose device doesn't record it — and "not detected" gave no reason. Every ride is now listed, and every empty threshold cell says why: the device recorded no beat-to-beat data (a strap alone isn't enough — the head unit must log it; on Garmin, enable HRV logging), the ride never reached the threshold, or the crossing was too noisy to fit. Detection itself is unchanged — the strict fit is what keeps the numbers trustworthy, and that strictness now comes with an explanation instead of a blank.
+- **The README finally shows the app.** Twenty annotated screenshots: a tour of every tab in the order you'd use them, plus one session followed end to end — the prescription, the ride that came back, and what it counted for. Linked right at the top.
+
 ## v3.10.0 — The plan reacts like a coach would (2026-08-15)
 
 - **Missing a hard session no longer means losing it.** When a quality session goes unridden and the week has no free rest day, it now takes over one of the remaining easy days — once per week, never back-to-back with another hard day, and never close to a race. Before, a missed interval day in a full week simply vanished, and the rest of the week rode out on easy spins. Missed easy days are still written off on purpose: there is no evidence that making up easy volume helps, and the fatigue cost is real.

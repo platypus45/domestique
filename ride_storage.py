@@ -518,6 +518,87 @@ def purge_stub_icu_records() -> int:
     return removed
 
 
+_PRUNE_MAX_PER_PASS = 20
+
+
+def prune_deleted_icu_records(fetched_ids: "set[str]",
+                              window_days: int) -> int:
+    """Delete local ICU records whose activity no longer exists upstream.
+
+    Sync only ever UPSERTED, so an activity deleted on intervals.icu lived on
+    here forever — the reported case was a ride uploaded twice (Karoo and
+    Garmin), one copy deleted upstream, both still on the calendar after a
+    resync.
+
+    Safety invariants, in order of importance:
+      * Only ICU-sourced records (this function only reads the icu/ dir);
+        a rider's own FIT imports are never candidates.
+      * Only records whose start date lies INSIDE the just-fetched window —
+        outside it the fetch says nothing about existence. The window is
+        shrunk by one day on the old edge so a timezone straddle at the
+        boundary can never delete a real ride.
+      * The caller must only pass ids from a SUCCESSFUL fetch. An empty set
+        is valid (everything in-window was deleted upstream) — a failed or
+        throttled fetch must not reach this function at all.
+      * At most _PRUNE_MAX_PER_PASS deletions per pass. A payload change that
+        parses to "no activities" looks identical to mass upstream deletion,
+        and the difference between the two is that no rider deletes their
+        whole archive between syncs (the v3.3.0 lesson: infra failure must
+        not be treated as per-record truth). Over the cap: delete nothing,
+        log loudly.
+
+    Removes both stores per record — the icu/<id>.json file and the
+    activities row in SQLite (best-effort; the DB may not be initialised in
+    minimal test harnesses). Returns the number of records pruned.
+    """
+    from datetime import date as _date, timedelta as _td
+    try:
+        icu_dir = _icu_rides_dir()
+    except RuntimeError:
+        return 0
+    oldest = (_date.today() - _td(days=max(0, window_days - 1))).isoformat()
+    stale = []
+    for f in icu_dir.glob("*.json"):
+        rid = f.stem
+        if rid in fetched_ids:
+            continue
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        started = str((d or {}).get("started_at") or "")[:10]
+        if not started or started < oldest:
+            continue  # outside the window the fetch can vouch for
+        stale.append((f, rid, started))
+    if not stale:
+        return 0
+    if len(stale) > _PRUNE_MAX_PER_PASS:
+        log.warning(
+            "EVENT=icu_prune_capped candidates=%d cap=%d — refusing to prune: "
+            "this many upstream deletions in one window smells like a fetch "
+            "that parsed to nothing, not a rider clearing their archive",
+            len(stale), _PRUNE_MAX_PER_PASS)
+        return 0
+    pruned = 0
+    for f, rid, started in stale:
+        try:
+            f.unlink()
+        except OSError as e:
+            log.debug("prune_deleted_icu_records(%s) skipped: %s", rid, e)
+            continue
+        pruned += 1
+        log.info("EVENT=icu_record_pruned id=%s started=%s (deleted upstream)",
+                 rid, started)
+        try:
+            import db as _db
+            conn = _db.get_db()
+            conn.execute("DELETE FROM activities WHERE id = ?", (rid,))
+            conn.commit()
+        except Exception as e:  # noqa: BLE001 — file removal is the source of truth
+            log.debug("prune sqlite row (%s) skipped: %s", rid, e)
+    return pruned
+
+
 def backfill_icu_sports_from_db() -> int:
     """v3.5.3 one-shot: copy ``sport`` from db.activities into ICU envelopes
     that predate the sport key (older than the incremental sync window, so

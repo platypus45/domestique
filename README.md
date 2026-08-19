@@ -282,10 +282,18 @@ Use cases: a couple sharing a single laptop, a coach managing two riders, your t
 
 ### From plan to ride to analysis
 
-One session, end to end — the prescription, the ride that came back, and what the app read out of it:
+One session, end to end — the prescription, the ride that came back, and what the app read out of it.
+
+**1 · The prescription.** What the plan asked for: the session's power profile, zone bands, duration and TSS, matched to a concrete workout file from the library.
 
 <p align="center"><img src="docs/screenshots/plan-01-planned-session.png" width="850" alt="A planned sweet-spot session with its power profile and zone bands"></p>
+
+**2 · The ride that came back.** Synced automatically after the ride: distance, IF, NP, heart rate, the power/HR trace — and a one-tap "how hard did that feel?" that the planner also listens to.
+
 <p align="center"><img src="docs/screenshots/plan-02-completed-ride.png" width="850" alt="The completed ride: distance, IF, NP, heart rate, and a post-ride feel rating"></p>
+
+**3 · What it counted for.** Time in every power and HR zone and the polarization verdict — this is what the plan uses to decide whether tomorrow stands or adapts.
+
 <p align="center"><img src="docs/screenshots/plan-03-ride-zones.png" width="850" alt="Post-ride analysis: polarization verdict, power-zone and HR-zone time"></p>
 
 
@@ -657,22 +665,80 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ## Screenshots
 
+A walk through the app in the order you would actually use it: wake up, see what today asks of you, follow the plan, pick something to ride, and check what the training is doing to you.
+
+### Start the day
+
+**Morning readiness.** The day starts with one number, built from HRV, form, sleep and resting HR, plus a four-question leg-check that takes ten seconds. The plan reads this — a rough night can soften today's session.
+
 <p align="center"><img src="docs/screenshots/tour-01-home-readiness.png" width="850" alt="Home: readiness score, morning check-in, fitness and form"></p>
+
+**What's behind the number.** Every factor is shown, never a black box: HRV and resting HR against your own 14-day baselines, eFTP progress, and the last rides as they synced in.
+
+<p align="center"><img src="docs/screenshots/tour-04-recovery-eftp.png" width="850" alt="Readiness factors, sleep and HRV trends, eFTP progress, recent activities"></p>
+
+### Follow the plan
+
+**Today, in context.** The session the plan chose, why it chose it, and the week around it — including what's already done, what was missed, and how the week's TSS is tracking.
+
 <p align="center"><img src="docs/screenshots/tour-02-today-week.png" width="850" alt="Today's session and the week at a glance, with adherence and intensity split"></p>
+
+**Is the week on course?** Planned versus actual, zone by zone, paced to the day of the week — not judged against a full week you haven't had time to ride yet. Last week's verdict sits below it.
+
 <p align="center"><img src="docs/screenshots/tour-03-week-pacing.png" width="850" alt="Week pacing against plan, and how last week's load compared"></p>
-<p align="center"><img src="docs/screenshots/tour-04-recovery-eftp.png" width="850" alt="Readiness factors, sleep and HRV, eFTP progress, recent activities"></p>
-<p align="center"><img src="docs/screenshots/tour-05-workout-picker.png" width="850" alt="Workout picker: how do you feel, how long do you have"></p>
-<p align="center"><img src="docs/screenshots/tour-06-route-picker.png" width="850" alt="Route picker: distance, climb, surface and finish-type filters"></p>
-<p align="center"><img src="docs/screenshots/tour-07-workout-library.png" width="850" alt="The workout library: 4,306 files, named for their structure"></p>
-<p align="center"><img src="docs/screenshots/tour-08-routes-climbs.png" width="850" alt="Routes and climbs: curated collections plus the full catalogue"></p>
-<p align="center"><img src="docs/screenshots/tour-09-route-cards.png" width="850" alt="Route cards with elevation profiles and categories"></p>
+
+### The plan itself
+
+**Two ways to train.** Toward a goal — classic base, build, peak into an event date — or continuously: no end date, a rolling window that extends itself weekly and re-reads your rides and readiness every day.
+
 <p align="center"><img src="docs/screenshots/tour-10-plan-config.png" width="850" alt="Plan configuration: goal or continuous, focus, intensity model"></p>
-<p align="center"><img src="docs/screenshots/tour-11-availability.png" width="850" alt="Weekly availability and the availability calendar"></p>
+
+**Your real week, not an ideal one.** Minutes per day, zero meaning rest, plus a calendar for the exceptions — holidays, travel, the odd free Saturday. The plan fits itself to what you actually have.
+
+<p align="center"><img src="docs/screenshots/tour-11-availability.png" width="850" alt="Weekly availability grid and the availability calendar"></p>
+
+**The calendar closes the loop.** Planned sessions, the rides that actually happened, and the misses — marked, not hidden. Missed hard sessions reschedule themselves; the week's totals update as you ride.
+
 <p align="center"><img src="docs/screenshots/tour-12-plan-calendar.png" width="850" alt="The plan calendar: planned sessions, completed rides, misses"></p>
+
+### Pick something to ride
+
+**4,306 workouts, named for what they are.** Class, structure, intensity and duration in every name — `threshold 4×8min @ 98%` reads the same in the library, on your head unit, and in the plan.
+
+<p align="center"><img src="docs/screenshots/tour-07-workout-library.png" width="850" alt="The workout library: 4,306 files, named for their structure"></p>
+
+**Or just say how you feel.** Two sliders — how you feel and how long you have — and it picks the session. The same page picks routes by distance, climb, surface and finish type.
+
+<p align="center"><img src="docs/screenshots/tour-05-workout-picker.png" width="850" alt="Workout picker: how do you feel, how long do you have"></p>
+
+<p align="center"><img src="docs/screenshots/tour-06-route-picker.png" width="850" alt="Route picker: distance, climb, surface and finish-type filters"></p>
+
+**622 routes and climbs.** Curated collections — rolling classics, alpine passes, flat TT loops — plus famous real-world climbs, each with its elevation profile and category.
+
+<p align="center"><img src="docs/screenshots/tour-08-routes-climbs.png" width="850" alt="Routes and climbs: curated collections plus the full catalogue"></p>
+
+<p align="center"><img src="docs/screenshots/tour-09-route-cards.png" width="850" alt="Route cards with elevation profiles and categories"></p>
+
+### See what the training is doing
+
+**The rider profile.** FTP, W', peak powers, heart markers, efficiency and load in one place — each value stamped with where it came from and when, so you know what's measured and what's modelled.
+
 <p align="center"><img src="docs/screenshots/tour-13-analysis.png" width="850" alt="Analysis: rider profile and the fitness/fatigue/form chart"></p>
+
+**Power curve and fatigue resistance.** Your curve against a published baseline, and how much of your fresh power survives after 1500 kJ of work — the number that decides how a long ride ends.
+
 <p align="center"><img src="docs/screenshots/tour-14-power-curve.png" width="850" alt="Power curve against a reference baseline, plus fatigue resistance"></p>
+
+**Thresholds from heart-rate variability.** DFA α1 estimates your aerobic and anaerobic thresholds from beat-to-beat data — an independent check on your power zones, with the confidence of each estimate shown.
+
 <p align="center"><img src="docs/screenshots/tour-15-dfa-thresholds.png" width="850" alt="DFA a1: estimated aerobic and anaerobic thresholds from HRV"></p>
+
 <p align="center"><img src="docs/screenshots/tour-16-dfa-per-ride.png" width="850" alt="DFA a1 per ride, with intensity distribution and threshold detections"></p>
+
+### Make it yours
+
+**Settings.** Weight, FTP with its full history, LTHR, and editable power and HR zones — prefilled from your data, overridable everywhere.
+
 <p align="center"><img src="docs/screenshots/tour-17-settings.png" width="850" alt="Settings: athlete profile, FTP history, power and HR zones"></p>
 
 ## Releases

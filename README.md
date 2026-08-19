@@ -286,22 +286,6 @@ Use cases: a couple sharing a single laptop, a coach managing two riders, your t
 
 ## Planner modes
 
-### From plan to ride to analysis
-
-One session, end to end — the prescription, the ride that came back, and what the app read out of it.
-
-**1 · The prescription.** What the plan asked for: the session's power profile, zone bands, duration and TSS, matched to a concrete workout file from the library.
-
-<p align="center"><img src="docs/screenshots/plan-01-planned-session.png" width="850" alt="A planned sweet-spot session with its power profile and zone bands"></p>
-
-**2 · The ride that came back.** Synced automatically after the ride: distance, IF, NP, heart rate, the power/HR trace — and a one-tap "how hard did that feel?" that the planner also listens to.
-
-<p align="center"><img src="docs/screenshots/plan-02-completed-ride.png" width="850" alt="The completed ride: distance, IF, NP, heart rate, and a post-ride feel rating"></p>
-
-**3 · What it counted for.** Time in every power and HR zone and the polarization verdict — this is what the plan uses to decide whether tomorrow stands or adapts.
-
-<p align="center"><img src="docs/screenshots/plan-03-ride-zones.png" width="850" alt="Post-ride analysis: polarization verdict, power-zone and HR-zone time"></p>
-
 
 Three ways to have your plan built — pick a **plan style** on the plan form:
 
@@ -317,6 +301,22 @@ Independent of the mode, two more dials shape what gets planned:
 Whatever the mode, weekly volume is **load-based** — sized from your target fitness and recent training load, not the raw sum of your free hours — and the plan starts from your real current CTL, with genuine rest weeks and per-day availability honored.
 
 ---
+
+### From plan to ride to analysis
+
+One session, end to end — the prescription, the ride that came back, and what the app read out of it.
+
+**1 · The prescription.** What the plan asked for: the session's power profile, zone bands, duration and TSS, matched to a concrete workout file from the library.
+
+<p align="center"><img src="docs/screenshots/plan-01-planned-session.png" width="850" alt="A planned sweet-spot session with its power profile and zone bands"></p>
+
+**2 · The ride that came back.** Synced automatically after the ride: distance, IF, NP, heart rate, the power/HR trace — and a one-tap "how hard did that feel?" that the planner also listens to.
+
+<p align="center"><img src="docs/screenshots/plan-02-completed-ride.png" width="850" alt="The completed ride: distance, IF, NP, heart rate, and a post-ride feel rating"></p>
+
+**3 · What it counted for.** Time in every power and HR zone and the polarization verdict — this is what the plan uses to decide whether tomorrow stands or adapts.
+
+<p align="center"><img src="docs/screenshots/plan-03-ride-zones.png" width="850" alt="Post-ride analysis: polarization verdict, power-zone and HR-zone time"></p>
 
 ## Race-ready event plans
 

@@ -16,6 +16,12 @@
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
 
+<p align="center">
+  📸 <b><a href="#screenshots">Screenshots — a tour of every tab</a></b>
+  &nbsp;·&nbsp; <a href="#from-plan-to-ride-to-analysis">one session, from plan to ride to analysis</a>
+  &nbsp;·&nbsp; <a href="https://github.com/platypus45/domestique/releases/latest">⬇ Download</a>
+</p>
+
 ---
 
 **Contents:** [TL;DR](#tldr) · [Why this exists](#why-this-exists) · [What's new](#whats-new-in-v300) · [Quick start](#quick-start) · [Planner modes](#planner-modes) · [Race-ready event plans](#race-ready-event-plans) · [Plan stability](#plan-stability) · [Train by heart rate](#train-by-heart-rate-no-power-meter) · [Analysis & Rider Profile](#analysis-tab--rider-profile) · [Execution scores](#execution-scores) · [Retest reminders](#retest-reminders) · [Core mechanics](#core-mechanics) · [Architecture](#architecture-overview) · [The science](#the-science--how-the-planner-thinks) · [Ride auto-matching](#auto-matching-your-rides-to-planned-sessions) · [Screenshots](#screenshots) · [Releases](#releases) · [Development](#development) · [Abbreviations](#abbreviations--terms) · [License](#license--attribution)

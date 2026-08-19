@@ -18,7 +18,7 @@
 
 ---
 
-**Contents:** [TL;DR](#tldr) · [Why this exists](#why-this-exists) · [What's new](#whats-new-in-v300) · [Quick start](#quick-start) · [Planner modes](#planner-modes) · [Race-ready event plans](#race-ready-event-plans) · [Plan stability](#plan-stability) · [Train by heart rate](#train-by-heart-rate-no-power-meter) · [Analysis & Rider Profile](#analysis-tab--rider-profile) · [Execution scores](#execution-scores) · [Retest reminders](#retest-reminders) · [Core mechanics](#core-mechanics) · [Architecture](#architecture-overview) · [The science](#the-science--how-the-planner-thinks) · [Ride auto-matching](#auto-matching-your-rides-to-planned-sessions) · [Releases](#releases) · [Development](#development) · [Abbreviations](#abbreviations--terms) · [License](#license--attribution)
+**Contents:** [TL;DR](#tldr) · [Why this exists](#why-this-exists) · [What's new](#whats-new-in-v300) · [Quick start](#quick-start) · [Planner modes](#planner-modes) · [Race-ready event plans](#race-ready-event-plans) · [Plan stability](#plan-stability) · [Train by heart rate](#train-by-heart-rate-no-power-meter) · [Analysis & Rider Profile](#analysis-tab--rider-profile) · [Execution scores](#execution-scores) · [Retest reminders](#retest-reminders) · [Core mechanics](#core-mechanics) · [Architecture](#architecture-overview) · [The science](#the-science--how-the-planner-thinks) · [Ride auto-matching](#auto-matching-your-rides-to-planned-sessions) · [Screenshots](#screenshots) · [Releases](#releases) · [Development](#development) · [Abbreviations](#abbreviations--terms) · [License](#license--attribution)
 
 > Deep dive: the full planner logic, formulas, and the complete cited reference table now live in **[docs/SCIENCE.md](docs/SCIENCE.md)** (moved out of this README to keep it readable).
 
@@ -279,6 +279,15 @@ Use cases: a couple sharing a single laptop, a coach managing two riders, your t
 ---
 
 ## Planner modes
+
+### From plan to ride to analysis
+
+One session, end to end — the prescription, the ride that came back, and what the app read out of it:
+
+<p align="center"><img src="docs/screenshots/plan-01-planned-session.png" width="850" alt="A planned sweet-spot session with its power profile and zone bands"></p>
+<p align="center"><img src="docs/screenshots/plan-02-completed-ride.png" width="850" alt="The completed ride: distance, IF, NP, heart rate, and a post-ride feel rating"></p>
+<p align="center"><img src="docs/screenshots/plan-03-ride-zones.png" width="850" alt="Post-ride analysis: polarization verdict, power-zone and HR-zone time"></p>
+
 
 Three ways to have your plan built — pick a **plan style** on the plan form:
 
@@ -645,6 +654,26 @@ The week-level Plan settings panel has a "Rematch all this week" action that run
 If you ICU-sync running, lifting, or anything else, those activities count toward `cross_sport_load` and feed into `compute_today_metrics()` so the cycling plan respects the full training stress, not just bike work. Non-cycling activities never occupy plan days — they count toward load, they don't become sessions.
 
 ---
+
+## Screenshots
+
+<p align="center"><img src="docs/screenshots/tour-01-home-readiness.png" width="850" alt="Home: readiness score, morning check-in, fitness and form"></p>
+<p align="center"><img src="docs/screenshots/tour-02-today-week.png" width="850" alt="Today's session and the week at a glance, with adherence and intensity split"></p>
+<p align="center"><img src="docs/screenshots/tour-03-week-pacing.png" width="850" alt="Week pacing against plan, and how last week's load compared"></p>
+<p align="center"><img src="docs/screenshots/tour-04-recovery-eftp.png" width="850" alt="Readiness factors, sleep and HRV, eFTP progress, recent activities"></p>
+<p align="center"><img src="docs/screenshots/tour-05-workout-picker.png" width="850" alt="Workout picker: how do you feel, how long do you have"></p>
+<p align="center"><img src="docs/screenshots/tour-06-route-picker.png" width="850" alt="Route picker: distance, climb, surface and finish-type filters"></p>
+<p align="center"><img src="docs/screenshots/tour-07-workout-library.png" width="850" alt="The workout library: 4,306 files, named for their structure"></p>
+<p align="center"><img src="docs/screenshots/tour-08-routes-climbs.png" width="850" alt="Routes and climbs: curated collections plus the full catalogue"></p>
+<p align="center"><img src="docs/screenshots/tour-09-route-cards.png" width="850" alt="Route cards with elevation profiles and categories"></p>
+<p align="center"><img src="docs/screenshots/tour-10-plan-config.png" width="850" alt="Plan configuration: goal or continuous, focus, intensity model"></p>
+<p align="center"><img src="docs/screenshots/tour-11-availability.png" width="850" alt="Weekly availability and the availability calendar"></p>
+<p align="center"><img src="docs/screenshots/tour-12-plan-calendar.png" width="850" alt="The plan calendar: planned sessions, completed rides, misses"></p>
+<p align="center"><img src="docs/screenshots/tour-13-analysis.png" width="850" alt="Analysis: rider profile and the fitness/fatigue/form chart"></p>
+<p align="center"><img src="docs/screenshots/tour-14-power-curve.png" width="850" alt="Power curve against a reference baseline, plus fatigue resistance"></p>
+<p align="center"><img src="docs/screenshots/tour-15-dfa-thresholds.png" width="850" alt="DFA a1: estimated aerobic and anaerobic thresholds from HRV"></p>
+<p align="center"><img src="docs/screenshots/tour-16-dfa-per-ride.png" width="850" alt="DFA a1 per ride, with intensity distribution and threshold detections"></p>
+<p align="center"><img src="docs/screenshots/tour-17-settings.png" width="850" alt="Settings: athlete profile, FTP history, power and HR zones"></p>
 
 ## Releases
 

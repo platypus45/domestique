@@ -7711,8 +7711,12 @@ async function _dfaRunMigrate(nStale) {
 }
 
 // Render one HRVT block (HR + power cells, each colored by its own r²).
-function _dfaThresholdCells(t) {
-  if (!t) return '<span style="color:var(--text3);">not detected</span>';
+function _dfaThresholdCells(t, note) {
+  // "not detected" alone read as an error. It usually is not: a threshold
+  // only resolves when the ride's α1 actually crosses it — an easy spin
+  // never reaches 0.75, an all-out session never rises back above it. Say
+  // which case this ride is.
+  if (!t) return '<span style="color:var(--text3);">' + esc(note || 'not detected') + '</span>';
   const cell = (load, unit, r2) => {
     if (load == null) return `<span style="color:var(--text3);">—</span>`;
     const col = _dfaR2Color(r2);
@@ -7826,8 +7830,8 @@ function _renderDfaPerRide(d) {
       <td style="padding:6px 10px;text-align:right;">${r.avg_hr!=null?esc(String(r.avg_hr)):'—'}</td>
       <td style="padding:6px 10px;text-align:right;color:${a1col};font-weight:600;">${a1}</td>
       <td style="padding:6px 10px;">${zbar(r.zone_minutes)}</td>
-      <td style="padding:6px 10px;font-size:11px;">${_dfaThresholdCells(r.hrvt1)}</td>
-      <td style="padding:6px 10px;font-size:11px;">${_dfaThresholdCells(r.hrvt2)}</td>
+      <td style="padding:6px 10px;font-size:11px;">${_dfaThresholdCells(r.hrvt1, r.hrvt1_note)}</td>
+      <td style="padding:6px 10px;font-size:11px;">${_dfaThresholdCells(r.hrvt2, r.hrvt2_note)}</td>
     </tr>`;
   }).join('');
   host.innerHTML = `<div class="card">

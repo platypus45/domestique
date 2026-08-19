@@ -2797,9 +2797,29 @@ def api_profile_dfa_rides():
             n_computed += 1
             if int(d.get("dfa_algo_version") or 0) < _DFA_ALGO_VERSION:
                 n_stale += 1
-        # Only surface rides that actually have an α1 value in the table.
-        if a1 is None:
+        # A ride with no α1 still belongs in the table: 15 of one tester's 46
+        # rides carried no beat-to-beat data at all (head unit not recording
+        # RR), and omitting them read as "many rides not indexed" — an error
+        # where none existed. Surface them with the reason instead.
+        if a1 is None and status not in ("no_rr_data", "sanity_rejected"):
             continue
+        # "not detected" with no reason reads as failure. The reason is
+        # computable from what is already stored: a threshold only resolves
+        # when the ride's α1 series actually CROSSES the target (no
+        # extrapolation, r²-gated) — so say which of those failed.
+        def _hrvt_note(target_alpha):
+            series = d.get("dfa_alpha1_series")
+            if not isinstance(series, list) or not series:
+                return None
+            alphas = [w.get("alpha1") for w in series
+                      if isinstance(w, dict) and w.get("alpha1") is not None]
+            if len(alphas) < 8:
+                return "too few clean windows"
+            if min(alphas) > target_alpha:
+                return "no crossing — ride stayed easier than this threshold"
+            if max(alphas) < target_alpha:
+                return "no crossing — whole ride harder than this threshold"
+            return "crossing too noisy to fit (r² gate)"
         moving = d.get("moving_s") or d.get("duration_s") or 0
         rides.append({
             "id": d.get("id"),
@@ -2813,6 +2833,13 @@ def api_profile_dfa_rides():
             "zone_minutes": d.get("dfa_zone_minutes"),
             "hrvt1": d.get("dfa_hrvt1"),   # stored dict, passed through unchanged
             "hrvt2": d.get("dfa_hrvt2"),
+            "hrvt1_note": ("no beat-to-beat data from the recording device"
+                           if status == "no_rr_data" else
+                           None if d.get("dfa_hrvt1") else _hrvt_note(0.75)),
+            "hrvt2_note": ("no beat-to-beat data from the recording device"
+                           if status == "no_rr_data" else
+                           None if d.get("dfa_hrvt2") else _hrvt_note(0.50)),
+            "no_rr": status in ("no_rr_data", "sanity_rejected"),
             "algo_version": d.get("dfa_algo_version"),
             # v2.4.1 — whole-ride aerobic decoupling; high drift means a
             # non-stationary α1, so such rides are dropped from the HRVT
@@ -3378,6 +3405,11 @@ def _iter_icu_dfa_rides() -> list[dict]:
                 "dfa_alpha1_lt1_minutes": d.get("dfa_alpha1_lt1_minutes"),
                 "dfa_hrvt1": d.get("dfa_hrvt1"),
                 "dfa_hrvt2": d.get("dfa_hrvt2"),
+                # The per-ride table derives its "why not detected" note from
+                # the window series (crossed? stayed easy? too noisy?); without
+                # this the note silently degrades to the bare "not detected"
+                # this projection was starving it into.
+                "dfa_alpha1_series": d.get("dfa_alpha1_series"),
                 "dfa_zone_minutes": d.get("dfa_zone_minutes"),
                 "dfa_algo_version": d.get("dfa_algo_version"),
             })

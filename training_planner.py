@@ -9627,6 +9627,15 @@ def reforecast(
                     s.description = f"z2 ({new_dur}min) — restored from rest"
                     s.zwo_file = ""
                     s.zwo_name = ""
+                elif getattr(s, "user_swapped", False):
+                    # A pinned day — swap-type, accepted redraw, FTP-test
+                    # choice — keeps the workout the rider chose. Applying the
+                    # calendar hours literally here rescaled the duration and,
+                    # past a 15% change, re-matched the file while excluding
+                    # the rider's pick: the exact "I accepted one workout and
+                    # got another" report. Unavailable (0h) still wins above —
+                    # a day the rider zeroed is rest whatever was pinned.
+                    pass
                 else:
                     # v1.7.3 — apply user's hours LITERALLY (both up and
                     # down). v1.7.1 used a ceiling-only rule, but that

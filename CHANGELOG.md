@@ -1,5 +1,9 @@
 # Changelog
 
+## v3.10.2 — The workout you accept is the workout you get (2026-08-23)
+
+- **Fixed: accepting a reshuffled workout could put a different workout in the plan.** You previewed a session, clicked Accept, and the plan showed something else. The accepted pick was installed and then immediately rebalanced against your availability calendar — a 51-minute workout on a 60-minute day counts as a big enough change that the rebalance re-drew the day, deliberately skipping the file you had just chosen. An accepted workout is now pinned, exactly like a swapped type or a chosen FTP test, and the rebalance leaves pinned days alone. Marking a day unavailable still turns it into rest, pinned or not.
+
 ## v3.10.1 — Honest tables, tidy deletions, and a proper look at the app (2026-08-20)
 
 - **Deleting a ride on intervals.icu now deletes it here too.** Upload a ride twice — say a head unit and a watch both recorded it — delete one copy on intervals.icu, resync, and the calendar kept showing both. Sync now notices upstream deletions and removes the local copy, carefully: only rides inside the just-synced window, never your own imported files, and never in bulk — a sync that suddenly claims everything vanished is treated as a broken connection, not a purge.

@@ -17459,6 +17459,15 @@ def _accept_redraw_apply(plan: dict, day_iso: str, candidate: dict) -> dict:
     target["zwo_name"] = str(candidate.get("zwo_name") or candidate.get("zwo_file") or "")
     target["variation"] = int(candidate.get("variation") or 0)
     target["status"] = "pending"
+    # PIN IT. An accepted redraw is the rider's deliberate choice — the same
+    # thing swap-type and ftp-test-type already pin — yet this path left the
+    # day unpinned and then ran a reforecast over it. That reforecast applies
+    # the availability calendar literally: a 51-min accepted workout on a
+    # 60-min day is a 17% change, over the 15% re-match threshold, so it
+    # re-matched the day while EXCLUDING the file just accepted. The rider
+    # accepted one workout and watched a different one land in the plan.
+    target["user_swapped"] = True
+    target["adapted"] = False
     # v1.7.0 — actually carry the new workout's TSS / duration into the
     # plan so downstream reforecast (and the dashboard's load math) sees
     # the truth, not the planner's stale estimate.

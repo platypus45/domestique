@@ -44,8 +44,21 @@ def _plan(d, stype, dur, zwo, pinned=False):
 
 
 def _reforecast(plan, overrides, today):
-    plan, _, _ = tp.reforecast_dict(plan, today_iso=today.isoformat(),
-                                    availability_overrides=overrides)
+    # The engine reads date.today() internally — unpinned, these fixtures age
+    # out: the moment the wall clock passes the fixture week, reforecast
+    # skips it as fully past and every assertion here tests nothing. These
+    # two tests were BORN failing for exactly that reason (authored against a
+    # same-week date in a session that died before its gate finished).
+    from unittest.mock import patch
+
+    class _D(datetime.date):
+        @classmethod
+        def today(cls):
+            return today
+
+    with patch.object(tp, "date", _D):
+        plan, _, _ = tp.reforecast_dict(plan, today_iso=today.isoformat(),
+                                        availability_overrides=overrides)
     return plan["weeks"][0]["sessions"][0]
 
 

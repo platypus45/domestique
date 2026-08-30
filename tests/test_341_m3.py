@@ -254,6 +254,11 @@ global.loadTodaySession = async () => { refreshed.push('today'); };
 global.loadCalendar = async () => { refreshed.push('cal'); };
 global.loadPlan = async () => { refreshed.push('plan'); };
 global.loadWeeklyCalendar = () => { refreshed.push('week'); };
+// keepOriginalToday dims the modal and shows a reflow note before closing —
+// browser-only chrome the sandbox doesn't need to render, only tolerate.
+global.document = { querySelector: () => null, getElementById: () => null };
+global._calTodayStr = () => '2026-01-01';
+global.openDayWorkout = async () => {};
 """
 
 

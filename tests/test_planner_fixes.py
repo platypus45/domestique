@@ -297,7 +297,7 @@ class TestFix4AtomicWrites(unittest.TestCase):
             src,
         )
         self.assertEqual(
-            len(helper_calls), 22,  # 3.4.0 W2: +2 sanctioned sites (continuous deload advance + revert)
+            len(helper_calls), 23,  # +1: revert-cap's plan restore (the 'Ride the original anyway' fix)
             f"Expected 22 tp.atomic_write_plan() sites, found {len(helper_calls)}",
         )
 

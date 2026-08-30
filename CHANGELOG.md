@@ -1,8 +1,13 @@
 # Changelog
 
-## v3.10.2 — The workout you accept is the workout you get (2026-08-23)
+## v3.10.2 — What you see is what you did (2026-08-30)
 
-- **Fixed: accepting a reshuffled workout could put a different workout in the plan.** You previewed a session, clicked Accept, and the plan showed something else. The accepted pick was installed and then immediately rebalanced against your availability calendar — a 51-minute workout on a 60-minute day counts as a big enough change that the rebalance re-drew the day, deliberately skipping the file you had just chosen. An accepted workout is now pinned, exactly like a swapped type or a chosen FTP test, and the rebalance leaves pinned days alone. Marking a day unavailable still turns it into rest, pinned or not.
+- **Completed days in the plan grid now show the ride you actually did.** The mini chart on a ridden day kept drawing the planned workout's silhouette; compared side-by-side with intervals.icu it looked like a stock preview. It now draws your recorded laps — every sprint spike, every recovery, at their real lengths and intensities — just like the intervals.icu card, built from data already on your machine.
+- **The intensity colors finally agree, everywhere.** Anaerobic work (121–150% FTP) is purple and true sprint efforts (over 150%) are deep violet, so the scale runs red → purple → deeper violet and harder always looks harder — it used to loop back to red, making a 470 W sprint the same color as VO2max work. Four different charts each had their own color rules and disagreed with each other; the day chart, the grid, the workout preview and the ride detail now tell one story. (30/15-style reps stay purple on purpose: their wattage sits in the anaerobic band even though the session trains VO2max — intervals.icu colors them the same.)
+- **Fixed: accepting a reshuffled workout could hand you a different one.** The preview showed one session; accepting it let the follow-up rebalance re-roll the day. An accepted workout is now pinned — what you accepted is what lands.
+- **Fixed: "Ride the original anyway" needed several attempts.** When a rough morning downgraded your session, reverting only silenced the recommendation — the replacement stayed written into the plan, so the button looked dead. It now restores the original session on the first click, shows a brief "reflowing back" moment, and re-opens the day with your planned workout in place.
+- **Swapping a workout's type shows the load you're choosing, before you commit.** Picking "Threshold, 60 min" on an easy day quietly meant doubling that day's TSS. The picker now shows it live — "≈ 90 TSS (+45 vs planned — the rest of the week rebalances)" — as you change type or duration. No TSS input was added: intensity × duration *is* the load; the rest of the week absorbs the difference automatically, and your swapped day is never the one trimmed.
+- **Fixed: the "Time" label under workout charts overlapped the tick marks.**
 
 ## v3.10.1 — Honest tables, tidy deletions, and a proper look at the app (2026-08-20)
 

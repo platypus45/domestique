@@ -1,8 +1,8 @@
 """Tests for the v1.0.4 IMPL-CLASSIFIER rewrite.
 
 Coverage:
-  * Canary tests (HARD GATE) — `tempo_steady_57min.zwo` and
-    `tempo_steady_55min.zwo` reclassify to `threshold_ladder` with the
+  * Canary tests (HARD GATE) — `tempo_4x150s_85pct_63min.zwo` and
+    `tempo_2x6min_88pct_55min_v2.zwo` reclassify to `threshold_ladder` with the
     locked display_name format. At least one previously-mis-filed `vo2max`
     Z2 file is reclassified out of `vo2max`.
   * Synthetic-XML structural detector tests — ladder hit/miss, peak-zone
@@ -80,11 +80,11 @@ class TestCanary(unittest.TestCase):
     display_name matching the locked schema."""
 
     def test_canary_tempo_steady_57min_is_threshold_ladder(self):
-        """Primary canary — `tempo_steady_57min.zwo` is the user's named
+        """Primary canary — `tempo_4x150s_85pct_63min.zwo` is the user's named
         miss. Must classify as `threshold_ladder` with display_name
         matching `r"Threshold Ladder \\d+min — \\d+→\\d+% × \\d+"`.
         """
-        p = WORKOUTS_DIR / "tempo_steady_57min.zwo"
+        p = WORKOUTS_DIR / "tempo_4x150s_85pct_63min.zwo"
         self.assertTrue(p.exists(), f"canary file missing: {p}")
         result = clc.classify_zwo_v104(p)
         self.assertEqual(result["primary"], "threshold_ladder",
@@ -101,10 +101,10 @@ class TestCanary(unittest.TestCase):
         )
 
     def test_canary_tempo_steady_55min_is_threshold_ladder(self):
-        """Secondary canary — `tempo_steady_55min.zwo` peaks ≥97% FTP per
+        """Secondary canary — `tempo_2x6min_88pct_55min_v2.zwo` peaks ≥97% FTP per
         audit and must classify as `threshold_ladder` (not vo2_ladder, even
         though there's a brief 60 s 120% spike)."""
-        p = WORKOUTS_DIR / "tempo_steady_55min.zwo"
+        p = WORKOUTS_DIR / "tempo_2x6min_88pct_55min_v2.zwo"
         self.assertTrue(p.exists())
         result = clc.classify_zwo_v104(p)
         self.assertEqual(result["primary"], "threshold_ladder",
@@ -320,7 +320,7 @@ class TestJSONIntegrity(unittest.TestCase):
         matches the locked output."""
         if self.classifications is None:
             self.skipTest("no classification cache")
-        entry = self.classifications.get("tempo_steady_57min.zwo")
+        entry = self.classifications.get("tempo_4x150s_85pct_63min.zwo")
         self.assertIsNotNone(entry, "canary file missing from cache")
         self.assertEqual(entry["display_name"],
                          "Threshold Ladder 63min — 85→97% × 4")

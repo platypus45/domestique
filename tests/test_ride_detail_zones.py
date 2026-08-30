@@ -239,3 +239,84 @@ class TestPolarizationMath(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_icu_average_power_is_read_from_the_field_icu_actually_returns():
+    """avg_power_w was None on every ICU ride ever synced.
+
+    The normalizer looked for icu_pm_p_avg / average_watts / avg_watts. Probed
+    live against both an indoor and an outdoor activity, none of those three
+    exist on an intervals.icu payload — the value lives in icu_average_watts.
+    It went unnoticed because np_w reads icu_weighted_avg_watts and is correct,
+    and that is the number most views show; but avg_power_w also decides
+    load_source, so a genuine power ride could be tagged HR-derived.
+    """
+    import ride_storage as rs
+    payload = {
+        "id": "i1", "type": "VirtualRide", "name": "Indoorcycling",
+        "start_date_local": "2026-07-26T19:00:00", "elapsed_time": 3600,
+        "icu_average_watts": 201, "icu_weighted_avg_watts": 234,
+        "icu_ftp": 248, "icu_training_load": 76,
+    }
+    rec = rs._normalize_icu_activity(payload)
+    assert rec["avg_power_w"] == 201, "avg power still not read"
+    assert rec["np_w"] == 234
+    assert rec["load_source"] == "icu", (
+        "a power ride was tagged HR-derived because avg power read as None")
+
+
+def test_a_ride_with_no_power_is_still_tagged_hr_derived():
+    """The load_source fallback must survive the fix — a genuinely power-less
+    ride is still hr_icu, not icu."""
+    import ride_storage as rs
+    rec = rs._normalize_icu_activity({
+        "id": "i2", "type": "Ride", "name": "x",
+        "start_date_local": "2026-07-26T19:00:00", "elapsed_time": 3600,
+        "icu_training_load": 40,
+    })
+    assert rec["avg_power_w"] is None
+    assert rec["load_source"] == "hr_icu"
+
+
+# ── issue #9: indoor rides imported blank ────────────────────────────────────
+
+def _strava_stub():
+    """Exactly what intervals.icu returns for a Strava-origin activity: five
+    keys, three of them null. Verified live against a real one."""
+    return {"id": "17204133079", "source": "STRAVA",
+            "start_date_local": "2026-01-28T10:08:02",
+            "name": None, "type": None,
+            "elapsed_time": None, "moving_time": None}
+
+
+def test_a_strava_origin_stub_is_not_written_as_a_ride():
+    """Issue #9. ICU does not re-share Strava's data, so a Zwift ride that
+    reached ICU via Strava arrives as a stub. Taken at face value it became a
+    record with no name and every number zero, drawn in the calendar as a row
+    called "Activity" with empty fields."""
+    import ride_storage as rs
+    assert rs._normalize_icu_activity(_strava_stub()) == {}
+
+
+def test_a_real_ride_missing_only_its_duration_is_still_kept():
+    """The guard needs BOTH signals absent. A ride that has a type but no
+    duration is odd, not a stub, and must not be thrown away."""
+    import ride_storage as rs
+    rec = rs._normalize_icu_activity({
+        "id": "i9", "type": "VirtualRide", "name": "Zwift",
+        "start_date_local": "2026-01-28T10:08:02", "icu_distance": 30000,
+    })
+    assert rec and rec["sport"] == "VirtualRide"
+
+
+def test_the_riders_own_fit_survives_when_icu_has_only_a_stub(tmp_path, monkeypatch):
+    """The half that made it unfixable. Importing the real FIT deduped INTO the
+    stub, and the ICU side wins that dedupe by design — true of every ICU
+    record except an empty one — so the rider's own file was discarded in
+    favour of a blank. With the stub refused there is no twin to lose to."""
+    import ride_storage as rs
+    monkeypatch.setattr(rs, "_icu_rides_dir", lambda: tmp_path / "icu")
+    (tmp_path / "icu").mkdir(parents=True, exist_ok=True)
+    assert rs.persist_icu_activity(_strava_stub()) is None
+    assert not list((tmp_path / "icu").glob("*.json")), (
+        "a blank record was written and will out-rank the rider's FIT")

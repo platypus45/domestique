@@ -301,7 +301,11 @@ def test_grid_sprite_source_is_matched_file():
     c = chunks["dPlanned"]
     assert "Matched workout zone mix" in c
     assert "Z5 VO2 50%" in c
-    assert "#dc2626" in c  # z5 (113% FTP) bar drawn from the file's zones
+    # 113% FTP is VO2 red. #dc2626 moved up to the >=151% sprint band when the
+    # mini sprite gained the day chart's top-end split (anaerobic purple,
+    # sprints dark red) — asserting the old hex here would pin the collapsed
+    # one-red-for-everything mapping this repo deliberately left behind.
+    assert "#ef4444" in c  # z5 (113% FTP) bar drawn from the file's zones
     # Fileless slot with stale hard zone_dist: sprite must NOT render the
     # stale zones — falls back to the type silhouette, labeled approximate.
     s = chunks["dMissing"]

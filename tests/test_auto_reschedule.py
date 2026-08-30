@@ -74,8 +74,12 @@ def test_auto_relocate_is_idempotent():
     assert app._auto_apply_missed_moves(plan, today) == []
 
 
-def test_no_free_slot_leaves_session_missed():
-    # Every other day is busy/rest-unavailable → nothing to move onto.
+def test_hard_miss_with_no_rest_slot_takes_over_an_easy_day():
+    """This used to assert the miss stayed missed — the week's easy back half
+    rode out unchanged while the quality was silently dropped. The evidence
+    (SCIENCE.md) supports one narrow move: a missed HARD session may take
+    over an easy day, >=48h from any other hard day. Thursday touches the
+    done Wednesday threshold, so the move lands on Friday."""
     plan = _plan_with_missed()
     wk = plan["weeks"][0]["sessions"]
     for s in wk:
@@ -83,7 +87,28 @@ def test_no_free_slot_leaves_session_missed():
             s["session_type"] = "z2"  # fill the rest slots
             s["duration_min"] = 60
     today = date(2026, 6, 25)
+    assert app._auto_apply_missed_moves(plan, today) == [
+        {"from": "2026-06-22", "to": "2026-06-26"}]
+    by_day = {s["day"]: s for s in plan["weeks"][0]["sessions"]}
+    assert by_day["2026-06-26"]["session_type"] == "vo2max"
+    assert by_day["2026-06-26"]["status"] == "pending"
+    assert by_day["2026-06-26"]["auto_moved"] is True
+    assert by_day["2026-06-22"]["session_type"] == "rest"   # origin stub
+
+
+def test_easy_miss_with_no_rest_slot_stays_missed():
+    """Missed easy volume is written off deliberately — no evidence says
+    compensating it helps, and the fatigue cost is real."""
+    plan = _plan_with_missed()
+    wk = plan["weeks"][0]["sessions"]
+    for s in wk:
+        if s["day"] == "2026-06-22":
+            s["session_type"] = "z2"
+            s["zwo_file"] = ""
+        if s["session_type"] == "rest":
+            s["session_type"] = "z2"
+            s["duration_min"] = 60
+    today = date(2026, 6, 25)
     assert app._auto_apply_missed_moves(plan, today) == []
-    # The miss is untouched (will fall through to the refit tier).
     by_day = {s["day"]: s for s in plan["weeks"][0]["sessions"]}
     assert by_day["2026-06-22"]["status"] == "missed"

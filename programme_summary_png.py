@@ -313,8 +313,8 @@ def render_programme_summary_png(summary: dict) -> bytes:
             return ACCENT
         return RED
 
-    # The delta dicts always carry the keys, with None for "not measured" —
-    # dict.get(k, "—") never fires, so an unridden plan printed "NoneW → NoneW".
+    # The delta dicts always carry the keys, with None for "not measured" — so
+    # dict.get(k, "—") never fires and an unridden plan printed "NoneW → NoneW".
     def _dash(v) -> str:
         return "—" if v is None else str(v)
 

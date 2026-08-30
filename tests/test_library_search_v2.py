@@ -225,7 +225,7 @@ def test_relevance_exact_name_query_ranks_first():
     """Querying a row's exact Name with sort=relevance puts that Name first."""
     _r, probe = _get(search="3x16", limit=50)
     assert probe
-    target = next((w for w in probe if w["File"] == "threshold_3x16min_118min.zwo"),
+    target = next((w for w in probe if w["File"] == "threshold_2x16min-10min_98pct_118min.zwo"),
                   probe[0])
     _r, ranked = _get(search=target["Name"], sort="relevance", limit=6000)
     assert ranked

@@ -8,17 +8,23 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.12-blue" alt="Python">
-  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-green" alt="Platform">
-  <img src="https://img.shields.io/badge/Workouts-4249-orange" alt="Workouts">
+  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-green" alt="Platform">
+  <img src="https://img.shields.io/badge/Workouts-4306-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v3.7.0-brightgreen" alt="Version">
-  <img src="https://img.shields.io/badge/Tests-2400%2B-success" alt="Tests">
+  <img src="https://img.shields.io/badge/Version-v3.10.2-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Tests-3240-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
+</p>
+
+<p align="center">
+  📸 <b><a href="#screenshots">Screenshots — a tour of every tab</a></b>
+  &nbsp;·&nbsp; <a href="#from-plan-to-ride-to-analysis">one session, from plan to ride to analysis</a>
+  &nbsp;·&nbsp; <a href="https://github.com/platypus45/domestique/releases/latest">⬇ Download</a>
 </p>
 
 ---
 
-**Contents:** [TL;DR](#tldr) · [Why this exists](#why-this-exists) · [What's new](#whats-new-in-v300) · [Quick start](#quick-start) · [Planner modes](#planner-modes) · [Race-ready event plans](#race-ready-event-plans) · [Plan stability](#plan-stability) · [Train by heart rate](#train-by-heart-rate-no-power-meter) · [Analysis & Rider Profile](#analysis-tab--rider-profile) · [Execution scores](#execution-scores) · [Retest reminders](#retest-reminders) · [Core mechanics](#core-mechanics) · [Architecture](#architecture-overview) · [The science](#the-science--how-the-planner-thinks) · [Ride auto-matching](#auto-matching-your-rides-to-planned-sessions) · [Releases](#releases) · [Development](#development) · [Abbreviations](#abbreviations--terms) · [License](#license--attribution)
+**Contents:** [TL;DR](#tldr) · [Why this exists](#why-this-exists) · [What's new](#whats-new-in-v300) · [Quick start](#quick-start) · [Planner modes](#planner-modes) · [Race-ready event plans](#race-ready-event-plans) · [Plan stability](#plan-stability) · [Train by heart rate](#train-by-heart-rate-no-power-meter) · [Analysis & Rider Profile](#analysis-tab--rider-profile) · [Execution scores](#execution-scores) · [Retest reminders](#retest-reminders) · [Core mechanics](#core-mechanics) · [Architecture](#architecture-overview) · [The science](#the-science--how-the-planner-thinks) · [Ride auto-matching](#auto-matching-your-rides-to-planned-sessions) · [Screenshots](#screenshots) · [Releases](#releases) · [Development](#development) · [Abbreviations](#abbreviations--terms) · [License](#license--attribution)
 
 > Deep dive: the full planner logic, formulas, and the complete cited reference table now live in **[docs/SCIENCE.md](docs/SCIENCE.md)** (moved out of this README to keep it readable).
 
@@ -49,6 +55,19 @@ Seven science-grounded guardrails (G1–G7), each citing a specific paper, plus 
 ---
 
 ## What's new in v3
+
+**Short-interval VO2max (v3.8).** Twenty-one 30/15 microinterval sessions —
+thirty seconds hard, fifteen easy, repeated — from 33 to 82 minutes, plus a
+switch that makes every VO2max day one of them. The switch explains what the
+evidence does and does not show: this protocol is well supported but *not*
+established as the best way to train VO2max, so it is off by default. See
+[docs/SCIENCE.md](docs/SCIENCE.md).
+
+**Linux is in testing.** A native-window build for 64-bit x86 exists as a
+**pre-release** — genuinely new, built against Ubuntu 22.04, no other
+distribution tried, and nothing can confirm by machine what the window draws.
+It is not part of the v3.8 release and nobody is offered it automatically. If
+you want to try it, read [Installing on Linux](#installing-on-linux) first.
 
 **Which blocks did you actually do? (v3.7).** After an interval session the app
 now tells you the blocks, not just a score: all ten done, or eight of ten and
@@ -192,7 +211,7 @@ TrainingPeaks / Vekta / Garmin.
 
 ## Quick start
 
-1. **Install** — macOS users have two paths: `brew tap platypus45/tap && brew install --cask domestique` (no Gatekeeper prompts) OR grab `Domestique-vX.Y.Z.dmg` from the [latest release](https://github.com/platypus45/domestique/releases/latest) and right-click → Open on first launch. Windows users grab `Domestique-Windows.zip`, unzip, run `Domestique.exe`. See [Installing on macOS](#installing-on-macos) for details.
+1. **Install** — macOS users have two paths: `brew tap platypus45/tap && brew install --cask domestique` (no Gatekeeper prompts) OR grab `Domestique-vX.Y.Z.dmg` from the [latest release](https://github.com/platypus45/domestique/releases/latest) and right-click → Open on first launch. Windows users grab `Domestique-Windows.zip`, unzip, run `Domestique.exe`. Linux users grab the `.AppImage`, `chmod +x` it and run it — see [Installing on Linux](#installing-on-linux). See [Installing on macOS](#installing-on-macos) for details.
 2. **Connect Intervals.icu** — the first-run wizard walks you through it: click **Sign in to intervals.icu**, log in + approve in your browser (OAuth — no API keys to copy, athlete auto-detected), then optionally enable Garmin Connect on Intervals.icu so rides sync automatically. While your history indexes, a top-bar strip shows live first-sync progress. No intervals.icu account? It's free and you can sign in with Garmin or Strava. Whole step is skippable — without ICU, Domestique falls back to local CTL from your imported FITs. (Already linked with an API key from an older version? You'll be prompted to switch to sign-in.)
 3. **Generate a plan** — pick a goal type (event prep / FTP / VO2max / hybrid / general / endurance), target date, target CTL, hours/week, and a [planner mode](#planner-modes) (auto / fixed-core / template). The planner sizes Base / Build1 / Build2 / Peak / (Taper or Consolidation) phases, draws 150 distinct ZWO files across a 24-week plan, and adapts daily to your readiness.
 
@@ -217,6 +236,33 @@ brew install --cask domestique
 
 The Windows EXE is also unsigned. On first run, SmartScreen shows a blue "Windows protected your PC" dialog. Click **More info -> Run anyway**.
 
+### Installing on Linux
+
+Grab `Domestique-vX.Y.Z-x86_64.AppImage` from the [latest release](https://github.com/platypus45/domestique/releases/latest), make it executable, run it:
+
+```bash
+chmod +x Domestique-v3.9.1-x86_64.AppImage
+./Domestique-v3.9.1-x86_64.AppImage
+```
+
+There is nothing to install and nothing to uninstall — the file *is* the app. Your data lives in `~/.domestique/` exactly as on macOS and Windows, so deleting the file leaves your plan and rides intact.
+
+The app opens its own window and serves on `http://127.0.0.1:22400`. If something else already holds that port it moves to the next free one on its own and remembers the choice; set `DOMESTIQUE_PORT` to pick one yourself.
+
+- **64-bit x86 only.** No ARM build (a Raspberry Pi or an ARM laptop will not run it).
+- **glibc 2.35 or newer** — Ubuntu 22.04+, Debian 12+, Fedora 36+ and their derivatives. Older distributions are out of reach for this build.
+- **~260 MB.** The window carries its own browser engine instead of borrowing the distribution's, which is what makes one file behave the same on every desktop. That is the whole cost, and it is not hidden.
+- **Text too small or too large?** The interface is sized to match macOS and Windows. Your desktop's own scaling is not always readable from inside an AppImage, so if it looks wrong, `QT_SCALE_FACTOR=1.5 ./Domestique-v3.9.1-x86_64.AppImage` (or `=1` for the smallest) sets it explicitly.
+- **If the window cannot open, the app says so and exits** — a dialog if your desktop can show one, the reason on stderr, and the full detail written to `~/.domestique/startup_crash.txt`. It will never quietly fall back to a browser tab or sit there holding the port with nothing on screen.
+
+**Host packages.** Almost everything travels inside the file. The graphics and X11 client libraries deliberately do not: a bundled copy of those is the classic way an AppImage dies on a machine whose drivers differ from the build host's. A normal desktop install already has them; a minimal or headless system may not.
+
+The exact package names differ by distribution. Every Linux build writes the
+list it actually resolved to `dist/host-deps-debian.txt` (Debian/Ubuntu names)
+and `dist/host-deps.txt` (portable sonames); the release notes for each version
+carry the current list. If the app starts but no window appears, install your
+distribution's Qt xcb platform packages — that is nearly always the cause.
+
 ### First-run secrets
 
 On first launch you sign in to Intervals.icu (OAuth); the bearer token — and, on installs that linked before v2.2.0, any legacy API key — is written to a per-profile env file at `~/.domestique/profiles/<id>/.env` (mode 0600). There is no repo-root `.env`. All data lives in `~/.domestique/` outside the app bundle and survives upgrades — see [docs/upgrading.md](docs/upgrading.md).
@@ -239,6 +285,7 @@ Use cases: a couple sharing a single laptop, a coach managing two riders, your t
 ---
 
 ## Planner modes
+
 
 Three ways to have your plan built — pick a **plan style** on the plan form:
 
@@ -282,6 +329,9 @@ An adaptive planner is only useful if you can trust next week to still look like
 ---
 
 ## Train by heart rate (no power meter)
+
+
+HR zones follow your choice of model: LTHR-anchored (default), or heart-rate reserve (Karvonen) built from your synced resting HR and measured max HR — with the resting anchor as a rolling median or a fixed value you set. The [science notes](docs/SCIENCE.md#1c-heart-rate-zones-lthr-vs-heart-rate-reserve) explain when each model is the right call.
 
 No power meter? Domestique can prescribe every workout in beats per minute instead of watts.
 
@@ -606,11 +656,105 @@ If you ICU-sync running, lifting, or anything else, those activities count towar
 
 ---
 
+## Screenshots
+
+A walk through the app in the order you would actually use it: wake up, see what today asks of you, follow the plan, pick something to ride, and check what the training is doing to you.
+
+### Start the day
+
+**Morning readiness.** The day starts with one number, built from HRV, form, sleep and resting HR, plus a four-question leg-check that takes ten seconds. The plan reads this — a rough night can soften today's session.
+
+<p align="center"><img src="docs/screenshots/tour-01-home-readiness.png" width="850" alt="Home: readiness score, morning check-in, fitness and form"></p>
+
+**What's behind the number.** Every factor is shown, never a black box: HRV and resting HR against your own 14-day baselines, eFTP progress, and the last rides as they synced in.
+
+<p align="center"><img src="docs/screenshots/tour-04-recovery-eftp.png" width="850" alt="Readiness factors, sleep and HRV trends, eFTP progress, recent activities"></p>
+
+### Follow the plan
+
+**Today, in context.** The session the plan chose, why it chose it, and the week around it — including what's already done, what was missed, and how the week's TSS is tracking.
+
+<p align="center"><img src="docs/screenshots/tour-02-today-week.png" width="850" alt="Today's session and the week at a glance, with adherence and intensity split"></p>
+
+**Is the week on course?** Planned versus actual, zone by zone, paced to the day of the week — not judged against a full week you haven't had time to ride yet. Last week's verdict sits below it.
+
+<p align="center"><img src="docs/screenshots/tour-03-week-pacing.png" width="850" alt="Week pacing against plan, and how last week's load compared"></p>
+
+### The plan itself
+
+**Two ways to train.** Toward a goal — classic base, build, peak into an event date — or continuously: no end date, a rolling window that extends itself weekly and re-reads your rides and readiness every day.
+
+<p align="center"><img src="docs/screenshots/tour-10-plan-config.png" width="850" alt="Plan configuration: goal or continuous, focus, intensity model"></p>
+
+**Your real week, not an ideal one.** Minutes per day, zero meaning rest, plus a calendar for the exceptions — holidays, travel, the odd free Saturday. The plan fits itself to what you actually have.
+
+<p align="center"><img src="docs/screenshots/tour-11-availability.png" width="850" alt="Weekly availability grid and the availability calendar"></p>
+
+**The calendar closes the loop.** Planned sessions, the rides that actually happened, and the misses — marked, not hidden. Missed hard sessions reschedule themselves; the week's totals update as you ride.
+
+<p align="center"><img src="docs/screenshots/tour-12-plan-calendar.png" width="850" alt="The plan calendar: planned sessions, completed rides, misses"></p>
+
+### From plan to ride to analysis
+
+One session, end to end — the prescription, the ride that came back, and what the app read out of it.
+
+**1 · The prescription.** What the plan asked for: the session's power profile, zone bands, duration and TSS, matched to a concrete workout file from the library.
+
+<p align="center"><img src="docs/screenshots/plan-01-planned-session.png" width="850" alt="A planned sweet-spot session with its power profile and zone bands"></p>
+
+**2 · The ride that came back.** Synced automatically after the ride: distance, IF, NP, heart rate, the power/HR trace — and a one-tap "how hard did that feel?" that the planner also listens to.
+
+<p align="center"><img src="docs/screenshots/plan-02-completed-ride.png" width="850" alt="The completed ride: distance, IF, NP, heart rate, and a post-ride feel rating"></p>
+
+**3 · What it counted for.** Time in every power and HR zone and the polarization verdict — this is what the plan uses to decide whether tomorrow stands or adapts.
+
+<p align="center"><img src="docs/screenshots/plan-03-ride-zones.png" width="850" alt="Post-ride analysis: polarization verdict, power-zone and HR-zone time"></p>
+
+### Pick something to ride
+
+**4,306 workouts, named for what they are.** Class, structure, intensity and duration in every name — `threshold 4×8min @ 98%` reads the same in the library, on your head unit, and in the plan.
+
+<p align="center"><img src="docs/screenshots/tour-07-workout-library.png" width="850" alt="The workout library: 4,306 files, named for their structure"></p>
+
+**Or just say how you feel.** Two sliders — how you feel and how long you have — and it picks the session. The same page picks routes by distance, climb, surface and finish type.
+
+<p align="center"><img src="docs/screenshots/tour-05-workout-picker.png" width="850" alt="Workout picker: how do you feel, how long do you have"></p>
+
+<p align="center"><img src="docs/screenshots/tour-06-route-picker.png" width="850" alt="Route picker: distance, climb, surface and finish-type filters"></p>
+
+**622 routes and climbs.** Curated collections — rolling classics, alpine passes, flat TT loops — plus famous real-world climbs, each with its elevation profile and category.
+
+<p align="center"><img src="docs/screenshots/tour-08-routes-climbs.png" width="850" alt="Routes and climbs: curated collections plus the full catalogue"></p>
+
+<p align="center"><img src="docs/screenshots/tour-09-route-cards.png" width="850" alt="Route cards with elevation profiles and categories"></p>
+
+### See what the training is doing
+
+**The rider profile.** FTP, W', peak powers, heart markers, efficiency and load in one place — each value stamped with where it came from and when, so you know what's measured and what's modelled.
+
+<p align="center"><img src="docs/screenshots/tour-13-analysis.png" width="850" alt="Analysis: rider profile and the fitness/fatigue/form chart"></p>
+
+**Power curve and fatigue resistance.** Your curve against a published baseline, and how much of your fresh power survives after 1500 kJ of work — the number that decides how a long ride ends.
+
+<p align="center"><img src="docs/screenshots/tour-14-power-curve.png" width="850" alt="Power curve against a reference baseline, plus fatigue resistance"></p>
+
+**Thresholds from heart-rate variability.** DFA α1 estimates your aerobic and anaerobic thresholds from beat-to-beat data — an independent check on your power zones, with the confidence of each estimate shown.
+
+<p align="center"><img src="docs/screenshots/tour-15-dfa-thresholds.png" width="850" alt="DFA a1: estimated aerobic and anaerobic thresholds from HRV"></p>
+
+<p align="center"><img src="docs/screenshots/tour-16-dfa-per-ride.png" width="850" alt="DFA a1 per ride, with intensity distribution and threshold detections"></p>
+
+### Make it yours
+
+**Settings.** Weight, FTP with its full history, LTHR, and editable power and HR zones — prefilled from your data, overridable everywhere.
+
+<p align="center"><img src="docs/screenshots/tour-17-settings.png" width="850" alt="Settings: athlete profile, FTP history, power and HR zones"></p>
+
 ## Releases
 
-Latest: **[v3.7.0 — Which blocks did you actually do, and cooldowns that are cooldowns](https://github.com/platypus45/domestique/releases/latest)** (2026-07-27).
+Latest: **[v3.10.2 — The workout you accept is the workout you get](https://github.com/platypus45/domestique/releases/latest)** (2026-08-23).
 
-GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE on every tagged release.
+GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE + Linux AppImage on every tagged release. The three jobs are independent: a Linux failure cannot hold up or damage the macOS and Windows artifacts.
 
 **Highlights since v1.8.5** (see [CHANGELOG.md](CHANGELOG.md) for every shipped tag):
 
@@ -648,9 +792,10 @@ pytest -q                            # ~2,300 tests pass on clean-main
 ```bash
 ./build_dmg.sh                       # macOS — writes ~/Desktop/Domestique.dmg
 build_win.bat                        # Windows — writes dist\Domestique\Domestique.exe
+./build_linux.sh                     # Linux — writes dist/Domestique-vX.Y.Z-x86_64.AppImage
 ```
 
-GitHub Actions ([.github/workflows/release.yml](.github/workflows/release.yml)) builds both on every tagged release.
+GitHub Actions ([.github/workflows/release.yml](.github/workflows/release.yml)) builds all three on every tagged release.
 
 ### Workout library
 
@@ -668,7 +813,15 @@ Nothing is scraped or reconstructed from any third-party workout site.
 
 Domestique is a **single-user, local-first desktop app**. The security model follows from that: everything runs on your machine, and the only data that leaves it is what you choose to sync to your *own* intervals.icu / Strava account. There is no Domestique-operated server and no telemetry.
 
-**Network exposure — no remote access.** The bundled API server binds to `127.0.0.1` only — there is no `0.0.0.0` bind anywhere in the codebase, and the notarized macOS build ships no inbound-network (`com.apple.security.network.server`) entitlement, so nothing on your LAN or the internet can reach it. The local endpoints are **unauthenticated by design**: they trust the localhost boundary for single-user use. Do not manually rebind to `0.0.0.0` or expose port 8080 without adding your own authentication layer. Outbound connections are made only to **intervals.icu** (and **Strava**, if configured) over HTTPS, using your own credentials.
+**Network exposure — no remote access.** The bundled API server binds to `127.0.0.1` only — there is no `0.0.0.0` bind anywhere in the codebase, and the notarized macOS build ships no inbound-network (`com.apple.security.network.server`) entitlement, so nothing on your LAN or the internet can reach it. The local endpoints are **unauthenticated by design**: they trust the localhost boundary for single-user use. Do not manually rebind to `0.0.0.0` or expose the app's port without adding your own authentication layer. Outbound connections are made only to **intervals.icu** (and **Strava**, if configured) over HTTPS, using your own credentials.
+
+**Which port it uses.** Domestique serves on `http://127.0.0.1:22400`. You never have to configure this — if something else already holds that port, it tries `21055`, then `26214`, and remembers whichever one worked so the address stays the same next time you launch. To force a specific port, set `DOMESTIQUE_PORT`:
+
+```bash
+DOMESTIQUE_PORT=23500 domestique
+```
+
+The ports are chosen to stay out of the way: all three sit below `32768`, which is where Linux, macOS and Windows start handing out temporary ports for outgoing connections. A listener inside that range binds fine most of the time and fails unpredictably the rest — so the app deliberately avoids the "high and out of the way" numbers that look safest. Earlier versions pinned `8080`, which is heavily contested on Linux desktops; if another program had it, Domestique could end up showing that program's page instead of its own.
 
 **Input handling — path-traversal protection.** Every file-download endpoint (workouts, courses, GPX) routes the user-supplied path segments through a single `_safe_path()` guard: it resolves the full path and verifies it stays inside the intended base directory (`pathlib.Path.is_relative_to`), rejecting `../` climb-outs, an absolute-path segment, and symlink escapes. A request that tries to escape the base returns 404 — never the target file. This is covered by `tests/test_security.py` (see below).
 

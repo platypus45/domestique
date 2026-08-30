@@ -1,7 +1,7 @@
 [
   {
     "hash": "7497ad29aaa37bb26a209edf53ac113e60424a42",
-    "imported_filename": "endurance_7x2min_43min.zwo",
+    "imported_filename": "endurance_steady_63pct_43min.zwo",
     "source_filename": "Active_Recovery_FTP_W4D5.zwo",
     "source_license": "Unlicense",
     "source_repo": "macgrrl_zwift-workouts",
@@ -17,7 +17,7 @@
   },
   {
     "hash": "39054860b28171d80d83472107b19e5c3953f10c",
-    "imported_filename": "threshold_steady_55min_v6.zwo",
+    "imported_filename": "threshold_4x210s-2min_81pct_55min.zwo",
     "source_filename": "Fondo_W1D2_Intervals.zwo",
     "source_license": "Unlicense",
     "source_repo": "macgrrl_zwift-workouts",
@@ -25,7 +25,7 @@
   },
   {
     "hash": "1a1ecefcf5987f199717b4638eac273f1587e6c0",
-    "imported_filename": "endurance_steady_35min.zwo",
+    "imported_filename": "endurance_steady_65pct_35min.zwo",
     "source_filename": "Maffetone_HR___20m.zwo",
     "source_license": "Unlicense",
     "source_repo": "macgrrl_zwift-workouts",
@@ -33,7 +33,7 @@
   },
   {
     "hash": "57344ea00ef88b712d4a59f981ad67f53572c685",
-    "imported_filename": "endurance_steady_45min.zwo",
+    "imported_filename": "endurance_steady_65pct_45min_v2.zwo",
     "source_filename": "Maffetone_HR___30m.zwo",
     "source_license": "Unlicense",
     "source_repo": "macgrrl_zwift-workouts",
@@ -41,7 +41,7 @@
   },
   {
     "hash": "ddc63817b1eced04dd4f23c8b76628f96c371e86",
-    "imported_filename": "endurance_steady_60min.zwo",
+    "imported_filename": "endurance_steady_65pct_60min_v4.zwo",
     "source_filename": "Maffetone_HR___45m.zwo",
     "source_license": "Unlicense",
     "source_repo": "macgrrl_zwift-workouts",
@@ -49,7 +49,7 @@
   },
   {
     "hash": "1f651d1e2b89896fbf190d5e7318e4b38c092478",
-    "imported_filename": "endurance_steady_45min_v2.zwo",
+    "imported_filename": "endurance_steady_75pct_45min.zwo",
     "source_filename": "Maffetone_Ramp_HR___30m.zwo",
     "source_license": "Unlicense",
     "source_repo": "macgrrl_zwift-workouts",
@@ -65,7 +65,7 @@
   },
   {
     "hash": "0f156a467ad669d509dd5629ae62c3fb679ac2d6",
-    "imported_filename": "endurance_3x15s_48min.zwo",
+    "imported_filename": "endurance_steady_68pct_48min.zwo",
     "source_filename": "Z2_Foundation_5x_5m_2m_6W1D3.zwo",
     "source_license": "Unlicense",
     "source_repo": "macgrrl_zwift-workouts",
@@ -73,7 +73,7 @@
   },
   {
     "hash": "ab9b27c439b30db162c08a690d9979b1b3c15151",
-    "imported_filename": "endurance_4x2min_48min.zwo",
+    "imported_filename": "endurance_steady_68pct_48min_v2.zwo",
     "source_filename": "Z2_Foundation_5x_5m_2m_CC.zwo",
     "source_license": "Unlicense",
     "source_repo": "macgrrl_zwift-workouts",
@@ -81,7 +81,7 @@
   },
   {
     "hash": "9beea9ff2ac8f30fcd5818dcc1c5e3ff19e21dc9",
-    "imported_filename": "endurance_3x1min_58min.zwo",
+    "imported_filename": "endurance_steady_68pct_58min.zwo",
     "source_filename": "Z2_Foundation_6x_6m_2m_6W2D3.zwo",
     "source_license": "Unlicense",
     "source_repo": "macgrrl_zwift-workouts",
@@ -89,7 +89,7 @@
   },
   {
     "hash": "0bd0df52f52b1715ecee24bf70bd84f4ee716b79",
-    "imported_filename": "endurance_5x2min_58min.zwo",
+    "imported_filename": "endurance_steady_68pct_58min_v2.zwo",
     "source_filename": "Z2_Foundation_6x_6m_2m_NC_6W2D3.zwo",
     "source_license": "Unlicense",
     "source_repo": "macgrrl_zwift-workouts",
@@ -105,7 +105,7 @@
   },
   {
     "hash": "66931c385fc6032abf0f1f3d4eeed39d25c1f69c",
-    "imported_filename": "threshold_2x10min_80min.zwo",
+    "imported_filename": "threshold_6x10min_100pct_85min.zwo",
     "source_filename": "1 x 60' @ Z4 (100%).zwo",
     "source_license": "MIT",
     "source_repo": "michaelahlers_zwift-workouts",
@@ -137,7 +137,7 @@
   },
   {
     "hash": "b6ec62bfe6fa41880960fb927c96e6aa108b3472",
-    "imported_filename": "anaerobic_steady_72min.zwo",
+    "imported_filename": "anaerobic_3x8min-8min_100pct_77min.zwo",
     "source_filename": "3 x 10' @ Z5, Z4 (2' @ 120%, 8' @ 100%).zwo",
     "source_license": "MIT",
     "source_repo": "michaelahlers_zwift-workouts",
@@ -161,7 +161,7 @@
   },
   {
     "hash": "2928b016b1573e2261dbca901eca788a262b0776",
-    "imported_filename": "vo2_8x5min_80min_v2.zwo",
+    "imported_filename": "vo2_6x5min-5min_110pct_85min.zwo",
     "source_filename": "6 x 5' @ Z5 (110%).zwo",
     "source_license": "MIT",
     "source_repo": "michaelahlers_zwift-workouts",
@@ -185,7 +185,7 @@
   },
   {
     "hash": "69eea8e4dbe16158be5c8a4e1d529d6005902aa5",
-    "imported_filename": "over_under_2x1min_30min.zwo",
+    "imported_filename": "over_under_2x2min-1min_110pct_30min.zwo",
     "source_filename": "Warmup (short).zwo",
     "source_license": "MIT",
     "source_repo": "michaelahlers_zwift-workouts",

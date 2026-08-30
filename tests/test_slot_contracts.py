@@ -194,13 +194,13 @@ def test_emergency_fallback_never_serves_ftp_class(tmp_path, monkeypatch):
     lib.mkdir()
     monkeypatch.setattr(tp, "WORKOUT_DIR", lib)
     wf.reset_cache()
-    mis = {"Name": "FTP Test 2x10", "File": "ftp_test_mixed_42min.zwo",
+    mis = {"Name": "FTP Test 2x10", "File": "ftp_test_2x10min-4min_100pct_42min.zwo",
            "Duration(min)": 42.0, "TSS": 60.0, "IF": 0.8, "Score": 6,
            "Protocol": "FTP Test", "Notes": "", "Z1%": 20.0, "Z2%": 20.0,
            "Z3%": 10.0, "Z4%": 50.0, "Z5%": 0.0, "Z6%": 0.0, "Tags": [],
            "ContentClass": "ftp_test", "ContentConfidence": 0.9,
            "SecondaryFlags": {}}
-    tagged = dict(mis, File="ftp_test_coggan_20min.zwo", Tags=["ftp_test"])
+    tagged = dict(mis, File="ftp_test_coggan_3x1min-1min_95pct_59min.zwo", Tags=["ftp_test"])
     pools = tp._build_pool_indexes([mis, tagged])
     assert pools["hit"] == [] and pools["endurance"] == []
     assert tagged not in pools["all_pool"]          # tag skip at pool build

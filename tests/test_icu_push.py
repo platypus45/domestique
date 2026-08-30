@@ -125,9 +125,9 @@ def stub(tmp_path):
     (workouts / "steady.zwo").write_text(STEADY_ZWO, encoding="utf-8")
     (workouts / "tempo_alt.zwo").write_text(TEMPO_ZWO, encoding="utf-8")
     (workouts / "sprint_end.zwo").write_text(SPRINT_END_ZWO, encoding="utf-8")
-    real = REPO / "workouts" / "threshold_steady_56min.zwo"
+    real = REPO / "workouts" / "threshold_2x3min-3min_95pct_56min.zwo"
     if real.exists():
-        (workouts / "threshold_steady_56min.zwo").write_bytes(real.read_bytes())
+        (workouts / "threshold_2x3min-3min_95pct_56min.zwo").write_bytes(real.read_bytes())
     app_module.WORKOUT_DIR = workouts
 
     ns = types.SimpleNamespace(home=home, pm=pm, pid=pid, workouts=workouts,
@@ -335,12 +335,12 @@ class TestG3Format:
 
     def test_hr_mode_fit_carries_heart_rate_targets(self, stub, fake):
         fitparse = pytest.importorskip("fitparse")
-        if not (stub.workouts / "threshold_steady_56min.zwo").exists():
+        if not (stub.workouts / "threshold_2x3min-3min_95pct_56min.zwo").exists():
             pytest.skip("bundled zwo fixture missing")
         _apikey(stub)
         stub.pm._athlete.update(
             {"target_mode": "hr", "lthr": 160, "max_hr": 185})
-        _write_plan([_sess(D1, zwo="threshold_steady_56min.zwo",
+        _write_plan([_sess(D1, zwo="threshold_2x3min-3min_95pct_56min.zwo",
                            stype="threshold")])
         r = icp.reconcile()
         assert r["pushed"] == 1 and not r.get("needs_lthr")

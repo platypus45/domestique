@@ -311,13 +311,22 @@ def test_coherence_rematch_preserves_content_class(library):
     (measured 2 → 0 on pinned seed 12345). Whatever the outcome (rematch or
     A3 keep), the served class must not drift."""
     cats = {"anaerobic", "vo2_short", "neuromuscular"}
+    # The fixture must be a file that actually TRIPS coherence for the 50-min
+    # slot below, so derive the bound from the band the pass itself uses
+    # instead of hardcoding 55. A flat ">= 55" also admits files inside the
+    # band, and which one `next()` returned depended on library order — a
+    # library rename picked a 55-min file, nothing tripped, and the assertion
+    # failed on a fixture problem rather than on the behaviour under test.
+    _slot = 50
+    _band = tp._slot_file_band_min(_slot)
     row = next((r for r in library
                 if (r.get("ContentClass") or "").strip() == "anaerobic"
-                and 55 <= float(r.get("Duration(min)") or 0) <= 76
+                and abs(float(r.get("Duration(min)") or 0) - _slot) > _band
+                and float(r.get("Duration(min)") or 0) <= 76
                 and (r.get("Score") or 0) >= 5), None)
     if row is None:
-        pytest.skip("no 55-76min anaerobic row in library")
-    s = _mk_session(_ANCHOR + timedelta(days=2), "vo2max", 50,
+        pytest.skip(f"no anaerobic row >{_band}min off a {_slot}min slot")
+    s = _mk_session(_ANCHOR + timedelta(days=2), "vo2max", _slot,
                     zwo_file=row["File"])
     week = _mk_week([s])
     stats = tp._enforce_slot_file_coherence([week], library,

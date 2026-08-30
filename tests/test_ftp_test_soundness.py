@@ -43,7 +43,7 @@ def test_4x8_threshold_ride_is_not_a_ramp():
 
 def test_filename_tag_is_authoritative():
     assert fe.detect_ftp_test_shape([100] * 300, "ftp_test_ramp_20w.zwo") == "ramp"
-    assert fe.detect_ftp_test_shape([100] * 300, "ftp_test_coggan_20min.zwo") == "coggan_20min"
+    assert fe.detect_ftp_test_shape([100] * 300, "ftp_test_coggan_3x1min-1min_95pct_59min.zwo") == "coggan_20min"
 
 
 def test_coggan_mean_not_np_and_finish_sprint_capped():
@@ -73,7 +73,7 @@ def _plan_with_ftp_test(tmp):
         "end": (date.today() + timedelta(days=6)).isoformat(),
         "sessions": [{"day": day, "day_name": "Thu", "session_type": "ftp_test",
                       "duration_min": 60, "tss_estimate": 90,
-                      "zwo_file": "ftp_test_coggan_20min.zwo", "status": "pending"}],
+                      "zwo_file": "ftp_test_coggan_3x1min-1min_95pct_59min.zwo", "status": "pending"}],
     }]}
     (Path(tmp) / "current_plan.json").write_text(_json.dumps(plan))
     return day

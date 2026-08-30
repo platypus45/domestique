@@ -25,6 +25,8 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 import app as app_module
@@ -149,8 +151,18 @@ class TestRolloverSurplusSubtract(unittest.TestCase):
         is to "subtract min(surplus, weekly_tss × 0.20) AND decrement
         hit_per_week by 1" — both observable effects are asserted.
         """
-        from datetime import date as _d
-        today = _d.today()
+        # The planner clock MUST be pinned here. generate_weekly_plan derives
+        # its step-back flag from the real calendar — is_stepback = ISO week %
+        # 4 == 0 — so on any week divisible by 4 the baseline week is itself a
+        # deload and the measured reduction is the deload plus the surplus cut,
+        # not the surplus cut. Unpinned, this test passed for three weeks out
+        # of every four and asserted nothing about the surplus path on the
+        # fourth. conftest.PLANNER_PIN_ANCHOR is ISO week 2.
+        from conftest import FrozenPlannerDate
+        mp = pytest.MonkeyPatch()
+        self.addCleanup(mp.undo)
+        mp.setattr(tp, "date", FrozenPlannerDate)
+        today = tp.date.today()
         monday = today - timedelta(days=today.weekday())
         last_week_start = monday - timedelta(days=7)
         phase = tp.Phase(

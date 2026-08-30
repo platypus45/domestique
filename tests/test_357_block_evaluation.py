@@ -720,7 +720,7 @@ def test_an_abandoned_over_under_is_not_certified_complete():
     were never ridden, including one prescribed eight minutes after the rider
     had stopped. Library-wide: 121 to 206 over-credited sessions depending on
     how long the recoveries ran."""
-    segs = sf.parse_zwo_file("workouts/over_under_6x2min_33min.zwo")
+    segs = sf.parse_zwo_file("workouts/over_under_2x3x2min_105pct_33min.zwo")
     laps = _laps([(300, 72.6), (120, 50.0)]
                  + [(120, 105.0), (120, 90.0)] * 3      # 3 blocks, long unders
                  + [(360, 51.0)])                        # …then home
@@ -748,7 +748,7 @@ def test_a_flat_ride_with_auto_lap_is_not_eighteen_vo2_blocks():
     """Continuous tempo at 85 % FTP, never above it, head unit auto-lapping every
     minute. 18 VO2 blocks certified — the under-power veto plus the 80 % length
     rule means 64 % of the prescribed work reads as a completed block."""
-    segs = sf.parse_zwo_file("workouts/vo2_short_1min_18x_60min.zwo")
+    segs = sf.parse_zwo_file("workouts/vo2_short_2x9x70s-20s_105pct_67min.zwo")
     end = max(s["start_s"] + s["dur_s"] for s in segs)
     items = [(600, 60.0)] + [(60, 85.0)] * ((end - 900) // 60) + [(300, 55.0)]
     r = sf.score_blocks(segs, _laps(items), FTP)

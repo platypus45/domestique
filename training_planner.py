@@ -1511,6 +1511,14 @@ class Goal:
     # GOAL_CLASS_EMPHASIS profiles via CONTINUOUS_FOCUS_EMPHASIS at the
     # sampler seam; ignored by every other goal_type.
     focus: str = "both"
+    # v3.7.1 — VO2max sessions restricted to the microinterval protocol
+    # (short on/off reps: 30/15, 40/20, 30/30). Default OFF: the evidence
+    # supports microintervals as an excellent VO2max stimulus, not as the
+    # only defensible one, so the rider opts in rather than out. Applied as
+    # a HARD filter on VO2max slots in match_zwo — with a fallback, because
+    # a plan that cannot fill a day is worse than one that fills it with a
+    # long interval.
+    vo2_microintervals_only: bool = False
 
     def max_hours_for_day(self, weekday: int) -> float:
         """Get max training hours for a specific weekday (0=Mon..6=Sun)."""
@@ -1800,6 +1808,11 @@ BUDGETS_BY_MODEL: dict[str, "dict[str, IntensityBudget]"] = {
 }
 
 _ACTIVE_DISTRIBUTION = "polarized"
+# v3.7.1 — rider opted into microintervals-only for VO2max days. Generation-
+# scoped state, set from the goal at exactly the sites that set the active
+# distribution, and ALWAYS set explicitly (including to False) so it can never
+# go stale between plans — the failure mode a sticky module global invites.
+_VO2_MICRO_ONLY = False
 # v2.3.0: per-phase budget table for the "custom" distribution, built on demand
 # by set_active_distribution from goal.custom_bands. None ⇒ no custom plan active.
 _ACTIVE_CUSTOM_BUDGETS: "dict[str, IntensityBudget] | None" = None
@@ -1819,6 +1832,22 @@ def _custom_model_budgets(bands: dict) -> "dict[str, IntensityBudget]":
     if (z3w + z4w + z5w) <= 0:
         z3w, z4w, z5w = 34.0, 33.0, 33.0  # safe default if the user zeroed it
     return _model_budgets(z3w, z4w, z5w)
+
+
+def set_vo2_micro_only(flag) -> bool:
+    """Set (and return) the microintervals-only preference for VO2max slots.
+
+    Deliberately takes a plain bool rather than reading a goal: the swap and
+    rematch paths carry the preference without a Goal object, and a setter
+    that can only be fed one shape is a setter that some path will skip.
+    """
+    global _VO2_MICRO_ONLY
+    _VO2_MICRO_ONLY = bool(flag)
+    return _VO2_MICRO_ONLY
+
+
+def get_vo2_micro_only() -> bool:
+    return _VO2_MICRO_ONLY
 
 
 def set_active_distribution(model: "str | None", custom_bands: "dict | None" = None) -> str:
@@ -3724,8 +3753,31 @@ def load_workout_library() -> list[dict]:
             if power_pct > 105:  # VO2 floor (Coggan Z5 edge)
                 has_vo2_intensity = True
 
+        # v3.7.1 — the length of the session's WORK REPS, measured from the
+        # prescription. The classifier's pattern_microinterval flag says a
+        # microinterval pattern occurs SOMEWHERE in the file, which a warm-up
+        # fast-pedal drill is enough to trip: a 10x2min session carries it, and
+        # a "microintervals only" preference built on that flag served exactly
+        # the long-rep sessions it was meant to exclude. This measures the main
+        # set instead — the shortest ON leg the file actually repeats at
+        # intensity.
+        _micro_work_s = 0      # seconds in reps at or under the micro ceiling
+        _long_work_s = 0       # seconds in reps above it
+
         for seg in workout_el:
             tag = seg.tag
+            if tag == "IntervalsT":
+                try:
+                    _on = int(float(seg.get("OnDuration", 0) or 0))
+                    _onp = float(seg.get("OnPower", 0) or 0)
+                    _rep = int(float(seg.get("Repeat", 0) or 0))
+                except (TypeError, ValueError):
+                    _on = _rep = 0; _onp = 0.0
+                if _on > 0 and _rep >= 4 and _onp >= 1.00:
+                    if _on <= MICROINTERVAL_MAX_REP_S:
+                        _micro_work_s += _on * _rep
+                    else:
+                        _long_work_s += _on * _rep
             if tag in ("Warmup", "Cooldown", "Ramp"):
                 dur = int(float(seg.get("Duration", 0)))
                 plo = float(seg.get("PowerLow", 0.5))
@@ -3862,6 +3914,13 @@ def load_workout_library() -> list[dict]:
             # has_vo2_work, has_sprints, has_sweet_spot_work,
             # pattern_over_under, pattern_microinterval, polarized_consistent,
             # pyramidal_consistent). Empty when the content cache is absent.
+            # v3.7.1 — share of the file's repeated at-intensity work that
+            # sits in SHORT reps. Time-weighted, not a median: a 10x2min
+            # session with an 8x40s finisher has a median rep of 40 s and is
+            # emphatically not a microinterval session. None when the file
+            # declares no repeated work set at all.
+            "MicroFrac": (round(_micro_work_s / (_micro_work_s + _long_work_s), 3)
+                          if (_micro_work_s + _long_work_s) > 0 else None),
             "ContentClass": content_class,
             "ContentConfidence": content_confidence,
             "SecondaryFlags": secondary_flags,
@@ -3974,6 +4033,29 @@ def _ftp_test_family(filename: str) -> str | None:
             return tok
     return None
 
+# v3.7.1 — how strongly a microinterval protocol is preferred when filling a
+# VO2max slot. Measured over 84 slots (7 durations x 12 weeks), share of
+# VO2max days that get a microinterval file:
+#     bonus 0 -> 0 %     3 -> 36 %     5 -> 63 %     7 -> 71 %     9 -> 73 %
+# 5 is the knee. It makes the protocol the usual choice without making it the
+# only one — a third of VO2max days still go to long intervals, ladders and
+# over-unders, which is the variety a block needs, and the distinct-file count
+# across those slots is unchanged at 75. Past 7 it buys nothing and starts
+# eroding variety.
+MICROINTERVAL_VO2_BONUS = 5.0
+# v3.7.1 — penalty applied to a NON-microinterval file on a VO2max slot when
+# the rider has opted into microintervals only. Large enough to lose to any
+# microinterval file that fits, small enough that the slot still fills when
+# none does.
+MICROINTERVAL_ONLY_PENALTY = 500.0
+# The ON leg at or under which a repeated effort is a MICROinterval. 60 s is
+# the natural break: the protocols in this family run 30 s and 40 s, while the
+# formats they are contrasted against in the literature start at 2 minutes.
+MICROINTERVAL_MAX_REP_S = 60
+# …and the share of repeated work that must sit in those short reps for the
+# session to BE a microinterval session rather than merely contain some.
+MICROINTERVAL_MIN_FRAC = 0.5
+
 
 def match_zwo(
     session: PlannedSession, library: list[dict],
@@ -3984,6 +4066,7 @@ def match_zwo(
     exact_duration: bool = False,
     widen_band: bool = False,
     hr_bias: bool = False,
+    micro_only: bool = False,
 ) -> PlannedSession:
     """Find a ZWO workout matching this session, rotating for variety.
 
@@ -4182,6 +4265,38 @@ def match_zwo(
             _top_pct = float(w.get("Z5%", 0) or 0) + float(w.get("Z6%", 0) or 0)
             if _mid_pct >= 40 and _top_pct < 10:
                 score -= 5  # mid-dominated, low top-end → poor fit for a hard slot
+
+        # v3.7.1 — MICROINTERVAL preference on VO2max slots. Short on/off reps
+        # (30/15, 40/20, 30/30) accumulate more time near VO2max than longer
+        # intervals at the same average power: the recovery is too brief for
+        # oxygen uptake to fall back, so it ratchets up over the first reps and
+        # stays there. That is the stimulus a VO2max day is FOR, and the pool
+        # is 718 files deep, so without a preference the highest-yield protocol
+        # in the library surfaced on ~3 % of VO2max days by pure arithmetic.
+        #
+        # Keyed on the content classifier's own pattern flag, never on a
+        # filename — every microinterval file in the library earns this,
+        # including the ones that predate it. Deliberately a BONUS of the same
+        # order as the mid-dominance penalty above, not a hard gate: a VO2max
+        # block that served nothing but 30/15 would be its own kind of wrong,
+        # and the variety machinery still has to have something to choose.
+        if session.session_type == "vo2max" and not want_test:
+            _mf = w.get("MicroFrac")
+            _is_micro = (_mf is not None and _mf >= MICROINTERVAL_MIN_FRAC)
+            if _mf is None:
+                # No declared work set to measure — fall back to the
+                # classifier's pattern flag rather than assuming either way.
+                _is_micro = bool((w.get("SecondaryFlags") or {})
+                                 .get("pattern_microinterval"))
+            if _is_micro:
+                score += MICROINTERVAL_VO2_BONUS
+            elif micro_only or _VO2_MICRO_ONLY:
+                # Rider asked for microintervals only. Heavy penalty rather
+                # than exclusion: if no microinterval file fits the slot's
+                # duration the day still fills, because an unfillable day is
+                # a worse outcome than a long interval the rider did not ask
+                # for. The caller reports which way it went.
+                score -= MICROINTERVAL_ONLY_PENALTY
 
         # v1.8.25 — easy-slot grey-zone HARD gate (mirrors the sampler). A
         # z2/recovery slot must NOT admit a file with a tempo/SS finisher
@@ -5253,7 +5368,7 @@ def _session_type_from_row(row: dict) -> str:
     if fname.startswith("ftp_test_"):
         # v3.5.4 — the NAME alone must not mint a maximal test. 28 rows are
         # named ftp_test_* while their CONTENT is ordinary hard work (e.g.
-        # ftp_test_3x2min_42min.zwo classifies threshold_ladder — a 3x2min
+        # ftp_test_3x2min_82pct_42min.zwo classifies threshold_ladder — a 3x2min
         # ladder is no FTP protocol). Stamped ftp_test by prefix alone, any of
         # them can be drawn by the sampler into a hard slot and become an
         # UNPLANNED maximal test: it bypasses _inject_mid_cycle_ftp_tests,
@@ -5564,7 +5679,7 @@ def sample_week_workouts(
     if is_stepback:
         # Class filter alone is too coarse: filenames lie, so an
         # "endurance_intervals"-classed file can still carry sweet-spot-density
-        # work (e.g. sweetspot_5x0min_60min_v5.zwo, IF 0.795, TSS 64 in 61min,
+        # work (e.g. sweetspot_8x40s-20s_115pct_61min.zwo, IF 0.795, TSS 64 in 61min,
         # derives session_type="sweetspot"). Add an IF ceiling so a deload day
         # draws only genuinely easy rides. 0.75 sits below the sweet-spot floor
         # and above the median easy-strides ride (0.68), keeping ~127 endurance_
@@ -6445,6 +6560,8 @@ def generate_plan(
     athlete: dict | None = None,
     current_ctl: float | None = None,
     recent_weekly_tss: float | None = None,
+    days_since_last_ride: "int | None" = None,
+    tsb_at_generation: "float | None" = None,
 ) -> tuple[list[Phase], list[PlannedWeek]]:
     """Generate the full training plan.
 
@@ -6527,6 +6644,7 @@ def generate_plan(
 
     # J1 (v2.1.0): honor the goal's chosen intensity-distribution model for every
     # get_budget_for_phase lookup in this run (default "polarized" → unchanged).
+    set_vo2_micro_only(getattr(goal, "vo2_microintervals_only", False))
     set_active_distribution(getattr(goal, "distribution", "polarized"),
                             getattr(goal, "custom_bands", None))
     # v3.0.0: only self-fetch when the caller didn't supply CTL — `metrics`
@@ -6963,6 +7081,11 @@ def generate_plan(
     if goal.goal_type in ("event", "ctl") and goal.target_date:
         _apply_race_week_shape(weeks, goal, library)
     _mark_race_days(weeks, goal)  # issue #7: race day shows the race, not a session
+    # Re-entry after a short break (SCIENCE.md): a 4-14 day gap reshapes the
+    # first week — planned intensity forward, volume trimmed — instead of
+    # opening on the lightest session in the library. No-op when the caller
+    # does not know the gap (tests, legacy paths).
+    _apply_reentry_shape(weeks, days_since_last_ride, tsb_at_generation, library)
 
     # F4c (v2.5.0, D4): a race-week-only MICRO-PLAN (single taper phase — see
     # generate_phases) keeps at most ONE hard touch total, excluding the
@@ -7274,6 +7397,66 @@ def _protect_race(s) -> bool:
     return bool(getattr(s, "is_race", False))
 
 
+# Hard per-phase HIT-class floors. Module-level because two passes need
+# them: _enforce_build2_peak_hard_floor PLACES these sessions, and
+# _enforce_weekly_hit_cap must not silently DEMOTE what that pass just
+# placed -- it used to, whenever every HIT class in the week sat at count 1
+# and dict order alone chose the victim.
+_PHASE_HARD_FLOORS = {
+    # build1 is a 4-week phase; we ask for 4 vo2_short + 2 neuromuscular
+    # so the across-plan target ≥10 vo2_short / ≥4 neuromuscular is reached.
+    # v4.6.2 PLANNER-DIVERSITY-PUSH: also enforce 1 sweet_spot in build1
+    # so the canonical {threshold, vo2max, sweet_spot, over_under} 4-shape
+    # rotation is visible in every build phase regardless of seed (the
+    # strong novelty boost can salt-bias sweet_spot to zero in build1+
+    # build2 if it happened to fill base-phase slots first).
+    # v2.0.3 F1: over_under sits at mix weight ~0.09 → E[picks]≈1 → rounds
+    # to 0 in build, so it needs the SAME hard-floor as the other protected
+    # interval classes. ≥1 in build1 AND build2 completes the 4-shape
+    # rotation without crowding the other 3 hard types (each floor is
+    # filled by swapping the lowest-stimulus steady slots, not the hards).
+    # v3.2.2 (#14): threshold joins the build floors — the ORIGINAL
+    # "threshold starved in builds" symptom. The niche-class floors above
+    # force 8-9 swaps across build1+build2 while threshold had NO floor
+    # and (being outside all_targets) its natural picks were even legal
+    # SWAP VICTIMS — on unlucky seeds builds ended with zero threshold
+    # work (pinned seed 12345 reproduced it). ≥1 per build phase keeps
+    # the canonical 4-shape rotation intact and shields threshold picks
+    # from the sibling-floor swap pass.
+    # vo2max gets the same ≥1 shield: fixing threshold alone just moved
+    # the crowd-out to vo2max on the pinned seed — the canonical 4-shape
+    # holds only when ALL four are floor-protected (swap-immune).
+    # Dict ORDER is fill priority (the swap loop walks mins.items() and
+    # per-week hit caps are a shared budget): niche classes with no
+    # natural pick mass fill FIRST; the canonical shields last — they
+    # exist mostly to make natural threshold/vo2max picks swap-immune
+    # (all_targets membership), rarely to force a fill.
+    # The shields live in build1 ONLY: the canonical-4 contract is over
+    # build1+build2 COMBINED, and each extra target class shrinks the
+    # phase's swap-victim pool (all_targets slots are immune) — putting
+    # them in build2 too starved its anaerobic fill (capacity, not
+    # weight). vo2_short leads each dict: it has the least natural pick
+    # mass and loses fills last-in-line.
+    "build1": {"vo2_short": 4, "neuromuscular": 2, "sweet_spot": 1, "over_under": 1,
+               "threshold": 1, "vo2max": 1},
+    "build2": {"vo2_short": 3, "anaerobic": 1, "neuromuscular": 1, "over_under": 1},
+    "peak":   {"anaerobic": 1, "neuromuscular": 1, "vo2_short": 3},
+    # v3.5.4 — continuous plans are a single rolling "continuous" phase and
+    # were the ONLY plan type this floor never touched (it is phase-keyed to
+    # build/peak). Result: 58% of fresh continuous plans had ZERO anaerobic
+    # AND ZERO neuromuscular, despite the owner explicitly wanting sprint /
+    # anaerobic-capacity work for his group riding. ≥1 anaerobic + ≥1
+    # neuromuscular per 4-week rolling block ≈ one supra-threshold exposure
+    # every ~2 weeks — evidence-bounded (research caps anaerobic-family work
+    # at ≤1 quality session/wk; ANAEROBIC_OVERDUE_DAYS=7 in continuous_policy
+    # is the intent bar), never forced in the stepback week (excluded at the
+    # phase_weeks filter), and it displaces a low-stimulus steady slot rather
+    # than a hard aerobic session. The neuromuscular 6×4-8s "sprints inside
+    # easy rides" backbone is a separate, lighter mechanism (endurance_
+    # intervals content) — this floor guarantees the DEDICATED sessions.
+    "continuous": {"anaerobic": 1, "neuromuscular": 1},
+}
+
 def _enforce_build2_peak_hard_floor(
     weeks: list,
     pool_index: dict,
@@ -7295,60 +7478,7 @@ def _enforce_build2_peak_hard_floor(
     # v4.6.1: build2+peak each must have ≥1 anaerobic + ≥1 neuromuscular +
     # ≥2 vo2_short. We also enforce a softer build1 floor for vo2_short
     # (≥2) so the across-plan ≥10 vo2_short headline target is reachable.
-    phase_floors = {
-        # build1 is a 4-week phase; we ask for 4 vo2_short + 2 neuromuscular
-        # so the across-plan target ≥10 vo2_short / ≥4 neuromuscular is reached.
-        # v4.6.2 PLANNER-DIVERSITY-PUSH: also enforce 1 sweet_spot in build1
-        # so the canonical {threshold, vo2max, sweet_spot, over_under} 4-shape
-        # rotation is visible in every build phase regardless of seed (the
-        # strong novelty boost can salt-bias sweet_spot to zero in build1+
-        # build2 if it happened to fill base-phase slots first).
-        # v2.0.3 F1: over_under sits at mix weight ~0.09 → E[picks]≈1 → rounds
-        # to 0 in build, so it needs the SAME hard-floor as the other protected
-        # interval classes. ≥1 in build1 AND build2 completes the 4-shape
-        # rotation without crowding the other 3 hard types (each floor is
-        # filled by swapping the lowest-stimulus steady slots, not the hards).
-        # v3.2.2 (#14): threshold joins the build floors — the ORIGINAL
-        # "threshold starved in builds" symptom. The niche-class floors above
-        # force 8-9 swaps across build1+build2 while threshold had NO floor
-        # and (being outside all_targets) its natural picks were even legal
-        # SWAP VICTIMS — on unlucky seeds builds ended with zero threshold
-        # work (pinned seed 12345 reproduced it). ≥1 per build phase keeps
-        # the canonical 4-shape rotation intact and shields threshold picks
-        # from the sibling-floor swap pass.
-        # vo2max gets the same ≥1 shield: fixing threshold alone just moved
-        # the crowd-out to vo2max on the pinned seed — the canonical 4-shape
-        # holds only when ALL four are floor-protected (swap-immune).
-        # Dict ORDER is fill priority (the swap loop walks mins.items() and
-        # per-week hit caps are a shared budget): niche classes with no
-        # natural pick mass fill FIRST; the canonical shields last — they
-        # exist mostly to make natural threshold/vo2max picks swap-immune
-        # (all_targets membership), rarely to force a fill.
-        # The shields live in build1 ONLY: the canonical-4 contract is over
-        # build1+build2 COMBINED, and each extra target class shrinks the
-        # phase's swap-victim pool (all_targets slots are immune) — putting
-        # them in build2 too starved its anaerobic fill (capacity, not
-        # weight). vo2_short leads each dict: it has the least natural pick
-        # mass and loses fills last-in-line.
-        "build1": {"vo2_short": 4, "neuromuscular": 2, "sweet_spot": 1, "over_under": 1,
-                   "threshold": 1, "vo2max": 1},
-        "build2": {"vo2_short": 3, "anaerobic": 1, "neuromuscular": 1, "over_under": 1},
-        "peak":   {"anaerobic": 1, "neuromuscular": 1, "vo2_short": 3},
-        # v3.5.4 — continuous plans are a single rolling "continuous" phase and
-        # were the ONLY plan type this floor never touched (it is phase-keyed to
-        # build/peak). Result: 58% of fresh continuous plans had ZERO anaerobic
-        # AND ZERO neuromuscular, despite the owner explicitly wanting sprint /
-        # anaerobic-capacity work for his group riding. ≥1 anaerobic + ≥1
-        # neuromuscular per 4-week rolling block ≈ one supra-threshold exposure
-        # every ~2 weeks — evidence-bounded (research caps anaerobic-family work
-        # at ≤1 quality session/wk; ANAEROBIC_OVERDUE_DAYS=7 in continuous_policy
-        # is the intent bar), never forced in the stepback week (excluded at the
-        # phase_weeks filter), and it displaces a low-stimulus steady slot rather
-        # than a hard aerobic session. The neuromuscular 6×4-8s "sprints inside
-        # easy rides" backbone is a separate, lighter mechanism (endurance_
-        # intervals content) — this floor guarantees the DEDICATED sessions.
-        "continuous": {"anaerobic": 1, "neuromuscular": 1},
-    }
+    phase_floors = dict(_PHASE_HARD_FLOORS)
     # F1 (v2.1/B5): when opt-in block periodization is on, REPLACE the flat
     # forced-4-shape floor with a BLOCK-AWARE floor — concentrate ~≥70% of each
     # phase-block's HIT on its focus class and RETAIN ≥1 complementary quality
@@ -7438,7 +7568,7 @@ def _enforce_build2_peak_hard_floor(
             # Source candidates: workouts whose CACHE primary is cc_target
             # (NOT the by_class filename-prefix bucketing — that bucket
             # mixes files whose name starts with the class prefix but whose
-            # content is something else, e.g. anaerobic_3x25s_54min.zwo
+            # content is something else, e.g. anaerobic_ladder7_180pct_59min.zwo
             # is content-classified as neuromuscular). The post-pass count
             # check uses the cache primary too, so if we swap in a file
             # whose by_class bucket is anaerobic but whose cache primary
@@ -7783,7 +7913,18 @@ def _enforce_weekly_hit_cap(weeks: list, library: list[dict]) -> None:
                 cc = (_content_class_for_zwo(s.zwo_file or "")
                       or s.session_type or "")
                 class_counts[cc] = class_counts.get(cc, 0) + 1
-            redundant_cc = max(class_counts, key=lambda c: class_counts[c])
+            # max() on a dict returns the FIRST-INSERTED key when values tie,
+            # so in a week whose HIT classes all sit at count 1 the victim was
+            # simply whichever HIT slot came earliest — and this pass runs AFTER
+            # the hard-floor pass, so it would demote the single over_under that
+            # pass had just placed, leaving the plan with none at all. Spare a
+            # class that is sitting exactly ON its phase floor; it stays a
+            # PREFERENCE, so the cap still binds when every candidate is floored.
+            floors = _PHASE_HARD_FLOORS.get(getattr(wk, "phase", "") or "", {})
+            def _victim_rank(c: str) -> tuple:
+                at_floor = c in floors and class_counts[c] <= floors[c]
+                return (class_counts[c], not at_floor)
+            redundant_cc = max(class_counts, key=_victim_rank)
             demote_candidates = [
                 (i, s) for i, s in demotable
                 if (_content_class_for_zwo(s.zwo_file or "")
@@ -8377,6 +8518,122 @@ _RACE_T2_MAX_MIN = 45          # T-2: rest or ≤45min z1
 _RACE_FINAL3_MAX_MIN = 75      # cap for any ride inside T-1..T-3 (<90 invariant)
 _RACE_WEEK_MIN_REST = 3        # FC2a: ≥3 rest days in the race week
 
+# ── Re-entry after a short break (docs/SCIENCE.md "Returning after a break") ─
+# A rider back from 4-7 days of complete rest is neither peaked nor detrained
+# but RESTED AND UNPRIMED: glycogen-replete, fatigue-free, ~5% down on plasma
+# volume — all of it lost within 48h and flat thereafter (Cullinane 1986,
+# PMID 3747802) — with VO2max intact out to 10 days and economy intact at 14
+# (Houmard 1992, PMID 1487339). Complete rest is the one taper variant that
+# does NOT supercompensate: in Shepley 1992's crossover (PMID 1559951) 7 days
+# of rest-only was -3% against +22% for high-intensity/low-volume. And a
+# single intense session restores the plasma volume the break cost within 24h
+# (Gillen 1991, PMID 1761491) — so the lightest session in the library is
+# precisely the one least able to fix the actual deficit. The first session
+# back is therefore TAPER-SHAPED: the planned intensity, at reduced volume
+# (Bosquet 2007 meta, PMID 17762369: taper = cut volume, hold intensity).
+_REENTRY_MIN_GAP_D = 4         # 1-3 days off costs nothing: ride the plan
+_REENTRY_MID_GAP_D = 8         # 8-14: quality capped at threshold
+_REENTRY_MAX_GAP_D = 15        # beyond: the gap-regen recovery ramp owns it
+_REENTRY_VOL_SHORT = 0.70      # 4-7d: volume x0.70 — inside Bosquet's 41-60%
+                               # cut read against a single session; extrapolated
+_REENTRY_VOL_MID = 0.60        # 8-14d: deeper cut, ceiling one notch down
+_REENTRY_EASY_TYPES = ("recovery", "z2", "endurance", "long_z2")
+_REENTRY_CAPPED_TYPES = ("vo2max", "overunder", "anaerobic", "sprint")
+
+
+def _reentry_scale(s, factor: float, lib) -> None:
+    """Cut a session's volume, keep its type, re-match the file."""
+    dur = int(round((s.duration_min or 60) * factor / 5.0) * 5)
+    s.duration_min = max(30, dur)
+    s.tss_estimate = round(s.duration_min / 60 * TSS_PER_HOUR.get(s.session_type, 45))
+    s.description = (f"{s.session_type} ({s.duration_min}min) — first session "
+                     "back: planned intensity, volume trimmed")
+    s.zwo_file = ""
+    s.zwo_name = ""
+    try:
+        match_zwo(s, lib)
+    except Exception:  # noqa: BLE001
+        log.debug("re-entry re-match failed", exc_info=True)
+
+
+def _apply_reentry_shape(weeks: list, gap_days: "int | None",
+                         tsb: "float | None", library=None) -> None:
+    """Shape the first week back after a short complete break.
+
+    4-7 days off: the first non-rest day carries the week's first QUALITY
+    session at ~70% volume — swapped forward if an easy day sat in front of
+    it. 8-14 days: week-1 quality is capped at threshold and the first quality
+    day is cut to ~60%. Under 4 days this is a no-op (ride the plan); 15+ is
+    the gap-regen ramp's territory, not ours.
+
+    TSB still NEGATIVE after days of rest means the pre-break hole was deep or
+    the break was not rest at all (illness is the case the planner cannot
+    see) — leave the conservative layout standing. A TSB a few points either
+    side of zero is model noise (Busso 2023, PMID 36791017), so only a clearly
+    negative reading blocks.
+    """
+    if gap_days is None or gap_days < _REENTRY_MIN_GAP_D \
+            or gap_days >= _REENTRY_MAX_GAP_D or not weeks:
+        return
+    if tsb is not None and tsb < -5:
+        log.info("EVENT=reentry_blocked gap=%sd tsb=%.1f (still fatigued — "
+                 "keeping the conservative first week)", gap_days, tsb)
+        return
+    lib = library if library is not None else load_workout_library()
+    wk = weeks[0]
+    sessions = [s for s in wk.sessions
+                if getattr(s, "session_type", "rest") != "rest"
+                and not _race_shape_frozen(s)]
+    if not sessions:
+        return
+
+    if gap_days < _REENTRY_MID_GAP_D:
+        first = sessions[0]
+        if first.session_type in _REENTRY_EASY_TYPES:
+            quality = next((s for s in sessions[1:]
+                            if s.session_type not in _REENTRY_EASY_TYPES), None)
+            if quality is None:
+                return  # an all-easy week (stepback) is not ours to harden
+            # Swap the TYPES between the two days; each keeps its day and its
+            # availability-sized duration until the scale below.
+            first.session_type, quality.session_type = (
+                quality.session_type, first.session_type)
+            quality.tss_estimate = round(
+                (quality.duration_min or 60) / 60
+                * TSS_PER_HOUR.get(quality.session_type, 45))
+            quality.description = f"{quality.session_type} — moved back in the week"
+            quality.zwo_file = ""
+            quality.zwo_name = ""
+            try:
+                match_zwo(quality, lib)
+            except Exception:  # noqa: BLE001
+                log.debug("re-entry easy-day re-match failed", exc_info=True)
+        _reentry_scale(first, _REENTRY_VOL_SHORT, lib)
+        log.info("EVENT=reentry_shape gap=%sd first=%s dur=%smin",
+                 gap_days, first.session_type, first.duration_min)
+        return
+
+    # 8-14 days: hold quality, drop the ceiling one notch. VO2max is intact at
+    # 10 days (Cullinane) but time-to-exhaustion is -9% by 14 (Houmard), so
+    # threshold work stands while the max-aerobic top end waits a week.
+    scaled_one = False
+    for s in sessions:
+        if s.session_type in _REENTRY_CAPPED_TYPES:
+            s.session_type = "threshold"
+            s.zwo_file = ""
+            s.zwo_name = ""
+            s.tss_estimate = round((s.duration_min or 60) / 60
+                                   * TSS_PER_HOUR["threshold"])
+            s.description = "threshold — first week back: top end waits"
+            try:
+                match_zwo(s, lib)
+            except Exception:  # noqa: BLE001
+                log.debug("re-entry cap re-match failed", exc_info=True)
+        if not scaled_one and s.session_type not in _REENTRY_EASY_TYPES:
+            _reentry_scale(s, _REENTRY_VOL_MID, lib)
+            scaled_one = True
+    log.info("EVENT=reentry_shape gap=%sd ceiling=threshold", gap_days)
+
 
 def _race_shape_frozen(s) -> bool:
     """True when the race-week shaper must not touch this slot: the race entry
@@ -8403,6 +8660,15 @@ def _make_opener_session(day, day_name, library) -> "PlannedSession":
             continue
         dur = float(row.get("Duration(min)") or 0)
         if not (35 <= dur <= 50):  # the ~40-50min opener window (≤50 hard)
+            continue
+        # An opener carries a short-surge file on a z2 slot by design, but
+        # "short surges" is not "any hard session that happens to be 45min".
+        # 22 of the 42 files tied at exactly 45min are over the easy ceiling,
+        # so which one won was decided by the alphabet — and a library rename
+        # duly handed race eve a 0.83-IF / 52-TSS anaerobic ladder. The
+        # aggregate-load ceiling match_zwo already applies (line 4150) belongs
+        # here too; is_opener still exempts the file from being re-matched away.
+        if float(row.get("IF") or 0) > _EASY_SLOT_IF_CEILING:
             continue
         key = (abs(dur - _OPENER_DURATION_MIN), row.get("File") or "")
         if best is None or key < best[0]:
@@ -9403,6 +9669,15 @@ def reforecast(
                     s.description = f"z2 ({new_dur}min) — restored from rest"
                     s.zwo_file = ""
                     s.zwo_name = ""
+                elif getattr(s, "user_swapped", False):
+                    # A pinned day — swap-type, accepted redraw, FTP-test
+                    # choice — keeps the workout the rider chose. Applying the
+                    # calendar hours literally here rescaled the duration and,
+                    # past a 15% change, re-matched the file while excluding
+                    # the rider's pick: the exact "I accepted one workout and
+                    # got another" report. Unavailable (0h) still wins above —
+                    # a day the rider zeroed is rest whatever was pinned.
+                    pass
                 else:
                     # v1.7.3 — apply user's hours LITERALLY (both up and
                     # down). v1.7.1 used a ceiling-only rule, but that
@@ -10185,8 +10460,46 @@ def detect_plan_gaps(
                 "status": status,
             })
 
-    # Calculate absence in days (consecutive missed weeks × 7)
+    # The CURRENT week used to contribute nothing — the loop above stops at
+    # the first week whose end >= today — so a rider who went dark could not
+    # complete a 2-week streak until the following Monday, days after the
+    # pattern was already plain. The current week now joins PRO-RATA: planned
+    # TSS scaled to the days already elapsed, counted only from day 4 and
+    # only at the substantially-missed tier. On its own it still cannot
+    # trigger a rebuild (the regen gate needs a streak of 2, so a fully
+    # missed PAST week must anchor it) — it exists to finish a streak early,
+    # not to start one.
+    cur_partial_elapsed = 0
+    cur_week = next((w for w in plan_weeks
+                     if w.start.isoformat() <= today_str <= w.end.isoformat()),
+                    None)
+    if cur_week is not None and (cur_week.tss_target or 0) > 0:
+        elapsed_d = (today - cur_week.start).days
+        planned_to_date = cur_week.tss_target * (elapsed_d / 7.0)
+        # >= 50 planned TSS so a tiny plan's early week cannot count on noise.
+        if elapsed_d >= 4 and planned_to_date >= 50:
+            actual = actual_by_week.get(cur_week.week_num, 0)
+            if actual / planned_to_date < 0.50:
+                consecutive_missed += 1
+                if consecutive_missed > max_consecutive:
+                    max_consecutive = consecutive_missed
+                    cur_partial_elapsed = elapsed_d
+                gap_weeks.append({
+                    "week_num": cur_week.week_num,
+                    "phase": cur_week.phase,
+                    "planned_tss": round(planned_to_date),
+                    "actual_tss": round(actual),
+                    "ratio": round(actual / planned_to_date, 2),
+                    "status": "substantially_missed",
+                    "partial_week": True,
+                })
+
+    # Absence in days: full missed weeks x 7, and the current week counts
+    # only its elapsed days — the ramp must not be sized as if days that
+    # have not happened yet were already missed.
     absence_days = max_consecutive * 7
+    if cur_partial_elapsed:
+        absence_days -= (7 - cur_partial_elapsed)
 
     # Expected CTL from plan progression
     past_weeks_count = sum(1 for w in plan_weeks if w.end.isoformat() < today_str)

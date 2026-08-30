@@ -60,10 +60,21 @@ class ICUCredentialsMissing(Exception):
 class ICUAuthError(Exception):
     """HTTP 401/403 from Intervals.icu — credentials invalid or revoked.
 
-    Bubbles up to db._sync_loop where 5 consecutive hits flip auth_disabled
-    and stop retrying until the user fixes their key.
+    Bubbles up to db._sync_loop, which decides how many hits it takes to flip
+    auth_disabled. ``status`` is what that decision reads:
+
+      401 is UNAMBIGUOUS — probed live against intervals.icu, every dead
+      credential answers 401 ({"error":"Auth failed"}), and a transient blip is
+      a URLError / timeout / 5xx that _get retries 3× and raises as a DIFFERENT
+      type. So one 401 is proof and needs no strike budget.
+
+      403 is NOT proof — Cloudflare answers 403 "error code: 1010" to a blocked
+      User-Agent (independently of any credential), and ICU answers 403 to a
+      missing scope. Those keep the 5-strike budget.
     """
-    pass
+    def __init__(self, *args, status: "int | None" = None):
+        super().__init__(*args)
+        self.status = status
 
 
 class ICURateLimitError(Exception):
@@ -261,7 +272,8 @@ def _get(path: str, params: dict | None = None) -> list | dict | None:
             # "reconnect intervals.icu" path). No retry.
             if e.code == 401:
                 _log.warning(f"ICU HTTP 401 on {path}: {e.reason}")
-                raise ICUAuthError(f"HTTP 401 on {path}: {e.reason}") from e
+                raise ICUAuthError(f"HTTP 401 on {path}: {e.reason}",
+                                   status=401) from e
             # 403 = forbidden. A MISSING-SCOPE 403 (valid token, but the endpoint
             # needs a scope we didn't request — e.g. SETTINGS:READ on /athlete/0)
             # is NOT a dead credential; treating it as one wrongly disabled a
@@ -278,7 +290,8 @@ def _get(path: str, params: dict | None = None) -> list | dict | None:
                     _log.warning(f"ICU 403 missing-scope on {path}: {_body}")
                     raise ICUServerError(f"HTTP 403 (scope) on {path}") from e
                 _log.warning(f"ICU HTTP 403 on {path}: {e.reason}")
-                raise ICUAuthError(f"HTTP 403 on {path}: {e.reason}") from e
+                raise ICUAuthError(f"HTTP 403 on {path}: {e.reason}",
+                                   status=403) from e
             # 429: rate-limited. If Retry-After header set and we have budget, sleep + retry.
             if e.code == 429:
                 retry_after_raw = e.headers.get("Retry-After", "0") if e.headers else "0"

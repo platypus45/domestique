@@ -100,13 +100,22 @@ echo "[1b/9] Version smoke-test OK — bundle reports $BUNDLED_VER"
 # HR-mode riders using the native save dialog.
 # python3.12 explicitly: the system python3 (3.9) can't import app.py
 # (PEP 604 unions in FastAPI annotations evaluate at import time).
+# The workout is CHOSEN FROM THE LIBRARY, never named literally. A hardcoded
+# filename made this smoke test fail the whole build the first time the library
+# was renamed — and it failed for the one reason a smoke test must not, a stale
+# fixture rather than a real defect in the thing under test. Any threshold file
+# exercises the same code path.
 FIT_SMOKE="$(python3.12 - <<'PYEOF'
 import sys
 sys.path.insert(0, ".")
 try:
     import app
+    from pathlib import Path
+    picks = sorted(Path("workouts").glob("threshold_*.zwo"))
+    if not picks:
+        raise SystemExit("no threshold workout in the library to smoke-test")
     data = app.build_fit_workout_bytes("z2", 56, "smoke",
-                                       "threshold_steady_56min.zwo", view="hr")
+                                       picks[0].name, view="hr")
     import fitparse
     steps = list(fitparse.FitFile(data).get_messages("workout_step"))
     hr = sum(1 for m in steps

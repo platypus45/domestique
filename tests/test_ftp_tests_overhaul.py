@@ -160,7 +160,7 @@ def test_perfect_hour_of_power_not_graded_over():
 def test_ramp_test_execution_is_silent():
     import execution_score as es
     planned = {"session_type": "ftp_test", "duration_min": 60,
-               "tss_estimate": 60, "zwo_file": "ftp_test_ramp.zwo"}
+               "tss_estimate": 60, "zwo_file": "ftp_test_ramp_ladder21_200pct_35min.zwo"}
     ride = {"duration_min": 22.0, "tss": 40,
             "time_in_zone": {"z1": 600, "z2": 200, "z3": 100, "z4": 120,
                              "z5": 100, "z6": 100, "z7": 100}}
@@ -172,7 +172,7 @@ def test_coggan_test_grading_unchanged():
     import execution_score as es
     planned = {"session_type": "ftp_test", "duration_min": 59,
                "tss_estimate": 72,
-               "zwo_file": "ftp_test_coggan_20min.zwo"}
+               "zwo_file": "ftp_test_coggan_3x1min-1min_95pct_59min.zwo"}
     ride = {"duration_min": 59.0, "tss": 72,
             "time_in_zone": {"z1": 1900, "z2": 200, "z3": 0,
                              "z4": 1200, "z5": 240, "z6": 0, "z7": 0}}
@@ -185,12 +185,12 @@ def test_coggan_test_grading_unchanged():
 
 def test_ftp_test_family_tokens():
     import training_planner as tp
-    assert tp._ftp_test_family("ftp_test_coggan_20min.zwo")
-    assert tp._ftp_test_family("ftp_test_ramp_10w_step.zwo")
+    assert tp._ftp_test_family("ftp_test_coggan_3x1min-1min_95pct_59min.zwo")
+    assert tp._ftp_test_family("ftp_test_ramp_10w_step_ladder20_152pct_52min.zwo")
     assert tp._ftp_test_family("ftp_test_60min_100pct_86min.zwo")
-    assert tp._ftp_test_family("ftp_test_cts_2x8min_54min.zwo") is None
-    assert tp._ftp_test_family("ftp_test_mixed_90min.zwo") is None
-    assert tp._ftp_test_family("ftp_test_protocol_53min.zwo") is None
+    assert tp._ftp_test_family("ftp_test_cts_3x1min-1min_105pct_54min.zwo") is None
+    assert tp._ftp_test_family("ftp_test_ladder4_110pct_90min.zwo") is None
+    assert tp._ftp_test_family("ftp_test_2x15s-4min_250pct_54min.zwo") is None
 
 
 def test_test_slot_never_serves_unscorable_protocol():

@@ -130,15 +130,37 @@ class AutoReforecastBase(unittest.TestCase):
         self._tmpdir.cleanup()
 
 
-class TestSkipWhenNewRidesZero(AutoReforecastBase):
-    """new_rides<=0 → early return; reforecast_date NOT touched."""
+class TestRunsOncePerDayWithoutNewRides(AutoReforecastBase):
+    """new_rides<=0 runs the chain ONCE a day, not on every sync.
 
-    def test_skip_when_new_rides_zero(self):
+    This class used to assert the opposite — that zero new rides returned
+    immediately and touched nothing. That was the bug: a miss is the ABSENCE
+    of a ride, so the one event the adaptation chain most needs to see was the
+    one event that skipped it. Sessions were never marked missed and the week
+    kept its original shape.
+
+    The cost concern the old gate protected against is real and still handled,
+    just by a date stamp rather than by never running: a sync that brings no
+    rides does the work at most once per calendar day.
+    """
+
+    def test_runs_when_no_new_rides_arrived(self):
         app_module._maybe_auto_reforecast("default", 0)
         plan = json.loads(self._json_path.read_text())
-        # No reforecast_date was set originally and helper must not have
-        # written one.
-        self.assertNotIn("reforecast_date", plan)
+        self.assertIn("reconcile_date", plan,
+                      "the daily pass did not run — missed days would never "
+                      "be marked, and the plan would never adapt to them")
+
+    def test_does_not_repeat_within_the_same_day(self):
+        app_module._maybe_auto_reforecast("default", 0)
+        first = json.loads(self._json_path.read_text())
+        app_module._maybe_auto_reforecast("default", 0)
+        app_module._maybe_auto_reforecast("default", 0)
+        again = json.loads(self._json_path.read_text())
+        self.assertEqual(first.get("reconcile_date"), again.get("reconcile_date"))
+        self.assertEqual(first.get("reforecast_date"), again.get("reforecast_date"),
+                         "the chain re-ran on a later same-day sync — this is "
+                         "the churn the original new_rides gate prevented")
 
 
 class TestSkipWhenRecentReforecast(AutoReforecastBase):

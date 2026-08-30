@@ -222,3 +222,99 @@ def test_w_prime_icu_source_is_overwritten_by_icu(tmp_path, monkeypatch):
     assert row is not None
     assert row[0] == 25000
     assert row[1] == "intervals.icu"
+
+
+# ─── Token-lifecycle: a dead credential must fail LOUDLY, and fast ───────────
+# Regression for "sync just stops working with no message". intervals.icu
+# issues NO refresh token and NO expires_in (forum #2759: "it doesn't use
+# refresh tokens, only access tokens"), so a token only ever dies by
+# revocation — and a revoked credential answers 401. The reconnect banner is
+# driven by db._auth_disabled, which used to need 5 consecutive background
+# failures = 4 × 1800s = 2h of CONTINUOUS uptime, from a LOOP-LOCAL counter
+# that every app restart reset to zero.
+
+def _spin_sync_loop(db, monkeypatch, exc, max_iters=12):
+    """Run db._sync_loop with run_sync raising ``exc``; return the call count."""
+    calls = {"n": 0, "iters": 0}
+
+    def _raise(*_a, **_kw):
+        calls["n"] += 1
+        raise exc
+    monkeypatch.setattr(db, "run_sync", _raise)
+    monkeypatch.setattr(db._sync_stop, "wait", lambda *_a, **_kw: None)
+
+    def _is_set():
+        calls["iters"] += 1
+        return calls["iters"] > max_iters or db._auth_disabled
+    monkeypatch.setattr(db._sync_stop, "is_set", _is_set)
+    db._sync_loop(interval_sec=1)
+    return calls["n"]
+
+
+def _fresh_db(db, tmp_path):
+    db.set_db_path(tmp_path / "t.db")
+    db.close_all_connections()
+    db.init_db()
+    db._auth_disabled = False
+    db._consecutive_failures = 0
+    db._last_sync_error = None
+
+
+def test_401_disables_sync_on_the_first_strike(monkeypatch, tmp_path):
+    """A 401 is a dead credential — pause immediately so the reconnect banner
+    shows on the next 60s poll, not after 2h of uninterrupted uptime."""
+    import db
+    _fresh_db(db, tmp_path)
+    n = _spin_sync_loop(
+        db, monkeypatch,
+        ICUAuthError("HTTP 401 on athlete/i225278/wellness: Unauthorized",
+                     status=401))
+    assert db._auth_disabled is True
+    assert n == 1, f"expected 1 sync attempt before pausing, got {n}"
+
+
+def test_403_still_takes_five_strikes(monkeypatch, tmp_path):
+    """403 is NOT proof of a dead credential — Cloudflare answers 403
+    'error code: 1010' to a blocked User-Agent and ICU answers 403 to a
+    missing scope. Keep the strike budget there."""
+    import db
+    _fresh_db(db, tmp_path)
+    n = _spin_sync_loop(
+        db, monkeypatch,
+        ICUAuthError("HTTP 403 on athlete/i225278/wellness: Forbidden",
+                     status=403))
+    assert db._auth_disabled is True
+    assert n == 5, f"expected 5 sync attempts before pausing, got {n}"
+
+
+def test_get_stamps_the_status_on_ICUAuthError():
+    """training._get must carry which status it saw — db reads .status."""
+    import db
+    with patch("urllib.request.urlopen", side_effect=_http_error(401)):
+        with pytest.raises(ICUAuthError) as ei:
+            training._get("athlete/0")
+    assert ei.value.status == 401
+    assert db._is_dead_credential(ei.value) is True
+
+    with patch("urllib.request.urlopen", side_effect=_http_error(403)):
+        with pytest.raises(ICUAuthError) as ei:
+            training._get("athlete/0")
+    assert ei.value.status == 403
+    assert db._is_dead_credential(ei.value) is False
+
+
+def test_typed_non_auth_errors_are_never_auth_failures():
+    """db._is_auth_error's '401'/'403' substring fallback undid training._get's
+    deliberate classification: a missing-scope 403 is mapped to ICUServerError
+    on purpose (so a working read-only connection is not nagged to reconnect),
+    and an activity id like i403992 made a plain 500 look like an auth failure."""
+    import db
+    from training import ICUNetworkError, ICURateLimitError, ICUServerError
+    assert db._is_auth_error(ICUServerError("HTTP 403 (scope) on athlete/0")) is False
+    assert db._is_auth_error(ICUServerError("HTTP 500 on activity/i403992")) is False
+    assert db._is_auth_error(ICUServerError("HTTP 422 on activity/4013")) is False
+    assert db._is_auth_error(ICURateLimitError(30.0, "HTTP 429")) is False
+    assert db._is_auth_error(ICUNetworkError("Connection error on athlete/i401/x")) is False
+    # Real auth errors still count.
+    assert db._is_auth_error(ICUAuthError("HTTP 401", status=401)) is True
+    assert db._is_auth_error(ICUAuthError("HTTP 403", status=403)) is True

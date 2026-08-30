@@ -1,6 +1,6 @@
 """v1.0.3 fix-forward(workout-detail UX) — JS-side filename derivation.
 
-User report: clicking ``Download ZWO`` gave ``tempo_steady_57min.zwo``;
+User report: clicking ``Download ZWO`` gave ``tempo_4x150s_85pct_63min.zwo``;
 clicking ``Download FIT`` for the same session gave ``Tuesday_TEMPO.fit``.
 That mismatch confused users who expected to download "the same workout in
 a different format".

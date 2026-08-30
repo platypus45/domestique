@@ -1,0 +1,26 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>Rønnestad 30/15 VO2max — 3x9 @ 113% (46 min)</name>
+    <description>3 series of 9 x (30s @ 113% FTP / 15s easy), 3 min easy between series. The 15 s recoveries are deliberately too short for oxygen uptake to fall back, so it ratchets up over the first few reps and stays near maximum for the rest of the series — which is the point. Time spent near VO2max is what drives the adaptation, and short on/off reps buy more of it than long intervals at the same average power. The percentage is a STARTING POINT, not the protocol: the source studies prescribed no percentage at all — ride the highest power you can repeat in the LAST series and adjust between series. RPE 16-18. A session you fade through trains fading. Warmup: 12min from 45% to 78% FTP | Microintervals: 3 x 9 x (30s @ 113% / 15s @ 56%) | Cooldown: 8min from 56% to 45% FTP</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="720" PowerLow="0.45" PowerHigh="0.78" pace="0" Cadence="90" />
+        <IntervalsT Repeat="9" OnDuration="30" OffDuration="15" OnPower="1.13" OffPower="0.56" pace="0" Cadence="100" CadenceResting="85">
+            <textevent timeoffset="0" message="Series 1 of 3 — 9 x 30/15. Settle on a power you can repeat to the end." />
+        </IntervalsT>
+        <SteadyState Duration="180" Power="0.56" pace="0" Cadence="90">
+            <textevent timeoffset="0" message="Easy 3 min — spin, stay rolling." />
+        </SteadyState>
+        <IntervalsT Repeat="9" OnDuration="30" OffDuration="15" OnPower="1.13" OffPower="0.56" pace="0" Cadence="100" CadenceResting="85">
+            <textevent timeoffset="0" message="Series 2 of 3 — 9 x 30/15. Same power as series 1." />
+        </IntervalsT>
+        <SteadyState Duration="180" Power="0.56" pace="0" Cadence="90">
+            <textevent timeoffset="0" message="Easy 3 min — spin, stay rolling." />
+        </SteadyState>
+        <IntervalsT Repeat="9" OnDuration="30" OffDuration="15" OnPower="1.13" OffPower="0.56" pace="0" Cadence="100" CadenceResting="85">
+            <textevent timeoffset="0" message="Series 3 of 3 — 9 x 30/15. Same power as series 1." />
+        </IntervalsT>
+        <Cooldown Duration="480" PowerLow="0.56" PowerHigh="0.45" pace="0" Cadence="90" />
+    </workout>
+</workout_file>

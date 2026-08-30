@@ -37,7 +37,7 @@ def test_auto_adapt_reconciles_current_week(monkeypatch):
         "sessions": [{
             "day": today_iso, "day_name": "X", "session_type": "z2",
             "duration_min": 60, "tss_estimate": 50, "status": "pending",
-            "zwo_file": "endurance_clean_60min.zwo", "zwo_name": "E60",
+            "zwo_file": "endurance_steady_65pct_60min.zwo", "zwo_name": "E60",
             "description": "",
         }],
     }])
@@ -239,3 +239,67 @@ def test_rebuild_preserves_top_level_keys_and_past_weeks():
     # past weeks kept verbatim (start dates still present in the rebuilt plan)
     starts = {w["start"] for w in pd["weeks"]}
     assert w1.isoformat() in starts and w2.isoformat() in starts
+
+
+# ── v3.7.1: VO2max microintervals-only preference ────────────────────────────
+
+def test_microinterval_preference_measures_the_main_set_not_a_finisher():
+    """The classifier's pattern_microinterval flag fires when a microinterval
+    pattern occurs ANYWHERE, which a warm-up drill or a short finisher is enough
+    to do — vo2_short_2x5x2min_115pct_81min.zwo carries it while being a 10x2min
+    session. A preference built on that flag served exactly the long-rep
+    sessions it was meant to exclude, so the row now carries the time-weighted
+    share of repeated work sitting in short reps."""
+    lib = tp.load_workout_library()
+    by = {w["File"]: w for w in lib}
+    tenx2 = by.get("vo2_short_2x5x2min_115pct_81min.zwo")
+    if tenx2 is not None:
+        assert tenx2.get("MicroFrac") is not None
+        assert tenx2["MicroFrac"] < tp.MICROINTERVAL_MIN_FRAC, (
+            "a 10x2min session must not read as a microinterval session")
+    ron = by.get("vo2_short_3x13x30s-15s_113pct_55min.zwo")
+    if ron is not None:
+        assert ron.get("MicroFrac") == 1.0
+
+
+def test_microintervals_only_shifts_vo2_slots_and_still_fills_them():
+    """ON must raise the microinterval share well above OFF, and must never
+    leave a slot unfilled — a day with no session is worse than one long
+    interval the rider did not ask for."""
+    lib = tp.load_workout_library()
+    by = {w["File"]: w for w in lib}
+
+    def sweep(flag):
+        tp.set_vo2_micro_only(flag)
+        hit = tot = 0
+        for wk in range(1, 21):
+            for dur in (45, 60):
+                s = tp.PlannedSession(day="", day_name="", session_type="vo2max",
+                                      duration_min=dur, tss_estimate=80,
+                                      description="")
+                m = tp.match_zwo(s, lib, week_num=wk, day_idx=2)
+                f = getattr(m, "zwo_file", None)
+                assert f, "microintervals-only left a VO2max slot unfilled"
+                tot += 1
+                mf = (by.get(f) or {}).get("MicroFrac")
+                if mf is not None and mf >= tp.MICROINTERVAL_MIN_FRAC:
+                    hit += 1
+        return hit, tot
+
+    try:
+        off_hit, tot = sweep(False)
+        on_hit, _ = sweep(True)
+    finally:
+        tp.set_vo2_micro_only(False)
+    assert on_hit > off_hit, (off_hit, on_hit, tot)
+    assert on_hit >= 0.75 * tot, f"only {on_hit}/{tot} slots microinterval"
+
+
+def test_the_preference_defaults_off_and_never_goes_stale():
+    """Generation-scoped state: always set explicitly, including to False, so a
+    plan generated after a microinterval plan is not silently still filtered."""
+    assert tp.Goal.__dataclass_fields__["vo2_microintervals_only"].default is False
+    tp.set_vo2_micro_only(True)
+    assert tp.get_vo2_micro_only() is True
+    tp.set_vo2_micro_only(getattr(object(), "vo2_microintervals_only", False))
+    assert tp.get_vo2_micro_only() is False

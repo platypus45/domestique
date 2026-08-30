@@ -1095,6 +1095,18 @@ def _is_auth_error(exc: Exception) -> bool:
             return True
     except Exception:
         pass
+    # A typed NON-auth ICU error is a deliberate classification and must win
+    # over the substring fallback below. training._get maps a missing-scope 403
+    # to ICUServerError precisely so a working read-only connection is not
+    # nagged to reconnect — the "403" substring undid that. It also read
+    # ICUServerError("HTTP 500 on activity/i403992") as an auth failure,
+    # because the ACTIVITY ID contains "403".
+    try:
+        from training import ICUNetworkError, ICURateLimitError, ICUServerError
+        if isinstance(exc, (ICUNetworkError, ICURateLimitError, ICUServerError)):
+            return False
+    except Exception:
+        pass
     try:
         from urllib.error import HTTPError
         if isinstance(exc, HTTPError) and exc.code in (401, 403):
@@ -1103,6 +1115,23 @@ def _is_auth_error(exc: Exception) -> bool:
         pass
     msg = str(exc).lower()
     return "401" in msg or "403" in msg or "unauthorized" in msg
+
+
+def _is_dead_credential(exc: Exception) -> bool:
+    """HTTP 401 from ICU — the credential is gone, not a blip.
+
+    Probed live against intervals.icu: an invalid bearer token, an invalid API
+    key and a bad athlete path all answer 401. A blocked User-Agent answers 403
+    (Cloudflare "error code: 1010") and a missing scope answers 403, so only 401
+    is proof. Network blips never reach here at all — they are URLError /
+    timeout / 5xx, retried 3× inside training._get and raised as a different
+    exception type.
+    """
+    try:
+        from training import ICUAuthError
+        return isinstance(exc, ICUAuthError) and getattr(exc, "status", None) == 401
+    except Exception:
+        return False
 
 
 def _sync_loop(interval_sec: int = 1800):
@@ -1151,11 +1180,19 @@ def _sync_loop(interval_sec: int = 1800):
             log.error("Background sync failed (#%d): %s", _consecutive_failures, e)
             if _is_auth_error(e):
                 consecutive_auth_failures += 1
-                if consecutive_auth_failures >= 5:
+                # A 401 is a dead credential — pause on the FIRST one. The
+                # 5-strike ladder cost 2h of CONTINUOUS uptime before the
+                # reconnect banner appeared (4 × 1800s of interruptible sleep),
+                # and this counter is loop-local, so every app restart put it
+                # back to zero. On a desktop app opened for ten minutes, a
+                # revoked token read as "sync just stops working, no message".
+                # 403 keeps the budget: it is not proof of a dead credential.
+                if _is_dead_credential(e) or consecutive_auth_failures >= 5:
                     _auth_disabled = True
                     log.error(
-                        "5 consecutive auth failures — disabling background sync. "
-                        "Check ICU credentials and restart."
+                        "EVENT=icu_auth_disabled after=%d auth failure(s) — "
+                        "pausing background sync. Reconnect intervals.icu.",
+                        consecutive_auth_failures
                     )
                     return
             else:

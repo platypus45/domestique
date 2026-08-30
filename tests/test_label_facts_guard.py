@@ -22,12 +22,12 @@ WK = ROOT / "workouts"
 # threshold-label t200 rule (their sprint caps were owner-clamped 2.0→1.45 in
 # this wave, so the exemption is now dormant — kept to pin provenance).
 FUSED_EXEMPT = frozenset({
-    "neuromuscular_15s0s_7x_60min.zwo",
-    "neuromuscular_15s0s_8x_60min.zwo",
-    "neuromuscular_15s0s_8x_60min_renamed_v46_1.zwo",
-    "neuromuscular_15s300s_6x_74min.zwo",
-    "sprints_5x2min_53min.zwo",
-    "sprints_6x15s_58min.zwo",
+    "neuromuscular_7x15s_140pct_62min.zwo",
+    "neuromuscular_5x150s_80pct_62min.zwo",
+    "neuromuscular_5x150s_80pct_62min_v2.zwo",
+    "neuromuscular_3x12min_100pct_77min.zwo",
+    "sprints_5x2min-1min_105pct_59min.zwo",
+    "sprints_7x15s_140pct_60min.zwo",
 })
 
 
@@ -162,10 +162,10 @@ def test_detector_real_library_files_pinned():
     classifier-rerun blocklist needed)."""
     clc = _clc()
     keep_ftp = [
-        "ftp_test_coggan_20min.zwo", "ftp_test_coggan_20min_v2.zwo",
-        "ftp_test_coggan_20min_v3.zwo", "ftp_test_mixed_90min.zwo",
-        "ftp_test_protocol_53min.zwo", "ftp_test_ramp.zwo",
-        "ftp_test_ramp_20w_step.zwo", "ftp_test_ramp_10w_step.zwo",
+        "ftp_test_coggan_3x1min-1min_95pct_59min.zwo", "ftp_test_coggan_3x1min-1min_95pct_59min_v2.zwo",
+        "ftp_test_coggan_3x1min-1min_95pct_59min_v3.zwo", "ftp_test_ladder4_110pct_90min.zwo",
+        "ftp_test_2x15s-4min_250pct_54min.zwo", "ftp_test_ramp_ladder21_200pct_35min.zwo",
+        "ftp_test_ramp_20w_step_ladder23_256pct_43min.zwo", "ftp_test_ramp_10w_step_ladder20_152pct_52min.zwo",
     ]
     for fn in keep_ftp:
         p = WK / fn
@@ -174,15 +174,15 @@ def test_detector_real_library_files_pinned():
         feats = clc.extract_features_v104(power, segments)
         fresh, _, _ = clc.classify_v104(feats, tags=tags, segments=segments)
         assert fresh == "ftp_test", (fn, fresh)
-    for fn in ("threshold_2x10min_80min.zwo",
-               "threshold_mixed_60min_renamed_v46_1.zwo"):
+    for fn in ("threshold_6x10min_100pct_85min.zwo",
+               "threshold_1x20min_80pct_65min.zwo"):
         p = WK / fn
         power, tags, meta, segments = clc.parse_zwo_full(p)
         feats = clc.extract_features_v104(power, segments)
         fresh, _, _ = clc.classify_v104(feats, tags=tags, segments=segments)
         assert fresh == "threshold", (fn, fresh)
     # the fixed 10w ramp now genuinely detects as a to-failure ramp
-    power, tags, meta, segments = clc.parse_zwo_full(WK / "ftp_test_ramp_10w_step.zwo")
+    power, tags, meta, segments = clc.parse_zwo_full(WK / "ftp_test_ramp_10w_step_ladder20_152pct_52min.zwo")
     feats = clc.extract_features_v104(power, segments)
     assert feats["is_ftp_test"] and feats["ftp_test_subtype"] == "ramp"
 

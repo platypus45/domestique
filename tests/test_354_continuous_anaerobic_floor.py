@@ -132,9 +132,9 @@ def test_new_supra_files_are_not_deload_eligible():
     import workout_facts as wf
     W = Path(tp.__file__).resolve().parent / "workouts"
     lib = {r["File"]: r for r in tp.load_workout_library()}
-    for fn in ("endurance_12s348s_6x_60min.zwo",
-               "endurance_10s380s_8x_84min.zwo",
-               "neuromuscular_30s360s_4x_41min.zwo"):
+    for fn in ("endurance_6x12s-348s_195pct_60min.zwo",
+               "endurance_8x10s-380s_185pct_84min.zwo",
+               "neuromuscular_4x30s-6min_182pct_41min.zwo"):
         row = lib.get(fn)
         if row is None:
             continue  # file retired later; nothing to assert
@@ -151,7 +151,7 @@ def test_sprint_slot_files_keep_real_if_headroom():
     correct today and silently unroutable after any metric drift. Require real
     headroom on the neuromuscular files authored for that slot."""
     lib = {r["File"]: r for r in tp.load_workout_library()}
-    row = lib.get("neuromuscular_30s360s_4x_41min.zwo")
+    row = lib.get("neuromuscular_4x30s-6min_182pct_41min.zwo")
     if row is None:
         pytest.skip("file retired")
     margin = tp._SPRINT_SLOT_IF_CEILING - float(row["IF"])

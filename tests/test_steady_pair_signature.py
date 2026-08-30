@@ -28,7 +28,7 @@ def _sig_for(name):
 def test_steady_pair_real_file_counts_all_five():
     """(a) anaerobic_5x3min_55min: 5×180s@120% SteadyState; the 5th interval has
     no trailing recovery. Must report 5, not 4."""
-    sig = _sig_for("anaerobic_5x3min_55min.zwo")
+    sig = _sig_for("anaerobic_5x3min-5min_120pct_57min.zwo")
     assert sig is not None, "expected an interval signature"
     reps, on_s, _off_s, on_p = sig
     assert reps == 5, f"expected 5 reps, got {reps}"
@@ -64,7 +64,7 @@ def test_steady_pair_over_under_dominant_alternation():
     scaled 1.05 → 1.02 to bring the file's tank demand feasible; the
     signature contract (dominant alternation, ~10 reps) is unchanged — only
     the pinned on-power moved with the amendment."""
-    sig = _sig_for("over_under_1min_10x_64min.zwo")
+    sig = _sig_for("over_under_2x5x1min_102pct_64min.zwo")
     assert sig is not None
     reps, _on_s, _off_s, on_p = sig
     assert reps >= 9, f"expected ~10 OU reps, got {reps}"

@@ -192,7 +192,7 @@ class TestSweetSpotDominance(unittest.TestCase):
 
 
 class TestCanaryFile(unittest.TestCase):
-    """tempo_2x12min_63min.zwo — the audit's marquee bug.
+    """tempo_4x1min-2min_98pct_66min.zwo — the audit's marquee bug.
 
     HARD GATE: primary MUST be sweet_spot, display_name MUST mention 2×12min.
     """
@@ -204,7 +204,7 @@ class TestCanaryFile(unittest.TestCase):
         with CLASSIFICATION_PATH.open() as f:
             cls.cache = json.load(f)
         cls.cls_map = cls.cache.get("classifications", {})
-        cls.entry = cls.cls_map.get("tempo_2x12min_63min.zwo")
+        cls.entry = cls.cls_map.get("tempo_4x1min-2min_98pct_66min.zwo")
 
     def test_canary_present(self):
         self.assertIsNotNone(self.entry, "canary file missing from cache")
@@ -369,56 +369,56 @@ class TestConfirmedBugsV105D(unittest.TestCase):
     # --- BUG-A: 105% FTP top-of-Z4 was binning to Z5 → vo2max instead of threshold
 
     def test_bug_a_vo2max_2min_7x_56min_now_threshold(self):
-        """threshold_2min_7x_56min.zwo → threshold (BUG-A; was vo2max)."""
-        self.assertEqual(self._primary("threshold_2min_7x_56min.zwo"), "threshold")
+        """threshold_7x90s-3min_105pct_56min.zwo → threshold (BUG-A; was vo2max)."""
+        self.assertEqual(self._primary("threshold_7x90s-3min_105pct_56min.zwo"), "threshold")
 
     def test_bug_a_vo2max_mixed_40min_now_threshold(self):
-        """threshold_mixed_40min_v2.zwo → threshold (BUG-A; was vo2max)."""
-        self.assertEqual(self._primary("threshold_mixed_40min_v2.zwo"), "threshold")
+        """threshold_3x5min-5min_105pct_40min_v2.zwo → threshold (BUG-A; was vo2max)."""
+        self.assertEqual(self._primary("threshold_3x5min-5min_105pct_40min_v2.zwo"), "threshold")
 
     def test_bug_a_vo2max_mixed_60min_now_threshold(self):
-        """threshold_mixed_60min_v2.zwo → threshold (BUG-A; was vo2max)."""
-        self.assertEqual(self._primary("threshold_mixed_60min_v2.zwo"), "threshold")
+        """threshold_2x5min-90s_105pct_60min.zwo → threshold (BUG-A; was vo2max)."""
+        self.assertEqual(self._primary("threshold_2x5min-90s_105pct_60min.zwo"), "threshold")
 
     def test_bug_a_vo2max_10x2min_70min_now_threshold(self):
-        """threshold_10x2min_70min.zwo → threshold (BUG-A; was vo2max)."""
-        self.assertEqual(self._primary("threshold_10x2min_70min.zwo"), "threshold")
+        """threshold_2x5x2min-1min_95pct_75min.zwo → threshold (BUG-A; was vo2max)."""
+        self.assertEqual(self._primary("threshold_2x5x2min-1min_95pct_75min.zwo"), "threshold")
 
     # --- BUG-B: z6 ≥60s floor in z1-dom fallback → mis-routing endurance to anaerobic
 
     def test_bug_b_billat_30_30_not_anaerobic(self):
-        """vo2max_billat_30_30_2x_31min.zwo → NOT anaerobic (BUG-B). Billat
+        """vo2max_2x30s-30s_120pct_33min_v2.zwo → NOT anaerobic (BUG-B). Billat
         30/30 microintervals have brief Z6 surges that were tripping the 60-s
         z6 floor; raised to 180 s (3 min Coggan/FasCat anaerobic minimum). Per
         QA-V105 the right destination is one of vo2_short (microinterval
         pattern), vo2max (Z5 dose) or endurance (Z2-dominant majority) — the
         v1.0.5d boundary fix exposed Z5 dose that previously binned to Z6."""
         self.assertNotEqual(
-            self._primary("vo2max_billat_30_30_2x_31min.zwo"), "anaerobic",
+            self._primary("vo2max_2x30s-30s_120pct_33min_v2.zwo"), "anaerobic",
         )
 
     def test_bug_b_tempo_steady_45min_v2_not_anaerobic(self):
-        """tempo_steady_45min_v2.zwo → NOT anaerobic (BUG-B)."""
+        """tempo_ladder5_120pct_49min.zwo → NOT anaerobic (BUG-B)."""
         self.assertNotEqual(
-            self._primary("tempo_steady_45min_v2.zwo"), "anaerobic",
+            self._primary("tempo_ladder5_120pct_49min.zwo"), "anaerobic",
         )
 
     # --- BUG-C: OU detector under-leg lower bound 0.70 caught Z3 ramps
 
     def test_bug_c_anaerobic_2x1min_64min_not_over_under(self):
-        """anaerobic_2x1min_64min.zwo → anaerobic or vo2_short (BUG-C; was
+        """anaerobic_6x40s_125pct_71min.zwo → anaerobic or vo2_short (BUG-C; was
         over_under). Z3 ramp before/after Z6 sprint was satisfying alternation
         count under the old 0.70 under-leg lower bound."""
         self.assertIn(
-            self._primary("anaerobic_2x1min_64min.zwo"),
+            self._primary("anaerobic_6x40s_125pct_71min.zwo"),
             ("anaerobic", "vo2_short"),
         )
 
     def test_bug_c_anaerobic_4x20s_56min_not_over_under(self):
-        """anaerobic_4x20s_56min.zwo → vo2_ladder, anaerobic, or neuromuscular
+        """anaerobic_4x5min_76pct_59min.zwo → vo2_ladder, anaerobic, or neuromuscular
         (BUG-C; was over_under)."""
         self.assertIn(
-            self._primary("anaerobic_4x20s_56min.zwo"),
+            self._primary("anaerobic_4x5min_76pct_59min.zwo"),
             ("vo2_ladder", "anaerobic", "neuromuscular"),
         )
 

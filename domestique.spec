@@ -5,8 +5,9 @@ PyInstaller spec for Domestique.
 Build:
   macOS:   pyinstaller domestique.spec
   Windows: pyinstaller domestique.spec
+  Linux:   ./build_linux.sh   (wraps the onedir output in an AppImage)
 
-Output: dist/Domestique.app (macOS) or dist/Domestique/Domestique.exe (Windows)
+Output: dist/Domestique.app (macOS) or dist/Domestique/Domestique[.exe]
 """
 
 import sys
@@ -15,6 +16,10 @@ from pathlib import Path
 
 block_cipher = None
 app_name = "Domestique"
+
+# Every Linux arm below is guarded on this so a darwin/win32 PyInstaller run
+# produces byte-identical output to before the Linux release existed.
+_LINUX = sys.platform.startswith("linux")
 
 # Single source of truth for the bundle version — read the repo's VERSION
 # file at build time. `SPEC` is the absolute path to this spec file that
@@ -56,6 +61,32 @@ datas = [
 from PyInstaller.utils.hooks import collect_data_files
 datas += collect_data_files("certifi")
 
+binaries: list = []
+
+if _LINUX:
+    # QtWebEngine is a multi-process engine: the window is drawn by a SEPARATE
+    # helper binary, plus its .pak resources and locale files. PyInstaller's
+    # PySide6 hook is supposed to collect these, and on one build host it did
+    # while on another it silently did not — leaving a bundle with every
+    # libQt6WebEngine*.so present and no QtWebEngineProcess to run them. The
+    # window then opens and renders nothing, which is the one failure this
+    # whole release exists to avoid. Collect them explicitly instead of
+    # depending on hook behaviour.
+    import PySide6 as _ps6
+    _qt = Path(_ps6.__file__).parent / "Qt"
+    _helper = _qt / "libexec" / "QtWebEngineProcess"
+    if not _helper.exists():
+        raise SystemExit(
+            f"FATAL: {_helper} missing from the PySide6 wheel — a Linux build "
+            "without it produces a window that draws nothing.")
+    binaries += [(str(_helper), "PySide6/Qt/libexec")]
+    for _sub in ("resources", "translations/qtwebengine_locales"):
+        _d = _qt / _sub
+        if _d.is_dir():
+            for _f in _d.rglob("*"):
+                if _f.is_file():
+                    datas.append((str(_f), str(Path("PySide6/Qt") / _sub)))
+
 # Add profiles directory if it exists (per-user data, optional)
 if os.path.exists("profiles"):
     datas.append(("profiles", "profiles"))
@@ -79,7 +110,7 @@ if os.path.exists(".oauth.env"):
 a = Analysis(
     ["launcher.py"],
     pathex=["."],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=[
         "certifi",  # v2.1.0 WIN-TLS-FIX — urllib CA bundle (see datas + launcher)
@@ -116,6 +147,21 @@ a = Analysis(
         *(["clr", "clr_loader", "webview.platforms.edgechromium",
            "webview.platforms.winforms", "proxy_tools"]
           if sys.platform == "win32" else []),
+        # v3.8.0 LINUX-BACKEND: same bug class as the win32 block above —
+        # pywebview resolves its GUI backend lazily inside `webview.start()`,
+        # so the static scan never reaches the Qt platform module and the
+        # frozen app would raise WebViewException with no window. The Linux
+        # release deliberately uses Qt/PySide6 (QtWebEngine ships its own
+        # Chromium, so there is no host WebKitGTK to depend on). QtWebChannel
+        # is NOT optional: webview/platforms/qt.py routes the js_api bridge
+        # through QWebChannel, and its absence sends qt.py down the PyQt5
+        # QtWebKit fallback branch, which does not exist here. Linux-only, as
+        # PySide6 is not installed on the macOS/Windows builders.
+        *(["qtpy", "webview.platforms.qt", "PySide6",
+           "PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWidgets",
+           "PySide6.QtNetwork", "PySide6.QtWebChannel",
+           "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets"]
+          if _LINUX else []),
         # v1.0.1: fit_tool is imported lazily inside try/except in app.py (FIT
         # workout export endpoint + .fit ride parser). PyInstaller's static
         # analyser misses imports inside try/except blocks, so the module was
@@ -166,9 +212,15 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # UPX mangles the QtWebEngine shared libraries badly enough that the
+    # process dies at load; harmless-to-helpful on the other two platforms.
+    upx=not _LINUX,
     console=False,  # no terminal window
-    icon="assets/icon.icns" if sys.platform == "darwin" else "assets/icon.ico",
+    # An ELF carries no embedded icon, and handing PyInstaller the .ico here
+    # would only make it try (and fail) to stamp a Windows resource onto one.
+    # The Linux icon travels in the AppDir's .desktop + hicolor tree instead.
+    icon=(None if _LINUX else
+          "assets/icon.icns" if sys.platform == "darwin" else "assets/icon.ico"),
 )
 
 coll = COLLECT(
@@ -177,7 +229,7 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
+    upx=not _LINUX,  # see EXE — UPX corrupts the bundled Qt libraries
     upx_exclude=[],
     name=app_name,
 )

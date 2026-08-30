@@ -556,6 +556,40 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
   font-size: 11px; font-weight: 600; color: var(--accent);
   flex: 0 0 auto; white-space: nowrap;
 }
+/* v3.7.1 — COLLAPSED, this bar is the only way back to the goal, event date
+   and weekly hours, and it read as a muted divider: same surface as the card
+   behind it, 12px uppercase, and a 13px chevron. People did not know it
+   opened. Expanded it stays quiet (the panel below it is the content); it is
+   only the collapsed state that has to advertise itself. */
+.planfold-bar[aria-expanded="false"] {
+  background: var(--accent); border-color: var(--accent);
+  padding: 14px 15px;
+}
+.planfold-bar[aria-expanded="false"] .planfold-title {
+  font-size: 14px; letter-spacing: .6px; color: #fff;
+}
+.planfold-bar[aria-expanded="false"] .planfold-chev {
+  font-size: 16px; color: #fff;
+}
+.planfold-bar[aria-expanded="false"] .planfold-hint {
+  font-size: 12px; color: #fff;
+  border: 1px solid rgba(255,255,255,0.55); border-radius: 999px;
+  padding: 2px 9px;
+}
+/* Hover must still change something once the collapsed bar is already
+   accent-coloured, or it looks inert. */
+.planfold-bar[aria-expanded="false"]:hover { filter: brightness(1.12); }
+@media (prefers-reduced-motion: no-preference) {
+  /* One slow pulse on the border only — enough to catch the eye without the
+     jitter of an animated background. */
+  .planfold-bar[aria-expanded="false"] {
+    animation: planfoldNudge 2.4s ease-in-out 3;
+  }
+}
+@keyframes planfoldNudge {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59,130,246,0.0); }
+  50%      { box-shadow: 0 0 0 4px rgba(59,130,246,0.28); }
+}
 #plan-config-body { margin-top: 14px; }
 #plan-config-body[hidden] { display: none; }
 /* Collapsed, the card must shrink to the bar — otherwise the g2 grid stretches
@@ -1355,8 +1389,16 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
 /* v1.8.9 Bug 5 — global chevron marker for every <details> summary.
    Replaces the native triangle (which is invisible on some themes / Safari).
    Rotates 90° when the panel is open. */
-details > summary { position: relative; padding-left: 18px; cursor: pointer; }
-details > summary::before { content: "\25B6"; position: absolute; left: 4px; transition: transform 0.15s; color: var(--text2); }
+/* v3.7.1 — `list-style: none` is what actually suppresses the native
+   disclosure triangle. ::-webkit-details-marker is a legacy pseudo the
+   current engine no longer honours and ::marker { content: "" } does not
+   remove the marker box, so BOTH the native triangle and the ::before one
+   rendered: "How your plan updates" showed two arrows side by side.
+   The glyph is U+25B8 (SMALL right-pointing triangle) to match
+   .planfold-chev's U+25BE at the same 13px — U+25B6 is a noticeably larger
+   glyph, which is why the two collapsers looked different sizes. */
+details > summary { position: relative; padding-left: 18px; cursor: pointer; list-style: none; }
+details > summary::before { content: "\25B8"; position: absolute; left: 4px; font-size: 13px; line-height: inherit; transition: transform 0.15s; color: var(--text2); }
 details[open] > summary::before { transform: rotate(90deg); }
 details > summary::-webkit-details-marker { display: none; }
 details > summary::marker { content: ""; }
@@ -2231,6 +2273,13 @@ window.addEventListener('unhandledrejection', function(e) {
           <span class="hint" title="Concentrate each build/peak phase on ONE quality per ~3-4 week block (VO2 block then threshold block toward your event) instead of mixing every hard type weekly. Evidence is strongest for trained cyclists with adequate volume; default OFF." style="margin-left:4px;cursor:help;color:var(--text3);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;">?</span>
         </label></div>
       </div>
+      <!-- v3.7.1: VO2max protocol preference (default off). -->
+      <div class="form-row">
+        <div class="form-group"><label>
+          <input type="checkbox" id="plan-vo2-micro-only" onchange="refreshPlanPreview()" style="vertical-align:middle;"> VO2max: microintervals only
+          <span class="info-icon" data-popover="planpop-vo2micro" tabindex="0" role="button" aria-label="What does microintervals only mean?" title="What this does, and what the evidence says">i</span>
+        </label></div>
+      </div>
       <!-- FS1 (IP_PLANNER_MODES): plan construction mode. -->
       <div class="form-row">
         <div class="form-group"><label>Plan style
@@ -2430,14 +2479,14 @@ window.addEventListener('unhandledrejection', function(e) {
   function _psDestroyCharts(){ try { Object.values(window._psCharts || {}).forEach(c => { if (c && c.destroy) c.destroy(); }); } catch (_) {} window._psCharts = {}; }
   // A fresh install reported the summary as "blank": with no plan (404) the
   // only thing written was one line into #ps-window, leaving four empty metric
-  // grids and six empty chart frames; with a plan but no rides yet every tile
-  // read "no data" over blank axes. Both now say what is missing and when it
-  // fills in, and hide the metric grid so empty frames can't be read as a
-  // broken feature. Explicit display values on restore — these are grids, and
-  // clearing the property would drop grid-template-columns with it.
+  // grids and six empty chart frames behind it. Both that case and "plan but no
+  // rides yet" now say what is missing and when it fills in, and hide the metric
+  // grid so empty frames cannot be read as a broken feature. Explicit display
+  // values on restore — these are grids, and clearing the property would drop
+  // grid-template-columns with it.
   const _PS_BLOCKS = {'ps-kpi-row':'grid', 'ps-charts':'grid', 'ps-totals':'grid', 'ps-monotony':'block'};
   function _psShowEmpty(msg){
-    _psDestroyCharts();
+    if (typeof _psDestroyCharts === 'function') _psDestroyCharts();
     const n = document.getElementById('ps-empty');
     if (n) { n.textContent = msg; n.style.display = 'block'; }
     Object.keys(_PS_BLOCKS).forEach(id => { const e = document.getElementById(id); if (e) e.style.display = 'none'; });
@@ -2454,14 +2503,23 @@ window.addEventListener('unhandledrejection', function(e) {
     const link = document.getElementById('ps-png-link');
     if (link) link.style.display = '';
   }
+  // Not every tile needs a ride: FTP and VO2max come from the metrics ledger
+  // and the Hooper trend from the daily log, so a plan with no stored rides can
+  // still carry real measurements. Blanking on the ride count alone would hide
+  // a measured FTP gain, so that case gets a note ABOVE a live panel.
+  function _psNote(msg){
+    _psHideEmpty();
+    const n = document.getElementById('ps-empty');
+    if (n) { n.textContent = msg; n.style.display = 'block'; }
+  }
   async function showProgrammeSummary(planId){
     planId = planId || 'current';
     const overlay = document.getElementById('programme-summary-modal');
     if (!overlay) return;
     // The modal markup sits inside #sec-plan, which is display:none unless the
-    // Plan tab is open — so the end-of-plan auto-open (which fires on the Home
-    // tab) laid out a 0x0 box: nothing visible, body scroll still locked, and
-    // the once-only "shown" flag burned. Hoist it to <body> on first open.
+    // Plan tab is open — so the end-of-plan auto-open (which fires on Home)
+    // laid out a 0x0 box: nothing visible, body scroll still locked, and the
+    // once-only "shown" flag burned. Hoist it to <body> on first open.
     if (overlay.parentElement !== document.body) document.body.appendChild(overlay);
     overlay.style.display = 'block';
     document.body.style.overflow = 'hidden';
@@ -2504,11 +2562,17 @@ window.addEventListener('unhandledrejection', function(e) {
       _psShowEmpty('This plan has no weeks to summarise yet — generate a plan on this tab, and the summary starts filling in from your first ride.');
       return;
     }
+    const _psMeasured = b => !!b && (b.start != null || b.end != null);
     if (!d.rides) {
-      _psShowEmpty('No rides recorded in this plan window yet. Every number here is measured from completed rides, so the summary stays empty until the first one lands — sync from intervals.icu or import a FIT file, and it fills in from there. The week-by-week trends need a few weeks of riding before they say anything.');
-      return;
+      if (!_psMeasured(d.ftp_delta) && !_psMeasured(d.vo2max_delta)
+          && !(d.hooper_trend || []).length) {
+        _psShowEmpty('Nothing measured in this plan window yet — no rides, and no FTP, VO2max or daily-log entries either. Sync from intervals.icu or import a FIT file, and the summary fills in from your first ride.');
+        return;
+      }
+      _psNote('No rides found in this plan window, so the ride-based figures — totals, intensity distribution, compliance, monotony and the decoupling trend — all read zero. FTP, VO2max and the Hooper trend come from your metrics ledger and daily log, so those are measured.');
+    } else {
+      _psHideEmpty();
     }
-    _psHideEmpty();
     const kpi = document.getElementById('ps-kpi-row');
     if (kpi) {
       const tiles = [
@@ -3173,6 +3237,30 @@ window.addEventListener('unhandledrejection', function(e) {
       <div id="power-zones"></div>
       <h3 style="margin-top:16px;display:flex;align-items:center;gap:10px;">HR Zones
         <button class="btn btn-sm" id="hr-zones-edit" onclick="editZones('hr')">Edit</button></h3>
+      <!-- Issue #10: HRR (Karvonen) zone model. LTHR stays the default — the
+           comparative evidence favors threshold anchoring when LTHR is known
+           (docs/SCIENCE.md "Heart-rate zones") — so this is a choice, never a
+           fallback, and it greys out with the reason when the anchors are
+           missing rather than silently staying on LTHR. -->
+      <div id="hr-model-row" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12px;margin:4px 0 8px 0;">
+        <label>Zone model
+          <select id="hr-zone-model" style="font-size:12px;margin-left:4px;" onchange="saveHrZoneModel()">
+            <option value="lthr">LTHR (threshold-anchored)</option>
+            <option value="hrr">Heart-rate reserve (Karvonen)</option>
+          </select>
+        </label>
+        <span id="hrr-controls" style="display:none;gap:8px;align-items:center;flex-wrap:wrap;">
+          <label>Resting HR
+            <select id="hrr-rhr-mode" style="font-size:12px;margin-left:4px;" onchange="saveHrZoneModel()">
+              <option value="rolling">rolling median</option>
+              <option value="manual">fixed (my Resting HR field)</option>
+            </select>
+          </label>
+          <label id="hrr-window-wrap">over <input type="number" id="hrr-window" min="2" max="60" value="7" style="width:44px;font-size:12px;" onchange="saveHrZoneModel()"> days</label>
+          <span id="hrr-anchor-note" style="color:var(--text3);"></span>
+        </span>
+        <span id="hrr-why" style="color:var(--yellow);"></span>
+      </div>
       <div style="font-size:10px;color:var(--text3);margin-bottom:4px;">Analysis zones (ride time-in-zone). Workout HR targets are edited under “Workout targets” on the left.</div>
       <div id="hr-zones"></div>
       <h3 style="margin-top:16px;">Data Sync</h3>
@@ -3297,6 +3385,11 @@ window.addEventListener('unhandledrejection', function(e) {
      0x0 (the B2 "wired + live-proven" pass only tested from the Plan tab).
      Same invariant as calpush-info above; pinned by
      tests/test_343_today_identity.py (section-burial structural test). -->
+<div class="info-popover" id="planpop-vo2micro"><strong>VO2max: microintervals only</strong> — every VO2max day becomes a short on/off session (30s on / 15s off and relatives) instead of longer 4-8 minute intervals.
+<br><br><strong>Is this the best VO2max protocol?</strong> Not established — and the honest answer matters here. The short-interval format is genuinely potent and easy to hit high power in, but every training study showing it beat a structured comparator in cyclists comes from <em>one</em> research group, with 7-9 riders per arm and no independent replication. Within those studies VO2max itself improved significantly more in only two of four; the flagship elite-cyclist trial reported no group difference in VO2max at all. The trials matched effort rather than work, so the short-interval riders also produced more power for the same perceived effort.
+<br><br><strong>What the wider field shows.</strong> Independent labs comparing short against long intervals have found no difference, or an advantage for long. The largest single result in this space is 4x8 minutes, which beat both 4x4 and 4x16 by roughly double over seven weeks — and has never been tested against 30/15. Meta-analyses pooling the field either find nothing or lean toward work bouts of two minutes and up.
+<br><br><strong>So use this as a preference, not a verdict.</strong> Leave it off and you get a mix — microintervals are already preferred on VO2max days, they just are not the only thing served. Turn it on if you like the format and want to train it consistently; it is a good session and you will not be doing anything unsupported. What you give up is variety, and variety is the one thing the evidence cannot rule against.
+<br><br>Off by default. If no microinterval session fits a day's length, that day still gets a VO2max workout rather than nothing.</div>
 <div class="info-popover" id="planpop-rematch"><strong>Swap workout</strong> — swaps in another workout of the same type and duration — your plan's load stays the same.</div>
 <div class="info-popover" id="planpop-swaptype"><strong>Change training type</strong> — pick a different training type for this day — the week re-balances around it.</div>
 <div class="info-popover" id="planpop-easier"><strong>Make it easier today</strong> — drops today one intensity notch (e.g. threshold → sweet spot) — use when you're not feeling it.</div>
@@ -3961,6 +4054,14 @@ async function openCourseDetail(region, filename) {
 function powerToZone(pct) {
   // Allen-Coggan boundaries (kept in sync with zones.py / classify_library_content.py
   // ZONES_FTP). v1.0.5 fixed the 88% Z3↔Z4 boundary in the Python source-of-truth.
+  // Z6 anaerobic gets its own purple: 122% and 178% both rendered in the same
+  // red, so a 30s sprint block and the anaerobic reps around it were
+  // indistinguishable at a glance — the rider read the whole top end as one
+  // zone. Z7 keeps the red; discrimination is the point.
+  // Deep violet, not red: Z7 above Z6 must read as MORE purple, or the
+  // intensity scale loops back to red and sprints blend into VO2 work.
+  if (pct >= 151) return {zone:'Z7', color:'#7c3aed'};
+  if (pct >= 121) return {zone:'Z6', color:'var(--purple)'};
   if (pct >= 105) return {zone:'Z6', color:'var(--z6)'};
   if (pct >= 96)  return {zone:'Z5', color:'var(--z5)'};
   if (pct >= 88)  return {zone:'Z4', color:'var(--z4)'};
@@ -4185,7 +4286,11 @@ function workoutProfileSVG(segments, ftp, totalSec, hrCtx) {
     const x = xScale(t);
     const m = Math.floor(t/60);
     const label = m >= 60 ? `${Math.floor(m/60)}h${m%60?String(m%60).padStart(2,'0'):'00'}` : `${m}m`;
-    xLabels += `<text x="${x}" y="${H-4}" text-anchor="middle" fill="var(--text3)" font-size="9">${label}</text>`;
+    // Ticks at H-4 shared a baseline with the "Time" title at H-1 — three
+    // pixels apart, so the title sat on top of whichever tick landed mid-axis.
+    // PAD_B is 30: hang the ticks just under the axis line and leave the
+    // bottom row to the title alone.
+    xLabels += `<text x="${x}" y="${H-PAD_B+14}" text-anchor="middle" fill="var(--text3)" font-size="9">${label}</text>`;
   }
 
   const yMid = PAD_T + (H - PAD_T - PAD_B) / 2;
@@ -7643,8 +7748,12 @@ async function _dfaRunMigrate(nStale) {
 }
 
 // Render one HRVT block (HR + power cells, each colored by its own r²).
-function _dfaThresholdCells(t) {
-  if (!t) return '<span style="color:var(--text3);">not detected</span>';
+function _dfaThresholdCells(t, note) {
+  // "not detected" alone read as an error. It usually is not: a threshold
+  // only resolves when the ride's α1 actually crosses it — an easy spin
+  // never reaches 0.75, an all-out session never rises back above it. Say
+  // which case this ride is.
+  if (!t) return '<span style="color:var(--text3);">' + esc(note || 'not detected') + '</span>';
   const cell = (load, unit, r2) => {
     if (load == null) return `<span style="color:var(--text3);">—</span>`;
     const col = _dfaR2Color(r2);
@@ -7758,8 +7867,8 @@ function _renderDfaPerRide(d) {
       <td style="padding:6px 10px;text-align:right;">${r.avg_hr!=null?esc(String(r.avg_hr)):'—'}</td>
       <td style="padding:6px 10px;text-align:right;color:${a1col};font-weight:600;">${a1}</td>
       <td style="padding:6px 10px;">${zbar(r.zone_minutes)}</td>
-      <td style="padding:6px 10px;font-size:11px;">${_dfaThresholdCells(r.hrvt1)}</td>
-      <td style="padding:6px 10px;font-size:11px;">${_dfaThresholdCells(r.hrvt2)}</td>
+      <td style="padding:6px 10px;font-size:11px;">${_dfaThresholdCells(r.hrvt1, r.hrvt1_note)}</td>
+      <td style="padding:6px 10px;font-size:11px;">${_dfaThresholdCells(r.hrvt2, r.hrvt2_note)}</td>
     </tr>`;
   }).join('');
   host.innerHTML = `<div class="card">
@@ -8465,7 +8574,7 @@ async function openRideDetail(rideId) {
 
     const fmtDur = sec => { const h = Math.floor(sec/3600); const min = Math.floor((sec%3600)/60); return h ? `${h}h${min}m` : `${min}min`; };
     const dcColor = c => c === 'green' ? '#22c55e' : c === 'yellow' ? '#eab308' : c === 'red' ? '#ef4444' : 'var(--text3)';
-    const zc = pct => pct < 56 ? '#64748b' : pct < 76 ? '#3b82f6' : pct < 91 ? '#22c55e' : pct < 106 ? '#eab308' : pct < 121 ? '#f97316' : pct < 150 ? '#ef4444' : '#a855f7';
+    const zc = pct => pct < 56 ? '#64748b' : pct < 76 ? '#3b82f6' : pct < 91 ? '#22c55e' : pct < 106 ? '#eab308' : pct < 121 ? '#ef4444' : pct < 151 ? '#a855f7' : '#7c3aed';
     const fmtDate = iso => { try { const d = new Date(iso); return d.toLocaleDateString('en-GB', {weekday:'short', day:'numeric', month:'short', year:'numeric'}) + ' · ' + d.toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'}); } catch(e) { return iso || ''; } };
 
     // Kind pill (matches row pill — TRAINING / ROUTE / FREE RIDE)
@@ -12257,10 +12366,15 @@ function _toggleUnavailable(dateKey, checked) {
     _availData[dateKey] = { hours: 0, type: 'holiday' };
     renderAvailCalendar();
   } else {
-    // Restore to default from weekly grid
+    // Restore to default from weekly grid. The grid's class is plan-day-mins
+    // and its values are MINUTES — this selector previously named a
+    // .plan-day-hours class that exists nowhere, so the querySelector was
+    // always null and every un-marked day "restored" to 0 hours, i.e. became
+    // a rest day. Quietly zeroing days is exactly the shape of the "my
+    // availability didn't stick" reports.
     const d = new Date(dateKey + 'T12:00:00');
     const weekday = d.getDay() === 0 ? 6 : d.getDay() - 1;
-    const defaultH = parseFloat(document.querySelector(`.plan-day-hours[data-day="${weekday}"]`)?.value) || 0;
+    const defaultH = (parseFloat(document.querySelector(`.plan-day-mins[data-day="${weekday}"]`)?.value) || 0) / 60;
     _availData[dateKey] = { hours: defaultH, type: defaultH > 0 ? 'available' : 'rest' };
     renderAvailCalendar();
   }
@@ -12434,6 +12548,7 @@ async function generatePlan(opts) {
     daily_availability: dailyHours,
     distribution: ($('plan-distribution') || {}).value || 'polarized',  // J1
     block_periodization: (($('plan-block-periodization') || {}).checked) || false,  // F1
+    vo2_microintervals_only: (($('plan-vo2-micro-only') || {}).checked) || false,
     plan_mode: ($('plan-mode') || {}).value || 'auto',  // FS1
     template_id: (($('plan-mode') || {}).value === 'template')
       ? (($('plan-template') || {}).value || '') : '',  // FS1
@@ -12637,8 +12752,18 @@ async function renderPlanJSON(plan) {
 
   // Fetch actual activities for overlay
   let actualByDate = {};
+  window._pgActualBlocks = {};
   try {
-    const actRes = await fetch('/api/activities');
+    // Awaited alongside the activities list — fire-and-forget here would race
+    // the render and paint the planned silhouette on first load, with the
+    // actual blocks only appearing on the NEXT repaint. /api/activities is
+    // the wellness-summary hot path and carries no laps, so the sprites'
+    // actual blocks come from their own ride-store endpoint.
+    const [blkRes, actRes] = await Promise.all([
+      fetch('/api/activities/blocks?days=64').catch(() => null),
+      fetch('/api/activities'),
+    ]);
+    try { window._pgActualBlocks = (blkRes && blkRes.ok) ? await blkRes.json() : {}; } catch (_) {}
     const activities = await actRes.json();
     for (const a of (activities || [])) {
       // Cycling plan view: a run/swim must not appear in the overlay or count
@@ -12850,7 +12975,7 @@ async function renderPlanJSON(plan) {
         const spriteTip = zdOk
           ? pgZoneTooltip(s.zone_dist)
           : `Typical ${SESSION_SHORT[s.session_type] || (s.session_type || '').toUpperCase()} shape (approximate — matched file structure unavailable)`;
-        const miniSvg = `<div class="pg-card-sprite" title="${esc(spriteTip)}">${miniPowerBlockSVG(blocks)}</div>`;
+        let miniSvg = `<div class="pg-card-sprite" title="${esc(spriteTip)}">${miniPowerBlockSVG(blocks)}</div>`;
 
         // Actual activity overlay for past days — calendar prominence:
         // done shows duration · TSS (green), missed mirrors the calendar's
@@ -12863,6 +12988,16 @@ async function renderPlanJSON(plan) {
           const actDur = dayActuals.reduce((s,a) => s + (a.duration_min||0), 0);
           actualOverlay = `<div class="pg-card-actual" style="color:var(--green);">${icons} ${actDur}m${actTss ? ' · ' + Math.round(actTss) + ' TSS' : ''}</div>`;
           dayCompleted = true;
+          // Completed days show the ride's own lap blocks (intervals.icu's
+          // card does the same from streams) — the planned silhouette on a
+          // ridden day answered a question nobody asked. Multi-ride days
+          // concatenate in ride order. No laps -> planned sprite stands.
+          const actBlocks = ((window._pgActualBlocks || {})[dayStr] || [])
+            .filter(e => _isCyclingSport(e.sport))
+            .flatMap(e => Array.isArray(e.blocks) ? e.blocks : []);
+          if (actBlocks.length) {
+            miniSvg = `<div class="pg-card-sprite" title="What you actually rode — lap by lap from the recorded ride">${miniPowerBlockSVG(actBlocks)}</div>`;
+          }
         } else if (isPast && !dayActuals.length) {
           actualOverlay = '<div class="pg-card-actual" style="font-style:italic;color:var(--red);">missed</div>';
         }
@@ -14826,7 +14961,14 @@ function miniPowerBlockSVG(blocks) {
   if (totalMin === 0) return '';
   const W = 60, H = 16;
   // Unified Z3 color with library/history/detail (green)
-  const zoneCol = (pct) => pct < 56 ? '#64748b' : pct < 76 ? '#3b82f6' : pct < 88 ? '#22c55e' : pct < 96 ? '#f97316' : pct < 105 ? '#ef4444' : '#dc2626';
+  // Same top-end split as the day chart: anaerobic purple, sprints red —
+  // an actual ride's 470W lap must not blend into the VO2 red around it.
+  // Monotonic top end: VO2 red -> anaerobic purple -> neuromuscular DEEP
+  // violet. Z7 was dark red (#dc2626), which sits next to VO2's #ef4444 and
+  // made the scale read red -> purple -> red-again — a rider judged their
+  // 470W bursts "should be purple, they're heavier" and was right about the
+  // ordering: heavier must look heavier, not loop back to red.
+  const zoneCol = (pct) => pct < 56 ? '#64748b' : pct < 76 ? '#3b82f6' : pct < 88 ? '#22c55e' : pct < 96 ? '#f97316' : pct < 121 ? '#ef4444' : pct < 151 ? '#a855f7' : '#7c3aed';
 
   let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;margin-top:2px;">`;
   let cursor = 0;
@@ -14834,7 +14976,7 @@ function miniPowerBlockSVG(blocks) {
     const x = (cursor / totalMin) * W;
     const bw = Math.max(0.5, (b.min / totalMin) * W);
     const avgPct = (b.pctLow + b.pctHigh) / 2;
-    const h = Math.max(2, (avgPct / 120) * H);
+    const h = Math.min(H, Math.max(2, (avgPct / 120) * H));
     svg += `<rect x="${x}" y="${H-h}" width="${bw}" height="${h}" fill="${zoneCol(avgPct)}" rx="0.5"/>`;
     cursor += b.min;
   }
@@ -14922,6 +15064,7 @@ function populatePlanFormFromGoal(goal) {
   // model as polarized and restore the real custom split under the template.
   setVal('plan-distribution', (goal.distribution === 'custom') ? 'polarized' : (goal.distribution || 'polarized'));
   const bp = $('plan-block-periodization'); if (bp) bp.checked = !!goal.block_periodization;
+  const vm = $('plan-vo2-micro-only'); if (vm) vm.checked = !!goal.vo2_microintervals_only;
   setVal('plan-mode', goal.plan_mode || 'auto');
   if (goal.template_id) setVal('plan-template', goal.template_id);
   // v2.3.0: a custom plan round-trips as template_id=custom — present it as
@@ -14975,6 +15118,7 @@ function populatePlanFormFromGoal(goal) {
     const parts = [distLbl, modeLbl];
     if (goal.hours_per_week) parts.push(goal.hours_per_week + 'h/wk');
     if (goal.block_periodization) parts.push('Block periodization');
+    if (goal.vo2_microintervals_only) parts.push('VO2max: microintervals only');
     if (goal.plan_mode === 'template' && goal.template_id) parts.push(String(goal.template_id).replace(/_/g, ' '));
     const races = (goal.events || []).filter(e => e && e.priority && e.priority !== 'A').length;
     if (races) parts.push(races + ' race' + (races > 1 ? 's' : ''));
@@ -15626,6 +15770,7 @@ async function loadSettings() {
   $('power-zones').innerHTML = '<table><thead><tr><th>Zone</th><th>Name</th><th>Range</th></tr></thead><tbody>' +
     d.power_zones.map(z => _zoneRow(z, 'W')).join('') +
     '</tbody></table>';
+  try { _hydrateHrModelRow(s); } catch (_) {}
   $('hr-zones').innerHTML = '<table><thead><tr><th>Zone</th><th>Name</th><th>Range</th></tr></thead><tbody>' +
     d.hr_zones.map(z => _zoneRow(z, ' bpm')).join('') +
     '</tbody></table>';
@@ -15633,6 +15778,38 @@ async function loadSettings() {
   // Sync status + blood markers + metric history
   loadSyncStatus();
   loadMetricHistory();
+}
+
+function _hydrateHrModelRow(s) {
+  const sel = $('hr-zone-model'), ctl = $('hrr-controls'), why = $('hrr-why');
+  if (!sel) return;
+  sel.value = s.hr_zone_model_choice || 'lthr';
+  const wantHrr = sel.value === 'hrr';
+  if (ctl) ctl.style.display = wantHrr ? 'inline-flex' : 'none';
+  const mode = $('hrr-rhr-mode'); if (mode) mode.value = s.hrr_rhr_mode || 'rolling';
+  const win = $('hrr-window'); if (win) win.value = s.hrr_rhr_window_days || 7;
+  const ww = $('hrr-window-wrap'); if (ww) ww.style.display = (s.hrr_rhr_mode || 'rolling') === 'rolling' ? '' : 'none';
+  const note = $('hrr-anchor-note');
+  if (note) note.textContent = (wantHrr && s.hr_zone_model === 'hrr' && s.hrr_anchor_bpm)
+    ? `anchored at ${s.hrr_anchor_bpm} bpm rest / ${s.max_hr} bpm max` : '';
+  if (why) why.textContent = (wantHrr && s.hr_zone_model !== 'hrr' && s.hrr_unavailable_reason)
+    ? `Using LTHR zones for now — ${s.hrr_unavailable_reason}.` : '';
+}
+
+async function saveHrZoneModel() {
+  const body = {
+    hr_zone_model: ($('hr-zone-model') || {}).value || 'lthr',
+    hrr_rhr_mode: ($('hrr-rhr-mode') || {}).value || 'rolling',
+    hrr_rhr_window_days: parseInt(($('hrr-window') || {}).value) || 7,
+  };
+  try {
+    const res = await fetch('/api/settings', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    await loadSettings();
+  } catch (e) {
+    try { showToast('Could not save zone model: ' + (e && e.message || e), 4000); } catch (_) {}
+  }
 }
 
 // ── Customizable zones (Edit button on Power/HR Zones) ───────────────────
@@ -17035,6 +17212,12 @@ async function loadWeeklyCalendar() {
         ? `<div style="font-size:8px;color:#60a5fa;font-style:italic;margin-top:2px;">moved</div>`
         : '';
 
+      // v3.7.1 — key the click by DATE, not by an index into
+      // window._weekPlanSessions. That global is reassigned from four places
+      // (the home calendar, the today-adjustment synth, the week grid), so a
+      // row rendered against one week could resolve into another week's
+      // array — the rider clicked a VO2max card and got the row above it,
+      // a different day's tempo session, with no sign anything was wrong.
       const sIdx = _sessIdxByDay.get(s.day);
       const draggable = (s.session_type !== 'rest' && rawStatus === 'pending') ? 'true' : 'false';
       html += `<div class="${cls}" data-day="${s.day}" data-session-type="${s.session_type}" data-status="${rawStatus}"
@@ -17044,7 +17227,7 @@ async function loadWeeklyCalendar() {
         ondragleave="onPlanDragLeave(event)"
         ondrop="onPlanDrop(event,'${s.day}')"
         style="cursor:pointer;position:relative;${dismissedStyle}"
-        onclick="openDayWorkout(${sIdx})">
+        onclick="openDayWorkout(${sIdx}, '${s.day}')">
         ${statusBadge}
         ${dragHandle}
         ${undismissBtn}
@@ -18399,19 +18582,47 @@ async function keepOriginalToday() {
     const t = _effectiveTodaySession(window._todaySessionData);
     if (t.planned && t.planned.session_type) pLabel = _sessTypeLabel(t.planned.session_type);
   } catch (_) {}
+  // The modal used to close immediately and the views refreshed behind it —
+  // which read as "click, nothing happens" whenever the refresh raced the
+  // write. Now the modal stays up, shows the reflow in place, and re-opens
+  // on today's date with the restored session, so the rider WATCHES the
+  // original come back instead of hunting for it.
+  const body = document.querySelector('#day-workout-modal .modal-body')
+            || document.querySelector('.modal-body');
+  if (body) {
+    body.style.transition = 'opacity 0.25s';
+    body.style.opacity = '0.25';
+    const note = document.createElement('div');
+    note.id = 'reflow-note';
+    note.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;'
+      + 'justify-content:center;font-size:14px;color:var(--text2);z-index:5;';
+    note.innerHTML = '<span style="width:14px;height:14px;border:2px solid var(--border);'
+      + 'border-top-color:var(--accent);border-radius:50%;display:inline-block;'
+      + 'animation:pg-redraw-spin 0.8s linear infinite;margin-right:8px;"></span>'
+      + `Reflowing back to your planned ${esc(pLabel)}…`;
+    body.parentElement && body.parentElement.appendChild(note);
+  }
+  let restored = null;
   try {
     const res = await fetch('/api/readiness/revert-cap', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({signal: 'any'}),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
+    try { restored = (await res.json()).restored || null; } catch (_) {}
     try { showToast(`Keeping the planned ${pLabel} — adjustment dismissed for today`, 3500); } catch (_) {}
   } catch (e) {
+    document.getElementById('reflow-note')?.remove();
+    if (body) body.style.opacity = '';
     try { showToast('Could not keep original: ' + (e && e.message || e), 4000); } catch (_) {}
     return;
   }
-  closeModal();
   await _refreshAfterAdjustAction();
+  document.getElementById('reflow-note')?.remove();
+  if (body) body.style.opacity = '';
+  closeModal();
+  // Instantly re-show the day, now carrying the original session.
+  try { await openDayWorkout(null, _calTodayStr()); } catch (_) {}
 }
 
 // After either action: card + calendar + plan grid refresh consistently
@@ -18467,8 +18678,25 @@ function dayModalTssStat(session) {
   return `<div class="metric"><div class="mv">${dispTss}</div><div class="ml">TSS</div>${slotNote}</div>`;
 }
 
-async function openDayWorkout(sessionIdx) {
+async function openDayWorkout(sessionIdx, day) {
   let session = window._weekPlanSessions?.[sessionIdx];
+  // v3.7.1 — the DATE wins whenever the caller supplies one. The index is a
+  // position in a global that other renders overwrite, so it can silently
+  // address a different week; the date cannot. Callers that still pass only
+  // an index keep working unchanged.
+  if (day) {
+    let found = (window._weekPlanSessions || []).find(s => s && s.day === day);
+    if (!found) {
+      // The global belongs to another week — recover the right one and adopt
+      // it, so the modal's own actions (test switch, swap, rematch) operate
+      // on the week the rider is actually looking at.
+      for (const wk of (window._calData?.weeks || [])) {
+        const hit = (wk.sessions || []).find(s => s && s.day === day);
+        if (hit) { window._weekPlanSessions = wk.sessions; found = hit; break; }
+      }
+    }
+    if (found) session = found;
+  }
   if (!session || session.session_type === 'rest') return;
 
   // 3.4.1 M3 — when TODAY carries a pending live adjustment, render the
@@ -18829,14 +19057,67 @@ function swapTypeOpen(day) {
   el.innerHTML = `<div style="padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);">
     <div style="font-size:12px;font-weight:600;margin-bottom:6px;">Swap to a different training type</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
-      <select id="swap-type-${day}" style="font-size:12px;">${types.map(t=>`<option value="${t[0]}">${t[1]}</option>`).join('')}</select>
-      <select id="swap-dur-${day}" style="font-size:12px;">${durs.map(d=>`<option value="${d}"${d===60?' selected':''}>${d} min</option>`).join('')}</select>
+      <select id="swap-type-${day}" style="font-size:12px;" onchange="swapTypeToggleMicro('${day}');swapTssHint('${day}')">${types.map(t=>`<option value="${t[0]}">${t[1]}</option>`).join('')}</select>
+      <select id="swap-dur-${day}" style="font-size:12px;" onchange="swapTssHint('${day}')">${durs.map(d=>`<option value="${d}"${d===60?' selected':''}>${d} min</option>`).join('')}</select>
+      <span id="swap-tss-${day}" style="font-size:11px;color:var(--text2);white-space:nowrap;"></span>
+      <label id="swap-micro-wrap-${day}" style="font-size:11px;display:none;align-items:center;gap:4px;white-space:nowrap;">
+        <input type="checkbox" id="swap-micro-${day}" style="vertical-align:middle;"> microintervals only
+      </label>
       <button class="btn btn-primary" style="font-size:12px;" onclick="swapTypeApply('${day}')">Apply</button>
       <button class="btn" style="font-size:12px;" onclick="document.getElementById('swap-result-${day}').innerHTML=''">Cancel</button>
     </div>
     <div style="font-size:10px;color:var(--text3);">Matches a workout for the new type and rebalances the rest of your plan. Long durations are capped to what each type allows.</div>
+    <div id="swap-micro-note-${day}" style="font-size:10px;color:var(--text3);margin-top:4px;display:none;">Short on/off reps (30s/15s and relatives) rather than 4-8 minute intervals. A preference, not a verdict — see Plan Configuration for what the evidence does and does not show. If none fits this length you still get a VO2max session.</div>
   </div>`;
+  swapTypeToggleMicro(day);
+  swapTssHint(day);
 }
+
+// v3.7.1 — the microinterval choice only means anything on a VO2max slot, so
+// it appears only when VO2max is selected rather than sitting there greyed
+// out next to seven types it does not apply to. Seeded from the plan-level
+// preference so the per-swap control agrees with the plan by default.
+function swapTypeToggleMicro(day) {
+  const sel = document.getElementById('swap-type-' + day);
+  const wrap = document.getElementById('swap-micro-wrap-' + day);
+  const note = document.getElementById('swap-micro-note-' + day);
+  if (!sel || !wrap) return;
+  const isVo2 = sel.value === 'vo2max';
+  wrap.style.display = isVo2 ? 'inline-flex' : 'none';
+  if (note) note.style.display = isVo2 ? 'block' : 'none';
+  const box = document.getElementById('swap-micro-' + day);
+  if (box && isVo2 && box.dataset.seeded !== '1') {
+    try {
+      const g = (window._calData && window._calData.goal) || {};
+      box.checked = !!g.vo2_microintervals_only;
+    } catch (_) {}
+    box.dataset.seeded = '1';
+  }
+}
+// The swap picker asked for type + duration and hid the consequence: a rider
+// on a 45-TSS z2 day picked "Threshold, 60 min" and was surprised by the
+// ~90-TSS session that landed. TSS is not a third dial — it IS type x
+// duration — so the honest fix is showing the arithmetic before Apply, plus
+// where the difference goes (the weekly reflow trims other days; the swapped
+// day is pinned). Rates mirror training_planner.TSS_PER_HOUR.
+const _SWAP_TSS_H = {recovery:30, z2:45, tempo:65, sweetspot:80, threshold:90,
+                     vo2max:75, overunder:85, sprint:57};
+function swapTssHint(day) {
+  const el = document.getElementById('swap-tss-' + day);
+  if (!el) return;
+  const t = (document.getElementById('swap-type-' + day) || {}).value;
+  const d = parseInt((document.getElementById('swap-dur-' + day) || {}).value) || 60;
+  const tss = Math.round(d / 60 * (_SWAP_TSS_H[t] || 60));
+  let cur = null;
+  try {
+    const s = (window._weekPlanSessions || []).find(x => x && x.day === day);
+    if (s && s.tss_estimate != null) cur = Math.round(s.tss_estimate);
+  } catch (_) {}
+  const delta = cur != null ? tss - cur : null;
+  el.textContent = `≈ ${tss} TSS` + (delta === null || Math.abs(delta) < 5 ? ''
+    : ` (${delta > 0 ? '+' : ''}${delta} vs planned — the rest of the week rebalances)`);
+}
+
 async function swapTypeApply(day) {
   const t = (document.getElementById('swap-type-' + day) || {}).value;
   const d = parseInt((document.getElementById('swap-dur-' + day) || {}).value) || 60;
@@ -18845,7 +19126,8 @@ async function swapTypeApply(day) {
   try {
     const res = await fetch('/api/plan/swap-type', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({date: day, session_type: t, duration_min: d}),
+      body: JSON.stringify({date: day, session_type: t, duration_min: d,
+        microintervals_only: !!(document.getElementById('swap-micro-' + day) || {}).checked}),
     });
     const j = await res.json();
     if (!res.ok || j.error) {
@@ -19321,7 +19603,8 @@ function renderPowerBlocksSVG(blocks, ftp) {
     if (pct < 91) return 'var(--z3)';
     if (pct < 106) return 'var(--z4)';
     if (pct < 121) return 'var(--z5)';
-    return 'var(--purple)';  // anaerobic (≥121% FTP, e.g. 150%) — purple, not red
+    if (pct < 151) return 'var(--purple)';  // anaerobic — purple, not red
+    return '#7c3aed';  // neuromuscular: deeper violet, heavier looks heavier
   };
 
   let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;">`;

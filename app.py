@@ -2,7 +2,7 @@
 Domestique Dashboard v2 — local web interface.
 
 Run: python3 app.py
-Open: http://localhost:8080
+Open: http://127.0.0.1:22400  (or $DOMESTIQUE_PORT, if set)
 
 Pure HTML + CSS + vanilla JS. No npm, no frameworks.
 """
@@ -1179,12 +1179,42 @@ def setup_icu_hr(athlete_id: str = Query(""), api_key: str = Query("")):
 _setup_lock = threading.Lock()
 
 
-_SETUP_PATH_ALLOWED_BASES = [
-    Path.home(),
-    domestique_home(),  # 3.4.3: sandbox-aware
-    Path("/tmp"),
-    Path("/private/tmp"),  # macOS symlink target
-]
+def _setup_path_allowed_bases() -> "list[Path]":
+    """Where a setup-supplied path may point (SEC4).
+
+    Computed per call rather than frozen at import: the app's OWN directories
+    are on this list, and on Windows they live wherever the user installed to
+    — which import order cannot know.
+
+    The guard exists to stop a hostile setup-save pointing the server at
+    arbitrary filesystem locations. It was never meant to reject the
+    application's own bundled workout library, but that is exactly what it did
+    on Windows: the wizard auto-detects the bundled path, pre-fills it, marks
+    it touched (deliberately — an auto-detected path is a proposal the user
+    accepts by clicking through), and submits it. Under Program Files that
+    is not below $HOME, so "Complete Setup" failed with a message about
+    directories the rider had never chosen and could not act on.
+    """
+    bases = [Path.home(), domestique_home()]
+    # The app's own directories. Trusted by definition — this is where the
+    # library ships, and on a frozen build it is inside the install location.
+    for own in (_BUNDLED_WORKOUT_DIR, _BUNDLED_GPX_DIR):
+        try:
+            bases.append(own)
+            bases.append(own.parent)
+        except Exception:  # noqa: BLE001 — a bad base must never break setup
+            pass
+    if sys.platform == "win32":
+        # Windows equivalents of /tmp; %TEMP% is also where a frozen onefile
+        # build unpacks itself.
+        for env in ("TEMP", "TMP", "LOCALAPPDATA", "APPDATA"):
+            v = os.environ.get(env)
+            if v:
+                bases.append(Path(v))
+    else:
+        bases.append(Path("/tmp"))
+        bases.append(Path("/private/tmp"))  # macOS symlink target
+    return bases
 
 
 def _setup_path_allowed(p: Path) -> bool:
@@ -1198,7 +1228,7 @@ def _setup_path_allowed(p: Path) -> bool:
         resolved = p.resolve()
     except (OSError, RuntimeError):
         return False
-    for base in _SETUP_PATH_ALLOWED_BASES:
+    for base in _setup_path_allowed_bases():
         try:
             rb = base.resolve()
         except (OSError, RuntimeError):
@@ -2767,9 +2797,29 @@ def api_profile_dfa_rides():
             n_computed += 1
             if int(d.get("dfa_algo_version") or 0) < _DFA_ALGO_VERSION:
                 n_stale += 1
-        # Only surface rides that actually have an α1 value in the table.
-        if a1 is None:
+        # A ride with no α1 still belongs in the table: 15 of one tester's 46
+        # rides carried no beat-to-beat data at all (head unit not recording
+        # RR), and omitting them read as "many rides not indexed" — an error
+        # where none existed. Surface them with the reason instead.
+        if a1 is None and status not in ("no_rr_data", "sanity_rejected"):
             continue
+        # "not detected" with no reason reads as failure. The reason is
+        # computable from what is already stored: a threshold only resolves
+        # when the ride's α1 series actually CROSSES the target (no
+        # extrapolation, r²-gated) — so say which of those failed.
+        def _hrvt_note(target_alpha):
+            series = d.get("dfa_alpha1_series")
+            if not isinstance(series, list) or not series:
+                return None
+            alphas = [w.get("alpha1") for w in series
+                      if isinstance(w, dict) and w.get("alpha1") is not None]
+            if len(alphas) < 8:
+                return "too few clean windows"
+            if min(alphas) > target_alpha:
+                return "no crossing — ride stayed easier than this threshold"
+            if max(alphas) < target_alpha:
+                return "no crossing — whole ride harder than this threshold"
+            return "crossing too noisy to fit (r² gate)"
         moving = d.get("moving_s") or d.get("duration_s") or 0
         rides.append({
             "id": d.get("id"),
@@ -2783,6 +2833,13 @@ def api_profile_dfa_rides():
             "zone_minutes": d.get("dfa_zone_minutes"),
             "hrvt1": d.get("dfa_hrvt1"),   # stored dict, passed through unchanged
             "hrvt2": d.get("dfa_hrvt2"),
+            "hrvt1_note": ("no beat-to-beat data from the recording device"
+                           if status == "no_rr_data" else
+                           None if d.get("dfa_hrvt1") else _hrvt_note(0.75)),
+            "hrvt2_note": ("no beat-to-beat data from the recording device"
+                           if status == "no_rr_data" else
+                           None if d.get("dfa_hrvt2") else _hrvt_note(0.50)),
+            "no_rr": status in ("no_rr_data", "sanity_rejected"),
             "algo_version": d.get("dfa_algo_version"),
             # v2.4.1 — whole-ride aerobic decoupling; high drift means a
             # non-stationary α1, so such rides are dropped from the HRVT
@@ -3348,6 +3405,11 @@ def _iter_icu_dfa_rides() -> list[dict]:
                 "dfa_alpha1_lt1_minutes": d.get("dfa_alpha1_lt1_minutes"),
                 "dfa_hrvt1": d.get("dfa_hrvt1"),
                 "dfa_hrvt2": d.get("dfa_hrvt2"),
+                # The per-ride table derives its "why not detected" note from
+                # the window series (crossed? stayed easy? too noisy?); without
+                # this the note silently degrades to the bare "not detected"
+                # this projection was starving it into.
+                "dfa_alpha1_series": d.get("dfa_alpha1_series"),
                 "dfa_zone_minutes": d.get("dfa_zone_minutes"),
                 "dfa_algo_version": d.get("dfa_algo_version"),
             })
@@ -3838,10 +3900,42 @@ async def api_readiness_revert_cap(request: Request):
     _ = str(body.get("signal") or "any")
     _mark_readiness_cap_reverted_today()
     clear_cache()  # training metrics cache may have gated on the flag
-    _log.info(f"EVENT=readiness_cap_reverted signal={_} body={body}")
+    # The flag only suppresses the LIVE adjustment. When the adaptation was
+    # also persisted into the plan (api_today_session_persist), the stored day
+    # still carries the replacement — restore it from the pre_adapt stash, or
+    # the button closes the modal and visibly changes nothing.
+    restored = None
+    try:
+        json_path = _plan_dir() / "current_plan.json"
+        if json_path.exists():
+            with tp.plan_write_lock():
+                with open(json_path, encoding="utf-8") as f:
+                    plan = json.load(f)
+                today_iso = date.today().isoformat()
+                for w in plan.get("weeks", []):
+                    for s in w.get("sessions", []):
+                        if (s.get("day") == today_iso and s.get("adapted")
+                                and isinstance(s.get("pre_adapt"), dict)):
+                            pre = s.pop("pre_adapt")
+                            for k, v in pre.items():
+                                s[k] = v
+                            s["adapted"] = False
+                            s.pop("adapted_reason", None)
+                            restored = {"session_type": s.get("session_type"),
+                                        "duration_min": s.get("duration_min"),
+                                        "zwo_file": s.get("zwo_file"),
+                                        "zwo_name": s.get("zwo_name")}
+                            tp.atomic_write_plan(json_path, plan)
+                            break
+                    if restored:
+                        break
+    except Exception:
+        _log.exception("revert-cap: plan restore skipped")
+    _log.info(f"EVENT=readiness_cap_reverted signal={_} restored={bool(restored)}")
     return {
         "ok": True,
         "reverted": True,
+        "restored": restored,
         "cleared_at_midnight": True,
         "flag_file": str(_readiness_revert_flag_path()),
     }
@@ -4455,6 +4549,37 @@ async def api_wellness_manual_hrv(request: Request):
             _cache.pop(k, None)
             _cache_ts.pop(k, None)
     return {"ok": True, "date": d, "hrv_manual_rmssd": rmssd}
+
+
+@app.get("/api/activities/blocks")
+def api_activities_blocks(days: int = Query(42)):
+    """Per-date actual-ride lap blocks for the plan grid's completed-day
+    sprites. A separate endpoint on purpose: /api/activities is the homepage
+    hot path built from the ICU wellness summaries, which carry no laps —
+    attaching a ride-store join there would tax every frontpage load for a
+    grid-only need. One request per grid render, straight off the local ride
+    store, shaped for miniPowerBlockSVG."""
+    try:
+        days = max(1, min(int(days or 42), 120))
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        try:
+            from profile_manager import ProfileManager
+            _pm_ftp = ProfileManager.get().ftp or None
+        except Exception:
+            _pm_ftp = None
+        out: dict = {}
+        for r in _load_all_rides_safe():
+            d = (r.get("started_at") or "")[:10]
+            if not d or d < cutoff:
+                continue
+            blocks = _actual_blocks_from_laps(r, _pm_ftp)
+            if blocks:
+                out.setdefault(d, []).append(
+                    {"sport": r.get("sport"), "blocks": blocks})
+        return out
+    except Exception:
+        _log.exception("activities/blocks failed")
+        return {}
 
 
 @app.get("/api/activities")
@@ -5296,7 +5421,7 @@ def _scan_zwo_for_library(zwo_path: Path) -> dict | None:
             # planner's load_workout_library parse (training_planner.py, v2.0.6).
             # Binning the whole duration at mean power here (while the planner
             # sliced) drifted the two scanners' zone seconds → score_sync mismatch
-            # (e.g. neuromuscular_30s120s_9x_52min.zwo scored 5 vs 6).
+            # (e.g. neuromuscular_9x30s-2min_175pct_52min.zwo scored 5 vs 6).
             _RAMP_SLICES = 20
             for _i in range(_RAMP_SLICES):
                 _acc_zone((plo + (phi - plo) * (_i + 0.5) / _RAMP_SLICES) * 100, dur / _RAMP_SLICES)
@@ -5586,7 +5711,7 @@ def _search_normalize(s: str) -> str:
     """Shared normalizer: lowercase, transliterate, [-_/]→space, collapse ws.
 
     Collapsing separators is what lets one token grammar span filenames
-    (threshold_3x16min_118min.zwo), ZWO names (Threshold 3x16min) and
+    (threshold_2x16min-10min_98pct_118min.zwo), ZWO names (Threshold 3x16min) and
     display names (Threshold 118min — 3×16min @ 91%).
     """
     s = (s or "").lower().translate(_SEARCH_TRANSLIT)
@@ -8481,6 +8606,10 @@ def api_version():
     """
     import platform
     return {
+        # Identity marker, not decoration: the launcher's single-instance probe
+        # uses it to tell a running Domestique from any other server that
+        # happens to hold :8080. Do not rename or remove.
+        "app": "domestique",
         "version": _VERSION,
         "python": platform.python_version(),
         "frozen": getattr(sys, "frozen", False),
@@ -8530,7 +8659,8 @@ def _select_platform_asset(assets, plat):
     macOS (`darwin`) → `.dmg`, prefer plain `Domestique.dmg` over decorated
     variants like `Domestique-1.0.3.dmg` so the canonical asset wins.
     Windows (`win32`) → prefer `.exe`, fall back to `.zip`.
-    Anything else (Linux, BSD) → no asset; banner falls back to release_url.
+    Linux → `.AppImage` (released as `Domestique-v<VERSION>-x86_64.AppImage`).
+    Anything else (BSD) → no asset; banner falls back to release_url.
     """
     if not isinstance(assets, list):
         return None, None
@@ -8557,6 +8687,15 @@ def _select_platform_asset(assets, plat):
         if zips:
             return _url(zips[0]) or None, _name(zips[0]) or None
         return None, None
+
+    if plat == "linux":
+        # One AppImage per release, and it always carries the version token —
+        # unlike the DMG, whose bare name caused the v1.8.8 mix-up. No
+        # canonical-name preference is needed because there is only ever one.
+        imgs = [a for a in assets if _name(a).lower().endswith(".appimage")]
+        if not imgs:
+            return None, None
+        return _url(imgs[0]) or None, _name(imgs[0]) or None
 
     return None, None
 
@@ -9498,7 +9637,8 @@ def api_settings():
                 break
 
     p_zones = _power_zones(pm.ftp)
-    h_zones = _hr_zones(pm.lthr, pm.max_hr)
+    h_zones = _hr_zones(pm.lthr, pm.max_hr, pm=pm)
+    _hz_model, _hz_anchor, _hz_why = _hr_zone_model(pm)
 
     return {
         "weight": config.ATHLETE_WEIGHT_KG,
@@ -9511,6 +9651,15 @@ def api_settings():
         # the bare lthr value above is a 170 default when unset.
         "target_mode": pm.target_mode,
         "lthr_is_set": pm.lthr_is_set,
+        # HRR zone model (issue #10): what is ACTIVE, what the rider CHOSE,
+        # and — when the choice cannot take effect — the plain-language why,
+        # so the UI greys the option instead of silently ignoring it.
+        "hr_zone_model": _hz_model,
+        "hr_zone_model_choice": pm._athlete.get("hr_zone_model") or "lthr",
+        "hrr_unavailable_reason": _hz_why,
+        "hrr_anchor_bpm": _hz_anchor,
+        "hrr_rhr_mode": pm._athlete.get("hrr_rhr_mode") or "rolling",
+        "hrr_rhr_window_days": pm._athlete.get("hrr_rhr_window_days") or 7,
         # W2d: LTHR provenance — hr-mode accuracy hangs on this one number.
         "lthr_source": pm._athlete.get("lthr_source"),
         "lthr_source_date": pm._athlete.get("lthr_source_date"),
@@ -9572,6 +9721,28 @@ def update_settings(request_body: dict):
         "pmax": ("pmax_w", "ATHLETE_PMAX_W", int),
     }
     athlete_updates = {}
+    # HRR zone model (issue #10): free-form athlete keys, validated here and
+    # only here. The model choice persists even while ineligible — the
+    # settings payload carries the why, and _hr_zone_model refuses to
+    # activate it until the anchors are real.
+    if "hr_zone_model" in request_body:
+        v = str(request_body["hr_zone_model"] or "lthr")
+        if v not in ("lthr", "hrr"):
+            raise HTTPException(400, "hr_zone_model must be lthr or hrr")
+        athlete_updates["hr_zone_model"] = v
+    if "hrr_rhr_mode" in request_body:
+        v = str(request_body["hrr_rhr_mode"] or "rolling")
+        if v not in ("rolling", "manual"):
+            raise HTTPException(400, "hrr_rhr_mode must be rolling or manual")
+        athlete_updates["hrr_rhr_mode"] = v
+    if "hrr_rhr_window_days" in request_body:
+        try:
+            w = int(request_body["hrr_rhr_window_days"])
+        except (TypeError, ValueError):
+            raise HTTPException(400, "hrr_rhr_window_days must be an integer")
+        if not 2 <= w <= 60:
+            raise HTTPException(400, "hrr_rhr_window_days must be 2-60")
+        athlete_updates["hrr_rhr_window_days"] = w
     old_ftp = pm.ftp
     new_ftp = None
     for key, (athlete_key, config_key, cast) in field_map.items():
@@ -9757,12 +9928,94 @@ def _power_zones(ftp):
         for i, z in enumerate(_zones_mod.power_zones(ftp))
     ]
 
-def _hr_zones(lthr, max_hr):
-    # Custom (rider-edited) zones win; else the LTHR-anchored hybrid model.
-    # Adapts Zone(low, high, name) → dict shape required by clients.
+def _hrr_rhr_anchor(pm) -> "tuple[int | None, str]":
+    """(resting bpm, source) for the HRR zone anchor, or (None, reason).
+
+    Two modes, rider-chosen (docs/SCIENCE.md "Heart-rate zones"): a fixed
+    manual value (rhr_baseline — the field that already backs the profile's
+    RHR display), or a rolling MEDIAN of the synced daily wellness RHR.
+    The literature's anchor is morning resting HR — which the wellness RHR
+    is — but no published standard exists for an averaging window, so the
+    7-day default is practice extrapolation, labeled as such, and editable.
+
+    Eligibility is a SAMPLE-COUNT rule, not a calendar cutoff: >=4 RHR
+    samples in the last 14 days. A calendar rule let one stale reading from
+    three weeks ago enable the model while the rolling window sat empty.
+    """
+    a = pm._athlete
+    if (a.get("hrr_rhr_mode") or "rolling") == "manual":
+        if a.get("rhr_baseline"):
+            return int(a["rhr_baseline"]), "manual"
+        return None, "manual mode selected but no resting HR set"
+    try:
+        window = max(2, min(60, int(a.get("hrr_rhr_window_days") or 7)))
+    except (TypeError, ValueError):
+        window = 7
+    try:
+        import ride_storage as _rs
+        wl = _rs.load_recent_wellness(days=max(window, 14)) or []
+    except Exception:
+        wl = []
+    def _day(w):
+        return str(w.get("id") or "")[:10]
+    dated = sorted((( _day(w), int(w["restingHR"]) ) for w in wl
+                    if w.get("restingHR")), reverse=True)
+    recent14 = [v for d, v in dated[:60] if d >= (date.today() - timedelta(days=14)).isoformat()]
+    if len(recent14) < 4:
+        return None, "needs at least 4 resting-HR samples in the last 14 days"
+    in_window = [v for d, v in dated if d >= (date.today() - timedelta(days=window)).isoformat()]
+    src = in_window if in_window else recent14
+    src = sorted(src)
+    mid = len(src) // 2
+    med = src[mid] if len(src) % 2 else round((src[mid - 1] + src[mid]) / 2)
+    return int(med), f"rolling {window}d median"
+
+
+def _max_hr_is_set(pm) -> bool:
+    """True only for a MEASURED/entered max HR. pm.max_hr silently falls
+    back to Tanaka 208-0.7xage — fine for display, not for anchoring a zone
+    model whose top band is 90-100% of it."""
+    raw = pm._athlete.get("max_hr")
+    try:
+        return raw is not None and 140 <= int(raw) <= 220
+    except (TypeError, ValueError):
+        return False
+
+
+def _hr_zone_model(pm) -> "tuple[str, int | None, str]":
+    """(active model, hrr anchor bpm | None, reason-if-unavailable)."""
+    want = (pm._athlete.get("hr_zone_model") or "lthr")
+    if want != "hrr":
+        return "lthr", None, ""
+    if not _max_hr_is_set(pm):
+        return "lthr", None, "requires a measured max HR (no age formula)"
+    anchor, why = _hrr_rhr_anchor(pm)
+    if anchor is None:
+        return "lthr", None, why
+    if anchor >= int(pm._athlete["max_hr"]):
+        return "lthr", None, "resting HR is not below max HR"
+    return "hrr", anchor, ""
+
+
+def _hr_zones(lthr, max_hr, pm=None):
+    # Custom (rider-edited) zones win; else the rider's zone model: the
+    # LTHR-anchored hybrid (default), or heart-rate reserve when selected
+    # AND eligible — never silently, never by fallback guesswork. HRR here
+    # covers the ZONE TABLE and displays; workout prescription stays
+    # LTHR-anchored (no validated %FTP->%HRR mapping exists, and Z5+ keeps
+    # RPE per the standing contract) — docs/SCIENCE.md carries the verdict.
     custom = _custom_zones("hr_zones_custom")
     if custom:
         return custom
+    if pm is not None:
+        model, anchor, _why = _hr_zone_model(pm)
+        if model == "hrr":
+            return [
+                {"zone": f"Z{i + 1}", "name": z.name, "low": z.low,
+                 "high": z.high}
+                for i, z in enumerate(
+                    _zones_mod.hrr_zones(anchor, int(pm._athlete["max_hr"])))
+            ]
     return [
         {"zone": f"Z{i + 1}", "name": z.name, "low": z.low, "high": z.high}
         for i, z in enumerate(_zones_mod.hr_zones(lthr, max_hr))
@@ -9807,8 +10060,18 @@ def update_custom_zones(body: dict):
 
 @app.post("/api/sync")
 def api_sync():
-    """Manually trigger a sync from Intervals.icu."""
+    """Manually trigger a sync from Intervals.icu.
+
+    A manual sync that SUCCEEDS proves the credential is alive, so it clears
+    the auth-disable latch and restarts the background loop. The latch is
+    one-way otherwise — it returns out of _sync_loop and only a reconnect or an
+    app restart resets it — and now that a single 401 sets it, a one-off 401
+    from ICU must not cost the rider background sync for the rest of the
+    session. run_sync re-raises on failure, so this only runs on success.
+    """
     result = db.run_sync(days=90)
+    if db._auth_disabled:
+        db.restart_sync()
     return result
 
 
@@ -10881,6 +11144,23 @@ async def api_today_session_persist(request: Request):
         for w in plan.get("weeks", []):
             for s in w.get("sessions", []):
                 if s.get("day") == today_iso:
+                    # The original prescription used to be OVERWRITTEN here,
+                    # which made "Ride the original anyway" unable to keep its
+                    # promise: the revert flag suppressed the live adjustment,
+                    # but every view reading the plan still showed the
+                    # persisted replacement — clicking looked like it did
+                    # nothing. Stash the pre-adapt session once (never
+                    # re-stash on a second adapt of the same day, or the true
+                    # original would be lost) so revert-cap can restore it.
+                    if not s.get("pre_adapt"):
+                        s["pre_adapt"] = {
+                            "session_type": s.get("session_type"),
+                            "duration_min": s.get("duration_min"),
+                            "tss_estimate": s.get("tss_estimate"),
+                            "description": s.get("description"),
+                            "zwo_file": s.get("zwo_file"),
+                            "zwo_name": s.get("zwo_name"),
+                        }
                     s["session_type"] = new_type
                     if body.get("duration_min") is not None:
                         s["duration_min"] = int(body["duration_min"])
@@ -12508,6 +12788,9 @@ async def api_plan_generate(request: Request):
                           else body.get("distribution", _prefs.get("distribution", "polarized"))),
             # F1 (v2.1): opt-in block periodization (default off).
             block_periodization=bool(body.get("block_periodization", _prefs.get("block_periodization", False))),
+            vo2_microintervals_only=bool(body.get(
+                "vo2_microintervals_only",
+                _prefs.get("vo2_microintervals_only", False))),
             events=_events_from_dicts(body.get("events")),  # F7 (A + optional B/C)
             # FS1 — plan construction mode (auto | fixed_core | template).
             # v2.3.0: a custom-bands payload drives the dynamic custom blueprint,
@@ -12619,12 +12902,34 @@ async def api_plan_generate(request: Request):
         except Exception:
             recent_weekly_tss = None
 
+        # Re-entry shaping inputs (SCIENCE.md "Returning after a break"):
+        # how long since the last ride, and TSB now. Best-effort — None keeps
+        # generate_plan's legacy behaviour.
+        days_since_last_ride = None
+        tsb_at_generation = None
+        try:
+            import ride_storage as _rs2
+            from datetime import date as _date
+            last = max((r.get("started_at") or "")[:10]
+                       for r in _rs2.load_all_rides())
+            if last:
+                days_since_last_ride = (_date.today()
+                                        - _date.fromisoformat(last)).days
+        except Exception:
+            days_since_last_ride = None
+        try:
+            tsb_at_generation = training.get("tsb")
+        except Exception:
+            tsb_at_generation = None
+
         phases, weeks = tp.generate_plan(
             goal, seed_salt=seed_salt,
             availability_overrides=availability_overrides or None,
             athlete=athlete,
             current_ctl=current_ctl,
             recent_weekly_tss=recent_weekly_tss,
+            days_since_last_ride=days_since_last_ride,
+            tsb_at_generation=tsb_at_generation,
         )
         plan_path = tp.export_plan_md(goal, phases, weeks)
 
@@ -12656,6 +12961,8 @@ async def api_plan_generate(request: Request):
                 # rebuild with the same model (else they'd revert to polarized).
                 "distribution": getattr(goal, "distribution", "polarized"),
                 "block_periodization": getattr(goal, "block_periodization", False),  # F1
+                "vo2_microintervals_only": getattr(
+                    goal, "vo2_microintervals_only", False),
                 "events": _events_to_dicts(getattr(goal, "events", [])),  # F7
                 "plan_mode": getattr(goal, "plan_mode", "auto"),  # FS1
                 "template_id": getattr(goal, "template_id", "") or "",  # FS1
@@ -12844,8 +13151,6 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
     import responses must stay clean even if adaptation errors.
     """
     try:
-        if new_rides <= 0:
-            return
         json_path = _plan_dir() / "current_plan.json"
         if not json_path.exists():
             return
@@ -12857,6 +13162,21 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
             with open(json_path, encoding="utf-8") as f:
                 plan = json.load(f)
 
+            # A MISS IS THE ABSENCE OF A RIDE. Gating this whole chain on
+            # new_rides > 0 meant the one thing it most needs to react to was
+            # the one thing that skipped it: stop riding and nothing marks the
+            # sessions missed, so reconcile never runs, the refit tier is
+            # handed an empty missed list, and the week keeps the shape it was
+            # born with until the rider notices and presses Update plan by
+            # hand. A rider who stops riding is exactly the rider who never
+            # presses it. Rides arriving still drive it immediately; otherwise
+            # it runs once per day so a day that passed unridden is seen.
+            today = date.today()
+            stamped = plan.get("reconcile_date") != today.isoformat()
+            if new_rides <= 0 and not stamped:
+                return
+            plan["reconcile_date"] = today.isoformat()
+
             activities = db.query_activities(days=120)
             training = cached("training", get_today_metrics)
 
@@ -12864,13 +13184,16 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
                 plan,
                 training=training,
                 activities=activities,
-                today=date.today(),
+                today=today,
                 allow_regen=True,
                 gap_debounce=True,
                 reforecast_min_interval_iso=plan.get("reforecast_date"),
             )
-            if action == "skipped":
-                return  # reforecast tier debounced (<5 min) — nothing to write
+            # "skipped" means the reforecast tier debounced. The daily stamp
+            # still has to land, or every sync for the rest of the day re-runs
+            # the full chain.
+            if action == "skipped" and not stamped:
+                return
 
             tp.atomic_write_plan(json_path, plan_dict)
     except Exception as e:  # noqa: BLE001
@@ -12959,6 +13282,7 @@ async def api_plan_reforecast():
             # distribution model (also sets the active model for this recalc's
             # budget lookups) so a pyramidal/threshold plan isn't judged against
             # the polarized ceiling. Default polarized → unchanged.
+            tp.set_vo2_micro_only((plan.get("goal", {}) or {}).get("vo2_microintervals_only", False))
             tp.set_active_distribution(
                 (plan.get("goal", {}) or {}).get("distribution", "polarized"),
                 (plan.get("goal", {}) or {}).get("custom_bands"))
@@ -13240,6 +13564,7 @@ def _regenerate_plan_dict(
     # lookups (mirrors generate_plan) — /api/plan/regenerate and add-race call
     # this core bare, so after an app restart the process default (polarized)
     # silently rebudgeted non-polarized plans.
+    tp.set_vo2_micro_only(getattr(goal, "vo2_microintervals_only", False))
     tp.set_active_distribution(goal.distribution, goal.custom_bands)
 
     # Reconstruct PlannedWeek list.
@@ -13494,6 +13819,7 @@ def _goal_from_plan_dict(g: dict) -> "tp.Goal":
         last_ftp_test_date=g.get("last_ftp_test_date"),
         distribution=g.get("distribution", "polarized"),  # J1
         block_periodization=bool(g.get("block_periodization", False)),  # F1
+        vo2_microintervals_only=bool(g.get("vo2_microintervals_only", False)),
         events=_events_from_dicts(g.get("events")),  # F7
         plan_mode=g.get("plan_mode", "auto"),  # FS1 — keep fixed plans fixed on refit/reforecast
         template_id=g.get("template_id", "") or "",
@@ -13658,6 +13984,7 @@ def _apply_plan_update(
     # J1 (v2.1.0): pin the active intensity-distribution model to the plan's
     # persisted choice so every tier (rebuild / missed-hard refit / reforecast)
     # rebuilds with the same model rather than reverting to polarized.
+    tp.set_vo2_micro_only((plan.get("goal", {}) or {}).get("vo2_microintervals_only", False))
     tp.set_active_distribution((plan.get("goal", {}) or {}).get("distribution", "polarized"),
                                (plan.get("goal", {}) or {}).get("custom_bands"))
 
@@ -13666,8 +13993,15 @@ def _apply_plan_update(
     # every sync / Update-plan (no manual "Reconcile Week" click). Idempotent
     # (dedup by activity_id). Runs before regen/reforecast so the regen path's
     # v1.8.20 preservation carries the freshly-marked done/missed statuses.
+    # ``reconciled`` counts what the two bookkeeping passes below changed. The
+    # reforecast tier can debounce out and return "skipped", and its caller
+    # takes that as "nothing to write" — which silently threw away the misses
+    # these passes had just marked, so a rider who synced twice inside five
+    # minutes ended the day with a plan that still called every past session
+    # pending. Bookkeeping is not reforecast work and must survive that gate.
+    reconciled = 0
     try:
-        _reconcile_current_week(plan, today)
+        reconciled += _reconcile_current_week(plan, today)[0] or 0
     except Exception:  # noqa: BLE001 — reconcile is best-effort; never block adapt
         _log.exception("auto-reconcile skipped")
 
@@ -13678,7 +14012,7 @@ def _apply_plan_update(
     # redistribute it; misses with no free in-week slot stay missed and fall
     # through to the refit tier as before.
     try:
-        _auto_apply_missed_moves(plan, today)
+        reconciled += len(_auto_apply_missed_moves(plan, today) or ())
     except Exception:  # noqa: BLE001 — best-effort; never block adapt
         _log.exception("auto-reschedule skipped")
 
@@ -13815,6 +14149,12 @@ def _apply_plan_update(
         try:
             last_dt = datetime.fromisoformat(reforecast_min_interval_iso)
             if (datetime.now() - last_dt).total_seconds() < 300:
+                # "reconciled" when the bookkeeping passes above actually
+                # changed something: the debounce is about reforecast churn,
+                # and callers treat only "skipped" as nothing-to-write, so a
+                # bare "skipped" here would discard those marks.
+                if reconciled:
+                    return plan, "reconciled", {"gaps": gaps}, ""
                 return plan, "skipped", {"gaps": gaps}, ""
         except (ValueError, TypeError):
             pass
@@ -13849,7 +14189,7 @@ def _apply_plan_update(
         for day_iso, entry in plan.get("availability", {}).items()
         if isinstance(entry, dict) and "hours" in entry
     }
-    plan, _modified, reforecast_info = tp.reforecast_dict(
+    plan, modified, reforecast_info = tp.reforecast_dict(
         plan,
         today_iso=today.isoformat(),
         tsb_series=tsb_series,
@@ -13870,8 +14210,17 @@ def _apply_plan_update(
                                     "at": now_iso, "behind_plan": True}
         info = {"gaps": gaps, "taper_blocked": True}
         return plan, "rebalanced", info, status
-    status = "Plan rebalanced to today's fitness."
-    plan["last_update_info"] = {"action": "rebalanced", "message": status, "at": now_iso}
+    # Every mutator in the reforecast tier is downward-only and none of them
+    # read status=="missed", so an absence lands here and changes nothing —
+    # yet the rider was told "Plan rebalanced to today's fitness", which reads
+    # as "we adjusted for the days you missed" when the plan is byte-identical.
+    # Say which of the two actually happened.
+    if modified or reconciled:
+        status = "Plan rebalanced to today's fitness."
+    else:
+        status = "Plan checked — no change needed."
+    plan["last_update_info"] = {"action": "rebalanced", "message": status,
+                                "at": now_iso, "modified": bool(modified)}
     info = {"gaps": gaps, "reforecast_info": reforecast_info}
     return plan, "rebalanced", info, status
 
@@ -14932,7 +15281,8 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
         return cc in tp._HIT_SLOT_CONTENT_CLASSES
 
     def _is_available_slot(d_iso: str, missed_iso: str,
-                           missed_sess: "dict | None" = None) -> bool:
+                           missed_sess: "dict | None" = None,
+                           easy_takeover: bool = False) -> bool:
         try:
             d = date.fromisoformat(d_iso)
         except ValueError:
@@ -14965,8 +15315,38 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
         sess = sess_by_day.get(d_iso)
         if sess is None:
             return False
-        if sess.get("session_type") != "rest":
-            return False
+        stype = sess.get("session_type")
+        if stype != "rest":
+            # The first-fit allowed only empty rest slots, so a rider whose
+            # week had none lost the missed session entirely — dropped without
+            # a word, and the week rode out on its easy back-half. The
+            # redistribution evidence (SCIENCE.md) supports exactly one
+            # narrower move: ONE missed HARD session may take over a remaining
+            # EASY day. A move, never an addition; the displaced easy volume
+            # is written off, because missed z2 is not worth compensating and
+            # intensity is what preserves adaptation (Hickson 1985). Easy
+            # misses never take over anything.
+            if not easy_takeover:
+                return False
+            if stype not in ("recovery", "z2", "endurance", "long_z2"):
+                return False
+            # Only a day still being ridden can be taken over. The generic
+            # status checks below reject done/moved/dismissed but let
+            # "missed" through — and a missed easy day is exactly the day
+            # the rider is NOT riding; landing the quality there loses it
+            # twice over.
+            if (sess.get("status") or "pending") != "pending":
+                return False
+            # >=48h from any other hard day (the evidence's spacing bound,
+            # approximated as no hard neighbour on the adjacent days). A
+            # missed or dismissed neighbour does not count — it will not be
+            # ridden.
+            for nb in (d - timedelta(days=1), d + timedelta(days=1)):
+                nb_sess = sess_by_day.get(nb.isoformat())
+                if (nb_sess and _sess_is_hard(nb_sess)
+                        and (nb_sess.get("status") or "pending")
+                        not in ("missed", "dismissed")):
+                    return False
         stat = (sess.get("status") or "")
         if stat in ("done", "done_partial", "ambiguous"):
             return False
@@ -14991,6 +15371,7 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
     misses.sort(key=lambda s: s.get("day", ""))
 
     used: set[str] = set()
+    takeover_weeks: set = set()   # at most ONE easy-day takeover per ISO week
     suggestions: list[dict] = []
     for miss in misses:
         missed_iso = miss.get("day", "")
@@ -15020,6 +15401,23 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
             cand_sess = sess_by_day.get(cand_iso, {})
             chosen_reason = "rest_slot" if cand_sess.get("session_type") == "rest" else "unfilled_available_day"
             break
+        if chosen is None and _sess_is_hard(miss) \
+                and (iso_year, iso_week) not in takeover_weeks:
+            # Second chance for a missed HARD session in a week with no free
+            # rest slot: take over an easy day. Capped at one per week so a
+            # badly-missed week never converts its whole back half to
+            # intensity — the cap comes from the same evidence as the move.
+            for cand_iso in same_week_dates:
+                if cand_iso in used:
+                    continue
+                if not _is_available_slot(cand_iso, missed_iso,
+                                          missed_sess=miss,
+                                          easy_takeover=True):
+                    continue
+                chosen = cand_iso
+                chosen_reason = "easy_day_takeover"
+                takeover_weeks.add((iso_year, iso_week))
+                break
         if chosen is None:
             continue
 
@@ -15706,6 +16104,28 @@ def _ride_started_local_iso_date(ride: dict) -> str | None:
         return started[:10] if len(started) >= 10 else None
 
 
+def _actual_blocks_from_laps(ride: dict, ftp: "int | None") -> list:
+    """Lap timeline -> mini-sprite blocks ({min, pctLow, pctHigh} each)."""
+    laps = ride.get("intervals")
+    ride_ftp = ride.get("ftp_at_ride") or ftp
+    if not isinstance(laps, list) or not laps or not ride_ftp:
+        return []
+    if len(laps) > 120:   # degenerate 1-lap-per-second exports: not a structure
+        return []
+    out = []
+    for lp in laps:
+        try:
+            dur = float(lp.get("duration_s") or 0)
+            pw = lp.get("avg_power_w")
+            if dur <= 0 or pw is None:
+                continue
+            pct = round(100.0 * float(pw) / float(ride_ftp), 1)
+            out.append({"min": round(dur / 60.0, 2), "pctLow": pct, "pctHigh": pct})
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def _summarize_ride_for_calendar(
     ride: dict, ftp: int | None, planned_session: dict | None = None,
 ) -> dict:
@@ -15748,6 +16168,11 @@ def _summarize_ride_for_calendar(
             "started_at": ride.get("started_at") or "",
             "classification": _pol.get("classification") if isinstance(_pol, dict) else None,
             "pol_confidence": _pol.get("confidence") if isinstance(_pol, dict) else None,
+            # Same lap-blocks contract as the legacy path below — this early
+            # return is the branch every SYNCED ride takes, and it was the
+            # one initially missed: the test asserting blocks on an icu ride
+            # failed with KeyError while the legacy-path tests passed.
+            "blocks": _actual_blocks_from_laps(ride, ftp),
         }
         if planned_session is not None:
             from analytics import compare_plan_to_actual
@@ -15793,6 +16218,17 @@ def _summarize_ride_for_calendar(
         "started_at": ride.get("started_at") or parsed.get("start_time") or "",
         "classification": _pol.get("classification") if isinstance(_pol, dict) else None,
         "pol_confidence": _pol.get("confidence") if isinstance(_pol, dict) else None,
+        # The grid's completed-day sprite used to keep showing the PLANNED
+        # silhouette — a rider compared it with intervals.icu's card, which
+        # draws the ride you actually did, and read ours as "a standard
+        # preview, completely different from the blocks I did". ICU renders
+        # stream-downsampled zone-colored bars; the lap timeline stored on
+        # every synced ride (start_s / duration_s / avg_power_w) carries the
+        # same structure with zero extra fetches, so completed days ship it
+        # as ready-to-render blocks in the sprite's own {min, pctLow,
+        # pctHigh} shape. Empty for rides without laps or a known FTP — the
+        # client keeps the planned silhouette there.
+        "blocks": _actual_blocks_from_laps(ride, ftp),
     }
     if planned_session is not None:
         from analytics import compare_plan_to_actual
@@ -17262,6 +17698,15 @@ def _accept_redraw_apply(plan: dict, day_iso: str, candidate: dict) -> dict:
     target["zwo_name"] = str(candidate.get("zwo_name") or candidate.get("zwo_file") or "")
     target["variation"] = int(candidate.get("variation") or 0)
     target["status"] = "pending"
+    # PIN IT. An accepted redraw is the rider's deliberate choice — the same
+    # thing swap-type and ftp-test-type already pin — yet this path left the
+    # day unpinned and then ran a reforecast over it. That reforecast applies
+    # the availability calendar literally: a 51-min accepted workout on a
+    # 60-min day is a 17% change, over the 15% re-match threshold, so it
+    # re-matched the day while EXCLUDING the file just accepted. The rider
+    # accepted one workout and watched a different one land in the plan.
+    target["user_swapped"] = True
+    target["adapted"] = False
     # v1.7.0 — actually carry the new workout's TSS / duration into the
     # plan so downstream reforecast (and the dashboard's load math) sees
     # the truth, not the planner's stale estimate.
@@ -17576,6 +18021,11 @@ async def api_plan_swap_type(request: Request):
         return JSONResponse({"error": "Invalid date format"}, 400)
     if new_type not in _SWAP_TYPES:
         return JSONResponse({"error": f"Unknown session_type: {new_type}"}, 400)
+    # v3.7.1 — per-swap VO2max protocol choice. Absent key ⇒ fall back to the
+    # plan's own preference, so a swap made without touching the control does
+    # what the plan would have done. Only meaningful on a VO2max slot; the
+    # planner ignores it elsewhere.
+    micro_raw = body.get("microintervals_only")
     # Clamp duration to the type ceiling (e.g. vo2max ≤75, sprint ≤45); floor 30.
     ceil = tp.TYPE_CEILING.get(new_type)
     new_dur = new_dur or 60
@@ -17589,6 +18039,10 @@ async def api_plan_swap_type(request: Request):
     try:
         with open(json_path, encoding="utf-8") as f:
             plan = json.load(f)
+        _micro = (bool(micro_raw) if micro_raw is not None
+                  else bool((plan.get("goal", {}) or {})
+                            .get("vo2_microintervals_only", False)))
+        tp.set_vo2_micro_only(_micro)
         result = _swap_session_type_apply(plan, day_iso, new_type, new_dur)
         tp.atomic_write_plan(json_path, plan)
         return result
@@ -17618,8 +18072,8 @@ def _ftp_test_family(fname: str) -> "str | None":
 # even beyond the ramp's baseline bias. Fallback duration keeps the endpoint
 # alive if the preferred file is ever renamed.
 _FTP_TEST_PREFERRED_FILE = {
-    "ramp": ("ftp_test_ramp.zwo", 35),
-    "coggan_20min": ("ftp_test_coggan_20min.zwo", 59),
+    "ramp": ("ftp_test_ramp_ladder21_200pct_35min.zwo", 35),
+    "coggan_20min": ("ftp_test_coggan_3x1min-1min_95pct_59min.zwo", 59),
     "sixty_min": ("ftp_test_60min_100pct_86min.zwo", 86),
 }
 
@@ -17935,6 +18389,7 @@ def api_plan_auto_recalc():
         # J1: pin the active intensity-distribution model for this recalc's
         # budget lookups (mirrors generate_plan) — this scheduler called
         # recalculate_plan bare, so it inherited whatever model ran last.
+        tp.set_vo2_micro_only(getattr(goal, "vo2_microintervals_only", False))
         tp.set_active_distribution(goal.distribution, goal.custom_bands)
 
         # Reconstruct plan weeks.
@@ -19215,6 +19670,27 @@ def _sync_icu_activities_locked(force: bool = False) -> dict:
     try:
         with db.sync_write_gate(_snap):
             _rs.backfill_icu_sports_from_db()
+            # v3.8.1 (issue #9) — drop blank records a Strava-origin stub wrote
+            # before the guard existed. Cheap, idempotent, and it is what lets
+            # the rider's own FIT import finally win the dedupe.
+            _rs.purge_stub_icu_records()
+            # Deletions made ON intervals.icu propagate here too: sync only
+            # ever upserted, so a ride deleted upstream (the double-upload
+            # case: Karoo + Garmin, one copy removed) stayed on the calendar
+            # forever. Ids come from the raw fetched list — not the persisted
+            # subset — and the fetch provably succeeded to reach this line;
+            # the aborted pass skips this block entirely.
+            if not aborted:
+                _pruned = _rs.prune_deleted_icu_records(
+                    {str(a.get("id") or a.get("activity_id"))
+                     for a in _activities
+                     if a.get("id") or a.get("activity_id")},
+                    _sync_days)
+                if _pruned:
+                    # Not counted as "updated" — the toast would report ghost
+                    # rides as new activity. The cache drop is what matters:
+                    # every reader must stop seeing the pruned records now.
+                    clear_cache()
     except db.SyncAborted:
         pass
     except Exception as e:  # noqa: BLE001 — best-effort heal, never break sync
@@ -20684,8 +21160,8 @@ def _build_programme_summary(plan: dict) -> dict:
         return {
             "plan_id": "current",
             "start_date": None, "end_date": None, "weeks": 0,
-            # "rides" is what the modal keys its empty state off: zero rides
-            # must read as "nothing ridden yet", never as measured zeros.
+            # The modal keys its empty state off "rides": zero rides must read
+            # as "nothing ridden yet", never as measured zeros.
             "rides": 0,
             "ftp_delta": {}, "eftp_delta": {}, "vo2max_delta": {},
             "ctl_gain": {}, "intensity_dist": {}, "pol_index": {},
@@ -20698,6 +21174,23 @@ def _build_programme_summary(plan: dict) -> dict:
     start_date = weeks[0].get("start") or weeks[0].get("day")
     end_date = weeks[-1].get("end") or weeks[-1].get("day")
     n_weeks = len(weeks)
+
+    # A CONTINUOUS plan regenerates on a rolling basis, so "plan start" is
+    # whenever the last regeneration happened — possibly yesterday. Summarising
+    # from there produces a recap of nothing: a rider with a 213-TSS ride five
+    # days ago saw zeros everywhere because the window had just reset behind
+    # it. A rolling plan has no end to recap, so its summary is a trailing
+    # 28-day one instead, extended to the plan window when that is longer.
+    goal_type = str(((plan.get("goal") or {}).get("goal_type")) or "").lower()
+    is_continuous = goal_type == "continuous" or any(
+        (w.get("phase") or "") == "continuous" for w in weeks[:1])
+    if is_continuous and start_date:
+        from datetime import date as _date, timedelta as _td
+        trailing = (_date.today() - _td(days=28)).isoformat()
+        if trailing < start_date:
+            start_date = trailing
+        if end_date:
+            end_date = min(end_date, _date.today().isoformat())
 
     # ── FTP / VO2max ledger lookups ────────────────────────────────────────
     def _value_at_or_before(metric: str, target_date: str) -> float | None:
@@ -20758,9 +21251,35 @@ def _build_programme_summary(plan: dict) -> dict:
     # ── Rides in window ────────────────────────────────────────────────────
     try:
         import ride_storage as _rs
-        all_rides = _rs.list_rides()
+        # load_all_rides, not list_rides: list_rides globs ride_*.json — FIT
+        # imports only. A rider whose rides all arrive by intervals.icu sync
+        # (the icu/i*.json cache) summed to zero rides here, so the recap
+        # showed zeros over a window with a 213-TSS ride sitting in it.
+        all_rides = _rs.load_all_rides()
     except Exception:
         all_rides = []
+    # load_all_rides mixes two record shapes: FIT imports nest their numbers
+    # under "summary", ICU sync records are flat. Every aggregate below reads
+    # the summary shape, so a flat record gets one synthesized — otherwise an
+    # ICU-only rider counts rides but sums zero km, zero hours, zero kJ.
+    for _r in all_rides:
+        if not _r.get("summary"):
+            _r["summary"] = {
+                "tss": _r.get("tss"),
+                "distance_km": _r.get("distance_km"),
+                "duration_sec": _r.get("duration_s") or _r.get("moving_s"),
+                "kj_mechanical": _r.get("kj"),
+                "elevation_gain_m": _r.get("elevation_m"),
+                "decoupling_pct": _r.get("decoupling_pct"),
+            }
+        # Same shape trap for zone time: FIT records call it "zones", ICU
+        # records "time_in_zone" — so the intensity-distribution and
+        # polarization charts stayed empty for a fully-synced rider. The "ss"
+        # entry is ICU's sweet-spot overlay spanning parts of z3/z4; summing
+        # it alongside the real zones would double-count those seconds.
+        if not _r.get("zones") and isinstance(_r.get("time_in_zone"), dict):
+            _r["zones"] = {k: v for k, v in _r["time_in_zone"].items()
+                           if k != "ss"}
     in_window = []
     for r in all_rides:
         d = _ride_started_iso_date(r)
@@ -21369,6 +21888,10 @@ if __name__ == "__main__":
         "Domestique requires single-worker uvicorn — see launcher.py / README "
         "for the reason (per-process caches, DB sync thread)."
     )
-    print("Domestique Dashboard - http://localhost:8080")
-    uvicorn.run(app, host="127.0.0.1", port=8080, log_level="warning",
+    # Follows the launcher's choice so a standalone `python app.py` lands on
+    # the same URL the desktop app uses. 22400 only applies when nothing set
+    # DOMESTIQUE_PORT — i.e. app.py run directly, without the launcher.
+    _port = int(os.environ.get("DOMESTIQUE_PORT") or 22400)
+    print(f"Domestique Dashboard - http://127.0.0.1:{_port}")
+    uvicorn.run(app, host="127.0.0.1", port=_port, log_level="warning",
                 workers=_UVICORN_WORKERS)

@@ -46,7 +46,7 @@ def test_over_cooked_neuromuscular_file_unreachable_from_sprint():
     # value synthetically (canary pattern) and prove the ceiling still
     # rejects it end-to-end through match_zwo.
     lib = tp.load_workout_library()
-    base = _row(lib, "neuromuscular_10s16s_60x_110min.zwo")
+    base = _row(lib, "neuromuscular_26x10s_200pct_108min.zwo")
     if base is None:
         return  # library variant without this file — nothing to assert
     resurrected = dict(base, IF=0.87)  # pre-amendment over-cooked value
@@ -59,7 +59,7 @@ def test_over_cooked_neuromuscular_file_unreachable_from_sprint():
                 duration_min=dur, tss_estimate=140, description="")
             tp.match_zwo(s, doctored, week_num=seed, day_idx=1, seed_salt=seed)
             picks.add(s.zwo_file)
-    assert "neuromuscular_10s16s_60x_110min.zwo" not in picks
+    assert "neuromuscular_26x10s_200pct_108min.zwo" not in picks
 
 
 def test_ceiling_does_not_apply_to_non_sprint_slots():

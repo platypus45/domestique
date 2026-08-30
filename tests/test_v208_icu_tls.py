@@ -68,11 +68,38 @@ class TestIcuTlsCaBundle(unittest.TestCase):
             configure_tls_ca(platform="darwin", frozen=True)
             self.assertEqual(os.environ["SSL_CERT_FILE"], "/custom/ca.pem")
 
-    def test_linux_is_never_patched(self):
+    def test_frozen_linux_is_patched_too(self):
+        """This class used to assert Linux is NEVER patched, on the premise
+        that "the system store works". It works on the distro we BUILD on.
+
+        The AppImage ships its own libcrypto and PyInstaller puts _internal on
+        LD_LIBRARY_PATH, so that copy wins over the host's — and its
+        compiled-in OPENSSLDIR is Debian's /usr/lib/ssl, a path that does not
+        exist on Fedora/RHEL/Rocky/Alma and differs on Arch and openSUSE. So
+        urllib failed cert verification there even with ca-certificates
+        installed and current.
+
+        The partial nature is what made it vicious: the OAuth exchange runs on
+        httpx with its own certifi and SUCCEEDED, so the app said "connected"
+        while every sync, FIT upload and calendar push — all urllib — failed
+        forever with CERTIFICATE_VERIFY_FAILED.
+        """
+        import certifi
         from launcher import configure_tls_ca
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("SSL_CERT_FILE", None)
-            self.assertIsNone(configure_tls_ca(platform="linux", frozen=True))
+            ca = configure_tls_ca(platform="linux", frozen=True)
+            self.assertEqual(ca, certifi.where())
+            self.assertEqual(os.environ.get("SSL_CERT_FILE"), certifi.where())
+            self.assertTrue(os.path.isfile(os.environ["SSL_CERT_FILE"]))
+
+    def test_linux_dev_checkout_keeps_the_system_store(self):
+        """Only the FROZEN build carries its own OpenSSL. A dev checkout runs
+        on the system Python, whose cert paths match the machine it is on."""
+        from launcher import configure_tls_ca
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SSL_CERT_FILE", None)
+            self.assertIsNone(configure_tls_ca(platform="linux", frozen=False))
             self.assertNotIn("SSL_CERT_FILE", os.environ)
 
 

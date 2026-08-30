@@ -1,6 +1,6 @@
 """v3.5.2 — cooldowns must descend, in the file itself.
 
-Owner rode vo2max_ou_53min.zwo: the modal drew the cooldown descending (the
+Owner rode vo2max_ladder12_150pct_53min.zwo: the modal drew the cooldown descending (the
 renderer force-slopes Cooldown down) but the ZWO authored it ascending
 (PowerLow=0.25 → PowerHigh=0.75), and trainer apps that play attributes
 chronologically (MyWhoosh / Tacx) ramped him UP to 75% FTP as a "cooldown".
@@ -45,7 +45,7 @@ def test_no_trailing_cooldown_ramps_up():
 def test_owner_reported_file_descends():
     # The file from the report, pinned end-to-end: attrs descend and the
     # description narrates the same direction.
-    p = WORKOUTS / "vo2max_ou_53min.zwo"
+    p = WORKOUTS / "vo2max_ladder12_150pct_53min.zwo"
     root = ET.parse(p).getroot()
     last = list(root.find("workout"))[-1]
     assert last.tag == "Cooldown"

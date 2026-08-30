@@ -82,16 +82,16 @@ def test_w4_short_sprint_files_are_servable():
     HIT Score floor, and are admissible to the sprint slot — i.e. actually
     reachable by the serve path, not just present on disk."""
     w4_files = [
-        "neuromuscular_15s180s_4x_33min.zwo",
-        "neuromuscular_16s180s_4x_33min.zwo",
-        "neuromuscular_18s180s_4x_33min.zwo",
-        "neuromuscular_20s180s_4x_34min.zwo",
-        "neuromuscular_15s180s_2x2_34min.zwo",
-        "neuromuscular_20s180s_5x_flying_40min.zwo",
-        "neuromuscular_12s180s_desc_2x3_41min.zwo",
-        "neuromuscular_10s180s_7x_43min.zwo",
-        "neuromuscular_12s180s_7x_43min.zwo",
-        "neuromuscular_15s180s_2x3_44min.zwo",
+        "neuromuscular_4x15s-3min_220pct_33min.zwo",
+        "neuromuscular_4x16s-3min_225pct_33min.zwo",
+        "neuromuscular_4x18s-3min_205pct_33min.zwo",
+        "neuromuscular_4x20s-3min_195pct_34min.zwo",
+        "neuromuscular_4x15s_230pct_34min.zwo",
+        "neuromuscular_5x45s_78pct_40min.zwo",
+        "neuromuscular_2x12s-3min_240pct_41min.zwo",
+        "neuromuscular_7x10s-3min_250pct_43min.zwo",
+        "neuromuscular_7x12s-3min_210pct_43min.zwo",
+        "neuromuscular_6x15s-3min_215pct_44min.zwo",
     ]
     missing = [fn for fn in w4_files if not (WK / fn).exists()]
     assert missing == [], f"W4 files missing from workouts/: {missing}"

@@ -87,6 +87,44 @@ def power_zones(ftp: int) -> list[Zone]:
     return out
 
 
+# Heart-rate-reserve (Karvonen) 5-zone model: target = rest + f x (max - rest).
+# Consumer-standard bands; ACSM (Garber 2011, PMID 21694556) classifies
+# 40-59 %HRR as moderate and 60-89 %HRR as vigorous, so Z2 sits in
+# ACSM-moderate and Z4-Z5 in vigorous. Shipped as an OPTIONAL model: the
+# comparative evidence (Wolpern 2015 RCT, PMID 26146564; Meyer 1999; Mann
+# 2013) favors threshold-anchored zones when an LTHR is known, and %HRR is
+# the evidence-based choice when it is not — docs/SCIENCE.md
+# "Heart-rate zones: LTHR vs heart-rate reserve" carries the full verdict.
+_HRR_FRACS = [
+    (0.00, 0.60, "Z1 Recovery"),
+    (0.60, 0.70, "Z2 Aerobic"),
+    (0.70, 0.80, "Z3 Tempo"),
+    (0.80, 0.90, "Z4 Threshold"),
+    (0.90, 99.0, "Z5 VO2max"),
+]
+
+
+def hrr_zones(resting_hr: int, max_hr: int) -> list[Zone]:
+    """HR zones from heart-rate reserve (Karvonen). Ascending, gap-free,
+    same clamping strategy as hr_zones. Requires BOTH anchors measured —
+    callers gate on that; this function only validates."""
+    if resting_hr <= 0 or max_hr <= resting_hr:
+        raise ValueError(
+            f"need 0 < resting_hr < max_hr, got rest={resting_hr} max={max_hr}")
+    reserve = max_hr - resting_hr
+    out: list[Zone] = []
+    prev_high = -1
+    for lo_f, hi_f, name in _HRR_FRACS:
+        lo = max(prev_high + 1, round(resting_hr + lo_f * reserve))
+        hi = max_hr if hi_f >= 99 else round(resting_hr + hi_f * reserve)
+        if hi < lo:
+            hi = lo
+        out.append(Zone(lo, hi, name))
+        prev_high = hi
+    out[0] = Zone(0, out[0].high, out[0].name)
+    return out
+
+
 def hr_zones(lthr: int, max_hr: int | None = None) -> list[Zone]:
     """Return HR zones (5-zone Friel, ascending). Top zone clamped to max_hr
     if given (else open-ended 99999).

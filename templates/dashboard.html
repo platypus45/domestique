@@ -4259,7 +4259,11 @@ function workoutProfileSVG(segments, ftp, totalSec, hrCtx) {
     const x = xScale(t);
     const m = Math.floor(t/60);
     const label = m >= 60 ? `${Math.floor(m/60)}h${m%60?String(m%60).padStart(2,'0'):'00'}` : `${m}m`;
-    xLabels += `<text x="${x}" y="${H-4}" text-anchor="middle" fill="var(--text3)" font-size="9">${label}</text>`;
+    // Ticks at H-4 shared a baseline with the "Time" title at H-1 — three
+    // pixels apart, so the title sat on top of whichever tick landed mid-axis.
+    // PAD_B is 30: hang the ticks just under the axis line and leave the
+    // bottom row to the title alone.
+    xLabels += `<text x="${x}" y="${H-PAD_B+14}" text-anchor="middle" fill="var(--text3)" font-size="9">${label}</text>`;
   }
 
   const yMid = PAD_T + (H - PAD_T - PAD_B) / 2;

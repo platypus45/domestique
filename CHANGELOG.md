@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Heart-rate zones can now follow heart-rate reserve (Karvonen).** Settings → HR Zones gains a zone-model choice: the LTHR-anchored default, or %HRR — resting + fraction × (max − rest) — using the resting HR your watch already syncs. The resting anchor defaults to a rolling 7-day median (window adjustable), or a fixed manual value that never drifts; the option explains itself and stays off until enough resting-HR data exists and a real max HR is set. LTHR remains the default deliberately — where the two have been compared, threshold-anchored zones produced the more uniform training response, and %HRR earns its place when no threshold test exists. The full evidence review, including what the literature does *not* establish, is in [the science documentation](docs/SCIENCE.md#1c-heart-rate-zones-lthr-vs-heart-rate-reserve).
+
 ## v3.10.2 — What you see is what you did (2026-08-30)
 
 - **Completed days in the plan grid now show the ride you actually did.** The mini chart on a ridden day kept drawing the planned workout's silhouette; compared side-by-side with intervals.icu it looked like a stock preview. It now draws your recorded laps — every sprint spike, every recovery, at their real lengths and intensities — just like the intervals.icu card, built from data already on your machine.

@@ -9637,7 +9637,8 @@ def api_settings():
                 break
 
     p_zones = _power_zones(pm.ftp)
-    h_zones = _hr_zones(pm.lthr, pm.max_hr)
+    h_zones = _hr_zones(pm.lthr, pm.max_hr, pm=pm)
+    _hz_model, _hz_anchor, _hz_why = _hr_zone_model(pm)
 
     return {
         "weight": config.ATHLETE_WEIGHT_KG,
@@ -9650,6 +9651,15 @@ def api_settings():
         # the bare lthr value above is a 170 default when unset.
         "target_mode": pm.target_mode,
         "lthr_is_set": pm.lthr_is_set,
+        # HRR zone model (issue #10): what is ACTIVE, what the rider CHOSE,
+        # and — when the choice cannot take effect — the plain-language why,
+        # so the UI greys the option instead of silently ignoring it.
+        "hr_zone_model": _hz_model,
+        "hr_zone_model_choice": pm._athlete.get("hr_zone_model") or "lthr",
+        "hrr_unavailable_reason": _hz_why,
+        "hrr_anchor_bpm": _hz_anchor,
+        "hrr_rhr_mode": pm._athlete.get("hrr_rhr_mode") or "rolling",
+        "hrr_rhr_window_days": pm._athlete.get("hrr_rhr_window_days") or 7,
         # W2d: LTHR provenance — hr-mode accuracy hangs on this one number.
         "lthr_source": pm._athlete.get("lthr_source"),
         "lthr_source_date": pm._athlete.get("lthr_source_date"),
@@ -9711,6 +9721,28 @@ def update_settings(request_body: dict):
         "pmax": ("pmax_w", "ATHLETE_PMAX_W", int),
     }
     athlete_updates = {}
+    # HRR zone model (issue #10): free-form athlete keys, validated here and
+    # only here. The model choice persists even while ineligible — the
+    # settings payload carries the why, and _hr_zone_model refuses to
+    # activate it until the anchors are real.
+    if "hr_zone_model" in request_body:
+        v = str(request_body["hr_zone_model"] or "lthr")
+        if v not in ("lthr", "hrr"):
+            raise HTTPException(400, "hr_zone_model must be lthr or hrr")
+        athlete_updates["hr_zone_model"] = v
+    if "hrr_rhr_mode" in request_body:
+        v = str(request_body["hrr_rhr_mode"] or "rolling")
+        if v not in ("rolling", "manual"):
+            raise HTTPException(400, "hrr_rhr_mode must be rolling or manual")
+        athlete_updates["hrr_rhr_mode"] = v
+    if "hrr_rhr_window_days" in request_body:
+        try:
+            w = int(request_body["hrr_rhr_window_days"])
+        except (TypeError, ValueError):
+            raise HTTPException(400, "hrr_rhr_window_days must be an integer")
+        if not 2 <= w <= 60:
+            raise HTTPException(400, "hrr_rhr_window_days must be 2-60")
+        athlete_updates["hrr_rhr_window_days"] = w
     old_ftp = pm.ftp
     new_ftp = None
     for key, (athlete_key, config_key, cast) in field_map.items():
@@ -9896,12 +9928,94 @@ def _power_zones(ftp):
         for i, z in enumerate(_zones_mod.power_zones(ftp))
     ]
 
-def _hr_zones(lthr, max_hr):
-    # Custom (rider-edited) zones win; else the LTHR-anchored hybrid model.
-    # Adapts Zone(low, high, name) → dict shape required by clients.
+def _hrr_rhr_anchor(pm) -> "tuple[int | None, str]":
+    """(resting bpm, source) for the HRR zone anchor, or (None, reason).
+
+    Two modes, rider-chosen (docs/SCIENCE.md "Heart-rate zones"): a fixed
+    manual value (rhr_baseline — the field that already backs the profile's
+    RHR display), or a rolling MEDIAN of the synced daily wellness RHR.
+    The literature's anchor is morning resting HR — which the wellness RHR
+    is — but no published standard exists for an averaging window, so the
+    7-day default is practice extrapolation, labeled as such, and editable.
+
+    Eligibility is a SAMPLE-COUNT rule, not a calendar cutoff: >=4 RHR
+    samples in the last 14 days. A calendar rule let one stale reading from
+    three weeks ago enable the model while the rolling window sat empty.
+    """
+    a = pm._athlete
+    if (a.get("hrr_rhr_mode") or "rolling") == "manual":
+        if a.get("rhr_baseline"):
+            return int(a["rhr_baseline"]), "manual"
+        return None, "manual mode selected but no resting HR set"
+    try:
+        window = max(2, min(60, int(a.get("hrr_rhr_window_days") or 7)))
+    except (TypeError, ValueError):
+        window = 7
+    try:
+        import ride_storage as _rs
+        wl = _rs.load_recent_wellness(days=max(window, 14)) or []
+    except Exception:
+        wl = []
+    def _day(w):
+        return str(w.get("id") or "")[:10]
+    dated = sorted((( _day(w), int(w["restingHR"]) ) for w in wl
+                    if w.get("restingHR")), reverse=True)
+    recent14 = [v for d, v in dated[:60] if d >= (date.today() - timedelta(days=14)).isoformat()]
+    if len(recent14) < 4:
+        return None, "needs at least 4 resting-HR samples in the last 14 days"
+    in_window = [v for d, v in dated if d >= (date.today() - timedelta(days=window)).isoformat()]
+    src = in_window if in_window else recent14
+    src = sorted(src)
+    mid = len(src) // 2
+    med = src[mid] if len(src) % 2 else round((src[mid - 1] + src[mid]) / 2)
+    return int(med), f"rolling {window}d median"
+
+
+def _max_hr_is_set(pm) -> bool:
+    """True only for a MEASURED/entered max HR. pm.max_hr silently falls
+    back to Tanaka 208-0.7xage — fine for display, not for anchoring a zone
+    model whose top band is 90-100% of it."""
+    raw = pm._athlete.get("max_hr")
+    try:
+        return raw is not None and 140 <= int(raw) <= 220
+    except (TypeError, ValueError):
+        return False
+
+
+def _hr_zone_model(pm) -> "tuple[str, int | None, str]":
+    """(active model, hrr anchor bpm | None, reason-if-unavailable)."""
+    want = (pm._athlete.get("hr_zone_model") or "lthr")
+    if want != "hrr":
+        return "lthr", None, ""
+    if not _max_hr_is_set(pm):
+        return "lthr", None, "requires a measured max HR (no age formula)"
+    anchor, why = _hrr_rhr_anchor(pm)
+    if anchor is None:
+        return "lthr", None, why
+    if anchor >= int(pm._athlete["max_hr"]):
+        return "lthr", None, "resting HR is not below max HR"
+    return "hrr", anchor, ""
+
+
+def _hr_zones(lthr, max_hr, pm=None):
+    # Custom (rider-edited) zones win; else the rider's zone model: the
+    # LTHR-anchored hybrid (default), or heart-rate reserve when selected
+    # AND eligible — never silently, never by fallback guesswork. HRR here
+    # covers the ZONE TABLE and displays; workout prescription stays
+    # LTHR-anchored (no validated %FTP->%HRR mapping exists, and Z5+ keeps
+    # RPE per the standing contract) — docs/SCIENCE.md carries the verdict.
     custom = _custom_zones("hr_zones_custom")
     if custom:
         return custom
+    if pm is not None:
+        model, anchor, _why = _hr_zone_model(pm)
+        if model == "hrr":
+            return [
+                {"zone": f"Z{i + 1}", "name": z.name, "low": z.low,
+                 "high": z.high}
+                for i, z in enumerate(
+                    _zones_mod.hrr_zones(anchor, int(pm._athlete["max_hr"])))
+            ]
     return [
         {"zone": f"Z{i + 1}", "name": z.name, "low": z.low, "high": z.high}
         for i, z in enumerate(_zones_mod.hr_zones(lthr, max_hr))

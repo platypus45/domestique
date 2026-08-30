@@ -330,6 +330,9 @@ An adaptive planner is only useful if you can trust next week to still look like
 
 ## Train by heart rate (no power meter)
 
+
+HR zones follow your choice of model: LTHR-anchored (default), or heart-rate reserve (Karvonen) built from your synced resting HR and measured max HR — with the resting anchor as a rolling median or a fixed value you set. The [science notes](docs/SCIENCE.md#1c-heart-rate-zones-lthr-vs-heart-rate-reserve) explain when each model is the right call.
+
 No power meter? Domestique can prescribe every workout in beats per minute instead of watts.
 
 - **Switch the target mode in Settings** (Power ↔ Heart rate). The heart-rate option unlocks once your LTHR (lactate-threshold heart rate) is known — Domestique keeps it synced automatically from your intervals.icu ride data, unless you've set it manually, in which case your number stays put.

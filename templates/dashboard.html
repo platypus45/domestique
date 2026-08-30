@@ -3236,6 +3236,30 @@ window.addEventListener('unhandledrejection', function(e) {
       <div id="power-zones"></div>
       <h3 style="margin-top:16px;display:flex;align-items:center;gap:10px;">HR Zones
         <button class="btn btn-sm" id="hr-zones-edit" onclick="editZones('hr')">Edit</button></h3>
+      <!-- Issue #10: HRR (Karvonen) zone model. LTHR stays the default — the
+           comparative evidence favors threshold anchoring when LTHR is known
+           (docs/SCIENCE.md "Heart-rate zones") — so this is a choice, never a
+           fallback, and it greys out with the reason when the anchors are
+           missing rather than silently staying on LTHR. -->
+      <div id="hr-model-row" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12px;margin:4px 0 8px 0;">
+        <label>Zone model
+          <select id="hr-zone-model" style="font-size:12px;margin-left:4px;" onchange="saveHrZoneModel()">
+            <option value="lthr">LTHR (threshold-anchored)</option>
+            <option value="hrr">Heart-rate reserve (Karvonen)</option>
+          </select>
+        </label>
+        <span id="hrr-controls" style="display:none;gap:8px;align-items:center;flex-wrap:wrap;">
+          <label>Resting HR
+            <select id="hrr-rhr-mode" style="font-size:12px;margin-left:4px;" onchange="saveHrZoneModel()">
+              <option value="rolling">rolling median</option>
+              <option value="manual">fixed (my Resting HR field)</option>
+            </select>
+          </label>
+          <label id="hrr-window-wrap">over <input type="number" id="hrr-window" min="2" max="60" value="7" style="width:44px;font-size:12px;" onchange="saveHrZoneModel()"> days</label>
+          <span id="hrr-anchor-note" style="color:var(--text3);"></span>
+        </span>
+        <span id="hrr-why" style="color:var(--yellow);"></span>
+      </div>
       <div style="font-size:10px;color:var(--text3);margin-bottom:4px;">Analysis zones (ride time-in-zone). Workout HR targets are edited under “Workout targets” on the left.</div>
       <div id="hr-zones"></div>
       <h3 style="margin-top:16px;">Data Sync</h3>
@@ -15701,6 +15725,7 @@ async function loadSettings() {
   $('power-zones').innerHTML = '<table><thead><tr><th>Zone</th><th>Name</th><th>Range</th></tr></thead><tbody>' +
     d.power_zones.map(z => _zoneRow(z, 'W')).join('') +
     '</tbody></table>';
+  try { _hydrateHrModelRow(s); } catch (_) {}
   $('hr-zones').innerHTML = '<table><thead><tr><th>Zone</th><th>Name</th><th>Range</th></tr></thead><tbody>' +
     d.hr_zones.map(z => _zoneRow(z, ' bpm')).join('') +
     '</tbody></table>';
@@ -15708,6 +15733,38 @@ async function loadSettings() {
   // Sync status + blood markers + metric history
   loadSyncStatus();
   loadMetricHistory();
+}
+
+function _hydrateHrModelRow(s) {
+  const sel = $('hr-zone-model'), ctl = $('hrr-controls'), why = $('hrr-why');
+  if (!sel) return;
+  sel.value = s.hr_zone_model_choice || 'lthr';
+  const wantHrr = sel.value === 'hrr';
+  if (ctl) ctl.style.display = wantHrr ? 'inline-flex' : 'none';
+  const mode = $('hrr-rhr-mode'); if (mode) mode.value = s.hrr_rhr_mode || 'rolling';
+  const win = $('hrr-window'); if (win) win.value = s.hrr_rhr_window_days || 7;
+  const ww = $('hrr-window-wrap'); if (ww) ww.style.display = (s.hrr_rhr_mode || 'rolling') === 'rolling' ? '' : 'none';
+  const note = $('hrr-anchor-note');
+  if (note) note.textContent = (wantHrr && s.hr_zone_model === 'hrr' && s.hrr_anchor_bpm)
+    ? `anchored at ${s.hrr_anchor_bpm} bpm rest / ${s.max_hr} bpm max` : '';
+  if (why) why.textContent = (wantHrr && s.hr_zone_model !== 'hrr' && s.hrr_unavailable_reason)
+    ? `Using LTHR zones for now — ${s.hrr_unavailable_reason}.` : '';
+}
+
+async function saveHrZoneModel() {
+  const body = {
+    hr_zone_model: ($('hr-zone-model') || {}).value || 'lthr',
+    hrr_rhr_mode: ($('hrr-rhr-mode') || {}).value || 'rolling',
+    hrr_rhr_window_days: parseInt(($('hrr-window') || {}).value) || 7,
+  };
+  try {
+    const res = await fetch('/api/settings', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    await loadSettings();
+  } catch (e) {
+    try { showToast('Could not save zone model: ' + (e && e.message || e), 4000); } catch (_) {}
+  }
 }
 
 // ── Customizable zones (Edit button on Power/HR Zones) ───────────────────

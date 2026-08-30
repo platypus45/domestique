@@ -12681,8 +12681,18 @@ async function renderPlanJSON(plan) {
 
   // Fetch actual activities for overlay
   let actualByDate = {};
+  window._pgActualBlocks = {};
   try {
-    const actRes = await fetch('/api/activities');
+    // Awaited alongside the activities list — fire-and-forget here would race
+    // the render and paint the planned silhouette on first load, with the
+    // actual blocks only appearing on the NEXT repaint. /api/activities is
+    // the wellness-summary hot path and carries no laps, so the sprites'
+    // actual blocks come from their own ride-store endpoint.
+    const [blkRes, actRes] = await Promise.all([
+      fetch('/api/activities/blocks?days=64').catch(() => null),
+      fetch('/api/activities'),
+    ]);
+    try { window._pgActualBlocks = (blkRes && blkRes.ok) ? await blkRes.json() : {}; } catch (_) {}
     const activities = await actRes.json();
     for (const a of (activities || [])) {
       // Cycling plan view: a run/swim must not appear in the overlay or count
@@ -12911,7 +12921,9 @@ async function renderPlanJSON(plan) {
           // card does the same from streams) — the planned silhouette on a
           // ridden day answered a question nobody asked. Multi-ride days
           // concatenate in ride order. No laps -> planned sprite stands.
-          const actBlocks = dayActuals.flatMap(a => Array.isArray(a.blocks) ? a.blocks : []);
+          const actBlocks = ((window._pgActualBlocks || {})[dayStr] || [])
+            .filter(e => _isCyclingSport(e.sport))
+            .flatMap(e => Array.isArray(e.blocks) ? e.blocks : []);
           if (actBlocks.length) {
             miniSvg = `<div class="pg-card-sprite" title="What you actually rode — lap by lap from the recorded ride">${miniPowerBlockSVG(actBlocks)}</div>`;
           }

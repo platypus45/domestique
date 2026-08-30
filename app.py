@@ -4551,6 +4551,37 @@ async def api_wellness_manual_hrv(request: Request):
     return {"ok": True, "date": d, "hrv_manual_rmssd": rmssd}
 
 
+@app.get("/api/activities/blocks")
+def api_activities_blocks(days: int = Query(42)):
+    """Per-date actual-ride lap blocks for the plan grid's completed-day
+    sprites. A separate endpoint on purpose: /api/activities is the homepage
+    hot path built from the ICU wellness summaries, which carry no laps —
+    attaching a ride-store join there would tax every frontpage load for a
+    grid-only need. One request per grid render, straight off the local ride
+    store, shaped for miniPowerBlockSVG."""
+    try:
+        days = max(1, min(int(days or 42), 120))
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        try:
+            from profile_manager import ProfileManager
+            _pm_ftp = ProfileManager.get().ftp or None
+        except Exception:
+            _pm_ftp = None
+        out: dict = {}
+        for r in _load_all_rides_safe():
+            d = (r.get("started_at") or "")[:10]
+            if not d or d < cutoff:
+                continue
+            blocks = _actual_blocks_from_laps(r, _pm_ftp)
+            if blocks:
+                out.setdefault(d, []).append(
+                    {"sport": r.get("sport"), "blocks": blocks})
+        return out
+    except Exception:
+        _log.exception("activities/blocks failed")
+        return {}
+
+
 @app.get("/api/activities")
 def api_activities():
     # v1.6.1: outer-fn try; surfaces E_ACTIVITIES_LIST_FAILED on any uncaught

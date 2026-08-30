@@ -3900,10 +3900,42 @@ async def api_readiness_revert_cap(request: Request):
     _ = str(body.get("signal") or "any")
     _mark_readiness_cap_reverted_today()
     clear_cache()  # training metrics cache may have gated on the flag
-    _log.info(f"EVENT=readiness_cap_reverted signal={_} body={body}")
+    # The flag only suppresses the LIVE adjustment. When the adaptation was
+    # also persisted into the plan (api_today_session_persist), the stored day
+    # still carries the replacement — restore it from the pre_adapt stash, or
+    # the button closes the modal and visibly changes nothing.
+    restored = None
+    try:
+        json_path = _plan_dir() / "current_plan.json"
+        if json_path.exists():
+            with tp.plan_write_lock():
+                with open(json_path, encoding="utf-8") as f:
+                    plan = json.load(f)
+                today_iso = date.today().isoformat()
+                for w in plan.get("weeks", []):
+                    for s in w.get("sessions", []):
+                        if (s.get("day") == today_iso and s.get("adapted")
+                                and isinstance(s.get("pre_adapt"), dict)):
+                            pre = s.pop("pre_adapt")
+                            for k, v in pre.items():
+                                s[k] = v
+                            s["adapted"] = False
+                            s.pop("adapted_reason", None)
+                            restored = {"session_type": s.get("session_type"),
+                                        "duration_min": s.get("duration_min"),
+                                        "zwo_file": s.get("zwo_file"),
+                                        "zwo_name": s.get("zwo_name")}
+                            tp.atomic_write_plan(json_path, plan)
+                            break
+                    if restored:
+                        break
+    except Exception:
+        _log.exception("revert-cap: plan restore skipped")
+    _log.info(f"EVENT=readiness_cap_reverted signal={_} restored={bool(restored)}")
     return {
         "ok": True,
         "reverted": True,
+        "restored": restored,
         "cleared_at_midnight": True,
         "flag_file": str(_readiness_revert_flag_path()),
     }
@@ -10967,6 +10999,23 @@ async def api_today_session_persist(request: Request):
         for w in plan.get("weeks", []):
             for s in w.get("sessions", []):
                 if s.get("day") == today_iso:
+                    # The original prescription used to be OVERWRITTEN here,
+                    # which made "Ride the original anyway" unable to keep its
+                    # promise: the revert flag suppressed the live adjustment,
+                    # but every view reading the plan still showed the
+                    # persisted replacement — clicking looked like it did
+                    # nothing. Stash the pre-adapt session once (never
+                    # re-stash on a second adapt of the same day, or the true
+                    # original would be lost) so revert-cap can restore it.
+                    if not s.get("pre_adapt"):
+                        s["pre_adapt"] = {
+                            "session_type": s.get("session_type"),
+                            "duration_min": s.get("duration_min"),
+                            "tss_estimate": s.get("tss_estimate"),
+                            "description": s.get("description"),
+                            "zwo_file": s.get("zwo_file"),
+                            "zwo_name": s.get("zwo_name"),
+                        }
                     s["session_type"] = new_type
                     if body.get("duration_min") is not None:
                         s["duration_min"] = int(body["duration_min"])

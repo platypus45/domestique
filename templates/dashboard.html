@@ -18389,19 +18389,47 @@ async function keepOriginalToday() {
     const t = _effectiveTodaySession(window._todaySessionData);
     if (t.planned && t.planned.session_type) pLabel = _sessTypeLabel(t.planned.session_type);
   } catch (_) {}
+  // The modal used to close immediately and the views refreshed behind it —
+  // which read as "click, nothing happens" whenever the refresh raced the
+  // write. Now the modal stays up, shows the reflow in place, and re-opens
+  // on today's date with the restored session, so the rider WATCHES the
+  // original come back instead of hunting for it.
+  const body = document.querySelector('#day-workout-modal .modal-body')
+            || document.querySelector('.modal-body');
+  if (body) {
+    body.style.transition = 'opacity 0.25s';
+    body.style.opacity = '0.25';
+    const note = document.createElement('div');
+    note.id = 'reflow-note';
+    note.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;'
+      + 'justify-content:center;font-size:14px;color:var(--text2);z-index:5;';
+    note.innerHTML = '<span style="width:14px;height:14px;border:2px solid var(--border);'
+      + 'border-top-color:var(--accent);border-radius:50%;display:inline-block;'
+      + 'animation:pg-redraw-spin 0.8s linear infinite;margin-right:8px;"></span>'
+      + `Reflowing back to your planned ${esc(pLabel)}…`;
+    body.parentElement && body.parentElement.appendChild(note);
+  }
+  let restored = null;
   try {
     const res = await fetch('/api/readiness/revert-cap', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({signal: 'any'}),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
+    try { restored = (await res.json()).restored || null; } catch (_) {}
     try { showToast(`Keeping the planned ${pLabel} — adjustment dismissed for today`, 3500); } catch (_) {}
   } catch (e) {
+    document.getElementById('reflow-note')?.remove();
+    if (body) body.style.opacity = '';
     try { showToast('Could not keep original: ' + (e && e.message || e), 4000); } catch (_) {}
     return;
   }
-  closeModal();
   await _refreshAfterAdjustAction();
+  document.getElementById('reflow-note')?.remove();
+  if (body) body.style.opacity = '';
+  closeModal();
+  // Instantly re-show the day, now carrying the original session.
+  try { await openDayWorkout(null, _calTodayStr()); } catch (_) {}
 }
 
 // After either action: card + calendar + plan grid refresh consistently

@@ -6629,19 +6629,25 @@ def api_picker(subjective: float = Query(7), duration: int = Query(75)):
         advice = advice or "No HRV data yet — using neutral baseline"
         baseline_used = True
 
-    # Map readiness to session type + fallback types
+    # Map readiness to session type + fallback types. Grill
+    # PICKER-DEAD-TYPE-KEYWORDS: session_type is substring-matched against
+    # the library's Protocol values — "z2"/"helgerud"/"rønnestad"/"seiler"
+    # match ZERO of the 17 Protocol strings, so the ≥80 pool was vo2-only
+    # and the 60-69 pool endurance-only. Every keyword below matches a real
+    # Protocol family (the Helgerud/Rønnestad-style sessions live inside
+    # VO2max/Over-Unders protocols anyway).
     if score >= 80:
-        types = ["vo2", "helgerud", "rønnestad"]
+        types = ["vo2", "over-under", "anaerobic"]
     elif score >= 70:
-        types = ["sweet spot", "threshold", "z2", "endurance"]
+        types = ["sweet spot", "threshold", "endurance"]
     elif score >= 60:
-        types = ["z2", "seiler", "endurance"]
+        types = ["tempo", "endurance"]
     elif score >= 40:
-        types = ["z2", "recovery", "endurance"]
+        types = ["endurance", "recovery"]
     else:
         # REST-level readiness: still show 3 light suggestions rather
         # than an empty card (Bug D.2).
-        types = ["recovery", "z2", "endurance"]
+        types = ["recovery", "endurance"]
 
     # Search with multiple type keywords for better matches. Fix D.1:
     # pass tags=None explicitly — api_workouts' Query() default object
@@ -6678,14 +6684,28 @@ def api_picker(subjective: float = Query(7), duration: int = Query(75)):
         if len(workouts) >= 5:
             break
 
+    # Grill PICKER-FTP-TEST-LEAK: the typeless fallbacks below have no
+    # protocol filter, and with sort="score" an FTP-test ramp ranks FIRST in
+    # exactly these windows — a maximal to-failure protocol as the casual
+    # workout-of-the-day card. Tests are ridden deliberately, never picked.
+    def _not_a_test(w: dict) -> bool:
+        if (w.get("Protocol") or "").lower() == "ftp test":
+            return False
+        return "ftp_test" not in {t.lower() for t in (w.get("Tags") or [])}
+
     # If still empty, try without session type filter (still capped).
+    # Grill PICKER-FALLBACK-QUERY-CRASH: session_type=None must be passed
+    # explicitly — calling api_workouts as a plain function leaves FastAPI's
+    # Query(None) default OBJECT in place, which is truthy and crashes at
+    # session_type.lower(); the except swallowed it, so both fallbacks were
+    # dead code and underfilled pickers silently returned 0-2 cards.
     if not workouts:
         try:
-            workouts = api_workouts(
-                min_score=3, max_duration=duration,
+            workouts = [w for w in api_workouts(
+                min_score=3, session_type=None, max_duration=duration,
                 min_duration=max(0, duration - 30),
-                limit=5, sort="score", tags=None,
-            )
+                limit=10, sort="score", tags=None,
+            ) if _not_a_test(w)][:5]
         except Exception as _e:
             _log.warning(f"picker api_workouts fallback failed: {_e}")
             workouts = []
@@ -6695,10 +6715,10 @@ def api_picker(subjective: float = Query(7), duration: int = Query(75)):
     # library still see ≥3 cards.
     if len(workouts) < 3:
         try:
-            extra = api_workouts(
-                min_score=1, max_duration=duration,
-                min_duration=0, limit=10, sort="score", tags=None,
-            )
+            extra = [w for w in api_workouts(
+                min_score=1, session_type=None, max_duration=duration,
+                min_duration=0, limit=15, sort="score", tags=None,
+            ) if _not_a_test(w)][:10]
             workouts.extend(extra)
         except Exception as _e:
             _log.warning(f"picker last-resort widen failed: {_e}")
@@ -18575,8 +18595,11 @@ def _resample_series_1hz(ts: list, values: list) -> list:
     span = tN - t0
     if span <= 0 or span > 24 * 3600:
         return values
-    # Already ~1 Hz? (span within 2% of the sample count → leave untouched.)
-    if abs(span - (len(pairs) - 1)) <= max(2.0, 0.02 * len(pairs)):
+    # Already ~1 Hz? Grill F2: the tolerance must not scale unbounded with
+    # ride length — on a 3000-sample ride a flat 2% allowance (60 s) swallowed
+    # a genuine 60-s autopause, letting a 20-min window span the pause as
+    # contiguous time and over-read the test. Absolute cap 10 s.
+    if abs(span - (len(pairs) - 1)) <= max(2.0, min(10.0, 0.02 * len(pairs))):
         return values
     out = [0] * (int(span) + 1)
     prev_t = None
@@ -18613,8 +18636,12 @@ def _sitko_advisory(best_20min_w: int) -> "dict | None":
         from profile_manager import ProfileManager
         pm = ProfileManager.get()
         weight = float(getattr(pm, "weight_kg", 0) or 0)
-        prior_ftp = int(config.ATHLETE_FTP_W or 0)
-        if weight <= 0 or (abs(weight - 70.0) < 1e-9 and prior_ftp == 200):
+        # Grill pipeline/F4: 70.0 is the SEEDED default — a rider who set FTP
+        # but never entered weight still carries it, and a band computed from
+        # a fabricated 70 kg is exactly what this gate exists to prevent.
+        # Suppress on the default weight unconditionally (a genuine 70.0 kg
+        # rider loses an advisory line, never a number).
+        if weight <= 0 or abs(weight - 70.0) < 1e-9:
             return None
         wkg = best_20min_w / weight
         if wkg >= 4.7:
@@ -18815,7 +18842,7 @@ def _parse_fit_stats(fit_path: Path) -> dict:
         # suggestion payload so U1's banner renders the delta line.
         _eval = _fe.evaluate_ftp_test(
             power_series, cadence_series=cadence_series,
-            filename_hint=f"{fit_path.name} {fit_workout_name}".strip(),
+            filename_hint=[fit_path.name, fit_workout_name],
             prior_ftp=int(config.ATHLETE_FTP_W or 0),
         )
         if _eval:
@@ -21084,9 +21111,13 @@ async def api_ride_ftp_test_review(ride_id: str, request: Request):
     icu = ride_storage.get_icu_ride(ride_id)
     if not icu:
         return JSONResponse({"error": "Ride not found"}, 404)
+    try:
+        _ftp_val = int(float(body.get("ftp") or 0)) or None
+    except (TypeError, ValueError):
+        _ftp_val = None  # grill pipeline/F5: garbage ftp must not 500
     icu["ftp_test_review"] = {
         "action": action,
-        "ftp": int(body.get("ftp") or 0) or None,
+        "ftp": _ftp_val,
         "at": datetime.now().isoformat(timespec="seconds"),
     }
     try:

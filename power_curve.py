@@ -727,10 +727,11 @@ def release_backfill_lock() -> None:
 
 
 def _planned_ftp_test_hint(day_iso: str) -> str:
-    """FTP-tests IP W2b — the planned slot's zwo filename when ``day_iso`` is
-    a planned FTP-test day ('' otherwise). On the sync path the activity name
-    carries the ZWO's display <name>, not the underscore filename, so the
-    planned slot's file is the strongest recognition signal available."""
+    """FTP-tests IP W2b — truthy when ``day_iso`` is a planned FTP-test day
+    ('' otherwise). Grill pipeline/F1 demoted this from a recognition hint to
+    a RETRY TRIGGER: a planned test day earns the shape heuristic a second
+    look when the activity name says nothing, but never force-classifies the
+    ride (the rider may have skipped the test and spun easy instead)."""
     try:
         from training_planner import PLAN_DIR
         p = PLAN_DIR / "current_plan.json"
@@ -741,7 +742,7 @@ def _planned_ftp_test_hint(day_iso: str) -> str:
             for s in w.get("sessions", []):
                 if (s.get("day") == day_iso
                         and s.get("session_type") == "ftp_test"):
-                    return s.get("zwo_file") or ""
+                    return s.get("zwo_file") or "planned"
     except Exception:
         pass
     return ""
@@ -767,20 +768,35 @@ def _maybe_detect_ftp_test(data: dict, streams: dict) -> None:
         # Conservative floor: every scorable protocol sustains ≥20 min.
         if not isinstance(watts, list) or len(watts) < 1200:
             return
-        day = str(data.get("started_at") or "")[:10]
-        hint = f"{_planned_ftp_test_hint(day)} {data.get('name') or ''}".strip()
         import fitness_estimation as fe
         try:
             import config as _cfg
             prior = int(getattr(_cfg, "ATHLETE_FTP_W", 0) or 0)
         except Exception:
             prior = 0
+        watts_c = [int(w or 0) for w in watts]
+        # Grill pipeline/F1: the activity NAME is the only recognition hint —
+        # the planned slot's zwo filename must never be force-fed here, or
+        # ANY ≥20-min ride on a planned test day (an easy spin instead of the
+        # skipped test) would be stamped as that test. The planned day only
+        # earns a shape-heuristic retry when the name says nothing: a genuine
+        # test ridden under a garbage title still gets recognised by its
+        # power profile, while a Z2 spin fails every shape guard.
         res = fe.evaluate_ftp_test(
-            [int(w or 0) for w in watts],
+            watts_c,
             cadence_series=streams.get("cadence"),
-            filename_hint=hint or None,
+            filename_hint=[data.get("name") or ""],
             prior_ftp=prior,
         )
+        if not res:
+            day = str(data.get("started_at") or "")[:10]
+            if _planned_ftp_test_hint(day):
+                res = fe.evaluate_ftp_test(
+                    watts_c,
+                    cadence_series=streams.get("cadence"),
+                    filename_hint=None,
+                    prior_ftp=prior,
+                )
         if res:
             data.update(res)
     except Exception as e:

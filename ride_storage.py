@@ -947,11 +947,13 @@ def load_all_rides() -> list[dict]:
             # the 3-day gate. Nothing else can regenerate it. ICU's own value
             # wins if it has one — that surface is the newer edit.
             moved = {}
-            # W2a: FTP-test artifacts ride along — a FIT-imported test whose
-            # ICU twin later wins this dedupe must not lose its detection or
-            # the rider's accept/decline verdict.
-            for k in (_RIDER_INPUT_CARRY_KEYS + _FTP_TEST_CARRY_KEYS
-                      + _FTP_TEST_REVIEW_CARRY_KEYS):
+            # Grill pipeline/F2: only rider-input keys move here. FIT listing
+            # rows never carry the FTP-test detection/review keys (detection
+            # is recomputed from the file on read; FIT reviews have no
+            # envelope), so carrying them was dead code claiming a guarantee
+            # the FIT side never feeds. The ICU sync path re-detects the twin
+            # from its own streams and persists its own review marker.
+            for k in _RIDER_INPUT_CARRY_KEYS:
                 if r.get(k) is not None and twin.get(k) is None:
                     twin[k] = r[k]
                     moved[k] = r[k]

@@ -419,7 +419,12 @@ def ramp_test_ftp(
         # ponytail: flatness guard rejects spike-and-coast; a real ramp step is
         # near-constant, so mean ≥ 0.70×peak. A warmup/cooldown sprint minute
         # (30s hard + 30s coast) has mean ≈ 0.56×peak and can never win.
-        peak_i = max(powers[i:i + window])
+        # Grill F3: "peak" is the window's p95, not its absolute 1-s max — a
+        # single 800 W meter artifact inside a flat top step made every window
+        # covering that step fail the guard and dropped the score a full step;
+        # a genuine 30-s sprint still dominates p95 and is still rejected.
+        srt_i = sorted(powers[i:i + window])
+        peak_i = srt_i[int(0.95 * (window - 1))]
         if peak_i > 0 and mean_i < 0.70 * peak_i:
             continue
         if best is None or mean_i > best:
@@ -497,10 +502,34 @@ def sixty_min_ftp(power_series: list[int] | list[float]) -> dict | None:
         return None
     lo = best_idx
     hi = best_idx + core_w  # exclusive
-    while lo > 0 and minutes[lo - 1] >= 0.90 * core_mean:
-        lo -= 1
-    while hi < len(minutes) and minutes[hi] >= 0.90 * core_mean:
-        hi += 1
+    # Grill F1: bridge short interruptions. A completed hour with a 2-min
+    # traffic-light dip used to split the plateau at the dip (→ None → the
+    # coggan fallback under-read a finished test). A gap of up to 3
+    # consecutive sub-threshold minutes is crossed when the effort resumes
+    # beyond it; longer gaps still end the plateau (rest periods).
+    thresh = 0.90 * core_mean
+
+    def _grow(idx: int, step: int) -> int:
+        # idx = next candidate minute in `step` direction; returns final
+        # boundary (lo: inclusive index, hi: exclusive index semantics are
+        # handled by the callers' offsets).
+        while 0 <= idx < len(minutes):
+            if minutes[idx] >= thresh:
+                idx += step
+                continue
+            bridged = False
+            for gap in range(1, 4):
+                j = idx + gap * step
+                if 0 <= j < len(minutes) and minutes[j] >= thresh:
+                    idx = j + step
+                    bridged = True
+                    break
+            if not bridged:
+                break
+        return idx
+
+    lo = _grow(lo - 1, -1) + 1
+    hi = _grow(hi, 1)
     plateau_min = hi - lo
     if plateau_min < 50:
         return None
@@ -531,9 +560,37 @@ def _minute_averages(powers: list[float]) -> list[float]:
     return [sum(powers[i * 60:(i + 1) * 60]) / 60.0 for i in range(n // 60)]
 
 
+def _hint_test_kind(filename_hint) -> "str | None":
+    """FTP-tests grill (HINT hardening) — recognise a protocol from name/file
+    hints. Accepts a single string or a list of independent source strings
+    (file name, FIT workout name, ICU activity name). Each source is
+    normalized (every separator run → "_") and must START with the test
+    prefix — a title that merely MENTIONS a test ("skipped ftp test ramp
+    today, easy spin") must never route the ride into scoring, while the
+    shipped names ("FTP Test — Coggan 20min protocol (59min)") and files
+    (ftp_test_coggan_….zwo) all begin with it."""
+    if not filename_hint:
+        return None
+    sources = (filename_hint if isinstance(filename_hint, (list, tuple))
+               else [filename_hint])
+    for src in sources:
+        if not src:
+            continue
+        lname = re.sub(r"[^a-z0-9]+", "_", str(src).lower()).strip("_")
+        if not lname.startswith("ftp_test"):
+            continue
+        if "ftp_test_coggan" in lname:
+            return "coggan_20min"
+        if "ftp_test_ramp" in lname:
+            return "ramp"
+        if "ftp_test_60min" in lname:
+            return "sixty_min"
+    return None
+
+
 def detect_ftp_test_shape(
     power_series: list[int] | list[float],
-    filename_hint: str | None = None,
+    filename_hint=None,
 ) -> str | None:
     """T1 — classify a ride's power profile as Coggan 20-min, Ramp, or not a test.
 
@@ -554,31 +611,23 @@ def detect_ftp_test_shape(
 
     Returns "coggan_20min", "ramp", or None.
     """
-    if filename_hint:
-        # FTP-tests IP W2b: the hint may be a FILE name (ftp_test_coggan_….zwo)
-        # or a WORKOUT/ACTIVITY name carrying the ZWO's in-file <name> ("FTP
-        # Test — Coggan 20min protocol (59min)") — Zwift stamps that into the
-        # FIT's workout message and ICU uses it as the activity name, neither
-        # of which contains underscore tokens. Normalizing every separator run
-        # to "_" makes one token set cover all three sources.
-        lname = re.sub(r"[^a-z0-9]+", "_", str(filename_hint).lower())
-        if "ftp_test_coggan" in lname:
-            return "coggan_20min"
-        if "ftp_test_ramp" in lname:
-            return "ramp"
-        if "ftp_test_60min" in lname:
-            return "sixty_min"
+    hint_kind = _hint_test_kind(filename_hint)
+    if hint_kind:
+        return hint_kind
 
     if not power_series:
         return None
     n = len(power_series)
     powers = [float(p or 0) for p in power_series]
 
-    # Ramp heuristic (ponytail: two cheap checks, no step-counting): a ramp
-    # peaks LATE and climbs. (a) the best-60s window falls in the last third of
-    # the ride, AND (b) the last-third mean ≥ 1.5× the first-third mean. A 4×8
-    # threshold ride peaks throughout (first-third ≈ last-third) ⇒ fails (b).
-    if n >= 180:
+    # Ramp heuristic. Grill FP-2: "best-60s late + 1.5× thirds ratio" alone
+    # fires on ANY easy-start/hard-finish ride (a late 15-min climb at steady
+    # power scored as a ramp, suggesting 0.75× climb power). A real ramp is a
+    # MONOTONE CLIMB: require (c) a run of ≥8 consecutive non-decreasing
+    # minute-means ending at the best minute with a ≥40% net rise across the
+    # run — a steady block is flat (run length 1–2) and fails — and (d) ride
+    # short enough to be a ramp at all (≤60 min; the shipped protocol is 35).
+    if 180 <= n <= 3600:
         third = n // 3
         first_mean = sum(powers[:third]) / third
         last_mean = sum(powers[2 * third:]) / (n - 2 * third)
@@ -595,7 +644,22 @@ def detect_ftp_test_shape(
         best_in_last_third = best_idx >= 2 * third
         if (best_in_last_third and first_mean > 0
                 and last_mean >= 1.5 * first_mean):
-            return "ramp"
+            minutes = _minute_averages(powers)
+            m_best = min(best_idx // 60, len(minutes) - 1)
+            j = m_best
+            # Extend the climb backwards: each backward step may neither rise
+            # (>5 W would mean power FELL going forward) nor drop more than a
+            # plausible ramp step (40 W) — a flat block preceded by easy
+            # riding has a >40 W cliff at its start and the run stops there.
+            while j > 0:
+                d = minutes[j] - minutes[j - 1]
+                if d < -5 or d > 40:
+                    break
+                j -= 1
+            run_len = m_best - j + 1
+            run_base = max(minutes[j], 1.0)
+            if run_len >= 8 and minutes[m_best] >= 1.4 * run_base:
+                return "ramp"
 
     # Sixty-min heuristic — checked BEFORE Coggan because a 60-min plateau
     # contains an 18-min one (order is load-bearing). Guards keep an ordinary
@@ -614,13 +678,26 @@ def detect_ftp_test_shape(
         if len(minutes) >= pw and ride_mean > 0:
             cur = sum(minutes[:pw])
             best = cur
+            best_k = 0
             for k in range(1, len(minutes) - pw + 1):
                 cur += minutes[k + pw - 1] - minutes[k - 1]
                 if cur > best:
                     best = cur
+                    best_k = k
             best_mean = best / pw
+            # Grill FP-1/FP-3: the window must be a FLAT plateau, not merely
+            # hot on average. Rest-broken interval rides (2×20, 3×15) satisfy
+            # the 1.10× uplift because the rests drag ride_mean down, and a
+            # progressive ride's rising back half does too — but both have
+            # many window minutes far below the window mean. A genuine hour
+            # of power has at most a brief traffic-light dip: allow ≤3
+            # sub-0.85× minutes inside the best window.
+            low_minutes = sum(
+                1 for m in minutes[best_k:best_k + pw]
+                if m < 0.85 * best_mean)
             if (best_mean >= 1.10 * ride_mean and best_mean >= 150
-                    and (n - pw * 60) <= 0.45 * n):
+                    and (n - pw * 60) <= 0.45 * n
+                    and low_minutes <= 3):
                 return "sixty_min"
 
     # Coggan heuristic (TIGHTENED, v3.2.0): a single sustained ≥18-min plateau
@@ -688,6 +765,15 @@ def evaluate_ftp_test(power_series, cadence_series=None,
     "sixty_min"`` with the validated 20-min method's number instead of a
     blind 60-min average.
     """
+    # Grill F5: FIT/stream corruption armour. uint16 invalid-value spikes
+    # (65535) and sign-corrupted samples are zeroed BEFORE any windowing —
+    # three single 65535 samples inside a clean 250 W block otherwise
+    # inflated the suggestion by +57%.
+    if power_series:
+        power_series = [
+            0 if (p is None or p < 0 or p > 2500) else p
+            for p in power_series
+        ]
     kind = detect_ftp_test_shape(power_series, filename_hint=filename_hint)
     if not kind:
         return None
@@ -699,11 +785,22 @@ def evaluate_ftp_test(power_series, cadence_series=None,
     else:
         s = sixty_min_ftp(power_series)
         if not s:
-            s = coggan_20min_ftp(power_series)
-            fallback = bool(s)
+            # Grill FP-1: the early-quit fallback is legitimate ONLY when the
+            # rider demonstrably RODE the 60-min protocol (file/name hint) and
+            # abandoned it. When "sixty_min" came from the shape heuristic,
+            # a missing plateau means the heuristic was wrong about the ride
+            # (rest-broken intervals, progressive rides) — scoring those with
+            # the coggan calculator bypassed its own 2×20 rejection. Silence.
+            if _hint_test_kind(filename_hint) == "sixty_min":
+                s = coggan_20min_ftp(power_series)
+                fallback = bool(s)
     if not s:
         return None
     val = int(s["value"])
+    # Grill F5 (2nd layer): refuse a physiologically impossible suggestion —
+    # corrupt streams must never reach the review modal with FTP 62258.
+    if not (50 <= val <= 600):
+        return None
     prior = int(prior_ftp or 0)
     delta = round((val - prior) / prior * 100.0, 1) if prior > 0 else 0.0
     method = "coggan_20min" if (kind == "sixty_min" and fallback) else kind
@@ -777,11 +874,41 @@ def detect_ramp_halt(
     if not ref_ftp or ref_ftp <= 0:
         return None
 
+    # Grill F4 (a): anchor step 0 at the detected ramp START, not ride second
+    # 0. The shipped protocol has a 5-min 0.50-FTP warmup before the 0.56
+    # first step; counting from the file start over-reported every halt step
+    # by exactly the warmup minutes. Leading minutes clearly below the first
+    # step's band are warmup.
+    minutes = _minute_averages([float(p or 0) for p in power_series[:n]])
+    warmup_min = 0
+    first_step_w = ref_ftp * start_pct
+    for m in minutes:
+        if m < 0.90 * first_step_w:
+            warmup_min += 1
+        else:
+            break
+    warmup_s = warmup_min * 60
+    # Grill F4 (b): stop scanning once the reconstructed target exceeds what
+    # the rider demonstrably produced (best 60 s) — past that point the ride
+    # is post-exhaustion coast/cooldown, which the cadence+power rule would
+    # otherwise re-flag as a "halt" far beyond the real quit step.
+    best60 = 0.0
+    if n >= 60:
+        cur = sum(float(p or 0) for p in power_series[:60])
+        best60 = cur
+        for i in range(1, n - 60 + 1):
+            cur += float(power_series[i + 59] or 0) - float(power_series[i - 1] or 0)
+            if cur > best60:
+                best60 = cur
+        best60 /= 60.0
+
     low_streak = 0
-    for i in range(n):
-        step_idx = i // step_seconds
+    for i in range(warmup_s, n):
+        step_idx = (i - warmup_s) // step_seconds
         target_pct = start_pct + step_idx * step_increment_pct
         target_w = ref_ftp * target_pct
+        if best60 > 0 and target_w > 1.05 * best60:
+            break
         p = float(power_series[i] or 0)
         c = float(cadence_series[i] or 0)
         if p < target_w * 0.85 and c < 50:

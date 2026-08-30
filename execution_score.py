@@ -268,13 +268,18 @@ def score_ride(planned: dict, ride: dict, mode: str, *,
     # hour of power as verdict "over" (hard share ≈ 0.70).
     _ftp_expected_override = None
     if stype == "ftp_test":
+        # Grill pipeline/F3: a scheduled test slot can carry zwo_file="" (the
+        # swap-type sets it empty, the match is best-effort) — fall back to
+        # the slot's ftp_test_type choice so the protocol override still
+        # applies to an unmatched slot.
         _zwo_l = str(planned.get("zwo_file") or "").lower()
-        if "ftp_test_ramp" in _zwo_l:
+        _tt = str(planned.get("ftp_test_type") or "").lower()
+        if "ftp_test_ramp" in _zwo_l or (not _zwo_l and _tt == "ramp"):
             return {"score": None, "basis": "load_only",
                     "components": {"duration": None, "load": None,
                                    "intensity": None},
                     "verdict": "off_plan", "fidelity": None}
-        if "ftp_test_60min" in _zwo_l:
+        if "ftp_test_60min" in _zwo_l or (not _zwo_l and _tt == "sixty_min"):
             _ftp_expected_override = 0.70
         # coggan (and unknown files) keep the static POWER_BANDS row.
 

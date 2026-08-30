@@ -266,3 +266,94 @@ def test_fresh_legs_guard_respects_ridden_and_pinned_days():
     assert done_prev.session_type == "vo2max"      # ridden — untouched
     assert pinned_prev.session_type == "threshold"  # user-placed — untouched
     assert hard_prev.session_type == "recovery"     # plain hard — eased
+
+
+# ── grill round 2: confirmed-finding regressions ────────────────────────────
+
+def _blk(w, m):
+    return [w] * (m * 60)
+
+
+def test_grill_fp1_2x20_is_never_a_test():
+    # Rest periods drag ride_mean down; the sixty_min window guard used to
+    # fire and the coggan fallback then bypassed its own 2×20 rejection.
+    s = _blk(120, 10) + _blk(280, 20) + _blk(150, 10) + _blk(280, 20) + _blk(120, 10)
+    assert fe.detect_ftp_test_shape(s) is None
+    assert fe.evaluate_ftp_test(s, prior_ftp=250) is None
+
+
+def test_grill_fp2_climb_finish_is_not_a_ramp():
+    # Easy start + steady late block satisfied the thirds ratio; the monotone
+    # -climb requirement now rejects a flat finishing block.
+    s = [140] * 2400 + [280] * 900
+    assert fe.evaluate_ftp_test(s, prior_ftp=250) is None
+
+
+def test_grill_fp3_progressive_ride_is_not_a_test():
+    import random
+    random.seed(7)
+    s = [150 + (100 * i) // 5400 + random.gauss(0, 5) for i in range(5400)]
+    assert fe.evaluate_ftp_test(s, prior_ftp=250) is None
+
+
+def test_grill_f1_dip_hour_bridged_not_split():
+    warm = [120] * 600 + ([237] * 60 + [120] * 60) * 3 + [120] * 240
+    dip = warm + [250] * 1740 + [180] * 120 + [250] * 1740 + [96] * 360
+    r = fe.sixty_min_ftp(dip)
+    assert r is not None and r["plateau_min"] >= 58
+    assert 245 <= r["value"] <= 250  # hour mean including the dip
+
+
+def test_grill_true_ramp_still_detected():
+    ramp = ([125] * 300
+            + [x for st in range(140, 480, 15) for x in [st] * 60]
+            + [60] * 120)
+    out = fe.evaluate_ftp_test(ramp, prior_ftp=250)
+    assert out and out["ftp_test_type"] == "ramp"
+
+
+def test_grill_hint1_mention_in_title_never_scores():
+    # "skipped ftp test ramp today, easy spin" MENTIONS a test; the hint must
+    # require the name to START with the test prefix.
+    assert fe.evaluate_ftp_test(
+        [130] * 2700,
+        filename_hint=["skipped ftp test ramp today, easy spin"],
+        prior_ftp=250) is None
+
+
+def test_grill_f5_spikes_and_corrupt_streams():
+    sp = _blk(120, 15) + _blk(250, 20) + _blk(100, 5)
+    spiked = sp[:]
+    for i in (1000, 1600, 2100):
+        spiked[i] = 65535
+    hint = ["FTP Test — Coggan 20min protocol (59min)"]
+    a = fe.evaluate_ftp_test(sp, filename_hint=hint, prior_ftp=250)
+    b = fe.evaluate_ftp_test(spiked, filename_hint=hint, prior_ftp=250)
+    assert abs(a["ftp_test_suggestion"]["ftp"] - b["ftp_test_suggestion"]["ftp"]) <= 2
+    # Fully corrupt stream → refuse (plausibility band), never FTP 62258.
+    assert fe.evaluate_ftp_test([65535] * 3600, filename_hint=hint,
+                                prior_ftp=250) is None
+
+
+def test_grill_f3_ramp_one_sample_spike_does_not_drop_a_step():
+    ramp = ([125] * 300
+            + [x for st in range(140, 420, 15) for x in [st] * 60]
+            + [60] * 120)
+    spiked = ramp[:]
+    top_start = 300 + 60 * ((420 - 140) // 15 - 1)
+    spiked[top_start + 30] = 800  # 1-s artifact inside the top step
+    a = fe.ramp_test_ftp(ramp)
+    b = fe.ramp_test_ftp(spiked)
+    assert abs(a["value"] - b["value"]) <= 10  # was a full step (~11W+) lost
+
+
+def test_grill_fallback_only_for_hinted_sixty():
+    # Shape-detected "sixty_min" with no 50-min plateau = misdetection →
+    # silence; the coggan fallback fires only when the FILE/NAME says the
+    # rider actually attempted the hour.
+    warm = [120] * 600 + ([237] * 60 + [120] * 60) * 3 + [120] * 240
+    early_quit = warm + [250] * (41 * 60) + [96] * 360
+    hinted = fe.evaluate_ftp_test(
+        early_quit, filename_hint="ftp_test_60min_100pct_86min.zwo",
+        prior_ftp=240)
+    assert hinted and hinted["ftp_test_suggestion"]["fallback_from"] == "sixty_min"

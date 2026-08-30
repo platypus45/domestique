@@ -4029,6 +4029,12 @@ async function openCourseDetail(region, filename) {
 function powerToZone(pct) {
   // Allen-Coggan boundaries (kept in sync with zones.py / classify_library_content.py
   // ZONES_FTP). v1.0.5 fixed the 88% Z3↔Z4 boundary in the Python source-of-truth.
+  // Z6 anaerobic gets its own purple: 122% and 178% both rendered in the same
+  // red, so a 30s sprint block and the anaerobic reps around it were
+  // indistinguishable at a glance — the rider read the whole top end as one
+  // zone. Z7 keeps the red; discrimination is the point.
+  if (pct >= 151) return {zone:'Z7', color:'var(--z6)'};
+  if (pct >= 121) return {zone:'Z6', color:'var(--purple)'};
   if (pct >= 105) return {zone:'Z6', color:'var(--z6)'};
   if (pct >= 96)  return {zone:'Z5', color:'var(--z5)'};
   if (pct >= 88)  return {zone:'Z4', color:'var(--z4)'};

@@ -18861,8 +18861,9 @@ function swapTypeOpen(day) {
   el.innerHTML = `<div style="padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);">
     <div style="font-size:12px;font-weight:600;margin-bottom:6px;">Swap to a different training type</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
-      <select id="swap-type-${day}" style="font-size:12px;" onchange="swapTypeToggleMicro('${day}')">${types.map(t=>`<option value="${t[0]}">${t[1]}</option>`).join('')}</select>
-      <select id="swap-dur-${day}" style="font-size:12px;">${durs.map(d=>`<option value="${d}"${d===60?' selected':''}>${d} min</option>`).join('')}</select>
+      <select id="swap-type-${day}" style="font-size:12px;" onchange="swapTypeToggleMicro('${day}');swapTssHint('${day}')">${types.map(t=>`<option value="${t[0]}">${t[1]}</option>`).join('')}</select>
+      <select id="swap-dur-${day}" style="font-size:12px;" onchange="swapTssHint('${day}')">${durs.map(d=>`<option value="${d}"${d===60?' selected':''}>${d} min</option>`).join('')}</select>
+      <span id="swap-tss-${day}" style="font-size:11px;color:var(--text2);white-space:nowrap;"></span>
       <label id="swap-micro-wrap-${day}" style="font-size:11px;display:none;align-items:center;gap:4px;white-space:nowrap;">
         <input type="checkbox" id="swap-micro-${day}" style="vertical-align:middle;"> microintervals only
       </label>
@@ -18873,6 +18874,7 @@ function swapTypeOpen(day) {
     <div id="swap-micro-note-${day}" style="font-size:10px;color:var(--text3);margin-top:4px;display:none;">Short on/off reps (30s/15s and relatives) rather than 4-8 minute intervals. A preference, not a verdict — see Plan Configuration for what the evidence does and does not show. If none fits this length you still get a VO2max session.</div>
   </div>`;
   swapTypeToggleMicro(day);
+  swapTssHint(day);
 }
 
 // v3.7.1 — the microinterval choice only means anything on a VO2max slot, so
@@ -18896,6 +18898,30 @@ function swapTypeToggleMicro(day) {
     box.dataset.seeded = '1';
   }
 }
+// The swap picker asked for type + duration and hid the consequence: a rider
+// on a 45-TSS z2 day picked "Threshold, 60 min" and was surprised by the
+// ~90-TSS session that landed. TSS is not a third dial — it IS type x
+// duration — so the honest fix is showing the arithmetic before Apply, plus
+// where the difference goes (the weekly reflow trims other days; the swapped
+// day is pinned). Rates mirror training_planner.TSS_PER_HOUR.
+const _SWAP_TSS_H = {recovery:30, z2:45, tempo:65, sweetspot:80, threshold:90,
+                     vo2max:75, overunder:85, sprint:57};
+function swapTssHint(day) {
+  const el = document.getElementById('swap-tss-' + day);
+  if (!el) return;
+  const t = (document.getElementById('swap-type-' + day) || {}).value;
+  const d = parseInt((document.getElementById('swap-dur-' + day) || {}).value) || 60;
+  const tss = Math.round(d / 60 * (_SWAP_TSS_H[t] || 60));
+  let cur = null;
+  try {
+    const s = (window._weekPlanSessions || []).find(x => x && x.day === day);
+    if (s && s.tss_estimate != null) cur = Math.round(s.tss_estimate);
+  } catch (_) {}
+  const delta = cur != null ? tss - cur : null;
+  el.textContent = `≈ ${tss} TSS` + (delta === null || Math.abs(delta) < 5 ? ''
+    : ` (${delta > 0 ? '+' : ''}${delta} vs planned — the rest of the week rebalances)`);
+}
+
 async function swapTypeApply(day) {
   const t = (document.getElementById('swap-type-' + day) || {}).value;
   const d = parseInt((document.getElementById('swap-dur-' + day) || {}).value) || 60;

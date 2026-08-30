@@ -8506,7 +8506,7 @@ async function openRideDetail(rideId) {
 
     const fmtDur = sec => { const h = Math.floor(sec/3600); const min = Math.floor((sec%3600)/60); return h ? `${h}h${min}m` : `${min}min`; };
     const dcColor = c => c === 'green' ? '#22c55e' : c === 'yellow' ? '#eab308' : c === 'red' ? '#ef4444' : 'var(--text3)';
-    const zc = pct => pct < 56 ? '#64748b' : pct < 76 ? '#3b82f6' : pct < 91 ? '#22c55e' : pct < 106 ? '#eab308' : pct < 121 ? '#f97316' : pct < 150 ? '#ef4444' : '#a855f7';
+    const zc = pct => pct < 56 ? '#64748b' : pct < 76 ? '#3b82f6' : pct < 91 ? '#22c55e' : pct < 106 ? '#eab308' : pct < 121 ? '#ef4444' : pct < 151 ? '#a855f7' : '#7c3aed';
     const fmtDate = iso => { try { const d = new Date(iso); return d.toLocaleDateString('en-GB', {weekday:'short', day:'numeric', month:'short', year:'numeric'}) + ' · ' + d.toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'}); } catch(e) { return iso || ''; } };
 
     // Kind pill (matches row pill — TRAINING / ROUTE / FREE RIDE)
@@ -19436,7 +19436,8 @@ function renderPowerBlocksSVG(blocks, ftp) {
     if (pct < 91) return 'var(--z3)';
     if (pct < 106) return 'var(--z4)';
     if (pct < 121) return 'var(--z5)';
-    return 'var(--purple)';  // anaerobic (≥121% FTP, e.g. 150%) — purple, not red
+    if (pct < 151) return 'var(--purple)';  // anaerobic — purple, not red
+    return '#7c3aed';  // neuromuscular: deeper violet, heavier looks heavier
   };
 
   let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;">`;

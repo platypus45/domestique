@@ -75,6 +75,13 @@ class _LazySyncBase(unittest.TestCase):
     def tearDown(self):
         for p in self._patches:
             p.stop()
+        # The force-resync tests deliberately kick the fire-and-forget sync
+        # thread; under a loaded parallel gate it can still be writing into
+        # this tree when cleanup() runs, and rmtree loses that race
+        # (observed: gw3 teardown ENOTEMPTY after every assertion had already
+        # passed). The thread writes only inside the sandbox, so best-effort
+        # removal is correct — the OS temp reaper owns any stragglers.
+        self._tmp._ignore_cleanup_errors = True
         self._tmp.cleanup()
 
 
@@ -185,6 +192,13 @@ class TestPerProfileSyncMarkers(unittest.TestCase):
     def tearDown(self):
         for p in self._patches:
             p.stop()
+        # The force-resync tests deliberately kick the fire-and-forget sync
+        # thread; under a loaded parallel gate it can still be writing into
+        # this tree when cleanup() runs, and rmtree loses that race
+        # (observed: gw3 teardown ENOTEMPTY after every assertion had already
+        # passed). The thread writes only inside the sandbox, so best-effort
+        # removal is correct — the OS temp reaper owns any stragglers.
+        self._tmp._ignore_cleanup_errors = True
         self._tmp.cleanup()
 
     def test_markers_resolve_inside_profile_dirs(self):

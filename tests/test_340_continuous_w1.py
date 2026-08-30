@@ -169,8 +169,18 @@ def test_extend_full_horizon_deficit_keeps_deload_cadence():
     # 3-load:1-deload continues positionally: W8 is the next deload.
     assert [w.is_stepback for w in appended] == [False, False, False, True]
     assert appended[3].tss_target < appended[0].tss_target
-    # IP §5 retest cadence: W6 (6 % 6 == 0, not a deload) carries the test.
-    assert any(s.session_type == "ftp_test" for s in appended[1].sessions)
+    # FTP-tests W1e retest cadence (weeks-since-last-test, not week_num % 6):
+    # the continuous generate path baselines the rider with a week-2 test, so
+    # the next test is due at W8 — a deload — and DEFERS to the next appended
+    # non-deload week instead of landing on tired legs or (the old %6 bug)
+    # silently vanishing into a 12-week hole. No test in this batch is the
+    # correct behaviour; the base plan must carry the week-2 baseline.
+    base_weeks = all_weeks[:-4]
+    assert any(s.session_type == "ftp_test"
+               for w in base_weeks for s in w.sessions), \
+        "continuous generation must baseline with a week-2 FTP test"
+    assert not any(s.session_type == "ftp_test"
+                   for w in appended for s in w.sessions)
     # The appended horizon serves today onward (no dead past weeks).
     assert appended[-1].end >= date.today()
 

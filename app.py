@@ -18119,7 +18119,7 @@ def _ftp_test_family(fname: str) -> "str | None":
 _FTP_TEST_PREFERRED_FILE = {
     "ramp": ("ftp_test_ramp_ladder21_200pct_35min.zwo", 35),
     "coggan_20min": ("ftp_test_coggan_3x1min-1min_95pct_59min.zwo", 59),
-    "sixty_min": ("ftp_test_60min_100pct_86min.zwo", 86),
+    "sixty_min": ("ftp_test_60min_steady_100pct_86min.zwo", 86),
 }
 
 

@@ -1,6 +1,6 @@
 {
  "version": 1,
- "workouts_dir_hash": "a804753c89dc288f30380302bb9ab72c7600424416541e549dc23e4be08be534",
+ "workouts_dir_hash": "865a39a0ad620dc5f19dab0fcbe8df0f45943e41cdb0f0d2db0574820d41a4ec",
  "count": 4307,
  "classifications": {
   "anaerobic_3x10x15s-45s_121pct_64min.zwo": {
@@ -221268,8 +221268,8 @@
    },
    "tags": []
   },
-  "ftp_test_60min_100pct_86min.zwo": {
-   "file": "ftp_test_60min_100pct_86min.zwo",
+  "ftp_test_60min_steady_100pct_86min.zwo": {
+   "file": "ftp_test_60min_steady_100pct_86min.zwo",
    "primary": "ftp_test",
    "confidence": 1.0,
    "secondary_flags": {
@@ -221307,7 +221307,8 @@
    "tags": [
     "ftp_test",
     "ftp_test_60min"
-   ]
+   ],
+   "display_name": "FTP Test 86min"
   }
  }
 }

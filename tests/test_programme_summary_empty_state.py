@@ -106,7 +106,9 @@ def _summary(rides: int) -> dict:
 def test_plan_with_no_rides_explains_itself():
     """Zero rides: a plain sentence, and no empty metric grid behind it."""
     out = _render(_summary(rides=0))
-    assert "No rides recorded" in out["empty"]
+    # 74987dc1: the empty state explains what's missing and how to fill it,
+    # not just that rides are absent.
+    assert "no rides" in out["empty"].lower()
     assert out["emptyDisplay"] == "block"
     # The plan window is still stated — it is measured, not invented.
     assert "2026-05-18" in out["window"] and "12 weeks" in out["window"]

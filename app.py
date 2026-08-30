@@ -6653,13 +6653,22 @@ def api_picker(subjective: float = Query(7), duration: int = Query(75)):
     # effectively asking for needles in a haystack. We now use 3 as the
     # primary floor and widen further on misses, so the picker returns
     # real suggestions instead of silently collapsing to an empty list.
+    # Forum bug (2026-08-30): at duration=30 the old flat ±30 window spanned
+    # [0, 60] and sort="score" favours high-TSS files — which are the LONG
+    # ones — so a rider asking for 30 minutes was handed 60-minute workouts.
+    # The requested duration is a HARD CAP (owner decision): the rider said
+    # how much time they have, so nothing longer is ever served. The search
+    # flexes DOWNWARD only (25% below the request, floor 10 min), and the
+    # final list is ordered by closeness to the requested duration (score
+    # breaks ties). The fallbacks below widen further down, never up.
+    _dur_pad = max(10, int(duration * 0.25))
     workouts: list[dict] = []
     for stype in types:
         try:
             matches = api_workouts(
                 min_score=3, session_type=stype,
-                max_duration=duration + 30,
-                min_duration=max(0, duration - 30),
+                max_duration=duration,
+                min_duration=max(0, duration - _dur_pad),
                 limit=10, sort="score", tags=None,
             )
         except Exception as _e:
@@ -6669,11 +6678,11 @@ def api_picker(subjective: float = Query(7), duration: int = Query(75)):
         if len(workouts) >= 5:
             break
 
-    # If still empty, try without session type filter
+    # If still empty, try without session type filter (still capped).
     if not workouts:
         try:
             workouts = api_workouts(
-                min_score=3, max_duration=duration + 30,
+                min_score=3, max_duration=duration,
                 min_duration=max(0, duration - 30),
                 limit=5, sort="score", tags=None,
             )
@@ -6681,12 +6690,13 @@ def api_picker(subjective: float = Query(7), duration: int = Query(75)):
             _log.warning(f"picker api_workouts fallback failed: {_e}")
             workouts = []
 
-    # Last-resort widening: drop the score floor + widen the duration
-    # window so fresh installs with a smaller library still see ≥3 cards.
+    # Last-resort widening: drop the score floor + widen the window all the
+    # way DOWN (never above the cap) so fresh installs with a smaller
+    # library still see ≥3 cards.
     if len(workouts) < 3:
         try:
             extra = api_workouts(
-                min_score=1, max_duration=duration + 60,
+                min_score=1, max_duration=duration,
                 min_duration=0, limit=10, sort="score", tags=None,
             )
             workouts.extend(extra)
@@ -6701,6 +6711,21 @@ def api_picker(subjective: float = Query(7), duration: int = Query(75)):
         if nm and nm not in seen:
             seen.add(nm)
             unique.append(w)
+
+    # Closest-to-requested-duration first; score breaks ties. Without this,
+    # score ordering hands a 30-min request the longest file in the window.
+    def _dur_rank(w: dict):
+        try:
+            d = float(w.get("Duration(min)") or 0)
+        except (TypeError, ValueError):
+            d = 0.0
+        try:
+            sc = float(w.get("Score") or 0)
+        except (TypeError, ValueError):
+            sc = 0.0
+        return (abs(d - duration), -sc)
+
+    unique.sort(key=_dur_rank)
 
     return {
         "type": types[0] if types else "z2",

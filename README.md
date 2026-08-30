@@ -150,11 +150,18 @@ are corrected, the 20-minute test gains its depletion effort, and ~30 new
 sessions land (30/15, 40/20 and microburst ladders, over-unders, a real 2×8
 field test).
 
-**Test your FTP your way.** Open the FTP test in your plan and choose ramp or
-20-minute — a side-by-side chooser shows each option's power profile and honest
-trade-offs (speed and easy pacing vs. threshold accuracy, and the pacing trap
-that reads low). Your tested FTP is now read from the effort itself, so a stray
-sprint in your warm-up can't inflate the ramp result.
+**Test your FTP your way.** Open the FTP test in your plan and choose the
+20-minute protocol (default — best-validated, full protocol with the 5-min
+clearing effort), the ramp (quick and pacing-free; the card says honestly that
+its 0.75 factor has no peer-reviewed validation and reads high for punchy
+riders), or a full 60-minute hour of power (definitional — no factor at all).
+A side-by-side chooser shows each option's power profile and trade-offs. Tests
+are recognised whether the ride arrives as a FIT import or through the
+intervals.icu sync, the suggested number comes with Accept / Keep / Edit and a
+level-typical range for your W/kg, and a "Schedule FTP test" button puts a
+test on any day — fresh legs arranged, plan re-fit around it. The evidence
+review per protocol is in
+[the science documentation](docs/SCIENCE.md#2a-the-ftp-test-protocols--what-the-literature-actually-supports).
 
 **Short intervals to your measured power** (opt-in). If you have a measured
 peak-power number, Domestique can cap a workout's short, very-hard reps to what

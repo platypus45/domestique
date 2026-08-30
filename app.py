@@ -15959,6 +15959,28 @@ def _ride_started_local_iso_date(ride: dict) -> str | None:
         return started[:10] if len(started) >= 10 else None
 
 
+def _actual_blocks_from_laps(ride: dict, ftp: "int | None") -> list:
+    """Lap timeline -> mini-sprite blocks ({min, pctLow, pctHigh} each)."""
+    laps = ride.get("intervals")
+    ride_ftp = ride.get("ftp_at_ride") or ftp
+    if not isinstance(laps, list) or not laps or not ride_ftp:
+        return []
+    if len(laps) > 120:   # degenerate 1-lap-per-second exports: not a structure
+        return []
+    out = []
+    for lp in laps:
+        try:
+            dur = float(lp.get("duration_s") or 0)
+            pw = lp.get("avg_power_w")
+            if dur <= 0 or pw is None:
+                continue
+            pct = round(100.0 * float(pw) / float(ride_ftp), 1)
+            out.append({"min": round(dur / 60.0, 2), "pctLow": pct, "pctHigh": pct})
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def _summarize_ride_for_calendar(
     ride: dict, ftp: int | None, planned_session: dict | None = None,
 ) -> dict:
@@ -16001,6 +16023,11 @@ def _summarize_ride_for_calendar(
             "started_at": ride.get("started_at") or "",
             "classification": _pol.get("classification") if isinstance(_pol, dict) else None,
             "pol_confidence": _pol.get("confidence") if isinstance(_pol, dict) else None,
+            # Same lap-blocks contract as the legacy path below — this early
+            # return is the branch every SYNCED ride takes, and it was the
+            # one initially missed: the test asserting blocks on an icu ride
+            # failed with KeyError while the legacy-path tests passed.
+            "blocks": _actual_blocks_from_laps(ride, ftp),
         }
         if planned_session is not None:
             from analytics import compare_plan_to_actual
@@ -16046,6 +16073,17 @@ def _summarize_ride_for_calendar(
         "started_at": ride.get("started_at") or parsed.get("start_time") or "",
         "classification": _pol.get("classification") if isinstance(_pol, dict) else None,
         "pol_confidence": _pol.get("confidence") if isinstance(_pol, dict) else None,
+        # The grid's completed-day sprite used to keep showing the PLANNED
+        # silhouette — a rider compared it with intervals.icu's card, which
+        # draws the ride you actually did, and read ours as "a standard
+        # preview, completely different from the blocks I did". ICU renders
+        # stream-downsampled zone-colored bars; the lap timeline stored on
+        # every synced ride (start_s / duration_s / avg_power_w) carries the
+        # same structure with zero extra fetches, so completed days ship it
+        # as ready-to-render blocks in the sprite's own {min, pctLow,
+        # pctHigh} shape. Empty for rides without laps or a known FTP — the
+        # client keeps the planned silhouette there.
+        "blocks": _actual_blocks_from_laps(ride, ftp),
     }
     if planned_session is not None:
         from analytics import compare_plan_to_actual

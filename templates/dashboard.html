@@ -12894,7 +12894,7 @@ async function renderPlanJSON(plan) {
         const spriteTip = zdOk
           ? pgZoneTooltip(s.zone_dist)
           : `Typical ${SESSION_SHORT[s.session_type] || (s.session_type || '').toUpperCase()} shape (approximate — matched file structure unavailable)`;
-        const miniSvg = `<div class="pg-card-sprite" title="${esc(spriteTip)}">${miniPowerBlockSVG(blocks)}</div>`;
+        let miniSvg = `<div class="pg-card-sprite" title="${esc(spriteTip)}">${miniPowerBlockSVG(blocks)}</div>`;
 
         // Actual activity overlay for past days — calendar prominence:
         // done shows duration · TSS (green), missed mirrors the calendar's
@@ -12907,6 +12907,14 @@ async function renderPlanJSON(plan) {
           const actDur = dayActuals.reduce((s,a) => s + (a.duration_min||0), 0);
           actualOverlay = `<div class="pg-card-actual" style="color:var(--green);">${icons} ${actDur}m${actTss ? ' · ' + Math.round(actTss) + ' TSS' : ''}</div>`;
           dayCompleted = true;
+          // Completed days show the ride's own lap blocks (intervals.icu's
+          // card does the same from streams) — the planned silhouette on a
+          // ridden day answered a question nobody asked. Multi-ride days
+          // concatenate in ride order. No laps -> planned sprite stands.
+          const actBlocks = dayActuals.flatMap(a => Array.isArray(a.blocks) ? a.blocks : []);
+          if (actBlocks.length) {
+            miniSvg = `<div class="pg-card-sprite" title="What you actually rode — lap by lap from the recorded ride">${miniPowerBlockSVG(actBlocks)}</div>`;
+          }
         } else if (isPast && !dayActuals.length) {
           actualOverlay = '<div class="pg-card-actual" style="font-style:italic;color:var(--red);">missed</div>';
         }
@@ -14870,7 +14878,9 @@ function miniPowerBlockSVG(blocks) {
   if (totalMin === 0) return '';
   const W = 60, H = 16;
   // Unified Z3 color with library/history/detail (green)
-  const zoneCol = (pct) => pct < 56 ? '#64748b' : pct < 76 ? '#3b82f6' : pct < 88 ? '#22c55e' : pct < 96 ? '#f97316' : pct < 105 ? '#ef4444' : '#dc2626';
+  // Same top-end split as the day chart: anaerobic purple, sprints red —
+  // an actual ride's 470W lap must not blend into the VO2 red around it.
+  const zoneCol = (pct) => pct < 56 ? '#64748b' : pct < 76 ? '#3b82f6' : pct < 88 ? '#22c55e' : pct < 96 ? '#f97316' : pct < 121 ? '#ef4444' : pct < 151 ? '#a855f7' : '#dc2626';
 
   let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;margin-top:2px;">`;
   let cursor = 0;
@@ -14878,7 +14888,7 @@ function miniPowerBlockSVG(blocks) {
     const x = (cursor / totalMin) * W;
     const bw = Math.max(0.5, (b.min / totalMin) * W);
     const avgPct = (b.pctLow + b.pctHigh) / 2;
-    const h = Math.max(2, (avgPct / 120) * H);
+    const h = Math.min(H, Math.max(2, (avgPct / 120) * H));
     svg += `<rect x="${x}" y="${H-h}" width="${bw}" height="${h}" fill="${zoneCol(avgPct)}" rx="0.5"/>`;
     cursor += b.min;
   }

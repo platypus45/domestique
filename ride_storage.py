@@ -56,6 +56,21 @@ _BACKFILL_CARRY_KEYS = ("streams",)
 #                reinterpret old ratings.
 _RIDER_INPUT_CARRY_KEYS = ("rpe", "rpe_at", "rpe_scale")
 
+# FTP-tests IP W2a — sync-path FTP-test artifacts, computed locally (never in
+# any ICU payload). Two carry classes, mirroring the lessons above:
+#   * detection output (suggestion + flags) — payload-wins semantics like
+#     _DFA_CARRY_KEYS: a fresh local re-detection may legitimately replace it,
+#     but a plain re-sync must not erase it (the modal typically fires the
+#     NEXT morning, well past the 30-min re-persist that used to wipe it).
+#   * the rider's review verdict (accepted / declined / edited) — rider input,
+#     carried UNCONDITIONALLY like RPE: nothing ICU sends can ever supply it,
+#     and losing it re-nags the rider with a modal they already answered.
+_FTP_TEST_CARRY_KEYS = (
+    "is_ftp_test", "ftp_test_type", "ftp_test_suggestion",
+    "ftp_test_halted", "ftp_test_halt_step",
+)
+_FTP_TEST_REVIEW_CARRY_KEYS = ("ftp_test_review",)
+
 
 def _active_profile_dir() -> Path:
     """AC2a: the ACTIVE profile's directory — every archive dir hangs off it.
@@ -566,6 +581,14 @@ def persist_icu_activity(activity: dict, carry_hydrated: bool = True) -> Path | 
                 for k in _RIDER_INPUT_CARRY_KEYS:
                     if prior.get(k) is not None:
                         norm.setdefault(k, prior[k])
+                # W2a: locally-computed FTP-test detection (payload-wins) +
+                # the rider's review verdict (unconditional, like RPE).
+                for k in _FTP_TEST_CARRY_KEYS:
+                    if prior.get(k) is not None:
+                        norm.setdefault(k, prior[k])
+                for k in _FTP_TEST_REVIEW_CARRY_KEYS:
+                    if prior.get(k) is not None:
+                        norm.setdefault(k, prior[k])
         except (json.JSONDecodeError, OSError) as e:
             log.debug(f"persist_icu_activity({icu_id}) prior read: {e}")
     if prior_prs is not None:
@@ -758,7 +781,11 @@ def load_all_rides() -> list[dict]:
             # the 3-day gate. Nothing else can regenerate it. ICU's own value
             # wins if it has one — that surface is the newer edit.
             moved = {}
-            for k in _RIDER_INPUT_CARRY_KEYS:
+            # W2a: FTP-test artifacts ride along — a FIT-imported test whose
+            # ICU twin later wins this dedupe must not lose its detection or
+            # the rider's accept/decline verdict.
+            for k in (_RIDER_INPUT_CARRY_KEYS + _FTP_TEST_CARRY_KEYS
+                      + _FTP_TEST_REVIEW_CARRY_KEYS):
                 if r.get(k) is not None and twin.get(k) is None:
                     twin[k] = r[k]
                     moved[k] = r[k]

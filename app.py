@@ -16857,6 +16857,13 @@ def _block_eval_for(s_json: dict, ride: dict) -> "dict | None":
     unless the laps settle every block.
     """
     try:
+        # FTP-tests IP W1a: tests are graded by their calculator (the FTP
+        # suggestion), never by blocks. The 60-min protocol especially —
+        # graded as blocks, an hour abandoned at 20 min still reads
+        # "completed" (confirmed false green), and the ramp's to-failure
+        # shape has no meaningful block contract either.
+        if (s_json.get("session_type") or "") == "ftp_test":
+            return None
         laps = ride.get("intervals") or []
         zwo = (s_json.get("zwo_file") or "").strip()
         if not laps or not zwo:
@@ -17422,6 +17429,16 @@ def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: i
     # race flag still attached (user_swapped then immunized it everywhere).
     if target.get("is_race"):
         raise ValueError("race day is fixed — edit the race instead")
+    # FTP-tests IP F8: a maximal protocol is only valid on fresh legs. Refuse
+    # converting a day already RIDDEN hard (test-today after intervals reads a
+    # depressed FTP that then mis-sets every zone of the next cycle).
+    _easy_f8 = {"rest", "z2", "long_z2", "recovery"}
+    if (new_type == "ftp_test"
+            and target.get("status") in ("done", "done_partial", "ambiguous")
+            and target.get("session_type") not in _easy_f8):
+        raise ValueError(
+            "a hard session was already ridden that day — a valid FTP test "
+            "needs fresh legs; schedule it for another day")
 
     tss_per_h = tp.TSS_PER_HOUR.get(new_type, 60)
     target["session_type"] = new_type
@@ -17460,6 +17477,37 @@ def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: i
                 target["tss_estimate"] = round(float(planned.tss_estimate))
     except Exception:
         _log.exception("swap-type match_zwo skipped")
+
+    # F8: single-day fresh-legs easing — the generation/recalc passes run
+    # _ensure_fresh_legs_before_ftp_tests, but a manually scheduled test lands
+    # outside those passes. Ease the PREVIOUS day when it is a hard, still
+    # untouched future slot (never a ridden day, never a user-placed one, and
+    # yesterday-relative-to-a-test-today stays as ridden history).
+    if new_type == "ftp_test":
+        try:
+            prev_iso = (date.fromisoformat(day_iso) - timedelta(days=1)).isoformat()
+            prev = next((s for w in plan.get("weeks", [])
+                         for s in w.get("sessions", [])
+                         if s.get("day") == prev_iso), None)
+            if (prev is not None
+                    and prev.get("session_type") not in _easy_f8
+                    and prev.get("session_type") != "ftp_test"
+                    and prev.get("status", "pending") == "pending"
+                    and not prev.get("user_swapped")
+                    and not prev.get("user_moved")
+                    and not prev.get("is_race")
+                    and prev_iso >= date.today().isoformat()):
+                prev["session_type"] = "recovery"
+                prev["zwo_file"] = ""
+                prev["zwo_name"] = ""
+                prev["duration_min"] = min(int(prev.get("duration_min") or 45), 45)
+                prev["tss_estimate"] = min(float(prev.get("tss_estimate") or 30.0), 30.0)
+                prev["description"] = (
+                    "Recovery — eased to leave fresh legs for tomorrow's FTP "
+                    "test. A maximal protocol read off a fatigued day sets a "
+                    "wrong FTP for the whole cycle.")
+        except Exception:
+            _log.exception("ftp-test fresh-legs easing skipped")
 
     plan["last_swap_day"] = {"date": day_iso, "at": datetime.now().isoformat(),
                              "new_type": new_type}
@@ -17552,13 +17600,28 @@ async def api_plan_swap_type(request: Request):
 
 
 def _ftp_test_family(fname: str) -> "str | None":
-    # ponytail: the filename already partitions ramp vs coggan — no sub-tags.
+    # ponytail: the filename already partitions the families — no sub-tags.
     f = (fname or "").lower()
     if f.startswith("ftp_test_ramp"):
         return "ramp"
     if f.startswith("ftp_test_coggan"):
         return "coggan_20min"
+    if f.startswith("ftp_test_60min"):
+        return "sixty_min"
     return None
+
+
+# FTP-tests IP W1b: the file each protocol card serves. Ramp is pinned to the
+# 6%/min ladder (the ONLY protocol detect_ramp_halt's step reconstruction
+# matches: 56% start, +6%/min) — the old closest-to-45min pick landed on the
+# 8%/min 43-min file, whose steeper steps over-read FTP for anaerobic riders
+# even beyond the ramp's baseline bias. Fallback duration keeps the endpoint
+# alive if the preferred file is ever renamed.
+_FTP_TEST_PREFERRED_FILE = {
+    "ramp": ("ftp_test_ramp.zwo", 35),
+    "coggan_20min": ("ftp_test_coggan_20min.zwo", 59),
+    "sixty_min": ("ftp_test_60min_100pct_86min.zwo", 86),
+}
 
 
 @app.post("/api/plan/ftp-test-type")
@@ -17569,8 +17632,9 @@ async def api_plan_ftp_test_type(request: Request):
     body = await _get_json_body(request)
     day_iso = str(body.get("date") or "").strip()
     test_type = str(body.get("test_type") or "").strip()
-    if test_type not in ("ramp", "coggan_20min"):
-        return JSONResponse({"error": "test_type must be ramp or coggan_20min"}, 400)
+    if test_type not in ("ramp", "coggan_20min", "sixty_min"):
+        return JSONResponse(
+            {"error": "test_type must be ramp, coggan_20min or sixty_min"}, 400)
     try:
         date.fromisoformat(day_iso)
     except ValueError:
@@ -17587,22 +17651,32 @@ async def api_plan_ftp_test_type(request: Request):
             return JSONResponse({"error": f"No session at {day_iso}"}, 404)
         if target.get("session_type") != "ftp_test":
             return JSONResponse({"error": "not an FTP-test session"}, 400)
-        # Pick the chosen family's workout closest to a sensible duration
-        # (ramp ~45min, 20-min ~60min).
-        want_dur = 45 if test_type == "ramp" else 60
+        # W1b: serve the family's PREFERRED protocol file (ramp = the 6%/min
+        # ladder detect_ramp_halt reconstructs); duration-closest is only the
+        # renamed-file fallback.
+        pref_file, want_dur = _FTP_TEST_PREFERRED_FILE[test_type]
         cands = [w for w in tp.load_workout_library()
                  if _ftp_test_family(w.get("File", "")) == test_type]
         if not cands:
             return JSONResponse({"error": f"no {test_type} workout in library"}, 404)
-        pick = min(cands, key=lambda w: abs((w.get("Duration(min)") or 0) - want_dur))
+        pick = next((w for w in cands if w.get("File") == pref_file), None)
+        if pick is None:
+            pick = min(cands,
+                       key=lambda w: abs((w.get("Duration(min)") or 0) - want_dur))
         target["zwo_file"] = pick["File"]
         target["zwo_name"] = pick.get("Name") or pick["File"]
         target["duration_min"] = int(pick.get("Duration(min)") or want_dur)
+        # W1b: keep the load forecast honest — the hour-of-power carries ~2×
+        # the TSS of a ramp, and reforecast/eval read tss_estimate.
+        if pick.get("TSS"):
+            target["tss_estimate"] = round(float(pick["TSS"]))
         target["ftp_test_type"] = test_type
         target["user_swapped"] = True   # the rider's deliberate choice
         tp.atomic_write_plan(json_path, plan)
         return {"ok": True, "test_type": test_type, "zwo_file": pick["File"],
-                "zwo_name": target["zwo_name"], "duration_min": target["duration_min"]}
+                "zwo_name": target["zwo_name"],
+                "duration_min": target["duration_min"],
+                "tss_estimate": target.get("tss_estimate")}
     except Exception:
         _log.exception("ftp-test-type swap failed")
         return JSONResponse({"detail": "ftp-test-type failed"}, 500)
@@ -17995,6 +18069,91 @@ def _rides_fit_dir() -> Path:
     return _rs._fit_rides_dir()
 
 
+def _resample_series_1hz(ts: list, values: list) -> list:
+    """FTP-tests IP — strict 1 Hz grid for the test calculators.
+
+    Zwift writes 1 Hz FITs, but Garmin/Wahoo "smart recording" writes a
+    record only when something changes (0.2–1 Hz, uneven). Every FTP-test
+    window in fitness_estimation counts SAMPLES as seconds, so on a sparse
+    file a "20-min" window would silently span far more wall time and
+    under-read the test. Rebuild second-by-second using record timestamps:
+    hold the last value across gaps ≤ 3 s (sensor cadence), zero beyond
+    (coasting/pause — matches how power meters behave when stopped).
+
+    Returns ``values`` unchanged when timestamps are absent/unusable or the
+    stream is already ~1 Hz (the overwhelmingly common case — zero risk to
+    the existing Zwift path).
+    """
+    n = len(values)
+    if n < 2 or len(ts) != n:
+        return values
+    pairs = [(t, v) for t, v in zip(ts, values) if t is not None]
+    if len(pairs) < max(2, int(0.9 * n)):
+        return values  # too many missing timestamps to trust the grid
+    t0 = pairs[0][0]
+    tN = pairs[-1][0]
+    span = tN - t0
+    if span <= 0 or span > 24 * 3600:
+        return values
+    # Already ~1 Hz? (span within 2% of the sample count → leave untouched.)
+    if abs(span - (len(pairs) - 1)) <= max(2.0, 0.02 * len(pairs)):
+        return values
+    out = [0] * (int(span) + 1)
+    prev_t = None
+    prev_v = 0
+    for t, v in pairs:
+        i = int(t - t0)
+        if 0 <= i < len(out):
+            out[i] = v
+        if prev_t is not None:
+            gap_lo = int(prev_t - t0) + 1
+            gap_hi = min(i, gap_lo + 3)  # hold ≤3 s, zero beyond
+            for j in range(gap_lo, gap_hi):
+                if 0 <= j < len(out):
+                    out[j] = prev_v
+        prev_t, prev_v = t, v
+    return out
+
+
+def _sitko_advisory(best_20min_w: int) -> "dict | None":
+    """FTP-tests IP F3 — Sitko 2023 (PMID 37802084) level advisory for the
+    Coggan 20-min test. The universal 0.95 factor is a population average:
+    measured 60-min/20-min ratios ran ~0.96 in professionals down to ~0.88 in
+    recreational riders, so one factor over-reads weaker riders. ADVISORY
+    ONLY — the suggested FTP stays 0.95 × best-20; the modal just shows the
+    level-typical band so the rider can temper an Accept.
+
+    Gated on a touched profile: weight_kg=70.0 AND ftp=200 is the untouched
+    default signature (ProfileManager seeds both), and W/kg computed from
+    defaults would fabricate the band.
+    """
+    try:
+        if best_20min_w <= 0:
+            return None
+        from profile_manager import ProfileManager
+        pm = ProfileManager.get()
+        weight = float(getattr(pm, "weight_kg", 0) or 0)
+        prior_ftp = int(config.ATHLETE_FTP_W or 0)
+        if weight <= 0 or (abs(weight - 70.0) < 1e-9 and prior_ftp == 200):
+            return None
+        wkg = best_20min_w / weight
+        if wkg >= 4.7:
+            level, band = "well-trained/elite", (0.94, 0.96)
+        elif wkg >= 3.5:
+            level, band = "trained", (0.91, 0.94)
+        else:
+            level, band = "recreational", (0.88, 0.91)
+        return {
+            "sitko_wkg": round(wkg, 2),
+            "sitko_level": level,
+            "sitko_factor_band": [band[0], band[1]],
+            "sitko_ftp_band": [int(round(best_20min_w * band[0])),
+                               int(round(best_20min_w * band[1]))],
+        }
+    except Exception:
+        return None
+
+
 def _parse_fit_stats(fit_path: Path) -> dict:
     """Parse a FIT file and return a shallow stats dict.
 
@@ -18035,6 +18194,11 @@ def _parse_fit_stats(fit_path: Path) -> dict:
     # FTP-test detection + ramp-halt detection after the scan.
     power_series: list[int] = []
     cadence_series: list[int] = []
+    record_ts: list = []  # per-record timestamps (s), parallel to the series
+    # FTP-tests IP W2b: the FIT's embedded workout name — Zwift stamps the
+    # ZWO's <name> here, and exported FITs are named by DATE, so the file
+    # name alone almost never identifies the protocol. This does.
+    fit_workout_name = ""
 
     try:
         for rec in ff.records:
@@ -18042,6 +18206,16 @@ def _parse_fit_stats(fit_path: Path) -> dict:
             mtype = type(msg).__name__
             if mtype == "RecordMessage":
                 sample_count += 1
+                try:
+                    _ts = msg.get_value("timestamp")
+                    if _ts is not None:
+                        _tsf = float(_ts)
+                        # fit_tool serves ms-since-epoch; tolerate seconds too.
+                        record_ts.append(_tsf / 1000.0 if _tsf > 1e11 else _tsf)
+                    else:
+                        record_ts.append(None)
+                except Exception:
+                    record_ts.append(None)
                 p_val = 0
                 try:
                     pw = msg.get_value("power")
@@ -18122,6 +18296,14 @@ def _parse_fit_stats(fit_path: Path) -> dict:
                         start_time = str(v)
                 except Exception:
                     pass
+            elif mtype == "WorkoutMessage":
+                try:
+                    v = (getattr(msg, "workout_name", None)
+                         or msg.get_value("wkt_name"))
+                    if v:
+                        fit_workout_name = str(v)
+                except Exception:
+                    pass
     except Exception as e:
         log_ride_import.warning(f"FIT record scan aborted: {e}")
 
@@ -18140,59 +18322,36 @@ def _parse_fit_stats(fit_path: Path) -> dict:
     local_eftp_suggestion = None
     try:
         import fitness_estimation as _fe
-        test_kind = _fe.detect_ftp_test_shape(
-            power_series, filename_hint=fit_path.name,
+        # Strict 1 Hz grid for the test math — smart-recording FITs are
+        # sparse and would silently stretch every "20-min" window.
+        power_series = _resample_series_1hz(record_ts, power_series)
+        cadence_series = _resample_series_1hz(record_ts, cadence_series)
+        # W2b: hint = file name + the FIT's embedded workout name (the
+        # detector normalizes separators, so the ZWO's display <name>
+        # matches its family token too). evaluate_ftp_test is the SINGLE
+        # recognition+calculation entry point shared with the ICU sync path
+        # (power_curve backfill) — the two paths can never drift.
+        # FIX-CONTRACT M3: prior_ftp / pct_delta / method carried on the
+        # suggestion payload so U1's banner renders the delta line.
+        _eval = _fe.evaluate_ftp_test(
+            power_series, cadence_series=cadence_series,
+            filename_hint=f"{fit_path.name} {fit_workout_name}".strip(),
+            prior_ftp=int(config.ATHLETE_FTP_W or 0),
         )
-        # FIX-CONTRACT M3: carry prior_ftp / pct_delta / method on the
-        # suggestion payload so U1's banner renders the delta line correctly
-        # ("was 250W · +3.2%") instead of defaulting to 0W/0%.
-        _prior_ftp = int(config.ATHLETE_FTP_W or 0)
-        if test_kind == "coggan_20min":
-            suggest = _fe.coggan_20min_ftp(power_series)
-            if suggest:
-                is_ftp_test = True
-                ftp_test_type = "coggan_20min"
-                _val = int(suggest["value"])
-                _delta = (
-                    round((_val - _prior_ftp) / _prior_ftp * 100.0, 1)
-                    if _prior_ftp > 0 else 0.0
-                )
-                ftp_test_suggestion = {
-                    "type": suggest["type"],
-                    "method": "coggan_20min",
-                    "ftp": _val,
-                    "value": _val,
-                    "prior_ftp": _prior_ftp,
-                    "pct_delta": _delta,
-                    "source": "tested_coggan_20min",
-                    "formula_used": suggest["formula_used"],
-                    "best_20min": suggest.get("best_20min"),
-                }
-        elif test_kind == "ramp":
-            suggest = _fe.ramp_test_ftp(power_series)
-            if suggest:
-                is_ftp_test = True
-                ftp_test_type = "ramp"
-                _val = int(suggest["value"])
-                _delta = (
-                    round((_val - _prior_ftp) / _prior_ftp * 100.0, 1)
-                    if _prior_ftp > 0 else 0.0
-                )
-                ftp_test_suggestion = {
-                    "type": suggest["type"],
-                    "method": "ramp",
-                    "ftp": _val,
-                    "value": _val,
-                    "prior_ftp": _prior_ftp,
-                    "pct_delta": _delta,
-                    "source": "tested_ramp",
-                    "formula_used": suggest["formula_used"],
-                    "best_60s": suggest.get("best_60s"),
-                }
-                halt = _fe.detect_ramp_halt(power_series, cadence_series)
-                if halt and halt.get("halted"):
-                    ftp_test_halted = True
-                    ftp_test_halt_at_step = halt.get("halt_at_step")
+        if _eval:
+            is_ftp_test = True
+            ftp_test_type = _eval["ftp_test_type"]
+            ftp_test_suggestion = _eval["ftp_test_suggestion"]
+            ftp_test_halted = bool(_eval.get("ftp_test_halted"))
+            ftp_test_halt_at_step = _eval.get("ftp_test_halt_step")
+            # F3: Sitko level advisory — profile-dependent, so applied here
+            # (fitness_estimation stays profile-free). Any suggestion scored
+            # by the 20-min method qualifies, including a sixty_min fallback.
+            if ftp_test_suggestion.get("method") == "coggan_20min":
+                _sitko = _sitko_advisory(
+                    int(ftp_test_suggestion.get("best_20min") or 0))
+                if _sitko:
+                    ftp_test_suggestion.update(_sitko)
     except Exception as _e:
         log_ride_import.debug(f"FTP-test detection skipped: {_e}")
 
@@ -20359,6 +20518,33 @@ def api_ride_detail(ride_id: str):
         }
 
     import ride_storage
+    # FTP-tests IP W2c: resolve icu_ ids — the legacy get_ride only reads the
+    # JSON-archive dir, so every ICU-synced ride 404'd here and the post-test
+    # modal could never fire for sync-path rides. The detection keys live at
+    # the top of the ICU envelope; mirror them into summary.* (the shape the
+    # modal reads on every other path).
+    if ride_id.startswith("icu_"):
+        icu = ride_storage.get_icu_ride(ride_id)
+        if not icu:
+            return JSONResponse({"error": "Ride not found"}, 404)
+        icu_summary = {
+            "is_ftp_test": icu.get("is_ftp_test", False),
+            "ftp_test_type": icu.get("ftp_test_type"),
+            "ftp_test_suggestion": icu.get("ftp_test_suggestion"),
+            "ftp_test_halted": icu.get("ftp_test_halted", False),
+            "ftp_test_halt_step": icu.get("ftp_test_halt_step"),
+            "ftp_test_review": icu.get("ftp_test_review"),
+            "duration_sec": icu.get("moving_s") or icu.get("duration_s"),
+            "tss": icu.get("tss"),
+        }
+        return {
+            "ride_id": f"icu_{icu.get('external_id')}",
+            "id": f"icu_{icu.get('external_id')}",
+            "source": "icu",
+            "started_at": icu.get("started_at"),
+            "name": icu.get("name"),
+            "summary": icu_summary,
+        }
     ride = ride_storage.get_ride(ride_id)
     if not ride:
         return JSONResponse({"error": "Ride not found"}, 404)
@@ -20376,6 +20562,40 @@ def api_ride_detail(ride_id: str):
     except Exception:
         pass
     return ride
+
+
+@app.post("/api/ride/{ride_id}/ftp-test-review")
+async def api_ride_ftp_test_review(ride_id: str, request: Request):
+    """FTP-tests IP W2c — persist the rider's verdict on a test suggestion
+    (accepted / declined / edited) onto the ICU ride envelope, so the post-
+    test modal never re-nags across restarts or re-syncs (the marker is on
+    ride_storage's unconditional carry list, same class as RPE). FIT-archive
+    rides keep the sessionStorage fast-path only — their stats are re-parsed
+    from the file on every read, so there is no envelope to stamp."""
+    body = await _get_json_body(request)
+    action = str(body.get("action") or "").strip()
+    if action not in ("accepted", "declined", "edited"):
+        return JSONResponse(
+            {"error": "action must be accepted, declined or edited"}, 400)
+    if not ride_id.startswith("icu_"):
+        return {"ok": True, "persisted": False}
+    import ride_storage
+    icu = ride_storage.get_icu_ride(ride_id)
+    if not icu:
+        return JSONResponse({"error": "Ride not found"}, 404)
+    icu["ftp_test_review"] = {
+        "action": action,
+        "ftp": int(body.get("ftp") or 0) or None,
+        "at": datetime.now().isoformat(timespec="seconds"),
+    }
+    try:
+        ext = str(icu.get("external_id"))
+        path = ride_storage._icu_rides_dir() / f"{ext}.json"
+        path.write_text(json.dumps(icu, indent=2), encoding="utf-8")
+    except OSError as e:
+        _log.warning(f"ftp-test-review persist failed: {e}")
+        return JSONResponse({"detail": "persist failed"}, 500)
+    return {"ok": True, "persisted": True}
 
 
 @app.delete("/api/rides/{ride_id}")
@@ -20464,6 +20684,9 @@ def _build_programme_summary(plan: dict) -> dict:
         return {
             "plan_id": "current",
             "start_date": None, "end_date": None, "weeks": 0,
+            # "rides" is what the modal keys its empty state off: zero rides
+            # must read as "nothing ridden yet", never as measured zeros.
+            "rides": 0,
             "ftp_delta": {}, "eftp_delta": {}, "vo2max_delta": {},
             "ctl_gain": {}, "intensity_dist": {}, "pol_index": {},
             "monotony_max": None, "strain_max": None, "compliance": [],
@@ -20848,6 +21071,7 @@ def _build_programme_summary(plan: dict) -> dict:
         "start_date": start_date,
         "end_date": end_date,
         "weeks": n_weeks,
+        "rides": len(in_window),
         "ftp_delta": _delta(ftp_start, ftp_end),
         "eftp_delta": _delta(eftp_start_w, eftp_end_w),
         "vo2max_delta": _delta_float(vo2_start, vo2_end),

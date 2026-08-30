@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from collections import deque
 from dataclasses import dataclass
 from typing import Optional
@@ -457,6 +458,72 @@ def ramp_test_ftp(
     return out
 
 
+def sixty_min_ftp(power_series: list[int] | list[float]) -> dict | None:
+    """T2 — 60-min (hour-of-power) FTP from a ride's 1Hz power series.
+
+    Formula: ``suggested_ftp = 1.00 * mean_power(detected_plateau)`` — FTP is
+    DEFINED as best-hour power, so the factor is 1.0 by definition, but the
+    scored extent is the DETECTED plateau, never a blind best-3600s window:
+    the protocol's most common failure is quitting early, and averaging a
+    fixed 60-min window across the quit point silently under-reads the
+    effort while still stamping it "sixty_min".
+
+    Plateau extraction: best 20-min core (minute ladder), grown left/right
+    while each adjacent minute stays ≥ 0.90 × the core mean. A plateau
+    shorter than 50 min means the hour was not completed → returns None (the
+    caller falls back to ``coggan_20min_ftp`` on the same series, which is
+    validated and conservative for a 20–50-min effort).
+
+    Additive advisory (never blocks): ``pacing_drift``/``pacing_drift_pct``
+    when first-vs-second-half drift of the plateau > 8%.
+    """
+    if not power_series:
+        return None
+    powers = [float(p or 0) for p in power_series]
+    minutes = _minute_averages(powers)
+    core_w = 20
+    if len(minutes) < 50:
+        return None
+    cur = sum(minutes[:core_w])
+    best = cur
+    best_idx = 0
+    for k in range(1, len(minutes) - core_w + 1):
+        cur += minutes[k + core_w - 1] - minutes[k - 1]
+        if cur > best:
+            best = cur
+            best_idx = k
+    core_mean = best / core_w
+    if core_mean <= 0:
+        return None
+    lo = best_idx
+    hi = best_idx + core_w  # exclusive
+    while lo > 0 and minutes[lo - 1] >= 0.90 * core_mean:
+        lo -= 1
+    while hi < len(minutes) and minutes[hi] >= 0.90 * core_mean:
+        hi += 1
+    plateau_min = hi - lo
+    if plateau_min < 50:
+        return None
+    seg = powers[lo * 60:hi * 60]
+    plateau_mean = sum(seg) / len(seg)
+    out = {
+        "type": "sixty_min",
+        "value": int(round(plateau_mean)),
+        "best_60min": int(round(plateau_mean)),
+        "plateau_min": plateau_min,
+        "formula_used": "1.00 * plateau_mean",
+    }
+    half = len(seg) // 2
+    first_half = sum(seg[:half]) / half
+    second_half = sum(seg[half:]) / (len(seg) - half)
+    if first_half > 0:
+        drift = abs(first_half - second_half) / first_half
+        if drift > 0.08:
+            out["pacing_drift_pct"] = round(drift * 100.0, 1)
+            out["pacing_drift"] = True
+    return out
+
+
 def _minute_averages(powers: list[float]) -> list[float]:
     """1-minute mean-power ladder for the whole series (drops the ragged tail
     minute so every entry is a full 60-s average)."""
@@ -488,11 +555,19 @@ def detect_ftp_test_shape(
     Returns "coggan_20min", "ramp", or None.
     """
     if filename_hint:
-        lname = str(filename_hint).lower()
+        # FTP-tests IP W2b: the hint may be a FILE name (ftp_test_coggan_….zwo)
+        # or a WORKOUT/ACTIVITY name carrying the ZWO's in-file <name> ("FTP
+        # Test — Coggan 20min protocol (59min)") — Zwift stamps that into the
+        # FIT's workout message and ICU uses it as the activity name, neither
+        # of which contains underscore tokens. Normalizing every separator run
+        # to "_" makes one token set cover all three sources.
+        lname = re.sub(r"[^a-z0-9]+", "_", str(filename_hint).lower())
         if "ftp_test_coggan" in lname:
             return "coggan_20min"
         if "ftp_test_ramp" in lname:
             return "ramp"
+        if "ftp_test_60min" in lname:
+            return "sixty_min"
 
     if not power_series:
         return None
@@ -521,6 +596,32 @@ def detect_ftp_test_shape(
         if (best_in_last_third and first_mean > 0
                 and last_mean >= 1.5 * first_mean):
             return "ramp"
+
+    # Sixty-min heuristic — checked BEFORE Coggan because a 60-min plateau
+    # contains an 18-min one (order is load-bearing). Guards keep an ordinary
+    # steady endurance hour out: (a) best 50-min plateau ≥ 1.10× ride-mean —
+    # a Z2 hour with a token warmup has plateau ≈ ride-mean and fails; (b)
+    # absolute floor 150 W; (c) the non-plateau share of the ride ≤ 45% — a
+    # long ride that merely CONTAINS a hard hour stays un-scored (never
+    # auto-score a random hard ride; the FIT-import path with the file hint
+    # is how a deliberate hour test is normally recognised). 45% because the
+    # share is measured against the 50-min WINDOW, not the true plateau: the
+    # shipped 86-min protocol ride itself is 42% non-window.
+    if n >= 3000:  # ≥50 min
+        ride_mean = sum(powers) / n
+        minutes = _minute_averages(powers)
+        pw = 50
+        if len(minutes) >= pw and ride_mean > 0:
+            cur = sum(minutes[:pw])
+            best = cur
+            for k in range(1, len(minutes) - pw + 1):
+                cur += minutes[k + pw - 1] - minutes[k - 1]
+                if cur > best:
+                    best = cur
+            best_mean = best / pw
+            if (best_mean >= 1.10 * ride_mean and best_mean >= 150
+                    and (n - pw * 60) <= 0.45 * n):
+                return "sixty_min"
 
     # Coggan heuristic (TIGHTENED, v3.2.0): a single sustained ≥18-min plateau
     # meaningfully above ride-mean, with NO second comparable plateau elsewhere
@@ -564,6 +665,78 @@ def detect_ftp_test_shape(
                 if not second and blowout:
                     return "coggan_20min"
     return None
+
+
+def evaluate_ftp_test(power_series, cadence_series=None,
+                      filename_hint: "str | None" = None,
+                      prior_ftp: int = 0) -> "dict | None":
+    """FTP-tests IP W2b — THE single entry point for scoring a ride as an FTP
+    test. Both ingestion paths (FIT import in app._parse_fit_stats, ICU
+    sync-path detection in power_curve's backfill) call this, so recognition
+    and calculation can never drift between them.
+
+    Returns None when the ride is not a recognisable test, else::
+
+        {"is_ftp_test": True, "ftp_test_type": kind,
+         "ftp_test_suggestion": {...}, "ftp_test_halted": bool,
+         "ftp_test_halt_step": int | None}
+
+    The suggestion carries prior_ftp / pct_delta for the review modal, the
+    formula used, per-protocol extras (best_20min / best_60s / best_60min /
+    plateau_min), the additive advisories (pacing_drift, ramp factor_band),
+    and — for an abandoned hour (plateau < 50 min) — ``fallback_from:
+    "sixty_min"`` with the validated 20-min method's number instead of a
+    blind 60-min average.
+    """
+    kind = detect_ftp_test_shape(power_series, filename_hint=filename_hint)
+    if not kind:
+        return None
+    fallback = False
+    if kind == "coggan_20min":
+        s = coggan_20min_ftp(power_series)
+    elif kind == "ramp":
+        s = ramp_test_ftp(power_series)
+    else:
+        s = sixty_min_ftp(power_series)
+        if not s:
+            s = coggan_20min_ftp(power_series)
+            fallback = bool(s)
+    if not s:
+        return None
+    val = int(s["value"])
+    prior = int(prior_ftp or 0)
+    delta = round((val - prior) / prior * 100.0, 1) if prior > 0 else 0.0
+    method = "coggan_20min" if (kind == "sixty_min" and fallback) else kind
+    sug = {
+        "type": kind,
+        "method": method,
+        "ftp": val,
+        "value": val,
+        "prior_ftp": prior,
+        "pct_delta": delta,
+        "source": f"tested_{kind}",
+        "formula_used": s["formula_used"],
+    }
+    for k in ("best_20min", "best_60s", "best_60min", "plateau_min",
+              "pacing_drift", "pacing_drift_pct", "blowout_missing",
+              "factor_band", "likely_overestimate"):
+        if s.get(k) is not None:
+            sug[k] = s[k]
+    if fallback:
+        sug["fallback_from"] = "sixty_min"
+    out = {
+        "is_ftp_test": True,
+        "ftp_test_type": kind,
+        "ftp_test_suggestion": sug,
+        "ftp_test_halted": False,
+        "ftp_test_halt_step": None,
+    }
+    if kind == "ramp" and cadence_series:
+        halt = detect_ramp_halt(power_series, cadence_series)
+        if halt and halt.get("halted"):
+            out["ftp_test_halted"] = True
+            out["ftp_test_halt_step"] = halt.get("halt_at_step")
+    return out
 
 
 def detect_ramp_halt(

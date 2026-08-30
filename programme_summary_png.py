@@ -288,8 +288,8 @@ def render_programme_summary_png(summary: dict) -> bytes:
     # ── Header ─────────────────────────────────────────────────────────────
     draw.text((40, 30), "DOMESTIQUE", font=_font(14, bold=True), fill=ACCENT)
     draw.text((40, 56), "Programme Summary", font=_font(36, bold=True), fill=TEXT)
-    start = summary.get("start_date", "—")
-    end = summary.get("end_date", "—")
+    start = summary.get("start_date") or "—"
+    end = summary.get("end_date") or "—"
     weeks = summary.get("weeks") or 0
     draw.text((40, 110), f"{start}  →  {end}   ·   {weeks} weeks",
               font=_font(16), fill=TEXT2)
@@ -313,22 +313,27 @@ def render_programme_summary_png(summary: dict) -> bytes:
             return ACCENT
         return RED
 
+    # The delta dicts always carry the keys, with None for "not measured" —
+    # dict.get(k, "—") never fires, so an unridden plan printed "NoneW → NoneW".
+    def _dash(v) -> str:
+        return "—" if v is None else str(v)
+
     tiles = [
         ("FTP",
          _fmt_delta_w(ftp.get("start"), ftp.get("end"), ftp.get("pct")),
-         f"{ftp.get('start','—')}W → {ftp.get('end','—')}W",
+         f"{_dash(ftp.get('start'))}W → {_dash(ftp.get('end'))}W",
          _kpi_color(ftp.get("pct"))),
         ("eFTP",
          _fmt_delta_w(eftp.get("start"), eftp.get("end"), eftp.get("pct")),
-         f"{eftp.get('start','—')}W → {eftp.get('end','—')}W",
+         f"{_dash(eftp.get('start'))}W → {_dash(eftp.get('end'))}W",
          _kpi_color(eftp.get("pct"))),
         ("CTL FITNESS",
-         (f"+{ctl.get('delta'):+.1f}" if ctl.get("delta") is not None else "—"),
-         f"{ctl.get('start','—')} → {ctl.get('end','—')}",
+         (f"{ctl.get('delta'):+.1f}" if ctl.get("delta") is not None else "—"),
+         f"{_dash(ctl.get('start'))} → {_dash(ctl.get('end'))}",
          _kpi_color(ctl.get("delta"))),
         ("VO2max",
          (f"{vo2.get('pct'):+.1f}%" if vo2.get("pct") is not None else "—"),
-         f"{vo2.get('start','—')} → {vo2.get('end','—')}  · Stöggl bar +11.7%",
+         f"{_dash(vo2.get('start'))} → {_dash(vo2.get('end'))}  · Stöggl bar +11.7%",
          _kpi_color(vo2.get("pct"))),
     ]
     for i, (lab, val, sub, col) in enumerate(tiles):

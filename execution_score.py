@@ -259,6 +259,25 @@ def score_ride(planned: dict, ride: dict, mode: str, *,
         ride = {}
     stype = _canon_type(planned.get("session_type"))
 
+    # FTP-tests IP W1a: protocol-aware test grading. A ramp is ridden TO
+    # FAILURE — its finish time and zone mix are unknowable a priori, so
+    # every axis grades noise; stay silent (score None → callers skip
+    # persisting; the test is judged by its FTP suggestion instead). The
+    # steady protocols (coggan 20-min, 60-min hour) grade against their OWN
+    # planned hard share — the static 0.35 row reads a perfectly executed
+    # hour of power as verdict "over" (hard share ≈ 0.70).
+    _ftp_expected_override = None
+    if stype == "ftp_test":
+        _zwo_l = str(planned.get("zwo_file") or "").lower()
+        if "ftp_test_ramp" in _zwo_l:
+            return {"score": None, "basis": "load_only",
+                    "components": {"duration": None, "load": None,
+                                   "intensity": None},
+                    "verdict": "off_plan", "fidelity": None}
+        if "ftp_test_60min" in _zwo_l:
+            _ftp_expected_override = 0.70
+        # coggan (and unknown files) keep the static POWER_BANDS row.
+
     duration = _ratio_axis(_ride_duration_min(ride), planned.get("duration_min"))
     load = _ratio_axis(ride.get("tss"), planned.get("tss_estimate"))
 
@@ -267,6 +286,8 @@ def score_ride(planned: dict, ride: dict, mode: str, *,
     basis = "load_only"
     if stype not in RPE_ONLY_TYPES and stype in POWER_BANDS:
         zones, expected = POWER_BANDS[stype]
+        if _ftp_expected_override is not None:
+            expected = _ftp_expected_override
         power_tiz = _tiz_seconds(ride.get("time_in_zone"))
         hr_tiz = _tiz_seconds(ride.get("hr_time_in_zone"))
         if power_tiz is not None:

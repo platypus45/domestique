@@ -726,6 +726,67 @@ def release_backfill_lock() -> None:
         pass
 
 
+def _planned_ftp_test_hint(day_iso: str) -> str:
+    """FTP-tests IP W2b — the planned slot's zwo filename when ``day_iso`` is
+    a planned FTP-test day ('' otherwise). On the sync path the activity name
+    carries the ZWO's display <name>, not the underscore filename, so the
+    planned slot's file is the strongest recognition signal available."""
+    try:
+        from training_planner import PLAN_DIR
+        p = PLAN_DIR / "current_plan.json"
+        if not p.exists():
+            return ""
+        plan = json.loads(p.read_text(encoding="utf-8"))
+        for w in plan.get("weeks", []):
+            for s in w.get("sessions", []):
+                if (s.get("day") == day_iso
+                        and s.get("session_type") == "ftp_test"):
+                    return s.get("zwo_file") or ""
+    except Exception:
+        pass
+    return ""
+
+
+def _maybe_detect_ftp_test(data: dict, streams: dict) -> None:
+    """FTP-tests IP W2b — opportunistic sync-path FTP-test detection.
+
+    Runs ONLY on streams the backfill fetched anyway (zero extra requests —
+    the fetch-policy circularity the grill flagged: ICU list payloads carry
+    no watts, so a shape gate could never fire pre-fetch). Recognition =
+    evaluate_ftp_test, the SAME entry point as the FIT-import path, hinted
+    with the planned test-day's zwo filename + the ICU activity name.
+    Strava-origin rides never reach here (no streams — documented carve-out;
+    FIT import remains their path). A ride the rider already reviewed
+    (ftp_test_review) or that already carries a suggestion is never
+    re-scored. Mutates ``data`` in place; caller persists."""
+    try:
+        if (data.get("ftp_test_suggestion") is not None
+                or data.get("ftp_test_review") is not None):
+            return
+        watts = streams.get("watts") or streams.get("power")
+        # Conservative floor: every scorable protocol sustains ≥20 min.
+        if not isinstance(watts, list) or len(watts) < 1200:
+            return
+        day = str(data.get("started_at") or "")[:10]
+        hint = f"{_planned_ftp_test_hint(day)} {data.get('name') or ''}".strip()
+        import fitness_estimation as fe
+        try:
+            import config as _cfg
+            prior = int(getattr(_cfg, "ATHLETE_FTP_W", 0) or 0)
+        except Exception:
+            prior = 0
+        res = fe.evaluate_ftp_test(
+            [int(w or 0) for w in watts],
+            cadence_series=streams.get("cadence"),
+            filename_hint=hint or None,
+            prior_ftp=prior,
+        )
+        if res:
+            data.update(res)
+    except Exception as e:
+        log.debug(f"sync-path ftp-test detection skipped: {e}")
+
+
 def backfill_icu_history(profile_id: "str | None" = None,
                           max_per_second: int = 1,
                           _skip_lock: bool = False,
@@ -874,6 +935,10 @@ def backfill_icu_history(profile_id: "str | None" = None,
             # downstream consumer thinks streams are uncached and the
             # fatigue panel reports 0% forever.
             data["streams"] = streams
+            # W2b: opportunistic FTP-test detection on the just-hydrated
+            # streams (persisted with this same write; carried across
+            # re-syncs by ride_storage._FTP_TEST_CARRY_KEYS).
+            _maybe_detect_ftp_test(data, streams)
             try:
                 if sync_snapshot is not None:
                     import db as _db

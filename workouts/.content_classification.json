@@ -1,7 +1,7 @@
 {
  "version": 1,
- "workouts_dir_hash": "70184d148398a49468fa2e3b25cd313e9b2d2184361ca4aa9aa66e84e5890764",
- "count": 4285,
+ "workouts_dir_hash": "232ab5e22bab90d3ec6a5285c55d888880bb79512dab7eb0510098f3ea1779e0",
+ "count": 4286,
  "classifications": {
   "anaerobic_10x15s_59min.zwo": {
    "file": "anaerobic_10x15s_59min.zwo",
@@ -220175,6 +220175,47 @@
     "work_dur_s": 2220
    },
    "tags": []
+  },
+  "ftp_test_60min_100pct_86min.zwo": {
+   "file": "ftp_test_60min_100pct_86min.zwo",
+   "primary": "ftp_test",
+   "confidence": 1.0,
+   "secondary_flags": {
+    "has_threshold_work": true,
+    "has_vo2_work": false,
+    "has_sprints": false,
+    "has_sweet_spot_work": false,
+    "pattern_over_under": false,
+    "pattern_microinterval": false,
+    "polarized_consistent": false,
+    "pyramidal_consistent": false
+   },
+   "features": {
+    "duration_s": 5160,
+    "valid_dur_s": 5160,
+    "z1_pct": 18.86,
+    "z2_pct": 7.89,
+    "z3_pct": 0.0,
+    "z4_pct": 73.26,
+    "z5_pct": 0.0,
+    "z6_pct": 0.0,
+    "z7_pct": 0.0,
+    "z4_lower_s": 0,
+    "z4_upper_s": 3780,
+    "sweet_spot_pct": 0.0,
+    "hard_segment_count": 4,
+    "longest_hard_segment_s": 3600,
+    "sprint_segment_count": 0,
+    "np_fraction": 0.9303,
+    "if_fraction": 0.8979,
+    "peak_power_fraction": 1.0,
+    "ou_transitions": 0,
+    "micro_cycles": 0
+   },
+   "tags": [
+    "ftp_test",
+    "ftp_test_60min"
+   ]
   }
  }
 }

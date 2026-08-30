@@ -2410,8 +2410,9 @@ window.addEventListener('unhandledrejection', function(e) {
           <button class="btn" onclick="hideProgrammeSummary()" aria-label="Close">Close</button>
         </div>
       </div>
+      <div id="ps-empty" style="display:none;font-size:14px;color:var(--text2);line-height:1.6;margin-bottom:18px;"></div>
       <div id="ps-kpi-row" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px;"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">
+      <div id="ps-charts" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">
         <div class="card" style="margin:0;"><h4 style="margin:0 0 8px 0;font-size:13px;">Intensity distribution</h4><canvas id="ps-chart-intensity" height="160"></canvas><div style="font-size:10px;color:var(--text3);margin-top:4px;">Stöggl & Sperlich 2014 — POL 80/0/20 target</div></div>
         <div class="card" style="margin:0;"><h4 style="margin:0 0 8px 0;font-size:13px;">Polarization index</h4><canvas id="ps-chart-pol" height="160"></canvas><div style="font-size:10px;color:var(--text3);margin-top:4px;">Treff et al. 2019 — PI > 2.0 polarized</div></div>
         <div class="card" style="margin:0;"><h4 style="margin:0 0 8px 0;font-size:13px;">Compliance per phase</h4><canvas id="ps-chart-compliance" height="160"></canvas></div>
@@ -2427,21 +2428,61 @@ window.addEventListener('unhandledrejection', function(e) {
   <script>
   window._psCharts = {};
   function _psDestroyCharts(){ try { Object.values(window._psCharts || {}).forEach(c => { if (c && c.destroy) c.destroy(); }); } catch (_) {} window._psCharts = {}; }
+  // A fresh install reported the summary as "blank": with no plan (404) the
+  // only thing written was one line into #ps-window, leaving four empty metric
+  // grids and six empty chart frames; with a plan but no rides yet every tile
+  // read "no data" over blank axes. Both now say what is missing and when it
+  // fills in, and hide the metric grid so empty frames can't be read as a
+  // broken feature. Explicit display values on restore — these are grids, and
+  // clearing the property would drop grid-template-columns with it.
+  const _PS_BLOCKS = {'ps-kpi-row':'grid', 'ps-charts':'grid', 'ps-totals':'grid', 'ps-monotony':'block'};
+  function _psShowEmpty(msg){
+    _psDestroyCharts();
+    const n = document.getElementById('ps-empty');
+    if (n) { n.textContent = msg; n.style.display = 'block'; }
+    Object.keys(_PS_BLOCKS).forEach(id => { const e = document.getElementById(id); if (e) e.style.display = 'none'; });
+    // The PNG of a summary with nothing in it is six empty frames too.
+    const link = document.getElementById('ps-png-link');
+    if (link) link.style.display = 'none';
+    const cites = document.getElementById('ps-citations');
+    if (cites) cites.textContent = '';
+  }
+  function _psHideEmpty(){
+    const n = document.getElementById('ps-empty');
+    if (n) { n.textContent = ''; n.style.display = 'none'; }
+    Object.entries(_PS_BLOCKS).forEach(([id, disp]) => { const e = document.getElementById(id); if (e) e.style.display = disp; });
+    const link = document.getElementById('ps-png-link');
+    if (link) link.style.display = '';
+  }
   async function showProgrammeSummary(planId){
     planId = planId || 'current';
     const overlay = document.getElementById('programme-summary-modal');
     if (!overlay) return;
+    // The modal markup sits inside #sec-plan, which is display:none unless the
+    // Plan tab is open — so the end-of-plan auto-open (which fires on the Home
+    // tab) laid out a 0x0 box: nothing visible, body scroll still locked, and
+    // the once-only "shown" flag burned. Hoist it to <body> on first open.
+    if (overlay.parentElement !== document.body) document.body.appendChild(overlay);
     overlay.style.display = 'block';
     document.body.style.overflow = 'hidden';
+    document.getElementById('ps-window').textContent = '';
     try {
       const res = await fetch('/api/programme/summary?plan_id=' + encodeURIComponent(planId));
-      if (!res.ok) { document.getElementById('ps-window').textContent = 'No active plan to summarise yet.'; return; }
+      if (!res.ok) {
+        _psShowEmpty(res.status === 404
+          ? 'No training plan yet. This is a recap of a plan you have ridden — generate a plan on this tab, and it starts filling in from your first ride.'
+          : 'The summary could not be loaded (HTTP ' + res.status + ').');
+        return;
+      }
       const d = await res.json();
       _psRender(d);
       const link = document.getElementById('ps-png-link');
       if (link) link.href = '/api/programme/summary/png?plan_id=' + encodeURIComponent(planId);
       try { localStorage.setItem('summary_shown_' + planId, '1'); } catch (_) {}
-    } catch (e) { console.warn('programme summary load failed', e); }
+    } catch (e) {
+      console.warn('programme summary load failed', e);
+      _psShowEmpty('The summary could not be loaded — the local Domestique server did not answer.');
+    }
   }
   function hideProgrammeSummary(){
     const overlay = document.getElementById('programme-summary-modal');
@@ -2459,6 +2500,15 @@ window.addEventListener('unhandledrejection', function(e) {
   }
   function _psRender(d){
     document.getElementById('ps-window').textContent = `${d.start_date || '—'}  →  ${d.end_date || '—'}  ·  ${d.weeks || 0} weeks`;
+    if (!d.weeks) {
+      _psShowEmpty('This plan has no weeks to summarise yet — generate a plan on this tab, and the summary starts filling in from your first ride.');
+      return;
+    }
+    if (!d.rides) {
+      _psShowEmpty('No rides recorded in this plan window yet. Every number here is measured from completed rides, so the summary stays empty until the first one lands — sync from intervals.icu or import a FIT file, and it fills in from there. The week-by-week trends need a few weeks of riding before they say anything.');
+      return;
+    }
+    _psHideEmpty();
     const kpi = document.getElementById('ps-kpi-row');
     if (kpi) {
       const tiles = [
@@ -2718,6 +2768,7 @@ window.addEventListener('unhandledrejection', function(e) {
       <div class="cal-tab active" id="cal-tab-overlay" data-view="overlay" onclick="calSwitchView('overlay')">Calendar</div>
       <div class="cal-tab" id="cal-tab-grid" data-view="grid" onclick="calSwitchView('grid')">Grid</div>
       <button class="cal-jump-btn" onclick="calJumpToToday()">Jump to today</button>
+      <button class="cal-jump-btn" onclick="openScheduleFtpTest()" title="Put an FTP test on a day of your choice — the plan re-fits around it">Schedule FTP test</button>
     </div>
     <div id="cal-body" class="cal-scroll">
       <div class="cal-week-grid">
@@ -8229,6 +8280,7 @@ async function applyFtpSuggestion(ftp, method, source, opts) {
       return;
     }
     if (status) { status.textContent = 'FTP updated to ' + d.ftp + ' W'; status.style.color = '#22c55e'; }
+    recordFtpTestReview(opts.rideId, 'accepted', ftp);
     const btn = document.getElementById('ftp-update-btn');
     if (btn) btn.disabled = true;
     try { showToast('FTP updated to ' + d.ftp + ' W (source: ' + sourceTag + ')', 4000); } catch(_) {}
@@ -8251,6 +8303,7 @@ async function keepCurrentFtp(method, ftp, source, opts) {
   } catch (e) {
     try { showToast('Could not log keep-current: server update needed', 4000); } catch(_) {}
   }
+  recordFtpTestReview(opts.rideId, 'declined', ftp);
   const status = document.getElementById('ftp-banner-status') || document.getElementById('ftp-modal-status');
   if (status) { status.textContent = 'Kept current FTP. Test logged to history.'; status.style.color = 'var(--text2)'; }
   if (opts.closeModal) { try { closeModal(); } catch(_) {} }
@@ -8283,6 +8336,7 @@ async function customFtp(suggested, method, source, opts) {
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error);
+    recordFtpTestReview(opts.rideId, 'edited', v);
     try { showToast('FTP set manually to ' + v + ' W', 3500); } catch(_) {}
     if (typeof loadSettings === 'function') { try { loadSettings(); } catch(_) {} }
     if (opts.closeModal) { try { closeModal(); } catch(_) {} }
@@ -8303,40 +8357,64 @@ function showFtpTestModal(suggestion, opts) {
   const deltaSign = delta >= 0 ? '+' : '';
   const deltaColor = delta >= 0 ? '#22c55e' : '#ef4444';
   const methodLabel = fs.method === 'ramp' ? 'Ramp'
-    : fs.method === 'coggan_20min' ? 'Coggan 20-min' : (fs.method || 'Unknown');
+    : fs.method === 'coggan_20min' ? 'Coggan 20-min'
+    : fs.method === 'sixty_min' ? '60-min hour of power' : (fs.method || 'Unknown');
   let html = `<h2 style="margin-top:0;">FTP Test Detected</h2>`;
   html += `<div style="font-size:12px;color:var(--text2);letter-spacing:0.5px;font-weight:600;margin-bottom:8px;">METHOD: ${esc(methodLabel)}</div>`;
   html += `<div style="font-size:24px;font-weight:900;margin-bottom:6px;">Suggested new FTP: <span style="color:var(--accent);">${fs.ftp}</span> W</div>`;
   html += `<div style="font-size:14px;color:var(--text2);margin-bottom:14px;">was ${prior} W · <span style="color:${deltaColor};font-weight:700;">${deltaSign}${delta}%</span></div>`;
+  // FTP-tests IP W1a/F3 — honest advisories (never change the number):
+  // 60-min early-quit fallback, pacing drift, Sitko level band.
+  if (fs.fallback_from === 'sixty_min') {
+    html += `<div style="background:rgba(234,179,8,0.10);border:1px solid #eab308;color:#a16207;padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:12px;">The hour wasn't completed (sustained effort &lt; 50 min), so this number was scored with the validated 20-min method instead of a blind 60-min average.</div>`;
+  }
+  if (fs.pacing_drift) {
+    html += `<div style="font-size:12px;color:var(--text2);margin-bottom:10px;">&#9888; Pacing drift ${esc(String(fs.pacing_drift_pct))}% between halves — an evenly paced test reads truer.</div>`;
+  }
+  if (fs.sitko_ftp_band && fs.method === 'coggan_20min') {
+    html += `<div style="font-size:12px;color:var(--text2);margin-bottom:10px;">At ${esc(String(fs.sitko_wkg))} W/kg (${esc(String(fs.sitko_level))}), measured 60-min/20-min ratios in the literature suggest ${fs.sitko_ftp_band[0]}&ndash;${fs.sitko_ftp_band[1]} W — the 0.95 default can over-read below ~pro level. Use Custom if you want to temper it.</div>`;
+  }
   if (fs.halted || opts.halted) {
     html += `<div style="background:rgba(239,68,68,0.10);border:1px solid #ef4444;color:#ef4444;padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:12px;">
       &#9888; Test was halted at step ${esc(String(fs.halt_step || opts.haltStep || 'N'))} &mdash; suggested value may be unreliable.
     </div>`;
   }
+  const _ridOpt = opts.rideId ? `, rideId: '${escJs(String(opts.rideId))}'` : '';
   html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;">
-    <button class="btn btn-primary" id="ftp-update-btn" onclick="applyFtpSuggestion(${fs.ftp}, '${escJs(fs.method || '')}', '${escJs(fs.source || '')}', {closeModal: true})" style="background:#22c55e;color:#fff;border-color:#22c55e;">Update</button>
-    <button class="btn" onclick="keepCurrentFtp('${escJs(fs.method || '')}', ${fs.ftp}, '${escJs(fs.source || '')}', {closeModal: true})">Keep</button>
+    <button class="btn btn-primary" id="ftp-update-btn" onclick="applyFtpSuggestion(${fs.ftp}, '${escJs(fs.method || '')}', '${escJs(fs.source || '')}', {closeModal: true${_ridOpt}})" style="background:#22c55e;color:#fff;border-color:#22c55e;">Update</button>
+    <button class="btn" onclick="keepCurrentFtp('${escJs(fs.method || '')}', ${fs.ftp}, '${escJs(fs.source || '')}', {closeModal: true${_ridOpt}})">Keep</button>
     <input type="number" id="ftp-modal-custom-input" min="50" max="600" step="1" placeholder="${fs.ftp}"
        style="width:80px;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);">
-    <button class="btn" onclick="customFtp(${fs.ftp}, '${escJs(fs.method || '')}', '${escJs(fs.source || '')}', {closeModal: true})">Custom</button>
+    <button class="btn" onclick="customFtp(${fs.ftp}, '${escJs(fs.method || '')}', '${escJs(fs.source || '')}', {closeModal: true${_ridOpt}})">Custom</button>
   </div>`;
   html += `<div id="ftp-modal-status" style="font-size:12px;color:var(--text2);margin-top:6px;"></div>`;
   html += `<div style="font-size:10px;color:var(--text3);margin-top:10px;">Update applies immediately and recomputes all power zones. Keep logs the test to history without changing FTP.</div>`;
   openModal(html);
 }
 
-// v4.1.0 U1: scan the most recent ride on dashboard load and open the FTP
-// modal if the backend stamped ftp_test_suggestion on it. Only fires once
-// per ride_id per session (sessionStorage dedup) to avoid nag loops.
+// v4.1.0 U1: scan recent rides on dashboard load and open the FTP modal if
+// the backend stamped ftp_test_suggestion on one. FTP-tests IP W2c: the scan
+// now (a) covers the last ~10 rides but only those started in the last 5
+// days (the sync-path backfill stamps suggestions on HISTORICAL test rides
+// too — those must not modal-storm after an upgrade), (b) skips rides whose
+// persisted ftp_test_review says the rider already answered (survives
+// restarts; sessionStorage stays as the same-session fast-path), and (c)
+// works for icu_ ids (the detail endpoint resolves them since W2c).
 async function maybeShowFtpTestModal() {
   try {
-    const listRes = await fetch('/api/rides?limit=5');
+    const listRes = await fetch('/api/rides?limit=10');
     if (!listRes.ok) return;
     const data = await listRes.json();
     const rides = Array.isArray(data) ? data : (data.rides || []);
-    for (const r of rides.slice(0, 3)) {
+    const cutoff = Date.now() - 5 * 24 * 3600 * 1000;
+    for (const r of rides.slice(0, 10)) {
       const rideId = r.id || r.ride_id;
       if (!rideId) continue;
+      const startedAt = r.started_at || r.start_time || '';
+      if (startedAt) {
+        const t = Date.parse(startedAt);
+        if (!isNaN(t) && t < cutoff) continue;
+      }
       const seenKey = 'ftp-modal-seen-' + rideId;
       try { if (sessionStorage.getItem(seenKey)) continue; } catch(_) {}
       const dRes = await fetch(`/api/rides/${encodeURIComponent(rideId)}`);
@@ -8344,14 +8422,30 @@ async function maybeShowFtpTestModal() {
       const ride = await dRes.json();
       const s = (ride && ride.summary) || {};
       const fs = s.ftp_test_suggestion;
+      if (s.ftp_test_review) {
+        try { sessionStorage.setItem(seenKey, '1'); } catch(_) {}
+        continue; // already answered — never re-nag
+      }
       const isFtp = !!(s.is_ftp_test || (fs && fs.ftp));
       if (isFtp && fs && fs.ftp) {
         try { sessionStorage.setItem(seenKey, '1'); } catch(_) {}
-        showFtpTestModal(fs, { halted: !!s.ftp_test_halted, haltStep: s.ftp_test_halt_step });
+        showFtpTestModal(fs, { halted: !!s.ftp_test_halted, haltStep: s.ftp_test_halt_step, rideId: rideId });
         return; // one modal at a time
       }
     }
   } catch(e) { /* endpoint missing or parse error — non-fatal */ }
+}
+
+// W2c: fire-and-forget persist of the rider's verdict (icu rides only —
+// the server no-ops for FIT ids).
+function recordFtpTestReview(rideId, action, ftp) {
+  if (!rideId) return;
+  try {
+    fetch(`/api/ride/${encodeURIComponent(rideId)}/ftp-test-review`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: action, ftp: ftp || null}),
+    }).catch(() => {});
+  } catch (_) {}
 }
 
 async function openRideDetail(rideId) {
@@ -8429,7 +8523,8 @@ async function openRideDetail(rideId) {
       const deltaSign = delta >= 0 ? '+' : '';
       const deltaColor = delta >= 0 ? '#22c55e' : '#ef4444';
       const methodLabel = fs.method === 'ramp' ? 'Ramp'
-        : fs.method === 'coggan_20min' ? 'Coggan 20-min' : fs.method;
+        : fs.method === 'coggan_20min' ? 'Coggan 20-min'
+        : fs.method === 'sixty_min' ? '60-min hour of power' : fs.method;
       const haltedBanner = s.ftp_test_halted
         ? `<div style="font-size:11px;color:#ef4444;margin-bottom:8px;">&#9888; Test was halted at step ${esc(String(s.ftp_test_halt_step || 'N'))} &mdash; suggested value may be unreliable.</div>`
         : '';
@@ -17835,6 +17930,68 @@ async function retestScheduleTest(dateIso) {
   }
 }
 
+// FTP-tests IP F8 — manual "Schedule FTP test": pick a day + protocol, the
+// backend converts that day via the swap-type machinery (pins it, eases the
+// previous day for fresh legs, reforecasts the rest) and then swaps the
+// protocol file. Refused server-side when the day was already ridden hard.
+function openScheduleFtpTest() {
+  const today = _calTodayStr();
+  let html = `<h2 style="margin-top:0;">Schedule an FTP test</h2>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:12px;">The chosen day becomes the test; the day before is eased for fresh legs and the rest of the plan re-fits automatically.</div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+      <label style="font-size:12px;color:var(--text2);">Day
+        <input type="date" id="sched-ftp-date" value="${today}" min="${today}"
+          style="margin-left:6px;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);">
+      </label>
+      <label style="font-size:12px;color:var(--text2);">Protocol
+        <select id="sched-ftp-proto" style="margin-left:6px;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);">
+          <option value="coggan_20min" selected>20-minute test (best validated)</option>
+          <option value="ramp">Ramp (quick, factor unvalidated)</option>
+          <option value="sixty_min">60-minute hour of power (definitional)</option>
+        </select>
+      </label>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button class="btn btn-primary" onclick="scheduleFtpTestSubmit()">Schedule</button>
+      <button class="btn" onclick="closeModal()">Cancel</button>
+    </div>
+    <div id="sched-ftp-status" style="font-size:12px;color:var(--text2);margin-top:10px;"></div>`;
+  openModal(html);
+}
+
+async function scheduleFtpTestSubmit() {
+  const dateEl = document.getElementById('sched-ftp-date');
+  const protoEl = document.getElementById('sched-ftp-proto');
+  const statusEl = document.getElementById('sched-ftp-status');
+  const dateIso = dateEl && dateEl.value;
+  const proto = (protoEl && protoEl.value) || 'coggan_20min';
+  if (!dateIso) { if (statusEl) statusEl.textContent = 'Pick a day first.'; return; }
+  if (statusEl) statusEl.textContent = 'Scheduling…';
+  try {
+    const res = await fetch('/api/plan/swap-type', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({date: dateIso, session_type: 'ftp_test', duration_min: 60}),
+    });
+    const j = await res.json();
+    if (!res.ok || j.error) {
+      if (statusEl) statusEl.textContent = j.error || ('Could not schedule (HTTP ' + res.status + ')');
+      return;
+    }
+    // Protocol swap is best-effort — the day is already a test either way.
+    try {
+      await fetch('/api/plan/ftp-test-type', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({date: dateIso, test_type: proto}),
+      });
+    } catch (_) {}
+    closeModal();
+    try { showToast(`FTP test scheduled for ${new Date(dateIso + 'T12:00:00').toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'short'})}`, 3500); } catch (_) {}
+    try { await loadCalendar(); } catch (_) {}
+  } catch (e) {
+    if (statusEl) statusEl.textContent = 'Could not schedule: ' + e.message;
+  }
+}
+
 // hr target_mode — LTHR field-test instructions (20-min TT protocol). No
 // auto-insert in hr mode: the rider does the test outdoors/free-form and
 // types the result into Settings.
@@ -18615,12 +18772,14 @@ async function openDayWorkout(sessionIdx) {
   openModal(html);
 }
 
-// v3.2.0 — FTP-test chooser: two cards (ramp / 20-min) with a power-profile
-// sketch and honest pros/cons, shown at the top of an ftp_test session modal.
-// Picking a card swaps THIS session's workout (per-session, no global setting).
+// v3.2.0 — FTP-test chooser; FTP-tests IP W1b: three cards (20-min default /
+// ramp / 60-min) with a power-profile sketch and honest pros/cons, shown at
+// the top of an ftp_test session modal. Picking a card swaps THIS session's
+// workout (per-session, no global setting).
 function ftpTestChooserHtml(sessionIdx, day, currentType) {
   const RAMP_SVG = `<svg viewBox="0 0 120 46" width="120" height="46" aria-hidden="true"><polyline points="0,42 16,42 16,36 34,36 34,29 52,29 52,21 70,21 70,13 88,13 88,6 100,6 101,42 120,42" fill="none" stroke="var(--accent)" stroke-width="2"/></svg>`;
   const TT_SVG = `<svg viewBox="0 0 120 46" width="120" height="46" aria-hidden="true"><polyline points="0,40 14,30 19,30 21,7 26,7 28,36 40,36 44,36 44,18 108,18 114,40 120,40" fill="none" stroke="var(--accent)" stroke-width="2"/></svg>`;
+  const HOUR_SVG = `<svg viewBox="0 0 120 46" width="120" height="46" aria-hidden="true"><polyline points="0,40 10,32 14,26 18,32 22,26 26,32 30,32 30,16 112,16 116,40 120,40" fill="none" stroke="var(--accent)" stroke-width="2"/></svg>`;
   const card = (tt, svg, title, what, pro, con) => {
     const sel = currentType === tt;
     return `<div style="flex:1;min-width:190px;border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'};border-radius:8px;padding:10px;background:${sel ? 'var(--surface2)' : 'transparent'};">
@@ -18635,8 +18794,9 @@ function ftpTestChooserHtml(sessionIdx, day, currentType) {
   return `<div style="margin:4px 0 14px;">
     <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px;">Choose your FTP test</div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
-      ${card('ramp', RAMP_SVG, 'Ramp test', 'Power steps up ~20 W every minute until you can\'t hold on; FTP = 75% of your best minute.', 'Quick (~20 min). Pacing is easy — just hold each step to failure.', 'Leans on your anaerobic system near the top, so punchy riders read HIGH. Measures your aerobic ceiling, not threshold directly.')}
-      ${card('coggan_20min', TT_SVG, '20-minute test', 'A 5-min all-out effort drains your sprint reserve, then a 20-min max effort; FTP = 95% of the 20-min average.', 'More accurate for threshold — the depletion effort keeps anaerobic inflation out.', 'Longer (~60 min). Pacing is HARD — go too hard early and you fade, reading LOW.')}
+      ${card('coggan_20min', TT_SVG, '20-minute test', 'A 5-min all-out effort drains your sprint reserve, then a 20-min max effort; FTP = 95% of the 20-min average.', 'Best-validated protocol in the literature — the depletion effort keeps anaerobic inflation out.', 'Pacing is HARD — go too hard early and you fade, reading LOW. ~60 min total.')}
+      ${card('ramp', RAMP_SVG, 'Ramp test', 'Power steps up 6% of FTP each minute until you can\'t hold on; FTP = 75% of your best minute.', 'Quick (~35 min) and pacing-free — just hold each step to failure.', 'The 0.75 factor has no peer-reviewed validation, and punchy/anaerobic riders read HIGH.')}
+      ${card('sixty_min', HOUR_SVG, '60-minute test', 'One full hour at the hardest steady pace you can hold; FTP = the hour\'s average power — no correction factor, by definition.', 'Definitional — zero estimation error when paced right.', 'Brutal. Ride the hour with erg OFF at time-trial discipline; blown pacing ruins it. ~86 min total.')}
     </div>
   </div>`;
 }
@@ -18650,7 +18810,7 @@ async function chooseFtpTest(sessionIdx, day, testType) {
     const d = await r.json();
     if (!r.ok || d.error) { alert(d.error || 'Could not switch test'); return; }
     const s = window._weekPlanSessions?.[sessionIdx];
-    if (s) { s.zwo_file = d.zwo_file; s.zwo_name = d.zwo_name; s.duration_min = d.duration_min; s.ftp_test_type = d.test_type; }
+    if (s) { s.zwo_file = d.zwo_file; s.zwo_name = d.zwo_name; s.duration_min = d.duration_min; s.ftp_test_type = d.test_type; if (d.tss_estimate != null) s.tss_estimate = d.tss_estimate; }
     openDayWorkout(sessionIdx);   // re-render with the chosen workout
   } catch (e) { alert('Could not switch test'); }
 }

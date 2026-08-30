@@ -208,11 +208,24 @@ Synthesised from Seiler 2010, Mujika 2010, Ronnestad 2014, and Coggan/Allen for 
 
 ### 2. FTP detection from a regular FIT
 
-Ride a Coggan 20-min test or a Ramp test in any app, import the FIT:
-- Detection by power-profile shape (no manual marking).
-- Suggested FTP: `0.95 x avg 20-min power` (Coggan, Allen & Coggan 2019) or `0.75 x best 1-min` (Ramp, Ric Stern / British Cycling).
-- Modal: Update / Keep / Custom. Every change logged to `ftp_test_history` with provenance (`tested_coggan_20min` / `tested_ramp` / `eftp_auto` / `manual`) plus a sparkline chart in Settings.
+Ride a Coggan 20-min test, a Ramp test or a 60-min test in any app, import the FIT (or let the intervals.icu sync bring it in):
+- Recognition, in strength order: (1) the structured file you rode — the FIT's embedded workout name and the ICU activity name both carry the workout's display name, and a ride landing on a planned test day is matched against that day's file; (2) a conservative power-profile shape fallback for free-form rides, tuned to stay silent on anything ambiguous (a 2×20 session, a steady endurance hour, a long ride that merely contains a hard hour).
+- Suggested FTP: `0.95 x avg 20-min power` (Coggan), `0.75 x best 1-min` (Ramp) or `1.00 x best-hour power` (60-min — definitional). Sparse "smart recording" files are resampled to a strict 1 Hz grid first so a 20-min window is 20 minutes of wall time, not 20 minutes of samples.
+- Modal: Update / Keep / Custom. Every change logged to `ftp_test_history` with provenance (`tested_coggan_20min` / `tested_ramp` / `tested_sixty_min` / `eftp_auto` / `manual`) plus a sparkline chart in Settings.
 - Ramp auto-halt detection: cadence < 50 + power < 85% target for 3s.
+- An abandoned 60-min test (sustained effort under 50 minutes) is never scored by a blind 60-min average — it falls back to the validated 20-min method, and the modal says so.
+
+#### 2a. The FTP test protocols — what the literature actually supports
+
+**The 20-min test (default).** The best-validated field protocol. Borszcz 2018 (PMID 29303908) found 20-min power × 0.95 agreed with 60-min power at the group level (but with individual spread — hence the review modal, never auto-apply); MacInnis 2019 (PMID 30452368) and follow-ups confirmed the correlation in trained riders. The full Coggan protocol *includes* a 5-min all-out effort before the 20-min block: Tramontin 2022 (PMID 34749416) measured that omitting it inflates the 20-min number by ~5% — the anaerobic contribution the blowout is designed to drain. Zwift-style "warm up then just ride 20 minutes" tests skip this and over-read. Domestique's shipped 20-min workout keeps the full protocol: openers, 5-min blowout at ~110%, 9 min recovery, then the test block. Sitko 2023 (PMID 37802084) measured the true 60/20-min ratio by rider level: ~0.96 in professionals falling to ~0.88 in recreational riders — one universal 0.95 flatters weaker riders. When your weight is set, the review modal shows the level-typical band next to the 0.95 default (advisory only; the suggestion itself never moves).
+
+**The ramp test.** Honesty first: the 0.75 × best-minute factor has **no peer-reviewed validation**. Maximal Aerobic Power from a ramp is protocol-dependent (step size and duration change MAP — Luttikholt/Jones lineage), so a single universal fraction cannot be right for everyone; riders with a large anaerobic capacity over-read because the final minutes are partly anaerobic. It survives here because it is short, needs zero pacing skill, and is self-limiting (you ride to failure, no target to mislead you) — a fine *tracking* tool if you always use the same ramp. Domestique serves the 6%/min ladder (the one its auto-halt detector reconstructs) and flags a likely over-read when a trustworthy measured Pmax says you're punchy (Pmax/FTP ≥ 1.35).
+
+**The 60-min test.** FTP is *defined* as quasi-steady-state hour power (Allen & Coggan), so this is the definitional test: factor 1.0, zero estimation error — if you finish it, well paced. That's the catch: it is brutal, and pacing errors are common enough that the calculator scores the *detected* sustained plateau, not a fixed window. No blowout effort is prescribed: over a full hour the anaerobic contribution is negligible, which is exactly why no correction factor is needed. Ride it in resistance/free mode (erg off) — the workout's 100% target is your *old* FTP and the point is to find the new one.
+
+**Excluded protocols.** The 8-min test (×0.90) and multi-stage "progressive" tests have no peer-reviewed validation of their factors either, and unlike the ramp they add pacing skill as a confounder — two unvalidated degrees of freedom instead of one. They stay out of the menu.
+
+**Scheduling.** Tests are placed on fresh legs (the previous day is eased to recovery if the plan put something hard there) on a weeks-since-last-test cadence (~6 weeks), which survives collisions with recovery weeks instead of silently skipping a cycle. Continuous plans get a baselining test in week 2. You can also schedule one manually on any day — the plan re-fits around it, and it refuses a day you already rode hard.
 
 ### 3. Capability projection (event preparation)
 

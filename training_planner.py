@@ -3960,6 +3960,21 @@ _TYPE_TO_FALLBACK_CLASSES = {
 }
 
 
+# FTP-tests IP W1d: the protocol families the FIT-import calculators can
+# score, keyed on the SAME filename tokens detect_ftp_test_shape uses. A
+# test slot must never serve a file outside these families — the ride would
+# come back un-scorable (no FTP suggestion).
+_FTP_TEST_FAMILY_TOKENS = ("ftp_test_coggan", "ftp_test_ramp", "ftp_test_60min")
+
+
+def _ftp_test_family(filename: str) -> str | None:
+    lname = str(filename).lower()
+    for tok in _FTP_TEST_FAMILY_TOKENS:
+        if tok in lname:
+            return tok
+    return None
+
+
 def match_zwo(
     session: PlannedSession, library: list[dict],
     week_num: int = 0, day_idx: int = 0, used_names: set = None,
@@ -4091,6 +4106,15 @@ def match_zwo(
             if "ftp_test" in tags_lower and not want_test:
                 continue
             if want_test and "ftp_test" not in tags_lower:
+                continue
+            # FTP-tests IP W1d: a test slot only serves protocols the
+            # calculators can score (coggan/ramp/60min families, by filename
+            # token — the same token detect_ftp_test_shape keys on). Legacy
+            # ftp_test-tagged files outside these families (cts_2x8min,
+            # mixed_90min, protocol_53min) stay in the library but stop
+            # competing at test slots: riding one would end in an un-scorable
+            # "test" and no FTP suggestion.
+            if want_test and not _ftp_test_family(w.get("File") or ""):
                 continue
             dur_diff = abs(w["Duration(min)"] - target_dur)
         except (KeyError, TypeError) as _e:
@@ -4289,6 +4313,9 @@ def match_zwo(
             if "ftp_test" in tags_lower and not want_test:
                 continue
             if want_test and "ftp_test" not in tags_lower:
+                continue
+            # W1d: scorable-family gate — see the primary candidate loop.
+            if want_test and not _ftp_test_family(w.get("File") or ""):
                 continue
             cat = cc_row
             # v1.3.4 fix: ftp_test bypasses the category gate (the tag filter
@@ -7121,6 +7148,15 @@ def _inject_mid_cycle_ftp_tests(weeks: list, phases: list) -> None:
         # path is untouched (GB1).
         test_phase_starts = [ph.start for ph in phases
                              if getattr(ph, "name", "") == "peak"][:1]
+    # FTP-tests IP W1e: continuous plans have no build2/peak anchor and
+    # previously got NO generation-time test at all (first one arrived via
+    # the extend cadence, weeks later). Baseline the rider in week 2 — week 1
+    # settles the routine, and the weeks-since-last-test cadence in
+    # extend_continuous_plan takes over from there.
+    if (not test_phase_starts
+            and any(getattr(p, "name", "") == "continuous" for p in phases)
+            and len(weeks) >= 2):
+        test_phase_starts = [weeks[1].start]
     if not test_phase_starts:
         return
     # PART B (B-LOCKED-1, tp FTP-test site): on a backdated plan a test week
@@ -7636,6 +7672,13 @@ def _ensure_fresh_legs_before_ftp_tests(weeks: list) -> None:
             continue
         prev = by_day.get(day - timedelta(days=1))
         if prev is None or prev.session_type in easy:
+            continue
+        # W1e: the guard now also runs on recalc/extend, where a rebuilt week
+        # can hold preserved (ridden / user-placed) sessions — never rewrite
+        # those, and never rewrite a day that is already in the past.
+        if (getattr(prev, "status", "pending") not in ("pending", "planned")
+                or getattr(prev, "user_moved", False)
+                or getattr(prev, "day", None) is not None and prev.day < date.today()):
             continue
         prev.session_type = "recovery"
         prev.zwo_file = ""
@@ -11114,6 +11157,16 @@ def recalculate_plan(
     # Seed cross-week 48h HIT-gap (PL2) with the last past week's sessions.
     prev_week_sessions: list | None = past_weeks[-1].sessions if past_weeks else None
 
+    # FTP-tests IP W1e: weeks-since-last-test cadence (see
+    # extend_continuous_plan) — the old week_num % 6 dropped every test week
+    # colliding with the 4-week stepback (LCM 12 → 12-week test holes).
+    # Seeded from the ridden past; updated when a test is actually PLACED.
+    _last_test_wk_rc = max(
+        (w.week_num for w in past_weeks
+         if any(getattr(s, "session_type", "") == "ftp_test"
+                for s in w.sessions)),
+        default=0)
+
     for phase in new_phases:
         cursor = max(phase.start, regen_start)
         phase_week = 0
@@ -11122,9 +11175,11 @@ def recalculate_plan(
             phase_week += 1
             is_stepback = (phase_week % STEP_BACK_EVERY == 0) and phase.name != "taper"
 
-            # Insert FTP test at phase transitions (every 6-8 weeks)
-            ftp_test_week = (week_num > 0 and week_num % 6 == 0 and phase.name != "taper"
-                            and not is_stepback)
+            # Insert FTP test when due (weeks-since-last-test ≥ 6; due-ness
+            # persists across a stepback/taper collision instead of vanishing).
+            ftp_test_week = (phase.name != "taper" and not is_stepback
+                             and (week_num - _last_test_wk_rc >= 6
+                                  if _last_test_wk_rc else week_num >= 6))
 
             pw = plan_week(week_num, cursor, phase, adjusted_goal, is_stepback,
                            prev_week_sessions=prev_week_sessions,
@@ -11158,6 +11213,7 @@ def recalculate_plan(
                     _pick_rc.session_type = "ftp_test"
                     _pick_rc.description = "FTP test — 20min all-out na 10min warmup. Update zones daarna."
                     _pick_rc.tss_estimate = round(75 / 60 * TSS_PER_HOUR.get("threshold", 90))
+                    _last_test_wk_rc = week_num  # W1e: anchor on PLACED tests
 
             # §6.12 — swap preserved (user_moved / done / dismissed) sessions
             # back into their calendar slots BEFORE the sampler + match_zwo
@@ -11323,6 +11379,10 @@ def recalculate_plan(
                                         used_names_dict, used_names)
         _enforce_ronnestad_floor(new_weeks, pool_index, plan_pick_counts)
         _enforce_weekly_hit_cap(new_weeks, library)
+    # FTP-tests IP W1e: fresh-legs guard on the rebuilt weeks (parity with
+    # generate_plan / extend_continuous_plan — floors above can land a HIT
+    # session the day before a test).
+    _ensure_fresh_legs_before_ftp_tests(new_weeks)
 
     all_weeks = past_weeks + new_weeks
 
@@ -11547,12 +11607,24 @@ def extend_continuous_plan(
     new_weeks: list[PlannedWeek] = []
     week_num = last_num + 1
     cursor = append_start
+    # FTP-tests IP W1e: cadence anchored on WEEKS SINCE THE LAST PLANNED TEST,
+    # not week_num % 6. The %6 form silently dropped every test week that
+    # collided with the 4-week stepback (LCM 12 → real 12-week holes at weeks
+    # 12/24/…). Due-ness now PERSISTS across a stepback collision: the test
+    # lands on the next non-stepback week instead of vanishing. A plan with no
+    # test anywhere is due immediately (first non-stepback appended week).
+    _last_test_wk = max(
+        (w.week_num for w in current_plan_weeks
+         if any(getattr(s, "session_type", "") == "ftp_test"
+                for s in w.sessions)),
+        default=0)
     for _ in range(deficit):
         # 3-load:1-deload rides the positional stepback cadence (no taper to
         # exempt on this path).
         is_stepback = (week_num % STEP_BACK_EVERY == 0)
-        # IP §5: mid-cycle FTP retest on the recalc path's 6-week cadence.
-        ftp_test_week = (week_num % 6 == 0 and not is_stepback)
+        ftp_test_week = (not is_stepback
+                         and (week_num - _last_test_wk >= 6
+                              if _last_test_wk else True))
 
         pw = plan_week(week_num, cursor, phase, goal, is_stepback,
                        prev_week_sessions=prev_week_sessions,
@@ -11582,6 +11654,7 @@ def extend_continuous_plan(
                                         "warmup. Update zones daarna.")
                 _pick_cx.tss_estimate = round(
                     75 / 60 * TSS_PER_HOUR.get("threshold", 90))
+                _last_test_wk = week_num  # W1e: anchor on PLACED tests
 
         # Rolling eviction (same windows as recalculate_plan).
         stale = [n for n, wk in used_in_week.items() if week_num - wk >= 6]
@@ -11700,6 +11773,13 @@ def extend_continuous_plan(
             count_weeks=_rolling_window)
         _enforce_ronnestad_floor(new_weeks, pool_index, plan_pick_counts)
     _enforce_weekly_hit_cap(new_weeks, library)
+    # FTP-tests IP W1e: fresh-legs guard on the appended weeks too — the hard
+    # floor passes above can land a HIT session the day before an appended
+    # test, exactly the gap the generation path already closes. Appended weeks
+    # only (ponytail: a test on an appended week's day 1 whose previous day
+    # lives in a KEPT week isn't eased here — the placement rule above already
+    # prefers prev-day-easy for that boundary).
+    _ensure_fresh_legs_before_ftp_tests(new_weeks)
 
     # Authoritative per-day availability clamp (recalc A8 parity).
     for _w in new_weeks:

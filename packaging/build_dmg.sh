@@ -135,7 +135,7 @@ sys.path.insert(0, "src")
 try:
     import app
     from pathlib import Path
-    picks = sorted(Path("workouts").glob("threshold_*.zwo"))
+    picks = sorted(Path("src/workouts").glob("threshold_*.zwo"))
     if not picks:
         raise SystemExit("no threshold workout in the library to smoke-test")
     data = app.build_fit_workout_bytes("z2", 56, "smoke",

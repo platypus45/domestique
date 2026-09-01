@@ -93,6 +93,30 @@ if [ -z "$BUNDLED_VER_FILE" ] || [ "$BUNDLED_VER" != "$REPO_VER" ]; then
 fi
 echo "[1b/9] Version smoke-test OK — bundle reports $BUNDLED_VER"
 
+# 1b2. Linux-IP D4 — the bundled workout library must survive packaging. A
+# bundle that loses workouts/ (or its hidden classification/facts sidecars)
+# still builds, boots and serves /api/version, then silently degrades every
+# plan to endurance-only ("Z2 Steady" everywhere — the v3.11.0 Linux report
+# class, same family as the v3.3.0 frozen-install storm).
+BUNDLED_WK_DIR="$(find dist/Domestique.app -type d -name workouts -path '*Resources*' 2>/dev/null | head -1)"
+[ -z "$BUNDLED_WK_DIR" ] && BUNDLED_WK_DIR="$(find dist/Domestique.app -type d -name workouts 2>/dev/null | head -1)"
+if [ -z "$BUNDLED_WK_DIR" ]; then
+    echo "FATAL: no workouts/ directory inside the bundle — plans would degrade to endurance-only. Aborting build." >&2
+    exit 1
+fi
+ZWO_N="$(find "$BUNDLED_WK_DIR" -maxdepth 1 -name '*.zwo' | wc -l | tr -d ' ')"
+if [ "$ZWO_N" -lt 4000 ]; then
+    echo "FATAL: bundled workout library holds $ZWO_N .zwo files (<4000). Aborting build." >&2
+    exit 1
+fi
+for SIDE in .content_classification.json .workout_facts.json .library_index.json; do
+    if [ ! -f "$BUNDLED_WK_DIR/$SIDE" ]; then
+        echo "FATAL: $SIDE missing from the bundled workouts/ — classification/facts would fail closed and empty the HIT pools. Aborting build." >&2
+        exit 1
+    fi
+done
+echo "[1b2/9] Library smoke-test OK — $ZWO_N workouts + sidecars bundled"
+
 # 1c. HR-mode FIT smoke (v2.5.0 P1.5) — the desktop save path builds FIT bytes
 # in-process (launcher.JsApi save_fit bridge), a path the web tests can't reach.
 # Prove the bundled code produces HEART_RATE-target steps for view='hr' before

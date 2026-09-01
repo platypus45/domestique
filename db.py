@@ -20,7 +20,9 @@ from user_home import domestique_home
 _USER_DATA = domestique_home()  # 3.4.3: DOMESTIQUE_HOME-aware (dev preview sandbox)
 
 # Load .env — check user data dir first, then project dir
-for _env_candidate in [_USER_DATA / ".env", Path(__file__).parent / ".env"]:
+for _env_candidate in [_USER_DATA / ".env", Path(__file__).parent / ".env",
+                       # dev mode, repo root (Part-B src/ layout)
+                       Path(__file__).parent.parent / ".env"]:
     if _env_candidate.exists():
         for _line in _env_candidate.read_text().splitlines():
             if "=" in _line and not _line.startswith("#"):

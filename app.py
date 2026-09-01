@@ -25,6 +25,7 @@ from pathlib import Path
 # Load .env file if present (secrets) — check multiple locations
 _env_candidates = [
     Path(__file__).parent / ".env",                                    # dev mode
+    Path(__file__).parent.parent / ".env",                             # dev mode, repo root (Part-B src/ layout)
     Path.home() / ".domestique" / ".env",                              # packaged mode (user home)
     Path.home() / "Documents" / "health_tracker" / ".env",             # legacy location
 ]
@@ -488,12 +489,22 @@ WORKOUT_DIR   = _BUNDLED_WORKOUT_DIR
 GPX_DIR       = _BUNDLED_GPX_DIR
 
 # Load user path overrides — check user data dir (packaged) then project dir (dev)
+# Linux-IP D3: apply an override ONLY when the dir exists (mirrors
+# profile_manager) — a stale workout_dir silently emptied the library and
+# every plan degenerated to unmatched Z2 with no error anywhere.
 for _upf in [_user_data_dir / "user_paths.json", Path(__file__).parent / "user_paths.json"]:
     if _upf.exists():
         try:
             _up = json.loads(_upf.read_text(encoding="utf-8"))
             if _up.get("workout_dir"):
-                WORKOUT_DIR = Path(_up["workout_dir"])
+                _cand = Path(_up["workout_dir"])
+                if _cand.exists():
+                    WORKOUT_DIR = _cand
+                else:
+                    logging.getLogger("app").error(
+                        "E_WORKOUT_DIR_OVERRIDE_MISSING: user_paths.json "
+                        "workout_dir=%s does not exist — keeping the bundled "
+                        "library", _cand)
             if _up.get("gpx_dir"):
                 GPX_DIR = Path(_up["gpx_dir"])
         except Exception:
@@ -549,7 +560,14 @@ ROUTE_PROFILES_DIR = Path(__file__).parent / "profiles"
 # Single source of truth for the app version. VERSION file is the canonical
 # spec (read by the PyInstaller builder and the /api/version route).
 try:
-    _VERSION = (Path(__file__).parent / "VERSION").read_text(encoding="utf-8-sig").strip()
+    # Sibling first (frozen bundle: VERSION lands at _MEIPASS root next to the
+    # collected modules), then one level up (dev repo root under the Part-B
+    # src/ layout — VERSION stays at the root where the release tooling and
+    # the README guard tests read/write it).
+    _v_p = Path(__file__).parent / "VERSION"
+    if not _v_p.exists():
+        _v_p = Path(__file__).parent.parent / "VERSION"
+    _VERSION = _v_p.read_text(encoding="utf-8-sig").strip()
 except OSError:
     _VERSION = "0.0.0"
 
@@ -21846,6 +21864,22 @@ def api_diag_health(request: Request):
     try:
         lib = tp.load_workout_library()
         checks["workout_library"] = {"ok": True, "count": len(lib) if hasattr(lib, "__len__") else None}
+        # Linux-IP D6: pool health — one curl diagnoses the whole class of
+        # "plan degenerated to endurance-only" faults (empty library, hit-
+        # only pool collapse, stale workout_dir override).
+        try:
+            _pi = tp._build_pool_indexes(lib)
+            checks["pool_health"] = {
+                "hit": len(_pi.get("hit") or []),
+                "endurance": len(_pi.get("endurance") or []),
+                "all_pool": len(_pi.get("all_pool") or []),
+                "library": len(lib),
+                "workout_dir_is_bundled":
+                    tp.WORKOUT_DIR == tp._BUNDLED_WORKOUT_DIR,
+                "collapse_reason": tp._pool_collapse_reason(_pi, lib) or None,
+            }
+        except Exception as e:
+            checks["pool_health"] = {"ok": False, "msg": str(e)[:200]}
     except Exception as e:
         checks["workout_library"] = {"ok": False, "code": error_codes.Codes.ENRICH_LIBRARY, "msg": str(e)[:200]}
     # enrich

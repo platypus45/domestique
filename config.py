@@ -24,7 +24,10 @@ def _load_oauth_env() -> None:
     repo root; the build bundles it into the frozen app (see domestique.spec) so
     the shipped binary has it. A real environment variable still wins (setdefault)."""
     import sys
-    candidates = [Path(__file__).resolve().parent / ".oauth.env"]
+    candidates = [Path(__file__).resolve().parent / ".oauth.env",
+                  # dev mode, repo root (Part-B src/ layout — gitignored dev
+                  # secrets stay at the repo root, one level above the code)
+                  Path(__file__).resolve().parent.parent / ".oauth.env"]
     _mei = getattr(sys, "_MEIPASS", None)
     if _mei:
         candidates.append(Path(_mei) / ".oauth.env")

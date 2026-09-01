@@ -13490,11 +13490,16 @@ function calCardTitle(planned) {
   if (dn) return dn;
   const zn = (planned.zwo_name || '').trim();
   if (zn) return zn;
+  // Linux-IP D5: reaching past display_name AND zwo_name means no workout is
+  // attached — say so instead of rendering a plausible-looking bare label
+  // (an all-unmatched plan used to read as a wall of innocent "Z2" cards).
+  const stRaw = (planned.session_type || '').toLowerCase();
+  const noFile = !String(planned.zwo_file || '').trim() && stRaw !== 'rest';
+  const mark = t => noFile ? `${t} — no workout matched` : t;
   const cc = (planned.content_class || '').toLowerCase();
-  if (cc && CAL_CONTENT_LABEL[cc]) return CAL_CONTENT_LABEL[cc];
-  if (cc) return cc.toUpperCase().replace(/_/g, ' ');
-  const st = (planned.session_type || '').toLowerCase();
-  return CAL_SESSION_LABEL[st] || st.toUpperCase();
+  if (cc && CAL_CONTENT_LABEL[cc]) return mark(CAL_CONTENT_LABEL[cc]);
+  if (cc) return mark(cc.toUpperCase().replace(/_/g, ' '));
+  return mark(CAL_SESSION_LABEL[stRaw] || stRaw.toUpperCase());
 }
 
 // v4.5.1 FIX-UI variety — extract a structure suffix from the workout name

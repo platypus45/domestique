@@ -336,7 +336,23 @@ jobs:
               Write-Host "::error::Version mismatch: served '$served' != VERSION '$expected'"
               exit 1
             }
-            Write-Host "Smoke-test passed: EXE serves version $served"
+            # Linux-IP D4 (all platforms): the bundled workout library must
+            # survive packaging — a build that loses it boots fine and
+            # silently degrades every plan to endurance-only.
+            $hb = Invoke-RestMethod -Uri "http://127.0.0.1:22400/api/diag/health" -TimeoutSec 10
+            $libcount = [int]$hb.checks.workout_library.count
+            if ($libcount -lt 4000) {
+              Dump-Diagnostics
+              Write-Host "::error::bundled workout library count=$libcount (<4000) — packaging lost the library"
+              exit 1
+            }
+            $hitn = [int]$hb.checks.pool_health.hit
+            if ($hitn -lt 1000) {
+              Dump-Diagnostics
+              Write-Host "::error::hit pool count=$hitn (<1000) — classification/facts fault inside the bundle"
+              exit 1
+            }
+            Write-Host "Smoke-test passed: EXE serves version $served, library=$libcount, hit=$hitn"
           } finally {
             # $proc is the cmd.exe wrapper; the EXE is its child. Kill the whole
             # tree (/T) so Domestique.exe doesn't outlive the wrapper.
@@ -614,6 +630,19 @@ jobs:
             || fail "the GUI instance did not answer on http://localhost:22400"
           served="$(printf '%s' "$body" | jq -r .version)"
           [ "$served" = "$EXPECTED_VERSION" ] || fail "GUI served '$served' != VERSION '$EXPECTED_VERSION'"
+
+          # Linux-IP D4: the bundled workout library must survive packaging.
+          # A build that loses it (or its classification/facts sidecars)
+          # still boots, still serves the version, and silently degrades
+          # every plan to endurance-only — the v3.11.0 Linux report class.
+          hb="$(curl -fsS --max-time 10 http://localhost:22400/api/diag/health)" \
+            || fail "/api/diag/health did not answer"
+          libcount="$(printf '%s' "$hb" | jq -r '.checks.workout_library.count // 0')"
+          [ "$libcount" -ge 4000 ] || fail "bundled workout library count=$libcount (<4000) — packaging lost the library"
+          hitn="$(printf '%s' "$hb" | jq -r '.checks.pool_health.hit // 0')"
+          [ "$hitn" -ge 1000 ] || fail "hit pool count=$hitn (<1000) — classification/facts fault inside the bundle"
+          creason="$(printf '%s' "$hb" | jq -r '.checks.pool_health.collapse_reason // empty')"
+          [ -z "$creason" ] || fail "pool collapse inside built artifact: $creason"
 
           #    ...and the listener must BE the GUI process, not a stage-A leftover.
           PORT_PID="$(ss -ltnp 2>/dev/null | awk '/:22400 /{ if (match($0, /pid=[0-9]+/)) print substr($0, RSTART+4, RLENGTH-4) }' | head -1)"

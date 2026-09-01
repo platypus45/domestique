@@ -26,8 +26,19 @@ after every test so the singleton can never leak across test boundaries.
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import threading
+from pathlib import Path as _Path
+
+# Part-B src/ layout: the app modules live in <repo>/src after the root
+# consolidation. pytest imports conftest before any test module, so this one
+# insert serves every test's `import app` / `import training_planner` without
+# touching the ~200 files that do their own sys.path.insert(ROOT) for
+# repo-root artifacts. Harmless pre-move (missing path entries are skipped).
+_SRC = _Path(__file__).resolve().parent.parent / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 from datetime import date
 
 # ── 3.4.3 HERMETIC-FS GATE (root fix for the owner-plan clobber) ─────────────

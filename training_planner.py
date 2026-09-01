@@ -104,15 +104,29 @@ import config
 from user_home import domestique_home
 
 # Workout library — flat directory of .zwo files (metadata extracted by parsing XML)
-WORKOUT_DIR = Path(__file__).parent / "workouts"
-# Allow user override via user_paths.json (matches app.py behavior)
+# Linux-IP D2 scoping: snapshot the BUNDLED default BEFORE any override can
+# retarget WORKOUT_DIR — the pool-collapse hardening only applies to the
+# bundled library (always ≥4000 files), never to a rider's custom dir.
+_BUNDLED_WORKOUT_DIR = Path(__file__).parent / "workouts"
+WORKOUT_DIR = _BUNDLED_WORKOUT_DIR
+# Allow user override via user_paths.json (matches app.py behavior).
+# Linux-IP D3: apply the override ONLY when the dir exists — a stale entry
+# silently pointed the planner at nothing and every plan degenerated with no
+# error (profile_manager already validated; this site and app.py did not).
 for _upf in [domestique_home() / "user_paths.json",
              Path(__file__).parent / "user_paths.json"]:
     if _upf.exists():
         try:
             _up = json.loads(_upf.read_text(encoding="utf-8"))
             if _up.get("workout_dir"):
-                WORKOUT_DIR = Path(_up["workout_dir"])
+                _cand = Path(_up["workout_dir"])
+                if _cand.exists():
+                    WORKOUT_DIR = _cand
+                else:
+                    logging.getLogger("training_planner").error(
+                        "E_WORKOUT_DIR_OVERRIDE_MISSING: user_paths.json "
+                        "workout_dir=%s does not exist — keeping the bundled "
+                        "library", _cand)
         except Exception:
             pass
         break
@@ -5317,13 +5331,33 @@ _POOL_COLLAPSE_MIN_FRACTION = 0.02  # storm 0.5% << 2% << healthy 73%
 
 def _pool_collapse_reason(pool_index: dict, library: list) -> str:
     """Reason string when the pool index is 'effectively empty' for a
-    non-trivial library (the storm signature), else '' (healthy)."""
+    non-trivial library (the storm signature), else '' (healthy).
+
+    Linux-IP D2: two additional trips, ONLY when WORKOUT_DIR is the BUNDLED
+    library (a rider's custom dir may legitimately be tiny or endurance-only):
+      * the bundled library loading ZERO rows is an infrastructure fault —
+        it ships ≥4000 files, and the old '<100 ⇒ healthy' floor let a
+        completely EMPTY library sail past every guard (a PARTIAL bundled
+        library is the D4 build-smoke's job — a runtime <N floor here would
+        trip on every test that fabricates a small library);
+      * hit pool empty while endurance is populated — the hole behind the
+        Linux all-"Z2 Steady" report: the 3.3.1 rules only tripped when hit
+        AND endurance were BOTH empty, so a hit-only collapse filled every
+        slot from the endurance pool and shipped a plausible-looking,
+        intensity-free plan.
+    """
     lib_n = len(library or [])
-    if lib_n < _POOL_COLLAPSE_MIN_LIBRARY:
-        return ""
     all_pool = pool_index.get("all_pool") or []
     hit = pool_index.get("hit") or []
     endurance = pool_index.get("endurance") or []
+    if WORKOUT_DIR == _BUNDLED_WORKOUT_DIR:
+        if lib_n == 0:
+            return "bundled workout library empty (0 files loaded)"
+        if not hit and endurance:
+            return (f"hit pools empty with endurance populated "
+                    f"(library={lib_n}) — classification/facts fault")
+    if lib_n < _POOL_COLLAPSE_MIN_LIBRARY:
+        return ""
     if not all_pool:
         return f"all_pool empty (library={lib_n})"
     if not hit and not endurance:
@@ -6719,6 +6753,18 @@ def generate_plan(
     # v4.5.0 IMPL-PLANNER: build pool index ONCE for the whole plan (3054 files
     # → ~1818 score>=5 → bucketed into HIT/endurance pools). All weeks share it.
     pool_index = _build_pool_indexes(library)
+    # Linux-IP D1: generate_plan was the ONLY plan writer without the
+    # 3.3.1 pool-collapse breaker (recalc/extend/regenerate/deload all have
+    # it) — a first generation over collapsed pools silently wrote an
+    # all-endurance plan. Refuse instead: ValueError maps to 400 {detail}
+    # at /api/plan/generate, which the UI folds into the entry card.
+    _collapse = _pool_collapse_reason(pool_index, library)
+    if _collapse:
+        log.error("E_GENERATE_POOL_COLLAPSE: plan generation refused — %s",
+                  _collapse)
+        raise ValueError(
+            f"workout library unavailable ({_collapse}) — plan not "
+            "generated; restart the app and, if this persists, reinstall")
 
     def _in_unavailable(d: date) -> bool:
         if not unavailable_periods:

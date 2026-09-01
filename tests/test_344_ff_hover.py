@@ -10,7 +10,7 @@ import re
 import subprocess
 from pathlib import Path
 
-_SRC = (Path(__file__).resolve().parent.parent / "templates" / "dashboard.html"
+_SRC = (Path(__file__).resolve().parent.parent / "src" / "templates" / "dashboard.html"
         ).read_text(encoding="utf-8")
 
 

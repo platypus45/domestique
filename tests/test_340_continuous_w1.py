@@ -23,7 +23,7 @@ import pytest
 
 import training_planner as tp
 
-_LIB_INDEX = Path(__file__).resolve().parent.parent / "workouts" / ".library_index.json"
+_LIB_INDEX = Path(__file__).resolve().parent.parent / "src" / "workouts" / ".library_index.json"
 
 # Pinned engine inputs (hermetic sizing — no archive/ICU self-fetch).
 CTL = 50.0

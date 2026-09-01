@@ -94,7 +94,7 @@ def test_macos_and_windows_picks_are_unchanged_by_the_linux_asset():
 
 
 def test_linux_picks_the_versioned_appimage():
-    src = (ROOT / "app.py").read_text(encoding="utf-8")
+    src = (ROOT / "src" / "app.py").read_text(encoding="utf-8")
     if "AppImage" not in src:
         pytest.skip("update picker has no Linux arm yet (CODE agent)")
     pick = _picker()
@@ -144,7 +144,7 @@ def test_pyqt_is_never_a_dependency():
     named = [n for n in _requirements() if n.startswith("pyqt")]
     assert named == [], f"PyQt must not be a dependency: {named}"
 
-    spec_src = (ROOT / "domestique.spec").read_text(encoding="utf-8")
+    spec_src = (ROOT / "packaging" / "domestique.spec").read_text(encoding="utf-8")
     if "_LINUX" in spec_src:
         for plat in ("darwin", "win32", "linux"):
             offenders = [h for h in _spec_hiddenimports(plat)
@@ -155,7 +155,7 @@ def test_pyqt_is_never_a_dependency():
 # ─── 3. domestique.spec ──────────────────────────────────────────────────────
 
 def _spec_tree() -> tuple[str, ast.Module]:
-    src = (ROOT / "domestique.spec").read_text(encoding="utf-8")
+    src = (ROOT / "packaging" / "domestique.spec").read_text(encoding="utf-8")
     return src, ast.parse(src)
 
 
@@ -206,7 +206,7 @@ def test_linux_hiddenimports_carry_the_qt_webview_modules():
     in the static import scan reaches the Qt platform module. QtWebChannel is
     load-bearing: without it pywebview's qt.py takes a PyQt5/QtWebKit fallback
     branch that does not exist in this bundle."""
-    if "_LINUX" not in (ROOT / "domestique.spec").read_text(encoding="utf-8"):
+    if "_LINUX" not in (ROOT / "packaging" / "domestique.spec").read_text(encoding="utf-8"):
         pytest.skip("spec has no Linux arm yet (PACKAGING agent)")
 
     linux = _spec_hiddenimports("linux")
@@ -229,15 +229,15 @@ def test_icon_is_three_way_and_linux_never_gets_the_ico():
     """An ELF carries no embedded icon; handing PyInstaller `assets/icon.ico`
     on Linux makes it attempt a Windows resource stamp. The macOS/Windows
     values must be exactly what they are today."""
-    if "_LINUX" not in (ROOT / "domestique.spec").read_text(encoding="utf-8"):
+    if "_LINUX" not in (ROOT / "packaging" / "domestique.spec").read_text(encoding="utf-8"):
         pytest.skip("spec has no Linux arm yet (PACKAGING agent)")
 
     icon_expr = _spec_call_kwarg("EXE", "icon")
     icons = {p: _spec_eval(icon_expr, p, _spec_ns(p))
              for p in ("darwin", "win32", "linux")}
 
-    assert icons["darwin"] == "assets/icon.icns"
-    assert icons["win32"] == "assets/icon.ico"
+    assert icons["darwin"] == "../assets/icon.icns"
+    assert icons["win32"] == "../assets/icon.ico"
     assert icons["linux"] is None or not str(icons["linux"]).endswith(".ico")
     assert len(set(map(str, icons.values()))) == 3, (
         f"icon expression is not three-way: {icons}")
@@ -246,7 +246,7 @@ def test_icon_is_three_way_and_linux_never_gets_the_ico():
 # ─── 4. launcher.py ──────────────────────────────────────────────────────────
 
 def _launcher_tree() -> ast.Module:
-    return ast.parse((ROOT / "launcher.py").read_text(encoding="utf-8"))
+    return ast.parse((ROOT / "src" / "launcher.py").read_text(encoding="utf-8"))
 
 
 def _env_keys_written(tree: ast.Module) -> list[str]:
@@ -361,7 +361,7 @@ def test_the_crash_dialog_cannot_satisfy_the_native_window_check():
     Reads _fatal_report, which owns the dialog for BOTH startup deaths — the
     dead GUI backend this was written for, and a foreign server holding :8080.
     """
-    src = (ROOT / "launcher.py").read_text(encoding="utf-8")
+    src = (ROOT / "src" / "launcher.py").read_text(encoding="utf-8")
     i = src.index("def _fatal_report")
     body = src[i:i + 4000]
     assert 'setWindowTitle("Domestique")' not in body, (
@@ -377,7 +377,7 @@ def test_a_second_linux_launch_does_not_open_a_browser():
     to _open_url — a browser tab, which is the one degradation this release
     forbids, reached by the DEFAULT path. Focusing the existing window is out of
     scope; doing nothing is correct, doing the wrong thing is not."""
-    src = (ROOT / "launcher.py").read_text(encoding="utf-8")
+    src = (ROOT / "src" / "launcher.py").read_text(encoding="utf-8")
     i = src.index("Domestique already running →")
     tail = src[i:i + 700]
     assert 'sys.platform.startswith("linux")' in tail, (

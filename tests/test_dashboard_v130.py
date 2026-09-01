@@ -28,7 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _html() -> str:
-    return (REPO_ROOT / "templates/dashboard.html").read_text()
+    return (REPO_ROOT / "src/templates/dashboard.html").read_text()
 
 
 def test_power_curve_panel_present():

@@ -65,7 +65,7 @@ def _scan(src_file: Path) -> list[tuple[int, str, str]]:
 def test_no_unlink_on_plan_path_outside_sanctioned_helpers() -> None:
     bad: list[str] = []
     for fname in SOURCES:
-        path = REPO_ROOT / fname
+        path = REPO_ROOT / "src" / fname
         for lineno, line, fn in _scan(path):
             if fn in ALLOWED_HELPERS:
                 continue
@@ -82,7 +82,7 @@ def test_no_unlink_on_plan_path_outside_sanctioned_helpers() -> None:
 def test_atomic_write_plan_helper_is_used() -> None:
     """app.py should call ``tp.atomic_write_plan`` directly — the inline
     tmp+rename pattern is gone."""
-    app_src = (REPO_ROOT / "app.py").read_text(encoding="utf-8")
+    app_src = (REPO_ROOT / "src" / "app.py").read_text(encoding="utf-8")
     assert "tp.atomic_write_plan" in app_src, (
         "app.py must call tp.atomic_write_plan after v1.6.2 migration"
     )

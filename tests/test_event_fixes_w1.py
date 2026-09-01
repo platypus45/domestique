@@ -34,7 +34,7 @@ import pytest
 import training_planner as tp
 from conftest import PLANNER_PIN_ANCHOR as ANCHOR, PLANNER_PIN_ARGS
 
-_LIB_INDEX = Path(__file__).resolve().parent.parent / "workouts" / ".library_index.json"
+_LIB_INDEX = Path(__file__).resolve().parent.parent / "src" / "workouts" / ".library_index.json"
 
 # Monday race, 16 weeks out (D3's worst observed form was a Monday race).
 TARGET_16W = ANCHOR + timedelta(days=112)

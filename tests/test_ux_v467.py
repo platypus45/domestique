@@ -33,7 +33,7 @@ import app as app_module
 import training_planner as tp
 
 
-DASH_PATH = Path(__file__).resolve().parent.parent / "templates" / "dashboard.html"
+DASH_PATH = Path(__file__).resolve().parent.parent / "src" / "templates" / "dashboard.html"
 
 
 def _mk_plan_weeks(monday: date, weeks_count: int = 2) -> list[dict]:

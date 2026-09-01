@@ -11,8 +11,8 @@ from __future__ import annotations
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-VENDOR_FILE = REPO_ROOT / "static/vendor/chart.umd.min.js"
-DASHBOARD_FILE = REPO_ROOT / "templates/dashboard.html"
+VENDOR_FILE = REPO_ROOT / "src/static/vendor/chart.umd.min.js"
+DASHBOARD_FILE = REPO_ROOT / "src/templates/dashboard.html"
 
 
 def test_chart_js_vendored_and_non_empty():

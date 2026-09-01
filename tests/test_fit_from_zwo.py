@@ -28,7 +28,7 @@ import app as app_module
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-WORKOUTS_DIR = REPO_ROOT / "workouts"
+WORKOUTS_DIR = REPO_ROOT / "src" / "workouts"
 TEMPO_FILE = "tempo_4x150s_85pct_63min.zwo"
 
 

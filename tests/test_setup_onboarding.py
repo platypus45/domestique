@@ -120,7 +120,7 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
 def _setup_html():
-    with open(os.path.join(REPO, "templates", "setup.html"), encoding="utf-8") as f:
+    with open(os.path.join(REPO, "src", "templates", "setup.html"), encoding="utf-8") as f:
         return f.read()
 
 

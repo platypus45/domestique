@@ -21,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_banister_panel_present():
-    html = (REPO_ROOT / "templates/dashboard.html").read_text()
+    html = (REPO_ROOT / "src/templates/dashboard.html").read_text()
     assert '<details class="banister-validation"' in html
     assert 'id="banister-oos-panel"' in html
     assert 'loadBanisterValidationPanel' in html
@@ -30,12 +30,12 @@ def test_banister_panel_present():
 
 
 def test_panel_ordering():
-    html = (REPO_ROOT / "templates/dashboard.html").read_text()
+    html = (REPO_ROOT / "src/templates/dashboard.html").read_text()
     assert html.index('"tau-fit-results"') < html.index('"banister-validation"')
 
 
 def test_all_16_locked_fields_present():
-    html = (REPO_ROOT / "templates/dashboard.html").read_text()
+    html = (REPO_ROOT / "src/templates/dashboard.html").read_text()
     for f in (
         "ftp_mae_w", "ftp_mae_pct", "ftp_mae_pct_ci_low", "ftp_mae_pct_ci_high",
         "ctl_mae_tss", "ctl_mae_tss_ci_low", "ctl_mae_tss_ci_high",
@@ -47,7 +47,7 @@ def test_all_16_locked_fields_present():
 
 
 def test_no_unbalanced_script_tags():
-    html = (REPO_ROOT / "templates/dashboard.html").read_text()
+    html = (REPO_ROOT / "src/templates/dashboard.html").read_text()
     assert html.count("<script") == html.count("</script>"), "unbalanced <script> tags"
     assert "function loadBanisterValidationPanel" in html
     assert "function refreshBanisterValidation" in html
@@ -55,6 +55,6 @@ def test_no_unbalanced_script_tags():
 
 
 def test_a11y_attributes_present():
-    html = (REPO_ROOT / "templates/dashboard.html").read_text()
+    html = (REPO_ROOT / "src/templates/dashboard.html").read_text()
     assert "aria-busy" in html
     assert 'aria-label="Re-run holdout validation"' in html

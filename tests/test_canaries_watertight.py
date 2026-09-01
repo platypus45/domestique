@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT))
 import training_planner as tp  # noqa: E402
 import workout_facts as wf  # noqa: E402
 
-WK = ROOT / "workouts"
+WK = ROOT / "src" / "workouts"
 INCIDENT_SAMPLER = "neuromuscular_6x5min_95pct_88min.zwo"
 INCIDENT_MATCH = "neuromuscular_3x5min_89pct_75min.zwo"
 NEW_4X13 = "vo2_short_4x13x30s-15s_106pct_64min.zwo"

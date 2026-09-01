@@ -23,7 +23,7 @@ import pytest
 
 import readiness as R
 
-_DASH = Path(__file__).resolve().parent.parent / "templates" / "dashboard.html"
+_DASH = Path(__file__).resolve().parent.parent / "src" / "templates" / "dashboard.html"
 
 
 # ── C1: graded recency ──────────────────────────────────────────────────────

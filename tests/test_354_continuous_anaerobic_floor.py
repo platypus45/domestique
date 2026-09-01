@@ -19,7 +19,7 @@ import training_planner as tp
 
 CTL = 50.0
 RWT = 500.0
-_LIB_INDEX = Path(__file__).resolve().parent.parent / "workouts" / ".library_index.json"
+_LIB_INDEX = Path(__file__).resolve().parent.parent / "src" / "workouts" / ".library_index.json"
 
 # Session types the deload week must not contain (Issurin unloading). Mirrors
 # tests/test_340_continuous_w1.py::HIT_TYPES but drops "tempo": the planner

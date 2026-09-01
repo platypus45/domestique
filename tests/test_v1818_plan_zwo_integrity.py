@@ -67,7 +67,7 @@ class TestPlanZwoIntegrity(unittest.TestCase):
         self.assertNotEqual(healed, ghost_future)
         self.assertNotIn("/", healed)
         if healed:
-            self.assertTrue((Path("workouts") / healed).exists())
+            self.assertTrue((Path("src/workouts") / healed).exists())
         self.assertGreaterEqual(n, 1)
 
     def test_idempotent_and_day_invariant(self):

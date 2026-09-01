@@ -21,7 +21,7 @@ import re
 import subprocess
 from pathlib import Path
 
-SRC = (Path(__file__).resolve().parent.parent / "templates" / "dashboard.html"
+SRC = (Path(__file__).resolve().parent.parent / "src" / "templates" / "dashboard.html"
        ).read_text(encoding="utf-8")
 
 

@@ -22,7 +22,7 @@ if not exist assets mkdir assets
 
 REM 4. Build with PyInstaller
 echo Building...
-pyinstaller domestique.spec --clean --noconfirm
+pyinstaller packaging/domestique.spec --clean --noconfirm
 
 echo.
 echo === Build complete ===

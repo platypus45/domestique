@@ -393,7 +393,7 @@ class TestFeedbackEngine:
 
 class TestCRSParser:
     def test_parse_real_crs_file(self):
-        crs = Path(__file__).parent.parent / "courses" / "virtual" / "desert_loop" / "desert-loop__tt-course.crs"
+        crs = Path(__file__).parent.parent / "src" / "courses" / "virtual" / "desert_loop" / "desert-loop__tt-course.crs"
         if not crs.exists():
             pytest.skip("CRS test file missing")
         points = parse_crs_for_session(crs)
@@ -1271,7 +1271,7 @@ class TestFix34SpeedNoHalving:
         """Static assert: the `virtual_speed * 0.5` halving must not
         appear in display_speed calculations. Guards against regression."""
         from pathlib import Path
-        src = Path(__file__).parent.parent / "training_live.py"
+        src = Path(__file__).parent.parent / "src" / "training_live.py"
         text = src.read_text()
         assert "virtual_speed * 0.5" not in text, (
             "regression: `virtual_speed * 0.5` reappeared in training_live.py "

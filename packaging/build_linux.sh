@@ -94,7 +94,7 @@ echo "[2/9] Building with PyInstaller..."
 # always 0, so `set -e` never saw a failed build — the script carried on and
 # version-checked whatever happened to be in dist/ already.
 set -o pipefail
-pyinstaller domestique.spec --clean --noconfirm 2>&1 | tail -3
+pyinstaller packaging/domestique.spec --clean --noconfirm 2>&1 | tail -3
 set +o pipefail
 [ -x "${DIST}/${APP_NAME}" ] || { echo "✗ FATAL: ${DIST}/${APP_NAME} not produced"; exit 1; }
 

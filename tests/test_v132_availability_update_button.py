@@ -19,7 +19,7 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DASHBOARD_FILE = REPO_ROOT / "templates" / "dashboard.html"
+DASHBOARD_FILE = REPO_ROOT / "src" / "templates" / "dashboard.html"
 
 
 def _read_dashboard() -> str:

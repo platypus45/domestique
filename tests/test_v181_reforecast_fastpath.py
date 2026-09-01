@@ -293,7 +293,7 @@ def test_accept_redraw_apply_passes_fast_kwarg():
     """Source-level wiring check: `_accept_redraw_apply` must pass
     `accept_redraw_fast=True` so the speed win is actually plumbed.
     """
-    app_path = ROOT / "app.py"
+    app_path = ROOT / "src" / "app.py"
     src = app_path.read_text(encoding="utf-8")
     # Locate the `_accept_redraw_apply` function body and confirm it
     # contains the kwarg on a `reforecast_dict(...)` call.

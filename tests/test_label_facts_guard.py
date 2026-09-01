@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 import workout_facts as wf  # noqa: E402
 
-WK = ROOT / "workouts"
+WK = ROOT / "src" / "workouts"
 
 # A4: the ledger-verified fused-threshold bodies, exempt BY NAME from the
 # threshold-label t200 rule (their sprint caps were owner-clamped 2.0→1.45 in
@@ -33,7 +33,7 @@ FUSED_EXEMPT = frozenset({
 
 def _clc():
     spec = importlib.util.spec_from_file_location(
-        "clc_guard", ROOT / "scripts" / "classify_library_content.py")
+        "clc_guard", ROOT / "src" / "scripts" / "classify_library_content.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

@@ -128,7 +128,7 @@ def test_regenerate_stamps_fresh_snapshot(monkeypatch):
 def test_generate_site_stamps_snapshot_source_level():
     """Both plan-dict serialization sites stamp via tp.plan_ctl_snapshot
     (the generate endpoint is exercised end-to-end by the planner suites)."""
-    src = (ROOT / "app.py").read_text(encoding="utf-8")
+    src = (ROOT / "src" / "app.py").read_text(encoding="utf-8")
     assert src.count("tp.plan_ctl_snapshot(") == 2
     gen = src.index('"generated": datetime.now().isoformat(),\n            '
                     '# P4.2')
@@ -192,7 +192,7 @@ def test_api_plan_no_snapshot_no_drift_no_error(plan_env, monkeypatch):
 # ── chip: structural (client is render-only) ────────────────────────────────
 
 def test_chip_structure_and_wiring():
-    html = (ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
+    html = (ROOT / "src" / "templates" / "dashboard.html").read_text(encoding="utf-8")
     assert 'id="plan-drift-chip"' in html
     assert "function renderPlanDriftChip(drift)" in html
     # Keyed strictly on the SERVER's exceeded flag (client renders only).

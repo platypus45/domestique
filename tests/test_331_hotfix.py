@@ -27,7 +27,7 @@ def test_spec_bundles_classifier():
     """The storm's root cause: the frozen app shipped without the classifier
     script. The spec must bundle it — a string test so packaging can't
     silently regress."""
-    spec = (ROOT / "domestique.spec").read_text(encoding="utf-8")
+    spec = (ROOT / "packaging" / "domestique.spec").read_text(encoding="utf-8")
     assert "classify_library_content" in spec
 
 
@@ -36,7 +36,7 @@ def test_spec_bundles_classifier():
 def _seed_dir(tmp_path, n=2):
     d = tmp_path / "workouts"
     d.mkdir()
-    src = sorted((ROOT / "workouts").glob("z2_*.zwo"))[:n]
+    src = sorted((ROOT / "src" / "workouts").glob("z2_*.zwo"))[:n]
     assert len(src) == n, "repo z2 fixtures missing"
     for p in src:
         (d / p.name).write_bytes(p.read_bytes())

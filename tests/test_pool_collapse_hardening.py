@@ -138,7 +138,7 @@ def test_diag_health_reports_pool_health():
 
 def test_calendar_title_marks_unmatched_sessions():
     html = (Path(__file__).resolve().parent.parent
-            / "templates" / "dashboard.html").read_text(encoding="utf-8")
+            / "src" / "templates" / "dashboard.html").read_text(encoding="utf-8")
     assert "no workout matched" in html
     # The marker must live in the calCardTitle fallback path.
     i = html.find("function calCardTitle(")

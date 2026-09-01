@@ -250,7 +250,7 @@ class TestZeroMinRegexHidesSegments(unittest.TestCase):
         """The four description-rendering call sites in dashboard.html must
         all wrap their description through fixZeroMin so a stray 0min token
         from the workout library can never reach the user's screen."""
-        html = (Path(__file__).parent.parent / "templates" /
+        html = (Path(__file__).parent.parent / "src" / "templates" /
                 "dashboard.html").read_text(encoding="utf-8")
         # Must define the helper.
         self.assertIn("function fixZeroMin", html,

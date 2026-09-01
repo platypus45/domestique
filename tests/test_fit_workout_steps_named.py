@@ -28,7 +28,7 @@ def test_blocks_path_names_every_step():
 
 
 def test_zwo_transcode_names_every_step():
-    zwo = os.path.basename(glob.glob("workouts/vo2*.zwo")[0])
+    zwo = os.path.basename(glob.glob("src/workouts/vo2*.zwo")[0])
     names = _step_names(app.build_fit_workout_bytes("vo2max", 45, "w", zwo))
     assert names, "no workout steps emitted"
     assert all(n for n in names), f"unnamed steps: {names}"

@@ -17,8 +17,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-WK = ROOT / "workouts"
-LABELS = ROOT / "scripts" / "reclassify_sustained_labels.json"
+WK = ROOT / "src" / "workouts"
+LABELS = ROOT / "src" / "scripts" / "reclassify_sustained_labels.json"
 CC_PATH = WK / ".content_classification.json"
 IDX_PATH = WK / ".library_index.json"
 
@@ -96,7 +96,7 @@ def test_strides_example_intact(classifications):
 @pytest.fixture(scope="module")
 def _classifier():
     import sys
-    sys.path.insert(0, str(ROOT / "scripts"))
+    sys.path.insert(0, str(ROOT / "src" / "scripts"))
     import classify_library_content as clc
     return clc
 

@@ -51,7 +51,7 @@ class W2BG1DuplicateLoadPowerCurve(unittest.TestCase):
 
     def test_only_one_loadpowercurve_declaration(self):
         repo = Path(__file__).resolve().parent.parent
-        html = (repo / "templates" / "dashboard.html").read_text(
+        html = (repo / "src" / "templates" / "dashboard.html").read_text(
             encoding="utf-8")
         decls = re.findall(r"^async function loadPowerCurve\(",
                            html, re.MULTILINE)
@@ -77,7 +77,7 @@ class W2BG3PRBadgeXSS(unittest.TestCase):
 
     def test_pr_badge_uses_data_attr_not_inline_onclick(self):
         repo = Path(__file__).resolve().parent.parent
-        html = (repo / "templates" / "dashboard.html").read_text(
+        html = (repo / "src" / "templates" / "dashboard.html").read_text(
             encoding="utf-8")
         # The vulnerable pattern was:
         #   `onclick="openRideDetail('${escJs(prevId)}')"`
@@ -117,7 +117,7 @@ class W2BG4ToastQueueEndpoint(unittest.TestCase):
 
     def test_dashboard_wires_drain_function(self):
         repo = Path(__file__).resolve().parent.parent
-        html = (repo / "templates" / "dashboard.html").read_text(
+        html = (repo / "src" / "templates" / "dashboard.html").read_text(
             encoding="utf-8")
         # The toast-queue path must appear in a fetch call.
         self.assertIn("/api/profile/pr-toast-queue?drain=1", html)
@@ -228,7 +228,7 @@ class W2BG7WindowDaysPropagated(unittest.TestCase):
 
     def test_dashboard_passes_window_days(self):
         repo = Path(__file__).resolve().parent.parent
-        html = (repo / "templates" / "dashboard.html").read_text(
+        html = (repo / "src" / "templates" / "dashboard.html").read_text(
             encoding="utf-8")
         # The fetch URL must include window_days now.
         self.assertIn("window_days=", html,
@@ -416,7 +416,7 @@ class W2BG11FirstTierSortOrder(unittest.TestCase):
 
     def test_sort_promotes_first_tier(self):
         repo = Path(__file__).resolve().parent.parent
-        html = (repo / "templates" / "dashboard.html").read_text(
+        html = (repo / "src" / "templates" / "dashboard.html").read_text(
             encoding="utf-8")
         # The new sort uses _tierRank.
         self.assertIn("_tierRank", html)
@@ -435,7 +435,7 @@ class W2BG15RemovedDeadField(unittest.TestCase):
 
     def test_dashboard_no_longer_reads_n_long_rides_at_threshold(self):
         repo = Path(__file__).resolve().parent.parent
-        html = (repo / "templates" / "dashboard.html").read_text(
+        html = (repo / "src" / "templates" / "dashboard.html").read_text(
             encoding="utf-8")
         # The dead read pattern was `d.n_long_rides_at_threshold`.
         # The fix-forward comment may mention the field name so we only

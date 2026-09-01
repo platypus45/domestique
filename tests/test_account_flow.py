@@ -521,7 +521,7 @@ class TestSyncWriteGateWiring:
 # ---------------------------------------------------------------------------
 
 def _tpl(name):
-    return (REPO / "templates" / name).read_text(encoding="utf-8")
+    return (REPO / "src" / "templates" / name).read_text(encoding="utf-8")
 
 
 def _input_minmax(html, input_id):

@@ -71,11 +71,11 @@ jobs:
 
       - name: Build DMG
         run: |
-          chmod +x build_dmg.sh
+          chmod +x packaging/build_dmg.sh
           # build_dmg.sh writes to ~/Desktop; we redirect via env var.
           export DESTDIR="$GITHUB_WORKSPACE/dist_dmg"
           mkdir -p "$DESTDIR"
-          ./build_dmg.sh || { cat /tmp/dmg_build.log 2>/dev/null || true; exit 1; }
+          ./packaging/build_dmg.sh || { cat /tmp/dmg_build.log 2>/dev/null || true; exit 1; }
           # Fallback: some build_dmg.sh variants hardcode ~/Desktop
           if [ ! -f "$DESTDIR/Domestique.dmg" ] && [ -f "$HOME/Desktop/Domestique.dmg" ]; then
             cp "$HOME/Desktop/Domestique.dmg" "$DESTDIR/Domestique.dmg"
@@ -144,7 +144,7 @@ jobs:
       - name: Build EXE
         shell: cmd
         run: |
-          call build_win.bat
+          call packaging\build_win.bat
           dir dist\Domestique
 
       # Watertight gate for the OAuth fix: prove the client_secret actually made
@@ -514,7 +514,7 @@ jobs:
         run: |
           set -eux
           chmod +x build_linux.sh
-          ./build_linux.sh
+          ./packaging/build_linux.sh
 
       - name: Locate the AppImage
         run: |

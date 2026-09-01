@@ -86,6 +86,6 @@ New routes may be contributed under Apache-2.0 provided:
    OSM / SRTM / another license-compatible source.
 2. The source and its license are documented in a `SOURCE` file alongside the
    route data.
-3. The contribution follows [CONTRIBUTING.md](CONTRIBUTING.md).
+3. The contribution follows [CONTRIBUTING.md](../.github/CONTRIBUTING.md).
 
 Routes that appear to be scraped from commercial platforms will be removed.

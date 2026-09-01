@@ -26,7 +26,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 _REPO = Path(__file__).resolve().parent.parent
-_SRC = (_REPO / "templates" / "dashboard.html").read_text(encoding="utf-8")
+_SRC = (_REPO / "src" / "templates" / "dashboard.html").read_text(encoding="utf-8")
 
 _PURE_START = "// ═══ FF DATE-RANGE (3.4.4) — pure helpers"
 _PURE_END = "// ═══ FF DATE-RANGE — UI wiring"

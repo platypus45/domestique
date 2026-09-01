@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 _DASHBOARD = (
-    Path(__file__).resolve().parent.parent / "templates" / "dashboard.html"
+    Path(__file__).resolve().parent.parent / "src" / "templates" / "dashboard.html"
 )
 
 # v1.6.1 codes added for homepage panel instrumentation. Each must appear

@@ -790,7 +790,7 @@ GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads
 git clone https://github.com/platypus45/domestique.git
 cd domestique
 pip install -r requirements.txt
-python launcher.py
+python src/launcher.py
 pytest -q                            # ~2,300 tests pass on clean-main
 ```
 
@@ -846,11 +846,11 @@ The ports are chosen to stay out of the way: all three sit below `32768`, which 
 
 ### Contributing
 
-Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request — in particular, all commits must be signed off under the Developer Certificate of Origin (`git commit -s`).
+Contributions are welcome. Please read [CONTRIBUTING.md](.github/CONTRIBUTING.md) before opening a pull request — in particular, all commits must be signed off under the Developer Certificate of Origin (`git commit -s`).
 
 See also:
-- [COURSES_LICENSE.md](COURSES_LICENSE.md) — route and elevation data provenance.
-- [TRADEMARKS.md](TRADEMARKS.md) — trademark policy.
+- [COURSES_LICENSE.md](docs/COURSES_LICENSE.md) — route and elevation data provenance.
+- [TRADEMARKS.md](docs/TRADEMARKS.md) — trademark policy.
 - [docs/cycling_apps.md](docs/cycling_apps.md) — comparison of free cycling apps accepting ZWO/FIT.
 - [docs/workout_sources.md](docs/workout_sources.md) — workout library provenance.
 - [docs/windows_build.md](docs/windows_build.md) — path to a signed-style Windows `.exe` build.
@@ -912,7 +912,7 @@ Hover any abbreviation in the body for an inline tooltip. The full glossary live
 
 Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
-Tacx, Wahoo, Garmin, Polar, MyWhoosh, Zwift, Golden Cheetah, Rouvy, and Intervals.icu are trademarks of their respective owners. See [TRADEMARKS.md](TRADEMARKS.md).
+Tacx, Wahoo, Garmin, Polar, MyWhoosh, Zwift, Golden Cheetah, Rouvy, and Intervals.icu are trademarks of their respective owners. See [TRADEMARKS.md](docs/TRADEMARKS.md).
 
 *Built with PubMed research, 4,232 workouts, and a deep love for cycling.*
 

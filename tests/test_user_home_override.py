@@ -27,7 +27,7 @@ def _run(env_home: str | None) -> list[str]:
         env["DOMESTIQUE_HOME"] = env_home
     out = subprocess.run([sys.executable, "-c", _PROBE],
                          capture_output=True, text=True, env=env,
-                         cwd=str(Path(__file__).resolve().parent.parent),
+                         cwd=str(Path(__file__).resolve().parent.parent / "src"),
                          timeout=120)
     assert out.returncode == 0, out.stderr[-800:]
     return out.stdout.strip().splitlines()

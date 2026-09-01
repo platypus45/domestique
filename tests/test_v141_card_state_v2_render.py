@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 
-DASHBOARD = ROOT / "templates" / "dashboard.html"
+DASHBOARD = ROOT / "src" / "templates" / "dashboard.html"
 HTML = DASHBOARD.read_text(encoding="utf-8")
 
 

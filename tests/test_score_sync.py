@@ -26,7 +26,7 @@ if str(ROOT) not in sys.path:
 
 import training_planner as tp  # noqa: E402
 
-WORKOUT_DIR = ROOT / "workouts"
+WORKOUT_DIR = ROOT / "src" / "workouts"
 
 
 def _sample_zwo_files() -> list[Path]:

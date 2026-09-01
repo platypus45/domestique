@@ -31,7 +31,7 @@ import app as app_module
 import continuous_policy as cpol
 import training_planner as tp
 
-_LIB_INDEX = Path(__file__).resolve().parent.parent / "workouts" / ".library_index.json"
+_LIB_INDEX = Path(__file__).resolve().parent.parent / "src" / "workouts" / ".library_index.json"
 
 HARD_TYPES = {"vo2max", "threshold", "overunder", "sweetspot", "sprint"}
 

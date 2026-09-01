@@ -18,7 +18,7 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DASHBOARD = REPO_ROOT / "templates" / "dashboard.html"
+DASHBOARD = REPO_ROOT / "src" / "templates" / "dashboard.html"
 
 # The six moved panels (G12 move list). Sub-ids of the power-curve card and
 # the fitness card are asserted separately below.

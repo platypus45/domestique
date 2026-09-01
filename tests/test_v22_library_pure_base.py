@@ -11,7 +11,7 @@ import unittest
 
 import app
 
-WORKOUTS = Path(__file__).resolve().parents[1] / "workouts"
+WORKOUTS = Path(__file__).resolve().parents[1] / "src" / "workouts"
 
 
 def _is_pure_z2(scan) -> bool:

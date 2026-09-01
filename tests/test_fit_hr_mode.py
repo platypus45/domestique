@@ -20,7 +20,7 @@ fitparse = pytest.importorskip("fitparse")
 import app  # noqa: E402
 from hr_targets import HR_MIN_SEG_S  # noqa: E402
 
-ZWO = ROOT / "workouts" / "threshold_2x3min-3min_95pct_56min.zwo"
+ZWO = ROOT / "src" / "workouts" / "threshold_2x3min-3min_95pct_56min.zwo"
 LTHR, MAX_HR = 160, 185
 
 

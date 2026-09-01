@@ -35,7 +35,7 @@ _FILES = [
 
 
 def test_loader_rebuild_of_flagged_rows_matches_facts(tmp_path):
-    facts_path = Path("workouts/.workout_facts.json")
+    facts_path = Path("src/workouts/.workout_facts.json")
     if not facts_path.exists():
         pytest.skip("facts cache absent")
     facts = json.loads(facts_path.read_text())["facts"]
@@ -44,8 +44,8 @@ def test_loader_rebuild_of_flagged_rows_matches_facts(tmp_path):
     # parses them fresh (count mismatch → full parse path) without touching
     # the real committed index (repo rule: never rebuild it wholesale).
     for f in _FILES:
-        shutil.copy2(f"workouts/{f}", tmp_path / f)
-    shutil.copy2("workouts/.content_classification.json",
+        shutil.copy2(f"src/workouts/{f}", tmp_path / f)
+    shutil.copy2("src/workouts/.content_classification.json",
                  tmp_path / ".content_classification.json")
 
     orig = tp.WORKOUT_DIR

@@ -22,9 +22,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-WORKOUTS = ROOT / "workouts"
+WORKOUTS = ROOT / "src" / "workouts"
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "src" / "scripts"))
 
 _REP = r"\d+x\d+(?:s|min)(?:-\d+(?:s|min))?"        # 4x8min-4min, 13x30s
 _SERIES = r"\d+x" + _REP                            # 3x13x30s-15s (Ronnestad)

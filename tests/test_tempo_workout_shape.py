@@ -36,7 +36,7 @@ import xml.etree.ElementTree as ET
 from glob import glob
 from pathlib import Path
 
-WORKOUTS_DIR = Path(__file__).resolve().parent.parent / "workouts"
+WORKOUTS_DIR = Path(__file__).resolve().parent.parent / "src" / "workouts"
 WRAPPER_TAGS = {"Warmup", "Cooldown"}
 
 

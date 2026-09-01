@@ -27,12 +27,12 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 REPO_ROOT = HERE.parent
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
+sys.path.insert(0, str(REPO_ROOT / "src" / "scripts"))
 
 import classify_library_content as clc  # noqa: E402
 
 
-WORKOUTS_DIR = REPO_ROOT / "workouts"
+WORKOUTS_DIR = REPO_ROOT / "src" / "workouts"
 CLASSIFICATION_PATH = WORKOUTS_DIR / ".content_classification.json"
 
 

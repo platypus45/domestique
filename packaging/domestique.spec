@@ -29,28 +29,28 @@ try:
     _spec_dir = Path(SPEC).resolve().parent  # type: ignore[name-defined]
 except NameError:
     _spec_dir = Path(os.path.abspath(os.getcwd()))
-VERSION = (_spec_dir / "VERSION").read_text(encoding="utf-8").strip()
+VERSION = (_spec_dir.parent / "VERSION").read_text(encoding="utf-8").strip()
 
 # Data files to bundle (templates, courses, JSON, CSV).
 # All entries unconditional — these directories MUST exist for the app to run
 # and conditional guards caused silent "missing assets" bugs in older builds.
 datas = [
-    ("templates", "templates"),
-    ("courses", "courses"),
-    ("workouts", "workouts"),          # 1,753 scientific workout templates
-    ("static", "static"),
-    ("assets", "assets"),
-    ("routes.json", "."),
-    ("profiles_indexed.json", "."),
-    ("surface_types.json", "."),
-    ("VERSION", "."),
+    ("../src/templates", "templates"),
+    ("../src/courses", "courses"),
+    ("../src/workouts", "workouts"),          # 1,753 scientific workout templates
+    ("../src/static", "static"),
+    ("../assets", "assets"),
+    ("../src/routes.json", "."),
+    ("../src/profiles_indexed.json", "."),
+    ("../src/surface_types.json", "."),
+    ("../VERSION", "."),
     # 3.3.1 hotfix (v3.3.0 storm): workout_facts._clc() loads the classifier
     # by FILE PATH (Path(__file__).parent / "scripts" / "classify_library_
     # content.py"), so PyInstaller's import scan never sees it. v3.3.0
     # shipped without it → every frozen facts recompute raised
     # FileNotFoundError → all-null facts → planner-wide no-candidates.
     # Stdlib-only at module level, so bundling the single file suffices.
-    ("scripts/classify_library_content.py", "scripts"),
+    ("../src/scripts/classify_library_content.py", "scripts"),
 ]
 
 # v2.1.0 WIN-TLS-FIX: bundle certifi's CA bundle so urllib (all ICU HTTPS in
@@ -88,18 +88,18 @@ if _LINUX:
                     datas.append((str(_f), str(Path("PySide6/Qt") / _sub)))
 
 # Add profiles directory if it exists (per-user data, optional)
-if os.path.exists("profiles"):
-    datas.append(("profiles", "profiles"))
+if os.path.exists("src/profiles"):
+    datas.append(("../src/profiles", "profiles"))
 
 # Add gpx directory if it exists (optional user imports)
-if os.path.exists("gpx"):
-    datas.append(("gpx", "gpx"))
+if os.path.exists("src/gpx"):
+    datas.append(("../src/gpx", "gpx"))
 
 # v2.1.x ICU OAuth — bundle the gitignored .oauth.env (client_secret) so the
 # frozen app carries it while the PUBLIC repo never does (see config._load_oauth_env).
 # The secret necessarily ships in the binary (installed-app OAuth, no PKCE).
 if os.path.exists(".oauth.env"):
-    datas.append((".oauth.env", "."))
+    datas.append(("../.oauth.env", "."))
 
 # Previously we enumerated top-level `.py` modules explicitly and added them
 # as `datas`. PyInstaller's Analysis pass already picks them up via its
@@ -108,8 +108,8 @@ if os.path.exists(".oauth.env"):
 # added/removed). Dropping it keeps the spec short and correct.
 
 a = Analysis(
-    ["launcher.py"],
-    pathex=["."],
+    ["../src/launcher.py"],
+    pathex=["..", "../src"],
     binaries=binaries,
     datas=datas,
     hiddenimports=[
@@ -220,7 +220,7 @@ exe = EXE(
     # would only make it try (and fail) to stamp a Windows resource onto one.
     # The Linux icon travels in the AppDir's .desktop + hicolor tree instead.
     icon=(None if _LINUX else
-          "assets/icon.icns" if sys.platform == "darwin" else "assets/icon.ico"),
+          "../assets/icon.icns" if sys.platform == "darwin" else "../assets/icon.ico"),
 )
 
 coll = COLLECT(
@@ -239,7 +239,7 @@ if sys.platform == "darwin":
     app = BUNDLE(
         coll,
         name=f"{app_name}.app",
-        icon="assets/icon.icns" if os.path.exists("assets/icon.icns") else None,
+        icon="../assets/icon.icns" if os.path.exists("assets/icon.icns") else None,
         bundle_identifier="com.platypus45.domestique",
         info_plist={
             "CFBundleDisplayName": app_name,

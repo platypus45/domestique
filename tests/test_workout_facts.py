@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT))
 import training_planner as tp  # noqa: E402
 import workout_facts as wf  # noqa: E402
 
-WK = ROOT / "workouts"
+WK = ROOT / "src" / "workouts"
 
 
 # ── synthetic ZWO helpers ────────────────────────────────────────────────────

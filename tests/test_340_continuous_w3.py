@@ -38,8 +38,8 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
-DASHBOARD = REPO / "templates" / "dashboard.html"
-_LIB_INDEX = REPO / "workouts" / ".library_index.json"
+DASHBOARD = REPO / "src" / "templates" / "dashboard.html"
+_LIB_INDEX = REPO / "src" / "workouts" / ".library_index.json"
 
 needs_node = pytest.mark.skipif(shutil.which("node") is None,
                                 reason="node not installed")

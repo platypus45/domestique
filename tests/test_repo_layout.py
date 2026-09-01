@@ -77,7 +77,7 @@ _PINNED_DESTINATIONS = {
 
 def _spec_datas() -> list[tuple[str, str]]:
     spec = None
-    for cand in (ROOT / "domestique.spec", CODE_DIR / "domestique.spec"):
+    for cand in (ROOT / "packaging" / "domestique.spec", ROOT / "domestique.spec"):
         if cand.is_file():
             spec = cand
             break

@@ -25,8 +25,8 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPTS = REPO_ROOT / "scripts"
-WORKOUTS = REPO_ROOT / "workouts"
+SCRIPTS = REPO_ROOT / "src" / "scripts"
+WORKOUTS = REPO_ROOT / "src" / "workouts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 

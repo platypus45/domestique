@@ -37,7 +37,7 @@ MACOS_MIN="11.0"
 PYINSTALLER="pyinstaller"
 if [ ! -x ".venv-build/bin/pyinstaller" ]; then
     echo "  Build venv missing — creating it (OpenBLAS numpy/scipy)..."
-    bash scripts/setup_build_venv.sh
+    bash src/scripts/setup_build_venv.sh
 fi
 if [ -x ".venv-build/bin/pyinstaller" ]; then
     PYINSTALLER=".venv-build/bin/pyinstaller"
@@ -51,7 +51,7 @@ RW_DMG="/tmp/${DMG_NAME}_rw.dmg"
 APP_ZIP="/tmp/${DMG_NAME}.app.zip"
 ICON_PNG="assets/icon.png"
 ICON_ICNS="assets/icon.icns"
-ENTITLEMENTS="entitlements.plist"
+ENTITLEMENTS="packaging/entitlements.plist"
 
 NOTARIZE_MODE="adhoc"
 if [ -f .notarize.env ]; then
@@ -78,7 +78,7 @@ done
 
 # 1. Build with PyInstaller
 echo "[1/9] Building app with PyInstaller..."
-"$PYINSTALLER" domestique.spec --clean --noconfirm 2>&1 | tail -3
+"$PYINSTALLER" packaging/domestique.spec --clean --noconfirm 2>&1 | tail -3
 
 # 1b. Version smoke-test — the bundled app MUST ship its own VERSION file with the
 # right contents, else the running app reports "0.0.0" and the in-app updater shows
@@ -131,7 +131,7 @@ echo "[1b2/9] Library smoke-test OK — $ZWO_N workouts + sidecars bundled"
 # exercises the same code path.
 FIT_SMOKE="$(python3.12 - <<'PYEOF'
 import sys
-sys.path.insert(0, ".")
+sys.path.insert(0, "src")
 try:
     import app
     from pathlib import Path

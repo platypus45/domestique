@@ -125,7 +125,7 @@ def stub(tmp_path):
     (workouts / "steady.zwo").write_text(STEADY_ZWO, encoding="utf-8")
     (workouts / "tempo_alt.zwo").write_text(TEMPO_ZWO, encoding="utf-8")
     (workouts / "sprint_end.zwo").write_text(SPRINT_END_ZWO, encoding="utf-8")
-    real = REPO / "workouts" / "threshold_2x3min-3min_95pct_56min.zwo"
+    real = REPO / "src" / "workouts" / "threshold_2x3min-3min_95pct_56min.zwo"
     if real.exists():
         (workouts / "threshold_2x3min-3min_95pct_56min.zwo").write_bytes(real.read_bytes())
     app_module.WORKOUT_DIR = workouts

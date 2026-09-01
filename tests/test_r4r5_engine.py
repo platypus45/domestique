@@ -46,7 +46,7 @@ from conftest import (  # noqa: E402
     PLANNER_PIN_ARGS as _PIN_ARGS,
 )
 
-WK = ROOT / "workouts"
+WK = ROOT / "src" / "workouts"
 
 
 @pytest.fixture(scope="module", autouse=True)

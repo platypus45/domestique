@@ -52,7 +52,7 @@ from test_icu_push import (  # noqa: E402,F401
 )
 
 REPO = Path(__file__).resolve().parent.parent
-DASHBOARD = REPO / "templates" / "dashboard.html"
+DASHBOARD = REPO / "src" / "templates" / "dashboard.html"
 
 
 @pytest.fixture()

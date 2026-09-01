@@ -17,7 +17,7 @@ from pathlib import Path
 import error_codes as ec
 
 
-_APP_PY = Path(__file__).resolve().parent.parent / "app.py"
+_APP_PY = Path(__file__).resolve().parent.parent / "src" / "app.py"
 
 
 class ErrorCodeRegistryConsistencyTests(unittest.TestCase):

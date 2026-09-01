@@ -177,7 +177,7 @@ def test_snooze_round_trip(monkeypatch):
 def test_today_session_payload_carries_flag():
     """/api/today-session exposes retest_nudge (source-level check — the
     full impl path needs live plan/readiness fixtures)."""
-    src = (ROOT / "app.py").read_text(encoding="utf-8")
+    src = (ROOT / "src" / "app.py").read_text(encoding="utf-8")
     assert '"retest_nudge": _retest_nudge_payload(_PM.get())' in src
 
 
@@ -220,7 +220,7 @@ def test_next_slot_none_without_plan(monkeypatch, tmp_path):
 # ── UI structural ────────────────────────────────────────────────────────────
 
 def test_dashboard_banner_and_instructions_modal():
-    html = (ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
+    html = (ROOT / "src" / "templates" / "dashboard.html").read_text(encoding="utf-8")
     assert 'id="retest-nudge-host"' in html
     assert "renderRetestNudge(d.retest_nudge)" in html
     assert "/api/retest-nudge/snooze" in html

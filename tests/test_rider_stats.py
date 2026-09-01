@@ -296,7 +296,7 @@ def test_profile_failure_still_returns(monkeypatch, stats_env):
 # ── UI structural: card at the TOP of the Analysis tab, lazy ────────────────
 
 def test_stats_card_top_of_analysis_tab_and_lazy():
-    html = (ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
+    html = (ROOT / "src" / "templates" / "dashboard.html").read_text(encoding="utf-8")
     sec = html.index('id="sec-analysis"')
     card = html.index('id="rider-stats-card"')
     fitness = html.index('id="fitness-chart"')

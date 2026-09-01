@@ -29,7 +29,7 @@ from fastapi.testclient import TestClient
 from app import app
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DASHBOARD_FILE = REPO_ROOT / "templates/dashboard.html"
+DASHBOARD_FILE = REPO_ROOT / "src/templates/dashboard.html"
 
 
 def test_energy_system_canvas_in_template():

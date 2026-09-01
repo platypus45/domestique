@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import capacity_cap as C  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
-LIB = REPO / "workouts"
+LIB = REPO / "src" / "workouts"
 
 # Realistic anchors for a 250 W FTP rider.
 FTP = 250.0
@@ -233,7 +233,7 @@ class TestGate:
 
 class TestGA6NoWprimePrediction:
     def test_no_wprime_or_prescription_tau_symbol(self):
-        src = (REPO / "capacity_cap.py").read_text(encoding="utf-8")
+        src = (REPO / "src" / "capacity_cap.py").read_text(encoding="utf-8")
         low = src.lower()
         # No W′-balance / W-prime prescription machinery may feed an on-power.
         for bad in ("wprime", "w_prime", "w'bal", "wbal", "w_bal", "cp_wprime"):
@@ -318,7 +318,7 @@ def stub(tmp_path):
     workouts.mkdir()
     (workouts / "hard.zwo").write_text(HARD_ZWO, encoding="utf-8")
     (workouts / "easy.zwo").write_text(EASY_ZWO, encoding="utf-8")
-    ramp = REPO / "workouts" / "ftp_test_ramp_20w_step_ladder23_256pct_43min.zwo"
+    ramp = REPO / "src" / "workouts" / "ftp_test_ramp_20w_step_ladder23_256pct_43min.zwo"
     if ramp.exists():
         (workouts / "ftp_test_ramp_20w_step_ladder23_256pct_43min.zwo").write_bytes(ramp.read_bytes())
     app_module.WORKOUT_DIR = workouts

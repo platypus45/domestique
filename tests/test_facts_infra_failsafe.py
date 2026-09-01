@@ -39,7 +39,7 @@ import workout_facts as wf
 from conftest import PLANNER_PIN_ANCHOR, PLANNER_PIN_ARGS, FrozenPlannerDate
 
 ROOT = Path(__file__).resolve().parent.parent
-WK = ROOT / "workouts"
+WK = ROOT / "src" / "workouts"
 
 # Real library files, hand-picked so their COMMITTED facts pass their slot
 # gates (threshold: t240==0 & t200==0; z2: n130_45==0 & t200==0; vo2max:
@@ -221,8 +221,8 @@ def test_spec_bundles_classifier_script():
     PyInstaller's import scan — only an explicit datas entry ships it. v3.3.0
     shipped without it; this canary stops the packaging from regressing
     silently."""
-    spec = (ROOT / "domestique.spec").read_text(encoding="utf-8")
-    assert '("scripts/classify_library_content.py", "scripts")' in spec, (
+    spec = (ROOT / "packaging" / "domestique.spec").read_text(encoding="utf-8")
+    assert '("../src/scripts/classify_library_content.py", "scripts")' in spec, (
         "domestique.spec no longer bundles scripts/classify_library_content.py"
         " — the frozen app cannot compute workout facts without it (v3.3.0"
         " no-candidates storm)")

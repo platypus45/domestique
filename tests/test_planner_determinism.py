@@ -18,7 +18,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-_REPO = Path(__file__).resolve().parent.parent
+_REPO = Path(__file__).resolve().parent.parent / "src"
 
 
 _DRIVER = textwrap.dedent(

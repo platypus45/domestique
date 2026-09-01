@@ -28,7 +28,7 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 REPO_ROOT = HERE.parent
-DASHBOARD_HTML = REPO_ROOT / "templates" / "dashboard.html"
+DASHBOARD_HTML = REPO_ROOT / "src" / "templates" / "dashboard.html"
 
 
 def _read_dashboard() -> str:

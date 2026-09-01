@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-DASH = (ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
+DASH = (ROOT / "src" / "templates" / "dashboard.html").read_text(encoding="utf-8")
 
 
 # ── 1. Origin gate ───────────────────────────────────────────────────────────

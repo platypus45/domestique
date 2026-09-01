@@ -14,10 +14,10 @@ block. Mirrors the IntervalsT branch.
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "scripts"))
 from classify_library_content import parse_zwo_full, _detect_interval_signature  # noqa: E402
 
-WORKOUTS = Path(__file__).resolve().parent.parent / "workouts"
+WORKOUTS = Path(__file__).resolve().parent.parent / "src" / "workouts"
 
 
 def _sig_for(name):

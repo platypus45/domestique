@@ -12,7 +12,7 @@ pip3 install -r requirements.txt pyinstaller
 mkdir -p assets
 
 # 3. Build with PyInstaller
-pyinstaller domestique.spec --clean --noconfirm
+pyinstaller packaging/domestique.spec --clean --noconfirm
 
 echo ""
 echo "=== Build complete ==="

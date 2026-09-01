@@ -19,7 +19,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-WORKOUTS = Path(__file__).resolve().parent.parent / "workouts"
+WORKOUTS = Path(__file__).resolve().parent.parent / "src" / "workouts"
 
 
 def _trailing_cooldowns():

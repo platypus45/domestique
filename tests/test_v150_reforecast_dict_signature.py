@@ -143,7 +143,7 @@ def test_propagate_reforecast_to_dict_removed_from_app_py():
     GONE from app.py. Comments mentioning the name in changelog-style
     notes are allowed; a `def` is not.
     """
-    app_path = ROOT / "app.py"
+    app_path = ROOT / "src" / "app.py"
     src = app_path.read_text(encoding="utf-8")
     # No `def _propagate_reforecast_to_dict(...)` anywhere.
     assert not re.search(r"^def _propagate_reforecast_to_dict\b", src, re.MULTILINE), (

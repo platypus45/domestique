@@ -32,7 +32,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
-DASHBOARD = REPO / "templates" / "dashboard.html"
+DASHBOARD = REPO / "src" / "templates" / "dashboard.html"
 
 requires_node = pytest.mark.skipif(shutil.which("node") is None,
                                    reason="node not installed")

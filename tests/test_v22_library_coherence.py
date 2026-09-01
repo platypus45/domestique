@@ -14,10 +14,10 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "src" / "scripts"))
 import classify_library_content as C  # noqa: E402
 
-CACHE = ROOT / "workouts" / ".content_classification.json"
+CACHE = ROOT / "src" / "workouts" / ".content_classification.json"
 
 
 class TestCoherenceUnit(unittest.TestCase):

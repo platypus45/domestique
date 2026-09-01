@@ -18,14 +18,14 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "src" / "scripts"))
 
 from reclassify_mixed_v461 import (  # noqa: E402
     detect_ronnestad,
     promote_mixed,
 )
 
-WORKOUTS_DIR = ROOT / "workouts"
+WORKOUTS_DIR = ROOT / "src" / "workouts"
 CACHE_PATH = WORKOUTS_DIR / ".content_classification.json"
 
 

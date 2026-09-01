@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-WORKOUTS_DIR = ROOT / "workouts"
+WORKOUTS_DIR = ROOT / "src" / "workouts"
 CACHE_PATH = WORKOUTS_DIR / ".content_classification.json"
 MANIFEST_PATH = WORKOUTS_DIR / ".overhaul_manifest.json"
 

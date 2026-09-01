@@ -19,7 +19,7 @@ from PIL import ImageDraw
 from programme_summary_png import render_programme_summary_png
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC = (ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
+SRC = (ROOT / "src" / "templates" / "dashboard.html").read_text(encoding="utf-8")
 
 
 def _extract_js_function(src: str, name: str) -> str:

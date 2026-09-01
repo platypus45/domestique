@@ -81,7 +81,7 @@ class TestUnifiedTodayMarkup(unittest.TestCase):
     def setUpClass(cls):
         from pathlib import Path
         cls.html = (Path(__file__).resolve().parent.parent
-                    / "templates" / "dashboard.html").read_text(encoding="utf-8")
+                    / "src" / "templates" / "dashboard.html").read_text(encoding="utf-8")
 
     def test_one_today_card(self):
         self.assertEqual(self.html.count('id="today-card"'), 1)

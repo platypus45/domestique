@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-DASH = (Path(__file__).resolve().parent.parent / "templates" / "dashboard.html").read_text(encoding="utf-8")
+DASH = (Path(__file__).resolve().parent.parent / "src" / "templates" / "dashboard.html").read_text(encoding="utf-8")
 
 
 def _fn(name: str) -> str:

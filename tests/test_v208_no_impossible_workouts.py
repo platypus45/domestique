@@ -12,7 +12,7 @@ import re
 import unittest
 from pathlib import Path
 
-WORKOUTS = Path(__file__).resolve().parent.parent / "workouts"
+WORKOUTS = Path(__file__).resolve().parent.parent / "src" / "workouts"
 
 
 def _max_sustained_supra_seconds(txt, ftp_frac=1.5):

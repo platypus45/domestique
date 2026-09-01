@@ -31,7 +31,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DASHBOARD_FILE = REPO_ROOT / "templates/dashboard.html"
+DASHBOARD_FILE = REPO_ROOT / "src/templates/dashboard.html"
 
 
 @pytest.fixture(scope="module")

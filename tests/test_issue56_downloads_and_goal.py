@@ -20,11 +20,11 @@ import app
 import launcher
 
 REPO = Path(__file__).resolve().parent.parent
-DASH = REPO / "templates" / "dashboard.html"
+DASH = REPO / "src" / "templates" / "dashboard.html"
 
 
 def _a_library_zwo() -> str:
-    return os.path.basename(sorted(glob.glob(str(REPO / "workouts" / "*.zwo")))[0])
+    return os.path.basename(sorted(glob.glob(str(REPO / "src" / "workouts" / "*.zwo")))[0])
 
 
 class TestFitBytesGuards(unittest.TestCase):

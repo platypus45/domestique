@@ -113,7 +113,7 @@ def test_dashboard_reshuffle_accept_paints_staged_progress():
     """v1.8.1 progress UX: accept flow paints 4 stages (WORKOUT
     RESHUFFLED → UPDATING PLAN → UPDATING CALENDAR → DONE) so the
     multi-second refresh is legible. Pin the wiring."""
-    dash = Path(__file__).resolve().parent.parent / "templates" / "dashboard.html"
+    dash = Path(__file__).resolve().parent.parent / "src" / "templates" / "dashboard.html"
     text = dash.read_text(encoding="utf-8")
     # Locate the _rematchAccept function body.
     start = text.index("async function _rematchAccept(day)")

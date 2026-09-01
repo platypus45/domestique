@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 import training_planner as tp  # noqa: E402
 import workout_facts as wf  # noqa: E402
 
-WK = ROOT / "workouts"
+WK = ROOT / "src" / "workouts"
 pytestmark = pytest.mark.skipif(
     not (WK / wf.FACTS_FILENAME).exists(), reason="facts cache absent")
 

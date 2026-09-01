@@ -13,7 +13,7 @@ from pathlib import Path
 
 import training_planner as tp
 
-_LIB_INDEX = Path(__file__).resolve().parent.parent / "workouts" / ".library_index.json"
+_LIB_INDEX = Path(__file__).resolve().parent.parent / "src" / "workouts" / ".library_index.json"
 _HIT = {"vo2max", "threshold", "overunder", "sweetspot", "sprint"}
 
 

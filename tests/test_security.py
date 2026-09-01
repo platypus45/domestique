@@ -113,7 +113,7 @@ def test_save_env_writes_owner_only_0600(tmp_path):
 # ── 4. Localhost-only bind (no remote access) ──────────────────────────────────
 
 def test_launcher_binds_localhost_only():
-    src = (REPO / "launcher.py").read_text()
+    src = (REPO / "src" / "launcher.py").read_text()
     assert '"127.0.0.1"' in src, "launcher should bind 127.0.0.1"
     assert "0.0.0.0" not in src, "launcher must never bind 0.0.0.0 (would expose the API to the network)"
 

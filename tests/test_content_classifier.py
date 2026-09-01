@@ -19,7 +19,7 @@ from pathlib import Path
 # Add scripts/ for the classifier module
 HERE = Path(__file__).parent
 REPO_ROOT = HERE.parent
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
+sys.path.insert(0, str(REPO_ROOT / "src" / "scripts"))
 
 import classify_library_content as clc
 
@@ -439,7 +439,7 @@ class TestProtocolMapping(unittest.TestCase):
 
 
 def _load_golden_set():
-    p = REPO_ROOT / "workouts" / ".golden_set.json"
+    p = REPO_ROOT / "src" / "workouts" / ".golden_set.json"
     if not p.exists():
         return []
     with p.open(encoding="utf-8") as f:
@@ -447,7 +447,7 @@ def _load_golden_set():
 
 
 def _load_classifications():
-    p = REPO_ROOT / "workouts" / ".content_classification.json"
+    p = REPO_ROOT / "src" / "workouts" / ".content_classification.json"
     if not p.exists():
         return {}
     with p.open(encoding="utf-8") as f:

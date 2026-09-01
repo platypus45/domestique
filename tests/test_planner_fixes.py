@@ -25,8 +25,8 @@ from training_planner import (
 
 
 ROOT = Path(__file__).resolve().parent.parent
-APP_PY = ROOT / "app.py"
-PLANNER_PY = ROOT / "training_planner.py"
+APP_PY = ROOT / "src" / "app.py"
+PLANNER_PY = ROOT / "src" / "training_planner.py"
 
 
 def _make_base_phase(start: date, weeks: int = 4, weekly_tss: float = 500) -> Phase:

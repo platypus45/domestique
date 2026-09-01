@@ -70,3 +70,8 @@ IP_*.md
 scripts/scrape_*.py
 workouts/.scrape_progress.json
 workouts/.ftp_tests_manifest.json
+build_premove/
+dist_premove/
+dist_postmove/
+build_postmove/
+plans/

@@ -341,7 +341,7 @@ jobs:
             # silently degrades every plan to endurance-only.
             $hb = $null
             try {
-              $hb = Invoke-RestMethod -Uri "http://127.0.0.1:22400/api/diag/health" -TimeoutSec 30
+              $hb = Invoke-RestMethod -Uri "http://127.0.0.1:22400/api/diag/health" -TimeoutSec 180
             } catch {
               Write-Host "diag/health request failed: $($_.Exception.Message)"
               try {

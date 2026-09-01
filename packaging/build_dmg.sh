@@ -117,6 +117,17 @@ for SIDE in .content_classification.json .workout_facts.json .library_index.json
 done
 echo "[1b2/9] Library smoke-test OK — $ZWO_N workouts + sidecars bundled"
 
+# 1b3. OAuth-secret gate (parity with the Windows CI check): the spec bundles
+# the gitignored .oauth.env only when it exists at build time — a checkout
+# without it (fresh clone, WORKTREE) silently ships a DMG whose intervals.icu
+# OAuth sign-in fails with an "exchange" error. Refuse instead.
+BUNDLED_OAUTH="$(find dist/Domestique.app -name '.oauth.env' 2>/dev/null | head -1)"
+if [ -z "$BUNDLED_OAUTH" ] || ! grep -q 'ICU_OAUTH_CLIENT_SECRET=..*' "$BUNDLED_OAUTH"; then
+    echo "FATAL: .oauth.env missing or empty in the bundle — OAuth sign-in would ship broken. Put .oauth.env at the repo root and rebuild." >&2
+    exit 1
+fi
+echo "[1b3/9] OAuth-secret gate OK — client secret bundled"
+
 # 1c. HR-mode FIT smoke (v2.5.0 P1.5) — the desktop save path builds FIT bytes
 # in-process (launcher.JsApi save_fit bridge), a path the web tests can't reach.
 # Prove the bundled code produces HEART_RATE-target steps for view='hr' before

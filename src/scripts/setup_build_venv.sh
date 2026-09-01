@@ -17,7 +17,7 @@
 # numpy/scipy are then forced onto the OpenBLAS wheel variant (NOT Apple
 # Accelerate, whose $NEWLAPACK symbols need macOS 13.3) at the SAME versions.
 set -e
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."  # script lives in src/scripts/; repo root is two up
 
 PBS_TAG="20260623"
 PBS_PY="3.12.13"

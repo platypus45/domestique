@@ -2,7 +2,7 @@
 REM Build Domestique for Windows
 REM Output: dist\Domestique\Domestique.exe
 
-cd /d "%~dp0"
+cd /d "%~dp0\.."
 
 echo === Domestique Windows Build ===
 

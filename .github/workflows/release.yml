@@ -513,7 +513,7 @@ jobs:
           PIP_BREAK_SYSTEM_PACKAGES: "1"
         run: |
           set -eux
-          chmod +x build_linux.sh
+          chmod +x packaging/build_linux.sh
           ./packaging/build_linux.sh
 
       - name: Locate the AppImage

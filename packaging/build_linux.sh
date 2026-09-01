@@ -23,7 +23,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."  # scripts live in packaging/; build from the repo root
 
 # The developer works on macOS; fail immediately and usefully rather than
 # part-building something unusable.

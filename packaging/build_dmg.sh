@@ -24,7 +24,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."  # scripts live in packaging/; build from the repo root
 
 # v2.2.15 — Monterey (macOS 12) compatibility (see IP_MONTEREY_COMPAT.md):
 #   * MACOSX_DEPLOYMENT_TARGET=11.0 so anything PyInstaller compiles targets 11.

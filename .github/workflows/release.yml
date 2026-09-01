@@ -339,7 +339,19 @@ jobs:
             # Linux-IP D4 (all platforms): the bundled workout library must
             # survive packaging — a build that loses it boots fine and
             # silently degrades every plan to endurance-only.
-            $hb = Invoke-RestMethod -Uri "http://127.0.0.1:22400/api/diag/health" -TimeoutSec 10
+            $hb = $null
+            try {
+              $hb = Invoke-RestMethod -Uri "http://127.0.0.1:22400/api/diag/health" -TimeoutSec 30
+            } catch {
+              Write-Host "diag/health request failed: $($_.Exception.Message)"
+              try {
+                $raw = Invoke-WebRequest -Uri "http://127.0.0.1:22400/api/diag/health" -TimeoutSec 30 -SkipHttpErrorCheck
+                Write-Host "status=$($raw.StatusCode) body=$($raw.Content)"
+              } catch { Write-Host "raw retry also failed: $($_.Exception.Message)" }
+              Dump-Diagnostics
+              Write-Host "::error::/api/diag/health unreachable — cannot verify the bundled library"
+              exit 1
+            }
             $libcount = [int]$hb.checks.workout_library.count
             if ($libcount -lt 4000) {
               Dump-Diagnostics

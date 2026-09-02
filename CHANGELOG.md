@@ -3,6 +3,7 @@
 ## v3.11.3 — Sign-in that says what went wrong (2026-09-02)
 
 - **A rider reported "Connection failed — the token exchange failed" when connecting intervals.icu.** The sign-in code has not changed in months and intervals.icu accepts this app's credentials, so the failure is specific to that machine — but the app gave nobody, including its author, a way to tell *what* failed. This release closes that gap without guessing at a fix: the Diagnostics panel (and `/api/diag/health`) now reports whether the app actually loaded its sign-in credentials, and every release build on macOS, Windows and Linux is now launched and checked for exactly that before it can ship. If you see this error, the log line starting `EVENT=icu_oauth_exchange_http` in `~/.domestique/logs/domestique.log` (`%USERPROFILE%\.domestique\logs` on Windows) names the exact reason — please include it when reporting.
+- **The sign-in error now says which step failed.** One sentence used to cover five different faults. It now distinguishes intervals.icu rejecting the code (with the HTTP status — a code is single-use and expires within minutes), the app being unable to reach intervals.icu at all (network, proxy or certificate), an unexpected reply, a token that was granted but could not be saved to your profile folder (permissions or disk), and a failure clearing a previous account's data. The last two were the worst offenders: the sign-in had actually *succeeded* and the message blamed the wrong thing.
 
 ## v3.11.2 — The fix that actually reaches the Linux rider (2026-09-02)
 

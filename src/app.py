@@ -9022,16 +9022,31 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
         if not getattr(config, "ICU_OAUTH_CLIENT_SECRET", ""):
             _log.error("EVENT=icu_oauth_no_secret — client_secret missing from this "
                        "build (.oauth.env not bundled); token exchange will fail")
-        resp = httpx.post(config.ICU_OAUTH_TOKEN_URL, data={
-            "client_id": config.ICU_OAUTH_CLIENT_ID,
-            "client_secret": config.ICU_OAUTH_CLIENT_SECRET,
-            "code": code,
-        }, timeout=15)
+        # v3.11.3: PHASE-SPECIFIC failure codes. Every failure below used to
+        # collapse into one "token exchange failed" — including a token that
+        # exchanged fine but could not be SAVED (profile-folder permissions)
+        # and an athlete-change purge that raised. A rider's screenshot then
+        # said nothing about which step broke. Each phase now names itself.
+        try:
+            resp = httpx.post(config.ICU_OAUTH_TOKEN_URL, data={
+                "client_id": config.ICU_OAUTH_CLIENT_ID,
+                "client_secret": config.ICU_OAUTH_CLIENT_SECRET,
+                "code": code,
+            }, timeout=15)
+        except httpx.TransportError as e:
+            # DNS / TLS / proxy / connection refused — the request never got an
+            # answer. Certificate stores and corporate proxies live here.
+            _log.warning("EVENT=icu_oauth_network error=%s", str(e)[:200])
+            return _back("icu=error&reason=network")
         if resp.status_code != 200:
             _log.warning("EVENT=icu_oauth_exchange_http status=%s body=%s",
                          resp.status_code, (resp.text or "")[:200])
-            raise RuntimeError(f"token endpoint returned {resp.status_code}")
-        tok = resp.json()
+            return _back(f"icu=error&reason=exchange&status={int(resp.status_code)}")
+        try:
+            tok = resp.json()
+        except ValueError:
+            _log.warning("EVENT=icu_oauth_bad_json body=%s", (resp.text or "")[:200])
+            return _back("icu=error&reason=token")
         access_token = tok.get("access_token")
         athlete = tok.get("athlete") or {}
         athlete_id = str(athlete.get("id") or "")
@@ -9079,11 +9094,21 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
                 # Nothing saved yet — a clean retry re-runs the whole flow.
                 _log.warning("EVENT=icu_oauth_purge_busy profile=%s", target_pid)
                 return _back("icu=error&reason=busy")
-        _save_icu_token_for_profile(
-            pm, target_pid, access_token, athlete_id or None, athlete_name or None,
-            refresh_token=tok.get("refresh_token"),
-            expires_in=tok.get("expires_in"),
-            granted_scopes=granted_scopes or None)
+            except Exception:
+                _log.exception("EVENT=icu_oauth_purge_failed profile=%s", target_pid)
+                return _back("icu=error&reason=purge")
+        try:
+            _save_icu_token_for_profile(
+                pm, target_pid, access_token, athlete_id or None, athlete_name or None,
+                refresh_token=tok.get("refresh_token"),
+                expires_in=tok.get("expires_in"),
+                granted_scopes=granted_scopes or None)
+        except Exception:
+            # The exchange SUCCEEDED — the token just could not be persisted
+            # (profile folder permissions / disk). The one-time code is spent,
+            # so the rider must authorise again after fixing the folder.
+            _log.exception("EVENT=icu_oauth_save_failed profile=%s", target_pid)
+            return _back("icu=error&reason=save")
         if target_pid == pm.active_id:
             # Unshadow stale module-level config.ICU_* so the proxy re-resolves
             # to the freshly-saved token immediately (same fix as the API-key
@@ -9098,6 +9123,8 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
                   target_pid, athlete_id or "?", athlete_name or "")
         return _back("icu=connected")
     except Exception:
+        # Anything not caught by a phase above (e.g. a raise from inside a
+        # mocked/unknown step) keeps the historical catch-all code.
         _log.exception("ICU OAuth token exchange failed")
         return _back("icu=error&reason=exchange")
 

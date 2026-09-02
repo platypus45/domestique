@@ -16519,17 +16519,22 @@ function handleIcuOauthReturn() {
         no_athlete_id: "intervals.icu didn't return an athlete id for that account. Nothing was linked — try connecting again.",
         profile_gone: 'the profile that started the sign-in no longer exists.',
         state: 'the sign-in link expired — start again from this page.',
-        exchange: 'the token exchange failed — try again.',
+        exchange: 'intervals.icu rejected the sign-in code — try again (a code is single-use and expires within minutes).',
+        network: "the app could not reach intervals.icu (connection, proxy or certificate problem) — check your network and try again.",
+        token: 'intervals.icu returned an unexpected response — try again.',
+        purge: "signed in, but clearing the previous account's data failed — see the log, then try again.",
+        save: 'signed in, but the token could not be saved to your profile folder (permissions or disk) — fix the folder, then connect again.',
         denied: 'access was declined on intervals.icu.',
         busy: 'a sync was in progress — try again in a moment.'
       };
       const reason = p.get('reason') || '';
-      const msg = REASON_MSGS[reason] || 'try again';
+      const status = p.get('status') || '';
+      const msg = (REASON_MSGS[reason] || 'try again') + (status ? ' (HTTP ' + status + ')' : '');
       showToast('intervals.icu connection failed — ' + msg, 8000, 'error');
       window._icuConnError = 'Connection failed — ' + msg;
       try { loadIcuConnection(); } catch (_) {}
     }
-    p.delete('icu'); p.delete('reason');
+    p.delete('icu'); p.delete('reason'); p.delete('status');
     const qs = p.toString();
     window.history.replaceState({}, '', window.location.pathname + (qs ? '?' + qs : ''));
   } catch (e) { /* ignore */ }

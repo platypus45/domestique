@@ -1,5 +1,9 @@
 # Changelog
 
+## v3.11.3 — Sign-in that says what went wrong (2026-09-02)
+
+- **A rider reported "Connection failed — the token exchange failed" when connecting intervals.icu.** The sign-in code has not changed in months and intervals.icu accepts this app's credentials, so the failure is specific to that machine — but the app gave nobody, including its author, a way to tell *what* failed. This release closes that gap without guessing at a fix: the Diagnostics panel (and `/api/diag/health`) now reports whether the app actually loaded its sign-in credentials, and every release build on macOS, Windows and Linux is now launched and checked for exactly that before it can ship. If you see this error, the log line starting `EVENT=icu_oauth_exchange_http` in `~/.domestique/logs/domestique.log` (`%USERPROFILE%\.domestique\logs` on Windows) names the exact reason — please include it when reporting.
+
 ## v3.11.2 — The fix that actually reaches the Linux rider (2026-09-02)
 
 - **Found it: an empty workout folder was silently replacing the whole library.** The Linux rider came back with logs after yesterday's release, and they pointed straight at it: the app was reading its workouts from a folder that *existed* but held no workout files — and treated that as a valid library of zero. Yesterday's guards checked whether a custom folder existed; today they check whether it actually contains workouts. A folder with none is now ignored with a clear log line and the built-in 4,300-workout library takes over. This applies everywhere a folder can be chosen: the workout-folder setting, a per-profile folder, and the file-based override. The setting itself also refuses to save a folder without workouts in it, so this cannot be configured into existence again.

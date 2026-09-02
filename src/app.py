@@ -21878,6 +21878,15 @@ def api_diag_health(request: Request):
         checks["plan_readable"] = {"ok": False, "code": error_codes.Codes.PLAN_PARSE_CORRUPT, "msg": str(e)[:200]}
     except OSError as e:
         checks["plan_readable"] = {"ok": False, "code": error_codes.Codes.PLAN_LOAD_OS_ERROR, "msg": str(e)[:200]}
+    # v3.11.3: OAuth readiness — the build gates prove .oauth.env is IN the
+    # bundle; this proves the frozen app actually LOADED it (a reporter hit
+    # "token exchange failed" on 3.11.2 and the platform was unknown).
+    # Booleans only — the secret never leaves the process.
+    checks["icu_oauth"] = {
+        "client_id": str(getattr(config, "ICU_OAUTH_CLIENT_ID", "") or ""),
+        "secret_loaded": bool(getattr(config, "ICU_OAUTH_CLIENT_SECRET", "")),
+        "redirect_uri": str(getattr(config, "ICU_OAUTH_REDIRECT_URI", "") or ""),
+    }
     # workout_library
     try:
         lib = tp.load_workout_library()

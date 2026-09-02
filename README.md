@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4307-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v3.11.2-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v3.11.3-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-3240-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -759,7 +759,7 @@ One session, end to end — the prescription, the ride that came back, and what 
 
 ## Releases
 
-Latest: **[v3.11.2 — The fix that actually reaches the Linux rider](https://github.com/platypus45/domestique/releases/latest)** (2026-09-02).
+Latest: **[v3.11.3 — Sign-in that says what went wrong](https://github.com/platypus45/domestique/releases/latest)** (2026-09-02).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE + Linux AppImage on every tagged release. The three jobs are independent: a Linux failure cannot hold up or damage the macOS and Windows artifacts.
 

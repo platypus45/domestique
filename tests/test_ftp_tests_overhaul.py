@@ -357,3 +357,15 @@ def test_grill_fallback_only_for_hinted_sixty():
         early_quit, filename_hint="ftp_test_60min_steady_86min.zwo",
         prior_ftp=240)
     assert hinted and hinted["ftp_test_suggestion"]["fallback_from"] == "sixty_min"
+
+
+def test_hint_sources_are_matched_independently():
+    # v3.11.3: a date-named FIT file must not mask the workout name — each
+    # source is anchored on its own leading "ftp_test".
+    assert fe.detect_ftp_test_shape(
+        [100] * 300, ["2026-09-02-10-13-35.fit", "FTP Test Ramp (35min)"]) == "ramp"
+    assert fe.detect_ftp_test_shape(
+        [100] * 300, "2026-09-02-10-13-35.fit FTP Test Ramp (35min)") is None
+    # A title that merely mentions a test still never routes into scoring.
+    assert fe.detect_ftp_test_shape(
+        [100] * 300, ["skipped ftp test ramp today, easy spin"]) is None

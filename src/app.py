@@ -39,6 +39,7 @@ for _env_path in _env_candidates:
 
 import asyncio
 import logging
+from fit_activity import fit_field as _fit_val  # v3.11.3 fit-tool compat reader
 import log_config
 _log = log_config.get_logger("app")
 log = log_config.get_logger(__name__)
@@ -4979,7 +4980,7 @@ def _v136_extract_fit_power_series(fit_path: Path) -> list:
             if type(msg).__name__ != "RecordMessage":
                 continue
             try:
-                pw = msg.get_value("power")
+                pw = _fit_val(msg, "power")
                 out.append(int(pw) if pw is not None else 0)
             except Exception:
                 out.append(0)
@@ -18804,7 +18805,7 @@ def _parse_fit_stats(fit_path: Path) -> dict:
             if mtype == "RecordMessage":
                 sample_count += 1
                 try:
-                    _ts = msg.get_value("timestamp")
+                    _ts = _fit_val(msg, "timestamp")
                     if _ts is not None:
                         _tsf = float(_ts)
                         # fit_tool serves ms-since-epoch; tolerate seconds too.
@@ -18815,7 +18816,7 @@ def _parse_fit_stats(fit_path: Path) -> dict:
                     record_ts.append(None)
                 p_val = 0
                 try:
-                    pw = msg.get_value("power")
+                    pw = _fit_val(msg, "power")
                     if pw is not None:
                         p = int(pw)
                         power_sum += p
@@ -18827,7 +18828,7 @@ def _parse_fit_stats(fit_path: Path) -> dict:
                     pass
                 power_series.append(p_val)
                 try:
-                    hr = msg.get_value("heart_rate")
+                    hr = _fit_val(msg, "heart_rate")
                     if hr is not None:
                         h = int(hr)
                         hr_sum += h
@@ -18838,7 +18839,7 @@ def _parse_fit_stats(fit_path: Path) -> dict:
                     pass
                 c_val = 0
                 try:
-                    cad = msg.get_value("cadence")
+                    cad = _fit_val(msg, "cadence")
                     if cad is not None:
                         cad_sum += int(cad)
                         cad_n += 1
@@ -18847,48 +18848,48 @@ def _parse_fit_stats(fit_path: Path) -> dict:
                     pass
                 cadence_series.append(c_val)
                 try:
-                    sp = msg.get_value("speed")
+                    sp = _fit_val(msg, "speed")
                     if sp is not None and float(sp) > speed_max:
                         speed_max = float(sp)
                 except Exception:
                     pass
                 try:
-                    d = msg.get_value("distance")
+                    d = _fit_val(msg, "distance")
                     if d is not None:
                         distance_m = max(distance_m, float(d))
                 except Exception:
                     pass
             elif mtype == "SessionMessage":
                 try:
-                    v = msg.get_value("total_timer_time")
+                    v = _fit_val(msg, "total_timer_time")
                     if v is not None:
                         duration_s = int(round(float(v)))
                 except Exception:
                     pass
                 try:
-                    v = msg.get_value("total_distance")
+                    v = _fit_val(msg, "total_distance")
                     if v is not None:
                         distance_m = max(distance_m, float(v))
                 except Exception:
                     pass
                 try:
-                    v = msg.get_value("total_work")
+                    v = _fit_val(msg, "total_work")
                     if v is not None:
                         total_kj = float(v) / 1000.0
                 except Exception:
                     pass
                 try:
-                    v = msg.get_value("training_stress_score")
+                    v = _fit_val(msg, "training_stress_score")
                     if v is not None:
                         tss = float(v)
                 except Exception:
                     pass
                 try:
-                    sport = str(msg.get_value("sport") or "")
+                    sport = str(_fit_val(msg, "sport") or "")
                 except Exception:
                     sport = None
                 try:
-                    v = msg.get_value("start_time")
+                    v = _fit_val(msg, "start_time")
                     if v is not None:
                         start_time = str(v)
                 except Exception:
@@ -18896,7 +18897,7 @@ def _parse_fit_stats(fit_path: Path) -> dict:
             elif mtype == "WorkoutMessage":
                 try:
                     v = (getattr(msg, "workout_name", None)
-                         or msg.get_value("wkt_name"))
+                         or _fit_val(msg, "wkt_name"))
                     if v:
                         fit_workout_name = str(v)
                 except Exception:
@@ -20925,19 +20926,19 @@ def _build_fit_samples(fit_path: Path) -> dict:
             if type(msg).__name__ != "RecordMessage":
                 continue
             try:
-                pwr.append(int(msg.get_value("power") or 0))
+                pwr.append(int(_fit_val(msg, "power") or 0))
             except Exception:
                 pwr.append(0)
             try:
-                hr.append(int(msg.get_value("heart_rate") or 0))
+                hr.append(int(_fit_val(msg, "heart_rate") or 0))
             except Exception:
                 hr.append(0)
             try:
-                cad.append(int(msg.get_value("cadence") or 0))
+                cad.append(int(_fit_val(msg, "cadence") or 0))
             except Exception:
                 cad.append(0)
             try:
-                elev.append(float(msg.get_value("altitude") or 0))
+                elev.append(float(_fit_val(msg, "altitude") or 0))
             except Exception:
                 elev.append(0)
     except Exception:
@@ -21193,13 +21194,13 @@ def _fit_power_series_1hz(fit_path: Path) -> list[int]:
         if type(msg).__name__ != "RecordMessage":
             continue
         try:
-            _t = msg.get_value("timestamp")
+            _t = _fit_val(msg, "timestamp")
             _tf = float(_t) if _t is not None else None
             ts.append((_tf / 1000.0 if _tf and _tf > 1e11 else _tf))
         except Exception:
             ts.append(None)
         try:
-            pw.append(int(msg.get_value("power") or 0))
+            pw.append(int(_fit_val(msg, "power") or 0))
         except Exception:
             pw.append(0)
     return _resample_series_1hz(ts, pw)

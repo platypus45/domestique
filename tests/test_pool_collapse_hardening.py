@@ -227,3 +227,16 @@ def test_calendar_title_marks_unmatched_sessions():
     i = html.find("function calCardTitle(")
     assert i > 0
     assert "no workout matched" in html[i:i + 2500]
+
+
+# ── v3.11.3: the rider's protocol choice survives a plan rebuild ─────────────
+
+def test_ftp_test_type_round_trips_through_session_objects():
+    import app as app_module
+    src = {"day": "2026-09-04", "day_name": "Fri", "session_type": "ftp_test",
+           "duration_min": 35, "tss_estimate": 60.0, "description": "",
+           "zwo_file": "ftp_test_ramp_ladder21_200pct_35min.zwo",
+           "ftp_test_type": "ramp"}
+    ps = app_module._planned_session_from_json(src)
+    out = app_module._planned_session_to_json(ps)
+    assert out.get("ftp_test_type") == "ramp"

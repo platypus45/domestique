@@ -69,6 +69,30 @@ _GARMIN_PRODUCT_NAMES: dict[int, str] = {
 # device-by-device path table.
 
 
+def fit_field(msg, name):
+    """v3.11.3 — read a FIT message field across fit-tool versions.
+
+    The generated message classes expose every field as an attribute
+    (``msg.power``); the older ``fit_field(msg, name)`` helper this code was
+    written against does not exist in fit-tool 0.9.15/0.9.16 (the pinned
+    range). Every ``get_value`` call sat inside a silent try/except, so FIT
+    imports read power / heart rate / cadence / timestamps as 0 or None —
+    no ride stats, no FTP-test recognition on imported files. Returns None
+    when the field is absent.
+    """
+    try:
+        v = getattr(msg, name)
+        if v is not None:
+            return v
+    except Exception:
+        pass
+    try:
+        f = msg.get_field_by_name(name)
+        return f.get_value(0) if f is not None else None
+    except Exception:
+        return None
+
+
 def parse_device_info(fit_path: Path) -> dict | None:
     """v1.0.7 IMPL-HRV-PROMPT — extract recording device info from a FIT file.
 
@@ -118,7 +142,7 @@ def parse_device_info(fit_path: Path) -> dict | None:
                 m_raw = None
             if m_raw is None:
                 try:
-                    m_raw = msg.get_value("manufacturer")
+                    m_raw = fit_field(msg, "manufacturer")
                 except Exception:
                     m_raw = None
             if m_raw is not None:
@@ -135,7 +159,7 @@ def parse_device_info(fit_path: Path) -> dict | None:
                 gp_raw = None
             if gp_raw is None:
                 try:
-                    gp_raw = msg.get_value("garmin_product")
+                    gp_raw = fit_field(msg, "garmin_product")
                 except Exception:
                     gp_raw = None
             if gp_raw is not None:
@@ -206,7 +230,7 @@ def parse_rr_intervals(fit_path: Path) -> list[float]:
             except Exception:
                 # Some fit_tool versions only expose via get_value.
                 try:
-                    t = msg.get_value("time")
+                    t = fit_field(msg, "time")
                 except Exception:
                     t = None
             if t is None:
@@ -264,7 +288,7 @@ def read_session_sport(fit_path: Path) -> "str | None":
                 sp = msg.sport
             except Exception:
                 try:
-                    sp = msg.get_value("sport")
+                    sp = fit_field(msg, "sport")
                 except Exception:
                     sp = None
             if sp is None:
@@ -320,7 +344,7 @@ def parse_record_streams(fit_path: Path) -> "dict | None":
         except Exception:
             pass
         try:
-            return msg.get_value(name)
+            return fit_field(msg, name)
         except Exception:
             return None
 

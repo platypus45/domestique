@@ -5,7 +5,7 @@
       "name": "domestique",
       "runtimeExecutable": "python3",
       "runtimeArgs": [
-        "app.py"
+        "src/app.py"
       ],
       "port": 8080
     },
@@ -13,7 +13,7 @@
       "name": "domestique-preview",
       "runtimeExecutable": "python3.12",
       "runtimeArgs": [
-        "scripts/dev_preview.py"
+        "src/scripts/dev_preview.py"
       ],
       "port": 8090,
       "autoPort": false

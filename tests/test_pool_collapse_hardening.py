@@ -194,6 +194,29 @@ def test_diag_health_reports_pool_health():
     assert ph.get("collapse_reason") is None
 
 
+# ── v3.11.3: OAuth readiness surfaced (booleans only) ────────────────────────
+
+def test_diag_health_reports_oauth_readiness():
+    from fastapi.testclient import TestClient
+    import app as app_module
+    app_module._DIAG_HEALTH_CACHE["result"] = None
+    app_module._DIAG_HEALTH_CACHE["ts"] = 0.0
+    client = TestClient(app_module.app)
+    r = client.get("/api/diag/health")
+    assert r.status_code == 200
+    oa = r.json()["checks"].get("icu_oauth")
+    assert oa is not None
+    assert isinstance(oa["secret_loaded"], bool)
+    assert oa["client_id"]
+    assert oa["redirect_uri"].startswith("http://127.0.0.1:")
+    # The secret itself must never appear in the payload.
+    body = r.text
+    import config
+    sec = getattr(config, "ICU_OAUTH_CLIENT_SECRET", "")
+    if sec:
+        assert sec not in body
+
+
 # ── D5: UI honesty — unmatched marker present in the title cascade ───────────
 
 def test_calendar_title_marks_unmatched_sessions():
@@ -204,3 +227,16 @@ def test_calendar_title_marks_unmatched_sessions():
     i = html.find("function calCardTitle(")
     assert i > 0
     assert "no workout matched" in html[i:i + 2500]
+
+
+# ── v3.11.3: the rider's protocol choice survives a plan rebuild ─────────────
+
+def test_ftp_test_type_round_trips_through_session_objects():
+    import app as app_module
+    src = {"day": "2026-09-04", "day_name": "Fri", "session_type": "ftp_test",
+           "duration_min": 35, "tss_estimate": 60.0, "description": "",
+           "zwo_file": "ftp_test_ramp_ladder21_200pct_35min.zwo",
+           "ftp_test_type": "ramp"}
+    ps = app_module._planned_session_from_json(src)
+    out = app_module._planned_session_to_json(ps)
+    assert out.get("ftp_test_type") == "ramp"

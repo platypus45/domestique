@@ -39,6 +39,38 @@ for _env_path in _env_candidates:
 
 import asyncio
 import logging
+from fit_activity import fit_field as _fit_val  # v3.11.3 fit-tool compat reader
+
+def _icu_verify():
+    """v3.11.3 — TLS trust for every httpx call to intervals.icu / GitHub.
+
+    httpx verifies against certifi ONLY. On a Windows machine where HTTPS is
+    inspected (antivirus "HTTPS scanning", a corporate proxy) the server
+    certificate is re-signed by a root that lives in the Windows certificate
+    store but not in certifi — browsers trust it, our OAuth token exchange
+    failed with CERTIFICATE_VERIFY_FAILED (Windows rider, v3.11.2). urllib
+    (the sync path) never had this problem: the default context loads the OS
+    store as well. Give httpx the same union: certifi + the OS trust store.
+    """
+    global _ICU_VERIFY_CTX
+    try:
+        return _ICU_VERIFY_CTX
+    except NameError:
+        pass
+    import ssl
+    ctx = ssl.create_default_context()
+    try:
+        import certifi
+        ctx.load_verify_locations(cafile=certifi.where())
+    except Exception:
+        pass
+    try:
+        ctx.load_default_certs()  # Windows CA/ROOT stores, macOS keychain, Linux dirs
+    except Exception:
+        pass
+    _ICU_VERIFY_CTX = ctx
+    return ctx
+
 import log_config
 _log = log_config.get_logger("app")
 log = log_config.get_logger(__name__)
@@ -531,6 +563,14 @@ def _apply_profile_paths() -> None:
     global WORKOUT_DIR, GPX_DIR
     wp: Path = _BUNDLED_WORKOUT_DIR
     gp: Path = _BUNDLED_GPX_DIR
+    # v3.11.3 multi-profile screen: the 60-s Diagnostics snapshot is per
+    # profile (plan readable, pool_health.workout_dir) — drop it on switch so
+    # the next call never reports the previous profile's state.
+    try:
+        _DIAG_HEALTH_CACHE["result"] = None
+        _DIAG_HEALTH_CACHE["ts"] = 0.0
+    except Exception:
+        pass
     try:
         from profile_manager import ProfileManager
         pm = ProfileManager.get()
@@ -986,7 +1026,7 @@ def setup_test_icu(body: dict):
     import httpx
     try:
         url = f"https://intervals.icu/api/v1/athlete/{athlete_id}"
-        resp = httpx.get(url, auth=("API_KEY", api_key), timeout=10)
+        resp = httpx.get(url, auth=("API_KEY", api_key), timeout=10, verify=_icu_verify())
         if resp.status_code == 401:
             return {"ok": False, "error": "Invalid API key. Check your credentials."}
         if resp.status_code == 404:
@@ -999,7 +1039,7 @@ def setup_test_icu(body: dict):
         weight = data.get("weight")
         try:
             w_url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/wellness?oldest=2025-01-01&newest=2026-12-31"
-            w_resp = httpx.get(w_url, auth=("API_KEY", api_key), timeout=10)
+            w_resp = httpx.get(w_url, auth=("API_KEY", api_key), timeout=10, verify=_icu_verify())
             if w_resp.status_code == 200:
                 for w in reversed(w_resp.json()):
                     si = w.get("sportInfo", [])
@@ -1080,7 +1120,7 @@ def setup_check_activities(body: dict):
     try:
         url = (f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities"
                f"?oldest={oldest}&newest={newest}")
-        resp = httpx.get(url, auth=("API_KEY", api_key), timeout=15)
+        resp = httpx.get(url, auth=("API_KEY", api_key), timeout=15, verify=_icu_verify())
         if resp.status_code in (401, 403):
             return {"ok": False, "error": "Authentication failed — check your API key."}
         if resp.status_code != 200:
@@ -1178,7 +1218,7 @@ def setup_icu_hr(athlete_id: str = Query(""), api_key: str = Query("")):
         _new = (_date.today() + _td(days=1)).isoformat()
         _old = (_date.today() - _td(days=365)).isoformat()
         url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities?oldest={_old}&newest={_new}"
-        resp = httpx.get(url, auth=("API_KEY", api_key), timeout=15)
+        resp = httpx.get(url, auth=("API_KEY", api_key), timeout=15, verify=_icu_verify())
         if resp.status_code != 200:
             return {"lthr": None, "max_hr": None}
         activities = resp.json()
@@ -4979,7 +5019,7 @@ def _v136_extract_fit_power_series(fit_path: Path) -> list:
             if type(msg).__name__ != "RecordMessage":
                 continue
             try:
-                pw = msg.get_value("power")
+                pw = _fit_val(msg, "power")
                 out.append(int(pw) if pw is not None else 0)
             except Exception:
                 out.append(0)
@@ -9022,16 +9062,31 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
         if not getattr(config, "ICU_OAUTH_CLIENT_SECRET", ""):
             _log.error("EVENT=icu_oauth_no_secret — client_secret missing from this "
                        "build (.oauth.env not bundled); token exchange will fail")
-        resp = httpx.post(config.ICU_OAUTH_TOKEN_URL, data={
-            "client_id": config.ICU_OAUTH_CLIENT_ID,
-            "client_secret": config.ICU_OAUTH_CLIENT_SECRET,
-            "code": code,
-        }, timeout=15)
+        # v3.11.3: PHASE-SPECIFIC failure codes. Every failure below used to
+        # collapse into one "token exchange failed" — including a token that
+        # exchanged fine but could not be SAVED (profile-folder permissions)
+        # and an athlete-change purge that raised. A rider's screenshot then
+        # said nothing about which step broke. Each phase now names itself.
+        try:
+            resp = httpx.post(config.ICU_OAUTH_TOKEN_URL, data={
+                "client_id": config.ICU_OAUTH_CLIENT_ID,
+                "client_secret": config.ICU_OAUTH_CLIENT_SECRET,
+                "code": code,
+            }, timeout=15, verify=_icu_verify())
+        except httpx.TransportError as e:
+            # DNS / TLS / proxy / connection refused — the request never got an
+            # answer. Certificate stores and corporate proxies live here.
+            _log.warning("EVENT=icu_oauth_network error=%s", str(e)[:200])
+            return _back("icu=error&reason=network")
         if resp.status_code != 200:
             _log.warning("EVENT=icu_oauth_exchange_http status=%s body=%s",
                          resp.status_code, (resp.text or "")[:200])
-            raise RuntimeError(f"token endpoint returned {resp.status_code}")
-        tok = resp.json()
+            return _back(f"icu=error&reason=exchange&status={int(resp.status_code)}")
+        try:
+            tok = resp.json()
+        except ValueError:
+            _log.warning("EVENT=icu_oauth_bad_json body=%s", (resp.text or "")[:200])
+            return _back("icu=error&reason=token")
         access_token = tok.get("access_token")
         athlete = tok.get("athlete") or {}
         athlete_id = str(athlete.get("id") or "")
@@ -9053,7 +9108,7 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
             try:
                 r2 = httpx.get("https://intervals.icu/api/v1/athlete/0",
                                headers={"Authorization": f"Bearer {access_token}"},
-                               timeout=10)
+                               timeout=10, verify=_icu_verify())
                 if r2.status_code == 200:
                     a2 = r2.json() or {}
                     athlete_name = athlete_name or (a2.get("name") or "").strip()
@@ -9079,11 +9134,21 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
                 # Nothing saved yet — a clean retry re-runs the whole flow.
                 _log.warning("EVENT=icu_oauth_purge_busy profile=%s", target_pid)
                 return _back("icu=error&reason=busy")
-        _save_icu_token_for_profile(
-            pm, target_pid, access_token, athlete_id or None, athlete_name or None,
-            refresh_token=tok.get("refresh_token"),
-            expires_in=tok.get("expires_in"),
-            granted_scopes=granted_scopes or None)
+            except Exception:
+                _log.exception("EVENT=icu_oauth_purge_failed profile=%s", target_pid)
+                return _back("icu=error&reason=purge")
+        try:
+            _save_icu_token_for_profile(
+                pm, target_pid, access_token, athlete_id or None, athlete_name or None,
+                refresh_token=tok.get("refresh_token"),
+                expires_in=tok.get("expires_in"),
+                granted_scopes=granted_scopes or None)
+        except Exception:
+            # The exchange SUCCEEDED — the token just could not be persisted
+            # (profile folder permissions / disk). The one-time code is spent,
+            # so the rider must authorise again after fixing the folder.
+            _log.exception("EVENT=icu_oauth_save_failed profile=%s", target_pid)
+            return _back("icu=error&reason=save")
         if target_pid == pm.active_id:
             # Unshadow stale module-level config.ICU_* so the proxy re-resolves
             # to the freshly-saved token immediately (same fix as the API-key
@@ -9098,6 +9163,8 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
                   target_pid, athlete_id or "?", athlete_name or "")
         return _back("icu=connected")
     except Exception:
+        # Anything not caught by a phase above (e.g. a raise from inside a
+        # mocked/unknown step) keeps the historical catch-all code.
         _log.exception("ICU OAuth token exchange failed")
         return _back("icu=error&reason=exchange")
 
@@ -9643,7 +9710,7 @@ def api_update_check(force: int = Query(0)):
         return _overlay_live_current(out)
 
     try:
-        resp = httpx.get(_GITHUB_RELEASES_LATEST_URL, timeout=10)
+        resp = httpx.get(_GITHUB_RELEASES_LATEST_URL, timeout=10, verify=_icu_verify())
         if resp.status_code != 200:
             raise RuntimeError("GitHub returned status " + str(resp.status_code))
         rel = resp.json()
@@ -14902,8 +14969,11 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int,
                     raw_steps.append(("active", on_d, on_p, on_p))
                     raw_steps.append(("rest", off_d, off_p, off_p))
             elif tag == "FreeRide":
-                # No target in ZWO; default to 50% FTP so the head unit isn't blank.
-                raw_steps.append(("active", dur, 0.5, 0.5))
+                # v3.11.3: a FreeRide is an OPEN step — no target at all. The old
+                # "default to 50% FTP so the head unit isn't blank" turned the
+                # 20-min / 60-min FTP-test blocks into a 50%-of-FTP prescription
+                # on Garmin/Wahoo — worse than erg-locking at the old FTP.
+                raw_steps.append(("active", dur, None, None))
             # Anything else (e.g. <textevent>) is ignored.
 
     INTENSITY_MAP = {
@@ -14954,6 +15024,13 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int,
             "rest": "Recovery", "active": "Work",
         }.get(intensity_kind, "Work")
 
+        if p_start is None:
+            # FreeRide → OPEN target (duration only), in power AND hr mode: the
+            # rider is measuring their FTP here, not riding a number.
+            step.target_type = WorkoutStepTarget.OPEN
+            step.workout_step_name = "Free ride"
+            builder.add(step)
+            continue
         if hr_mode:
             # hr target_mode (IP_HR_ONLY C8): HEART_RATE targets where HR can
             # guide, OPEN + RPE-in-name where it can't (short / supra-threshold).
@@ -14993,7 +15070,10 @@ import dataclasses as _dataclasses
 
 # FC5a (v2.5.0): "auto_moved" is the auto-reschedule provenance marker (never
 # user_moved — that pin is reserved for user drags). JSON-only like variation.
-_PS_JSON_ONLY_KEYS = ("variation", "adapted_reason", "auto_moved")
+# v3.11.3: + ftp_test_type — the rider's explicit protocol choice was dropped by
+# every plan rebuild (reforecast / tab-open auto-recalc), so the day modal
+# snapped back to "20-minute · selected" after a close/reopen.
+_PS_JSON_ONLY_KEYS = ("variation", "adapted_reason", "auto_moved", "ftp_test_type")
 
 
 def _planned_session_from_json(s: dict) -> "tp.PlannedSession":
@@ -18152,10 +18232,14 @@ def _ftp_test_family(fname: str) -> "str | None":
 # 8%/min 43-min file, whose steeper steps over-read FTP for anaerobic riders
 # even beyond the ramp's baseline bias. Fallback duration keeps the endpoint
 # alive if the preferred file is ever renamed.
+# (file, duration_min, nominal TSS). v3.11.3: the measured blocks are FreeRide
+# (no target — a test must not erg-lock at the OLD FTP), so the library's
+# computed TSS under-counts them; the nominal is the honest load of a real
+# attempt and wins when the file's number is lower.
 _FTP_TEST_PREFERRED_FILE = {
-    "ramp": ("ftp_test_ramp_ladder21_200pct_35min.zwo", 35),
-    "coggan_20min": ("ftp_test_coggan_3x1min-1min_95pct_59min.zwo", 59),
-    "sixty_min": ("ftp_test_60min_steady_100pct_86min.zwo", 86),
+    "ramp": ("ftp_test_ramp_ladder21_200pct_35min.zwo", 35, 60),
+    "coggan_20min": ("ftp_test_coggan_3x1min-1min_95pct_59min.zwo", 59, 75),
+    "sixty_min": ("ftp_test_60min_steady_86min.zwo", 86, 100),
 }
 
 
@@ -18189,7 +18273,7 @@ async def api_plan_ftp_test_type(request: Request):
         # W1b: serve the family's PREFERRED protocol file (ramp = the 6%/min
         # ladder detect_ramp_halt reconstructs); duration-closest is only the
         # renamed-file fallback.
-        pref_file, want_dur = _FTP_TEST_PREFERRED_FILE[test_type]
+        pref_file, want_dur, nominal_tss = _FTP_TEST_PREFERRED_FILE[test_type]
         cands = [w for w in tp.load_workout_library()
                  if _ftp_test_family(w.get("File", "")) == test_type]
         if not cands:
@@ -18203,15 +18287,25 @@ async def api_plan_ftp_test_type(request: Request):
         target["duration_min"] = int(pick.get("Duration(min)") or want_dur)
         # W1b: keep the load forecast honest — the hour-of-power carries ~2×
         # the TSS of a ramp, and reforecast/eval read tss_estimate.
-        if pick.get("TSS"):
-            target["tss_estimate"] = round(float(pick["TSS"]))
+        target["tss_estimate"] = max(round(float(pick.get("TSS") or 0)), nominal_tss)
         target["ftp_test_type"] = test_type
         target["user_swapped"] = True   # the rider's deliberate choice
         tp.atomic_write_plan(json_path, plan)
+        # v3.11.3: hand back the FILE-derived enrichment the day modal reads
+        # (display_name / zwo_duration_min / zwo_tss) so the panel refreshes
+        # without a full plan reload.
+        try:
+            _dn, _zdur = _session_naming_lookup(
+                pick["File"], tp._load_content_classifications() or {},
+                {pick["File"]: pick})
+        except Exception:
+            _dn, _zdur = (pick.get("Name") or pick["File"]), int(pick.get("Duration(min)") or 0)
         return {"ok": True, "test_type": test_type, "zwo_file": pick["File"],
                 "zwo_name": target["zwo_name"],
                 "duration_min": target["duration_min"],
-                "tss_estimate": target.get("tss_estimate")}
+                "tss_estimate": target.get("tss_estimate"),
+                "display_name": _dn, "zwo_duration_min": _zdur,
+                "zwo_tss": pick.get("TSS")}
     except Exception:
         _log.exception("ftp-test-type swap failed")
         return JSONResponse({"detail": "ftp-test-type failed"}, 500)
@@ -18750,7 +18844,7 @@ def _parse_fit_stats(fit_path: Path) -> dict:
             if mtype == "RecordMessage":
                 sample_count += 1
                 try:
-                    _ts = msg.get_value("timestamp")
+                    _ts = _fit_val(msg, "timestamp")
                     if _ts is not None:
                         _tsf = float(_ts)
                         # fit_tool serves ms-since-epoch; tolerate seconds too.
@@ -18761,7 +18855,7 @@ def _parse_fit_stats(fit_path: Path) -> dict:
                     record_ts.append(None)
                 p_val = 0
                 try:
-                    pw = msg.get_value("power")
+                    pw = _fit_val(msg, "power")
                     if pw is not None:
                         p = int(pw)
                         power_sum += p
@@ -18773,7 +18867,7 @@ def _parse_fit_stats(fit_path: Path) -> dict:
                     pass
                 power_series.append(p_val)
                 try:
-                    hr = msg.get_value("heart_rate")
+                    hr = _fit_val(msg, "heart_rate")
                     if hr is not None:
                         h = int(hr)
                         hr_sum += h
@@ -18784,7 +18878,7 @@ def _parse_fit_stats(fit_path: Path) -> dict:
                     pass
                 c_val = 0
                 try:
-                    cad = msg.get_value("cadence")
+                    cad = _fit_val(msg, "cadence")
                     if cad is not None:
                         cad_sum += int(cad)
                         cad_n += 1
@@ -18793,48 +18887,48 @@ def _parse_fit_stats(fit_path: Path) -> dict:
                     pass
                 cadence_series.append(c_val)
                 try:
-                    sp = msg.get_value("speed")
+                    sp = _fit_val(msg, "speed")
                     if sp is not None and float(sp) > speed_max:
                         speed_max = float(sp)
                 except Exception:
                     pass
                 try:
-                    d = msg.get_value("distance")
+                    d = _fit_val(msg, "distance")
                     if d is not None:
                         distance_m = max(distance_m, float(d))
                 except Exception:
                     pass
             elif mtype == "SessionMessage":
                 try:
-                    v = msg.get_value("total_timer_time")
+                    v = _fit_val(msg, "total_timer_time")
                     if v is not None:
                         duration_s = int(round(float(v)))
                 except Exception:
                     pass
                 try:
-                    v = msg.get_value("total_distance")
+                    v = _fit_val(msg, "total_distance")
                     if v is not None:
                         distance_m = max(distance_m, float(v))
                 except Exception:
                     pass
                 try:
-                    v = msg.get_value("total_work")
+                    v = _fit_val(msg, "total_work")
                     if v is not None:
                         total_kj = float(v) / 1000.0
                 except Exception:
                     pass
                 try:
-                    v = msg.get_value("training_stress_score")
+                    v = _fit_val(msg, "training_stress_score")
                     if v is not None:
                         tss = float(v)
                 except Exception:
                     pass
                 try:
-                    sport = str(msg.get_value("sport") or "")
+                    sport = str(_fit_val(msg, "sport") or "")
                 except Exception:
                     sport = None
                 try:
-                    v = msg.get_value("start_time")
+                    v = _fit_val(msg, "start_time")
                     if v is not None:
                         start_time = str(v)
                 except Exception:
@@ -18842,7 +18936,7 @@ def _parse_fit_stats(fit_path: Path) -> dict:
             elif mtype == "WorkoutMessage":
                 try:
                     v = (getattr(msg, "workout_name", None)
-                         or msg.get_value("wkt_name"))
+                         or _fit_val(msg, "wkt_name"))
                     if v:
                         fit_workout_name = str(v)
                 except Exception:
@@ -20871,19 +20965,19 @@ def _build_fit_samples(fit_path: Path) -> dict:
             if type(msg).__name__ != "RecordMessage":
                 continue
             try:
-                pwr.append(int(msg.get_value("power") or 0))
+                pwr.append(int(_fit_val(msg, "power") or 0))
             except Exception:
                 pwr.append(0)
             try:
-                hr.append(int(msg.get_value("heart_rate") or 0))
+                hr.append(int(_fit_val(msg, "heart_rate") or 0))
             except Exception:
                 hr.append(0)
             try:
-                cad.append(int(msg.get_value("cadence") or 0))
+                cad.append(int(_fit_val(msg, "cadence") or 0))
             except Exception:
                 cad.append(0)
             try:
-                elev.append(float(msg.get_value("altitude") or 0))
+                elev.append(float(_fit_val(msg, "altitude") or 0))
             except Exception:
                 elev.append(0)
     except Exception:
@@ -21126,6 +21220,98 @@ def api_ride_detail(ride_id: str):
     except Exception:
         pass
     return ride
+
+
+def _fit_power_series_1hz(fit_path: Path) -> list[int]:
+    """1 Hz power series from a FIT (same record walk + resampling the
+    detector uses) — for the FTP-test analysis view only."""
+    from fit_tool.fit_file import FitFile
+    ff = FitFile.from_file(str(fit_path))
+    ts, pw = [], []
+    for rec in ff.records:
+        msg = rec.message
+        if type(msg).__name__ != "RecordMessage":
+            continue
+        try:
+            _t = _fit_val(msg, "timestamp")
+            _tf = float(_t) if _t is not None else None
+            ts.append((_tf / 1000.0 if _tf and _tf > 1e11 else _tf))
+        except Exception:
+            ts.append(None)
+        try:
+            pw.append(int(_fit_val(msg, "power") or 0))
+        except Exception:
+            pw.append(0)
+    return _resample_series_1hz(ts, pw)
+
+
+@app.get("/api/ride/{ride_id}/ftp-test-analysis")
+def api_ride_ftp_test_analysis(ride_id: str):
+    """v3.11.3 — the FTP-test analysis view: the recognised protocol, the
+    1 Hz power trace, and WHERE the number came from (scored window, the
+    clearing effort, the ramp halt point), so the rider sees the evidence
+    behind a suggestion instead of a bare number. Read-only."""
+    safe_id = re.sub(r'[^\w.\-]', '_', ride_id)
+    suggestion = None
+    halted = False
+    halt_step = None
+    series: list = []
+    source = None
+    fit_path = _rides_fit_dir() / f"{safe_id}.fit"
+    if fit_path.exists():
+        source = "fit"
+        stats = _parse_fit_stats(fit_path)
+        suggestion = stats.get("ftp_test_suggestion")
+        halted = bool(stats.get("ftp_test_halted"))
+        halt_step = stats.get("ftp_test_halt_step")
+        try:
+            series = _fit_power_series_1hz(fit_path)
+        except Exception as e:
+            _log.debug(f"ftp-test-analysis: FIT series failed: {e}")
+    elif ride_id.startswith("icu_"):
+        import ride_storage
+        icu = ride_storage.get_icu_ride(ride_id)
+        if not icu:
+            return JSONResponse({"error": "Ride not found"}, 404)
+        source = "icu"
+        suggestion = icu.get("ftp_test_suggestion")
+        halted = bool(icu.get("ftp_test_halted"))
+        halt_step = icu.get("ftp_test_halt_step")
+        streams = icu.get("streams") or {}
+        raw = streams.get("watts") or streams.get("power") or []
+        series = [int(w or 0) for w in raw] if isinstance(raw, list) else []
+    else:
+        return JSONResponse({"error": "Ride not found"}, 404)
+    if not suggestion:
+        return JSONResponse({"error": "no FTP-test suggestion on this ride"}, 404)
+
+    total_s = len(series)
+    # Downsample for the chart (≤ 1800 points), keeping seconds addressable.
+    step = max(1, -(-total_s // 1800)) if total_s else 1   # ceil → ≤ 1800 points
+    ds = []
+    for i in range(0, total_s, step):
+        chunk = series[i:i + step]
+        ds.append(int(round(sum(chunk) / len(chunk))) if chunk else 0)
+
+    windows = []
+    ws, we = suggestion.get("window_start_s"), suggestion.get("window_end_s")
+    kind = suggestion.get("method") or suggestion.get("type")
+    if ws is not None and we is not None:
+        label = {"coggan_20min": "20-min block (scored)",
+                 "ramp": "best sustained minute (scored)",
+                 "sixty_min": "hour plateau (scored)"}.get(kind, "scored window")
+        windows.append({"kind": "scored", "start_s": int(ws), "end_s": int(we), "label": label})
+    if suggestion.get("blowout_start_s") is not None:
+        windows.append({"kind": "blowout", "start_s": int(suggestion["blowout_start_s"]),
+                        "end_s": int(suggestion["blowout_end_s"]),
+                        "label": "5-min clearing effort"})
+    return {
+        "ok": True, "ride_id": ride_id, "source": source,
+        "suggestion": suggestion, "halted": halted, "halt_step": halt_step,
+        "halt_at_s": suggestion.get("halt_at_s"),
+        "total_s": total_s, "step_s": step, "series": ds, "windows": windows,
+        "prior_ftp": suggestion.get("prior_ftp"),
+    }
 
 
 @app.post("/api/ride/{ride_id}/ftp-test-review")
@@ -21878,6 +22064,15 @@ def api_diag_health(request: Request):
         checks["plan_readable"] = {"ok": False, "code": error_codes.Codes.PLAN_PARSE_CORRUPT, "msg": str(e)[:200]}
     except OSError as e:
         checks["plan_readable"] = {"ok": False, "code": error_codes.Codes.PLAN_LOAD_OS_ERROR, "msg": str(e)[:200]}
+    # v3.11.3: OAuth readiness — the build gates prove .oauth.env is IN the
+    # bundle; this proves the frozen app actually LOADED it (a reporter hit
+    # "token exchange failed" on 3.11.2 and the platform was unknown).
+    # Booleans only — the secret never leaves the process.
+    checks["icu_oauth"] = {
+        "client_id": str(getattr(config, "ICU_OAUTH_CLIENT_ID", "") or ""),
+        "secret_loaded": bool(getattr(config, "ICU_OAUTH_CLIENT_SECRET", "")),
+        "redirect_uri": str(getattr(config, "ICU_OAUTH_REDIRECT_URI", "") or ""),
+    }
     # workout_library
     try:
         lib = tp.load_workout_library()

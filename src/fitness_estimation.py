@@ -347,6 +347,10 @@ def coggan_20min_ftp(power_series: list[int] | list[float]) -> dict | None:
         "value": int(round(best_mean * 0.95)),
         "best_20min": int(round(best_mean)),
         "formula_used": "0.95 * best_20min_mean",
+        # v3.11.3 analysis view: WHERE the number came from (seconds).
+        "window_start_s": int(best_idx),
+        "window_end_s": int(best_idx + window),
+        "factor": 0.95,
     }
 
     # Advisories (ADDITIVE, never block). Built off the RAW window `seg`.
@@ -364,19 +368,25 @@ def coggan_20min_ftp(power_series: list[int] | list[float]) -> dict | None:
     pre_lo = max(0, best_idx - 900)
     pre = powers[pre_lo:best_idx]
     blowout_present = False
+    blowout_at = None
     if len(pre) >= 240:
         w4 = 240
         c = sum(pre[:w4])
         if c / w4 >= 1.05 * block_mean_raw:
             blowout_present = True
+            blowout_at = pre_lo
         else:
             for i in range(1, len(pre) - w4 + 1):
                 c += pre[i + w4 - 1] - pre[i - 1]
                 if c / w4 >= 1.05 * block_mean_raw:
                     blowout_present = True
+                    blowout_at = pre_lo + i
                     break
     if not blowout_present:
         out["blowout_missing"] = True
+    else:
+        out["blowout_start_s"] = int(blowout_at)
+        out["blowout_end_s"] = int(blowout_at + 240)
 
     return out
 
@@ -411,6 +421,7 @@ def ramp_test_ftp(
 
     window = 60
     best = None
+    best_at = 0
     cur = sum(powers[:window])
     for i in range(0, n - window + 1):
         if i > 0:
@@ -429,16 +440,19 @@ def ramp_test_ftp(
             continue
         if best is None or mean_i > best:
             best = mean_i
+            best_at = i
 
     if best is None:
         # No sustained 60-s window (every minute was spiky) — fall back to the
         # plain global best-60s so a detected ramp never returns None.
         cur = sum(powers[:window])
         best = cur / window
+        best_at = 0
         for i in range(1, n - window + 1):
             cur += powers[i + window - 1] - powers[i - 1]
             if cur / window > best:
                 best = cur / window
+                best_at = i
 
     best_mean = best
     out = {
@@ -446,6 +460,9 @@ def ramp_test_ftp(
         "value": int(round(best_mean * 0.75)),
         "best_60s": int(round(best_mean)),
         "formula_used": "0.75 * best_60s_mean",
+        "window_start_s": int(best_at),
+        "window_end_s": int(best_at + window),
+        "factor": 0.75,
     }
 
     # GF4: high measured-Pmax over-read advisory (advisory only, value fixed).
@@ -541,6 +558,9 @@ def sixty_min_ftp(power_series: list[int] | list[float]) -> dict | None:
         "best_60min": int(round(plateau_mean)),
         "plateau_min": plateau_min,
         "formula_used": "1.00 * plateau_mean",
+        "window_start_s": int(lo * 60),
+        "window_end_s": int(hi * 60),
+        "factor": 1.0,
     }
     half = len(seg) // 2
     first_half = sum(seg[:half]) / half
@@ -816,7 +836,9 @@ def evaluate_ftp_test(power_series, cadence_series=None,
     }
     for k in ("best_20min", "best_60s", "best_60min", "plateau_min",
               "pacing_drift", "pacing_drift_pct", "blowout_missing",
-              "factor_band", "likely_overestimate"):
+              "factor_band", "likely_overestimate",
+              "window_start_s", "window_end_s", "factor",
+              "blowout_start_s", "blowout_end_s"):
         if s.get(k) is not None:
             sug[k] = s[k]
     if fallback:
@@ -833,6 +855,7 @@ def evaluate_ftp_test(power_series, cadence_series=None,
         if halt and halt.get("halted"):
             out["ftp_test_halted"] = True
             out["ftp_test_halt_step"] = halt.get("halt_at_step")
+            sug["halt_at_s"] = halt.get("halt_at_sec")
     return out
 
 

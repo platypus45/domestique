@@ -364,7 +364,14 @@ jobs:
               Write-Host "::error::hit pool count=$hitn (<1000) — classification/facts fault inside the bundle"
               exit 1
             }
-            Write-Host "Smoke-test passed: EXE serves version $served, library=$libcount, hit=$hitn"
+            # v3.11.3: the OAuth secret must be LOADED by the frozen app, not just
+            # bundled — a rider reported "token exchange failed" on 3.11.2.
+            if (-not $hb.checks.icu_oauth.secret_loaded) {
+              Dump-Diagnostics
+              Write-Host "::error::frozen app did not load the OAuth client secret — sign-in would fail"
+              exit 1
+            }
+            Write-Host "Smoke-test passed: EXE serves version $served, library=$libcount, hit=$hitn, oauth_secret=loaded"
           } finally {
             # $proc is the cmd.exe wrapper; the EXE is its child. Kill the whole
             # tree (/T) so Domestique.exe doesn't outlive the wrapper.
@@ -655,6 +662,9 @@ jobs:
           [ "$hitn" -ge 1000 ] || fail "hit pool count=$hitn (<1000) — classification/facts fault inside the bundle"
           creason="$(printf '%s' "$hb" | jq -r '.checks.pool_health.collapse_reason // empty')"
           [ -z "$creason" ] || fail "pool collapse inside built artifact: $creason"
+          # v3.11.3: OAuth secret LOADED by the frozen app (not merely bundled).
+          secret_loaded="$(printf '%s' "$hb" | jq -r '.checks.icu_oauth.secret_loaded // false')"
+          [ "$secret_loaded" = "true" ] || fail "frozen app did not load the OAuth client secret — sign-in would fail"
 
           #    ...and the listener must BE the GUI process, not a stage-A leftover.
           PORT_PID="$(ss -ltnp 2>/dev/null | awk '/:22400 /{ if (match($0, /pid=[0-9]+/)) print substr($0, RSTART+4, RLENGTH-4) }' | head -1)"

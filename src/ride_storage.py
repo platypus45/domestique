@@ -56,6 +56,18 @@ _BACKFILL_CARRY_KEYS = ("streams",)
 #                reinterpret old ratings.
 _RIDER_INPUT_CARRY_KEYS = ("rpe", "rpe_at", "rpe_scale")
 
+# v3.11.3 — FIT load sidecars are versioned by the READER that produced them.
+# Every sidecar written before this version was computed from a FIT reader that
+# returned 0 W / 0 bpm for every record (fit_activity.fit_field), so their TSS /
+# power figures are wrong on disk. A sidecar without the current reader_v is
+# recomputed lazily on the next listing; write_fit_load_sidecar carries the
+# rider's RPE across the recompute (the one thing it cannot regenerate).
+FIT_LOAD_READER_V = 2
+
+
+def fit_load_sidecar_is_stale(load) -> bool:
+    return not (isinstance(load, dict) and load.get("reader_v") == FIT_LOAD_READER_V)
+
 # FTP-tests IP W2a — sync-path FTP-test artifacts, computed locally (never in
 # any ICU payload). Two carry classes, mirroring the lessons above:
 #   * detection output (suggestion + flags) — payload-wins semantics like
@@ -894,8 +906,8 @@ def load_all_rides() -> list[dict]:
         # of a ride the importer relayed to intervals.icu. A missing sidecar
         # (pre-W4 import) is lazily computed + persisted once.
         load = read_fit_load_sidecar(f)
-        if load is None:
-            load = write_fit_load_sidecar(f)
+        if load is None or fit_load_sidecar_is_stale(load):
+            load = write_fit_load_sidecar(f) or load
         if isinstance(load, dict):
             if load.get("duration_s"):
                 try:
@@ -1206,6 +1218,7 @@ def write_fit_load_sidecar(fit_path: Path) -> dict | None:
         for k in _RIDER_INPUT_CARRY_KEYS:
             if prior.get(k) is not None:
                 load.setdefault(k, prior[k])
+    load["reader_v"] = FIT_LOAD_READER_V
     try:
         side.write_text(json.dumps(load, indent=2), encoding="utf-8")
     except OSError as e:

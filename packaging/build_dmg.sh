@@ -148,6 +148,36 @@ if ! printf '%s' "$ARCHIVE_LIST" | grep -q "fit_tool.profile.messages.device_inf
 fi
 echo "[1b4/9] FIT-message gate OK — fit_tool message modules bundled"
 
+# 1b5. Runtime gate (v3.11.3): launch the FROZEN app against a throwaway data
+# home on a side port and prove it (a) serves the repo version, (b) loaded the
+# bundled workout library, (c) LOADED the OAuth client secret — 1b3 only proves
+# the file is in the bundle; a rider reported "token exchange failed" on 3.11.2
+# and nothing could say whether the frozen loader had read it. Never touches
+# ~/.domestique and never uses port 22400 (the developer's live instance).
+PROBE_HOME="$(mktemp -d)"; PROBE_PORT=25999
+DOMESTIQUE_HOME="$PROBE_HOME" DOMESTIQUE_PORT="$PROBE_PORT" DOMESTIQUE_SERVER_ONLY=1 \
+    "$FROZEN_EXE" > /tmp/dmg_runtime_probe.log 2>&1 &
+PROBE_PID=$!
+for _i in $(seq 45); do
+    curl -fsS --max-time 2 "http://127.0.0.1:${PROBE_PORT}/api/version" >/dev/null 2>&1 && break
+    sleep 2
+done
+PROBE_VER="$(curl -fsS --max-time 5 "http://127.0.0.1:${PROBE_PORT}/api/version" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null)"
+PROBE_HB="$(curl -fsS --max-time 180 "http://127.0.0.1:${PROBE_PORT}/api/diag/health" 2>/dev/null)"
+kill "$PROBE_PID" >/dev/null 2>&1 || true; sleep 1; rm -rf "$PROBE_HOME"
+PROBE_LIB="$(printf '%s' "$PROBE_HB" | python3 -c 'import json,sys; print(json.load(sys.stdin)["checks"]["workout_library"]["count"])' 2>/dev/null || echo 0)"
+PROBE_SECRET="$(printf '%s' "$PROBE_HB" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["checks"]["icu_oauth"]["secret_loaded"]).lower())' 2>/dev/null || echo false)"
+if [ "$PROBE_VER" != "$REPO_VER" ]; then
+    echo "FATAL: frozen app served version '$PROBE_VER' (expected $REPO_VER) — see /tmp/dmg_runtime_probe.log" >&2; exit 1
+fi
+if [ "${PROBE_LIB:-0}" -lt 4000 ]; then
+    echo "FATAL: frozen app loaded $PROBE_LIB workouts (<4000) — library unreachable at runtime" >&2; exit 1
+fi
+if [ "$PROBE_SECRET" != "true" ]; then
+    echo "FATAL: frozen app did NOT load the OAuth client secret — intervals.icu sign-in would fail" >&2; exit 1
+fi
+echo "[1b5/9] Runtime gate OK — version $PROBE_VER, library $PROBE_LIB, OAuth secret loaded"
+
 # 1c. HR-mode FIT smoke (v2.5.0 P1.5) — the desktop save path builds FIT bytes
 # in-process (launcher.JsApi save_fit bridge), a path the web tests can't reach.
 # Prove the bundled code produces HEART_RATE-target steps for view='hr' before

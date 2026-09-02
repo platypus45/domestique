@@ -144,6 +144,80 @@ class TestRoutes(unittest.TestCase):
         self.assertIn("icu=error", r.headers["location"])
         self.assertIn("reason=exchange", r.headers["location"])
 
+    # v3.11.3 — phase-specific failure codes. One screenshot ("token exchange
+    # failed") used to cover five different faults; each now names itself.
+
+    def _pm_with_profile(self):
+        from profile_manager import ProfileManager as _PM
+        return _PM.get()
+
+    def test_callback_http_rejection_carries_status(self):
+        app_module._icu_oauth_states["S5"] = {"profile_id": "p", "ts": 9e12}
+
+        class _Resp:
+            status_code = 404
+            text = '{"status":404,"error":"Code not found (expired?)"}'
+            def json(self):
+                return {}
+
+        pm = self._pm_with_profile()
+        with mock.patch("httpx.post", return_value=_Resp()), \
+             mock.patch.object(pm, "list_profiles", return_value=[{"id": "p"}]):
+            r = self.client.get("/oauth/icu/callback?code=C&state=S5", follow_redirects=False)
+        loc = r.headers["location"]
+        self.assertIn("reason=exchange", loc)
+        self.assertIn("status=404", loc)
+
+    def test_callback_transport_error_is_network(self):
+        import httpx
+        app_module._icu_oauth_states["S6"] = {"profile_id": "p", "ts": 9e12}
+        pm = self._pm_with_profile()
+        with mock.patch("httpx.post", side_effect=httpx.ConnectError("refused")), \
+             mock.patch.object(pm, "list_profiles", return_value=[{"id": "p"}]):
+            r = self.client.get("/oauth/icu/callback?code=C&state=S6", follow_redirects=False)
+        self.assertIn("reason=network", r.headers["location"])
+
+    def test_callback_save_failure_is_named_not_exchange(self):
+        # The exchange SUCCEEDED; persisting the token raised (profile-folder
+        # permissions). Must not be reported as an exchange failure.
+        app_module._icu_oauth_states["S7"] = {"profile_id": "p", "ts": 9e12}
+
+        class _Resp:
+            status_code = 200
+            def json(self):
+                return {"access_token": "ATOK", "athlete": {"id": "i1", "name": "Z"}}
+
+        pm = self._pm_with_profile()
+        with mock.patch("httpx.post", return_value=_Resp()), \
+             mock.patch.object(pm, "list_profiles", return_value=[{"id": "p"}]), \
+             mock.patch.object(app_module, "_icu_profile_stored_athlete_id",
+                               return_value=""), \
+             mock.patch.object(app_module, "_save_icu_token_for_profile",
+                               side_effect=OSError("read-only profile dir")):
+            r = self.client.get("/oauth/icu/callback?code=C&state=S7", follow_redirects=False)
+        loc = r.headers["location"]
+        self.assertIn("reason=save", loc)
+        self.assertNotIn("reason=exchange", loc)
+
+    def test_callback_purge_failure_is_named(self):
+        app_module._icu_oauth_states["S8"] = {"profile_id": "p", "ts": 9e12}
+
+        class _Resp:
+            status_code = 200
+            def json(self):
+                return {"access_token": "ATOK", "athlete": {"id": "new", "name": "Z"}}
+
+        import db as _db
+        pm = self._pm_with_profile()
+        with mock.patch("httpx.post", return_value=_Resp()), \
+             mock.patch.object(pm, "list_profiles", return_value=[{"id": "p"}]), \
+             mock.patch.object(app_module, "_icu_profile_stored_athlete_id",
+                               return_value="old"), \
+             mock.patch.object(_db, "purge_profile_data",
+                               side_effect=RuntimeError("db locked")):
+            r = self.client.get("/oauth/icu/callback?code=C&state=S8", follow_redirects=False)
+        self.assertIn("reason=purge", r.headers["location"])
+
     def test_callback_deleted_profile_errors(self):
         # AC3a: the state's profile was deleted mid-flow → error redirect,
         # NEVER a bind to whichever profile is active now.
@@ -202,3 +276,14 @@ class TestRoutes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# v3.11.3 — httpx must trust certifi AND the OS store (Windows AV/proxy TLS
+# inspection re-signs intervals.icu with a root only the OS store knows).
+def test_icu_verify_context_has_certifi_and_os_roots():
+    import ssl
+    ctx = app_module._icu_verify()
+    assert isinstance(ctx, ssl.SSLContext)
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.cert_store_stats()["x509_ca"] > 100   # certifi loaded
+    assert app_module._icu_verify() is ctx              # cached

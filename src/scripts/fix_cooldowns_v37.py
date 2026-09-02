@@ -79,7 +79,13 @@ def prev_end_power(elements, idx) -> "float | None":
     for k in range(idx - 1, -1, -1):
         tag = elements[k].tag.split("}")[-1]
         if tag == "FreeRide":
-            continue
+            # v3.11.3: a free ride right before the cooldown means the rider
+            # was at whatever they could hold (the FTP tests: a maximal
+            # effort), not at the easy segment further back — the power the
+            # cooldown steps down FROM is unknown, so the direction rule
+            # cannot apply. Walking past it to an earlier easy segment
+            # falsely flagged every test file's cooldown as "stepping up".
+            return None
         if tag == "SteadyState":
             v = elements[k].get("Power")
             return float(v) if v is not None else None

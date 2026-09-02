@@ -177,6 +177,17 @@ def _spec_eval(expr_src: str, plat: str, ns_extra: dict | None = None):
 def _spec_ns(plat: str) -> dict:
     src, tree = _spec_tree()
     ns: dict = {}
+    # v3.11.2: the hiddenimports list splices in
+    # `*collect_submodules("fit_tool.profile.messages")` (the 90 FIT message
+    # modules the static scan never followed). Evaluate it with the real hook
+    # when PyInstaller is importable so the list is faithful; otherwise an
+    # empty splice keeps the Qt/PyQt assertions evaluable.
+    try:
+        from PyInstaller.utils.hooks import collect_submodules
+    except Exception:  # pragma: no cover — PyInstaller absent in this env
+        def collect_submodules(*_a, **_k):
+            return []
+    ns["collect_submodules"] = collect_submodules
     for node in tree.body:
         if (isinstance(node, ast.Assign)
                 and any(isinstance(t, ast.Name) and t.id == "_LINUX"

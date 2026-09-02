@@ -276,3 +276,14 @@ class TestRoutes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# v3.11.3 — httpx must trust certifi AND the OS store (Windows AV/proxy TLS
+# inspection re-signs intervals.icu with a root only the OS store knows).
+def test_icu_verify_context_has_certifi_and_os_roots():
+    import ssl
+    ctx = app_module._icu_verify()
+    assert isinstance(ctx, ssl.SSLContext)
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.cert_store_stats()["x509_ca"] > 100   # certifi loaded
+    assert app_module._icu_verify() is ctx              # cached

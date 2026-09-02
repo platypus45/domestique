@@ -40,6 +40,37 @@ for _env_path in _env_candidates:
 import asyncio
 import logging
 from fit_activity import fit_field as _fit_val  # v3.11.3 fit-tool compat reader
+
+def _icu_verify():
+    """v3.11.3 — TLS trust for every httpx call to intervals.icu / GitHub.
+
+    httpx verifies against certifi ONLY. On a Windows machine where HTTPS is
+    inspected (antivirus "HTTPS scanning", a corporate proxy) the server
+    certificate is re-signed by a root that lives in the Windows certificate
+    store but not in certifi — browsers trust it, our OAuth token exchange
+    failed with CERTIFICATE_VERIFY_FAILED (Windows rider, v3.11.2). urllib
+    (the sync path) never had this problem: the default context loads the OS
+    store as well. Give httpx the same union: certifi + the OS trust store.
+    """
+    global _ICU_VERIFY_CTX
+    try:
+        return _ICU_VERIFY_CTX
+    except NameError:
+        pass
+    import ssl
+    ctx = ssl.create_default_context()
+    try:
+        import certifi
+        ctx.load_verify_locations(cafile=certifi.where())
+    except Exception:
+        pass
+    try:
+        ctx.load_default_certs()  # Windows CA/ROOT stores, macOS keychain, Linux dirs
+    except Exception:
+        pass
+    _ICU_VERIFY_CTX = ctx
+    return ctx
+
 import log_config
 _log = log_config.get_logger("app")
 log = log_config.get_logger(__name__)
@@ -987,7 +1018,7 @@ def setup_test_icu(body: dict):
     import httpx
     try:
         url = f"https://intervals.icu/api/v1/athlete/{athlete_id}"
-        resp = httpx.get(url, auth=("API_KEY", api_key), timeout=10)
+        resp = httpx.get(url, auth=("API_KEY", api_key), timeout=10, verify=_icu_verify())
         if resp.status_code == 401:
             return {"ok": False, "error": "Invalid API key. Check your credentials."}
         if resp.status_code == 404:
@@ -1000,7 +1031,7 @@ def setup_test_icu(body: dict):
         weight = data.get("weight")
         try:
             w_url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/wellness?oldest=2025-01-01&newest=2026-12-31"
-            w_resp = httpx.get(w_url, auth=("API_KEY", api_key), timeout=10)
+            w_resp = httpx.get(w_url, auth=("API_KEY", api_key), timeout=10, verify=_icu_verify())
             if w_resp.status_code == 200:
                 for w in reversed(w_resp.json()):
                     si = w.get("sportInfo", [])
@@ -1081,7 +1112,7 @@ def setup_check_activities(body: dict):
     try:
         url = (f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities"
                f"?oldest={oldest}&newest={newest}")
-        resp = httpx.get(url, auth=("API_KEY", api_key), timeout=15)
+        resp = httpx.get(url, auth=("API_KEY", api_key), timeout=15, verify=_icu_verify())
         if resp.status_code in (401, 403):
             return {"ok": False, "error": "Authentication failed — check your API key."}
         if resp.status_code != 200:
@@ -1179,7 +1210,7 @@ def setup_icu_hr(athlete_id: str = Query(""), api_key: str = Query("")):
         _new = (_date.today() + _td(days=1)).isoformat()
         _old = (_date.today() - _td(days=365)).isoformat()
         url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities?oldest={_old}&newest={_new}"
-        resp = httpx.get(url, auth=("API_KEY", api_key), timeout=15)
+        resp = httpx.get(url, auth=("API_KEY", api_key), timeout=15, verify=_icu_verify())
         if resp.status_code != 200:
             return {"lthr": None, "max_hr": None}
         activities = resp.json()
@@ -9033,7 +9064,7 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
                 "client_id": config.ICU_OAUTH_CLIENT_ID,
                 "client_secret": config.ICU_OAUTH_CLIENT_SECRET,
                 "code": code,
-            }, timeout=15)
+            }, timeout=15, verify=_icu_verify())
         except httpx.TransportError as e:
             # DNS / TLS / proxy / connection refused — the request never got an
             # answer. Certificate stores and corporate proxies live here.
@@ -9069,7 +9100,7 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
             try:
                 r2 = httpx.get("https://intervals.icu/api/v1/athlete/0",
                                headers={"Authorization": f"Bearer {access_token}"},
-                               timeout=10)
+                               timeout=10, verify=_icu_verify())
                 if r2.status_code == 200:
                     a2 = r2.json() or {}
                     athlete_name = athlete_name or (a2.get("name") or "").strip()
@@ -9671,7 +9702,7 @@ def api_update_check(force: int = Query(0)):
         return _overlay_live_current(out)
 
     try:
-        resp = httpx.get(_GITHUB_RELEASES_LATEST_URL, timeout=10)
+        resp = httpx.get(_GITHUB_RELEASES_LATEST_URL, timeout=10, verify=_icu_verify())
         if resp.status_code != 200:
             raise RuntimeError("GitHub returned status " + str(resp.status_code))
         rel = resp.json()

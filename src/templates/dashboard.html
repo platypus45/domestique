@@ -16612,7 +16612,7 @@ function handleIcuOauthReturn() {
         profile_gone: 'the profile that started the sign-in no longer exists.',
         state: 'the sign-in link expired — start again from this page.',
         exchange: 'intervals.icu rejected the sign-in code — try again (a code is single-use and expires within minutes).',
-        network: "the app could not reach intervals.icu (connection, proxy or certificate problem) — check your network and try again.",
+        network: "the app could not reach intervals.icu — a certificate/proxy problem. On Windows this is usually antivirus \"HTTPS scanning\" or a corporate proxy re-signing the connection; update the app, or add intervals.icu to the scanner's exclusions, then try again.",
         token: 'intervals.icu returned an unexpected response — try again.',
         purge: "signed in, but clearing the previous account's data failed — see the log, then try again.",
         save: 'signed in, but the token could not be saved to your profile folder (permissions or disk) — fix the folder, then connect again.',

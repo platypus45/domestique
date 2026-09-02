@@ -21182,6 +21182,98 @@ def api_ride_detail(ride_id: str):
     return ride
 
 
+def _fit_power_series_1hz(fit_path: Path) -> list[int]:
+    """1 Hz power series from a FIT (same record walk + resampling the
+    detector uses) — for the FTP-test analysis view only."""
+    from fit_tool.fit_file import FitFile
+    ff = FitFile.from_file(str(fit_path))
+    ts, pw = [], []
+    for rec in ff.records:
+        msg = rec.message
+        if type(msg).__name__ != "RecordMessage":
+            continue
+        try:
+            _t = msg.get_value("timestamp")
+            _tf = float(_t) if _t is not None else None
+            ts.append((_tf / 1000.0 if _tf and _tf > 1e11 else _tf))
+        except Exception:
+            ts.append(None)
+        try:
+            pw.append(int(msg.get_value("power") or 0))
+        except Exception:
+            pw.append(0)
+    return _resample_series_1hz(ts, pw)
+
+
+@app.get("/api/ride/{ride_id}/ftp-test-analysis")
+def api_ride_ftp_test_analysis(ride_id: str):
+    """v3.11.3 — the FTP-test analysis view: the recognised protocol, the
+    1 Hz power trace, and WHERE the number came from (scored window, the
+    clearing effort, the ramp halt point), so the rider sees the evidence
+    behind a suggestion instead of a bare number. Read-only."""
+    safe_id = re.sub(r'[^\w.\-]', '_', ride_id)
+    suggestion = None
+    halted = False
+    halt_step = None
+    series: list = []
+    source = None
+    fit_path = _rides_fit_dir() / f"{safe_id}.fit"
+    if fit_path.exists():
+        source = "fit"
+        stats = _parse_fit_stats(fit_path)
+        suggestion = stats.get("ftp_test_suggestion")
+        halted = bool(stats.get("ftp_test_halted"))
+        halt_step = stats.get("ftp_test_halt_step")
+        try:
+            series = _fit_power_series_1hz(fit_path)
+        except Exception as e:
+            _log.debug(f"ftp-test-analysis: FIT series failed: {e}")
+    elif ride_id.startswith("icu_"):
+        import ride_storage
+        icu = ride_storage.get_icu_ride(ride_id)
+        if not icu:
+            return JSONResponse({"error": "Ride not found"}, 404)
+        source = "icu"
+        suggestion = icu.get("ftp_test_suggestion")
+        halted = bool(icu.get("ftp_test_halted"))
+        halt_step = icu.get("ftp_test_halt_step")
+        streams = icu.get("streams") or {}
+        raw = streams.get("watts") or streams.get("power") or []
+        series = [int(w or 0) for w in raw] if isinstance(raw, list) else []
+    else:
+        return JSONResponse({"error": "Ride not found"}, 404)
+    if not suggestion:
+        return JSONResponse({"error": "no FTP-test suggestion on this ride"}, 404)
+
+    total_s = len(series)
+    # Downsample for the chart (≤ 1800 points), keeping seconds addressable.
+    step = max(1, -(-total_s // 1800)) if total_s else 1   # ceil → ≤ 1800 points
+    ds = []
+    for i in range(0, total_s, step):
+        chunk = series[i:i + step]
+        ds.append(int(round(sum(chunk) / len(chunk))) if chunk else 0)
+
+    windows = []
+    ws, we = suggestion.get("window_start_s"), suggestion.get("window_end_s")
+    kind = suggestion.get("method") or suggestion.get("type")
+    if ws is not None and we is not None:
+        label = {"coggan_20min": "20-min block (scored)",
+                 "ramp": "best sustained minute (scored)",
+                 "sixty_min": "hour plateau (scored)"}.get(kind, "scored window")
+        windows.append({"kind": "scored", "start_s": int(ws), "end_s": int(we), "label": label})
+    if suggestion.get("blowout_start_s") is not None:
+        windows.append({"kind": "blowout", "start_s": int(suggestion["blowout_start_s"]),
+                        "end_s": int(suggestion["blowout_end_s"]),
+                        "label": "5-min clearing effort"})
+    return {
+        "ok": True, "ride_id": ride_id, "source": source,
+        "suggestion": suggestion, "halted": halted, "halt_step": halt_step,
+        "halt_at_s": suggestion.get("halt_at_s"),
+        "total_s": total_s, "step_s": step, "series": ds, "windows": windows,
+        "prior_ftp": suggestion.get("prior_ftp"),
+    }
+
+
 @app.post("/api/ride/{ride_id}/ftp-test-review")
 async def api_ride_ftp_test_review(ride_id: str, request: Request):
     """FTP-tests IP W2c — persist the rider's verdict on a test suggestion

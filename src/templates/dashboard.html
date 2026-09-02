@@ -8498,7 +8498,98 @@ function showFtpTestModal(suggestion, opts) {
   </div>`;
   html += `<div id="ftp-modal-status" style="font-size:12px;color:var(--text2);margin-top:6px;"></div>`;
   html += `<div style="font-size:10px;color:var(--text3);margin-top:10px;">Update applies immediately and recomputes all power zones. Keep logs the test to history without changing FTP.</div>`;
+  // v3.11.3 — the analysis tunnel: evidence behind the number (trace, scored
+  // window, clearing effort, halt point, the factor). Fills in async.
+  html += `<div id="ftp-analysis-host" style="margin-top:14px;"></div>`;
   openModal(html);
+  if (opts.rideId) { try { renderFtpTestAnalysis(opts.rideId, fs); } catch(_) {} }
+}
+
+// v3.11.3 — FTP-test analysis tunnel. One guided strip (Recognise → Measure →
+// Compute → Apply) above an SVG power trace with the scored window and the
+// clearing effort shaded, the ramp halt point marked, and every input to the
+// number listed. Read-only: the actions above it remain the only writes.
+async function renderFtpTestAnalysis(rideId, fs) {
+  const host = document.getElementById('ftp-analysis-host');
+  if (!host) return;
+  host.innerHTML = '<div style="font-size:11px;color:var(--text3);">Loading the evidence…</div>';
+  let a;
+  try {
+    const r = await fetch(`/api/ride/${encodeURIComponent(rideId)}/ftp-test-analysis`);
+    if (!r.ok) { host.innerHTML = ''; return; }
+    a = await r.json();
+  } catch (_) { host.innerHTML = ''; return; }
+  const sug = a.suggestion || fs || {};
+  const method = sug.method || sug.type || '';
+  const isRamp = method === 'ramp', isHour = method === 'sixty_min';
+  const factor = sug.factor != null ? sug.factor : (isRamp ? 0.75 : isHour ? 1.0 : 0.95);
+  const base = isRamp ? sug.best_60s : isHour ? sug.best_60min : sug.best_20min;
+  const baseLabel = isRamp ? 'best sustained minute' : isHour ? 'hour plateau mean' : 'best 20-min mean';
+  const recognised = a.source === 'fit' ? 'from the ride file' : 'from the synced ride';
+
+  // ── stepper ──────────────────────────────────────────────────────────
+  const step = (n, title, body) => `<div style="flex:1;min-width:150px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;">
+      <div style="font-size:10px;letter-spacing:.5px;color:var(--text3);font-weight:700;">${n}</div>
+      <div style="font-size:12px;font-weight:700;margin:2px 0;">${title}</div>
+      <div style="font-size:11px;color:var(--text2);">${body}</div></div>`;
+  let html = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+    ${step('1 · RECOGNISE', {ramp:'Ramp test', sixty_min:'60-minute test', coggan_20min:'20-minute test'}[method] || method,
+           (sug.fallback_from ? 'Hour abandoned early (plateau &lt; 50 min) — scored with the validated 20-min method. ' : '') + recognised)}
+    ${step('2 · MEASURE', `${base != null ? base + ' W' : '—'}`, baseLabel + (sug.plateau_min ? ` · ${sug.plateau_min} min sustained` : '') + (a.halted ? ` · halted at step ${esc(String(a.halt_step || '?'))}` : ''))}
+    ${step('3 · COMPUTE', `${sug.ftp} W`, `${base != null ? base : '?'} × ${factor} — ${esc(sug.formula_used || '')}`)}
+    ${step('4 · APPLY', (sug.prior_ftp ? `${sug.prior_ftp} → ${sug.ftp} W` : `${sug.ftp} W`), 'Update rewrites FTP + every power zone; Keep only logs the test.')}
+  </div>`;
+
+  // ── trace ────────────────────────────────────────────────────────────
+  const ser = Array.isArray(a.series) ? a.series : [];
+  if (ser.length > 10) {
+    const W = 720, H = 180, padL = 36, padB = 18, padT = 8;
+    const maxW = Math.max(1, ...ser);
+    const stepS = a.step_s || 1, totalS = a.total_s || ser.length * stepS;
+    const x = i => padL + (i * stepS / totalS) * (W - padL - 8);
+    const y = v => padT + (1 - v / maxW) * (H - padT - padB);
+    let pts = '';
+    ser.forEach((v, i) => { pts += `${x(i).toFixed(1)},${y(v).toFixed(1)} `; });
+    const shade = (w, color) => {
+      const x0 = padL + (w.start_s / totalS) * (W - padL - 8), x1 = padL + (w.end_s / totalS) * (W - padL - 8);
+      return `<rect x="${x0.toFixed(1)}" y="${padT}" width="${Math.max(1, x1 - x0).toFixed(1)}" height="${H - padT - padB}" fill="${color}" opacity="0.18"/>
+              <text x="${(x0 + 3).toFixed(1)}" y="${padT + 11}" font-size="10" fill="${color}">${esc(w.label)}</text>`;
+    };
+    let shades = '';
+    (a.windows || []).forEach(w => { shades += shade(w, w.kind === 'scored' ? 'var(--accent)' : '#eab308'); });
+    let halt = '';
+    if (a.halt_at_s != null) {
+      const hx = padL + (a.halt_at_s / totalS) * (W - padL - 8);
+      halt = `<line x1="${hx.toFixed(1)}" y1="${padT}" x2="${hx.toFixed(1)}" y2="${H - padB}" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3,3"/>
+              <text x="${(hx + 3).toFixed(1)}" y="${H - padB - 4}" font-size="10" fill="#ef4444">halt</text>`;
+    }
+    const prior = sug.prior_ftp || 0;
+    const priorLine = prior > 0 && prior < maxW
+      ? `<line x1="${padL}" y1="${y(prior).toFixed(1)}" x2="${W - 8}" y2="${y(prior).toFixed(1)}" stroke="var(--text3)" stroke-dasharray="4,4"/>
+         <text x="${W - 10}" y="${(y(prior) - 3).toFixed(1)}" font-size="10" fill="var(--text3)" text-anchor="end">old FTP ${prior} W</text>` : '';
+    const newLine = sug.ftp > 0 && sug.ftp < maxW
+      ? `<line x1="${padL}" y1="${y(sug.ftp).toFixed(1)}" x2="${W - 8}" y2="${y(sug.ftp).toFixed(1)}" stroke="var(--accent)" stroke-dasharray="2,3"/>
+         <text x="${W - 10}" y="${(y(sug.ftp) + 11).toFixed(1)}" font-size="10" fill="var(--accent)" text-anchor="end">suggested ${sug.ftp} W</text>` : '';
+    const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => { const t = f * totalS; return `<text x="${(padL + f * (W - padL - 8)).toFixed(1)}" y="${H - 4}" font-size="10" fill="var(--text3)" text-anchor="middle">${Math.round(t / 60)}m</text>`; }).join('');
+    html += `<div style="overflow-x:auto;"><svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;display:block;background:var(--surface2);border-radius:8px;">
+      ${shades}
+      <polyline points="${pts.trim()}" fill="none" stroke="var(--text)" stroke-width="1"/>
+      ${priorLine}${newLine}${halt}
+      <text x="4" y="${padT + 10}" font-size="10" fill="var(--text3)">${maxW} W</text>
+      ${ticks}
+    </svg></div>`;
+  }
+
+  // ── advisories (never change the number) ─────────────────────────────
+  const notes = [];
+  if (sug.blowout_missing) notes.push('No clearing effort detected before the block — a fresh anaerobic reserve can inflate a 20-min number by ~5%.');
+  if (sug.pacing_drift) notes.push(`Pacing drift ${esc(String(sug.pacing_drift_pct))}% between halves — an even effort reads truer.`);
+  if (sug.likely_overestimate) notes.push('Your measured Pmax says you are punchy: a ramp over-reads riders like you; the band below is the literature\'s range.');
+  if (Array.isArray(sug.factor_band)) notes.push(`Ramp factor band ${sug.factor_band[0]}–${sug.factor_band[1]} (advisory).`);
+  if (Array.isArray(sug.sitko_ftp_band)) notes.push(`At ${esc(String(sug.sitko_wkg))} W/kg (${esc(String(sug.sitko_level))}) the measured 60/20-min ratios suggest ${sug.sitko_ftp_band[0]}–${sug.sitko_ftp_band[1]} W.`);
+  if (a.halted) notes.push('The ramp was halted — the last full step reached is what got scored.');
+  if (notes.length) html += `<ul style="font-size:11px;color:var(--text2);margin:8px 0 0 16px;padding:0;">${notes.map(n => `<li>${n}</li>`).join('')}</ul>`;
+  host.innerHTML = html;
 }
 
 // v4.1.0 U1: scan recent rides on dashboard load and open the FTP modal if
@@ -8638,16 +8729,17 @@ async function openRideDetail(rideId) {
         ? `<div style="font-size:11px;color:#ef4444;margin-bottom:8px;">&#9888; Test was halted at step ${esc(String(s.ftp_test_halt_step || 'N'))} &mdash; suggested value may be unreliable.</div>`
         : '';
       // Stash on window for the Review button to re-open the modal.
-      window._lastFtpSuggestion = { suggestion: fs, halted: !!s.ftp_test_halted, haltStep: s.ftp_test_halt_step };
+      window._lastFtpSuggestion = { suggestion: fs, halted: !!s.ftp_test_halted, haltStep: s.ftp_test_halt_step, rideId: rideId };
       html += `<div id="ftp-test-banner" style="background:rgba(59,130,246,0.12);border:1px solid #3b82f6;border-radius:12px;padding:14px 16px;margin-bottom:16px;">
         <div style="font-size:12px;color:var(--text2);letter-spacing:0.5px;font-weight:600;margin-bottom:4px;">FTP TEST — ${esc(methodLabel)}</div>
         <div style="font-size:20px;font-weight:900;margin-bottom:4px;">Suggested FTP: <span id="ftp-suggest-val">${fs.ftp}</span> W</div>
         <div style="font-size:13px;color:var(--text2);margin-bottom:8px;">was ${prior} W · <span style="color:${deltaColor};font-weight:700;">${deltaSign}${delta}%</span></div>
         ${haltedBanner}
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn" id="ftp-update-btn" onclick="applyFtpSuggestion(${fs.ftp}, '${escJs(fs.method)}', '${escJs(fs.source || '')}')" style="background:#22c55e;color:#fff;border-color:#22c55e;">Update Profile</button>
-          <button class="btn" onclick="keepCurrentFtp('${escJs(fs.method)}', ${fs.ftp}, '${escJs(fs.source || '')}')">Keep Current</button>
-          <button class="btn" onclick="customFtp(${fs.ftp}, '${escJs(fs.method)}', '${escJs(fs.source || '')}')">Custom…</button>
+          <button class="btn btn-primary" onclick="showFtpTestModal(window._lastFtpSuggestion.suggestion, {halted: window._lastFtpSuggestion.halted, haltStep: window._lastFtpSuggestion.haltStep, rideId: window._lastFtpSuggestion.rideId})">Review the evidence</button>
+          <button class="btn" id="ftp-update-btn" onclick="applyFtpSuggestion(${fs.ftp}, '${escJs(fs.method)}', '${escJs(fs.source || '')}', {rideId: '${escJs(String(rideId))}'})" style="background:#22c55e;color:#fff;border-color:#22c55e;">Update Profile</button>
+          <button class="btn" onclick="keepCurrentFtp('${escJs(fs.method)}', ${fs.ftp}, '${escJs(fs.source || '')}', {rideId: '${escJs(String(rideId))}'})">Keep Current</button>
+          <button class="btn" onclick="customFtp(${fs.ftp}, '${escJs(fs.method)}', '${escJs(fs.source || '')}', {rideId: '${escJs(String(rideId))}'})">Custom…</button>
         </div>
         <div id="ftp-banner-status" style="font-size:12px;color:var(--text2);margin-top:8px;"></div>
       </div>`;

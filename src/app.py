@@ -498,13 +498,14 @@ for _upf in [_user_data_dir / "user_paths.json", Path(__file__).parent / "user_p
             _up = json.loads(_upf.read_text(encoding="utf-8"))
             if _up.get("workout_dir"):
                 _cand = Path(_up["workout_dir"])
-                if _cand.exists():
+                # v3.11.2: usable (holds .zwo files), not merely existing.
+                if _cand.is_dir() and next(_cand.glob("*.zwo"), None) is not None:
                     WORKOUT_DIR = _cand
                 else:
                     logging.getLogger("app").error(
-                        "E_WORKOUT_DIR_OVERRIDE_MISSING: user_paths.json "
-                        "workout_dir=%s does not exist — keeping the bundled "
-                        "library", _cand)
+                        "E_WORKOUT_DIR_UNUSABLE: user_paths.json workout_dir=%s "
+                        "is missing or holds no .zwo files — keeping the "
+                        "bundled library", _cand)
             if _up.get("gpx_dir"):
                 GPX_DIR = Path(_up["gpx_dir"])
         except Exception:
@@ -541,10 +542,15 @@ def _apply_profile_paths() -> None:
             if not isinstance(up, dict):
                 up = {}
             cand = up.get("workout_dir")
-            if cand and Path(cand).exists():
+            # v3.11.2: usable (holds .zwo files), not merely existing.
+            if cand and tp.workout_dir_is_usable(Path(cand)):
                 wp = Path(cand)
-            elif (pm.active_dir / "workouts").exists():
+            elif tp.workout_dir_is_usable(pm.active_dir / "workouts"):
                 wp = pm.active_dir / "workouts"
+            elif cand:
+                log.error("E_WORKOUT_DIR_UNUSABLE: profile workout_dir=%s is "
+                          "missing or holds no .zwo files — using the bundled "
+                          "library", cand)
             gcand = up.get("gpx_dir")
             if gcand and Path(gcand).exists():
                 gp = Path(gcand)
@@ -1428,6 +1434,18 @@ def setup_save(body: dict):
                     status_code=400,
                     detail=f"{_field} must be under $HOME, ~/.domestique, or /tmp",
                 )
+        # v3.11.2: never persist a workout folder that cannot serve as a
+        # library. An existing-but-empty folder used to be accepted, emptied
+        # the library on the next resolution, and every plan degenerated to
+        # endurance-only with nothing telling the rider why (Linux report).
+        if body.get("workout_dir") and not tp.workout_dir_is_usable(
+                Path(body["workout_dir"])):
+            raise HTTPException(
+                status_code=400,
+                detail=("workout_dir must be an existing folder containing "
+                        ".zwo workout files — leave it blank to use the "
+                        "built-in library"),
+            )
 
         # ══ PHASE 2 — WRITE (all validation passed) ══════════════════════════
         creds_changed = False
@@ -21874,6 +21892,7 @@ def api_diag_health(request: Request):
                 "endurance": len(_pi.get("endurance") or []),
                 "all_pool": len(_pi.get("all_pool") or []),
                 "library": len(lib),
+                "workout_dir": str(tp.WORKOUT_DIR),
                 "workout_dir_is_bundled":
                     tp.WORKOUT_DIR == tp._BUNDLED_WORKOUT_DIR,
                 "collapse_reason": tp._pool_collapse_reason(_pi, lib) or None,

@@ -662,11 +662,17 @@ class ProfileManager:
         custom = paths.get("workout_dir")
         if custom:
             candidate = Path(custom)
-            if candidate.exists():
+            # v3.11.2: usable (holds .zwo files), not merely existing — an
+            # empty override folder emptied the whole library (Linux report).
+            if training_planner.workout_dir_is_usable(candidate):
                 wp_dir = candidate
+            else:
+                log.error("E_WORKOUT_DIR_UNUSABLE: profile workout_dir=%s is "
+                          "missing or holds no .zwo files — using the bundled "
+                          "library", candidate)
         if wp_dir is None:
             default_per_profile = self.active_dir / "workouts"
-            if default_per_profile.exists():
+            if training_planner.workout_dir_is_usable(default_per_profile):
                 wp_dir = default_per_profile
         if wp_dir is None:
             # Recompute the bundled default from the module location instead

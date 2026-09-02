@@ -1,5 +1,12 @@
 # Changelog
 
+## v3.11.2 — The fix that actually reaches the Linux rider (2026-09-02)
+
+- **Found it: an empty workout folder was silently replacing the whole library.** The Linux rider came back with logs after yesterday's release, and they pointed straight at it: the app was reading its workouts from a folder that *existed* but held no workout files — and treated that as a valid library of zero. Yesterday's guards checked whether a custom folder existed; today they check whether it actually contains workouts. A folder with none is now ignored with a clear log line and the built-in 4,300-workout library takes over. This applies everywhere a folder can be chosen: the workout-folder setting, a per-profile folder, and the file-based override. The setting itself also refuses to save a folder without workouts in it, so this cannot be configured into existence again.
+- **An empty library now trips the safety breaker on every setup, not only the built-in one.** Yesterday the "small personal library" exemption also excused a library of zero. Small is fine; zero never is.
+- **Ride files from Garmin devices import again in the installed app.** Every real Garmin ride carries a device-info record, and the installed builds on all three platforms were missing the code to read it — the whole file was then rejected with a "No module named …" warning at every start-up and every plan generation. The affected component is now bundled completely, and the build refuses to produce an app without it.
+- Diagnostics now also show *which* folder the library is being read from, so this class of problem is a one-line answer next time.
+
 ## v3.11.1 — A broken plan now says so, instead of pretending (2026-09-01)
 
 - **A plan can no longer silently lose its intensity.** A Linux rider reported every session showing as "Z2 Steady" — the plan generator had quietly filled the whole calendar from easy endurance rides because the hard-workout catalogue had come up empty, and nothing anywhere said a word. Three separate guards now close that class of failure: plan generation refuses outright when the workout library is missing (with a clear message instead of a fake plan), a library that loads with its hard workouts gone is treated as the fault it is rather than "healthy", and both cases tell you what went wrong instead of degrading in silence.

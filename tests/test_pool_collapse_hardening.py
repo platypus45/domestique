@@ -34,11 +34,71 @@ def test_empty_bundled_library_is_a_collapse():
         assert tp._pool_collapse_reason(_pools(0, 0, 0), [])
 
 
-def test_empty_custom_library_stays_healthy():
-    # A rider's custom dir may be legitimately tiny/empty-of-known-classes —
-    # back-compat with the pre-hardening '<100 ⇒ healthy' floor.
+def test_empty_custom_library_is_a_collapse_too():
+    # v3.11.2: the custom-dir exemption is for SMALL libraries, never for
+    # ZERO — the Linux report was an override pointing at an empty folder
+    # that the v3.11.1 exemption waved through.
     with mock.patch.object(tp, "WORKOUT_DIR", Path("/tmp/custom-lib")):
-        assert tp._pool_collapse_reason(_pools(0, 0, 0), []) == ""
+        assert "empty" in tp._pool_collapse_reason(_pools(0, 0, 0), [])
+
+
+def test_small_custom_library_stays_healthy():
+    # A rider's own handful of files is a legitimate library.
+    with mock.patch.object(tp, "WORKOUT_DIR", Path("/tmp/custom-lib")):
+        assert tp._pool_collapse_reason(_pools(5, 10, 15), _lib(30)) == ""
+
+
+# ── v3.11.2: workout-dir USABILITY (exists is not enough) ────────────────────
+
+def test_workout_dir_usable_requires_zwo_files(tmp_path):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert tp.workout_dir_is_usable(empty) is False          # exists, no .zwo
+    assert tp.workout_dir_is_usable(tmp_path / "missing") is False
+    assert tp.workout_dir_is_usable(None) is False
+    good = tmp_path / "good"
+    good.mkdir()
+    (good / "z2_steady_60min.zwo").write_text("<workout_file/>")
+    assert tp.workout_dir_is_usable(good) is True
+    assert tp.workout_dir_is_usable(tp._BUNDLED_WORKOUT_DIR) is True
+
+
+def test_profile_switch_ignores_empty_override_and_empty_profile_dir(tmp_path):
+    """profile_manager.switch(): an override pointing at an EXISTING EMPTY
+    folder, and an existing empty <profile>/workouts, must both fall back to
+    the bundled library (the Linux v3.11.1 hole)."""
+    import profile_manager as pm_mod
+    orig_wd, orig_pd = tp.WORKOUT_DIR, tp.PLAN_DIR
+    orig_inst = pm_mod.ProfileManager._instance
+    try:
+        pm_mod.ProfileManager._instance = None
+        with mock.patch("pathlib.Path.home", return_value=tmp_path):
+            pm = pm_mod.ProfileManager.get()
+            pid = pm.create_profile("Rider One")
+            if pm.active_id is None:
+                # Activate without switch()'s DB/sync machinery — only the
+                # directory resolution is under test here.
+                pm._active_id = pid
+            active = pm.active_dir
+            active.mkdir(parents=True, exist_ok=True)
+            empty_override = tmp_path / "my-empty-workouts"
+            empty_override.mkdir()
+            (active / "user_paths.json").write_text(
+                json.dumps({"workout_dir": str(empty_override)}))
+            (active / "workouts").mkdir(exist_ok=True)      # empty per-profile dir
+            pm.apply_training_dirs()
+            assert tp.WORKOUT_DIR == tp._BUNDLED_WORKOUT_DIR, tp.WORKOUT_DIR
+            # A populated override IS honoured.
+            good = tmp_path / "good-lib"
+            good.mkdir()
+            (good / "tempo_steady_45min.zwo").write_text("<workout_file/>")
+            (active / "user_paths.json").write_text(
+                json.dumps({"workout_dir": str(good)}))
+            pm.apply_training_dirs()
+            assert tp.WORKOUT_DIR == good
+    finally:
+        tp.WORKOUT_DIR, tp.PLAN_DIR = orig_wd, orig_pd
+        pm_mod.ProfileManager._instance = orig_inst
 
 
 def test_hit_only_collapse_trips_on_bundled_dir():

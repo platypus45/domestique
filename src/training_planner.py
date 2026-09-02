@@ -109,10 +109,28 @@ from user_home import domestique_home
 # bundled library (always ≥4000 files), never to a rider's custom dir.
 _BUNDLED_WORKOUT_DIR = Path(__file__).parent / "workouts"
 WORKOUT_DIR = _BUNDLED_WORKOUT_DIR
+
+
+def workout_dir_is_usable(path) -> bool:
+    """v3.11.2 — a workout-dir candidate (user_paths override OR the
+    per-profile ``workouts/`` default) is honoured only when it actually
+    holds at least one ``.zwo``. The v3.11.1 Linux report survived the
+    existence check: the rider's override pointed at a real, EMPTY folder,
+    every resolution site accepted it, the library loaded 0 rows, and the
+    bundled-only breaker exempted it as a "custom dir". Empty is never a
+    library — fall back to the bundled one and say so."""
+    try:
+        p = Path(path)
+        if not p.is_dir():
+            return False
+        return next(p.glob("*.zwo"), None) is not None
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 # Allow user override via user_paths.json (matches app.py behavior).
-# Linux-IP D3: apply the override ONLY when the dir exists — a stale entry
-# silently pointed the planner at nothing and every plan degenerated with no
-# error (profile_manager already validated; this site and app.py did not).
+# Linux-IP D3 (v3.11.1) checked existence; v3.11.2 checks USABILITY — see
+# workout_dir_is_usable.
 for _upf in [domestique_home() / "user_paths.json",
              Path(__file__).parent / "user_paths.json"]:
     if _upf.exists():
@@ -120,13 +138,13 @@ for _upf in [domestique_home() / "user_paths.json",
             _up = json.loads(_upf.read_text(encoding="utf-8"))
             if _up.get("workout_dir"):
                 _cand = Path(_up["workout_dir"])
-                if _cand.exists():
+                if workout_dir_is_usable(_cand):
                     WORKOUT_DIR = _cand
                 else:
                     logging.getLogger("training_planner").error(
-                        "E_WORKOUT_DIR_OVERRIDE_MISSING: user_paths.json "
-                        "workout_dir=%s does not exist — keeping the bundled "
-                        "library", _cand)
+                        "E_WORKOUT_DIR_UNUSABLE: user_paths.json workout_dir=%s "
+                        "is missing or holds no .zwo files — keeping the "
+                        "bundled library", _cand)
         except Exception:
             pass
         break
@@ -5350,9 +5368,14 @@ def _pool_collapse_reason(pool_index: dict, library: list) -> str:
     all_pool = pool_index.get("all_pool") or []
     hit = pool_index.get("hit") or []
     endurance = pool_index.get("endurance") or []
+    # v3.11.2: an EMPTY library can never plan — collapse on ANY dir. The
+    # custom-dir exemption below is for SMALL libraries (a rider's own
+    # handful of files), never for zero: the v3.11.1 Linux report was an
+    # override pointing at an empty folder that this exemption waved through.
+    if lib_n == 0:
+        return ("workout library empty (0 files loaded from "
+                f"{WORKOUT_DIR})")
     if WORKOUT_DIR == _BUNDLED_WORKOUT_DIR:
-        if lib_n == 0:
-            return "bundled workout library empty (0 files loaded)"
         if not hit and endurance:
             return (f"hit pools empty with endurance populated "
                     f"(library={lib_n}) — classification/facts fault")

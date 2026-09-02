@@ -128,6 +128,18 @@ if [ -z "$BUNDLED_OAUTH" ] || ! grep -q 'ICU_OAUTH_CLIENT_SECRET=..*' "$BUNDLED_
 fi
 echo "[1b3/9] OAuth-secret gate OK — client secret bundled"
 
+# 1b4. Frozen-module gate: fit_tool resolves FIT message classes through
+# message_factory, which imports all 90 message modules — reachable only via
+# a lazy import PyInstaller's static scan never followed. Every frozen build
+# through v3.11.1 lacked device_info_message, so a real Garmin FIT (always
+# carries device_info) failed to parse. Assert the module is in the archive.
+PYZ_FILE="$(find dist/Domestique.app -name 'PYZ-00.pyz' | head -1)"
+if [ -z "$PYZ_FILE" ] || ! .venv-build/bin/pyi-archive_viewer -l "$PYZ_FILE" 2>/dev/null | grep -q "fit_tool.profile.messages.device_info_message"; then
+    echo "FATAL: fit_tool.profile.messages.device_info_message not in the frozen archive — FIT import would fail on real rides." >&2
+    exit 1
+fi
+echo "[1b4/9] FIT-message gate OK — fit_tool message modules bundled"
+
 # 1c. HR-mode FIT smoke (v2.5.0 P1.5) — the desktop save path builds FIT bytes
 # in-process (launcher.JsApi save_fit bridge), a path the web tests can't reach.
 # Prove the bundled code produces HEART_RATE-target steps for view='hr' before

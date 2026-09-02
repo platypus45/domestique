@@ -213,6 +213,9 @@ def test_a3_profile_b_starts_clean_roundtrip_preserves_a(tmp_path):
     rs.persist_wellness({"id": "2026-07-01", "ctl": 1.0, "atl": 2.0})
     custom = tmp_path / "custom_lib"
     custom.mkdir()
+    # v3.11.2: an override is honoured only when it actually holds workouts
+    # — an EMPTY folder was the Linux all-Z2 bug, so give this one a file.
+    (custom / "z2_steady_60min.zwo").write_text("<workout_file/>", encoding="utf-8")
     (pm.active_dir / "user_paths.json").write_text(
         json.dumps({"workout_dir": str(custom)}), encoding="utf-8")
     pm.apply_training_dirs()

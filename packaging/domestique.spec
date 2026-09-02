@@ -58,7 +58,7 @@ datas = [
 # urllib has no CA store → cert-verify fails → "ICUNetworkError" on every
 # credential save / sync. httpx ships certifi; urllib needs the file on disk +
 # SSL_CERT_FILE (set in launcher.configure_tls_ca).
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 datas += collect_data_files("certifi")
 
 binaries: list = []
@@ -176,6 +176,14 @@ a = Analysis(
         "fit_tool.profile.messages.file_id_message",
         "fit_tool.profile.messages.workout_message",
         "fit_tool.profile.messages.workout_step_message",
+        # v3.11.2: fit_tool's message_factory imports EVERY message module
+        # (90 of them) — but only reachable from a lazy import inside
+        # try/except, so the static scan never followed it and every frozen
+        # build lacked device_info_message & co. A real Garmin FIT always
+        # carries device_info → "No module named ..." → the whole ride parse
+        # failed (Linux report, every platform). Collect them all.
+        *collect_submodules("fit_tool.profile.messages"),
+        "fit_tool.profile.messages.message_factory",
         # v1.0.7 IMPL-TAU-FIT-CORE: scipy is now a hard dependency for
         # tau_fitting.py (Banister NLS via scipy.optimize.curve_fit +
         # bootstrap-CI). PyInstaller's static analyser misses scipy's lazy

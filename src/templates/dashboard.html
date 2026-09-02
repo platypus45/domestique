@@ -3950,7 +3950,7 @@ async function _importFitFile(file) {
     // pop the modal if so. Non-fatal; runs async.
     try {
       if (data && data.ride_id) {
-        try { sessionStorage.removeItem('ftp-modal-seen-' + data.ride_id); } catch(_) {}
+        try { sessionStorage.removeItem('ftp-modal-seen-' + __ACTIVE_PROFILE_ID + ':' + data.ride_id); } catch(_) {}
       }
       setTimeout(() => { try { maybeShowFtpTestModal(); } catch(_) {} }, 400);
     } catch(_) {}
@@ -8615,7 +8615,7 @@ async function maybeShowFtpTestModal() {
         const t = Date.parse(startedAt);
         if (!isNaN(t) && t < cutoff) continue;
       }
-      const seenKey = 'ftp-modal-seen-' + rideId;
+      const seenKey = 'ftp-modal-seen-' + __ACTIVE_PROFILE_ID + ':' + rideId;
       try { if (sessionStorage.getItem(seenKey)) continue; } catch(_) {}
       const dRes = await fetch(`/api/rides/${encodeURIComponent(rideId)}`);
       if (!dRes.ok) continue;

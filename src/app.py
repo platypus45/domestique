@@ -563,6 +563,14 @@ def _apply_profile_paths() -> None:
     global WORKOUT_DIR, GPX_DIR
     wp: Path = _BUNDLED_WORKOUT_DIR
     gp: Path = _BUNDLED_GPX_DIR
+    # v3.11.3 multi-profile screen: the 60-s Diagnostics snapshot is per
+    # profile (plan readable, pool_health.workout_dir) — drop it on switch so
+    # the next call never reports the previous profile's state.
+    try:
+        _DIAG_HEALTH_CACHE["result"] = None
+        _DIAG_HEALTH_CACHE["ts"] = 0.0
+    except Exception:
+        pass
     try:
         from profile_manager import ProfileManager
         pm = ProfileManager.get()

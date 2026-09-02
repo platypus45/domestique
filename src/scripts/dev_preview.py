@@ -26,4 +26,5 @@ else:
 
 os.environ["DOMESTIQUE_HOME"] = str(sandbox)
 os.execvp(sys.executable,
-          [sys.executable, "-m", "uvicorn", "app:app", "--port", "8090"])
+          [sys.executable, "-m", "uvicorn", "app:app", "--port", "8090",
+           "--app-dir", "src"])  # v3.11.1 layout: modules live in src/

@@ -44,7 +44,7 @@ def test_sixty_min_detects_by_shape_before_coggan():
 
 def test_sixty_min_filename_token():
     assert fe.detect_ftp_test_shape(
-        [100] * 300, "ftp_test_60min_steady_100pct_86min.zwo") == "sixty_min"
+        [100] * 300, "ftp_test_60min_steady_86min.zwo") == "sixty_min"
 
 
 def test_workout_name_hint_normalized():
@@ -91,7 +91,7 @@ def test_sixty_min_early_quit_returns_none():
 def test_evaluate_sixty_min_early_quit_falls_back_to_coggan():
     s = _hour_of_power(test_w=250, test_min=41)
     out = fe.evaluate_ftp_test(
-        s, filename_hint="ftp_test_60min_steady_100pct_86min.zwo", prior_ftp=240)
+        s, filename_hint="ftp_test_60min_steady_86min.zwo", prior_ftp=240)
     assert out is not None
     sug = out["ftp_test_suggestion"]
     assert out["ftp_test_type"] == "sixty_min"
@@ -149,7 +149,7 @@ def test_perfect_hour_of_power_not_graded_over():
     import execution_score as es
     planned = {"session_type": "ftp_test", "duration_min": 86,
                "tss_estimate": 100,
-               "zwo_file": "ftp_test_60min_steady_100pct_86min.zwo"}
+               "zwo_file": "ftp_test_60min_steady_86min.zwo"}
     ride = {"duration_min": 86.0, "tss": 100,
             "time_in_zone": {"z1": 1500, "z2": 60, "z3": 0,
                              "z4": 3600, "z5": 0, "z6": 0, "z7": 0}}
@@ -187,7 +187,7 @@ def test_ftp_test_family_tokens():
     import training_planner as tp
     assert tp._ftp_test_family("ftp_test_coggan_3x1min-1min_95pct_59min.zwo")
     assert tp._ftp_test_family("ftp_test_ramp_10w_step_ladder20_152pct_52min.zwo")
-    assert tp._ftp_test_family("ftp_test_60min_steady_100pct_86min.zwo")
+    assert tp._ftp_test_family("ftp_test_60min_steady_86min.zwo")
     assert tp._ftp_test_family("ftp_test_cts_3x1min-1min_105pct_54min.zwo") is None
     assert tp._ftp_test_family("ftp_test_ladder4_110pct_90min.zwo") is None
     assert tp._ftp_test_family("ftp_test_2x15s-4min_250pct_54min.zwo") is None
@@ -354,6 +354,6 @@ def test_grill_fallback_only_for_hinted_sixty():
     warm = [120] * 600 + ([237] * 60 + [120] * 60) * 3 + [120] * 240
     early_quit = warm + [250] * (41 * 60) + [96] * 360
     hinted = fe.evaluate_ftp_test(
-        early_quit, filename_hint="ftp_test_60min_steady_100pct_86min.zwo",
+        early_quit, filename_hint="ftp_test_60min_steady_86min.zwo",
         prior_ftp=240)
     assert hinted and hinted["ftp_test_suggestion"]["fallback_from"] == "sixty_min"

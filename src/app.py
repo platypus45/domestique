@@ -14929,8 +14929,11 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int,
                     raw_steps.append(("active", on_d, on_p, on_p))
                     raw_steps.append(("rest", off_d, off_p, off_p))
             elif tag == "FreeRide":
-                # No target in ZWO; default to 50% FTP so the head unit isn't blank.
-                raw_steps.append(("active", dur, 0.5, 0.5))
+                # v3.11.3: a FreeRide is an OPEN step — no target at all. The old
+                # "default to 50% FTP so the head unit isn't blank" turned the
+                # 20-min / 60-min FTP-test blocks into a 50%-of-FTP prescription
+                # on Garmin/Wahoo — worse than erg-locking at the old FTP.
+                raw_steps.append(("active", dur, None, None))
             # Anything else (e.g. <textevent>) is ignored.
 
     INTENSITY_MAP = {
@@ -14981,6 +14984,13 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int,
             "rest": "Recovery", "active": "Work",
         }.get(intensity_kind, "Work")
 
+        if p_start is None:
+            # FreeRide → OPEN target (duration only), in power AND hr mode: the
+            # rider is measuring their FTP here, not riding a number.
+            step.target_type = WorkoutStepTarget.OPEN
+            step.workout_step_name = "Free ride"
+            builder.add(step)
+            continue
         if hr_mode:
             # hr target_mode (IP_HR_ONLY C8): HEART_RATE targets where HR can
             # guide, OPEN + RPE-in-name where it can't (short / supra-threshold).
@@ -15020,7 +15030,10 @@ import dataclasses as _dataclasses
 
 # FC5a (v2.5.0): "auto_moved" is the auto-reschedule provenance marker (never
 # user_moved — that pin is reserved for user drags). JSON-only like variation.
-_PS_JSON_ONLY_KEYS = ("variation", "adapted_reason", "auto_moved")
+# v3.11.3: + ftp_test_type — the rider's explicit protocol choice was dropped by
+# every plan rebuild (reforecast / tab-open auto-recalc), so the day modal
+# snapped back to "20-minute · selected" after a close/reopen.
+_PS_JSON_ONLY_KEYS = ("variation", "adapted_reason", "auto_moved", "ftp_test_type")
 
 
 def _planned_session_from_json(s: dict) -> "tp.PlannedSession":
@@ -18179,10 +18192,14 @@ def _ftp_test_family(fname: str) -> "str | None":
 # 8%/min 43-min file, whose steeper steps over-read FTP for anaerobic riders
 # even beyond the ramp's baseline bias. Fallback duration keeps the endpoint
 # alive if the preferred file is ever renamed.
+# (file, duration_min, nominal TSS). v3.11.3: the measured blocks are FreeRide
+# (no target — a test must not erg-lock at the OLD FTP), so the library's
+# computed TSS under-counts them; the nominal is the honest load of a real
+# attempt and wins when the file's number is lower.
 _FTP_TEST_PREFERRED_FILE = {
-    "ramp": ("ftp_test_ramp_ladder21_200pct_35min.zwo", 35),
-    "coggan_20min": ("ftp_test_coggan_3x1min-1min_95pct_59min.zwo", 59),
-    "sixty_min": ("ftp_test_60min_steady_100pct_86min.zwo", 86),
+    "ramp": ("ftp_test_ramp_ladder21_200pct_35min.zwo", 35, 60),
+    "coggan_20min": ("ftp_test_coggan_3x1min-1min_95pct_59min.zwo", 59, 75),
+    "sixty_min": ("ftp_test_60min_steady_86min.zwo", 86, 100),
 }
 
 
@@ -18216,7 +18233,7 @@ async def api_plan_ftp_test_type(request: Request):
         # W1b: serve the family's PREFERRED protocol file (ramp = the 6%/min
         # ladder detect_ramp_halt reconstructs); duration-closest is only the
         # renamed-file fallback.
-        pref_file, want_dur = _FTP_TEST_PREFERRED_FILE[test_type]
+        pref_file, want_dur, nominal_tss = _FTP_TEST_PREFERRED_FILE[test_type]
         cands = [w for w in tp.load_workout_library()
                  if _ftp_test_family(w.get("File", "")) == test_type]
         if not cands:
@@ -18230,15 +18247,25 @@ async def api_plan_ftp_test_type(request: Request):
         target["duration_min"] = int(pick.get("Duration(min)") or want_dur)
         # W1b: keep the load forecast honest — the hour-of-power carries ~2×
         # the TSS of a ramp, and reforecast/eval read tss_estimate.
-        if pick.get("TSS"):
-            target["tss_estimate"] = round(float(pick["TSS"]))
+        target["tss_estimate"] = max(round(float(pick.get("TSS") or 0)), nominal_tss)
         target["ftp_test_type"] = test_type
         target["user_swapped"] = True   # the rider's deliberate choice
         tp.atomic_write_plan(json_path, plan)
+        # v3.11.3: hand back the FILE-derived enrichment the day modal reads
+        # (display_name / zwo_duration_min / zwo_tss) so the panel refreshes
+        # without a full plan reload.
+        try:
+            _dn, _zdur = _session_naming_lookup(
+                pick["File"], tp._load_content_classifications() or {},
+                {pick["File"]: pick})
+        except Exception:
+            _dn, _zdur = (pick.get("Name") or pick["File"]), int(pick.get("Duration(min)") or 0)
         return {"ok": True, "test_type": test_type, "zwo_file": pick["File"],
                 "zwo_name": target["zwo_name"],
                 "duration_min": target["duration_min"],
-                "tss_estimate": target.get("tss_estimate")}
+                "tss_estimate": target.get("tss_estimate"),
+                "display_name": _dn, "zwo_duration_min": _zdur,
+                "zwo_tss": pick.get("TSS")}
     except Exception:
         _log.exception("ftp-test-type swap failed")
         return JSONResponse({"detail": "ftp-test-type failed"}, 500)

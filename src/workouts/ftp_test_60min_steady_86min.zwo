@@ -1,0 +1,18 @@
+<?xml version='1.0' encoding='utf-8'?>
+<workout_file>
+    <author>Domestique Library</author>
+    <name>FTP Test — 60min hour of power (86min)</name>
+    <description>60-minute FTP test (~86min total). FTP is defined as your best one-hour power, so this is the definitional test: no correction factor, no estimation error — but it is brutal and takes real pacing discipline. 10min easy ramp warmup, 3x1min fast-spin openers at 95% with 1min easy between, 4min easy, then the test: 60min FREE RIDE — no target, no erg. The app deliberately shows no number to hold: we are measuring your FTP, not riding your old one. Ride the hardest steady pace you can hold for the full hour. No anaerobic-depletion surge is needed here: over a full hour the anaerobic contribution is negligible, which is exactly why the factor is 1.0. Your new FTP = the hour's average power — the app computes this from the ride file automatically. Easy 6min cooldown.</description>
+    <sportType>bike</sportType>
+    <tags>
+        <tag name="ftp_test" />
+        <tag name="ftp_test_60min" />
+    </tags>
+    <workout>
+        <Warmup Duration="600" PowerLow="0.45" PowerHigh="0.70" pace="warmup" />
+        <IntervalsT Repeat="3" OnDuration="60" OffDuration="60" OnPower="0.95" OffPower="0.50" pace="openers" />
+        <SteadyState Duration="240" Power="0.50" pace="easy" />
+        <FreeRide Duration="3600" FlatRoad="1" pace="test" />
+        <Cooldown Duration="360" PowerLow="0.60" PowerHigh="0.40" pace="cooldown" />
+    </workout>
+</workout_file>

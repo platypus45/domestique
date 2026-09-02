@@ -18127,37 +18127,122 @@ async function retestScheduleTest(dateIso) {
 // backend converts that day via the swap-type machinery (pins it, eases the
 // previous day for fresh legs, reforecasts the rest) and then swaps the
 // protocol file. Refused server-side when the day was already ridden hard.
-function openScheduleFtpTest() {
-  const today = _calTodayStr();
-  let html = `<h2 style="margin-top:0;">Schedule an FTP test</h2>
-    <div style="font-size:12px;color:var(--text2);margin-bottom:12px;">The chosen day becomes the test; the day before is eased for fresh legs and the rest of the plan re-fits automatically.</div>
-    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
-      <label style="font-size:12px;color:var(--text2);">Day
-        <input type="date" id="sched-ftp-date" value="${today}" min="${today}"
-          style="margin-left:6px;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);">
-      </label>
-      <label style="font-size:12px;color:var(--text2);">Protocol
-        <select id="sched-ftp-proto" style="margin-left:6px;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);">
-          <option value="coggan_20min" selected>20-minute test (best validated)</option>
-          <option value="ramp">Ramp (quick, factor unvalidated)</option>
-          <option value="sixty_min">60-minute hour of power (definitional)</option>
-        </select>
-      </label>
-    </div>
-    <div style="display:flex;gap:8px;align-items:center;">
-      <button class="btn btn-primary" onclick="scheduleFtpTestSubmit()">Schedule</button>
-      <button class="btn" onclick="closeModal()">Cancel</button>
-    </div>
-    <div id="sched-ftp-status" style="font-size:12px;color:var(--text2);margin-top:10px;"></div>`;
-  openModal(html);
+function _ftpTypeFromFile(zwoFile) {
+  const f = String(zwoFile || '').toLowerCase();
+  if (f.includes('ftp_test_ramp')) return 'ramp';
+  if (f.includes('ftp_test_60min')) return 'sixty_min';
+  if (f.includes('ftp_test_coggan')) return 'coggan_20min';
+  return null;
 }
 
-async function scheduleFtpTestSubmit() {
-  const dateEl = document.getElementById('sched-ftp-date');
-  const protoEl = document.getElementById('sched-ftp-proto');
+// FTP-tests F8 (v3.11.3 two-step): "Schedule FTP test" is one modal in two
+// panes. Step 1: a month calendar on top (pick the day), the three protocol
+// cards greyed below. Step 2: the calendar pane greys out (with a "change"
+// link), the cards become live — choosing a card IS the schedule action
+// (swap-type → ftp_test, then ftp-test-type → the chosen protocol). The day
+// modal opened later from the calendar cell is unchanged.
+function openScheduleFtpTest() {
+  const today = _calTodayStr();
+  const [y, m] = today.split('-').map(Number);
+  window._schedFtp = { date: today, year: y, month: m - 1, step: 1 };
+  let html = `<h2 style="margin-top:0;">Schedule an FTP test</h2>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:12px;">Pick the day, then the protocol. The day before is eased for fresh legs and the rest of the plan re-fits automatically.</div>
+    <div id="sched-ftp-step1"></div>
+    <div id="sched-ftp-step2" style="margin-top:14px;"></div>
+    <div id="sched-ftp-status" style="font-size:12px;color:var(--text2);margin-top:10px;"></div>
+    <div style="margin-top:6px;"><button class="btn" onclick="closeModal()">Cancel</button></div>`;
+  openModal(html);
+  _schedFtpRender();
+}
+
+function _schedFtpMonthShift(delta) {
+  const st = window._schedFtp; if (!st) return;
+  let m = st.month + delta, y = st.year;
+  if (m < 0) { m = 11; y -= 1; } if (m > 11) { m = 0; y += 1; }
+  st.month = m; st.year = y; _schedFtpRender();
+}
+
+function _schedFtpPick(iso) {
+  const st = window._schedFtp; if (!st) return;
+  st.date = iso; _schedFtpRender();
+}
+
+function _schedFtpStep(n) {
+  const st = window._schedFtp; if (!st) return;
+  st.step = n; _schedFtpRender();
+}
+
+function _schedFtpCalendarHtml(st) {
+  const today = _calTodayStr();
+  const first = new Date(st.year, st.month, 1);
+  const monthName = first.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+  const lead = (first.getDay() + 6) % 7;             // Monday-first grid
+  const days = new Date(st.year, st.month + 1, 0).getDate();
+  const pad2 = n => String(n).padStart(2, '0');
+  let cells = '';
+  for (let i = 0; i < lead; i++) cells += '<div></div>';
+  for (let d = 1; d <= days; d++) {
+    const iso = `${st.year}-${pad2(st.month + 1)}-${pad2(d)}`;
+    const past = iso < today, sel = iso === st.date, isToday = iso === today;
+    const style = [
+      'padding:8px 0;text-align:center;border-radius:8px;font-size:13px;',
+      past ? 'color:var(--text3);opacity:0.45;cursor:default;' : 'cursor:pointer;',
+      sel ? 'background:var(--accent);color:#fff;font-weight:700;' : (isToday ? 'border:1px solid var(--accent);' : ''),
+    ].join('');
+    cells += `<div style="${style}" ${past ? '' : `onclick="_schedFtpPick('${iso}')"`}>${d}</div>`;
+  }
+  return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <button class="btn btn-sm" onclick="_schedFtpMonthShift(-1)">&#8249;</button>
+      <div style="font-weight:700;">${monthName}</div>
+      <button class="btn btn-sm" onclick="_schedFtpMonthShift(1)">&#8250;</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;font-size:11px;color:var(--text3);text-align:center;margin-bottom:4px;">
+      <div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div><div>Sun</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;">${cells}</div>`;
+}
+
+function _schedFtpRender() {
+  const st = window._schedFtp; if (!st) return;
+  const s1 = document.getElementById('sched-ftp-step1');
+  const s2 = document.getElementById('sched-ftp-step2');
+  if (!s1 || !s2) return;
+  const pretty = new Date(st.date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+  const paneStyle = (active) => `border:1px solid ${active ? 'var(--accent)' : 'var(--border)'};border-radius:10px;padding:12px;${active ? '' : 'opacity:0.45;'}`;
+  if (st.step === 1) {
+    s1.innerHTML = `<div style="${paneStyle(true)}">
+        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px;">1 · Pick the day</div>
+        ${_schedFtpCalendarHtml(st)}
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;">
+          <div style="font-size:12px;color:var(--text2);">Selected: <b>${pretty}</b></div>
+          <button class="btn btn-primary" onclick="_schedFtpStep(2)">Continue &rarr;</button>
+        </div>
+      </div>`;
+    s2.innerHTML = `<div style="${paneStyle(false)}">
+        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px;">2 · Pick the protocol</div>
+        ${ftpTestChooserHtml(-1, st.date, null, { disabled: true, onChoose: () => '' })}
+      </div>`;
+  } else {
+    s1.innerHTML = `<div style="${paneStyle(false)}">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div style="font-size:12px;color:var(--text2);">1 · Day: <b style="color:var(--text);">${pretty}</b></div>
+          <button class="btn btn-sm" onclick="_schedFtpStep(1)" style="pointer-events:auto;">change</button>
+        </div>
+      </div>`;
+    s2.innerHTML = `<div style="${paneStyle(true)}">
+        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px;">2 · Pick the protocol — choosing schedules the test</div>
+        ${ftpTestChooserHtml(-1, st.date, null, { onChoose: tt => `scheduleFtpTestSubmit('${tt}')` })}
+      </div>`;
+    // the greyed pane must still allow its "change" button
+    s1.firstElementChild.style.opacity = '0.6';
+  }
+}
+
+async function scheduleFtpTestSubmit(proto) {
+  const st = window._schedFtp || {};
   const statusEl = document.getElementById('sched-ftp-status');
-  const dateIso = dateEl && dateEl.value;
-  const proto = (protoEl && protoEl.value) || 'coggan_20min';
+  const dateIso = st.date;
+  proto = proto || 'coggan_20min';
   if (!dateIso) { if (statusEl) statusEl.textContent = 'Pick a day first.'; return; }
   if (statusEl) statusEl.textContent = 'Scheduling…';
   try {
@@ -18865,7 +18950,10 @@ async function openDayWorkout(sessionIdx, day) {
   html += `<h2>${esc(_title.label)} — ${esc(heroTitle)}${_title.pill}</h2>`;
   // v3.2.0: FTP-test sessions lead with a ramp-vs-20-min chooser — the rider
   // picks per test (no global setting), with the trade-offs shown.
-  if (type === 'ftp_test') html += ftpTestChooserHtml(sessionIdx, session.day, session.ftp_test_type || 'coggan_20min');
+  // v3.11.3: an auto-matched test slot has no ftp_test_type — derive the
+  // "selected" card from the matched file's family, never default to 20-min
+  // (the card said "20-minute · selected" above a matched Ramp file).
+  if (type === 'ftp_test') html += ftpTestChooserHtml(sessionIdx, session.day, session.ftp_test_type || _ftpTypeFromFile(session.zwo_file) || 'coggan_20min');
   if (session.zwo_file && matchedFile) {
     // B7 — direction-aware, non-alarming gap note. The matched .zwo is a guide;
     // a longer file means ride the structure and stop at the slot target, a
@@ -19014,7 +19102,13 @@ async function openDayWorkout(sessionIdx, day) {
 // ramp / 60-min) with a power-profile sketch and honest pros/cons, shown at
 // the top of an ftp_test session modal. Picking a card swaps THIS session's
 // workout (per-session, no global setting).
-function ftpTestChooserHtml(sessionIdx, day, currentType) {
+// v3.11.3: `opts.onChoose(tt)` returns the onclick JS for a card (the two-step
+// scheduler reuses these cards with its own action); `opts.disabled` renders
+// the cards greyed and inert (step-1 preview). Default = day-modal behaviour.
+function ftpTestChooserHtml(sessionIdx, day, currentType, opts) {
+  opts = opts || {};
+  const onChoose = opts.onChoose || (tt => `chooseFtpTest(${sessionIdx}, '${escJs(day)}', '${tt}')`);
+  const wrapStyle = opts.disabled ? 'opacity:0.35;pointer-events:none;filter:grayscale(0.6);' : '';
   const RAMP_SVG = `<svg viewBox="0 0 120 46" width="120" height="46" aria-hidden="true"><polyline points="0,42 16,42 16,36 34,36 34,29 52,29 52,21 70,21 70,13 88,13 88,6 100,6 101,42 120,42" fill="none" stroke="var(--accent)" stroke-width="2"/></svg>`;
   const TT_SVG = `<svg viewBox="0 0 120 46" width="120" height="46" aria-hidden="true"><polyline points="0,40 14,30 19,30 21,7 26,7 28,36 40,36 44,36 44,18 108,18 114,40 120,40" fill="none" stroke="var(--accent)" stroke-width="2"/></svg>`;
   const HOUR_SVG = `<svg viewBox="0 0 120 46" width="120" height="46" aria-hidden="true"><polyline points="0,40 10,32 14,26 18,32 22,26 26,32 30,32 30,16 112,16 116,40 120,40" fill="none" stroke="var(--accent)" stroke-width="2"/></svg>`;
@@ -19026,10 +19120,10 @@ function ftpTestChooserHtml(sessionIdx, day, currentType) {
       <div style="font-size:11px;color:var(--text2);margin:6px 0;">${what}</div>
       <div style="font-size:11px;color:var(--text2);"><b style="color:var(--green,#3a3);">Pro</b> ${pro}</div>
       <div style="font-size:11px;color:var(--text2);margin-top:2px;"><b style="color:var(--red);">Con</b> ${con}</div>
-      <button class="btn btn-sm" ${sel ? 'disabled' : ''} style="margin-top:8px;font-size:11px;${sel ? 'opacity:0.5;' : ''}" onclick="chooseFtpTest(${sessionIdx}, '${escJs(day)}', '${tt}')">${sel ? 'Current test' : 'Choose this test'}</button>
+      <button class="btn btn-sm" ${sel ? 'disabled' : ''} style="margin-top:8px;font-size:11px;${sel ? 'opacity:0.5;' : ''}" onclick="${onChoose(tt)}">${sel ? 'Current test' : 'Choose this test'}</button>
     </div>`;
   };
-  return `<div style="margin:4px 0 14px;">
+  return `<div style="margin:4px 0 14px;${wrapStyle}">
     <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px;">Choose your FTP test</div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
       ${card('coggan_20min', TT_SVG, '20-minute test', 'A 5-min all-out effort drains your sprint reserve, then a 20-min max effort; FTP = 95% of the 20-min average.', 'Best-validated protocol in the literature — the depletion effort keeps anaerobic inflation out.', 'Pacing is HARD — go too hard early and you fade, reading LOW. ~60 min total.')}
@@ -19048,7 +19142,17 @@ async function chooseFtpTest(sessionIdx, day, testType) {
     const d = await r.json();
     if (!r.ok || d.error) { alert(d.error || 'Could not switch test'); return; }
     const s = window._weekPlanSessions?.[sessionIdx];
-    if (s) { s.zwo_file = d.zwo_file; s.zwo_name = d.zwo_name; s.duration_min = d.duration_min; s.ftp_test_type = d.test_type; if (d.tss_estimate != null) s.tss_estimate = d.tss_estimate; }
+    if (s) {
+      s.zwo_file = d.zwo_file; s.zwo_name = d.zwo_name; s.duration_min = d.duration_min;
+      s.ftp_test_type = d.test_type; if (d.tss_estimate != null) s.tss_estimate = d.tss_estimate;
+      // v3.11.3: the hero title / Duration / TSS stats read the FILE-derived
+      // enrichment fields, which stayed stale after a protocol switch — the
+      // panel showed "FTP Test Ramp (35min) · 106 TSS" under a 60-min chart.
+      if (d.display_name != null) s.display_name = d.display_name;
+      if (d.zwo_duration_min != null) s.zwo_duration_min = d.zwo_duration_min;
+      if (d.zwo_tss !== undefined) s.zwo_tss = d.zwo_tss;
+      s.content_class = 'ftp_test';
+    }
     openDayWorkout(sessionIdx);   // re-render with the chosen workout
   } catch (e) { alert('Could not switch test'); }
 }

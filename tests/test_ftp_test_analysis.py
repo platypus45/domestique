@@ -187,3 +187,28 @@ def test_parse_fit_stats_reads_power_hr_cadence(tmp_path):
     assert st.get("avg_hr") == 140
     assert st.get("avg_cadence") == 90
     assert st.get("duration_sec") == 120
+
+
+# ── v3.11.3: stale zero-power load sidecars are recomputed, RPE kept ────────
+
+def test_stale_fit_load_sidecar_is_recomputed_and_keeps_rpe(tmp_path, monkeypatch):
+    import json as _json
+    import ride_storage as rs
+    import config
+    fitdir = tmp_path / "fits"; fitdir.mkdir()
+    monkeypatch.setattr(rs, "_fit_rides_dir", lambda: fitdir)
+    monkeypatch.setattr(config, "ATHLETE_FTP_W", 250, raising=False)
+    p = fitdir / "old.fit"
+    p.write_bytes(_activity_fit_bytes(_coggan_ride()))
+    # A sidecar as every pre-fix version wrote it: zero-power load, no reader_v,
+    # plus the rider's own rating.
+    side = rs._fit_load_sidecar_path(p)
+    side.write_text(_json.dumps({"tss": 0, "load_source": "power", "duration_s": 3540,
+                                 "rpe": 7, "rpe_at": "2026-09-01T10:00", "rpe_scale": "cr10"}))
+    assert rs.fit_load_sidecar_is_stale(rs.read_fit_load_sidecar(p))
+    new = rs.write_fit_load_sidecar(p)
+    assert new is not None, "recompute must succeed on a real FIT"
+    assert new["reader_v"] == rs.FIT_LOAD_READER_V
+    assert new.get("rpe") == 7 and new.get("rpe_scale") == "cr10"   # carried
+    assert not rs.fit_load_sidecar_is_stale(rs.read_fit_load_sidecar(p))
+    assert rs.fit_load_sidecar_is_stale({"tss": 1}) and rs.fit_load_sidecar_is_stale(None)

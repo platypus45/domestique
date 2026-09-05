@@ -173,8 +173,15 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class _QuietServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        pass  # clients that refuse our certificate abort the handshake — expected
+
+
 def serve(cert_pem: Path, key_pem: Path, host="127.0.0.1", port=0) -> int:
-    srv = http.server.ThreadingHTTPServer((host, port), _Handler)
+    srv = _QuietServer((host, port), _Handler)
     sctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     sctx.load_cert_chain(cert_pem, key_pem)
     srv.socket = sctx.wrap_socket(srv.socket, server_side=True)
@@ -193,7 +200,7 @@ def verdict_httpx(ctx, url) -> str:
 def verdict_schannel(url) -> str:
     """Independent Windows oracle: PowerShell Invoke-WebRequest (.NET → SChannel)."""
     cmd = (f"try {{ (Invoke-WebRequest -Uri '{url}' -UseBasicParsing -TimeoutSec 20).StatusCode }} "
-           f"catch {{ 'ERR: ' + $_.Exception.Message }}")
+           f"catch {{ $e = $_.Exception; while ($e.InnerException) {{ $e = $e.InnerException }}; 'ERR: ' + $e.Message }}")
     out = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", cmd],
                          capture_output=True, text=True, timeout=90).stdout.strip()
     return "ok" if out == "200" else f"refused: {out[:160]}"
@@ -216,7 +223,6 @@ def probe() -> int:
         failures.append(f"{label}: {why}")
         print(f"FAIL {label}: {why}")
 
-    openssl_ctx = tls_trust._openssl_context()
     shipped = tls_trust.make_context()
     backend = tls_trust.backend_of(shipped)
     print(f"shipped context backend: {backend}")
@@ -232,7 +238,12 @@ def probe() -> int:
         try:
             port = serve(pem, key)
             url = f"https://127.0.0.1:{port}/"
-            rows[shape] = {"openssl": verdict_httpx(openssl_ctx, url),
+            # Fresh OpenSSL context AFTER the install: load_default_certs() snapshots
+            # the Windows store, and the app builds its context at first use — long
+            # after an antivirus installed its root. A context built before the
+            # install says "self-signed certificate in certificate chain" (root not
+            # found), which is not the rider's failure.
+            rows[shape] = {"openssl": verdict_httpx(tls_trust._openssl_context(), url),
                            "truststore": verdict_httpx(shipped, url),
                            "schannel": verdict_schannel(url)}
         finally:
@@ -318,7 +329,7 @@ def serve_fake_icu() -> int:
     with HOSTS.open("a", encoding="ascii") as h:
         h.write("\r\n127.0.0.1 intervals.icu\r\n")
     subprocess.run(["ipconfig", "/flushdns"], check=False, stdout=subprocess.DEVNULL)
-    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 443), _Handler)
+    srv = _QuietServer(("127.0.0.1", 443), _Handler)
     sctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     sctx.load_cert_chain(pem, key)
     srv.socket = sctx.wrap_socket(srv.socket, server_side=True)

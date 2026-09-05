@@ -198,7 +198,7 @@ def verdict_httpx(ctx, url) -> str:
 
 
 def verdict_schannel(url) -> str:
-    """Independent Windows oracle: PowerShell Invoke-WebRequest (.NET → SChannel)."""
+    """Independent Windows oracle: PowerShell Invoke-WebRequest (.NET -> SChannel)."""
     cmd = (f"try {{ (Invoke-WebRequest -Uri '{url}' -UseBasicParsing -TimeoutSec 20).StatusCode }} "
            f"catch {{ $e = $_.Exception; while ($e.InnerException) {{ $e = $e.InnerException }}; 'ERR: ' + $e.Message }}")
     out = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", cmd],
@@ -355,14 +355,14 @@ def e2e_oauth(base="http://127.0.0.1:22400") -> int:
             fail("frozen EXE tls_backend", f"{tlsb!r} (expected os-native)")
         r = c.get("/oauth/icu/start", params={"return_to": "/"})
         loc = r.headers.get("location", "")
-        print(f"start → {r.status_code} {loc[:120]}")
+        print(f"start -> {r.status_code} {loc[:120]}")
         state = (parse_qs(urlparse(loc).query).get("state") or [""])[0]
         if r.status_code not in (302, 303, 307) or not state:
             fail("oauth start", f"status={r.status_code} location={loc[:200]}")
             print("\n".join(failures)); return 1
         r = c.get("/oauth/icu/callback", params={"code": "ci-dummy-code", "state": state})
         loc = r.headers.get("location", "")
-        print(f"callback → {r.status_code} {loc}")
+        print(f"callback -> {r.status_code} {loc}")
         if "reason=network" in loc:
             fail("token exchange reached fake intervals.icu",
                  "reason=network — the TLS refusal the rider hit is still there")
@@ -387,6 +387,12 @@ def e2e_oauth(base="http://127.0.0.1:22400") -> int:
 
 
 def main() -> int:
+    # The runner's console is cp1252; never let a log character abort a gate.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     if sys.platform != "win32":
         print("tls_intercept_probe_win.py: Windows only (certutil + CryptoAPI + SChannel oracle)")
         return 2

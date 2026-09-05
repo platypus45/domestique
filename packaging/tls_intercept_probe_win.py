@@ -38,7 +38,6 @@ Exit 1 on any deviation.
 from __future__ import annotations
 
 import datetime as dt
-import glob
 import http.server
 import ipaddress
 import json
@@ -371,9 +370,14 @@ def e2e_oauth(base="http://127.0.0.1:22400") -> int:
         else:
             print(f"e2e OK: token POST went through the interceptor and got HTTP {FAKE_ICU_STATUS} from the fake intervals.icu")
 
-    logs = sorted(glob.glob(str(Path.home() / ".domestique" / "logs" / "domestique_*.log")), key=os.path.getmtime)
-    text = Path(logs[-1]).read_text(encoding="utf-8", errors="replace") if logs else ""
-    lines = [l for l in text.splitlines() if "icu_oauth" in l]
+    # The frozen EXE writes %USERPROFILE%\.domestique\logs\domestique.log (plus
+    # per-session app_*.log files); scan every log there, oldest first.
+    logdir = Path.home() / ".domestique" / "logs"
+    files = sorted(logdir.glob("*.log"), key=os.path.getmtime) if logdir.is_dir() else []
+    print(f"app logs: {[f.name for f in files]}")
+    lines = []
+    for f in files:
+        lines += [l for l in f.read_text(encoding="utf-8", errors="replace").splitlines() if "icu_oauth" in l]
     print("app log (icu_oauth lines):\n  " + "\n  ".join(lines[-12:]) if lines else "app log: no icu_oauth lines found")
     if not any("EVENT=icu_oauth_start" in l and "tls=os-native" in l for l in lines):
         fail("log", "no 'EVENT=icu_oauth_start ... tls=os-native' line")

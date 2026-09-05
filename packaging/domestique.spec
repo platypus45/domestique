@@ -114,6 +114,11 @@ a = Analysis(
     datas=datas,
     hiddenimports=[
         "certifi",  # v2.1.0 WIN-TLS-FIX — urllib CA bundle (see datas + launcher)
+        # v3.11.4 WIN-TLS-TRUST — OS-native verifier for intervals.icu on Windows.
+        # The backends sit behind platform checks; name them so no analysis
+        # shortcut can drop one (CI asserts tls_backend == os-native on Windows).
+        "truststore", "truststore._api", "truststore._windows",
+        "truststore._macos", "truststore._openssl", "truststore._ssl_constants",
         # v4.0.0-alpha: BLE/ANT+ runtime is gone with the trainer rip;
         # WebSocket bits are no longer imported because the /ws/training
         # endpoint was deleted. Keep only the HTTP + lifespan minimum.

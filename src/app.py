@@ -41,35 +41,24 @@ import asyncio
 import logging
 from fit_activity import fit_field as _fit_val  # v3.11.3 fit-tool compat reader
 
-def _icu_verify():
-    """v3.11.3 — TLS trust for every httpx call to intervals.icu / GitHub.
+import tls_trust  # v3.11.4 — OS-native verifier on Windows, OpenSSL+certifi elsewhere
 
-    httpx verifies against certifi ONLY. On a Windows machine where HTTPS is
-    inspected (antivirus "HTTPS scanning", a corporate proxy) the server
-    certificate is re-signed by a root that lives in the Windows certificate
-    store but not in certifi — browsers trust it, our OAuth token exchange
-    failed with CERTIFICATE_VERIFY_FAILED (Windows rider, v3.11.2). urllib
-    (the sync path) never had this problem: the default context loads the OS
-    store as well. Give httpx the same union: certifi + the OS trust store.
+
+def _icu_verify():
+    """TLS trust for every httpx call to intervals.icu / GitHub (see tls_trust).
+
+    v3.11.3 gave httpx certifi + the OS store; the Windows rider's next log
+    showed the antivirus root now FOUND and refused ("invalid CA certificate"):
+    OpenSSL never trusts a malformed root, Windows always does. v3.11.4 asks
+    the OS verifier on Windows. Built once, cached for the process.
     """
     global _ICU_VERIFY_CTX
     try:
         return _ICU_VERIFY_CTX
     except NameError:
         pass
-    import ssl
-    ctx = ssl.create_default_context()
-    try:
-        import certifi
-        ctx.load_verify_locations(cafile=certifi.where())
-    except Exception:
-        pass
-    try:
-        ctx.load_default_certs()  # Windows CA/ROOT stores, macOS keychain, Linux dirs
-    except Exception:
-        pass
-    _ICU_VERIFY_CTX = ctx
-    return ctx
+    _ICU_VERIFY_CTX = tls_trust.make_context()
+    return _ICU_VERIFY_CTX
 
 import log_config
 _log = log_config.get_logger("app")
@@ -9011,7 +9000,8 @@ def api_oauth_icu_start(return_to: str = Query("/")):
     state = _secrets.token_urlsafe(32)
     _icu_oauth_states[state] = {"profile_id": profile_id, "ts": now,
                                 "return_to": _icu_oauth_safe_return(return_to)}
-    _log.info("EVENT=icu_oauth_start profile=%s", profile_id or "?")
+    _log.info("EVENT=icu_oauth_start profile=%s tls=%s", profile_id or "?",
+              tls_trust.backend_of(_icu_verify()))
     params = urlencode({
         "client_id": config.ICU_OAUTH_CLIENT_ID,
         "redirect_uri": config.ICU_OAUTH_REDIRECT_URI,
@@ -22072,6 +22062,9 @@ def api_diag_health(request: Request):
         "client_id": str(getattr(config, "ICU_OAUTH_CLIENT_ID", "") or ""),
         "secret_loaded": bool(getattr(config, "ICU_OAUTH_CLIENT_SECRET", "")),
         "redirect_uri": str(getattr(config, "ICU_OAUTH_REDIRECT_URI", "") or ""),
+        # v3.11.4: which verifier guards the sign-in. CI asserts os-native on
+        # Windows (antivirus roots OpenSSL refuses) and openssl on Linux.
+        "tls_backend": tls_trust.backend_of(_icu_verify()),
     }
     # workout_library
     try:

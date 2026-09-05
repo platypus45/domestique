@@ -117,6 +117,19 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      # v3.11.4: the intervals.icu TLS path must agree with Windows itself. A
+      # rider's 3.11.3 log showed OpenSSL refusing the antivirus root Windows
+      # trusts ("invalid CA certificate"). This installs an interceptor-style
+      # root in the runner's ROOT store, reproduces that refusal with the
+      # 3.11.3 context, then proves the OS-native verifier accepts it, still
+      # rejects untrusted roots + hostname mismatches, and reaches the real
+      # intervals.icu. Same Python + packages the EXE is frozen from.
+      - name: "TLS probe: OS-native trust agrees with Windows"
+        shell: pwsh
+        run: |
+          pip install cryptography
+          python packaging/tls_intercept_probe_win.py
+
       # The OAuth client_secret lives in the gitignored .oauth.env (never in the
       # repo), so the CI checkout doesn't have it — without this the spec skips
       # bundling it and the Windows EXE ships an empty secret, making the
@@ -371,7 +384,15 @@ jobs:
               Write-Host "::error::frozen app did not load the OAuth client secret — sign-in would fail"
               exit 1
             }
-            Write-Host "Smoke-test passed: EXE serves version $served, library=$libcount, hit=$hitn, oauth_secret=loaded"
+            # v3.11.4: the frozen EXE must verify intervals.icu with the OS
+            # verifier — the 3.11.3 rider's antivirus root is refused by OpenSSL.
+            $tlsb = "$($hb.checks.icu_oauth.tls_backend)"
+            if ($tlsb -ne "os-native") {
+              Dump-Diagnostics
+              Write-Host "::error::frozen app verifies TLS with '$tlsb' (expected os-native) — truststore not bundled/selected"
+              exit 1
+            }
+            Write-Host "Smoke-test passed: EXE serves version $served, library=$libcount, hit=$hitn, oauth_secret=loaded, tls=$tlsb"
           } finally {
             # $proc is the cmd.exe wrapper; the EXE is its child. Kill the whole
             # tree (/T) so Domestique.exe doesn't outlive the wrapper.
@@ -665,6 +686,9 @@ jobs:
           # v3.11.3: OAuth secret LOADED by the frozen app (not merely bundled).
           secret_loaded="$(printf '%s' "$hb" | jq -r '.checks.icu_oauth.secret_loaded // false')"
           [ "$secret_loaded" = "true" ] || fail "frozen app did not load the OAuth client secret — sign-in would fail"
+          # v3.11.4: Linux stays on OpenSSL + certifi + OS store (os-native is Windows-only).
+          tls_backend="$(printf '%s' "$hb" | jq -r '.checks.icu_oauth.tls_backend // empty')"
+          [ "$tls_backend" = "openssl" ] || fail "Linux TLS backend is '$tls_backend' (expected openssl)"
 
           #    ...and the listener must BE the GUI process, not a stage-A leftover.
           PORT_PID="$(ss -ltnp 2>/dev/null | awk '/:22400 /{ if (match($0, /pid=[0-9]+/)) print substr($0, RSTART+4, RLENGTH-4) }' | head -1)"

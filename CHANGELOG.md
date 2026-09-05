@@ -1,5 +1,9 @@
 # Changelog
 
+## v3.11.4 — Windows sign-in trusts what Windows trusts (unreleased)
+
+- **The Windows sign-in fix in 3.11.3 was half a fix.** The rider came back with the 3.11.3 log, and it had moved one step: the antivirus root certificate was now *found*, but rejected as an invalid authority. Certificates that antivirus "HTTPS scanning" and corporate proxies generate are frequently not well-formed authority certificates, and the app's HTTPS library refuses such a root outright, whatever settings are applied. Windows itself trusts an installed root without inspecting it, which is why the browser and every other program on that machine connect fine. On Windows the app now hands the certificate check to Windows, exactly as those programs do, instead of running its own. macOS and Linux are unchanged. Every Windows release build is now tested against a simulated antivirus certificate of this kind before it can ship: the rejection is reproduced there, and the fix verified. The Diagnostics panel shows which verifier is in use, and the sign-in log line names it too.
+
 ## v3.11.3 — Sign-in that says what went wrong (2026-09-02)
 
 - **A rider reported "Connection failed — the token exchange failed" when connecting intervals.icu.** The sign-in code has not changed in months and intervals.icu accepts this app's credentials, so the failure is specific to that machine — but the app gave nobody, including its author, a way to tell *what* failed. This release closes that gap without guessing at a fix: the Diagnostics panel (and `/api/diag/health`) now reports whether the app actually loaded its sign-in credentials, and every release build on macOS, Windows and Linux is now launched and checked for exactly that before it can ship. If you see this error, the log line starting `EVENT=icu_oauth_exchange_http` in `~/.domestique/logs/domestique.log` (`%USERPROFILE%\.domestique\logs` on Windows) names the exact reason — please include it when reporting.

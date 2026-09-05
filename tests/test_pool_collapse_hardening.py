@@ -209,6 +209,8 @@ def test_diag_health_reports_oauth_readiness():
     assert isinstance(oa["secret_loaded"], bool)
     assert oa["client_id"]
     assert oa["redirect_uri"].startswith("http://127.0.0.1:")
+    # v3.11.4: which verifier guards the sign-in — CI asserts os-native on Windows.
+    assert oa["tls_backend"] in ("openssl", "os-native")
     # The secret itself must never appear in the payload.
     body = r.text
     import config

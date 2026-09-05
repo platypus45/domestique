@@ -1,6 +1,6 @@
 # Changelog
 
-## v3.11.4 — Windows sign-in trusts what Windows trusts (unreleased)
+## v3.11.4 — Windows sign-in trusts what Windows trusts (2026-09-05)
 
 - **The Windows sign-in fix in 3.11.3 was half a fix.** The rider came back with the 3.11.3 log, and it had moved one step: the antivirus root certificate was now *found*, but rejected as an invalid authority. Certificates that antivirus "HTTPS scanning" and corporate proxies install are often not written as proper authority certificates, and the app's HTTPS library refuses such a root outright, whatever settings are applied. Windows accepts them, which is why the browser and every other program on that machine connect fine. On Windows the app now hands the certificate check to Windows itself, exactly as those programs do, for *every* connection to intervals.icu: sign-in, ride and wellness sync, ride-file uploads and downloads, and the calendar push — not only the sign-in step that the rider's log happened to show. macOS and Linux are unchanged.
 - **Proven on Windows before it can ship.** Every Windows release build now installs a simulated antivirus certificate of exactly that kind on the build machine, reproduces the rider's rejection with the old check, confirms Windows accepts what the browser accepts and still refuses forged or mismatched certificates, and then signs the finished app in through the simulated antivirus. A build that fails any of it does not ship.

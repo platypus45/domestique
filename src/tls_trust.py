@@ -68,3 +68,37 @@ def make_context(platform: str | None = None) -> ssl.SSLContext:
 def backend_of(ctx: ssl.SSLContext) -> str:
     """'os-native' for a truststore context, 'openssl' otherwise (diag + logs)."""
     return OS_NATIVE if type(ctx).__module__.startswith("truststore") else OPENSSL
+
+
+def peer_chain_summary(host: str, port: int = 443, timeout: float = 5.0) -> list[str]:
+    """Subject/issuer of every certificate the server presents, fetched WITHOUT
+    verification. Diagnostics only — logged when a TLS failure is reported so
+    the log names the interceptor (antivirus / proxy) instead of us guessing.
+    Never used to trust anything."""
+    import socket
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    with socket.create_connection((host, port), timeout=timeout) as raw, \
+            ctx.wrap_socket(raw, server_hostname=host) as s:
+        chain = s._sslobj.get_unverified_chain() or ()   # CPython 3.10+; public in 3.13
+    out = []
+    for c in chain:
+        if isinstance(c, (bytes, bytearray)):            # 3.13+: DER bytes
+            import hashlib
+            out.append("sha256=" + hashlib.sha256(c).hexdigest()[:16])
+            continue
+        info = c.get_info()
+        out.append(f"subject={_rdn(info.get('subject'))} issuer={_rdn(info.get('issuer'))}")
+    return out
+
+
+def _rdn(name) -> str:
+    """(((k, v),), ...) → 'CN=x,O=y'."""
+    short = {"commonName": "CN", "organizationName": "O", "organizationalUnitName": "OU",
+             "countryName": "C", "stateOrProvinceName": "ST", "localityName": "L"}
+    parts = []
+    for rdn in name or ():
+        for k, v in rdn:
+            parts.append(f"{short.get(k, k)}={v}")
+    return ",".join(parts) or "?"

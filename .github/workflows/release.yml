@@ -173,6 +173,28 @@ jobs:
           }
           Write-Host "OK: .oauth.env bundled with a non-empty secret at $($f.FullName)"
 
+      # v3.11.4: simulated antivirus interception of intervals.icu for the
+      # end-to-end sign-in check inside the smoke test below. Installs a root
+      # of the shape the TLS probe found Windows accepts and OpenSSL refuses,
+      # points intervals.icu at 127.0.0.1 in the hosts file, and answers the
+      # token exchange on :443 the way intervals.icu answers a bad code (400).
+      - name: "Start simulated antivirus interceptor for intervals.icu"
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath python -ArgumentList 'packaging/tls_intercept_probe_win.py','serve-fake-icu' `
+            -PassThru -RedirectStandardOutput fake_icu.out -RedirectStandardError fake_icu.err
+          $deadline = (Get-Date).AddSeconds(120)
+          while ((Get-Date) -lt $deadline) {
+            $out = if (Test-Path fake_icu.out) { Get-Content fake_icu.out -Raw -ErrorAction SilentlyContinue } else { "" }
+            if ($out -match 'READY') { break }
+            if ($p.HasExited) { break }
+            Start-Sleep -Seconds 2
+          }
+          Get-Content fake_icu.out -ErrorAction SilentlyContinue | Write-Host
+          Get-Content fake_icu.err -ErrorAction SilentlyContinue | Write-Host
+          $out = if (Test-Path fake_icu.out) { Get-Content fake_icu.out -Raw } else { "" }
+          if ($p.HasExited -or -not ($out -match 'READY')) { Write-Host "::error::simulated interceptor did not start"; exit 1 }
+
       # Gate the build: a frozen EXE that won't start (or reports the wrong
       # version) must fail CI here rather than ship. Runs the EXE headless via
       # DOMESTIQUE_SERVER_ONLY=1 (no window/tray on the runner), polls the
@@ -392,7 +414,18 @@ jobs:
               Write-Host "::error::frozen app verifies TLS with '$tlsb' (expected os-native) — truststore not bundled/selected"
               exit 1
             }
-            Write-Host "Smoke-test passed: EXE serves version $served, library=$libcount, hit=$hitn, oauth_secret=loaded, tls=$tlsb"
+            # v3.11.4 end-to-end: the frozen EXE signs in THROUGH the simulated
+            # antivirus interceptor. Start -> state -> callback with a dummy
+            # code: the token POST must reach the (fake) intervals.icu and come
+            # back HTTP 400 (reason=exchange&status=400). reason=network is the
+            # rider's failure, still present.
+            python packaging/tls_intercept_probe_win.py e2e-oauth
+            if ($LASTEXITCODE -ne 0) {
+              Dump-Diagnostics
+              Write-Host "::error::end-to-end sign-in through the simulated interceptor failed - see e2e output above"
+              exit 1
+            }
+            Write-Host "Smoke-test passed: EXE serves version $served, library=$libcount, hit=$hitn, oauth_secret=loaded, tls=$tlsb, e2e-through-interceptor=ok"
           } finally {
             # $proc is the cmd.exe wrapper; the EXE is its child. Kill the whole
             # tree (/T) so Domestique.exe doesn't outlive the wrapper.

@@ -123,3 +123,37 @@ def test_app_caches_one_context_from_tls_trust():
     ctx = app_module._icu_verify()
     assert app_module._icu_verify() is ctx
     assert tls_trust.backend_of(ctx) == tls_trust.backend_of(tls_trust.make_context())
+
+
+# ── diagnostics: the log names the interceptor ───────────────────────────────
+
+def test_peer_chain_summary_names_subject_and_issuer():
+    port = _serve(FIX / "leaf_no_ca_markers.pem", FIX / "leaf.key")
+    out = tls_trust.peer_chain_summary("127.0.0.1", port, timeout=5)
+    assert len(out) == 1
+    assert "subject=CN=localhost" in out[0]
+    assert "issuer=CN=Domestique TEST-ONLY root no_ca_markers" in out[0]
+
+
+def test_oauth_network_failure_logs_peer_chain(monkeypatch, caplog):
+    """A TLS refusal on the token POST must leave the interceptor's identity in
+    the log — the whole reason two rider logs went nowhere."""
+    import logging
+    import httpx
+    import app as app_module
+    from fastapi.testclient import TestClient
+
+    def boom(*a, **k):
+        raise httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] invalid CA certificate")
+    monkeypatch.setattr(httpx, "post", boom)
+    monkeypatch.setattr(tls_trust, "peer_chain_summary",
+                        lambda host, port=443, timeout=5.0: ["subject=CN=intervals.icu issuer=CN=Some AV Root"])
+    app_module._icu_oauth_states["st-test"] = {"profile_id": "p", "ts": 9e12, "return_to": "/"}
+    monkeypatch.setattr(app_module, "_icu_profile_exists", lambda pm, pid: True)
+    client = TestClient(app_module.app)
+    with caplog.at_level(logging.WARNING, logger="app"):
+        r = client.get("/oauth/icu/callback", params={"code": "x", "state": "st-test"},
+                       follow_redirects=False)
+    assert r.status_code in (302, 307)
+    assert "reason=network" in r.headers["location"]
+    assert any("icu_oauth_peer_chain" in m and "Some AV Root" in m for m in caplog.messages), caplog.messages

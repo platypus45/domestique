@@ -9067,6 +9067,17 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
             # DNS / TLS / proxy / connection refused — the request never got an
             # answer. Certificate stores and corporate proxies live here.
             _log.warning("EVENT=icu_oauth_network error=%s", str(e)[:200])
+            # v3.11.4: name the interceptor. Two Windows logs in a row said
+            # "certificate verify failed" without saying WHOSE certificate.
+            # Unverified fetch of the presented chain, diagnostics only.
+            try:
+                from urllib.parse import urlparse as _up
+                _host = _up(config.ICU_OAUTH_TOKEN_URL).hostname or "intervals.icu"
+                _log.warning("EVENT=icu_oauth_peer_chain host=%s tls=%s chain=%s", _host,
+                             tls_trust.backend_of(_icu_verify()),
+                             " | ".join(tls_trust.peer_chain_summary(_host))[:600])
+            except Exception as e2:
+                _log.warning("EVENT=icu_oauth_peer_chain unavailable=%s", str(e2)[:120])
             return _back("icu=error&reason=network")
         if resp.status_code != 200:
             _log.warning("EVENT=icu_oauth_exchange_http status=%s body=%s",

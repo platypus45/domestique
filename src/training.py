@@ -8,6 +8,7 @@ import statistics
 import time
 import urllib.parse
 import urllib.request
+import tls_trust  # v3.11.4 — one verifier for every intervals.icu connection
 import urllib.error
 import base64
 from datetime import date, timedelta
@@ -145,7 +146,7 @@ def discover_athlete_id(api_key: str) -> dict | None:
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=10, context=tls_trust.make_context()) as resp:
             data = json.loads(resp.read())
             if isinstance(data, dict) and data.get("id"):
                 return data
@@ -199,7 +200,7 @@ def upload_fit_to_icu(fit_path: "str | pathlib.Path", retry: int = 1) -> dict:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=30, context=tls_trust.make_context()) as resp:
                 status = resp.getcode()
                 if 200 <= status < 300:
                     _log.info(f"EVENT=icu_fit_upload_ok status={status} file={path.name}")
@@ -260,7 +261,7 @@ def _get(path: str, params: dict | None = None) -> list | dict | None:
     last_network_exc: Exception | None = None
     for attempt in range(3):
         try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with urllib.request.urlopen(req, timeout=15, context=tls_trust.make_context()) as resp:
                 try:
                     return json.loads(resp.read())
                 except json.JSONDecodeError as e:
@@ -557,7 +558,7 @@ def fetch_activity_fit_file(activity_id: str) -> bytes | None:
     headers["User-Agent"] = ICU_USER_AGENT
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=30, context=tls_trust.make_context()) as resp:
             status = resp.getcode()
             if 200 <= status < 300:
                 return resp.read()

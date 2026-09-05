@@ -47,18 +47,10 @@ import tls_trust  # v3.11.4 — OS-native verifier on Windows, OpenSSL+certifi e
 def _icu_verify():
     """TLS trust for every httpx call to intervals.icu / GitHub (see tls_trust).
 
-    v3.11.3 gave httpx certifi + the OS store; the Windows rider's next log
-    showed the antivirus root now FOUND and refused ("invalid CA certificate"):
-    OpenSSL never trusts a malformed root, Windows always does. v3.11.4 asks
-    the OS verifier on Windows. Built once, cached for the process.
+    Not cached here: on Windows tls_trust hands out a fresh OS-native context
+    per call (truststore#209 race), elsewhere it caches the OpenSSL one itself.
     """
-    global _ICU_VERIFY_CTX
-    try:
-        return _ICU_VERIFY_CTX
-    except NameError:
-        pass
-    _ICU_VERIFY_CTX = tls_trust.make_context()
-    return _ICU_VERIFY_CTX
+    return tls_trust.make_context()
 
 import log_config
 _log = log_config.get_logger("app")
@@ -9001,7 +8993,7 @@ def api_oauth_icu_start(return_to: str = Query("/")):
     _icu_oauth_states[state] = {"profile_id": profile_id, "ts": now,
                                 "return_to": _icu_oauth_safe_return(return_to)}
     _log.info("EVENT=icu_oauth_start profile=%s tls=%s", profile_id or "?",
-              tls_trust.backend_of(_icu_verify()))
+              tls_trust.backend_name())
     params = urlencode({
         "client_id": config.ICU_OAUTH_CLIENT_ID,
         "redirect_uri": config.ICU_OAUTH_REDIRECT_URI,
@@ -9074,7 +9066,7 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
                 from urllib.parse import urlparse as _up
                 _host = _up(config.ICU_OAUTH_TOKEN_URL).hostname or "intervals.icu"
                 _log.warning("EVENT=icu_oauth_peer_chain host=%s tls=%s chain=%s", _host,
-                             tls_trust.backend_of(_icu_verify()),
+                             tls_trust.backend_name(),
                              " | ".join(tls_trust.peer_chain_summary(_host))[:600])
             except Exception as e2:
                 _log.warning("EVENT=icu_oauth_peer_chain unavailable=%s", str(e2)[:120])
@@ -22075,7 +22067,7 @@ def api_diag_health(request: Request):
         "redirect_uri": str(getattr(config, "ICU_OAUTH_REDIRECT_URI", "") or ""),
         # v3.11.4: which verifier guards the sign-in. CI asserts os-native on
         # Windows (antivirus roots OpenSSL refuses) and openssl on Linux.
-        "tls_backend": tls_trust.backend_of(_icu_verify()),
+        "tls_backend": tls_trust.backend_name(),
     }
     # workout_library
     try:

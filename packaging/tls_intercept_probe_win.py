@@ -172,6 +172,21 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class _FakeIcuHandler(_Handler):
+    """intervals.icu stand-in: token exchange -> 400 (bad code), athlete/0 -> 401
+    (bad key); every request it receives is logged as 'REQ <method> <path>' so
+    the e2e can prove a request made it THROUGH the interceptor's TLS."""
+
+    def do_GET(self):
+        if self.path.startswith("/api/v1/athlete/0"):
+            self._send(401, json.dumps({"error": "unauthorized"}).encode(), "application/json")
+        else:
+            super().do_GET()
+
+    def log_message(self, fmt, *args):
+        print(f"REQ {self.command} {self.path}", flush=True)
+
+
 class _QuietServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
 
@@ -188,25 +203,45 @@ def serve(cert_pem: Path, key_pem: Path, host="127.0.0.1", port=0) -> int:
     return srv.server_address[1]
 
 
+def _is_cert_error(exc) -> bool:
+    """A certificate/trust verdict, as opposed to a timeout or a dead server."""
+    e, depth = exc, 0
+    while e is not None and depth < 8:
+        if isinstance(e, ssl.SSLCertVerificationError):
+            return True
+        e, depth = (e.__cause__ or e.__context__), depth + 1
+    return "CERTIFICATE_VERIFY_FAILED" in str(exc)
+
+
 def verdict_httpx(ctx, url) -> str:
+    """'ok' | 'refused: <certificate reason>' | 'error: <anything else>'."""
     try:
         r = httpx.get(url, verify=ctx, timeout=20)
-        return "ok" if r.status_code == 200 else f"http {r.status_code}"
+        return "ok" if r.status_code == 200 else f"error: http {r.status_code}"
     except httpx.TransportError as e:
-        return f"refused: {str(e)[:160]}"
+        return f"{'refused' if _is_cert_error(e) else 'error'}: {str(e)[:160]}"
 
 
 def verdict_schannel(url) -> str:
-    """Independent Windows oracle: PowerShell Invoke-WebRequest (.NET -> SChannel)."""
+    """Independent Windows oracle: PowerShell Invoke-WebRequest (.NET -> SChannel).
+    'ok' | 'refused: <certificate reason>' | 'error: <anything else>'."""
     cmd = (f"try {{ (Invoke-WebRequest -Uri '{url}' -UseBasicParsing -TimeoutSec 20).StatusCode }} "
            f"catch {{ $e = $_.Exception; while ($e.InnerException) {{ $e = $e.InnerException }}; 'ERR: ' + $e.Message }}")
     out = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", cmd],
                          capture_output=True, text=True, timeout=90).stdout.strip()
-    return "ok" if out == "200" else f"refused: {out[:160]}"
+    if out == "200":
+        return "ok"
+    words = ("certificate", "untrustedroot", "notvalidforusage", "invalidbasicconstraints", "namemismatch", "chain")
+    kind = "refused" if any(w in out.lower() for w in words) else "error"
+    return f"{kind}: {out[:160]}"
 
 
 def _ok(v: str) -> bool:
     return v == "ok"
+
+
+def _refused(v: str) -> bool:
+    return v.startswith("refused")
 
 
 # ── default mode ─────────────────────────────────────────────────────────────
@@ -269,8 +304,11 @@ def probe() -> int:
 
     # A3 — the shipped context agrees with Windows on every shape.
     for s in SHAPES:
-        if _ok(rows[s]["truststore"]) != _ok(rows[s]["schannel"]):
-            fail("A3 truststore agrees with SChannel", f"{s}: truststore={rows[s]['truststore']} schannel={rows[s]['schannel']}")
+        t, o = rows[s]["truststore"], rows[s]["schannel"]
+        # Agreement = both accept, or both refuse FOR A CERTIFICATE REASON. An
+        # 'error' verdict (timeout, dead server) is a broken probe, not agreement.
+        if not ((_ok(t) and _ok(o)) or (_refused(t) and _refused(o))):
+            fail("A3 truststore agrees with SChannel", f"{s}: truststore={t} schannel={o}")
     if not any(f.startswith("A3") for f in failures):
         print("A3 OK: truststore verdict == SChannel verdict on every shape")
 
@@ -290,9 +328,9 @@ def probe() -> int:
             url = f"https://127.0.0.1:{port}/"
             t, s_ = verdict_httpx(shipped, url), verdict_schannel(url)
             print(f"A4 {label:18s} truststore={t}\n{'':21s} schannel={s_}")
-            if _ok(t) != want_ok:
+            if not (_ok(t) if want_ok else _refused(t)):
                 fail(f"A4 {label}", f"truststore={t}")
-            if _ok(s_) != want_ok:
+            if not (_ok(s_) if want_ok else _refused(s_)):
                 fail(f"A4 {label} (oracle)", f"schannel={s_}")
     finally:
         remove_root(cn)
@@ -300,12 +338,15 @@ def probe() -> int:
     # A5 — the public-CA path through the same verifier.
     try:
         r = httpx.get("https://intervals.icu/api/v1/athlete/0", verify=shipped, timeout=20)
-        if r.status_code in (401, 403):
-            print(f"A5 OK: intervals.icu reachable through truststore (HTTP {r.status_code})")
+        if r.status_code == 401:
+            print("A5 OK: intervals.icu (public CA) verified through truststore; HTTP 401 unauthenticated, as expected")
         else:
-            fail("A5 intervals.icu", f"HTTP {r.status_code}")
+            print(f"A5 WARN: intervals.icu answered HTTP {r.status_code} (TLS fine; not a gate)")
     except httpx.TransportError as e:
-        fail("A5 intervals.icu", str(e)[:200])
+        if _is_cert_error(e):
+            fail("A5 intervals.icu public-CA chain refused by truststore", str(e)[:200])
+        else:
+            print(f"A5 WARN: intervals.icu unreachable from the runner ({str(e)[:120]}) - not a TLS verdict, not a gate")
 
     if failures:
         print("TLS probe FAILED:\n  " + "\n  ".join(failures))
@@ -328,7 +369,7 @@ def serve_fake_icu() -> int:
     with HOSTS.open("a", encoding="ascii") as h:
         h.write("\r\n127.0.0.1 intervals.icu\r\n")
     subprocess.run(["ipconfig", "/flushdns"], check=False, stdout=subprocess.DEVNULL)
-    srv = _QuietServer(("127.0.0.1", 443), _Handler)
+    srv = _QuietServer(("127.0.0.1", 443), _FakeIcuHandler)
     sctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     sctx.load_cert_chain(pem, key)
     srv.socket = sctx.wrap_socket(srv.socket, server_side=True)
@@ -369,6 +410,25 @@ def e2e_oauth(base="http://127.0.0.1:22400") -> int:
             fail("token exchange reached fake intervals.icu", f"unexpected redirect {loc[:200]}")
         else:
             print(f"e2e OK: token POST went through the interceptor and got HTTP {FAKE_ICU_STATUS} from the fake intervals.icu")
+
+        # urllib path - ride/wellness sync, FIT upload/download and calendar
+        # push all share it. The setup wizard's key test resolves athlete/0
+        # through urllib; through the interceptor the request must REACH the
+        # fake intervals.icu (its request log shows it). A TLS refusal never
+        # gets there - the half of the rider's problem 3.11.4 would otherwise
+        # have left in place.
+        r = c.post("/api/setup/test-icu", json={"api_key": "ci-dummy-key"})
+        print(f"setup/test-icu -> {r.status_code} {r.text[:120]}")
+
+    fake_log = Path("fake_icu.out")
+    reqs = [l for l in fake_log.read_text(encoding="utf-8", errors="replace").splitlines()
+            if l.startswith("REQ ")] if fake_log.exists() else []
+    print("interceptor saw: " + (", ".join(reqs) if reqs else "nothing"))
+    if not any("POST /api/oauth/token" in l for l in reqs):
+        fail("interceptor log", "no 'POST /api/oauth/token' reached the fake intervals.icu (httpx path)")
+    if not any("GET /api/v1/athlete/0" in l for l in reqs):
+        fail("interceptor log", "no 'GET /api/v1/athlete/0' reached the fake intervals.icu (urllib path) - "
+                                "ride sync would fail exactly like the rider's sign-in did")
 
     # The frozen EXE writes %USERPROFILE%\.domestique\logs\domestique.log (plus
     # per-session app_*.log files); scan every log there, oldest first.

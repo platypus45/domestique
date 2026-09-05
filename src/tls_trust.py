@@ -4,16 +4,23 @@ Two verifiers, chosen by platform:
 
 * Windows → the operating system's own verifier (CryptoAPI, via truststore).
   Antivirus "HTTPS scanning" and corporate proxies re-sign every connection
-  with a root that lives in the Windows store. Many of those roots are not
-  well-formed CA certificates: keyUsage without keyCertSign, no
-  basicConstraints, even CA:FALSE. Windows trusts an installed root by
-  identity and never inspects its extensions, so browsers and every native
-  app accept them. OpenSSL applies X509_check_ca() to the trust anchor and
-  refuses with "invalid CA certificate" — no verify flag relaxes that.
-  v3.11.3 loaded the Windows store into OpenSSL and only moved the rider's
-  failure from "unable to get local issuer certificate" to "invalid CA
-  certificate". Asking Windows is the only way to agree with the browser.
+  with a root that lives in the Windows store. Some of those roots carry no CA
+  markers at all (no basicConstraints, no keyUsage) or only an EKU. Windows
+  accepts such a root — verified on a Windows runner against SChannel itself
+  (packaging/tls_intercept_probe_win.py) — while OpenSSL applies
+  X509_check_ca() to the trust anchor and refuses it with "invalid CA
+  certificate"; no verify flag relaxes that. Windows is not blind either: a
+  root with basicConstraints CA:FALSE or a keyUsage without keyCertSign is
+  refused by BOTH verifiers (a browser on that PC would fail too, so no rider
+  has one). v3.11.3 loaded the Windows store into OpenSSL and only moved the
+  rider's failure from "unable to get local issuer certificate" to "invalid
+  CA certificate". Asking Windows is the only way to agree with the browser.
 * macOS / Linux → OpenSSL with certifi + the OS store (unchanged since 3.11.3).
+
+Every outbound intervals.icu/GitHub connection — httpx (OAuth, update check)
+AND urllib (sync, wellness, FIT upload/download, calendar push) — takes its
+context from make_context(); a call site left on the stock context is the
+3.11.3 bug again (pinned by tests/test_tls_trust.py).
 
 No app imports here: the Windows CI probe imports this module on its own.
 """
@@ -55,14 +62,42 @@ def _os_native_context() -> ssl.SSLContext:
     return ctx
 
 
+_OPENSSL_CTX: ssl.SSLContext | None = None
+
+
 def make_context(platform: str | None = None) -> ssl.SSLContext:
-    """A verifying client context for the given (default: current) platform."""
+    """A verifying client context for the given (default: current) platform.
+
+    Windows: a NEW truststore context per call, never shared. truststore
+    0.10.4 flips its inner context to CERT_NONE for the duration of each
+    handshake and restores it without holding its lock
+    (sethmlarson/truststore#209); two overlapping handshakes on one shared
+    context can leave it at CERT_NONE for the rest of the process, after which
+    CryptoAPI is told to accept any certificate. A context per call has
+    nothing to share; construction costs about a millisecond.
+    ponytail: cache the Windows context again once truststore fixes #209.
+    macOS/Linux: one cached OpenSSL context (thread-safe).
+    """
+    global _OPENSSL_CTX
     if (platform or sys.platform) == "win32":
         try:
             return _os_native_context()
         except Exception:
             pass  # truststore missing/broken: OpenSSL + OS store still beats nothing
-    return _openssl_context()
+    if _OPENSSL_CTX is None:
+        _OPENSSL_CTX = _openssl_context()
+    return _OPENSSL_CTX
+
+
+def backend_name(platform: str | None = None) -> str:
+    """Which verifier make_context() hands out, without building one (diag, logs)."""
+    if (platform or sys.platform) == "win32":
+        try:
+            import truststore  # noqa: F401
+            return OS_NATIVE
+        except Exception:
+            return OPENSSL
+    return OPENSSL
 
 
 def backend_of(ctx: ssl.SSLContext) -> str:

@@ -13741,6 +13741,7 @@ def adjust_today_session(
 def push_to_icu(weeks: list[PlannedWeek]) -> None:
     """Push planned workouts to Intervals.icu calendar via /events/bulk API."""
     import urllib.request
+    import tls_trust  # v3.11.4 — one verifier for every intervals.icu connection
 
     events = []
     for pw in weeks:
@@ -13776,7 +13777,7 @@ def push_to_icu(weeks: list[PlannedWeek]) -> None:
     req.add_header("Authorization", f"Basic {_b64auth()}")
 
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=15, context=tls_trust.make_context()) as resp:
             print(f"✓  {len(events)} workouts pushed to Intervals.icu calendar")
     except Exception as e:
         print(f"✗  Failed to push to Intervals.icu: {e}")

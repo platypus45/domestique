@@ -3,8 +3,10 @@
 v3.11.3 loaded the OS store into OpenSSL; the rider's error moved from
 "unable to get local issuer certificate" to "invalid CA certificate": the
 antivirus root was now FOUND and then refused, because OpenSSL applies
-X509_check_ca() to trust anchors and an interceptor's root is often not a
-well-formed CA. Windows trusts a root by identity. v3.11.4 asks Windows.
+X509_check_ca() to trust anchors. On a real Windows runner (CI probe, SChannel
+oracle) Windows ACCEPTS a root with no CA markers or an EKU only — OpenSSL
+refuses both — and, like OpenSSL, REFUSES CA:FALSE and keyUsage without
+keyCertSign. v3.11.4 asks Windows, per connection.
 
 Fixtures (tests/fixtures/tls, TEST-ONLY keys, valid to 2126): one leaf for
 localhost signed by four roots — well-formed, keyUsage without keyCertSign,
@@ -23,6 +25,8 @@ import pytest
 import tls_trust
 
 FIX = Path(__file__).parent / "fixtures" / "tls"
+# Shapes OpenSSL refuses as a trust anchor. Windows accepts only the middle one
+# of these (and EKU-only roots); the other two are refused by both.
 INTERCEPTOR_ROOTS = ["ku_no_certsign", "no_ca_markers", "ca_false"]
 
 
@@ -94,10 +98,10 @@ def test_windows_uses_os_native_verifier():
     assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname
 
 
-def test_os_native_context_still_rejects_an_untrusted_root():
-    # Not CERT_NONE in disguise: a root the OS has never seen must fail.
-    # (macOS/Linux backend here; the Windows backend is proved in CI —
-    # packaging/tls_intercept_probe_win.py.)
+def test_os_native_context_is_a_verifier_not_cert_none():
+    # The macOS backend refuses this fixture (100-year leaf: "not standards
+    # compliant") — proof that the context verifies at all, not of WHY. Trust
+    # and hostname on the real Windows verifier are proved by the CI probe (A4).
     ctx = tls_trust.make_context("win32")
     assert tls_trust.backend_of(ctx) == tls_trust.OS_NATIVE   # not the fallback
     err = _handshake(ctx, _serve(FIX / "leaf_good.pem", FIX / "leaf.key"))
@@ -118,11 +122,51 @@ def test_current_platform_default_matches_explicit():
 
 # ── app wiring ───────────────────────────────────────────────────────────────
 
-def test_app_caches_one_context_from_tls_trust():
+def test_app_takes_context_from_tls_trust_and_windows_never_shares_one():
     import app as app_module
-    ctx = app_module._icu_verify()
-    assert app_module._icu_verify() is ctx
-    assert tls_trust.backend_of(ctx) == tls_trust.backend_of(tls_trust.make_context())
+    assert tls_trust.backend_of(app_module._icu_verify()) == tls_trust.backend_name()
+    # macOS/Linux: one cached OpenSSL context. Windows: a fresh one per call —
+    # truststore 0.10.4 mutates its inner context during each handshake and
+    # restores it unlocked (sethmlarson/truststore#209); two overlapping
+    # handshakes on a shared context can leave it at CERT_NONE for the process.
+    assert tls_trust.make_context("darwin") is tls_trust.make_context("linux")
+    a, b = tls_trust.make_context("win32"), tls_trust.make_context("win32")
+    assert a is not b and tls_trust.backend_of(a) == tls_trust.OS_NATIVE
+
+
+def test_backend_name_matches_what_make_context_hands_out():
+    for plat in ("darwin", "linux", "win32"):
+        assert tls_trust.backend_name(plat) == tls_trust.backend_of(tls_trust.make_context(plat))
+
+
+# ── every intervals.icu connection, not only the httpx ones ──────────────────
+
+def test_every_intervals_icu_urllib_call_uses_the_shared_verifier():
+    """Sync, wellness, FIT upload/download and calendar push go through urllib,
+    not httpx. A site left on the stock context is the 3.11.3 bug again: the
+    rider signs in, then every sync fails with the same certificate error."""
+    src = Path(__file__).parent.parent / "src"
+    offenders = []
+    for f in ("training.py", "icu_calendar_push.py", "training_planner.py"):
+        for i, line in enumerate((src / f).read_text().splitlines(), 1):
+            if "urllib.request.urlopen(" in line and "context=tls_trust.make_context()" not in line:
+                offenders.append(f"{f}:{i}: {line.strip()}")
+    assert offenders == [], offenders
+
+
+def test_discover_athlete_id_hands_urllib_the_verifier(monkeypatch):
+    import urllib.error
+    import urllib.request
+    import training
+    seen = {}
+
+    def fake_urlopen(req, timeout=None, context=None):
+        seen["context"] = context
+        raise urllib.error.URLError("stop here")
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert training.discover_athlete_id("k") is None
+    assert isinstance(seen["context"], ssl.SSLContext)
+    assert tls_trust.backend_of(seen["context"]) == tls_trust.backend_name()
 
 
 # ── diagnostics: the log names the interceptor ───────────────────────────────

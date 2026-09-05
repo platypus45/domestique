@@ -37,6 +37,7 @@ import logging
 import re
 import urllib.error
 import urllib.request
+import tls_trust  # v3.11.4 — one verifier for every intervals.icu connection
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -110,7 +111,7 @@ def _http(method: str, path: str, payload=None, timeout: float = 30.0):
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=tls_trust.make_context()) as resp:
             return resp.getcode(), resp.read()
     except urllib.error.HTTPError as e:
         try:

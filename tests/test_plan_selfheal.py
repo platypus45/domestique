@@ -143,7 +143,26 @@ def test_heal_with_an_empty_library_changes_nothing(library):
     assert tp.count_unmatched_pending_sessions(plan) == 5
 
 
-def test_api_plan_heals_once_per_file_version_and_persists(monkeypatch, tmp_path, library):
+def test_api_plan_heals_and_persists_with_a_backup(monkeypatch, tmp_path, library):
+    import app as app_module
+    from fastapi.testclient import TestClient
+    monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
+    json_path = tmp_path / "current_plan.json"
+    json_path.write_text(json.dumps(_plan_dict(_next_monday())))
+    app_module._PLAN_HEAL_SEEN.clear()
+    r = TestClient(app_module.app).get("/api/plan")
+    assert r.status_code == 200
+    served = r.json()["plan_json"]["weeks"][0]["sessions"][:7]
+    assert all(s["zwo_file"] for s in served), [s.get("zwo_file") for s in served]
+    on_disk = json.loads(json_path.read_text())["weeks"][0]["sessions"][:7]
+    assert [s["zwo_file"] for s in on_disk] == [s["zwo_file"] for s in served]   # served == persisted
+    assert (tmp_path / "current_plan.json.bak").exists()                          # previous plan kept
+    assert json.loads((tmp_path / "current_plan.json.bak").read_text())["weeks"][0]["sessions"][0]["zwo_file"] == ""
+
+
+def test_api_plan_runs_the_heal_once_per_file_version(monkeypatch, tmp_path):
+    """The mtime cache, proven independently of content: a heal that fixes
+    nothing (still damaged file) must not be re-run until the file changes."""
     import app as app_module
     from fastapi.testclient import TestClient
     monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
@@ -151,23 +170,16 @@ def test_api_plan_heals_once_per_file_version_and_persists(monkeypatch, tmp_path
     json_path.write_text(json.dumps(_plan_dict(_next_monday())))
     app_module._PLAN_HEAL_SEEN.clear()
     calls = []
-    real = tp.heal_unmatched_sessions_dict
-    monkeypatch.setattr(tp, "heal_unmatched_sessions_dict", lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    monkeypatch.setattr(tp, "heal_unmatched_sessions_dict",
+                        lambda *a, **k: (calls.append(1), {"candidates": 5, "healed": 0, "still_unmatched": 5})[1])
     client = TestClient(app_module.app)
-    r = client.get("/api/plan")
-    assert r.status_code == 200
-    served = r.json()["plan_json"]["weeks"][0]["sessions"][:7]
-    assert all(s["zwo_file"] for s in served), [s.get("zwo_file") for s in served]
-    on_disk = json.loads(json_path.read_text())["weeks"][0]["sessions"][:7]
-    assert all(s["zwo_file"] for s in on_disk)                 # persisted
-    assert (tmp_path / "current_plan.json.bak").exists()        # backup rotated first
-    assert calls == [1]
-    client.get("/api/plan")
-    assert calls == [1]                                          # same file version: no second heal
-    json_path.write_text(json.dumps(_plan_dict(_next_monday())))   # new damage = new mtime
+    client.get("/api/plan"); client.get("/api/plan"); client.get("/api/plan")
+    assert calls == [1], "same file version must not be healed again"
+    json_path.write_text(json.dumps(_plan_dict(_next_monday())))   # rewrite = new mtime = new version
+    import os, time
+    os.utime(json_path, ns=(time.time_ns(), time.time_ns()))
     client.get("/api/plan")
     assert calls == [1, 1]
-
 
 def test_diag_health_counts_sessions_without_file(monkeypatch, tmp_path):
     import app as app_module

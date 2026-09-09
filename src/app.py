@@ -12408,7 +12408,7 @@ def _maybe_heal_plan_files(json_path, plan_data: dict) -> None:
             with tp.plan_write_lock():                 # RLock: atomic_write_plan nests inside
                 with open(json_path, encoding="utf-8") as f:
                     fresh = json.load(f)
-                stats = tp.heal_unmatched_sessions_dict(fresh, library)
+                stats = tp.heal_unmatched_sessions_dict(fresh, library, hr_bias=_hr_bias())
                 if stats["healed"]:
                     tp.atomic_write_plan(json_path, fresh)
                     _PLAN_HEAL_SEEN[key] = json_path.stat().st_mtime_ns

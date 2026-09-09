@@ -10226,6 +10226,11 @@ def _iter_pending_unmatched(plan_dict: dict, today: date):
             if s_json.get("dismissed_at") or s_json.get("is_race") or s_json.get("is_opener"):
                 continue
             try:
+                if int(s_json.get("duration_min") or 0) <= 0:   # R4a's slot<=0 guard
+                    continue
+            except (TypeError, ValueError):
+                pass                                            # malformed: heal counts it, then skips
+            try:
                 sd = date.fromisoformat(s_json["day"])
             except (KeyError, ValueError, TypeError):
                 continue
@@ -10242,7 +10247,8 @@ def count_unmatched_pending_sessions(plan_dict: dict, today: "date | None" = Non
 
 
 def heal_unmatched_sessions_dict(plan_dict: dict, library: list,
-                                 today: "date | None" = None) -> dict:
+                                 today: "date | None" = None, *,
+                                 hr_bias: bool = False) -> dict:
     """v3.11.5 — give every upcoming pending session that has no workout file
     one from the current library, in place on the persisted plan dict.
 
@@ -10276,7 +10282,7 @@ def heal_unmatched_sessions_dict(plan_dict: dict, library: list,
         try:
             s = _planned_session_from_dict(s_json, sd)
             match_zwo(s, library, week_num=int(w.get("week_num") or 0),
-                      day_idx=(sd - ws).days, used_names=used)
+                      day_idx=(sd - ws).days, used_names=used, hr_bias=hr_bias)
         except Exception:  # noqa: BLE001 — one malformed or unmatchable session never breaks the read
             log.debug("plan self-heal: session skipped", exc_info=True)
             stats["still_unmatched"] += 1

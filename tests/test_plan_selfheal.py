@@ -43,7 +43,7 @@ def _mk(day, st, dur, tss):
 
 def _matched_week(mon, library):
     spec = [("z2", 90, 68), ("z2", 90, 68), ("z2", 90, 68), ("z2", 90, 68),
-            ("sweet_spot", 60, 80), ("z2", 90, 68), ("z2", 180, 135)]
+            ("sweetspot", 60, 80), ("z2", 90, 68), ("z2", 180, 135)]
     sessions = [_mk(mon + timedelta(days=i), st, d, t) for i, (st, d, t) in enumerate(spec)]
     wk = tp.PlannedWeek(week_num=1, start=mon, end=mon + timedelta(days=6), phase="build1",
                         tss_target=550.0, is_stepback=False, sessions=sessions, hit_per_week=1)
@@ -87,7 +87,7 @@ def test_availability_reflow_with_a_real_library_rematches_instead(library):
 def _plan_dict(mon, *, blank_days=(0, 1, 2, 3, 6)):
     """Persisted-plan shape with the rider's damage: blank files on the given days."""
     spec = [("z2", 60, 45), ("z2", 120, 90), ("z2", 60, 45), ("z2", 120, 90),
-            ("sweet_spot", 60, 80), ("z2", 90, 68), ("z2", 240, 180)]
+            ("sweetspot", 60, 80), ("z2", 90, 68), ("z2", 240, 180)]
     sessions = []
     for i, (st, d, t) in enumerate(spec):
         day = mon + timedelta(days=i)
@@ -112,6 +112,7 @@ def test_heal_gives_upcoming_blank_sessions_a_file_and_leaves_the_rest_alone(lib
         {"day": (mon + timedelta(days=8)).isoformat(), "session_type": "z2", "duration_min": 60, "tss_estimate": 45, "zwo_file": "", "status": "pending", "is_race": True},
         {"day": (mon + timedelta(days=9)).isoformat(), "session_type": "z2", "duration_min": 30, "tss_estimate": 20, "zwo_file": "", "status": "pending", "is_opener": True},
         {"day": (mon + timedelta(days=10)).isoformat(), "session_type": "z2", "duration_min": 60, "tss_estimate": 45, "zwo_file": "", "status": "done"},
+        {"day": (mon + timedelta(days=11)).isoformat(), "session_type": "z2", "duration_min": 0, "tss_estimate": 0, "zwo_file": "", "status": "pending"},
     ]
     assert tp.count_unmatched_pending_sessions(plan, today=date.today()) == 5
     stats = tp.heal_unmatched_sessions_dict(plan, library, today=date.today())
@@ -123,7 +124,7 @@ def test_heal_gives_upcoming_blank_sessions_a_file_and_leaves_the_rest_alone(lib
     assert [s["zwo_file"] for i, s in enumerate(healed) if i in (4, 5)] == ["keep_4.zwo", "keep_5.zwo"]
     assert len({s["zwo_name"] for s in healed}) == 7          # plan-wide uniqueness respected
     assert [s["duration_min"] for s in healed] == [60, 120, 60, 120, 60, 90, 240]   # slots untouched
-    assert all(s["zwo_file"] == "" for s in sessions[7:])   # past / dismissed / race / opener / done untouched
+    assert all(s["zwo_file"] == "" for s in sessions[7:])   # past / dismissed / race / opener / done / zero-length untouched
     assert tp.count_unmatched_pending_sessions(plan, today=date.today()) == 0
 
 
@@ -205,3 +206,13 @@ def test_api_plan_heal_never_overwrites_a_plan_written_in_between(monkeypatch, t
     on_disk = json.loads(json_path.read_text())
     assert on_disk.get("marker") == "written-by-regenerate"        # the concurrent write survived
     assert [s["zwo_file"] for s in on_disk["weeks"][0]["sessions"]] == [f"keep_{i}.zwo" for i in range(7)]
+
+
+def test_heal_passes_the_hr_mode_bias_through(monkeypatch, library):
+    seen = {}
+    real = tp.match_zwo
+    def spy(session, lib, **kw):
+        seen["hr_bias"] = kw.get("hr_bias"); return real(session, lib, **kw)
+    monkeypatch.setattr(tp, "match_zwo", spy)
+    tp.heal_unmatched_sessions_dict(_plan_dict(_next_monday()), library, today=date.today(), hr_bias=True)
+    assert seen["hr_bias"] is True

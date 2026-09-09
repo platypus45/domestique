@@ -1002,6 +1002,31 @@ RAMP_MODERATE     = 5
 RAMP_AGGRESSIVE   = 7
 
 # TSS per hour by session type (for budget calculations)
+def _completed_tss_in(activities: list | None, start: date, end: date) -> float:
+    """Load already ridden inside [start, end] inclusive.
+
+    Naturally zero for a future week, so callers can pass it unconditionally
+    rather than special-casing the current one.
+    """
+    total = 0.0
+    for a in activities or []:
+        if not isinstance(a, dict):
+            continue
+        d = str(a.get("date") or a.get("start_date_local") or "")[:10]
+        if not d or not (start.isoformat() <= d <= end.isoformat()):
+            continue
+        try:
+            total += float(a.get("tss") or a.get("icu_training_load") or 0)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+# Below this much remaining budget, a day is rested rather than filled. Session
+# floors mean the shortest thing the planner will schedule is ~45 min of Z2,
+# which is ~34 TSS; handing that out when 10 TSS remain is filler, not training.
+_MIN_VIABLE_SESSION_TSS = 25
+
 # Share of the weekly budget a long-ride day carries relative to a normal one.
 # Applied by _build_week when it normalises the remaining days' weights.
 _LONG_DAY_WEIGHT = 1.5
@@ -3053,10 +3078,16 @@ def plan_week(
     is_stepback: bool,
     prev_week_sessions: list | None = None,
     seed_salt: int = 0,
+    completed_tss: float = 0.0,
 ) -> PlannedWeek:
     """Generate a specific week's training schedule.
 
     Args:
+        completed_tss: Load the athlete has ALREADY ridden inside this week's
+            window. Seeds the budget so the planner prescribes what is left
+            rather than a full week on top of the work already done. Defaults
+            to 0.0, which is the old behaviour, so callers that cannot supply
+            it are unaffected.
         prev_week_sessions: Sessions from the immediately preceding week. Used
             to enforce the 48h HIT-gap across week boundaries (PL2). Without
             this, a Sunday vo2max + Monday vo2max pair slipped through because
@@ -3072,7 +3103,11 @@ def plan_week(
         tss_target = round(tss_target * 0.72)
 
     sessions = []
-    tss_allocated = 0
+    # Seeded, not zero: `tss_allocated` used to count only what THIS pass
+    # assigned, so a rider who had already ridden 369 TSS against a 272 target
+    # was handed a further full week on top -- nothing in the budget had heard
+    # about the rides.
+    tss_allocated = max(0.0, float(completed_tss or 0.0))
 
     for day_offset in range(7):
         d = start + timedelta(days=day_offset)
@@ -3095,6 +3130,22 @@ def plan_week(
 
         # Determine session type based on phase + day position
         remaining_tss = tss_target - tss_allocated
+
+        # Spent budget: rest, not filler. The per-session floors mean a clamp
+        # alone would hand out a string of 45-minute rides once the week was
+        # covered. Resting is the honest prescription, and it is said out loud
+        # in the description so a spent-budget rest day is distinguishable from
+        # a scheduled one.
+        if remaining_tss < _MIN_VIABLE_SESSION_TSS:
+            sessions.append(PlannedSession(
+                day=d, day_name=day_name, session_type="rest",
+                duration_min=0, tss_estimate=0,
+                description=(
+                    "Rest — this week's TSS budget is already spent "
+                    f"({tss_allocated:.0f} of {tss_target:.0f})."
+                ),
+            ))
+            continue
         remaining_days = sum(
             1 for i in range(day_offset + 1, 7)
             if (start + timedelta(days=i)).weekday() not in goal.rest_days
@@ -11062,7 +11113,9 @@ def regenerate_from_today(
             is_stepback = (phase_week % STEP_BACK_EVERY == 0) and phase.name != "taper"
             pw = plan_week(week_num, cursor, phase, adjusted_goal, is_stepback,
                            prev_week_sessions=prev_week_sessions,
-                           seed_salt=seed_salt)
+                           seed_salt=seed_salt,
+                           completed_tss=_completed_tss_in(
+                               activities, cursor, cursor + timedelta(days=6)))
 
             # Mark unavailable days as REST
             for s in pw.sessions:

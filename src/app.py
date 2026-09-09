@@ -10967,6 +10967,47 @@ def _matches_planned(activities: list, session_type: str) -> bool:
     return any((a.get("sport") or "") in _CYCLING_SPORTS for a in activities)
 
 
+def _exposure_split_from_tiz(tiz: dict | None) -> dict[str, float] | None:
+    """Split one ride's minutes across the exposure bands using its MEASURED
+    time-in-zone, rather than filing the whole ride under one average.
+
+    Coggan power zones land on the four bands exactly as _SESSION_TYPE_TO_BAND
+    maps session types, which is what makes the planned and actual bars
+    comparable at all:
+
+        Z1 + Z2   -> low_aerobic    (recovery, endurance)   <- z2 / long_z2
+        Z3        -> mid_aerobic    (tempo)                 <- tempo
+        Z4        -> high_aerobic   (sweet spot, threshold) <- sweetspot / threshold
+        Z5 .. Z7  -> anaerobic      (VO2max and above)      <- vo2max / overunder
+
+    ``ss`` is deliberately not summed: sweet spot overlaps Z3/Z4 and counting
+    it would inflate the total beyond the ride's own duration.
+
+    Returns None when the ride carries no zone data, so the caller falls back
+    to the whole-ride average rather than silently reporting zero minutes.
+    """
+    if not isinstance(tiz, dict):
+        return None
+
+    def _s(*keys: str) -> float:
+        total = 0.0
+        for k in keys:
+            try:
+                total += float(tiz.get(k) or 0)
+            except (TypeError, ValueError):
+                continue
+        return total
+
+    if _s("z1", "z2", "z3", "z4", "z5", "z6", "z7") <= 0:
+        return None
+    return {
+        "low_aerobic": _s("z1", "z2") / 60.0,
+        "mid_aerobic": _s("z3") / 60.0,
+        "high_aerobic": _s("z4") / 60.0,
+        "anaerobic": _s("z5", "z6", "z7") / 60.0,
+    }
+
+
 def _classify_exposure_with_signal(activity: dict, lthr: float) -> tuple[str, str]:
     """Like _classify_exposure but also returns the signal source.
 
@@ -11092,10 +11133,37 @@ def api_week_summary(week_offset: int = Query(0)):
     activities_by_day: dict[str, list[dict]] = {}
     sports_counter: dict[str, int] = {}
 
+    # Measured time-in-zone beats a whole-ride average, and Domestique already
+    # records it per ride (the calendar renders it as Z1Z2/Z3Z4/Z5+). Filing a
+    # three-hour endurance ride wholly under the band of its average HR put
+    # every minute of a Z2 week into mid/high and reported low_aerobic as zero.
+    # _load_all_rides_safe is the shared 5-minute cache, so this is one parse.
+    _tiz_by_id: dict[str, dict] = {}
+    try:
+        for _r in _load_all_rides_safe() or []:
+            _tiz = _r.get("time_in_zone")
+            if not _tiz:
+                continue
+            _rid = str(_r.get("ride_id") or "")
+            if _rid.startswith("icu_"):
+                _rid = _rid[4:]
+            if _rid:
+                _tiz_by_id[_rid] = _tiz
+    except Exception:  # noqa: BLE001 - never break the rollup over the archive
+        _tiz_by_id = {}
+
     for a in week_activities:
         band, signal = _classify_exposure_with_signal(a, lthr)
         dur = int(round(a.get("duration_min") or 0))
-        if signal == "inferred":
+        split = _exposure_split_from_tiz(_tiz_by_id.get(str(a.get("id") or "")))
+        if split:
+            for _b, _m in split.items():
+                exposure_minutes[_b] = exposure_minutes.get(_b, 0) + _m
+            # Label the day-list row with where the ride actually spent most of
+            # its time, so the list and the bars cannot tell different stories.
+            band = max(split, key=lambda k: split[k])
+            signal = "time_in_zone"
+        elif signal == "inferred":
             unclassified_minutes += dur
         else:
             exposure_minutes[band] = exposure_minutes.get(band, 0) + dur
@@ -11114,6 +11182,7 @@ def api_week_summary(week_offset: int = Query(0)):
         sport_key = a.get("sport") or "Other"
         sports_counter[sport_key] = sports_counter.get(sport_key, 0) + 1
 
+    exposure_minutes = {k: int(round(v)) for k, v in exposure_minutes.items()}
     total_exposure = sum(exposure_minutes.values())
     exposure_dominant = "mixed"
     if total_exposure > 0:
@@ -11156,8 +11225,13 @@ def api_week_summary(week_offset: int = Query(0)):
             day_d = date.fromisoformat(day_str)
         except (ValueError, TypeError):
             continue
-        # Strict past: today and future days aren't done/missed yet.
-        if day_d >= today:
+        # Future days are neither done nor missed yet. Today is allowed
+        # through: it can be DONE (the ride is already on file) but never
+        # MISSED (the day is not over). Excluding today outright — the
+        # original fix for QA #1 above — also made it impossible to ever
+        # count, so a session ridden this morning read "0 of N done" beside
+        # a TSS bar that had already banked its load.
+        if day_d > today:
             continue
         session_type = (s.get("session_type") or "").lower()
         day_acts = acts_on_day.get(day_str, [])
@@ -11171,7 +11245,9 @@ def api_week_summary(week_offset: int = Query(0)):
         # A cycling-planned day needs a bike activity. Cross-sport doesn't satisfy.
         if _matches_planned(day_acts, session_type):
             planned_days_done += 1
-        else:
+        elif day_d < today:
+            # Strictly past only: an unridden session TODAY is still pending,
+            # not missed. This is what QA #1 was about.
             planned_days_missed += 1
             missed_sessions.append({
                 "day": day_str,

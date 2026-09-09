@@ -17255,7 +17255,11 @@ async function loadWeeklyCalendar() {
         const sportIcons = agg.sports.map(_sportEmoji).slice(0, 3).join('');
         const adherence = s.tss_estimate > 0 ? Math.round(agg.total_tss / s.tss_estimate * 100) : null;
         const adhTxt = adherence !== null ? `<div style="font-size:8px;color:${adherence >= 80 ? 'var(--green)' : adherence >= 50 ? 'var(--yellow)' : 'var(--text3)'};font-weight:700;">vs plan: ${adherence}%</div>` : '';
-        const CYCLING_SPORTS = new Set(['Ride','VirtualRide','EBikeRide']);
+        // Must match app._CYCLING_SPORTS — a narrower set here paints a
+        // mountain-bike or gravel day red as "missed".
+        const CYCLING_SPORTS = new Set(['Ride','VirtualRide','EBikeRide',
+          'GravelRide','MountainBikeRide','EMountainBikeRide',
+          'Handcycle','Velomobile']);
         const didCycling = dayActs.some(a => CYCLING_SPORTS.has(a.sport || ''));
         const cyclingPlanned = s.session_type && s.session_type !== 'rest';
         const planMissed = cyclingPlanned && !didCycling && isPast;
@@ -17495,7 +17499,12 @@ function _buildWeekSummaryFallback(week, activities, actsByDate, lthr, todayStr)
   // Planned-session accounting; "missed" = STRICTLY past day with non-rest
   // cycling plan AND no cycling activity (a hike on a planned SS day still
   // counts as missed — the user owes the bike session).
-  const CYCLING_SPORTS = new Set(['Ride','VirtualRide','EBikeRide']);
+  // Must match app._CYCLING_SPORTS exactly — this fallback stands in for
+  // /api/week-summary, so a narrower set silently downgrades a
+  // mountain-bike or gravel day from done to missed when it is used.
+  const CYCLING_SPORTS = new Set(['Ride','VirtualRide','EBikeRide',
+    'GravelRide','MountainBikeRide','EMountainBikeRide',
+    'Handcycle','Velomobile']);
   const _SESSION_TYPE_TO_BAND = {
     recovery:  'low_aerobic',
     z2:        'low_aerobic',
@@ -17511,6 +17520,7 @@ function _buildWeekSummaryFallback(week, activities, actsByDate, lthr, todayStr)
   const missed = [];
   for (const s of sessions) {
     const isStrictlyPast = s.day < todayStr;
+    const isFuture = s.day > todayStr;
     const dayActs = actsByDate[s.day] || [];
     const didCycling = dayActs.some(a => CYCLING_SPORTS.has(a.sport || ''));
     const isReal = s.session_type && s.session_type !== 'rest';
@@ -17519,19 +17529,21 @@ function _buildWeekSummaryFallback(week, activities, actsByDate, lthr, todayStr)
     if (band) exposurePlanned[band] += Number(s.duration_min || 0);
     if (isReal) {
       plannedWith++;
-      if (isStrictlyPast) {
-        if (didCycling) plannedDone++;
-        else {
-          plannedMissed++;
-          missed.push({
-            day: s.day, day_name: s.day_name,
-            session_type: s.session_type,
-            tss_estimate: Number(s.tss_estimate || 0),
-            duration_min: Number(s.duration_min || 0),
-            name: s.name || '',
-            did_non_cycling: dayActs.length > 0,
-          });
-        }
+      // Today counts as DONE but never as MISSED — the day is not over. Must
+      // mirror api_week_summary exactly, or a rider whose /api/week-summary
+      // errors sees a different adherence figure than one whose does not.
+      if (!isFuture && didCycling) {
+        plannedDone++;
+      } else if (isStrictlyPast) {
+        plannedMissed++;
+        missed.push({
+          day: s.day, day_name: s.day_name,
+          session_type: s.session_type,
+          tss_estimate: Number(s.tss_estimate || 0),
+          duration_min: Number(s.duration_min || 0),
+          name: s.name || '',
+          did_non_cycling: dayActs.length > 0,
+        });
       }
     }
   }

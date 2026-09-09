@@ -1002,6 +1002,10 @@ RAMP_MODERATE     = 5
 RAMP_AGGRESSIVE   = 7
 
 # TSS per hour by session type (for budget calculations)
+# Share of the weekly budget a long-ride day carries relative to a normal one.
+# Applied by _build_week when it normalises the remaining days' weights.
+_LONG_DAY_WEIGHT = 1.5
+
 TSS_PER_HOUR = {
     "recovery":  30,
     "z2":        45,
@@ -3097,6 +3101,24 @@ def plan_week(
             and (start + timedelta(days=i)).weekday() in goal.available_days
         )
 
+        # This day's share of what is left. Weights are normalised across the
+        # days actually remaining, so giving the weekend long ride a bigger
+        # slice necessarily takes it from another day. The previous code
+        # multiplied one day's EVEN share by 1.5 without reducing any other,
+        # which simply spent 1.5x the budget.
+        _remaining_weight = 0.0
+        for _i in range(day_offset, 7):
+            _dd = start + timedelta(days=_i)
+            if (_dd.weekday() in goal.rest_days
+                    or _dd.weekday() not in goal.available_days):
+                continue
+            _remaining_weight += _LONG_DAY_WEIGHT if _dd.weekday() >= 5 else 1.0
+        _today_weight = _LONG_DAY_WEIGHT if is_weekend else 1.0
+        day_budget_tss = (
+            remaining_tss * (_today_weight / _remaining_weight)
+            if _remaining_weight > 0 else 0.0
+        )
+
         session = _pick_session(
             phase=phase,
             is_weekend=is_weekend,
@@ -3104,6 +3126,7 @@ def plan_week(
             max_min=max_min,
             remaining_tss=remaining_tss,
             remaining_days=remaining_days,
+            day_budget_tss=day_budget_tss,
             day_in_week=day_offset,
             sessions_so_far=sessions,
             week_num=week_num,
@@ -3139,6 +3162,7 @@ def _pick_session(
     remaining_days: int,
     day_in_week: int,
     sessions_so_far: list,
+    day_budget_tss: float | None = None,
     week_num: int = 0,
     prev_week_sessions: list | None = None,
     seed_salt: int = 0,
@@ -3153,6 +3177,39 @@ def _pick_session(
             shuffle seed so consecutive ``/api/plan/regenerate`` calls produce
             visibly different HIT picks. Default 0 = legacy deterministic mode.
     """
+
+    # The weekly TSS budget has to bound EVERY day, not just the weekend long
+    # ride. Until this existed, `remaining_tss` had exactly one consumer -- the
+    # `is_weekend` branch below -- so for an athlete resting Saturday and Sunday
+    # it was dead code and the week was sized purely by declared availability.
+    # Measured effect on a Mon-Fri rider with 3 h/day declared: 2.5-2.9x the
+    # target on load weeks, and an unload week HEAVIER than the load weeks it
+    # was meant to be a recovery from.
+    #
+    # Each day takes an even share of what is left, converted to minutes at the
+    # intensity that day will actually be ridden at. `floor_min` keeps a session
+    # worth doing rather than shrinking it to nothing when the budget is nearly
+    # spent -- so a week can still finish slightly over, by design.
+    # Falls back to an even split when the caller supplied no share, so the
+    # function stays correct if it is ever called from somewhere else.
+    share_tss = day_budget_tss
+    if share_tss is None:
+        share_tss = remaining_tss / max(1, remaining_days + 1)
+
+    # "No budget" and "budget already spent" are different states and must not
+    # collapse: a phase with no target should be sized by availability, but a
+    # week whose earlier days overspent has to stop, not fall back to the
+    # unbudgeted maximum. Conflating them let a Sunday take a full 180 min
+    # after the week was already at its target.
+    budget_known = share_tss is not None and (phase.weekly_tss_target or 0) > 0
+
+    def _fit_budget(dur: int, session_type: str, floor_min: int = 45) -> int:
+        per_h = TSS_PER_HOUR.get(session_type, 0)
+        if not budget_known or per_h <= 0:
+            return dur          # no budget information: availability decides
+        if share_tss <= 0:
+            return floor_min    # budget spent: smallest session still worth doing
+        return max(floor_min, min(dur, int(share_tss / per_h * 60)))
 
     # Count HIT sessions already planned this week
     hit_types = {"vo2max", "threshold", "overunder", "sweetspot", "sprint"}
@@ -3182,7 +3239,7 @@ def _pick_session(
     if is_stepback:
         flavour = week_num % 3
         if is_weekend:
-            dur = min(max_min, 150)
+            dur = _fit_budget(min(max_min, 150), "z2", floor_min=60)
             return PlannedSession(
                 day=date.today(), day_name="", session_type="long_z2",
                 duration_min=dur, tss_estimate=dur / 60 * TSS_PER_HOUR["z2"],
@@ -3193,7 +3250,7 @@ def _pick_session(
             # First weekday stepback gets easy tempo; rest remain recovery.
             # hit_count==0 + day_in_week<=2 means it's the first training day.
             if hit_count == 0 and day_in_week <= 2:
-                dur = min(max_min, 60)
+                dur = _fit_budget(min(max_min, 60), "tempo", floor_min=40)
                 return PlannedSession(
                     day=date.today(), day_name="", session_type="tempo",
                     duration_min=dur,
@@ -3201,13 +3258,13 @@ def _pick_session(
                     description=f"Step-back easy tempo ({dur}min), HR 146-156 bpm",
                 )
         elif flavour == 2:
-            dur = min(max_min, 75)
+            dur = _fit_budget(min(max_min, 75), "z2", floor_min=45)
             return PlannedSession(
                 day=date.today(), day_name="", session_type="z2",
                 duration_min=dur, tss_estimate=round(dur / 60 * TSS_PER_HOUR["z2"]),
                 description=f"Step-back Z2 spin ({dur}min), HR 142-156 bpm",
             )
-        dur = min(max_min, 60)
+        dur = _fit_budget(min(max_min, 60), "recovery", floor_min=30)
         return PlannedSession(
             day=date.today(), day_name="", session_type="recovery",
             duration_min=dur, tss_estimate=dur / 60 * TSS_PER_HOUR["recovery"],
@@ -3216,9 +3273,9 @@ def _pick_session(
 
     # Weekend long ride — scale duration to fit TSS budget
     if is_weekend and "long_z2" in phase.session_types:
-        # Budget-aware: don't exceed remaining TSS
-        ideal_tss = remaining_tss / max(1, remaining_days + 1) * 1.5  # weekends get 1.5x share
-        ideal_dur = int(ideal_tss / TSS_PER_HOUR["z2"] * 60)
+        # Budget-aware. The weekend's larger share is applied by the caller's
+        # weighting; re-applying a 1.5x multiplier here would spend it twice.
+        ideal_dur = int(share_tss / TSS_PER_HOUR["z2"] * 60)
         dur = min(max_min, ideal_dur, 180)
         dur = max(60, dur)  # minimum 1h
         tss = dur / 60 * TSS_PER_HOUR["z2"]
@@ -3406,7 +3463,7 @@ def _pick_session(
             # only consulted as a structural skeleton hint by daily-adapt /
             # legacy callers. Use max_min (clamped to sane HIT range) so
             # those callers don't accidentally produce a 30-min VO2 slot.
-            dur = max(45, min(max_min, 90))
+            dur = _fit_budget(min(max_min, 90), hit_type, floor_min=45)
             desc = desc_template.replace("{dur}", str(dur))
             return PlannedSession(
                 day=date.today(), day_name="", session_type=hit_type,
@@ -3418,7 +3475,7 @@ def _pick_session(
     # the sampler overwrites this in the main flow; this remains as a fallback
     # skeleton hint. Use available time (no 150-min cap) so legacy callers
     # see a duration consistent with the time budget.
-    dur = max(45, min(max_min, 180))
+    dur = _fit_budget(min(max_min, 180), "z2", floor_min=45)
     return PlannedSession(
         day=date.today(), day_name="", session_type="z2",
         duration_min=dur, tss_estimate=round(dur / 60 * TSS_PER_HOUR["z2"]),
@@ -13434,7 +13491,16 @@ def generate_weekly_plan(
         day_max_h = goal.max_hours_for_day(i) if goal else (max_weekend_h if is_weekend else max_weekday_h)
         max_dur = day_max_h * 60
         # Z2 fills available time but respects TSS budget (Seiler: easy days LONG)
-        budget_dur = int(tss_per_z2 / TSS_PER_HOUR["z2"] * 60) if tss_per_z2 > 10 else int(max_dur)
+        #
+        # "Budget spent" is not "no budget". The old `if tss_per_z2 > 10 else
+        # max_dur` fell back to the WHOLE available day exactly when the week had
+        # already been used up, so once the HIT sessions had consumed the budget
+        # every remaining slot took its full 3 hours -- turning rest days into
+        # 175-minute rides and a 272 TSS week into 638. A spent budget means the
+        # shortest session still worth doing, not the longest one that fits.
+        # Same defect _pick_session carried; see upstream-findings.md §14.
+        budget_dur = (int(tss_per_z2 / TSS_PER_HOUR["z2"] * 60)
+                      if weekly_tss and weekly_tss > 0 else int(max_dur))
         z2_dur = max(45, min(int(max_dur), budget_dur))
         z2_tss = round(z2_dur / 60 * TSS_PER_HOUR["z2"])
         sessions[i] = PlannedSession(

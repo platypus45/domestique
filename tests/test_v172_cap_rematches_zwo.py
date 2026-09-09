@@ -138,10 +138,12 @@ def test_cap_skips_rematch_for_trivial_shrink(tmp_path, monkeypatch):
     assert sess["zwo_name"] == "Endurance Long (110min)"  # ZWO unchanged
 
 
-def test_cap_clears_zwo_when_no_candidate(tmp_path, monkeypatch):
-    """If match_zwo raises NoCandidateWorkoutError (library has nothing
-    short enough), v1.7.2 clears zwo_file/zwo_name so the UI flags the
-    unmatched state instead of rendering the wrong workout's chart."""
+def test_cap_keeps_zwo_when_no_candidate(tmp_path, monkeypatch):
+    """If match_zwo raises NoCandidateWorkoutError, the session KEEPS the file
+    it had (v3.11.5). v1.7.2 cleared it so the UI would flag the mismatch —
+    and a rider whose library was empty at the time (3.11.1) then carried
+    "no workout matched" cards for weeks, because nothing re-matches a blank
+    session. The day view narrates the slot/file length gap instead."""
     plan_dir = _isolate_plan_dir(tmp_path, monkeypatch)
     _seed_plan_with_long_session(plan_dir)
 
@@ -164,8 +166,8 @@ def test_cap_clears_zwo_when_no_candidate(tmp_path, monkeypatch):
 
     sess = json.loads(plan_path.read_text(encoding="utf-8"))["weeks"][0]["sessions"][0]
     assert sess["duration_min"] == 30
-    assert sess["zwo_file"] == ""
-    assert sess["zwo_name"] == ""
+    assert sess["zwo_file"] == "z2_endurance_110min.zwo"   # kept, not blanked
+    assert sess["zwo_name"] == plan_before["weeks"][0]["sessions"][0]["zwo_name"]
 
 
 def test_cap_real_library_picks_shorter_zwo(tmp_path, monkeypatch):

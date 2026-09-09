@@ -9820,8 +9820,20 @@ def reforecast(
                                         raise_on_empty=True,
                                     )
                                 except NoCandidateWorkoutError:
-                                    s.zwo_file = ""
-                                    s.zwo_name = ""
+                                    # v3.11.5: a wrong-length file beats no
+                                    # file. Blanking here (with an empty
+                                    # library, 3.11.1) left a rider's plan
+                                    # reading "no workout matched" for weeks;
+                                    # the day view narrates the length gap and
+                                    # the R4a pass rematches when it can.
+                                    if not (s.zwo_file or "").strip():
+                                        s.zwo_file = ""
+                                        s.zwo_name = ""
+                                    else:
+                                        log.info(
+                                            "EVENT=reforecast_kept_file day=%s slot=%smin "
+                                            "file=%s (no candidate for the new length)",
+                                            d_iso, s.duration_min, s.zwo_file)
                                 except Exception:
                                     pass
                 touched.add(d_iso)
@@ -10166,6 +10178,119 @@ def _target_events_from_dicts(raw) -> list:
     return out
 
 
+def _planned_session_from_dict(s_json: dict, sd: date) -> PlannedSession:
+    """The ONE persisted-JSON -> PlannedSession mapping (v3.11.5: shared by
+    _plan_dict_to_planned_weeks and the plan self-heal so the field list
+    cannot drift between them)."""
+    return PlannedSession(
+        day=sd,
+        day_name=s_json.get("day_name", sd.strftime("%a")),
+        session_type=s_json.get("session_type", "z2"),
+        duration_min=int(s_json.get("duration_min", 0) or 0),
+        tss_estimate=float(s_json.get("tss_estimate", 0) or 0),
+        description=s_json.get("description", ""),
+        zwo_file=s_json.get("zwo_file", "") or "",
+        zwo_name=s_json.get("zwo_name", "") or "",
+        status=s_json.get("status", "pending"),
+        user_swapped=bool(s_json.get("user_swapped", False)),
+        user_moved=bool(s_json.get("user_moved", False)),
+        dismissed_at=s_json.get("dismissed_at", "") or "",
+        is_race=bool(s_json.get("is_race", False)),
+        race=(s_json.get("race")
+              if isinstance(s_json.get("race"), dict) else None),
+        is_opener=bool(s_json.get("is_opener", False)),
+    )
+
+
+def _iter_pending_unmatched(plan_dict: dict, today: date):
+    """Yield (week_dict, week_start, session_dict, day) for every session that
+    is pending, today-or-later, not rest/race/opener/dismissed and has NO
+    workout file. These are the cards the dashboard shows as
+    "no workout matched" (Linux-IP D5)."""
+    for w in plan_dict.get("weeks", []) or []:
+        if not isinstance(w, dict):
+            continue
+        try:
+            ws = date.fromisoformat(w["start"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        for s_json in w.get("sessions", []) or []:
+            if not isinstance(s_json, dict):
+                continue
+            if (s_json.get("session_type") or "") == "rest":
+                continue
+            if (s_json.get("zwo_file") or "").strip():
+                continue
+            if (s_json.get("status") or "pending") != "pending":
+                continue
+            if s_json.get("dismissed_at") or s_json.get("is_race") or s_json.get("is_opener"):
+                continue
+            try:
+                sd = date.fromisoformat(s_json["day"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            if sd < today:
+                continue
+            yield w, ws, s_json, sd
+
+
+def count_unmatched_pending_sessions(plan_dict: dict, today: "date | None" = None) -> int:
+    """How many upcoming pending sessions carry no workout file (diagnostics)."""
+    if not isinstance(plan_dict, dict):
+        return 0
+    return sum(1 for _ in _iter_pending_unmatched(plan_dict, today or date.today()))
+
+
+def heal_unmatched_sessions_dict(plan_dict: dict, library: list,
+                                 today: "date | None" = None) -> dict:
+    """v3.11.5 — give every upcoming pending session that has no workout file
+    one from the current library, in place on the persisted plan dict.
+
+    Why: a Linux rider's plan carried blank files for weeks. Under 3.11.1 the
+    availability reflow re-matched slots against an EMPTY library (the custom
+    workouts folder existed but held nothing) and blanked them; the 3.11.2
+    guards fixed the library, but nothing ever re-matched a blank session —
+    the R4a coherence pass skips file-less slots by design and the
+    generation-time sweep only runs at generation. Same guards as R4a
+    (pending-only, today-or-later, never race/opener/dismissed); a session
+    that still finds no candidate stays blank and is counted.
+
+    Returns {"candidates", "healed", "still_unmatched"}. Writes back only
+    zwo_file / zwo_name / matched — durations, TSS, descriptions and every
+    user flag stay exactly as persisted.
+    """
+    stats = {"candidates": 0, "healed": 0, "still_unmatched": 0}
+    if not isinstance(plan_dict, dict) or not library:
+        return stats
+    today = today or date.today()
+    # Plan-wide uniqueness, as generate_plan's sweep (used_names_set).
+    used: set = set()
+    for w in plan_dict.get("weeks", []) or []:
+        if not isinstance(w, dict):
+            continue
+        for s_json in w.get("sessions", []) or []:
+            if isinstance(s_json, dict) and (s_json.get("zwo_name") or "").strip():
+                used.add(s_json["zwo_name"].strip())
+    for w, ws, s_json, sd in list(_iter_pending_unmatched(plan_dict, today)):
+        stats["candidates"] += 1
+        s = _planned_session_from_dict(s_json, sd)
+        try:
+            match_zwo(s, library, week_num=int(w.get("week_num") or 0),
+                      day_idx=(sd - ws).days, used_names=used)
+        except Exception:  # noqa: BLE001 — a failed match leaves the card blank, never breaks the read
+            log.debug("plan self-heal: match_zwo failed", exc_info=True)
+        if (s.zwo_file or "").strip():
+            s_json["zwo_file"] = s.zwo_file
+            s_json["zwo_name"] = s.zwo_name or ""
+            s_json["matched"] = True
+            if s.zwo_name:
+                used.add(s.zwo_name)
+            stats["healed"] += 1
+        else:
+            stats["still_unmatched"] += 1
+    return stats
+
+
 def _plan_dict_to_planned_weeks(plan_dict: dict) -> list[PlannedWeek]:
     """v1.5.0 — build a PlannedWeek list from the persisted plan_dict.
 
@@ -10198,29 +10323,7 @@ def _plan_dict_to_planned_weeks(plan_dict: dict) -> list[PlannedWeek]:
                 sd = date.fromisoformat(s_json["day"])
             except (KeyError, ValueError, TypeError):
                 continue
-            sess_list.append(PlannedSession(
-                day=sd,
-                day_name=s_json.get("day_name", sd.strftime("%a")),
-                session_type=s_json.get("session_type", "z2"),
-                duration_min=int(s_json.get("duration_min", 0) or 0),
-                tss_estimate=float(s_json.get("tss_estimate", 0) or 0),
-                description=s_json.get("description", ""),
-                zwo_file=s_json.get("zwo_file", "") or "",
-                zwo_name=s_json.get("zwo_name", "") or "",
-                status=s_json.get("status", "pending"),
-                # v2.3.0: carry the swap pin so reforecast won't re-sample/demote it.
-                user_swapped=bool(s_json.get("user_swapped", False)),
-                # E7 (v2.5.0): round-trip the race day, the user-move pin, the
-                # dismissal and the opener marker — without these the dict-path
-                # mutators saw a plain session and freely rewrote race days /
-                # pinned moves / openers (FC3 + F5b guards key on them).
-                user_moved=bool(s_json.get("user_moved", False)),
-                dismissed_at=s_json.get("dismissed_at", "") or "",
-                is_race=bool(s_json.get("is_race", False)),
-                race=(s_json.get("race")
-                      if isinstance(s_json.get("race"), dict) else None),
-                is_opener=bool(s_json.get("is_opener", False)),
-            ))
+            sess_list.append(_planned_session_from_dict(s_json, sd))
         pw_list.append(PlannedWeek(
             week_num=w.get("week_num", 0), start=ws, end=we,
             phase=w.get("phase", ""),

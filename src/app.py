@@ -12374,6 +12374,42 @@ def _plan_ctl_drift(snapshot: "dict | None", live_ctl) -> "dict | None":
     }
 
 
+_PLAN_HEAL_SEEN: dict = {}
+_PLAN_HEAL_LOCK = threading.Lock()
+
+
+def _maybe_heal_plan_files(json_path, plan_data: dict) -> None:
+    """v3.11.5 plan self-heal — upcoming pending sessions with no workout file
+    get one from the current library, once per plan-file version, and the
+    plan is persisted when anything changed. Background: a rider's 3.11.1-era
+    plan carried blank files for weeks because nothing ever re-matched them
+    (see tp.heal_unmatched_sessions_dict)."""
+    try:
+        key = str(json_path)
+        mtime_ns = json_path.stat().st_mtime_ns
+    except OSError:
+        return
+    with _PLAN_HEAL_LOCK:
+        if _PLAN_HEAL_SEEN.get(key) == mtime_ns:
+            return
+        _PLAN_HEAL_SEEN[key] = mtime_ns
+        try:
+            if not tp.count_unmatched_pending_sessions(plan_data):
+                return
+            stats = tp.heal_unmatched_sessions_dict(plan_data, tp.load_workout_library())
+        except Exception as e:  # noqa: BLE001 — never break the plan read
+            _log.warning("EVENT=plan_selfheal_failed error=%s", str(e)[:200])
+            return
+        _log.info("EVENT=plan_selfheal candidates=%d healed=%d still_unmatched=%d",
+                  stats["candidates"], stats["healed"], stats["still_unmatched"])
+        if stats["healed"]:
+            try:
+                tp.atomic_write_plan(json_path, plan_data)
+                _PLAN_HEAL_SEEN[key] = json_path.stat().st_mtime_ns
+            except Exception as e:  # noqa: BLE001
+                _log.warning("EVENT=plan_selfheal_write_failed error=%s", str(e)[:200])
+
+
 @app.get("/api/plan")
 def api_plan():
     # Try structured JSON first
@@ -12382,6 +12418,7 @@ def api_plan():
         try:
             with open(json_path, encoding="utf-8") as f:
                 plan_data = json.load(f)
+            _maybe_heal_plan_files(json_path, plan_data)
             # v4.1.1 FIX-PLANNER B: attach per-session `zone_dist` so the
             # dashboard mini-graph can render the ACTUAL ZWO's zone
             # distribution. v1.4.0: per-session enrichment now lives in
@@ -22048,11 +22085,15 @@ def api_diag_health(request: Request):
     # plan_readable
     try:
         if not plan_path.exists():
-            checks["plan_readable"] = {"ok": False, "code": error_codes.Codes.PLAN_PARSE_MISSING}
+            checks["plan_readable"] = {"ok": False, "code": error_codes.Codes.PLAN_PARSE_MISSING,
+                                       "sessions_without_file": 0}
         else:
             with open(plan_path, encoding="utf-8") as f:
                 plan_data = json.load(f)
-            checks["plan_readable"] = {"ok": True}
+            # v3.11.5: upcoming pending cards with no workout file — the
+            # "no workout matched" count a rider sees; api_plan heals these.
+            checks["plan_readable"] = {"ok": True,
+                                       "sessions_without_file": tp.count_unmatched_pending_sessions(plan_data)}
     except json.JSONDecodeError as e:
         checks["plan_readable"] = {"ok": False, "code": error_codes.Codes.PLAN_PARSE_CORRUPT, "msg": str(e)[:200]}
     except OSError as e:

@@ -22151,6 +22151,12 @@ def api_diag_health(request: Request):
         from icu_calendar_push import write_ok as _icu_calendar_write_ok
     except Exception:  # noqa: BLE001
         _icu_calendar_write_ok = lambda: False  # noqa: E731
+
+    def _safe_bool(fn) -> bool:
+        try:
+            return bool(fn())
+        except Exception:  # noqa: BLE001 — diagnostics never 500 over a capability probe
+            return False
     checks["icu_oauth"] = {
         "client_id": str(getattr(config, "ICU_OAUTH_CLIENT_ID", "") or ""),
         "secret_loaded": bool(getattr(config, "ICU_OAUTH_CLIENT_SECRET", "")),
@@ -22162,7 +22168,7 @@ def api_diag_health(request: Request):
         # was an un-granted ACTIVITY:WRITE. Scope names only, never tokens.
         "granted_scopes": [s for s in re.split(r"[,\s]+", (_pm_scopes or "").upper()) if s],
         "can_upload_activities": _icu_can_upload(),
-        "can_write_calendar": _icu_calendar_write_ok(),
+        "can_write_calendar": _safe_bool(_icu_calendar_write_ok),
     }
     # workout_library
     try:

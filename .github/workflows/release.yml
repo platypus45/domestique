@@ -430,7 +430,7 @@ jobs:
               Write-Host "::error::end-to-end sign-in through the simulated interceptor failed - see e2e output above"
               exit 1
             }
-            # v3.11.5: the plan self-heal counter must exist and be 0 on a fresh install.
+            # v3.11.5: the plan self-heal counter must EXIST (contract) — 0 here because a fresh install has no plan.
             $swf = $hb.checks.plan_readable.sessions_without_file
             if ($null -eq $swf -or [int]$swf -ne 0) {
               Dump-Diagnostics
@@ -735,7 +735,7 @@ jobs:
           # v3.11.4: Linux stays on OpenSSL + certifi + OS store (os-native is Windows-only).
           tls_backend="$(printf '%s' "$hb" | jq -r '.checks.icu_oauth.tls_backend // empty')"
           [ "$tls_backend" = "openssl" ] || fail "Linux TLS backend is '$tls_backend' (expected openssl)"
-          # v3.11.5: the plan self-heal counter must exist and be 0 on a fresh install.
+          # v3.11.5: the plan self-heal counter must EXIST (contract) — 0 here because a fresh install has no plan.
           swf="$(printf '%s' "$hb" | jq -r '.checks.plan_readable.sessions_without_file // "missing"')"
           [ "$swf" = "0" ] || fail "plan_readable.sessions_without_file is '$swf' (expected 0)"
 

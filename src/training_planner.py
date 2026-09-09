@@ -10273,12 +10273,14 @@ def heal_unmatched_sessions_dict(plan_dict: dict, library: list,
                 used.add(s_json["zwo_name"].strip())
     for w, ws, s_json, sd in list(_iter_pending_unmatched(plan_dict, today)):
         stats["candidates"] += 1
-        s = _planned_session_from_dict(s_json, sd)
         try:
+            s = _planned_session_from_dict(s_json, sd)
             match_zwo(s, library, week_num=int(w.get("week_num") or 0),
                       day_idx=(sd - ws).days, used_names=used)
-        except Exception:  # noqa: BLE001 — a failed match leaves the card blank, never breaks the read
-            log.debug("plan self-heal: match_zwo failed", exc_info=True)
+        except Exception:  # noqa: BLE001 — one malformed or unmatchable session never breaks the read
+            log.debug("plan self-heal: session skipped", exc_info=True)
+            stats["still_unmatched"] += 1
+            continue
         if (s.zwo_file or "").strip():
             s_json["zwo_file"] = s.zwo_file
             s_json["zwo_name"] = s.zwo_name or ""

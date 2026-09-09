@@ -12383,31 +12383,43 @@ def _maybe_heal_plan_files(json_path, plan_data: dict) -> None:
     get one from the current library, once per plan-file version, and the
     plan is persisted when anything changed. Background: a rider's 3.11.1-era
     plan carried blank files for weeks because nothing ever re-matched them
-    (see tp.heal_unmatched_sessions_dict)."""
-    try:
-        key = str(json_path)
-        mtime_ns = json_path.stat().st_mtime_ns
-    except OSError:
-        return
+    (see tp.heal_unmatched_sessions_dict).
+
+    The request's ``plan_data`` was read OUTSIDE the plan-write lock, so the
+    heal re-reads the file under the lock (a regenerate/reforecast may have
+    written in between), heals THAT copy, writes it, and then replaces the
+    request's dict with exactly what was persisted. Nothing is served that is
+    not on disk; nothing on disk is overwritten with a stale read.
+    """
+    key = str(json_path)
+    stats = None
     with _PLAN_HEAL_LOCK:
+        try:
+            mtime_ns = json_path.stat().st_mtime_ns
+        except OSError:
+            return
         if _PLAN_HEAL_SEEN.get(key) == mtime_ns:
             return
         _PLAN_HEAL_SEEN[key] = mtime_ns
         try:
             if not tp.count_unmatched_pending_sessions(plan_data):
                 return
-            stats = tp.heal_unmatched_sessions_dict(plan_data, tp.load_workout_library())
+            library = tp.load_workout_library()
+            with tp.plan_write_lock():                 # RLock: atomic_write_plan nests inside
+                with open(json_path, encoding="utf-8") as f:
+                    fresh = json.load(f)
+                stats = tp.heal_unmatched_sessions_dict(fresh, library)
+                if stats["healed"]:
+                    tp.atomic_write_plan(json_path, fresh)
+                    _PLAN_HEAL_SEEN[key] = json_path.stat().st_mtime_ns
+                    plan_data.clear()
+                    plan_data.update(fresh)
         except Exception as e:  # noqa: BLE001 — never break the plan read
             _log.warning("EVENT=plan_selfheal_failed error=%s", str(e)[:200])
             return
+    if stats is not None:
         _log.info("EVENT=plan_selfheal candidates=%d healed=%d still_unmatched=%d",
                   stats["candidates"], stats["healed"], stats["still_unmatched"])
-        if stats["healed"]:
-            try:
-                tp.atomic_write_plan(json_path, plan_data)
-                _PLAN_HEAL_SEEN[key] = json_path.stat().st_mtime_ns
-            except Exception as e:  # noqa: BLE001
-                _log.warning("EVENT=plan_selfheal_write_failed error=%s", str(e)[:200])
 
 
 @app.get("/api/plan")

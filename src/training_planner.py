@@ -4146,7 +4146,59 @@ MICROINTERVAL_MAX_REP_S = 60
 MICROINTERVAL_MIN_FRAC = 0.5
 
 
-def match_zwo(
+# Headroom before a matched file is considered over budget. A library workout
+# rarely lands exactly on a computed target, and truncating one for the sake of
+# a few TSS makes the plan worse, not better.
+_MATCH_BUDGET_TOLERANCE = 1.10
+# Never truncate below this: a stub is not a session.
+_MATCH_BUDGET_FLOOR_MIN = 30
+
+
+def match_zwo(session: PlannedSession, library: list[dict], *args, **kwargs):
+    """Select a library workout for this session without inflating its load.
+
+    The session arrives already sized: the planner converted this day's share
+    of the weekly TSS budget into a duration, and wrote both onto the session.
+    ``_match_zwo_unclamped`` then picks a ``.zwo`` and OVERWRITES both fields
+    with the file's own numbers, bounded only by ``max_min`` -- the athlete's
+    available time, which is a different quantity from the load budget.
+
+    That is how a 60 min / 45 TSS Wednesday became 175 min / 152 TSS: the file
+    fitted the three hours that were free, so nothing objected. Across a week
+    it turned a 272 TSS target into 638, and made the unload week the heaviest
+    of its block.
+
+    This wrapper restores the invariant at the one place all 30 call sites pass
+    through: matching may choose the workout, but it may not spend more load
+    than the planner budgeted.
+
+    ponytail: truncation is the stopgap, not the answer. Scaling a structured
+    session (3x20min threshold clipped to fit) changes what it trains, and the
+    description still describes the file's full shape. The upgrade path is to
+    make the budget a SELECTION criterion -- score candidates on fitting both
+    the time and the load, and report a miss rather than reshaping a file that
+    does not fit. That needs the scorer, which is why it is not done here.
+    """
+    budgeted = float(getattr(session, "tss_estimate", 0) or 0)
+    out = _match_zwo_unclamped(session, library, *args, **kwargs)
+
+    if out is None or budgeted <= 0:
+        return out          # nothing budgeted to honour; leave the match alone
+
+    got = float(getattr(out, "tss_estimate", 0) or 0)
+    dur = int(getattr(out, "duration_min", 0) or 0)
+    ceiling = budgeted * _MATCH_BUDGET_TOLERANCE
+    if got <= ceiling or got <= 0 or dur <= 0:
+        return out
+
+    scaled = max(_MATCH_BUDGET_FLOOR_MIN, int(round(dur * (ceiling / got))))
+    if scaled < dur:
+        out.duration_min = scaled
+        out.tss_estimate = round(got * (scaled / dur))
+    return out
+
+
+def _match_zwo_unclamped(
     session: PlannedSession, library: list[dict],
     week_num: int = 0, day_idx: int = 0, used_names: set = None,
     plan_start_date: date | None = None,

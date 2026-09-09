@@ -14736,6 +14736,22 @@ def _prescription_hr_rows(pm) -> dict | None:
     return rows if isinstance(rows, dict) else None
 
 
+def _icu_can_upload() -> bool:
+    """v3.11.5 — may this connection POST activities to intervals.icu?
+    API key → yes (full access). OAuth → only with the ACTIVITY:WRITE stamp
+    (pre-3.11.5 connections asked for ACTIVITY:READ and got 403 on every
+    upload; they need one reconnect). No connection → no."""
+    token = getattr(config, "ICU_ACCESS_TOKEN", "") or ""
+    key = getattr(config, "ICU_API_KEY", "") or ""
+    if token:
+        try:
+            from profile_manager import ProfileManager
+            return ProfileManager.get().icu_has_scope("ACTIVITY:WRITE")
+        except Exception:  # noqa: BLE001
+            return False
+    return bool(key)
+
+
 def _hr_bias() -> bool:
     """hr target_mode -> soft matcher preference for HR-guidable files
     (v2.5.0 W5). One chokepoint so every rematch/redraw path agrees."""
@@ -19182,7 +19198,19 @@ async def api_ride_import(
     icu_upload = {"ok": False, "skipped": True}
     try:
         from training import upload_fit_to_icu
-        res = upload_fit_to_icu(fit_path, retry=1)
+        _oauth = bool(getattr(config, "ICU_ACCESS_TOKEN", "") or "")
+        if _oauth and not _icu_can_upload():
+            # v3.11.5: the token was granted without ACTIVITY:WRITE (every
+            # pre-3.11.5 sign-in) — ICU would answer 403. Say so instead.
+            res = {"ok": False, "skipped": True, "status": 0,
+                   "detail": "needs_reconnect", "needs_reconnect": True}
+            log_ride_import.warning(
+                f"EVENT=icu_fit_upload_skipped id={ride_id} reason=scope_missing "
+                f"(reconnect intervals.icu to grant ACTIVITY:WRITE)")
+        else:
+            res = upload_fit_to_icu(fit_path, retry=1)
+            if _oauth and res.get("detail") == "auth_failed":
+                res["needs_reconnect"] = True   # revoked / stale grant
         icu_upload = res
         if res.get("ok"):
             log_ride_import.info(
@@ -22114,6 +22142,15 @@ def api_diag_health(request: Request):
     # bundle; this proves the frozen app actually LOADED it (a reporter hit
     # "token exchange failed" on 3.11.2 and the platform was unknown).
     # Booleans only — the secret never leaves the process.
+    try:
+        from profile_manager import ProfileManager as _PM
+        _pm_scopes = _PM.get().icu_granted_scopes
+    except Exception:  # noqa: BLE001
+        _pm_scopes = ""
+    try:
+        from icu_calendar_push import write_ok as _icu_calendar_write_ok
+    except Exception:  # noqa: BLE001
+        _icu_calendar_write_ok = lambda: False  # noqa: E731
     checks["icu_oauth"] = {
         "client_id": str(getattr(config, "ICU_OAUTH_CLIENT_ID", "") or ""),
         "secret_loaded": bool(getattr(config, "ICU_OAUTH_CLIENT_SECRET", "")),
@@ -22121,6 +22158,11 @@ def api_diag_health(request: Request):
         # v3.11.4: which verifier guards the sign-in. CI asserts os-native on
         # Windows (antivirus roots OpenSSL refuses) and openssl on Linux.
         "tls_backend": tls_trust.backend_name(),
+        # v3.11.5: what the connection may do — the rider's 403 on upload
+        # was an un-granted ACTIVITY:WRITE. Scope names only, never tokens.
+        "granted_scopes": [s for s in re.split(r"[,\s]+", (_pm_scopes or "").upper()) if s],
+        "can_upload_activities": _icu_can_upload(),
+        "can_write_calendar": _icu_calendar_write_ok(),
     }
     # workout_library
     try:

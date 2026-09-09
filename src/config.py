@@ -76,7 +76,12 @@ ICU_OAUTH_REDIRECT_URI = (
 # "Duplicate scope CALENDAR" if an area appears twice (v3.0.2 hotfix —
 # CALENDAR:READ + CALENDAR:WRITE together bricked reconnect). WRITE covers
 # the calendar reads the app does.
-ICU_OAUTH_SCOPES = "ACTIVITY:READ,WELLNESS:READ,LIBRARY:READ,CALENDAR:WRITE"
+# ACTIVITY:WRITE (v3.11.5): the ride import mirrors the FIT to intervals.icu;
+# with ACTIVITY:READ every OAuth upload answered 403 (a rider's log). WRITE
+# implies READ per the intervals.icu OAuth docs ("to update, implies READ
+# access"), so the sync keeps working; existing connections keep their
+# granted set and are told to reconnect once before their first upload.
+ICU_OAUTH_SCOPES = "ACTIVITY:WRITE,WELLNESS:READ,LIBRARY:READ,CALENDAR:WRITE"
 
 # ── Weekly mesocycle planner — Seiler (2010), Stöggl & Sperlich (2014) ───────
 WEEKLY_LIT_PCT = 0.80

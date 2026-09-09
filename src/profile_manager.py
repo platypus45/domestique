@@ -264,6 +264,16 @@ class ProfileManager:
         stamp — the latter are treated as read-only until a reconnect."""
         return (self._env.get("ICU_GRANTED_SCOPES") or "").strip()
 
+    def icu_has_scope(self, scope: str) -> bool:
+        """v3.11.5 — was ``scope`` (e.g. ``"ACTIVITY:WRITE"``) granted at
+        connect time? Parses the ICU_GRANTED_SCOPES stamp (comma/space
+        separated, case-insensitive). False for API-key auth and for OAuth
+        connections that predate the stamp — callers treat both as
+        "reconnect to grant it" only when a token is present."""
+        import re as _re
+        granted = {s for s in _re.split(r"[,\s]+", self.icu_granted_scopes.upper()) if s}
+        return scope.strip().upper() in granted
+
     @property
     def icu_name(self) -> str:
         """Display name of the linked intervals.icu athlete (OAuth). Empty until

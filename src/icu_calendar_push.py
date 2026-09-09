@@ -82,8 +82,7 @@ def write_ok(pm=None) -> bool:
         if pm is None:
             from profile_manager import ProfileManager
             pm = ProfileManager.get()
-        scopes = [s for s in re.split(r"[,\s]+", (pm.icu_granted_scopes or "").upper()) if s]
-        return "CALENDAR:WRITE" in scopes
+        return pm.icu_has_scope("CALENDAR:WRITE")
     return bool(key)
 
 

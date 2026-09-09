@@ -437,6 +437,11 @@ jobs:
               Write-Host "::error::plan_readable.sessions_without_file = '$swf' (expected 0)"
               exit 1
             }
+            if ($null -eq $hb.checks.icu_oauth.can_upload_activities) {
+              Dump-Diagnostics
+              Write-Host "::error::icu_oauth.can_upload_activities missing from diag (v3.11.5 contract)"
+              exit 1
+            }
             Write-Host "Smoke-test passed: EXE serves version $served, library=$libcount, hit=$hitn, oauth_secret=loaded, tls=$tlsb, e2e-through-interceptor=ok, sessions_without_file=0"
           } finally {
             if ($fake -and -not $fake.HasExited) { Stop-Process -Id $fake.Id -Force -ErrorAction SilentlyContinue }
@@ -738,6 +743,8 @@ jobs:
           # v3.11.5: the plan self-heal counter must EXIST (contract) — 0 here because a fresh install has no plan.
           swf="$(printf '%s' "$hb" | jq -r '.checks.plan_readable.sessions_without_file // "missing"')"
           [ "$swf" = "0" ] || fail "plan_readable.sessions_without_file is '$swf' (expected 0)"
+          cu="$(printf '%s' "$hb" | jq -r '.checks.icu_oauth.can_upload_activities // "missing"')"
+          [ "$cu" = "false" ] || fail "icu_oauth.can_upload_activities is '$cu' on a fresh install (expected false, present)"
 
           #    ...and the listener must BE the GUI process, not a stage-A leftover.
           PORT_PID="$(ss -ltnp 2>/dev/null | awk '/:22400 /{ if (match($0, /pid=[0-9]+/)) print substr($0, RSTART+4, RLENGTH-4) }' | head -1)"

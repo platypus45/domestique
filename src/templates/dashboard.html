@@ -3939,6 +3939,11 @@ async function _importFitFile(file) {
     const dur = ps.duration_sec ? Math.round(ps.duration_sec / 60) + ' min' : '';
     const tss = ps.tss ? ' · TSS ' + ps.tss : '';
     showToast('Imported ' + file.name + (dur ? ' (' + dur + tss + ')' : ''), 5000);
+    // v3.11.5: the upload to intervals.icu needs a permission every sign-in
+    // before 3.11.5 never asked for — say so once, instead of a silent 403.
+    if (data.icu_upload && data.icu_upload.needs_reconnect) {
+      setTimeout(() => showToast('Ride saved here. To send rides to intervals.icu too, reconnect once (Settings → Connections) to grant upload permission.', 8000, 'warning'), 1200);
+    }
     // v1.9.1 — refresh the home views so the imported ride + the plan
     // auto-adapt it just triggered (server-side _maybe_auto_reforecast →
     // reconcile + adapt) are visible immediately. Pre-fix nothing repainted,

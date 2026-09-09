@@ -76,35 +76,75 @@ is not what these do. The structural criticism stands (four sites write into a
 directory another module owns, and the FIT parser exists three times), but it is
 a design problem, not data loss.
 
+## The substrate review overturned the ordering
+
+The fourth review asked a different question — not "can this chunk move" but
+"what does the whole file sit on" — and its answer changes the plan:
+
+> A split cannot start with a feature area.
+
+**755 cross-section references across 89 edges**, and **ten section pairs that
+depend on each other in both directions**. Cutting anywhere along a banner today
+produces an import cycle. Every one of the fifteen heaviest edges points into
+the prelude, and their substance is a short repeating list: `_plan_dir`,
+`_get_json_body`, `_log_error`, `_log`, `cached`, `clear_cache`, `WORKOUT_DIR`,
+`DATA_DIR`, `app`.
+
+Three of its sharpest claims, verified directly rather than taken on trust:
+
+- **`app.PLAN_DIR` (`:498`) is a dead alias.** `_plan_dir()` (`:171`) reads
+  `tp.PLAN_DIR` dynamically; the module constant never updates. Any module that
+  imports it gets a value that is wrong after the first profile switch. Delete
+  it rather than move it.
+- **`_cache` / `_cache_ts` have no lock at all** and are mutated from four
+  sections. The single-worker assertion at `:22263` is standing in for
+  synchronisation.
+- **`_dfa_backfill_lock` is acquired at `:2495` and released at `:2475`** — in a
+  different function, on a different thread.
+
+The last two are behaviour questions, not moves. They get their own commits
+*after* the extraction, so the characterization harness can tell a relocation
+from a change.
+
 ## Order of work
 
 Dependency-ordered. Each step is independently revertable and gated on: upstream
 pytest green, the nine stack suites green, and the characterization harness
 clean.
 
-1. **`cache.py`** — lift `_cache`, `_cache_ts`, `cached`, `clear_cache` out of
-   the setup-wizard section. Add per-key invalidation so ingest can drop
-   `"all_rides"` without destroying the planner's `"training"`. Route the two
-   direct dict mutations (`:4569`, `:4604`) through the API. Unblocks every
-   other extraction and is a fix in its own right.
-2. **Leaf helpers to a neutral module** — `_get_json_body` (`:813`),
-   `_safe_path` (`:8350`), `_age_days_from_iso` (`:3562`),
-   `_session_naming_lookup` (`:464`), `_hr_bias` (`:14766`),
-   `_prescription_hr_rows` (`:14756`). Each is currently misfiled inside a
-   feature section.
-3. **Extract the workout library + routes chunk** — the best first real
+**Substrate first — no endpoint moves until all four are done.** Each is a pure
+relocation: the harness must stay clean, and `app.py` re-exports every moved
+name so the 60 test files that reach `app.X` keep working.
+
+1. **`obs.py`** — `_log_error` (`:77`), `_DIAG_RING` + its lock (`:73-74`),
+   `_diag_ring_snapshot` (`:124`), the loggers (`:56-63`). Smallest, fewest
+   edges; proves the extraction pattern and the gate before anything riskier.
+2. **`cache.py`** — `cached` (`:1639`), `clear_cache` (`:1670`), `_cache` /
+   `_cache_ts` (`:1603-1604`), the fatigue-resistance lock map (`:1610-1620`).
+   Relocation only. The missing lock and per-key invalidation follow as separate
+   commits, because they change behaviour and should be visible as such.
+3. **`paths.py`** — `_plan_dir` (`:171`), `_safe_path` (`:8350`),
+   `_rides_fit_dir` (`:18760`), `DATA_DIR`, `COURSE_DIR`, `ROUTE_*`, and
+   **accessors `workout_dir()` / `gpx_dir()`** replacing the rebound globals.
+   Delete `PLAN_DIR` (`:498`) outright.
+4. **`http_util.py`** — `_get_json_body` (`:813`, used from 12 sections),
+   `_icu_verify` (`:47`), `_diag_local_only` (`:22026`).
+
+Only then:
+
+5. **Extract the workout library + routes chunk** — the best first feature
    extraction on every measure: smallest interface, no escaping state, no
    threads, 3 test files touching internals.
-4. **`size_session` as the single owner of session sizing** — the four known
+6. **`size_session` as the single owner of session sizing** — the four known
    layers migrate to it. Note the blast radius is wider than those four:
    `TYPE_CEILING`, `TSS_PER_HOUR`, `_INTENSITY_LADDER`, `_deescalated_load`,
    `apply_week_tier_down` and others are used from `app.py` outside the planning
    chunk.
-5. **Monday week anchoring** — `regenerate_from_today` builds weeks starting on
+7. **Monday week anchoring** — `regenerate_from_today` builds weeks starting on
    whatever weekday it runs, so a Wednesday regenerate produces Wed–Tue weeks
    while every rollup aggregates Mon–Sun. Requested explicitly.
-6. **Sorted candidates before seeding** — makes regeneration reproducible.
-7. **Planning domain extraction** — only after 1 and 2.
+8. **Sorted candidates before seeding** — makes regeneration reproducible.
+9. **Planning domain extraction** — only after 1 and 2.
 
 Not scheduled: the ride chunk (needs `_maybe_auto_reforecast` inverted into a
 hook first) and the profile chunk (entangled with the whole file by design).

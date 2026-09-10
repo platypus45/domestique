@@ -1,12 +1,12 @@
 """One codec between a persisted plan and its objects, and it loses nothing.
 
 There were seven hand-typed week readers, two session readers that disagreed on
-12 fields, and a generate endpoint that wrote 11 of a session's 27. Reforecast
-read every session through the lossy reader, which dropped `adapted`, so the
-guard that skips adapted sessions never fired and the same session was
-downgraded again on every sync; a rider's CTL target was never persisted and
-vanished on the first regenerate; every rebuild deleted the readiness undo
-stash (notes/review/dupes.md DUP-5, DUP-22, DUP-25).
+12 fields, and a generate endpoint that wrote 11 of a session's 27. Reforecast's
+reader dropped `adapted`, `completion_matches`, `moved_from` and `execution`; a
+rider's CTL target was never persisted; every rebuild deleted the readiness undo
+stash (notes/review/dupes.md DUP-5, DUP-22, DUP-25). The same session was also
+downgraded again on every sync: the reader was half of that, and the TSB loop,
+which never checked `adapted`, the other half.
 
 The two dict-path tests write the stored plan by field name, not through the
 codec, so they run against the old readers too -- and fail there.
@@ -99,15 +99,11 @@ def test_the_reforecast_reader_keeps_what_the_athlete_owns():
     assert got.moved_from == "2026-09-10" and got.execution == {"score": 88}
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "reforecast's TSB loop never checks `adapted`, so the same projected TSB "
-    "drops the same session another tier on every sync; the codec alone "
-    "cannot stop it"))
 def test_reforecast_adapts_a_session_once_not_on_every_sync():
     """The same projected TSB, synced three times, must not keep downgrading
     the same session: nothing about the athlete changed between the syncs. The
-    review blamed the reader, which dropped `adapted`. Carrying it is needed
-    for G3's guard, but the TSB loop has no such guard, and this fails the same
+    review blamed the reader, which dropped `adapted`. Carrying it is needed,
+    but the TSB loop never checked it: without that guard this failed the same
     way on both readers (vo2max -> threshold -> overunder, one tier a sync)."""
     goal, weeks = _plan()
     plan = {"goal": {"type": "event", "event_date": goal.target_date.isoformat()},

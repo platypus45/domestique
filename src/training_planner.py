@@ -11650,6 +11650,13 @@ def reforecast(
                     continue  # FC3: race entry immutable to the TSB downshift
                 if getattr(s, "user_swapped", False):
                     continue  # v2.3.0: user's manual type-swap is pinned
+                if s.adapted:
+                    # Eased once already. Two syncs minutes apart hand this
+                    # loop the same TSB, and easing again turned one fatigue
+                    # reading into a tier per sync: vo2max -> threshold ->
+                    # over-under -> sweet spot (dupes.md DUP-22). The rule is
+                    # one tier past TSB -25, and G3 below always had the guard.
+                    continue
                 tsb = _tsb_at(s.day)
                 if tsb is None:
                     continue

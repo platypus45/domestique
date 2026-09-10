@@ -389,7 +389,7 @@ Measured:
 The ratchet did not stop, because its cause is not the reader (see "Handover
 claims that did not hold"). That is Step 4b.
 
-### Step 4b — reforecast eases a session once
+### Step 4b — reforecast eases a session once — DONE
 
 The TSB downshift loop skips a session that is already `adapted`, as G3
 always has. The rule it implements is one tier past TSB −25. Two syncs minutes

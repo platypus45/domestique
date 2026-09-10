@@ -1530,9 +1530,12 @@ def setup_save(body: dict):
 
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
-
-_cache = {}
-_cache_ts = {}
+# Lives in cache.py. Imported by name and re-exported so `app.cached`,
+# `app.clear_cache` and the four sections that mutate `_cache` directly keep
+# working -- the dicts are the same objects, so in-place mutation is shared.
+from cache import (  # noqa: F401
+    _cache, _cache_ts, cached, clear_cache, register_clearer,
+)
 
 # W2B-G5 fix: per-key lock map for the fatigue-resistance endpoint so
 # concurrent same-key requests don't both compute and don't race the
@@ -1567,47 +1570,12 @@ def _fatigue_resistance_memoised(latest_ride_id: str, current_ftp: int,
         kj_threshold=int(kj_threshold),
     )
 
-def cached(key, fn, ttl=300):
-    now = time.time()
-    if key in _cache and now - _cache_ts.get(key, 0) < ttl:
-        return _cache[key]
-    try:
-        result = fn()
-    except Exception as e:
-        # If API call fails (no internet, DNS error), return stale cache.
-        if key in _cache:
-            return _cache[key]
-        # v1.6.0 — log under E_CACHE_<key>-or-GENERIC and stick the empty
-        # result for only 30s so transient errors don't sit in cache for
-        # the full ttl. Trick: backdate _cache_ts to (now - (ttl - 30))
-        # so the staleness check ``now - ts < ttl`` flips back to False
-        # after 30 wall-clock seconds.
-        cache_code = {
-            "training": error_codes.Codes.CACHE_TRAINING,
-            "sleep": error_codes.Codes.CACHE_SLEEP,
-            "wellness": error_codes.Codes.CACHE_WELLNESS,
-        }.get(key, error_codes.Codes.CACHE_GENERIC)
-        _log_error(cache_code, exc=e, cache_key=key)
-        _cache[key] = {}
-        if ttl > 30:
-            _cache_ts[key] = now - (ttl - 30)
-        else:
-            _cache_ts[key] = now
-        return {}
-    _cache[key] = result
-    _cache_ts[key] = now
-    return result
 
-def clear_cache():
-    _cache.clear()
-    _cache_ts.clear()
-    # AC2c: the fatigue-resistance memo is keyed on (ride_id, ftp, window, kj)
-    # only — NOT profile — so a profile switch (clear_cache is an on_switch
-    # callback) must drop it or profile B could serve A's cached curve.
-    try:
-        _fatigue_resistance_memoised.cache_clear()
-    except Exception:
-        pass
+# The FR memo is keyed on (ride_id, ftp, window, kj) -- NOT profile -- so a
+# profile switch must drop it or profile B serves A's curve. It cannot live in
+# cache.py because it resolves the active profile, so it registers instead.
+register_clearer(_fatigue_resistance_memoised.cache_clear)
+
 
 
 # Serialises FIRST-EVER ProfileManager construction from concurrent request

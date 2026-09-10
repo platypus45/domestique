@@ -998,7 +998,26 @@ def _monday_on_or_after(d: date) -> date:
     return d + timedelta(days=(-d.weekday()) % 7)
 
 
-def _next_week_cursor(cursor: date) -> date:
+def _phase_end_for_weeks(start: date, weeks: int) -> date:
+    """Last day of a phase holding ``weeks`` planned weeks and starting on
+    ``start``.
+
+    Single owner. Three call sites derived this independently and one of them
+    (the continuous rolling phase) was missed on the first pass, which turned
+    a "4-week rolling horizon" into five rows.
+
+    Weeks are Monday-Sunday. A phase opening mid-week gets a short opening week
+    and that short week COUNTS as one of the phase's weeks, so the phase always
+    emits exactly ``weeks`` rows and always ends on a Sunday. Callers that need
+    a different end (the taper ends ON race day) override it afterwards.
+    """
+    first_monday = _monday_on_or_after(start)
+    stub = 1 if first_monday != start else 0
+    return (first_monday
+            + timedelta(weeks=max(0, weeks - stub)) - timedelta(days=1))
+
+
+def _next_week_cursor(cursor: date, phase=None) -> date:
     """Where the next planned week starts: the following Monday.
 
     Plain ``cursor + 7 days`` keeps whatever weekday the walk began on, which
@@ -1006,7 +1025,19 @@ def _next_week_cursor(cursor: date) -> date:
     the next Monday instead makes the FIRST week of a plan short (today..Sunday)
     and every week after it a full Monday-Sunday one, which is the window every
     rollup in the app already aggregates over.
+
+    THE TAPER IS EXEMPT, and that is a decision rather than an oversight. It is
+    the one phase laid BACKWARD from a fixed date, and putting its rows on the
+    Monday grid leaves the race week with only the days between the last Monday
+    and the event -- a Tuesday race gets two. The race-week shaper needs room
+    for two rest days, the openers ride and the race, and measured directly
+    (tests/test_event_fixes_w1.py::test_d6_race_week_composition) the anchored
+    version cut a race week from three rest days to none. A taper is 8-14 days,
+    so at most two rows sit off the grid, in the fortnight where a Monday-Sunday
+    rollup matters least.
     """
+    if getattr(phase, "name", "") == "taper":
+        return cursor + timedelta(days=7)
     return cursor + timedelta(days=7 - cursor.weekday())
 
 
@@ -2479,7 +2510,7 @@ def _continuous_phases(goal: "Goal", current_ctl: float,
     return [Phase(
         name="continuous",
         start=start,
-        end=start + timedelta(weeks=weeks) - timedelta(days=1),
+        end=_phase_end_for_weeks(start, weeks),
         weeks=weeks,
         focus=(f"Rolling {weeks}-week block — 3 load + 1 deload, {label} "
                "focus. No end date: the plan extends itself every week."),
@@ -2620,10 +2651,7 @@ def generate_phases(goal: Goal, current_ctl: float,
         # day belongs to the plan; the emitters clip the final week at the phase
         # end instead of spilling to target+1), and Phase.weeks is the ceil of
         # the ACTUAL day-span (was hardcoded 2 — lied for sub-week runways).
-        # Nearest Monday so the taper opens on a week boundary like every other
-        # phase; TAPER_DAYS=12 means the resulting span stays inside Mujika's
-        # 8-14 day band whichever way it rounds. Still floored at today.
-        taper_start = max(date.today(), _taper_anchor(cursor))
+        taper_start = max(date.today(), cursor - timedelta(days=TAPER_DAYS))
         _taper_span = (cursor - taper_start).days + 1
         taper_weeks = max(1, -(-_taper_span // 7))
         phases.append(Phase(
@@ -2859,17 +2887,7 @@ def generate_phases(goal: Goal, current_ctl: float,
                   or _entry_anchor(goal)
                   or date.today())
     for name, weeks, tss, focus, z2, hit, types in phase_defs:
-        # Whole Monday-Sunday weeks. A phase that opens mid-week (only ever the
-        # first one -- the plan still starts TODAY, so generating on a Thursday
-        # must not leave Thu-Sun blank) gets a short opening week, and that
-        # short week COUNTS as one of the phase's weeks. Adding it on top
-        # instead would turn the continuous goal's "4-week rolling horizon"
-        # into five rows, which is what CONTINUOUS_HORIZON_WEEKS means by a
-        # week: a row, not seven days.
-        _first_monday = _monday_on_or_after(cursor_fwd)
-        _stub = 1 if _first_monday != cursor_fwd else 0
-        end = (_first_monday
-               + timedelta(weeks=max(0, weeks - _stub)) - timedelta(days=1))
+        end = _phase_end_for_weeks(cursor_fwd, weeks)
         phases.insert(-1 if taper_weeks > 0 else len(phases), Phase(  # insert before taper (or append if no taper)
             name=name,
             start=cursor_fwd,
@@ -2985,7 +3003,7 @@ def _entry_week_targets(phases: list) -> list[dict]:
             if is_sb:
                 t = float(round(t * 0.72))
             rows.append({"start": cursor, "tss_target": t, "phase": phase.name})
-            cursor = _next_week_cursor(cursor)
+            cursor = _next_week_cursor(cursor, phase)
     return rows
 
 
@@ -6837,7 +6855,7 @@ def _clip_week_to_phase(pw: "PlannedWeek", phase: "Phase", cursor: date) -> None
     # cursor..cursor+6, so a plan generated on a Thursday would spill its first
     # row into the next Monday-Sunday week and double-book those days against
     # the row that starts there.
-    limit = min(phase.end, _next_week_cursor(cursor) - timedelta(days=1))
+    limit = min(phase.end, _next_week_cursor(cursor, phase) - timedelta(days=1))
     week_end = cursor + timedelta(days=6)
     if week_end <= limit:
         return
@@ -7200,7 +7218,7 @@ def generate_plan(
                 _clip_week_to_phase(pw, phase, cursor)
                 weeks.append(pw)
                 prev_week_sessions = pw.sessions  # feed into next plan_week for 48h gap
-                cursor = _next_week_cursor(cursor)
+                cursor = _next_week_cursor(cursor, phase)
                 week_num += 1
                 week_in_phase += 1
         except Exception as _e:
@@ -11318,7 +11336,7 @@ def regenerate_from_today(
             _clip_week_to_phase(pw, phase, cursor)
             new_weeks.append(pw)
             prev_week_sessions = pw.sessions  # feed into next plan_week (PL2)
-            cursor = _next_week_cursor(cursor)
+            cursor = _next_week_cursor(cursor, phase)
             week_num += 1
             week_in_phase += 1
 
@@ -11958,7 +11976,7 @@ def recalculate_plan(
             _clip_week_to_phase(pw, phase, cursor)
             new_weeks.append(pw)
             prev_week_sessions = pw.sessions  # feed into next plan_week (PL2)
-            cursor = _next_week_cursor(cursor)
+            cursor = _next_week_cursor(cursor, phase)
             week_num += 1
             week_in_phase += 1
 
@@ -12360,7 +12378,7 @@ def extend_continuous_plan(
         _clip_week_to_phase(pw, phase, cursor)
         new_weeks.append(pw)
         prev_week_sessions = pw.sessions
-        cursor = _next_week_cursor(cursor)
+        cursor = _next_week_cursor(cursor, phase)
         week_num += 1
 
     # ── Post passes, NEW weeks only (recalc parity minus event passes) ──────

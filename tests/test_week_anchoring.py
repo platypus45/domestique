@@ -60,18 +60,27 @@ class WeekAnchorHelpers(unittest.TestCase):
         self.assertEqual(tp._monday_on_or_after(mon), mon)
         self.assertEqual(tp._monday_on_or_before(mon), mon)
 
-    def test_taper_anchor_keeps_the_span_inside_mujikas_band(self):
-        """Rounding to the nearest Monday puts an event on a Monday at a
-        15-day taper, over Mujika's 14-day ceiling -- this test caught that.
-        Only one Monday can sit in the 8-14 day window, so there is no
-        rounding decision, and every weekday must land inside the band."""
-        for i in range(7):
-            target = _on_weekday(date(2026, 11, 2), i)
-            start = tp._taper_anchor(target)
-            span = (target - start).days + 1
-            self.assertEqual(start.weekday(), 0)
+    def test_the_taper_is_deliberately_not_on_the_monday_grid(self):
+        """Measured, not assumed: anchoring the taper cut a race week from
+        three rest days to none, because the race week then holds only the
+        days between the last Monday and the event. The taper is laid backward
+        from race day and stays that way; at most two rows sit off the grid.
+        """
+        for wd in range(7):
+            target = _on_weekday(date.today() + timedelta(weeks=10), wd)
+            phases, weeks = tp.generate_plan(_goal(target), seed_salt=1)
+            taper = [p for p in phases if p.name == "taper"]
+            if not taper:
+                continue
+            span = (taper[-1].end - taper[-1].start).days + 1
             self.assertTrue(8 <= span <= 14,
-                            f"event on weekday {i}: taper span {span}d is outside 8-14")
+                            f"weekday {wd}: taper span {span}d outside Mujika 8-14")
+            race_row = [w for w in weeks if w.start <= target <= w.end]
+            self.assertEqual(len(race_row), 1)
+            days_before = (target - race_row[0].start).days
+            self.assertGreaterEqual(days_before, 4,
+                                    f"weekday {wd}: only {days_before} days before "
+                                    "the race in its own week")
 
 
 class GeneratedPlansStartOnMondays(unittest.TestCase):
@@ -79,7 +88,8 @@ class GeneratedPlansStartOnMondays(unittest.TestCase):
         for wd in range(7):
             target = _on_weekday(date.today() + timedelta(weeks=10), wd)
             _, weeks = tp.generate_plan(_goal(target), seed_salt=1)
-            offenders = [w.start.isoformat() for w in weeks[1:] if w.start.weekday() != 0]
+            offenders = [w.start.isoformat() for w in weeks[1:]
+                         if w.start.weekday() != 0 and w.phase != "taper"]
             self.assertEqual(offenders, [], f"event on weekday {wd}: {offenders}")
 
     def test_the_opening_week_ends_on_a_sunday(self):
@@ -96,7 +106,8 @@ class GeneratedPlansStartOnMondays(unittest.TestCase):
         for wd in range(7):
             target = _on_weekday(date.today() + timedelta(weeks=10), wd)
             phases, _ = tp.generate_plan(_goal(target), seed_salt=1)
-            offenders = [f"{p.name}@{p.start}" for p in phases[1:] if p.start.weekday() != 0]
+            offenders = [f"{p.name}@{p.start}" for p in phases[1:]
+                         if p.start.weekday() != 0 and p.name != "taper"]
             self.assertEqual(offenders, [], f"event on weekday {wd}: {offenders}")
 
     def test_a_plan_starts_today_and_not_next_monday(self):
@@ -116,7 +127,8 @@ class GeneratedPlansStartOnMondays(unittest.TestCase):
         goal = _goal(target)
         _, base = tp.generate_plan(goal, seed_salt=1)
         _, weeks, _ = tp.regenerate_from_today(goal, base, current_ctl=45.0, seed_salt=1)
-        offenders = [w.start.isoformat() for w in weeks[1:] if w.start.weekday() != 0]
+        offenders = [w.start.isoformat() for w in weeks[1:]
+                     if w.start.weekday() != 0 and w.phase != "taper"]
         self.assertEqual(offenders, [], str(offenders))
 
     def test_weeks_do_not_overlap_and_leave_no_gap(self):

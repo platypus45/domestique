@@ -8111,6 +8111,12 @@ def _apply_long_ride_target(sessions: list, target_min: int, max_weekend_min: in
         return
     tss_per_min = (best.tss_estimate / best.duration_min) if best.duration_min else 0.7
     best.duration_min = cap
+    # This is a decision, not a proposal: the week's TSS ceiling does not know
+    # the athlete has entered a 200 km event, and the owner's re-commit would
+    # otherwise shrink this ride straight back to the budget. `cap` already
+    # honours weekend availability and the 5 h ceiling, so pinning cannot
+    # breach what the athlete said they have.
+    week_plan.pin(best, "event long-ride progression")
     best.tss_estimate = round(tss_per_min * cap)
     if cap >= 120:
         best.session_type = "long_z2"

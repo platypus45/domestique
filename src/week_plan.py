@@ -70,6 +70,14 @@ DEMOTE_TO = "z2"
 # becomes rest instead. Mirrors the old volume pass's _VOLUME_MIN_SESSION_MIN.
 _MIN_EASY_MIN = 20
 
+# Roughly what a _MIN_EASY_MIN ride costs, at an easy ~0.7 TSS/min. Held back
+# for each slot still waiting to be committed, so an early session cannot spend
+# the whole week. Without the reserve the priority order simply moved the
+# starvation around: the long ride took everything left after the hard days and
+# 26 later slots became rest, while the median week still delivered only 0.91 of
+# its ceiling -- sessions cut AND budget unused, the worst of both.
+_RESERVE_TSS_PER_SLOT = 14.0
+
 # The floor on zone-1 share of a week's TIME, measured on the workouts actually
 # served rather than on the slot labels. Every three-zone model in the
 # literature -- polarized, pyramidal, threshold alike -- puts the clear
@@ -94,6 +102,50 @@ def _offending_caller() -> str:
             return f"{f.f_globals.get('__name__', '?')}.{f.f_code.co_name}"
         f = f.f_back
     return "?"
+
+
+def pin(session, reason: str):
+    """Declare that a plan-level policy has DECIDED this session's shape.
+
+    The owner re-asserts its constraints after the plan-level policies run, so
+    that none of them can win merely by running last. A few of them should win
+    anyway, because they know something the constraint does not: the event
+    long-ride progression grows the weekend ride toward the event's own
+    duration, and the week's TSS ceiling has no idea the athlete has signed up
+    for a 200 km granfondo. Left unpinned, the owner shrank that ride straight
+    back to the budget and the specificity was lost.
+
+    So such a policy says so explicitly. That is the difference between a
+    decision and a pass that happened to run late -- and it stays visible,
+    because the reason travels with the session.
+    """
+    object.__setattr__(session, "_policy_pin", reason)
+    return session
+
+
+def is_pinned(session) -> bool:
+    return bool(getattr(session, "_policy_pin", ""))
+
+
+def is_immutable(session) -> bool:
+    """Sessions no planning pass may rewrite, for any reason.
+
+    A race (FC3) has exactly one sanctioned write path -- _mark_race_days and
+    the goal-level add/edit-race flow -- and is immutable to every clamp,
+    rescale, demote and rematch in the planner. An athlete-owned session is the
+    same contract for a different reason. Both still count against the week's
+    budget and both still block a neighbouring hard day: planning AROUND them
+    is the point.
+    """
+    import training_planner as tp
+    if is_pinned(session):
+        return True
+    try:
+        if tp._protect_race(session):
+            return True
+    except Exception:                                          # noqa: BLE001
+        pass
+    return is_athlete_owned(session)
 
 
 def is_athlete_owned(session) -> bool:
@@ -235,6 +287,7 @@ class TrainingWeek:
         self._tss = 0.0                 # total committed
         self._hard_tss = 0.0            # committed hard work only
         self._lib_index: dict = {}      # filename -> library row, built lazily
+        self._pending_slots = 0         # trainable slots still awaiting commit
 
     # ── budget ───────────────────────────────────────────────────────────
     @property
@@ -286,7 +339,7 @@ class TrainingWeek:
         #    count against the week's budget and still block a neighbouring
         #    hard day -- planning around them is the point -- but no rule here
         #    may rewrite one.
-        if is_athlete_owned(session):
+        if is_immutable(session):
             return self._accept(session)
 
         # 1. Days the athlete cannot ride carry nothing.
@@ -345,15 +398,27 @@ class TrainingWeek:
         # 5. The week total. Constraint 4 caps intensity; without this the
         #    easy days walk straight past the ceiling, which is what the old
         #    volume pass was left to clean up after the fact.
+        #
+        #    Each slot still waiting keeps a reserve, so this session takes its
+        #    share rather than everything that is left. A week is a set of
+        #    sessions, not a queue draining a budget.
         room = self.ceiling - self._tss
-        if session.tss_estimate > room:
-            if room <= 0:
-                return self._accept(self._as_rest(session, "Rest -- the week's load is spent"))
-            fitted = self._minutes_for_tss(session, room)
+        share = room - self._pending_slots * _RESERVE_TSS_PER_SLOT
+        if session.tss_estimate > share:
+            fitted = self._minutes_for_tss(session, max(share, 0.0))
             if fitted >= _MIN_EASY_MIN:
                 self._rescale(session, fitted, "shortened to fit the week's load")
+            elif room > 0 and self._minutes_for_tss(session, room) >= _MIN_EASY_MIN:
+                # The reserve would starve this slot, but the week can still
+                # carry a short ride here. A short session beats a lost one --
+                # and never a LONGER one: min() because a session already under
+                # the floor must not be grown to reach it, which is how a
+                # deload week came back heavier than the build week beside it.
+                self._rescale(session, min(_MIN_EASY_MIN, session.duration_min or _MIN_EASY_MIN),
+                              "shortened to the minimum the week can carry")
             else:
-                return self._accept(self._as_rest(session, "Rest -- no room left in the week"))
+                return self._accept(self._as_rest(
+                    session, "Rest -- no room left in the week"))
 
         return self._accept(session)
 
@@ -566,17 +631,25 @@ class TrainingWeek:
                 block_focus=block_focus,
             )
 
+        # Trim the per-phase HIT rotation to the last ~4 weeks of picks
+        # (<=3 HIT/wk x 4). Left ungrowing, an old pick keeps suppressing its
+        # own class for the rest of the plan.
+        _rot = st.recent_hit_by_phase.setdefault(ctx.phase.name, [])
+        if len(_rot) > 12:
+            del _rot[:len(_rot) - 12]
+
         # A scheduled test outranks a sampled workout: the sampler's pool
         # excludes test protocols, so a slot plan_week marked ftp_test would
         # otherwise be silently overwritten with ordinary intensity.
-        owned = {s.day: s for s in (ctx.preserved or []) if is_athlete_owned(s)}
+        owned = {s.day: s for s in (ctx.preserved or []) if is_immutable(s)}
         chosen = []
         for i, skeleton in enumerate(self.week.sessions):
             keep = owned.get(getattr(skeleton, "day", None))
             if keep is not None:
                 chosen.append(keep)
                 continue
-            if getattr(skeleton, "session_type", "") == "ftp_test":
+            if (getattr(skeleton, "session_type", "") == "ftp_test"
+                    or is_immutable(skeleton)):
                 chosen.append(skeleton)
                 continue
             proposed = proposals[i] if i < len(proposals) else None
@@ -585,6 +658,55 @@ class TrainingWeek:
         self.week.net_tss_target = self.ceiling
         self._commit_all(sorted(chosen, key=lambda s: s.day))
         return self.seal() if seal else self.week
+
+    def _processing_order(self, sessions):
+        """The order slots compete for the week's budget.
+
+        Not day order. Committing Monday-to-Sunday means whatever falls last in
+        the week is what gets shrunk, and for most athletes that is the weekend
+        long ride -- the one session whose length IS the training effect. An
+        event plan came back with a 150-minute long ride against a five-hour
+        Saturday because Tuesday through Friday had already spent the budget.
+
+        So: the athlete's own sessions and races first (they are facts, not
+        proposals), then hard sessions, then the week's longest ride, then
+        everything else. Within each tier, day order, so the 48 h rule still
+        eases the LATER of two neighbouring hard days.
+        """
+        easy = [s for s in sessions
+                if not is_immutable(s) and s.session_type not in HARD_TYPES
+                and s.session_type != "rest"]
+        longest = max(easy, key=lambda s: (s.duration_min or 0), default=None)
+
+        def tier(s):
+            if is_immutable(s):
+                return 0
+            if s.session_type in HARD_TYPES:
+                return 1
+            if longest is not None and s is longest:
+                return 2
+            return 3
+        return sorted(sessions, key=lambda s: (tier(s), s.day))
+
+    def _clamp_to_limits(self, session):
+        """Duration bounds, re-applied. Called after the rematch as well.
+
+        _rescale drops the file it invalidated, the rematch answers with a new
+        one, and that new file can be longer than the slot -- which is how a
+        77-minute anaerobic workout kept landing on a slot whose ceiling is 50.
+        The bound has to be re-asserted on what was actually attached.
+        """
+        if is_immutable(session) or session.session_type == "rest":
+            return
+        limit = min([x for x in (self._day_cap_min(session.day),
+                                 self._type_ceiling_min(session)) if x is not None],
+                    default=None)
+        if limit is not None and (session.duration_min or 0) > limit:
+            old = max(1, int(session.duration_min or 1))
+            new = max(1, int(round(limit)))
+            session.tss_estimate = round(
+                float(session.tss_estimate or 0.0) * new / old, 1)
+            session.duration_min = new
 
     def _commit_all(self, sessions):
         """Run every session through the one door, from a clean slate.
@@ -595,21 +717,36 @@ class TrainingWeek:
         """
         import training_planner as tp
         self._committed, self._tss, self._hard_tss = [], 0.0, 0.0
+        ordered = self._processing_order(sessions)
+        trainable = sum(1 for s in ordered
+                        if s.session_type != "rest" and not is_immutable(s))
         out = []
-        for s in sessions:
+        for s in ordered:
+            if s.session_type != "rest" and not is_immutable(s):
+                trainable -= 1
+            self._pending_slots = trainable      # slots still to come after this
             object.__setattr__(s, "_sealed", False)
             out.append(self._commit(s))
-        # The rematch below must not touch the athlete's own sessions either.
-        # Anything left without a workout gets one. Easing and shrinking both
+        # Anything left without a workout gets one -- easing and shrinking both
         # drop the file they invalidated, and a session with no .zwo is not a
-        # session the athlete can ride.
+        # session the athlete can ride. The athlete's own sessions and races are
+        # not rematched.
         for s in out:
             if (s.session_type not in ("rest", "ftp_test") and not s.zwo_file
-                    and self.state.library and not is_athlete_owned(s)):
+                    and self.state.library and not is_immutable(s)):
                 try:
                     tp.match_zwo(s, self.state.library, seed_salt=self.ctx.seed_salt)
+                    # NOTE: clearing the file when its CONTENT is hard but the
+                    # slot is easy was tried here and made things worse (6
+                    # failures -> 12): an unmatched slot is re-filled elsewhere
+                    # and the HIT cap breaches moved rather than went away. The
+                    # slot-vs-content mismatch is real, but it belongs where
+                    # match_zwo chooses, not in a post-hoc clear.
                 except Exception:                              # noqa: BLE001
                     log.debug("rematch failed for %s", s.day, exc_info=True)
+            self._clamp_to_limits(s)
+        out.sort(key=lambda s: s.day)
+        self._committed.sort(key=lambda s: s.day)
         self.week.sessions = out
         return out
 
@@ -656,7 +793,7 @@ class TrainingWeek:
                 return
             hard = [s for s in self._committed
                     if (s.session_type in HARD_TYPES or s.session_type == DEMOTE_TO)
-                    and not is_athlete_owned(s)]
+                    and not is_immutable(s)]
             if not hard:
                 return
             # The biggest contributor first: easing it moves the share most per

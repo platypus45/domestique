@@ -79,7 +79,11 @@ def test_continuous_generates_rolling_horizon_no_taper():
 
     # 3 load : 1 deload — the deload rides the stepback cadence at W4.
     assert [w.is_stepback for w in weeks] == [False, False, False, True]
-    assert weeks[3].tss_target < weeks[0].tss_target  # ×0.72 discount
+    # ×0.72 discount, measured against a FULL load week. weeks[0] is the
+    # opening week, which is short (today..Sunday) whenever the plan is
+    # generated mid-week and carries a prorated target -- comparing the deload
+    # to it compares two different things.
+    assert weeks[3].tss_target < weeks[2].tss_target
     assert not any(s.session_type in HIT_TYPES for s in weeks[3].sessions), \
         "deload week must carry no HIT session"
     # Load weeks actually train (the horizon isn't a Z2 skeleton).

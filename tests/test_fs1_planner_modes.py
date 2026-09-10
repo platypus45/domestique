@@ -47,6 +47,13 @@ class TestPlannerModes(unittest.TestCase):
     def test_fixed_core_one_hit_type_per_build_week(self):
         _ph, weeks = tp.generate_plan(_goal("fixed_core"), recent_weekly_tss=500)
         for w in weeks:
+            # A plan generated mid-week opens with a short week (today..Sunday).
+            # fixed_core puts its one HIT on a fixed weekday, so a 4-day opener
+            # that does not contain that day legitimately carries none -- and
+            # opening a plan with intensity on day one would be the worse
+            # behaviour anyway.
+            if (w.end - w.start).days < 6:
+                continue
             hits = [s.session_type for s in w.sessions if s.session_type in _HIT]
             has_test = any(s.session_type == "ftp_test" for s in w.sessions)
             sb = getattr(w, "is_stepback", False) or w.phase == "taper"

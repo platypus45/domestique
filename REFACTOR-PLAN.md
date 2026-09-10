@@ -215,25 +215,39 @@ Only then:
    `TYPE_CEILING`, `TSS_PER_HOUR`, `_INTENSITY_LADDER`, `_deescalated_load`,
    `apply_week_tier_down` and others are used from `app.py` outside the planning
    chunk.
-7. **Monday week anchoring** — implemented and PARKED on branch
-   `refactor/monday-anchoring`, awaiting one decision.
+7. **Monday week anchoring** — DONE, on `refactor/monday-anchoring`.
 
-   `tests/probe_week_anchors.py` measured the condition rather than assuming
-   it: **87 of 91 emitted week starts were not a Monday**, while every rollup
-   in the app (week tile, adherence counter, TSS budget, ramp check)
-   aggregates Mon–Sun. Both candidate fixes reach 0.
+   `tests/probe_week_anchors.py` measured the condition before anything was
+   touched: **87 of 91 emitted week starts were not a Monday**, while every
+   rollup in the app (week tile, adherence counter, TSS budget, ramp check)
+   aggregates Mon–Sun. Now 0 after the opening week.
 
-   | | code | cost | new test failures |
-   |---|---|---|---|
-   | **A** plan opens next Monday | 2 sites | up to 6 idle days at generation; on regen the current week vanishes from the calendar | 8, all asserting `phases[0].start == today` |
-   | **B** short opening week | 5 week walks + a second ceiling in `_clip_week_to_phase` + the stub must count toward its phase's weeks | none to the rider | 15, mostly `extend_continuous_plan` row arithmetic |
+   The plan still starts today. Opening on the next Monday instead was two
+   lines and made every week whole — and left a rider generating on a Thursday
+   with nothing to ride until Monday, and on the regen path with the current
+   week gone from the calendar. So the first week is short (today→Sunday) and
+   every later week is Mon–Sun.
 
-   The remaining failures are a *contract* question — does a plan generated on
-   a Thursday start Thursday or next Monday — so it goes to the user rather
-   than getting patched further. Two findings from the work stand either way:
-   `_taper_anchor` (rounding to the nearest Monday gives a Monday event a
-   15-day taper, over Mujika's ceiling) and that `_clip_week_to_phase` only
-   ever clipped the phase end, never the week's own Sunday.
+   Three things it needed that were not obvious:
+
+   - The stub week **counts** as one of its phase's weeks rather than adding to
+     it, or the continuous goal's "4-week rolling horizon" becomes five rows.
+     One owner now, `_phase_end_for_weeks`; three sites derived it
+     independently and the continuous one was missed first time round.
+   - `_clip_week_to_phase` only ever clipped the phase *end*. A week that can
+     open mid-week needs its own Sunday as a second ceiling, or the opening row
+     spills into the next week and double-books those days.
+   - **The taper is exempt.** It is laid backward from a fixed date, so the
+     Monday grid leaves the race week only the days between the last Monday and
+     the event — measured, that cut a race week from three rest days to zero.
+
+   Two test findings worth keeping: the phase-week sum may now read 21 for a
+   20-week runway, and **21 is the honest number** (on main `peak` reported 2
+   while emitting 3); and `test_more_elapsed_weeks_ramps_higher` was passing on
+   main by luck — the long-ride series is non-monotone on both branches because
+   the test reads `duration_min` *after* `match_zwo` restamps a slot down to
+   whatever the library holds.
+
 8. **Reproducible regeneration** — DONE, and the fix was not the one this plan
    predicted (see the correction above): `zlib.crc32(phase.name)` in place of
    the builtin `hash`. 43 of 57 → 0 of 57 across separate processes.

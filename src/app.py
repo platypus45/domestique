@@ -10578,7 +10578,7 @@ def _advance_continuous_deload(plan: dict, json_path: Path, cur_idx: int,
         name="continuous", start=cur_dto.start, end=cur_dto.end, weeks=1,
         focus="deload (advanced on load trigger)",
         weekly_tss_target=float(cur_dto.tss_target or 0),
-        z2_pct=budget.polarized_target.get("z1z2_pct", 78),
+        z2_pct=budget.polarized_target.get("z1_pct", 78),
         hit_per_week=budget.hit_count_max, session_types=[],
     )
     # Deterministic per (week, trigger) — re-running the same advance cannot
@@ -15267,16 +15267,20 @@ def _annotate_planned_ctl_eow(weeks: list[dict], plan: dict) -> None:
 def _polarized_actual_from_rides(
     rides: list[dict], today: date, last_n_days: int = 7
 ) -> dict:
-    """v4.4.0 — compute actual polarized split (Z1+Z2 / Z3 / Z4+) over the
-    last N days of rides.
+    """Actual three-zone split over the last N days of rides.
 
-    Buckets:
-      - Z1+Z2 = z1+z2 (low aerobic)
-      - Z3    = z3    (tempo / SS)
-      - Z4+   = z4+z5+z6+z7 (threshold + above)
+    Folded through zones.THREE_ZONE_FROM_COGGAN:
+      - z1 = Coggan z1+z2          (< 76% FTP, below LT1)
+      - z2 = Coggan z3+z4          (76-105%, spanning LT2 -- the grey zone)
+      - z3 = Coggan z5+z6+z7       (>= 106%, above LT2)
 
-    Returns ``{"z1z2_pct": int, "z3_pct": int, "z4plus_pct": int}``. Empty
-    rides → all zeros.
+    This used to put Coggan Z4 -- work AT threshold -- in the hard band, which
+    disagreed with analytics.compute_polarization_block on the ride detail card
+    and with intervals.icu, so the same ride showed two different polarization
+    readings on two screens.
+
+    Returns ``{"z1_pct": int, "z2_pct": int, "z3_pct": int}``. Empty rides →
+    all zeros.
     """
     cutoff = (today - timedelta(days=last_n_days)).isoformat()
     z12 = z3 = z4p = 0.0
@@ -15295,19 +15299,17 @@ def _polarized_actual_from_rides(
             tiz = full.get("time_in_zone") or {}
         if not tiz:
             continue
-        z12 += float((tiz.get("z1") or 0) + (tiz.get("z2") or 0))
-        z3  += float(tiz.get("z3") or 0)
-        z4p += float(
-            (tiz.get("z4") or 0) + (tiz.get("z5") or 0)
-            + (tiz.get("z6") or 0) + (tiz.get("z7") or 0)
-        )
+        _b = _zones_mod.three_zone(tiz)
+        z12 += _b["z1"]
+        z3  += _b["z2"]
+        z4p += _b["z3"]
     total = z12 + z3 + z4p
     if total <= 0:
-        return {"z1z2_pct": 0, "z3_pct": 0, "z4plus_pct": 0}
+        return {"z1_pct": 0, "z2_pct": 0, "z3_pct": 0}
     return {
-        "z1z2_pct": int(round(z12 / total * 100)),
-        "z3_pct":   int(round(z3  / total * 100)),
-        "z4plus_pct": int(round(z4p / total * 100)),
+        "z1_pct": int(round(z12 / total * 100)),
+        "z2_pct": int(round(z3  / total * 100)),
+        "z3_pct": int(round(z4p / total * 100)),
     }
 
 
@@ -15385,7 +15387,7 @@ def _intensity_dist_match(actual: dict, target: dict) -> float:
     """
     if not actual or not target:
         return 0.0
-    keys = ("z1z2_pct", "z3_pct", "z4plus_pct")
+    keys = ("z1_pct", "z2_pct", "z3_pct")
     diff = sum(abs(int(actual.get(k) or 0) - int(target.get(k) or 0)) for k in keys)
     # Max possible L1 difference is 200 (e.g., 100/0/0 vs 0/0/100).
     return max(0.0, 100.0 - (diff / 2.0))
@@ -15549,10 +15551,10 @@ def _build_summary_block(
 
     # Polarized.
     actual_pol = _polarized_actual_from_rides(rides, today, last_n_days=7)
-    target_pol = tp.PHASE_POLARIZED_TARGETS.get(
-        cur_phase.lower() if cur_phase else "",
-        tp.PHASE_POLARIZED_TARGETS["history"],
-    )
+    # The active model's row for this phase; falls back to "history" for a
+    # phase name the table does not carry.
+    _tid = tp.get_active_polarized_targets()
+    target_pol = _tid.get((cur_phase or "").lower(), _tid.get("history", {}))
 
     # Sub-scores → composite.
     tss_comp_score: float | None
@@ -15972,9 +15974,9 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
         # current phase block in the plan (1-based). planned_ctl_eow is
         # filled in below by the second pass once we have a global series.
         phase_name = (w.get("phase") or "").lower()
-        target_polarized = tp.PHASE_POLARIZED_TARGETS.get(
-            phase_name, tp.PHASE_POLARIZED_TARGETS["history"]
-        )
+        _tid_rows = tp.get_active_polarized_targets()
+        target_polarized = _tid_rows.get(
+            phase_name, _tid_rows.get("history", {}))
 
         out_weeks.append({
             "iso_year": wy,

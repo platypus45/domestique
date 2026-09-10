@@ -27,26 +27,46 @@ import training_planner as tp  # noqa: E402
 
 
 def _shares(b):
+    """The budget's four internal buckets folded back into the three-zone
+    model. z4 is the MIDDLE -- 91-105% FTP is work at threshold, i.e. at LT2 --
+    not the hard pole. Getting that backwards here is the same mistake the
+    planner itself made, so it is worth stating rather than inlining."""
     tot = (b.z1z2_minutes_per_week + b.z3_minutes_per_week
            + b.z4_minutes_per_week + b.z5plus_minutes_per_week) or 1
     return (100 * b.z1z2_minutes_per_week / tot,
-            100 * b.z3_minutes_per_week / tot,
-            100 * (b.z4_minutes_per_week + b.z5plus_minutes_per_week) / tot)
+            100 * (b.z3_minutes_per_week + b.z4_minutes_per_week) / tot,
+            100 * b.z5plus_minutes_per_week / tot)
 
 
 class ScaleBudgetToWeek(unittest.TestCase):
     def test_the_ratio_survives_every_volume(self):
-        """The science is the ratio, not the minutes. Seiler's distribution is
-        a share of training TIME and is scale-free; that is the whole point."""
+        """Given a target ratio, scaling to a week preserves it exactly. What
+        that ratio SHOULD be at a given volume is tid_target_pct's job, tested
+        in test_tid_targets.py; this is the arithmetic underneath."""
         for phase in ("base", "build1", "build2", "peak", "taper"):
             pt = tp.BUDGETS[phase].polarized_target
             for tss in (120, 250, 400, 700):
                 s = tp.scale_budget_to_week(tp.BUDGETS[phase], tss)
-                e, z3, hard = _shares(s)
-                self.assertAlmostEqual(e, pt["z1z2_pct"], delta=1.5,
+                e, z2, hard = _shares(s)
+                self.assertAlmostEqual(e, pt["z1_pct"], delta=1.5,
                                        msg=f"{phase} @{tss}: easy {e:.1f}")
-                self.assertAlmostEqual(hard, pt["z4plus_pct"], delta=1.5,
+                self.assertAlmostEqual(hard, pt["z3_pct"], delta=1.5,
                                        msg=f"{phase} @{tss}: hard {hard:.1f}")
+
+    def test_the_target_is_recomputed_for_the_weeks_own_volume(self):
+        """The dose model's whole point: the same phase is a different
+        percentage at 6 h and at 15 h, because the hard sessions do not
+        multiply with the hours."""
+        small = tp.scale_budget_to_week(
+            tp.BUDGETS["peak"], 300, available_minutes=6 * 60,
+            model="polarized", phase_name="peak")
+        big = tp.scale_budget_to_week(
+            tp.BUDGETS["peak"], 900, available_minutes=18 * 60,
+            model="polarized", phase_name="peak")
+        self.assertGreater(_shares(small)[2], _shares(big)[2],
+                           "hard share must fall as the week grows")
+        self.assertLess(_shares(small)[0], _shares(big)[0],
+                        "easy share must rise as the week grows")
 
     def test_minutes_track_the_target(self):
         a = tp.scale_budget_to_week(tp.BUDGETS["build1"], 200)
@@ -66,14 +86,17 @@ class ScaleBudgetToWeek(unittest.TestCase):
         """When the target needs more hours than the rider has, the RATIO is
         what survives and the load lands short. Buying the missing load with
         intensity instead is the failure this exists to stop."""
-        s = tp.scale_budget_to_week(tp.BUDGETS["peak"], 600, available_minutes=240)
+        s = tp.scale_budget_to_week(tp.BUDGETS["peak"], 600, available_minutes=240,
+                                    model="polarized", phase_name="peak")
         total = (s.z1z2_minutes_per_week + s.z3_minutes_per_week
                  + s.z4_minutes_per_week + s.z5plus_minutes_per_week)
         self.assertLessEqual(total, 241)
-        pt = tp.BUDGETS["peak"].polarized_target
-        e, _z3, hard = _shares(s)
-        self.assertAlmostEqual(e, pt["z1z2_pct"], delta=1.5)
-        self.assertAlmostEqual(hard, pt["z4plus_pct"], delta=1.5)
+        want = tp.tid_target_pct(
+            "polarized", "peak", 240,
+            tp.hit_slots_for_volume(240, tp.BUDGETS["peak"].hit_count_max))
+        e, _z2, hard = _shares(s)
+        self.assertAlmostEqual(e, want["z1_pct"], delta=1.5)
+        self.assertAlmostEqual(hard, want["z3_pct"], delta=1.5)
 
     def test_the_hourly_rate_comes_from_tss_per_hour_not_a_constant(self):
         """_BAND_TSS_PER_HOUR must stay derived from TSS_PER_HOUR, or the two

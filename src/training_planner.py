@@ -938,16 +938,18 @@ def _last_3d_mean_feel(rides: list[dict]) -> float | None:
 
 def _polarization_breach(actual_pol: dict | None, target_pol: dict | None) -> bool:
     """G3 input — Seiler 2010 / Stöggl 2014 / Treff 2019.
-    Breach when actual.z4plus_pct > target+8 OR actual.z1z2_pct < target-10.
+
+    Three-zone keys: breach when the hard band (z3, >=106% FTP) runs more than
+    8 points over target, or the easy band (z1, <76%) more than 10 points under.
     Empty inputs -> False (safe default).
     """
     if not actual_pol or not target_pol:
         return False
     try:
-        a_z4 = int(actual_pol.get("z4plus_pct") or 0)
-        t_z4 = int(target_pol.get("z4plus_pct") or 0)
-        a_z12 = int(actual_pol.get("z1z2_pct") or 0)
-        t_z12 = int(target_pol.get("z1z2_pct") or 0)
+        a_z4 = int(actual_pol.get("z3_pct") or 0)
+        t_z4 = int(target_pol.get("z3_pct") or 0)
+        a_z12 = int(actual_pol.get("z1_pct") or 0)
+        t_z12 = int(target_pol.get("z1_pct") or 0)
     except (TypeError, ValueError):
         return False
     if a_z4 > t_z4 + 8:
@@ -1611,7 +1613,9 @@ class Goal:
     # J1 (v2.1.0): intensity-distribution model is a USER CHOICE, not forced.
     # "polarized" (Seiler, default) | "pyramidal" | "threshold". Selects which
     # per-phase IntensityBudget table the planner uses (see BUDGETS_BY_MODEL).
-    distribution: str = "polarized"
+    # "auto" follows DEFAULT_TID_SEQUENCE (pyramidal base/build, polarized
+    # peak/taper). A named model applies to every phase.
+    distribution: str = "auto"
     # F1 (v2.1): OPT-IN block periodization (default OFF). When True the planner
     # concentrates each build/peak phase on ONE focus quality per ≤4-week block
     # (VO2 block → threshold block) instead of the weekly-mixed default. Default
@@ -1735,7 +1739,10 @@ class IntensityBudget:
     hit_count_min: int           # min hard sessions per week
     hit_count_max: int           # max hard sessions per week
     rest_days_per_week: int      # default 2
-    polarized_target: dict       # mirror of PHASE_POLARIZED_TARGETS row
+    # The phase's three-zone distribution target: {z1_pct, z2_pct, z3_pct}.
+    # Filled in per MODEL by _budgets_for_model; the _PHASE_SHAPE rows leave
+    # it empty because the shape is model-agnostic.
+    polarized_target: dict = field(default_factory=dict)
     # ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ──────────────────
     # Optional W'/Pmax weekly budgets. None ⇒ TSS-only path.
     wprime_per_week: int | None = None
@@ -1862,107 +1869,294 @@ PHASE_TARGETS: dict[str, dict[str, float]] = {
     "history":       {"z1z2_hrs": 8.0, "z3z4_min": 45,  "z5plus_min": 10,  "tss_per_week": 400},
 }
 
-# Intensity-distribution targets per phase (Seiler 2006/Stöggl 2014 polarised
-# model). Adherence "broken" if Z1+Z2 falls below ~75% or Z4+ above ~25%.
-PHASE_POLARIZED_TARGETS: dict[str, dict[str, int]] = {
-    "base":          {"z1z2_pct": 88, "z3_pct": 8, "z4plus_pct": 4},
-    "build1":        {"z1z2_pct": 78, "z3_pct": 6, "z4plus_pct": 16},
-    "build2":        {"z1z2_pct": 75, "z3_pct": 5, "z4plus_pct": 20},
-    "peak":          {"z1z2_pct": 72, "z3_pct": 4, "z4plus_pct": 24},
-    "taper":         {"z1z2_pct": 80, "z3_pct": 5, "z4plus_pct": 15},
-    # v1.0.0: consolidation = recovery-week shape, 90% Z1+Z2 (Mujika 2010).
-    "consolidation": {"z1z2_pct": 92, "z3_pct": 6, "z4plus_pct": 2},
-    "history":       {"z1z2_pct": 80, "z3_pct": 5, "z4plus_pct": 15},
+# ── Intensity-distribution targets, per phase and per model ──────────────────
+#
+# THREE-ZONE, and stated as a share of POWER TIME-IN-ZONE, which is what this
+# app actually measures. Both of those qualifiers are load-bearing; the table
+# these replace got each of them wrong.
+#
+# 1. The bands are zones.THREE_ZONE_FROM_COGGAN: z1 <76% FTP, z2 76-105%,
+#    z3 >=106%. The old table put Coggan Z4 (91-105%, i.e. AT threshold) in the
+#    hard pole, so the planner could "hit" a polarized target by filling the
+#    grey zone -- the one thing the model exists to avoid. Scored in the app's
+#    own classify_distribution, not one generated week came out polarized.
+#
+# 2. These are TIME-IN-ZONE numbers, not session-goal numbers. Seiler's famous
+#    80/20 counts SESSIONS. Rosenblat et al. (Sports Med 2025) put the
+#    difference plainly: "an intervention executed as a POL TID (75-8-17%)
+#    using a session-goal approach, can be quantified as a PYR TID (91-6-3%)
+#    using heart rate based time-in-zone". Tonnessen's elite skiers: 77/23 by
+#    session goal, 91/9 by time-in-zone, same training.
+#
+# 3. And time-in-zone by POWER, not by heart rate. Measured on this athlete's
+#    own 38 hours of rides carrying both streams: 79.6/16.5/3.9 by power,
+#    51.6/45.0/3.3 by heart rate. Twenty-eight points apart, because cardiac
+#    drift pushes long endurance work into HR-Z3 while power stays put. The
+#    workout library is power; the targets must be too.
+#
+# What the evidence supports, as of the 2025 literature:
+#
+#   * Rosenblat et al. 2025 (Sports Med), network meta-analysis of individual
+#     participant data, 13 studies / 348 athletes, Seiler senior author: no
+#     difference between POL and PYR when quantified by HR time-in-zone
+#     (VO2max SMD -0.06, p=0.68; TT SMD -0.05, p=0.34). The mean difference in
+#     VO2peak, -0.11 mL/kg/min, is inside the measurement's own error.
+#   * The one robust moderator is athlete level (subgroup SMD -0.63, p<0.05):
+#     competitive athletes respond better to POL, recreational athletes to PYR.
+#   * Filipas et al. 2022 (Scand J Med Sci Sports), 60 runners, load held
+#     constant: a PYRAMIDAL block followed by a POLARIZED block beat every
+#     other order (5 km -1.5%, VO2peak +3.0%, against PYR-only -0.6%/+1.3%).
+#
+# Hence: pyramidal through base and build, polarized into peak, and a toggle,
+# because the evidence does not support forcing either one.
+#
+# The z3 numbers are deliberately far below the "15-20%" of the polarized
+# literature, and that is not timidity. Those figures are session-goal or
+# HR-based. Measured against this library, three realistic HIT sessions in a
+# 12 h week deliver about 6.4% of weekly minutes above 106% FTP; reaching 15%
+# would need the extreme tail (a 96-minute file carrying 51 minutes at VO2max).
+# Observational power-based data for cyclists agrees: 2-9%. A target nobody can
+# reach is not a target, it is a permanent deficit the planner chases by
+# over-prescribing. tests/test_tid_targets.py enforces achievability against
+# the real library.
+# THE TARGET IS A DOSE, NOT A PERCENTAGE, and that is the correction the
+# achievability layer forced.
+#
+# A flat percentage cannot survive rising volume. Hard work is limited by
+# RECOVERY, not by available hours: 48 h between hard sessions caps a week at
+# three or four of them however much time the rider has. So an 8%-of-week Z3
+# target that three sessions can just about serve at 12 h/week needs five
+# sessions at 15 h/week, and there is no fifth session to have.
+#
+# The literature agrees, and this is why the observational data looks the way it
+# does: elite cyclists at 20-30 h/week show 90%+ Z1 by time-in-zone (Lucia 2000:
+# 88/11/2 in active rest) not because they avoid intensity but because their Z3
+# dose is roughly constant while their easy volume is not. The percentage is an
+# OUTPUT of volume, never an input.
+#
+# So each phase prescribes minutes PER HARD SESSION, taken from the protocols
+# themselves, plus a small trickle of Z2 that any long endurance ride picks up
+# on climbs and into wind. Z1 is the remainder. The distribution percentages
+# fall out, and they fall out correctly at every volume.
+#
+# Doses, in minutes, per hard session:
+#   z3  time above 106% FTP. Ronnestad 3x13x30/15 delivers ~19.5 min (measured
+#       from this library), Helgerud 4x4 ~16, a 5x5min @106% ~25.
+#   z2  time at 76-105%. A 2x20min threshold session is ~40; sweet spot 3x20
+#       @90% is ~60; a VO2 session carries almost none.
+#
+# The Z2 TRICKLE is the middle-zone time an endurance ride picks up whether you
+# plan it or not -- climbs, headwind, group surges, the last hour of a long day.
+# Measured on this athlete's own 38 hours by power: 16.5% of all riding sat at
+# 76-105% FTP. Assuming a clean 2% was fiction, and it made every target
+# unreachable by construction. The models differ in how much of it they accept:
+# polarized keeps endurance days honest, threshold lets them drift. A
+# consolidation week carries the smallest trickle in every model, because the
+# trickle is what a week of real riding picks up and a recovery week is not one.
+#
+# The models differ in WHICH protocol fills a hard slot, which is exactly the
+# real difference between them: polarized sends hard slots to VO2 work and
+# keeps endurance days clean, pyramidal mixes threshold and sweet spot in,
+# threshold puts nearly everything at or just under FTP.
+PHASE_TID_DOSE: dict[str, dict[str, dict[str, float]]] = {
+    "pyramidal": {
+        #                z3/hit  z2/hit  z2 trickle (share of week)
+        "base":          {"z3": 3.0,  "z2": 14.0, "z2_trickle": 0.10},
+        "build1":        {"z3": 7.0,  "z2": 20.0, "z2_trickle": 0.10},
+        "build2":        {"z3": 8.0,  "z2": 22.0, "z2_trickle": 0.10},
+        "peak":          {"z3": 10.0, "z2": 20.0, "z2_trickle": 0.10},
+        "taper":         {"z3": 7.0,  "z2": 12.0, "z2_trickle": 0.10},
+        "consolidation": {"z3": 0.0,  "z2": 0.0,  "z2_trickle": 0.04},
+        "history":       {"z3": 6.0,  "z2": 16.0, "z2_trickle": 0.10},
+    },
+    "polarized": {
+        "base":          {"z3": 5.0,  "z2": 5.0,  "z2_trickle": 0.06},
+        "build1":        {"z3": 10.0, "z2": 5.0,  "z2_trickle": 0.06},
+        "build2":        {"z3": 12.0, "z2": 5.0,  "z2_trickle": 0.06},
+        "peak":          {"z3": 13.0, "z2": 5.0,  "z2_trickle": 0.06},
+        "taper":         {"z3": 9.0,  "z2": 4.0,  "z2_trickle": 0.06},
+        "consolidation": {"z3": 0.0,  "z2": 0.0,  "z2_trickle": 0.03},
+        "history":       {"z3": 9.0,  "z2": 5.0,  "z2_trickle": 0.06},
+    },
+    "threshold": {
+        "base":          {"z3": 2.0,  "z2": 20.0, "z2_trickle": 0.14},
+        "build1":        {"z3": 4.0,  "z2": 34.0, "z2_trickle": 0.14},
+        "build2":        {"z3": 5.0,  "z2": 36.0, "z2_trickle": 0.14},
+        "peak":          {"z3": 5.5,  "z2": 36.0, "z2_trickle": 0.14},
+        "taper":         {"z3": 4.0,  "z2": 20.0, "z2_trickle": 0.14},
+        "consolidation": {"z3": 0.0,  "z2": 0.0,  "z2_trickle": 0.05},
+        "history":       {"z3": 3.0,  "z2": 24.0, "z2_trickle": 0.14},
+    },
+}
+
+# The z3 doses are bounded by what a session can actually be SERVED. Measured
+# over the 2,649 score>=5 files, after TYPE_CEILING clamps a long file down to
+# what a slot will run:
+#
+#     max 36 min | 95th 18 | 90th 15 | 85th 10.6 | 80th 8.2 | median 1.5
+#
+# So 13 minutes above 106% FTP is a good hard session and 18 is a very good one;
+# asking every hard slot for a top-decile file week after week is how a target
+# becomes a permanent deficit. tests/test_tid_targets.py holds every dose under
+# the 90th percentile.
+
+# Hard sessions a week can hold, by weekly volume. Bounded by RECOVERY, not by
+# time: 48 h between hard days (Seiler 2010) allows four in a seven-day week
+# (Mon/Wed/Fri/Sun) and no more. A rider with six hours cannot recover from
+# four; a rider with fifteen still cannot fit five.
+def hit_slots_for_volume(week_minutes: float, phase_max: int) -> int:
+    """The phase's own ceiling, reduced for a rider who does not have the
+    volume to support it. Never above 4."""
+    h = max(0.0, float(week_minutes)) / 60.0
+    by_volume = 1 if h < 4 else 2 if h < 7 else 3 if h < 11 else 4
+    return max(0, min(int(phase_max), by_volume, 4))
+
+
+def tid_target_pct(model: str, phase: str, week_minutes: float,
+                   hit_count: int) -> dict[str, float]:
+    """The three-zone target this phase implies for THIS week, as percentages.
+
+    Percentages are derived, never authored: dose x sessions, plus the Z2
+    trickle, with Z1 taking the remainder. tests/test_tid_targets.py checks the
+    result against the literature's observed ranges at every volume.
+    """
+    row = PHASE_TID_DOSE.get(model, PHASE_TID_DOSE["pyramidal"]).get(phase) \
+        or PHASE_TID_DOSE["pyramidal"]["history"]
+    m = max(1.0, float(week_minutes))
+    z3 = row["z3"] * hit_count
+    z2 = row["z2"] * hit_count + row["z2_trickle"] * m
+    # Never let the hard work crowd the week; the Z1 floor is the safety rail
+    # and is enforced in PERCENT so it lands on exactly 70.0 rather than
+    # 69.99999999999999, which a >= 70 check reads as a breach.
+    _Z1_FLOOR_PCT = 70.0
+    hard_cap = (100.0 - _Z1_FLOOR_PCT) / 100.0 * m
+    if z3 + z2 > hard_cap:
+        k = hard_cap / (z3 + z2)
+        z3, z2 = z3 * k, z2 * k
+    # z1 takes the remainder in PERCENT, not in minutes, so the three always sum
+    # to exactly 100 and the 70% floor is exactly 70 rather than 69.999999.
+    z3_pct = 100.0 * z3 / m
+    z2_pct = 100.0 * z2 / m
+    z1_pct = max(0.0, 100.0 - z2_pct - z3_pct)
+    if z1_pct < _Z1_FLOOR_PCT:          # float dust at the clamp, not a breach
+        z1_pct = _Z1_FLOOR_PCT
+        _rest = 100.0 - z1_pct
+        _sum = (z2_pct + z3_pct) or 1.0
+        z2_pct, z3_pct = _rest * z2_pct / _sum, _rest * z3_pct / _sum
+    return {"z1_pct": z1_pct, "z2_pct": z2_pct, "z3_pct": z3_pct}
+
+
+# The default sequence: pyramidal through base and build, polarized into peak
+# and taper (Filipas 2022). A rider who picks a model explicitly gets that model
+# in every phase; this applies only when they have expressed no preference.
+DEFAULT_TID_SEQUENCE: dict[str, str] = {
+    "base": "pyramidal", "build1": "pyramidal", "build2": "pyramidal",
+    "peak": "polarized", "taper": "polarized",
+    "consolidation": "pyramidal", "history": "pyramidal",
 }
 
 
-# v4.5.0 IMPL-PLANNER: per-phase intensity budgets driving the new sampler.
-# Numbers locked by /tmp/MASTER_DECISIONS_v45.md §3 Pillar A. Derived from
-# PHASE_TARGETS (z1z2_hrs × 60 = z1z2_min; z3z4_min split 75/25 between Z3 and
-# Z4 in build/peak, 80/20 in base/taper; z5plus_min direct).
-BUDGETS: dict[str, "IntensityBudget"] = {
+# Per-phase budget SHAPE. What this table is still authoritative about, after
+# scale_budget_to_week took over the sizing:
+#
+#   * hit_count_min / hit_count_max  — how many hard sessions the phase carries
+#   * rest_days_per_week
+#   * the z4 : z5plus split inside the hard band — the phase's CHARACTER (peak
+#     leans VO2, build1 leans threshold), which the three-zone target cannot
+#     express because it has only one hard band
+#
+# The minute rows themselves are no longer used as absolute minutes: they were
+# authored for a ~10 h/week rider and applied verbatim to everyone.
+# scale_budget_to_week re-derives them per athlete from PHASE_TID_TARGETS.
+# They are kept because that split, and the relative shape, still come from here.
+_PHASE_SHAPE: dict[str, "IntensityBudget"] = {
     "base":    IntensityBudget(
         z1z2_minutes_per_week=540, z3_minutes_per_week=45,
         z4_minutes_per_week=10, z5plus_minutes_per_week=5,
-        tss_per_week=425, hit_count_min=1, hit_count_max=1, rest_days_per_week=2,
-        polarized_target=PHASE_POLARIZED_TARGETS["base"],
+        # A second quality day, volume-gated at 7+ h/week. One is right for a
+        # rider on five hours; a base block at 12 h with a single hard session
+        # is an active-rest block, and the observational data disagrees
+        # (Zapico 2007 U23 winter: 78/20/2 carries more than one).
+        tss_per_week=425, hit_count_min=1, hit_count_max=2, rest_days_per_week=2,
     ),
     "build1":  IntensityBudget(
         z1z2_minutes_per_week=420, z3_minutes_per_week=120,
         z4_minutes_per_week=60, z5plus_minutes_per_week=45,
         tss_per_week=600, hit_count_min=2, hit_count_max=3, rest_days_per_week=2,
-        polarized_target=PHASE_POLARIZED_TARGETS["build1"],
     ),
     "build2":  IntensityBudget(
         z1z2_minutes_per_week=400, z3_minutes_per_week=120,
         z4_minutes_per_week=60, z5plus_minutes_per_week=45,
-        tss_per_week=600, hit_count_min=2, hit_count_max=3, rest_days_per_week=2,
-        polarized_target=PHASE_POLARIZED_TARGETS["build2"],
+        # See the note on peak: the fourth slot is volume-gated, not free.
+        tss_per_week=600, hit_count_min=2, hit_count_max=4, rest_days_per_week=2,
     ),
     "peak":    IntensityBudget(
         z1z2_minutes_per_week=360, z3_minutes_per_week=90,
         z4_minutes_per_week=80, z5plus_minutes_per_week=80,
-        tss_per_week=650, hit_count_min=3, hit_count_max=3, rest_days_per_week=2,
-        polarized_target=PHASE_POLARIZED_TARGETS["peak"],
+        # 4, not 3, and only reachable at 11+ h/week (hit_slots_for_volume).
+        # Three hard sessions is the classic recommendation for a rider on
+        # 6-10 h; at 12-15 h it leaves the intensity dose falling as a share of
+        # the week with nowhere to go, because the ceiling is recovery and 48 h
+        # spacing fits four in seven days (Mon/Wed/Fri/Sun). A rider without the
+        # volume to support four never gets four.
+        tss_per_week=650, hit_count_min=3, hit_count_max=4, rest_days_per_week=2,
     ),
     "taper":   IntensityBudget(
         z1z2_minutes_per_week=240, z3_minutes_per_week=30,
         z4_minutes_per_week=20, z5plus_minutes_per_week=22,
         tss_per_week=275, hit_count_min=1, hit_count_max=1, rest_days_per_week=3,
-        polarized_target=PHASE_POLARIZED_TARGETS["taper"],
     ),
     "consolidation": IntensityBudget(
         z1z2_minutes_per_week=330, z3_minutes_per_week=20,
         z4_minutes_per_week=0, z5plus_minutes_per_week=0,
         tss_per_week=240, hit_count_min=0, hit_count_max=0, rest_days_per_week=3,
-        polarized_target=PHASE_POLARIZED_TARGETS["consolidation"],
     ),
     "history": IntensityBudget(
         z1z2_minutes_per_week=480, z3_minutes_per_week=45,
         z4_minutes_per_week=10, z5plus_minutes_per_week=10,
         tss_per_week=400, hit_count_min=1, hit_count_max=2, rest_days_per_week=2,
-        polarized_target=PHASE_POLARIZED_TARGETS["history"],
     ),
 }
 
 
-# ── J1 (v2.1.0): selectable intensity-distribution model ──────────────────────
-# The complaint: polarized was FORCED. The model is now a user choice (default
-# polarized). pyramidal/threshold are derived from the polarized base by
-# redistributing only the HARD minutes (z3+z4+z5plus) of the work phases —
-# total load, TSS, HIT count, rest days and easy (z1z2) volume are preserved, so
-# only the *kind* of intensity changes, never the dose. base/taper/consolidation/
-# history stay polarized (foundation, recovery and taper are model-agnostic).
-def _reallocate_hard(b: "IntensityBudget", z3w: float, z4w: float, z5w: float) -> "IntensityBudget":
-    hard = b.z3_minutes_per_week + b.z4_minutes_per_week + b.z5plus_minutes_per_week
-    tot = (z3w + z4w + z5w) or 1.0
-    z3 = round(hard * z3w / tot)
-    z4 = round(hard * z4w / tot)
-    z5 = max(0, hard - z3 - z4)  # remainder keeps the sum exact
-    wk = (b.z1z2_minutes_per_week + hard) or 1
-    tgt = {
-        "z1z2_pct": round(100 * b.z1z2_minutes_per_week / wk),
-        "z3_pct": round(100 * z3 / wk),
-        "z4plus_pct": round(100 * (z4 + z5) / wk),
-    }
-    return replace(b, z3_minutes_per_week=z3, z4_minutes_per_week=z4,
-                   z5plus_minutes_per_week=z5, polarized_target=tgt)
+# ── Selectable intensity-distribution model ──────────────────────────────────
+# One budget table per model, differing only in the distribution target they
+# carry. Everything else -- HIT count, rest days, the phase's z4:z5plus
+# character, the TSS shape -- is the same, because the model choice is about
+# WHICH intensity, never about the dose.
+def _budgets_for_model(model: str) -> "dict[str, IntensityBudget]":
+    """One budget table per model.
 
-
-def _model_budgets(z3w: float, z4w: float, z5w: float) -> "dict[str, IntensityBudget]":
-    d = dict(BUDGETS)  # reuse polarized objects for the model-agnostic phases
-    for ph in ("build1", "build2", "peak"):
-        d[ph] = _reallocate_hard(BUDGETS[ph], z3w, z4w, z5w)
-    return d
+    The distribution target on each row is the one a rider of TYPICAL volume
+    (10 h/week, the volume the phase shape was authored for) would get, so the
+    surfaces that need a single number to show -- the settings screen, the
+    on-track comparison -- have one. scale_budget_to_week recomputes it for the
+    athlete's actual week, because the percentage is an output of volume.
+    """
+    out = {}
+    for ph, shape in _PHASE_SHAPE.items():
+        if ph not in PHASE_TID_DOSE[model]:
+            continue
+        hits = hit_slots_for_volume(600, shape.hit_count_max)
+        pct = tid_target_pct(model, ph, 600, hits)
+        out[ph] = replace(shape, polarized_target={
+            k: int(round(v)) for k, v in pct.items()})
+    return out
 
 
 BUDGETS_BY_MODEL: dict[str, "dict[str, IntensityBudget]"] = {
-    "polarized": BUDGETS,                       # Seiler — easy + very-hard, little threshold
-    "pyramidal": _model_budgets(60, 28, 12),    # threshold-led, descending z3>z4>z5
-    "threshold": _model_budgets(78, 16, 6),     # sweet-spot/at-FTP, minimal VO2/anaerobic
+    m: _budgets_for_model(m) for m in PHASE_TID_DOSE
 }
+# The default table. Pyramidal, not polarized: Rosenblat et al. 2025 found the
+# only robust moderator to be athlete level, with recreational athletes
+# responding better to PYR, and Filipas 2022 found pyramidal-then-polarized the
+# best ORDER. DEFAULT_TID_SEQUENCE applies the switch per phase; this is the
+# fallback for callers that do not go through it.
+BUDGETS: dict[str, "IntensityBudget"] = BUDGETS_BY_MODEL["pyramidal"]
 
-_ACTIVE_DISTRIBUTION = "polarized"
+# "auto" = follow DEFAULT_TID_SEQUENCE (pyramidal base/build, polarized
+# peak/taper -- Filipas 2022). A rider who names a model gets it everywhere.
+_ACTIVE_DISTRIBUTION = "auto"
 # v3.7.1 — rider opted into microintervals-only for VO2max days. Generation-
 # scoped state, set from the goal at exactly the sites that set the active
 # distribution, and ALWAYS set explicitly (including to False) so it can never
@@ -1976,17 +2170,33 @@ _ACTIVE_CUSTOM_BUDGETS: "dict[str, IntensityBudget] | None" = None
 def _custom_model_budgets(bands: dict) -> "dict[str, IntensityBudget]":
     """Build a per-phase budget table from a user hard-work split (v2.3.0).
 
-    ``bands`` percentages (need not be normalized): tempo_ss→Z3, threshold→Z4,
-    vo2+sprint→Z5+. Reuses _model_budgets/_reallocate_hard so easy volume, total
-    hard minutes, TSS, HIT count and rest days are preserved exactly as in the
-    polarized base — only the *kind* of hard work changes (parity with the
-    pyramidal/threshold models)."""
-    z3w = float(bands.get("tempo_ss", 0) or 0)
-    z4w = float(bands.get("threshold", 0) or 0)
-    z5w = float(bands.get("vo2", 0) or 0) + float(bands.get("sprint", 0) or 0)
-    if (z3w + z4w + z5w) <= 0:
-        z3w, z4w, z5w = 34.0, 33.0, 33.0  # safe default if the user zeroed it
-    return _model_budgets(z3w, z4w, z5w)
+    ``bands`` percentages (need not be normalized): tempo_ss and threshold are
+    three-zone Z2 (76-105% FTP, spanning LT2), vo2 and sprint are three-zone Z3
+    (>=106%). The rider is choosing the SHAPE of their hard work; the total
+    easy share, HIT count, rest days and TSS come from the pyramidal table
+    unchanged, because the model choice is about which intensity, not the dose.
+
+    Clamped to the same ceilings the shipped tables are held to: Z1 never below
+    70%, Z3 never above 12% (tests/test_tid_targets.py). A rider cannot ask for
+    a week the library cannot serve."""
+    mid = float(bands.get("tempo_ss", 0) or 0) + float(bands.get("threshold", 0) or 0)
+    hard = float(bands.get("vo2", 0) or 0) + float(bands.get("sprint", 0) or 0)
+    if (mid + hard) <= 0:
+        return _budgets_for_model("pyramidal")
+    out = {}
+    for ph, shape in _PHASE_SHAPE.items():
+        base_row = tid_target_pct("pyramidal", ph, 600,
+                                  hit_slots_for_volume(600, shape.hit_count_max))
+        work = base_row["z2_pct"] + base_row["z3_pct"]      # the phase's hard budget
+        z3 = min(12, round(work * hard / (mid + hard)))
+        z2 = max(0, work - z3)
+        z1 = 100 - z2 - z3
+        if z1 < 70:                                          # honour the floor
+            z1, z2, z3 = 70, round((100 - 70) * z2 / max(1, z2 + z3)), 0
+            z3 = 100 - z1 - z2
+        out[ph] = replace(shape, polarized_target={
+            "z1_pct": z1, "z2_pct": z2, "z3_pct": z3})
+    return out
 
 
 def set_vo2_micro_only(flag) -> bool:
@@ -2009,9 +2219,12 @@ def set_active_distribution(model: "str | None", custom_bands: "dict | None" = N
     """Set the active intensity-distribution model for budget lookups (J1).
 
     Called at plan generation + recalc from ``goal.distribution``. Unknown or
-    None falls back to ``polarized`` so the default path is byte-for-byte
-    unchanged and the model is never hard-forced. ``model == "custom"`` with a
-    non-empty ``custom_bands`` builds an on-demand budget table (v2.3.0).
+    None falls back to ``"auto"``: pyramidal through base and build, polarized
+    into peak and taper, which is the sequence Filipas 2022 found beat every
+    other order and is consistent with Rosenblat 2025's finding that the models
+    are otherwise equivalent at the group level. A rider who names a model gets
+    that model in every phase. ``model == "custom"`` with non-empty
+    ``custom_bands`` builds an on-demand budget table.
     """
     global _ACTIVE_DISTRIBUTION, _ACTIVE_CUSTOM_BUDGETS
     if model == "custom" and custom_bands:
@@ -2022,12 +2235,24 @@ def set_active_distribution(model: "str | None", custom_bands: "dict | None" = N
         except Exception:
             _ACTIVE_CUSTOM_BUDGETS = None  # fall through to polarized on bad input
     _ACTIVE_CUSTOM_BUDGETS = None
-    _ACTIVE_DISTRIBUTION = model if model in BUDGETS_BY_MODEL else "polarized"
+    _ACTIVE_DISTRIBUTION = model if model in BUDGETS_BY_MODEL else "auto"
     return _ACTIVE_DISTRIBUTION
 
 
 def get_active_distribution() -> str:
     return _ACTIVE_DISTRIBUTION
+
+
+def active_model_for_phase(phase_name: "str | None") -> str:
+    """Which distribution model this phase is trained on.
+
+    A named model applies to every phase. "auto" -- the default -- follows
+    DEFAULT_TID_SEQUENCE, so the plan is pyramidal while it is building
+    aerobic base and polarized when it is sharpening.
+    """
+    if _ACTIVE_DISTRIBUTION in PHASE_TID_DOSE:
+        return _ACTIVE_DISTRIBUTION
+    return DEFAULT_TID_SEQUENCE.get((phase_name or "").lower(), "pyramidal")
 
 
 def _active_budget_table() -> "dict[str, IntensityBudget]":
@@ -2104,7 +2329,9 @@ def week_available_minutes(goal, week_start: date) -> int:
 
 
 def scale_budget_to_week(budget: "IntensityBudget", week_tss_target: float,
-                         available_minutes: float | None = None) -> "IntensityBudget":
+                         available_minutes: float | None = None,
+                         model: str | None = None,
+                         phase_name: str | None = None) -> "IntensityBudget":
     """The phase budget re-expressed for ONE week of THIS athlete.
 
     Keeps everything the phase table is actually authoritative about -- the
@@ -2117,24 +2344,64 @@ def scale_budget_to_week(budget: "IntensityBudget", week_tss_target: float,
     returned budget is therefore already week-specific and the sampler must NOT
     apply those discounts again -- ``week_scaled`` says so.
 
+    ``model`` and ``phase_name``, when given, recompute the distribution target
+    for THIS week's volume from the per-session dose (see tid_target_pct) rather
+    than using the row's typical-volume figure. That is the whole point of a
+    dose: at 15 h/week the same three hard sessions are a smaller share of the
+    week than at 6 h, and the target has to say so.
+
     ``available_minutes`` clamps the result to the time the rider actually has.
     When the target needs more hours than they have, the RATIO is preserved and
     the load lands under target. That is the honest answer: you cannot ride
     287 TSS in five hours at 78% easy, and quietly buying the load with
     intensity is exactly the failure this function exists to stop.
     """
-    pt = budget.polarized_target
-    s1 = max(0.0, float(pt.get("z1z2_pct", 80))) / 100.0
-    s3 = max(0.0, float(pt.get("z3_pct", 5))) / 100.0
-    shard = max(0.0, float(pt.get("z4plus_pct", 15))) / 100.0
-    tot = (s1 + s3 + shard) or 1.0
-    s1, s3, shard = s1 / tot, s3 / tot, shard / tot
+    # THREE-ZONE target -> the four internal buckets the sampler scores against.
+    #
+    #   three-zone z1 (<76% FTP)      -> z1z2
+    #   three-zone z2 (76-105% FTP)   -> z3 + z4, split by the phase's character
+    #   three-zone z3 (>=106% FTP)    -> z5plus
+    #
+    # The middle band has to be split because a sampler slot is filled by a
+    # file, and a tempo file and a threshold file are different things even
+    # though the three-zone model calls both "Z2". The split comes from
+    # _PHASE_SHAPE, which is where the phase's character lives (build1 leans
+    # threshold, peak leans VO2) -- the three-zone target has only one middle
+    # band and cannot express it.
+    # The dose has to be sized against the week the athlete will actually RIDE,
+    # not the time they have free. Sizing it against availability put four hard
+    # sessions' worth of intensity into a week the TSS target had already capped
+    # at under four hours -- 25% of its minutes above 106% FTP, measured.
+    #
+    # Planned minutes depend on the ratio and the ratio depends on the minutes,
+    # so: estimate the week from the row's typical-volume ratio, derive the
+    # target from that estimate, and let the second pass below use it. One
+    # iteration is enough -- the ratio moves the estimate by a few percent, and
+    # the second-order correction is smaller than a session.
+    tid_pct = None
+    if model and phase_name:
+        _pt0 = budget.polarized_target or {}
+        _s1 = float(_pt0.get("z1_pct", 80)) / 100.0
+        _s2 = float(_pt0.get("z2_pct", 12)) / 100.0
+        _s3 = float(_pt0.get("z3_pct", 8)) / 100.0
+        _rate = (_s1 * _BAND_TSS_PER_HOUR["z1z2"] + _s2 * _BAND_TSS_PER_HOUR["z4"]
+                 + _s3 * _BAND_TSS_PER_HOUR["z5plus"]) or 50.0
+        _mins = float(week_tss_target or 0) / _rate * 60.0
+        if available_minutes and available_minutes > 0:
+            _mins = min(_mins, float(available_minutes))
+        _hits = hit_slots_for_volume(_mins, budget.hit_count_max)
+        tid_pct = tid_target_pct(model, phase_name, _mins, _hits)
+    pt = tid_pct if tid_pct is not None else budget.polarized_target
+    s1 = max(0.0, float(pt.get("z1_pct", 80))) / 100.0
+    smid = max(0.0, float(pt.get("z2_pct", 12))) / 100.0
+    s5 = max(0.0, float(pt.get("z3_pct", 8))) / 100.0
+    tot = (s1 + smid + s5) or 1.0
+    s1, smid, s5 = s1 / tot, smid / tot, s5 / tot
 
-    # z4 vs z5plus inside the hard share: keep the phase's own character.
+    z3t = float(budget.z3_minutes_per_week)
     z4t = float(budget.z4_minutes_per_week)
-    z5t = float(budget.z5plus_minutes_per_week)
-    hard_t = (z4t + z5t) or 1.0
-    s4, s5 = shard * (z4t / hard_t), shard * (z5t / hard_t)
+    mid_t = (z3t + z4t) or 1.0
+    s3, s4 = smid * (z3t / mid_t), smid * (z4t / mid_t)
 
     per_hour = (s1 * _BAND_TSS_PER_HOUR["z1z2"] + s3 * _BAND_TSS_PER_HOUR["z3"]
                 + s4 * _BAND_TSS_PER_HOUR["z4"] + s5 * _BAND_TSS_PER_HOUR["z5plus"])
@@ -7165,7 +7432,7 @@ def generate_plan(
     # J1 (v2.1.0): honor the goal's chosen intensity-distribution model for every
     # get_budget_for_phase lookup in this run (default "polarized" → unchanged).
     set_vo2_micro_only(getattr(goal, "vo2_microintervals_only", False))
-    set_active_distribution(getattr(goal, "distribution", "polarized"),
+    set_active_distribution(getattr(goal, "distribution", "auto"),
                             getattr(goal, "custom_bands", None))
     # v3.0.0: only self-fetch when the caller didn't supply CTL — `metrics`
     # feeds nothing but the ctl fallback below, and the v2.1.0 comment already
@@ -7322,7 +7589,8 @@ def generate_plan(
                 # stepback and ACWR discounts.
                 budget = scale_budget_to_week(
                     budget, pw.tss_target,
-                    week_available_minutes(goal, pw.start))
+                    week_available_minutes(goal, pw.start),
+                    model=active_model_for_phase(phase.name), phase_name=phase.name)
                 phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
                 # v1.11.0 (P4) — climbing specificity ONLY in build2/peak (research:
                 # race-specific work belongs in build+peak, not base). None elsewhere.
@@ -11459,7 +11727,8 @@ def regenerate_from_today(
             # stepback and ACWR discounts.
             budget = scale_budget_to_week(
                 budget, pw.tss_target,
-                week_available_minutes(adjusted_goal, pw.start))
+                week_available_minutes(adjusted_goal, pw.start),
+                model=active_model_for_phase(phase.name), phase_name=phase.name)
             phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
             # v1.11.0 (P4) — climbing specificity ONLY in build2/peak (mirrors
             # generate_plan's _emph). None elsewhere / for non-event regens.
@@ -12108,7 +12377,8 @@ def recalculate_plan(
             # stepback and ACWR discounts.
             budget = scale_budget_to_week(
                 budget, pw.tss_target,
-                week_available_minutes(adjusted_goal, pw.start))
+                week_available_minutes(adjusted_goal, pw.start),
+                model=active_model_for_phase(phase.name), phase_name=phase.name)
             phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
             _emph = ("event_climb"
                      if (event_targets and event_targets.get("climbing_bias")
@@ -12540,7 +12810,8 @@ def extend_continuous_plan(
         # the branch: expand_blueprint_week reads it too.
         budget = scale_budget_to_week(
             phase_budget, pw.tss_target,
-            week_available_minutes(goal, pw.start))
+            week_available_minutes(goal, pw.start),
+            model=active_model_for_phase(phase.name), phase_name=phase.name)
 
         if _bp_mode:
             # FS1 parity: a fixed/template plan extends deterministically too.
@@ -12870,12 +13141,13 @@ def refit_remaining_week(
     # week, and the HIT slot floor -- derived from the remaining hard budget --
     # came out far too high, so the freed slot could not be re-owed.
     budget = scale_budget_to_week(
-        budget, week.tss_target, week_available_minutes(goal, week.start))
+        budget, week.tss_target, week_available_minutes(goal, week.start),
+        model=active_model_for_phase(week.phase), phase_name=week.phase)
     sampled = sample_week_workouts(
         phase=Phase(
             name=week.phase, start=week.start, end=week.end,
             weeks=1, focus="", weekly_tss_target=week.tss_target,
-            z2_pct=budget.polarized_target.get("z1z2_pct", 80),
+            z2_pct=budget.polarized_target.get("z1_pct", 80),
             hit_per_week=budget.hit_count_max,
             session_types=[],
         ),

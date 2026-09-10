@@ -401,6 +401,113 @@ which yields 48–55 TSS/h. `scale_budget_to_week` already computes the
 phase-correct rate — the cap should use it. Left alone here because it only
 binds for a rider with no ride history, and it deserves its own before/after.
 
+## The intensity-distribution rework
+
+### What was wrong
+
+Three tables claimed to encode the same phase model and no two agreed. The
+decisive one: `PHASE_POLARIZED_TARGETS` folded the Coggan zones as
+`z1z2 | z3 | z4plus`, putting work AT threshold (91–105% FTP) in the hard pole,
+while `PHASE_TARGETS`, `analytics` and intervals.icu all fold
+`z1z2 | z3z4 | z5plus`. Scored in the app's own `classify_distribution`, **not
+one generated week came out polarized** — the planner "hit" its polarized target
+by filling the grey zone, the one thing the model exists to avoid.
+
+`zones.THREE_ZONE_FROM_COGGAN` is now the single fold, used by the planner,
+analytics and the on-track score alike. FTP ≈ LT2, so the seam is the top of
+Coggan Z4.
+
+### Three measurement frames, and they are 28 points apart
+
+| | z1 | z2 | z3 |
+|---|---|---|---|
+| session-goal (Seiler's 80/20) | 75 | 8 | 17 |
+| the same training by HR time-in-zone | 91 | 6 | 3 |
+| **this athlete's 38 h, by power** | **79.6** | **16.5** | **3.9** |
+| the same rides, by heart rate | 51.6 | 45.0 | 3.3 |
+
+Rosenblat et al. (Sports Med 2025) name the first two explicitly. The last two
+are measured here: cardiac drift pushes long endurance work into HR-Z3 while
+power stays put. Domestique bins `.zwo` files by power, so the targets are
+power time-in-zone, and any figure lifted from a paper has to be checked for
+which frame it is in.
+
+### The target is a dose, not a percentage
+
+The achievability test layer failed on the first attempt and forced the
+redesign. A flat percentage cannot survive rising volume: hard work is limited
+by RECOVERY, not hours, so 48 h spacing caps a week at three or four hard
+sessions however much time the rider has. An 8%-of-week target three sessions
+can just serve at 12 h/week needs five at 15 h, and there is no fifth session.
+
+So each phase prescribes **minutes per hard session** — from the protocols
+themselves (Rønnestad 3×13×30/15 ≈ 19.5 min above 106% FTP, Helgerud 4×4 ≈ 16)
+— plus a Z2 trickle, with Z1 taking the remainder. The percentages are an
+output. They fall with volume, which is exactly why elite cyclists at 25 h/week
+read 90%+ Z1 by time-in-zone.
+
+Both dose constants come from measurement rather than preference:
+
+- the **Z2 trickle** from the athlete's own riding (16.5% of all power-time sits
+  at 76–105% FTP, so assuming a clean 2% made every target unreachable);
+- the **z3 ceiling** from the library's servable distribution (max 36 min,
+  95th 18, 90th 15, median 1.5 — asking every hard slot for a top-decile file
+  is how a target becomes a permanent deficit).
+
+### The evidence it rests on
+
+- **Rosenblat et al. 2025** (Sports Med), network meta-analysis of individual
+  participant data, 13 studies / 348 athletes, Seiler senior author: POL and PYR
+  are indistinguishable by HR time-in-zone (VO₂max SMD −0.06, p = 0.68; TT SMD
+  −0.05, p = 0.34; MD −0.11 mL/kg/min, inside the measurement's own error). The
+  one robust moderator is athlete level (subgroup SMD −0.63, p < 0.05):
+  competitive → POL, recreational → PYR.
+- **Filipas et al. 2022**, 60 runners, load held constant: pyramidal-then-
+  polarized beat every other order (5 km −1.5%, VO₂peak +3.0%, against PYR-only
+  −0.6%/+1.3%). Hence `DEFAULT_TID_SEQUENCE` and a default of `"auto"` rather
+  than a forced model.
+
+### The testing strategy
+
+Five layers, cheapest first, each catching a different class of failure:
+
+1. **Table invariants** (`test_tid_targets.py`) — sums, the 70% Z1 floor, the
+   12% Z3 ceiling, POL has less middle than PYR, progression base→peak, and the
+   two properties the dose model exists for: hard share FALLS and easy share
+   RISES with volume.
+2. **Achievability** — every target, at every volume, must be reachable by the
+   hard slots that week actually gets, drawing 90th-percentile files. This is
+   the anti-fiction layer and it is the one that forced the redesign.
+3. **Band agreement** — planner, analytics and the on-track score fold Coggan
+   zones identically; `z4plus_pct` may not reappear anywhere.
+4. **Differential** — POL and PYR must produce measurably different plans. A
+   toggle that changes nothing is worse than no toggle.
+5. **Plan properties** (`test_tid_plan_properties.py`) — real `generate_plan`
+   over volume × model, against absolute safety rails: ≤18% Z3, ≥55% Z1, HIT
+   count inside the phase cap, 48 h spacing, and more hours never buying more
+   intensity.
+
+**Layer 5 earned its keep twice.** It caught my first version setting the model
+on the module global — which `generate_plan` overwrites from `goal.distribution`
+— so the toggle test was comparing two identical plans and passing. And it
+surfaced a genuine pre-existing defect: the 48 h rule is already violated on
+main (6 breaches at 6 h/week, 7 after this branch), because spacing is enforced
+on the SLOTS designated hard while a file served to an endurance slot can carry
+threshold content. Marked `expectedFailure` with the measurement rather than
+loosened, so a fix reports an unexpected success.
+
+A sixth guard went into `conftest.py`: `_ACTIVE_DISTRIBUTION` is module-global
+state that `generate_plan` sets from the goal, and it leaked across FILES under
+`-n 8` — the same class as the `WORKOUT_DIR` leak, caught the same way.
+
+### What it did not fix
+
+Delivered plans barely moved: 77.2/14.2/8.6 → 74.8/14.7/10.5 in the same bands.
+This is a specification fix, not a plan overhaul. The remaining gap to target is
+that a slot is filled by whatever file the library happens to hold — the median
+score≥5 file carries 1.5 minutes above 106% FTP and 54 of tempo. Closing it is
+the workout generator's job, not the budget's.
+
 ## Hard rules for this branch
 
 - `app.py` must re-export anything moved: 60 test files reach 67 planning names

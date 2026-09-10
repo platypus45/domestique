@@ -41,14 +41,14 @@ def test_custom_polarized_targets_do_not_crash():
     tp.set_active_distribution("custom", {"tempo_ss": 40, "threshold": 40, "vo2": 20, "sprint": 0})
     try:
         targets = tp.get_active_polarized_targets()
-        assert "build1" in targets and "z1z2_pct" in targets["build1"]
+        assert "build1" in targets and "z1_pct" in targets["build1"]
     finally:
         tp.set_active_distribution("polarized")
 
 
 def test_empty_custom_falls_back_to_polarized():
-    assert tp.set_active_distribution("custom", {}) == "polarized"
-    assert tp.set_active_distribution("custom", None) == "polarized"
+    assert tp.set_active_distribution("custom", {}) == "auto"
+    assert tp.set_active_distribution("custom", None) == "auto"
     tp.set_active_distribution("polarized")
 
 

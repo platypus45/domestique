@@ -248,10 +248,12 @@ def test_polarized_distribution_within_5pp_of_target(plan_24w_7day, library):
     for pw in plan_24w_7day:
         by_phase.setdefault(pw.phase, []).append(pw)
     for phase_name, phase_weeks in by_phase.items():
-        polar = tp.PHASE_POLARIZED_TARGETS.get(phase_name)
+        # three-zone keys: z1 <76% FTP, z2 76-105% (spanning LT2), z3 >=106%. The old z1z2/z3/z4plus grouping counted threshold work as the hard pole; zones.THREE_ZONE_FROM_COGGAN is the one fold now.
+        polar = (tp.BUDGETS.get(phase_name) or None)
+        polar = polar.polarized_target if polar else None
         if not polar:
             continue
-        target_z1z2 = polar["z1z2_pct"]
+        target_z1z2 = polar["z1_pct"]
         total_min = 0.0
         z1z2_min = 0.0
         for pw in phase_weeks:

@@ -171,6 +171,28 @@ def _restore_tp_profile_dirs():
 
 
 @pytest.fixture(autouse=True)
+def _restore_tp_distribution():
+    """Order-independence guard for training_planner's active TID model.
+
+    ``_ACTIVE_DISTRIBUTION`` and ``_ACTIVE_CUSTOM_BUDGETS`` are module globals
+    set by set_active_distribution, which generate_plan calls from
+    goal.distribution on every run. Any suite that plans with a named model
+    leaves it set for whatever runs next in the same worker -- under -n 8 that
+    is a different FILE. Exactly the leak _restore_tp_profile_dirs exists for,
+    and it made test_default_is_auto fail in the parallel run while passing
+    alone. Snap it back after every test.
+    """
+    import training_planner as _tp
+    prev = _tp.get_active_distribution()
+    prev_custom = _tp._ACTIVE_CUSTOM_BUDGETS
+    prev_micro = _tp._VO2_MICRO_ONLY
+    yield
+    _tp._ACTIVE_DISTRIBUTION = prev
+    _tp._ACTIVE_CUSTOM_BUDGETS = prev_custom
+    _tp._VO2_MICRO_ONLY = prev_micro
+
+
+@pytest.fixture(autouse=True)
 def _restore_db_path():
     """Order-independence guard for the db.DB_PATH global.
 

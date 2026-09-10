@@ -45,6 +45,55 @@ _HR_FRACS = [
 ]
 
 
+# ── The three-zone model (Seiler / Treff), and its map onto Coggan ───────────
+#
+# Every intensity-distribution number in this app -- the phase targets, the
+# sampler's budget, the ride-detail polarization card, the on-track score --
+# has to mean the same thing. Before this constant existed there were three
+# different groupings of the same Coggan zones in the codebase and no two
+# agreed; the planner counted threshold work (91-105% FTP) as the hard pole
+# while analytics and intervals.icu counted it as the middle.
+#
+# The three-zone model is anchored on the two physiological thresholds, not on
+# zone numbers:
+#
+#   Z1  below LT1 / VT1
+#   Z2  between LT1/VT1 and LT2/VT2      <- the "grey zone" a polarized model
+#   Z3  above LT2 / VT2                     deliberately minimises
+#
+# FTP approximates LT2 (it is the power at which lactate stops reaching a
+# steady state), so on the Coggan %FTP scale the seam falls at the top of Z4:
+#
+#   Coggan Z1+Z2      < 76% FTP     -> three-zone Z1
+#   Coggan Z3+Z4      76-105% FTP   -> three-zone Z2   (FTP itself lives here)
+#   Coggan Z5+Z6+Z7   >= 106% FTP   -> three-zone Z3
+#
+# Note the asymmetry this cannot fix: LT1 sits below 75% FTP for many riders,
+# so Coggan Z2 slightly over-counts three-zone Z1. That is a property of using
+# %FTP as a proxy for a threshold nobody measured, not of this mapping.
+THREE_ZONE_FROM_COGGAN: dict[str, tuple[str, ...]] = {
+    "z1": ("z1", "z2"),
+    "z2": ("z3", "z4"),
+    "z3": ("z5", "z6", "z7"),
+}
+
+
+def three_zone(coggan: dict) -> dict[str, float]:
+    """Fold a Coggan z1..z7 dict (seconds, minutes, anything additive) into the
+    three-zone model. Unknown keys are ignored; missing ones count as zero."""
+    return {band: sum(float(coggan.get(k) or 0) for k in keys)
+            for band, keys in THREE_ZONE_FROM_COGGAN.items()}
+
+
+def three_zone_pct(coggan: dict) -> dict[str, float]:
+    """``three_zone`` as percentages of the total. All zeros when empty."""
+    z = three_zone(coggan)
+    total = sum(z.values())
+    if total <= 0:
+        return {"z1": 0.0, "z2": 0.0, "z3": 0.0}
+    return {k: 100.0 * v / total for k, v in z.items()}
+
+
 def estimated_hr_max(age: int) -> int:
     """Tanaka 2001 formula: 208 - 0.7*age.
 

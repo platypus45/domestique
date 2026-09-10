@@ -102,9 +102,10 @@ def _distribution(week):
         if miss:
             unmatched += float(s.duration_min or 0)
     tot = sum(acc.values()) or 1.0
+    # Three-zone fold: z4 (91-105% FTP) is the MIDDLE, not the hard pole.
     return ({"easy": 100 * acc["z1z2"] / tot,
-             "z3": 100 * acc["z3"] / tot,
-             "hard": 100 * (acc["z4"] + acc["z5plus"]) / tot},
+             "z3": 100 * (acc["z3"] + acc["z4"]) / tot,
+             "hard": 100 * acc["z5plus"] / tot},
             tot, 100 * unmatched / tot)
 
 
@@ -147,19 +148,23 @@ def main():
                 continue
             seen.add(w.phase)
             b = tp.get_budget_for_phase(w.phase)
+            _mins = tp.week_available_minutes(goal, w.start)
+            _model = tp.active_model_for_phase(w.phase)
+            _hits = tp.hit_slots_for_volume(_mins, b.hit_count_max)
+            _pt = tp.tid_target_pct(_model, w.phase, _mins, _hits)
             got = sum(float(s.tss_estimate or 0) for s in w.sessions)
             tgt = float(w.tss_target or 0)
             miss = (got - tgt) / tgt * 100 if tgt else 0.0
             dist, mins, unm = _distribution(w)
-            pt = b.polarized_target
+            pt = {k: int(round(v)) for k, v in _pt.items()}
             print(f"  {hours:<10}{w.phase:<9}{b.tss_per_week:>7}{tgt:>8.0f}{got:>7.0f}"
                   f"{miss:>+7.0f}%   "
                   f"{dist['easy']:>5.0f}/{dist['z3']:>4.0f}/{dist['hard']:>4.0f}          "
-                  f"{pt['z1z2_pct']:>3}/{pt['z3_pct']:>3}/{pt['z4plus_pct']:>3}     "
+                  f"{pt['z1_pct']:>3}/{pt['z2_pct']:>3}/{pt['z3_pct']:>3}     "
                   f"{mins/60:>4.1f}{unm:>6.0f}%")
             worst.append((abs(miss), hours, w.phase, miss,
-                          dist['easy'] - pt['z1z2_pct'],
-                          dist['hard'] - pt['z4plus_pct']))
+                          dist['easy'] - pt['z1_pct'],
+                          dist['hard'] - pt['z3_pct']))
     import statistics
     tss_miss = [abs(w[3]) for w in worst]
     easy_gap = [w[4] for w in worst]

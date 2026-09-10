@@ -93,17 +93,14 @@ except Exception:
 # profile_manager._maybe_migrate_data_dir has had a chance to rename a
 # legacy ~/.chickencycling/ dir into place). _plan_dir() below mkdirs
 # on demand, so deferring this is safe.
-from user_home import domestique_home
-_user_data_dir = domestique_home()  # 3.4.3: DOMESTIQUE_HOME-aware
-
-COURSE_DIR    = Path(__file__).parent / "courses"
-_DEFAULT_PLAN_DIR = _user_data_dir / "plans"
-
-def _plan_dir() -> Path:
-    """Dynamic plan dir: uses profile-specific path after profile switch."""
-    d = getattr(tp, 'PLAN_DIR', _DEFAULT_PLAN_DIR)
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+# Filesystem locations live in paths.py. Re-exported so `app.DATA_DIR`,
+# `app._plan_dir`, `app._safe_path` and friends keep resolving for the ~200
+# call sites and the test files that reach them through `app.X`.
+from paths import (  # noqa: F401
+    domestique_home, _user_data_dir, DATA_DIR, COURSE_DIR,
+    ROUTE_DATA, ROUTE_PROFILES_INDEX, ROUTE_PROFILES_DIR,
+    _DEFAULT_PLAN_DIR, _plan_dir, _safe_path, _rides_fit_dir,
+)
 
 
 def _maybe_restore_plan_from_backup(plan_path: Path) -> str | None:
@@ -529,9 +526,6 @@ def _apply_profile_paths() -> None:
     WORKOUT_DIR = wp
     GPX_DIR = gp
 CONFIG_PATH   = Path(__file__).parent / "config.py"
-ROUTE_DATA    = Path(__file__).parent / "routes.json"
-ROUTE_PROFILES_INDEX = Path(__file__).parent / "profiles_indexed.json"
-ROUTE_PROFILES_DIR = Path(__file__).parent / "profiles"
 
 # Single source of truth for the app version. VERSION file is the canonical
 # spec (read by the PyInstaller builder and the /api/version route).
@@ -853,7 +847,6 @@ _static_dir = Path(__file__).parent / "static"
 _static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
-DATA_DIR = _user_data_dir
 
 
 def _setup_marker() -> Path:
@@ -8263,24 +8256,6 @@ def api_climb_workout(url: str = Query(...), warmup: int = Query(10)):
 # ═══════════════════════════════════════════════════════════════════════════════
 # DOWNLOAD APIs
 # ═══════════════════════════════════════════════════════════════════════════════
-
-def _safe_path(base: Path, *parts: str) -> Path | None:
-    """Resolve path and verify it's inside the base directory (prevent traversal + symlink escape)."""
-    try:
-        path = base.joinpath(*parts).resolve()
-        base_resolved = base.resolve()
-        # Use is_relative_to (Python 3.9+) for robust check
-        if hasattr(path, 'is_relative_to'):
-            if not path.is_relative_to(base_resolved):
-                return None
-        else:
-            # Fallback: string prefix with trailing separator
-            if not (str(path) + "/").startswith(str(base_resolved) + "/"):
-                return None
-        return path
-    except (ValueError, OSError):
-        return None
-
 
 def _capacity_cap_active(pm, force: bool = False) -> bool:
     """task #24: True when the measured-capacity short-rep cap should apply to a
@@ -18672,17 +18647,6 @@ def api_gc_status():
 # ride_storage.list_rides / get_ride read per-profile JSON rides from the
 # existing archive and are still used by /api/rides* for the post-pivot
 # history list.
-
-
-def _rides_fit_dir() -> Path:
-    """Directory for raw FIT imports — v3.0.0 AC2a: PER-PROFILE, delegated to
-    ride_storage._fit_rides_dir() so app.py and ride_storage.load_all_rides
-    can never disagree about where FITs live (the old global
-    ~/.domestique/rides made one profile's imports visible to all, and after
-    the per-profile migration an app-side global would make imports vanish
-    from load_all_rides entirely)."""
-    import ride_storage as _rs
-    return _rs._fit_rides_dir()
 
 
 def _resample_series_1hz(ts: list, values: list) -> list:

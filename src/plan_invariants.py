@@ -147,17 +147,26 @@ def _ride_tss(rides, lo, hi) -> float:
     return total
 
 
-def budget(week, rides=None) -> float:
-    """The week's budget, derived here rather than read off the planner.
+def budget(week, rides=None, today=None) -> float:
+    """What is left of the week's budget, derived here rather than read off the
+    planner.
 
     A stub week (shorter than seven days) carries a prorated target; the
     calendar week's gross is recovered from the span. With rides, what the
     athlete already rode in that calendar week comes off the gross, and the
     stub's own prorated share still caps what may be prescribed on top.
+    Without rides, what the plan put on the days already behind ``today`` is
+    taken as ridden -- refit, for one, is handed no rides, and grading its
+    Thursday-to-Sunday against the whole week's target called a correctly
+    sized remainder "under-delivered".
     """
     target = float(week.tss_target or 0)
     if rides is None:
-        return target
+        if today is None or today <= week.start:
+            return target
+        behind = sum(float(s.tss_estimate or 0) for s in week.sessions
+                     if _ridden(s) and s.day < today and not _is_race(s))
+        return max(0.0, target - behind)
     span = (week.end - week.start).days + 1
     gross = target * 7 / span if 0 < span < 7 else target
     monday = week.start - timedelta(days=week.start.weekday())
@@ -207,7 +216,7 @@ def check_weekly_volume(weeks, rides=None, today=None, tolerance=1.15) -> list[V
     """Prescribed TSS must not overshoot the week's budget."""
     out = []
     for w in _weeks_ahead(weeks, today):
-        got, ceil = _load(w, rides, today), budget(w, rides)
+        got, ceil = _load(w, rides, today), budget(w, rides, today)
         if (ceil > 0 and got > ceil * tolerance) or (ceil <= 0 and got > 30):
             out.append(Violation(
                 "weekly_volume", w.week_num,
@@ -233,7 +242,7 @@ def check_under_delivery(weeks, goal, rides=None, today=None) -> list[Violation]
         days = [first + timedelta(days=i) for i in range((w.end - first).days + 1)]
         cap = sum((_day_cap_h(d, goal) or 0) * 60 * EASY_TSS_PER_MIN
                   for d in days if _is_available(d, goal))
-        expected = min(budget(w, rides), cap)
+        expected = min(budget(w, rides, today), cap)
         got = sum(float(s.tss_estimate or 0) for s in w.sessions
                   if _pending(s) and s.day >= first)
         if expected >= 60 and got < 0.5 * expected:
@@ -303,6 +312,11 @@ def check_easy_slot_content(weeks) -> list[Violation]:
         for s in w.sessions:
             if not (_pending(s) and s.session_type in EASY_TYPES and s.zwo_file):
                 continue
+            # A race-week opener is a short easy ride carrying two or three
+            # race-pace touches the day before the race, by design (the taper's
+            # "short and sharp" last days, Mujika & Padilla 2003).
+            if getattr(s, "is_opener", False):
+                continue
             cc = content_class(s.zwo_file)
             if cc and cc not in EASY_CONTENT:
                 out.append(Violation("easy_slot_content", w.week_num,
@@ -316,7 +330,7 @@ def check_hard_share(weeks, rides=None, today=None, tolerance=1.10) -> list[Viol
     for w in _weeks_ahead(weeks, today):
         if str(getattr(w, "phase", "")).lower() == "taper":
             continue
-        ceil = budget(w, rides)
+        ceil = budget(w, rides, today)
         if ceil < 60:
             continue
         hard = _load(w, rides, today, hard_only=True)
@@ -328,10 +342,18 @@ def check_hard_share(weeks, rides=None, today=None, tolerance=1.10) -> list[Viol
     return out
 
 
-def check_stepback_lightest(weeks) -> list[Violation]:
-    """An unload week is lighter than the load weeks of its block."""
+def check_stepback_lightest(weeks, today=None) -> list[Violation]:
+    """An unload week is lighter than the load weeks of its block.
+
+    Issurin's 3:1 loading: the unload week exists to let the three before it
+    be absorbed, so it has to be the lightest of them. Weeks that began before
+    ``today`` are history -- half-ridden, half-dismissed -- and are compared
+    with nothing.
+    """
     out, block = [], []
     for w in weeks:
+        if today is not None and w.start < today:
+            continue
         full = (w.end - w.start).days >= 6
         load = sum(float(s.tss_estimate or 0) for s in w.sessions
                    if _ridden(s) and not _is_race(s))
@@ -357,7 +379,7 @@ def check_no_empty_training_week(weeks, goal, rides=None, today=None) -> list[Vi
         # opening stub of a Thursday plan for a Mon/Tue/Wed rider often is.
         ridable = any(_is_available(first + timedelta(days=i), goal)
                       for i in range((w.end - first).days + 1))
-        ceil = budget(w, rides)
+        ceil = budget(w, rides, today)
         if ridable and ceil >= 50 and not any(_ridden(s) and s.day >= first
                                               for s in w.sessions):
             out.append(Violation("empty_week", w.week_num,
@@ -374,7 +396,7 @@ ALL_CHECKS = (
     ("slot_file_coherence", lambda ws, g, r, t: check_slot_file_coherence(ws)),
     ("easy_slot_content", lambda ws, g, r, t: check_easy_slot_content(ws)),
     ("hard_share", lambda ws, g, r, t: check_hard_share(ws, r, t)),
-    ("stepback_lightest", lambda ws, g, r, t: check_stepback_lightest(ws)),
+    ("stepback_lightest", lambda ws, g, r, t: check_stepback_lightest(ws, t)),
     ("empty_week", lambda ws, g, r, t: check_no_empty_training_week(ws, g, r, t)),
 )
 

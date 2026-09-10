@@ -4446,7 +4446,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:11",
     "weekly_volume:1",
     "weekly_volume:2",
     "weekly_volume:3",
@@ -5137,7 +5136,7 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:11",
+    "hard_share:1",
     "weekly_volume:2",
     "weekly_volume:3",
     "weekly_volume:5",
@@ -5803,7 +5802,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:11",
     "weekly_volume:10",
     "weekly_volume:3",
     "weekly_volume:6",
@@ -6493,7 +6491,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:11",
     "weekly_volume:1",
     "weekly_volume:2",
     "weekly_volume:3",
@@ -7184,7 +7181,7 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:11",
+    "hard_share:1",
     "weekly_volume:2",
     "weekly_volume:3",
     "weekly_volume:5",
@@ -7850,7 +7847,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:11",
     "weekly_volume:10",
     "weekly_volume:3",
     "weekly_volume:6",
@@ -16411,9 +16407,7 @@
      ]
     ]
    ],
-   "inv": [
-    "under_delivery:1"
-   ]
+   "inv": []
   },
   "cont/mon-fri/3h/reforecast-tsb@3": {
    "fp": [
@@ -23335,7 +23329,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:13",
     "hard_share:5",
     "weekly_volume:2",
     "weekly_volume:3",
@@ -24132,7 +24125,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:13",
     "easy_slot_content:7",
     "easy_slot_content:7",
     "easy_slot_content:9",
@@ -25094,7 +25086,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "hard_share:5",
     "hard_share:9",
     "weekly_volume:2",
@@ -26025,7 +26016,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "weekly_volume:1",
     "weekly_volume:2",
     "weekly_volume:3",
@@ -26979,7 +26969,6 @@
    ],
    "inv": [
     "easy_slot_content:10",
-    "easy_slot_content:15",
     "stepback_lightest:8",
     "weekly_volume:6",
     "weekly_volume:7",
@@ -27932,7 +27921,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "hard_share:5",
     "hard_share:9",
     "weekly_volume:2",
@@ -28887,7 +28875,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "hard_share:5",
     "hard_share:9",
     "weekly_volume:5",
@@ -29817,7 +29804,6 @@
    ],
    "inv": [
     "easy_slot_content:12",
-    "easy_slot_content:15",
     "hard_share:10",
     "hard_share:12",
     "hard_share:13",
@@ -30936,7 +30922,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "weekly_volume:3",
     "weekly_volume:5",
     "weekly_volume:7"
@@ -31864,7 +31849,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "hard_share:1",
     "hard_share:5",
     "hard_share:6",
@@ -32821,7 +32805,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "easy_slot_content:7",
     "weekly_volume:11",
     "weekly_volume:5",
@@ -33776,7 +33759,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "weekly_volume:3",
     "weekly_volume:5",
     "weekly_volume:7"
@@ -34728,7 +34710,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "hard_share:1",
     "weekly_volume:1",
     "weekly_volume:3",
@@ -35682,7 +35663,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "hard_share:5",
     "weekly_volume:5",
     "weekly_volume:7"
@@ -36611,7 +36591,6 @@
    ],
    "inv": [
     "easy_slot_content:10",
-    "easy_slot_content:15",
     "hard_share:10",
     "weekly_volume:10",
     "weekly_volume:11",
@@ -37435,9 +37414,7 @@
      ]
     ]
    ],
-   "inv": [
-    "easy_slot_content:11"
-   ]
+   "inv": []
   },
   "blueprint/fixed_core/refit@3": {
    "fp": [
@@ -38120,9 +38097,7 @@
      ]
     ]
    ],
-   "inv": [
-    "easy_slot_content:11"
-   ]
+   "inv": []
   },
   "blueprint/fixed_core/regenerate@17": {
    "fp": [
@@ -38782,7 +38757,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:11",
     "weekly_volume:3"
    ]
   },
@@ -39467,9 +39441,7 @@
      ]
     ]
    ],
-   "inv": [
-    "easy_slot_content:11"
-   ]
+   "inv": []
   },
   "blueprint/template/refit@3": {
    "fp": [
@@ -40152,9 +40124,7 @@
      ]
     ]
    ],
-   "inv": [
-    "easy_slot_content:11"
-   ]
+   "inv": []
   },
   "blueprint/template/regenerate@17": {
    "fp": [
@@ -40814,7 +40784,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:11",
     "weekly_volume:3"
    ]
   },
@@ -43855,8 +43824,7 @@
     ]
    ],
    "inv": [
-    "hard_day_spacing:2",
-    "under_delivery:4"
+    "hard_day_spacing:2"
    ]
   },
   "cont/every-day/3h/refit@3": {
@@ -44128,6 +44096,7 @@
    ],
    "inv": [
     "hard_day_spacing:2",
+    "hard_share:1",
     "hard_share:2"
    ]
   },
@@ -49656,9 +49625,7 @@
      ]
     ]
    ],
-   "inv": [
-    "stepback_lightest:4"
-   ]
+   "inv": []
   },
   "cont/mon-fri/3h/regenerate@3": {
    "fp": [
@@ -56317,9 +56284,7 @@
      ]
     ]
    ],
-   "inv": [
-    "easy_slot_content:13"
-   ]
+   "inv": []
   },
   "ctl/target60/regenerate@17": {
    "fp": [
@@ -57111,7 +57076,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:13",
     "hard_share:9",
     "weekly_volume:3"
    ]
@@ -58061,9 +58025,7 @@
      ]
     ]
    ],
-   "inv": [
-    "easy_slot_content:15"
-   ]
+   "inv": []
   },
   "event/wkend3h/generate-thu": {
    "fp": [
@@ -58987,7 +58949,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "empty_week:1",
     "under_delivery:1"
    ]
@@ -59939,7 +59900,6 @@
    ],
    "inv": [
     "easy_slot_content:10",
-    "easy_slot_content:15",
     "stepback_lightest:8",
     "weekly_volume:6",
     "weekly_volume:7",
@@ -60892,7 +60852,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "hard_share:1"
    ]
   },
@@ -61842,7 +61801,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "hard_share:5",
     "weekly_volume:5"
    ]
@@ -62769,7 +62727,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "weekly_volume:3"
    ]
   },
@@ -63877,9 +63834,7 @@
      ]
     ]
    ],
-   "inv": [
-    "easy_slot_content:15"
-   ]
+   "inv": []
   },
   "event/wkend5h/generate-thu": {
    "fp": [
@@ -64803,7 +64758,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "empty_week:1",
     "under_delivery:1",
     "under_delivery:13"
@@ -65755,7 +65709,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "easy_slot_content:7",
     "weekly_volume:11",
     "weekly_volume:5",
@@ -66710,7 +66663,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "hard_share:1"
    ]
   },
@@ -67660,7 +67612,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "hard_share:1",
     "weekly_volume:1"
    ]
@@ -68611,7 +68562,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "weekly_volume:5"
    ]
   },
@@ -69537,7 +69487,6 @@
     ]
    ],
    "inv": [
-    "easy_slot_content:15",
     "weekly_volume:3"
    ]
   },

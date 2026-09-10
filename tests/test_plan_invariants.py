@@ -115,6 +115,19 @@ class TheBudgetIsDerivedNotRead(unittest.TestCase):
         starved.net_tss_target = 19
         self.assertIn("under_delivery", rules([starved], rides=rides(0, 2, 34), today=day(3)))
 
+    def test_without_rides_the_days_behind_count_as_ridden(self):
+        """Refit is handed no rides. Grading its Thursday-to-Sunday against the
+        whole week's target called a correctly sized remainder a starvation."""
+        fair = week([sess(0, tss=100), sess(2, tss=100), sess(3, tss=60), sess(4, tss=50)],
+                    target=336)                          # 110 of the 136 left
+        starved = week([sess(0, tss=100), sess(2, tss=100), sess(3, tss=20)], target=336)
+        self.assertNotIn("under_delivery", rules([fair], today=day(3)))
+        self.assertIn("under_delivery", rules([starved], today=day(3)))
+
+    def test_an_opener_is_not_an_easy_slot_breach(self):
+        wk = week([sess(4, f=HARD_FILE, is_opener=True), sess(5, t="race", tss=250, is_race=True)])
+        self.assertNotIn("easy_slot_content", rules([wk]))
+
     def test_a_race_week_is_exempt_from_under_delivery(self):
         wk = week([sess(5, t="race", tss=250, is_race=True)], target=200)
         self.assertNotIn("under_delivery", rules([wk]))

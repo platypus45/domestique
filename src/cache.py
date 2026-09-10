@@ -19,16 +19,40 @@ from obs import error_codes, _log_error
 _cache = {}
 _cache_ts = {}
 
+
+def _defensive_copy(value):
+    """Return a shallow copy, so a caller cannot mutate what the cache serves.
+
+    `cached()` used to hand every caller the SAME object. One of them mutates
+    it -- app.py's readiness endpoint writes severity/source/severity_reasons
+    into the dict it was handed -- so those keys were baked into the cache for
+    every subsequent reader. More generally it meant clear_cache() did not
+    really invalidate: callers went on holding, and mutating, what had been
+    the cache's object.
+
+    Shallow, not deep, and deliberately so. The observed failure is a
+    top-level key assignment; nothing mutates nested structures. Deep-copying
+    would prevent a bug that does not exist, at the cost of copying a 17 MB
+    ride archive on every one of the twenty-two `all_rides` reads per request.
+    A caller that needs to mutate something nested copies it itself.
+    """
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, list):
+        return list(value)
+    return value
+
+
 def cached(key, fn, ttl=300):
     now = time.time()
     if key in _cache and now - _cache_ts.get(key, 0) < ttl:
-        return _cache[key]
+        return _defensive_copy(_cache[key])
     try:
         result = fn()
     except Exception as e:
         # If API call fails (no internet, DNS error), return stale cache.
         if key in _cache:
-            return _cache[key]
+            return _defensive_copy(_cache[key])
         # v1.6.0 — log under E_CACHE_<key>-or-GENERIC and stick the empty
         # result for only 30s so transient errors don't sit in cache for
         # the full ttl. Trick: backdate _cache_ts to (now - (ttl - 30))
@@ -48,7 +72,7 @@ def cached(key, fn, ttl=300):
         return {}
     _cache[key] = result
     _cache_ts[key] = now
-    return result
+    return _defensive_copy(result)
 
 _extra_clearers: list = []
 

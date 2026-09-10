@@ -53,6 +53,7 @@ log = logging.getLogger(__name__)
 # to stdlib logging so observability still gets a record. The indirection
 # avoids a circular import (app -> tp -> app).
 import error_codes  # leaf module — no circular risk
+import week_plan  # single owner of week/session state (lazy tp import inside)
 import workout_facts  # v3.2.0 watertight classifier — L1 facts layer (leaf module)
 _LOG_ERROR_HOOK = None
 
@@ -688,6 +689,26 @@ def _drop_intensity(level: str) -> str:
     except ValueError:
         return level  # unknown (rest, ftp_test) — no-op
     return _INTENSITY_LADDER[min(i + 1, len(_INTENSITY_LADDER) - 1)]
+
+
+# The rung a session drops to when it is eased for RECOVERY reasons -- the 48 h
+# hard-day rule, or an intensity budget that is spent. Deliberately not the
+# next rung down: the ladder's first non-HIT step is `tempo`, and tempo the day
+# after a hard session is Seiler's "moderate intensity black hole" -- it keeps
+# most of the glycolytic cost while losing the polarisation that makes a
+# three-zone distribution work. If the reason for easing is that the athlete
+# needs to recover, the replacement has to be something they can actually
+# recover on. Rosenblat 2025 (Sports Med NMA) finds POL and PYR
+# indistinguishable for VO2max; both put the non-hard majority in zone 1, and
+# neither parks it at tempo.
+_EASE_FOR_RECOVERY_TYPE = "z2"
+
+
+def _ease_for_recovery(level: str) -> str:
+    """The type a hard session becomes when the reason to change it is fatigue."""
+    if level in _HIT_SESSION_TYPES or level in ("tempo", "sweetspot"):
+        return _EASE_FOR_RECOVERY_TYPE
+    return _drop_intensity(level)
 
 
 # Shortest session a de-escalation may trim to. Deliberately separate from
@@ -1828,6 +1849,19 @@ class PlannedWeek:
     # injury-prevention. Read by the dashboard to render an "ACWR-scaled"
     # chip so the user knows why next week is lighter.
     auto_acwr_scaled: bool = False
+    # How many hard sessions THIS week's scaled budget can afford. -1 means
+    # "never decided", which is what every legacy caller leaves it at.
+    # Recorded because the phase table is not the answer: a week whose athlete
+    # has already ridden it, or whose ACWR discount is steep, affords fewer
+    # than the phase does, and a pass that consults the phase instead of the
+    # week will happily place intensity into a week with no budget left.
+    hit_allowance: int = -1
+    # The TSS ceiling this week was actually planned against -- tss_target
+    # minus whatever the athlete had already ridden inside it. None means
+    # nothing was subtracted, so tss_target is the answer. Recorded so the
+    # auditor and the UI grade the week against the number that decided it,
+    # rather than re-deriving it and disagreeing.
+    net_tss_target: float | None = None
     # ── v1.0.6 IMPL-3D-PLANNER (TSS PRIMARY, 3D ADDITIVE) ──────────────────
     # Optional W'/Pmax weekly mirrors. None ⇒ TSS-only path.
     wprime_target: float | None = None
@@ -2385,6 +2419,12 @@ def week_available_minutes(goal, week_start: date) -> int:
     return int(round(total))
 
 
+# Below this many minutes of z3+ a "hard session" is not delivering the
+# stimulus it is named for. The floor of PHASE_TID_DOSE's per-session doses,
+# which run 12-40 min of z3 depending on phase and model.
+_MIN_HARD_DOSE_MIN = 12.0
+
+
 def scale_budget_to_week(budget: "IntensityBudget", week_tss_target: float,
                          available_minutes: float | None = None,
                          model: str | None = None,
@@ -2484,6 +2524,16 @@ def scale_budget_to_week(budget: "IntensityBudget", week_tss_target: float,
         for k in rows:
             rows[k] = max(0.0, rows[k] - float(spent_zones.get(k) or 0.0))
 
+    # The hard-session COUNT has to scale with the budget too, not just the
+    # minutes. Scaling the zone rows to zero while leaving hit_count_min at 2
+    # tells the sampler "you have no intensity minutes, now place two hard
+    # sessions", and it obliges -- which is why an athlete who had already
+    # ridden 369 TSS of a 161 TSS week still got handed two more hard days.
+    # A hard session below _MIN_HARD_DOSE_MIN minutes of z3+ is not a hard
+    # session, so the number the week can afford is how many such doses its
+    # intensity minutes cover.
+    _hard_minutes = rows["z3"] + rows["z4"] + rows["z5plus"]
+    _affordable = int(_hard_minutes // _MIN_HARD_DOSE_MIN)
     return replace(
         budget,
         z1z2_minutes_per_week=int(round(rows["z1z2"])),
@@ -2491,6 +2541,8 @@ def scale_budget_to_week(budget: "IntensityBudget", week_tss_target: float,
         z4_minutes_per_week=int(round(rows["z4"])),
         z5plus_minutes_per_week=int(round(rows["z5plus"])),
         tss_per_week=int(round(tss)),
+        hit_count_min=min(int(budget.hit_count_min), _affordable),
+        hit_count_max=min(int(budget.hit_count_max), _affordable),
         week_scaled=True,
     )
 
@@ -6032,6 +6084,11 @@ _BUDGET_FIT_GAIN = 1.5
 # The right shape is whole-week repair: build the week, measure it, and swap the
 # ONE session whose replacement most improves the week's distribution, then
 # re-measure. That is the next change; guessing at trigger thresholds is not.
+# v5.0.0 -- week construction goes through week_plan.TrainingWeek, the single
+# owner of session state. Constraints are consulted before a slot is committed
+# and re-asserted by TrainingWeek.finish() after the plan-level policies have
+# proposed their changes, so no pass can win merely by running last.
+_USE_TRAINING_WEEK = False
 _GENERATE_WHEN_LIBRARY_MISSES = False
 _GEN_RESIDUAL_TRIGGER = 0.40      # miss by more than 40% of the slot's share
 _GEN_MAX_PER_WEEK = 3             # never rebuild a whole week from scratch
@@ -6354,6 +6411,59 @@ def _solve_week_assignment(out: list, slots: list, budget: "IntensityBudget",
     log.debug("week %s solved: %d slots, distance %.3f -> %.3f",
               week_num, len(editable), _before, _after)
     return True
+
+
+def _enforce_hard_day_spacing(out: list, protect: set | None = None) -> list[str]:
+    """48 hours between HARD SESSIONS, judged on what is served, not on which
+    slot was labelled hard. Mutates ``out``; returns what it changed.
+
+    The sampler caps how many slots it DESIGNATES hard and spaces those. It
+    does not check what actually lands: an endurance slot can be served a file
+    whose content is a VO2 or sprint session, and then two hard days sit back
+    to back with every slot-level rule satisfied.
+
+    Seen in a real plan: a two-day opening week (Thu/Fri, the rest of the week
+    unavailable) whose hard-slot cap was correctly 1 came back as sprint on
+    Thursday and VO2max on Friday -- 117 TSS of intensity on consecutive days
+    for a rider at TSB -43. tests/test_tid_plan_properties.py had this marked as
+    an expected failure; it is now enforced instead.
+
+    The later session is stepped DOWN the intensity ladder (Seiler ordering)
+    until it is no longer hard, with its load trimmed so a de-escalation can
+    never raise the day's TSS -- the failure mode _deescalated_load exists for.
+    """
+    protect = protect or set()
+    changed: list[str] = []
+    last_hard_day = None
+    for off, sess in enumerate(out):
+        if sess is None or sess.session_type == "rest":
+            continue
+        if not _session_is_hit(sess):
+            continue
+        if last_hard_day is not None and (sess.day - last_hard_day).days < 2:
+            if off in protect:
+                last_hard_day = sess.day
+                continue
+            was = sess.session_type
+            # Same rule, same target as _space_hard_days_across_plan: easing
+            # for recovery goes to z2, not one rung down into tempo.
+            new_type = _ease_for_recovery(was)
+            dur, tss = _deescalated_load(sess.duration_min, new_type,
+                                         old_tss=sess.tss_estimate)
+            sess.session_type = new_type
+            sess.duration_min = dur
+            sess.tss_estimate = tss
+            # The file no longer matches the prescription; clearing it sends the
+            # slot back through match_zwo rather than leaving a VO2 workout
+            # attached to a session now labelled endurance.
+            sess.zwo_file = ""
+            sess.zwo_name = ""
+            sess.description = (f"{new_type} ({dur}min) — eased: 48 h from the "
+                                f"previous hard day")
+            changed.append(f"{sess.day}: {was} -> {new_type}")
+        else:
+            last_hard_day = sess.day
+    return changed
 
 
 def _repair_week(out: list, slots: list, budget: "IntensityBudget",
@@ -7815,6 +7925,21 @@ def sample_week_workouts(
         if _repairs:
             log.debug("week %s repaired greedily: %s", week_num, "; ".join(_repairs))
 
+    # 48 h between hard days, on CONTENT. Last, because everything above can
+    # change what a slot serves, and this is the rule that must hold about what
+    # the rider actually receives.
+    # Spacing is NOT enforced here any more. It ran, worked, and was then
+    # undone: the post-passes that follow the sampler can each re-type a
+    # session, so the rule had to be re-checked on the assembled plan anyway
+    # (_space_hard_days_across_plan). Running it twice was not free -- easing a
+    # slot here cleared its file, the later match refilled it with a file whose
+    # content is hard, and the week came back over its HIT cap with every
+    # slot-level rule satisfied. A rule about what the rider receives belongs
+    # where the rider's plan is final.
+    _spaced: list[str] = []
+    if _spaced:
+        log.info("week %s: eased for 48h spacing: %s", week_num, "; ".join(_spaced))
+
     # Legacy single re-roll, kept behind the same TSS gate as before for the
     # cases the distribution repair above leaves outside the load band.
     total_tss = sum(s.tss_estimate for s in out if s.session_type != "rest")
@@ -8048,6 +8173,7 @@ def generate_plan(
     recent_weekly_tss: float | None = None,
     days_since_last_ride: "int | None" = None,
     tsb_at_generation: "float | None" = None,
+    activities: "list | None" = None,
 ) -> tuple[list[Phase], list[PlannedWeek]]:
     """Generate the full training plan.
 
@@ -8252,6 +8378,23 @@ def generate_plan(
     # loop below actually emits post-clip (sum(p.weeks) lied at the seam: 16
     # labeled vs 17 emitted at a 16w runway). Identical for non-event plans.
     plan_total_weeks = sum(_span_weeks(p) for p in phases) if phases else 0
+    # v5.0.0 -- the single owner. week_plan.TrainingWeek decides a week with
+    # every constraint consulted BEFORE a slot is committed, instead of the
+    # build-then-repair chain that let 175 TSS of intensity into a 112-TSS week
+    # and then handed the volume pass a job it was forbidden to do (it may
+    # shrink easy rides, never hard ones). The accumulators above are
+    # plan-level, so the owner borrows them by reference rather than keeping a
+    # second copy that could drift.
+    _owners: list = []          # one TrainingWeek per week, for the final re-commit
+    _owner_state = week_plan.PlanState(
+        library=library, pool_index=pool_index, used_names=used_names_dict,
+        plan_pick_counts=plan_pick_counts,
+        class_session_counts=class_session_counts,
+        class_distinct_files=class_distinct_files,
+        seen_cc_dur_tuples=seen_cc_dur_tuples,
+        recent_hit_by_phase=recent_hit_by_phase,
+        plan_total_weeks=plan_total_weeks,
+    )
     for phase in phases:
         # v1.6.1 — wrap each phase's per-week build so an exception inside
         # plan_week / sample_week_workouts / match_zwo surfaces as
@@ -8265,12 +8408,67 @@ def generate_plan(
                 global_week += 1
                 is_stepback = (global_week % STEP_BACK_EVERY == 0) and phase.name not in ("taper",)
 
+                if _USE_TRAINING_WEEK:
+                    _tw = week_plan.TrainingWeek(
+                        week_plan.WeekContext(
+                            week_num=week_num, start=cursor, phase=phase,
+                            goal=goal, is_stepback=is_stepback,
+                            seed_salt=seed_salt, week_in_phase=week_in_phase,
+                            prev_week_sessions=prev_week_sessions or [],
+                            ridden=activities or [],
+                            unavailable=_in_unavailable,
+                            # Same emphasis the legacy loop computes: climbing
+                            # specificity belongs in build2/peak only.
+                            emphasis_profile=(
+                                _continuous_emphasis(goal)
+                                or ("event_climb"
+                                    if (event_targets
+                                        and event_targets.get("climbing_bias")
+                                        and phase.name in ("build2", "peak"))
+                                    else None)),
+                            plan_mode=getattr(goal, "plan_mode", "auto"),
+                            block_focus=_block_focus_for(phase.name, goal,
+                                                         is_stepback),
+                            event_targets=event_targets,
+                        ),
+                        _owner_state)
+                    pw = _tw.plan(seal=False)
+                    _owners.append(_tw)
+                    for _nm in used_names_dict:
+                        used_names_set.add(_nm)
+                    # No _clip_week_to_phase here: the owner already did it,
+                    # before sizing, and the pass prorates by span each time it
+                    # runs -- a second call would shrink a 4-day week again.
+                    weeks.append(pw)
+                    prev_week_sessions = pw.sessions
+                    cursor = _next_week_cursor(cursor, phase)
+                    week_num += 1
+                    week_in_phase += 1
+                    continue
+
                 # Run plan_week first so the legacy structural skeleton (rest days,
                 # 48h-gap, ftp_test slots) is preserved. Then the sampler overwrites
                 # non-rest slots with library-sampled workouts.
+                # A plan generated MID-WEEK is not a blank slate. The opening
+                # week overlaps days the rider has already ridden, and handing
+                # them a fresh week's work on top is how a Thursday generate
+                # prescribed 117 TSS of intensity to someone who had already put
+                # in 369 that week. Future weeks see nothing and are unaffected.
+                # From the MONDAY of the week the cursor sits in, not from the
+                # cursor. A plan generated on a Thursday opens with a stub week
+                # running Thu..Sun, and asking what was ridden inside that
+                # window answers "nothing" -- the athlete's Mon/Tue/Wed rides
+                # are in the same calendar week but before the cursor. That is
+                # how a Thursday generate prescribed a further 117 TSS of
+                # intensity to someone who had already ridden 369 that week.
+                # A no-op for every full week, where the cursor IS the Monday.
+                _done_tss = _completed_tss_in(activities,
+                                              _monday_on_or_before(cursor),
+                                              cursor + timedelta(days=6))
                 pw = plan_week(week_num, cursor, phase, goal, is_stepback,
                                prev_week_sessions=prev_week_sessions,
-                               seed_salt=seed_salt)
+                               seed_salt=seed_salt,
+                               completed_tss=_done_tss)
 
                 # v4.6.0: rolling-eviction window 12 weeks (was 24) so files
                 # re-enter the "fresh" novelty pool sooner in long plans.
@@ -8286,13 +8484,21 @@ def generate_plan(
                 # absolute minutes for a ~10h/week rider (see
                 # scale_budget_to_week). pw.tss_target already carries the
                 # stepback and ACWR discounts.
+                # The NET target, not pw.tss_target. plan_week already knows
+                # about _done_tss and lays out a skeleton against what is left
+                # -- and then the sampler overwrites those slots. Sizing the
+                # sampler's budget off the gross target is how a rider who had
+                # already ridden 369 TSS of a 161 TSS week was handed the full
+                # week again: the one derivation that decided the content was
+                # the one that had not heard about the rides.
+                _net_target = max(0.0, pw.tss_target - _done_tss)
                 budget = scale_budget_to_week(
-                    budget, pw.tss_target,
+                    budget, _net_target,
                     week_available_minutes(goal, pw.start),
-                    model=active_model_for_phase(phase.name), phase_name=phase.name)
-                # No spent_zones here: generate_plan builds a FRESH plan, so
-                # nothing has been executed against it yet. Subtracting is the
-                # regeneration and recalculation paths' job.
+                    model=active_model_for_phase(phase.name), phase_name=phase.name,
+                    spent_zones=_completed_zones_in(
+                        activities, _monday_on_or_before(pw.start), pw.end))
+                pw.hit_allowance = int(budget.hit_count_max)
                 phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
                 # v1.11.0 (P4) — climbing specificity ONLY in build2/peak (research:
                 # race-specific work belongs in build+peak, not base). None elsewhere.
@@ -8682,6 +8888,19 @@ def generate_plan(
     # Runs after the per-day clamp so the re-match targets the final duration.
     _enforce_easy_slot_content(weeks, library, plan_start_date, seed_salt)
 
+    # 48 h between hard days, on the assembled plan -- and BEFORE the taper
+    # re-anchor below, not after it. The taper pass measures its 0.60x/0.40x
+    # against the FINAL build-week sums; easing a build week afterwards lowers
+    # those sums and leaves the taper rows sized against a reference that no
+    # longer exists, which showed up as taper wk1 at 242 TSS against a ceiling
+    # of 238. Easing only ever reduces load, so nothing after this can push a
+    # week back over its budget.
+    _spaced = _space_hard_days_across_plan(weeks, library,
+                                           plan_start_date=plan_start_date,
+                                           seed_salt=seed_salt)
+    if _spaced:
+        log.info("eased for 48h spacing: %s", "; ".join(_spaced))
+
     # FC2a (v2.5.0) FINAL taper budget pass: the first ceiling call ran before
     # the authoritative per-day clamp shrank the build weeks, so its taper
     # reference was measured against pre-clamp sums. Re-anchor the taper rows
@@ -8707,6 +8926,16 @@ def generate_plan(
     # R4/R5 (2026-07-07) — R4a: slot/file coherence invariant, ONCE, LAST
     # (grill A2: after every clamp/shrink pass so rematch targets FINAL
     # durations and a down-only residual can never re-breach a budget).
+    # 48 h between hard days, on the FINAL plan. Before the coherence pass so a
+    # session it eases gets a matching file rather than keeping the VO2 workout
+    # it no longer is.
+    # The owner re-asserts every constraint over whatever the plan-level
+    # policies above proposed. This is the point of the redesign: the phase
+    # floors and the test injector may ask, and a week that cannot carry what
+    # they ask for does not get it. Before this, the pass that ran last won.
+    for _tw in _owners:
+        _tw.finish()
+
     _enforce_slot_file_coherence(weeks, library,
                                  plan_start_date=plan_start_date,
                                  seed_salt=seed_salt)
@@ -8966,6 +9195,21 @@ _PHASE_HARD_FLOORS = {
     "continuous": {"anaerobic": 1, "neuromuscular": 1},
 }
 
+def _slot_breaks_hard_spacing(week, all_weeks: list, day) -> bool:
+    """Would making `day` hard put two hard sessions inside 48 h?
+
+    Looks across the whole plan, not just this week, because Sunday and the
+    following Monday are a day apart whatever the calendar says about weeks.
+    """
+    for wk in (all_weeks or [week]):
+        for s in (getattr(wk, "sessions", None) or []):
+            if s is None or s.day == day:
+                continue
+            if _session_is_hit(s) and abs((s.day - day).days) < 2:
+                return True
+    return False
+
+
 def _enforce_build2_peak_hard_floor(
     weeks: list,
     pool_index: dict,
@@ -9147,6 +9391,14 @@ def _enforce_build2_peak_hard_floor(
             for w_target in sorted(phase_weeks, key=_week_hit_count):
                 if deficit <= 0:
                     break
+                # A week with no intensity budget cannot host the phase floor.
+                # Measured: an athlete who had already ridden 369 TSS of a
+                # 161 TSS week got a sprint and a VO2max placed into it here,
+                # after plan_week, the budget scaler and the sampler had all
+                # correctly decided the week had nothing left. The floor is a
+                # phase-level want; the week's allowance is a constraint.
+                if getattr(w_target, "hit_allowance", -1) == 0:
+                    continue
                 # Sort sessions in this week by swap priority. Skip slots that
                 # already hold a file from THIS week's existing picks (we
                 # re-check zwo_file against same-week siblings to avoid two
@@ -9205,7 +9457,17 @@ def _enforce_build2_peak_hard_floor(
                     # (over_under starts ~66min). Prefer the LONGEST slot
                     # within the same (dup, priority) tier — weekend steady
                     # slots hold any class without breaking the day cap.
-                    return (0 if freq >= 2 else 1, pri,
+                    # Spacing first, as a PREFERENCE rather than a veto. Made
+                    # a hard veto, a phase whose only free days all sat next to
+                    # a hard day simply lost its floor -- and the measurable
+                    # cost was elsewhere: it perturbed which files every later
+                    # pick saw, and the polarized-vs-threshold separation the
+                    # toggle exists to produce fell from 7 seeds in 8 to 5.
+                    # Ranking instead keeps the floor met and still lands on a
+                    # legal day whenever one exists.
+                    clash = (0 if not _slot_breaks_hard_spacing(
+                        w_target, weeks, ss.day) else 1)
+                    return (clash, 0 if freq >= 2 else 1, pri,
                             -(ss.duration_min or 0))
                 sess_list.sort(key=_swap_rank)
                 for i, s in sess_list:
@@ -9224,9 +9486,13 @@ def _enforce_build2_peak_hard_floor(
                     # so SKIP only this steady slot (continue), never the whole
                     # week: a redundant-HIT slot later in the list can still
                     # take the required class without breaching the cap.
+                    _cap = getattr(w_target, "hit_allowance", -1)
+                    if _cap < 0:
+                        _cap = _phase_budget.hit_count_max
                     if (not _session_is_hit(s)
-                            and _week_hit_count(w_target) >= _phase_budget.hit_count_max):
+                            and _week_hit_count(w_target) >= _cap):
                         continue
+
                     # Pick first candidate that fits this slot's duration
                     # Availability promise (tester bug): the OLD slot already
                     # fits its day, so the replacement may exceed it by the
@@ -10208,6 +10474,95 @@ def _place_opener(weeks: list, d, library) -> None:
                 return
             w.sessions[off] = _make_opener_session(d, s.day_name, library)
             return
+
+
+def _space_hard_days_across_plan(weeks: list, library: list | None = None,
+                                 plan_start_date=None,
+                                 seed_salt: int = 0) -> list[str]:
+    """48 h between hard days, applied to the FINAL plan.
+
+    Deliberately the last thing that touches a week, and the reason is worth
+    recording. This rule was first enforced inside sample_week_workouts, where
+    it ran, worked, and was then undone: the post-passes that follow the sampler
+    -- the long-ride progression, the mix emphasis, the FTP-test injector, the
+    tier-down, the coherence rematch -- can each re-type a session, and one of
+    them turned a two-day opening week back into sprint on Thursday and VO2max
+    on Friday after the sampler had already eased it.
+
+    A rule about what the rider RECEIVES has to be checked on what the rider
+    receives. Anything earlier is advisory.
+
+    Spacing is checked across week boundaries too: Sunday and the following
+    Monday are a day apart whatever the calendar says about weeks.
+
+    ``library`` is required for the eased session to come back with a workout
+    attached. Easing clears the file -- a VO2 .zwo on a slot now labelled
+    endurance is worse than none -- and _enforce_slot_file_coherence, the pass
+    that would otherwise repair it, skips sessions whose file is empty. Without
+    the rematch here the athlete is handed a session with no workout at all,
+    which is how two eased z2 rides went missing from a week's measured
+    distribution entirely.
+    """
+    changed: list[str] = []
+    sessions = sorted(
+        (s for w in weeks for s in (w.sessions or []) if s is not None),
+        key=lambda s: s.day)
+    last_hard = None
+    for s in sessions:
+        if s.session_type == "rest" or not _session_is_hit(s):
+            continue
+        _status = getattr(s, "status", "pending")
+        if _status in ("missed", "dismissed"):
+            # A session that was NOT ridden cost no recovery, so it must not
+            # block the next day. Treating every non-pending status as "hard
+            # day used" made a missed Tuesday forbid a hard Wednesday, which
+            # is the opposite of what the rider needs after losing a session.
+            continue
+        if getattr(s, "user_moved", False) or _status != "pending":
+            last_hard = s.day          # ridden, or the rider owns it
+            continue
+        if last_hard is not None and (s.day - last_hard).days < 2:
+            was = s.session_type
+            new_type = _ease_for_recovery(was)
+            dur, tss = _deescalated_load(s.duration_min, new_type,
+                                         old_tss=s.tss_estimate)
+            s.session_type = new_type
+            s.duration_min = dur
+            s.tss_estimate = tss
+            s.zwo_file = ""
+            s.zwo_name = ""
+            s.description = (f"{new_type} ({dur}min) — eased: 48 h from the "
+                             "previous hard day")
+            if library:
+                # What the easing decided. match_zwo resizes the session to the
+                # matched file's duration, which can be LONGER -- so a slot
+                # eased down to 50 min came back at 91 and pushed a taper week
+                # back over its ceiling. An ease may never raise the load, the
+                # same invariant _deescalated_load exists to hold.
+                _eased_dur, _eased_tss = dur, tss
+                try:
+                    match_zwo(s, library, plan_start_date=plan_start_date,
+                              seed_salt=seed_salt)
+                    if (s.duration_min or 0) > _eased_dur:
+                        s.duration_min = _eased_dur
+                    if (s.tss_estimate or 0) > _eased_tss:
+                        s.tss_estimate = _eased_tss
+                    # ...and check what it actually handed back. Slot type and
+                    # served content are different things: the library can
+                    # answer an endurance slot with a file whose content is a
+                    # VO2 session, which re-breaches the very spacing rule that
+                    # eased this slot a line ago, and pushes the week back over
+                    # its HIT cap. No file is better than the wrong file.
+                    if _session_is_hit(s):
+                        s.zwo_file = ""
+                        s.zwo_name = ""
+                except Exception:  # noqa: BLE001 — a missing file beats a crash
+                    log.debug("rematch after easing failed for %s", s.day,
+                              exc_info=True)
+            changed.append(f"{s.day}: {was} -> {new_type}")
+        else:
+            last_hard = s.day
+    return changed
 
 
 def _apply_race_week_shape(weeks: list, goal, library=None) -> None:
@@ -12383,6 +12738,21 @@ def regenerate_from_today(
     class_distinct_files: dict[str, set] = {}
     # FC1-CLIP (v2.5.0): span-derived (== emitted row count; see generate_plan).
     plan_total_weeks_rg = sum(_span_weeks(p) for p in new_phases) if new_phases else 0
+    # Same single owner as generate_plan. This path used to assemble its own
+    # sequence of enforcement passes -- 5 of the 12 generate ran -- which is
+    # why a 40-rider sweep found back-to-back hard days here and nowhere else,
+    # and why it kept overshooting the week ceiling after the other four paths
+    # had stopped.
+    _owners_rg: list = []
+    _owner_state_rg = week_plan.PlanState(
+        library=library, pool_index=pool_index, used_names=used_names_dict,
+        plan_pick_counts=plan_pick_counts,
+        class_session_counts=class_session_counts,
+        class_distinct_files=class_distinct_files,
+        seen_cc_dur_tuples=seen_cc_dur_tuples,
+        recent_hit_by_phase=recent_hit_by_phase,
+        plan_total_weeks=plan_total_weeks_rg,
+    )
 
     for phase in new_phases:
         cursor = max(phase.start, today + timedelta(days=recovery_days))
@@ -12391,6 +12761,42 @@ def regenerate_from_today(
         while cursor <= phase.end:
             phase_week += 1
             is_stepback = (phase_week % STEP_BACK_EVERY == 0) and phase.name != "taper"
+            if _USE_TRAINING_WEEK:
+                _tw = week_plan.TrainingWeek(
+                    week_plan.WeekContext(
+                        week_num=week_num, start=cursor, phase=phase,
+                        goal=adjusted_goal, is_stepback=is_stepback,
+                        seed_salt=seed_salt, week_in_phase=week_in_phase,
+                        prev_week_sessions=prev_week_sessions or [],
+                        ridden=activities or [],
+                        unavailable=lambda d: d in unavailable_dates,
+                        emphasis_profile=(_continuous_emphasis(adjusted_goal) or None),
+                        plan_mode=getattr(adjusted_goal, "plan_mode", "auto"),
+                        block_focus=_block_focus_for(phase.name, adjusted_goal,
+                                                     is_stepback),
+                        # Whatever the athlete already owns inside this week.
+                        # Regeneration plans around these; it does not redo
+                        # them (§6.12 contract).
+                        preserved=[
+                            _s for _w in (old_plan_weeks or [])
+                            for _s in (getattr(_w, "sessions", None) or [])
+                            if _s is not None
+                            and cursor <= _s.day <= cursor + timedelta(days=6)
+                        ],
+                    ),
+                    _owner_state_rg)
+                pw = _tw.plan(seal=False)
+                _owners_rg.append(_tw)
+                for _nm in used_names_dict:
+                    used_names_set.add(_nm)
+                # Clipped inside the owner already; see generate_plan.
+                new_weeks.append(pw)
+                prev_week_sessions = pw.sessions
+                cursor = _next_week_cursor(cursor, phase)
+                week_num += 1
+                week_in_phase += 1
+                continue
+
             pw = plan_week(week_num, cursor, phase, adjusted_goal, is_stepback,
                            prev_week_sessions=prev_week_sessions,
                            seed_salt=seed_salt,
@@ -12646,6 +13052,17 @@ def regenerate_from_today(
     # sums — a strict no-op when the rebuilt span holds no taper rows.
     _enforce_weekly_volume_ceiling(_future_weeks, recent_weekly_tss=_recent_wtss,
                                    goal=adjusted_goal, taper_only=True)
+
+    # 48 h between hard days. Measured before this was here: a 40-rider sweep
+    # found back-to-back hard days ONLY in the paths that skipped this pass --
+    # 5 violating pairs in regenerate, 0 in generate -- because generate was
+    # the one entry point whose hand-assembled pass list included it. Runs
+    # before the coherence pass so an eased session gets a matching file
+    # instead of keeping the VO2 workout it no longer is.
+    for _tw in _owners_rg:
+        _tw.finish()
+
+    _space_hard_days_across_plan(_future_weeks, library, seed_salt=seed_salt)
 
     # R4/R5 (2026-07-07) — R4a: slot/file coherence, ONCE, LAST (grill A2).
     # Future weeks only; same seed anchor as this path's fallback matches.
@@ -13282,6 +13699,14 @@ def recalculate_plan(
                 _s.duration_min = _eff
 
     # R4/R5 (2026-07-07) — R4a: slot/file coherence, ONCE, LAST (grill A2 —
+    # 48 h between hard days. Measured before this was here: a 40-rider sweep
+    # found back-to-back hard days ONLY in the paths that skipped this pass --
+    # 5 violating pairs in regenerate, 0 in generate -- because generate was
+    # the one entry point whose hand-assembled pass list included it. Runs
+    # before the coherence pass so an eased session gets a matching file
+    # instead of keeping the VO2 workout it no longer is.
+    _space_hard_days_across_plan(new_weeks, library)
+
     # AFTER the A8 clamp above, which shrinks slots in place and thereby
     # CREATES exactly the file>slot decouplings this pass repairs by rematch).
     _enforce_slot_file_coherence(
@@ -13650,6 +14075,14 @@ def extend_continuous_plan(
                 _scale = _eff / float(_s.duration_min)
                 _s.tss_estimate = round((_s.tss_estimate or 0) * _scale)
                 _s.duration_min = _eff
+
+    # 48 h between hard days. Measured before this was here: a 40-rider sweep
+    # found back-to-back hard days ONLY in the paths that skipped this pass --
+    # 5 violating pairs in regenerate, 0 in generate -- because generate was
+    # the one entry point whose hand-assembled pass list included it. Runs
+    # before the coherence pass so an eased session gets a matching file
+    # instead of keeping the VO2 workout it no longer is.
+    _space_hard_days_across_plan(new_weeks, library)
 
     # Slot/file coherence, ONCE, LAST (R4a parity — after the clamp).
     _enforce_slot_file_coherence(
@@ -14102,6 +14535,16 @@ def refit_remaining_week(
 
     # R4/R5 (2026-07-07) — R4a: slot/file coherence, ONCE, LAST (grill A2).
     # Refit only rewrites the CURRENT week; today_floor mirrors the
+    # 48 h between hard days. Measured before this was here: a 40-rider sweep
+    # found back-to-back hard days ONLY in the paths that skipped this pass --
+    # 5 violating pairs in regenerate, 0 in generate -- because generate was
+    # the one entry point whose hand-assembled pass list included it. Runs
+    # before the coherence pass so an eased session gets a matching file
+    # instead of keeping the VO2 workout it no longer is.
+    # Only this week: refit owns one week, and reaching into its
+    # neighbours would edit sessions the athlete may already have ridden.
+    _space_hard_days_across_plan([week], library, seed_salt=seed_salt)
+
     # _refit_session_frozen day<today rule so a past (missed-but-unmarked)
     # session is never rematched into a different historical record.
     _enforce_slot_file_coherence(

@@ -120,8 +120,16 @@ class TestBlockConcentration(unittest.TestCase):
                 self.assertEqual(
                     cc[focus], max(cc.values()),
                     f"seed{seed} {pn}: focus {focus} not the dominant HIT class: {dict(cc)}")
+                # 0.45 was the pinned measurement before 48 h hard-day
+                # spacing became a placement constraint on the phase-floor
+                # pass. Re-measured at 0.40 (seed42 build2): concentrating a
+                # block's focus class now competes with keeping hard days
+                # apart, and spacing wins. Still well above the ~0.25 an
+                # unconcentrated week would show, so the test still detects a
+                # block toggle that has stopped concentrating at all -- which
+                # is what it is for.
                 self.assertGreaterEqual(
-                    cc[focus] / H, 0.45, f"seed{seed} {pn}: weak focus share {dict(cc)}")
+                    cc[focus] / H, 0.40, f"seed{seed} {pn}: weak focus share {dict(cc)}")
                 self.assertGreater(
                     H - cc[focus], 0, f"seed{seed} {pn}: no complementary shape {dict(cc)}")
 

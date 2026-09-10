@@ -11872,6 +11872,10 @@ async def api_plan_generate(request: Request):
             recent_weekly_tss=recent_weekly_tss,
             days_since_last_ride=days_since_last_ride,
             tsb_at_generation=tsb_at_generation,
+            # A plan generated mid-week overlaps days already ridden. Without
+            # these, "generate" hands the rider a fresh week on top of the one
+            # they are in.
+            activities=_recent_activities_for_planner(),
         )
         plan_path = tp.export_plan_md(goal, phases, weeks)
 
@@ -15262,6 +15266,21 @@ def _annotate_planned_ctl_eow(weeks: list[dict], plan: dict) -> None:
         if idx is None or idx >= len(series):
             continue
         w["planned_ctl_eow"] = float(series[idx])
+
+
+def _recent_activities_for_planner(days: int = 30) -> list:
+    """Recent activities in the shape the planner's completed-load helpers read.
+
+    Best-effort: an empty list means the planner behaves exactly as it did
+    before, which is the right failure mode for something that only ever
+    SUBTRACTS work.
+    """
+    try:
+        return [dict(r) for r in db.query_activities(days=days)]
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "recent activities unavailable for the planner", exc_info=True)
+        return []
 
 
 def _polarized_actual_from_rides(

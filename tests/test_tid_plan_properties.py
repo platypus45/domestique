@@ -125,21 +125,22 @@ class PlanProperties(unittest.TestCase):
                     bad.append(f"{key} {w.phase} wk{w.week_num}: {n} HIT > {cap}")
         self.assertEqual(bad, [], "\n".join(bad[:15]))
 
-    @unittest.expectedFailure
     def test_hard_days_keep_48_hours_apart(self):
         """Seiler 2010. The rule that makes four hard sessions the ceiling.
 
-        EXPECTED FAILURE, and deliberately not softened: the planner already
-        breaks this on main. Measured on the 6 h shape, 16-week event plan,
-        seed 3: 6 breaches by slot type before this branch's TID rework and 7
-        after, so the rework contributes one of them and the other six predate
-        it. The sampler spaces the SLOTS it designates hard, but a file served
-        to an endurance slot can carry threshold content, and nothing re-checks
-        spacing against what was actually served.
+        This was an expectedFailure: the sampler spaced the SLOTS it
+        designated hard, but a file served to an endurance slot can carry
+        threshold content, and nothing re-checked spacing against what was
+        actually served. Measured on the 6 h shape, 16-week event plan, seed 3:
+        6 breaches.
 
-        Marked expectedFailure rather than deleted or loosened so that fixing
-        it reports an UNEXPECTED SUCCESS instead of quietly doing nothing, and
-        so the breach cannot grow unnoticed behind a widened tolerance.
+        It passes now because the check moved to the end -- a rule about what
+        the rider RECEIVES is verified on what the rider receives -- and
+        because that final pass runs in every entry point rather than only in
+        generate_plan. The predicate below is tp._session_is_hit, which reads
+        the served content, so this is the content-level rule, not the
+        slot-label one. Within-week only; cross-week spacing is covered by
+        plan_invariants.check_hard_day_spacing over the whole plan.
         """
         bad = []
         for key, weeks in self.plans.items():

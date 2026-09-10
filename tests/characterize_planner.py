@@ -137,7 +137,42 @@ def cases():
             out.append((key, lambda r=rest, t=target: tp.generate_weekly_plan(
                 goal=_goal(r, 3.0), current_phase=_phase(t), current_ctl=40.0)))
 
+    # generate_plan itself. Everything above pins a BUILDER -- plan_week and
+    # generate_weekly_plan -- and nothing pinned the pipeline that assembles a
+    # plan out of them. That gap was not theoretical: week construction was
+    # moved onto a new owner object, the delivered plans changed materially,
+    # and this file still reported "57 cases, all unchanged", because it never
+    # called generate_plan at all. A characterization gate blind to the path a
+    # refactor touches is worse than none: it reassures.
+    #
+    # Fingerprinted per week so a diff names the week that moved. Completed
+    # load is included because a mid-week generate has to subtract it, and that
+    # is precisely the behaviour that regressed unnoticed.
+    _ridden = [{"date": (ANCHOR + timedelta(days=d)).isoformat(), "tss": 120.0}
+               for d in (0, 1, 2)]
+    for sname, rest in shapes:
+        for hours in (1.0, 3.0):
+            for acts, alabel in ((None, "fresh"), (_ridden, "midweek")):
+                key = f"generate/{sname}/{hours:g}h/{alabel}"
+                out.append((key, lambda r=rest, h=hours, a=acts: _plan_fingerprint(
+                    tp.generate_plan(_goal(r, h), seed_salt=SEED, current_ctl=40.0,
+                                     activities=a))))
+
     return out
+
+
+def _plan_fingerprint(result):
+    """generate_plan returns (phases, weeks); reduce it to one comparable row.
+
+    Returned as a stand-in "week" so the existing _fingerprint path does not
+    have to special-case it.
+    """
+    _phases, weeks = result
+
+    class _AsWeek:
+        tss_target = sum(float(w.tss_target or 0) for w in weeks)
+        sessions = [s for w in weeks for s in w.sessions]
+    return _AsWeek()
 
 
 def collect():

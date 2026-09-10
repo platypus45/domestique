@@ -14,6 +14,18 @@ State at handover:
 | `_USE_TRAINING_WEEK` | **False**. With it on: 6 failures, all one root cause (§4) |
 | characterization | 73 cases, all passing |
 
+The companion architecture review — the same findings with the wider structural
+survey, ranked, plus a recommended order of work:
+
+- **In this repo:** `notes/architecture-review.html` (open it in a browser).
+  This is the durable copy; it does not depend on any service.
+- **Published page:** https://claude.ai/code/artifact/e2674ef2-d56d-47b7-999e-32bf3dafb5f0
+  (private to the account that published it; also reachable from `/artifacts`
+  in Claude Code, or the gallery at claude.ai/code/artifacts).
+
+Neither is the source of truth. **The tool is** — every number in both is
+regenerable, and if the code has moved since, the report is what to believe:
+
 Re-run the measurements with:
 
 ```

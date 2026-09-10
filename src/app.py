@@ -752,6 +752,11 @@ from http_util import (  # noqa: F401
     _icu_verify, _get_json_body, _diag_local_only,
 )
 
+# HR resolution lives in hr.py; re-exported for the six sections that call it.
+from hr import (  # noqa: F401
+    _fit_hr_mode, _prescription_hr_rows, _hr_bias, _fit_hr_params,
+)
+
 
 # Request logging middleware — logs all API errors
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -14624,42 +14629,6 @@ def api_export_fit_workout(
         media_type="application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{safe_name}.fit"'},
     )
-
-
-def _fit_hr_mode() -> bool:
-    """True when the athlete's target_mode is 'hr' (IP_HR_ONLY). Kept tiny so
-    both FIT builders share one gate; ProfileManager.target_mode already
-    degrades to 'power' if the lthr/max_hr invariant is broken."""
-    try:
-        from profile_manager import ProfileManager
-        return ProfileManager.get().target_mode == "hr"
-    except Exception:
-        return False
-
-
-def _prescription_hr_rows(pm) -> dict | None:
-    """The athlete's custom HR prescription rows (W1) or None for Coggan
-    defaults. SINGLE resolver — converter, FIT, hr_axis, /api/settings
-    hr_rows and session chips all route through here so the numbers can
-    never diverge. Shape: {"z1_high": int, "z2": [lo,hi], "z3": [lo,hi],
-    "z4": [lo,hi]} (absolute bpm; validated at the settings write)."""
-    rows = pm._athlete.get("hr_prescription_rows_custom")
-    return rows if isinstance(rows, dict) else None
-
-
-def _hr_bias() -> bool:
-    """hr target_mode -> soft matcher preference for HR-guidable files
-    (v2.5.0 W5). One chokepoint so every rematch/redraw path agrees."""
-    return _fit_hr_mode()
-
-
-def _fit_hr_params() -> tuple[int, int, dict | None]:
-    # int() — save_athlete's validator stores lthr as float (e.g. 167.5 from an
-    # ICU estimate); the detail endpoint ints too, so chart and FIT round the
-    # same base and can't skew by 1-2 bpm (red-team F5).
-    from profile_manager import ProfileManager
-    pm = ProfileManager.get()
-    return int(pm.lthr), int(pm.max_hr), _prescription_hr_rows(pm)
 
 
 def _fit_apply_hr_target(step, pct_lo: float, pct_hi: float, dur_s: float,

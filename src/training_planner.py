@@ -1740,6 +1740,10 @@ class IntensityBudget:
     # Optional W'/Pmax weekly budgets. None ⇒ TSS-only path.
     wprime_per_week: int | None = None
     pmax_per_week: int | None = None
+    # True once scale_budget_to_week has re-expressed this for ONE week of ONE
+    # athlete. The minute rows and tss_per_week are then already week-specific
+    # (stepback and ACWR included), so the sampler must not discount them again.
+    week_scaled: bool = False
 
 
 @dataclass
@@ -2037,6 +2041,117 @@ def get_active_polarized_targets() -> "dict[str, dict]":
     breach gate judges a non-polarized plan against its own target, not the
     polarized ceiling."""
     return {ph: b.polarized_target for ph, b in _active_budget_table().items()}
+
+
+# ── Scaling the budget to the athlete (IMPL-BUDGET-SCALE) ────────────────────
+# BUDGETS above is authored in ABSOLUTE minutes for a ~10 h/week rider, and it
+# was applied verbatim to everyone. Measured consequences
+# (tests/probe_budget_fidelity.py):
+#
+#   * build1's hard allowance is 225 min. For a 10 h/wk rider that is 38% of the
+#     week; for a 4 h/wk rider it is 94%, and peak's is 100%. So for anybody
+#     riding less than about ten hours there was no intensity ceiling at all.
+#   * The sampler verified its output against `budget.tss_per_week` -- the table
+#     constant, 425/600/650 -- and not against the athlete's own
+#     `phase.weekly_tss_target`. A rider on a 287 TSS week was checked against
+#     600, so the check never fired.
+#   * Result on real generate_plan output: a build1 week delivered 32% easy /
+#     49% z4+ minutes where the phase asks for 78/6/16. All 20 sampled weeks
+#     were more than 10 points off their easy-minute target.
+#
+# The science in this table is the RATIO, not the minutes. Seiler's polarized
+# distribution (Seiler & Kjerland 2006; Stöggl & Sperlich 2014) is a share of
+# training TIME and is scale-free -- that is the whole point of it. So
+# PHASE_POLARIZED_TARGETS becomes the single source of the distribution, the
+# week's minutes are derived from the athlete's own TSS target, and the absolute
+# rows are kept only for the z4:z5plus split, which is where the phase's
+# character lives (peak leans z5, build1 leans z4).
+#
+# TSS per hour by BAND, used to turn a time ratio into a load. Averaged over the
+# session types the sampler can put in each band, from TSS_PER_HOUR, so the two
+# tables cannot drift apart.
+_BAND_TSS_PER_HOUR = {
+    "z1z2":   float(TSS_PER_HOUR["z2"]),
+    "z3":     (TSS_PER_HOUR["tempo"] + TSS_PER_HOUR["sweetspot"]) / 2.0,
+    "z4":     (TSS_PER_HOUR["threshold"] + TSS_PER_HOUR["overunder"]) / 2.0,
+    "z5plus": (TSS_PER_HOUR["vo2max"] + TSS_PER_HOUR["sprint"]) / 2.0,
+}
+
+
+def week_available_minutes(goal, week_start: date) -> int:
+    """Minutes this athlete can actually train in the week starting ``week_start``.
+
+    Same rule the sampler uses for its per-day caps (``_max_min_for``): the
+    per-weekday override when there is one, otherwise the weekday/weekend
+    default, and nothing for a rest or unavailable day. Duplicating the rule
+    would let the clamp and the slots disagree about how big a week is.
+    """
+    rest = set(getattr(goal, "rest_days", []) or [])
+    avail = set(getattr(goal, "available_days", list(range(7))) or range(7))
+    dmh = getattr(goal, "daily_max_hours", None) or {}
+    wd_h = float(getattr(goal, "max_weekday_hours", 0) or 0)
+    we_h = float(getattr(goal, "max_weekend_hours", 0) or 0)
+    total = 0.0
+    for off in range(7):
+        wd = (week_start + timedelta(days=off)).weekday()
+        if wd in rest or wd not in avail:
+            continue
+        if wd in dmh:
+            total += float(dmh[wd]) * 60.0
+        else:
+            total += (we_h if wd >= 5 else wd_h) * 60.0
+    return int(round(total))
+
+
+def scale_budget_to_week(budget: "IntensityBudget", week_tss_target: float,
+                         available_minutes: float | None = None) -> "IntensityBudget":
+    """The phase budget re-expressed for ONE week of THIS athlete.
+
+    Keeps everything the phase table is actually authoritative about -- the
+    intensity ratio, the HIT count band, rest days -- and replaces the two
+    things it cannot know: how many minutes this rider trains and how much load
+    the week is allowed to carry.
+
+    ``week_tss_target`` is the week's own target (PlannedWeek.tss_target), so it
+    already carries the Issurin stepback discount and any ACWR scaling. The
+    returned budget is therefore already week-specific and the sampler must NOT
+    apply those discounts again -- ``week_scaled`` says so.
+
+    ``available_minutes`` clamps the result to the time the rider actually has.
+    When the target needs more hours than they have, the RATIO is preserved and
+    the load lands under target. That is the honest answer: you cannot ride
+    287 TSS in five hours at 78% easy, and quietly buying the load with
+    intensity is exactly the failure this function exists to stop.
+    """
+    pt = budget.polarized_target
+    s1 = max(0.0, float(pt.get("z1z2_pct", 80))) / 100.0
+    s3 = max(0.0, float(pt.get("z3_pct", 5))) / 100.0
+    shard = max(0.0, float(pt.get("z4plus_pct", 15))) / 100.0
+    tot = (s1 + s3 + shard) or 1.0
+    s1, s3, shard = s1 / tot, s3 / tot, shard / tot
+
+    # z4 vs z5plus inside the hard share: keep the phase's own character.
+    z4t = float(budget.z4_minutes_per_week)
+    z5t = float(budget.z5plus_minutes_per_week)
+    hard_t = (z4t + z5t) or 1.0
+    s4, s5 = shard * (z4t / hard_t), shard * (z5t / hard_t)
+
+    per_hour = (s1 * _BAND_TSS_PER_HOUR["z1z2"] + s3 * _BAND_TSS_PER_HOUR["z3"]
+                + s4 * _BAND_TSS_PER_HOUR["z4"] + s5 * _BAND_TSS_PER_HOUR["z5plus"])
+    tss = max(0.0, float(week_tss_target or 0.0))
+    minutes = (tss / per_hour * 60.0) if per_hour > 0 else 0.0
+    if available_minutes and available_minutes > 0:
+        minutes = min(minutes, float(available_minutes))
+
+    return replace(
+        budget,
+        z1z2_minutes_per_week=int(round(minutes * s1)),
+        z3_minutes_per_week=int(round(minutes * s3)),
+        z4_minutes_per_week=int(round(minutes * s4)),
+        z5plus_minutes_per_week=int(round(minutes * s5)),
+        tss_per_week=int(round(tss)),
+        week_scaled=True,
+    )
 
 
 def get_budget_for_phase(phase_name: str) -> "IntensityBudget":
@@ -5460,6 +5575,44 @@ def _row_zone_minutes(row: dict) -> dict[str, float]:
     }
 
 
+# ── HIT-slot hard-minute floor (IMPL-BUDGET-SCALE) ───────────────────────────
+# A slot contract, the pattern already used for _SPRINT_SLOT_IF_CEILING and
+# _EASY_SLOT_IF_CEILING: a workout admitted to a HIT slot must actually deliver
+# intensity. It used to be enough to be LABELLED hard. Measured on a peak week
+# for a 2h/day rider, the three HIT slots were filled by a 41-min neuromuscular
+# file carrying 1.7 minutes above Z3, a 49-min "recovery"-slotted intervals
+# file with none, and one real VO2 session -- 41 hard minutes total, against
+# build1's 72 in the same plan. The peaking phase came out easier than the
+# build phase it exists to sharpen, and peak missed its 24% Z4+ target by 13
+# points at every volume sampled.
+#
+# Seiler and Rønnestad prescribe TIME AT INTENSITY, not a count of sessions
+# labelled hard: Rønnestad's 3x13x30/15 is ~19.5 min at VO2max, Seiler's 4x8min
+# ~32 min at threshold. The floor is a share of what this slot is nominally
+# responsible for -- the remaining hard budget spread over the remaining hard
+# slots -- so it scales with the athlete's own budget rather than a fixed
+# minute count that would be absurd at one end of the volume range or the
+# other. Half, because the sampler must still have a pool to pick from: this
+# excludes the sessions that deliver almost nothing, not the merely modest.
+_HIT_SLOT_HARD_MIN_SHARE = 0.5
+
+
+def _hard_minutes(row_zones: dict[str, float]) -> float:
+    """Minutes a workout spends above Z2. Z3 counts: the pyramidal and
+    threshold distribution models put most of their hard work there, and the
+    budget rows already carry whichever split the active model uses."""
+    return (row_zones.get("z3", 0.0) + row_zones.get("z4", 0.0)
+            + row_zones.get("z5plus", 0.0))
+
+
+def _hit_slot_hard_floor(remaining: dict[str, float], hard_slots_left: int) -> float:
+    """The least intensity a HIT slot may be filled with, in minutes."""
+    if hard_slots_left <= 0:
+        return 0.0
+    budget = max(0.0, _hard_minutes(remaining))
+    return budget / hard_slots_left * _HIT_SLOT_HARD_MIN_SHARE
+
+
 def _budget_fit_score(row_zones: dict[str, float], remaining: dict[str, float]) -> float:
     """Reward workouts whose zone minutes fit the remaining gap; penalize
     overshoot beyond +20min in any zone (esp. z5plus where a too-hot workout
@@ -6076,8 +6229,10 @@ def sample_week_workouts(
         "z4":     float(budget.z4_minutes_per_week),
         "z5plus": float(budget.z5plus_minutes_per_week),
     }
-    if is_stepback:
-        # Issurin unloading: drop targets to 72%.
+    if is_stepback and not budget.week_scaled:
+        # Issurin unloading: drop targets to 72%. Skipped for a week-scaled
+        # budget -- PlannedWeek.tss_target already carries the discount, so
+        # applying it here too would unload to 52%.
         for k in remaining:
             remaining[k] *= 0.72
 
@@ -6156,6 +6311,37 @@ def sample_week_workouts(
             w for w in candidates
             if min_dur <= float(w.get("Duration(min)", 0) or 0) <= max_min + 5
         ]
+
+        if is_hit and feasible:
+            # SLOT CONTRACT: a HIT slot must be filled with a workout that
+            # actually delivers intensity, not merely one labelled hard. See
+            # _hit_slot_hard_floor. The minutes are scaled by the clamp the
+            # session will get anyway (day cap and TYPE_CEILING), or a 90-min
+            # file about to be cut to 45 would be admitted on hard minutes it
+            # never rides.
+            _slots_left = sum(1 for i in hit_slot_idxs if i >= off)
+            _floor = _hit_slot_hard_floor(remaining, _slots_left)
+            if _floor > 0:
+                _gated = []
+                for w in feasible:
+                    _fd = float(w.get("Duration(min)", 0) or 0)
+                    if _fd <= 0:
+                        continue
+                    _ceil = TYPE_CEILING.get(_content_class_for_row(w))
+                    _cap = min(max_min, _ceil) if _ceil else max_min
+                    _k = min(1.0, _cap / _fd) if _cap > 0 else 1.0
+                    if _hard_minutes(_row_zone_minutes(w)) * _k >= _floor:
+                        _gated.append(w)
+                # Never let the contract make a week unplannable: an empty
+                # gated pool means the library has nothing hard enough for this
+                # athlete's budget, which is a library problem, not a reason to
+                # emit no session.
+                if _gated:
+                    feasible = _gated
+                else:
+                    log.debug(
+                        "HIT slot %s: no candidate reaches the %.0f-min hard "
+                        "floor; falling back to the ungated pool", d, _floor)
 
         if not feasible:
             # Emergency fallback — drop the duration floor & dip into ALL workouts.
@@ -6665,7 +6851,11 @@ def sample_week_workouts(
     # 3. Budget verification: if total TSS missed by >15%, do one re-roll on the
     # worst-fitting endurance slot (cheapest to re-pick without disrupting HIT).
     total_tss = sum(s.tss_estimate for s in out if s.session_type != "rest")
-    target_tss = budget.tss_per_week * (0.72 if is_stepback else 1.0)
+    # Against the ATHLETE's week, not the phase table's 425/600/650. The table
+    # constant made this check unreachable for anyone training under ~10h/week:
+    # a rider on a 287 TSS target had their week verified against 600.
+    target_tss = budget.tss_per_week * (
+        1.0 if budget.week_scaled else (0.72 if is_stepback else 1.0))
     if target_tss > 0 and abs(total_tss - target_tss) / target_tss > 0.15:
         # Find the endurance slot whose zone profile is furthest from remaining
         # need, swap it. (Best-effort — single attempt only, per MASTER §3.)
@@ -7119,6 +7309,13 @@ def generate_plan(
 
                 # v4.5.0 IMPL-PLANNER: sampler-driven workout selection per week.
                 budget = get_budget_for_phase(phase.name)
+                # Re-express it for THIS week and THIS athlete: the table is
+                # absolute minutes for a ~10h/week rider (see
+                # scale_budget_to_week). pw.tss_target already carries the
+                # stepback and ACWR discounts.
+                budget = scale_budget_to_week(
+                    budget, pw.tss_target,
+                    week_available_minutes(goal, pw.start))
                 phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
                 # v1.11.0 (P4) — climbing specificity ONLY in build2/peak (research:
                 # race-specific work belongs in build+peak, not base). None elsewhere.
@@ -11249,6 +11446,13 @@ def regenerate_from_today(
 
             # v4.5.0 IMPL-PLANNER: sampler-driven workout selection per week.
             budget = get_budget_for_phase(phase.name)
+            # Re-express it for THIS week and THIS athlete: the table is
+            # absolute minutes for a ~10h/week rider (see
+            # scale_budget_to_week). pw.tss_target already carries the
+            # stepback and ACWR discounts.
+            budget = scale_budget_to_week(
+                budget, pw.tss_target,
+                week_available_minutes(adjusted_goal, pw.start))
             phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
             # v1.11.0 (P4) — climbing specificity ONLY in build2/peak (mirrors
             # generate_plan's _emph). None elsewhere / for non-event regens.
@@ -11891,6 +12095,13 @@ def recalculate_plan(
             # skeleton so mix-emphasis + the over_under hard-floor reach a
             # weekly recalc. Climbing specificity ONLY in build2/peak.
             budget = get_budget_for_phase(phase.name)
+            # Re-express it for THIS week and THIS athlete: the table is
+            # absolute minutes for a ~10h/week rider (see
+            # scale_budget_to_week). pw.tss_target already carries the
+            # stepback and ACWR discounts.
+            budget = scale_budget_to_week(
+                budget, pw.tss_target,
+                week_available_minutes(adjusted_goal, pw.start))
             phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
             _emph = ("event_climb"
                      if (event_targets and event_targets.get("climbing_bias")
@@ -12250,7 +12461,9 @@ def extend_continuous_plan(
     _last_week = max(current_plan_weeks, key=lambda w: w.end)
     prev_week_sessions: list | None = _last_week.sessions
 
-    budget = get_budget_for_phase("continuous")
+    # Hoisted: the PHASE budget is the same for every appended week. It is
+    # re-expressed per week inside the loop below, where pw.tss_target exists.
+    phase_budget = get_budget_for_phase("continuous")
     _emph = _continuous_emphasis(goal)
     _bp_mode = getattr(goal, "plan_mode", "auto") in ("fixed_core", "template")
 
@@ -12315,6 +12528,12 @@ def extend_continuous_plan(
                    if week_num - wk >= _USED_NAMES_ROLLING_WEEKS]
         for n in stale_d:
             used_names_dict.pop(n, None)
+
+        # Re-express the phase budget for THIS week and THIS athlete. Before
+        # the branch: expand_blueprint_week reads it too.
+        budget = scale_budget_to_week(
+            phase_budget, pw.tss_target,
+            week_available_minutes(goal, pw.start))
 
         if _bp_mode:
             # FS1 parity: a fixed/template plan extends deterministically too.
@@ -12639,6 +12858,12 @@ def refit_remaining_week(
     # hard day frees its HIT slot, so the sampler re-owes the stimulus into the
     # remaining slots up to hit_count_max — the "credit the stimulus back" lever.
     budget = get_budget_for_phase(week.phase)
+    # Fifth and last sampler entry point. Missing it left the refit sampling
+    # against the 10h/week table while every other path used the athlete's own
+    # week, and the HIT slot floor -- derived from the remaining hard budget --
+    # came out far too high, so the freed slot could not be re-owed.
+    budget = scale_budget_to_week(
+        budget, week.tss_target, week_available_minutes(goal, week.start))
     sampled = sample_week_workouts(
         phase=Phase(
             name=week.phase, start=week.start, end=week.end,

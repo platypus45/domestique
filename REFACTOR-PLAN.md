@@ -274,6 +274,133 @@ Only then:
 Not scheduled: the ride chunk (needs `_maybe_auto_reforecast` inverted into a
 hook first) and the profile chunk (entangled with the whole file by design).
 
+## How the weekly TSS budget is actually established
+
+Traced end to end, because the answer was spread over four files and two
+tables that disagree with each other.
+
+```
+current_ctl                        ICU, or estimated from ride history
+  → safe_ramp_rate = clamp(5 × ctl/80, 3, 7)                    Couzens
+  → target_ctl     = EVENT_CTL_TARGETS[event] × (0.94 + 0.12·difficulty)
+  → max_achievable = ctl + ramp × (weeks − elapsed − 2)         feasibility cap
+  → target         = min(target_ctl, max_achievable)
+peak_weekly_tss    = target × 7
+  → capped by  recent_weekly_tss × 1.3        Gabbett 2016 ACWR   ← with history
+     or, with no history,  hours_per_week × 65                   ← flat rate
+phase targets:  base   = ctl × 7 × 1.05  (clamped ≤ build1)
+                build1 = peak × 0.70
+                build2 = peak × 0.85
+                peak   = peak × 1.00
+                taper  = peak × 0.60
+  → every 4th week × 0.72                     Issurin stepback
+PlannedWeek.tss_target
+  → plan_week sizes sessions to it
+  → sample_week_workouts REPLACES them
+```
+
+That last step was where it came apart. The sampler verified its week against
+`BUDGETS[phase].tss_per_week` — a **table constant**, 425/600/650 — not against
+the athlete's own `PlannedWeek.tss_target`. A rider on a 287 TSS week had it
+checked against 600, so the check could never fire.
+
+### The table is authored for a 10 h/week rider
+
+`BUDGETS` (`training_planner.py:1879`) states the Seiler distribution as
+absolute minutes. Measured hard-minute allowance as a share of a rider's week:
+
+| phase | hard min | 4 h/wk | 6 h/wk | 8 h/wk | 10 h/wk | 12 h/wk |
+|---|---|---|---|---|---|---|
+| base | 60 | 25% | 17% | 12% | 10% | 8% |
+| build1 | 225 | **94%** | 62% | 47% | 38% | 31% |
+| peak | 250 | **100%** | 69% | 52% | 42% | 35% |
+
+So below about ten hours there was no intensity ceiling at all. And the rows
+contradict their own `polarized_target`: build1's minutes are 65/19/16 against
+a stated 78/6/16 — 13 points of extra grey zone, which is the one thing a
+polarized model exists to avoid.
+
+**The science in that table is the RATIO, not the minutes.** Seiler's
+distribution is a share of training *time* and is scale-free. So
+`PHASE_POLARIZED_TARGETS` is now the single source of the distribution and
+`scale_budget_to_week` derives the week's minutes from the athlete's own
+target, pricing each band from `TSS_PER_HOUR` so the two tables cannot drift.
+
+### A hard slot has to be hard
+
+`hit_count_min/max` counts *sessions*. Seiler and Rønnestad prescribe *time at
+intensity* — Rønnestad's 3×13×30/15 is ~19.5 min at VO2max, Seiler's 4×8min
+~32 min at threshold. Nothing checked that a workout admitted to a HIT slot
+delivered any.
+
+Measured on a peak week for a 2 h/day rider: the three HIT slots were a 41-min
+neuromuscular file carrying **1.7 minutes** above Z2, a 49-min intervals file
+on a *recovery* slot carrying none, and one real VO2 session — 41 hard minutes,
+against build1's 72 in the same plan. **The peaking phase came out easier than
+the build phase it exists to sharpen**, and peak missed its 24% Z4+ target by
+11–18 points at every volume sampled.
+
+`_hit_slot_hard_floor` makes it a slot contract, the pattern already used for
+`_SPRINT_SLOT_IF_CEILING` and `_EASY_SLOT_IF_CEILING`: a candidate must carry at
+least half of what the slot owes (remaining hard budget ÷ remaining hard slots),
+scaled by the clamp it will actually get. An empty gated pool falls back rather
+than emitting no session — a library gap must not make a week unplannable.
+
+**It costs library coverage, measured rather than assumed**: 895 → 867 of 2,643
+candidate files reached across 30 regenerations, 33.9% → 32.8%. Those 28 files
+are not lost, they are no longer served *where they do not belong* — every one
+stays reachable on an endurance slot. 3.1% relative, against a test written to
+catch >10%, so `test_population_coverage_across_regenerations`'s floor moves to
+0.32 with the measurement recorded rather than the sampler being loosened.
+
+**Five sampler entry points, not four.** `generate_plan`,
+`regenerate_from_today`, `recalculate_plan`, `extend_continuous_plan` and
+`refit_remaining_week` each build a budget and call the sampler. Missing the
+fifth left the refit sampling against the 10 h/week table while every other
+path used the athlete's week, and the hard floor derived from that oversized
+budget was high enough that a freed missed slot could not be re-owed —
+`test_v207_missed_hard_refit` caught it at 49 of 60 seeds against a 55
+threshold. That the count of these sites had to be discovered by a failing test
+is itself the argument for the wider `size_session` work.
+
+### What it moved
+
+`tests/probe_budget_fidelity.py`, 20 full weeks across five athlete volumes,
+scoring **time in zone** read from each matched workout's own profile:
+
+| | before | after |
+|---|---|---|
+| mean \|TSS miss\| | 17.0% | 16.9% |
+| mean easy-share gap | +3.4 pts | −1.3 pts |
+| mean hard-share gap | −5.3 pts | −1.9 pts |
+| weeks >8 pts short of hard | 7 of 20 | **2 of 20** |
+| weeks >10 pts off easy | 1 of 20 | 4 of 20 |
+
+The intensity deficit is largely closed and the easy share is now centred
+rather than uniformly too easy. One metric got worse: the easy share scatters
+more, four weeks landing >10 points off in either direction (base too easy at
+1.5–3 h/day, build2 too hard). That is honest variance, not a fix.
+
+### Two things the instrument taught me the hard way
+
+- **Scoring session labels is not scoring zones.** The first version of the
+  probe attributed a whole session to the band of its `session_type` and
+  reported build weeks at "49% hard". A 60-minute VO2max session is a warm-up,
+  some intervals, the recoveries between them and a cool-down — most of its
+  minutes are Z1/Z2. The corrected probe reads each matched workout's own
+  Z1%..Z6% and the same weeks are 12–21% hard.
+- **The opening week is not a week.** Scoring the short Monday-anchored opening
+  week against a seven-day phase shape reported a 56% "miss" that was nothing
+  but the week being four days long.
+
+### Still open
+
+`hours_per_week × 65` (`:2603`, `:2723`) is the no-history fallback cap. 65
+TSS/h implies riding at IF ≈ 0.8 all week; the phase model asks for 72–88% easy,
+which yields 48–55 TSS/h. `scale_budget_to_week` already computes the
+phase-correct rate — the cap should use it. Left alone here because it only
+binds for a rider with no ride history, and it deserves its own before/after.
+
 ## Hard rules for this branch
 
 - `app.py` must re-export anything moved: 60 test files reach 67 planning names

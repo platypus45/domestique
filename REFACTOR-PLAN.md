@@ -112,6 +112,40 @@ Dependency-ordered. Each step is independently revertable and gated on: upstream
 pytest green, the nine stack suites green, and the characterization harness
 clean.
 
+## Status
+
+**Substrate is done.** `app.py` 22,273 → 22,134; four leaf modules out, each of
+which imports standalone without pulling in `fastapi`, `app` or
+`training_planner` — that property, not the line count, is what makes a feature
+extraction possible next.
+
+| module | lines | holds |
+|---|---|---|
+| `obs.py` | 95 | loggers, the diagnostic ring, `_log_error` |
+| `cache.py` | 101 | `cached`, `clear_cache`, the clearer registry |
+| `paths.py` | 71 | `DATA_DIR`, `COURSE_DIR`, `ROUTE_*`, `_plan_dir`, `_safe_path`, `_rides_fit_dir` |
+| `http_util.py` | 46 | `_get_json_body`, `_icu_verify`, `_diag_local_only` |
+
+Three behaviour changes came with it, each its own commit and each with a
+failing-first test:
+
+- `cached()` returns defensive copies. It used to hand every caller the object
+  it was holding, and one caller mutated it — app.py's readiness endpoint wrote
+  three keys straight into the cached dict. Shallow, not deep, because the ride
+  archive behind `"all_rides"` is 17 MB read 22 times per request; that limit is
+  pinned by a test asserting nested values *are* shared.
+- The dead `PLAN_DIR` alias is gone.
+- Workout and GPX directories are read through `active_workout_dir()` /
+  `active_gpx_dir()`, with a test that scans `src/` for
+  `from ... import WORKOUT_DIR` and fails on any hit.
+
+**What the gate caught, which is the case for having one.** The accessor change
+broke 9 tests in `test_calendar_push_workout.py` via a name collision
+(`workout_dir = Path(workout_dir())` is an `UnboundLocalError`), and only a run
+against `clean-main` — which passes all 20 — showed they were regressions rather
+than inherited. Separately, one careless test of mine built the `ProfileManager`
+singleton in the shared sandbox and cost 22 unrelated failures.
+
 **Substrate first — no endpoint moves until all four are done.** Each is a pure
 relocation: the harness must stay clean, and `app.py` re-exports every moved
 name so the 60 test files that reach `app.X` keep working.

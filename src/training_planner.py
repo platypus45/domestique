@@ -5887,27 +5887,117 @@ def _hit_slot_hard_floor(remaining: dict[str, float], hard_slots_left: int) -> f
     return budget / hard_slots_left * _HIT_SLOT_HARD_MIN_SHARE
 
 
-def _budget_fit_score(row_zones: dict[str, float], remaining: dict[str, float]) -> float:
-    """Reward workouts whose zone minutes fit the remaining gap; penalize
-    overshoot beyond +20min in any zone (esp. z5plus where a too-hot workout
-    blows the polarized budget). Returns 0..1 normalized.
+# Bands a HIT slot is judged on. Z3 is in because the pyramidal and threshold
+# models put most of their hard work there; on polarized its own budget is
+# small, so it cannot dominate the weighted mean.
+_HARD_BANDS = ("z3", "z4", "z5plus")
+
+
+# How much a good budget fit outweighs a poor one in the pick weight. The
+# weight is a product of eight factors and the budget used to be the WEAKEST of
+# them: measured over a real 2,334-candidate peak pool, `(0.2 + sqrt(fit))`
+# spanned 0.35..0.61, a 2x range, against novelty's 500x, dup_penalty's 20x and
+# the mix preference's 8x. It was outvoted 250:1, and shoving the target to
+# either extreme moved delivered Z3 by 0.7 points (7.8% when asking for none,
+# 7.1% when asking for five times as much).
+#
+# GAIN**(2*fit - 1) spans 1/GAIN .. GAIN. Swept against the Layer 5 safety
+# rails: 1.5 is the highest value that keeps every week inside them. Above it
+# the picker chases the target into weeks the rails reject -- 6.0 put a week at
+# 53% Z1 against a 55% floor, 3.0 at 21.9% Z3 against an 18% ceiling.
+#
+# So 1.5 spans only 2.25x, barely more than the 2x it replaces, and that is the
+# finding: nearly all of the improvement below comes from the SHAPE of the fit
+# score, not from giving it more authority. Authority does not survive the
+# rails, because the pool does not contain the answer -- pushing harder only
+# moves the breach to a different band. That is the generator's case, not the
+# scorer's.
+_BUDGET_FIT_GAIN = 1.5
+
+
+def _budget_fit_weight(fit: float) -> float:
+    """Turn a 0..1 fit into a multiplier centred on 1.0 at fit = 0.5."""
+    return _BUDGET_FIT_GAIN ** (2.0 * max(0.0, min(1.0, fit)) - 1.0)
+
+
+def _budget_fit_score(row_zones: dict[str, float], remaining: dict[str, float],
+                      slots_left: int = 1, hard_slot: bool = False) -> float:
+    """How well this workout fits what the week still owes. 0..1.
+
+    PER ZONE, and against the SLOT's share rather than the week's. The old
+    version summed raw minutes across all four bands and divided by the total
+    remaining, which broke it in two ways that compounded:
+
+      * The denominator was dominated by the easy budget -- roughly 500 minutes
+        of z1z2 against 50 of hard -- so a Ronnestad 30/15 carrying 20 minutes
+        above 106% FTP and a plain endurance ride both scored 60/600 = 0.1 on
+        the same HIT slot. Identical. The function could not tell them apart
+        on exactly the slots it existed to decide.
+      * Scoring against the WEEK's remaining need rewarded a file for filling
+        a gap that four more sessions still have to share. The target for one
+        slot is its share: the remaining need divided by the slots left.
+
+    Now each band is scored on its own scale -- what fraction of this slot's
+    fair share does the file deliver -- and the bands are combined by how much
+    of the remaining work they represent for THIS KIND of slot. A hard slot is
+    judged on its hard bands, an endurance slot on its easy one, so the big
+    band can no longer drown the small one.
+
+    The band score peaks at exactly the fair share and falls away on both
+    sides: undershooting leaves the week short, overshooting spends a budget
+    the remaining slots still need. The z5plus hard-kill is unchanged.
     """
-    fit = 0.0
+    bands = _HARD_BANDS if hard_slot else ("z1z2",)
+    n = max(1, int(slots_left))
+
+    # Overshoot is judged against the WEEK's remaining budget, not the slot's
+    # share: a single session may legitimately carry more than its share, but
+    # never more than the week has left. Unchanged weights -- z5plus costs most.
     overshoot = 0.0
-    total_gap = max(1.0, sum(max(0.0, v) for v in remaining.values()))
     for z in ("z1z2", "z3", "z4", "z5plus"):
-        gap = max(0.0, remaining.get(z, 0.0))
-        contrib = min(row_zones.get(z, 0.0), gap)
-        fit += contrib
-        excess = max(0.0, row_zones.get(z, 0.0) - gap)
-        # z5plus overshoot is the most expensive — small budget, high CNS load.
-        weight = 3.0 if z == "z5plus" else (2.0 if z == "z4" else 1.0)
-        overshoot += excess * weight
-    # Normalize. Hard kill if z5plus overshoot > 20min.
+        excess = max(0.0, row_zones.get(z, 0.0) - max(0.0, remaining.get(z, 0.0)))
+        overshoot += excess * (3.0 if z == "z5plus" else (2.0 if z == "z4" else 1.0))
     if (row_zones.get("z5plus", 0.0) - max(0.0, remaining.get("z5plus", 0.0))) > 20:
         return 0.0
-    raw = (fit - 0.5 * overshoot) / total_gap
-    return max(0.0, min(1.0, raw))
+
+    # An ENDURANCE slot is judged on its easy content, but it must also answer
+    # for the middle it drags in. Measured: a 120-minute tempo file carrying 100
+    # minutes at 76-105% FTP was served to a single endurance slot and took that
+    # week to 52/42/6, below any distribution observed in the literature, because
+    # nothing scored what it spent from the week's middle budget. Overshoot alone
+    # did not catch it -- the file stayed inside the WEEK's remaining middle, it
+    # simply ate several slots' worth of it at once.
+    if not hard_slot:
+        mid_need = sum(max(0.0, remaining.get(z, 0.0)) for z in ("z3", "z4"))
+        mid_share = mid_need / n
+        mid_give = sum(max(0.0, row_zones.get(z, 0.0)) for z in ("z3", "z4"))
+        if mid_give > mid_share:
+            overshoot += (mid_give - mid_share) * 1.5
+
+    num = den = 0.0
+    for z in bands:
+        need = max(0.0, remaining.get(z, 0.0))
+        share = need / n
+        give = max(0.0, row_zones.get(z, 0.0))
+        if share <= 0.0:
+            # Band already satisfied: anything the file adds here is spend
+            # against a budget that is gone. Score it 1.0 only if it adds
+            # nothing, and let the overshoot term handle the rest.
+            band = 1.0 if give <= 1.0 else 0.0
+            w = 1.0
+        else:
+            r = give / share
+            band = r if r <= 1.0 else max(0.0, 2.0 - r)   # peak at the share
+            w = need                                       # bigger need, louder vote
+        num += band * w
+        den += w
+    fit = (num / den) if den > 0 else 0.0
+
+    # The overshoot penalty is scaled by the SLOT's share of the bands it is
+    # responsible for, so it stays on the same scale as the fit it subtracts
+    # from instead of being crushed by a week-sized denominator.
+    scale = max(1.0, sum(max(0.0, remaining.get(z, 0.0)) for z in bands) / n)
+    return max(0.0, min(1.0, fit - 0.5 * overshoot / scale))
 
 
 def _build_pool_indexes(library: list[dict]) -> dict:
@@ -6703,7 +6793,14 @@ def sample_week_workouts(
                     continue
 
             zones = _row_zone_minutes(w)
-            fit = _budget_fit_score(zones, remaining)  # 0..1
+            # Slots of the SAME KIND still to fill, including this one, so the
+            # fair share shrinks as the week fills and the last slot is asked
+            # to close whatever is left.
+            _slots_left = sum(1 for _s in slots
+                              if not _s[5] and _s[0] >= off
+                              and ((_s[0] in hit_slot_idxs) == is_hit))
+            fit = _budget_fit_score(zones, remaining,
+                                    slots_left=_slots_left, hard_slot=is_hit)
             score = float(w.get("Score", 0) or 0)
             quality = max(0.0, (score - 5.0) / 5.0)  # 0..1 over score 5..10
             # v4.6.0 IMPL-PLANNER-UTILIZATION (Pillar B): plan_pick_counts is
@@ -6733,7 +6830,9 @@ def sample_week_workouts(
             novelty *= _NOVELTY_BOOST.get(min(cur_picks, 2), 0.5)
 
             dup_penalty = 0.05 if week_picked.get(name, 0) > 0 else 1.0
-            soft_fit = math.sqrt(max(0.0, fit))
+            # No sqrt: it compressed an already-narrow score into nothing.
+            # _budget_fit_weight spans 1/GAIN..GAIN, centred at fit = 0.5.
+            fit_mult = _budget_fit_weight(fit)
             # v4.5.0 Layer 2/3: per-class mix-preference multiplier. Rows in
             # WORKOUT_MIX_PREFERENCE that don't list a class still get a
             # baseline weight (0.08) so vo2_short / niche classes appear
@@ -6780,7 +6879,7 @@ def sample_week_workouts(
                     glyco_stack_mult = 0.7
 
             wt = max(0.0001,
-                     (0.2 + soft_fit) * novelty * (0.5 + quality)
+                     fit_mult * novelty * (0.5 + quality)
                      * dup_penalty * (0.3 + mix_mult * 5.0)
                      * tuple_bonus * class_min_bonus * var_mult
                      * glyco_stack_mult)
@@ -7165,7 +7264,13 @@ def sample_week_workouts(
                 weights: list[float] = []
                 for w in feasible:
                     zones = _row_zone_minutes(w)
-                    fit = _budget_fit_score(zones, remaining)
+                    # Same contract as the main picker: this is an ENDURANCE
+                    # re-roll, and it is the last slot being reconsidered, so
+                    # its fair share is what the week still owes in z1z2.
+                    # Calling with the defaults left it scored on a week-sized
+                    # share and made the re-roll blind.
+                    fit = _budget_fit_score(zones, remaining, slots_left=1,
+                                            hard_slot=False)
                     score = float(w.get("Score", 0) or 0)
                     quality = max(0.0, (score - 5.0) / 5.0)
                     nm_w = w.get("Name", "")
@@ -7192,8 +7297,8 @@ def sample_week_workouts(
                             novelty = max(0.01, min(0.6, recency / 18.0))
                     novelty *= _NOVELTY_BOOST.get(min(cur_picks_w, 2), 0.5)
                     dup_penalty = 0.05 if week_picked.get(nm_w, 0) > 0 else 1.0
-                    soft_fit = math.sqrt(max(0.0, fit))
-                    weights.append(max(0.0001, (0.2 + soft_fit) * novelty * (0.5 + quality) * dup_penalty))
+                    weights.append(max(0.0001, _budget_fit_weight(fit) * novelty
+                                       * (0.5 + quality) * dup_penalty))
                 total_w = sum(weights)
                 if total_w > 0:
                     r = rng.random() * total_w

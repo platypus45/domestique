@@ -17,8 +17,10 @@ network, frozen "today", pinned athlete id), over two matrices:
             and Thursday with Mon-Wed already ridden), regenerate around owned
             sessions, extend with a horizon gap (and one reaching a stepback),
             recalculate on an event goal, refit after a missed hard day (and in
-            a stepback week), reforecast with and without a TSB crash, and the
-            day/week adapters -- for continuous, event, blueprint and CTL goals.
+            a stepback week), reforecast with and without a TSB crash, the
+            stored-plan reforecast over three syncs (the path every sync takes,
+            through the plan's reader and goal block), and the day/week
+            adapters -- for continuous, event, blueprint and CTL goals.
             Run once per value of _USE_TRAINING_WEEK while both week builders
             exist.
 
@@ -268,6 +270,16 @@ def _all(*cms):
 
 def _shorten_first_pending(out):
     items = out if isinstance(out, tuple) else (out,)
+    plan = next((x for x in items if isinstance(x, dict) and "weeks" in x), None)
+    if plan is not None:                        # reforecast_dict edits the stored plan
+        for w in plan["weeks"]:
+            for s in w.get("sessions", []):
+                if (s.get("session_type") != "rest" and (s.get("duration_min") or 0) > 15
+                        and s.get("status", "pending") == "pending"
+                        and s.get("day", "") >= env.today().isoformat()):
+                    s["duration_min"] -= 5
+                    return out
+        return out
     weeks = next((x for x in items if isinstance(x, list) and x
                   and hasattr(x[0], "sessions")), [])
     for w in weeks:
@@ -303,19 +315,22 @@ def self_test():
     def of(*drivers):
         return {k for k in clean if k.rsplit("/", 1)[-1] in drivers}
 
-    # 1. each entry point's output is actually observed
-    for fname, drivers in (("regenerate_from_today", ("regenerate@3", "regenerate@17")),
-                           ("extend_continuous_plan", ("extend@9", "extend@30")),
-                           ("recalculate_plan", ("recalculate@21",)),
-                           ("refit_remaining_week", ("refit@3", "refit@24")),
-                           ("reforecast", ("reforecast@21", "reforecast-tsb@3")),
-                           ("generate_plan", ("generate", "generate-thu"))):
+    # 1. each entry point's output is actually observed. `inner`: drivers whose
+    #    entry point calls this one, and so may move with it. A generate
+    #    perturbation changes every base plan, so it moves everything (None).
+    for fname, drivers, inner in (
+            ("regenerate_from_today", ("regenerate@3", "regenerate@17"), ()),
+            ("extend_continuous_plan", ("extend@9", "extend@30"), ()),
+            ("recalculate_plan", ("recalculate@21",), ()),
+            ("refit_remaining_week", ("refit@3", "refit@24"), ()),
+            ("reforecast", ("reforecast@21", "reforecast-tsb@3"), ("reforecast-dict@3",)),
+            ("reforecast_dict", ("reforecast-dict@3",), ()),
+            ("generate_plan", ("generate", "generate-thu"), None)):
         with _perturbing(fname):
             m = moved(clean, collect_entries(0)[0])
         mine = of(*drivers)
         missed = mine - m
-        # A generate perturbation changes every base plan, so it moves everything.
-        stray = (m - mine) if fname != "generate_plan" else set()
+        stray = (m - mine - of(*inner)) if inner is not None else set()
         status = "ok" if not missed and not stray else "FAIL"
         print(f"  [{status}] perturb {fname:<24} {len(mine & m)}/{len(mine)} own cases moved"
               + (f", {len(stray)} other cases moved" if stray else ""))

@@ -23,6 +23,7 @@ The re-exec with PYTHONHASHSEED=0 is the caller's job: it has to happen before
 any import.
 """
 import copy
+import dataclasses
 import datetime as _dt
 import os
 import pathlib
@@ -239,6 +240,79 @@ def _reforecast(days, tsb=None):
     return drive
 
 
+def _stored(weeks, goal):
+    """The plan as the app keeps it on disk: the goal block under the names the
+    generate endpoint writes, and every session field (the regenerate and
+    auto-recalc writer). Built by field name, not through the planner's codec:
+    a gate that reads the plan through the code it judges cannot see that code
+    lose something."""
+    g = goal
+    names = [f.name for f in dataclasses.fields(tp.PlannedSession)]
+
+    def session(s):
+        return {**{k: getattr(s, k) for k in names}, "day": s.day.isoformat()}
+    return {
+        "goal": {
+            "type": g.goal_type,
+            "event_date": g.target_date.isoformat() if g.target_date else None,
+            "event_name": g.event_name, "event_km": g.event_km,
+            "event_climb": g.event_climb_m, "event_type": g.event_type,
+            "hours_per_week": g.hours_per_week, "max_weekday_hours": g.max_weekday_hours,
+            "max_weekend_hours": g.max_weekend_hours, "rest_days": list(g.rest_days),
+            "available_days": list(g.available_days),
+            "daily_max_hours": {str(k): float(v) for k, v in g.daily_max_hours.items()},
+            "plan_weeks": g.plan_weeks, "distribution": g.distribution,
+            "block_periodization": g.block_periodization,
+            "vo2_microintervals_only": g.vo2_microintervals_only, "events": [],
+            "plan_mode": g.plan_mode, "template_id": g.template_id,
+            "custom_bands": dict(g.custom_bands), "start_date": None,
+            "entry_mode": None, "phase_weeks": None, "focus": g.focus,
+        },
+        "weeks": [{"week_num": w.week_num, "start": w.start.isoformat(),
+                   "end": w.end.isoformat(), "phase": w.phase, "tss_target": w.tss_target,
+                   "is_stepback": w.is_stepback,
+                   "sessions": [session(s) for s in w.sessions]} for w in weeks],
+    }
+
+
+def _read_stored(plan):
+    """The stored plan as objects again, for the fingerprint and the auditor:
+    by field name, for the same reason."""
+    sf = {f.name for f in dataclasses.fields(tp.PlannedSession)}
+    wf = {f.name for f in dataclasses.fields(tp.PlannedWeek)}
+    weeks = []
+    for w in plan["weeks"]:
+        sessions = [tp.PlannedSession(**{**{k: v for k, v in s.items() if k in sf},
+                                         "day": _dt.date.fromisoformat(s["day"])})
+                    for s in w["sessions"]]
+        weeks.append(tp.PlannedWeek(**{**{k: v for k, v in w.items() if k in wf},
+                                       "start": _dt.date.fromisoformat(w["start"]),
+                                       "end": _dt.date.fromisoformat(w["end"]),
+                                       "sessions": sessions}))
+    return weeks
+
+
+def _reforecast_dict(days, tsb, syncs=3):
+    """What the app runs on every ride sync: reforecast the STORED plan and
+    write it back -- here three syncs in a row under a projected TSB of -40.
+    The object driver above goes through neither the plan's reader, which
+    dropped `adapted` so the same session was downgraded again on every sync
+    (dupes.md DUP-22), nor its goal block, which lost the rider's hours
+    (DUP-27)."""
+    def drive(r, base):
+        t = _day(days)
+        wk = copy.deepcopy(base)
+        own_some(wk, t)
+        plan = _stored(wk, r.goal())
+        rs = rides(t - _dt.timedelta(days=14), t - _dt.timedelta(days=1))
+        series = {t + _dt.timedelta(days=i): float(tsb) for i in range(7 * 20)}
+        at(t)
+        for _ in range(syncs):
+            tp.reforecast_dict(plan, tsb_series=series, recent_activities=rs)
+        return _read_stored(plan), rs, t
+    return drive
+
+
 # Adapters answer about one day or one week and return a projection, not a
 # plan. They are fingerprinted as data, and not audited as plans.
 
@@ -295,6 +369,7 @@ DRIVERS = {
     "refit@24": _refit(24),
     "reforecast@21": _reforecast(21),
     "reforecast-tsb@3": _reforecast(3, tsb=-40),
+    "reforecast-dict@3": _reforecast_dict(3, tsb=-40),
     "daily-adapt@3": _daily_adapt(3),
     "adjust-today@3": _adjust_today(3),
     "rematch@3": _rematch(3),
@@ -303,7 +378,8 @@ DRIVERS = {
 # case did not exercise its entry point.
 EDITORS = frozenset(DRIVERS) - {"generate", "generate-thu", "daily-adapt@3",
                                 "adjust-today@3", "rematch@3"}
-ADAPTERS = ("reforecast-tsb@3", "daily-adapt@3", "adjust-today@3", "rematch@3")
+ADAPTERS = ("reforecast-tsb@3", "reforecast-dict@3", "daily-adapt@3", "adjust-today@3",
+            "rematch@3")
 
 CONTINUOUS_DRIVERS = ("generate", "generate-thu", "regenerate@3", "extend@9", "refit@3")
 EVENT_DRIVERS = ("generate", "generate-thu", "regenerate@17", "recalculate@21",

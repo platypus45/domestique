@@ -23,6 +23,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app as app_module
+import routes_lib  # route loading/indexing/scoring lives here, not in app
 
 
 ROUTE_DATA = app_module.ROUTE_DATA
@@ -617,11 +618,14 @@ def test_cache_reload_on_mtime_change(tmp_path, monkeypatch):
     }
     fake.write_text(json.dumps([entry_a]))
 
-    # Monkey-patch ROUTE_DATA and reset cache state
-    monkeypatch.setattr(app_module, "ROUTE_DATA", fake)
-    monkeypatch.setattr(app_module, "_ROUTES_CACHE", [])
-    monkeypatch.setattr(app_module, "_ROUTES_INDEX", {})
-    monkeypatch.setattr(app_module, "_ROUTES_MTIME", 0.0)
+    # Monkey-patch ROUTE_DATA and reset cache state.
+    # On routes_lib, not app_module: _load_routes_v2 reads its OWN module
+    # globals, so patching app.X here would silently leave the real cache live
+    # and the test would assert against whatever routes.json happens to hold.
+    monkeypatch.setattr(routes_lib, "ROUTE_DATA", fake)
+    monkeypatch.setattr(routes_lib, "_ROUTES_CACHE", [])
+    monkeypatch.setattr(routes_lib, "_ROUTES_INDEX", {})
+    monkeypatch.setattr(routes_lib, "_ROUTES_MTIME", 0.0)
 
     routes1, idx1 = app_module._load_routes_v2()
     assert len(routes1) == 1
@@ -1173,7 +1177,7 @@ def test_lap_route_surface_segments_tiled_3x(monkeypatch):
             {"start_km": 2.0, "end_km": 5.0, "surface": "cobble"},
         ],
     }
-    monkeypatch.setattr(app_module, "_load_surface_types_db", lambda: fake_db)
+    monkeypatch.setattr(routes_lib, "_load_surface_types_db", lambda: fake_db)
     segs = app_module._route_surface_segments(
         "synthetic/test-lap-3x",
         15.0,
@@ -1204,7 +1208,7 @@ def test_single_lap_route_unchanged(monkeypatch):
             {"start_km": 4.0, "end_km": 9.0, "surface": "gravel"},
         ],
     }
-    monkeypatch.setattr(app_module, "_load_surface_types_db", lambda: fake_db)
+    monkeypatch.setattr(routes_lib, "_load_surface_types_db", lambda: fake_db)
     # No lap_info → unchanged
     segs_none = app_module._route_surface_segments("synthetic/plain", 9.0)
     assert len(segs_none) == 2

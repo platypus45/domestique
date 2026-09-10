@@ -1,5 +1,13 @@
 # Planner cleanup — findings and plan
 
+> **Superseded by `notes/overhaul-plan.md`** (2026-09-10, evening). An
+> adversarial review done before any code changed (`notes/review/`) found that
+> several premises below do not hold: the six owner-on failures are not one
+> defect, Step 4 aims at the minority source of the slot/content mismatch,
+> Step 2 as written would import the owner's double subtraction, and the gate
+> this plan relies on was date- and machine-dependent and blind to three of the
+> five entry points. Kept for the history and the decisions in §1, which stand.
+
 Written 2026-09-10 at the end of a long session, for a **fresh session to
 implement**. Everything here is measured; the tools that measured it are in the
 repo and re-runnable. Nothing in this file is a guess.

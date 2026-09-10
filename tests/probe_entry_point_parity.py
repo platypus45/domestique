@@ -1,99 +1,104 @@
-"""Do the five planner entry points obey the same rules?
+#!/usr/bin/env python3
+"""Do the planner's entry points obey the same rules?
 
-Each of generate / regenerate / recalculate / extend / refit assembles its own
-sequence of enforcement passes -- measured, 12, 5, 6, 6 and 3 of them. This
-probe asks whether that difference is visible in the output: it builds many
-riders, runs each entry point, and audits every resulting plan against
-plan_invariants.
+Builds plausible riders -- continuous AND event goals -- generates a base plan
+for each, drives every entry point into its real body (tests/_gate_env.py, the
+same drivers the characterization uses) and audits each result with
+plan_invariants, given the rides and the "today" it was built with.
 
-Not a unittest: it is a measurement, and its job is to say how big the problem
-is before the architecture changes, and that it stayed fixed after.
+The previous version fed recalculate / extend / refit a plan built that same
+moment, for continuous riders only, so all three returned their input: three
+of its five columns were generate's plan audited again (notes/review/gates.md
+GATE-1). This one also counts, per entry point, how many riders it actually
+changed, and says so loudly when an entry point did nothing.
 
-Run:  .venv/bin/python tests/probe_entry_point_parity.py [n_riders]
+Not a unittest: it is a measurement.
+
+Run:  .venv/bin/python tests/probe_entry_point_parity.py [n_riders] [--owner]
 """
-import copy
-import datetime as dt
-import itertools
+import os
 import pathlib
 import random
 import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
-import training_planner as tp          # noqa: E402
-import plan_invariants as pi           # noqa: E402
+if __name__ == "__main__" and os.environ.get("PYTHONHASHSEED") != "0":
+    os.environ["PYTHONHASHSEED"] = "0"
+    os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+    os.execv(sys.executable, [sys.executable] + sys.argv)
 
-TODAY = dt.date(2026, 9, 10)
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import _gate_env as env  # noqa: E402
+
+tp = env.tp
 
 
 def riders(n, rng):
     """Plausible athletes, not adversarial ones -- the point is whether the
     entry points disagree for ordinary riders, not whether they survive junk."""
-    for _ in range(n):
+    for i in range(n):
         n_avail = rng.randint(3, 7)
         avail = sorted(rng.sample(range(7), n_avail))
-        rest = [d for d in range(7) if d not in avail]
-        cap = {d: rng.choice([1.0, 1.5, 2.0, 3.0, 4.0]) for d in avail}
-        yield tp.Goal(
-            goal_type="continuous", rest_days=rest, available_days=avail,
-            daily_max_hours=cap,
-            hours_per_week=rng.choice([6, 8, 10, 12, 15, 18]),
-            max_weekday_hours=max(cap.values()),
-            max_weekend_hours=max(cap.values()),
-            plan_weeks=12,
-        ), rng.randint(0, 9999), rng.choice([25.0, 37.1, 55.0, 75.0])
-
-
-def run_all(goal, salt, ctl):
-    """Every entry point, from the same base plan. Returns name -> weeks|Exception."""
-    out = {}
-    try:
-        _ph, base = tp.generate_plan(goal, seed_salt=salt, current_ctl=ctl)
-        out["generate"] = base
-    except Exception as e:                                    # noqa: BLE001
-        return {"generate": e}
-    cp = lambda: [copy.deepcopy(w) for w in base]             # noqa: E731
-    for name, fn in (
-        ("regenerate", lambda: tp.regenerate_from_today(goal, cp(), ctl, seed_salt=salt)[1]),
-        ("recalculate", lambda: tp.recalculate_plan(goal, cp(), ctl)[1]),
-        ("extend", lambda: tp.extend_continuous_plan(goal, cp(), ctl, seed_salt=salt)[1]),
-        ("refit", lambda: tp.refit_remaining_week(goal, cp(), TODAY, seed_salt=salt)[0]),
-    ):
-        try:
-            out[name] = fn()
-        except Exception as e:                                # noqa: BLE001
-            out[name] = e
-    return out
+        rest = tuple(d for d in range(7) if d not in avail)
+        salt, ctl = rng.randint(0, 9999), rng.choice([30.0, 45.0, 55.0, 70.0])
+        if rng.random() < 0.6:
+            h = rng.choice([1.0, 1.5, 2.0, 3.0])
+            yield env.Rider(f"c{i}", lambda r=rest, h=h: env.continuous(r, h),
+                            env.CONTINUOUS_DRIVERS, salt=salt, ctl=ctl,
+                            rwt=rng.choice([200.0, 320.0, 450.0]))
+        else:
+            wk, weeks = rng.choice([2.5, 3.5, 5.0]), rng.choice([10, 14, 18])
+            yield env.Rider(f"e{i}", lambda w=wk, n=weeks: env.event(w, weeks=n),
+                            env.EVENT_DRIVERS, salt=salt, ctl=ctl,
+                            rwt=rng.choice([250.0, 380.0, 500.0]))
 
 
 def main(n=40):
+    env.set_owner(1 if "--owner" in sys.argv else 0)
     rng = random.Random(20260910)
-    tally = {}          # entry -> rule -> riders affected
-    errors = {}
-    for goal, salt, ctl in riders(n, rng):
-        for name, weeks in run_all(goal, salt, ctl).items():
-            slot = tally.setdefault(name, {})
-            if isinstance(weeks, Exception):
-                errors.setdefault(name, []).append(f"{type(weeks).__name__}: {weeks}")
-                slot["RAISED"] = slot.get("RAISED", 0) + 1
+    tally, ran, noop, errors = {}, {}, {}, {}
+    for r in riders(n, rng):
+        try:
+            base = r.base()
+        except Exception as e:                                   # noqa: BLE001
+            errors.setdefault("base", []).append(f"{type(e).__name__}: {e}")
+            continue
+        base_fp = env.fingerprint(base)
+        for d in r.drivers:
+            ran[d] = ran.get(d, 0) + 1
+            try:
+                weeks, rides, today = env.DRIVERS[d](r, base)
+            except Exception as e:                               # noqa: BLE001
+                errors.setdefault(d, []).append(f"{type(e).__name__}: {e}")
                 continue
-            for rule in {v.rule for v in pi.audit(weeks, goal)}:
-                slot[rule] = slot.get(rule, 0) + 1
+            if d in env.EDITORS and env.fingerprint(weeks) == base_fp:
+                noop[d] = noop.get(d, 0) + 1
+            for rule in {f.split(":")[0] for f in env.findings(weeks, r.goal(), rides, today)}:
+                tally.setdefault(d, {})[rule] = tally.get(d, {}).get(rule, 0) + 1
 
-    rules = sorted({r for d in tally.values() for r in d})
-    order = ["generate", "regenerate", "recalculate", "extend", "refit"]
-    w = max((len(r) for r in rules), default=10) + 2
-    print(f"\n{n} riders x 5 entry points -- riders with at least one violation\n")
-    print(f"{'rule':<{w}}" + "".join(f"{o:>13}" for o in order))
-    print("-" * (w + 13 * len(order)))
-    for r in rules:
-        print(f"{r:<{w}}" + "".join(f"{tally.get(o, {}).get(r, 0):>13}" for o in order))
+    order = [d for d in env.DRIVERS if d in ran]
+    rules = sorted({x for v in tally.values() for x in v})
+    w = max((len(x) for x in rules + ["changed nothing"]), default=10) + 2
+    mode = "owner ON" if "--owner" in sys.argv else "owner off"
+    print(f"\n{n} riders, {mode} -- riders with at least one violation, per entry point\n")
+    print(f"{'':<{w}}" + "".join(f"{d:>15}" for d in order))
+    print(f"{'riders run':<{w}}" + "".join(f"{ran[d]:>15}" for d in order))
+    print("-" * (w + 15 * len(order)))
+    for x in rules:
+        print(f"{x:<{w}}" + "".join(f"{tally.get(d, {}).get(x, 0):>15}" for d in order))
     if not rules:
         print("(no violations anywhere)")
-    for name, errs in errors.items():
-        u = sorted(set(errs))
-        print(f"\n{name} raised on {len(errs)} riders: {u[:3]}")
-    return tally
+    print("-" * (w + 15 * len(order)))
+    print(f"{'changed nothing':<{w}}" + "".join(
+        f"{(noop.get(d, 0) if d in env.EDITORS else '-'):>15}" for d in order))
+    dead = [d for d in order if d in env.EDITORS and noop.get(d, 0) == ran[d]]
+    if dead:
+        print(f"\n!! {dead}: returned the base plan for EVERY rider -- the column "
+              "above audits generate's plan, not this entry point")
+    for d, errs in errors.items():
+        print(f"\n{d} raised on {len(errs)} riders: {sorted(set(errs))[:3]}")
+    return 1 if dead else 0
 
 
 if __name__ == "__main__":
-    main(int(sys.argv[1]) if len(sys.argv) > 1 else 40)
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    sys.exit(main(int(args[0]) if args else 40))

@@ -92,6 +92,21 @@ class TheOwnerDecidesRatherThanRepairs(unittest.TestCase):
         self.assertLessEqual(tw._hard_tss, 200 * wp.HARD_CEILING_SHARE + 0.5,
                              f"hard load {tw._hard_tss} exceeds its share of 200")
 
+    def test_the_taper_keeps_its_intensity(self):
+        """Mujika & Padilla 2003: a taper cuts volume and HOLDS intensity, so the
+        hard-share cap must not bite in it. Invisible at plan level -- every
+        event plan built for the gates carried 0-50% hard in its taper -- so it
+        is pinned here, where the exemption actually binds (gates.md W03)."""
+        taper = tp.Phase(name="taper", start=MON, end=MON + dt.timedelta(days=6), weeks=1,
+                         focus="", weekly_tss_target=200, z2_pct=70, hit_per_week=3,
+                         session_types=[])
+        ctx = wp.WeekContext(week_num=1, start=MON, phase=taper, goal=goal(), tss_ceiling=200)
+        tw = wp.TrainingWeek(ctx)
+        for d in range(0, 6, 2):
+            tw._commit(sess(MON + dt.timedelta(days=d), t="vo2max", dur=60, tss=80))
+        self.assertGreater(tw._hard_tss, 200 * wp.HARD_CEILING_SHARE + 1,
+                           "the taper's intensity was cut by the hard-share cap")
+
     def test_the_week_total_stays_under_the_ceiling(self):
         tw = self._owner(150)
         for d in range(6):

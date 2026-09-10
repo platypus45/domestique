@@ -5915,6 +5915,57 @@ _HARD_BANDS = ("z3", "z4", "z5plus")
 _BUDGET_FIT_GAIN = 1.5
 
 
+# ── Constructing a session the library cannot supply ─────────────────────────
+# The library fills 822 of 830 slots, so this is not about coverage. It is
+# about DOSE: the median score>=5 file carries 1.5 minutes above 106% FTP and
+# 54 of tempo, and the pool as a whole sits at 53.8/39.1/7.1. Measured, asking
+# the budget for five times the intensity still delivered 7.4% -- a weighted
+# draw returns the pool's shape whatever is asked of it.
+#
+# So when the library's best candidate misses this slot's share by more than
+# _GEN_RESIDUAL_TRIGGER of that share, build one to the dose instead. The
+# library is still asked first, and a generated row is used only when it is
+# strictly closer -- never merely because generation was available.
+#
+# Generated files are written flat into the workout directory under a `gen_`
+# prefix with deterministic names, so a regeneration reuses what is there and
+# `rm gen_*.zwo` removes every one.
+#
+# OFF BY DEFAULT, and the measurement says why. Triggering only on an UNDERSHOOT
+# it improves the aggregate on both axes:
+#
+#                          easy-share gap   hard-share gap
+#   generation off              -3.2 pts        +5.0 pts
+#   on, either direction        -7.4            +4.0
+#   on, undershoot only         -2.8            +3.4
+#
+# But the Layer 5 safety rails still reject it: individual weeks breach the 18%
+# Z3 ceiling and the 55% Z1 floor, because constructing a session to the hard
+# dose converts easy minutes inside that slot into hard ones, and on a
+# TSS-capped week there is nowhere for the easy share to come back from. A
+# better aggregate that puts some weeks outside the rails is not a better
+# planner. The trigger needs to consider the week's easy headroom, not only the
+# hard residual -- that is the next change, and it gets its own before/after.
+_GENERATE_WHEN_LIBRARY_MISSES = False
+_GEN_RESIDUAL_TRIGGER = 0.40      # miss by more than 40% of the slot's share
+_GEN_MAX_PER_WEEK = 3             # never rebuild a whole week from scratch
+
+
+def _zwo_scanner():
+    """The library scanner, for measuring a file we just wrote.
+
+    app._scan_zwo_for_library, reached by a function-local import because app
+    imports this module at module scope. It is the SECOND implementation of
+    this scan -- the first is inline in the library loader below -- and
+    tests/test_zone_binning.py pins the two as producing identical numbers on
+    every file in the library. Measuring a generated file with anything other
+    than the scanner that measures every other file would reintroduce exactly
+    the divergence this branch has spent its time removing.
+    """
+    import app as _app
+    return _app._scan_zwo_for_library
+
+
 def _budget_fit_weight(fit: float) -> float:
     """Turn a 0..1 fit into a multiplier centred on 1.0 at fit = 0.5."""
     return _BUDGET_FIT_GAIN ** (2.0 * max(0.0, min(1.0, fit)) - 1.0)
@@ -6649,6 +6700,7 @@ def sample_week_workouts(
     # anti-stacking (TSS PRIMARY, 3D ADDITIVE).
     prev_day_glyco_load: float = 0.0
 
+    _gen_made = 0          # synthesised sessions this week; capped
     for off, d, day_name, weekday, max_min, is_rest in slots:
         if is_rest:
             out[off] = PlannedSession(
@@ -6898,6 +6950,45 @@ def sample_week_workouts(
                     pick_idx = i
                     break
             pick = feasible[pick_idx]
+
+        # The library has offered its best. If that best misses the dose this
+        # slot owes by a wide margin, construct one instead -- see the note on
+        # _GENERATE_WHEN_LIBRARY_MISSES.
+        if (_GENERATE_WHEN_LIBRARY_MISSES and is_hit
+                and _gen_made < _GEN_MAX_PER_WEEK):
+            _band = "z5plus"
+            _share = max(0.0, remaining.get(_band, 0.0)) / max(1, _slots_left)
+            if _share > 0:
+                _pick_z = _row_zone_minutes(pick)
+                _pick_fd = float(pick.get("Duration(min)", 0) or 0)
+                _k = min(1.0, max_min / _pick_fd) if _pick_fd > 0 and max_min > 0 else 1.0
+                _pick_got = _pick_z.get(_band, 0.0) * _k
+                # Only when the library UNDERSHOOTS. Generating against an
+                # overshoot swaps in a smaller hard session, which the library
+                # can usually supply anyway; generating against an undershoot
+                # is the case nothing else can fix.
+                if _pick_got < _share * (1.0 - _GEN_RESIDUAL_TRIGGER):
+                    try:
+                        import workout_gen as _wg
+                        # SOLVE first, decide, and only then write. Writing and
+                        # then rejecting left files in the library that no plan
+                        # ever referenced -- litter, and misleading litter at
+                        # that, since a `gen_` file implies something used it.
+                        _made = _wg.generate(_session_type_from_row(pick),
+                                             max_min, _share / 60.0)
+                        _row = None
+                        if _made is not None:
+                            _cand_min = _made[2].band_s[_made[2].protocol.band()] / 60.0
+                            if abs(_cand_min - _share) < abs(_pick_got - _share):
+                                _row = _wg.generate_row(
+                                    _session_type_from_row(pick), max_min,
+                                    _share / 60.0, WORKOUT_DIR, _zwo_scanner())
+                    except Exception as _e:      # never let this break a plan
+                        log.debug(f"workout generation skipped: {_e}")
+                        _row = None
+                    if _row is not None:
+                        pick = _row
+                        _gen_made += 1
 
         sess = _make_session_from_row(pick, d, day_name, phase.name)
         # v1.8.21 — HARD-clamp the session to the day's AVAILABLE minutes. The

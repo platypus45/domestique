@@ -171,6 +171,29 @@ def _restore_tp_profile_dirs():
 
 
 @pytest.fixture(autouse=True)
+def _sweep_generated_workouts():
+    """Leave no synthesised workouts behind.
+
+    The planner writes `gen_*.zwo` into the ACTIVE workout directory when the
+    library has nothing at the prescribed dose. In the app that directory is
+    the athlete's own profile and the files belong there; under test it is the
+    repository's src/workouts, which is 4,315 tracked files and not somewhere a
+    test may leave anything. Same order-independence discipline as the other
+    guards in this file.
+    """
+    import training_planner as _tp
+    before = {p.name for p in _tp.WORKOUT_DIR.glob("gen_*.zwo")} \
+        if _tp.WORKOUT_DIR.exists() else set()
+    yield
+    try:
+        for p in _tp.WORKOUT_DIR.glob("gen_*.zwo"):
+            if p.name not in before:
+                p.unlink()
+    except OSError:
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _restore_tp_distribution():
     """Order-independence guard for training_planner's active TID model.
 

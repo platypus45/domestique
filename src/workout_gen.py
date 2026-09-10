@@ -284,3 +284,87 @@ def generate(session_type: str, window_min: float,
             f"{got:.0f} min in {proto.band()}. Source: {proto.source}. "
             f"Generated to a prescribed dose.")
     return fname, to_zwo(s, proto.label, desc), s
+
+
+# ── Producing a library-shaped row ───────────────────────────────────────────
+# The sampler picks a library ROW -- a dict carrying File, Duration(min), TSS,
+# Z1%..Z6%, Score and the content-class fields -- and everything downstream
+# (_make_session_from_row, match_zwo, the FIT builder, the calendar push)
+# consumes that shape. So a generated workout enters as a row of the same
+# shape, written flat into the workout directory under a `gen_` prefix, and
+# nothing downstream needs to know it was synthesised.
+#
+# Deterministic names make this idempotent: the same request writes the same
+# file, so regenerating a plan reuses what is already there rather than
+# accumulating near-duplicates. `rm gen_*.zwo` removes every one of them.
+
+_GEN_PREFIX = "gen_"
+
+
+def generate_row(session_type: str, window_min: float, target_band_min: float,
+                 workout_dir, scan) -> dict | None:
+    """Synthesise a workout and return it as a library row, or None.
+
+    ``scan`` is the caller's library scanner (app._scan_zwo_for_library or the
+    planner's equivalent) -- injected rather than imported so this module stays
+    a leaf and the row is built by the SAME code that measures every other file
+    in the library. A generated row measured by a different scanner would be
+    exactly the divergence this project has spent its time removing.
+    """
+    import pathlib
+
+    made = generate(session_type, window_min, target_band_min)
+    if made is None:
+        return None
+    fname, xml, s = made
+    d = pathlib.Path(workout_dir)
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        path = d / fname
+        if not path.exists():
+            path.write_text(xml, encoding="utf-8")
+    except OSError:
+        return None            # read-only library: fall back to the pick
+
+    got = scan(path)
+    if not got:
+        return None
+    total = float(got.get("total_sec") or 0)
+    if total <= 0:
+        return None
+
+    def pct(key):
+        return round(100.0 * float(got.get(key) or 0) / total, 1)
+
+    return {
+        "Name": s.protocol.label,
+        "Category": "Workout",
+        "File": fname,
+        "Duration(min)": round(total / 60.0, 1),
+        "TSS": round(float(got.get("tss") or 0), 1),
+        "IF": round(float(got.get("if_val") or 0), 3),
+        # Score 7: usable and preferred over a poor fit, but never above a
+        # curated file on quality alone -- the budget fit is what should win it
+        # a slot, not a manufactured score.
+        "Score": 7,
+        "Protocol": s.protocol.label,
+        "Notes": (got.get("description") or "")[:200],
+        "Z1%": pct("z1_sec"), "Z2%": pct("z2_sec"), "Z3%": pct("z3_sec"),
+        "Z4%": pct("z4_sec"), "Z5%": pct("z5_sec"), "Z6%": pct("z6_sec"),
+        "Tags": ["generated", s.protocol.key],
+        "content_class": _CONTENT_CLASS_FOR_TYPE.get(session_type, session_type),
+        "content_confidence": 1.0,
+        "secondary_flags": {},
+        "generated": True,
+    }
+
+
+# The sampler buckets its pools by content_class, so a generated row has to
+# declare one the pool builder recognises.
+_CONTENT_CLASS_FOR_TYPE: dict[str, str] = {
+    "vo2max": "vo2_short",
+    "threshold": "threshold",
+    "overunder": "over_under",
+    "sweetspot": "sweet_spot",
+    "tempo": "tempo",
+}

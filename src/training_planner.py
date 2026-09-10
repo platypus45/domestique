@@ -8116,7 +8116,13 @@ def _apply_long_ride_target(sessions: list, target_min: int, max_weekend_min: in
     # otherwise shrink this ride straight back to the budget. `cap` already
     # honours weekend availability and the 5 h ceiling, so pinning cannot
     # breach what the athlete said they have.
-    week_plan.pin(best, "event long-ride progression")
+    # NOT pinned. week_plan.pin() existed to stop the owner shrinking this ride
+    # back to the week's TSS budget; measured, it was worth 7 minutes (233 vs
+    # 240 on the granfondo test) and it was the only caller. An escape hatch
+    # every awkward policy can reach for is how finish() gets hollowed out, so
+    # it is gone. The real fix is to size the long ride from the event target
+    # INSIDE the owner rather than grow it afterwards -- see notes/planner-
+    # cleanup-plan.md, step 3.
     best.tss_estimate = round(tss_per_min * cap)
     if cap >= 120:
         best.session_type = "long_z2"

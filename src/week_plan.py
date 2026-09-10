@@ -104,29 +104,6 @@ def _offending_caller() -> str:
     return "?"
 
 
-def pin(session, reason: str):
-    """Declare that a plan-level policy has DECIDED this session's shape.
-
-    The owner re-asserts its constraints after the plan-level policies run, so
-    that none of them can win merely by running last. A few of them should win
-    anyway, because they know something the constraint does not: the event
-    long-ride progression grows the weekend ride toward the event's own
-    duration, and the week's TSS ceiling has no idea the athlete has signed up
-    for a 200 km granfondo. Left unpinned, the owner shrank that ride straight
-    back to the budget and the specificity was lost.
-
-    So such a policy says so explicitly. That is the difference between a
-    decision and a pass that happened to run late -- and it stays visible,
-    because the reason travels with the session.
-    """
-    object.__setattr__(session, "_policy_pin", reason)
-    return session
-
-
-def is_pinned(session) -> bool:
-    return bool(getattr(session, "_policy_pin", ""))
-
-
 def is_immutable(session) -> bool:
     """Sessions no planning pass may rewrite, for any reason.
 
@@ -138,8 +115,6 @@ def is_immutable(session) -> bool:
     is the point.
     """
     import training_planner as tp
-    if is_pinned(session):
-        return True
     try:
         if tp._protect_race(session):
             return True
@@ -161,6 +136,28 @@ def is_athlete_owned(session) -> bool:
     if getattr(session, "user_moved", False) or getattr(session, "adapted", False):
         return True
     return getattr(session, "status", "pending") != "pending"
+
+
+# ── constraint precedence ────────────────────────────────────────────────
+# Decided 2026-09-10, and the reason it is written down: these four contend on
+# almost every week, and resolving each collision ad hoc is how the planner
+# ended up with rules that cancelled each other.
+#
+#   1. INTENSITY BUDGET.  Nothing outranks it. Exceeding the week's own TSS
+#      ceiling, or its share of hard work, is how an athlete overtrains, and
+#      that is the one failure the planner must never cause. Everything below
+#      yields to it.
+#   2. RECOVERY SPACING.  48 h between hard sessions (Seiler 2010, Gabbett
+#      2016). A safety rail, not a preference.
+#   3. SESSION COUNT.  A week of the right load spread over the right number of
+#      days beats the same load in fewer, bigger sessions -- hence the per-slot
+#      reserve.
+#   4. VARIETY QUOTAS.  Per-class floors (anaerobic, neuromuscular, vo2_short)
+#      and TID separation. Real goals, and the first to yield when 1-3 cannot
+#      all be met.
+#
+# A policy that believes it should outrank this order does not get an escape
+# hatch: it belongs in the ordering, or its rule belongs in _commit.
 
 
 class SealedSessionError(RuntimeError):

@@ -425,8 +425,6 @@ def _session_naming_lookup(
     return display_name, zwo_duration_min
 
 
-# Legacy alias for any direct references
-PLAN_DIR = _DEFAULT_PLAN_DIR
 _BUNDLED_WORKOUT_DIR = Path(__file__).parent / "workouts"  # bundled workout files
 _BUNDLED_GPX_DIR     = Path(__file__).parent / "gpx"       # bundled GPX files
 WORKOUT_DIR   = _BUNDLED_WORKOUT_DIR

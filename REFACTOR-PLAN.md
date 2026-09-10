@@ -114,10 +114,11 @@ clean.
 
 ## Status
 
-**Substrate is done.** `app.py` 22,273 → 22,134; four leaf modules out, each of
-which imports standalone without pulling in `fastapi`, `app` or
-`training_planner` — that property, not the line count, is what makes a feature
-extraction possible next.
+**Substrate done, first feature extractions done.** `app.py` 22,273 → 20,936.
+Every module below imports standalone without pulling in `fastapi`, `app` or
+`training_planner` (`download_lib` imports fastapi on purpose — building the
+response is what it does). That property, not the line count, is what makes the
+next extraction possible.
 
 | module | lines | holds |
 |---|---|---|
@@ -125,6 +126,34 @@ extraction possible next.
 | `cache.py` | 101 | `cached`, `clear_cache`, the clearer registry |
 | `paths.py` | 71 | `DATA_DIR`, `COURSE_DIR`, `ROUTE_*`, `_plan_dir`, `_safe_path`, `_rides_fit_dir` |
 | `http_util.py` | 46 | `_get_json_body`, `_icu_verify`, `_diag_local_only` |
+| `hr.py` | 48 | `_prescription_hr_rows` and the target-mode gate — the single HR resolver |
+| `routes_lib.py` | 808 | the virtual-route library: load, index, filter, score, profile, climb .zwo |
+| `search_lib.py` | 394 | the `q=` grammar: synonyms, typos, durations, matcher, ranker |
+| `download_lib.py` | 125 | capacity cap, outdoor wrapper, the shared `.zwo` response |
+
+### The rule mutable state taught us
+
+`routes_lib` and `search_lib` own module-level caches, and app.py does **not**
+re-export them. `from routes_lib import _ROUTES_CACHE` binds the list object, so
+rebinding `app.X` later leaves the module reading its own — silently.
+
+Not theoretical: moving the routes caches without retargeting the monkeypatches
+broke exactly three tests in `test_route_picker_api.py`. Functions are safe to
+re-export (60 test files reach them through `app.X`); mutable state never is,
+and `tests/test_routes_lib_boundary.py` fails on any attempt.
+
+### Still blocked: the workout-library and FIT-export helpers
+
+The remaining ~725 lines of that chunk (`_build_library_rows` and friends, both
+FIT builders) all call `active_workout_dir()`, which reads `app.WORKOUT_DIR` —
+a module global rebound on every profile switch, patched by 10 test sites across
+20 files.
+
+Worse, there are **two** of them: `app.WORKOUT_DIR` (rebound by
+`app._apply_profile_paths`) and `training_planner.WORKOUT_DIR` (rebound by
+`profile_manager._retarget_training_planner`). Two globals, two writers, one
+concept. Unifying them is the real fix and it is a behaviour change, not a
+relocation — it gets its own commit, not this one.
 
 Three behaviour changes came with it, each its own commit and each with a
 failing-first test:
@@ -174,9 +203,23 @@ Only then:
    `TYPE_CEILING`, `TSS_PER_HOUR`, `_INTENSITY_LADDER`, `_deescalated_load`,
    `apply_week_tier_down` and others are used from `app.py` outside the planning
    chunk.
-7. **Monday week anchoring** — `regenerate_from_today` builds weeks starting on
-   whatever weekday it runs, so a Wednesday regenerate produces Wed–Tue weeks
-   while every rollup aggregates Mon–Sun. Requested explicitly.
+7. **Monday week anchoring** — DONE. `tests/probe_week_anchors.py` measured the
+   condition first: **87 of 91 emitted week starts were not a Monday**, while
+   every rollup in the app (week tile, adherence counter, TSS budget, ramp
+   check) aggregates Mon–Sun. Now 0 after the opening week.
+
+   Two designs were possible and the cheaper one is wrong. Snapping the plan
+   start forward to the next Monday is two lines and makes *every* week a
+   Monday — and leaves a rider who generates on a Thursday with nothing to ride
+   until Monday. So instead the plan still starts today, the **first** week is
+   short (today→Sunday), and `_next_week_cursor` steps every later week to the
+   following Monday. `_clip_week_to_phase` gained the Sunday as a second
+   ceiling so the opening row cannot spill into the week that follows it.
+
+   The taper needed its own rule. Rounding to the *nearest* Monday gives an
+   event on a Monday a 15-day taper, over Mujika's 14-day ceiling; the 8–14 day
+   window is exactly seven days wide, so exactly one Monday sits in it and
+   `_taper_anchor` takes that one. A test over all seven weekdays caught this.
 8. **Sorted candidates before seeding** — makes regeneration reproducible.
 9. **Planning domain extraction** — only after 1 and 2.
 

@@ -6138,6 +6138,344 @@ def _budget_fit_score(row_zones: dict[str, float], remaining: dict[str, float],
     return max(0.0, min(1.0, fit - 0.5 * overshoot / scale))
 
 
+# ── Whole-week repair ────────────────────────────────────────────────────────
+# A greedy per-slot pick chases LOCAL residuals: a session contributes to
+# several bands at once, so closing one band's gap opens another's, and the
+# slot in front of you gets optimised while the week drifts. Measured, that is
+# why more scoring authority did not help -- pushing harder only moved the
+# breach to a different band.
+#
+# So: build the week, MEASURE it, try every single-move change, apply only the
+# one that most improves the WHOLE week, and re-measure. Bounded moves, because
+# this runs inside plan generation.
+#
+# Two asymmetric cases, and they need different rules:
+#
+#   WINDING DOWN (the week is over budget). Trimming every session a little
+#   wrecks them all: below _VOLUME_MIN_SESSION_MIN a session stops being
+#   training and becomes filler. Past that point the right move is to remove
+#   ONE session and rest, not to shave five minutes off four of them.
+#
+#   WINDING UP (the week is under budget). Availability is a hard promise. A
+#   session may grow only inside its own day's cap, and no day may be added
+#   beyond what the rider said they have.
+# Both week optimisers are OFF, and the deciding measurement is that the
+# UNOPTIMISED sampler passes every safety rail while both optimisers breach
+# one. Neither is allowed to trade a rail for a better average -- the same
+# refusal applied to the generated workouts, and consistency about it is the
+# point.
+#
+#                      TSS miss   easy gap   hard gap   weeks off   rails
+#   neither              18.3%      -3.2       +5.0      6 of 20    pass
+#   greedy               13.6%      -2.6       +4.5      3 of 20    BREACH
+#   solver               14.3%      -4.2       +4.4      6 of 20    BREACH
+#   solver then greedy   16.0%      -3.8       +3.9      5 of 20    BREACH
+#
+# The breach is the thread to pull next, and it is informative: the solver
+# carries the rails as hard CONSTRAINTS, so a solution it returns satisfies
+# them on its own model of the week. That the emitted plan then does not means
+# the week changes after the optimiser sees it -- match_zwo, the R4a coherence
+# pass and clamp-then-rematch all still run downstream. Optimising an artifact
+# that is subsequently rewritten is the real problem, and no amount of tuning
+# either optimiser addresses it.
+#
+# Set to 5 to enable the greedy pass.
+_REPAIR_MAX_MOVES = 0
+_REPAIR_MIN_GAIN = 0.03          # a move must improve the week by this much
+_REPAIR_BAND_FLOOR_MIN = 10.0    # below this a band's target is noise, not a goal
+
+
+def _week_band_minutes(sessions, row_for_file) -> dict[str, float]:
+    """Minutes the week actually delivers in each of the four buckets."""
+    acc = {"z1z2": 0.0, "z3": 0.0, "z4": 0.0, "z5plus": 0.0}
+    for s in sessions:
+        if s is None or s.session_type == "rest":
+            continue
+        row = row_for_file(getattr(s, "zwo_file", "") or "")
+        if not row:
+            continue
+        fd = float(row.get("Duration(min)", 0) or 0)
+        sd = float(s.duration_min or 0)
+        k = (sd / fd) if fd > 0 else 1.0
+        for band, v in _row_zone_minutes(row).items():
+            acc[band] += v * k
+    return acc
+
+
+def _week_distance(delivered: dict, budget: "IntensityBudget") -> float:
+    """How far the week is from its budget. Lower is better.
+
+    Normalised PER BAND, for the same reason the fit score is: the easy budget
+    is ten to twenty times the hard one, so an absolute sum lets it drown every
+    other band and the metric stops seeing intensity at all.
+    """
+    want = {"z1z2": budget.z1z2_minutes_per_week, "z3": budget.z3_minutes_per_week,
+            "z4": budget.z4_minutes_per_week, "z5plus": budget.z5plus_minutes_per_week}
+    total = 0.0
+    for band, target in want.items():
+        scale = max(_REPAIR_BAND_FLOOR_MIN, float(target))
+        total += abs(delivered.get(band, 0.0) - float(target)) / scale
+    return total / len(want)
+
+
+# How many options each slot offers the solver. Small on purpose: the shortlist
+# is already the best few by the picker's own weight, so novelty, diversity and
+# the mix preference decide what is ON the table and the solver decides which
+# combination makes the best week. Twelve keeps a 7-slot solve near 100 ms.
+_USE_WEEK_SOLVER = False          # see the note at the call site
+_SOLVER_SHORTLIST = 12
+_SOLVER_TIME_LIMIT_S = 0.6
+
+# The safety rails, as CONSTRAINTS rather than as tests that fail afterwards.
+# Same numbers tests/test_tid_plan_properties.py asserts: past these a week is
+# wrong whatever the model says.
+_RAIL_MIN_EASY_SHARE = 0.55
+_RAIL_MAX_HARD_SHARE = 0.18
+
+
+def _solve_week_assignment(out: list, slots: list, budget: "IntensityBudget",
+                           hit_slot_idxs: set, shortlist: dict,
+                           max_min_for, week_num: int, phase_name: str,
+                           all_rows: dict) -> bool:
+    """Choose the week's workouts by solving the assignment. True if it did.
+
+    The greedy repair this replaces could only ever fix one band at a time, and
+    a session contributes to several at once -- closing one gap opened another.
+    Here the whole week is one model: see week_solver for the formulation.
+
+    Returns False when the model is infeasible or scipy is unavailable, and the
+    caller keeps what it had.
+    """
+    try:
+        import week_solver as _ws
+    except Exception:
+        return False
+
+    editable = [off for off, _d, _dn, _wd, _mm, is_rest in slots if not is_rest]
+    if not editable:
+        return False
+
+    cand_rows: dict[int, list] = {}
+    prob_slots: list = []
+    for off in editable:
+        sess = out[off]
+        day = slots[off][1]
+        cap = float(max_min_for(day.weekday()) or 0)
+        rows = list(shortlist.get(off) or [])
+        # The sampled pick always stays on the table: the solver may only
+        # improve on what the picker chose, never be forced away from it.
+        cur_file = getattr(sess, "zwo_file", "") if sess else ""
+        if cur_file and not any((r.get("File") or "") == cur_file for r in rows):
+            _cur_row = all_rows.get(cur_file)
+            if _cur_row is not None:
+                rows.insert(0, _cur_row)
+        cands = [_ws.Candidate(key=None, bands={b: 0.0 for b in _ws.BANDS})]
+        keep = [None]
+        for r in rows:
+            fd = float(r.get("Duration(min)", 0) or 0)
+            if fd <= 0:
+                continue
+            k = min(1.0, cap / fd) if cap > 0 else 1.0
+            z = _row_zone_minutes(r)
+            cands.append(_ws.Candidate(
+                key=r.get("File"),
+                bands={b: z.get(b, 0.0) * k for b in _ws.BANDS},
+                is_hard=_content_class_for_row(r) in _HIT_SLOT_CONTENT_CLASSES))
+            keep.append(r)
+        if len(cands) <= 1:
+            return False
+        cand_rows[off] = keep
+        prob_slots.append(cands)
+
+    pos = {off: i for i, off in enumerate(editable)}
+    adjacent = [(pos[a], pos[b]) for a, b in zip(editable, editable[1:])
+                if (slots[b][1] - slots[a][1]).days < 2]
+
+    problem = _ws.WeekProblem(
+        slots=prob_slots,
+        target={"z1z2": budget.z1z2_minutes_per_week,
+                "z3": budget.z3_minutes_per_week,
+                "z4": budget.z4_minutes_per_week,
+                "z5plus": budget.z5plus_minutes_per_week},
+        hit_max=max(0, int(budget.hit_count_max)),
+        min_easy_share=_RAIL_MIN_EASY_SHARE,
+        max_hard_share=_RAIL_MAX_HARD_SHARE,
+        adjacent=adjacent,
+    )
+    picks = _ws.solve(problem, time_limit_s=_SOLVER_TIME_LIMIT_S)
+    if picks is None:
+        return False
+
+    # THE SOLVER PROPOSES, THE METRIC DISPOSES. Its answer is exact for the
+    # model it was given, but the model is not the whole truth: the objective
+    # trades share accuracy against total volume, and the menu it chose from is
+    # a shortlist. Measured, its weeks are sometimes worse on the distribution
+    # than the greedy repair's. So take its assignment only when the week's own
+    # distance actually falls -- composition that cannot regress, and the same
+    # discipline used for the generated workouts.
+    _before = _week_distance(_week_band_minutes(out, all_rows.get), budget)
+    _trial = list(out)
+    for off, j in zip(editable, picks):
+        row = cand_rows[off][j]
+        day = slots[off][1]
+        day_name = slots[off][2]
+        if row is None:
+            _trial[off] = PlannedSession(
+                day=day, day_name=day_name, session_type="rest",
+                duration_min=0, tss_estimate=0,
+                description="Rest — the week's work is already accounted for")
+        else:
+            sess = _make_session_from_row(row, day, day_name, phase_name)
+            # The same clamp the main loop applies after building a session:
+            # the day's cap AND the per-type ceiling, with TSS scaled to match.
+            # Skipping it let the solver emit files at their full length -- it
+            # optimised a clamped week and the plan received an unclamped one,
+            # which is exactly the kind of divergence between what a component
+            # decides and what it emits that this branch keeps finding.
+            _cap = float(max_min_for(day.weekday()) or 0)
+            _ceil = (TYPE_CEILING.get(_content_class_for_row(row))
+                     or TYPE_CEILING.get(sess.session_type))
+            _eff = _cap if _cap > 0 else 0.0
+            if _ceil is not None:
+                _eff = float(_ceil) if _eff <= 0 else min(_eff, float(_ceil))
+            if _eff > 0 and sess.duration_min > _eff:
+                _scale = _eff / float(sess.duration_min)
+                sess.tss_estimate = round(float(sess.tss_estimate or 0) * _scale)
+                sess.duration_min = int(_eff)
+                sess.description = (f"{sess.session_type} ({sess.duration_min}min)"
+                                    " — sampled from library")
+            _trial[off] = sess
+    _after = _week_distance(_week_band_minutes(_trial, all_rows.get), budget)
+    if _after >= _before:
+        log.debug("week %s: solver offered no improvement (%.3f -> %.3f)",
+                  week_num, _before, _after)
+        return False
+    out[:] = _trial
+    log.debug("week %s solved: %d slots, distance %.3f -> %.3f",
+              week_num, len(editable), _before, _after)
+    return True
+
+
+def _repair_week(out: list, slots: list, budget: "IntensityBudget",
+                 hit_slot_idxs: set, row_for_file, pool_for_slot,
+                 max_min_for, protect: set | None = None) -> list[str]:
+    """Improve the WEEK's distribution, one best move at a time. Mutates ``out``.
+
+    ``protect`` is the set of slot offsets that may not be touched -- days
+    already ridden, user-moved sessions, anything the rider has an opinion
+    about. Repairing an ongoing week means repairing only what is left of it,
+    which is the whole reason this can run mid-week on two or three remaining
+    sessions.
+
+    Returns a list of what it did, for the log and for tests to assert on.
+    """
+    protect = protect or set()
+    moves: list[str] = []
+    editable = [off for off, _d, _dn, _wd, _mm, is_rest in slots
+                if not is_rest and off not in protect]
+    if not editable:
+        return moves
+
+    for _ in range(_REPAIR_MAX_MOVES):
+        here = _week_band_minutes(out, row_for_file)
+        base = _week_distance(here, budget)
+        best = None            # (gain, description, apply)
+
+        # ── Move 1: swap a session's workout for a better-fitting one ────────
+        for off in editable:
+            sess = out[off]
+            if sess is None or sess.session_type == "rest":
+                continue
+            cap = max_min_for(sess.day.weekday())
+            for cand in pool_for_slot(off in hit_slot_idxs):
+                fd = float(cand.get("Duration(min)", 0) or 0)
+                if fd <= 0 or fd > cap + 5:
+                    continue
+                if (cand.get("File") or "") == (sess.zwo_file or ""):
+                    continue
+                trial = list(out)
+                trial[off] = _make_session_from_row(
+                    cand, sess.day, sess.day_name, sess.phase
+                    if hasattr(sess, "phase") else "")
+                gain = base - _week_distance(_week_band_minutes(trial, row_for_file),
+                                             budget)
+                if gain > _REPAIR_MIN_GAIN and (best is None or gain > best[0]):
+                    best = (gain, f"swap {sess.day} -> {cand.get('File')}",
+                            (off, trial[off]))
+
+        # ── Move 2: resize a session within its own day's cap ────────────────
+        # The gentle correction, and the one to try before anything drastic.
+        # Growing is bounded by the day's cap because AVAILABILITY IS A HARD
+        # PROMISE -- the rider said how long they have and the planner does not
+        # get to argue. Shrinking stops at _VOLUME_MIN_SESSION_MIN: below that
+        # a session is filler, not training, and the right answer is Move 3.
+        for off in editable:
+            sess = out[off]
+            if sess is None or sess.session_type == "rest":
+                continue
+            cap = max_min_for(sess.day.weekday())
+            cur = int(sess.duration_min or 0)
+            for new_dur in (int(cur * 0.75), int(cur * 0.9),
+                            int(cur * 1.1), int(cur * 1.25)):
+                new_dur = min(new_dur, int(cap))
+                if new_dur < _VOLUME_MIN_SESSION_MIN or new_dur == cur:
+                    continue
+                trial = list(out)
+                scaled = replace(sess, duration_min=new_dur,
+                                 tss_estimate=round(float(sess.tss_estimate or 0)
+                                                    * new_dur / max(1, cur)))
+                trial[off] = scaled
+                gain = base - _week_distance(_week_band_minutes(trial, row_for_file),
+                                             budget)
+                if gain > _REPAIR_MIN_GAIN and (best is None or gain > best[0]):
+                    verb = "shorten" if new_dur < cur else "lengthen"
+                    best = (gain, f"{verb} {sess.day} {cur}->{new_dur}min",
+                            (off, scaled))
+
+        # ── Move 3: rest a day (winding down only) ───────────────────────────
+        # Only when the week is OVER its budget. Removing a session from an
+        # under-budget week can never help, and the guard makes that explicit
+        # rather than leaving it to the distance metric to notice.
+        over = sum(here.values()) > (budget.z1z2_minutes_per_week
+                                     + budget.z3_minutes_per_week
+                                     + budget.z4_minutes_per_week
+                                     + budget.z5plus_minutes_per_week)
+        if over:
+            for off in editable:
+                sess = out[off]
+                if sess is None or sess.session_type == "rest":
+                    continue
+                # Only when TRIMMING cannot do the job. If shortening this
+                # session to the viable floor would absorb the surplus, Move 2
+                # already offered that and it is the better answer -- a shorter
+                # session still trains. Resting is for when the surplus is
+                # bigger than the session has to give.
+                _cur = int(sess.duration_min or 0)
+                _sheddable = max(0, _cur - _VOLUME_MIN_SESSION_MIN)
+                _surplus = sum(here.values()) - (
+                    budget.z1z2_minutes_per_week + budget.z3_minutes_per_week
+                    + budget.z4_minutes_per_week + budget.z5plus_minutes_per_week)
+                if _surplus <= _sheddable:
+                    continue
+                trial = list(out)
+                trial[off] = PlannedSession(
+                    day=sess.day, day_name=sess.day_name, session_type="rest",
+                    duration_min=0, tss_estimate=0,
+                    description="Rest — the week's work is already done")
+                gain = base - _week_distance(_week_band_minutes(trial, row_for_file),
+                                             budget)
+                if gain > _REPAIR_MIN_GAIN and (best is None or gain > best[0]):
+                    best = (gain, f"rest {sess.day}", (off, trial[off]))
+
+        if best is None:
+            break
+        off, new_sess = best[2]
+        out[off] = new_sess
+        moves.append(best[1])
+
+    return moves
+
+
 def _build_pool_indexes(library: list[dict]) -> dict:
     """Pre-bucket the Score≥5 library by content_class for O(1) pool lookup.
 
@@ -6788,6 +7126,7 @@ def sample_week_workouts(
     prev_day_glyco_load: float = 0.0
 
     _gen_made = 0          # synthesised sessions this week; capped
+    _shortlist: dict[int, list] = {}   # slot -> candidates offered to the solver
     for off, d, day_name, weekday, max_min, is_rest in slots:
         if is_rest:
             out[off] = PlannedSession(
@@ -7023,6 +7362,35 @@ def sample_week_workouts(
                      * tuple_bonus * class_min_bonus * var_mult
                      * glyco_stack_mult)
             weights.append(wt)
+
+        # Keep the best few by the SAME weight the pick uses, so the solver
+        # chooses among options novelty, diversity and the mix preference have
+        # already endorsed. It decides WHICH of the plausible options makes the
+        # best week; it does not get to overrule what is plausible.
+        if weights:
+            _ranked = sorted(range(len(feasible)), key=lambda i: -weights[i])
+            _sl = [feasible[i] for i in _ranked[:_SOLVER_SHORTLIST]]
+            # SPAN the option space, do not just take the top of one ranking.
+            # A set-partitioning solver is only as good as its columns, and the
+            # picker's weight ranks by novelty, diversity and mix preference --
+            # none of which knows what the WEEK is short of. Adding the extreme
+            # candidate in each band gives the solver something to balance with.
+            # Without this it had twelve near-identical options per slot and
+            # the easy share came out 7 points under target.
+            _seen = {(r.get("File") or "") for r in _sl}
+            for _b in ("z1z2", "z3", "z4", "z5plus"):
+                _ext = max(feasible, key=lambda r: _row_zone_minutes(r).get(_b, 0.0),
+                           default=None)
+                if _ext is not None and (_ext.get("File") or "") not in _seen:
+                    _sl.append(_ext)
+                    _seen.add(_ext.get("File") or "")
+            # And the shortest, so the solver can wind a week DOWN without
+            # having to rest a whole day.
+            _short = min(feasible, key=lambda r: float(r.get("Duration(min)", 0) or 0),
+                         default=None)
+            if _short is not None and (_short.get("File") or "") not in _seen:
+                _sl.append(_short)
+            _shortlist[off] = _sl
 
         total_w = sum(weights)
         if total_w <= 0:
@@ -7409,8 +7777,46 @@ def sample_week_workouts(
                     )
                 swap_attempts -= 1
 
-    # 3. Budget verification: if total TSS missed by >15%, do one re-roll on the
-    # worst-fitting endurance slot (cheapest to re-pick without disrupting HIT).
+    # 3. WHOLE-WEEK REPAIR. Measure the week, apply the single best move, repeat.
+    # Replaces the one re-roll that used to happen here: a single swap on the
+    # worst endurance slot could only ever fix one band, and fixing one band is
+    # what caused the drift in the others.
+    _rows_by_file = {r.get("File"): r for r in (pool_index or {}).get("all_pool", [])}
+    for _r in (hit_pool or []) + (endurance_pool or []):
+        _rows_by_file.setdefault(_r.get("File"), _r)
+
+    # THE SOLVER IS OFF BY DEFAULT, and the numbers say why. Its formulation is
+    # right -- see week_solver -- and its one property nothing else can offer is
+    # that the safety rails become CONSTRAINTS rather than tests that fail
+    # afterwards. But as modelled it does not yet beat the greedy pass on the
+    # metric the plan is judged by. Measured over 20 full weeks:
+    #
+    #                        TSS miss   easy gap   hard gap   weeks off easy
+    #   neither                18.3%      -3.2       +5.0        6 of 20
+    #   greedy only            13.6%      -2.6       +4.5        3 of 20
+    #   solver only            14.3%      -4.2       +4.4        6 of 20
+    #   solver then greedy     16.0%      -3.8       +3.9        5 of 20
+    #
+    # Two things need calibrating before it can lead, and neither is a constant
+    # to guess at: the objective trades share accuracy against total volume
+    # through _VOLUME_WEIGHT, and the shortlist it chooses from is built by a
+    # ranking that knows nothing about what the week is short of. A solver is
+    # only as good as its columns.
+    if _USE_WEEK_SOLVER:
+        _solve_week_assignment(out, slots, budget, hit_slot_idxs, _shortlist,
+                               _max_min_for, week_num, phase.name, _rows_by_file)
+    if True:
+        _repairs = _repair_week(
+            out, slots, budget, hit_slot_idxs,
+            row_for_file=_rows_by_file.get,
+            pool_for_slot=lambda is_h: (hit_pool if is_h else endurance_pool) or [],
+            max_min_for=_max_min_for,
+        )
+        if _repairs:
+            log.debug("week %s repaired greedily: %s", week_num, "; ".join(_repairs))
+
+    # Legacy single re-roll, kept behind the same TSS gate as before for the
+    # cases the distribution repair above leaves outside the load band.
     total_tss = sum(s.tss_estimate for s in out if s.session_type != "rest")
     # Against the ATHLETE's week, not the phase table's 425/600/650. The table
     # constant made this check unreachable for anyone training under ~10h/week:

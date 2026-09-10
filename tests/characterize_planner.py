@@ -44,7 +44,12 @@ from datetime import date, timedelta
 # planner while the source on disk read correct, and the harness dutifully
 # reported 39 changed cases against a file that had already been restored. That
 # will happen constantly if agents are editing rapidly, so never leave one.
-if os.environ.get("PYTHONHASHSEED") != "0":
+# Only when RUN, never on import: `python -c "import characterize_planner"`
+# has sys.argv == ["-c"], so re-execing at import time relaunches the
+# interpreter with no code to run. tests/probe_plan_reproducibility.py imports
+# this module precisely to run it WITHOUT the pin, and would have been
+# silenced by it.
+if __name__ == "__main__" and os.environ.get("PYTHONHASHSEED") != "0":
     os.environ["PYTHONHASHSEED"] = "0"
     os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
     os.execv(sys.executable, [sys.executable] + sys.argv)

@@ -24,11 +24,18 @@ That is the argument for structure rather than more clamps.
   caught, restoring it goes clean. `--bless` exists for intentional changes; a
   refactor that needs it is not a refactor.
 - Two facts that fell out of building it:
-  - **The planner is not reproducible across processes.** The HIT shuffle is
-    seeded (`training_planner.py:3496`) but the candidate list arrives in
-    set-iteration order, so 43 of 57 cases differed run to run until
-    `PYTHONHASHSEED` was pinned. Two identical regenerations give different
-    plans. Fix: sort candidates before seeding.
+  - **The planner was not reproducible across processes.** 43 of 57 cases
+    differed run to run until `PYTHONHASHSEED` was pinned, so two identical
+    regenerations handed the rider different workouts.
+
+    My first diagnosis here was wrong and is worth leaving on the record: I
+    wrote that the HIT candidate list "arrives in set-iteration order". It does
+    not — it is a literal list filtered by a list membership test, fully
+    ordered. The actual cause was one component of the shuffle seed,
+    `abs(hash(phase.name))`: Python randomises `str` hashing per process
+    (PEP 456), so the seed changed on every restart. `zlib.crc32` instead.
+    Measured with `tests/probe_plan_reproducibility.py`, which runs the matrix
+    in separate child processes with no pin: **43 of 57 differing → 0 of 57**.
   - **Stale `.pyc` files silently serve old code.** A restored file reported 39
     changed cases. The harness now sets `PYTHONDONTWRITEBYTECODE`.
 
@@ -101,6 +108,11 @@ Three of its sharpest claims, verified directly rather than taken on trust:
   synchronisation.
 - **`_dfa_backfill_lock` is acquired at `:2495` and released at `:2475`** — in a
   different function, on a different thread.
+
+Pre-existing and left alone, flagged rather than fixed: `app.py:1296` declares
+`global WORKOUT_DIR, GPX_DIR` in a function that assigns neither. A review
+attributed this to the accessor commit on this branch; it is on `clean-main`
+too (line 1303 there), so it is not ours to clean up.
 
 The last two are behaviour questions, not moves. They get their own commits
 *after* the extraction, so the characterization harness can tell a relocation
@@ -222,7 +234,27 @@ Only then:
    `_taper_anchor` (rounding to the nearest Monday gives a Monday event a
    15-day taper, over Mujika's ceiling) and that `_clip_week_to_phase` only
    ever clipped the phase end, never the week's own Sunday.
-8. **Sorted candidates before seeding** — makes regeneration reproducible.
+8. **Reproducible regeneration** — DONE, and the fix was not the one this plan
+   predicted (see the correction above): `zlib.crc32(phase.name)` in place of
+   the builtin `hash`. 43 of 57 → 0 of 57 across separate processes.
+
+   **It also produced the sharpest evidence yet for item 6.** Sampling eight
+   hash seeds on the OLD code, the same week came out at five different loads:
+
+   | case | target | totals across 8 process seeds |
+   |---|---|---|
+   | `every-day/1h/target150` | 150 | 139, 143, 150, 154, 158 — over target on 4 of 8 |
+   | `every-day/1h/target272` | 272 | 252, 256, 260, 275, 279 |
+
+   A rider on 1h/day was getting anywhere from 7% under to 5% over, decided by
+   which process served the request. Determinism fixes the *variance*; it does
+   not fix the *bias*, and the seed it settles on lands that first case at 166,
+   10.7% over target, every time. Cause: HIT variants carry different TSS for
+   the same duration (`threshold` 45min = 68 TSS, `sweetspot` 45min = 60), the
+   z2 fill is sized from the residual BEFORE the variant is drawn, and when the
+   daily-hours cap pins z2 it cannot absorb the difference. That is precisely
+   what `size_session` as single owner has to fix, and it is now measurable
+   rather than anecdotal.
 9. **Planning domain extraction** — only after 1 and 2.
 
 Not scheduled: the ride chunk (needs `_maybe_auto_reforecast` inverted into a

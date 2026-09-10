@@ -3481,7 +3481,17 @@ def _pick_session(
         # Also factor the phase-specific candidate count in: phases with tighter
         # lists are otherwise likelier to repeat.
         import random as _random
-        _phase_hash = (abs(hash(phase.name)) & 0xFFFF) if phase.name else 0
+        import zlib as _zlib
+        # zlib.crc32, not the builtin hash(). Python randomises str hashing per
+        # PROCESS (PEP 456), so this seed component changed on every restart and
+        # two identical regenerations handed the rider different workouts --
+        # measured at 43 of 57 characterization cases differing between
+        # processes (tests/probe_plan_reproducibility.py). The characterization
+        # harness only ever looked deterministic because it pins
+        # PYTHONHASHSEED=0; production uvicorn does not.
+        # crc32 is stable across processes, versions and machines, and & 0xFFFF
+        # keeps the same 16-bit width the seed arithmetic was tuned around.
+        _phase_hash = (_zlib.crc32(phase.name.encode()) & 0xFFFF) if phase.name else 0
         # v4.3.0 B3: mix seed_salt (% 7919) so each regeneration shifts
         # which HIT variant lands on each day.
         _salt_mix = (int(seed_salt) % 7919) if seed_salt else 0

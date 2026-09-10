@@ -1114,6 +1114,63 @@ def _completed_tss_in(activities: list | None, start: date, end: date) -> float:
     return total
 
 
+def _completed_zones_in(activities: list | None, start: date,
+                        end: date) -> dict[str, float]:
+    """MINUTES already ridden in each Coggan bucket inside [start, end].
+
+    The companion to _completed_tss_in, which knows how much work was done but
+    not what KIND. Regenerating from total load alone treats three hard days and
+    three long easy days as the same week, and they are not: the first has spent
+    the week's intensity budget and the second has not.
+
+    Reads whichever shape the caller has. Rides from ride_storage carry a
+    ``time_in_zone`` dict; rows from db.query_activities carry the ICU envelope
+    in ``raw_json`` as ``icu_zone_times``, a list of {id: "Z1", secs: n}. Both
+    are the same seven Coggan zones, folded here through the one canonical map.
+
+    Returns the four buckets the budget is expressed in, in minutes. Missing or
+    power-less rides contribute nothing rather than a guess.
+    """
+    import json as _json
+    acc = {f"z{i}": 0.0 for i in range(1, 8)}
+    for a in activities or []:
+        if not isinstance(a, dict):
+            continue
+        d = str(a.get("date") or a.get("start_date_local")
+                or a.get("started_at") or "")[:10]
+        if not d or not (start.isoformat() <= d <= end.isoformat()):
+            continue
+        tiz = a.get("time_in_zone")
+        if not tiz:
+            raw = a.get("raw_json")
+            if isinstance(raw, str):
+                try:
+                    raw = _json.loads(raw)
+                except (TypeError, ValueError):
+                    raw = None
+            if isinstance(raw, dict):
+                tiz = raw.get("time_in_zone") or raw.get("icu_zone_times")
+        if not tiz:
+            continue
+        if isinstance(tiz, list):
+            # ICU envelope shape. "SS" is a sweet-spot overlay ICU reports
+            # alongside the zones, not an eighth zone -- counting it would
+            # double-count the Z3/Z4 seconds it overlaps.
+            tiz = {str(e.get("id", "")).lower(): e.get("secs") or 0
+                   for e in tiz if isinstance(e, dict)}
+        for i in range(1, 8):
+            try:
+                acc[f"z{i}"] += float(tiz.get(f"z{i}") or 0)
+            except (TypeError, ValueError):
+                continue
+    return {
+        "z1z2": (acc["z1"] + acc["z2"]) / 60.0,
+        "z3": acc["z3"] / 60.0,
+        "z4": acc["z4"] / 60.0,
+        "z5plus": (acc["z5"] + acc["z6"] + acc["z7"]) / 60.0,
+    }
+
+
 # Below this much remaining budget, a day is rested rather than filled. Session
 # floors mean the shortest thing the planner will schedule is ~45 min of Z2,
 # which is ~34 TSS; handing that out when 10 TSS remain is filler, not training.
@@ -2331,7 +2388,8 @@ def week_available_minutes(goal, week_start: date) -> int:
 def scale_budget_to_week(budget: "IntensityBudget", week_tss_target: float,
                          available_minutes: float | None = None,
                          model: str | None = None,
-                         phase_name: str | None = None) -> "IntensityBudget":
+                         phase_name: str | None = None,
+                         spent_zones: "dict | None" = None) -> "IntensityBudget":
     """The phase budget re-expressed for ONE week of THIS athlete.
 
     Keeps everything the phase table is actually authoritative about -- the
@@ -2349,6 +2407,10 @@ def scale_budget_to_week(budget: "IntensityBudget", week_tss_target: float,
     than using the row's typical-volume figure. That is the whole point of a
     dose: at 15 h/week the same three hard sessions are a smaller share of the
     week than at 6 h, and the target has to say so.
+
+    ``spent_zones`` (from _completed_zones_in) is what the athlete has ALREADY
+    ridden inside this week, per band. It is subtracted from the derived budget
+    so the sampler prescribes what remains rather than a fresh week on top.
 
     ``available_minutes`` clamps the result to the time the rider actually has.
     When the target needs more hours than they have, the RATIO is preserved and
@@ -2410,12 +2472,24 @@ def scale_budget_to_week(budget: "IntensityBudget", week_tss_target: float,
     if available_minutes and available_minutes > 0:
         minutes = min(minutes, float(available_minutes))
 
+    rows = {"z1z2": minutes * s1, "z3": minutes * s3,
+            "z4": minutes * s4, "z5plus": minutes * s5}
+
+    # WHAT IS LEFT, not what the week was worth. Subtracting only total TSS
+    # treats three hard days and three long easy days as the same week: both
+    # spend the load, only one spends the INTENSITY. A rider who has already
+    # banked the week's hard minutes should be prescribed easy ones, and the
+    # sampler can only know that if the budget it is handed says so.
+    if spent_zones:
+        for k in rows:
+            rows[k] = max(0.0, rows[k] - float(spent_zones.get(k) or 0.0))
+
     return replace(
         budget,
-        z1z2_minutes_per_week=int(round(minutes * s1)),
-        z3_minutes_per_week=int(round(minutes * s3)),
-        z4_minutes_per_week=int(round(minutes * s4)),
-        z5plus_minutes_per_week=int(round(minutes * s5)),
+        z1z2_minutes_per_week=int(round(rows["z1z2"])),
+        z3_minutes_per_week=int(round(rows["z3"])),
+        z4_minutes_per_week=int(round(rows["z4"])),
+        z5plus_minutes_per_week=int(round(rows["z5plus"])),
         tss_per_week=int(round(tss)),
         week_scaled=True,
     )
@@ -5931,24 +6005,37 @@ _BUDGET_FIT_GAIN = 1.5
 # prefix with deterministic names, so a regeneration reuses what is there and
 # `rm gen_*.zwo` removes every one.
 #
-# OFF BY DEFAULT, and the measurement says why. Triggering only on an UNDERSHOOT
-# it improves the aggregate on both axes:
+# OFF BY DEFAULT, and the reason is the TRIGGER, not the generator.
 #
-#                          easy-share gap   hard-share gap
-#   generation off              -3.2 pts        +5.0 pts
-#   on, either direction        -7.4            +4.0
-#   on, undershoot only         -2.8            +3.4
+# An earlier note here claimed that constructing a session to the hard dose
+# "converts easy minutes inside that slot into hard ones". That explanation was
+# wrong and instrumenting the decision point showed why. Two bugs:
 #
-# But the Layer 5 safety rails still reject it: individual weeks breach the 18%
-# Z3 ceiling and the 55% Z1 floor, because constructing a session to the hard
-# dose converts easy minutes inside that slot into hard ones, and on a
-# TSS-capped week there is nowhere for the easy share to come back from. A
-# better aggregate that puts some weeks outside the rails is not a better
-# planner. The trigger needs to consider the week's easy headroom, not only the
-# hard residual -- that is the next change, and it gets its own before/after.
+#   * The band was hardcoded to z5plus for every HIT slot. A THRESHOLD slot was
+#     therefore judged on its VO2 content -- near zero -- read that as an
+#     enormous miss, and fired. internal_band_for_type now asks which Coggan
+#     bucket the session type actually works in.
+#   * `remaining` is in MINUTES and the dose was passed as `_share / 60.0`,
+#     dividing by sixty a second time. A 12-minute dose was requested as 0.2,
+#     and the solver returned each protocol's floor -- 18 minutes of hard work
+#     against a budget of nothing. Instrumented: 39 firings, almost all against
+#     a dose of zero.
+#
+# Both are fixed, and the generator declines to round a small dose up rather
+# than serve a protocol's floor. Firings fell 39 -> 15 and the doses became
+# real. It is still not a win: measured, generation on leaves the aggregate
+# worse than off and individual weeks still breach the rails.
+#
+# The reason is now clear and it is structural. Substituting a session to close
+# one band's residual perturbs the other two, and a per-slot greedy decision
+# cannot see that -- it optimises the slot in front of it while the week drifts.
+# The right shape is whole-week repair: build the week, measure it, and swap the
+# ONE session whose replacement most improves the week's distribution, then
+# re-measure. That is the next change; guessing at trigger thresholds is not.
 _GENERATE_WHEN_LIBRARY_MISSES = False
 _GEN_RESIDUAL_TRIGGER = 0.40      # miss by more than 40% of the slot's share
 _GEN_MAX_PER_WEEK = 3             # never rebuild a whole week from scratch
+_GEN_MIN_SHARE_MIN = 5.0          # below this the band's budget is spent
 
 
 def _zwo_scanner():
@@ -6956,9 +7043,20 @@ def sample_week_workouts(
         # _GENERATE_WHEN_LIBRARY_MISSES.
         if (_GENERATE_WHEN_LIBRARY_MISSES and is_hit
                 and _gen_made < _GEN_MAX_PER_WEEK):
-            _band = "z5plus"
-            _share = max(0.0, remaining.get(_band, 0.0)) / max(1, _slots_left)
-            if _share > 0:
+            # The band THIS session type actually works in, not a hardcoded
+            # z5plus. Judging a threshold slot on its VO2 content read ~0
+            # against a ~0 budget as a huge miss, and fired generation against
+            # a dose of zero -- which then returned the smallest session the
+            # protocol allows, 18 minutes of hard work nobody had asked for.
+            # That, not any zone-accounting error, is what breached the rails.
+            import workout_gen as _wg0
+            _stype = _session_type_from_row(pick)
+            _band = _wg0.internal_band_for_type(_stype)
+            _share = (max(0.0, remaining.get(_band, 0.0)) / max(1, _slots_left)
+                      if _band else 0.0)
+            # A share below this is a budget already spent; there is nothing to
+            # construct toward and the library's pick stands.
+            if _share >= _GEN_MIN_SHARE_MIN:
                 _pick_z = _row_zone_minutes(pick)
                 _pick_fd = float(pick.get("Duration(min)", 0) or 0)
                 _k = min(1.0, max_min / _pick_fd) if _pick_fd > 0 and max_min > 0 else 1.0
@@ -6974,15 +7072,14 @@ def sample_week_workouts(
                         # then rejecting left files in the library that no plan
                         # ever referenced -- litter, and misleading litter at
                         # that, since a `gen_` file implies something used it.
-                        _made = _wg.generate(_session_type_from_row(pick),
-                                             max_min, _share / 60.0)
+                        _made = _wg.generate(_stype, max_min, _share)
                         _row = None
                         if _made is not None:
                             _cand_min = _made[2].band_s[_made[2].protocol.band()] / 60.0
                             if abs(_cand_min - _share) < abs(_pick_got - _share):
                                 _row = _wg.generate_row(
-                                    _session_type_from_row(pick), max_min,
-                                    _share / 60.0, WORKOUT_DIR, _zwo_scanner())
+                                    _stype, max_min, _share,
+                                    WORKOUT_DIR, _zwo_scanner())
                     except Exception as _e:      # never let this break a plan
                         log.debug(f"workout generation skipped: {_e}")
                         _row = None
@@ -7787,6 +7884,9 @@ def generate_plan(
                     budget, pw.tss_target,
                     week_available_minutes(goal, pw.start),
                     model=active_model_for_phase(phase.name), phase_name=phase.name)
+                # No spent_zones here: generate_plan builds a FRESH plan, so
+                # nothing has been executed against it yet. Subtracting is the
+                # regeneration and recalculation paths' job.
                 phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
                 # v1.11.0 (P4) — climbing specificity ONLY in build2/peak (research:
                 # race-specific work belongs in build+peak, not base). None elsewhere.
@@ -11924,7 +12024,8 @@ def regenerate_from_today(
             budget = scale_budget_to_week(
                 budget, pw.tss_target,
                 week_available_minutes(adjusted_goal, pw.start),
-                model=active_model_for_phase(phase.name), phase_name=phase.name)
+                model=active_model_for_phase(phase.name), phase_name=phase.name,
+                spent_zones=_completed_zones_in(activities, pw.start, pw.end))
             phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
             # v1.11.0 (P4) — climbing specificity ONLY in build2/peak (mirrors
             # generate_plan's _emph). None elsewhere / for non-event regens.
@@ -12574,7 +12675,8 @@ def recalculate_plan(
             budget = scale_budget_to_week(
                 budget, pw.tss_target,
                 week_available_minutes(adjusted_goal, pw.start),
-                model=active_model_for_phase(phase.name), phase_name=phase.name)
+                model=active_model_for_phase(phase.name), phase_name=phase.name,
+                spent_zones=_completed_zones_in(recent_activities, pw.start, pw.end))
             phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
             _emph = ("event_climb"
                      if (event_targets and event_targets.get("climbing_bias")

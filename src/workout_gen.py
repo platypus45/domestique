@@ -275,6 +275,14 @@ def generate(session_type: str, window_min: float,
         return None
     proto, s = best
     got = s.band_s[proto.band()] / 60.0
+    # Refuse to round UP. Every protocol has a floor -- Seiler 4x8 cannot go
+    # below three reps, which is 18 minutes -- so a 5-minute dose comes back as
+    # 18 and the solver calls that "closest". It is closest, and it is also
+    # three and a half times what was asked for. Overshooting spends budget the
+    # rest of the week needs, and unlike undershooting it cannot be corrected
+    # later in the week. Say no and let the library keep the slot.
+    if got > target_band_min * _MAX_OVERSHOOT + _OVERSHOOT_GRACE_MIN:
+        return None
     # Deterministic name: same request -> same file, so the content classifier
     # and workout_facts caches stay valid across regenerations.
     fname = (f"gen_{proto.key}_{s.sets}x{s.reps_per_set}x{s.rep_s}s"
@@ -299,6 +307,12 @@ def generate(session_type: str, window_min: float,
 # accumulating near-duplicates. `rm gen_*.zwo` removes every one of them.
 
 _GEN_PREFIX = "gen_"
+
+# How far over the requested dose a session may land before the generator
+# declines. A little slack is fine -- protocols come in whole reps -- but
+# rounding a 5-minute dose up to 18 is not a rounding.
+_MAX_OVERSHOOT = 1.25
+_OVERSHOOT_GRACE_MIN = 3.0
 
 
 def generate_row(session_type: str, window_min: float, target_band_min: float,
@@ -368,3 +382,22 @@ _CONTENT_CLASS_FOR_TYPE: dict[str, str] = {
     "sweetspot": "sweet_spot",
     "tempo": "tempo",
 }
+
+
+# Which of the planner's four internal buckets a session type's work actually
+# lands in. The three-zone band is not enough here: "threshold" spans two
+# protocols on either side of 106% FTP, so asking which THREE-ZONE band it
+# targets gives the wrong answer for one of them.
+def internal_band_for_type(session_type: str) -> str | None:
+    """The Coggan bucket (z1z2 / z3 / z4 / z5plus) this type's work sits in."""
+    keys = PROTOCOLS_FOR_TYPE.get(session_type) or ()
+    if not keys:
+        return None
+    on = PROTOCOLS[keys[0]].on_pct
+    if on >= 106.0:
+        return "z5plus"
+    if on >= 91.0:
+        return "z4"
+    if on >= 76.0:
+        return "z3"
+    return "z1z2"

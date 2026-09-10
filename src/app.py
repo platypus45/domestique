@@ -9277,37 +9277,7 @@ def api_weekly_plan(week_offset: int = Query(0)):
             with open(json_path, encoding="utf-8") as f:
                 plan_data = json.load(f)
             g = plan_data.get("goal", {})
-            # P5 (v4.1.0): restore available_days + daily_max_hours from the
-            # persisted plan if present. Fall back to [0..6]-minus-rest_days
-            # when missing (pre-v4.1 plans) to avoid the Mon-drop bug where
-            # the old default [1..6] silently turned Monday into a rest day
-            # that wasn't in the user's rest_days list.
-            rest_days_val = g.get("rest_days", [0])
-            raw_available = g.get("available_days")
-            if raw_available is not None:
-                available_days_val = list(raw_available)
-            else:
-                available_days_val = [d for d in range(7) if d not in rest_days_val]
-            raw_daily = g.get("daily_max_hours") or {}
-            daily_max_val = {}
-            for k, v in raw_daily.items():
-                try:
-                    daily_max_val[int(k)] = float(v)
-                except (TypeError, ValueError):
-                    continue
-            goal = tp.Goal(
-                goal_type=g.get("type", g.get("goal_type", "general")),  # JSON saves as "type"
-                hours_per_week=g.get("hours_per_week", 8.0),
-                max_weekday_hours=g.get("max_weekday_hours", 2.0),
-                max_weekend_hours=g.get("max_weekend_hours", 3.5),
-                rest_days=rest_days_val,
-                available_days=available_days_val,
-                daily_max_hours=daily_max_val,
-                plan_weeks=g.get("plan_weeks", 0),
-                longest_ride_h_90d=g.get("longest_ride_h_90d"),
-                last_ftp_test_date=g.get("last_ftp_test_date"),
-                vo2_microintervals_only=bool(g.get("vo2_microintervals_only", False)),
-            )
+            goal = tp.goal_from_dict(g)
         else:
             goal = tp.Goal(goal_type="general", hours_per_week=8.0)
     except Exception:
@@ -9484,17 +9454,7 @@ def api_weekly_plan(week_offset: int = Query(0)):
                 plan = json.load(f)
             g = plan.get("goal", {})
             if g.get("event_date"):
-                plan_goal = tp.Goal(
-                    goal_type=g.get("type", "general"),
-                    target_date=date.fromisoformat(g["event_date"]),
-                    event_name=g.get("event_name", ""),
-                    event_km=g.get("event_km", 0),
-                    event_climb_m=g.get("event_climb", 0),
-                    event_type=g.get("event_type", "granfondo"),
-                    hours_per_week=g.get("hours_per_week", 8),
-                    longest_ride_h_90d=g.get("longest_ride_h_90d"),
-                    last_ftp_test_date=g.get("last_ftp_test_date"),
-                )
+                plan_goal = tp.goal_from_dict(g)
                 # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
                 if plan_goal.longest_ride_h_90d is None:
                     plan_goal.longest_ride_h_90d = _longest_ride_h_90d()
@@ -10486,12 +10446,7 @@ def _continuous_deload_signals(plan: dict, rides: list[dict],
     dto_weeks = []
     for w in plan.get("weeks", []):
         try:
-            dto_weeks.append(tp.PlannedWeek(
-                week_num=w["week_num"], start=date.fromisoformat(w["start"]),
-                end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
-                tss_target=w.get("tss_target", 0),
-                is_stepback=w.get("is_stepback", False), sessions=[],
-            ))
+            dto_weeks.append(tp.week_from_dict({**w, "sessions": []}))
         except (KeyError, ValueError, TypeError):
             continue
     ride_rows = []
@@ -10555,16 +10510,7 @@ def _advance_continuous_deload(plan: dict, json_path: Path, cur_idx: int,
     cur_json = weeks_json[cur_idx]
     goal = _goal_from_plan_dict(plan.get("goal", {}) or {})
     try:
-        cur_dto = tp.PlannedWeek(
-            week_num=cur_json["week_num"],
-            start=date.fromisoformat(cur_json["start"]),
-            end=date.fromisoformat(cur_json["end"]),
-            phase=cur_json.get("phase", "continuous"),
-            tss_target=cur_json.get("tss_target", 0),
-            is_stepback=cur_json.get("is_stepback", False),
-            sessions=[_planned_session_from_json(s)
-                      for s in cur_json.get("sessions", [])],
-        )
+        cur_dto = tp.week_from_dict({"phase": "continuous", **cur_json})
     except (KeyError, ValueError, TypeError):
         return None
     # Pool-collapse breaker — same fail-closed rule as the extend append
@@ -11545,24 +11491,7 @@ def api_event_projection():
     if not g.get("event_km"):
         return {"available": False, "reason": "no_event_km"}
 
-    target_date = None
-    if g.get("event_date"):
-        try:
-            target_date = date.fromisoformat(g["event_date"])
-        except ValueError:
-            target_date = None
-
-    goal = tp.Goal(
-        goal_type=g.get("type", "event"),
-        target_date=target_date,
-        event_name=g.get("event_name", ""),
-        event_km=g.get("event_km", 0),
-        event_climb_m=g.get("event_climb", 0),
-        event_type=g.get("event_type", "granfondo"),
-        hours_per_week=g.get("hours_per_week", 8),
-        longest_ride_h_90d=g.get("longest_ride_h_90d"),
-        last_ftp_test_date=g.get("last_ftp_test_date"),
-    )
+    goal = tp.goal_from_dict(g)
 
     rides = _load_all_rides_safe()
     if goal.longest_ride_h_90d is None:
@@ -11882,53 +11811,9 @@ async def api_plan_generate(request: Request):
 
         # Also save structured JSON
         plan_dict = {
-            "goal": {
-                "type": goal.goal_type,
-                "event_date": goal.target_date.isoformat() if goal.target_date else None,
-                "event_name": goal.event_name,
-                "event_km": goal.event_km,
-                "event_climb": goal.event_climb_m,
-                "event_type": goal.event_type,
-                "hours_per_week": goal.hours_per_week,
-                "max_weekday_hours": goal.max_weekday_hours,
-                "max_weekend_hours": goal.max_weekend_hours,
-                "rest_days": goal.rest_days,
-                # P5 (v4.1.0): persist available_days + daily_max_hours so
-                # /api/weekly-plan reconstruction doesn't silently fall back to
-                # [1..6] (dropping Monday). Without this, a user who picked
-                # rest_days=[2,3] would see a phantom Monday rest because the
-                # Goal reconstructor defaulted available_days to [1..6].
-                "available_days": list(goal.available_days or []),
-                "daily_max_hours": {str(k): float(v) for k, v in (goal.daily_max_hours or {}).items()},
-                "plan_weeks": goal.plan_weeks,
-                # v4.6.7 IMPL-CAP: persist capability-projection inputs.
-                "longest_ride_h_90d": goal.longest_ride_h_90d,
-                "last_ftp_test_date": goal.last_ftp_test_date,
-                # J1 (v2.1.0): persist the chosen distribution so recalc/refit
-                # rebuild with the same model (else they'd revert to polarized).
-                "distribution": getattr(goal, "distribution", "polarized"),
-                "block_periodization": getattr(goal, "block_periodization", False),  # F1
-                "vo2_microintervals_only": getattr(
-                    goal, "vo2_microintervals_only", False),
-                "events": _events_to_dicts(getattr(goal, "events", [])),  # F7
-                "plan_mode": getattr(goal, "plan_mode", "auto"),  # FS1
-                "template_id": getattr(goal, "template_id", "") or "",  # FS1
-                "custom_bands": getattr(goal, "custom_bands", {}) or {},  # v2.3.0
-                # PART B: persist the mid-plan-entry anchor + provenance so
-                # every reconstructor (reforecast/refit/recalc/regenerate)
-                # and the regenerate form repopulation see them.
-                "start_date": (goal.start_date.isoformat()
-                               if getattr(goal, "start_date", None) else None),
-                "entry_mode": getattr(goal, "entry_mode", None),
-                # v3.2.0 phase-split editor: the user's week vector (None =
-                # recommendation); round-trips through _goal_from_plan_dict
-                # + form repopulation like start_date.
-                "phase_weeks": (dict(goal.phase_weeks)
-                                if getattr(goal, "phase_weeks", None) else None),
-                # 3.4.0 W2: continuous focus pref — persisted so the weekly
-                # extend + rotation policy keep the chosen emphasis.
-                "focus": getattr(goal, "focus", "both") or "both",
-            },
+            # Through the codec: every Goal field, under the names the goal
+            # block has always used.
+            "goal": tp.goal_to_dict(goal),
             "phases": [
                 {
                     "name": p.name,
@@ -11940,37 +11825,11 @@ async def api_plan_generate(request: Request):
                 }
                 for p in phases
             ],
-            "weeks": [
-                {
-                    "week_num": w.week_num,
-                    "start": w.start.isoformat() if hasattr(w.start, "isoformat") else str(w.start),
-                    "end": w.end.isoformat() if hasattr(w.end, "isoformat") else str(w.end),
-                    "phase": w.phase,
-                    "tss_target": w.tss_target,
-                    "is_stepback": w.is_stepback,
-                    "sessions": [
-                        {
-                            "day": s.day.isoformat() if hasattr(s.day, "isoformat") else str(s.day),
-                            "day_name": s.day_name,
-                            "session_type": s.session_type,
-                            "duration_min": s.duration_min,
-                            "tss_estimate": s.tss_estimate,
-                            "description": s.description,
-                            "zwo_file": s.zwo_file,
-                            "zwo_name": s.zwo_name,
-                            # E7 (v2.5.0): persist the race marking + opener flag
-                            # from birth — generate_plan marks race days and
-                            # places openers, and the reforecast/refit round-trip
-                            # (tp._plan_dict_to_planned_weeks) keys on them.
-                            "is_race": bool(getattr(s, "is_race", False)),
-                            "race": getattr(s, "race", None),
-                            "is_opener": bool(getattr(s, "is_opener", False)),
-                        }
-                        for s in w.sessions
-                    ],
-                }
-                for w in weeks
-            ],
+            # Through the codec: every week and session field. This writer
+            # kept 11 of a session's 27, so fuelling notes, matched=False and
+            # the double-threshold pairing were lost at birth, and so was the
+            # week's own budget (dupes.md DUP-25, http.md HTTP-9).
+            "weeks": [tp.week_to_dict(w) for w in weeks],
             "generated": datetime.now().isoformat(),
             # P4.2 (v3.0.0) — generation-time fitness snapshot for the
             # Training-Plan-tab drift chip (live CTL vs plan assumption).
@@ -12510,13 +12369,7 @@ def _regenerate_plan_dict(
     # zeroed them, so every edit was silently wiped.
     old_weeks = []
     for w in plan.get("weeks", []):
-        sessions = [_planned_session_from_json(s) for s in w.get("sessions", [])]
-        old_weeks.append(tp.PlannedWeek(
-            week_num=w["week_num"], start=date.fromisoformat(w["start"]),
-            end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
-            tss_target=w.get("tss_target", 0), is_stepback=w.get("is_stepback", False),
-            sessions=sessions,
-        ))
+        old_weeks.append(tp.week_from_dict(w))
 
     unavailable = plan.get("unavailable_periods", [])
 
@@ -12574,16 +12427,7 @@ def _regenerate_plan_dict(
         }
         for p in new_phases
     ]
-    plan_dict["weeks"] = [
-        {
-            "week_num": w.week_num,
-            "start": w.start.isoformat(), "end": w.end.isoformat(),
-            "phase": w.phase, "tss_target": w.tss_target,
-            "is_stepback": w.is_stepback,
-            "sessions": [_planned_session_to_json(s) for s in w.sessions],
-        }
-        for w in all_weeks
-    ]
+    plan_dict["weeks"] = [tp.week_to_dict(w) for w in all_weeks]
     plan_dict["regenerated"] = datetime.now().isoformat()
     # 3.3.2 (Lapo #2): a regen is as fresh as a recalc — stamp recalc_date
     # too. The shallow copy carried the OLD stamp verbatim, so a user whose
@@ -12651,125 +12495,13 @@ def _current_absence_episode(old_weeks, gaps: dict, today: date):
     return (first, last.week_num)
 
 
-def _events_to_dicts(events) -> list:
-    """F7 (v2.1): serialize Goal.events (TargetEvent list) into the saved goal block."""
-    out = []
-    for e in events or []:
-        d = getattr(e, "date", None)
-        out.append({
-            "date": d.isoformat() if hasattr(d, "isoformat") else (d or None),
-            "priority": getattr(e, "priority", "B"),
-            "name": getattr(e, "name", ""),
-            "event_type": getattr(e, "event_type", "granfondo"),
-            "event_km": getattr(e, "event_km", 0),
-            "event_climb_m": getattr(e, "event_climb_m", 0),
-        })
-    return out
+# Goal.events from a list of event dicts: the codec's reader.
+_events_from_dicts = tp._target_events_from_dicts
 
-
-def _events_from_dicts(raw) -> list:
-    """F7 (v2.1): rebuild Goal.events (TargetEvent list) from the saved goal block
-    or the plan-form POST. Skips entries without a parseable date."""
-    out = []
-    for e in raw or []:
-        ds = e.get("date")
-        if not ds:
-            continue
-        try:
-            d = date.fromisoformat(ds) if isinstance(ds, str) else ds
-        except (TypeError, ValueError):
-            continue
-        climb = e.get("event_climb_m")
-        if climb is None:
-            climb = e.get("event_climb")
-        out.append(tp.TargetEvent(
-            date=d,
-            priority=e.get("priority", "B"),
-            name=e.get("name", "") or "",
-            event_type=e.get("event_type", "granfondo"),
-            event_km=e.get("event_km", 0) or 0,
-            event_climb_m=climb or 0,
-        ))
-    return out
-
-
-def _goal_from_plan_dict(g: dict) -> "tp.Goal":
-    """Reconstruct a full scheduling Goal from a persisted plan's ``goal`` block.
-
-    Mirrors the P5 (v4.1.0) reconstruction in api_plan_generate: restores
-    available_days / rest_days / daily_max_hours / max_*_hours so the sampler
-    sees the rider's real weekly shape (not Goal defaults). Used by the
-    missed-hard refit tier (the sampler reads all of these).
-    """
-    rest_days_val = g.get("rest_days", [0])
-    raw_available = g.get("available_days")
-    if raw_available is not None:
-        available_days_val = list(raw_available)
-    else:
-        available_days_val = [d for d in range(7) if d not in rest_days_val]
-    raw_daily = g.get("daily_max_hours") or {}
-    daily_max_val: dict = {}
-    for k, v in raw_daily.items():
-        try:
-            daily_max_val[int(k)] = float(v)
-        except (TypeError, ValueError):
-            continue
-    # B1 (v2.1.0): the saved goal block persists the event, but this
-    # reconstruction used to DROP target_date + every event_* field, so any
-    # recalc/refit/reforecast lost the event entirely — which also starved the
-    # F4 race-eve taper guard (it keys on goal.target_date). Restore them.
-    ev = g.get("event_date")
-    target_date_val = None
-    if ev:
-        try:
-            target_date_val = date.fromisoformat(ev)
-        except (TypeError, ValueError):
-            target_date_val = None
-    # PART B persistence sweep: restore the mid-plan-entry anchor so
-    # recalc/refit/reforecast goals carry it (splitter precedence still
-    # ignores it whenever _phase_start_override is set).
-    _sd = g.get("start_date")
-    start_date_val = None
-    if _sd:
-        try:
-            start_date_val = date.fromisoformat(str(_sd)[:10])
-        except (TypeError, ValueError):
-            start_date_val = None
-    return tp.Goal(
-        goal_type=g.get("type", g.get("goal_type", "general")),
-        target_date=target_date_val,
-        start_date=start_date_val,
-        entry_mode=g.get("entry_mode") or None,
-        event_name=g.get("event_name", ""),
-        event_km=g.get("event_km", 0),
-        event_climb_m=g.get("event_climb", 0),  # persisted as "event_climb"
-        event_type=g.get("event_type", "granfondo"),
-        hours_per_week=g.get("hours_per_week", 8.0),
-        max_weekday_hours=g.get("max_weekday_hours", 2.0),
-        max_weekend_hours=g.get("max_weekend_hours", 3.5),
-        rest_days=rest_days_val,
-        available_days=available_days_val,
-        daily_max_hours=daily_max_val,
-        plan_weeks=g.get("plan_weeks", 0),
-        longest_ride_h_90d=g.get("longest_ride_h_90d"),
-        last_ftp_test_date=g.get("last_ftp_test_date"),
-        distribution=g.get("distribution", "polarized"),  # J1
-        block_periodization=bool(g.get("block_periodization", False)),  # F1
-        vo2_microintervals_only=bool(g.get("vo2_microintervals_only", False)),
-        events=_events_from_dicts(g.get("events")),  # F7
-        plan_mode=g.get("plan_mode", "auto"),  # FS1 — keep fixed plans fixed on refit/reforecast
-        template_id=g.get("template_id", "") or "",
-        custom_bands=g.get("custom_bands", {}) or {},  # v2.3.0 custom distribution
-        # v3.2.0 phase-split editor (A2): restore the user's week vector so
-        # refit-tier goals carry it; any path that rebuilds phases
-        # validity-gates it against its own runway (A1).
-        phase_weeks=(g.get("phase_weeks") or None),
-        # 3.4.0 W2: continuous-mode focus pref (ftp|vo2|both) — without this
-        # every extend/refit rebuilt a continuous plan with the default
-        # emphasis. Ignored by other goal_types (engine contract, W1).
-        focus=str(g.get("focus") or "both"),
-    )
-
+# The goal block's reader is the codec's (tp.goal_from_dict). It used to be
+# written out here and in five other places, each with its own subset of
+# fields, and the rider's targets were read by none of them (dupes.md DUP-5).
+_goal_from_plan_dict = tp.goal_from_dict
 
 def _parse_custom_bands(raw) -> dict:
     """Validate a custom intensity-distribution payload (v2.3.0). Keeps only the
@@ -12835,13 +12567,7 @@ def _apply_refit_to_plan(plan: dict, today: date) -> "dict | None":
     dto_weeks: list = []
     for w in weeks_json:
         try:
-            dto_weeks.append(tp.PlannedWeek(
-                week_num=w["week_num"], start=date.fromisoformat(w["start"]),
-                end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
-                tss_target=w.get("tss_target", 0),
-                is_stepback=w.get("is_stepback", False),
-                sessions=[_planned_session_from_json(s) for s in w.get("sessions", [])],
-            ))
+            dto_weeks.append(tp.week_from_dict(w))
         except (KeyError, ValueError, TypeError):
             return None
 
@@ -12951,13 +12677,7 @@ def _apply_plan_update(
     old_weeks = []
     for w in plan.get("weeks", []):
         try:
-            old_weeks.append(tp.PlannedWeek(
-                week_num=w["week_num"], start=date.fromisoformat(w["start"]),
-                end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
-                tss_target=w.get("tss_target", 0),
-                is_stepback=w.get("is_stepback", False),
-                sessions=[_planned_session_from_json(s) for s in w.get("sessions", [])],
-            ))
+            old_weeks.append(tp.week_from_dict(w))
         except (KeyError, ValueError, TypeError):
             continue
 
@@ -13803,59 +13523,10 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int,
 # ROLLING PLAN AUTO-RECALCULATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# v1.8.20 — canonical PlannedSession ↔ JSON round-trip (single source of truth).
-# Pre-v1.8.20 several writers (notably /api/plan/regenerate) hand-listed ~8 of
-# the dataclass's 22 fields, silently DROPPING user_moved / status / moved_from /
-# completion_matches / dismissed_at / adapted / am_or_pm on every rebuild — so an
-# auto-regen wiped the rider's dragged + dismissed sessions. These helpers derive
-# the field list from ``dataclasses.fields`` so no field can ever silently
-# regress, and pass through the two JSON-only keys the dataclass doesn't carry
-# (``variation`` + ``adapted_reason``, written by accept-redraw — variation drives
-# redraw-seed reproducibility).
-import dataclasses as _dataclasses
-
-# FC5a (v2.5.0): "auto_moved" is the auto-reschedule provenance marker (never
-# user_moved — that pin is reserved for user drags). JSON-only like variation.
-# v3.11.3: + ftp_test_type — the rider's explicit protocol choice was dropped by
-# every plan rebuild (reforecast / tab-open auto-recalc), so the day modal
-# snapped back to "20-minute · selected" after a close/reopen.
-_PS_JSON_ONLY_KEYS = ("variation", "adapted_reason", "auto_moved", "ftp_test_type")
-
-
-def _planned_session_from_json(s: dict) -> "tp.PlannedSession":
-    """Reconstruct a PlannedSession from stored JSON, preserving ALL fields."""
-    kwargs = {}
-    for f in _dataclasses.fields(tp.PlannedSession):
-        if f.name == "day":
-            kwargs["day"] = date.fromisoformat(s["day"])
-            continue
-        if f.name in s:
-            kwargs[f.name] = s[f.name]
-    ps = tp.PlannedSession(**kwargs)
-    # Carry JSON-only keys (not dataclass fields) as dynamic attrs so they
-    # survive the round-trip on preserved sessions.
-    for k in _PS_JSON_ONLY_KEYS:
-        if k in s:
-            try:
-                setattr(ps, k, s[k])
-            except Exception:
-                pass
-    return ps
-
-
-def _planned_session_to_json(s: "tp.PlannedSession") -> dict:
-    """Serialize a PlannedSession to JSON, emitting ALL fields."""
-    out = {}
-    for f in _dataclasses.fields(tp.PlannedSession):
-        v = getattr(s, f.name, f.default)
-        if f.name == "day":
-            out["day"] = v.isoformat() if hasattr(v, "isoformat") else v
-        else:
-            out[f.name] = v
-    for k in _PS_JSON_ONLY_KEYS:
-        if hasattr(s, k):
-            out[k] = getattr(s, k)
-    return out
+# The plan codec lives with the dataclasses (training_planner.session_to_dict
+# and friends); these names stay because handlers and tests call them.
+_planned_session_from_json = tp.session_from_dict
+_planned_session_to_json = tp.session_to_dict
 
 
 def _load_current_week_dto(plan: dict, today: date):
@@ -13874,14 +13545,7 @@ def _load_current_week_dto(plan: dict, today: date):
         except (KeyError, ValueError):
             continue
         if w_start <= today <= w_end:
-            sessions = [_planned_session_from_json(s) for s in w.get("sessions", [])]
-            pw = tp.PlannedWeek(
-                week_num=w["week_num"], start=w_start, end=w_end,
-                phase=w["phase"], tss_target=w["tss_target"],
-                is_stepback=w.get("is_stepback", False),
-                sessions=sessions,
-            )
-            return pw, i
+            return tp.week_from_dict(w), i
     return None, -1
 
 
@@ -17263,17 +16927,7 @@ def api_plan_auto_recalc():
                         current_ctl = training.get("ctl") or 30
                         g = plan.get("goal", {})
                         if g.get("event_date"):
-                            goal = tp.Goal(
-                                goal_type=g.get("type", "general"),
-                                target_date=date.fromisoformat(g["event_date"]),
-                                event_name=g.get("event_name", ""),
-                                event_km=g.get("event_km", 0),
-                                event_climb_m=g.get("event_climb", 0),
-                                event_type=g.get("event_type", "granfondo"),
-                                hours_per_week=g.get("hours_per_week", 8),
-                                longest_ride_h_90d=g.get("longest_ride_h_90d"),
-                                last_ftp_test_date=g.get("last_ftp_test_date"),
-                            )
+                            goal = tp.goal_from_dict(g)
                             if goal.longest_ride_h_90d is None:
                                 goal.longest_ride_h_90d = _longest_ride_h_90d()
                             readiness = tp.compute_event_readiness(goal, current_ctl)
@@ -17321,12 +16975,7 @@ def api_plan_auto_recalc():
         # wiped rider edits + race markers from every week, past ones included.
         old_weeks = []
         for w in plan.get("weeks", []):
-            old_weeks.append(tp.PlannedWeek(
-                week_num=w["week_num"], start=date.fromisoformat(w["start"]),
-                end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
-                tss_target=w.get("tss_target", 0), is_stepback=w.get("is_stepback", False),
-                sessions=[_planned_session_from_json(s) for s in w.get("sessions", [])],
-            ))
+            old_weeks.append(tp.week_from_dict(w))
 
         # Get eFTP for drift detection
         eftp = None
@@ -17376,12 +17025,7 @@ def api_plan_auto_recalc():
                  "weekly_tss": p.weekly_tss_target, "focus": p.focus}
                 for p in new_phases
             ]
-        plan_dict["weeks"] = [
-            {"week_num": w.week_num, "start": w.start.isoformat(), "end": w.end.isoformat(),
-             "phase": w.phase, "tss_target": w.tss_target, "is_stepback": w.is_stepback,
-             "sessions": [_planned_session_to_json(s) for s in w.sessions]}
-            for w in all_weeks
-        ]
+        plan_dict["weeks"] = [tp.week_to_dict(w) for w in all_weeks]
         plan_dict["recalc_date"] = datetime.now().isoformat()
         plan_dict["recalc_info"] = recalc_info
         # Phase-split editor (v3.2.0, A1): the overlay copy above keeps every

@@ -11974,72 +11974,228 @@ def _target_events_from_dicts(raw) -> list:
     return out
 
 
+# ── The plan codec ────────────────────────────────────────────────────────
+# One place turns a persisted plan into objects and back. There were seven
+# hand-typed week readers in the app, two session readers that disagreed on 12
+# fields, and a generate endpoint that wrote 11 of a session's 27 -- so
+# reforecast read every session as un-adapted and downgraded the same one on
+# every sync, a rider's CTL target vanished on the first regenerate, and every
+# rebuild deleted the readiness undo stash (notes/review/dupes.md DUP-5,
+# DUP-22, DUP-25; http.md HTTP-9, HTTP-11). Built from the dataclass fields, so
+# a field added later round-trips without anyone remembering to add it here.
+from dataclasses import fields as _dc_fields  # noqa: E402
+
+# Session state that no dataclass field holds: written when the session
+# carries it, read back when the stored dict has it. Nothing else in a stored
+# dict is state. _enrich_plan_for_response writes nine display keys into the
+# dict it serves and the reforecast endpoint marks weeks is_current/is_past;
+# a rebuild is right to drop those, since a date-relative flag carried through
+# would outlive the day it was true on.
+_PS_JSON_ONLY_KEYS = ("variation", "adapted_reason", "auto_moved", "ftp_test_type",
+                      "pre_adapt")
+_SESSION_FIELDS = tuple(f.name for f in _dc_fields(PlannedSession))
+_WEEK_FIELDS = tuple(f.name for f in _dc_fields(PlannedWeek))
+_SESSION_DEFAULTS = {"session_type": "z2", "duration_min": 0, "tss_estimate": 0.0,
+                     "description": ""}
+_WEEK_DEFAULTS = {"week_num": 0, "phase": "", "tss_target": 0, "is_stepback": False}
+
+
+def _as_date(v) -> date:
+    """An ISO date string, or a date, as a date. Anything else raises."""
+    if isinstance(v, str):
+        return date.fromisoformat(v[:10])
+    if hasattr(v, "toordinal"):
+        return v
+    raise TypeError(f"not a date: {v!r}")
+
+
+def session_to_dict(s) -> dict:
+    """A PlannedSession as the plan stores it: every field, plus the session
+    state no field holds."""
+    out = {name: getattr(s, name, None) for name in _SESSION_FIELDS}
+    if hasattr(out["day"], "isoformat"):
+        out["day"] = out["day"].isoformat()
+    for k in _PS_JSON_ONLY_KEYS:
+        if hasattr(s, k):
+            out[k] = getattr(s, k)
+    return out
+
+
+def session_from_dict(d: dict) -> "PlannedSession":
+    """The inverse of session_to_dict. Raises on a missing or malformed day;
+    any other missing field takes its default."""
+    day = _as_date(d["day"])
+    kw = {k: d[k] for k in _SESSION_FIELDS if k in d and k != "day"}
+    if not kw.get("day_name"):
+        kw["day_name"] = day.strftime("%a")
+    for k, v in _SESSION_DEFAULTS.items():
+        if kw.get(k) is None:
+            kw[k] = v
+    s = PlannedSession(day=day, **kw)
+    for k in _PS_JSON_ONLY_KEYS:
+        if k in d:
+            setattr(s, k, d[k])
+    return s
+
+
+def week_to_dict(w) -> dict:
+    """A PlannedWeek as the plan stores it: every field, sessions included."""
+    out = {name: getattr(w, name, None) for name in _WEEK_FIELDS}
+    for name in ("start", "end"):
+        if hasattr(out[name], "isoformat"):
+            out[name] = out[name].isoformat()
+    out["sessions"] = [session_to_dict(s) for s in (w.sessions or [])]
+    return out
+
+
+def week_from_dict(d: dict) -> "PlannedWeek":
+    """The inverse of week_to_dict. Raises on a missing or malformed start or
+    end. A session with a malformed day is skipped, as reforecast's reader
+    always did; the app's readers dropped the whole week instead."""
+    kw = {k: d[k] for k in _WEEK_FIELDS if k in d and k not in ("start", "end", "sessions")}
+    for k, v in _WEEK_DEFAULTS.items():
+        if kw.get(k) is None:
+            kw[k] = v
+    sessions = []
+    for s in d.get("sessions") or []:
+        try:
+            sessions.append(session_from_dict(s))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return PlannedWeek(start=_as_date(d["start"]), end=_as_date(d["end"]),
+                       sessions=sessions, **kw)
+
+
+def _target_events_to_dicts(events) -> list:
+    """Goal.events (TargetEvent list) as the saved goal block stores it."""
+    out = []
+    for e in events or []:
+        d = getattr(e, "date", None)
+        out.append({
+            "date": d.isoformat() if hasattr(d, "isoformat") else (d or None),
+            "priority": getattr(e, "priority", "B"),
+            "name": getattr(e, "name", ""),
+            "event_type": getattr(e, "event_type", "granfondo"),
+            "event_km": getattr(e, "event_km", 0),
+            "event_climb_m": getattr(e, "event_climb_m", 0),
+        })
+    return out
+
+
+# The goal block keeps the names it has always been written with -- the
+# dashboard reads them -- and gains every field it used to drop (target_ctl,
+# target_ftp, the endurance and weight targets).
+_GOAL_KEY = {"goal_type": "type", "target_date": "event_date", "event_climb_m": "event_climb"}
+
+
+def goal_to_dict(g) -> dict:
+    """A Goal as the plan's goal block stores it: every field."""
+    out = {}
+    for f in _dc_fields(Goal):
+        v = getattr(g, f.name, None)
+        if f.name in ("target_date", "start_date"):
+            v = v.isoformat() if hasattr(v, "isoformat") else (v or None)
+        elif f.name == "daily_max_hours":
+            v = {str(k): float(x) for k, x in (v or {}).items()}
+        elif f.name == "events":
+            v = _target_events_to_dicts(v)
+        elif f.name in ("rest_days", "available_days"):
+            v = list(v or [])
+        elif f.name == "phase_weeks":
+            v = dict(v) if v else None
+        elif f.name == "custom_bands":
+            v = dict(v or {})
+        elif f.name == "template_id":
+            v = v or ""
+        elif f.name == "focus":
+            v = v or "both"
+        out[_GOAL_KEY.get(f.name, f.name)] = v
+    return out
+
+
+def goal_from_dict(g: dict) -> "Goal":
+    """The inverse of goal_to_dict, and the reader for every goal block ever
+    written. A key a block lacks takes the value plans were built with before
+    it existed -- polarized for a block older than J1's distribution key."""
+    g = g or {}
+
+    def pick(name, default=None):
+        v = g.get(_GOAL_KEY.get(name, name))
+        if v is None:
+            v = g.get(name)
+        return default if v is None else v
+
+    def iso(name):
+        v = pick(name)
+        try:
+            return _as_date(v) if v else None
+        except (TypeError, ValueError):
+            return None
+
+    rest = g.get("rest_days")
+    rest = [0] if rest is None else list(rest)
+    avail = g.get("available_days")
+    avail = [d for d in range(7) if d not in rest] if avail is None else list(avail)
+    daily = {}
+    for k, v in (g.get("daily_max_hours") or {}).items():
+        try:
+            daily[int(k)] = float(v)
+        except (TypeError, ValueError):
+            continue
+    return Goal(
+        goal_type=pick("goal_type", "general"),
+        target_date=iso("target_date"),
+        start_date=iso("start_date"),
+        entry_mode=pick("entry_mode") or None,
+        event_name=pick("event_name", ""),
+        event_km=pick("event_km", 0),
+        event_climb_m=pick("event_climb_m", 0),
+        event_type=pick("event_type", "granfondo"),
+        target_ftp=pick("target_ftp"),
+        target_ctl=pick("target_ctl"),
+        target_distance_km=pick("target_distance_km"),
+        target_duration_h=pick("target_duration_h"),
+        target_weight_kg=pick("target_weight_kg"),
+        longest_ride_h_90d=pick("longest_ride_h_90d"),
+        last_ftp_test_date=pick("last_ftp_test_date"),
+        hours_per_week=pick("hours_per_week", 8.0),
+        max_weekday_hours=pick("max_weekday_hours", 2.0),
+        max_weekend_hours=pick("max_weekend_hours", 3.5),
+        rest_days=rest,
+        available_days=avail,
+        daily_max_hours=daily,
+        plan_weeks=pick("plan_weeks", 0),
+        distribution=pick("distribution", "polarized"),
+        block_periodization=bool(pick("block_periodization", False)),
+        vo2_microintervals_only=bool(pick("vo2_microintervals_only", False)),
+        events=_target_events_from_dicts(g.get("events")),
+        plan_mode=pick("plan_mode", "auto"),
+        template_id=pick("template_id", "") or "",
+        custom_bands=pick("custom_bands", {}) or {},
+        phase_weeks=pick("phase_weeks") or None,
+        focus=str(pick("focus", "both") or "both"),
+    )
+
+
 def _plan_dict_to_planned_weeks(plan_dict: dict) -> list[PlannedWeek]:
-    """v1.5.0 — build a PlannedWeek list from the persisted plan_dict.
+    """Every week of a persisted plan, through the codec.
 
-    Replaces the inline PlannedWeek-building blocks in
-    `_maybe_auto_reforecast`, `api_plan_reforecast`, and
-    `api_save_availability` (app.py). Single conversion site means
-    field-name drift between the JSON shape and PlannedWeek can only
-    happen here.
-
-    Days/weeks with malformed dates are skipped silently (matches the
-    pre-migration behaviour — those callers wrapped their list-builds
-    in try/except per session).
+    This was its own hand-typed reader, and it dropped 12 session fields --
+    `adapted` among them, so reforecast saw every adapted session as fair game
+    and downgraded it again on every sync (dupes.md DUP-22). A week with a
+    malformed start or end is skipped and logged, as before.
     """
     pw_list: list[PlannedWeek] = []
     for _w_idx, w in enumerate(plan_dict.get("weeks", []) or []):
         try:
-            ws = date.fromisoformat(w["start"])
-            we = date.fromisoformat(w["end"])
+            pw_list.append(week_from_dict(w))
         except (KeyError, ValueError, TypeError) as _e:
-            # v1.6.1 — log skip with index + which keys were missing.
-            # WARN severity: malformed week is recoverable (we just skip it).
+            # v1.6.1 — WARN severity: a malformed week is recoverable (skipped).
             missing = [k for k in ("start", "end") if k not in (w or {})]
             _tp_log_error(error_codes.Codes.REFORECAST_DICT_TO_PW, exc=_e,
                           week_index=_w_idx,
                           missing_keys=missing or ["?"])
-            continue
-        sess_list: list[PlannedSession] = []
-        for s_json in w.get("sessions", []) or []:
-            try:
-                sd = date.fromisoformat(s_json["day"])
-            except (KeyError, ValueError, TypeError):
-                continue
-            sess_list.append(PlannedSession(
-                day=sd,
-                day_name=s_json.get("day_name", sd.strftime("%a")),
-                session_type=s_json.get("session_type", "z2"),
-                duration_min=int(s_json.get("duration_min", 0) or 0),
-                tss_estimate=float(s_json.get("tss_estimate", 0) or 0),
-                description=s_json.get("description", ""),
-                zwo_file=s_json.get("zwo_file", "") or "",
-                zwo_name=s_json.get("zwo_name", "") or "",
-                status=s_json.get("status", "pending"),
-                # v2.3.0: carry the swap pin so reforecast won't re-sample/demote it.
-                user_swapped=bool(s_json.get("user_swapped", False)),
-                # E7 (v2.5.0): round-trip the race day, the user-move pin, the
-                # dismissal and the opener marker — without these the dict-path
-                # mutators saw a plain session and freely rewrote race days /
-                # pinned moves / openers (FC3 + F5b guards key on them).
-                user_moved=bool(s_json.get("user_moved", False)),
-                dismissed_at=s_json.get("dismissed_at", "") or "",
-                is_race=bool(s_json.get("is_race", False)),
-                race=(s_json.get("race")
-                      if isinstance(s_json.get("race"), dict) else None),
-                is_opener=bool(s_json.get("is_opener", False)),
-            ))
-        pw_list.append(PlannedWeek(
-            week_num=w.get("week_num", 0), start=ws, end=we,
-            phase=w.get("phase", ""),
-            tss_target=w.get("tss_target", 0),
-            is_stepback=w.get("is_stepback", False),
-            sessions=sess_list,
-            hit_per_week=int(w.get("hit_per_week", 0) or 0),
-            auto_acwr_scaled=bool(w.get("auto_acwr_scaled", False)),
-        ))
     return pw_list
-
 
 def _apply_reforecast_to_dict(
     plan_dict: dict,
@@ -12187,44 +12343,11 @@ def reforecast_dict(
     """
     goal_dict = plan_dict.get("goal", {}) or {}
     try:
-        # FC4a (v2.5.0, L3-3): carry target_date + event scalars + B/C events
-        # through the rebuild. This Goal used to keep ONLY type/hours/days, so
-        # the B2 re-assertions at the end of reforecast() — eve-guard, B/C
-        # mini-tapers, _mark_race_days — were unconditional no-ops on the dict
-        # path (the ONLY path _apply_plan_update / swap-type / tier-down /
-        # accept-redraw use): every race guard was dead in production.
-        _ev_iso = goal_dict.get("event_date")
-        try:
-            _target_date = (date.fromisoformat(_ev_iso[:10])
-                            if isinstance(_ev_iso, str) and _ev_iso else None)
-        except (TypeError, ValueError):
-            _target_date = None
-        # PART B persistence sweep: carry the mid-plan-entry anchor through
-        # the dict rebuild (class-of-bug precedent: the FC4a fields below).
-        _sd_iso = goal_dict.get("start_date")
-        try:
-            _start_date = (date.fromisoformat(_sd_iso[:10])
-                           if isinstance(_sd_iso, str) and _sd_iso else None)
-        except (TypeError, ValueError):
-            _start_date = None
-        reforecast_goal = Goal(
-            goal_type=goal_dict.get("type", goal_dict.get("goal_type", "general")),
-            target_date=_target_date,
-            start_date=_start_date,
-            entry_mode=goal_dict.get("entry_mode") or None,
-            event_name=goal_dict.get("event_name", "") or "",
-            event_km=goal_dict.get("event_km", 0) or 0,
-            # persisted as "event_climb" (api_plan_generate), tolerate both
-            event_climb_m=(goal_dict.get("event_climb",
-                           goal_dict.get("event_climb_m", 0)) or 0),
-            event_type=goal_dict.get("event_type", "granfondo") or "granfondo",
-            events=_target_events_from_dicts(goal_dict.get("events")),
-            hours_per_week=goal_dict.get("hours_per_week", 8.0),
-            rest_days=goal_dict.get("rest_days", [0]),
-            available_days=goal_dict.get("available_days") or [
-                d for d in range(7) if d not in goal_dict.get("rest_days", [0])
-            ],
-        )
+        # Through the codec. This Goal was built by hand from a dozen keys, and
+        # it dropped the rider's hours, per-day caps, distribution and plan
+        # mode -- so the race-day guard clamped an unmarked Saturday race to a
+        # default 3.5 h weekend instead of the rider's own day (DUP-27).
+        reforecast_goal = goal_from_dict(goal_dict)
     except Exception:  # noqa: BLE001
         reforecast_goal = Goal(goal_type="general", hours_per_week=8.0)
 
@@ -12649,48 +12772,15 @@ def regenerate_from_today(
             pass
 
     # 9. Create adjusted goal
-    adjusted_goal = Goal(
-        goal_type=goal.goal_type,
-        target_date=goal.target_date,
-        event_name=goal.event_name,
-        event_km=goal.event_km,
-        event_climb_m=goal.event_climb_m,
-        event_type=goal.event_type,
-        target_ftp=goal.target_ftp,
-        target_ctl=adjusted_target,
-        target_distance_km=goal.target_distance_km,
-        target_duration_h=goal.target_duration_h,
-        target_weight_kg=goal.target_weight_kg,
-        hours_per_week=goal.hours_per_week,
-        max_weekday_hours=goal.max_weekday_hours,
-        max_weekend_hours=goal.max_weekend_hours,
-        available_days=goal.available_days,
-        rest_days=goal.rest_days,
-        daily_max_hours=goal.daily_max_hours,
-        plan_weeks=goal.plan_weeks,
-        # F1 (v2.1/B6): carry the user's intensity choices through recalc so a
-        # block / non-polarized plan doesn't silently revert on adaptation.
-        distribution=goal.distribution,
-        custom_bands=goal.custom_bands,  # v2.3.0: carry custom split through recalc
-        block_periodization=goal.block_periodization,
-        events=goal.events,  # F7: carry B/C events through recalc
-        # FS1: carry the construction mode so a fixed_core/template plan stays
-        # fixed on regenerate (else adjusted_goal defaults to "auto" and the
-        # sampler reshuffles the build weeks back to mixed HIT).
-        plan_mode=getattr(goal, "plan_mode", "auto"),
-        template_id=getattr(goal, "template_id", "") or "",
-        # PART B: carry the mid-plan-entry anchor through the recovery refit
-        # (the _phase_start_override below still wins at the splitter — the
-        # B-LOCKED-5 precedence — so behavior is legacy; the fields survive
-        # for the next full regenerate).
-        start_date=getattr(goal, "start_date", None),
-        entry_mode=getattr(goal, "entry_mode", None),
-        # Phase-split editor (v3.2.0, A2): carry the custom split into the
-        # refit; generate_phases validity-gates it against THIS refit's
-        # runway (A1) — the user's stored goal.phase_weeks is never mutated.
+    # The rider's goal, as a copy. The field-by-field rebuild this replaces
+    # dropped vo2_microintervals_only, longest_ride_h_90d and
+    # last_ftp_test_date (dupes.md DUP-5).
+    adjusted_goal = replace(
+        goal, target_ctl=adjusted_target,
+        # Copied, so the stored goal's week vector is never mutated (v3.2.0 A2);
+        # generate_phases validity-gates it against THIS call's runway (A1).
         phase_weeks=(dict(goal.phase_weeks)
                      if getattr(goal, "phase_weeks", None) else None),
-        # 3.4.0 W1: carry the continuous focus pref through the regen.
         focus=getattr(goal, "focus", "both") or "both",
     )
 
@@ -13274,45 +13364,15 @@ def recalculate_plan(
     )
 
     # 5. Re-generate phases for remaining time
-    adjusted_goal = Goal(
-        goal_type=goal.goal_type,
-        target_date=goal.target_date,
-        event_name=goal.event_name,
-        event_km=goal.event_km,
-        event_climb_m=goal.event_climb_m,
-        event_type=goal.event_type,
-        target_ftp=goal.target_ftp,
-        target_ctl=goal.target_ctl,
-        target_distance_km=goal.target_distance_km,
-        target_duration_h=goal.target_duration_h,
-        target_weight_kg=goal.target_weight_kg,
-        hours_per_week=goal.hours_per_week,
-        max_weekday_hours=goal.max_weekday_hours,
-        max_weekend_hours=goal.max_weekend_hours,
-        available_days=goal.available_days,
-        rest_days=goal.rest_days,
-        daily_max_hours=goal.daily_max_hours,
-        plan_weeks=goal.plan_weeks,
-        # F1 (v2.1/B6): carry the user's intensity choices through recalc so a
-        # block / non-polarized plan doesn't silently revert on adaptation.
-        distribution=goal.distribution,
-        custom_bands=goal.custom_bands,  # v2.3.0: carry custom split through recalc
-        block_periodization=goal.block_periodization,
-        events=goal.events,  # F7: carry B/C events through recalc
-        # FS1: carry the construction mode so a fixed_core/template plan stays
-        # fixed on reforecast (else it defaults to "auto" and reshuffles).
-        plan_mode=getattr(goal, "plan_mode", "auto"),
-        template_id=getattr(goal, "template_id", "") or "",
-        # PART B: carry the mid-plan-entry anchor through the weekly recalc
-        # (_phase_start_override wins at the splitter per B-LOCKED-5).
-        start_date=getattr(goal, "start_date", None),
-        entry_mode=getattr(goal, "entry_mode", None),
-        # Phase-split editor (v3.2.0, A2): carry the custom split into the
-        # recalc; generate_phases validity-gates it against THIS call's
-        # runway (A1) — the user's stored goal.phase_weeks is never mutated.
+    # The rider's goal, as a copy. The field-by-field rebuild this replaces
+    # dropped vo2_microintervals_only, longest_ride_h_90d and
+    # last_ftp_test_date (dupes.md DUP-5).
+    adjusted_goal = replace(
+        goal,
+        # Copied, so the stored goal's week vector is never mutated (v3.2.0 A2);
+        # generate_phases validity-gates it against THIS call's runway (A1).
         phase_weeks=(dict(goal.phase_weeks)
                      if getattr(goal, "phase_weeks", None) else None),
-        # 3.4.0 W1: carry the continuous focus pref (parity with regen).
         focus=getattr(goal, "focus", "both") or "both",
     )
 

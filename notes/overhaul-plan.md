@@ -106,10 +106,13 @@ instance of one of these. IDs point into `notes/review/<lens>.md`.
 - DUP-5 / HTTP-11: `Goal` is rebuilt by hand in 10+ places. `target_ctl`,
   `target_ftp` and the endurance targets are never persisted, so they vanish
   on the first automatic regenerate. Seven `PlannedWeek` builders from JSON.
-- DUP-22 (high, **live**): reforecast reads sessions through the lossy
-  reader, which drops `adapted` (and 11 other fields); the guard that skips
-  adapted sessions never fires, so the same session is downgraded on every
-  sync — vo2max → threshold → over-under → sweet spot → tempo in four syncs.
+- DUP-22 (high, **live**): the same session is downgraded on every sync —
+  vo2max → threshold → over-under → sweet spot → tempo in four syncs.
+  Reforecast reads sessions through a lossy reader that drops `adapted` (and
+  11 other fields), so G3's "already adapted" guard never fires. That is not
+  the whole cause (measured in Step 4): the TSB loop that does the
+  downgrading has no such guard at all, and ratchets identically on either
+  reader, because every sync hands it the same flat TSB projection.
 - DUP-25: the generate endpoint has its own serializer that writes 11 of 27
   session fields (nutrition notes lost at birth), and every rebuild deletes
   the readiness undo stash (`pre_adapt`), so "revert" restores nothing.
@@ -157,6 +160,7 @@ index serves stale zone percentages), and the Pillow gap in the production venv.
 | "141-line unreachable block deleted" | still there; it is the production path |
 | "handlers reaching SQL directly: 5" | 28 |
 | "the FIT parser exists three times" | nine decode sites, five stream walkers |
+| DUP-22: "D1 plus `adapted` only: sync 4 modifies nothing" | with the reader carrying `adapted`, three syncs under TSB −40 still ease the same sessions a tier each sync: the TSB loop never reads `adapted` (Step 4) |
 
 ## Decisions taken this session
 
@@ -351,12 +355,72 @@ not determine; now none. The tests that asserted "the global was re-pinned"
 now assert the property it stood for — every budget lookup during a regenerate
 or auto-recalc carries the plan's own model.
 
-### Step 4 — one serialisation (R6)
+### Step 4 — one serialisation (R6) — DONE
 
-`Goal.to_dict/from_dict` and `dataclasses.replace` for adjusted goals; one
-`PlannedWeek`/`PlannedSession` codec driven by `dataclasses.fields()` that
-carries unknown keys through (DUP-22, DUP-25) and keeps `net_tss_target`.
-*Verify:* round-trip tests; the reforecast ratchet (DUP-22) stops.
+One codec in the planner, next to the dataclasses and built from
+`dataclasses.fields()`: `session_to_dict`/`session_from_dict`,
+`week_to_dict`/`week_from_dict`, `goal_to_dict`/`goal_from_dict`. Every reader
+of a stored plan goes through it: the seven app week builders,
+`_plan_dict_to_planned_weeks`, reforecast's Goal and the five goal-block
+readers. So do the generate, regenerate and auto-recalc writers. The goal block
+keeps its historical key names, which the dashboard reads, and gains the
+targets it never carried. Regenerate and recalculate copy the rider's goal
+with `dataclasses.replace` instead of rebuilding it field by field.
+
+One departure from the plan: the codec does not "carry unknown keys through".
+`_enrich_plan_for_response` writes nine display keys into the dict it serves,
+and the reforecast endpoint stamps weeks `is_current`/`is_past`. Carried
+through a rebuild, a date-relative flag would outlive the day it was true on.
+The codec carries the fields plus the five keys that are session state
+without a field: `variation`, `adapted_reason`, `auto_moved`, `ftp_test_type`,
+and `pre_adapt`, the undo stash the old allow-list forgot.
+
+Measured:
+- **Characterization** is unchanged in all 229 cases. This includes the new
+  stored-plan reforecast driver, which was blessed on the previous code and
+  seen by the self-test. The riders exercise none of the lost fields.
+- **Tests that fail on the previous code** show the fixed defects:
+  - the reforecast reader keeps `adapted`, `completion_matches`, `moved_from`
+    and `execution`, which is DUP-22's reader half;
+  - after a real `_regenerate_plan_dict`, revert restores the original
+    (DUP-25; on the old code it restores nothing);
+  - the goal block round-trips `target_ctl` (DUP-5).
+
+The ratchet did not stop, because its cause is not the reader (see "Handover
+claims that did not hold"). That is Step 4b.
+
+### Step 4b — reforecast eases a session once
+
+The TSB downshift loop skips a session that is already `adapted`, as G3
+always has. The rule it implements is one tier past TSB −25. Two syncs minutes
+apart hand it the same reading, so applying the rule again per sync
+compounded one reading into a tier per sync. The fatigue signal is not
+re-counted, and the day-of adaptation (`adjust_today_session`, from actual
+readiness) still eases the day itself further when the athlete arrives tired.
+Measured:
+- `test_reforecast_adapts_a_session_once_not_on_every_sync` fails on both
+  readers before the guard and passes after it.
+- The characterization changes only the two stored-plan cases, and only where
+  a later sync had re-eased. After three syncs a session sits one tier down:
+  over-under, not tempo; threshold, not sweet spot.
+- The event rider's case now shows `hard_share` in weeks 5 and 7 and
+  `weekly_volume` in weeks 2 and 10. These are the base plan's own findings:
+  the legacy builder's generate has them, the owner's does not. The ratchet
+  had hidden them by easing everything to tempo and z2, which cut week 7 from
+  510 to 442 TSS. They belong to Steps 5 and 6.
+
+### Found on the way — reforecast's fatigue response barely reduces fatigue
+
+Two defects, measured on the stored-plan driver and present on either reader.
+Both are for Step 6, where the owner commits every session.
+- **The tier drop keeps the load.** `_deescalated_load` keeps TSS: vo2max
+  87 → threshold 87, 80 → 79, only the minutes shrink. The TSB model the loop
+  invokes (Banister/Coggan: TSB = CTL − ATL, and ATL is driven by TSS) says
+  fatigue falls only when stress does. An intensity swap at equal TSS answers
+  a TSB −40 reading with the same training stress.
+- **An eased session loses its workout file.** The loop clears `zwo_file`
+  "to force a library re-match downstream". Neither `reforecast_dict` nor its
+  seven app callers re-match, so the eased day is served with no workout.
 
 ### Step 5 — one owner of the week's budget (R1)
 

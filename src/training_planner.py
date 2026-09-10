@@ -622,7 +622,7 @@ def rewrite_stale_plan_classifications(plan_path: "Path | str") -> int:
                         week_num=week_num, day_idx=idx,
                         used_names=used_names,
                         plan_start_date=plan_start,
-                    )
+                     micro_only=bool((plan.get("goal") or {}).get("vo2_microintervals_only", False)),)
                     new_zwo = getattr(ps, "zwo_file", "") or ""
                     # One-time pre-migration snapshot before the FIRST mutation,
                     # named so it survives the 7-deep .bak rotation (grill B5).
@@ -2245,17 +2245,14 @@ BUDGETS_BY_MODEL: dict[str, "dict[str, IntensityBudget]"] = {
 # fallback for callers that do not go through it.
 BUDGETS: dict[str, "IntensityBudget"] = BUDGETS_BY_MODEL["pyramidal"]
 
+# The distribution model is the GOAL's, read from it at every lookup. It was
+# three module globals set per request from whichever goal was being planned,
+# and the server runs requests on a thread pool: a generate and a concurrent
+# auto-recalc built, and saved, plans under each other's model (notes/review/
+# state.md STA-1, 54 of 54 lookups foreign), and a one-off "microintervals
+# only" swap leaked into later rematches of other days (STA-5).
 # "auto" = follow DEFAULT_TID_SEQUENCE (pyramidal base/build, polarized
 # peak/taper -- Filipas 2022). A rider who names a model gets it everywhere.
-_ACTIVE_DISTRIBUTION = "auto"
-# v3.7.1 — rider opted into microintervals-only for VO2max days. Generation-
-# scoped state, set from the goal at exactly the sites that set the active
-# distribution, and ALWAYS set explicitly (including to False) so it can never
-# go stale between plans — the failure mode a sticky module global invites.
-_VO2_MICRO_ONLY = False
-# v2.3.0: per-phase budget table for the "custom" distribution, built on demand
-# by set_active_distribution from goal.custom_bands. None ⇒ no custom plan active.
-_ACTIVE_CUSTOM_BUDGETS: "dict[str, IntensityBudget] | None" = None
 
 
 def _custom_model_budgets(bands: dict) -> "dict[str, IntensityBudget]":
@@ -2290,73 +2287,52 @@ def _custom_model_budgets(bands: dict) -> "dict[str, IntensityBudget]":
     return out
 
 
-def set_vo2_micro_only(flag) -> bool:
-    """Set (and return) the microintervals-only preference for VO2max slots.
+def _model_of(goal) -> "tuple[str, dict | None]":
+    """(distribution, custom_bands) of a Goal, or of a persisted goal block.
 
-    Deliberately takes a plain bool rather than reading a goal: the swap and
-    rematch paths carry the preference without a Goal object, and a setter
-    that can only be fed one shape is a setter that some path will skip.
+    A persisted block without the key predates J1, when every plan was built
+    polarized -- the same default the plan restorer has always used.
     """
-    global _VO2_MICRO_ONLY
-    _VO2_MICRO_ONLY = bool(flag)
-    return _VO2_MICRO_ONLY
+    if goal is None:
+        return "auto", None
+    if isinstance(goal, dict):
+        return goal.get("distribution") or "polarized", goal.get("custom_bands") or None
+    return (getattr(goal, "distribution", None) or "auto",
+            getattr(goal, "custom_bands", None) or None)
 
 
-def get_vo2_micro_only() -> bool:
-    return _VO2_MICRO_ONLY
+def budget_table(goal=None) -> "dict[str, IntensityBudget]":
+    """The per-phase budget table for ``goal``'s distribution model.
 
-
-def set_active_distribution(model: "str | None", custom_bands: "dict | None" = None) -> str:
-    """Set the active intensity-distribution model for budget lookups (J1).
-
-    Called at plan generation + recalc from ``goal.distribution``. Unknown or
-    None falls back to ``"auto"``: pyramidal through base and build, polarized
-    into peak and taper, which is the sequence Filipas 2022 found beat every
-    other order and is consistent with Rosenblat 2025's finding that the models
-    are otherwise equivalent at the group level. A rider who names a model gets
-    that model in every phase. ``model == "custom"`` with non-empty
-    ``custom_bands`` builds an on-demand budget table.
+    "custom" with bands builds the rider's own table (_custom_model_budgets);
+    an unknown model, or custom without bands, falls back to "auto".
     """
-    global _ACTIVE_DISTRIBUTION, _ACTIVE_CUSTOM_BUDGETS
-    if model == "custom" and custom_bands:
+    model, bands = _model_of(goal)
+    if model == "custom" and bands:
         try:
-            _ACTIVE_CUSTOM_BUDGETS = _custom_model_budgets(custom_bands)
-            _ACTIVE_DISTRIBUTION = "custom"
-            return "custom"
-        except Exception:
-            _ACTIVE_CUSTOM_BUDGETS = None  # fall through to polarized on bad input
-    _ACTIVE_CUSTOM_BUDGETS = None
-    _ACTIVE_DISTRIBUTION = model if model in BUDGETS_BY_MODEL else "auto"
-    return _ACTIVE_DISTRIBUTION
+            return _custom_model_budgets(bands)
+        except Exception:                                  # noqa: BLE001
+            pass
+    return BUDGETS_BY_MODEL.get(model, BUDGETS)
 
 
-def get_active_distribution() -> str:
-    return _ACTIVE_DISTRIBUTION
-
-
-def active_model_for_phase(phase_name: "str | None") -> str:
-    """Which distribution model this phase is trained on.
+def active_model_for_phase(phase_name: "str | None", goal=None) -> str:
+    """Which distribution model this phase is trained on, for ``goal``.
 
     A named model applies to every phase. "auto" -- the default -- follows
     DEFAULT_TID_SEQUENCE, so the plan is pyramidal while it is building
     aerobic base and polarized when it is sharpening.
     """
-    if _ACTIVE_DISTRIBUTION in PHASE_TID_DOSE:
-        return _ACTIVE_DISTRIBUTION
+    model, _bands = _model_of(goal)
+    if model in PHASE_TID_DOSE:
+        return model
     return DEFAULT_TID_SEQUENCE.get((phase_name or "").lower(), "pyramidal")
 
 
-def _active_budget_table() -> "dict[str, IntensityBudget]":
-    if _ACTIVE_DISTRIBUTION == "custom" and _ACTIVE_CUSTOM_BUDGETS:
-        return _ACTIVE_CUSTOM_BUDGETS
-    return BUDGETS_BY_MODEL.get(_ACTIVE_DISTRIBUTION, BUDGETS)
-
-
-def get_active_polarized_targets() -> "dict[str, dict]":
-    """Per-phase polarization targets for the ACTIVE model (J1) so the recalc
-    breach gate judges a non-polarized plan against its own target, not the
-    polarized ceiling."""
-    return {ph: b.polarized_target for ph, b in _active_budget_table().items()}
+def polarized_targets(goal=None) -> "dict[str, dict]":
+    """Per-phase distribution targets for ``goal``'s model (J1), so the recalc
+    breach gate and the dashboards judge a plan against its own target."""
+    return {ph: b.polarized_target for ph, b in budget_table(goal).items()}
 
 
 # ── Scaling the budget to the athlete (IMPL-BUDGET-SCALE) ────────────────────
@@ -2547,13 +2523,12 @@ def scale_budget_to_week(budget: "IntensityBudget", week_tss_target: float,
     )
 
 
-def get_budget_for_phase(phase_name: str) -> "IntensityBudget":
-    """Return the IntensityBudget for a phase, defaulting to ``base``.
-
-    Honors the active distribution model (J1; default polarized → unchanged;
-    v2.3.0 custom supported).
+def get_budget_for_phase(phase_name: str, goal=None) -> "IntensityBudget":
+    """The IntensityBudget for a phase under ``goal``'s distribution model
+    (J1; v2.3.0 custom), defaulting to ``base``. No goal means "auto" -- fine
+    for the callers that only read the HIT count, which every model shares.
     """
-    table = _active_budget_table()
+    table = budget_table(goal)
     if phase_name == "continuous":
         # 3.4.0 W1: the continuous rolling block uses the build1 budget (the
         # sustainable steady-state: 2-3 HIT/wk, polarized 78/6/16). Mapping
@@ -5097,7 +5072,7 @@ def _match_zwo_unclamped(
                                  .get("pattern_microinterval"))
             if _is_micro:
                 score += MICROINTERVAL_VO2_BONUS
-            elif micro_only or _VO2_MICRO_ONLY:
+            elif micro_only:
                 # Rider asked for microintervals only. Heavy penalty rather
                 # than exclusion: if no microinterval file fits the slot's
                 # duration the day still fills, because an unfillable day is
@@ -7636,7 +7611,7 @@ def sample_week_workouts(ctx: "week_plan.WeekContext", state: "week_plan.PlanSta
                 try:
                     match_zwo(sess, library, week_num=week_num, day_idx=off,
                               used_names=used_names, raise_on_empty=True,
-                              seed_salt=seed_salt)
+                              seed_salt=seed_salt, micro_only=bool(getattr(goal, "vo2_microintervals_only", False)))
                     sess.description = (
                         f"{sess.session_type} ({sess.duration_min}min) — sampled from library"
                     )
@@ -8294,11 +8269,9 @@ def generate_plan(
                 "mark additional races as priority B or C."
             )
 
-    # J1 (v2.1.0): honor the goal's chosen intensity-distribution model for every
-    # get_budget_for_phase lookup in this run (default "polarized" → unchanged).
-    set_vo2_micro_only(getattr(goal, "vo2_microintervals_only", False))
-    set_active_distribution(getattr(goal, "distribution", "auto"),
-                            getattr(goal, "custom_bands", None))
+    # J1 (v2.1.0): the goal's distribution model and microinterval preference
+    # are passed with every lookup below -- nothing is pinned process-wide.
+    _micro = bool(getattr(goal, "vo2_microintervals_only", False))
     # v3.0.0: only self-fetch when the caller didn't supply CTL — `metrics`
     # feeds nothing but the ctl fallback below, and the v2.1.0 comment already
     # promised the thread-through "avoids a redundant fetch" (it never did:
@@ -8519,7 +8492,7 @@ def generate_plan(
                     used_names_set.discard(n)
 
                 # v4.5.0 IMPL-PLANNER: sampler-driven workout selection per week.
-                budget = get_budget_for_phase(phase.name)
+                budget = get_budget_for_phase(phase.name, goal)
                 # Re-express it for THIS week and THIS athlete: the table is
                 # absolute minutes for a ~10h/week rider (see
                 # scale_budget_to_week). pw.tss_target already carries the
@@ -8535,7 +8508,7 @@ def generate_plan(
                 budget = scale_budget_to_week(
                     budget, _net_target,
                     week_available_minutes(goal, pw.start),
-                    model=active_model_for_phase(phase.name), phase_name=phase.name,
+                    model=active_model_for_phase(phase.name, goal), phase_name=phase.name,
                     spent_zones=_completed_zones_in(
                         activities, _monday_on_or_before(pw.start), pw.end))
                 pw.hit_allowance = int(budget.hit_count_max)
@@ -8614,7 +8587,7 @@ def generate_plan(
                     before = len(used_names_set)
                     match_zwo(s, library, week_num=week_num, day_idx=day_idx,
                               used_names=used_names_set, plan_start_date=plan_start_date,
-                              seed_salt=seed_salt)
+                              seed_salt=seed_salt, micro_only=_micro)
                     if not getattr(s, "matched", True):
                         unmatched_count += 1
                     if len(used_names_set) > before:
@@ -8726,7 +8699,7 @@ def generate_plan(
                         match_zwo(s, library, week_num=pw.week_num,
                                   day_idx=day_idx, used_names=used_names_set,
                                   plan_start_date=plan_start_date,
-                                  seed_salt=seed_salt)
+                                  seed_salt=seed_salt, micro_only=_micro)
                         # v1.3.4 fix: refresh description to match new duration.
                         # Pre-fix the tooltip read "z2 (70min) — sampled from
                         # library · 154m" because description kept the original
@@ -8750,7 +8723,7 @@ def generate_plan(
                 match_zwo(s, library, week_num=pw.week_num,
                           day_idx=day_idx, used_names=used_names_set,
                           plan_start_date=plan_start_date,
-                          seed_salt=seed_salt)
+                          seed_salt=seed_salt, micro_only=_micro)
             except Exception:  # noqa: BLE001
                 log.debug("generate_plan final sweep match_zwo failed",
                           exc_info=True)
@@ -8818,7 +8791,7 @@ def generate_plan(
     # first week — planned intensity forward, volume trimmed — instead of
     # opening on the lightest session in the library. No-op when the caller
     # does not know the gap (tests, legacy paths).
-    _apply_reentry_shape(weeks, days_since_last_ride, tsb_at_generation, library)
+    _apply_reentry_shape(weeks, days_since_last_ride, tsb_at_generation, library, micro_only=_micro)
 
     # F4c (v2.5.0, D4): a race-week-only MICRO-PLAN (single taper phase — see
     # generate_phases) keeps at most ONE hard touch total, excluding the
@@ -8844,7 +8817,7 @@ def generate_plan(
                     tss_estimate=round(_dur / 60 * TSS_PER_HOUR["z2"]),
                     description="Easy spin — race week (one hard touch max).",
                 )
-                _m = match_zwo(_cand, library)
+                _m = match_zwo(_cand, library, micro_only=_micro)
                 _w.sessions[_off] = _m if (_m and getattr(_m, "zwo_file", "")) else _cand
 
     # v1.8.21 — AUTHORITATIVE per-day availability clamp. Session durations are
@@ -8956,7 +8929,7 @@ def generate_plan(
 
     _enforce_slot_file_coherence(weeks, library,
                                  plan_start_date=plan_start_date,
-                                 seed_salt=seed_salt)
+                                 seed_salt=seed_salt, micro_only=_micro)
 
     return phases, weeks
 
@@ -10137,7 +10110,7 @@ def _slot_file_band_min(slot_min: float) -> float:
 
 def _enforce_slot_file_coherence(weeks: list, library: list,
                                  plan_start_date=None, seed_salt: int = 0,
-                                 today_floor: "date | None" = None) -> dict:
+                                 today_floor: "date | None" = None, micro_only: bool = False) -> dict:
     """R4a — rematch-or-narrate every pending slot whose file duration left
     the band. Runs ONCE, LAST at each plan tail (after the availability
     clamps, so rematch targets FINAL durations). Returns a stats dict
@@ -10220,7 +10193,7 @@ def _enforce_slot_file_coherence(weeks: list, library: list,
                 match_zwo(s, _lib_view, week_num=getattr(wk, "week_num", 0),
                           day_idx=off, plan_start_date=plan_start_date,
                           seed_salt=seed_salt, exact_duration=True,
-                          raise_on_empty=True)
+                          raise_on_empty=True, micro_only=micro_only)
             except Exception:  # noqa: BLE001 — NoCandidate → keep the old file
                 s.zwo_file, s.zwo_name = old_file, old_name
             new_fd = dur_by_file.get((s.zwo_file or "").strip())
@@ -10346,7 +10319,7 @@ _REENTRY_EASY_TYPES = ("recovery", "z2", "endurance", "long_z2")
 _REENTRY_CAPPED_TYPES = ("vo2max", "overunder", "anaerobic", "sprint")
 
 
-def _reentry_scale(s, factor: float, lib) -> None:
+def _reentry_scale(s, factor: float, lib, micro_only: bool = False) -> None:
     """Cut a session's volume, keep its type, re-match the file."""
     dur = int(round((s.duration_min or 60) * factor / 5.0) * 5)
     s.duration_min = max(30, dur)
@@ -10356,13 +10329,13 @@ def _reentry_scale(s, factor: float, lib) -> None:
     s.zwo_file = ""
     s.zwo_name = ""
     try:
-        match_zwo(s, lib)
+        match_zwo(s, lib, micro_only=micro_only)
     except Exception:  # noqa: BLE001
         log.debug("re-entry re-match failed", exc_info=True)
 
 
 def _apply_reentry_shape(weeks: list, gap_days: "int | None",
-                         tsb: "float | None", library=None) -> None:
+                         tsb: "float | None", library=None, micro_only: bool = False) -> None:
     """Shape the first week back after a short complete break.
 
     4-7 days off: the first non-rest day carries the week's first QUALITY
@@ -10410,10 +10383,10 @@ def _apply_reentry_shape(weeks: list, gap_days: "int | None",
             quality.zwo_file = ""
             quality.zwo_name = ""
             try:
-                match_zwo(quality, lib)
+                match_zwo(quality, lib, micro_only=micro_only)
             except Exception:  # noqa: BLE001
                 log.debug("re-entry easy-day re-match failed", exc_info=True)
-        _reentry_scale(first, _REENTRY_VOL_SHORT, lib)
+        _reentry_scale(first, _REENTRY_VOL_SHORT, lib, micro_only=micro_only)
         log.info("EVENT=reentry_shape gap=%sd first=%s dur=%smin",
                  gap_days, first.session_type, first.duration_min)
         return
@@ -10431,11 +10404,11 @@ def _apply_reentry_shape(weeks: list, gap_days: "int | None",
                                    * TSS_PER_HOUR["threshold"])
             s.description = "threshold — first week back: top end waits"
             try:
-                match_zwo(s, lib)
+                match_zwo(s, lib, micro_only=micro_only)
             except Exception:  # noqa: BLE001
                 log.debug("re-entry cap re-match failed", exc_info=True)
         if not scaled_one and s.session_type not in _REENTRY_EASY_TYPES:
-            _reentry_scale(s, _REENTRY_VOL_MID, lib)
+            _reentry_scale(s, _REENTRY_VOL_MID, lib, micro_only=micro_only)
             scaled_one = True
     log.info("EVENT=reentry_shape gap=%sd ceiling=threshold", gap_days)
 
@@ -11154,7 +11127,7 @@ def apply_week_tier_down(
                     planned, library,
                     week_num=week_num, day_idx=day_idx,
                     used_names=excluded, raise_on_empty=True,
-                )
+                 micro_only=bool((plan.get("goal") or {}).get("vo2_microintervals_only", False)),)
                 sess["zwo_file"] = planned.zwo_file
                 sess["zwo_name"] = planned.zwo_name
                 rematched = True
@@ -11653,7 +11626,7 @@ def reforecast(
                                         day_idx=(s.day - pw.start).days,
                                         used_names=_excluded,
                                         raise_on_empty=True,
-                                    )
+                                     micro_only=bool(getattr(goal, "vo2_microintervals_only", False)),)
                                 except NoCandidateWorkoutError:
                                     s.zwo_file = ""
                                     s.zwo_name = ""
@@ -12868,7 +12841,7 @@ def regenerate_from_today(
                 used_names_set.discard(n)
 
             # v4.5.0 IMPL-PLANNER: sampler-driven workout selection per week.
-            budget = get_budget_for_phase(phase.name)
+            budget = get_budget_for_phase(phase.name, adjusted_goal)
             # Re-express it for THIS week and THIS athlete: the table is
             # absolute minutes for a ~10h/week rider (see
             # scale_budget_to_week). pw.tss_target already carries the
@@ -12876,7 +12849,7 @@ def regenerate_from_today(
             budget = scale_budget_to_week(
                 budget, pw.tss_target,
                 week_available_minutes(adjusted_goal, pw.start),
-                model=active_model_for_phase(phase.name), phase_name=phase.name,
+                model=active_model_for_phase(phase.name, adjusted_goal), phase_name=phase.name,
                 spent_zones=_completed_zones_in(activities, pw.start, pw.end))
             phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
             # v1.11.0 (P4) — climbing specificity ONLY in build2/peak (mirrors
@@ -12945,7 +12918,7 @@ def regenerate_from_today(
                 before = len(used_names_set)
                 match_zwo(s, library, week_num=week_num, day_idx=day_idx,
                           used_names=used_names_set, plan_start_date=_anchor,
-                          seed_salt=seed_salt)
+                          seed_salt=seed_salt, micro_only=bool(getattr(goal, "vo2_microintervals_only", False)))
                 if len(used_names_set) > before:
                     for n in used_names_set - set(used_names_dict.keys()):
                         used_names_dict[n] = week_num
@@ -13088,7 +13061,7 @@ def regenerate_from_today(
     _enforce_slot_file_coherence(
         _future_weeks, library,
         plan_start_date=(phase_start_date if new_phases else today),
-        seed_salt=seed_salt)
+        seed_salt=seed_salt, micro_only=bool(getattr(goal, "vo2_microintervals_only", False)))
     return new_phases, all_weeks, regen_info
 
 
@@ -13509,7 +13482,7 @@ def recalculate_plan(
             # / regenerate_from_today). Replaces the legacy plan_week-only
             # skeleton so mix-emphasis + the over_under hard-floor reach a
             # weekly recalc. Climbing specificity ONLY in build2/peak.
-            budget = get_budget_for_phase(phase.name)
+            budget = get_budget_for_phase(phase.name, adjusted_goal)
             # Re-express it for THIS week and THIS athlete: the table is
             # absolute minutes for a ~10h/week rider (see
             # scale_budget_to_week). pw.tss_target already carries the
@@ -13517,7 +13490,7 @@ def recalculate_plan(
             budget = scale_budget_to_week(
                 budget, pw.tss_target,
                 week_available_minutes(adjusted_goal, pw.start),
-                model=active_model_for_phase(phase.name), phase_name=phase.name,
+                model=active_model_for_phase(phase.name, adjusted_goal), phase_name=phase.name,
                 spent_zones=_completed_zones_in(recent_activities, pw.start, pw.end))
             phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
             _emph = ("event_climb"
@@ -13590,7 +13563,7 @@ def recalculate_plan(
                 before = len(used_names)
                 match_zwo(s, library, week_num=week_num, day_idx=day_idx,
                           used_names=used_names, plan_start_date=_anchor,
-                          seed_salt=seed_salt)
+                          seed_salt=seed_salt, micro_only=bool(getattr(goal, "vo2_microintervals_only", False)))
                 # Track when each workout was assigned
                 if len(used_names) > before:
                     new_names = used_names - set(used_in_week.keys())
@@ -13719,7 +13692,7 @@ def recalculate_plan(
     _enforce_slot_file_coherence(
         new_weeks, library,
         plan_start_date=(new_phases[0].start if new_phases else regen_start),
-        seed_salt=seed_salt)
+        seed_salt=seed_salt, micro_only=bool(getattr(goal, "vo2_microintervals_only", False)))
 
     recalc_info = {
         "action": "recalculated",
@@ -13876,7 +13849,7 @@ def extend_continuous_plan(
 
     # Hoisted: the PHASE budget is the same for every appended week. It is
     # re-expressed per week inside the loop below, where pw.tss_target exists.
-    phase_budget = get_budget_for_phase("continuous")
+    phase_budget = get_budget_for_phase("continuous", goal)
     _emph = _continuous_emphasis(goal)
     _bp_mode = getattr(goal, "plan_mode", "auto") in ("fixed_core", "template")
 
@@ -13947,7 +13920,7 @@ def extend_continuous_plan(
         budget = scale_budget_to_week(
             phase_budget, pw.tss_target,
             week_available_minutes(goal, pw.start),
-            model=active_model_for_phase(phase.name), phase_name=phase.name)
+            model=active_model_for_phase(phase.name, goal), phase_name=phase.name)
 
         if _bp_mode:
             # FS1 parity: a fixed/template plan extends deterministically too.
@@ -14001,7 +13974,7 @@ def extend_continuous_plan(
             before = len(used_names)
             match_zwo(s, library, week_num=week_num, day_idx=day_idx,
                       used_names=used_names, plan_start_date=append_start,
-                      seed_salt=seed_salt)
+                      seed_salt=seed_salt, micro_only=bool(getattr(goal, "vo2_microintervals_only", False)))
             if len(used_names) > before:
                 for n in used_names - set(used_in_week.keys()):
                     used_in_week[n] = week_num
@@ -14082,7 +14055,7 @@ def extend_continuous_plan(
 
     # Slot/file coherence, ONCE, LAST (R4a parity — after the clamp).
     _enforce_slot_file_coherence(
-        new_weeks, library, plan_start_date=append_start, seed_salt=seed_salt)
+        new_weeks, library, plan_start_date=append_start, seed_salt=seed_salt, micro_only=bool(getattr(goal, "vo2_microintervals_only", False)))
 
     all_weeks = list(current_plan_weeks) + new_weeks
 
@@ -14268,14 +14241,14 @@ def refit_remaining_week(
     # remaining days below). Budget is the unmodified per-phase budget: a missed
     # hard day frees its HIT slot, so the sampler re-owes the stimulus into the
     # remaining slots up to hit_count_max — the "credit the stimulus back" lever.
-    budget = get_budget_for_phase(week.phase)
+    budget = get_budget_for_phase(week.phase, goal)
     # Fifth and last sampler entry point. Missing it left the refit sampling
     # against the 10h/week table while every other path used the athlete's own
     # week, and the HIT slot floor -- derived from the remaining hard budget --
     # came out far too high, so the freed slot could not be re-owed.
     budget = scale_budget_to_week(
         budget, week.tss_target, week_available_minutes(goal, week.start),
-        model=active_model_for_phase(week.phase), phase_name=week.phase)
+        model=active_model_for_phase(week.phase, goal), phase_name=week.phase)
     sampled = sample_week_workouts(
         week_plan.WeekContext(
             week_num=week.week_num, start=week.start,
@@ -14326,7 +14299,7 @@ def refit_remaining_week(
     # frozen, the week stays as-is (some missed stimulus is legitimately dropped,
     # never forced onto / removed from a frozen day).
     remaining_set = set(remaining_offsets)
-    cap = get_budget_for_phase(week.phase).hit_count_max
+    cap = get_budget_for_phase(week.phase, goal).hit_count_max
 
     # A MISSED hard day imposed NO training load (the athlete rested it), so for
     # BOTH 48h spacing AND the weekly HIT cap it must be treated as NOT-hard.
@@ -14344,7 +14317,7 @@ def refit_remaining_week(
                                    * TSS_PER_HOUR.get(new_type, 45)),
                 description=f"{new_type} ({slot.duration_min}min) — refit demotion",
             )
-            m = match_zwo(cand, library)
+            m = match_zwo(cand, library, micro_only=bool(getattr(goal, "vo2_microintervals_only", False)))
             return m if (m.zwo_file and not _session_is_hit(m)) else None
         demoted = (_try("tempo") if slot.duration_min >= 60 else None) or _try("z2")
         week.sessions[off] = demoted if demoted is not None else PlannedSession(
@@ -14452,7 +14425,7 @@ def refit_remaining_week(
             tss_estimate=round(dur / 60 * TSS_PER_HOUR.get(new_type, 75)),
             description=f"{new_type} ({dur}min) — refit redistribution",
         )
-        promoted = match_zwo(cand, library, seed_salt=seed_salt)
+        promoted = match_zwo(cand, library, seed_salt=seed_salt, micro_only=bool(getattr(goal, "vo2_microintervals_only", False)))
         if not (promoted.zwo_file and _session_is_hit(promoted)):
             # The pool can't supply a hard file for this type/duration (e.g. the
             # sprint IF≤0.82 ceiling rejected every candidate) — drop, don't fake.
@@ -14507,7 +14480,7 @@ def refit_remaining_week(
             continue
         match_zwo(s, library, week_num=week.week_num, day_idx=off,
                   used_names=used_names_set, plan_start_date=anchor,
-                  seed_salt=seed_salt)
+                  seed_salt=seed_salt, micro_only=bool(getattr(goal, "vo2_microintervals_only", False)))
 
     refit_info = {
         "action": "refitted",
@@ -14540,7 +14513,7 @@ def refit_remaining_week(
         [week], library,
         plan_start_date=(current_plan_weeks[0].start if current_plan_weeks
                          else week.start),
-        seed_salt=seed_salt, today_floor=today)
+        seed_salt=seed_salt, today_floor=today, micro_only=bool(getattr(goal, "vo2_microintervals_only", False)))
     return current_plan_weeks, refit_info
 
 

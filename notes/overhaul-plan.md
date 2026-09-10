@@ -328,13 +328,28 @@ that bookkeeping switched off. With it on — as every real entry point runs the
 sampler — a vo2max goal drew 19 VO2 picks against 21 for a general goal over
 5 seeds × 12 weeks: the goal's emphasis is swamped by novelty and diversity.
 
-### Step 3 — generation parameters travel with the goal (R5)
+### Step 3 — generation parameters travel with the goal (R5) — DONE
 
-`get_budget_for_phase`, `active_model_for_phase` and the polarized targets take
-the goal (or a persisted goal block); `match_zwo`'s microinterval preference is
-an explicit argument from whoever holds the goal. `set_active_distribution`,
-`set_vo2_micro_only` and their three module globals are deleted. *Verify:* the
-STA-1 two-thread repro shows 0 foreign reads; characterization unchanged.
+`get_budget_for_phase(phase, goal)`, `active_model_for_phase(phase, goal)`,
+`budget_table(goal)` and `polarized_targets(goal)` read the model from a Goal
+or from a persisted goal block (a block without the key predates J1, when every
+plan was polarized — the restorer's existing default). `match_zwo`'s
+microinterval preference is an argument from whoever holds the goal: every
+planner entry point, the owner, the class-preserving coherence pass, the
+re-entry reshape, tier-down, reforecast and the seven app handlers that rematch
+a day. The swap-type endpoint passes its per-swap override instead of setting a
+process flag (STA-5). `set_active_distribution`, `set_vo2_micro_only`, their
+getters and the three module globals are deleted, and with them conftest's
+guard that snapped them back after every test — the symptom it hid is gone.
+
+Measured: characterization unchanged in all 213 cases (the riders use the
+default model, which every path already honoured serially).
+`tests/test_plan_is_a_function_of_its_goal.py` builds a polarized and a
+threshold plan on two threads at once and compares each with the same goal
+planned alone: on the Step 2 code 4 of 4 trials produced a plan its goal does
+not determine; now none. The tests that asserted "the global was re-pinned"
+now assert the property it stood for — every budget lookup during a regenerate
+or auto-recalc carries the plan's own model.
 
 ### Step 4 — one serialisation (R6)
 

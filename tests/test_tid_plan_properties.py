@@ -55,11 +55,10 @@ class PlanProperties(unittest.TestCase):
         cls.plans = {}
         for label, dmh in SHAPES.items():
             for model in MODELS:
-                # On the GOAL, not the module global: generate_plan calls
-                # set_active_distribution from goal.distribution itself, so a
-                # global set here is overwritten before the first week is laid
-                # -- which is exactly how the first version of this test
-                # "passed" the toggle check with two identical plans.
+                # On the GOAL: the model travels with it. (A module global
+                # set here was once overwritten by generate_plan before the
+                # first week was laid -- which is how the first version of this
+                # test "passed" the toggle check with two identical plans.)
                 try:
                     _ph, weeks = tp.generate_plan(
                         _goal(dmh, distribution=model), seed_salt=3,

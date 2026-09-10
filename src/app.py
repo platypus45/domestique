@@ -4105,7 +4105,7 @@ async def api_readiness_apply_tier_down(request: Request):
                 week_num=week_num, day_idx=day_idx,
                 used_names=excluded, raise_on_empty=True,
                 hr_bias=_hr_bias(),
-            )
+             micro_only=bool(((plan or {}).get("goal") or {}).get("vo2_microintervals_only", False)),)
             target["zwo_file"] = planned.zwo_file
             target["zwo_name"] = planned.zwo_name
         except tp.NoCandidateWorkoutError:
@@ -4381,7 +4381,7 @@ async def api_plan_auto_adjust(request: Request):
                             week_num=week_num, day_idx=day_idx,
                             used_names=excluded, raise_on_empty=True,
                             hr_bias=_hr_bias(),
-                        )
+                         micro_only=bool(((plan or {}).get("goal") or {}).get("vo2_microintervals_only", False)),)
                         target["zwo_file"] = planned.zwo_file
                         target["zwo_name"] = planned.zwo_name
                         rematched = True
@@ -9306,6 +9306,7 @@ def api_weekly_plan(week_offset: int = Query(0)):
                 plan_weeks=g.get("plan_weeks", 0),
                 longest_ride_h_90d=g.get("longest_ride_h_90d"),
                 last_ftp_test_date=g.get("last_ftp_test_date"),
+                vo2_microintervals_only=bool(g.get("vo2_microintervals_only", False)),
             )
         else:
             goal = tp.Goal(goal_type="general", hours_per_week=8.0)
@@ -9360,7 +9361,7 @@ def api_weekly_plan(week_offset: int = Query(0)):
                     week_num=week.week_num, day_idx=i,
                     used_names=cross_week_used_names,
                     hr_bias=_hr_bias(),
-                )
+                 micro_only=bool(getattr(goal, "vo2_microintervals_only", False)),)
             except Exception:
                 pass
     except Exception:
@@ -10573,7 +10574,7 @@ def _advance_continuous_deload(plan: dict, json_path: Path, cur_idx: int,
     if _collapse:
         _log.error("E_DELOAD_ADVANCE_POOL_COLLAPSE: skipped — %s", _collapse)
         return None
-    budget = tp.get_budget_for_phase("continuous")
+    budget = tp.get_budget_for_phase("continuous", (plan or {}).get("goal") or {})
     phase = tp.Phase(
         name="continuous", start=cur_dto.start, end=cur_dto.end, weeks=1,
         focus="deload (advanced on load trigger)",
@@ -10612,7 +10613,7 @@ def _advance_continuous_deload(plan: dict, json_path: Path, cur_idx: int,
         if repl.session_type not in ("rest", "recovery"):
             tp.match_zwo(repl, library, week_num=cur_dto.week_num, day_idx=off,
                          used_names=used_names, plan_start_date=cur_dto.start,
-                         seed_salt=seed_salt)
+                         seed_salt=seed_salt, micro_only=bool(((plan or {}).get("goal") or {}).get("vo2_microintervals_only", False)))
         cur_dto.sessions[off] = repl
         refit_days.append(repl.day.isoformat())
     if not refit_days:
@@ -12224,15 +12225,10 @@ async def api_plan_reforecast():
                  if (w.get("start", "") or "") <= today_iso_str <= (w.get("end", "") or "")),
                 None,
             )
-            # J1 (v2.1.0): align the breach gate with the plan's chosen
-            # distribution model (also sets the active model for this recalc's
-            # budget lookups) so a pyramidal/threshold plan isn't judged against
-            # the polarized ceiling. Default polarized → unchanged.
-            tp.set_vo2_micro_only((plan.get("goal", {}) or {}).get("vo2_microintervals_only", False))
-            tp.set_active_distribution(
-                (plan.get("goal", {}) or {}).get("distribution", "polarized"),
-                (plan.get("goal", {}) or {}).get("custom_bands"))
-            _model_targets = tp.get_active_polarized_targets()
+            # J1 (v2.1.0): judge the breach gate against the plan's OWN
+            # distribution model, so a pyramidal/threshold plan isn't held to
+            # the polarized ceiling.
+            _model_targets = tp.polarized_targets(plan.get("goal", {}) or {})
             target_pol_kwarg = _model_targets.get(
                 (cur_phase or "").lower(), _model_targets.get("history"))
         except Exception:  # noqa: BLE001
@@ -12506,12 +12502,6 @@ def _regenerate_plan_dict(
     # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
     if goal.longest_ride_h_90d is None:
         goal.longest_ride_h_90d = _longest_ride_h_90d()
-    # J1: pin the active intensity-distribution model for this regen's budget
-    # lookups (mirrors generate_plan) — /api/plan/regenerate and add-race call
-    # this core bare, so after an app restart the process default (polarized)
-    # silently rebudgeted non-polarized plans.
-    tp.set_vo2_micro_only(getattr(goal, "vo2_microintervals_only", False))
-    tp.set_active_distribution(goal.distribution, goal.custom_bands)
 
     # Reconstruct PlannedWeek list.
     # v1.8.20 — round-trip ALL session fields (user_moved/status/dismissed_at/
@@ -12927,12 +12917,6 @@ def _apply_plan_update(
     current_ctl = training.get("ctl") or 30
     current_tsb = training.get("tsb")
 
-    # J1 (v2.1.0): pin the active intensity-distribution model to the plan's
-    # persisted choice so every tier (rebuild / missed-hard refit / reforecast)
-    # rebuilds with the same model rather than reverting to polarized.
-    tp.set_vo2_micro_only((plan.get("goal", {}) or {}).get("vo2_microintervals_only", False))
-    tp.set_active_distribution((plan.get("goal", {}) or {}).get("distribution", "polarized"),
-                               (plan.get("goal", {}) or {}).get("custom_bands"))
 
     # v1.8.25 — RECONCILE FIRST. Mark the current week's sessions done/missed
     # from actual activities BEFORE adapting, so this happens automatically on
@@ -15561,7 +15545,7 @@ def _build_summary_block(
     actual_pol = _polarized_actual_from_rides(rides, today, last_n_days=7)
     # The active model's row for this phase; falls back to "history" for a
     # phase name the table does not carry.
-    _tid = tp.get_active_polarized_targets()
+    _tid = tp.polarized_targets((plan or {}).get("goal") or {})
     target_pol = _tid.get((cur_phase or "").lower(), _tid.get("history", {}))
 
     # Sub-scores → composite.
@@ -15982,7 +15966,7 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
         # current phase block in the plan (1-based). planned_ctl_eow is
         # filled in below by the second pass once we have a global series.
         phase_name = (w.get("phase") or "").lower()
-        _tid_rows = tp.get_active_polarized_targets()
+        _tid_rows = tp.polarized_targets((plan or {}).get("goal") or {})
         target_polarized = _tid_rows.get(
             phase_name, _tid_rows.get("history", {}))
 
@@ -16557,7 +16541,7 @@ def _pick_redraw_candidate(plan: dict, day_iso: str, exclude_extra: "list[str] |
                 # widened band grows DOWNWARD only (shorter files), upper edge
                 # stays slot+5 — availability holds even on reshuffle.
                 widen_band=(attempt >= 4),
-            )
+             micro_only=bool(((plan or {}).get("goal") or {}).get("vo2_microintervals_only", False)),)
         except tp.NoCandidateWorkoutError:
             # 3.3.1 hotfix (B2): an empty pool at attempts 0-3 must NOT abort
             # the whole ladder — the widened band (attempt >= 4) is exactly
@@ -16783,7 +16767,7 @@ _SWAP_TYPES = {"recovery", "z2", "tempo", "sweetspot", "threshold",
                "overunder", "vo2max", "sprint", "ftp_test"}
 
 
-def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: int) -> dict:
+def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: int, micro_only: "bool | None" = None) -> dict:
     """Mutate the session at ``day_iso`` to ``new_type`` + ``new_dur``, pin it
     (user_swapped → reforecast/refit won't demote it), match a workout for the
     new type, then reforecast the rest of the plan so downstream load rebalances.
@@ -16841,7 +16825,7 @@ def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: i
             day_idx = 0
         tp.match_zwo(planned, library, week_num=week_num, day_idx=day_idx,
                      used_names=excluded, raise_on_empty=False,
-                     hr_bias=_hr_bias())
+                     hr_bias=_hr_bias(), micro_only=(bool(((plan or {}).get("goal") or {}).get("vo2_microintervals_only", False)) if micro_only is None else bool(micro_only)))
         if planned.zwo_file:
             target["zwo_file"] = planned.zwo_file
             target["zwo_name"] = planned.zwo_name
@@ -16971,8 +16955,8 @@ async def api_plan_swap_type(request: Request):
         _micro = (bool(micro_raw) if micro_raw is not None
                   else bool((plan.get("goal", {}) or {})
                             .get("vo2_microintervals_only", False)))
-        tp.set_vo2_micro_only(_micro)
-        result = _swap_session_type_apply(plan, day_iso, new_type, new_dur)
+        result = _swap_session_type_apply(plan, day_iso, new_type, new_dur,
+                                          micro_only=_micro)
         tp.atomic_write_plan(json_path, plan)
         return result
     except ValueError as e:
@@ -17162,7 +17146,7 @@ async def api_plan_rematch_day(day: str):
                 hr_bias=_hr_bias(),
                 # v1.8.24 — closest-duration match on reshuffle (see helper).
                 exact_duration=True,
-            )
+             micro_only=bool(((plan or {}).get("goal") or {}).get("vo2_microintervals_only", False)),)
         except tp.NoCandidateWorkoutError:
             return {"ok": False, "action": "no_candidate", "day": day}
 
@@ -17329,11 +17313,6 @@ def api_plan_auto_recalc():
         # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
         if goal.longest_ride_h_90d is None:
             goal.longest_ride_h_90d = _longest_ride_h_90d()
-        # J1: pin the active intensity-distribution model for this recalc's
-        # budget lookups (mirrors generate_plan) — this scheduler called
-        # recalculate_plan bare, so it inherited whatever model ran last.
-        tp.set_vo2_micro_only(getattr(goal, "vo2_microintervals_only", False))
-        tp.set_active_distribution(goal.distribution, goal.custom_bands)
 
         # Reconstruct plan weeks.
         # v1.8.20 parity — round-trip ALL session fields via the canonical

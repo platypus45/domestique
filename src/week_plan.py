@@ -573,11 +573,11 @@ class TrainingWeek:
         for n in stale:
             st.used_names.pop(n, None)
 
-        budget = tp.get_budget_for_phase(ctx.phase.name)
+        budget = tp.get_budget_for_phase(ctx.phase.name, ctx.goal)
         budget = tp.scale_budget_to_week(
             budget, self.ceiling,
             tp.week_available_minutes(ctx.goal, ctx.start),
-            model=tp.active_model_for_phase(ctx.phase.name),
+            model=tp.active_model_for_phase(ctx.phase.name, ctx.goal),
             phase_name=ctx.phase.name,
             spent_zones=tp._completed_zones_in(ctx.ridden, ctx.start, ctx.end),
         )
@@ -707,7 +707,7 @@ class TrainingWeek:
             if (s.session_type not in ("rest", "ftp_test") and not s.zwo_file
                     and self.state.library and not is_immutable(s)):
                 try:
-                    tp.match_zwo(s, self.state.library, seed_salt=self.ctx.seed_salt)
+                    tp.match_zwo(s, self.state.library, seed_salt=self.ctx.seed_salt, micro_only=bool(getattr(self.ctx.goal, "vo2_microintervals_only", False)))
                     # NOTE: clearing the file when its CONTENT is hard but the
                     # slot is easy was tried here and made things worse (6
                     # failures -> 12): an unmatched slot is re-filled elsewhere

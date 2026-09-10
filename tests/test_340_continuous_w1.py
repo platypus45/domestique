@@ -273,13 +273,10 @@ def test_finite_plan_consumers_dont_crash_on_continuous():
 
     # Budget lookup maps the continuous block onto build1 under EVERY model
     # (P1: get_budget_for_phase must not fall back to the base budget).
-    try:
-        for model in ("polarized", "pyramidal", "threshold"):
-            tp.set_active_distribution(model)
-            assert tp.get_budget_for_phase("continuous") is \
-                tp.get_budget_for_phase("build1")
-    finally:
-        tp.set_active_distribution("polarized")
+    for model in ("polarized", "pyramidal", "threshold"):
+        g = tp.Goal(goal_type="continuous", distribution=model)
+        assert tp.get_budget_for_phase("continuous", g) is \
+            tp.get_budget_for_phase("build1", g)
 
     # Recovery/gap rebuild (P1 items 8/11): regenerate_from_today on a
     # continuous plan re-emits the rolling block, never a taper.

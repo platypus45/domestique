@@ -74,9 +74,6 @@ class TestRecalcEnginePreservesState(unittest.TestCase):
                                    event_km=80, event_climb_m=200)],
         )
 
-    def tearDown(self):
-        tp.set_active_distribution("polarized", None)
-
     def test_recalc_rebuild_keeps_races_tapers_and_rider_state(self):
         _phases, weeks = tp.generate_plan(self.goal, current_ctl=45)
         by_day = _sessions_by_day(weeks)
@@ -151,7 +148,6 @@ class TestAutoRecalcWritePreservesState(unittest.TestCase):
 
     def tearDown(self):
         self._patch.stop()
-        tp.set_active_distribution("polarized", None)
 
     def _mocks(self):
         stub = {"training": {"ctl": 45}, "wellness_7": []}

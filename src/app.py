@@ -44,13 +44,6 @@ from fit_activity import fit_field as _fit_val  # v3.11.3 fit-tool compat reader
 import tls_trust  # v3.11.4 — OS-native verifier on Windows, OpenSSL+certifi elsewhere
 
 
-def _icu_verify():
-    """TLS trust for every httpx call to intervals.icu / GitHub (see tls_trust).
-
-    Not cached here: on Windows tls_trust hands out a fresh OS-native context
-    per call (truststore#209 race), elsewhere it caches the OpenSSL one itself.
-    """
-    return tls_trust.make_context()
 
 # Observability lives in obs.py. Imported (not `from`-imported into new names)
 # for the module-level handles, then re-exported below so `app._log_error`,
@@ -753,12 +746,11 @@ async def generic_exception_handler(request: StarletteRequest, exc: Exception):
 
 # ── Shared JSON body helper ──────────────────────────────────────────────────
 # Returns parsed JSON dict, or raises HTTPException(400) on malformed input.
-async def _get_json_body(request) -> dict:
-    try:
-        return await request.json()
-    except Exception as e:
-        log.debug(f"JSON parse failed on {request.url.path}: {e}")
-        raise HTTPException(status_code=400, detail="invalid JSON body")
+# Request helpers live in http_util.py; re-exported for the ~40 call sites
+# and the tests that reach them through app.X.
+from http_util import (  # noqa: F401
+    _icu_verify, _get_json_body, _diag_local_only,
+)
 
 
 # Request logging middleware — logs all API errors
@@ -21902,18 +21894,6 @@ def api_programme_summary_png(plan_id: str = Query("current")):
 # clicks on the Diagnostics modal hammering the disk.
 _DIAG_HEALTH_CACHE: dict = {"ts": 0.0, "result": None}
 _DIAG_HEALTH_CACHE_TTL = 60.0
-
-
-def _diag_local_only(request: Request) -> bool:
-    """True iff the request is from localhost. Domestique listens only on
-    127.0.0.1, so any non-local client is suspicious. Returns True when
-    ``request.client`` is None or the host is the FastAPI TestClient
-    sentinel, so tests pass without special-casing.
-    """
-    client = getattr(request, "client", None)
-    if client is None or client.host is None:
-        return True
-    return client.host in ("127.0.0.1", "localhost", "::1", "testclient")
 
 
 @app.get("/api/diag/recent-errors")

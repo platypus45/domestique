@@ -455,6 +455,26 @@ for _upf in [_user_data_dir / "user_paths.json", Path(__file__).parent / "user_p
         break
 
 
+def active_workout_dir() -> Path:
+    """The active profile's workout directory, resolved at call time.
+
+    WORKOUT_DIR is rebound by _apply_profile_paths on every profile switch, so
+    a value read earlier belongs to the previous profile. Read it late through
+    this, and never `from app import WORKOUT_DIR` -- that binds the object, not
+    the name, and then serves the wrong athlete's library with no error and no
+    log line. tests/test_profile_path_rebinding.py enforces both halves.
+    """
+    return WORKOUT_DIR
+
+
+def active_gpx_dir() -> Path:
+    """The active profile's GPX directory, resolved at call time.
+
+    Same contract as active_workout_dir().
+    """
+    return GPX_DIR
+
+
 def _apply_profile_paths() -> None:
     """AC2b: resolve app.py's module-global WORKOUT_DIR / GPX_DIR from the
     ACTIVE profile's user_paths.json — one source of truth with the
@@ -612,7 +632,7 @@ async def lifespan(app):
     pm.on_switch(clear_cache)
     # AC2b: one-time adoption of the legacy ROOT ~/.domestique/user_paths.json
     # into the active profile (setup_save now writes per-profile only), then
-    # resolve app.py's WORKOUT_DIR/GPX_DIR through the same resolver used on
+    # resolve app.py's active_workout_dir()/active_gpx_dir() through the same resolver used on
     # every profile switch — one code path.
     try:
         _root_paths = _user_data_dir / "user_paths.json"
@@ -898,8 +918,8 @@ def setup_defaults():
 
     return {
         "icu_id": config.ICU_ATHLETE_ID or "",
-        "workout_dir": str(WORKOUT_DIR) if WORKOUT_DIR.exists() else workout_dir_default,
-        "gpx_dir": str(GPX_DIR) if GPX_DIR.exists() else "",
+        "workout_dir": str(active_workout_dir()) if active_workout_dir().exists() else workout_dir_default,
+        "gpx_dir": str(active_gpx_dir()) if active_gpx_dir().exists() else "",
         "weight": config.ATHLETE_WEIGHT_KG,
         "ftp": config.ATHLETE_FTP_W,
         "lthr": config.ATHLETE_LTHR,
@@ -5431,10 +5451,10 @@ _LIBRARY_TAGS_LOCK = threading.Lock()
 
 def _compute_library_tags() -> list[str]:
     """Scan all ZWO files for distinct tags. Returns sorted unique list."""
-    if not WORKOUT_DIR.exists():
+    if not active_workout_dir().exists():
         return []
     seen: set[str] = set()
-    for zwo_path in WORKOUT_DIR.glob("*.zwo"):
+    for zwo_path in active_workout_dir().glob("*.zwo"):
         try:
             tree = ET.parse(zwo_path)
         except (ET.ParseError, OSError):
@@ -5453,7 +5473,7 @@ def _get_library_tags_cached() -> list[str]:
     """Return cached distinct tag list, refreshing on dir mtime drift."""
     global _LIBRARY_TAGS_CACHE
     try:
-        mtimes = [p.stat().st_mtime for p in WORKOUT_DIR.glob("*.zwo")]
+        mtimes = [p.stat().st_mtime for p in active_workout_dir().glob("*.zwo")]
     except OSError:
         mtimes = []
     sig = max(mtimes) if mtimes else 0.0
@@ -5470,7 +5490,7 @@ def api_workouts_tags():
     """Return the sorted distinct list of tags across the library.
 
     v4.2.0 IMPL-LIBRARY: powers the tag multi-select chip-list in the
-    library browser. Cached in-memory; refreshes when WORKOUT_DIR mtimes
+    library browser. Cached in-memory; refreshes when active_workout_dir() mtimes
     drift.
     """
     return {"tags": _get_library_tags_cached()}
@@ -5487,7 +5507,7 @@ _LIBRARY_ROWS_LOCK = threading.Lock()
 
 
 def _build_library_rows() -> list[dict]:
-    """Parse every ZWO in WORKOUT_DIR into its full, filter-ready library row.
+    """Parse every ZWO in active_workout_dir() into its full, filter-ready library row.
 
     R2 (2026-07-07): S1 — extracted verbatim from the api_workouts per-file
     loop so the parse can be cached. Everything computed here is
@@ -5496,7 +5516,7 @@ def _build_library_rows() -> list[dict]:
     tags / flags / search / sort / limit) on top of the cached output.
     """
     rows: list[dict] = []
-    if not WORKOUT_DIR.exists():
+    if not active_workout_dir().exists():
         return rows
 
     # v4.1.2 IMPL-CLASSIFIER: load the content-classification cache once per
@@ -5506,7 +5526,7 @@ def _build_library_rows() -> list[dict]:
     _content_classifications = tp._load_content_classifications()
     _CONTENT_TO_PROTOCOL = tp._CONTENT_TO_PROTOCOL
 
-    for zwo_path in sorted(WORKOUT_DIR.glob("*.zwo")):
+    for zwo_path in sorted(active_workout_dir().glob("*.zwo")):
         scan = _scan_zwo_for_library(zwo_path)
         if not scan:
             continue
@@ -5620,12 +5640,12 @@ def _get_library_rows_cached() -> list[dict]:
     # scandir (DirEntry.stat avoids re-resolving each path). The dot-file
     # exclusion mirrors glob("*.zwo") semantics exactly.
     try:
-        with os.scandir(WORKOUT_DIR) as it:
+        with os.scandir(active_workout_dir()) as it:
             mtimes = [e.stat().st_mtime for e in it
                       if e.name.endswith(".zwo") and not e.name.startswith(".")]
     except OSError:
         mtimes = []
-    sig = (str(WORKOUT_DIR), max(mtimes) if mtimes else 0.0, len(mtimes))
+    sig = (str(active_workout_dir()), max(mtimes) if mtimes else 0.0, len(mtimes))
     with _LIBRARY_ROWS_LOCK:
         if _LIBRARY_ROWS_CACHE and _LIBRARY_ROWS_CACHE[0] == sig:
             return _LIBRARY_ROWS_CACHE[1]
@@ -6103,7 +6123,7 @@ def api_workouts(
     of silently dropping the tail.
     """
     workouts = []
-    if not WORKOUT_DIR.exists():
+    if not active_workout_dir().exists():
         return []
 
     filter_tags: set[str] = set()
@@ -6238,7 +6258,7 @@ def download_workout_by_id(filename: str, cap: int = Query(0)):
     reps to the rider's measured-power envelope. A no-op cap keeps the plain
     FileResponse (byte-identical to disk).
     """
-    path = _safe_path(WORKOUT_DIR, filename)
+    path = _safe_path(active_workout_dir(), filename)
     if not path or not path.exists():
         return JSONResponse({"error": "not found"}, 404)
     # v1.6.4: media_type "application/octet-stream" (was "application/xml")
@@ -6274,9 +6294,9 @@ def api_workout_detail(category: str, filename: str, view: str | None = Query(No
     as the settings gate); downloads follow the same param so what you see
     is what the head unit gets."""
     # Flat layout first, legacy category/file fallback
-    path = _safe_path(WORKOUT_DIR, filename)
+    path = _safe_path(active_workout_dir(), filename)
     if not path or not path.exists():
-        path = _safe_path(WORKOUT_DIR, category, filename)
+        path = _safe_path(active_workout_dir(), category, filename)
     if not path or not path.exists():
         return JSONResponse({"error": "not found"}, 404)
     try:
@@ -6475,9 +6495,9 @@ async def api_bulk_segments(request: Request):
         else:
             cat, fname = "", f
         # Flat lookup first; fall back to legacy category subdir
-        path = _safe_path(WORKOUT_DIR, fname) if fname else None
+        path = _safe_path(active_workout_dir(), fname) if fname else None
         if (not path or not path.exists()) and cat:
-            path = _safe_path(WORKOUT_DIR, cat, fname)
+            path = _safe_path(active_workout_dir(), cat, fname)
         if not path or not path.exists():
             continue
         try:
@@ -6792,7 +6812,7 @@ def api_courses(region: str = Query(None)):
 
         # Check if matching GPX exists
         gpx_name = crs.stem + ".gpx"
-        has_gpx = (GPX_DIR / r / gpx_name).exists()
+        has_gpx = (active_gpx_dir() / r / gpx_name).exists()
 
         courses.append({
             "name": crs.stem, "region": r, "description": desc,
@@ -8400,7 +8420,7 @@ def download_zwo_flat(filename: str, outdoor: int = Query(0),
     task #24: ``cap=1`` (PROMPT APPROVE) or the profile "on" toggle caps short
     reps to the rider's measured-power envelope for THIS download only.
     """
-    path = _safe_path(WORKOUT_DIR, filename)
+    path = _safe_path(active_workout_dir(), filename)
     if not path or not path.exists():
         return JSONResponse({"error": "not found"}, 404)
     return _zwo_download_response(path, filename, outdoor, transit_min, spin_min,
@@ -8415,9 +8435,9 @@ def download_zwo(category: str, filename: str, outdoor: int = Query(0),
     G1 (v2.1): ``outdoor=1`` adds an off-plan transit warmup + spin-home cooldown.
     task #24: ``cap=1``/on toggle caps short reps to measured power."""
     # Flat layout first, legacy category/file fallback
-    path = _safe_path(WORKOUT_DIR, filename)
+    path = _safe_path(active_workout_dir(), filename)
     if not path or not path.exists():
-        path = _safe_path(WORKOUT_DIR, category, filename)
+        path = _safe_path(active_workout_dir(), category, filename)
     if not path or not path.exists():
         return JSONResponse({"error": "not found"}, 404)
     return _zwo_download_response(path, filename, outdoor, transit_min, spin_min,
@@ -8538,7 +8558,7 @@ def download_course_by_id(region: str, filename: str):
 
 @app.get("/api/download/gpx/{region}/{filename}")
 def download_gpx(region: str, filename: str):
-    path = _safe_path(GPX_DIR, region, filename)
+    path = _safe_path(active_gpx_dir(), region, filename)
     if not path or not path.exists():
         return JSONResponse({"error": "not found"}, 404)
     return FileResponse(path, filename=filename, media_type="application/gpx+xml")
@@ -9411,11 +9431,11 @@ def api_calendar_push_workout(body: "dict | None" = None):
             return {"error": "date_out_of_range"}
         date_iso = target.isoformat()
 
-        workout_dir = Path(WORKOUT_DIR)
+        workout_dir = Path(active_workout_dir())
         if source == "library":
             # amendment 5: zwo_file is CLIENT-supplied → reject traversal BEFORE
             # any read (_safe_path returns None when the resolved path escapes
-            # WORKOUT_DIR, e.g. "../../etc/passwd"). _build_event re-validates too,
+            # active_workout_dir(), e.g. "../../etc/passwd"). _build_event re-validates too,
             # but failing fast here gives the clear message.
             if not _safe_path(workout_dir, zwo_file):
                 return {"error": "invalid_workout_file"}
@@ -10335,13 +10355,13 @@ def api_gpx_data(region: str, filename: str):
     if ".." in region or "/" in region or ".." in filename or "/" in filename:
         return JSONResponse({"error": "invalid path"}, 400)
     gpx_name = filename.rsplit(".", 1)[0] + ".gpx" if "." in filename else filename + ".gpx"
-    path = _safe_path(GPX_DIR, region, gpx_name)
+    path = _safe_path(active_gpx_dir(), region, gpx_name)
     if not path or not path.exists():
-        path = _safe_path(GPX_DIR, region, filename)
-    if (not path or not path.exists()) and (GPX_DIR / region).is_dir():
+        path = _safe_path(active_gpx_dir(), region, filename)
+    if (not path or not path.exists()) and (active_gpx_dir() / region).is_dir():
         # Try fuzzy match — find GPX with same stem prefix
         stem = filename.rsplit(".", 1)[0] if "." in filename else filename
-        for gpx_file in (GPX_DIR / region).glob("*.gpx"):
+        for gpx_file in (active_gpx_dir() / region).glob("*.gpx"):
             if gpx_file.stem.lower().startswith(stem[:20].lower()):
                 path = gpx_file
                 break
@@ -14547,7 +14567,7 @@ def build_fit_workout_bytes(session_type: str, duration_min: int,
 
     ftp = config.ATHLETE_FTP_W
     if zwo_file:
-        zwo_path = _safe_path(WORKOUT_DIR, zwo_file)
+        zwo_path = _safe_path(active_workout_dir(), zwo_file)
         if not zwo_path or not zwo_path.exists():
             raise FileNotFoundError(f"ZWO file not found: {zwo_file}")
         # task #24: cap the ZWO text pre-transcode when active + power FIT.
@@ -17432,7 +17452,7 @@ def _block_eval_for(s_json: dict, ride: dict) -> "dict | None":
         if not laps or not zwo:
             return None
         import structure_fidelity as _sf
-        path = WORKOUT_DIR / os.path.basename(zwo)
+        path = active_workout_dir() / os.path.basename(zwo)
         if not path.exists():
             return None
         segs = _sf.parse_zwo_file(path)

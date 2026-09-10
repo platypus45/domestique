@@ -4146,7 +4146,14 @@ def load_workout_library() -> list[dict]:
                 # ~95% easy — e.g. a 33%-Z3 file passed the recovery 25%-Z3 ceiling
                 # and landed on a recovery day. Slice the linear ramp; bin each
                 # slice at its local power so per-zone seconds reflect reality.
-                _RAMP_SLICES = 20
+                # 1-second slices, the same resolution as the `samples` series
+                # built two lines above for NP/IF. It used to be 20 slices
+                # regardless of length, so the zone bins and the IF for the SAME
+                # segment were computed at different resolutions: measured
+                # against a 1-second bin that cost up to 2.8 points on a zone
+                # share, with 63 of 4,079 ramp-carrying files off by more than a
+                # point. There is no reason to approximate a straight line.
+                _RAMP_SLICES = max(20, int(dur))
                 for _i in range(_RAMP_SLICES):
                     _acc_zone((plo + (phi - plo) * (_i + 0.5) / _RAMP_SLICES) * 100, dur / _RAMP_SLICES)
                 # Warmup/Ramp peaks contribute to structure + VO2 detection

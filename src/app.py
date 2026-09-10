@@ -5440,7 +5440,10 @@ def _scan_zwo_for_library(zwo_path: Path) -> dict | None:
             # Binning the whole duration at mean power here (while the planner
             # sliced) drifted the two scanners' zone seconds → score_sync mismatch
             # (e.g. neuromuscular_9x30s-2min_175pct_52min.zwo scored 5 vs 6).
-            _RAMP_SLICES = 20
+            # 1-second slices — see the note on the planner's copy of this
+            # scanner. The two must stay in step: they are compared file by
+            # file in tests/test_zone_binning.py.
+            _RAMP_SLICES = max(20, int(dur))
             for _i in range(_RAMP_SLICES):
                 _acc_zone((plo + (phi - plo) * (_i + 0.5) / _RAMP_SLICES) * 100, dur / _RAMP_SLICES)
             _acc_structure(phi * 100)

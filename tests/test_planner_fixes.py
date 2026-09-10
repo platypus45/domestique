@@ -92,35 +92,45 @@ class TestFix1StepbackReduction(unittest.TestCase):
             self.assertEqual(sb.tss_target, round(tss * 0.72),
                              f"Stepback factor mismatch for tss={tss}")
 
-    def test_generate_weekly_plan_uses_0_72(self):
-        # Search the source to confirm the factor.
-        src = PLANNER_PY.read_text()
-        # Look for generate_weekly_plan's stepback branch. Must use 0.72.
-        # The relevant line is: weekly_tss = round(weekly_tss * 0.72) inside generate_weekly_plan.
-        gwp_start = src.index("def generate_weekly_plan(")
-        gwp_end = src.index("def ", gwp_start + 1)
-        gwp_src = src[gwp_start:gwp_end]
-        self.assertIn("weekly_tss * 0.72", gwp_src,
-                      "generate_weekly_plan does not use 0.72 factor")
-        # Make sure no OTHER stepback factor is present in that function
-        # (e.g., 0.50 or 0.55). Check for common wrong values inside a
-        # `round(weekly_tss * X)` pattern.
-        bad = re.findall(r"weekly_tss\s*\*\s*0\.(?!72)\d+", gwp_src)
-        # Filter to patterns that look like stepback reductions (0.4-0.7)
-        bad = [b for b in bad if re.match(r"weekly_tss\s*\*\s*0\.[4567]", b)]
-        self.assertEqual(bad, [],
-                         f"Unexpected non-0.72 stepback factors found: {bad}")
+    def test_one_named_factor_is_issurins_cut(self):
+        # Issurin 2010: an unloading week cuts load by 20-30%; 0.72 is the
+        # midpoint. One named constant, so no builder can drift from it.
+        import training_planner as tp
+        self.assertEqual(tp.STEPBACK_LOAD_FACTOR, 0.72)
 
     def test_plan_week_and_generate_weekly_plan_match(self):
-        # Both should use the same 0.72 factor. Verify via source inspection
-        # that plan_week also uses 0.72.
-        src = PLANNER_PY.read_text()
-        pw_start = src.index("def plan_week(")
-        pw_end = src.index("def ", pw_start + 1)
-        pw_src = src[pw_start:pw_end]
-        self.assertIn("tss_target * 0.72", pw_src,
-                      "plan_week does not use 0.72 factor")
+        # The same factor in both builders, measured on what they return. The
+        # old checks searched their source for the literal "0.72", so naming
+        # the constant broke them while changing nothing a rider sees.
+        import tempfile
+        from datetime import timedelta
+        from pathlib import Path
+        from unittest import mock
+        import training_planner as tp
+        phase = _make_base_phase(date(2026, 4, 6), weekly_tss=500)
+        goal = _make_goal()
+        # With no stored plan, generate_weekly_plan unloads by ISO week number:
+        # a Monday on such a week, and the Monday after it.
+        monday = date(2026, 9, 7)
+        while monday.isocalendar()[1] % tp.STEP_BACK_EVERY:
+            monday += timedelta(days=7)
 
+        def week_tss(d):
+            class _Today(date):
+                @classmethod
+                def today(cls):
+                    return cls(d.year, d.month, d.day)
+            with tempfile.TemporaryDirectory() as tmp, \
+                    mock.patch.object(tp, "PLAN_DIR", Path(tmp)), \
+                    mock.patch.object(tp, "date", _Today):
+                return tp.generate_weekly_plan(goal, current_phase=phase,
+                                               current_ctl=40).tss_target
+
+        weekly = week_tss(monday) / week_tss(monday + timedelta(days=7))
+        planned = (plan_week(2, monday, phase, goal, is_stepback=True).tss_target
+                   / plan_week(1, monday, phase, goal, is_stepback=False).tss_target)
+        self.assertAlmostEqual(weekly, tp.STEPBACK_LOAD_FACTOR, places=2)
+        self.assertAlmostEqual(planned, tp.STEPBACK_LOAD_FACTOR, places=2)
 
 class TestFix2TempoNotHIT(unittest.TestCase):
     """Tempo sessions are not counted as HIT."""

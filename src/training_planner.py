@@ -988,6 +988,8 @@ MIN_BUILD_WEEKS  = 4
 MIN_PEAK_WEEKS   = 2
 TAPER_DAYS       = 12    # Mujika 2003: 8-14 days optimal
 STEP_BACK_EVERY  = 4     # Rønnestad: 3 load + 1 recovery
+# Issurin 2010: an unloading week cuts load by 20-30%; 0.72 is the midpoint.
+STEPBACK_LOAD_FACTOR = 0.72
 
 # ── Week anchoring (Monday-Sunday) ───────────────────────────────────────────
 # Every rollup in the app aggregates Monday-Sunday: the week tile, the
@@ -1004,6 +1006,41 @@ STEP_BACK_EVERY  = 4     # Rønnestad: 3 load + 1 recovery
 # two and every phase boundary is a Sunday/Monday seam, which makes every week
 # cursor Monday-aligned for free -- including _entry_week_targets, which walks
 # the same 7-day step without knowing about any of this.
+
+
+# Weeks whose load is reduced by design: the taper, and a regenerate's
+# recovery ramp (named "recon" and "recovery_ramp" by build_recovery_ramp).
+_UNLOAD_PHASES = ("taper", "recon", "recovery_ramp")
+
+
+def _is_unload_week(w) -> bool:
+    get = w.get if isinstance(w, dict) else (lambda k, d=None: getattr(w, k, d))
+    return bool(get("is_stepback", False)) or (get("phase", "") or "") in _UNLOAD_PHASES
+
+
+def stepback_due(prior_weeks, phase_name: str) -> bool:
+    """The 3:1 loading rhythm (Rønnestad), over the whole plan: a week is a
+    stepback when the STEP_BACK_EVERY - 1 weeks before it were all load weeks.
+
+    One predicate for every entry point. Generate counted weeks across phases,
+    regenerate and recalculate restarted the count at every phase, and extend
+    used the week number, so the rhythm depended on which button was pressed:
+    up to six load weeks in a row after a regenerate (dupes.md DUP-3). Counting
+    the load weeks since the last unload gives generate's answer for a plan
+    built in one go, and a rebuild continues the count -- through a recovery
+    ramp, or a deload the app advanced, as through a stepback. A taper is its
+    own unload and never also a stepback.
+    """
+    if phase_name in _UNLOAD_PHASES:
+        return False
+    run = 0
+    for w in reversed(list(prior_weeks or [])):
+        if _is_unload_week(w):
+            return False
+        run += 1
+        if run >= STEP_BACK_EVERY - 1:
+            return True
+    return False
 
 
 def _monday_on_or_before(d: date) -> date:
@@ -3473,19 +3510,18 @@ MIN_REMAINING_WEEKS = 4
 def _entry_week_targets(phases: list) -> list[dict]:
     """Week-level tss targets for a hypothesis split — mirrors the
     generate_plan emitter walk (7-day cursor per phase, global-week stepback
-    cadence, taper exempt) and plan_week's ×0.72 discount, WITHOUT building
+    rhythm, stepback_due) and plan_week's stepback discount, WITHOUT building
     sessions. Pure date math: no RNG, no I/O."""
     rows = []
-    global_week = 0
     for phase in phases:
         cursor = phase.start
         while cursor <= phase.end:
-            global_week += 1
-            is_sb = (global_week % STEP_BACK_EVERY == 0) and phase.name not in ("taper",)
+            is_sb = stepback_due(rows, phase.name)
             t = float(phase.weekly_tss_target)
             if is_sb:
-                t = float(round(t * 0.72))
-            rows.append({"start": cursor, "tss_target": t, "phase": phase.name})
+                t = float(round(t * STEPBACK_LOAD_FACTOR))
+            rows.append({"start": cursor, "tss_target": t, "phase": phase.name,
+                         "is_stepback": is_sb})
             cursor = _next_week_cursor(cursor, phase)
     return rows
 
@@ -3673,7 +3709,7 @@ def plan_week(
         # Issurin 2010 (Block Periodization): recovery/unloading weeks should cut
         # load by ~20-30%, not 40-60%. A 45% drop forces excessive detraining and
         # stalls adaptation. 0.72 = 28% reduction, midpoint of the recommended band.
-        tss_target = round(tss_target * 0.72)
+        tss_target = round(tss_target * STEPBACK_LOAD_FACTOR)
 
     sessions = []
     # Seeded, not zero: `tss_allocated` used to count only what THIS pass
@@ -7158,7 +7194,7 @@ def sample_week_workouts(ctx: "week_plan.WeekContext", state: "week_plan.PlanSta
         # budget -- PlannedWeek.tss_target already carries the discount, so
         # applying it here too would unload to 52%.
         for k in remaining:
-            remaining[k] *= 0.72
+            remaining[k] *= STEPBACK_LOAD_FACTOR
 
     # used_names normalization: accept set OR dict
     if isinstance(used_names, set):
@@ -7950,7 +7986,7 @@ def sample_week_workouts(ctx: "week_plan.WeekContext", state: "week_plan.PlanSta
     # constant made this check unreachable for anyone training under ~10h/week:
     # a rider on a 287 TSS target had their week verified against 600.
     target_tss = budget.tss_per_week * (
-        1.0 if budget.week_scaled else (0.72 if is_stepback else 1.0))
+        1.0 if budget.week_scaled else (STEPBACK_LOAD_FACTOR if is_stepback else 1.0))
     if target_tss > 0 and abs(total_tss - target_tss) / target_tss > 0.15:
         # Find the endurance slot whose zone profile is furthest from remaining
         # need, swap it. (Best-effort — single attempt only, per MASTER §3.)
@@ -8092,7 +8128,7 @@ def _apply_long_ride_target(sessions: list, target_min: int, max_weekend_min: in
     weekend endurance slot or it's already long enough."""
     cap = min(int(target_min or 0), int(max_weekend_min or 0))
     if is_stepback:
-        cap = int(round(cap * 0.72))
+        cap = int(round(cap * STEPBACK_LOAD_FACTOR))
     if cap <= 0:
         return
     # Pick the longer weekend (Sat/Sun) endurance session — found by s.day.weekday()
@@ -8367,7 +8403,6 @@ def generate_plan(
 
     weeks = []
     week_num = 1
-    global_week = 0  # global counter across all phases (not reset per phase)
     # v4.5.0: used_names is a dict (name -> last_used_week) so the sampler's
     # novelty score has full recency info. The legacy match_zwo path (used for
     # ftp_test fallback only) accepts a set, so we also keep a parallel set.
@@ -8418,8 +8453,7 @@ def generate_plan(
             cursor = phase.start
             week_in_phase = 0  # 0-indexed within this phase (for Layer 2 mix-row pick)
             while cursor <= phase.end:
-                global_week += 1
-                is_stepback = (global_week % STEP_BACK_EVERY == 0) and phase.name not in ("taper",)
+                is_stepback = stepback_due(weeks, phase.name)
 
                 if _USE_TRAINING_WEEK:
                     _tw = week_plan.TrainingWeek(
@@ -12866,11 +12900,12 @@ def regenerate_from_today(
 
     for phase in new_phases:
         cursor = max(phase.start, today + timedelta(days=recovery_days))
-        phase_week = 0
         week_in_phase = 0  # v4.5.0 Layer 2: 0-indexed within phase
         while cursor <= phase.end:
-            phase_week += 1
-            is_stepback = (phase_week % STEP_BACK_EVERY == 0) and phase.name != "taper"
+            # The count runs on from the kept weeks and the recovery ramp; it
+            # restarted at every phase, which ran up to six load weeks.
+            is_stepback = stepback_due(
+                [*past_weeks, *recovery_weeks, *new_weeks], phase.name)
             if _USE_TRAINING_WEEK:
                 _tw = week_plan.TrainingWeek(
                     week_plan.WeekContext(
@@ -13478,11 +13513,9 @@ def recalculate_plan(
 
     for phase in new_phases:
         cursor = max(phase.start, regen_start)
-        phase_week = 0
         week_in_phase = 0  # v2.0.3 F6: 0-indexed within phase, drives the sampler
         while cursor <= phase.end:
-            phase_week += 1
-            is_stepback = (phase_week % STEP_BACK_EVERY == 0) and phase.name != "taper"
+            is_stepback = stepback_due([*past_weeks, *new_weeks], phase.name)
 
             # Insert FTP test when due (weeks-since-last-test ≥ 6; due-ness
             # persists across a stepback/taper collision instead of vanishing).
@@ -13935,9 +13968,10 @@ def extend_continuous_plan(
                 for s in w.sessions)),
         default=0)
     for _ in range(deficit):
-        # 3-load:1-deload rides the positional stepback cadence (no taper to
-        # exempt on this path).
-        is_stepback = (week_num % STEP_BACK_EVERY == 0)
+        # The plan's 3:1 rhythm, continued from the weeks already there --
+        # including a deload the app advanced into one of them.
+        is_stepback = stepback_due(
+            sorted(current_plan_weeks, key=lambda w: w.start) + new_weeks, phase.name)
         ftp_test_week = (not is_stepback
                          and (week_num - _last_test_wk >= 6
                               if _last_test_wk else True))
@@ -15260,7 +15294,7 @@ def generate_weekly_plan(
         is_stepback = (monday.isocalendar()[1] % STEP_BACK_EVERY == 0)
     if is_stepback:
         # Issurin 2010: 20-30% unloading (not 40-60%). 0.72 = 28% reduction. Matches plan_week().
-        weekly_tss = round(weekly_tss * 0.72)
+        weekly_tss = round(weekly_tss * STEPBACK_LOAD_FACTOR)
         hit_per_week = max(0, hit_per_week - 1)
 
     # ── CONSTRAINT-BASED SESSION PLACEMENT ──

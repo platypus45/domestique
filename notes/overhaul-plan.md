@@ -431,6 +431,40 @@ in one place, so refit's emphasis and week-in-phase stop drifting (DUP-4).
 *Verify:* one answer per rider across entry points for DUP-1/2/3;
 `under_delivery` and `weekly_volume` → 0 in the characterization.
 
+#### Step 5, part 1 — one stepback rhythm (DUP-3) — DONE
+
+`stepback_due(prior_weeks, phase)` counts the load weeks since the last unload
+over the whole plan. An unload is a stepback, a taper, a regenerate's recovery
+ramp (`recon`, `recovery_ramp`), or a deload the app advanced. Generate, the
+entry scan, regenerate, recalculate and extend all use it. The 0.72 factor,
+a bare literal in seven places, is `STEPBACK_LOAD_FACTOR`, beside
+`STEP_BACK_EVERY`.
+
+Measured:
+- **Rebuild points.** On one 25-week event plan, rebuilt at every week 1–18:
+  - the old counters gave regenerate 4 and 5 load weeks in a row at weeks 1–2;
+  - recalculate got 6 at every fourth rebuild point, and 4–5 at most others;
+  - the predicate gives 3 everywhere.
+  - A plan built in one go is unchanged: stepbacks at weeks 4, 8 and 12.
+- **Characterization.** 7 of 80 cases move per owner mode, all
+  regenerate@17 and recalculate@21, each where a fourth load week became the
+  stepback.
+- **New auditor findings.** Each has an identified cause:
+  - The FTP test is barred from stepback weeks, so it moves to the next row.
+    Here that is a two-day build2 fragment (Mon–Tue) before a taper starting
+    mid-week, which then fails `hard_share`.
+  - The owner makes that same fragment its stepback (`under_delivery`).
+  - A resampled taper week crosses `weekly_volume`: it was at +11% before.
+
+Recorded, not decided here:
+- **The rhythm counts plan rows**, as generate always has. A phase boundary
+  that splits a calendar week makes a two-day fragment count as a week.
+  Counting calendar weeks would be closer to the microcycle the 3:1 rule is
+  about, but it changes generate too.
+- **FTP tests are barred from stepback weeks.** Allen & Coggan's advice is to
+  test rested, at the start of a block, which argues for the opposite. This
+  is a question for the owner, not a refactor.
+
 ### Step 5b — the sampler honours its science tables (SCI-1)
 
 Choose the content CLASS by the phase's mix preference, the goal's emphasis and

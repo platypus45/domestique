@@ -312,7 +312,7 @@ class TrainingWeek:
         else:
             gross = float(getattr(self.ctx.phase, "weekly_tss_target", 0.0) or 0.0)
             if self.ctx.is_stepback:
-                gross *= 0.72
+                gross *= tp.STEPBACK_LOAD_FACTOR
         # From the Monday of the containing calendar week: an opening stub
         # week starts mid-week, and the rides before its cursor are part of the
         # load the athlete is carrying into it.

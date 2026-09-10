@@ -24,18 +24,66 @@ STATE = ("_ROUTES_CACHE", "_ROUTES_INDEX", "_ROUTES_MTIME",
 
 
 class RoutesLibBoundaryTests(unittest.TestCase):
-    def test_no_module_imports_the_cache_objects(self):
+    def test_no_module_binds_the_cache_objects(self):
+        """Parsed, not grepped.
+
+        The first version of this scanned single lines for `from X import Y`
+        and a review broke it in one try: the parenthesised multi-line form
+        walked straight past it -- which is the form app.py itself uses for
+        every re-export block. `import routes_lib; X = routes_lib._ROUTES_CACHE`
+        got through too. Both are the same hazard, so the check reads the AST
+        and looks at every module under src/, subdirectories included.
+        """
+        import ast
         offenders = []
-        for f in sorted(SRC.glob("*.py")):
+        for f in sorted(SRC.rglob("*.py")):
             if f.name == "routes_lib.py":
                 continue
-            for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
-                s = line.strip()
-                if s.startswith("from ") and " import " in s:
-                    imported = s.split(" import ", 1)[1]
-                    for name in STATE:
-                        if name in imported:
-                            offenders.append(f"{f.name}:{i}: {s}")
+            try:
+                tree = ast.parse(f.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            rel = f.relative_to(SRC)
+            for node in ast.walk(tree):
+                # from routes_lib import _ROUTES_CACHE  (any layout)
+                if isinstance(node, ast.ImportFrom):
+                    for a in node.names:
+                        if a.name in STATE:
+                            offenders.append(f"{rel}:{node.lineno}: from {node.module} import {a.name}")
+            # Only MODULE-SCOPE binds. `d = app.WORKOUT_DIR` inside a
+            # function is a fresh read on every call and is the correct
+            # pattern -- icu_calendar_push.py:291 and launcher.py:702 both do
+            # it. At module scope the same line snapshots the boot value.
+            for node in tree.body:
+                if isinstance(node, ast.Assign):
+                    for v in ast.walk(node.value):
+                        if isinstance(v, ast.Attribute) and v.attr in STATE:
+                            offenders.append(f"{rel}:{node.lineno}: {ast.unparse(node)[:70]}")
+                # X = routes_lib._ROUTES_CACHE  -- binds the same object
+
+        self.assertEqual(offenders, [], "\n".join(offenders))
+
+    def test_no_module_defines_its_own_copy_of_the_state(self):
+        """A second `_ROUTES_CACHE = []` anywhere is the same divergence by a
+        different route, and the AST sees it at any nesting depth."""
+        import ast
+        offenders = []
+        for f in sorted(SRC.rglob("*.py")):
+            if f.name == "routes_lib.py":
+                continue
+            try:
+                tree = ast.parse(f.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                targets = []
+                if isinstance(node, ast.Assign):
+                    targets = node.targets
+                elif isinstance(node, ast.AnnAssign):
+                    targets = [node.target]
+                for tgt in targets:
+                    if isinstance(tgt, ast.Name) and tgt.id in STATE:
+                        offenders.append(f"{f.relative_to(SRC)}:{node.lineno}: {tgt.id} = ...")
         self.assertEqual(offenders, [], "\n".join(offenders))
 
     def test_app_does_not_carry_the_cache_names_at_all(self):

@@ -1,33 +1,46 @@
 # The gate: no new failures against `clean-main`
 
-`clean-main` is **not green**. Measured by running the full suite on a clean
-worktree of `origin/clean-main` and on this branch, capturing the failing test
-IDs from each and diffing them:
+`clean-main` is **not green**, so the gate for this branch is *no NEW failing
+test IDs versus main's set* — the set, never the count.
+
+## Run it with `--timeout=180`, not 45
+
+The original gate used `--timeout=45`, and six `test_357_block_evaluation.py`
+entries in the baseline below were **not failures at all**. They were
+pytest-timeout kills: the file's interval-grading cases take ~11s each and
+under `-n 8` contention a load-dependent subset crosses a 45s ceiling. Measured:
 
 ```
-clean-main            21 failed, 3,350 passed   (8m41s, -n 8)
-refactor/backend-...  21 failed, 3,351 passed
-diff of failing IDs   empty, both directions — byte-identical sets
+tests/test_357_block_evaluation.py  -n 8 --timeout=45    13-14 failed, 38-39 passed  (~92s)
+tests/test_357_block_evaluation.py  -n 8 --timeout=180   52 passed, 0 failed        (205s)
 ```
 
-So the gate for this branch is **no NEW failures versus main's set**, and the
-comparison is the set of test IDs, not the count. Counts alone mislead: an
-earlier read of two run tails showed 22 vs 21 and suggested main was worse,
-which the ID diff disproved. At least one of these tests is flaky.
+*Which* cases trip the ceiling changes run to run, and the same command on a
+`git archive` of clean-main fails the same way — so this was never a property of
+this branch, and 8 of the ~14 that time out were not even in the recorded
+baseline. A gate that lists a load-dependent set as "known failures" can mask a
+real regression in any of those 52 tests and invent one on a busier machine.
 
-## The 21, by file
+Found by an independent review of this branch, not by the author.
+
+## The baseline
+
+```
+clean-main            15 failed, 3,3xx passed   (-n 8, --timeout=180)
+refactor/backend-...  15 failed
+diff of failing IDs   empty, both directions
+```
 
 | File | Failures | Why, as far as it goes |
 |---|---|---|
-| `test_357_block_evaluation.py` | 6 | interval grading across the workout library |
 | `test_fit_hr_mode.py` | 5 | FIT export in HR mode |
 | `test_tls_trust.py` | 4 | OpenSSL root/interceptor handling — environmental |
 | `test_download_pywebview_bridge.py` | 4 | `pywebview` is deliberately absent from the headless venv |
 | `test_ftp_test_freeride.py` | 2 | FIT export, open-target blocks |
 
-A likely contributor to the first, second and fifth: a fresh worktree checks out
+A likely contributor to the first and last: a fresh worktree checks out
 **upstream's malformed `ftp_test_*.zwo` files**, the ones carrying `pace="warmup"`
-and `pace="ramp_test"` as free text. That is `upstream-findings.md` §1. The live
+and `pace="ramp_test"` as free text (`upstream-findings.md` §1). The live
 deployment repairs them with `cs-repair-workouts`; `clean-main` does not, and
 neither does a worktree. Not investigated further — they fail identically on
 main, so they are not this branch's problem.
@@ -35,14 +48,17 @@ main, so they are not this branch's problem.
 ## Running it
 
 ```
+PYTHONDONTWRITEBYTECODE=1 PYTHONHASHSEED=0 \
 uv run --with pytest --with pytest-xdist --with pytest-timeout \
        --with fitparse --with Pillow --python .venv/bin/python \
-       -m pytest -q -p no:cacheprovider -n 8 --timeout=45 --tb=no -rf
+       -m pytest -q -p no:cacheprovider -n 8 --timeout=180 --tb=no -rf
 ```
 
 `fitparse` and `Pillow` are stripped from the headless venv by the stack's
-updater, so three files fail to *collect* without `--with`. `-n 8` takes the run
-from over 15 minutes to under 9.
+updater, so three files fail to *collect* without `--with`.
+
+The run dirties `src/workouts/.library_index.json`; `git checkout --` it
+afterwards.
 
 To re-diff against main:
 

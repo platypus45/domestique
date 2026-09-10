@@ -7,7 +7,7 @@ Scope: backend only. `src/*.py`. Nothing under `src/templates/`.
 
 ## Where this started
 
-`src/app.py` is 22,273 lines and `src/training_planner.py` 14,051. The concrete
+`src/app.py` is 22,201 lines and `src/training_planner.py` 14,051. The concrete
 trigger was that the weekly TSS budget is re-derived independently in four
 places, so a plan prescribed 2.5–3.7× its own target and an unload week came out
 heavier than the load weeks it was recovering from. Fixing it site by site did
@@ -114,7 +114,7 @@ clean.
 
 ## Status
 
-**Substrate done, first feature extractions done.** `app.py` 22,273 → 20,936.
+**Substrate done, first feature extractions done.** `app.py` 22,201 → 20,936.
 Every module below imports standalone without pulling in `fastapi`, `app` or
 `training_planner` (`download_lib` imports fastapi on purpose — building the
 response is what it does). That property, not the line count, is what makes the

@@ -67,17 +67,38 @@ class ProfilePathRebindingTests(unittest.TestCase):
         switch that name still points at the old directory, with nothing to
         indicate it. Import the module and read the attribute, or call the
         accessor.
+
+        Parsed rather than grepped: the line-scanning version of this check
+        missed the parenthesised multi-line form, which is exactly the form
+        app.py uses for every import block, and missed
+        `import app; D = app.WORKOUT_DIR`, which binds the same object by a
+        different spelling. rglob so src/scripts/ is covered too.
         """
+        import ast
         src = pathlib.Path(__file__).resolve().parent.parent / "src"
+        names = ("WORKOUT_DIR", "GPX_DIR")
         offenders = []
-        for f in sorted(src.glob("*.py")):
-            for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
-                s = line.strip()
-                if s.startswith("from ") and " import " in s:
-                    imported = s.split(" import ", 1)[1]
-                    for name in ("WORKOUT_DIR", "GPX_DIR"):
-                        if name in imported:
-                            offenders.append(f"{f.name}:{i}: {s}")
+        for f in sorted(src.rglob("*.py")):
+            try:
+                tree = ast.parse(f.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            rel = f.relative_to(src)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    for a in node.names:
+                        if a.name in names:
+                            offenders.append(f"{rel}:{node.lineno}: from {node.module} import {a.name}")
+            # Only MODULE-SCOPE binds. `d = app.WORKOUT_DIR` inside a
+            # function is a fresh read on every call and is the correct
+            # pattern -- icu_calendar_push.py:291 and launcher.py:702 both do
+            # it. At module scope the same line snapshots the boot value.
+            for node in tree.body:
+                if isinstance(node, ast.Assign):
+                    for v in ast.walk(node.value):
+                        if isinstance(v, ast.Attribute) and v.attr in names:
+                            offenders.append(f"{rel}:{node.lineno}: {ast.unparse(node)[:70]}")
+
         self.assertEqual(offenders, [], "\n".join(offenders))
 
 

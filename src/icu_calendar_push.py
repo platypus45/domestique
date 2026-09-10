@@ -169,9 +169,14 @@ def _display_name(s: dict, classifications: dict) -> str:
 
 
 def _load_classifications(workout_dir: Path) -> dict:
+    """file -> classification entry. The file nests its entries under
+    "classifications"; returning the envelope made every lookup miss, so every
+    pushed event lost its display name (notes/review/dupes.md DUP-7)."""
     try:
         d = json.loads((workout_dir / ".content_classification.json")
                        .read_text(encoding="utf-8"))
+        if isinstance(d, dict) and isinstance(d.get("classifications"), dict):
+            return d["classifications"]
         return d if isinstance(d, dict) else {}
     except (OSError, json.JSONDecodeError, ValueError):
         return {}

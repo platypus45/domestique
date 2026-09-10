@@ -39,14 +39,19 @@ from datetime import date, timedelta
 
 log = logging.getLogger(__name__)
 
-# Types the planner treats as hard. Duplicated deliberately in
-# plan_invariants: there the list is the auditor's, here it is the planner's,
-# and a silent divergence between them should surface as a failing audit
-# rather than be hidden by a shared import.
-HARD_TYPES = frozenset({
-    "vo2max", "threshold", "sweetspot", "overunder", "sprint",
-    "anaerobic", "hill_repeats", "ftp_test", "race",
-})
+def _hard(session) -> bool:
+    """Does this session cost a hard day's recovery?
+
+    The planner's one hardness predicate -- the type it was prescribed OR the
+    content of the file it serves -- plus races, which the planner's HIT
+    counts leave out but which are the hardest day of all. This used to be a
+    type list of its own, judged by label and copied into the auditor "so a
+    divergence would surface"; both copies were blind to an endurance slot
+    serving a VO2 file, which is how the intensity budget -- precedence #1 --
+    came to be enforced on labels (notes/review/owner.md OWN-3, dupes.md DUP-6).
+    """
+    import training_planner as tp
+    return tp._session_is_hit(session) or tp._protect_race(session)
 
 MIN_HARD_GAP_DAYS = 2          # 48 h between hard sessions (Gabbett 2016)
 
@@ -317,10 +322,8 @@ class TrainingWeek:
         return max(0.0, gross - done)
 
     def _hard_days_committed(self) -> list[date]:
-        prev = [s.day for s in (self.ctx.prev_week_sessions or [])
-                if getattr(s, "session_type", "") in HARD_TYPES]
-        return prev + [s.day for s in self._committed
-                       if s.session_type in HARD_TYPES]
+        prev = [s.day for s in (self.ctx.prev_week_sessions or []) if _hard(s)]
+        return prev + [s.day for s in self._committed if _hard(s)]
 
     # ── the single writer ────────────────────────────────────────────────
     def _commit(self, session):
@@ -366,7 +369,7 @@ class TrainingWeek:
         # 3. 48 h between hard sessions -- checked against what is already
         #    committed AND the previous week, so the rule holds across the
         #    week boundary rather than only inside it.
-        if session.session_type in HARD_TYPES:
+        if _hard(session):
             for d in self._hard_days_committed():
                 if abs((session.day - d).days) < MIN_HARD_GAP_DAYS:
                     self._demote(session, "eased: 48 h from the neighbouring hard day")
@@ -381,7 +384,7 @@ class TrainingWeek:
         #    is the constraint the volume pass could never enforce, because by
         #    the time it ran the hard sessions were already placed and it was
         #    forbidden to touch them.
-        if session.session_type in HARD_TYPES and not self._is_taper():
+        if _hard(session) and not self._is_taper():
             room = self.ceiling * HARD_CEILING_SHARE - self._hard_tss
             if room <= 0:
                 self._demote(session, "eased: the week's intensity budget is spent")
@@ -423,7 +426,7 @@ class TrainingWeek:
     def _accept(self, session):
         self._committed.append(session)
         self._tss += float(session.tss_estimate or 0.0)
-        if session.session_type in HARD_TYPES:
+        if _hard(session):
             self._hard_tss += float(session.tss_estimate or 0.0)
         return session
 
@@ -671,14 +674,14 @@ class TrainingWeek:
         eases the LATER of two neighbouring hard days.
         """
         easy = [s for s in sessions
-                if not is_immutable(s) and s.session_type not in HARD_TYPES
+                if not is_immutable(s) and not _hard(s)
                 and s.session_type != "rest"]
         longest = max(easy, key=lambda s: (s.duration_min or 0), default=None)
 
         def tier(s):
             if is_immutable(s):
                 return 0
-            if s.session_type in HARD_TYPES:
+            if _hard(s):
                 return 1
             if longest is not None and s is longest:
                 return 2
@@ -789,7 +792,7 @@ class TrainingWeek:
             if self.easy_share() >= MIN_EASY_SHARE:
                 return
             hard = [s for s in self._committed
-                    if (s.session_type in HARD_TYPES or s.session_type == DEMOTE_TO)
+                    if (_hard(s) or s.session_type == DEMOTE_TO)
                     and not is_immutable(s)]
             if not hard:
                 return
@@ -842,7 +845,7 @@ class TrainingWeek:
         for s in self._committed:
             if s.session_type == "rest":
                 continue
-            tag = "HARD" if s.session_type in HARD_TYPES else "easy"
+            tag = "HARD" if _hard(s) else "easy"
             out.append(f"  {s.day.strftime('%a')} {tag} {s.session_type:<12}"
                        f"{s.duration_min:>4}min {s.tss_estimate:>6.1f} TSS  {s.description[:60]}")
         out.append(f"  total {self._tss:.0f} TSS (hard {self._hard_tss:.0f})")

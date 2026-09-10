@@ -5536,10 +5536,18 @@ _HIT_SLOT_CONTENT_CLASSES = frozenset({
     # (AM+PM threshold-class pair, ≥4 h gap, both with HR ceiling 88% max_hr).
     "double_threshold",
 })
+# No sweet_spot. Sweet spot (88-94% FTP) sits well above the first
+# ventilatory threshold, and work above VT1 delays autonomic recovery far more
+# than work below it (Seiler, Haugen & Kuffel 2007, MSSE 39:1366) -- which is
+# why the planner counts sweetspot as a hard session, under the weekly HIT
+# count and 48 h spacing. Served on an endurance slot it was a hard day neither
+# of those ever saw. Tempo stays: it is the moderate volume the pyramidal
+# phases prescribe (Filipas 2022), budgeted by the week's zone minutes, and a
+# tempo file is served -- and typed -- as tempo.
 _ENDURANCE_SLOT_CONTENT_CLASSES = frozenset({
     "endurance", "endurance_intervals",
     "tempo",
-    "sweet_spot", "recovery",
+    "recovery",
 })
 
 # v3.5.4 — the subset of endurance-slot classes that are genuinely EASY
@@ -5933,18 +5941,25 @@ def _features_for_row(row: dict) -> dict:
 _PURE_Z2_FLOOR_PCT = 50.0
 _PURE_Z2_HIGH_CEILING_PCT = 40.0
 
-# content_class → planner session_type (display label). For "mixed" we
-# lazy-pick z2 vs tempo from the row's Z3% (≥30% Z3 → tempo). The session_type
-# is what the UI shows + what _SESSION_TYPE_PREFIXES expects.
+# content_class → planner session_type. This IS the served session's type
+# (see _session_type_from_row), so every class of the taxonomy maps; "mixed"
+# is picked from the row's zones (≥30% Z3 → tempo).
 _CONTENT_CLASS_TO_SESSION_TYPE = {
     "recovery":     "recovery",
     "endurance":    "z2",
+    "endurance_intervals": "z2",
     "tempo":        "tempo",
+    "tempo_intervals": "tempo",
+    "tempo_ladder": "tempo",
     "sweet_spot":   "sweetspot",
+    "sweet_spot_ladder": "sweetspot",
     "threshold":    "threshold",
+    "threshold_ladder": "threshold",
+    "double_threshold": "threshold",
     "over_under":   "overunder",
     "vo2max":       "vo2max",
     "vo2_short":    "vo2max",
+    "vo2_ladder":   "vo2max",
     "anaerobic":    "vo2max",
     "neuromuscular": "sprint",
     "ftp_test":     "ftp_test",
@@ -6039,6 +6054,9 @@ _HARD_BANDS = ("z3", "z4", "z5plus")
 # moves the breach to a different band. That is the generator's case, not the
 # scorer's.
 _BUDGET_FIT_GAIN = 1.5
+# A file that overshoots what the week has left above 106% FTP by more than
+# this is out: the z5plus hard-kill, applied as a gate in sample_week_workouts.
+_Z5_OVERSHOOT_KILL_MIN = 20.0
 
 
 # ── Constructing a session the library cannot supply ─────────────────────────
@@ -6152,7 +6170,7 @@ def _budget_fit_score(row_zones: dict[str, float], remaining: dict[str, float],
     for z in ("z1z2", "z3", "z4", "z5plus"):
         excess = max(0.0, row_zones.get(z, 0.0) - max(0.0, remaining.get(z, 0.0)))
         overshoot += excess * (3.0 if z == "z5plus" else (2.0 if z == "z4" else 1.0))
-    if (row_zones.get("z5plus", 0.0) - max(0.0, remaining.get("z5plus", 0.0))) > 20:
+    if (row_zones.get("z5plus", 0.0) - max(0.0, remaining.get("z5plus", 0.0))) > _Z5_OVERSHOOT_KILL_MIN:
         return 0.0
 
     # An ENDURANCE slot is judged on its easy content, but it must also answer
@@ -6680,11 +6698,13 @@ def _build_pool_indexes(library: list[dict]) -> dict:
             # naturally re-weights toward purer Z2 picks once Z3 budget is
             # spent.
             endurance_strict.append(w)
-        elif cc in ("tempo", "sweet_spot") and dur >= 75 and z1z2 >= 50:
+        elif cc == "tempo" and dur >= 75 and z1z2 >= 50:
             # Long endurance-with-finisher: a 90-min ride that's 60% Z2 + 25% Z3
             # is functionally endurance volume with a tempo block — fits a Sat
-            # long-Z2 slot beautifully in build/peak phases. NOT in
-            # endurance_strict (these have substantial Z3 work).
+            # long-Z2 slot in build/peak phases, served as tempo. NOT in
+            # endurance_strict (these have substantial Z3 work). Sweet spot no
+            # longer qualifies: it is hard work above VT1, and an endurance slot
+            # does not hold hard work (see _ENDURANCE_SLOT_CONTENT_CLASSES).
             endurance.append(w)
     return {
         "hit": hit,
@@ -6755,55 +6775,30 @@ def _pool_collapse_reason(pool_index: dict, library: list) -> str:
 
 
 def _session_type_from_row(row: dict) -> str:
-    """Derive the planner session_type for a library row.
+    """The planner session_type a library row is SERVED as: its content.
 
-    v4.5.0 IMPL-PLANNER: prefer filename-prefix matching FIRST so the picked
-    session_type stays consistent with ``_SESSION_TYPE_PREFIXES`` (the boot-
-    time staleness rewrite). Without this, the sampler can produce
-    (session_type='tempo', zwo='vo2max_short_*') pairs that the staleness
-    rewriter clobbers on next boot, AND legacy tests that pin "tempo + vo2_
-    is stale" would break. Filename prefix is the most reliable sub-cycle
-    marker the workout authors use; we fall back to content_class only when
-    the filename is generic.
+    Content first -- the project's rule since v4.1.2, and the one the rest of
+    the planner judges by. This used to read the file NAME first, so an
+    endurance slot that drew a `sweetspot_*` file became an unplanned hard day
+    the week's HIT count and 48 h spacing never saw, and an `endurance_*` file
+    whose content is tempo became a "z2" that was not easy. Most easy-labelled
+    sessions serving hard content were minted here, not in match_zwo
+    (notes/review/owner.md OWN-3). The reason given for name-first --
+    consistency with the boot-time staleness rewrite -- lapsed in v1.8.18,
+    when that rewrite switched to "does the file exist".
+
+    The filename speaks only when a row carries no classification
+    (_content_class_for_row's fallback), and even then it may not mint a
+    maximal test: 28 rows are named ftp_test_* while their content is ordinary
+    hard work, and a test drawn into a normal slot bypasses the injector that
+    owns test placement (v3.5.4).
     """
-    fname = (row.get("File") or "").lower()
-    if fname.startswith("vo2max_") or fname.startswith("vo2_"):
-        return "vo2max"
-    if fname.startswith("threshold_") or fname.startswith("supra_threshold"):
-        return "threshold"
-    if fname.startswith("sweetspot_") or fname.startswith("sweet_spot_"):
-        return "sweetspot"
-    if fname.startswith("tempo_"):
-        return "tempo"
-    if fname.startswith("over_under_"):
-        return "overunder"
-    if fname.startswith("sprints_"):
-        return "sprint"
-    if fname.startswith("anaerobic_"):
-        return "vo2max"  # anaerobic is treated as VO2max-style for planner display
-    if fname.startswith("recovery_") or fname.startswith("warmup_"):
-        return "recovery"
-    if fname.startswith("z2_") or fname.startswith("endurance_"):
-        return "z2"
-    if fname.startswith("ftp_test_"):
-        # v3.5.4 — the NAME alone must not mint a maximal test. 28 rows are
-        # named ftp_test_* while their CONTENT is ordinary hard work (e.g.
-        # ftp_test_3x2min_82pct_42min.zwo classifies threshold_ladder — a 3x2min
-        # ladder is no FTP protocol). Stamped ftp_test by prefix alone, any of
-        # them can be drawn by the sampler into a hard slot and become an
-        # UNPLANNED maximal test: it bypasses _inject_mid_cycle_ftp_tests,
-        # which owns placement and only schedules a test where the previous
-        # calendar day is rest/easy, and it double-counts the retest cadence.
-        # Require the content to agree, per the project's content-based
-        # classification rule; otherwise fall through to content_class below.
-        # Genuine tests (Coggan-20, ramp) classify ftp_test and are unaffected.
-        _cc_ft = (row.get("ContentClass") or "").strip().lower()
-        _tags_ft = {str(t).strip().lower() for t in (row.get("Tags") or [])}
-        if _cc_ft == "ftp_test" or "ftp_test" in _tags_ft:
-            return "ftp_test"
-
-    # Fallback: content_class
-    cc = (row.get("ContentClass") or "").lower()
+    tags = {str(t).strip().lower() for t in (row.get("Tags") or [])}
+    if "ftp_test" in tags:
+        return "ftp_test"
+    cc = _content_class_for_row(row)
+    if cc == "ftp_test" and (row.get("ContentClass") or "").strip().lower() != "ftp_test":
+        cc = ""                          # a name is not a test protocol
     base = _CONTENT_CLASS_TO_SESSION_TYPE.get(cc)
     if base:
         return base
@@ -6818,7 +6813,6 @@ def _session_type_from_row(row: dict) -> str:
     if z3 >= 30:
         return "tempo"
     return "z2"
-
 
 def _make_session_from_row(row: dict, day: date, day_name: str, phase_name: str) -> "PlannedSession":
     """Build a PlannedSession from a sampled library row."""
@@ -7295,6 +7289,31 @@ def sample_week_workouts(
                         "HIT slot %s: no candidate reaches the %.0f-min hard "
                         "floor; falling back to the ungated pool", d, _floor)
 
+        # The intensity budget as a GATE, not a weight -- precedence #1 at the
+        # moment the content is chosen. _budget_fit_score has always zeroed a
+        # file that overshoots the week's remaining time above 106% FTP by more
+        # than _Z5_OVERSHOOT_KILL_MIN, "the z5plus hard-kill". But once the fit
+        # became a multiplier (_budget_fit_weight) a zero fit cost a file only a
+        # third of its weight, while novelty alone spans three orders of
+        # magnitude -- so the kill stopped killing, and a threshold-model week
+        # drew three VO2 files and crossed the 18% ceiling on time above
+        # threshold. The model's zone budget is the science (PHASE_TID_DOSE:
+        # Seiler 2010, Ronnestad 2020, Filipas 2022); a slot may not be served
+        # more of it than the week has left. Same fallback as the hard floor: a
+        # library gap must not make a week unplannable.
+        if feasible:
+            _z5_room = max(0.0, remaining.get("z5plus", 0.0)) + _Z5_OVERSHOOT_KILL_MIN
+            _within = []
+            for w in feasible:
+                _fd = float(w.get("Duration(min)", 0) or 0)
+                _ceil = TYPE_CEILING.get(_content_class_for_row(w))
+                _cap = min(max_min, _ceil) if _ceil else max_min
+                _k = min(1.0, _cap / _fd) if _fd > 0 and _cap > 0 else 1.0
+                if _row_zone_minutes(w).get("z5plus", 0.0) * _k <= _z5_room:
+                    _within.append(w)
+            if _within:
+                feasible = _within
+
         if not feasible:
             # Emergency fallback — drop the duration floor & dip into ALL workouts.
             # v3.2.0 WATERTIGHT: all_pool rows already passed the D3 facts gate
@@ -7302,10 +7321,14 @@ def sample_week_workouts(
             # class-blind dip additionally excludes ftp_test-CLASSED rows: a real
             # test (tagged ones never enter pools; untagged/misclassified ones
             # did) must never land on a normal day via the fallback.
+            # An endurance slot's dip stays out of hard content too: a hard
+            # day the week never budgeted costs the 48 h of recovery its
+            # neighbours were spaced for. The placeholder below is safer.
             feasible = [
                 w for w in pool_index["all_pool"]
                 if 0 < float(w.get("Duration(min)", 0) or 0) <= max_min + 5
                 and _content_class_for_row(w) != "ftp_test"
+                and (is_hit or _content_class_for_row(w) not in _HIT_SLOT_CONTENT_CLASSES)
             ]
 
         if not feasible:
@@ -9117,13 +9140,25 @@ _HIT_SESSION_TYPES = frozenset({
 
 
 def _session_is_hit(sess) -> bool:
-    """True if this PlannedSession is a hard (HIT) session, by EITHER axis."""
-    if sess is None or getattr(sess, "session_type", "") == "rest":
+    """Is this session hard -- by the type it was prescribed OR the content of
+    the file it serves?
+
+    THE hardness predicate: the owner's 48 h and hard-share checks, every pass,
+    the refit and the app's missed-session scan ask this one. There used to be
+    five answers and they disagreed (notes/review/dupes.md DUP-6). Takes a
+    PlannedSession or a persisted session dict.
+    """
+    if sess is None:
         return False
-    if sess.session_type in _HIT_SESSION_TYPES:
+    if isinstance(sess, dict):
+        st, zwo = sess.get("session_type") or "", sess.get("zwo_file") or ""
+    else:
+        st, zwo = getattr(sess, "session_type", "") or "", getattr(sess, "zwo_file", "") or ""
+    if st == "rest":
+        return False
+    if st in _HIT_SESSION_TYPES:
         return True
-    cc = _content_class_for_zwo(getattr(sess, "zwo_file", "") or "")
-    return cc in _HIT_SLOT_CONTENT_CLASSES
+    return _content_class_for_zwo(zwo) in _HIT_SLOT_CONTENT_CLASSES
 
 
 def _week_hit_count(week) -> int:
@@ -10975,25 +11010,35 @@ def _enforce_ronnestad_floor(
 
 
 def _content_class_for_zwo(zwo_file: str) -> str:
-    """Look up content_class for a planner-emitted zwo path/name."""
+    """Content class of a served file: the classifier's verdict, else the same
+    filename rule a library row falls back to.
+
+    One fallback, not two. This returned '' for any file missing from the
+    classification cache while _content_class_for_row answered from the name,
+    so the two disagreed on 73 files and a session's hardness depended on which
+    one a pass called (notes/review/dupes.md DUP-7). '' still means unknown:
+    the filename rule's catch-all 'mixed' is not an answer.
+    """
     if not zwo_file:
         return ""
+    name = zwo_file.split("/")[-1]
     cache = _load_content_classifications() or {}
-    ent = cache.get(zwo_file) or cache.get(zwo_file.split("/")[-1])
+    ent = cache.get(zwo_file) or cache.get(name)
     if ent:
         return (ent.get("primary") or "").lower()
-    return ""
+    cc = _content_class_for_row({"File": name})
+    return "" if cc == "mixed" else cc
 
 
 # ── Reforecaster ──────────────────────────────────────────────────────────────
 
 # Hard session types whose intensity we re-evaluate in reforecast (PL4).
-_HARD_SESSION_TYPES = frozenset({
-    "vo2max", "threshold", "overunder", "sweetspot", "sprint", "tempo",
-    # v1.1.0 IMPL-NORWEGIAN-HR: double_threshold counts as a hard session
-    # (AM+PM threshold-class pair, both with HR ceiling 88% max_hr).
-    "double_threshold",
-})
+# These are the rungs the intensity ladder can step DOWN: every hard type but
+# the FTP test (a test is postponed, not tiered down), plus tempo, which is
+# not hard but still carries intensity to shed. Derived, so it cannot drift
+# from _HIT_SESSION_TYPES -- it had: this set, that one and three local copies
+# disagreed on tempo, sprint, ftp_test and double_threshold (dupes.md DUP-6).
+_HARD_SESSION_TYPES = (_HIT_SESSION_TYPES - {"ftp_test"}) | {"tempo"}
 
 
 def apply_week_tier_down(
@@ -14633,7 +14678,7 @@ def daily_adapt_plan(
     # ── 0. TSB-aware de-load (PL1) — PROJECTION ONLY ────────────────
     tsb_deload_projected = []
     if tsb is not None and tsb < -30:
-        hard_types = {"vo2max", "threshold", "overunder", "sweetspot", "sprint", "tempo"}
+        hard_types = _HARD_SESSION_TYPES   # was a local copy missing double_threshold
         for s in sessions:
             if s.day < today:
                 continue

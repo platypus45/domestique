@@ -183,16 +183,22 @@ class TestFix2TempoNotHIT(unittest.TestCase):
             )
             phases, weeks = generate_plan(goal)
 
-        hit_types = {"vo2max", "threshold", "overunder", "sweetspot", "sprint"}
-        # Find at least one base week, count hit sessions and tempo sessions.
+        import training_planner as _tp
         base_weeks = [w for w in weeks if w.phase == "base" and not w.is_stepback]
         self.assertTrue(len(base_weeks) >= 1, "Expected at least one base week")
-        # For every base week, HIT count must be <= phase hit_per_week (1).
-        # Confirms tempo doesn't inflate the HIT budget.
+        # Every base week stays inside its hard-session budget, and tempo does
+        # not inflate the count. Counted by SERVED content -- the planner's one
+        # hardness predicate -- against the budget the sampler actually plans
+        # to: the base IntensityBudget's hit_count_max, two quality days from
+        # 7 h/week (Zapico 2007). This used to count LABELS against
+        # Phase.hit_per_week (1), a field the sampler does not read, and passed
+        # on weeks whose only hard work was a 97-minute sweet-spot file on a z2
+        # slot -- a label count of zero (notes/review/owner.md OWN-4).
+        cap = _tp.get_budget_for_phase("base").hit_count_max
         for w in base_weeks:
-            hit = sum(1 for s in w.sessions if s.session_type in hit_types)
-            self.assertLessEqual(hit, 1,
-                                 f"Base week {w.week_num}: HIT count {hit} exceeds budget 1")
+            hit = _tp._week_hit_count(w)
+            self.assertLessEqual(hit, cap,
+                                 f"Base week {w.week_num}: {hit} hard sessions > budget {cap}")
 
 
 class TestFix3ThreeDayWeekHITScaling(unittest.TestCase):

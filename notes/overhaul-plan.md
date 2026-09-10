@@ -160,23 +160,46 @@ index serves stale zone percentages), and the Pillow gap in the production venv.
 
 ## Decisions taken this session
 
-Recorded so they are not relitigated without new evidence.
+Recorded so they are not relitigated without new evidence. The project's
+value is that its rules come from the training literature; each decision says
+which rule it serves, so a later change can be argued on the same ground.
 
 - **D1** Constraint precedence unchanged: intensity budget > 48 h spacing >
-  session count > variety.
+  session count > variety. *Why:* load spikes are the best-documented injury
+  and overreaching risk (Gabbett 2016, ACWR); recovery from work above the
+  first threshold is what caps hard sessions (Seiler 2010); the number and
+  quality of hard sessions matters more than their length, and variety is a
+  preference.
 - **D2** A week's budget is decided in one place, `TrainingWeek`. For an
   opening stub week: `min(gross × span/7, gross − ridden since that Monday)`.
-  One subtraction, not two.
-- **D3** Two predicates, named for their questions, and no other type sets in
-  planning code: `is_hard` (costs recovery — spacing, HIT cap, hard share;
-  judged on type *or* served content) and `has_intensity` (a tier-down or
-  easing candidate; includes tempo).
-- **D4** A session's type comes from its slot. A file is admissible for a
-  slot only if its content class is allowed there; an endurance slot never
-  holds hard content.
-- **D5** Availability hours are a ceiling, never a prescription.
+  One subtraction, not two. *Why:* the acute load the ACWR guards is the
+  calendar week's, so what was ridden Mon–Wed counts against it (Gabbett 2016;
+  Hulin 2016); proration keeps a week's load from being compressed into four
+  days, which is itself a spike.
+- **D3** One hardness predicate, `_session_is_hit` (the type prescribed *or*
+  the served file's content), and the tier-down rungs derived from it
+  (`_HARD_SESSION_TYPES` = hard types − the FTP test + tempo). No other type
+  sets in planning code. *Why:* "hard" is a session above the first threshold,
+  which delays autonomic recovery far more than work below it (Seiler, Haugen
+  & Kuffel 2007) and counts against the session-goal budget of ~2–3 hard
+  sessions a week (Seiler & Kjerland 2006) — whatever the slot is called.
+  Tier-down sheds any intensity on a low-readiness day, tempo included
+  (HRV-guided training, Kiviniemi 2007); a test is postponed, not tiered down.
+- **D4** A session's type comes from its content, and an endurance slot never
+  holds hard content — sweet spot included; tempo may stay. *Why:* an easy day
+  that serves work above VT1 is an unplanned hard day that neither the weekly
+  HIT count nor 48 h spacing saw, and distribution is judged by the time the
+  athlete actually rides in each zone, not by labels (Rosenblat et al. 2025).
+  Tempo is the moderate volume the pyramidal phases prescribe (Filipas 2022),
+  budgeted by the week's zone minutes.
+- **D5** Availability hours are a ceiling, never a prescription. *Why:* load
+  is set by the athlete's chronic load and the phase (Gabbett 2016; Issurin
+  2010); free time is not a training stimulus, and scaling a session up to it
+  is how a tier-down came to raise load.
 - **D6** A missed or dismissed session costs nothing: no load, no spacing
-  block. A done session's load is counted once, from the ride.
+  block. A done session's load is counted once, from the ride. *Why:* fatigue
+  comes from training performed, not planned (Banister impulse-response); an
+  unridden session imposes no recovery cost.
 - **D7** The auditor stays independent by what it reads (the served file,
   the goal's caps, the rides), not by keeping a copied type set.
 - **D8** For the owner to decide: HTTP verb changes. GET auto-recalc writes,
@@ -229,12 +252,63 @@ tests/probe_entry_point_parity.py 40 [--owner]      # invariants per entry point
   21/21 event regenerate, recalculate and reforecast runs; weekly volume over
   budget for 10–33 riders on every entry point.
 
-### Step 1 — one workout identity (R2)
+### Step 1 — one workout identity (R2) — DONE
 
-One content-class resolver, one `is_hard`, one `has_intensity`, one type→band
-map. Sampled sessions take their slot's type; endurance pools exclude hard
-content. *Verify:* `easy_slot_content` → 0 in both modes; hard share holds by
-content; the characterization diff is content-heavy and explained.
+- One content-class resolver: `_content_class_for_zwo` falls back to the same
+  filename rule as `_content_class_for_row` (they disagreed on 73 files).
+- One hardness predicate, `_session_is_hit` (type or served content; takes a
+  plan dict too). The owner's `week_plan.HARD_TYPES`, the app's hand mirror and
+  daily-adapt's local set are gone; the tier-down rungs `_HARD_SESSION_TYPES`
+  are derived from it (D3).
+- Sessions are typed by content (`_session_type_from_row`), every content class
+  maps, and endurance slots — pool, mix preference and emergency fallback —
+  hold no hard content (D4). Sweet spot is out: it is above VT1 (Seiler,
+  Haugen & Kuffel 2007) and has always been a hard type here.
+- The z5plus "hard-kill" is a gate again. Once the budget fit became a
+  multiplier, a file overshooting the week's time above 106% FTP by 20+ minutes
+  kept two-thirds of its weight while novelty spans three orders of magnitude,
+  so a threshold-model week drew three VO2 files and crossed the 18% rail.
+- `icu_calendar_push` reads the classification entries, not the envelope
+  (every pushed event had lost its display name).
+- The type→band maps for the HTTP layer's zone bars are left for Step 6, which
+  replaces labels with the served files' own zones.
+
+Measured (characterization; planner change only, same auditor on both sides):
+
+| | easy-slot content | 48 h spacing | hard share | under-delivery | weekly volume | stepback |
+|---|---|---|---|---|---|---|
+| owner off | 7 → 0 | 0 → 0 | 41 → 44 | 4 → 4 | 115 → 112 | 1 → 3 |
+| owner on | 2 → 0 | 5 → 0 | 12 → 12 | 16 → 20 | 26 → 24 | 2 → 2 |
+
+The other rules move by churn — new and resolved findings in every entry point
+at similar rates: removing sweet spot from the endurance pool shifts every later
+weighted draw, so session-level diffs are not attributable (the two new stepback
+findings are both legacy regenerate, which has no "stepback is lightest" pass).
+Time above 106% FTP per week over tid_plan_properties' matrix: mean 5.6 → 5.5 %,
+p90 12.1 → 10.5 %, max 16.4 → 16.6 %, none over the 18 % rail (the identity half
+alone reached 18.6 %; the gate brought it back). Delivered/target median
+unchanged (0.97 off, 0.95 on). "tempo" labels fell from 205 to 59 and
+labelled-hard sessions rose from 587 to 650: files named tempo_* whose content is
+endurance or sweet spot are now typed by what they contain.
+
+Re-pinned: `test_planner_fixes::…test_multiple_tempos_and_one_hit_possible`
+counted labels against `Phase.hit_per_week` (1), a field the sampler does not
+read, and passed on weeks whose only hard work was a 97-min sweet-spot file on a
+z2 slot. It now counts served content against the base budget (two quality days
+from 7 h/week, Zapico 2007); the new assertion passes on the Step 0 code too.
+
+### Found on the way — SCI-1: the sampler does not honour its own science table
+
+The mix preference is a science table (base: sweet spot and threshold, no VO2),
+but the sampler draws per FILE with per-file weights, so a class's odds scale
+with how many files the library holds in it. The HIT pool holds 388 VO2max
+files against 382 sweet-spot and 630 threshold; pool size × mix weight alone
+gives VO2max ~14 % of base hard picks where the table says 0, and novelty (25×
+for an unseen file, ~1000× across picks) swamps both the budget fit (1.5^±1)
+and the class preference. Measured: a pyramidal base week for an 8 h rider drew
+two VO2 files. The z5plus gate bounds the damage; the fix is to choose the
+CLASS by the table and the week's budget, then the file within it by novelty —
+a behaviour change that needs its own measurement. Step 3b.
 
 ### Step 2 — one serialisation and no generation globals (R5, R6)
 

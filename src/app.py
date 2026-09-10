@@ -14192,17 +14192,6 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
         except (TypeError, ValueError):
             continue
 
-    def _sess_is_hard(sess: dict) -> bool:
-        """Union-of-axes hard check on a persisted session dict (mirrors
-        tp._session_is_hit without needing a DTO)."""
-        if (sess.get("session_type") or "") in tp._HIT_SESSION_TYPES:
-            return True
-        try:
-            cc = tp._content_class_for_zwo(sess.get("zwo_file") or "")
-        except Exception:
-            cc = ""
-        return cc in tp._HIT_SLOT_CONTENT_CLASSES
-
     def _is_available_slot(d_iso: str, missed_iso: str,
                            missed_sess: "dict | None" = None,
                            easy_takeover: bool = False) -> bool:
@@ -14227,7 +14216,7 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
             return False
         # FC5a (v2.5.0, L3-1): no HARD destination inside T-2..T+0 of an A/B
         # event. Openers are exempt — a short touch ride is what belongs there.
-        if (missed_sess is not None and _sess_is_hard(missed_sess)
+        if (missed_sess is not None and tp._session_is_hit(missed_sess)
                 and not missed_sess.get("is_opener")):
             for ed in event_days:
                 if 0 <= (ed - d).days <= 2:
@@ -14266,7 +14255,7 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
             # ridden.
             for nb in (d - timedelta(days=1), d + timedelta(days=1)):
                 nb_sess = sess_by_day.get(nb.isoformat())
-                if (nb_sess and _sess_is_hard(nb_sess)
+                if (nb_sess and tp._session_is_hit(nb_sess)
                         and (nb_sess.get("status") or "pending")
                         not in ("missed", "dismissed")):
                     return False
@@ -14324,7 +14313,7 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
             cand_sess = sess_by_day.get(cand_iso, {})
             chosen_reason = "rest_slot" if cand_sess.get("session_type") == "rest" else "unfilled_available_day"
             break
-        if chosen is None and _sess_is_hard(miss) \
+        if chosen is None and tp._session_is_hit(miss) \
                 and (iso_year, iso_week) not in takeover_weeks:
             # Second chance for a missed HARD session in a week with no free
             # rest slot: take over an easy day. Capped at one per week so a

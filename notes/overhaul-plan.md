@@ -525,7 +525,19 @@ variety rule overriding the distribution model, the SCI-1 problem: Step 5b's
 remedy (class-first sampling that honours the model's table) has to cover the
 floors too.
 
-### Step 5 — one owner of the week's budget (R1)
+### Step 5 — one owner of the week's budget (R1) — parts 1, 2, 4 DONE; part 3 waits
+
+*Status on 2026-09-11.* Three parts are done, each below:
+- part 1, the stepback rhythm;
+- part 2, one athlete state and one target rule;
+- part 4, one week context.
+
+Part 3 is D2's week ceiling, and it needs one thing decided first: which
+number is a week's budget. That is the ramp target the auditor, the owner
+and the UI read, or the ACWR base fill the week-total pass prescribes (see
+the end of part 2). D2's `min(gross × span/7, gross − ridden)` is built on
+that number. The verify line's `under_delivery` and `weekly_volume` → 0
+depends on it too.
 
 `TrainingWeek` derives the ceiling (D2); one stepback predicate on a plan-wide
 week index; every entry point (and the phase preview) feeds `generate_phases`
@@ -605,6 +617,31 @@ ramp target ("polarized base fill", v2.1.1), while the auditor, the owner
 and the UI read the ramp target. So a week has two budgets, and the
 `weekly_volume` findings on generate's own plans are that disagreement. One
 number has to win.
+
+#### Step 5, part 4 — one week context (DUP-4, OWN-9) — DONE
+
+`week_context(goal, phase, week, start, …)` builds the context every entry
+point builds a week from, with one emphasis rule (`_week_emphasis`) and the
+blueprint modes' block-focus exemption. `propose_week(ctx, state, budget)`
+takes the blueprint-or-sampler branch for generate, regenerate, recalculate,
+extend, refit and the owner. Refit reads its week-in-phase from the plan.
+
+Measured. The sampler reads only the context's emphasis, block focus, goal,
+phase, dates, seed and week indices, and the blueprint engine reads fewer
+still. So only refit's plans and the owner's regenerate could change, and
+the characterization moves only refit@3 cases (11 and 12 per owner mode):
+- **Fixed plan.** A fixed_core plan's refit keeps its generated week: two
+  long rides and one sweet spot, 456 TSS. The sampler had made it two
+  vo2max sessions and no long ride (339).
+- **Continuous plans.** Continuous refits carry their focus emphasis, and
+  over 12 seeds the load they re-owe is unchanged: mean 127 → 132 TSS, hard
+  86 → 85, and 3 of 12 under-deliver both before and after.
+- **Owner's regenerate.** It now carries the climbing emphasis, but these
+  riders' draws don't respond to it. That is SCI-1's diluted class
+  preference (Step 5b).
+
+`tests/test_one_week_context.py` fails all three of its checks on the
+previous code.
 
 ### Step 5b — the sampler honours its science tables (SCI-1)
 

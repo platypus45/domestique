@@ -589,19 +589,9 @@ class TrainingWeek:
 
         # A blueprint mode owns its week's structure, so no block focus is
         # applied on top of it -- the two are mutually exclusive by design.
-        block_focus = (None if ctx.plan_mode in ("fixed_core", "template")
-                       else ctx.block_focus)
-        self.week.block_focus = block_focus
-
-        if ctx.plan_mode in ("fixed_core", "template"):
-            # FS1 -- the blueprint engine builds a deterministic repeatable
-            # week in the same 7-slot shape the sampler produces, so
-            # everything downstream is unchanged.
-            proposals = tp.expand_blueprint_week(ctx, budget)
-        else:
-            # block_focus is ctx.block_focus on this branch: only the
-            # blueprint modes above clear it.
-            proposals = tp.sample_week_workouts(ctx, st, budget)
+        self.week.block_focus = (None if ctx.plan_mode in tp._BLUEPRINT_MODES
+                                 else ctx.block_focus)
+        proposals = tp.propose_week(ctx, st, budget)
 
         # Trim the per-phase HIT rotation to the last ~4 weeks of picks
         # (<=3 HIT/wk x 4). Left ungrowing, an old pick keeps suppressing its

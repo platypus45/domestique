@@ -8250,6 +8250,65 @@ def _block_focus_for(phase_name: str, goal: "Goal", is_stepback: bool) -> "str |
     return _BLOCK_FOCUS_BY_PHASE.get(phase_name)
 
 
+# A blueprint mode lays out its own week (FS1).
+_BLUEPRINT_MODES = ("fixed_core", "template")
+
+
+def _week_emphasis(goal, phase_name: str, event_targets) -> "str | None":
+    """The class-mix emphasis for one week: a continuous goal's focus, or the
+    event's climbing specificity in build2 and peak, where race-specific work
+    belongs (v1.11.0 P4)."""
+    return (_continuous_emphasis(goal)
+            or ("event_climb"
+                if (event_targets and event_targets.get("climbing_bias")
+                    and phase_name in ("build2", "peak"))
+                else None))
+
+
+def week_context(goal, phase, week_num: int, start: date, *, is_stepback: bool,
+                 week_in_phase: int, seed_salt: int = 0, event_targets=None,
+                 **extra) -> "week_plan.WeekContext":
+    """The context every entry point builds a week from, built only here.
+
+    Six call sites used to assemble it by hand and disagreed on 17 of 24
+    arguments. Refit sampled a fixed_core plan with the random sampler, always
+    as week 0 of its phase and with no emphasis; the owner's regenerate
+    dropped the event's climbing emphasis (notes/review/dupes.md DUP-4,
+    owner.md OWN-9). A blueprint mode lays out its own week, so no block focus
+    applies on top of it (FS1 D4). ``extra`` carries the owner's facts about
+    the week: rides, the previous week, days off, the athlete's own sessions.
+    """
+    plan_mode = getattr(goal, "plan_mode", "auto") or "auto"
+    return week_plan.WeekContext(
+        week_num=week_num, start=start, phase=phase, goal=goal,
+        is_stepback=is_stepback, seed_salt=seed_salt, week_in_phase=week_in_phase,
+        emphasis_profile=_week_emphasis(goal, phase.name, event_targets),
+        block_focus=(None if plan_mode in _BLUEPRINT_MODES
+                     else _block_focus_for(phase.name, goal, is_stepback)),
+        plan_mode=plan_mode, event_targets=event_targets, **extra)
+
+
+def propose_week(ctx, state, budget) -> list:
+    """A week's proposals: laid out by the blueprint in a fixed or template
+    plan, sampled otherwise. The one place that branch is taken; refit sampled
+    even a fixed plan, so one missed hard day cost both long rides and added
+    two hard sessions (dupes.md DUP-4)."""
+    if ctx.plan_mode in _BLUEPRINT_MODES:
+        return expand_blueprint_week(ctx, budget)
+    return sample_week_workouts(ctx, state, budget)
+
+
+def _week_in_phase(weeks: list, idx: int) -> int:
+    """How many weeks of weeks[idx]'s phase come straight before it: the index
+    generate gave the week inside its phase."""
+    n, name = 0, weeks[idx].phase
+    for w in reversed(weeks[:idx]):
+        if w.phase != name:
+            break
+        n += 1
+    return n
+
+
 def _span_weeks(p: "Phase") -> int:
     """FC1-CLIP (v2.5.0) — a phase's week count derived from its ACTUAL day-span
     (ceil), which equals the number of week-rows the emitters produce for it.
@@ -8510,27 +8569,13 @@ def generate_plan(
 
                 if _USE_TRAINING_WEEK:
                     _tw = week_plan.TrainingWeek(
-                        week_plan.WeekContext(
-                            week_num=week_num, start=cursor, phase=phase,
-                            goal=goal, is_stepback=is_stepback,
-                            seed_salt=seed_salt, week_in_phase=week_in_phase,
-                            prev_week_sessions=prev_week_sessions or [],
-                            ridden=activities or [],
-                            unavailable=_in_unavailable,
-                            # Same emphasis the legacy loop computes: climbing
-                            # specificity belongs in build2/peak only.
-                            emphasis_profile=(
-                                _continuous_emphasis(goal)
-                                or ("event_climb"
-                                    if (event_targets
-                                        and event_targets.get("climbing_bias")
-                                        and phase.name in ("build2", "peak"))
-                                    else None)),
-                            plan_mode=getattr(goal, "plan_mode", "auto"),
-                            block_focus=_block_focus_for(phase.name, goal,
-                                                         is_stepback),
-                            event_targets=event_targets,
-                        ),
+                        week_context(goal, phase, week_num, cursor,
+                                     is_stepback=is_stepback,
+                                     week_in_phase=week_in_phase,
+                                     seed_salt=seed_salt, event_targets=event_targets,
+                                     prev_week_sessions=prev_week_sessions or [],
+                                     ridden=activities or [],
+                                     unavailable=_in_unavailable),
                         _owner_state)
                     pw = _tw.plan(seal=False)
                     _owners.append(_tw)
@@ -8600,38 +8645,13 @@ def generate_plan(
                         activities, _monday_on_or_before(pw.start), pw.end))
                 pw.hit_allowance = int(budget.hit_count_max)
                 phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
-                # v1.11.0 (P4) — climbing specificity ONLY in build2/peak (research:
-                # race-specific work belongs in build+peak, not base). None elsewhere.
-                # 3.4.0 W1: continuous goals steer the class mix by focus pref
-                # instead (event_targets is None for them — mutually exclusive).
-                _emph = (_continuous_emphasis(goal)
-                         or ("event_climb"
-                             if (event_targets and event_targets.get("climbing_bias")
-                                 and phase.name in ("build2", "peak"))
-                             else None))
-                # F1 (v2.1/B2): block focus for this week (None unless opt-in).
-                # FS1 (D4): a blueprint mode owns its own per-phase focus → no
-                # block-periodization concentration on top.
-                _plan_mode = getattr(goal, "plan_mode", "auto")
-                block_focus = (None if _plan_mode in ("fixed_core", "template")
-                               else _block_focus_for(phase.name, goal, is_stepback))
-                pw.block_focus = block_focus
-                if _plan_mode in ("fixed_core", "template"):
-                    # FS1 — blueprint engine (deterministic repeatable week). Same
-                    # 7-slot shape as the sampler; downstream passes are reused.
-                    sampled = expand_blueprint_week(
-                        week_plan.WeekContext(
-                            week_num=week_num, start=cursor, phase=phase, goal=goal,
-                            is_stepback=is_stepback, week_in_phase=week_in_phase),
-                        budget)
-                else:
-                    sampled = sample_week_workouts(
-                        week_plan.WeekContext(
-                            week_num=week_num, start=cursor, phase=phase, goal=goal,
-                            is_stepback=is_stepback, seed_salt=seed_salt,
-                            week_in_phase=week_in_phase, emphasis_profile=_emph,
-                            block_focus=block_focus),
-                        _owner_state, budget)
+                # Emphasis, block focus, blueprint or sampler: decided in one
+                # place (week_context, propose_week).
+                _ctx = week_context(goal, phase, week_num, cursor,
+                                is_stepback=is_stepback, week_in_phase=week_in_phase,
+                                seed_salt=seed_salt, event_targets=event_targets)
+                pw.block_focus = _ctx.block_focus
+                sampled = propose_week(_ctx, _owner_state, budget)
                 # (v1.11.0 event long-ride progression is applied as a final pass
                 #  at the END of generate_plan — after all duration/re-match passes.)
                 # Trim rotation window to last 4 weeks worth of picks (≤3 HITs/wk
@@ -13006,17 +13026,13 @@ def regenerate_from_today(
                 [*past_weeks, *recovery_weeks, *new_weeks], phase.name)
             if _USE_TRAINING_WEEK:
                 _tw = week_plan.TrainingWeek(
-                    week_plan.WeekContext(
-                        week_num=week_num, start=cursor, phase=phase,
-                        goal=adjusted_goal, is_stepback=is_stepback,
-                        seed_salt=seed_salt, week_in_phase=week_in_phase,
+                    week_context(
+                        adjusted_goal, phase, week_num, cursor,
+                        is_stepback=is_stepback, week_in_phase=week_in_phase,
+                        seed_salt=seed_salt, event_targets=event_targets,
                         prev_week_sessions=prev_week_sessions or [],
                         ridden=activities or [],
                         unavailable=lambda d: d in unavailable_dates,
-                        emphasis_profile=(_continuous_emphasis(adjusted_goal) or None),
-                        plan_mode=getattr(adjusted_goal, "plan_mode", "auto"),
-                        block_focus=_block_focus_for(phase.name, adjusted_goal,
-                                                     is_stepback),
                         # Whatever the athlete already owns inside this week.
                         # Regeneration plans around these; it does not redo
                         # them (§6.12 contract).
@@ -13025,8 +13041,7 @@ def regenerate_from_today(
                             for _s in (getattr(_w, "sessions", None) or [])
                             if _s is not None
                             and cursor <= _s.day <= cursor + timedelta(days=6)
-                        ],
-                    ),
+                        ]),
                     _owner_state_rg)
                 pw = _tw.plan(seal=False)
                 _owners_rg.append(_tw)
@@ -13082,37 +13097,11 @@ def regenerate_from_today(
                 model=active_model_for_phase(phase.name, adjusted_goal), phase_name=phase.name,
                 spent_zones=_completed_zones_in(activities, pw.start, pw.end))
             phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
-            # v1.11.0 (P4) — climbing specificity ONLY in build2/peak (mirrors
-            # generate_plan's _emph). None elsewhere / for non-event regens.
-            # 3.4.0 W1: continuous regens keep the focus-pref emphasis too.
-            _emph = (_continuous_emphasis(adjusted_goal)
-                     or ("event_climb"
-                         if (event_targets and event_targets.get("climbing_bias")
-                             and phase.name in ("build2", "peak"))
-                         else None))
-            # F1 (v2.1/B6): keep blocks on the recalc path — recompute focus from
-            # the (adjusted) goal + phase so a recalc'd block plan stays blocked.
-            # None unless goal.block_periodization is on (default-off parity).
-            # FS1 — keep a fixed plan FIXED on "update plan": blueprint modes
-            # re-expand deterministically here too (else regenerate would reshuffle
-            # via the sampler). auto path unchanged.
-            _bp_mode = getattr(adjusted_goal, "plan_mode", "auto") in ("fixed_core", "template")
-            block_focus = None if _bp_mode else _block_focus_for(phase.name, adjusted_goal, is_stepback)
-            pw.block_focus = block_focus
-            if _bp_mode:
-                sampled = expand_blueprint_week(
-                    week_plan.WeekContext(
-                        week_num=week_num, start=cursor, phase=phase, goal=adjusted_goal,
-                        is_stepback=is_stepback, week_in_phase=week_in_phase),
-                    budget)
-            else:
-                sampled = sample_week_workouts(
-                    week_plan.WeekContext(
-                        week_num=week_num, start=cursor, phase=phase, goal=adjusted_goal,
-                        is_stepback=is_stepback, seed_salt=seed_salt,
-                        week_in_phase=week_in_phase, emphasis_profile=_emph,
-                        block_focus=block_focus),
-                    _owner_state_rg, budget)
+            _ctx = week_context(adjusted_goal, phase, week_num, cursor,
+                            is_stepback=is_stepback, week_in_phase=week_in_phase,
+                            seed_salt=seed_salt, event_targets=event_targets)
+            pw.block_focus = _ctx.block_focus
+            sampled = propose_week(_ctx, _owner_state_rg, budget)
             if len(phase_rot) > 12:
                 del phase_rot[: len(phase_rot) - 12]
             for nm in used_names_dict:
@@ -13686,41 +13675,22 @@ def recalculate_plan(
                 model=active_model_for_phase(phase.name, adjusted_goal), phase_name=phase.name,
                 spent_zones=_completed_zones_in(recent_activities, pw.start, pw.end))
             phase_rot = recent_hit_by_phase.setdefault(phase.name, [])
-            _emph = ("event_climb"
-                     if (event_targets and event_targets.get("climbing_bias")
-                         and phase.name in ("build2", "peak"))
-                     else None)
-            # F1 (v2.1/B6): keep blocks on the recalc path — recompute focus from
-            # the (adjusted) goal + phase so a recalc'd block plan stays blocked.
-            # None unless goal.block_periodization is on (default-off parity).
-            # FS1 — blueprint modes re-expand deterministically on reforecast too
-            # (a fixed plan must not reshuffle when the plan is recalc'd).
-            _bp_mode = getattr(adjusted_goal, "plan_mode", "auto") in ("fixed_core", "template")
-            block_focus = None if _bp_mode else _block_focus_for(phase.name, adjusted_goal, is_stepback)
-            pw.block_focus = block_focus
-            if _bp_mode:
-                sampled = expand_blueprint_week(
-                    week_plan.WeekContext(
-                        week_num=week_num, start=cursor, phase=phase, goal=adjusted_goal,
-                        is_stepback=is_stepback, week_in_phase=week_in_phase),
-                    budget)
-            else:
-                sampled = sample_week_workouts(
-                    week_plan.WeekContext(
-                        week_num=week_num, start=cursor, phase=phase, goal=adjusted_goal,
-                        is_stepback=is_stepback, seed_salt=seed_salt,
-                        week_in_phase=week_in_phase, emphasis_profile=_emph,
-                        block_focus=block_focus),
-                    week_plan.PlanState(
-                        library=library, pool_index=pool_index,
-                        used_names=used_names_dict,
-                        plan_pick_counts=plan_pick_counts,
-                        class_session_counts=class_session_counts,
-                        class_distinct_files=class_distinct_files,
-                        seen_cc_dur_tuples=seen_cc_dur_tuples,
-                        recent_hit_by_phase=recent_hit_by_phase,
-                        plan_total_weeks=plan_total_weeks_rc),
-                    budget)
+            _ctx = week_context(adjusted_goal, phase, week_num, cursor,
+                            is_stepback=is_stepback, week_in_phase=week_in_phase,
+                            seed_salt=seed_salt, event_targets=event_targets)
+            pw.block_focus = _ctx.block_focus
+            sampled = propose_week(
+                _ctx,
+                week_plan.PlanState(
+                    library=library, pool_index=pool_index,
+                    used_names=used_names_dict,
+                    plan_pick_counts=plan_pick_counts,
+                    class_session_counts=class_session_counts,
+                    class_distinct_files=class_distinct_files,
+                    seen_cc_dur_tuples=seen_cc_dur_tuples,
+                    recent_hit_by_phase=recent_hit_by_phase,
+                    plan_total_weeks=plan_total_weeks_rc),
+                budget)
             if len(phase_rot) > 12:
                 del phase_rot[: len(phase_rot) - 12]
             for nm in used_names_dict:
@@ -14047,7 +14017,6 @@ def extend_continuous_plan(
     # Hoisted: the PHASE budget is the same for every appended week. It is
     # re-expressed per week inside the loop below, where pw.tss_target exists.
     phase_budget = get_budget_for_phase("continuous", goal)
-    _emph = _continuous_emphasis(goal)
     _bp_mode = getattr(goal, "plan_mode", "auto") in ("fixed_core", "template")
 
     new_weeks: list[PlannedWeek] = []
@@ -14120,34 +14089,23 @@ def extend_continuous_plan(
             week_available_minutes(goal, pw.start),
             model=active_model_for_phase(phase.name, goal), phase_name=phase.name)
 
-        if _bp_mode:
-            # FS1 parity: a fixed/template plan extends deterministically too.
-            sampled = expand_blueprint_week(
-                week_plan.WeekContext(
-                    week_num=week_num, start=cursor, phase=phase, goal=goal,
-                    is_stepback=is_stepback, week_in_phase=week_num - 1),
-                budget)
-        else:
-            sampled = sample_week_workouts(
-                week_plan.WeekContext(
-                    week_num=week_num, start=cursor, phase=phase, goal=goal,
-                    is_stepback=is_stepback, seed_salt=seed_salt,
-                    # week_in_phase continues the rolling stream (generate emits
-                    # week_num N at week_in_phase N-1 for the single continuous
-                    # phase — identical indexing keeps the mix-row rotation).
-                    week_in_phase=week_num - 1, emphasis_profile=_emph,
-                    block_focus=None),
-                week_plan.PlanState(
-                    library=library, pool_index=pool_index,
-                    used_names=used_names_dict,
-                    plan_pick_counts=plan_pick_counts,
-                    class_session_counts=class_session_counts,
-                    class_distinct_files=class_distinct_files,
-                    seen_cc_dur_tuples=seen_cc_dur_tuples,
-                    # extend keeps one rolling HIT window, not one per phase
-                    recent_hit_by_phase={phase.name: recent_hit},
-                    plan_total_weeks=CONTINUOUS_HORIZON_WEEKS),
-                budget)
+        # week_in_phase continues the rolling stream: generate emits week_num N
+        # at week_in_phase N-1 for the single continuous phase, and identical
+        # indexing keeps the mix-row rotation.
+        sampled = propose_week(
+            week_context(goal, phase, week_num, cursor, is_stepback=is_stepback,
+                         week_in_phase=week_num - 1, seed_salt=seed_salt),
+            week_plan.PlanState(
+                library=library, pool_index=pool_index,
+                used_names=used_names_dict,
+                plan_pick_counts=plan_pick_counts,
+                class_session_counts=class_session_counts,
+                class_distinct_files=class_distinct_files,
+                seen_cc_dur_tuples=seen_cc_dur_tuples,
+                # extend keeps one rolling HIT window, not one per phase
+                recent_hit_by_phase={phase.name: recent_hit},
+                plan_total_weeks=CONTINUOUS_HORIZON_WEEKS),
+            budget)
         if len(recent_hit) > 12:
             del recent_hit[: len(recent_hit) - 12]
         for nm in used_names_dict:
@@ -14447,19 +14405,20 @@ def refit_remaining_week(
     budget = scale_budget_to_week(
         budget, week.tss_target, week_available_minutes(goal, week.start),
         model=active_model_for_phase(week.phase, goal), phase_name=week.phase)
-    sampled = sample_week_workouts(
-        week_plan.WeekContext(
-            week_num=week.week_num, start=week.start,
-            phase=Phase(
-                name=week.phase, start=week.start, end=week.end,
-                weeks=1, focus="", weekly_tss_target=week.tss_target,
-                z2_pct=budget.polarized_target.get("z1_pct", 80),
-                hit_per_week=budget.hit_count_max,
-                session_types=[],
-            ),
-            goal=goal, is_stepback=week.is_stepback, seed_salt=seed_salt,
-            week_in_phase=0,
-            block_focus=_block_focus_for(week.phase, goal, week.is_stepback)),  # F1/B6
+    sampled = propose_week(
+        week_context(
+            goal,
+            # The builders read only the phase's name from it.
+            Phase(name=week.phase, start=week.start, end=week.end,
+                  weeks=1, focus="", weekly_tss_target=week.tss_target,
+                  z2_pct=budget.polarized_target.get("z1_pct", 80),
+                  hit_per_week=budget.hit_count_max, session_types=[]),
+            week.week_num, week.start, is_stepback=week.is_stepback,
+            # Where the week sits in its phase, as generate numbered it: refit
+            # always sampled as week 0 (dupes.md DUP-4).
+            week_in_phase=_week_in_phase(current_plan_weeks, cur_idx),
+            seed_salt=seed_salt,
+            event_targets=_event_demand_targets(goal, athlete, {})),
         week_plan.PlanState(
             library=library, pool_index=pool_index, used_names=used_names_dict,
             plan_pick_counts=plan_pick_counts,

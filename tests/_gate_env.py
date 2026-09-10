@@ -186,7 +186,8 @@ def _regenerate(days):
         rs = rides(max(ANCHOR, t - _dt.timedelta(days=10)), t - _dt.timedelta(days=1))
         at(t)
         return tp.regenerate_from_today(r.goal(), wk, r.ctl, activities=rs,
-                                        seed_salt=r.salt, athlete=ATHLETE)[1], rs, t
+                                        seed_salt=r.salt, athlete=ATHLETE,
+                                        recent_weekly_tss=r.rwt)[1], rs, t
     return drive
 
 
@@ -208,7 +209,8 @@ def _recalculate(days):
         rs = rides(t - _dt.timedelta(days=14), t - _dt.timedelta(days=1))
         at(t)
         return tp.recalculate_plan(r.goal(), copy.deepcopy(base), r.ctl,
-                                   recent_activities=rs, athlete=ATHLETE)[1], rs, t
+                                   recent_activities=rs, athlete=ATHLETE,
+                                   recent_weekly_tss=r.rwt)[1], rs, t
     return drive
 
 

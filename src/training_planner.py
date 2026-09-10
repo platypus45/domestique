@@ -3064,35 +3064,41 @@ def _continuous_phases(goal: "Goal", current_ctl: float,
     )]
 
 
-def generate_phases(goal: Goal, current_ctl: float,
-                    event_targets: dict | None = None,
-                    recent_weekly_tss: float | None = None) -> list[Phase]:
-    """Generate training phases working backwards from the target date.
+def athlete_weekly_load(current_ctl, recent_weekly_tss=None):
+    """The rider's chronic weekly load: what the ACWR ceiling multiplies.
 
-    v1.11.0: ``event_targets`` (from `_event_demand_targets`, None for non-event)
-    feeds the event difficulty into the CTL band as a small ±6% nudge. Non-event
-    callers pass None → identical behavior.
+    The recent mean from the ride archive, else CTL x 7 -- CTL is the chronic
+    daily load, so a rider with no local archive (ICU-only, fresh install)
+    still gets a ceiling from their training rather than from their free time
+    (v2.1.0 B3). One derivation for every caller of generate_phases. Generate
+    and extend fetched it; regenerate, recalculate, the phase preview and the
+    entry scan fell back to hours_per_week x 65, so regenerate prescribed 17 of
+    22 weeks over the ACWR-safe load, and the preview showed 1.8x the load
+    Generate then built (notes/review/dupes.md DUP-1, DUP-14).
+    """
+    if recent_weekly_tss is None:
+        try:
+            import ride_storage as _rs
+            recent_weekly_tss = _rs.recent_mean_weekly_tss()
+        except Exception as _e:  # noqa: BLE001
+            log.debug(f"recent_mean_weekly_tss fetch failed: {_e}")
+    if recent_weekly_tss is None and current_ctl and current_ctl > 0:
+        recent_weekly_tss = round(current_ctl * 7)
+    return recent_weekly_tss
 
-    v2.1.0 (E1): ``recent_weekly_tss`` (rider's recent mean weekly TSS from the
-    full ride archive) sets a LOAD-based weekly volume ceiling instead of the
-    availability sum. None → fall back to the legacy ``hours_per_week×65`` cap."""
-    # ── 3.4.0 W1: continuous goal — single rolling block, nothing backward-
-    # planned (no target to plan backward FROM). No taper (goal_type gate
-    # extended per 3.3.2), no consolidation, no tier split.
-    if goal.goal_type == "continuous":
-        if getattr(goal, "phase_weeks", None):
-            # Phase-split editor: nothing to redistribute on a rolling block.
-            goal._phase_weeks_status = f"fallback:{_PW_REASON_CONTINUOUS}"
-        elif getattr(goal, "_phase_weeks_status", None) is not None:
-            goal._phase_weeks_status = None  # clear stale transient
-        return _continuous_phases(goal, current_ctl,
-                                  recent_weekly_tss=recent_weekly_tss)
+
+def plan_target_ctl(goal, current_ctl, event_targets=None):
+    """The CTL a plan builds toward: the goal's own rule, capped by how fast
+    fitness can safely rise over the weeks the plan has (Couzens' ramp).
+    Returns (the rule's target, the target after the cap).
+
+    One derivation. Regenerate replaced it for every non-event goal with the
+    ramp ceiling itself -- an FTP goal's target went from CTL 87 to 134 -- and
+    ignored an explicit target (notes/review/dupes.md DUP-1). Its recovery
+    ramp is a ceiling like any other: the phases start after it, and the ramp
+    counts from there.
+    """
     total_weeks = goal.weeks_available()
-    # PART B: no-target default runway hangs off the plan anchor (backdated
-    # start_date when set and no refit override, else today — unchanged).
-    _anchor = _entry_anchor(goal) or date.today()
-    target_date = goal.target_date or (_anchor + timedelta(weeks=16))
-
     # Determine target CTL based on goal type
     if goal.target_ctl:
         target = goal.target_ctl
@@ -3125,8 +3131,49 @@ def generate_phases(goal: Goal, current_ctl: float,
     _sd = _entry_anchor(goal)
     if _sd is not None and _sd < date.today():
         _elapsed_weeks = min(total_weeks, (date.today() - _sd).days // 7)
-    max_achievable = current_ctl + max_ramp * max(0, total_weeks - _elapsed_weeks - 2)  # minus taper
-    target = min(target, max_achievable)
+    # A rebuild's phases start after its recovery ramp, or next week for a
+    # recalculation (_phase_start_override): those are the weeks the ramp has.
+    ramp_weeks = total_weeks
+    _from = getattr(goal, "_phase_start_override", None)
+    if _from is not None and goal.target_date is not None:
+        ramp_weeks = max(0, (goal.target_date - _from).days // 7)
+    max_achievable = current_ctl + max_ramp * max(0, ramp_weeks - _elapsed_weeks - 2)  # minus taper
+    return target, min(target, max_achievable)
+
+
+def generate_phases(goal: Goal, current_ctl: float,
+                    event_targets: dict | None = None,
+                    recent_weekly_tss: float | None = None) -> list[Phase]:
+    """Generate training phases working backwards from the target date.
+
+    v1.11.0: ``event_targets`` (from `_event_demand_targets`, None for non-event)
+    feeds the event difficulty into the CTL band as a small ±6% nudge. Non-event
+    callers pass None → identical behavior.
+
+    v2.1.0 (E1): ``recent_weekly_tss`` (rider's recent mean weekly TSS from the
+    full ride archive) sets a LOAD-based weekly volume ceiling instead of the
+    availability sum. None → the rider's own, from athlete_weekly_load: every
+    caller gets the same ceiling (DUP-1, DUP-14)."""
+    recent_weekly_tss = athlete_weekly_load(current_ctl, recent_weekly_tss)
+    # ── 3.4.0 W1: continuous goal — single rolling block, nothing backward-
+    # planned (no target to plan backward FROM). No taper (goal_type gate
+    # extended per 3.3.2), no consolidation, no tier split.
+    if goal.goal_type == "continuous":
+        if getattr(goal, "phase_weeks", None):
+            # Phase-split editor: nothing to redistribute on a rolling block.
+            goal._phase_weeks_status = f"fallback:{_PW_REASON_CONTINUOUS}"
+        elif getattr(goal, "_phase_weeks_status", None) is not None:
+            goal._phase_weeks_status = None  # clear stale transient
+        return _continuous_phases(goal, current_ctl,
+                                  recent_weekly_tss=recent_weekly_tss)
+    total_weeks = goal.weeks_available()
+    # PART B: no-target default runway hangs off the plan anchor (backdated
+    # start_date when set and no refit override, else today — unchanged).
+    _anchor = _entry_anchor(goal) or date.today()
+    target_date = goal.target_date or (_anchor + timedelta(weeks=16))
+
+    _rule_target, target = plan_target_ctl(goal, current_ctl, event_targets)
+    max_ramp = safe_ramp_rate(current_ctl)    # for the phases' CTL labels
 
     # Weekly TSS at target CTL
     peak_weekly_tss = target * 7
@@ -8359,24 +8406,8 @@ def generate_plan(
     if current_ctl is None:
         current_ctl = 37.0
 
-    # v2.1.0 (E1) — recent mean weekly TSS sets the load-based volume ceiling.
-    # Self-fetch from the full local archive when the caller didn't supply it
-    # (best-effort; None → generate_phases keeps the legacy availability cap).
-    if recent_weekly_tss is None:
-        try:
-            import ride_storage as _rs
-            recent_weekly_tss = _rs.recent_mean_weekly_tss()
-        except Exception as _e:
-            log.debug(f"recent_mean_weekly_tss fetch failed: {_e}")
-
-    # B3 (v2.1.0): ICU-only / fresh-install riders have no local FIT archive, so
-    # recent_mean_weekly_tss() returns None and the plan would fall back to the
-    # legacy availability-driven cap — the 24.5h over-scheduling E1 set out to
-    # fix, and the exact symptom the original reporter had (ICU-primary). CTL is
-    # the chronic daily-load EWMA, so CTL×7 is a sound recent-weekly-TSS proxy;
-    # anchor on it so the LOAD-based ceiling still applies rather than availability.
-    if recent_weekly_tss is None and current_ctl and current_ctl > 0:
-        recent_weekly_tss = round(current_ctl * 7)
+    # The rider's chronic load: the ACWR ceiling's base (athlete_weekly_load).
+    recent_weekly_tss = athlete_weekly_load(current_ctl, recent_weekly_tss)
 
     # v1.11.0 IMPL-EVENT — event demand → plan targets (None for non-event goals
     # or missing athlete → all event wiring no-ops, non-event plans unchanged).
@@ -12728,6 +12759,7 @@ def regenerate_from_today(
     activities: list[dict] | None = None,
     seed_salt: int = 0,
     athlete: dict | None = None,
+    recent_weekly_tss: float | None = None,
 ) -> tuple[list, list[PlannedWeek], dict]:
     """Regenerate plan from today, preserving past weeks.
 
@@ -12858,12 +12890,9 @@ def regenerate_from_today(
         goal, athlete, {"current_ctl": post_recovery_ctl})
 
     build_weeks = post_recovery_weeks - max(1, adjusted_taper // 7)
-    max_achievable = post_recovery_ctl + safe_ramp_rate(post_recovery_ctl) * build_weeks
-
-    original_target = target_ctl_for_event(
-        goal, difficulty=(event_targets or {}).get("difficulty")
-    ) if goal.goal_type == "event" else None
-    adjusted_target = min(original_target, max_achievable) if original_target else max_achievable
+    # The rider's chronic load, for the same ACWR ceiling generate applies. It
+    # was fetched only after the phases were built, for the volume pass.
+    recent_weekly_tss = athlete_weekly_load(current_ctl, recent_weekly_tss)
 
     # 8. Build unavailable date set
     unavailable_dates = set()
@@ -12882,7 +12911,7 @@ def regenerate_from_today(
     # dropped vo2_microintervals_only, longest_ride_h_90d and
     # last_ftp_test_date (dupes.md DUP-5).
     adjusted_goal = replace(
-        goal, target_ctl=adjusted_target,
+        goal,
         # Copied, so the stored goal's week vector is never mutated (v3.2.0 A2);
         # generate_phases validity-gates it against THIS call's runway (A1).
         phase_weeks=(dict(goal.phase_weeks)
@@ -12894,7 +12923,11 @@ def regenerate_from_today(
     phase_start_date = today + timedelta(days=recovery_days)
     # Temporarily adjust goal so phases start after recovery
     adjusted_goal._phase_start_override = phase_start_date
-    new_phases = generate_phases(adjusted_goal, post_recovery_ctl, event_targets)
+    # The goal's own target rule, with the recovery ramp as a ceiling on it.
+    original_target, adjusted_target = plan_target_ctl(
+        adjusted_goal, post_recovery_ctl, event_targets)
+    new_phases = generate_phases(adjusted_goal, post_recovery_ctl, event_targets,
+                                 recent_weekly_tss=recent_weekly_tss)
     # Clamp all phase start dates to be after recovery
     for p in new_phases:
         if p.start < phase_start_date:
@@ -13161,17 +13194,8 @@ def regenerate_from_today(
     # L3-13 (v2.5.0): the regen path runs the SAME volume ceiling as
     # generate_plan (it had neither clamp — the comeback ramp, the one place
     # overload matters most, was the least-clamped output in the system).
-    # recent_weekly_tss mirrors generate_plan's fetch: archive → CTL×7 proxy.
-    _recent_wtss = None
-    try:
-        import ride_storage as _rs
-        _recent_wtss = _rs.recent_mean_weekly_tss()
-    except Exception:  # noqa: BLE001
-        _recent_wtss = None
-    if _recent_wtss is None and current_ctl and current_ctl > 0:
-        _recent_wtss = round(current_ctl * 7)
     _future_weeks = recovery_weeks + new_weeks
-    _enforce_weekly_volume_ceiling(_future_weeks, recent_weekly_tss=_recent_wtss,
+    _enforce_weekly_volume_ceiling(_future_weeks, recent_weekly_tss=recent_weekly_tss,
                                    goal=adjusted_goal)
 
     # Renumber recovery weeks
@@ -13239,7 +13263,7 @@ def regenerate_from_today(
 
     # FC2a parity: re-anchor the taper budget on the FINAL (post-clamp) build
     # sums — a strict no-op when the rebuilt span holds no taper rows.
-    _enforce_weekly_volume_ceiling(_future_weeks, recent_weekly_tss=_recent_wtss,
+    _enforce_weekly_volume_ceiling(_future_weeks, recent_weekly_tss=recent_weekly_tss,
                                    goal=adjusted_goal, taper_only=True)
 
     # 48 h between hard days. Measured before this was here: a 40-rider sweep
@@ -13377,6 +13401,7 @@ def recalculate_plan(
     recent_activities: list[dict] | None = None,
     current_eftp: float | None = None,
     athlete: dict | None = None,
+    recent_weekly_tss: float | None = None,
 ) -> tuple[list, list[PlannedWeek], dict]:
     """Weekly rolling recalculation of the training plan.
 
@@ -13406,6 +13431,8 @@ def recalculate_plan(
 
     # 1. Keep completed weeks (including current in-progress week)
     past_weeks = [w for w in current_plan_weeks if w.end < today or (w.start <= today <= w.end)]
+    # The rider's chronic load, read as generate and regenerate read it.
+    recent_weekly_tss = athlete_weekly_load(current_ctl, recent_weekly_tss)
     future_weeks = [w for w in current_plan_weeks if w.start > today]
 
     # §6.12 — gather preserved sessions from the FUTURE weeks before they are
@@ -13513,7 +13540,8 @@ def recalculate_plan(
     else:
         # Regenerate phases starting AFTER current week (avoids double-cover)
         adjusted_goal._phase_start_override = regen_start
-        new_phases = generate_phases(adjusted_goal, current_ctl, event_targets)
+        new_phases = generate_phases(adjusted_goal, current_ctl, event_targets,
+                                     recent_weekly_tss=recent_weekly_tss)
 
     # 6. Generate new weeks
     library = load_workout_library()
@@ -13788,6 +13816,13 @@ def recalculate_plan(
     # session the day before a test).
     _ensure_fresh_legs_before_ftp_tests(new_weeks)
 
+    # The week total, which generate and regenerate enforce and recalculate
+    # never did: its rebuilt weeks came out sized by the rider's free time,
+    # ~530 TSS in 15 of 17 weeks against a 325 TSS ACWR ceiling (dupes.md
+    # DUP-1). The same pass the other two run.
+    _enforce_weekly_volume_ceiling(new_weeks, recent_weekly_tss=recent_weekly_tss,
+                                   goal=adjusted_goal)
+
     all_weeks = past_weeks + new_weeks
 
     # Race/taper parity with generate_plan / regenerate_from_today / refit —
@@ -13842,6 +13877,10 @@ def recalculate_plan(
                 _scale = _eff / float(_s.duration_min)
                 _s.tss_estimate = round((_s.tss_estimate or 0) * _scale)
                 _s.duration_min = _eff
+
+    # FC2a parity: the taper budget anchors on the final, clamped build weeks.
+    _enforce_weekly_volume_ceiling(new_weeks, recent_weekly_tss=recent_weekly_tss,
+                                   goal=adjusted_goal, taper_only=True)
 
     # R4/R5 (2026-07-07) — R4a: slot/file coherence, ONCE, LAST (grill A2 —
     # 48 h between hard days. Measured before this was here: a 40-rider sweep
@@ -13951,15 +13990,8 @@ def extend_continuous_plan(
             f"Workout library temporarily unavailable ({_collapse}) — "
             "plan left unchanged.")
 
-    # Load-based sizing (mirrors generate_plan's self-fetch + CTL proxy).
-    if recent_weekly_tss is None:
-        try:
-            import ride_storage as _rs
-            recent_weekly_tss = _rs.recent_mean_weekly_tss()
-        except Exception as _e:
-            log.debug(f"recent_mean_weekly_tss fetch failed: {_e}")
-    if recent_weekly_tss is None and current_ctl and current_ctl > 0:
-        recent_weekly_tss = round(current_ctl * 7)
+    # Load-based sizing: the rider's chronic load, as every entry point reads it.
+    recent_weekly_tss = athlete_weekly_load(current_ctl, recent_weekly_tss)
 
     # ── Append anchor: contiguous with the last existing week ───────────────
     last_end = max(w.end for w in current_plan_weeks)

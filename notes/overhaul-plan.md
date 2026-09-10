@@ -568,6 +568,44 @@ Recorded, not decided here:
   test rested, at the start of a block, which argues for the opposite. This
   is a question for the owner, not a refactor.
 
+#### Step 5, part 2 — one athlete state, one target rule (DUP-1, DUP-14) — DONE
+
+`athlete_weekly_load(ctl, recent)` — the recent mean from the ride archive,
+else CTL × 7 — is filled in by `generate_phases` for every caller: the
+preview, the entry scan, regenerate and recalculate got the ACWR ceiling
+(Gabbett 2016: acute load past ~1.3× chronic) only by accident before.
+`plan_target_ctl(goal, ctl, event_targets)` is the goal's own rule capped by
+Couzens' safe ramp over the weeks the phases have. Regenerate's recovery ramp
+is a ceiling on that rule, not a replacement for it: an FTP goal aimed at
+CTL 99 and an explicit target of 60 at 113. Recalculate now runs the
+week-total pass generate and regenerate run.
+
+Measured on a rider with a chronic load of 250 TSS (ceiling 325):
+| path | weeks over 1.05 × ceiling, before → after | peak prescribed |
+|---|---|---|
+| generate | 0/21 → 0/21 | 340 → 340 |
+| regenerate | 12/17 → 0/17 | 514 → 336 |
+| recalculate | 15/17 → 0/17 | 532 → 335 |
+
+Capping the targets alone made recalculate *worse*, 564: its prescription
+followed the rider's free time, not its targets, because it had no
+week-total pass. Checking labels instead of prescribed load would have called
+that fixed.
+
+In the characterization, 7 of 80 cases move per owner mode, all
+regenerate@17 and recalculate@21. Recalculate's unload week had been the
+heaviest of its block: 465 TSS against a 265 label, now 259. Every rebuilt
+load week now sits under the ACWR ceiling. The auditor flags these weeks
+against their lowered ramp labels, as it already flagged generate's; that
+is the part 3 question below.
+
+**The question part 3 has to settle.** The week-total pass lets easy volume
+fill base, build and peak weeks up to the ACWR ceiling, above the phase's
+ramp target ("polarized base fill", v2.1.1), while the auditor, the owner
+and the UI read the ramp target. So a week has two budgets, and the
+`weekly_volume` findings on generate's own plans are that disagreement. One
+number has to win.
+
 ### Step 5b — the sampler honours its science tables (SCI-1)
 
 Choose the content CLASS by the phase's mix preference, the goal's emphasis and

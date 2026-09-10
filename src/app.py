@@ -12394,12 +12394,20 @@ def _regenerate_plan_dict(
         athlete = None
 
     # Regenerate (seed_salt forces shuffle variance per call — B3)
+    # The rider's chronic load, fetched once: the rebuild's ACWR ceiling and
+    # the drift chip's snapshot read the same number.
+    try:
+        import ride_storage as _rs
+        _recent_wtss = _rs.recent_mean_weekly_tss()
+    except Exception:
+        _recent_wtss = None
     _regen_kwargs = dict(
         goal=goal, old_plan_weeks=old_weeks,
         current_ctl=current_ctl,
         unavailable_periods=unavailable,
         activities=activities,
         seed_salt=seed_salt,
+        recent_weekly_tss=_recent_wtss,
     )
     # Pass athlete only if regenerate_from_today accepts it (the kwarg is being
     # added in training_planner concurrently — guard so a stale signature in a
@@ -12450,13 +12458,7 @@ def _regenerate_plan_dict(
     # (UI, tests) can detect that a fresh regen happened.
     plan_dict["last_regen_at"] = seed_salt
     # P4.2 (v3.0.0) — refresh the drift snapshot: a regen re-anchors the plan
-    # on live fitness, so the chip's baseline moves with it. recent_weekly_tss
-    # mirrors the generate site's best-effort archive fetch.
-    try:
-        import ride_storage as _rs
-        _recent_wtss = _rs.recent_mean_weekly_tss()
-    except Exception:
-        _recent_wtss = None
+    # on live fitness, so the chip's baseline moves with it.
     plan_dict["ctl_snapshot"] = tp.plan_ctl_snapshot(current_ctl, _recent_wtss)
     return plan_dict, regen_info
 

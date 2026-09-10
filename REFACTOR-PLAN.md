@@ -7,7 +7,7 @@ Scope: backend only. `src/*.py`. Nothing under `src/templates/`.
 
 ## Where this started
 
-`src/app.py` is 22,273 lines and `src/training_planner.py` 14,051. The concrete
+`src/app.py` is 22,201 lines and `src/training_planner.py` 14,051. The concrete
 trigger was that the weekly TSS budget is re-derived independently in four
 places, so a plan prescribed 2.5–3.7× its own target and an unload week came out
 heavier than the load weeks it was recovering from. Fixing it site by site did
@@ -114,7 +114,7 @@ clean.
 
 ## Status
 
-**Substrate done, first feature extractions done.** `app.py` 22,273 → 20,936.
+**Substrate done, first feature extractions done.** `app.py` 22,201 → 20,936.
 Every module below imports standalone without pulling in `fastapi`, `app` or
 `training_planner` (`download_lib` imports fastapi on purpose — building the
 response is what it does). That property, not the line count, is what makes the
@@ -203,23 +203,39 @@ Only then:
    `TYPE_CEILING`, `TSS_PER_HOUR`, `_INTENSITY_LADDER`, `_deescalated_load`,
    `apply_week_tier_down` and others are used from `app.py` outside the planning
    chunk.
-7. **Monday week anchoring** — DONE. `tests/probe_week_anchors.py` measured the
-   condition first: **87 of 91 emitted week starts were not a Monday**, while
-   every rollup in the app (week tile, adherence counter, TSS budget, ramp
-   check) aggregates Mon–Sun. Now 0 after the opening week.
+7. **Monday week anchoring** — DONE, on `refactor/monday-anchoring`.
 
-   Two designs were possible and the cheaper one is wrong. Snapping the plan
-   start forward to the next Monday is two lines and makes *every* week a
-   Monday — and leaves a rider who generates on a Thursday with nothing to ride
-   until Monday. So instead the plan still starts today, the **first** week is
-   short (today→Sunday), and `_next_week_cursor` steps every later week to the
-   following Monday. `_clip_week_to_phase` gained the Sunday as a second
-   ceiling so the opening row cannot spill into the week that follows it.
+   `tests/probe_week_anchors.py` measured the condition before anything was
+   touched: **87 of 91 emitted week starts were not a Monday**, while every
+   rollup in the app (week tile, adherence counter, TSS budget, ramp check)
+   aggregates Mon–Sun. Now 0 after the opening week.
 
-   The taper needed its own rule. Rounding to the *nearest* Monday gives an
-   event on a Monday a 15-day taper, over Mujika's 14-day ceiling; the 8–14 day
-   window is exactly seven days wide, so exactly one Monday sits in it and
-   `_taper_anchor` takes that one. A test over all seven weekdays caught this.
+   The plan still starts today. Opening on the next Monday instead was two
+   lines and made every week whole — and left a rider generating on a Thursday
+   with nothing to ride until Monday, and on the regen path with the current
+   week gone from the calendar. So the first week is short (today→Sunday) and
+   every later week is Mon–Sun.
+
+   Three things it needed that were not obvious:
+
+   - The stub week **counts** as one of its phase's weeks rather than adding to
+     it, or the continuous goal's "4-week rolling horizon" becomes five rows.
+     One owner now, `_phase_end_for_weeks`; three sites derived it
+     independently and the continuous one was missed first time round.
+   - `_clip_week_to_phase` only ever clipped the phase *end*. A week that can
+     open mid-week needs its own Sunday as a second ceiling, or the opening row
+     spills into the next week and double-books those days.
+   - **The taper is exempt.** It is laid backward from a fixed date, so the
+     Monday grid leaves the race week only the days between the last Monday and
+     the event — measured, that cut a race week from three rest days to zero.
+
+   Two test findings worth keeping: the phase-week sum may now read 21 for a
+   20-week runway, and **21 is the honest number** (on main `peak` reported 2
+   while emitting 3); and `test_more_elapsed_weeks_ramps_higher` was passing on
+   main by luck — the long-ride series is non-monotone on both branches because
+   the test reads `duration_min` *after* `match_zwo` restamps a slot down to
+   whatever the library holds.
+
 8. **Sorted candidates before seeding** — makes regeneration reproducible.
 9. **Planning domain extraction** — only after 1 and 2.
 

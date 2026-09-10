@@ -10,7 +10,6 @@ These tests pin the property the move is for: one definition, and app.py's name
 is that same object rather than a copy.
 """
 import pathlib
-import re
 import sys
 import unittest
 
@@ -23,19 +22,27 @@ NAMES = ("_fit_hr_mode", "_prescription_hr_rows", "_hr_bias", "_fit_hr_params")
 
 class SingleResolverTests(unittest.TestCase):
     def test_each_name_is_defined_exactly_once_in_src(self):
-        """A second `def` anywhere in src/ is the drift this move prevents:
+        """A second `def` anywhere under src/ is the drift this move prevents:
         two resolvers disagreeing by a few bpm is invisible until an athlete
-        rides the wrong zone."""
-        offenders = []
-        for name in NAMES:
-            sites = [
-                f"{f.name}:{i}"
-                for f in sorted(SRC.glob("*.py"))
-                for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1)
-                if re.match(rf"def {name}\(", line)
-            ]
-            if len(sites) != 1 or not sites[0].startswith("hr.py:"):
-                offenders.append(f"{name}: {sites}")
+        rides the wrong zone.
+
+        Parsed, not grepped. The first version matched `^def <name>(` on raw
+        lines, so a review hid a duplicate resolver inside a class in one try
+        and the test still passed. It also only globbed the top of src/, which
+        left src/scripts/ and src/gpx_sources/ unscanned.
+        """
+        import ast
+        found = {n: [] for n in NAMES}
+        for f in sorted(SRC.rglob("*.py")):
+            try:
+                tree = ast.parse(f.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in found:
+                    found[node.name].append(f"{f.relative_to(SRC)}:{node.lineno}")
+        offenders = [f"{n}: {sites}" for n, sites in found.items()
+                     if sites != [f"hr.py:{sites[0].split(':')[1]}"] or len(sites) != 1]
         self.assertEqual(offenders, [], "\n".join(offenders))
 
     def test_app_re_exports_the_same_objects(self):
@@ -97,8 +104,10 @@ class SingleResolverTests(unittest.TestCase):
         """It must not import fastapi, app or training_planner at module
         scope, or it is not a leaf and the workout-library extraction still
         drags the whole file in."""
-        src = (SRC / "hr.py").read_text(encoding="utf-8")
-        top_level = [l for l in src.splitlines() if l.startswith(("import ", "from "))]
+        import ast
+        tree = ast.parse((SRC / "hr.py").read_text(encoding="utf-8"))
+        top_level = [ast.unparse(n) for n in tree.body
+                     if isinstance(n, (ast.Import, ast.ImportFrom))]
         self.assertEqual(top_level, [], "\n".join(top_level))
 
 

@@ -597,39 +597,11 @@ class TrainingWeek:
             # FS1 -- the blueprint engine builds a deterministic repeatable
             # week in the same 7-slot shape the sampler produces, so
             # everything downstream is unchanged.
-            proposals = tp.expand_blueprint_week(
-                phase=ctx.phase, budget=budget, week_num=ctx.week_num,
-                week_start=ctx.start,
-                available_days=ctx.goal.available_days,
-                rest_days=ctx.goal.rest_days,
-                daily_max_hours=ctx.goal.daily_max_hours,
-                max_weekday_hours=ctx.goal.max_weekday_hours,
-                max_weekend_hours=ctx.goal.max_weekend_hours,
-                is_stepback=ctx.is_stepback,
-                week_in_phase=ctx.week_in_phase, goal=ctx.goal,
-            )
+            proposals = tp.expand_blueprint_week(ctx, budget)
         else:
-            proposals = tp.sample_week_workouts(
-                phase=ctx.phase, budget=budget, library=st.library,
-                used_names=st.used_names, week_num=ctx.week_num,
-                seed_salt=ctx.seed_salt, week_start=ctx.start,
-                available_days=ctx.goal.available_days,
-                rest_days=ctx.goal.rest_days,
-                daily_max_hours=ctx.goal.daily_max_hours,
-                max_weekday_hours=ctx.goal.max_weekday_hours,
-                max_weekend_hours=ctx.goal.max_weekend_hours,
-                is_stepback=ctx.is_stepback, pool_index=st.pool_index,
-                week_in_phase=ctx.week_in_phase,
-                recent_hit_types=st.recent_hit_by_phase.setdefault(ctx.phase.name, []),
-                seen_cc_dur_tuples=st.seen_cc_dur_tuples,
-                plan_pick_counts=st.plan_pick_counts,
-                class_session_counts=st.class_session_counts,
-                class_distinct_files=st.class_distinct_files,
-                plan_total_weeks=st.plan_total_weeks,
-                goal_type=getattr(ctx.goal, "goal_type", "general"),
-                emphasis_profile=ctx.emphasis_profile,
-                block_focus=block_focus,
-            )
+            # block_focus is ctx.block_focus on this branch: only the
+            # blueprint modes above clear it.
+            proposals = tp.sample_week_workouts(ctx, st, budget)
 
         # Trim the per-phase HIT rotation to the last ~4 weeks of picks
         # (<=3 HIT/wk x 4). Left ungrowing, an old pick keeps suppressing its

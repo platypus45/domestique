@@ -135,7 +135,7 @@ instance of one of these. IDs point into `notes/review/<lens>.md`.
   stamped number, judged hardness by label, could not see default day caps,
   and counted missed sessions as hard.
 
-Not planner, recorded for later (Step 7): STA-4 (a cache fill in flight
+Not planner, recorded for later (Step 9): STA-4 (a cache fill in flight
 survives invalidation), STA-7/8 (the sync thread stays dead after a reconnect
 while status reports healthy), STA-9, STA-11 (non-atomic ride-record
 writes), DUP-24 (xSS is never computed from a FIT: a keyword mismatch that the
@@ -308,28 +308,58 @@ for an unseen file, ~1000× across picks) swamps both the budget fit (1.5^±1)
 and the class preference. Measured: a pyramidal base week for an 8 h rider drew
 two VO2 files. The z5plus gate bounds the damage; the fix is to choose the
 CLASS by the table and the week's budget, then the file within it by novelty —
-a behaviour change that needs its own measurement. Step 3b.
+a behaviour change that needs its own measurement. Step 5b.
 
-### Step 2 — one serialisation and no generation globals (R5, R6)
+### Step 2 — one builder signature (R7) — DONE
+
+`sample_week_workouts(ctx, state, budget)` and `expand_blueprint_week(ctx,
+budget)`, from 24 and 12 parameters. Done ahead of the rest because the steps
+below need the goal inside the sampler, and threading a 25th argument into the
+function being collapsed would have been the old pattern again. A pure
+refactor: every call site builds its WeekContext from exactly the values it
+passed — refit's week-in-phase 0 and extend's fixed horizon included — so the
+characterization is unchanged in all 213 cases. The drift itself (DUP-4) is
+fixed as a visible change when the contexts move into TrainingWeek (Step 5).
+The four tests that call the sampler directly changed at the call site only;
+they pass None for the plan-wide bookkeeping, as their old calls did by default.
+
+More evidence for SCI-1, found here: test_goal_focus_shifts_mix holds only with
+that bookkeeping switched off. With it on — as every real entry point runs the
+sampler — a vo2max goal drew 19 VO2 picks against 21 for a general goal over
+5 seeds × 12 weeks: the goal's emphasis is swamped by novelty and diversity.
+
+### Step 3 — generation parameters travel with the goal (R5)
+
+`get_budget_for_phase`, `active_model_for_phase` and the polarized targets take
+the goal (or a persisted goal block); `match_zwo`'s microinterval preference is
+an explicit argument from whoever holds the goal. `set_active_distribution`,
+`set_vo2_micro_only` and their three module globals are deleted. *Verify:* the
+STA-1 two-thread repro shows 0 foreign reads; characterization unchanged.
+
+### Step 4 — one serialisation (R6)
 
 `Goal.to_dict/from_dict` and `dataclasses.replace` for adjusted goals; one
 `PlannedWeek`/`PlannedSession` codec driven by `dataclasses.fields()` that
-carries unknown keys through (DUP-22, DUP-25) and keeps `net_tss_target`; the
-distribution model and microinterval flag travel with the goal, and the
-module setters are deleted. *Verify:* round-trip tests; the two-thread repro
-from STA-1 shows 0 foreign reads; the reforecast ratchet (DUP-22) stops.
+carries unknown keys through (DUP-22, DUP-25) and keeps `net_tss_target`.
+*Verify:* round-trip tests; the reforecast ratchet (DUP-22) stops.
 
-### Step 3 — one owner of the week's budget and one builder signature (R1, R7)
+### Step 5 — one owner of the week's budget (R1)
 
-`TrainingWeek` derives the ceiling (D2); one stepback predicate on a
-plan-wide week index; every entry point (and the phase preview) feeds
-`generate_phases` the same athlete state (ACWR cap, `target_ctl`);
-`sample_week_workouts(ctx, state, budget)` and `expand_blueprint_week(ctx,
-budget)`, branched in one place. *Verify:* one answer per rider across entry
-points for DUP-1/2/3; `under_delivery` and `weekly_volume` → 0 in the
-characterization.
+`TrainingWeek` derives the ceiling (D2); one stepback predicate on a plan-wide
+week index; every entry point (and the phase preview) feeds `generate_phases`
+the same athlete state (ACWR cap, `target_ctl`); the builder contexts are built
+in one place, so refit's emphasis and week-in-phase stop drifting (DUP-4).
+*Verify:* one answer per rider across entry points for DUP-1/2/3;
+`under_delivery` and `weekly_volume` → 0 in the characterization.
 
-### Step 4 — one week pipeline (R3)
+### Step 5b — the sampler honours its science tables (SCI-1)
+
+Choose the content CLASS by the phase's mix preference, the goal's emphasis and
+the week's zone budget, then the file within it by novelty and quality. *Verify:*
+a base week's hard classes follow the base row; a vo2max goal draws more VO2 than
+a general one with the bookkeeping on; the per-class minimums still fill.
+
+### Step 6 — one week pipeline (R3)
 
 Every entry point builds weeks through `TrainingWeek`; plan-level policies
 (FTP test, phase floors, race/taper, re-entry) run once, in one order, as
@@ -341,20 +371,20 @@ on an available day, deterministic `replan`, long ride sized inside
 `_commit`. *Verify:* STRICT_SEAL over every gate case → 0 trips; invariants
 clean across all entry points; test_event_and_goal_focus 10/10.
 
-### Step 5 — availability as a ceiling, one plan store (R1 HTTP-1, R4)
+### Step 7 — availability as a ceiling, one plan store (R1 HTTP-1, R4)
 
 One derivation of per-date availability, consumed by the owner as day caps;
 one load→mutate→save with a version check instead of 23 hand-rolled writers.
 *Verify:* the HTTP-1 sandbox replay keeps the week at its target; the STA-2
 concurrent repros keep both writers' updates.
 
-### Step 6 — one week view for the HTTP layer (HTTP-2/3/4/7)
+### Step 8 — one week view for the HTTP layer (HTTP-2/3/4/7)
 
 Home and calendar read the stored week and the served files;
 `generate_weekly_plan` stops answering "what is planned". Response shapes
 unchanged (backend only).
 
-### Step 7 — runtime state and the non-planner findings
+### Step 9 — runtime state and the non-planner findings
 
 STA-4, 7, 8, 9, 11; DUP-24, 26, 15/16; the Pillow gap in the production venv.
 

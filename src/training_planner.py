@@ -6942,13 +6942,20 @@ def _blueprint_progress(prog: dict, week_in_phase: int) -> "tuple[int, int]":
     return reps, dur
 
 
-def expand_blueprint_week(
-    phase: "Phase", budget: "IntensityBudget", week_num: int, week_start: date,
-    available_days: list, rest_days: list, daily_max_hours: dict | None,
-    max_weekday_hours: float, max_weekend_hours: float, is_stepback: bool,
-    week_in_phase: int, goal,
-) -> list["PlannedSession"]:
-    """fixed_core / template week → 7-element Mon..Sun PlannedSession list."""
+def expand_blueprint_week(ctx: "week_plan.WeekContext",
+                          budget: "IntensityBudget") -> list["PlannedSession"]:
+    """fixed_core / template week → 7-element Mon..Sun PlannedSession list.
+
+    The week comes from ``ctx``. This took the goal AND five attributes of the
+    goal as separate arguments -- the purest form of the unpacking that let the
+    builder's call sites drift apart (notes/review/dupes.md DUP-4).
+    """
+    phase, goal = ctx.phase, ctx.goal
+    week_num, week_start = ctx.week_num, ctx.start
+    is_stepback, week_in_phase = ctx.is_stepback, ctx.week_in_phase
+    available_days, rest_days = goal.available_days, goal.rest_days
+    daily_max_hours = goal.daily_max_hours
+    max_weekday_hours, max_weekend_hours = goal.max_weekday_hours, goal.max_weekend_hours
     def _cap_min(weekday: int) -> int:
         if daily_max_hours and weekday in daily_max_hours:
             return int(daily_max_hours[weekday] * 60)
@@ -7014,33 +7021,16 @@ def CAL_SESSION_LABEL_SAFE(st: str) -> str:
     }.get(st, st.upper())
 
 
-def sample_week_workouts(
-    phase: "Phase",
-    budget: "IntensityBudget",
-    library: list[dict],
-    used_names: dict[str, int] | set,
-    week_num: int,
-    seed_salt: int,
-    week_start: date,
-    available_days: list,
-    rest_days: list,
-    daily_max_hours: dict | None,
-    max_weekday_hours: float,
-    max_weekend_hours: float,
-    is_stepback: bool = False,
-    pool_index: dict | None = None,
-    week_in_phase: int = 0,
-    recent_hit_types: list[str] | None = None,
-    seen_cc_dur_tuples: set | None = None,
-    plan_pick_counts: dict[str, int] | None = None,
-    class_session_counts: dict[str, int] | None = None,
-    class_distinct_files: dict[str, set] | None = None,
-    plan_total_weeks: int = 0,
-    goal_type: str = "general",
-    emphasis_profile: str | None = None,
-    block_focus: "str | None" = None,
-) -> list["PlannedSession"]:
+def sample_week_workouts(ctx: "week_plan.WeekContext", state: "week_plan.PlanState",
+                         budget: "IntensityBudget") -> list["PlannedSession"]:
     """Score-weighted per-week sampler driving the v4.5 diversification overhaul.
+
+    The week comes from ``ctx`` (a WeekContext: dates, phase, goal, stepback,
+    seed, week-in-phase, emphasis, block focus) and the plan's running tallies
+    from ``state`` (a PlanState: library and pool index, novelty and diversity
+    counters, the per-phase HIT rotation). This took those as 24 separate
+    arguments, and the six call sites that reassembled them by hand disagreed on
+    17 of them (notes/review/dupes.md DUP-4).
 
     ``block_focus`` (F1, v2.1): when set (opt-in block periodization), the week
     concentrates its HIT slots on that content_class. None = default weekly-mixed
@@ -7051,7 +7041,7 @@ def sample_week_workouts(
     or regenerate_from_today) can either use these directly or merge them
     into the existing plan_week skeleton.
 
-    Args:
+    Read from ``state`` and written back to it:
         used_names: A dict mapping ``workout_name -> last_used_week`` (rolling
             6-week window). A plain set is also accepted (treated as "in last
             6 weeks" for any name in it). Mutated in place: the picked
@@ -7064,6 +7054,21 @@ def sample_week_workouts(
             penalty so threshold→vo2max→sweet_spot→over_under cycles cleanly.
             Mutated in place: each HIT pick this week gets appended.
     """
+    # The names the body has always used, bound once from the two objects.
+    phase, goal = ctx.phase, ctx.goal
+    week_num, seed_salt, week_start = ctx.week_num, ctx.seed_salt, ctx.start
+    is_stepback, week_in_phase = ctx.is_stepback, ctx.week_in_phase
+    emphasis_profile, block_focus = ctx.emphasis_profile, ctx.block_focus
+    goal_type = getattr(goal, "goal_type", "general")
+    available_days, rest_days = goal.available_days, goal.rest_days
+    daily_max_hours = goal.daily_max_hours
+    max_weekday_hours, max_weekend_hours = goal.max_weekday_hours, goal.max_weekend_hours
+    library, used_names, pool_index = state.library, state.used_names, state.pool_index
+    recent_hit_types = state.recent_hit_by_phase.setdefault(phase.name, [])
+    seen_cc_dur_tuples, plan_pick_counts = state.seen_cc_dur_tuples, state.plan_pick_counts
+    class_session_counts = state.class_session_counts
+    class_distinct_files = state.class_distinct_files
+    plan_total_weeks = state.plan_total_weeks
     import random as _random
 
     # Reproducible RNG keyed on (week_num, seed_salt). 7919 is a prime far from
@@ -8555,40 +8560,18 @@ def generate_plan(
                     # FS1 — blueprint engine (deterministic repeatable week). Same
                     # 7-slot shape as the sampler; downstream passes are reused.
                     sampled = expand_blueprint_week(
-                        phase=phase, budget=budget, week_num=week_num,
-                        week_start=cursor,
-                        available_days=goal.available_days,
-                        rest_days=goal.rest_days,
-                        daily_max_hours=goal.daily_max_hours,
-                        max_weekday_hours=goal.max_weekday_hours,
-                        max_weekend_hours=goal.max_weekend_hours,
-                        is_stepback=is_stepback,
-                        week_in_phase=week_in_phase, goal=goal,
-                    )
+                        week_plan.WeekContext(
+                            week_num=week_num, start=cursor, phase=phase, goal=goal,
+                            is_stepback=is_stepback, week_in_phase=week_in_phase),
+                        budget)
                 else:
                     sampled = sample_week_workouts(
-                        phase=phase, budget=budget, library=library,
-                        used_names=used_names_dict,
-                        week_num=week_num, seed_salt=seed_salt,
-                        week_start=cursor,
-                        available_days=goal.available_days,
-                        rest_days=goal.rest_days,
-                        daily_max_hours=goal.daily_max_hours,
-                        max_weekday_hours=goal.max_weekday_hours,
-                        max_weekend_hours=goal.max_weekend_hours,
-                        is_stepback=is_stepback,
-                        pool_index=pool_index,
-                        week_in_phase=week_in_phase,
-                        recent_hit_types=phase_rot,
-                        seen_cc_dur_tuples=seen_cc_dur_tuples,
-                        plan_pick_counts=plan_pick_counts,
-                        class_session_counts=class_session_counts,
-                        class_distinct_files=class_distinct_files,
-                        plan_total_weeks=plan_total_weeks,
-                        goal_type=getattr(goal, "goal_type", "general"),
-                        emphasis_profile=_emph,
-                        block_focus=block_focus,
-                    )
+                        week_plan.WeekContext(
+                            week_num=week_num, start=cursor, phase=phase, goal=goal,
+                            is_stepback=is_stepback, seed_salt=seed_salt,
+                            week_in_phase=week_in_phase, emphasis_profile=_emph,
+                            block_focus=block_focus),
+                        _owner_state, budget)
                 # (v1.11.0 event long-ride progression is applied as a final pass
                 #  at the END of generate_plan — after all duration/re-match passes.)
                 # Trim rotation window to last 4 weeks worth of picks (≤3 HITs/wk
@@ -12915,39 +12898,18 @@ def regenerate_from_today(
             pw.block_focus = block_focus
             if _bp_mode:
                 sampled = expand_blueprint_week(
-                    phase=phase, budget=budget, week_num=week_num, week_start=cursor,
-                    available_days=adjusted_goal.available_days,
-                    rest_days=adjusted_goal.rest_days,
-                    daily_max_hours=adjusted_goal.daily_max_hours,
-                    max_weekday_hours=adjusted_goal.max_weekday_hours,
-                    max_weekend_hours=adjusted_goal.max_weekend_hours,
-                    is_stepback=is_stepback, week_in_phase=week_in_phase,
-                    goal=adjusted_goal,
-                )
+                    week_plan.WeekContext(
+                        week_num=week_num, start=cursor, phase=phase, goal=adjusted_goal,
+                        is_stepback=is_stepback, week_in_phase=week_in_phase),
+                    budget)
             else:
                 sampled = sample_week_workouts(
-                    phase=phase, budget=budget, library=library,
-                    used_names=used_names_dict,
-                    week_num=week_num, seed_salt=seed_salt,
-                    week_start=cursor,
-                    available_days=adjusted_goal.available_days,
-                    rest_days=adjusted_goal.rest_days,
-                    daily_max_hours=adjusted_goal.daily_max_hours,
-                    max_weekday_hours=adjusted_goal.max_weekday_hours,
-                    max_weekend_hours=adjusted_goal.max_weekend_hours,
-                    is_stepback=is_stepback,
-                    pool_index=pool_index,
-                    week_in_phase=week_in_phase,
-                    recent_hit_types=phase_rot,
-                    seen_cc_dur_tuples=seen_cc_dur_tuples,
-                    plan_pick_counts=plan_pick_counts,
-                    class_session_counts=class_session_counts,
-                    class_distinct_files=class_distinct_files,
-                    plan_total_weeks=plan_total_weeks_rg,
-                    goal_type=getattr(adjusted_goal, "goal_type", "general"),
-                    emphasis_profile=_emph,
-                    block_focus=block_focus,
-                )
+                    week_plan.WeekContext(
+                        week_num=week_num, start=cursor, phase=phase, goal=adjusted_goal,
+                        is_stepback=is_stepback, seed_salt=seed_salt,
+                        week_in_phase=week_in_phase, emphasis_profile=_emph,
+                        block_focus=block_focus),
+                    _owner_state_rg, budget)
             if len(phase_rot) > 12:
                 del phase_rot[: len(phase_rot) - 12]
             for nm in used_names_dict:
@@ -13572,39 +13534,27 @@ def recalculate_plan(
             pw.block_focus = block_focus
             if _bp_mode:
                 sampled = expand_blueprint_week(
-                    phase=phase, budget=budget, week_num=week_num, week_start=cursor,
-                    available_days=adjusted_goal.available_days,
-                    rest_days=adjusted_goal.rest_days,
-                    daily_max_hours=adjusted_goal.daily_max_hours,
-                    max_weekday_hours=adjusted_goal.max_weekday_hours,
-                    max_weekend_hours=adjusted_goal.max_weekend_hours,
-                    is_stepback=is_stepback, week_in_phase=week_in_phase,
-                    goal=adjusted_goal,
-                )
+                    week_plan.WeekContext(
+                        week_num=week_num, start=cursor, phase=phase, goal=adjusted_goal,
+                        is_stepback=is_stepback, week_in_phase=week_in_phase),
+                    budget)
             else:
                 sampled = sample_week_workouts(
-                phase=phase, budget=budget, library=library,
-                used_names=used_names_dict,
-                week_num=week_num, seed_salt=seed_salt,
-                week_start=cursor,
-                available_days=adjusted_goal.available_days,
-                rest_days=adjusted_goal.rest_days,
-                daily_max_hours=adjusted_goal.daily_max_hours,
-                max_weekday_hours=adjusted_goal.max_weekday_hours,
-                max_weekend_hours=adjusted_goal.max_weekend_hours,
-                is_stepback=is_stepback,
-                pool_index=pool_index,
-                week_in_phase=week_in_phase,
-                recent_hit_types=phase_rot,
-                seen_cc_dur_tuples=seen_cc_dur_tuples,
-                plan_pick_counts=plan_pick_counts,
-                class_session_counts=class_session_counts,
-                class_distinct_files=class_distinct_files,
-                plan_total_weeks=plan_total_weeks_rc,
-                goal_type=getattr(adjusted_goal, "goal_type", "general"),
-                emphasis_profile=_emph,
-                block_focus=block_focus,
-            )
+                    week_plan.WeekContext(
+                        week_num=week_num, start=cursor, phase=phase, goal=adjusted_goal,
+                        is_stepback=is_stepback, seed_salt=seed_salt,
+                        week_in_phase=week_in_phase, emphasis_profile=_emph,
+                        block_focus=block_focus),
+                    week_plan.PlanState(
+                        library=library, pool_index=pool_index,
+                        used_names=used_names_dict,
+                        plan_pick_counts=plan_pick_counts,
+                        class_session_counts=class_session_counts,
+                        class_distinct_files=class_distinct_files,
+                        seen_cc_dur_tuples=seen_cc_dur_tuples,
+                        recent_hit_by_phase=recent_hit_by_phase,
+                        plan_total_weeks=plan_total_weeks_rc),
+                    budget)
             if len(phase_rot) > 12:
                 del phase_rot[: len(phase_rot) - 12]
             for nm in used_names_dict:
@@ -14002,42 +13952,31 @@ def extend_continuous_plan(
         if _bp_mode:
             # FS1 parity: a fixed/template plan extends deterministically too.
             sampled = expand_blueprint_week(
-                phase=phase, budget=budget, week_num=week_num, week_start=cursor,
-                available_days=goal.available_days,
-                rest_days=goal.rest_days,
-                daily_max_hours=goal.daily_max_hours,
-                max_weekday_hours=goal.max_weekday_hours,
-                max_weekend_hours=goal.max_weekend_hours,
-                is_stepback=is_stepback,
-                week_in_phase=week_num - 1, goal=goal,
-            )
+                week_plan.WeekContext(
+                    week_num=week_num, start=cursor, phase=phase, goal=goal,
+                    is_stepback=is_stepback, week_in_phase=week_num - 1),
+                budget)
         else:
             sampled = sample_week_workouts(
-                phase=phase, budget=budget, library=library,
-                used_names=used_names_dict,
-                week_num=week_num, seed_salt=seed_salt,
-                week_start=cursor,
-                available_days=goal.available_days,
-                rest_days=goal.rest_days,
-                daily_max_hours=goal.daily_max_hours,
-                max_weekday_hours=goal.max_weekday_hours,
-                max_weekend_hours=goal.max_weekend_hours,
-                is_stepback=is_stepback,
-                pool_index=pool_index,
-                # week_in_phase continues the rolling stream (generate emits
-                # week_num N at week_in_phase N-1 for the single continuous
-                # phase — identical indexing keeps the mix-row rotation).
-                week_in_phase=week_num - 1,
-                recent_hit_types=recent_hit,
-                seen_cc_dur_tuples=seen_cc_dur_tuples,
-                plan_pick_counts=plan_pick_counts,
-                class_session_counts=class_session_counts,
-                class_distinct_files=class_distinct_files,
-                plan_total_weeks=CONTINUOUS_HORIZON_WEEKS,
-                goal_type="continuous",
-                emphasis_profile=_emph,
-                block_focus=None,
-            )
+                week_plan.WeekContext(
+                    week_num=week_num, start=cursor, phase=phase, goal=goal,
+                    is_stepback=is_stepback, seed_salt=seed_salt,
+                    # week_in_phase continues the rolling stream (generate emits
+                    # week_num N at week_in_phase N-1 for the single continuous
+                    # phase — identical indexing keeps the mix-row rotation).
+                    week_in_phase=week_num - 1, emphasis_profile=_emph,
+                    block_focus=None),
+                week_plan.PlanState(
+                    library=library, pool_index=pool_index,
+                    used_names=used_names_dict,
+                    plan_pick_counts=plan_pick_counts,
+                    class_session_counts=class_session_counts,
+                    class_distinct_files=class_distinct_files,
+                    seen_cc_dur_tuples=seen_cc_dur_tuples,
+                    # extend keeps one rolling HIT window, not one per phase
+                    recent_hit_by_phase={phase.name: recent_hit},
+                    plan_total_weeks=CONTINUOUS_HORIZON_WEEKS),
+                budget)
         if len(recent_hit) > 12:
             del recent_hit[: len(recent_hit) - 12]
         for nm in used_names_dict:
@@ -14338,34 +14277,27 @@ def refit_remaining_week(
         budget, week.tss_target, week_available_minutes(goal, week.start),
         model=active_model_for_phase(week.phase), phase_name=week.phase)
     sampled = sample_week_workouts(
-        phase=Phase(
-            name=week.phase, start=week.start, end=week.end,
-            weeks=1, focus="", weekly_tss_target=week.tss_target,
-            z2_pct=budget.polarized_target.get("z1_pct", 80),
-            hit_per_week=budget.hit_count_max,
-            session_types=[],
-        ),
-        budget=budget, library=library,
-        used_names=used_names_dict,
-        week_num=week.week_num, seed_salt=seed_salt,
-        week_start=week.start,
-        available_days=goal.available_days,
-        rest_days=goal.rest_days,
-        daily_max_hours=goal.daily_max_hours,
-        max_weekday_hours=goal.max_weekday_hours,
-        max_weekend_hours=goal.max_weekend_hours,
-        is_stepback=week.is_stepback,
-        pool_index=pool_index,
-        week_in_phase=0,
-        recent_hit_types=phase_rot,
-        seen_cc_dur_tuples=seen_cc_dur_tuples,
-        plan_pick_counts=plan_pick_counts,
-        class_session_counts=class_session_counts,
-        class_distinct_files=class_distinct_files,
-        plan_total_weeks=len(current_plan_weeks),
-        goal_type=getattr(goal, "goal_type", "general"),
-        block_focus=_block_focus_for(week.phase, goal, week.is_stepback),  # F1/B6
-    )
+        week_plan.WeekContext(
+            week_num=week.week_num, start=week.start,
+            phase=Phase(
+                name=week.phase, start=week.start, end=week.end,
+                weeks=1, focus="", weekly_tss_target=week.tss_target,
+                z2_pct=budget.polarized_target.get("z1_pct", 80),
+                hit_per_week=budget.hit_count_max,
+                session_types=[],
+            ),
+            goal=goal, is_stepback=week.is_stepback, seed_salt=seed_salt,
+            week_in_phase=0,
+            block_focus=_block_focus_for(week.phase, goal, week.is_stepback)),  # F1/B6
+        week_plan.PlanState(
+            library=library, pool_index=pool_index, used_names=used_names_dict,
+            plan_pick_counts=plan_pick_counts,
+            class_session_counts=class_session_counts,
+            class_distinct_files=class_distinct_files,
+            seen_cc_dur_tuples=seen_cc_dur_tuples,
+            recent_hit_by_phase=recent_hit_by_phase,
+            plan_total_weeks=len(current_plan_weeks)),
+        budget)
 
     # Splice ONLY remaining trainable days, ANTI-CHURN: overwrite a day solely
     # when its session_type OR duration changed (keep the existing zwo_file

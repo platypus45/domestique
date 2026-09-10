@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import training_planner as tp  # noqa: E402
+import week_plan as wp  # noqa: E402
 import workout_facts as wf  # noqa: E402
 
 WK = ROOT / "src" / "workouts"
@@ -94,11 +95,15 @@ def test_canary_incident1_real_sampler_over_seeds(rows):
     served = set()
     for salt in range(6):
         sessions = tp.sample_week_workouts(
-            phase=phase, budget=budget, library=rows, used_names=set(),
-            week_num=1 + salt, seed_salt=salt, week_start=date(2026, 7, 6),
-            available_days=[0, 1, 2, 3, 4, 5, 6], rest_days=[6],
-            daily_max_hours=None, max_weekday_hours=1.5,
-            max_weekend_hours=2.0, pool_index=pools)
+            wp.WeekContext(
+                week_num=1 + salt, start=date(2026, 7, 6), phase=phase, seed_salt=salt,
+                goal=tp.Goal(goal_type="general", available_days=[0, 1, 2, 3, 4, 5, 6],
+                             rest_days=[6], max_weekday_hours=1.5, max_weekend_hours=2.0)),
+            wp.PlanState(library=rows, used_names=set(), pool_index=pools,
+                         # the old call's defaults: no plan-wide bookkeeping
+                         plan_pick_counts=None, class_session_counts=None,
+                         class_distinct_files=None, seen_cc_dur_tuples=None),
+            budget)
         for s in sessions:
             if s is not None and s.zwo_file:
                 served.add(s.zwo_file)

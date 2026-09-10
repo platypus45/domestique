@@ -493,6 +493,38 @@ findings, by where they are dealt with:
   - a malformed session was silently dropped on rebuild;
   - the easing ladder turned a sprint into VO2max work under fatigue.
 
+### Found on the way — the continuous floor lost its sessions to 48 h spacing
+
+The gate's full run on 09-11 flagged `test_354`, a continuous plan's
+anaerobic and neuromuscular floor. It passes on clean-main and fails on this
+branch. Bisected to `cd161a0e` ("Enforce 48h spacing everywhere", from before
+this session), which a Friday start exposed.
+
+The floor for a missing class tried the lightest week first. When every slot
+there sat within 48 h of a hard day it took one anyway, because spacing was
+only a sort key. The spacing pass that runs afterwards then eased it. The
+code's own note said ranking "keeps the floor met", and that did not hold.
+Fixed: the floor searches the whole phase for a day the 48 h rule allows
+before it takes a clashing one (D1: spacing outranks variety).
+
+Measured, for continuous plans starting on each day of one week, and for
+`test_tid_plan_properties`' matrix on 14 start dates:
+
+| property | before | after |
+|---|---|---|
+| floor kept, 7 start days | 5 | 7 |
+| no week above 18% time above threshold | 12/14 dates | 14/14 |
+| polarized carries less middle than threshold | 41/42 | 36/42 |
+| — at 12 h/week | 13/14 | 10/14 |
+
+The separation cost is the variety floor's own. It imposes the same
+anaerobic and neuromuscular sessions on every model. Once those stop being
+eased away, they displace middle-zone work in threshold-model plans, and the
+threshold model's middle share falls further than polarized's. That is a
+variety rule overriding the distribution model, the SCI-1 problem: Step 5b's
+remedy (class-first sampling that honours the model's table) has to cover the
+floors too.
+
 ### Step 5 — one owner of the week's budget (R1)
 
 `TrainingWeek` derives the ceiling (D2); one stepback predicate on a plan-wide
@@ -539,7 +571,10 @@ Recorded, not decided here:
 ### Step 5b — the sampler honours its science tables (SCI-1)
 
 Choose the content CLASS by the phase's mix preference, the goal's emphasis and
-the week's zone budget, then the file within it by novelty and quality. *Verify:*
+the week's zone budget, then the file within it by novelty and quality. The
+variety floors are in scope: they impose the same anaerobic and neuromuscular
+sessions on every model, and in a threshold-model plan those displace the
+middle-zone work the model is defined by (measured with the 48 h floor fix). *Verify:*
 a base week's hard classes follow the base row; a vo2max goal draws more VO2 than
 a general one with the bookkeeping on; the per-class minimums still fill.
 

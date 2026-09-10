@@ -9447,7 +9447,13 @@ def _enforce_build2_peak_hard_floor(
             # outer pass so a swap that bumped one week's count reshuffles the
             # order. Stepback weeks were already excluded from phase_weeks.
             _phase_budget = get_budget_for_phase(phase_name)
-            for w_target in sorted(phase_weeks, key=_week_hit_count):
+            # Spacing outranks a variety floor (notes/overhaul-plan.md D1).
+            # First the whole phase is searched for a day the 48 h rule
+            # allows; only a phase with no such day anywhere takes a clashing
+            # one, and the spacing pass later eases it -- the honest outcome.
+            _by_hits = sorted(phase_weeks, key=_week_hit_count)
+            for _allow_clash, w_target in ([(False, w) for w in _by_hits]
+                                           + [(True, w) for w in _by_hits]):
                 if deficit <= 0:
                     break
                 # A week with no intensity budget cannot host the phase floor.
@@ -9516,14 +9522,14 @@ def _enforce_build2_peak_hard_floor(
                     # (over_under starts ~66min). Prefer the LONGEST slot
                     # within the same (dup, priority) tier — weekend steady
                     # slots hold any class without breaking the day cap.
-                    # Spacing first, as a PREFERENCE rather than a veto. Made
-                    # a hard veto, a phase whose only free days all sat next to
-                    # a hard day simply lost its floor -- and the measurable
-                    # cost was elsewhere: it perturbed which files every later
-                    # pick saw, and the polarized-vs-threshold separation the
-                    # toggle exists to produce fell from 7 seeds in 8 to 5.
-                    # Ranking instead keeps the floor met and still lands on a
-                    # legal day whenever one exists.
+                    # Spacing first. Ranking alone did not keep the floor met:
+                    # a class placed on a clashing day is eased by the spacing
+                    # pass that runs later, so the floor was lost after all --
+                    # a Friday-start continuous plan lost its anaerobic
+                    # session that way. A clashing day is now taken only in
+                    # the second pass over the phase (above). A blanket veto
+                    # was tried and reverted: a phase with no legal day lost
+                    # its floor, and later picks shifted.
                     clash = (0 if not _slot_breaks_hard_spacing(
                         w_target, weeks, ss.day) else 1)
                     return (clash, 0 if freq >= 2 else 1, pri,
@@ -9537,6 +9543,9 @@ def _enforce_build2_peak_hard_floor(
                     # its own floor (earlier swap in this same week) stops
                     # donating.
                     if not _swappable(s):
+                        continue
+                    if not _allow_clash and _slot_breaks_hard_spacing(
+                            w_target, weeks, s.day):
                         continue
                     # FIX-1a: swapping a *steady* slot into a hard adds NET HIT.
                     # Only do so when the week is under its hit_count_max. A

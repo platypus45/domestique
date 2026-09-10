@@ -15220,9 +15220,9 @@
       {
        "date": "2026-09-17",
        "from_type": "sprint",
-       "projected_tss": 50,
+       "projected_tss": 34,
        "reason": "TSB -35 \u2014 projected de-load",
-       "to_type": "vo2max"
+       "to_type": "z2"
       }
      ],
      "weekly_target": 336
@@ -16521,10 +16521,10 @@
       ],
       [
        "2026-09-24",
-       "overunder",
-       88,
-       124.0,
-       "",
+       "z2",
+       90,
+       68.0,
+       "endurance_steady_74pct_90min.zwo",
        "pending"
       ],
       [
@@ -16571,10 +16571,10 @@
       ],
       [
        "2026-09-29",
-       "z2",
+       "tempo",
        70,
-       52.0,
-       "",
+       58.0,
+       "tempo_6x3min-3min_81pct_70min.zwo",
        "pending"
       ],
       [
@@ -16587,10 +16587,10 @@
       ],
       [
        "2026-10-01",
-       "tempo",
-       54,
-       58.0,
-       "",
+       "sweetspot",
+       55,
+       59.0,
+       "sweetspot_8x1min-1min_100pct_55min.zwo",
        "pending"
       ],
       [
@@ -34128,10 +34128,10 @@
       ],
       [
        "2026-09-22",
-       "threshold",
-       58,
-       87.0,
-       "",
+       "z2",
+       70,
+       52.0,
+       "endurance_steady_62pct_65min_v2.zwo",
        "pending"
       ],
       [
@@ -34144,10 +34144,10 @@
       ],
       [
        "2026-09-24",
-       "tempo",
-       56,
-       60.0,
-       "",
+       "z2",
+       59,
+       44.0,
+       "endurance_4x30s-1min_120pct_60min.zwo",
        "pending"
       ],
       [
@@ -34194,10 +34194,10 @@
       ],
       [
        "2026-09-29",
-       "z2",
+       "tempo",
        70,
-       52.0,
-       "",
+       74.0,
+       "tempo_intervals_19x2min_80pct_70min.zwo",
        "pending"
       ],
       [
@@ -34210,10 +34210,10 @@
       ],
       [
        "2026-10-01",
-       "overunder",
-       55,
-       77.0,
-       "",
+       "threshold",
+       62,
+       79.0,
+       "threshold_3x30s-90s_120pct_62min.zwo",
        "pending"
       ],
       [
@@ -34326,10 +34326,10 @@
       ],
       [
        "2026-10-13",
-       "threshold",
-       53,
-       79.0,
-       "",
+       "vo2max",
+       60,
+       80.0,
+       "vo2_short_5x2min_90pct_59min.zwo",
        "pending"
       ],
       [
@@ -34342,10 +34342,10 @@
       ],
       [
        "2026-10-15",
-       "threshold",
-       56,
-       84.0,
-       "",
+       "vo2max",
+       59,
+       85.0,
+       "vo2_short_5x2min_90pct_59min.zwo",
        "pending"
       ],
       [
@@ -34358,10 +34358,10 @@
       ],
       [
        "2026-10-17",
-       "threshold",
-       51,
-       76.0,
-       "",
+       "vo2max",
+       60,
+       77.0,
+       "vo2_short_4x11x30s-15s_116pct_62min.zwo",
        "pending"
       ],
       [
@@ -34392,10 +34392,10 @@
       ],
       [
        "2026-10-20",
-       "tempo",
-       70,
-       75.0,
-       "",
+       "sweetspot",
+       75,
+       76.0,
+       "sweet_spot_3x12min-5min_90pct_75min_v2.zwo",
        "pending"
       ],
       [
@@ -34408,10 +34408,10 @@
       ],
       [
        "2026-10-22",
-       "vo2max",
-       40,
+       "sprint",
+       45,
        50.0,
-       "",
+       "neuromuscular_4x30s-1min_151pct_50min.zwo",
        "pending"
       ],
       [
@@ -34424,10 +34424,10 @@
       ],
       [
        "2026-10-24",
-       "threshold",
-       56,
+       "vo2max",
+       60,
        84.0,
-       "",
+       "vo2_short_2x5x70s-20s_110pct_60min.zwo",
        "pending"
       ],
       [
@@ -34458,10 +34458,10 @@
       ],
       [
        "2026-10-27",
-       "threshold",
-       57,
-       85.0,
-       "",
+       "vo2max",
+       66,
+       86.0,
+       "vo2max_4x6min-5min_110pct_66min.zwo",
        "pending"
       ],
       [
@@ -34474,10 +34474,10 @@
       ],
       [
        "2026-10-29",
-       "sweetspot",
-       52,
-       69.0,
-       "",
+       "overunder",
+       66,
+       70.0,
+       "over_under_4x4min_76pct_66min.zwo",
        "pending"
       ],
       [
@@ -34490,10 +34490,10 @@
       ],
       [
        "2026-10-31",
-       "overunder",
-       80,
-       113.0,
-       "",
+       "threshold",
+       90,
+       114.0,
+       "threshold_3x20min-5min_95pct_91min.zwo",
        "pending"
       ],
       [
@@ -34590,10 +34590,10 @@
       ],
       [
        "2026-11-10",
-       "threshold",
+       "vo2max",
        40,
-       60.0,
-       "",
+       117.0,
+       "vo2_short_10x30s-30s_105pct_40min.zwo",
        "pending"
       ],
       [
@@ -34606,10 +34606,10 @@
       ],
       [
        "2026-11-12",
-       "threshold",
-       52,
-       78.0,
-       "",
+       "vo2max",
+       60,
+       79.0,
+       "vo2_short_2x5min_90pct_61min.zwo",
        "pending"
       ],
       [
@@ -34622,10 +34622,10 @@
       ],
       [
        "2026-11-14",
-       "threshold",
-       54,
+       "vo2max",
+       60,
        81.0,
-       "",
+       "vo2_short_7x70s-20s_110pct_60min.zwo",
        "pending"
       ],
       [
@@ -34656,10 +34656,10 @@
       ],
       [
        "2026-11-17",
-       "overunder",
-       36,
+       "threshold",
+       44,
        51.0,
-       "",
+       "ftp_test_3x2min_82pct_44min.zwo",
        "pending"
       ],
       [
@@ -34672,10 +34672,10 @@
       ],
       [
        "2026-11-19",
-       "vo2max",
-       40,
+       "sprint",
+       45,
        50.0,
-       "",
+       "sprints_3x15s-1min_200pct_48min.zwo",
        "pending"
       ],
       [
@@ -34688,10 +34688,10 @@
       ],
       [
        "2026-11-21",
-       "sweetspot",
-       59,
-       78.0,
-       "",
+       "overunder",
+       68,
+       79.0,
+       "over_under_2x4x4min_88pct_68min.zwo",
        "pending"
       ],
       [
@@ -34722,10 +34722,10 @@
       ],
       [
        "2026-11-24",
-       "threshold",
-       50,
+       "vo2max",
+       60,
        75.0,
-       "",
+       "vo2_short_2x10x30s_112pct_60min.zwo",
        "pending"
       ],
       [
@@ -34738,10 +34738,10 @@
       ],
       [
        "2026-11-26",
-       "vo2max",
-       40,
+       "sprint",
+       45,
        50.0,
-       "",
+       "neuromuscular_6x20s_80pct_44min.zwo",
        "pending"
       ],
       [
@@ -34754,10 +34754,10 @@
       ],
       [
        "2026-11-28",
-       "threshold",
-       36,
-       54.0,
-       "",
+       "vo2max",
+       49,
+       55.0,
+       "vo2_short_3x2x90s_88pct_49min.zwo",
        "pending"
       ],
       [
@@ -34854,10 +34854,10 @@
       ],
       [
        "2026-12-08",
-       "threshold",
-       44,
-       66.0,
-       "",
+       "vo2max",
+       50,
+       67.0,
+       "anaerobic_2x2x45s-45s_130pct_47min.zwo",
        "pending"
       ]
      ]
@@ -34920,10 +34920,10 @@
       ],
       [
        "2026-12-15",
-       "overunder",
-       45,
-       63.0,
-       "",
+       "threshold",
+       56,
+       65.0,
+       "threshold_3x10min-3min_95pct_56min.zwo",
        "pending"
       ]
      ]
@@ -34992,7 +34992,6 @@
     "hard_share:7",
     "weekly_volume:1",
     "weekly_volume:10",
-    "weekly_volume:2",
     "weekly_volume:3",
     "weekly_volume:7"
    ]
@@ -49390,9 +49389,9 @@
       {
        "date": "2026-09-17",
        "from_type": "sprint",
-       "projected_tss": 50,
+       "projected_tss": 34,
        "reason": "TSB -35 \u2014 projected de-load",
-       "to_type": "vo2max"
+       "to_type": "z2"
       }
      ],
      "weekly_target": 336
@@ -50692,10 +50691,10 @@
       ],
       [
        "2026-09-24",
-       "overunder",
-       88,
-       124.0,
-       "",
+       "z2",
+       90,
+       68.0,
+       "endurance_steady_74pct_90min.zwo",
        "pending"
       ],
       [
@@ -50742,10 +50741,10 @@
       ],
       [
        "2026-09-29",
-       "z2",
+       "tempo",
        70,
-       52.0,
-       "",
+       58.0,
+       "tempo_6x3min-3min_81pct_70min.zwo",
        "pending"
       ],
       [
@@ -50758,10 +50757,10 @@
       ],
       [
        "2026-10-01",
-       "tempo",
-       54,
-       58.0,
-       "",
+       "sweetspot",
+       55,
+       59.0,
+       "sweetspot_8x1min-1min_100pct_55min.zwo",
        "pending"
       ],
       [
@@ -68250,10 +68249,10 @@
       ],
       [
        "2026-09-22",
-       "threshold",
-       58,
-       87.0,
-       "",
+       "z2",
+       70,
+       52.0,
+       "endurance_steady_62pct_65min_v2.zwo",
        "pending"
       ],
       [
@@ -68266,10 +68265,10 @@
       ],
       [
        "2026-09-24",
-       "tempo",
-       56,
-       60.0,
-       "",
+       "z2",
+       59,
+       44.0,
+       "endurance_4x30s-1min_120pct_60min.zwo",
        "pending"
       ],
       [
@@ -68316,10 +68315,10 @@
       ],
       [
        "2026-09-29",
-       "z2",
+       "tempo",
        70,
-       52.0,
-       "",
+       74.0,
+       "tempo_intervals_19x2min_80pct_70min.zwo",
        "pending"
       ],
       [
@@ -68332,10 +68331,10 @@
       ],
       [
        "2026-10-01",
-       "overunder",
-       55,
-       77.0,
-       "",
+       "threshold",
+       62,
+       79.0,
+       "threshold_3x30s-90s_120pct_62min.zwo",
        "pending"
       ],
       [
@@ -68448,10 +68447,10 @@
       ],
       [
        "2026-10-13",
-       "threshold",
-       51,
-       76.0,
-       "",
+       "vo2max",
+       60,
+       77.0,
+       "vo2_short_5x2min_90pct_59min.zwo",
        "pending"
       ],
       [
@@ -68464,10 +68463,10 @@
       ],
       [
        "2026-10-15",
-       "threshold",
-       56,
-       84.0,
-       "",
+       "vo2max",
+       59,
+       85.0,
+       "vo2_short_5x2min_90pct_59min.zwo",
        "pending"
       ],
       [
@@ -68480,10 +68479,10 @@
       ],
       [
        "2026-10-17",
-       "threshold",
-       30,
+       "vo2max",
+       36,
        45.0,
-       "",
+       "vo2_short_2x12x30s-15s_116pct_39min.zwo",
        "pending"
       ],
       [
@@ -68514,10 +68513,10 @@
       ],
       [
        "2026-10-20",
-       "tempo",
-       70,
-       75.0,
-       "",
+       "sweetspot",
+       75,
+       76.0,
+       "sweet_spot_3x12min-5min_90pct_75min_v2.zwo",
        "pending"
       ],
       [
@@ -68530,10 +68529,10 @@
       ],
       [
        "2026-10-22",
-       "vo2max",
-       40,
+       "sprint",
+       45,
        50.0,
-       "",
+       "neuromuscular_4x30s-1min_151pct_50min.zwo",
        "pending"
       ],
       [
@@ -68546,10 +68545,10 @@
       ],
       [
        "2026-10-24",
-       "threshold",
-       54,
-       81.0,
-       "",
+       "vo2max",
+       58,
+       81.2,
+       "sprints_5x3min_88pct_56min.zwo",
        "pending"
       ],
       [
@@ -68580,10 +68579,10 @@
       ],
       [
        "2026-10-27",
-       "threshold",
-       57,
-       85.0,
-       "",
+       "vo2max",
+       66,
+       86.0,
+       "vo2max_4x6min-5min_110pct_66min.zwo",
        "pending"
       ],
       [
@@ -68596,10 +68595,10 @@
       ],
       [
        "2026-10-29",
-       "sweetspot",
-       52,
-       69.0,
-       "",
+       "overunder",
+       66,
+       70.0,
+       "over_under_4x4min_76pct_66min.zwo",
        "pending"
       ],
       [
@@ -68612,10 +68611,10 @@
       ],
       [
        "2026-10-31",
-       "overunder",
-       35,
-       49.0,
-       "",
+       "threshold",
+       40,
+       50.7,
+       "threshold_3x30s-30s_105pct_43min.zwo",
        "pending"
       ],
       [
@@ -68712,10 +68711,10 @@
       ],
       [
        "2026-11-10",
-       "threshold",
+       "vo2max",
        40,
-       60.0,
-       "",
+       117.0,
+       "vo2_short_10x30s-30s_105pct_40min.zwo",
        "pending"
       ],
       [
@@ -68728,10 +68727,10 @@
       ],
       [
        "2026-11-12",
-       "threshold",
-       52,
-       78.0,
-       "",
+       "vo2max",
+       60,
+       79.0,
+       "vo2_short_2x5min_90pct_61min.zwo",
        "pending"
       ],
       [
@@ -68744,10 +68743,10 @@
       ],
       [
        "2026-11-14",
-       "threshold",
-       36,
-       54.0,
-       "",
+       "vo2max",
+       41,
+       55.4,
+       "over_under_2x2x1min_80pct_41min.zwo",
        "pending"
       ],
       [
@@ -68778,10 +68777,10 @@
       ],
       [
        "2026-11-17",
-       "overunder",
-       36,
+       "threshold",
+       44,
        51.0,
-       "",
+       "ftp_test_3x2min_82pct_44min.zwo",
        "pending"
       ],
       [
@@ -68794,10 +68793,10 @@
       ],
       [
        "2026-11-19",
-       "vo2max",
-       40,
+       "sprint",
+       45,
        50.0,
-       "",
+       "sprints_3x15s-1min_200pct_48min.zwo",
        "pending"
       ],
       [
@@ -68810,10 +68809,10 @@
       ],
       [
        "2026-11-21",
-       "sweetspot",
-       59,
-       78.0,
-       "",
+       "overunder",
+       68,
+       79.0,
+       "over_under_2x4x4min_88pct_68min.zwo",
        "pending"
       ],
       [
@@ -68844,10 +68843,10 @@
       ],
       [
        "2026-11-24",
-       "threshold",
-       50,
+       "vo2max",
+       60,
        75.0,
-       "",
+       "vo2_short_2x10x30s_112pct_60min.zwo",
        "pending"
       ],
       [
@@ -68860,10 +68859,10 @@
       ],
       [
        "2026-11-26",
-       "vo2max",
-       40,
+       "sprint",
+       45,
        50.0,
-       "",
+       "neuromuscular_6x20s_80pct_44min.zwo",
        "pending"
       ],
       [
@@ -68876,10 +68875,10 @@
       ],
       [
        "2026-11-28",
-       "threshold",
-       36,
-       54.0,
-       "",
+       "vo2max",
+       49,
+       55.0,
+       "vo2_short_3x2x90s_88pct_49min.zwo",
        "pending"
       ],
       [
@@ -69042,10 +69041,10 @@
       ],
       [
        "2026-12-15",
-       "overunder",
-       57,
-       80.0,
-       "",
+       "threshold",
+       70,
+       82.0,
+       "threshold_3x10min-5min_100pct_70min.zwo",
        "pending"
       ]
      ]

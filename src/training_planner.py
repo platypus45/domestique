@@ -678,12 +678,23 @@ _INTENSITY_LADDER = (
 )
 
 
+# A sprint stays ON the ladder -- the tier-down endpoint uses membership to
+# accept a session (v1.8.3) -- but its easier session is not the next rung.
+# A sprint is maximal and short: what it costs is neuromuscular freshness, not
+# metabolic load, and VO2max intervals are the most taxing session the plan
+# has. Easing one into the other added the stress a tier-down exists to shed;
+# on a low-readiness day the answer is low intensity (Kiviniemi 2007).
+_EASIER_THAN = {"sprint": "z2"}
+
+
 def _drop_intensity(level: str) -> str:
     """Return the next-easier session type in the Seiler-style ladder.
 
     Unknown session types (rest, ftp_test) pass through unchanged.
     Already-at-the-bottom recovery stays at recovery.
     """
+    if level in _EASIER_THAN:
+        return _EASIER_THAN[level]
     try:
         i = _INTENSITY_LADDER.index(level)
     except ValueError:
@@ -702,6 +713,17 @@ def _drop_intensity(level: str) -> str:
 # indistinguishable for VO2max; both put the non-hard majority in zone 1, and
 # neither parks it at tempo.
 _EASE_FOR_RECOVERY_TYPE = "z2"
+
+# Reforecast's fatigue easing. TSB_EASE_BELOW is the code's long-standing
+# threshold: conservative, since Coggan's PMC puts sustained TSB below about
+# -30 in the high-risk band. ATL, the fatigue term in TSB, is a 7-day
+# exponentially weighted average (Banister), so today's reading speaks for the
+# coming week and not for a session a month away.
+TSB_EASE_BELOW = -25
+TSB_EASE_HORIZON_DAYS = 7
+# What an eased session was, kept so the easing can be undone.
+_TSB_EASE_FIELDS = ("session_type", "duration_min", "tss_estimate",
+                    "description", "zwo_file", "zwo_name")
 
 
 def _ease_for_recovery(level: str) -> str:
@@ -11668,7 +11690,37 @@ def reforecast(
                                     pass
                 touched.add(d_iso)
 
+    # Fatigue. A hard session in the coming week, on a day whose TSB reading is
+    # below TSB_EASE_BELOW, is eased to something the athlete can recover on,
+    # and put back when the reading clears. What this replaces (Step 4 review;
+    # dupes.md DUP-22):
+    #   * one rung down the ladder -- a threshold day stayed a hard day, a
+    #     sprint became VO2max work, and the TSS barely moved (vo2max 87 ->
+    #     threshold 87). The reason is fatigue; _ease_for_recovery is the rung
+    #     for that.
+    #   * production hands this loop today's TSB for every future day, so one
+    #     reading eased every hard session in the plan, weeks ahead.
+    #   * nothing recorded what was replaced, so the loop either eased again on
+    #     every sync or, once guarded, never again: a TSB -26 on day 3 left a
+    #     real -60 crash on day 24 with nothing to ease. The original now sits
+    #     in tsb_eased_from; each sync derives the day from it and the reading.
     downshifts: list[str] = []
+    tsb_restored: list[str] = []
+
+    def _rematch_eased(s, pw):
+        # An eased day gets a workout. The loop used to clear the file "to
+        # force a re-match downstream"; nothing downstream re-matched.
+        nonlocal _rematch_library
+        if _rematch_library is None:
+            _rematch_library = load_workout_library()
+        try:
+            match_zwo(s, _rematch_library, week_num=pw.week_num,
+                      day_idx=(s.day - pw.start).days,
+                      micro_only=bool(getattr(goal, "vo2_microintervals_only", False)))
+        except Exception:  # noqa: BLE001 -- an eased day without a file is still eased
+            s.zwo_file = ""
+            s.zwo_name = ""
+
     for pw in plan_weeks:
         if pw.end < today:
             continue  # past weeks — don't touch
@@ -11678,34 +11730,34 @@ def reforecast(
             for s in pw.sessions:
                 if s.day <= today:
                     continue  # today + past already handled by daily_adapt_plan
-                if s.session_type not in _HARD_SESSION_TYPES:
-                    continue
                 if _protect_race(s):
                     continue  # FC3: race entry immutable to the TSB downshift
                 if getattr(s, "user_swapped", False):
                     continue  # v2.3.0: user's manual type-swap is pinned
-                if s.adapted:
-                    # Eased once already. Two syncs minutes apart hand this
-                    # loop the same TSB, and easing again turned one fatigue
-                    # reading into a tier per sync: vo2max -> threshold ->
-                    # over-under -> sweet spot (dupes.md DUP-22). The rule is
-                    # one tier past TSB -25, and G3 below always had the guard.
-                    continue
+                eased_from = getattr(s, "tsb_eased_from", None)
+                if not eased_from and (s.adapted or s.session_type not in _HARD_SESSION_TYPES):
+                    continue  # not hard, or eased by something else (G3, the rider)
                 tsb = _tsb_at(s.day)
-                if tsb is None:
-                    continue
-                if tsb < -25:
-                    new_type = _drop_intensity(s.session_type)
-                    if new_type != s.session_type:
-                        s.session_type = new_type
-                        s.duration_min, s.tss_estimate = _deescalated_load(
-                            s.duration_min, new_type, s.tss_estimate)
-                        s.description = f"Reforecast: TSB {tsb:.0f} → {new_type}"
-                        s.adapted = True
-                        # Force a library re-match downstream by clearing ZWO.
-                        s.zwo_file = ""
-                        s.zwo_name = ""
-                        downshifts.append(s.day.isoformat())
+                fatigued = (tsb is not None and tsb < TSB_EASE_BELOW
+                            and (s.day - today).days <= TSB_EASE_HORIZON_DAYS)
+                if fatigued and not eased_from:
+                    new_type = _ease_for_recovery(s.session_type)
+                    if new_type == s.session_type:
+                        continue
+                    s.tsb_eased_from = {k: getattr(s, k) for k in _TSB_EASE_FIELDS}
+                    s.session_type = new_type
+                    s.duration_min, s.tss_estimate = _deescalated_load(
+                        s.duration_min, new_type, s.tss_estimate)
+                    s.description = f"Reforecast: TSB {tsb:.0f} → {new_type}"
+                    s.adapted = True
+                    _rematch_eased(s, pw)
+                    downshifts.append(s.day.isoformat())
+                elif eased_from and not fatigued:
+                    for k, v in eased_from.items():
+                        setattr(s, k, v)
+                    del s.tsb_eased_from
+                    s.adapted = False
+                    tsb_restored.append(s.day.isoformat())
         except Exception as _e:
             _tp_log_error(error_codes.Codes.REFORECAST_WEEK_FAILED, exc=_e,
                           week_num=getattr(pw, "week_num", 0),
@@ -11905,8 +11957,8 @@ def reforecast(
     # v1.0.3 IMPL-AVAILABILITY: merge availability-touched dates into
     # touched_days so the app.py write-back loop persists duration_min /
     # tss_estimate / session_type changes for those days too.
-    merged_touched: list[str] = list(downshifts)
-    seen = set(downshifts)
+    merged_touched: list[str] = list(dict.fromkeys(downshifts + tsb_restored))
+    seen = set(merged_touched)
     for d_iso in sorted(touched):
         if d_iso not in seen:
             merged_touched.append(d_iso)
@@ -11931,7 +11983,8 @@ def reforecast(
         }
 
     action = "reforecasted" if (
-        downshifts or acwr_scaled_week is not None or g3_dropped_days or touched
+        downshifts or tsb_restored or acwr_scaled_week is not None
+        or g3_dropped_days or touched
     ) else "no_change"
     # B2 (v2.1.0): keep hard sessions off the event eve on the reforecast path
     # too (see regenerate_from_today). No-op for non-event goals.
@@ -12033,7 +12086,7 @@ from dataclasses import fields as _dc_fields  # noqa: E402
 # a rebuild is right to drop those, since a date-relative flag carried through
 # would outlive the day it was true on.
 _PS_JSON_ONLY_KEYS = ("variation", "adapted_reason", "auto_moved", "ftp_test_type",
-                      "pre_adapt")
+                      "pre_adapt", "tsb_eased_from")
 _SESSION_FIELDS = tuple(f.name for f in _dc_fields(PlannedSession))
 _WEEK_FIELDS = tuple(f.name for f in _dc_fields(PlannedWeek))
 _SESSION_DEFAULTS = {"session_type": "z2", "duration_min": 0, "tss_estimate": 0.0,
@@ -12090,19 +12143,15 @@ def week_to_dict(w) -> dict:
 
 
 def week_from_dict(d: dict) -> "PlannedWeek":
-    """The inverse of week_to_dict. Raises on a missing or malformed start or
-    end. A session with a malformed day is skipped, as reforecast's reader
-    always did; the app's readers dropped the whole week instead."""
+    """The inverse of week_to_dict. Raises on a malformed start, end or
+    session day: a rebuild writes back every week it read, so a row it could
+    not read has to stop the write rather than vanish from it. Reforecast's
+    reader, which edits the stored rows in place, skips such a week and logs."""
     kw = {k: d[k] for k in _WEEK_FIELDS if k in d and k not in ("start", "end", "sessions")}
     for k, v in _WEEK_DEFAULTS.items():
         if kw.get(k) is None:
             kw[k] = v
-    sessions = []
-    for s in d.get("sessions") or []:
-        try:
-            sessions.append(session_from_dict(s))
-        except (KeyError, TypeError, ValueError):
-            continue
+    sessions = [session_from_dict(s) for s in d.get("sessions") or []]
     return PlannedWeek(start=_as_date(d["start"]), end=_as_date(d["end"]),
                        sessions=sessions, **kw)
 
@@ -12320,6 +12369,13 @@ def _apply_reforecast_to_dict(
             if getattr(src, "adapted", False):
                 s_json["adapted"] = True
                 s_json["adapted_reason"] = new_description
+            eased_from = getattr(src, "tsb_eased_from", None)
+            if eased_from:
+                s_json["tsb_eased_from"] = eased_from
+            elif s_json.pop("tsb_eased_from", None) is not None:
+                # The fatigue easing was undone: the day is its plan again.
+                s_json["adapted"] = False
+                s_json.pop("adapted_reason", None)
             sessions_changed += 1
     # Week-level G4 ACWR mutations.
     pw_by_num = {pw.week_num: pw for pw in pw_list}

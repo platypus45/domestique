@@ -376,9 +376,14 @@ without a field: `variation`, `adapted_reason`, `auto_moved`, `ftp_test_type`,
 and `pre_adapt`, the undo stash the old allow-list forgot.
 
 Measured:
-- **Characterization** is unchanged in all 229 cases. This includes the new
-  stored-plan reforecast driver, which was blessed on the previous code and
-  seen by the self-test. The riders exercise none of the lost fields.
+- **Characterization** is unchanged in all 217 cases: 57 builders and 80 per
+  owner mode. The commit message says 229, which is a miscount. This includes
+  the new stored-plan reforecast driver, which was blessed on the previous
+  code and seen by the self-test. The riders exercise none of the lost fields.
+- **What that driver can see.** It fingerprints only what the rider is told to
+  ride. State that changes no prescription, a dropped pin for instance, is
+  invisible to it; the unit tests cover that. At the codec commit it did not
+  move at all, because nothing it fingerprints read `adapted` (review M2).
 - **Tests that fail on the previous code** show the fixed defects:
   - the reforecast reader keeps `adapted`, `completion_matches`, `moved_from`
     and `execution`, which is DUP-22's reader half;
@@ -389,7 +394,10 @@ Measured:
 The ratchet did not stop, because its cause is not the reader (see "Handover
 claims that did not hold"). That is Step 4b.
 
-### Step 4b — reforecast eases a session once — DONE
+### Step 4b — reforecast eases a session once — DONE, superseded by 4c
+
+*The review found this guard made the fatigue response one-shot for the
+whole plan. Step 4c replaces it.*
 
 The TSB downshift loop skips a session that is already `adapted`, as G3
 always has. The rule it implements is one tier past TSB −25. Two syncs minutes
@@ -409,10 +417,49 @@ Measured:
   had hidden them by easing everything to tempo and z2, which cut week 7 from
   510 to 442 TSS. They belong to Steps 5 and 6.
 
+### Step 4c — the review's fixes: fatigue easing, and three small ones — DONE
+
+The independent review of Steps 4 and 4b (28 claims, 22 held) found that
+Step 4b's guard made the fatigue response one-shot for the whole plan.
+Production hands reforecast today's TSB for every future day. So a TSB −26 on
+day 3 eased all 24 future hard sessions, and a real −60 crash on day 24 then
+eased 0 of 20. The loop is now a function of the original prescription and
+today's reading:
+- **Rung.** `_ease_for_recovery` (z2), the code's rung for fatigue, replaces
+  one rung down the ladder, which left a threshold day hard and kept its TSS.
+- **Horizon.** Only the coming 7 days (`TSB_EASE_HORIZON_DAYS`). ATL, the
+  fatigue term in TSB, is a 7-day exponentially weighted average (Banister),
+  so today's reading says nothing about a session a month away.
+- **Reversible.** The original is kept in `tsb_eased_from`, which the codec
+  carries, and restored when the day's reading clears. An eased day is
+  re-matched to a workout rather than left empty.
+
+Also fixed:
+- Readiness now needs an event date that parses; a corrupt one showed 100%.
+- `week_from_dict` now raises on a malformed session, where a rebuild used
+  to drop it.
+- `_drop_intensity("sprint")` is now `z2`, not `vo2max`: a low-readiness
+  tier-down added the stress it exists to shed.
+
+Measured:
+- **Tests.** `tests/test_reforecast_fatigue.py` fails four of five on Step 4b.
+  The review's case fails on behaviour (a −60 crash eased 0 of 2); three fail
+  for want of the record. All five pass here.
+- **Characterization.** Only the two stored-plan cases move, and only in the
+  coming week. An eased day is now z2 with a workout at about half the TSS
+  (over-under 124 → z2 68, threshold 87 → z2 52), where it used to keep its
+  load and lose its file. One `weekly_volume` finding resolves.
+  The sprint rung moves one more case: a daily-adapt projection at TSB −35
+  now de-loads a Thursday sprint to z2 at 34 TSS, where it projected VO2max
+  at the same 50.
+- **The swap pin.** `test_swap_type`'s pin test moved its two days into the
+  coming week, and the pin holds.
+
 ### Found on the way — reforecast's fatigue response barely reduces fatigue
 
 Two defects, measured on the stored-plan driver and present on either reader.
-Both are for Step 6, where the owner commits every session.
+*Both are fixed for the fatigue loop in Step 4c. The one-rung ladder still
+keeps the load where G3 and the tier-down endpoints use it.*
 - **The tier drop keeps the load.** `_deescalated_load` keeps TSS: vo2max
   87 → threshold 87, 80 → 79, only the minutes shrink. The TSB model the loop
   invokes (Banister/Coggan: TSB = CTL − ATL, and ATL is driven by TSS) says
@@ -421,6 +468,30 @@ Both are for Step 6, where the owner commits every session.
 - **An eased session loses its workout file.** The loop clears `zwo_file`
   "to force a library re-match downstream". Neither `reforecast_dict` nor its
   seven app callers re-match, so the eased day is served with no workout.
+
+### Found on the way — the Step 4 review (notes kept in the scratchpad's review/step4.md)
+
+28 claims: 22 held, 3 did not, 1 held in part, 2 could not be checked. Its
+findings, by where they are dealt with:
+- **H1, Step 4b's own guard.** The fatigue response became one-shot for the
+  whole plan. Fixed in Step 4c.
+- **H2, pre-existing: every ride sync overwrites today's readiness
+  adaptation.** The auto-reschedule moves yesterday's missed threshold onto
+  today's readiness-eased ride and deletes the undo stash. It belongs to Step
+  6, where one predicate says which sessions the athlete owns (DUP-23).
+- **M1: a persisted `target_ctl` changes recalculate but not regenerate.**
+  Regenerate ignored an explicit target, and Step 5 part 2 makes both honour
+  it. Only plans created through the API carry one; the dashboard never
+  sends it.
+- **M2: the stored-plan driver's blind spot.** See Step 4.
+- **M3, pre-existing: rebuilds still drop rider state.** Lost are the swap
+  pin, `variation`, `ftp_test_type`, `auto_moved` and the current week's
+  missed session. The codec carries them; the rebuild paths discard them. Step
+  6 (DUP-23).
+- **Low findings, fixed in Step 4c:**
+  - a corrupt event date read as 100% readiness;
+  - a malformed session was silently dropped on rebuild;
+  - the easing ladder turned a sprint into VO2max work under fatigue.
 
 ### Step 5 — one owner of the week's budget (R1)
 

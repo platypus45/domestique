@@ -9453,8 +9453,10 @@ def api_weekly_plan(week_offset: int = Query(0)):
             with open(json_path, encoding="utf-8") as f:
                 plan = json.load(f)
             g = plan.get("goal", {})
-            if g.get("event_date"):
-                plan_goal = tp.goal_from_dict(g)
+            plan_goal = tp.goal_from_dict(g)
+            # Readiness needs an event date that parses; a corrupt one used to
+            # raise here and show none, and must not now show 100%.
+            if plan_goal.target_date:
                 # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
                 if plan_goal.longest_ride_h_90d is None:
                     plan_goal.longest_ride_h_90d = _longest_ride_h_90d()
@@ -16926,8 +16928,8 @@ def api_plan_auto_recalc():
                         training = cached("training", get_today_metrics)
                         current_ctl = training.get("ctl") or 30
                         g = plan.get("goal", {})
-                        if g.get("event_date"):
-                            goal = tp.goal_from_dict(g)
+                        goal = tp.goal_from_dict(g)
+                        if goal.target_date:           # one that parses
                             if goal.longest_ride_h_90d is None:
                                 goal.longest_ride_h_90d = _longest_ride_h_90d()
                             readiness = tp.compute_event_readiness(goal, current_ctl)

@@ -14273,6 +14273,11 @@ def _refit_session_frozen(s, today: date) -> bool:
         return True
     if _protect_race(s):
         return True  # FC3 (v2.5.0): the race entry is immutable to the refit
+    if getattr(s, "session_type", "") == "ftp_test":
+        # A scheduled test sits on fresh legs on purpose (Allen & Coggan), and
+        # the week builder refit re-draws with never places one: every refit
+        # on a test day replaced the test (the Step 5 review).
+        return True
     if getattr(s, "adapted", False) or getattr(s, "user_moved", False):
         return True
     if getattr(s, "user_swapped", False):
@@ -15354,21 +15359,24 @@ def generate_weekly_plan(
     max_weekday_h = goal.max_weekday_hours if goal else 2.0
     max_weekend_h = goal.max_weekend_hours if goal else 3.5
 
-    # Step-back week detection — relative to plan start, not calendar week
-    # If a plan exists, count weeks since plan start. Otherwise use ISO week as fallback.
-    plan_start = None
+    # Step-back week: the plan's own week, when one covers this week, so the
+    # home card unloads when the plan does. Counting weeks from the plan's
+    # first Monday unloaded one week late: weeks 5, 9 and 13 against the plan's
+    # 4, 8 and 12 (the Step 5 review, L3). With no plan week here, the ISO week
+    # number decides.
+    plan_row = None
     try:
         import json as _json
         _plan_path = PLAN_DIR / "current_plan.json"
         if _plan_path.exists():
             _plan = _json.loads(_plan_path.read_text())
-            if _plan.get("weeks"):
-                plan_start = date.fromisoformat(_plan["weeks"][0]["start"])
+            _mon, _sun = monday.isoformat(), (monday + timedelta(days=6)).isoformat()
+            plan_row = next((w for w in _plan.get("weeks") or []
+                             if w.get("start", "") <= _sun and w.get("end", "") >= _mon), None)
     except Exception:
         pass
-    if plan_start:
-        weeks_since_start = max(0, (monday - plan_start).days // 7)
-        is_stepback = (weeks_since_start > 0 and weeks_since_start % STEP_BACK_EVERY == 0)
+    if plan_row is not None:
+        is_stepback = bool(plan_row.get("is_stepback"))
     else:
         is_stepback = (monday.isocalendar()[1] % STEP_BACK_EVERY == 0)
     if is_stepback:

@@ -7,6 +7,7 @@ rhythm depended on which button was pressed: after a regenerate, up to six
 load weeks in a row (notes/review/dupes.md DUP-3). One predicate now counts the
 load weeks since the last unload, and a rebuild continues the count.
 """
+import json
 from datetime import date, timedelta
 
 import pytest
@@ -121,3 +122,20 @@ def test_a_deload_the_app_advanced_restarts_the_count():
     weeks = [_week(1), _week(2, stepback=True), _week(3), _week(4)]
     assert not tp.stepback_due(weeks, "continuous")
     assert tp.stepback_due(weeks + [_week(5)], "continuous")
+
+
+def test_the_home_cards_week_unloads_when_the_plan_does(tmp_path, monkeypatch):
+    """The home page's week counted weeks from the plan's first Monday and
+    unloaded one late: weeks 5, 9 and 13 against the plan's 4, 8 and 12 (the
+    Step 5 review, L3). It reads the plan's own week."""
+    weeks = _generated()
+    (tmp_path / "current_plan.json").write_text(
+        json.dumps({"weeks": [tp.week_to_dict(w) for w in weeks]}))
+    monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
+    card, plan = [], []
+    for w in weeks[:12]:
+        _TODAY[0] = w.start
+        card.append(tp.generate_weekly_plan(_goal(), current_ctl=50).is_stepback)
+        plan.append(w.is_stepback)
+    assert any(plan), "no stepback in the first twelve weeks, so this proves nothing"
+    assert card == plan

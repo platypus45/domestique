@@ -112,3 +112,28 @@ def test_a_regenerate_respects_an_explicit_target():
         seed_salt=1)
     assert info["adjusted_target_ctl"] <= 60
     assert _peak(phases) <= 60 * 7 + 1
+
+
+def test_the_apps_refit_hands_the_planner_the_rider(monkeypatch):
+    """Refit's event emphasis needs the rider's FTP and weight. The app's refit
+    passed neither, so production never saw the emphasis the tests saw, since
+    they pass an athlete (the Step 5 review, L2)."""
+    import app as app_module
+    import profile_manager
+
+    class _Rider:
+        _athlete = {"ftp": 240, "weight_kg": 72}
+        ftp, weight_kg = 240, 72
+
+    monkeypatch.setattr(profile_manager.ProfileManager, "get", classmethod(lambda cls: _Rider()))
+    seen = {}
+
+    def _refit(goal, weeks, today, **kw):
+        seen.update(kw)
+        return weeks, {"action": "no_change"}
+
+    monkeypatch.setattr(tp, "refit_remaining_week", _refit)
+    goal = _goal()
+    plan = {"goal": tp.goal_to_dict(goal), "weeks": [tp.week_to_dict(w) for w in _base(goal)]}
+    app_module._apply_refit_to_plan(plan, MONDAY + timedelta(days=2))
+    assert seen.get("athlete") == {"ftp": 240, "weight_kg": 72}

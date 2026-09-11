@@ -11738,22 +11738,8 @@ async def api_plan_generate(request: Request):
                 old_availability_full = {}
 
         # v1.11.0 — thread athlete (ftp + weight) so the event-demand planner
-        # can compute event targets. Mirrors /api/event/projection's assembly;
-        # only pass a real dict when ftp+weight are present, else athlete=None
-        # (training_planner no-ops on a missing/empty athlete for non-event
-        # goals and for events without a real ftp/weight).
-        athlete = None
-        try:
-            from profile_manager import ProfileManager
-            _pm = ProfileManager.get()
-            # pm.ftp / pm.weight_kg are default-backed (200 / 70.0), so probe the
-            # raw athlete store to tell a genuinely-set value from a fabricated
-            # default — a brand-new user with no ftp/weight must yield athlete=None.
-            _raw = getattr(_pm, "_athlete", {}) or {}
-            if "ftp" in _raw and "weight_kg" in _raw and _raw.get("ftp") and _raw.get("weight_kg"):
-                athlete = {"ftp": _pm.ftp, "weight_kg": _pm.weight_kg}
-        except Exception:
-            athlete = None
+        # can compute event targets.
+        athlete = _planner_athlete()
 
         # v2.1.0 (F5 + E1) — thread the rider's ACTUAL starting fitness + recent
         # load into INITIAL generation. Pre-fix, generate_plan self-fetched CTL
@@ -12376,22 +12362,8 @@ def _regenerate_plan_dict(
     unavailable = plan.get("unavailable_periods", [])
 
     # v1.11.0 — thread athlete (ftp + weight) so the event-demand planner can
-    # compute event targets on regen too. No ProfileManager is in scope here
-    # (this core is shared by the auto-on-sync + manual regen paths), so
-    # assemble it the same way /api/event/projection does; only a real dict
-    # when ftp+weight are present, else athlete=None.
-    athlete = None
-    try:
-        from profile_manager import ProfileManager
-        _pm = ProfileManager.get()
-        # pm.ftp / pm.weight_kg are default-backed (200 / 70.0), so probe the raw
-        # athlete store to tell a genuinely-set value from a fabricated default —
-        # a brand-new user with no ftp/weight must yield athlete=None.
-        _raw = getattr(_pm, "_athlete", {}) or {}
-        if "ftp" in _raw and "weight_kg" in _raw and _raw.get("ftp") and _raw.get("weight_kg"):
-            athlete = {"ftp": _pm.ftp, "weight_kg": _pm.weight_kg}
-    except Exception:
-        athlete = None
+    # compute event targets on regen too.
+    athlete = _planner_athlete()
 
     # Regenerate (seed_salt forces shuffle variance per call — B3)
     # The rider's chronic load, fetched once: the rebuild's ACWR ceiling and
@@ -12552,6 +12524,25 @@ def _parse_phase_weeks(raw) -> "tuple[dict | None, str]":
     return dict(raw), ""
 
 
+def _planner_athlete() -> "dict | None":
+    """The rider's FTP and weight for the event-demand planner, or None.
+
+    pm.ftp and pm.weight_kg are default-backed (200 / 70.0), so the raw athlete
+    store tells a set value from a fabricated default: a brand-new user with no
+    FTP or weight gets None, and the planner then skips the event targets.
+    Generate, regenerate and recalculate each assembled this inline; refit did
+    not, and planned without it."""
+    try:
+        from profile_manager import ProfileManager
+        _pm = ProfileManager.get()
+        _raw = getattr(_pm, "_athlete", {}) or {}
+        if _raw.get("ftp") and _raw.get("weight_kg"):
+            return {"ftp": _pm.ftp, "weight_kg": _pm.weight_kg}
+    except Exception:
+        pass
+    return None
+
+
 def _apply_refit_to_plan(plan: dict, today: date) -> "dict | None":
     """v2.0.7 — run the missed-hard week-refit on ``plan`` in place.
 
@@ -12589,8 +12580,10 @@ def _apply_refit_to_plan(plan: dict, today: date) -> "dict | None":
     seed_basis = f"{dto_weeks[0].start.isoformat()}:{cur.week_num}:{','.join(missed_dates)}"
     seed_salt = int(hashlib.sha1(seed_basis.encode()).hexdigest()[:12], 16)
 
+    # Refit's event emphasis needs the rider's FTP and weight; without them it
+    # never reached production (the Step 5 review, L2).
     _, refit_info = tp.refit_remaining_week(
-        goal, dto_weeks, today, seed_salt=seed_salt,
+        goal, dto_weeks, today, seed_salt=seed_salt, athlete=_planner_athlete(),
     )
     if refit_info.get("action") != "refitted" or not refit_info.get("refit_days"):
         return None
@@ -16994,17 +16987,7 @@ def api_plan_auto_recalc():
         # v2.0.3 F5 — thread athlete (ftp + weight) so recalculate_plan can
         # compute event targets, matching the generate + regenerate paths
         # (without it, a weekly recalc reverted to the legacy +5/+5 CTL step).
-        # Assembled exactly like the regen caller: probe the raw athlete store
-        # so a brand-new user with default-backed ftp/weight yields None.
-        recalc_athlete = None
-        try:
-            from profile_manager import ProfileManager
-            _pm = ProfileManager.get()
-            _raw = getattr(_pm, "_athlete", {}) or {}
-            if "ftp" in _raw and "weight_kg" in _raw and _raw.get("ftp") and _raw.get("weight_kg"):
-                recalc_athlete = {"ftp": _pm.ftp, "weight_kg": _pm.weight_kg}
-        except Exception:
-            recalc_athlete = None
+        recalc_athlete = _planner_athlete()
 
         new_phases, all_weeks, recalc_info = tp.recalculate_plan(
             goal=goal, current_plan_weeks=old_weeks,

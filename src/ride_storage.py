@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -546,11 +547,16 @@ def purge_stub_icu_records() -> int:
         return 0
     for f in icu_dir.glob("*.json"):
         # v3.11.6 — a 0-byte file (an interrupted write) is not a ride either;
-        # left alone it re-warned on every power-curve load, forever.
+        # left alone it re-warned on every power-curve load, forever. Records
+        # are written with a plain truncate-then-write, so a file another
+        # thread is rewriting this instant is briefly empty too: only a file
+        # that has stayed empty for a minute is dead.
         try:
-            if f.stat().st_size == 0:
-                f.unlink()
-                removed += 1
+            st = f.stat()
+            if st.st_size == 0:
+                if time.time() - st.st_mtime > 60:
+                    f.unlink()
+                    removed += 1
                 continue
         except OSError:
             pass

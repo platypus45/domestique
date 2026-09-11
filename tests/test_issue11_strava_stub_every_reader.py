@@ -158,10 +158,19 @@ def test_purge_removes_a_zero_byte_ride_file(tmp_path, monkeypatch):
     icu = tmp_path / "icu"
     icu.mkdir()
     monkeypatch.setattr(rs, "_icu_rides_dir", lambda: icu)
-    (icu / "i179410835.json").write_bytes(b"")
+    import os
+    import time
+    dead = icu / "i179410835.json"
+    dead.write_bytes(b"")
+    stale = time.time() - 3600
+    os.utime(dead, (stale, stale))
+    # A file another thread is rewriting this instant is briefly empty too:
+    # fresh and empty means "in flight", and the purge must leave it alone.
+    (icu / "i3.json").write_bytes(b"")
     (icu / "i2.json").write_text(json.dumps(
         {"ride_id": "icu_i2", "name": "Endurance", "duration_s": 3600, "tss": 55}))
 
     assert rs.purge_stub_icu_records() == 1
-    assert not (icu / "i179410835.json").exists()
+    assert not dead.exists()
+    assert (icu / "i3.json").exists()
     assert (icu / "i2.json").exists()

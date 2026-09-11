@@ -12122,6 +12122,7 @@ def _api_today_session_impl():
             # v3.2.1: matched library file so the home card can preview the
             # actual blocks (same source the day-detail modal charts).
             "zwo_file": planned_data.get("zwo_file") or None,
+            "refit_note": planned_data.get("refit_note") or "",   # v3.11.5
         },
         "adjusted": {
             "session_type": adjusted.session_type,
@@ -14070,7 +14071,72 @@ def _parse_phase_weeks(raw) -> "tuple[dict | None, str]":
     return dict(raw), ""
 
 
-def _apply_refit_to_plan(plan: dict, today: date) -> "dict | None":
+def _recent_missed_and_done_hards(plan: dict, today: date, cur_week_dto) -> "tuple[list[str], list[date]]":
+    """v3.11.5 — hard sessions OUTSIDE the current plan-week within the rolling
+    window: (missed dates still owed, dates of hards actually done). The refit
+    owes the former and keeps 48 h from the latter."""
+    lo = today - timedelta(days=tp.MISSED_RECYCLE_WINDOW_DAYS)
+    cur_lo = getattr(cur_week_dto, "start", None)
+    cur_hi = getattr(cur_week_dto, "end", None)
+    owed: list[str] = []
+    done: list[date] = []
+    for w in plan.get("weeks", []) or []:
+        if not isinstance(w, dict):
+            continue
+        for sj in w.get("sessions", []) or []:
+            if not isinstance(sj, dict):
+                continue
+            try:
+                d = date.fromisoformat(sj.get("day") or "")
+            except (TypeError, ValueError):
+                continue
+            if not (lo <= d < today):
+                continue
+            if cur_lo is not None and cur_hi is not None and cur_lo <= d <= cur_hi:
+                continue
+            try:
+                ps = _planned_session_from_json(sj)
+            except Exception:  # noqa: BLE001
+                continue
+            if not tp._session_is_hit(ps):
+                continue
+            st = (sj.get("status") or "pending")
+            if st == "missed":
+                owed.append(d.isoformat())
+            elif st in ("done", "done_partial"):
+                done.append(d)
+    return sorted(set(owed)), sorted(set(done))
+
+
+def _recent_weekly_tss(activities, today: date) -> "float | None":
+    """Cycling TSS in the last 7 days incl. today (ACWR's acute window)."""
+    lo = (today - timedelta(days=6)).isoformat()
+    hi = today.isoformat()
+    total = 0.0
+    seen = False
+    for a in activities or []:
+        if not _is_cycling_sport(a.get("sport", "")):
+            continue
+        d = (a.get("date") or a.get("start_date_local", "") or "")[:10]
+        if not (lo <= d <= hi):
+            continue
+        tss = float(a.get("tss") or a.get("icu_training_load") or 0)
+        if tss > 0:
+            total += tss
+            seen = True
+    return total if seen else None
+
+
+def _ledger_message(ledger: dict) -> str:
+    n = len(ledger.get("missed_dates") or [])
+    if not n:
+        return ""
+    return (f"Missed {n} hard session{'s' if n != 1 else ''} — "
+            + (ledger.get("note") or "").replace("missed: ", "", 1))
+
+
+def _apply_refit_to_plan(plan: dict, today: date, owed_days=None, prev_done_hard_days=None,
+                         ctx: "dict | None" = None) -> "tuple[dict | None, dict | None]":
     """v2.0.7 — run the missed-hard week-refit on ``plan`` in place.
 
     Round-trips the plan's weeks into PlannedWeek DTOs (all session fields, so
@@ -14101,36 +14167,50 @@ def _apply_refit_to_plan(plan: dict, today: date) -> "dict | None":
 
     cur = next((w for w in dto_weeks if w.start <= today <= w.end), None)
     if cur is None:
-        return None
+        return None, None
+    cur_idx = dto_weeks.index(cur)
     missed_dates = sorted(
         s.day.isoformat() for s in cur.sessions
         if getattr(s, "status", "") == "missed" and tp._session_is_hit(s)
         and getattr(s, "day", None)
     )
-    # Deterministic seed: stable for a given absence so the latch + seed both
-    # keep the refit from re-rolling on repeat syncs (planner is otherwise
-    # non-deterministic — see planner-test-nondeterminism memory).
-    seed_basis = f"{dto_weeks[0].start.isoformat()}:{cur.week_num}:{','.join(missed_dates)}"
+    owed_set = set(owed_days or [])
+    owed_sessions = [s for w in dto_weeks for s in w.sessions
+                     if getattr(s, "day", None) and s.day.isoformat() in owed_set]
+    all_missed = sorted(set(missed_dates) | owed_set)
+    if not all_missed:
+        return None, None
+    seed_basis = f"{dto_weeks[0].start.isoformat()}:{cur.week_num}:{','.join(all_missed)}"
     seed_salt = int(hashlib.sha1(seed_basis.encode()).hexdigest()[:12], 16)
-
     _, refit_info = tp.refit_remaining_week(
         goal, dto_weeks, today, seed_salt=seed_salt,
+        owed_missed=owed_sessions, prev_done_hard_days=list(prev_done_hard_days or []),
     )
-    if refit_info.get("action") != "refitted" or not refit_info.get("refit_days"):
-        return None
-
-    # Write the changed remaining-day sessions back into the plan dict (match by
-    # date within the current week). Only refit_days were mutated.
-    changed = set(refit_info["refit_days"])
-    by_date = {s.day.isoformat(): s for s in cur.sessions}
-    for wj in weeks_json:
-        if wj.get("week_num") != cur.week_num:
-            continue
-        for i, sj in enumerate(wj.get("sessions", [])):
-            if sj.get("day") in changed:
+    ctx = ctx or {}
+    library = tp.load_workout_library()
+    ledger = tp.recycle_missed_load(
+        dto_weeks, cur_idx, today, goal, refit_info, library=library,
+        availability=ctx.get("availability") or plan.get("availability") or {},
+        current_ctl=ctx.get("current_ctl"), recent_weekly_tss=ctx.get("recent_weekly_tss"),
+        tsb=ctx.get("tsb"), taper_blocked=bool(ctx.get("taper_blocked")),
+        hr_bias=_hr_bias(), seed_salt=seed_salt,
+    )
+    touched = set(refit_info.get("refit_days") or []) | set(all_missed)
+    touched |= {r["date"] for r in ledger.get("placed_this_week") or []}
+    carried = ledger.get("carried_next_week") or {}
+    touched |= {r["date"] for r in carried.get("days") or []}
+    by_date = {s.day.isoformat(): s for w in dto_weeks for s in w.sessions if getattr(s, "day", None)}
+    for wi, wj in enumerate(weeks_json):
+        for i, sj in enumerate(wj.get("sessions", []) or []):
+            if sj.get("day") in touched and sj.get("day") in by_date:
                 wj["sessions"][i] = _planned_session_to_json(by_date[sj["day"]])
-        break
-    return refit_info
+        if carried and wj.get("week_num") == carried.get("week_num") and wi < len(dto_weeks):
+            wj["tss_target"] = dto_weeks[wi].tss_target
+    ledger["at"] = datetime.now().isoformat()
+    plan["missed_recycle"] = ledger
+    if refit_info.get("action") != "refitted" or not refit_info.get("refit_days"):
+        return None, ledger
+    return refit_info, ledger
 
 
 def _apply_plan_update(
@@ -14191,7 +14271,7 @@ def _apply_plan_update(
     # pending. Bookkeeping is not reforecast work and must survive that gate.
     reconciled = 0
     try:
-        reconciled += _reconcile_current_week(plan, today)[0] or 0
+        reconciled += _reconcile_recent_weeks(plan, today)[0] or 0
     except Exception:  # noqa: BLE001 — reconcile is best-effort; never block adapt
         _log.exception("auto-reconcile skipped")
 
@@ -14298,13 +14378,16 @@ def _apply_plan_update(
     # missed-date set) so it fires once, not on every sync. A missed EASY
     # session does NOT trigger this — only hard. Falls through to reforecast
     # when no hard miss, no remaining day, already latched, or nothing changed.
+    pending_missed_msg = ""
     cur_week_dto, _cur_idx = _load_current_week_dto(plan, today)
     if cur_week_dto is not None:
-        missed_hard = sorted(
+        # v3.11.5: misses from the previous plan-week's tail are owed too.
+        owed_days, prev_done_hard = _recent_missed_and_done_hards(plan, today, cur_week_dto)
+        missed_hard = sorted(set(
             s.day.isoformat() for s in cur_week_dto.sessions
             if getattr(s, "status", "") == "missed" and tp._session_is_hit(s)
             and getattr(s, "day", None)
-        )
+        ) | set(owed_days))
         has_remaining = any(
             (s.day >= today
              and getattr(s, "session_type", "") != "rest"
@@ -14314,23 +14397,43 @@ def _apply_plan_update(
         refit_key = "|".join(missed_hard)
         refit_latched = (plan.get("missed_refit_latch", {}) or {}).get("key") == refit_key
         if missed_hard and has_remaining and not refit_latched:
+            _tsb = training.get("tsb") if isinstance(training, dict) else None
+            if (_tsb is None and isinstance(training, dict)
+                    and training.get("ctl") is not None and training.get("atl") is not None):
+                try:
+                    _tsb = float(training["ctl"]) - float(training["atl"])
+                except (TypeError, ValueError):
+                    _tsb = None
+            _ctx = {"current_ctl": current_ctl, "recent_weekly_tss": _recent_weekly_tss(activities, today),
+                    "tsb": _tsb, "taper_blocked": taper_blocks,
+                    "availability": plan.get("availability") or {}}
             try:
-                refit_info = _apply_refit_to_plan(plan, today)
+                refit_info, ledger = _apply_refit_to_plan(
+                    plan, today, owed_days=owed_days, prev_done_hard_days=prev_done_hard, ctx=_ctx)
             except Exception:  # noqa: BLE001 — refit is best-effort; fall through
                 _log.exception("missed-hard refit skipped")
-                refit_info = None
-            if refit_info:
+                refit_info, ledger = None, None
+            if ledger:
                 plan["missed_refit_latch"] = {"key": refit_key, "at": now_iso}
+                _log.info("EVENT=missed_load_recycle missed=%s dose=%s promoted=%s placed=%s carried=%s dropped=%s reasons=%s",
+                          ",".join(ledger.get("missed_dates") or []), ledger.get("missed_dose"),
+                          ledger.get("promoted_tss"), sum(r["tss"] for r in ledger.get("placed_this_week") or []),
+                          (ledger.get("carried_next_week") or {}).get("tss", 0), ledger.get("dropped_tss"),
+                          "; ".join(ledger.get("reasons") or []))
+            if refit_info:
                 miss_n = len(refit_info["missed_dates"])
                 day_n = len(refit_info["refit_days"])
                 status = (
                     f"Missed {miss_n} hard session{'s' if miss_n != 1 else ''} — "
                     f"refit {day_n} remaining day{'s' if day_n != 1 else ''} this "
-                    f"week (within your safety limits).")
+                    f"week (within your safety limits)."
+                    + ((" " + (ledger.get("note") or "").replace("missed: ", "", 1)) if ledger and ledger.get("note") else ""))
                 plan["last_update_info"] = {"action": "refitted", "message": status,
                                             "at": now_iso}
-                info = {"gaps": gaps, "refit_info": refit_info}
+                info = {"gaps": gaps, "refit_info": refit_info, "recycle": ledger}
                 return plan, "refitted", info, status
+            if ledger:
+                pending_missed_msg = _ledger_message(ledger)
 
     # ── reforecast tier (structure-preserving rebalance) ─────────────────────
     # 5-min debounce applies to THIS tier only (the regen tier above always
@@ -14407,8 +14510,12 @@ def _apply_plan_update(
     # Say which of the two actually happened.
     if modified or reconciled:
         status = "Plan rebalanced to today's fitness."
+        if pending_missed_msg:
+            status = pending_missed_msg + " " + status
     else:
         status = "Plan checked — no change needed."
+        if pending_missed_msg:
+            status = pending_missed_msg + " " + status
     plan["last_update_info"] = {"action": "rebalanced", "message": status,
                                 "at": now_iso, "modified": bool(modified)}
     info = {"gaps": gaps, "reforecast_info": reforecast_info}
@@ -17602,6 +17709,60 @@ def _apply_rematch_preview_to_plan(plan: dict, week_idx: int, preview: dict) -> 
     return changed
 
 
+def _reconcile_recent_weeks(plan: dict, today: date, window_days: int = 14,
+                            skip_current: bool = False) -> "tuple[int, dict | None]":
+    """v3.11.5 — mark done/missed for EVERY recent past session, not only the
+    plan-week containing today. Plan-weeks can start on any weekday (a plan
+    generated on a Friday runs Fri->Thu), so a session on the last day of a
+    week was never reconciled on the first day of the next: the rider's
+    Thursday threshold stayed 'pending' forever, no tier ever saw the miss,
+    and a Wednesday ride was never credited. Returns (changed, current-week
+    preview)."""
+    changed = 0
+    cur_preview = None
+    lo = today - timedelta(days=window_days)
+    for idx, w in enumerate(plan.get("weeks", []) or []):
+        if not isinstance(w, dict):
+            continue
+        try:
+            ws = date.fromisoformat(w["start"])
+            we = date.fromisoformat(w["end"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if we < lo or ws > today:
+            continue
+        is_cur = ws <= today <= we
+        if is_cur:
+            if skip_current:
+                continue
+            n, cur_preview = _reconcile_current_week(plan, today)   # the pre-3.11.5 path, unchanged
+            changed += n or 0
+            continue
+        today_iso = today.isoformat()
+        if not any(isinstance(sj, dict)
+                   and (sj.get("status") or "pending") == "pending"
+                   and (sj.get("session_type") or "") != "rest"
+                   and (sj.get("day") or "") < today_iso
+                   for sj in w.get("sessions", []) or []):
+            continue
+        try:
+            dto = tp.PlannedWeek(
+                week_num=w.get("week_num", 0), start=ws, end=we, phase=w.get("phase", ""),
+                tss_target=w.get("tss_target", 0), is_stepback=w.get("is_stepback", False),
+                sessions=[_planned_session_from_json(sj) for sj in w.get("sessions", []) or []],
+            )
+            actual = _collect_week_activities(dto, today, include_today=False)
+            preview = tp.rematch_week(dto, actual, today)
+            n = _apply_rematch_preview_to_plan(plan, idx, preview)
+        except Exception:  # noqa: BLE001 — one malformed week must not block the others
+            _log.exception("reconcile: week %s skipped", w.get("week_num"))
+            continue
+        changed += n or 0
+    if changed:
+        plan["last_rematch"] = datetime.now().isoformat()
+    return changed, cur_preview
+
+
 def _reconcile_current_week(plan: dict, today: date) -> "tuple[int, dict | None]":
     """v1.8.25 — mark the CURRENT week's sessions done/missed/ambiguous from
     actual activities (the /api/plan/rematch?apply=1 logic), idempotently.
@@ -17658,6 +17819,8 @@ async def api_plan_rematch(request: Request, apply: int = Query(0)):
         # week's cumulative match total ("6 rides reconciled") on every
         # planner open even when nothing new happened.
         changed = _apply_rematch_preview_to_plan(plan, week_idx, preview)
+        # v3.11.5: the previous weeks' unreconciled past days too.
+        changed += _reconcile_recent_weeks(plan, today, skip_current=True)[0] or 0
         plan["last_rematch"] = datetime.now().isoformat()
         tp.atomic_write_plan(json_path, plan)
 

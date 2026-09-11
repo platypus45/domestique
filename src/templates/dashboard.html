@@ -735,6 +735,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
 .cal-day .cal-planned-meta {
   font-size: 8px; color: var(--text2); margin-top: 1px;
 }
+.cal-planned-note { font-size: 10px; line-height: 1.25; color: var(--text3); margin-top: 2px; white-space: normal; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .cal-day .cal-planned-warn {
   font-size: 9px; color: var(--yellow); font-weight: 700;
 }
@@ -13053,6 +13054,7 @@ async function renderPlanJSON(plan) {
           display_name: s.display_name || '', zwo_name: s.zwo_name || '',
           name: s.zwo_name || s.description || '',
           duration_min: s.duration_min, tss: s.tss_estimate,
+          refit_note: s.refit_note || '',
         }, cardState);
 
         // Mini power block SVG. v4.1.1 FIX-PLANNER B: prefer the
@@ -13122,6 +13124,7 @@ async function renderPlanJSON(plan) {
           <div class="wc-type ${parts.cssCls} pg-card-title" title="${esc(parts.title)}">${esc(parts.title)}</div>
           ${parts.warn}
           <div class="pg-card-meta">${parts.metaText}</div>
+          ${parts.note}
           ${miniSvg}
           ${actualOverlay}
           ${redrawBtn}
@@ -13665,7 +13668,12 @@ function plannedCardParts(planned, cardState) {
   const warn = cardState === 'missing_workout'
     ? '<span class="cal-planned-warn" title="Workout missing — click ⟳ to assign one.">⚠</span>'
     : '';
-  return { title, cssCls, metaText, warn };
+  // v3.11.5 — what became of a missed session's load, or what a day received
+  // ("+20 min recycled from Thu 10 Sep threshold"). Server-written, one line.
+  const note = planned.refit_note
+    ? `<div class="cal-planned-note" title="${esc(planned.refit_note)}">${esc(planned.refit_note)}</div>`
+    : '';
+  return { title, cssCls, metaText, warn, note };
 }
 
 // v3.4.4 — tooltip for the grid mini-sprite: names the zones it shows, from
@@ -14055,6 +14063,7 @@ function renderCalDay(d, wi, di, phaseKey, today) {
       <span class="cal-planned-type ${parts.cssCls}">${esc(parts.title)}</span>
       ${parts.warn}
       <div class="cal-planned-meta">${parts.metaText}</div>
+      ${parts.note}
     </div>`;
     if (scoreBadge) plannedHtml += scoreBadge;
   }

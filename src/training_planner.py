@@ -1710,6 +1710,10 @@ class PlannedSession:
     # _demote_hit_window + _enforce_weekly_hit_cap and round-tripped through the
     # plan dict (E7) so the eve-guard / caps / reforecast never flatten it.
     is_opener: bool = False
+    # v3.11.5 — why a missed session's load was dropped / recycled, or what a
+    # session received ("+20 min recycled from Thu 10 Sep threshold"). Shown
+    # under the card; the plan-level ledger is plan["missed_recycle"].
+    refit_note: str = ""
     # P2.1 (v3.0.0, G10) — execution score, written at completion-match time
     # by app._apply_rematch_preview_to_plan: {score, basis, components,
     # verdict, activity_id, computed_at} from execution_score.score_ride.
@@ -10199,6 +10203,7 @@ def _planned_session_from_dict(s_json: dict, sd: date) -> PlannedSession:
         race=(s_json.get("race")
               if isinstance(s_json.get("race"), dict) else None),
         is_opener=bool(s_json.get("is_opener", False)),
+        refit_note=s_json.get("refit_note", "") or "",
     )
 
 
@@ -12354,6 +12359,8 @@ def refit_remaining_week(
     *,
     seed_salt: int = 0,
     athlete: dict | None = None,
+    owed_missed: "list[PlannedSession] | None" = None,
+    prev_done_hard_days: "list[date] | None" = None,
 ) -> tuple[list[PlannedWeek], dict]:
     """v2.0.7 — re-fit the REMAINING trainable days of the CURRENT week after a
     HARD session was missed, redistributing the missed stimulus within the
@@ -12405,9 +12412,24 @@ def refit_remaining_week(
         s for s in week.sessions
         if getattr(s, "status", "") == "missed" and _session_is_hit(s)
     ]
+    # v3.11.5 — misses from the previous plan-week's tail (within
+    # MISSED_RECYCLE_WINDOW_DAYS) are owed here too: the plan's weeks may start
+    # on any weekday, and a miss on the last day of a week was invisible on
+    # the first day of the next (the rider's Thursday threshold on a Friday).
+    _seen_days = {s.day for s in missed_hard if getattr(s, "day", None)}
+    for s in (owed_missed or []):
+        d = getattr(s, "day", None)
+        if d is None or d in _seen_days or (week.start <= d <= week.end):
+            continue
+        if getattr(s, "status", "") == "missed" and _session_is_hit(s):
+            missed_hard.append(s)
+            _seen_days.add(d)
     missed_dates = sorted(
         s.day.isoformat() for s in missed_hard if getattr(s, "day", None)
     )
+    _missed_dose_all = float(sum((s.tss_estimate or 0) for s in missed_hard))
+    base = {"missed_dates": missed_dates, "missed_dose": _missed_dose_all,
+            "promoted_tss": 0.0, "promoted_days": [], "promote_blocked": ""}
     if not missed_hard:
         return current_plan_weeks, no_op
 
@@ -12421,7 +12443,7 @@ def refit_remaining_week(
         and not _refit_session_frozen(week.sessions[off], today)
     ]
     if not remaining_offsets:
-        return current_plan_weeks, {**no_op, "missed_dates": missed_dates}
+        return current_plan_weeks, {**no_op, **base}
 
     # L3-12 (v2.5.0): near the race — the final 2 build weeks and the taper —
     # the refit may RE-OWE at most 1.0× the missed dose. The taper-week probe
@@ -12528,7 +12550,7 @@ def refit_remaining_week(
         refit_days.append(new_s.day.isoformat())
 
     if not refit_days:
-        return current_plan_weeks, {**no_op, "missed_dates": missed_dates}
+        return current_plan_weeks, {**no_op, **base}
 
     # FINAL safety passes — guarantee the no-catch-up-spike invariants on the
     # whole (now spliced) week regardless of seed. Frozen past / done / pinned
@@ -12637,8 +12659,15 @@ def refit_remaining_week(
     # One promotion per missed hard (don't manufacture more stimulus than was
     # lost). The cap-headroom check in the loop bounds it further.
     promotions_owed = len(missed_hard) if missed_types else 0
+    promoted_tss = 0.0
+    promoted_days: list[str] = []
+    promote_blocked = ""
+    _prev_done = [d for d in (prev_done_hard_days or []) if d is not None]
     for _ in range(len(remaining_set) + 1):
-        if promotions_owed <= 0 or _eff_hard_count() >= cap or not missed_types:
+        if promotions_owed <= 0 or not missed_types:
+            break
+        if _eff_hard_count() >= cap:
+            promote_blocked = "cap"
             break
         eff_hard_offs = [o for o in range(len(week.sessions))
                          if _eff_hard(week.sessions[o])]
@@ -12649,8 +12678,13 @@ def refit_remaining_week(
             if not _eff_hard(week.sessions[o])
             and getattr(week.sessions[o], "session_type", "") not in ("rest", "ftp_test")
             and all(abs(o - h) >= 2 for h in eff_hard_offs)
+            # v3.11.5: ≥48 h from hard sessions DONE in the previous plan-week
+            # too — the weekly cap is per plan-week, the recovery rule is not.
+            and all(abs((week.start + timedelta(days=o) - pd).days) >= 2
+                    for pd in _prev_done)
         ]
         if not candidates:
+            promote_blocked = "48h"
             break  # no safe slot — drop the remaining stimulus (no spike)
         best = max(candidates,
                    key=lambda o: (min((abs(o - h) for h in eff_hard_offs),
@@ -12670,6 +12704,8 @@ def refit_remaining_week(
             # The pool can't supply a hard file for this type/duration (e.g. the
             # sprint IF≤0.82 ceiling rejected every candidate) — drop, don't fake.
             break
+        promoted_tss += float(promoted.tss_estimate or 0) - float(slot.tss_estimate or 0)
+        promoted_days.append(slot.day.isoformat())
         week.sessions[best] = promoted
         iso = slot.day.isoformat()
         if iso not in refit_days:
@@ -12726,7 +12762,10 @@ def refit_remaining_week(
         "action": "refitted",
         "week_num": week.week_num,
         "refit_days": refit_days,
-        "missed_dates": missed_dates,
+        **base,
+        "promoted_tss": round(promoted_tss, 1),
+        "promoted_days": promoted_days,
+        "promote_blocked": promote_blocked,
     }
     # B2 (v2.1.0): the missed-hard refit can land a hard session in the current
     # week; keep it off the event eve (see regenerate_from_today). No-op for
@@ -12760,6 +12799,221 @@ def refit_remaining_week(
 # Algorithm: after each training day (or on app open), compare actual load
 # to planned load. Redistribute remaining weekly TSS across remaining days.
 # Cross-sport: a hard run's TSS counts the same as a hard ride.
+
+# ── v3.11.5 — recycle the load of a missed hard session, bounded by the evidence ──
+MISSED_RECYCLE_WINDOW_DAYS = 6      # the rolling week = Gabbett's acute window; older misses are history (Mujika)
+RECYCLE_MAX_SESSION_GROWTH = 0.5    # never turn one easy day into the missed session (Foster monotony)
+RECYCLE_STEP_MIN = 5                # round-robin granularity so the volume spreads
+RECYCLE_TSB_FLOOR = -25.0           # Coggan overload threshold (mirrors the reforecast downshift)
+
+
+def _availability_cap_min(goal, day: date, availability: "dict | None") -> int:
+    """Minutes the rider said are available on ``day``: the per-date override
+    (plan['availability']) first, then Goal.max_hours_for_day; capped by
+    MAX_AVAIL_SESSION_MIN. 0 when nothing is known."""
+    hours = None
+    if availability:
+        ent = availability.get(day.isoformat())
+        if isinstance(ent, dict) and ent.get("hours") is not None:
+            try:
+                hours = float(ent.get("hours") or 0)
+            except (TypeError, ValueError):
+                hours = None
+    if hours is None and goal is not None:
+        try:
+            hours = float(goal.max_hours_for_day(day.weekday()) or 0)
+        except Exception:  # noqa: BLE001
+            hours = 0.0
+    return int(min(max(0.0, hours or 0.0) * 60, MAX_AVAIL_SESSION_MIN))
+
+
+def _spread_volume(sessions, today: date, goal, availability, budget_tss: float, *,
+                   library, note: str, hr_bias: bool = False, seed_salt: int = 0):
+    """Add up to ``budget_tss`` of EASY volume to pending, unfrozen z2/long_z2
+    sessions on/after today: 5 min at a time, round-robin across days (Foster —
+    spread, never one big day), never past the day's availability cap nor
+    +50 % of the session. A session that grows >=15 % is re-matched; smaller
+    gaps are narrated by the day view. Returns (placed_tss, rows)."""
+    easy = ("z2", "long_z2")
+    cands = []
+    for s in sessions:
+        if getattr(s, "session_type", "") not in easy:
+            continue
+        if getattr(s, "status", "pending") != "pending":
+            continue
+        d = getattr(s, "day", None)
+        if d is None or d < today or _refit_session_frozen(s, today):
+            continue
+        if getattr(s, "dismissed_at", "") or getattr(s, "is_opener", False):
+            continue
+        dur = int(s.duration_min or 0)
+        room = min(_availability_cap_min(goal, d, availability),
+                   int(dur * (1 + RECYCLE_MAX_SESSION_GROWTH))) - dur
+        if room >= RECYCLE_STEP_MIN:
+            cands.append([s, room, 0])
+    if not cands or budget_tss <= 0:
+        return 0.0, []
+    placed = 0.0
+    progressed = True
+    while progressed and placed < budget_tss:
+        progressed = False
+        for c in cands:
+            s, room, added = c
+            if room - added < RECYCLE_STEP_MIN:
+                continue
+            step_tss = RECYCLE_STEP_MIN / 60 * TSS_PER_HOUR.get(s.session_type, 45)
+            if placed + step_tss > budget_tss + 1e-6:
+                continue
+            c[2] += RECYCLE_STEP_MIN
+            placed += step_tss
+            progressed = True
+    rows = []
+    for s, room, added in cands:
+        if added <= 0:
+            continue
+        old_dur = int(s.duration_min or 0)
+        s.duration_min = old_dur + added
+        add_tss = round(added / 60 * TSS_PER_HOUR.get(s.session_type, 45))
+        s.tss_estimate = round((s.tss_estimate or 0) + add_tss)
+        s.refit_note = f"+{added} min {note}"
+        if old_dur > 0 and added / old_dur >= 0.15:
+            try:
+                excl = {s.zwo_name} if s.zwo_name else set()
+                match_zwo(s, library, used_names=excl, seed_salt=seed_salt, hr_bias=hr_bias)
+            except Exception:  # noqa: BLE001 — keep the file; R4a / day view narrate the gap
+                pass
+        rows.append({"date": s.day.isoformat(), "min": added, "tss": add_tss})
+    return placed, rows
+
+
+def _day_label(d: date, stype: str = "") -> str:
+    return f"{d.strftime('%a')} {d.day} {d.strftime('%b')}" + (f" {stype}" if stype else "")
+
+
+def recycle_missed_load(current_plan_weeks: list, cur_idx: int, today: date, goal,
+                        refit_info: dict, *, library, availability: "dict | None" = None,
+                        current_ctl: "float | None" = None,
+                        recent_weekly_tss: "float | None" = None,
+                        tsb: "float | None" = None, taper_blocked: bool = False,
+                        hr_bias: bool = False, seed_salt: int = 0) -> dict:
+    """v3.11.5 — put the part of a missed hard session's load that the refit
+    could not re-owe somewhere the evidence allows, and say what happened.
+
+    A missed session is not a debt (Mujika 2010; Cullinane 1986; Houmard
+    1992): nothing here raises intensity density — the refit already re-owes
+    the STIMULUS only onto a day >=48 h from any hard session (Stoggl &
+    Sperlich 2014; Hulin 2014) and within the weekly HIT cap (Seiler 80/20).
+    What remains is recycled as EASY volume only:
+      1. this week — pending z2/long_z2 days grow within their availability
+         cap, spread across days (Foster 1998 monotony), <= +50 % each;
+      2. next plan-week — the same, but only inside the headroom the load
+         rules already allow: acute <= 1.3 x chronic (Gabbett 2016,
+         ACWR_CEILING) and CTL ramp <= safe_ramp_rate (Couzens/Coggan), never
+         when TSB < -25 (Coggan overload), never into a stepback week or a
+         taper window (Mujika 2010). Next week's tss_target rises by what was
+         placed so a later re-sample keeps it.
+    Whatever cannot be placed is dropped — with the reason, written on the
+    missed card (refit_note) and in the returned ledger.
+    """
+    week = current_plan_weeks[cur_idx]
+    missed_dates = list(refit_info.get("missed_dates") or [])
+    dose = float(refit_info.get("missed_dose") or 0)
+    promoted = max(0.0, float(refit_info.get("promoted_tss") or 0))
+    ledger = {
+        "missed_dates": missed_dates,
+        "missed_dose": round(dose),
+        "promoted_tss": round(promoted),
+        "promoted_days": list(refit_info.get("promoted_days") or []),
+        "placed_this_week": [],
+        "carried_next_week": None,
+        "dropped_tss": 0,
+        "reasons": [],
+    }
+    if not missed_dates:
+        return ledger
+    reasons = ledger["reasons"]
+    blocked = refit_info.get("promote_blocked") or ""
+    if blocked == "48h":
+        hards = [_day_label(s.day, s.session_type) for s in week.sessions
+                 if _session_is_hit(s) and getattr(s, "status", "pending") not in ("missed", "dismissed")]
+        reasons.append("no day at least 48 h from a hard session"
+                       + (f" ({', '.join(hards)})" if hards else ""))
+    elif blocked == "cap":
+        reasons.append("this week already has its hard sessions")
+    label = ""
+    for w in current_plan_weeks:
+        for s in w.sessions:
+            if getattr(s, "day", None) and s.day.isoformat() == missed_dates[0]:
+                label = _day_label(s.day, s.session_type)
+    note_src = f"recycled from {label}" if label else "recycled from a missed session"
+    remaining = max(0.0, dose - promoted)
+    if remaining > 0:
+        placed, rows = _spread_volume(week.sessions, today, goal, availability, remaining,
+                                      library=library, note=note_src, hr_bias=hr_bias,
+                                      seed_salt=seed_salt)
+        ledger["placed_this_week"] = rows
+        placed = float(sum(r["tss"] for r in rows))     # the ledger adds up in whole TSS
+        remaining -= placed
+        if placed <= 0:
+            reasons.append("no room this week within your availability")
+    if remaining > 0:
+        nxt = current_plan_weeks[cur_idx + 1] if cur_idx + 1 < len(current_plan_weeks) else None
+        if nxt is None:
+            reasons.append("no next week in the plan")
+        elif taper_blocked:
+            reasons.append("taper window — nothing carried")
+        elif getattr(nxt, "is_stepback", False):
+            reasons.append("next week is a reduced-load week — nothing carried")
+        elif tsb is not None and tsb < RECYCLE_TSB_FLOOR:
+            reasons.append(f"form is already low (TSB {tsb:.0f}) — nothing carried")
+        else:
+            planned = float(sum((s.tss_estimate or 0) for s in nxt.sessions))
+            chronic = float(current_ctl or 0) * 7
+            acute_ref = float(recent_weekly_tss) if recent_weekly_tss else chronic
+            if acute_ref > 0:
+                acute_allowed = acute_ref * ACWR_CEILING
+                ramp_allowed = ((float(current_ctl) + safe_ramp_rate(float(current_ctl))) * 7
+                                if current_ctl else acute_allowed)
+                headroom = max(0.0, min(acute_allowed, ramp_allowed) - planned)
+            else:
+                headroom = remaining      # no fitness data: availability alone bounds it
+            budget = min(remaining, headroom)
+            if budget < RECYCLE_STEP_MIN / 60 * TSS_PER_HOUR.get("z2", 45):
+                reasons.append("next week is already at the load your fitness allows")
+            else:
+                placed2, rows2 = _spread_volume(nxt.sessions, today, goal, availability, budget,
+                                                library=library, note=note_src, hr_bias=hr_bias,
+                                                seed_salt=seed_salt)
+                placed2 = float(sum(r["tss"] for r in rows2))
+                if placed2 > 0:
+                    nxt.tss_target = round(float(nxt.tss_target or 0) + placed2)
+                    ledger["carried_next_week"] = {"week_num": nxt.week_num, "tss": round(placed2),
+                                                   "days": rows2}
+                    remaining -= placed2
+                else:
+                    reasons.append("no room next week within your availability")
+    ledger["dropped_tss"] = round(max(0.0, remaining))
+    parts = []
+    if ledger["promoted_days"]:
+        parts.append(f"{ledger['promoted_tss']} TSS re-owed to "
+                     + ", ".join(_day_label(date.fromisoformat(d)) for d in ledger["promoted_days"]))
+    if ledger["placed_this_week"]:
+        parts.append(f"{sum(r['tss'] for r in ledger['placed_this_week'])} TSS recycled into "
+                     + ", ".join(_day_label(date.fromisoformat(r['date'])) for r in ledger["placed_this_week"]))
+    if ledger["carried_next_week"]:
+        parts.append(f"{ledger['carried_next_week']['tss']} TSS carried to next week")
+    if ledger["dropped_tss"] > 0:
+        parts.append(f"{ledger['dropped_tss']} TSS dropped"
+                     + (" — " + "; ".join(reasons) if reasons else ""))
+    note = "missed: " + ("; ".join(parts) if parts else "nothing to recycle")
+    for w in current_plan_weeks:
+        for s in w.sessions:
+            if (getattr(s, "day", None) and s.day.isoformat() in missed_dates
+                    and getattr(s, "status", "") == "missed"):
+                s.refit_note = note
+    ledger["note"] = note
+    return ledger
+
 
 def daily_adapt_plan(
     current_week: PlannedWeek,

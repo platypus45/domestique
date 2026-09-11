@@ -732,8 +732,16 @@ def get_today_metrics() -> dict:
     except (ICUAuthError, ICURateLimitError, ICUServerError, ICUNetworkError) as e:
         _log.warning("get_today_metrics: activities fetch failed (%s)", e)
         activities = []
+    # v3.11.6 (issue #11) — an activity intervals.icu will not re-share (it
+    # reached ICU via Strava) is a stub with no name, type or duration. The
+    # ride store has refused those since v3.8.1; this list feeds the homepage
+    # "Recent activities" card and drew them anyway, as "Activity · 0min",
+    # opening to a 404. Same rule here.
+    from ride_storage import is_icu_stub
     recent = []
     for a in activities:
+        if is_icu_stub(a):
+            continue
         tss = a.get("icu_training_load") or a.get("training_load") or 0
         trimp = a.get("trimp") or 0
         # Effective load: max(TSS, TRIMP × TRIMP_TO_TSS_FACTOR)

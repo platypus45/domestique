@@ -1,5 +1,10 @@
 # Changelog
 
+## v3.11.6 — (unreleased)
+
+- **Fixed: rides that reach intervals.icu through Strava no longer show on the home page as an empty "Activity" that fails to open.** intervals.icu does not pass on Strava's data, so all it can offer for such a ride is a placeholder with no name, type or duration. Since 3.8.1 the calendar left those out, but the "Recent activities" card on the home page still listed them as "Activity · 0min", and opening one gave "Failed to load activity (404)" — which looked exactly like a broken sync. The card now leaves them out too, as does the local activity mirror behind the recovery checks. The rides themselves are not lost: connect your indoor platform to intervals.icu directly, or import the ride's FIT file, and they come in with full data. Reported in [#11](https://github.com/platypus45/domestique/issues/11).
+- A ride file left empty by an interrupted write is now cleaned up on the next sync, instead of raising the same warning every time the power curve loads.
+
 ## v3.11.5 — Missed sessions are registered, recycled where safe, and explained (2026-09-11)
 
 - **Fixed: days that read "no workout matched" for weeks.** A Linux rider's calendar showed most endurance days without a workout attached, even after the 3.11.2 library fix. The damage was old: while the app was still reading an empty custom workout folder (3.11.1), changing the day availability re-fitted those days against nothing and dropped their workouts, and nothing afterwards ever put one back. The app now checks the plan every time it loads it: any upcoming day that has no workout attached is matched against the library and saved, once, with a backup of the previous plan. No regenerate needed, adaptations untouched.

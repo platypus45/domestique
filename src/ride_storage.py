@@ -176,6 +176,29 @@ def _first_num(d: dict, *keys) -> "int | None":
     return None
 
 
+def is_icu_stub(a: dict) -> bool:
+    """True for the record intervals.icu returns for an activity it will not
+    re-share — one that reached it via Strava: id, source, a start time and
+    nothing else (no name, no type, no duration, no distance).
+
+    v3.11.6 (issue #11) — the one predicate for every reader of the ICU
+    activity list. _normalize_icu_activity refused these since v3.8.1, but
+    the homepage "Recent activities" card and the SQLite mirror read the
+    list on their own paths and still drew the stub as a row called
+    "Activity" that 404'd when opened.
+
+    Requiring a missing name as well is what keeps a genuine ride that merely
+    lacks a type (an untagged local FIT relayed to ICU) from being thrown
+    away with it.
+    """
+    if not isinstance(a, dict):
+        return False
+    return (not _pick_first(a, "name")
+            and not _pick_first(a, "type", "sport_type")
+            and not _pick_first(a, "elapsed_time", "moving_time", "duration",
+                                "icu_distance", "distance"))
+
+
 def _normalize_icu_activity(a: dict) -> dict:
     """v4.4.0 — translate an ICU activity dict to the §3 normalized shape.
 
@@ -213,10 +236,7 @@ def _normalize_icu_activity(a: dict) -> dict:
     # source and a start time. Requiring a missing name too is what keeps a
     # genuine ride that merely lacks a type (an untagged local FIT relayed to
     # ICU) from being thrown away with it.
-    if (not _pick_first(a, "name")
-            and not _pick_first(a, "type", "sport_type")
-            and not _pick_first(a, "elapsed_time", "moving_time", "duration",
-                                "icu_distance", "distance")):
+    if is_icu_stub(a):
         log.info("ICU activity %s is a %s stub (no type, no duration) — not "
                  "persisting; import the FIT to get this ride",
                  icu_id, a.get("source") or "source-less")
@@ -525,6 +545,15 @@ def purge_stub_icu_records() -> int:
     except RuntimeError:
         return 0
     for f in icu_dir.glob("*.json"):
+        # v3.11.6 — a 0-byte file (an interrupted write) is not a ride either;
+        # left alone it re-warned on every power-curve load, forever.
+        try:
+            if f.stat().st_size == 0:
+                f.unlink()
+                removed += 1
+                continue
+        except OSError:
+            pass
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):

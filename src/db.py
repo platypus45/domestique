@@ -31,6 +31,7 @@ for _env_candidate in [_USER_DATA / ".env", Path(__file__).parent / ".env",
         break
 
 from training import fetch_wellness, fetch_activities, ICUCredentialsMissing
+from ride_storage import is_icu_stub  # v3.11.6 — one stub rule for every reader
 
 log = logging.getLogger(__name__)
 
@@ -735,6 +736,10 @@ def sync_activities(days: int = 90, _snapshot=None) -> int:
                 aid = a.get("id", a.get("start_date_local", ""))
                 dt = a.get("start_date_local", "")[:10]
                 if not aid:
+                    continue
+                # v3.11.6 (issue #11) — same rule as the ride store: a stub
+                # ICU will not re-share (Strava-origin) has no data to mirror.
+                if is_icu_stub(a):
                     continue
                 # Widened projection — real columns (not just raw_json) for fast filtering.
                 distance_m = a.get("distance")

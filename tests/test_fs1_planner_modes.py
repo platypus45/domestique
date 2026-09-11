@@ -56,7 +56,9 @@ class TestPlannerModes(unittest.TestCase):
                 continue
             hits = [s.session_type for s in w.sessions if s.session_type in _HIT]
             has_test = any(s.session_type == "ftp_test" for s in w.sessions)
-            sb = getattr(w, "is_stepback", False) or w.phase == "taper"
+            # The taper and the closing consolidation week are unload phases,
+            # with no HIT by design; neither is also flagged a stepback.
+            sb = getattr(w, "is_stepback", False) or w.phase in ("taper", "consolidation")
             if sb:
                 self.assertEqual(hits, [], f"W{w.week_num} deload has HIT {hits}")
             elif has_test:

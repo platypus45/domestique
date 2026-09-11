@@ -5654,9 +5654,9 @@
      "2026-11-09",
      "2026-11-10",
      "build1",
-     54.0,
+     75.0,
      null,
-     true,
+     false,
      [
       [
        "2026-11-09",
@@ -5669,9 +5669,9 @@
       [
        "2026-11-10",
        "z2",
-       50,
-       38.0,
-       "endurance_steady_65pct_50min.zwo",
+       75,
+       56.0,
+       "endurance_steady_68pct_80min_v2.zwo",
        "pending"
       ]
      ]
@@ -5689,7 +5689,7 @@
        "z2",
        75,
        56.0,
-       "endurance_steady_68pct_75min.zwo",
+       "endurance_steady_70pct_71min.zwo",
        "pending"
       ],
       [
@@ -5697,7 +5697,7 @@
        "z2",
        75,
        56.0,
-       "tempo_12x30s-210s_90pct_71min.zwo",
+       "endurance_4x30s_100pct_75min.zwo",
        "pending"
       ],
       [
@@ -5763,7 +5763,7 @@
        "z2",
        85,
        64.0,
-       "endurance_steady_68pct_85min_v2.zwo",
+       "endurance_steady_74pct_90min.zwo",
        "pending"
       ],
       [
@@ -7699,9 +7699,9 @@
      "2026-11-09",
      "2026-11-10",
      "build1",
-     54.0,
+     75.0,
      null,
-     true,
+     false,
      [
       [
        "2026-11-09",
@@ -7714,9 +7714,9 @@
       [
        "2026-11-10",
        "z2",
-       50,
-       38.0,
-       "endurance_steady_65pct_50min.zwo",
+       75,
+       56.0,
+       "endurance_steady_68pct_80min_v2.zwo",
        "pending"
       ]
      ]
@@ -7734,7 +7734,7 @@
        "z2",
        75,
        56.0,
-       "endurance_steady_68pct_75min.zwo",
+       "endurance_steady_70pct_71min.zwo",
        "pending"
       ],
       [
@@ -7742,7 +7742,7 @@
        "z2",
        75,
        56.0,
-       "tempo_12x30s-210s_90pct_71min.zwo",
+       "endurance_4x30s_100pct_75min.zwo",
        "pending"
       ],
       [
@@ -7808,7 +7808,7 @@
        "z2",
        85,
        64.0,
-       "endurance_steady_68pct_85min_v2.zwo",
+       "endurance_steady_74pct_90min.zwo",
        "pending"
       ],
       [
@@ -29952,9 +29952,9 @@
      "2026-12-07",
      "2026-12-08",
      "build2",
-     80.0,
+     111.0,
      null,
-     true,
+     false,
      [
       [
        "2026-12-07",
@@ -29966,10 +29966,10 @@
       ],
       [
        "2026-12-08",
-       "z2",
-       50,
-       32.0,
-       "intervals_steady_65pct_50min.zwo",
+       "overunder",
+       62,
+       69.0,
+       "over_under_3x2min_90pct_62min.zwo",
        "pending"
       ]
      ]
@@ -29985,41 +29985,41 @@
       [
        "2026-12-09",
        "z2",
-       85,
-       60.0,
-       "endurance_steady_68pct_85min_v2.zwo",
+       46,
+       32.0,
+       "threshold_ladder3_95pct_48min.zwo",
        "pending"
       ],
       [
        "2026-12-10",
        "recovery",
-       46,
-       26.0,
-       "threshold_1x2min_81pct_46min_v2.zwo",
+       56,
+       43.0,
+       "over_under_2x45s-30s_95pct_56min.zwo",
        "pending"
       ],
       [
        "2026-12-11",
        "z2",
-       45,
+       60,
        33.0,
-       "recovery_steady_51pct_43min.zwo",
+       "endurance_9x10s-3min_80pct_60min.zwo",
        "pending"
       ],
       [
        "2026-12-12",
        "z2",
-       60,
-       40.0,
-       "endurance_steady_68pct_60min.zwo",
+       63,
+       54.0,
+       "tempo_9x30s-210s_90pct_63min.zwo",
        "pending"
       ],
       [
        "2026-12-13",
        "z2",
-       82,
-       51.0,
-       "endurance_steady_61pct_82min.zwo",
+       45,
+       22.0,
+       "endurance_steady_60pct_45min_v2.zwo",
        "pending"
       ],
       [
@@ -30033,9 +30033,9 @@
       [
        "2026-12-15",
        "threshold",
-       76,
-       96.0,
-       "threshold_2x25min-5min_95pct_76min.zwo",
+       85,
+       122.0,
+       "threshold_2x30min-3min_100pct_85min.zwo",
        "pending"
       ]
      ]
@@ -30058,18 +30058,18 @@
       ],
       [
        "2026-12-17",
-       "z2",
-       105,
-       69.0,
-       "endurance_steady_65pct_105min_v3.zwo",
-       "pending"
-      ],
-      [
-       "2026-12-18",
        "rest",
        0,
        0.0,
        "",
+       "pending"
+      ],
+      [
+       "2026-12-18",
+       "z2",
+       75,
+       53.0,
+       "endurance_steady_68pct_75min.zwo",
        "pending"
       ],
       [
@@ -30103,7 +30103,6 @@
     "hard_share:10",
     "hard_share:11",
     "hard_share:12",
-    "under_delivery:13",
     "weekly_volume:10",
     "weekly_volume:11",
     "weekly_volume:12",
@@ -37693,9 +37692,9 @@
      "2026-12-07",
      "2026-12-08",
      "build2",
-     80.0,
+     111.0,
      null,
-     true,
+     false,
      [
       [
        "2026-12-07",
@@ -37707,10 +37706,10 @@
       ],
       [
        "2026-12-08",
-       "recovery",
-       50,
-       31.0,
-       "intervals_4x2min-2min_76pct_50min.zwo",
+       "overunder",
+       70,
+       77.0,
+       "over_under_3x4min_80pct_70min.zwo",
        "pending"
       ]
      ]
@@ -37725,26 +37724,26 @@
      [
       [
        "2026-12-09",
-       "z2",
-       63,
-       44.0,
-       "endurance_steady_68pct_60min.zwo",
+       "recovery",
+       60,
+       46.0,
+       "tempo_6x3min-2min_85pct_60min.zwo",
        "pending"
       ],
       [
        "2026-12-10",
-       "z2",
-       63,
-       54.0,
-       "tempo_9x30s-210s_90pct_63min.zwo",
+       "recovery",
+       50,
+       31.0,
+       "intervals_4x2min-2min_76pct_50min.zwo",
        "pending"
       ],
       [
        "2026-12-11",
        "z2",
-       60,
-       59.0,
-       "endurance_6x130s_80pct_60min.zwo",
+       90,
+       66.0,
+       "endurance_6x1min-1min_85pct_90min.zwo",
        "pending"
       ],
       [
@@ -37757,10 +37756,10 @@
       ],
       [
        "2026-12-13",
-       "z2",
-       45,
-       26.0,
-       "endurance_steady_60pct_45min.zwo",
+       "long_z2",
+       49,
+       30.0,
+       "threshold_ladder3_95pct_48min.zwo",
        "pending"
       ],
       [
@@ -37774,9 +37773,9 @@
       [
        "2026-12-15",
        "threshold",
-       85,
-       113.0,
-       "threshold_2x25min-5min_100pct_85min.zwo",
+       90,
+       123.0,
+       "threshold_2x30min-5min_100pct_95min.zwo",
        "pending"
       ]
      ]
@@ -37799,18 +37798,18 @@
       ],
       [
        "2026-12-17",
-       "rest",
-       0,
-       0.0,
-       "",
+       "z2",
+       100,
+       66.0,
+       "endurance_steady_65pct_100min.zwo",
        "pending"
       ],
       [
        "2026-12-18",
-       "z2",
-       75,
-       52.0,
-       "endurance_steady_68pct_75min.zwo",
+       "rest",
+       0,
+       0.0,
+       "",
        "pending"
       ],
       [
@@ -37842,7 +37841,7 @@
    ],
    "inv": [
     "hard_share:10",
-    "under_delivery:13",
+    "hard_share:13",
     "weekly_volume:10",
     "weekly_volume:11",
     "weekly_volume:3",
@@ -39859,9 +39858,9 @@
      "2026-11-09",
      "2026-11-10",
      "build1",
-     54.0,
-     54.0,
-     true,
+     75.0,
+     75.0,
+     false,
      [
       [
        "2026-11-09",
@@ -39874,9 +39873,9 @@
       [
        "2026-11-10",
        "z2",
-       50,
-       38.0,
-       "intervals_6x40s_76pct_46min.zwo",
+       75,
+       56.0,
+       "endurance_steady_62pct_75min.zwo",
        "pending"
       ]
      ]
@@ -41886,9 +41885,9 @@
      "2026-11-09",
      "2026-11-10",
      "build1",
-     54.0,
-     54.0,
-     true,
+     75.0,
+     75.0,
+     false,
      [
       [
        "2026-11-09",
@@ -41901,9 +41900,9 @@
       [
        "2026-11-10",
        "z2",
-       50,
-       38.0,
-       "intervals_6x40s_76pct_46min.zwo",
+       75,
+       56.0,
+       "endurance_steady_62pct_75min.zwo",
        "pending"
       ]
      ]
@@ -64107,9 +64106,9 @@
      "2026-12-07",
      "2026-12-08",
      "build2",
-     80.0,
-     80.0,
-     true,
+     111.0,
+     111.0,
+     false,
      [
       [
        "2026-12-07",
@@ -64122,9 +64121,9 @@
       [
        "2026-12-08",
        "z2",
-       65,
-       51.0,
-       "endurance_steady_74pct_65min.zwo",
+       60,
+       52.8,
+       "recovery_1x4min_90pct_58min.zwo",
        "pending"
       ]
      ]
@@ -64139,42 +64138,42 @@
      [
       [
        "2026-12-09",
-       "recovery",
-       48,
-       30.0,
-       "threshold_1x2min_81pct_48min.zwo",
+       "z2",
+       95,
+       67.0,
+       "endurance_steady_68pct_95min.zwo",
        "pending"
       ],
       [
        "2026-12-10",
        "z2",
-       86,
-       92.0,
-       "over_under_3x3min-2min_95pct_86min.zwo",
+       47,
+       29.0,
+       "recovery_10x12s-3min_145pct_47min.zwo",
        "pending"
       ],
       [
        "2026-12-11",
        "z2",
-       41,
-       35.5,
-       "sweet_spot_3x2min_76pct_40min.zwo",
+       60,
+       53.6,
+       "intervals_9x90s-210s_85pct_60min.zwo",
        "pending"
       ],
       [
        "2026-12-12",
        "z2",
        21,
-       14.0,
+       14.4,
        "threshold_steady_66pct_23min.zwo",
        "pending"
       ],
       [
        "2026-12-13",
-       "z2",
-       26,
-       14.1,
-       "sweet_spot_steady_64pct_26min.zwo",
+       "recovery",
+       22,
+       13.9,
+       "endurance_steady_54pct_24min.zwo",
        "pending"
       ],
       [
@@ -64188,9 +64187,9 @@
       [
        "2026-12-15",
        "threshold",
-       65,
-       88.0,
-       "threshold_2x20min-3min_100pct_65min.zwo",
+       76,
+       96.0,
+       "threshold_2x25min-5min_95pct_76min.zwo",
        "pending"
       ]
      ]
@@ -64213,10 +64212,10 @@
       ],
       [
        "2026-12-17",
-       "z2",
-       75,
-       48.0,
-       "endurance_steady_65pct_75min_v3.zwo",
+       "recovery",
+       27,
+       13.5,
+       "recovery_steady_35pct_25min.zwo",
        "pending"
       ],
       [
@@ -71804,9 +71803,9 @@
      "2026-12-07",
      "2026-12-08",
      "build2",
-     80.0,
-     80.0,
-     true,
+     111.0,
+     111.0,
+     false,
      [
       [
        "2026-12-07",
@@ -71819,9 +71818,9 @@
       [
        "2026-12-08",
        "z2",
-       96,
-       79.7,
-       "endurance_steady_74pct_90min.zwo",
+       63,
+       53.1,
+       "recovery_ladder3_90pct_63min.zwo",
        "pending"
       ]
      ]
@@ -71837,16 +71836,16 @@
       [
        "2026-12-09",
        "z2",
-       61,
-       42.7,
-       "endurance_ladder6_120pct_56min.zwo",
+       75,
+       53.3,
+       "endurance_steady_62pct_75min.zwo",
        "pending"
       ],
       [
        "2026-12-10",
        "z2",
        20,
-       15.6,
+       14.6,
        "sweet_spot_1x2min_80pct_21min_v2.zwo",
        "pending"
       ],
@@ -71860,10 +71859,10 @@
       ],
       [
        "2026-12-12",
-       "recovery",
-       21,
-       11.9,
-       "recovery_steady_55pct_20min_v3.zwo",
+       "rest",
+       0,
+       0.0,
+       "",
        "pending"
       ],
       [
@@ -71885,9 +71884,9 @@
       [
        "2026-12-15",
        "threshold",
-       73,
-       83.0,
-       "threshold_2x4min-3min_100pct_73min.zwo",
+       62,
+       72.0,
+       "threshold_2x4x40s-20s_121pct_62min.zwo",
        "pending"
       ]
      ]
@@ -71902,10 +71901,10 @@
      [
       [
        "2026-12-16",
-       "recovery",
-       31,
-       13.6,
-       "recovery_1x4min_80pct_34min.zwo",
+       "rest",
+       0,
+       0.0,
+       "",
        "pending"
       ],
       [
@@ -71926,10 +71925,10 @@
       ],
       [
        "2026-12-19",
-       "rest",
-       0,
-       0.0,
-       "",
+       "recovery",
+       45,
+       22.0,
+       "endurance_2x1min_90pct_46min.zwo",
        "pending"
       ],
       [

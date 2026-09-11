@@ -1032,19 +1032,44 @@ STEPBACK_LOAD_FACTOR = 0.72
 # the same 7-day step without knowing about any of this.
 
 
-# Weeks whose load is reduced by design: the taper, and a regenerate's
-# recovery ramp (named "recon" and "recovery_ramp" by build_recovery_ramp).
-_UNLOAD_PHASES = ("taper", "recon", "recovery_ramp")
+# Weeks whose load is reduced by design: the taper, a regenerate's recovery
+# ramp (named "recon" and "recovery_ramp" by build_recovery_ramp), and the
+# consolidation week that closes a non-event plan (Mujika 2010).
+_UNLOAD_PHASES = ("taper", "recon", "recovery_ramp", "consolidation")
+
+
+def _went_unridden(w) -> bool:
+    """A finished week the rider barely rode unloaded them, whatever its label.
+
+    D6: a missed or dismissed session costs nothing. A week whose ridden cost
+    is at or under an unloading week's share of its target (Issurin's 20-30%
+    cut) was an unload in all but name, and the 3:1 count restarts after it:
+    someone back from two weeks off is not due a deload (Step 5 review, L4).
+    """
+    get = w.get if isinstance(w, dict) else (lambda k, d=None: getattr(w, k, d))
+    end, target, sessions = get("end"), float(get("tss_target") or 0), get("sessions") or []
+    if end is None or target <= 0 or not sessions or _as_date(end) >= date.today():
+        return False
+    cost = 0.0
+    for s in sessions:
+        sget = s.get if isinstance(s, dict) else (lambda k, d=None, _s=s: getattr(_s, k, d))
+        if (sget("session_type", "") == "rest" or sget("dismissed_at", "")
+                or sget("status", "") in ("missed", "dismissed")):
+            continue
+        cost += float(sget("tss_estimate", 0) or 0)
+    return cost <= STEPBACK_LOAD_FACTOR * target
 
 
 def _is_unload_week(w) -> bool:
     get = w.get if isinstance(w, dict) else (lambda k, d=None: getattr(w, k, d))
-    return bool(get("is_stepback", False)) or (get("phase", "") or "") in _UNLOAD_PHASES
+    return (bool(get("is_stepback", False)) or (get("phase", "") or "") in _UNLOAD_PHASES
+            or _went_unridden(w))
 
 
-def stepback_due(prior_weeks, phase_name: str) -> bool:
+def stepback_due(prior_weeks, phase_name: str, row_end: "date | None" = None) -> bool:
     """The 3:1 loading rhythm (Rønnestad), over the whole plan: a week is a
-    stepback when the STEP_BACK_EVERY - 1 weeks before it were all load weeks.
+    stepback when the STEP_BACK_EVERY - 1 calendar weeks before it were all
+    load weeks.
 
     One predicate for every entry point. Generate counted weeks across phases,
     regenerate and recalculate restarted the count at every phase, and extend
@@ -1053,9 +1078,20 @@ def stepback_due(prior_weeks, phase_name: str) -> bool:
     the load weeks since the last unload gives generate's answer for a plan
     built in one go, and a rebuild continues the count -- through a recovery
     ramp, or a deload the app advanced, as through a stepback. A taper is its
-    own unload and never also a stepback.
+    own unload and never also a stepback, and a week the rider barely rode is
+    an unload too (_went_unridden, D6).
+
+    The count is of calendar weeks, and a week belongs to the phase holding
+    most of its days. Rows are calendar weeks everywhere but before an event,
+    where the taper is laid back from race day off the Monday grid: the row
+    before it ends mid-week. When that row (ending on ``row_end``, starting on
+    its Monday) holds fewer than 4 days, its week is the taper's and it is no
+    stepback. Counting rows made a lone Monday before a Sunday event a
+    47-TSS stepback in 8 of 98 event plans.
     """
     if phase_name in _UNLOAD_PHASES:
+        return False
+    if row_end is not None and row_end.weekday() + 1 < 4:
         return False
     run = 0
     for w in reversed(list(prior_weeks or [])):
@@ -1123,6 +1159,12 @@ def _next_week_cursor(cursor: date, phase=None) -> date:
     if getattr(phase, "name", "") == "taper":
         return cursor + timedelta(days=7)
     return cursor + timedelta(days=7 - cursor.weekday())
+
+
+def _row_end(cursor: date, phase) -> date:
+    """Last day of the week row starting at ``cursor``: the day before the
+    next row, or the phase's end when that comes first."""
+    return min(phase.end, _next_week_cursor(cursor, phase) - timedelta(days=1))
 
 
 def _taper_anchor(target: date) -> date:
@@ -3587,12 +3629,13 @@ def _entry_week_targets(phases: list) -> list[dict]:
     for phase in phases:
         cursor = phase.start
         while cursor <= phase.end:
-            is_sb = stepback_due(rows, phase.name)
+            end = _row_end(cursor, phase)
+            is_sb = stepback_due(rows, phase.name, end)
             t = float(phase.weekly_tss_target)
             if is_sb:
                 t = float(round(t * STEPBACK_LOAD_FACTOR))
-            rows.append({"start": cursor, "tss_target": t, "phase": phase.name,
-                         "is_stepback": is_sb})
+            rows.append({"start": cursor, "end": end, "tss_target": t,
+                         "phase": phase.name, "is_stepback": is_sb})
             cursor = _next_week_cursor(cursor, phase)
     return rows
 
@@ -8334,7 +8377,7 @@ def _clip_week_to_phase(pw: "PlannedWeek", phase: "Phase", cursor: date) -> None
     # cursor..cursor+6, so a plan generated on a Thursday would spill its first
     # row into the next Monday-Sunday week and double-book those days against
     # the row that starts there.
-    limit = min(phase.end, _next_week_cursor(cursor, phase) - timedelta(days=1))
+    limit = _row_end(cursor, phase)
     week_end = cursor + timedelta(days=6)
     if week_end <= limit:
         return
@@ -8567,7 +8610,7 @@ def generate_plan(
             cursor = phase.start
             week_in_phase = 0  # 0-indexed within this phase (for Layer 2 mix-row pick)
             while cursor <= phase.end:
-                is_stepback = stepback_due(weeks, phase.name)
+                is_stepback = stepback_due(weeks, phase.name, _row_end(cursor, phase))
 
                 if _USE_TRAINING_WEEK:
                     _tw = week_plan.TrainingWeek(
@@ -13059,7 +13102,8 @@ def regenerate_from_today(
             # The count runs on from the kept weeks and the recovery ramp; it
             # restarted at every phase, which ran up to six load weeks.
             is_stepback = stepback_due(
-                [*past_weeks, *recovery_weeks, *new_weeks], phase.name)
+                [*past_weeks, *recovery_weeks, *new_weeks], phase.name,
+                _row_end(cursor, phase))
             if _USE_TRAINING_WEEK:
                 _tw = week_plan.TrainingWeek(
                     week_context(
@@ -13633,7 +13677,8 @@ def recalculate_plan(
         cursor = max(phase.start, regen_start)
         week_in_phase = 0  # v2.0.3 F6: 0-indexed within phase, drives the sampler
         while cursor <= phase.end:
-            is_stepback = stepback_due([*past_weeks, *new_weeks], phase.name)
+            is_stepback = stepback_due([*past_weeks, *new_weeks], phase.name,
+                                       _row_end(cursor, phase))
 
             # Insert FTP test when due (weeks-since-last-test ≥ 6; due-ness
             # persists across a stepback/taper collision instead of vanishing).
@@ -14073,7 +14118,8 @@ def extend_continuous_plan(
         # The plan's 3:1 rhythm, continued from the weeks already there --
         # including a deload the app advanced into one of them.
         is_stepback = stepback_due(
-            sorted(current_plan_weeks, key=lambda w: w.start) + new_weeks, phase.name)
+            sorted(current_plan_weeks, key=lambda w: w.start) + new_weeks, phase.name,
+            _row_end(cursor, phase))
         ftp_test_week = (not is_stepback
                          and (week_num - _last_test_wk >= 6
                               if _last_test_wk else True))

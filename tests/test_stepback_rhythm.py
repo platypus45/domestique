@@ -44,8 +44,13 @@ def _unload(w):
 
 
 def _longest_load_run(weeks):
+    """Load weeks in a row, in calendar weeks: a row that ends mid-week
+    holding fewer than 4 days -- the sliver before a taper -- is part of the
+    taper's week, as stepback_due counts it."""
     run = best = 0
     for w in sorted(weeks, key=lambda w: w.start):
+        if w.end.weekday() + 1 < 4 and (w.end - w.start).days + 1 < 4:
+            continue
         run = 0 if _unload(w) else run + 1
         best = max(best, run)
     return best
@@ -122,6 +127,48 @@ def test_a_deload_the_app_advanced_restarts_the_count():
     weeks = [_week(1), _week(2, stepback=True), _week(3), _week(4)]
     assert not tp.stepback_due(weeks, "continuous")
     assert tp.stepback_due(weeks + [_week(5)], "continuous")
+
+
+def test_a_sliver_before_the_taper_is_not_a_stepback():
+    """The taper is laid back from race day, off the Monday grid on purpose,
+    so the week before it ends in a sliver: a lone Monday before a Sunday
+    event. The rhythm counted rows, took that day for a week and made it a
+    47-TSS "stepback" in 8 of 98 event plans. The rhythm counts calendar
+    weeks, and a week belongs to the phase that holds most of its days: a
+    sliver's week is the taper's."""
+    target = MONDAY + timedelta(weeks=12, days=6)                 # a Sunday
+    goal = tp.Goal(goal_type="event", event_type="granfondo", event_km=160,
+                   event_climb_m=2000, target_date=target, hours_per_week=10.0,
+                   max_weekday_hours=2.0, max_weekend_hours=4.0,
+                   available_days=[1, 2, 3, 4, 5, 6], rest_days=[0], plan_weeks=0)
+    weeks = tp.generate_plan(goal, seed_salt=1, current_ctl=50.0,
+                             recent_weekly_tss=350.0, athlete=ATHLETE)[1]
+    slivers = [w for w in weeks[1:]
+               if w.phase != "taper" and (w.end - w.start).days + 1 < 4]
+    assert slivers, "no sliver before the taper, so this proves nothing"
+    assert not any(w.is_stepback for w in slivers)
+
+
+def _ridden_week(i, status):
+    start = MONDAY + timedelta(weeks=i)
+    return tp.PlannedWeek(
+        week_num=i + 1, start=start, end=start + timedelta(days=6), phase="build1",
+        tss_target=300, is_stepback=False,
+        sessions=[tp.PlannedSession(day=start + timedelta(days=d), day_name="",
+                                    session_type="z2", duration_min=60,
+                                    tss_estimate=50.0, description="", status=status)
+                  for d in range(1, 7)])
+
+
+def test_weeks_the_rider_missed_restart_the_count():
+    """D6: a week the rider did not ride unloaded them, whatever its label.
+    After one ridden load week and two fully missed ones, the rhythm still
+    asked for a stepback: a deload for someone coming back from two weeks off
+    (the Step 5 review, L4)."""
+    _TODAY[0] = MONDAY + timedelta(weeks=4)
+    back = [_ridden_week(1, "done"), _ridden_week(2, "missed"), _ridden_week(3, "missed")]
+    assert not tp.stepback_due(back, "build1")
+    assert tp.stepback_due([_ridden_week(i, "done") for i in (1, 2, 3)], "build1")
 
 
 def test_the_home_cards_week_unloads_when_the_plan_does(tmp_path, monkeypatch):

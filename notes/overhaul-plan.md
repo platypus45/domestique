@@ -854,6 +854,19 @@ unchanged (backend only).
 
 STA-4, 7, 8, 9, 11; DUP-24, 26, 15/16; the Pillow gap in the production venv.
 
+### After the first pass: deploy it, then reduce branching
+
+The owner's plan (2026-09-11): once this first large refactoring pass is
+done, it is tested in deployment, on the live service and real rides, before
+anything else. Then a second pass reduces branching everywhere.
+
+Branching this pass has already met, as a starting list:
+- two week builders behind `_USE_TRAINING_WEEK`;
+- five emitter loops (generate, regenerate, recalculate, extend, the entry
+  scan) that each repeat the week walk with their own variations;
+- the `plan_mode` branches (auto, fixed_core, template);
+- the post-pass chain, whose passes each re-decide a week after it is built.
+
 ## Deployment note
 
 Production runs the live checkout at `~/Documents/cycling-stack/domestique`,

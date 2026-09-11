@@ -1,6 +1,6 @@
 # Changelog
 
-## v3.11.5 — A plan that lost its workouts gets them back (unreleased)
+## v3.11.5 — Missed sessions are registered, recycled where safe, and explained (2026-09-11)
 
 - **Fixed: days that read "no workout matched" for weeks.** A Linux rider's calendar showed most endurance days without a workout attached, even after the 3.11.2 library fix. The damage was old: while the app was still reading an empty custom workout folder (3.11.1), changing the day availability re-fitted those days against nothing and dropped their workouts, and nothing afterwards ever put one back. The app now checks the plan every time it loads it: any upcoming day that has no workout attached is matched against the library and saved, once, with a backup of the previous plan. No regenerate needed, adaptations untouched.
 - **Changing availability can no longer drop a day's workout.** If no file of the new length exists, the day keeps the workout it had (the day view shows the length difference) instead of ending up empty.

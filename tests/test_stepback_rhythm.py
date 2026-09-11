@@ -139,3 +139,24 @@ def test_the_home_cards_week_unloads_when_the_plan_does(tmp_path, monkeypatch):
         plan.append(w.is_stepback)
     assert any(plan), "no stepback in the first twelve weeks, so this proves nothing"
     assert card == plan
+
+
+def test_after_the_plan_the_home_card_keeps_its_rhythm(tmp_path, monkeypatch):
+    """Past the plan's last week the card switched to ISO week numbers, which
+    put up to 8 weeks between two unloads (the fix review, F3). It carries the
+    plan's 3:1 on from the plan's last unload week."""
+    weeks = _generated()
+    (tmp_path / "current_plan.json").write_text(
+        json.dumps({"weeks": [tp.week_to_dict(w) for w in weeks]}))
+    monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
+    anchor = max(w.end for w in weeks if _unload(w))       # the last week it unloads
+    anchor -= timedelta(days=anchor.weekday())
+    first = weeks[-1].end + timedelta(days=7 - weeks[-1].end.weekday())
+    card, want = [], []
+    for i in range(9):
+        monday = first + timedelta(weeks=i)
+        _TODAY[0] = monday
+        card.append(tp.generate_weekly_plan(_goal(), current_ctl=50).is_stepback)
+        want.append((monday - anchor).days // 7 % tp.STEP_BACK_EVERY == 0)
+    assert any(want)
+    assert card == want

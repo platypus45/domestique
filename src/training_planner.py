@@ -721,7 +721,9 @@ _EASE_FOR_RECOVERY_TYPE = "z2"
 # coming week and not for a session a month away.
 TSB_EASE_BELOW = -25
 TSB_EASE_HORIZON_DAYS = 7
-# What an eased session was, kept so the easing can be undone.
+# What an eased session was, kept so the easing can be undone. The record also
+# holds what the easing made of the day ("eased_to": type and minutes), so a
+# restore undoes only that and never a later writer's change.
 _TSB_EASE_FIELDS = ("session_type", "duration_min", "tss_estimate",
                     "description", "zwo_file", "zwo_name")
 
@@ -9315,6 +9317,9 @@ def _slot_breaks_hard_spacing(week, all_weeks: list, day) -> bool:
         for s in (getattr(wk, "sessions", None) or []):
             if s is None or s.day == day:
                 continue
+            if (getattr(s, "status", "") in ("missed", "dismissed")
+                    or getattr(s, "dismissed_at", "")):
+                continue  # D6: a session not ridden costs nothing, spacing included
             if _session_is_hit(s) and abs((s.day - day).days) < 2:
                 return True
     return False
@@ -11816,8 +11821,16 @@ def reforecast(
                     s.description = f"Reforecast: TSB {tsb:.0f} → {new_type}"
                     s.adapted = True
                     _rematch_eased(s, pw)
+                    s.tsb_eased_from["eased_to"] = [s.session_type, s.duration_min]
                     downshifts.append(s.day.isoformat())
                 elif eased_from and not fatigued:
+                    if eased_from.get("eased_to") != [s.session_type, s.duration_min]:
+                        # The day is no longer what the easing made it: the
+                        # rider cut its hours, or another writer re-planned it.
+                        # Writing the original back put a hard session on a 0 h
+                        # day (the fix review, F1; D5: availability is a
+                        # ceiling). A restore undoes only the easing's own work.
+                        continue
                     if (_session_is_hit(eased_from)
                             and _slot_breaks_hard_spacing(pw, plan_weeks, s.day)):
                         # Putting it back would put two hard days inside 48 h:
@@ -11825,8 +11838,8 @@ def reforecast(
                         # around it (the Step 5 review, M4). Spacing outranks
                         # the session count (D1), so the day stays eased.
                         continue
-                    for k, v in eased_from.items():
-                        setattr(s, k, v)
+                    for k in _TSB_EASE_FIELDS:
+                        setattr(s, k, eased_from[k])
                     del s.tsb_eased_from
                     s.adapted = False
                     tsb_restored.append(s.day.isoformat())
@@ -15359,26 +15372,37 @@ def generate_weekly_plan(
     max_weekday_h = goal.max_weekday_hours if goal else 2.0
     max_weekend_h = goal.max_weekend_hours if goal else 3.5
 
-    # Step-back week: the plan's own week, when one covers this week, so the
-    # home card unloads when the plan does. Counting weeks from the plan's
-    # first Monday unloaded one week late: weeks 5, 9 and 13 against the plan's
-    # 4, 8 and 12 (the Step 5 review, L3). With no plan week here, the ISO week
-    # number decides.
-    plan_row = None
+    # Step-back week, so the home card unloads when the plan does. Counting
+    # weeks from the plan's first Monday unloaded one week late: weeks 5, 9 and
+    # 13 against the plan's 4, 8 and 12 (the Step 5 review, L3).
+    #   * In a plan week, the week's own stepback flag. Not _is_unload_week: a
+    #     taper week's phase target is already the taper, and a stepback cut on
+    #     top would cut it twice.
+    #   * Past the plan's end, its 3:1 carries on from its last unload week.
+    #     ISO weeks put up to 8 weeks between two unloads there (fix review, F3).
+    #   * With no plan, the ISO week number.
+    is_stepback = monday.isocalendar()[1] % STEP_BACK_EVERY == 0
     try:
         import json as _json
         _plan_path = PLAN_DIR / "current_plan.json"
-        if _plan_path.exists():
-            _plan = _json.loads(_plan_path.read_text())
-            _mon, _sun = monday.isoformat(), (monday + timedelta(days=6)).isoformat()
-            plan_row = next((w for w in _plan.get("weeks") or []
-                             if w.get("start", "") <= _sun and w.get("end", "") >= _mon), None)
+        rows = (_json.loads(_plan_path.read_text()).get("weeks") or []
+                if _plan_path.exists() else [])
+        _mon, _sun = monday.isoformat(), (monday + timedelta(days=6)).isoformat()
+        row = next((w for w in rows
+                    if w.get("start", "") <= _sun and w.get("end", "") >= _mon), None)
+        before = [w for w in rows if w.get("end", "") < _mon]
+        if row is not None:
+            is_stepback = bool(row.get("is_stepback"))
+        elif before:
+            unloads = [w for w in before if _is_unload_week(w)]
+            # The last week the plan unloads is the last one its last unload
+            # row covers: a taper row can run Wednesday to Monday.
+            anchor = (_as_date(unloads[-1]["end"]) if unloads
+                      else _as_date(before[0]["start"]) - timedelta(days=7))
+            anchor -= timedelta(days=anchor.weekday())
+            is_stepback = (monday - anchor).days // 7 % STEP_BACK_EVERY == 0
     except Exception:
         pass
-    if plan_row is not None:
-        is_stepback = bool(plan_row.get("is_stepback"))
-    else:
-        is_stepback = (monday.isocalendar()[1] % STEP_BACK_EVERY == 0)
     if is_stepback:
         # Issurin 2010: 20-30% unloading (not 40-60%). 0.72 = 28% reduction. Matches plan_week().
         weekly_tss = round(weekly_tss * STEPBACK_LOAD_FACTOR)

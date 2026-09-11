@@ -196,30 +196,76 @@ def test_a_restore_keeps_hard_days_48h_apart():
     plan = _stored(seed_salt=0)          # seed 4 eases only a tempo day next to a hard one
     day = MONDAY + timedelta(days=1)
     _sync(plan, day, -40)
-    S = _sessions(plan)
 
     def hard_pairs(p):
         hs = sorted(date.fromisoformat(d) for d, s in _sessions(p).items()
                     if date.fromisoformat(d) >= day and tp._session_is_hit(s))
         return {(a, b) for a, b in zip(hs, hs[1:]) if (b - a).days < 2}
 
-    moves = []
+    moves = _moves_beside_a_hard_day(plan, day)
+    assert moves, "no eased day can be moved next to a hard one"
+    for src, dst, _hard in moves:
+        p = copy.deepcopy(plan)
+        assert _apply_move_session(p, src, dst)
+        before = hard_pairs(p)
+        _sync(p, day, -5)
+        assert not hard_pairs(p) - before, f"{src} moved to {dst} came back hard beside another"
+
+
+def _moves_beside_a_hard_day(plan, day):
+    """Same-week moves of an eased day onto a non-hard day beside a hard one,
+    as (eased day, destination, the hard neighbours)."""
+    S = _sessions(plan)
+    out = []
     for d, s in sorted(S.items()):
         if not s.get("tsb_eased_from"):
             continue
         dd = date.fromisoformat(d)
         for k in range(7):
             dst = dd - timedelta(days=dd.weekday() - k)
-            nb = [(dst + timedelta(days=j)).isoformat() for j in (-1, 1)]
+            hard = [x for x in ((dst + timedelta(days=j)).isoformat() for j in (-1, 1))
+                    if x != d and tp._session_is_hit(S.get(x))]
             if (dst > day and dst != dd and dst.isoformat() in S
-                    and not tp._session_is_hit(S[dst.isoformat()])
-                    and any(x != d and tp._session_is_hit(S.get(x)) for x in nb)):
-                moves.append((d, dst.isoformat()))
+                    and not tp._session_is_hit(S[dst.isoformat()]) and hard):
+                out.append((d, dst.isoformat(), hard))
                 break
-    assert moves, "no eased day can be moved next to a hard one"
-    for src, dst in moves:
+    return out
+
+
+def test_a_restore_keeps_to_the_riders_availability():
+    """The rider cut an eased day's hours, and the restore wrote the whole
+    original back: a hard session on a 0 h day (the fix review, F1). D5:
+    availability is a ceiling. A restore undoes only what the easing did."""
+    plan = _stored()
+    day = MONDAY + timedelta(days=2)
+    _sync(plan, day, -40)
+    eased = sorted(d for d, s in _sessions(plan).items() if s.get("tsb_eased_from"))
+    assert len(eased) >= 2, "this needs two eased days"
+    cut = {eased[0]: 0.0, eased[-1]: 0.75}
+    _sync(plan, day, -40, availability_overrides=cut)
+    once = {d: (_sessions(plan)[d]["session_type"], _sessions(plan)[d]["duration_min"]) for d in cut}
+    assert once[eased[0]] == ("rest", 0) and once[eased[-1]][1] <= 45
+    _sync(plan, day, -5)
+    after = _sessions(plan)
+    assert {d: (after[d]["session_type"], after[d]["duration_min"]) for d in cut} == once
+
+
+def test_a_dismissed_neighbour_does_not_block_a_restore():
+    """D6: a dismissed session costs nothing, spacing included. The 48 h check
+    counted it, so an eased day moved beside a hard day the rider then
+    dismissed stayed eased for good (the fix review, F2)."""
+    import copy
+    from app import _apply_move_session
+    plan = _stored(seed_salt=0)
+    day = MONDAY + timedelta(days=1)
+    _sync(plan, day, -40)
+    moves = [m for m in _moves_beside_a_hard_day(plan, day) if len(m[2]) == 1]
+    assert moves, "no eased day can be moved beside exactly one hard day"
+    for src, dst, (hard,) in moves:
         p = copy.deepcopy(plan)
+        original = _sessions(p)[src]["tsb_eased_from"]["session_type"]
         assert _apply_move_session(p, src, dst)
-        before = hard_pairs(p)
+        _sessions(p)[hard].update(status="dismissed", dismissed_at="2026-09-15T08:00:00")
         _sync(p, day, -5)
-        assert not hard_pairs(p) - before, f"{src} moved to {dst} came back hard beside another"
+        assert _sessions(p)[dst]["session_type"] == original, \
+            f"{src} moved to {dst} stayed eased beside the dismissed {hard}"

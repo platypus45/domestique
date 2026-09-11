@@ -91,11 +91,12 @@ jobs:
           retention-days: 7
 
       - name: Attach DMG to release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
           files: dist_dmg/Domestique.dmg
           fail_on_unmatched_files: true
+          tag_name: ${{ inputs.tag || github.ref_name }}
 
   # ───────────────────────────────────────────────────────────────────
   # Windows EXE
@@ -467,11 +468,12 @@ jobs:
           retention-days: 7
 
       - name: Attach EXE to release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
           files: Domestique-Windows.zip
           fail_on_unmatched_files: true
+          tag_name: ${{ inputs.tag || github.ref_name }}
 
   # ───────────────────────────────────────────────────────────────────
   # Linux AppImage — ADDITIVE AND NON-BLOCKING
@@ -806,7 +808,7 @@ jobs:
           retention-days: 7
 
       - name: Attach AppImage to release
-        if: startsWith(github.ref, 'refs/tags/v') && env.APPIMAGE != ''
+        if: (startsWith(github.ref, 'refs/tags/v') || inputs.tag != '') && env.APPIMAGE != ''
         # Belt and braces on top of the job-level flag: a flaky asset upload
         # must not be able to take the macOS/Windows release down with it.
         continue-on-error: true
@@ -814,6 +816,7 @@ jobs:
         with:
           files: ${{ env.APPIMAGE }}
           fail_on_unmatched_files: true
+          tag_name: ${{ inputs.tag || github.ref_name }}
 
   # ───────────────────────────────────────────────────────────────────
   # Linux clean-room check — also non-blocking, also uncoupled from mac/win.

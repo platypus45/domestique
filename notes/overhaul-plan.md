@@ -631,95 +631,132 @@ number has to win.
 
 The owner's decision (2026-09-11): load ramps by Couzens, the build carries
 the most it safely can, and the planner needs no input to do it. A week's
-budget is one number, `LoadRamp`'s:
-- **The ramp.** CTL is a 42-day and ATL a 7-day exponentially weighted mean
-  of daily TSS (Banister; Coggan's performance manager). Raising CTL by r
-  points in a week takes W = 7 × (CTL + r / (1 − (41/42)^7)), and a ramp of
-  r held for weeks puts TSB near −5r. The build ramps at `RAMP_BUILD` = 6,
-  which sits at TSB −30, the floor of Coggan's productive band
-  (`TSB_PRODUCTIVE_FLOOR`); the peak at `RAMP_CONSERVATIVE` (3); base and
-  the rest at Couzens' `safe_ramp_rate`, capped at `RAMP_BUILD`. The goal's
-  target CTL (`plan_target_ctl`) is where the ramp stops.
-- **The guards.** No week over 1.3× the mean of the four before it (Gabbett
-  2016's sweet spot), 1.5× in the build (the danger threshold,
-  `ACWR_BUILD_CEILING`). The history starts at the rider's chronic load, the
-  lower of the archive's mean and CTL × 7. Their hours cap it at 65 TSS an
-  hour (D5).
-- **The cuts.** An unload week is 0.72 of the last full load week (Issurin)
-  and at most 0.9 of the lightest in its block (B3). The taper takes its
-  fraction of the most of the last three full load weeks (Mujika & Padilla
-  2003), as the week-total pass trims it; consolidation takes half of the
-  last one.
+budget is one number, `LoadRamp`'s. CTL is a 42-day and ATL a 7-day
+exponentially weighted mean of daily TSS.
+- **The ramp is Couzens' loading rule.** A load week carries CTL + k TSS a
+  day. His default, k = 30 (his "1,2,3"), ramps CTL about 10 a month with
+  TSB bottoming near −20 at the end of a three-week load. His "2,4,6"
+  (k = 60: 20 a month, TSB −40) he keeps for the exceptional athlete
+  ([Couzens, "CTL ramp rates"](https://www.alancouzens.com/blog/CTLramp.html)).
+  - Base and continuous blocks take the default.
+  - The build takes k = 45: the top of the 5–15 a month he finds sustainable
+    for most athletes, with TSB near −30. That is also where Friel's
+    productive band ends
+    ([Friel, "Managing training using TSB"](https://joefrieltraining.com/managing-training-using-tsb/)).
+  - The peak holds to `RAMP_CONSERVATIVE`, and the goal's target CTL
+    (`plan_target_ctl`) stops the ramp.
+- **The guard is Gabbett's sweet spot, in every phase.** No week goes over
+  1.3× the mean of the four before it (Gabbett 2016).
+  - The history starts at the rider's chronic load, the lower of the
+    archive's mean and CTL × 7. A rider with neither starts at Couzens'
+    rule for CTL 0, 210 TSS.
+  - Their hours cap every budget at 65 TSS an hour (D5).
+- **The cuts.**
+  - An unload week is 0.72 of the last full load week (Issurin) and at most
+    0.9 of the lightest in its block (B3).
+  - The taper takes its fraction of the most of the last three full load
+    weeks (Mujika & Padilla 2003), as the week-total pass trims it.
+  - Consolidation takes half of the last full load week.
 - **What it follows.** Each emitter feeds the ramp the rows it builds, at
-  what they prescribe capped at their budget. A ramp fed its own budgets
-  overstated the history by about a quarter, because the builders
-  under-deliver. A row already behind today moves nothing: the rider's CTL
-  holds what they rode. A plan declared eight weeks in otherwise asked
-  468 TSS of a rider carrying 245 in the week they enter (1.91×).
-- The phase labels are the mean of each phase's load-week budgets from a dry
-  run of the same ramp. The UI and the entry scan read them.
+  what they prescribe capped at their budget. Extend's kept weeks and
+  regenerate's recovery weeks are fed the same way. A row already behind
+  today moves nothing: the rider's CTL holds what they rode.
+- **The labels are a projection.** A dry run of the same ramp, fed its own
+  budgets, gives each phase's label for the preview and the entry scan. The
+  builders deliver less than their budgets, and the weeks' ramp follows what
+  they deliver. So the labels run above the built weeks' budgets, by up to
+  1.5× in the probe plans. The home card sizes its week from the plan's own
+  rows.
 
-Gone: the flat per-phase targets, the peak × Gabbett block in
-`generate_phases`, and the week-total pass's "polarized base fill", which let
-easy volume fill to 1.3× the rider's load on the day of planning. The owner
-reads the same number (`WeekContext.tss_target`).
+**Where the two rules meet.** For a rider below about CTL 100, the sweet spot
+binds before Couzens' rule does. At CTL 43, his default load week would be
+511 TSS against a chronic load of 300: 1.7×, past Gabbett's danger line at
+1.5×. So for such riders base and build carry the same load growth, the most
+the sweet spot allows, and differ in content. The build's larger k binds only
+for fitter riders. That is D1: the load budget first. Part 3's first version
+had budgeted the build at 1.5×, Gabbett's danger threshold, as its setpoint
+(the part 3 review, H2).
 
-Fixed on the way, each with a test that fails on the fault:
+Gone:
+- the flat per-phase targets;
+- the peak × Gabbett block in `generate_phases`;
+- the week-total pass's "polarized base fill", which let easy volume fill to
+  1.3× the rider's load on the day of planning.
+
+The owner reads the same number (`WeekContext.tss_target`).
+
+Fixed on the way. Each fix has a test, and each test was checked to fail with
+its fault planted:
 - **D6 read against the wrong number.** A week counts as unridden when the
-  rider rode at most 0.72 of what it prescribed (`_went_unridden`). Against
-  its budget, a fully ridden week that under-delivered read as unridden.
-- **The unload rest-day rule (issue #4) cut past Issurin.** With four
-  training days, each rest day took a quarter of the week: a novice's unload
-  week fell to 88 TSS against a 179 budget. It now stops before the week
-  falls under 60% of the load week before it (`STEPBACK_DEEPEST`; past a
-  ~40% cut the rider detrains).
-- **The cuts read a seam.** They took the last load row, so a two-day row at
-  a phase seam, scaled to a week, set a taper budget of 151 against a
-  pass-trimmed 334. They read the last full load week now.
-- The auditor gains `check_acwr` and `projected_ctl`. `check_acwr` is not in
-  `audit()`, because a plan does not carry the rider's chronic load.
+  rider rode at most 0.72 of what it prescribed (`_went_unridden`).
+  - Against its budget, a fully ridden week that under-delivered read as
+    unridden.
+  - A week of rest days alone counts as unridden too. That is how the
+    planner writes a holiday. Part 3's first version made it a load week
+    (H1).
+- **The unload rest-day rule (issue #4) cut too deep.**
+  - With four training days, each rest day took a quarter of the week. A
+    novice's unload week fell to 88 TSS against a 179 budget, and the load
+    weeks after it read 1.7× against what they were given.
+  - It now stops a sixth under the week's budget (`STEPBACK_DEEPEST` /
+    `STEPBACK_LOAD_FACTOR`), because the ramp has counted the week at its
+    budget.
+- **The cuts read a seam.** They took the last load row. A two-day row at a
+  phase seam, scaled to a week, set a taper budget of 151 against a
+  pass-trimmed 334. They read the last full load weeks now.
+- **A rider with no history got nothing.** At CTL 0 with no rides, the ACWR
+  had nothing to multiply, so every budget was 0 (M4).
+- **The auditor gains `check_acwr` and `projected_ctl`.** `check_acwr` is not
+  in `audit()`, since a plan does not carry the rider's chronic load.
 
-Measured:
+Measured, with the legacy builder:
 - **The owner's rider shape.** A 16-week plan for a rider at 300 TSS a week,
-  CTL 43: CTL at the taper 62 (was 49), and no week over its budget (was 8).
-- **Five riders** (`probe_budget.py`, 150–490 TSS a week, 12 h):
-  - no week over 1.05× its budget;
-  - build weeks over 1.5×: 2 for the 150-TSS rider, 1 for the 250, none
-    from 300 up;
-  - 1 of 60 load weeks under 70% of its budget.
-- **Characterization.** Every plan case moves load (79 of 80 per owner mode;
-  the builders are unchanged). Findings: 34 new and 167 resolved with the
-  legacy builder, 22 and 44 in owner mode. A clean-HEAD control run the same
-  day reproduces the golden exactly, so none of this is environment.
+  CTL 43: CTL at the taper 62 (the flat plan: 49), and no week over its
+  budget (was 8).
+- **Five riders** (150–490 TSS a week, 12 h):
+  - CTL at the taper: 45, 58, 62, 63, 62.
+  - No week over 1.05× its budget.
+  - No week over 1.5× the four before it. The owner-mode builder has one,
+    the 150-TSS rider's.
+  - One week over the sweet spot, also the 150-TSS rider's, after passes
+    moved the weeks before it.
+  - 1 of 60 load weeks under 70% of its budget (owner mode: 2).
+  - Lowest projected TSB −13 to −15, starting from rest.
+- **Characterization, against the plans before part 3.**
+  - Every plan case moves load: 79 of 80 per owner mode. The builders are
+    unchanged.
+  - Findings: 28 new and 165 resolved with the legacy builder, 16 and 43 in
+    owner mode.
+  - A clean-HEAD control run the same day reproduced the old golden
+    exactly, so none of this is environment.
 
 The new findings, by cause:
 - **Nothing in the legacy chain bounds hard work by the budget (M6).** The
-  owner does (`HARD_CEILING_SHARE`). A 3 h/week rider's budget is now the
-  195 TSS their hours carry, so the same two hard sessions of three read as
-  70% hard; where a budget rose, the sampler drew more hard work (278 of 394
-  in one continuous week 1). `hard_share`, 8 cases. Step 6.
+  owner does (`HARD_CEILING_SHARE`). `hard_share`, 8 cases. Step 6.
+  - A 3 h/week rider's budget is the 195 TSS their hours carry, so the same
+    two hard sessions of three read as 70% hard.
+  - Where a budget rose, the sampler drew more hard work: 278 of 394 in one
+    continuous week 1.
 - **Weeks move after the ramp has counted them.** The builders prescribe up
-  to 5% over a budget. Later passes then move the week:
+  to 5% over a budget, and later passes move the week:
   - the week-total pass rests whole easy days and lands under the budget;
   - the unload long-ride cap trims;
   - the event long-ride progression adds.
 
   A regenerated unload week built at 446 against 234 ends at 195. The load
   week after it reads 1.41× against what the rider gets, where the ramp
-  budgeted 1.3× against its own history (a strict xfail in
-  `test_one_athlete_state`). Tapers anchored on the final builds read up to
-  37% over the ramp's budget. Step 6: a week decided once, and followed as
-  decided.
-- **Paths that never ran the passes.** Regenerate, recalculate, extend and
-  refit do not run the B3 pass. Extend and refit run no week-total pass
-  either: extend's unload week was already 52% over its budget at HEAD.
-  Part 3's changed picks took that week to 607 TSS against 239, and a
-  continuous refit to 433 against 303. Step 6.
-- **The sampler at high targets.** It replaces plan_week's skeleton: an event
-  build week laid out at 626 against 627, with two 3 h long rides, came back
-  at 357 with none, 307 after the passes. It is rare (1 of 60 in the probe)
-  and the safe direction, but a build week without a long ride is not event
-  preparation. Step 5b.
+  budgeted 1.3× against its own history (a strict xfail). Tapers anchored
+  on the final builds read up to 19% over the ramp's budget. Step 6: a week
+  decided once, and followed as decided.
+- **Paths that never ran the passes.** Step 6.
+  - Regenerate, recalculate, extend and refit do not run the B3 pass.
+  - Extend and refit run no week-total pass either. Extend's unload week was
+    already 52% over its budget before part 3; changed picks took it to 607
+    TSS against 239, and a continuous refit to 433 against 303.
+- **The sampler under-delivers at high targets.** It replaces plan_week's
+  skeleton: one build week came back at 271 TSS against 563. In part 3's
+  first version, an event week laid out at 626 with two 3 h long rides came
+  back at 357 with none. Step 5b.
 - **Stubs after ridden days** carry the smaller budget of a rider whose hours
   cap them, so a stub's sessions exceed a budget already spent. The sessions
   did not change.
@@ -728,17 +765,63 @@ Recorded:
 - **Recalculate keeps the week in progress as the old plan sized it**, and
   extend keeps its kept weeks the same way. A plan's later weeks assume the
   earlier ones were ridden, and recalculate runs because they were not. Here
-  that is 443 TSS for a rider carrying 250 (1.77×); the flat cap hid it
-  before the ramp. It is pinned as a strict xfail, for Step 6 (kept weeks as
-  derived state).
-- **For the owner.** Reforecast eases the coming week when the rider's TSB
-  is under −25 (`TSB_EASE_BELOW`), and the build is designed to sit at −30.
-  A rider on plan in a build will be eased. Aligning the two at −30, the
-  productive floor, is one constant; it is not changed here.
+  that is 443 TSS for a rider carrying 250 (1.77×). It is a strict xfail
+  that checks that week alone, for Step 6 (kept weeks as derived state).
+- **The home card overshoots unload weeks.** It reads the plan's budget now,
+  but its own session floors do not go that low: 372 TSS for a 287 budget.
+  Step 8, where the card reads the stored week.
+- **Reforecast's easing and the build.** Reforecast eases the coming week
+  when the rider's TSB is under −25 (`TSB_EASE_BELOW`). With the sweet spot
+  binding, the probe plans' projected TSB stays around −13 to −15, so on
+  plan it should rarely fire. The build's k = 45 would take TSB near −30
+  only where Couzens' rule binds, for riders above about CTL 100. There the
+  two numbers disagree, and aligning them is the owner's call.
+- **Regenerate's recovery ramp** reads 1.39× on its own (252 TSS after 181).
+  That predates part 3. Step 6.
 - **Tests rewrite `src/workouts/.library_index.json`.** When the library is
   re-read, the zone shares of 3,200 rows move by a few tenths of a percent.
   That does not move the characterization (the control above), but the file
   must not be committed; `gate.sh` restores it.
+
+#### The part 3 review
+
+An independent reviewer ran part 3's first version and found 2 high, 5 medium
+and 6 low issues. Its report is kept in the scratchpad's `review/p3/`.
+- **H1, a holiday counted as load.** Fixed (above), with
+  `test_a_holiday_restarts_the_count`.
+- **H2, the build at the danger line.** The ACWR term set 27 of 30 build
+  weeks, at 1.5×. Low-load riders got more hard work than before part 3: the
+  150-TSS rider's total rose 107% in owner mode. The guard is 1.3× in every
+  phase now, and no rider crosses 1.5× with the legacy builder.
+- **M1, the citations.**
+  - The −10 to −30 band is Friel's, not Coggan's.
+  - Couzens' rates are as above. A build ramping 6 CTL a week "by Couzens"
+    was not his.
+  - "Past a ~40% cut the rider detrains" had no source, and it is withdrawn.
+    Mujika & Padilla's tapers cut volume 60–90% without losing adaptation.
+    The unload floor is about the history the ramp counted.
+- **M2, a second budget.** The home card sized its week from the phase's
+  label: 694 TSS for a build week the plan budgets at 540. It reads the
+  plan's own rows now.
+- **M3, the recalculate xfail** failed for two reasons. It now checks the
+  week in progress alone.
+- **M4, a rider with no history** got a zero plan in owner mode. Fixed
+  (above).
+- **M5, faults nothing caught.** Each now has a test that fails with the
+  fault planted:
+  - the dry run ignoring the rider's load;
+  - the dry run advancing past rows;
+  - extend building without a budget;
+  - the cuts reading the last row;
+  - the ramp skipping regenerate's recovery weeks;
+  - B3 missing from the ramp.
+- **Low.**
+  - L1: extend fed its kept weeks at their budget, and regenerate its
+    recovery weeks. Both are fed what they prescribe now.
+  - L2: "a rider on plan will be eased" overstated; restated above.
+  - L3 and L4: counts and comments corrected.
+  - L5: the recovery ramp's own 1.39× is recorded above.
+  - L6: W is exact only for evenly spread days, and the code now says so.
 
 #### Step 5, part 4 — one week context (DUP-4, OWN-9) — DONE
 
@@ -923,10 +1006,10 @@ middle-zone work the model is defined by (measured with the 48 h floor fix). *Ve
 a base week's hard classes follow the base row; a vo2max goal draws more VO2 than
 a general one with the bookkeeping on; the per-class minimums still fill.
 
-From part 3: at a high budget the sampler can return a build week without its
-long ride. An event week laid out at 626 TSS with two 3 h long rides came
-back at 357 with none. The class choice has to keep the long ride an event
-plan is built around.
+From part 3: at a high budget the sampler can return a build week far under
+it. In part 3's first version, an event week laid out at 626 TSS with two
+3 h long rides came back at 357 with none. The class choice has to keep the
+long ride an event plan is built around.
 
 ### Step 6 — one week pipeline (R3)
 

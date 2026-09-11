@@ -7,6 +7,7 @@ the rider started from, which the volume pass then filled to that same cap. A
 16-week plan for a rider at 300 TSS a week took CTL from 43 to 49 by the taper,
 with 8 weeks prescribed over their own budget.
 """
+import functools
 from datetime import date, timedelta
 from itertools import takewhile
 
@@ -16,27 +17,31 @@ import plan_invariants as pi
 import training_planner as tp
 
 MONDAY = date(2026, 9, 14)
+ATHLETE = {"ftp": 240, "weight_kg": 72}
+_TODAY = [MONDAY]
 
 
 class _Today(date):
     @classmethod
     def today(cls):
-        return cls(MONDAY.year, MONDAY.month, MONDAY.day)
+        d = _TODAY[0]
+        return cls(d.year, d.month, d.day)
 
 
 @pytest.fixture(autouse=True)
 def _frozen(monkeypatch):
+    _TODAY[0] = MONDAY
     monkeypatch.setattr(tp, "date", _Today)
 
 
+@functools.lru_cache(maxsize=None)
 def _plan(ctl, chronic, hours=12.0):
     goal = tp.Goal(goal_type="event", event_type="granfondo", event_km=160,
                    event_climb_m=2000, target_date=MONDAY + timedelta(weeks=16, days=5),
                    hours_per_week=hours, max_weekday_hours=2.0, max_weekend_hours=4.5,
                    available_days=[1, 2, 3, 4, 5, 6], rest_days=[0], plan_weeks=0)
-    return tp.generate_plan(goal, seed_salt=1, current_ctl=float(ctl),
-                            recent_weekly_tss=float(chronic),
-                            athlete={"ftp": 240, "weight_kg": 72})[1]
+    return tuple(tp.generate_plan(goal, seed_salt=1, current_ctl=float(ctl),
+                                  recent_weekly_tss=float(chronic), athlete=ATHLETE)[1])
 
 
 def _load(w):
@@ -72,31 +77,115 @@ def test_available_hours_are_a_ceiling():
     assert max(w.tss_target for w in _plan(55, 500, hours=6.0)) <= 6 * 65
 
 
-def test_the_acwr_holds_for_a_trained_rider():
-    """A guard on the ramp rather than a regression test (the flat plan never
-    ramped): plan_invariants.check_acwr, from the rider's own load. A 150-TSS
-    rider still crosses 1.5 in two or three build weeks: passes that run after
-    a week is built shave the weeks before it, which the ramp cannot see
-    (Step 6)."""
-    for ctl, chronic in ((43, 300), (55, 385), (70, 490)):
+def test_the_acwr_holds():
+    """No week over 1.3x the mean of the four before it, the top of Gabbett's
+    (2016) sweet spot, in any phase, from riders at 250 TSS a week up. The
+    150-TSS rider's plan crosses it in one week, where passes moved the weeks
+    before it after the ramp had counted them (Step 6); it stays under the
+    danger line (below)."""
+    for ctl, chronic in ((36, 250), (43, 300), (55, 385), (70, 490)):
         bad = pi.check_acwr(_plan(ctl, chronic), chronic)
         assert not bad, (ctl, [str(v) for v in bad])
+
+
+def test_no_rider_crosses_the_danger_line():
+    """Gabbett's danger zone starts at 1.5x. The build was budgeted at it, and
+    the 150- and 250-TSS riders crossed it (the part 3 review, H2)."""
+    for ctl, chronic in ((28, 150), (36, 250), (43, 300), (55, 385), (70, 490)):
+        bad = pi.check_acwr(_plan(ctl, chronic), chronic, limit=pi.ACWR_DANGER)
+        assert not bad, (ctl, [str(v) for v in bad])
+
+
+def test_a_rider_with_no_history_starts_somewhere():
+    """CTL 0 and no rides: the ACWR had nothing to multiply, so every budget was
+    0 (the part 3 review, M4). Couzens' loading rule at CTL 0 is 30 TSS a day."""
+    assert tp.LoadRamp(0.0).budget("base") == 7 * tp.LOAD_K_DEFAULT
+    assert min(w.tss_target for w in _plan(0, 0) if w.phase != "taper") > 0
+
+
+def test_the_cuts_read_full_load_weeks():
+    """A short row at a phase seam, scaled to a week, is a few days' noise: the
+    cuts took the last row, and one taper's budget came out at 151 against a
+    pass-trimmed 334."""
+    ramp = tp.LoadRamp(50.0, 350.0)
+    for weekly, days in ((500.0, 7), (420.0, 7), (350.0, 5), (140.0, 2)):
+        ramp.advance(weekly, days, True)
+    assert ramp.budget("taper", taper_frac=0.6) == 300        # the most of the full weeks
+    assert ramp.budget("base", is_stepback=True) == 302       # 0.72 x the last full one
+
+
+def test_an_unload_week_stays_under_its_blocks_lightest():
+    """B3: 0.72 of the last load week, and at most 0.9 of the block's lightest."""
+    ramp = tp.LoadRamp(50.0, 350.0)
+    for weekly in (300.0, 500.0):
+        ramp.advance(weekly, 7, True)
+    assert ramp.budget("base", is_stepback=True) == 270
+
+
+def _backdated_goal():
+    return tp.Goal(goal_type="event", event_type="granfondo", event_km=160,
+                   event_climb_m=2000, target_date=MONDAY + timedelta(weeks=8, days=6),
+                   hours_per_week=12.0, max_weekday_hours=2.0, max_weekend_hours=4.5,
+                   available_days=[1, 2, 3, 4, 5, 6], rest_days=[0], plan_weeks=0,
+                   start_date=MONDAY - timedelta(weeks=8), entry_mode="declared")
 
 
 def test_a_backdated_plans_elapsed_weeks_build_nothing():
     """A plan declared eight weeks in ramps from the rider's fitness today:
     their CTL already holds what they rode. Fed the elapsed weeks as if ridden
-    to plan, the ramp asked 468 TSS of the week they enter, from a rider
-    carrying 245 (1.91x)."""
-    goal = tp.Goal(goal_type="event", event_type="granfondo", event_km=160,
-                   event_climb_m=2000, target_date=MONDAY + timedelta(weeks=8, days=6),
-                   hours_per_week=12.0, max_weekday_hours=2.0, max_weekend_hours=4.5,
-                   available_days=[1, 2, 3, 4, 5, 6], rest_days=[0], plan_weeks=0,
-                   start_date=MONDAY - timedelta(weeks=8), entry_mode="declared")
-    weeks = tp.generate_plan(goal, seed_salt=1, current_ctl=35.0, recent_weekly_tss=35.0 * 7,
-                             athlete={"ftp": 240, "weight_kg": 72})[1]
+    to plan, the ramp asked 508 TSS of their second week, 1.88x the four
+    before it. The dry run behind the labels had the same fault, unseen: the
+    phases already behind today carry what today's fitness allows."""
+    weeks = tp.generate_plan(_backdated_goal(), seed_salt=1, current_ctl=35.0,
+                             recent_weekly_tss=35.0 * 7, athlete=ATHLETE)[1]
     bad = pi.check_acwr(weeks, 35.0 * 7, MONDAY)
     assert not bad, [str(v) for v in bad]
+    elapsed = [p for p in tp.generate_phases(_backdated_goal(), 35.0, recent_weekly_tss=35.0 * 7)
+               if p.end < MONDAY]
+    assert elapsed and all(p.weekly_tss_target <= tp.ACWR_CEILING * 35 * 7 + 1 for p in elapsed), (
+        [(p.name, p.weekly_tss_target) for p in elapsed])
+
+
+def test_extend_budgets_the_week_it_appends():
+    """A continuous plan's rolling horizon: the week extend appends is budgeted
+    by the ramp that followed the weeks it kept, not at the rolling phase's
+    label, where plan_week falls back when it is handed no budget (the part 3
+    review found no test catching that)."""
+    goal = tp.Goal(goal_type="continuous", hours_per_week=10.0, max_weekday_hours=2.0,
+                   max_weekend_hours=3.0, available_days=[1, 2, 3, 4, 5, 6], rest_days=[0],
+                   plan_weeks=4)
+    _p, weeks = tp.generate_plan(goal, seed_salt=1, current_ctl=40.0,
+                                 recent_weekly_tss=280.0, athlete=ATHLETE)
+    _TODAY[0] = MONDAY + timedelta(weeks=1)
+    phases, all_weeks, info = tp.extend_continuous_plan(goal, weeks, 40.0,
+                                                        recent_weekly_tss=280.0, athlete=ATHLETE)
+    assert info["action"] == "extended"
+    appended = all_weeks[-1]
+    label = phases[0].weekly_tss_target
+    fallback = round(label * tp.STEPBACK_LOAD_FACTOR) if appended.is_stepback else label
+    assert appended.tss_target != fallback, (appended.tss_target, label)
+
+
+def test_the_home_card_sizes_the_plans_own_week(monkeypatch, tmp_path):
+    """The home card (/api/weekly-plan) sized its week from the phase's label,
+    a projection that runs above the built weeks: 694 TSS for a build week the
+    plan budgets at 540 (the part 3 review, M2). It reads the plan's own rows."""
+    import json
+    goal = tp.Goal(goal_type="event", event_type="granfondo", event_km=160,
+                   event_climb_m=2000, target_date=MONDAY + timedelta(weeks=16, days=5),
+                   hours_per_week=12.0, max_weekday_hours=2.0, max_weekend_hours=4.5,
+                   available_days=[1, 2, 3, 4, 5, 6], rest_days=[0], plan_weeks=0)
+    phases, weeks = tp.generate_plan(goal, seed_salt=1, current_ctl=43.0,
+                                     recent_weekly_tss=300.0, athlete=ATHLETE)
+    monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
+    (tmp_path / "current_plan.json").write_text(json.dumps(
+        {"goal": tp.goal_to_dict(goal), "weeks": [tp.week_to_dict(w) for w in weeks]}))
+    week = next(w for w in weeks if w.phase == "build2" and not w.is_stepback)
+    phase = next(p for p in phases if p.name == "build2")
+    assert phase.weekly_tss_target > 1.15 * week.tss_target      # the label runs above
+    _TODAY[0] = week.start
+    card = tp.generate_weekly_plan(goal=goal, current_phase=phase, current_ctl=43.0)
+    assert _load(card) <= 1.10 * week.tss_target, (_load(card), week.tss_target)
 
 
 def _week(i, loads, stepback=False, target=0.0):
@@ -111,13 +200,13 @@ def _week(i, loads, stepback=False, target=0.0):
                   for d, load in enumerate(loads)])
 
 
-def test_rest_days_do_not_cut_an_unload_week_past_issurin():
+def test_rest_days_leave_an_unload_week_near_its_budget():
     """The rule that gives an unload week more rest days than its load weeks
     took a quarter of the week per rest day from a rider on four days: 88 TSS
-    against a 179 budget. It stops where the week would fall under 60% of the
-    load week before it (Issurin: a 20-30% cut; past ~40% the rider detrains),
-    which is 0.60 / 0.72 of a stepback's budget."""
+    against a 179 budget. It stops a sixth under the week's budget
+    (STEPBACK_DEEPEST / STEPBACK_LOAD_FACTOR): the ramp has counted the week at
+    its budget, and the weeks after it are budgeted from that."""
     block = [_week(i, [0, 0, 60, 0, 60, 70, 70]) for i in range(3)]
     unload = _week(3, [0, 0, 45, 0, 45, 50, 50], stepback=True, target=190.0)
     tp._enforce_stepback_is_lightest([*block, unload])
-    assert _load(unload) >= 190 * 0.60 / 0.72 - 1
+    assert _load(unload) >= 190 * tp.STEPBACK_DEEPEST / tp.STEPBACK_LOAD_FACTOR - 1

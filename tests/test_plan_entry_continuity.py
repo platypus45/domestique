@@ -196,12 +196,12 @@ def test_ramp_clamp_remaining_weeks_only():
                       for p in tp.generate_phases(claimed, ctl))
     assert max_claimed < max_legacy, "backdating must not inflate the ramp"
     assert max_claimed < 440, "no build2/440-TSS entry off a bare claim"
-    # The ramp starts at today's fitness and may lift it only as far as the
-    # weeks left allow, so no label asks more than the build's ACWR over the
-    # load a zero-history rider carries, CTL x 7. (That the elapsed weeks move
-    # the ramp nothing is pinned where the target is far enough to show it:
-    # test_week_budget.)
-    assert max_claimed <= tp.ACWR_BUILD_CEILING * ctl * 7 + 1
+    # The ramp starts at today's fitness: the phases already behind today
+    # carry what it allows over the load a zero-history rider carries, CTL x 7
+    # (the weeks left may ramp on from there).
+    elapsed = [p for p in tp.generate_phases(claimed, ctl) if p.end < ANCHOR]
+    assert elapsed and all(p.weekly_tss_target <= tp.ACWR_CEILING * ctl * 7 + 1
+                           for p in elapsed)
 
 
 # ── input gate ───────────────────────────────────────────────────────────────

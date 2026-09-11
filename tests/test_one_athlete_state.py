@@ -64,11 +64,13 @@ def _base(goal):
 def test_the_preview_uses_the_riders_load_not_their_free_time():
     """The preview calls generate_phases with a goal and a CTL, and nothing
     else. It showed 1.8x the load Generate then built. It must lay out the
-    phases Generate lays out, from the rider's load."""
+    phases Generate lays out, from the rider's load: the archive's, and a
+    rider carrying more gets more."""
     def labels(**kw):
         return [(p.name, p.start, p.weekly_tss_target)
                 for p in tp.generate_phases(_goal(), 55.0, **kw)]
     assert labels() == labels(recent_weekly_tss=RECENT)
+    assert labels() != labels(recent_weekly_tss=2 * RECENT)
 
 
 def _rebuild(entry):
@@ -93,10 +95,9 @@ def _rebuild(entry):
 @pytest.mark.parametrize("entry", ["regenerate", "recalculate"])
 def test_a_rebuild_budgets_from_the_riders_load(entry):
     """Each week a rebuild lays out is budgeted within the ACWR of the rider's
-    own load and the weeks budgeted since: 1.3x the mean of the four before
-    it, 1.5x in a build (Gabbett 2016). An entry point that does not read the
-    rider's load starts from CTL x 7 or from their free time, and breaks this
-    in its first week."""
+    own load and the weeks budgeted since: 1.3x the mean of the four before it
+    (Gabbett 2016). An entry point that does not read the rider's load starts
+    from CTL x 7 or from their free time, and breaks this in its first week."""
     weeks, first = _rebuild(entry)
     hist = [RECENT] * 4
     for w in weeks:
@@ -104,8 +105,7 @@ def test_a_rebuild_budgets_from_the_riders_load(entry):
         if w.end < first or days < 4:
             continue
         budget = w.tss_target * 7 / days
-        limit = 1.5 if w.phase in ("build1", "build2") else 1.3
-        assert w.phase == "taper" or budget <= limit * sum(hist[-4:]) / 4 + 1, (
+        assert w.phase == "taper" or budget <= tp.ACWR_CEILING * sum(hist[-4:]) / 4 + 1, (
             entry, w.week_num, budget, hist[-4:])
         hist.append(budget)
 
@@ -122,8 +122,8 @@ def test_no_rebuilt_week_crosses_the_danger_line(entry):
 
 @pytest.mark.xfail(strict=True, reason="passes after the build cut an unload week below the "
                    "budget the ramp has already counted (Step 6)")
-def test_a_regenerated_plan_prescribes_within_the_phase_ratio():
-    """1.3x outside the build. The regenerated unload week is built at 446 TSS
+def test_a_regenerated_plan_prescribes_within_the_sweet_spot():
+    """1.3x, in every phase. The regenerated unload week is built at 446 TSS
     against a 234 budget; the volume pass rests whole days and the unload
     long-ride cap trims it to 195, so the load week after it reads 1.41x
     against the history the rider gets, where the ramp budgeted 1.3x against
@@ -138,9 +138,28 @@ def test_recalculate_rebudgets_the_week_in_progress():
     """A plan's later weeks assume the rider rode the earlier ones. Recalculate
     runs because they did not, and keeps the week in progress verbatim: 443 TSS
     here, for a rider carrying 250 (1.77x). The flat cap hid this before the
-    ramp (Step 5 part 3)."""
+    ramp (Step 5 part 3). Only that week is checked, so the xfail turns green
+    when kept weeks are re-budgeted, whatever else still drifts."""
     weeks, _first = _rebuild("recalculate")
-    assert not pi.check_acwr(weeks, RECENT, _TODAY[0])
+    current = next(w for w in weeks if w.start <= _TODAY[0] <= w.end)
+    assert not [v for v in pi.check_acwr(weeks, RECENT, _TODAY[0])
+                if v.week_num == current.week_num]
+
+
+def test_a_regenerate_ramps_on_from_its_recovery_weeks():
+    """Back from an absence, regenerate lays a recovery ramp, and the plan
+    ramps on from it: the first load week after it is budgeted from what the
+    recovery weeks built, not from the load the rider carried before they
+    stopped (the part 3 review found no test catching the ramp skipping them)."""
+    base = _base(_goal())
+    today = MONDAY + timedelta(weeks=6)
+    _TODAY[0] = today
+    rides = _rides(today - timedelta(days=13), today - timedelta(days=1))   # 4 weeks off, 2 back
+    _p, weeks, info = tp.regenerate_from_today(_goal(), base, 55.0, activities=rides, seed_salt=1)
+    assert info["recovery_ramp_weeks"] > 0
+    after = next(w for w in weeks if w.start >= today and not w.is_stepback
+                 and w.phase not in ("recon", "recovery_ramp"))
+    assert after.tss_target > tp.ACWR_CEILING * RECENT + 1, (after.week_num, after.tss_target)
 
 
 def test_a_regenerate_aims_for_the_goals_own_target():

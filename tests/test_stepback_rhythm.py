@@ -39,6 +39,23 @@ def _goal():
                    available_days=[1, 2, 3, 4, 5, 6], rest_days=[0], plan_weeks=25)
 
 
+def test_a_holiday_restarts_the_count():
+    """Two weeks marked unavailable are written as weeks of rest days. They
+    unloaded the rider (D6), so the first week back is a load week, not the
+    deload the calendar count would make it (the Step 5 review, L4). Part 3
+    had a rest-only week count as a load week, since it prescribed nothing
+    (the part 3 review, H1)."""
+    hol = (MONDAY + timedelta(weeks=5), MONDAY + timedelta(weeks=7, days=-1))
+    _p, weeks = tp.generate_plan(_goal(), seed_salt=1, current_ctl=43.0,
+                                 recent_weekly_tss=300.0, athlete=ATHLETE,
+                                 unavailable_periods=[hol])
+    _TODAY[0] = MONDAY + timedelta(weeks=7)
+    past = [w for w in weeks if w.end < _TODAY[0]]
+    away = [w for w in past if w.start >= hol[0]]
+    assert away and all(tp._went_unridden(w) for w in away)
+    assert not tp.stepback_due(past, "build1")
+
+
 def _unload(w):
     return w.is_stepback or w.phase in ("taper", "recon", "recovery_ramp")
 

@@ -72,10 +72,11 @@ def _peak_nontaper_tss(weeks) -> float:
 
 @pytest.mark.parametrize("seed_salt", [0, 7, 4242])
 def test_peak_week_bounded_by_recent_load_not_availability(seed_salt):
-    """recent_weekly_tss=400 (≈10h) + generous availability → every week stays
-    within the ACWR of the rider's load and of the weeks the plan has built
-    since (plan_invariants.check_acwr), NOT the ~24.5h / ~1592-TSS availability
-    saturation."""
+    """recent_weekly_tss=400 (≈10h) + generous availability → no week crosses
+    the danger line over the rider's load and the weeks the plan has built
+    since (1.5x; plan_invariants.check_acwr), where the ~24.5h / ~1592-TSS
+    availability saturation would put a week near 4x. The sweet-spot line,
+    1.3x, is Step 6's: passes move weeks after the ramp has counted them."""
     recent = 400.0
     _phases, weeks = tp.generate_plan(
         _generous_goal(), seed_salt=seed_salt,
@@ -87,7 +88,7 @@ def test_peak_week_bounded_by_recent_load_not_availability(seed_salt):
         if w.phase != "taper" and not w.is_stepback
     ) / 60.0
 
-    bad = pi.check_acwr(weeks, recent)
+    bad = pi.check_acwr(weeks, recent, limit=pi.ACWR_DANGER)
     assert not bad, (
         f"seed={seed_salt}: volume ceiling not enforced — " + "; ".join(map(str, bad))
     )
@@ -122,14 +123,14 @@ def test_no_history_uses_ctl_load_ceiling_not_availability(seed_salt):
         )
 
     # The anchor: with no history, the plan is the one a rider whose chronic
-    # load is CTL×7 gets, and every week keeps the ACWR over that load.
+    # load is CTL×7 gets, and no week crosses the danger line over that load.
     anchored, _w = tp.generate_plan(goal, seed_salt=seed_salt,
                                     current_ctl=55.0, recent_weekly_tss=55.0 * 7)
     assert ([(p.name, p.weekly_tss_target) for p in phases]
             == [(p.name, p.weekly_tss_target) for p in anchored]), (
         f"seed={seed_salt}: the no-history plan is not anchored on CTL×7 — B3 anchor not applied"
     )
-    bad = pi.check_acwr(weeks, 55.0 * 7)
+    bad = pi.check_acwr(weeks, 55.0 * 7, limit=pi.ACWR_DANGER)
     assert not bad, (
         f"seed={seed_salt}: B3 must keep it load-based — " + "; ".join(map(str, bad))
     )

@@ -371,17 +371,16 @@ def check_stepback_lightest(weeks, today=None) -> list[Violation]:
 
 
 # Acute:chronic workload ratio (Gabbett 2016): past ~1.3x the load the rider
-# has been carrying, injury risk climbs; 1.5x is where the danger zone
-# begins, which a build week may reach and not cross.
+# has been carrying, injury risk climbs, and from 1.5x it is the danger zone.
 ACWR_SWEET_SPOT = 1.3
 ACWR_DANGER = 1.5
-BUILD_PHASES = frozenset({"build1", "build2"})
 
 
-def check_acwr(weeks, chronic, today=None, tolerance=1.05, limit=None) -> list[Violation]:
-    """No week asks more than 1.3x the mean load of the four weeks before it,
-    1.5x in a build phase; ``limit`` holds every phase to one ratio instead
-    (ACWR_DANGER: the line no week may cross).
+def check_acwr(weeks, chronic, today=None, tolerance=1.05,
+               limit=ACWR_SWEET_SPOT) -> list[Violation]:
+    """No week asks more than ``limit`` x the mean load of the four weeks
+    before it: the top of the sweet spot, in every phase, or ACWR_DANGER, the
+    line no week may cross.
 
     The four weeks start as ``chronic``, the load the rider has been carrying,
     and are then the plan's own: a plan that raises the chronic load may raise

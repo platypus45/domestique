@@ -40,12 +40,12 @@ def _frozen(monkeypatch):
     monkeypatch.setattr(tp, "date", _Today)
 
 
-def _stored():
+def _stored(seed_salt=4):
     goal = tp.Goal(goal_type="event", event_type="granfondo", event_km=160, event_climb_m=2000,
                    target_date=MONDAY + timedelta(weeks=16, days=6), hours_per_week=10.0,
                    max_weekday_hours=2.0, max_weekend_hours=4.0,
                    available_days=[1, 2, 3, 4, 5, 6], rest_days=[0], plan_weeks=0)
-    weeks = tp.generate_plan(goal, seed_salt=4, current_ctl=55.0, recent_weekly_tss=380.0,
+    weeks = tp.generate_plan(goal, seed_salt=seed_salt, current_ctl=55.0, recent_weekly_tss=380.0,
                              athlete={"ftp": 240, "weight_kg": 72})[1]
     names = [f.name for f in fields(tp.PlannedSession)]
     return {"goal": {"type": "event", "event_date": goal.target_date.isoformat()},
@@ -65,10 +65,11 @@ def _hard(s):
     return s["session_type"] in tp._HARD_SESSION_TYPES
 
 
-def _sync(plan, day, tsb):
+def _sync(plan, day, tsb, **kw):
     """What the app does on a ride sync: today's TSB, for every future day."""
     _TODAY[0] = day
-    tp.reforecast_dict(plan, tsb_series={day + timedelta(days=i): float(tsb) for i in range(160)})
+    tp.reforecast_dict(plan, tsb_series={day + timedelta(days=i): float(tsb) for i in range(160)},
+                       **kw)
 
 
 def _window(plan, day, lo, hi):
@@ -142,3 +143,83 @@ def test_a_crash_three_weeks_after_a_mild_reading_still_eases():
     after = _sessions(plan)
     assert all(after[d].get("tsb_eased_from") for d in ahead), \
         f"a -60 crash eased {sum(1 for d in ahead if after[d].get('tsb_eased_from'))} of {len(ahead)}"
+
+
+def test_no_reading_is_not_a_recovered_reading(monkeypatch):
+    """ICU down: get_today_metrics returns {} and the app passes no series. The
+    loop read that as 'not fatigued' and restored every eased session (the
+    Step 5 review, M1); the next sync with a reading eased them again."""
+    plan = _stored()
+    day = MONDAY + timedelta(days=2)
+    _sync(plan, day, -40)
+    eased = {d: dict(s) for d, s in _sessions(plan).items() if s.get("tsb_eased_from")}
+    assert eased
+    monkeypatch.setattr(tp, "get_today_metrics", lambda: {})
+    tp.reforecast_dict(plan, tsb_series=None)
+    tp.reforecast_dict(plan, tsb_series={})
+    after = _sessions(plan)
+    assert {d: after[d] for d in eased} == eased
+
+
+# A breach that arms G3: 20 % of the time above threshold against a 10 % target.
+_BREACH = {"actual_polarization": {"z1_pct": 62, "z2_pct": 18, "z3_pct": 20},
+           "target_polarization": {"z1_pct": 80, "z2_pct": 10, "z3_pct": 10}}
+
+
+def test_a_restore_keeps_what_the_polarization_gate_did():
+    """The reading clears in the sync where G3 lowers the restored day. The
+    write-back cleared `adapted` after copying G3's, so the next sync under the
+    same breach lowered the day again: two tiers for one breach (the Step 5
+    review, M3; the ratchet of DUP-22)."""
+    plan = _stored()
+    day = MONDAY + timedelta(days=2)
+    _sync(plan, day, -40)
+    eased = [d for d, s in _sessions(plan).items() if s.get("tsb_eased_from")]
+    _sync(plan, day, -5, **_BREACH)
+    once = {d: dict(s) for d, s in _sessions(plan).items()}
+    lowered = [d for d in eased if once[d]["description"].startswith("G3")]
+    assert lowered, "G3 lowered no restored day, so this proves nothing"
+    assert all(once[d].get("adapted") for d in lowered), "G3's adaptation was erased"
+    _sync(plan, day, -5, **_BREACH)
+    again = _sessions(plan)
+    assert all(again[d] == once[d] for d in lowered), \
+        {d: (once[d]["session_type"], again[d]["session_type"]) for d in lowered}
+
+
+def test_a_restore_keeps_hard_days_48h_apart():
+    """The rider drags an eased day next to a hard one. The move carries the
+    whole session, its record of the original included, and the restore put
+    the hard original back there: 8 of 18 such moves in the Step 5 review (M4).
+    Spacing ranks above the session count (D1), so the day stays eased."""
+    import copy
+    from app import _apply_move_session
+    plan = _stored(seed_salt=0)          # seed 4 eases only a tempo day next to a hard one
+    day = MONDAY + timedelta(days=1)
+    _sync(plan, day, -40)
+    S = _sessions(plan)
+
+    def hard_pairs(p):
+        hs = sorted(date.fromisoformat(d) for d, s in _sessions(p).items()
+                    if date.fromisoformat(d) >= day and tp._session_is_hit(s))
+        return {(a, b) for a, b in zip(hs, hs[1:]) if (b - a).days < 2}
+
+    moves = []
+    for d, s in sorted(S.items()):
+        if not s.get("tsb_eased_from"):
+            continue
+        dd = date.fromisoformat(d)
+        for k in range(7):
+            dst = dd - timedelta(days=dd.weekday() - k)
+            nb = [(dst + timedelta(days=j)).isoformat() for j in (-1, 1)]
+            if (dst > day and dst != dd and dst.isoformat() in S
+                    and not tp._session_is_hit(S[dst.isoformat()])
+                    and any(x != d and tp._session_is_hit(S.get(x)) for x in nb)):
+                moves.append((d, dst.isoformat()))
+                break
+    assert moves, "no eased day can be moved next to a hard one"
+    for src, dst in moves:
+        p = copy.deepcopy(plan)
+        assert _apply_move_session(p, src, dst)
+        before = hard_pairs(p)
+        _sync(p, day, -5)
+        assert not hard_pairs(p) - before, f"{src} moved to {dst} came back hard beside another"

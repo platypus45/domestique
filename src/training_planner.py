@@ -11798,7 +11798,12 @@ def reforecast(
                 if not eased_from and (s.adapted or s.session_type not in _HARD_SESSION_TYPES):
                     continue  # not hard, or eased by something else (G3, the rider)
                 tsb = _tsb_at(s.day)
-                fatigued = (tsb is not None and tsb < TSB_EASE_BELOW
+                if tsb is None:
+                    # No reading (ICU down: get_today_metrics answers {}) is not
+                    # a recovered one. Read as "not fatigued", an outage undid
+                    # every easing (the Step 5 review, M1).
+                    continue
+                fatigued = (tsb < TSB_EASE_BELOW
                             and (s.day - today).days <= TSB_EASE_HORIZON_DAYS)
                 if fatigued and not eased_from:
                     new_type = _ease_for_recovery(s.session_type)
@@ -11813,6 +11818,13 @@ def reforecast(
                     _rematch_eased(s, pw)
                     downshifts.append(s.day.isoformat())
                 elif eased_from and not fatigued:
+                    if (_session_is_hit(eased_from)
+                            and _slot_breaks_hard_spacing(pw, plan_weeks, s.day)):
+                        # Putting it back would put two hard days inside 48 h:
+                        # the rider moved the eased day, or a rebuild planned
+                        # around it (the Step 5 review, M4). Spacing outranks
+                        # the session count (D1), so the day stays eased.
+                        continue
                     for k, v in eased_from.items():
                         setattr(s, k, v)
                     del s.tsb_eased_from
@@ -12203,15 +12215,23 @@ def week_to_dict(w) -> dict:
 
 
 def week_from_dict(d: dict) -> "PlannedWeek":
-    """The inverse of week_to_dict. Raises on a malformed start, end or
-    session day: a rebuild writes back every week it read, so a row it could
-    not read has to stop the write rather than vanish from it. Reforecast's
-    reader, which edits the stored rows in place, skips such a week and logs."""
+    """The inverse of week_to_dict. Raises on a malformed start or end.
+
+    A session with no readable day has no place in the plan, so it is skipped
+    and logged. Raising on it answered 500 from every rebuild, the ride-sync
+    update and rematch while it sat in the current week, and reforecast's
+    reader dropped the whole week (the Step 5 review, M2). A rebuild writes
+    back what it read, so the row goes at the next rebuild; the log keeps it."""
     kw = {k: d[k] for k in _WEEK_FIELDS if k in d and k not in ("start", "end", "sessions")}
     for k, v in _WEEK_DEFAULTS.items():
         if kw.get(k) is None:
             kw[k] = v
-    sessions = [session_from_dict(s) for s in d.get("sessions") or []]
+    sessions = []
+    for s in d.get("sessions") or []:
+        try:
+            sessions.append(session_from_dict(s))
+        except (KeyError, TypeError, ValueError):
+            log.warning("plan codec: skipped a session it could not read: %r", s)
     return PlannedWeek(start=_as_date(d["start"]), end=_as_date(d["end"]),
                        sessions=sessions, **kw)
 
@@ -12432,8 +12452,11 @@ def _apply_reforecast_to_dict(
             eased_from = getattr(src, "tsb_eased_from", None)
             if eased_from:
                 s_json["tsb_eased_from"] = eased_from
-            elif s_json.pop("tsb_eased_from", None) is not None:
-                # The fatigue easing was undone: the day is its plan again.
+            elif (s_json.pop("tsb_eased_from", None) is not None
+                  and not getattr(src, "adapted", False)):
+                # The fatigue easing was undone and nothing has adapted the day
+                # since. G3 can lower a restored day in the same sync; clearing
+                # its flag let G3 lower the day again next sync (review M3).
                 s_json["adapted"] = False
                 s_json.pop("adapted_reason", None)
             sessions_changed += 1

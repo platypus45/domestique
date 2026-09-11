@@ -64,6 +64,21 @@ def test_a_plan_round_trips_unchanged_and_serialises():
     assert any(s.get("is_race") for d in once for s in d["sessions"]), "fixture has a race"
 
 
+def test_a_session_with_no_day_costs_that_session_not_its_week():
+    """A stored session with no readable day has no place in the plan. The
+    codec raised on it, so while one sat in the current week every rebuild, the
+    ride-sync update and rematch answered 500, and reforecast dropped its whole
+    week (the Step 5 review, M2). It is skipped and logged; the week is read."""
+    _g, weeks = _plan()
+    d = tp.week_to_dict(weeks[1])
+    n = len(d["sessions"])
+    d["sessions"][0].pop("day")
+    d["sessions"][1]["day"] = "not a date"
+    assert len(tp.week_from_dict(d).sessions) == n - 2
+    (w,) = tp._plan_dict_to_planned_weeks({"weeks": [d]})
+    assert len(w.sessions) == n - 2
+
+
 def test_every_field_is_written():
     _g, weeks = _plan()
     d = tp.week_to_dict(weeks[0])

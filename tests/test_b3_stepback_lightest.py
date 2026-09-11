@@ -63,7 +63,13 @@ class TestStepbackIsLightest(unittest.TestCase):
                         continue
                     builds, j = [], i - 1
                     while j >= 0 and not getattr(weeks[j], "is_stepback", False):
-                        if weeks[j].phase != "taper":
+                        # Full weeks only, as the pass and the auditor judge
+                        # it: a plan generated on a Friday opens with a 3-day
+                        # row, which is no load week of the block, and
+                        # comparing against it made the result depend on the
+                        # weekday the test ran.
+                        if (weeks[j].phase != "taper"
+                                and (weeks[j].end - weeks[j].start).days + 1 >= 7):
                             builds.append(weeks[j])
                         j -= 1
                     if not builds:

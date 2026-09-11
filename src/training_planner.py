@@ -8258,6 +8258,12 @@ def _apply_long_ride_target(sessions: list, target_min: int, max_weekend_min: in
         wd = day.weekday() if hasattr(day, "weekday") else None
         if wd not in (5, 6):
             continue
+        # Never the day before an FTP test: it is taken on fresh legs (Allen &
+        # Coggan). This pass runs after the test is placed, and grew the
+        # Saturday before a Sunday test into a 130-minute ride.
+        if any(getattr(t, "session_type", "") == "ftp_test"
+               and getattr(t, "day", None) == day + timedelta(days=1) for t in sessions):
+            continue
         if best is None or s.duration_min > best.duration_min:
             best = s
     if best is None or best.duration_min >= cap:    # no weekend Z2 slot, or already long enough
@@ -9107,6 +9113,60 @@ def _strip_elapsed_sessions(weeks: list, start_date: "date | None") -> None:
                           if getattr(s, "day", None) is None or s.day >= today]
 
 
+# A test day: a Coggan-20 or Ramp protocol with its warm-up, about an hour.
+_FTP_TEST_MIN, _FTP_TEST_TSS = 60, 70.0
+
+
+def _rested_test_day(week, around=()) -> "PlannedSession | None":
+    """The day in ``week`` to test FTP on, rested (Allen & Coggan): the latest
+    still-to-come trainable day whose two previous days are easy and whose
+    next day is not hard, so the test neither follows hard work nor sits
+    inside 48 h of the next. When the week allows, it keeps the week's long
+    ride and does not follow it: the long ride is the heaviest easy load, and
+    the day after it is not fresh. ``around`` are the neighbouring weeks'
+    sessions, which the day checks see across the week boundary."""
+    easy = ("rest", "z2", "long_z2", "recovery")
+    by_day = {s.day: s for s in [*around, *week.sessions]
+              if getattr(s, "day", None) is not None}
+    today = date.today()
+    days = [s for s in sorted((s for s in week.sessions
+                               if getattr(s, "day", None) is not None),
+                              key=lambda s: s.day, reverse=True)
+            if not (s.session_type == "rest" or s.day < today or _protect_race(s)
+                    or getattr(s, "user_moved", False)
+                    or getattr(s, "status", "pending") != "pending")]
+
+    def rested(s, spare_long_ride: bool) -> bool:
+        before = [by_day.get(s.day - timedelta(days=k)) for k in (1, 2)]
+        if not all(b is None or b.session_type in easy for b in before):
+            return False
+        if _session_is_hit(by_day.get(s.day + timedelta(days=1))):
+            return False
+        return not spare_long_ride or (
+            s.session_type != "long_z2"
+            and getattr(before[0], "session_type", "") != "long_z2")
+
+    return (next((s for s in days if rested(s, True)), None)
+            or next((s for s in days if rested(s, False)), None))
+
+
+def _make_ftp_test(s) -> None:
+    """Turn ``s`` into the test; match_zwo serves a Coggan-20 or Ramp file."""
+    old_type = s.session_type
+    s.session_type = "ftp_test"
+    s.zwo_file = ""
+    s.zwo_name = ""
+    s.matched = False
+    s.duration_min = _FTP_TEST_MIN
+    s.tss_estimate = _FTP_TEST_TSS
+    s.description = (
+        f"FTP TEST — Coggan-20 or Ramp protocol, on rested legs: its number "
+        f"sets the next block's zones (Allen-Coggan TR&P 3rd ed., 4-6 week "
+        f"re-test cadence). Originally scheduled as {old_type}; the FTP-test "
+        f"detector on the FIT-import path will suggest an FTP update."
+    )
+
+
 def _inject_mid_cycle_ftp_tests(weeks: list, phases: list) -> None:
     """v1.0.0 — schedule FTP test sessions at phase boundaries to recalibrate
     FTP mid-cycle, preventing systematic overload from stale FTP.
@@ -9198,35 +9258,47 @@ def _inject_mid_cycle_ftp_tests(weeks: list, phases: list) -> None:
         prev = day_type_by_date.get(d - timedelta(days=1))
         return prev is None or prev in skip_types
 
-    for week in weeks:
-        if getattr(week, "is_stepback", False):
-            continue
-        if getattr(week, "start", None) not in test_phase_starts:
-            continue
-        eligible = [
-            s for s in week.sessions
-            if s.session_type not in skip_types
-            # PART B: never convert a pre-today slot (the elapsed strip would
-            # delete the test); fresh plans have no pre-today slots → no-op.
-            and not (getattr(s, "day", None) is not None and s.day < today)
-        ]
-        if not eligible:
-            continue
-        s = next((c for c in eligible if _prev_day_easy(c)), eligible[0])
-        old_type = s.session_type
-        s.session_type = "ftp_test"
-        s.zwo_file = ""           # let match_zwo find a Coggan-20 / Ramp file
-        s.zwo_name = ""
-        s.matched = False
-        s.duration_min = 60
-        s.tss_estimate = 70.0
-        s.description = (
-            f"FTP TEST — Coggan-20 or Ramp protocol. "
-            f"Mid-cycle recalibration (Allen-Coggan TR&P 3rd ed., "
-            f"4-6 week re-test cadence) prevents stale-FTP overload. "
-            f"Originally scheduled as {old_type}; the FTP-test detector "
-            f"on the FIT-import path will suggest an FTP update."
-        )
+    # The owner's decision: test rested. A re-test ends the unload week before
+    # the block it calibrates, the latest within four weeks of its start
+    # (Allen & Coggan: a test is valid on fresh legs, and its number sets the
+    # block's zones). It used to open the block wherever the 3:1 rhythm had
+    # that week, and was barred from stepback weeks, so a block starting two
+    # load weeks after an unload tested tired. The continuous baseline stays
+    # in week 2: with no recent test, an early number beats a rested one
+    # three weeks on.
+    baseline = any(getattr(p, "name", "") == "continuous" for p in phases)
+    around = [s for w in weeks for s in w.sessions]
+
+    def _has_test(w) -> bool:
+        return any(x.session_type == "ftp_test" for x in w.sessions)
+
+    for bs in test_phase_starts:
+        unloads = [] if baseline else sorted(
+            (w for w in weeks
+             if _is_unload_week(w) and getattr(w, "phase", "") != "taper"
+             and bs - timedelta(days=28) <= w.start < bs + timedelta(days=7)
+             and w.end >= today and not _has_test(w)),
+            key=lambda w: w.start, reverse=True)
+        s = next((d for d in (_rested_test_day(w, around) for w in unloads) if d), None)
+        if s is None:
+            # No unload week before the block (a short or rebuilt plan), or the
+            # baseline: the block's own first week, on its most rested day.
+            week = next((w for w in weeks if w.start == bs
+                         and not getattr(w, "is_stepback", False)), None)
+            if week is None or _has_test(week):
+                continue
+            eligible = [
+                c for c in week.sessions
+                if c.session_type not in skip_types
+                # PART B: never convert a pre-today slot (the elapsed strip
+                # would delete the test); fresh plans have no pre-today slots.
+                and not (getattr(c, "day", None) is not None and c.day < today)
+            ]
+            s = _rested_test_day(week, around) or next(
+                (c for c in eligible if _prev_day_easy(c)),
+                eligible[0] if eligible else None)
+        if s is not None:
+            _make_ftp_test(s)
 
 
 # ── SAFETY: weekly HIT-count cap (planner FIX-1) ──────────────────────────────
@@ -13680,9 +13752,10 @@ def recalculate_plan(
             is_stepback = stepback_due([*past_weeks, *new_weeks], phase.name,
                                        _row_end(cursor, phase))
 
-            # Insert FTP test when due (weeks-since-last-test ≥ 6; due-ness
-            # persists across a stepback/taper collision instead of vanishing).
-            ftp_test_week = (phase.name != "taper" and not is_stepback
+            # A due test (six weeks since the last) waits for the next unload
+            # week and is taken there, rested (the owner's decision; Allen &
+            # Coggan). It used to skip unload weeks for the next load week.
+            ftp_test_week = (is_stepback
                              and (week_num - _last_test_wk_rc >= 6
                                   if _last_test_wk_rc else week_num >= 6))
 
@@ -13690,34 +13763,13 @@ def recalculate_plan(
                            prev_week_sessions=prev_week_sessions,
                            seed_salt=seed_salt)
 
-            # Insert FTP test session if due. Runs BEFORE the sampler pass so the
-            # ftp_test slot is preserved by the session-replacement skip below.
-            # 3.3.1 hotfix (DIAG_L1 H3): mirror the generate-path placement
-            # rule — prefer a slot whose PREVIOUS calendar day (cross week
-            # boundary via prev_week_sessions) is rest/easy or empty; fall
-            # back to the legacy first-hard-slot. Skeleton types only — the
-            # sampler overwrites the surrounding slots after this, so the
-            # guarantee on this path is best-effort by design.
+            # Placed BEFORE the sampler pass, which keeps an ftp_test slot. The
+            # day is chosen on the skeleton; _ensure_fresh_legs_before_ftp_tests
+            # re-checks the day before it once the weeks are sampled.
             if ftp_test_week:
-                _easy_rc = {"rest", "z2", "long_z2", "recovery"}
-                _day_types_rc = {
-                    s.day: s.session_type
-                    for s in list(prev_week_sessions or []) + list(pw.sessions)
-                    if getattr(s, "day", None) is not None
-                }
-                _cands_rc = [
-                    s for s in pw.sessions
-                    if s.session_type in ("sweetspot", "threshold", "vo2max", "overunder")
-                ]
-                _pick_rc = next(
-                    (s for s in _cands_rc
-                     if getattr(s, "day", None) is not None
-                     and (_day_types_rc.get(s.day - timedelta(days=1)) or "rest") in _easy_rc),
-                    _cands_rc[0] if _cands_rc else None)
+                _pick_rc = _rested_test_day(pw, prev_week_sessions or [])
                 if _pick_rc is not None:
-                    _pick_rc.session_type = "ftp_test"
-                    _pick_rc.description = "FTP test — 20min all-out na 10min warmup. Update zones daarna."
-                    _pick_rc.tss_estimate = round(75 / 60 * TSS_PER_HOUR.get("threshold", 90))
+                    _make_ftp_test(_pick_rc)
                     _last_test_wk_rc = week_num  # W1e: anchor on PLACED tests
 
             # §6.12 — swap preserved (user_moved / done / dismissed) sessions
@@ -13800,7 +13852,10 @@ def recalculate_plan(
                     continue
                 if getattr(s, "status", "pending") != "pending":
                     continue
-                if s.session_type in ("rest", "recovery", "ftp_test"):
+                # A test placed above has no file yet; match serves its
+                # protocol. Skipping ftp_test here left every recalculated
+                # test without a workout to ride.
+                if s.session_type in ("rest", "recovery"):
                     continue
                 if getattr(s, "zwo_file", ""):
                     continue
@@ -14106,9 +14161,9 @@ def extend_continuous_plan(
     # FTP-tests IP W1e: cadence anchored on WEEKS SINCE THE LAST PLANNED TEST,
     # not week_num % 6. The %6 form silently dropped every test week that
     # collided with the 4-week stepback (LCM 12 → real 12-week holes at weeks
-    # 12/24/…). Due-ness now PERSISTS across a stepback collision: the test
-    # lands on the next non-stepback week instead of vanishing. A plan with no
-    # test anywhere is due immediately (first non-stepback appended week).
+    # 12/24/…). Due-ness PERSISTS until the next unload week, where the test is
+    # taken rested (the owner's decision; Allen & Coggan). A plan with no test
+    # anywhere is due immediately (the first appended unload week).
     _last_test_wk = max(
         (w.week_num for w in current_plan_weeks
          if any(getattr(s, "session_type", "") == "ftp_test"
@@ -14120,7 +14175,7 @@ def extend_continuous_plan(
         is_stepback = stepback_due(
             sorted(current_plan_weeks, key=lambda w: w.start) + new_weeks, phase.name,
             _row_end(cursor, phase))
-        ftp_test_week = (not is_stepback
+        ftp_test_week = (is_stepback
                          and (week_num - _last_test_wk >= 6
                               if _last_test_wk else True))
 
@@ -14128,30 +14183,12 @@ def extend_continuous_plan(
                        prev_week_sessions=prev_week_sessions,
                        seed_salt=seed_salt)
 
-        # FTP test placement — mirrors recalculate_plan (prev-day-easy rule,
-        # 3.3.1 H3; runs before the sampler pass so the slot is preserved).
+        # Placed before the sampler pass, which keeps an ftp_test slot, on the
+        # week's most rested day (_rested_test_day, shared with recalculate).
         if ftp_test_week:
-            _easy_cx = {"rest", "z2", "long_z2", "recovery"}
-            _day_types_cx = {
-                s.day: s.session_type
-                for s in list(prev_week_sessions or []) + list(pw.sessions)
-                if getattr(s, "day", None) is not None
-            }
-            _cands_cx = [
-                s for s in pw.sessions
-                if s.session_type in ("sweetspot", "threshold", "vo2max", "overunder")
-            ]
-            _pick_cx = next(
-                (s for s in _cands_cx
-                 if getattr(s, "day", None) is not None
-                 and (_day_types_cx.get(s.day - timedelta(days=1)) or "rest") in _easy_cx),
-                _cands_cx[0] if _cands_cx else None)
+            _pick_cx = _rested_test_day(pw, prev_week_sessions or [])
             if _pick_cx is not None:
-                _pick_cx.session_type = "ftp_test"
-                _pick_cx.description = ("FTP test — 20min all-out na 10min "
-                                        "warmup. Update zones daarna.")
-                _pick_cx.tss_estimate = round(
-                    75 / 60 * TSS_PER_HOUR.get("threshold", 90))
+                _make_ftp_test(_pick_cx)
                 _last_test_wk = week_num  # W1e: anchor on PLACED tests
 
         # Rolling eviction (same windows as recalculate_plan).
@@ -14205,7 +14242,9 @@ def extend_continuous_plan(
         # parity). Anchor the seed on the append start so re-running the same
         # extend is deterministic (pinned-seeds contract).
         for day_idx, s in enumerate(pw.sessions):
-            if s.session_type in ("rest", "recovery", "ftp_test"):
+            # A test placed above has no file yet; match serves its protocol,
+            # as for recalculate. Skipping ftp_test left it without one.
+            if s.session_type in ("rest", "recovery"):
                 continue
             if getattr(s, "zwo_file", ""):
                 continue

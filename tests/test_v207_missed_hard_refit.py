@@ -502,12 +502,11 @@ class TestScheduledFtpTestSurvivesRefit(unittest.TestCase):
                                      recent_weekly_tss=380.0, athlete=athlete)[1]
             test = next(s for w in weeks for s in w.sessions if s.session_type == "ftp_test")
             week = next(w for w in weeks if w.start <= test.day <= w.end)
-            earlier = [s for s in week.sessions if s.day < test.day and s.session_type != "rest"]
-            self.assertTrue(earlier, "nothing before the test to miss")
-            missed = next((s for s in earlier if tp._session_is_hit(s)), earlier[-1])
-            if not tp._session_is_hit(missed):
-                missed.session_type = "vo2max"
-            missed.status = "missed"
+            # A missed hard session earlier in the test's week is what sends
+            # the refit in. A test now ends an unload week, whose first days
+            # are often rest, so the week's first day is marked one.
+            missed = next(s for s in week.sessions if s.day < test.day)
+            missed.session_type, missed.status = "vo2max", "missed"
             now[0] = test.day
             tp.refit_remaining_week(goal, weeks, test.day, seed_salt=1, athlete=athlete)
         after = next(s for s in week.sessions if s.day == test.day)

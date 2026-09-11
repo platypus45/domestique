@@ -741,9 +741,10 @@ jobs:
           tls_backend="$(printf '%s' "$hb" | jq -r '.checks.icu_oauth.tls_backend // empty')"
           [ "$tls_backend" = "openssl" ] || fail "Linux TLS backend is '$tls_backend' (expected openssl)"
           # v3.11.5: the plan self-heal counter must EXIST (contract) — 0 here because a fresh install has no plan.
-          swf="$(printf '%s' "$hb" | jq -r '.checks.plan_readable.sessions_without_file // "missing"')"
+          swf="$(printf '%s' "$hb" | jq -r 'if .checks.plan_readable.sessions_without_file == null then "missing" else (.checks.plan_readable.sessions_without_file | tostring) end')"
           [ "$swf" = "0" ] || fail "plan_readable.sessions_without_file is '$swf' (expected 0)"
-          cu="$(printf '%s' "$hb" | jq -r '.checks.icu_oauth.can_upload_activities // "missing"')"
+          # jq's // treats false as missing — read the boolean explicitly.
+          cu="$(printf '%s' "$hb" | jq -r 'if .checks.icu_oauth.can_upload_activities == null then "missing" else (.checks.icu_oauth.can_upload_activities | tostring) end')"
           [ "$cu" = "false" ] || fail "icu_oauth.can_upload_activities is '$cu' on a fresh install (expected false, present)"
 
           #    ...and the listener must BE the GUI process, not a stage-A leftover.

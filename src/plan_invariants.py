@@ -370,6 +370,65 @@ def check_stepback_lightest(weeks, today=None) -> list[Violation]:
     return out
 
 
+# Acute:chronic workload ratio (Gabbett 2016): past ~1.3x the load the rider
+# has been carrying, injury risk climbs; 1.5x is where the danger zone
+# begins, which a build week may reach and not cross.
+ACWR_SWEET_SPOT = 1.3
+ACWR_DANGER = 1.5
+BUILD_PHASES = frozenset({"build1", "build2"})
+
+
+def check_acwr(weeks, chronic, today=None, tolerance=1.05, limit=None) -> list[Violation]:
+    """No week asks more than 1.3x the mean load of the four weeks before it,
+    1.5x in a build phase; ``limit`` holds every phase to one ratio instead
+    (ACWR_DANGER: the line no week may cross).
+
+    The four weeks start as ``chronic``, the load the rider has been carrying,
+    and are then the plan's own: a plan that raises the chronic load may raise
+    the acute with it, which is what a ramp is. A row is scaled to a full week
+    and counted from four days. The taper is history only: its race is the
+    point of the plan, not a dose. Weeks behind ``today`` are skipped, since
+    ``chronic`` holds what the rider did. Not part of audit(), which has no
+    rider: a plan does not carry their chronic load.
+    """
+    hist, out = [float(chronic)] * 4, []
+    for w in _weeks_ahead(weeks, today):
+        days = (w.end - w.start).days + 1
+        if days < 4:
+            continue
+        load = sum(float(s.tss_estimate or 0) for s in w.sessions if _ridden(s)) * 7 / days
+        mean = sum(hist[-4:]) / 4
+        phase = str(getattr(w, "phase", "")).lower()
+        cap = limit or (ACWR_DANGER if phase in BUILD_PHASES else ACWR_SWEET_SPOT)
+        if phase != "taper" and mean > 0 and load > cap * mean * tolerance + 1:
+            out.append(Violation("acwr", w.week_num,
+                                 f"{load:.0f} TSS a week after four averaging {mean:.0f} "
+                                 f"({load / mean:.2f}x; {cap}x allowed)"))
+        hist.append(load)
+    return out
+
+
+def projected_ctl(weeks, ctl, today=None) -> list[tuple[int, float]]:
+    """The CTL each week's prescription leaves the rider at, from ``ctl`` on
+    ``today``: the 42-day exponentially weighted mean of daily TSS of
+    Banister's model, as Coggan's performance manager computes it. Days behind
+    ``today`` are skipped, since ``ctl`` already holds them."""
+    out = []
+    for w in weeks:
+        day = w.start if today is None else max(w.start, today)
+        if day > w.end:
+            continue
+        tss: dict = {}
+        for s in w.sessions:
+            if _ridden(s):
+                tss[s.day] = tss.get(s.day, 0.0) + float(s.tss_estimate or 0)
+        while day <= w.end:
+            ctl += (tss.get(day, 0.0) - ctl) / 42
+            day += timedelta(days=1)
+        out.append((w.week_num, ctl))
+    return out
+
+
 def check_no_empty_training_week(weeks, goal, rides=None, today=None) -> list[Violation]:
     """A week with a real budget must prescribe something."""
     out = []

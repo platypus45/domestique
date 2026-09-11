@@ -11,6 +11,7 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
+import plan_invariants as pi
 import training_planner as tp
 
 _LIB_INDEX = Path(__file__).resolve().parent.parent / "src" / "workouts" / ".library_index.json"
@@ -24,11 +25,6 @@ def _goal(mode, tmpl="", weeks=16, hpw=10.0):
         available_days=[0, 1, 2, 3, 4, 5, 6], rest_days=[0],
         daily_max_hours={}, plan_weeks=weeks,
         plan_mode=mode, template_id=tmpl)
-
-
-def _wk_tss(w):
-    return sum((s.tss_estimate or 0) for s in w.sessions
-               if s and s.session_type != "rest")
 
 
 class TestPlannerModes(unittest.TestCase):
@@ -107,18 +103,10 @@ class TestPlannerModes(unittest.TestCase):
                         self.assertLessEqual(self._if.get(f, 0.0),
                                              tp._EASY_SLOT_IF_CEILING,
                                              f"easy slot hard file {f}")
-        # B3: each deload < lightest build in its block.
-        for i, wk in enumerate(weeks):
-            if not getattr(wk, "is_stepback", False) or wk.phase == "taper":
-                continue
-            builds, j = [], i - 1
-            while j >= 0 and not getattr(weeks[j], "is_stepback", False):
-                if weeks[j].phase != "taper":
-                    builds.append(weeks[j])
-                j -= 1
-            if builds:
-                self.assertLess(_wk_tss(wk), min(_wk_tss(b) for b in builds),
-                                f"deload W{wk.week_num} not lightest")
+        # B3: each deload is lighter than the load weeks of its block, the full
+        # ones: an opening stub of three days is not a load week (FC1-CLIP),
+        # and counting it made the check depend on the weekday the plan starts.
+        self.assertEqual([str(v) for v in pi.check_stepback_lightest(weeks)], [])
 
 
 if __name__ == "__main__":

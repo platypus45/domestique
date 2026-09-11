@@ -137,12 +137,11 @@ def _snap(s):
 # ── E3 — race immutability, parametrized over every guarded tp mutator ──────
 
 def _mut_volume_ceiling(goal, weeks):
-    tp._enforce_weekly_volume_ceiling(weeks, recent_weekly_tss=650.0, goal=goal)
+    tp._enforce_weekly_volume_ceiling(weeks)
 
 
 def _mut_volume_ceiling_taper_only(goal, weeks):
-    tp._enforce_weekly_volume_ceiling(weeks, recent_weekly_tss=650.0, goal=goal,
-                                      taper_only=True)
+    tp._enforce_weekly_volume_ceiling(weeks, taper_only=True)
 
 
 def _mut_stepback_lightest(goal, weeks):

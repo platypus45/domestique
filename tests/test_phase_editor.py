@@ -152,10 +152,12 @@ def test_gp2_event_custom_labels_dates_tss():
     assert phases[0].start == ANCHOR
     for a, b in zip(phases, phases[1:]):
         assert (b.start - a.end).days == 1
-    # TSS formulas per phase unchanged (lengths only) + progressive overload.
+    # Lengths only: one load ramp lays out both splits, so a phase's label (the
+    # mean of its load weeks' budgets) moves with its length -- a longer base
+    # climbs further up the ramp -- and overload still progresses.
     tss_rec = {p.name: p.weekly_tss_target for p in rec_phases}
     tss_cus = {p.name: p.weekly_tss_target for p in phases}
-    assert tss_rec == tss_cus
+    assert tss_cus["base"] >= tss_rec["base"]        # five base weeks against four
     assert (tss_cus["base"] <= tss_cus["build1"] <= tss_cus["build2"]
             <= tss_cus["peak"])
 

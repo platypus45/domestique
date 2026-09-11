@@ -81,7 +81,7 @@ class TheAuditorFailsWhenItShould(unittest.TestCase):
 class TheOwnerDecidesRatherThanRepairs(unittest.TestCase):
     def _owner(self, ceiling, ridden=None):
         ctx = wp.WeekContext(week_num=1, start=MON, phase=None, goal=goal(),
-                             tss_ceiling=ceiling, ridden=ridden or [])
+                             tss_target=ceiling, ridden=ridden or [])
         return wp.TrainingWeek(ctx)
 
     def test_hard_work_is_capped_at_its_share_of_the_ceiling(self):
@@ -100,7 +100,7 @@ class TheOwnerDecidesRatherThanRepairs(unittest.TestCase):
         taper = tp.Phase(name="taper", start=MON, end=MON + dt.timedelta(days=6), weeks=1,
                          focus="", weekly_tss_target=200, z2_pct=70, hit_per_week=3,
                          session_types=[])
-        ctx = wp.WeekContext(week_num=1, start=MON, phase=taper, goal=goal(), tss_ceiling=200)
+        ctx = wp.WeekContext(week_num=1, start=MON, phase=taper, goal=goal(), tss_target=200)
         tw = wp.TrainingWeek(ctx)
         for d in range(0, 6, 2):
             tw._commit(sess(MON + dt.timedelta(days=d), t="vo2max", dur=60, tss=80))
@@ -159,7 +159,7 @@ class TheSealCatchesLaterWriters(unittest.TestCase):
 
     def _sealed(self):
         ctx = wp.WeekContext(week_num=1, start=MON, phase=None, goal=goal(),
-                             tss_ceiling=300)
+                             tss_target=300)
         tw = wp.TrainingWeek(ctx)
         tw._commit(sess(MON, t="z2", dur=60, tss=50))
         tw.week = week(tw._committed)

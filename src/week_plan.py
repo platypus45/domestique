@@ -255,12 +255,10 @@ class WeekContext:
     # rode, or dismissed. Re-planning may work around them; it may not rewrite
     # them.
     preserved: list = field(default_factory=list)
-    # The caller's authoritative TSS ceiling for this week, when it has one.
-    # generate_plan scales the phase target by ACWR and by the stepback factor
-    # before the week is built; without this the object would re-read the raw
-    # phase number and plan to a target 75% higher than the one the athlete's
-    # recent load justifies.
-    tss_ceiling: float | None = None
+    # The week's budget from the plan's LoadRamp: a full week's, stepback
+    # included, prorated when a short row is clipped. Without one, plan_week
+    # falls back to the phase's label.
+    tss_target: float | None = None
 
     @property
     def end(self) -> date:
@@ -301,8 +299,9 @@ class TrainingWeek:
         athlete had already put in that same calendar week.
         """
         import training_planner as tp
-        if self.ctx.tss_ceiling is not None:
-            gross = float(self.ctx.tss_ceiling)
+        if not getattr(self.week, "tss_target", 0.0) and self.ctx.tss_target is not None:
+            # Before the week is laid out: the ramp's budget, unprorated.
+            gross = float(self.ctx.tss_target)
         elif getattr(self.week, "tss_target", 0.0):
             # plan_week has already applied the stepback discount to this
             # number. Applying it again here took a 217 TSS unload week down to
@@ -554,6 +553,7 @@ class TrainingWeek:
             prev_week_sessions=ctx.prev_week_sessions or None,
             seed_salt=ctx.seed_salt,
             completed_tss=tp._completed_tss_in(ctx.ridden, ctx.start, ctx.end),
+            tss_target=ctx.tss_target,
         )
         # Clip and prorate BEFORE anything is sized against the target. An
         # opening stub week runs Thu..Sun but carries a full week's target

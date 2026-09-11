@@ -714,12 +714,13 @@ def _drop_intensity(level: str) -> str:
 # neither parks it at tempo.
 _EASE_FOR_RECOVERY_TYPE = "z2"
 
-# Reforecast's fatigue easing. TSB_EASE_BELOW is the code's long-standing
-# threshold: conservative, since Coggan's PMC puts sustained TSB below about
-# -30 in the high-risk band. ATL, the fatigue term in TSB, is a 7-day
-# exponentially weighted average (Banister), so today's reading speaks for the
-# coming week and not for a session a month away.
-TSB_EASE_BELOW = -25
+# Reforecast's fatigue easing. Below about -30 TSB, where Friel's productive
+# band ends, the risk climbs, and the build's loading rule (LOAD_K_BUILD)
+# bottoms TSB there: at -25 the easing fought a rider on plan in a build, so
+# the owner aligned both at -30 (2026-09-11). ATL, the fatigue term in TSB, is
+# a 7-day exponentially weighted average (Banister), so today's reading speaks
+# for the coming week and not for a session a month away.
+TSB_EASE_BELOW = -30
 TSB_EASE_HORIZON_DAYS = 7
 # What an eased session was, kept so the easing can be undone. The record also
 # holds what the easing made of the day ("eased_to": type and minutes), so a
@@ -2803,7 +2804,8 @@ def safe_ramp_rate(current_ctl: float) -> float:
 #     20 a month, TSB -40) he keeps for the exceptional athlete. Base and
 #     continuous blocks take the default. The build takes k = 45: the top of
 #     the 5-15 a month he finds sustainable for most athletes, with TSB near
-#     -30, which is also where Friel's productive band ends. The peak holds to
+#     -30, which is also where Friel's productive band ends and reforecast's
+#     fatigue easing starts (TSB_EASE_BELOW). The peak holds to
 #     RAMP_CONSERVATIVE, and no phase ramps past the goal's target CTL. Over a
 #     week of evenly spread days, CTL + k lifts CTL by k x (1 - (41/42)^7);
 #   * no week over 1.3 x the mean of the four before it, in any phase: the top

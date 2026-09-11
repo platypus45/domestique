@@ -770,12 +770,16 @@ Recorded:
 - **The home card overshoots unload weeks.** It reads the plan's budget now,
   but its own session floors do not go that low: 372 TSS for a 287 budget.
   Step 8, where the card reads the stored week.
-- **Reforecast's easing and the build.** Reforecast eases the coming week
-  when the rider's TSB is under −25 (`TSB_EASE_BELOW`). With the sweet spot
-  binding, the probe plans' projected TSB stays around −13 to −15, so on
-  plan it should rarely fire. The build's k = 45 would take TSB near −30
-  only where Couzens' rule binds, for riders above about CTL 100. There the
-  two numbers disagree, and aligning them is the owner's call.
+- **Reforecast's easing and the build, aligned at −30.** Reforecast eased
+  the coming week when the rider's TSB fell under −25 (`TSB_EASE_BELOW`),
+  while the build's k = 45 takes TSB near −30 where Couzens' rule binds, for
+  riders above about CTL 100. The owner aligned both at −30 (2026-09-11),
+  the floor of Friel's productive band.
+  - The continuous plans' deep-fatigue floor
+    (`continuous_policy.TSB_LOW_FLOOR`) mirrored the old −25. It follows,
+    and since that module takes no repo imports, a test pins the two equal.
+  - With the sweet spot binding, the probe plans' projected TSB stays around
+    −13 to −15, so on plan the easing should rarely fire.
 - **Regenerate's recovery ramp** reads 1.39× on its own (252 TSS after 181).
   That predates part 3. Step 6.
 - **Tests rewrite `src/workouts/.library_index.json`.** When the library is

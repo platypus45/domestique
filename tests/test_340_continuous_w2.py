@@ -82,14 +82,22 @@ def test_hrv_above_band_forces_low_aerobic_two_sided():
 
 
 def test_tsb_deep_fatigue_forces_low_aerobic():
-    r = dict(GREEN, tsb=-30.0)
+    r = dict(GREEN, tsb=-31.0)
     out = _suggest(deficits={"high_aerobic": 60}, readiness=r, dsa=9)
     _assert_shape(out)
     assert out["family"] == "low_aerobic"
     assert "tsb" in out["reason"].lower()
-    # boundary: exactly -25 does NOT trip (strictly below the floor)
+    # boundary: exactly -30 does NOT trip (strictly below the floor)
     assert _suggest(deficits={"high_aerobic": 60},
-                    readiness=dict(GREEN, tsb=-25.0))["family"] == "high_aerobic"
+                    readiness=dict(GREEN, tsb=-30.0))["family"] == "high_aerobic"
+
+
+def test_the_deep_fatigue_floor_is_reforecasts():
+    """The continuous suggestion's floor mirrors reforecast's fatigue easing:
+    the policy module keeps no repo imports, so a test keeps the two equal."""
+    import continuous_policy
+    import training_planner
+    assert continuous_policy.TSB_LOW_FLOOR == training_planner.TSB_EASE_BELOW
 
 
 @pytest.mark.parametrize("dsa", [0, 1])

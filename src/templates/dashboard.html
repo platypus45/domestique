@@ -13123,8 +13123,7 @@ async function renderPlanJSON(plan) {
         cal += `<div class="wc-day${todayCls}${stateExtraCls}" data-pg-day="${dayStr}" data-pg-week-idx="${wi}" data-pg-completed="${dayCompleted ? '1' : '0'}" data-pg-rest="0" data-cs="${cardState}" data-content-class="${esc(s.content_class || '')}" style="cursor:pointer;min-height:55px;padding:3px;position:relative;" ${dragAttrs} ondragover="pgDragOver(event)" ondragleave="pgDragLeave(event)" ondrop="pgDrop(event,'${dayStr}',${wi})" onclick="openOverviewDay(${wi},${d},'${dayStr}')">
           <div class="wc-type ${parts.cssCls} pg-card-title" title="${esc(parts.title)}">${esc(parts.title)}</div>
           ${parts.warn}
-          <div class="pg-card-meta">${parts.metaText}</div>
-          ${parts.note}
+          <div class="pg-card-meta">${parts.metaText}</div>${parts.note}
           ${miniSvg}
           ${actualOverlay}
           ${redrawBtn}
@@ -14062,8 +14061,7 @@ function renderCalDay(d, wi, di, phaseKey, today) {
     plannedHtml = `<div class="cal-planned">
       <span class="cal-planned-type ${parts.cssCls}">${esc(parts.title)}</span>
       ${parts.warn}
-      <div class="cal-planned-meta">${parts.metaText}</div>
-      ${parts.note}
+      <div class="cal-planned-meta">${parts.metaText}</div>${parts.note}
     </div>`;
     if (scoreBadge) plannedHtml += scoreBadge;
   }

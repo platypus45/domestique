@@ -53,6 +53,8 @@ log = logging.getLogger(__name__)
 # to stdlib logging so observability still gets a record. The indirection
 # avoids a circular import (app -> tp -> app).
 import error_codes  # leaf module — no circular risk
+from plan_invariants import (  # leaf: the auditor's rules are the planner's
+    ACWR_SWEET_SPOT, UNLOAD_PHASES, chronic_after)
 import week_plan  # single owner of week/session state (lazy tp import inside)
 import workout_facts  # v3.2.0 watertight classifier — L1 facts layer (leaf module)
 _LOG_ERROR_HOOK = None
@@ -1042,27 +1044,25 @@ STEPBACK_DEEPEST = 0.60
 # the same 7-day step without knowing about any of this.
 
 
-# Weeks whose load is reduced by design: the taper, a regenerate's recovery
-# ramp (named "recon" and "recovery_ramp" by build_recovery_ramp), and the
-# consolidation week that closes a non-event plan (Mujika 2010).
-_UNLOAD_PHASES = ("taper", "recon", "recovery_ramp", "consolidation")
-
-
 def _went_unridden(w) -> bool:
-    """A finished week the rider barely rode unloaded them, whatever its label.
+    """A week the rider does not ride unloads them, whatever its label.
 
-    D6: a missed or dismissed session costs nothing. A week whose ridden cost
-    is at or under an unloading week's share of what it prescribed (Issurin's
-    20-30% cut) was an unload in all but name, and the 3:1 count restarts
-    after it: someone back from two weeks off is not due a deload (Step 5
-    review, L4). Measured against the prescription, not the week's budget: a
-    budget the builders fell short of made a fully ridden week look unridden.
-    A week of rest days alone, which is how the planner writes a holiday, is
-    unridden too: nothing was asked, and nothing ridden.
+    D6: a missed or dismissed session costs nothing. A finished week whose
+    ridden cost is at or under an unloading week's share of what it
+    prescribed (Issurin's 20-30% cut) was an unload in all but name, and the
+    3:1 count restarts after it: someone back from two weeks off is not due
+    a deload (Step 5 review, L4). Measured against the prescription, not the
+    week's budget: a budget the builders fell short of made a fully ridden
+    week look unridden. A whole week of rest days, which is how the planner
+    writes a holiday, asks nothing, ahead of today as behind it: read only
+    once it was past, a holiday planned ahead made the first week back a
+    deload (the part 3 review, M-5). A shorter row of rest days says nothing
+    about its calendar week: a plan made on a Thursday opens with one when
+    the rider has already ridden the week's load.
     """
     get = w.get if isinstance(w, dict) else (lambda k, d=None: getattr(w, k, d))
-    end, sessions = get("end"), get("sessions") or []
-    if end is None or not sessions or _as_date(end) >= date.today():
+    start, end, sessions = get("start"), get("end"), get("sessions") or []
+    if start is None or end is None or not sessions:
         return False
     prescribed = ridden = 0.0
     for s in sessions:
@@ -1073,12 +1073,16 @@ def _went_unridden(w) -> bool:
         prescribed += tss
         if not (sget("dismissed_at", "") or sget("status", "") in ("missed", "dismissed")):
             ridden += tss
+    if not prescribed:
+        return (_as_date(end) - _as_date(start)).days + 1 >= 7
+    if _as_date(end) >= date.today():
+        return False
     return ridden <= STEPBACK_LOAD_FACTOR * prescribed
 
 
 def _is_unload_week(w) -> bool:
     get = w.get if isinstance(w, dict) else (lambda k, d=None: getattr(w, k, d))
-    return (bool(get("is_stepback", False)) or (get("phase", "") or "") in _UNLOAD_PHASES
+    return (bool(get("is_stepback", False)) or (get("phase", "") or "") in UNLOAD_PHASES
             or _went_unridden(w))
 
 
@@ -1105,7 +1109,7 @@ def stepback_due(prior_weeks, phase_name: str, row_end: "date | None" = None) ->
     stepback. Counting rows made a lone Monday before a Sunday event a
     47-TSS stepback in 8 of 98 event plans.
     """
-    if phase_name in _UNLOAD_PHASES:
+    if phase_name in UNLOAD_PHASES:
         return False
     if row_end is not None and row_end.weekday() + 1 < 4:
         return False
@@ -1208,10 +1212,8 @@ CONTINUOUS_HORIZON_WEEKS = 4
 # straight onto the existing sampler emphasis channel.
 CONTINUOUS_FOCUS_EMPHASIS = {"ftp": "ftp", "vo2": "vo2max", "both": "ftp_vo2max"}
 # v2.1.0 (E1) — acute:chronic workload upper bound (Gabbett 2016: sweet spot
-# 0.8-1.3, >1.5 doubles injury risk). Caps the generation-time weekly volume
-# at ≤1.3× the rider's recent mean weekly TSS so a fresh plan ramps from real
-# recent load rather than from the sum of daily availability.
-ACWR_CEILING     = 1.3
+# 0.8-1.3, >1.5 doubles injury risk): LoadRamp's guard, the auditor's number.
+ACWR_CEILING     = ACWR_SWEET_SPOT
 # v2.1.0 (F4) — no HARD session in the final N days before an A event. A taper
 # keeps SOME intensity earlier (Mujika), but VO2max/threshold intervals on the
 # event eve leave the legs flat — the last days must be easy openers. The day-3+
@@ -2801,16 +2803,22 @@ def safe_ramp_rate(current_ctl: float) -> float:
 #   * a load week carries CTL + k TSS a day, Couzens' loading rule. His
 #     default, k = 30 (his "1,2,3"), ramps CTL about 10 a month with TSB
 #     bottoming near -20 at the end of a three-week load; k = 60 ("2,4,6",
-#     20 a month, TSB -40) he keeps for the exceptional athlete. Base and
-#     continuous blocks take the default. The build takes k = 45: the top of
-#     the 5-15 a month he finds sustainable for most athletes, with TSB near
-#     -30, which is also where Friel's productive band ends and reforecast's
-#     fatigue easing starts (TSB_EASE_BELOW). The peak holds to
+#     20 a month, TSB -40) he keeps for the exceptional athlete, and for most
+#     he aims at 10-20 a four-week block. Base and continuous blocks take the
+#     default. The build takes the most that stays in that band and above
+#     -30, where Friel's productive band ends and reforecast's fatigue easing
+#     starts (TSB_EASE_BELOW). This ramp re-reads CTL every week and unloads
+#     at 0.72, so its numbers are not his: over evenly spread days a build
+#     block gains 15-20 at k = 40 and bottoms at -30, where k = 45 bottomed at
+#     -34 (test_week_budget pins it). A long weekend takes TSB lower on the
+#     day than evenly spread days do. The peak holds to
 #     RAMP_CONSERVATIVE, and no phase ramps past the goal's target CTL. Over a
 #     week of evenly spread days, CTL + k lifts CTL by k x (1 - (41/42)^7);
-#   * no week over 1.3 x the mean of the four before it, in any phase: the top
-#     of Gabbett's (2016) sweet spot, a guard. His danger zone starts at 1.5,
-#     and no phase is budgeted toward it;
+#   * no week over 1.3 x the load the rider carries, in any phase: the top of
+#     Gabbett's (2016) sweet spot, a guard. His danger zone starts at 1.5, and
+#     no phase is budgeted toward it. The load carried is a 28-day
+#     exponentially weighted mean (plan_invariants.chronic_after), as Murray,
+#     Gabbett et al. (2017) compute it;
 #   * available hours are a ceiling (D5);
 #   * a stepback is 0.72 of the last full load week (Issurin) and clearly
 #     under its block's lightest (B3); the taper takes its fraction of the
@@ -2826,7 +2834,7 @@ def safe_ramp_rate(current_ctl: float) -> float:
 # plan for a rider at 300 TSS a week took CTL from 43 to 49; with the owner's
 # builder, whose weeks kept to the flat labels, to 44.
 LOAD_K_DEFAULT = 30                               # TSS a day over CTL, Couzens
-LOAD_K_BUILD = 45
+LOAD_K_BUILD = 40
 CONSOLIDATION_LOAD_FACTOR = 0.5
 _CTL_WEEK_DECAY = (41 / 42) ** 7                  # of CTL, what a week leaves
 _TSS_PER_AVAILABLE_HOUR = 65                      # the planner's hours-to-load rate
@@ -2837,10 +2845,11 @@ class LoadRamp:
 
     ``ctl`` is the rider's CTL where the ramp starts, ``chronic`` their weekly
     load (athlete_weekly_load), ``target_ctl`` where the ramp stops (None: a
-    continuous plan, bounded only by the guards). The acute:chronic history
-    starts at the lower of ``chronic`` and CTL x 7: the archive's recent mean
-    averages only weeks with a ride, so after an absence it overstated the
-    load the rider carries (the Step 5 review, L1).
+    continuous plan, bounded only by the guards). The load the rider carries,
+    the ACWR's chronic side (plan_invariants.chronic_after), starts at the
+    lower of ``chronic`` and CTL x 7: the archive's recent mean averages only
+    weeks with a ride, so after an absence it overstated the load the rider
+    carries (the Step 5 review, L1).
     """
 
     def __init__(self, ctl, chronic=None, target_ctl=None):
@@ -2851,7 +2860,7 @@ class LoadRamp:
         if start <= 0:
             # Nothing known about the rider: Couzens' loading rule at CTL 0.
             start = 7.0 * LOAD_K_DEFAULT
-        self.hist = [start] * 4
+        self.chronic = start            # the load carried, TSS a week
         self.target = target_ctl
         self.loads: list = []           # full load weeks, in order
         self.block: list = []           # full load weeks since the last unload
@@ -2874,7 +2883,7 @@ class LoadRamp:
         there is one, from the load the rider carries. The taper cuts from the
         most of the last three, the training it rests from (Mujika & Padilla
         2003), as the volume pass trims it."""
-        ref = self.loads[-1] if self.loads else self.hist[-1]
+        ref = self.loads[-1] if self.loads else self.chronic
         if is_stepback:
             load = ref * STEPBACK_LOAD_FACTOR
             if self.block:
@@ -2891,27 +2900,32 @@ class LoadRamp:
             if self.target is not None:
                 k = min(k, max(0.0, float(self.target) - self.ctl) / (1 - _CTL_WEEK_DECAY))
             load = 7 * (self.ctl + k)
-            load = min(load, ACWR_CEILING * sum(self.hist[-4:]) / 4)
+        # The sweet spot guards every week, cuts included: an unload cut from
+        # the last week before a holiday was budgeted at 343 against a cap
+        # of 248 (the part 3 review, L-1).
+        load = min(load, ACWR_CEILING * self.chronic)
         if avail_tss is not None:
             load = min(load, avail_tss)
         return float(round(max(0.0, load)))
 
-    def follow(self, pw, budget, load_week: bool) -> None:
+    def follow(self, pw, budget) -> None:
         """Advance on a built row: what it prescribes (_row_load), over its
-        days. A row wholly in the past -- a backdated plan's elapsed weeks --
-        moves nothing: the rider's CTL today already holds whatever they rode,
-        and a ramp fed those weeks budgeted today from fitness never built."""
+        days, as a load week unless it unloads (_is_unload_week, which knows
+        a holiday). A row wholly in the past -- a backdated plan's elapsed
+        weeks -- moves nothing: the rider's CTL today already holds whatever
+        they rode, and a ramp fed those weeks budgeted today from fitness
+        never built."""
         if pw.end < date.today():
             return
-        self.advance(_row_load(pw, budget), (pw.end - pw.start).days + 1, load_week)
+        self.advance(_row_load(pw, budget), (pw.end - pw.start).days + 1,
+                     not _is_unload_week(pw))
 
     def advance(self, weekly_load, days: int = 7, load_week: bool = True) -> None:
         """A row's load, given per full week, over the row's days."""
         daily = float(weekly_load or 0) / 7
         for _ in range(max(0, int(days))):
             self.ctl += (daily - self.ctl) / 42
-        if days >= 4:
-            self.hist.append(float(weekly_load or 0))
+        self.chronic = chronic_after(self.chronic, weekly_load, days)
         if load_week and weekly_load and days >= 7:
             self.loads.append(float(weekly_load))
             self.block.append(float(weekly_load))
@@ -3793,7 +3807,7 @@ def _entry_week_targets(phases: list, goal=None, ramp=None) -> list[dict]:
                 t = _row_budget(ramp, goal, phase, cursor, is_sb)
                 if end >= date.today():     # as LoadRamp.follow: the past moves nothing
                     ramp.advance(t, (end - cursor).days + 1,
-                                 not is_sb and phase.name not in _UNLOAD_PHASES)
+                                 not is_sb and phase.name not in UNLOAD_PHASES)
             else:
                 t = float(phase.weekly_tss_target)
                 if is_sb:
@@ -8811,8 +8825,7 @@ def generate_plan(
                     # before sizing, and the pass prorates by span each time it
                     # runs -- a second call would shrink a 4-day week again.
                     weeks.append(pw)
-                    _ramp.follow(pw, _budget,
-                                 not is_stepback and phase.name not in _UNLOAD_PHASES)
+                    _ramp.follow(pw, _budget)
                     prev_week_sessions = pw.sessions
                     cursor = _next_week_cursor(cursor, phase)
                     week_num += 1
@@ -8933,8 +8946,7 @@ def generate_plan(
                 # days at the peak→taper seam, D3 training after race day).
                 _clip_week_to_phase(pw, phase, cursor)
                 weeks.append(pw)
-                _ramp.follow(pw, _budget,
-                             not is_stepback and phase.name not in _UNLOAD_PHASES)
+                _ramp.follow(pw, _budget)
                 prev_week_sessions = pw.sessions  # feed into next plan_week for 48h gap
                 cursor = _next_week_cursor(cursor, phase)
                 week_num += 1
@@ -10348,11 +10360,14 @@ def _enforce_stepback_is_lightest(weeks: list) -> None:
             continue
         if getattr(wk, "phase", "") == "taper":
             continue
-        # Block = the consecutive preceding non-stepback, non-taper weeks (back
-        # to the previous step-back or the plan start).
+        # Block = the load weeks since the last unload (_is_unload_week, as the
+        # rhythm and the ramp count it) or the plan start. Stopping at stepback
+        # flags alone took a holiday's weeks of rest days for the block's
+        # lightest, and cut the unload after it to 21 TSS (the second part 3
+        # review, M-5).
         builds = []
         j = i - 1
-        while j >= 0 and not getattr(weeks[j], "is_stepback", False):
+        while j >= 0 and not _is_unload_week(weeks[j]):
             # FC1-CLIP (v2.5.0): a clipped short row (<7 days, phase seam) is
             # not a real build week — its tiny TSS would drag the lightest-ref
             # down and force the deload toward zero. Full rows only.
@@ -13340,7 +13355,7 @@ def regenerate_from_today(
     # recovery ramp's own weeks (Step 5 part 3).
     _ramp = LoadRamp(current_ctl, recent_weekly_tss, adjusted_target)
     for rw in recovery_weeks:
-        _ramp.follow(rw, rw.tss_target, False)
+        _ramp.follow(rw, rw.tss_target)
     for phase in new_phases:
         cursor = max(phase.start, today + timedelta(days=recovery_days))
         week_in_phase = 0  # v4.5.0 Layer 2: 0-indexed within phase
@@ -13377,8 +13392,7 @@ def regenerate_from_today(
                     used_names_set.add(_nm)
                 # Clipped inside the owner already; see generate_plan.
                 new_weeks.append(pw)
-                _ramp.follow(pw, _budget,
-                             not is_stepback and phase.name not in _UNLOAD_PHASES)
+                _ramp.follow(pw, _budget)
                 prev_week_sessions = pw.sessions
                 cursor = _next_week_cursor(cursor, phase)
                 week_num += 1
@@ -13476,8 +13490,7 @@ def regenerate_from_today(
             # FC1-CLIP (v2.5.0): never spill past the phase end (D2/D3).
             _clip_week_to_phase(pw, phase, cursor)
             new_weeks.append(pw)
-            _ramp.follow(pw, _budget,
-                         not is_stepback and phase.name not in _UNLOAD_PHASES)
+            _ramp.follow(pw, _budget)
             prev_week_sessions = pw.sessions  # feed into next plan_week (PL2)
             cursor = _next_week_cursor(cursor, phase)
             week_num += 1
@@ -14056,8 +14069,7 @@ def recalculate_plan(
             # FC1-CLIP (v2.5.0): never spill past the phase end (D2/D3).
             _clip_week_to_phase(pw, phase, cursor)
             new_weeks.append(pw)
-            _ramp.follow(pw, _budget,
-                         not is_stepback and phase.name not in _UNLOAD_PHASES)
+            _ramp.follow(pw, _budget)
             prev_week_sessions = pw.sessions  # feed into next plan_week (PL2)
             cursor = _next_week_cursor(cursor, phase)
             week_num += 1
@@ -14359,7 +14371,7 @@ def extend_continuous_plan(
     for w in sorted(current_plan_weeks, key=lambda w: w.start):
         if w.end >= date.today():
             _ramp.advance(_row_load(w, w.tss_target), (w.end - max(w.start, date.today())).days + 1,
-                          not w.is_stepback and w.phase not in _UNLOAD_PHASES)
+                          not _is_unload_week(w))
     for _ in range(deficit):
         # The plan's 3:1 rhythm, continued from the weeks already there --
         # including a deload the app advanced into one of them.
@@ -14451,8 +14463,7 @@ def extend_continuous_plan(
 
         _clip_week_to_phase(pw, phase, cursor)
         new_weeks.append(pw)
-        _ramp.follow(pw, _budget,
-                     not is_stepback and phase.name not in _UNLOAD_PHASES)
+        _ramp.follow(pw, _budget)
         prev_week_sessions = pw.sessions
         cursor = _next_week_cursor(cursor, phase)
         week_num += 1

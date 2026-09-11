@@ -342,22 +342,35 @@ def check_hard_share(weeks, rides=None, today=None, tolerance=1.10) -> list[Viol
     return out
 
 
+# Weeks whose load is reduced by design: the taper, a regenerate's recovery
+# ramp (named "recon" and "recovery_ramp" by build_recovery_ramp), and the
+# consolidation week that closes a non-event plan (Mujika 2010). The
+# planner's rhythm and ramp read the same list.
+UNLOAD_PHASES = ("taper", "recon", "recovery_ramp", "consolidation")
+
+
 def check_stepback_lightest(weeks, today=None) -> list[Violation]:
     """An unload week is lighter than the load weeks of its block.
 
     Issurin's 3:1 loading: the unload week exists to let the three before it
-    be absorbed, so it has to be the lightest of them. Weeks that began before
-    ``today`` are history -- half-ridden, half-dismissed -- and are compared
-    with nothing.
+    be absorbed, so it has to be the lightest of them. The block is the load
+    weeks since the last unload, a stepback or an unload phase: counted from
+    stepbacks alone, a regenerate's recovery weeks sat in the block, and an
+    unload lighter than every load week before it was flagged. Weeks that
+    began before ``today`` are history -- half-ridden, half-dismissed -- and
+    are compared with nothing.
     """
     out, block = [], []
     for w in weeks:
         if today is not None and w.start < today:
             continue
+        if str(getattr(w, "phase", "")).lower() in UNLOAD_PHASES:
+            block = []
+            continue
         full = (w.end - w.start).days >= 6
         load = sum(float(s.tss_estimate or 0) for s in w.sessions
                    if _ridden(s) and not _is_race(s))
-        if not full or str(getattr(w, "phase", "")).lower() == "taper" or load <= 0:
+        if not full or load <= 0:
             continue
         if w.is_stepback:
             if block and load > min(block) + 1:
@@ -372,38 +385,48 @@ def check_stepback_lightest(weeks, today=None) -> list[Violation]:
 
 # Acute:chronic workload ratio (Gabbett 2016): past ~1.3x the load the rider
 # has been carrying, injury risk climbs, and from 1.5x it is the danger zone.
+# The load carried is a 28-day exponentially weighted mean of daily load
+# (Williams et al. 2017; Murray, Gabbett et al. 2017), in TSS a week. The
+# 4-week rolling mean it replaces read a two-week holiday as two zeros that
+# held the weeks back down and then dropped out of the window: 248, 236,
+# 157, then an unload (the second part 3 review, M-5).
 ACWR_SWEET_SPOT = 1.3
 ACWR_DANGER = 1.5
+_CHRONIC_DAY_WEIGHT = 2 / (28 + 1)
+
+
+def chronic_after(chronic: float, weekly_load: float, days: int = 7) -> float:
+    """The load carried, in TSS a week, after ``days`` at ``weekly_load``."""
+    keep = (1 - _CHRONIC_DAY_WEIGHT) ** max(0, int(days))
+    return chronic * keep + float(weekly_load or 0) * (1 - keep)
 
 
 def check_acwr(weeks, chronic, today=None, tolerance=1.05,
                limit=ACWR_SWEET_SPOT) -> list[Violation]:
-    """No week asks more than ``limit`` x the mean load of the four weeks
-    before it: the top of the sweet spot, in every phase, or ACWR_DANGER, the
-    line no week may cross.
+    """No week asks more than ``limit`` x the load the rider carries into it:
+    the top of the sweet spot, in every phase, or ACWR_DANGER, the line no
+    week may cross.
 
-    The four weeks start as ``chronic``, the load the rider has been carrying,
-    and are then the plan's own: a plan that raises the chronic load may raise
-    the acute with it, which is what a ramp is. A row is scaled to a full week
-    and counted from four days. The taper is history only: its race is the
-    point of the plan, not a dose. Weeks behind ``today`` are skipped, since
-    ``chronic`` holds what the rider did. Not part of audit(), which has no
-    rider: a plan does not carry their chronic load.
+    The load carried starts at ``chronic`` and follows the plan's own weeks
+    (chronic_after): a plan that raises the chronic load may raise the acute
+    with it, which is what a ramp is. A row is scaled to a full week and
+    checked from four days; a shorter one still counts toward the load
+    carried. The taper is history only: its race is the point of the plan,
+    not a dose. Weeks behind ``today`` are skipped, since ``chronic`` holds
+    what the rider did. Not part of audit(), which has no rider: a plan does
+    not carry their chronic load.
     """
-    hist, out = [float(chronic)] * 4, []
+    carried, out = float(chronic), []
     for w in _weeks_ahead(weeks, today):
         days = (w.end - w.start).days + 1
-        if days < 4:
-            continue
         load = sum(float(s.tss_estimate or 0) for s in w.sessions if _ridden(s)) * 7 / days
-        mean = sum(hist[-4:]) / 4
         phase = str(getattr(w, "phase", "")).lower()
-        cap = limit or (ACWR_DANGER if phase in BUILD_PHASES else ACWR_SWEET_SPOT)
-        if phase != "taper" and mean > 0 and load > cap * mean * tolerance + 1:
+        if (days >= 4 and phase != "taper" and carried > 0
+                and load > limit * carried * tolerance + 1):
             out.append(Violation("acwr", w.week_num,
-                                 f"{load:.0f} TSS a week after four averaging {mean:.0f} "
-                                 f"({load / mean:.2f}x; {cap}x allowed)"))
-        hist.append(load)
+                                 f"{load:.0f} TSS a week against {carried:.0f} carried "
+                                 f"({load / carried:.2f}x; {limit}x allowed)"))
+        carried = chronic_after(carried, load, days)
     return out
 
 

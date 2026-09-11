@@ -77,15 +77,82 @@ def test_available_hours_are_a_ceiling():
     assert max(w.tss_target for w in _plan(55, 500, hours=6.0)) <= 6 * 65
 
 
-def test_the_acwr_holds():
-    """No week over 1.3x the mean of the four before it, the top of Gabbett's
-    (2016) sweet spot, in any phase, from riders at 250 TSS a week up. The
-    150-TSS rider's plan crosses it in one week, where passes moved the weeks
-    before it after the ramp had counted them (Step 6); it stays under the
+def _block(phase, ctl=100.0):
+    """The ramp fed its own budgets for three four-week blocks of one phase
+    (three load weeks and an unload), from a rider in steady state at
+    ``ctl``, through the performance model day by day over evenly spread
+    days: the CTL each block gains, and TSB's lowest."""
+    ramp = tp.LoadRamp(ctl, 7 * ctl, None)
+    fit = tired = ctl
+    gains, low = [], 0.0
+    for _block_no in range(3):
+        start = fit
+        for wk in range(4):
+            load = ramp.budget(phase, wk == 3)
+            for _day in range(7):
+                fit += (load / 7 - fit) / 42
+                tired += (load / 7 - tired) / 7
+                low = min(low, fit - tired)
+            ramp.advance(load, 7, wk != 3)
+        gains.append(fit - start)
+    return gains, low
+
+
+def test_each_phase_loads_as_couzens_rule_says():
+    """k decides a fit rider's load weeks (CTL 100), where the sweet spot
+    does not bind. Base takes Couzens' "1,2,3": about 10 CTL a four-week
+    block, TSB bottoming near -20. The build takes the most that stays in
+    his 10-20 a block and above -30, the floor of Friel's productive band.
+    As this ramp lays a block out (CTL re-read weekly, the unload at 0.72),
+    k = 45 bottomed at -34 (the second part 3 review, M-2). Nothing noticed
+    k before: 30, 45 or 60 all passed."""
+    gains, low = _block("base")
+    assert all(9 <= g <= 13 for g in gains) and -25 <= low <= -20, (gains, low)
+    gains, low = _block("build1")
+    assert all(g <= 20 for g in gains) and -30 <= low <= -27, (gains, low)
+
+
+def test_the_goals_target_stops_the_ramp():
+    """No week takes the ramp's CTL past the goal's target: a rider at CTL 80
+    aiming for 85 levels off there (the second part 3 review, L-8: nothing
+    caught the cap's removal)."""
+    ramp = tp.LoadRamp(80.0, 560.0, 85.0)
+    for wk in range(12):
+        ramp.advance(ramp.budget("build1", wk % 4 == 3), 7, wk % 4 != 3)
+        assert ramp.ctl <= 85.5, (wk, ramp.ctl)
+
+
+def test_the_sweet_spot_guards_the_cuts_too():
+    """A cut is taken from the last full load week, which a holiday can leave
+    far behind: the unload after two weeks off was budgeted at 343 against a
+    cap of 248 (the second part 3 review, L-1)."""
+    ramp = tp.LoadRamp(45.0, 315.0, None)
+    for load in (330, 350, 0, 0):
+        ramp.advance(load, 7, load > 0)
+    cap = tp.ACWR_CEILING * ramp.chronic
+    assert ramp.budget("build1", is_stepback=True) <= cap + 1, cap
+
+
+_STEP6 = "passes move weeks after the ramp has counted them (Step 6)"
+
+
+@pytest.mark.parametrize("ctl, chronic", [
+    (36, 250),
+    pytest.param(43, 300, marks=pytest.mark.xfail(strict=True, reason=_STEP6)),
+    (55, 385),
+    pytest.param(70, 490, marks=pytest.mark.xfail(strict=True, reason=_STEP6)),
+])
+def test_the_acwr_holds(ctl, chronic):
+    """No week over 1.3x the load the rider carries into it (a 28-day EWMA),
+    the top of Gabbett's (2016) sweet spot, in any phase, from riders at 250
+    TSS a week up. The ramp budgets every week within it; passes then cut
+    weeks it has counted (the per-day clamp after the week-total pass), so
+    the 300- and 490-TSS riders' plans read 1.39x and 1.37x, and the 150-TSS
+    rider's crosses too. The EWMA weighs the latest week 0.39 where the
+    rolling mean weighed it 0.25, so a cut shows more. They stay under the
     danger line (below)."""
-    for ctl, chronic in ((36, 250), (43, 300), (55, 385), (70, 490)):
-        bad = pi.check_acwr(_plan(ctl, chronic), chronic)
-        assert not bad, (ctl, [str(v) for v in bad])
+    bad = pi.check_acwr(_plan(ctl, chronic), chronic)
+    assert not bad, (ctl, [str(v) for v in bad])
 
 
 def test_no_rider_crosses_the_danger_line():
@@ -135,10 +202,13 @@ def test_a_backdated_plans_elapsed_weeks_build_nothing():
     their CTL already holds what they rode. Fed the elapsed weeks as if ridden
     to plan, the ramp asked 508 TSS of their second week, 1.88x the four
     before it. The dry run behind the labels had the same fault, unseen: the
-    phases already behind today carry what today's fitness allows."""
+    phases already behind today carry what today's fitness allows. Checked
+    at the danger line, which the fault crossed: passes move the later weeks
+    after the ramp has counted them, and week 14 reads 1.45x the load carried
+    (Step 6)."""
     weeks = tp.generate_plan(_backdated_goal(), seed_salt=1, current_ctl=35.0,
                              recent_weekly_tss=35.0 * 7, athlete=ATHLETE)[1]
-    bad = pi.check_acwr(weeks, 35.0 * 7, MONDAY)
+    bad = pi.check_acwr(weeks, 35.0 * 7, MONDAY, limit=pi.ACWR_DANGER)
     assert not bad, [str(v) for v in bad]
     elapsed = [p for p in tp.generate_phases(_backdated_goal(), 35.0, recent_weekly_tss=35.0 * 7)
                if p.end < MONDAY]

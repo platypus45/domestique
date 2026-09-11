@@ -169,6 +169,15 @@ class CapsAndContent(unittest.TestCase):
         self.assertIn("stepback_lightest", rules(blk(350)))
         self.assertNotIn("stepback_lightest", rules(blk(200)))
 
+    def test_a_recovery_ramp_is_not_in_the_unload_weeks_block(self):
+        """The block is the load weeks since the last unload, an unload phase
+        included. Counted from stepbacks alone, a regenerate's recovery weeks
+        sat in it, and an unload lighter than every load week was flagged."""
+        ramp = [week([sess(0, tss=200)], n=i + 1, phase="recovery_ramp") for i in range(2)]
+        load = [week([sess(0, tss=400)], n=i + 3, phase="base") for i in range(2)]
+        unload = week([sess(0, tss=250)], n=5, phase="base", stepback=True)
+        self.assertNotIn("stepback_lightest", rules(ramp + load + [unload]))
+
     def test_a_ridden_session_on_a_rest_day_is_not_a_planner_fault(self):
         wk = week([sess(6, status="done")])
         self.assertNotIn("rest_days", rules([wk]))

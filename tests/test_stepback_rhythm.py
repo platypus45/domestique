@@ -41,10 +41,12 @@ def _goal():
 
 def test_a_holiday_restarts_the_count():
     """Two weeks marked unavailable are written as weeks of rest days. They
-    unloaded the rider (D6), so the first week back is a load week, not the
+    unload the rider (D6), so the first week back is a load week, not the
     deload the calendar count would make it (the Step 5 review, L4). Part 3
     had a rest-only week count as a load week, since it prescribed nothing
-    (the part 3 review, H1)."""
+    (the part 3 review, H1), and until it was past: the plan built with the
+    holiday ahead still made the first week back a deload (the second part 3
+    review, M-5)."""
     hol = (MONDAY + timedelta(weeks=5), MONDAY + timedelta(weeks=7, days=-1))
     _p, weeks = tp.generate_plan(_goal(), seed_salt=1, current_ctl=43.0,
                                  recent_weekly_tss=300.0, athlete=ATHLETE,
@@ -54,6 +56,26 @@ def test_a_holiday_restarts_the_count():
     away = [w for w in past if w.start >= hol[0]]
     assert away and all(tp._went_unridden(w) for w in away)
     assert not tp.stepback_due(past, "build1")
+    back = next(w for w in weeks if w.start > hol[1])
+    assert not back.is_stepback, f"week {back.week_num}, the first back, is a stepback"
+
+
+def test_the_weeks_back_from_a_holiday_rise():
+    """Two weeks off lower the load the rider carries, and the load weeks
+    back rise from it. On a 4-week rolling mean the holiday's zeros held the
+    weeks back down and then dropped out of the window: 248, 236, 157, then
+    an unload at 113 (the second part 3 review, M-5). The load carried is a
+    28-day exponentially weighted mean now (Murray, Gabbett et al. 2017)."""
+    hol = (MONDAY + timedelta(weeks=5), MONDAY + timedelta(weeks=7, days=-1))
+    _p, weeks = tp.generate_plan(_goal(), seed_salt=1, current_ctl=43.0,
+                                 recent_weekly_tss=300.0, athlete=ATHLETE,
+                                 unavailable_periods=[hol])
+    back = []
+    for w in (w for w in weeks if w.start > hol[1]):
+        if w.is_stepback:
+            break
+        back.append(w.tss_target)
+    assert len(back) >= 2 and back == sorted(back), back
 
 
 def _unload(w):
@@ -166,11 +188,11 @@ def test_a_sliver_before_the_taper_is_not_a_stepback():
     assert not any(w.is_stepback for w in slivers)
 
 
-def _ridden_week(i, status):
+def _ridden_week(i, status, target=300):
     start = MONDAY + timedelta(weeks=i)
     return tp.PlannedWeek(
         week_num=i + 1, start=start, end=start + timedelta(days=6), phase="build1",
-        tss_target=300, is_stepback=False,
+        tss_target=target, is_stepback=False,
         sessions=[tp.PlannedSession(day=start + timedelta(days=d), day_name="",
                                     session_type="z2", duration_min=60,
                                     tss_estimate=50.0, description="", status=status)
@@ -186,6 +208,39 @@ def test_weeks_the_rider_missed_restart_the_count():
     back = [_ridden_week(1, "done"), _ridden_week(2, "missed"), _ridden_week(3, "missed")]
     assert not tp.stepback_due(back, "build1")
     assert tp.stepback_due([_ridden_week(i, "done") for i in (1, 2, 3)], "build1")
+
+
+def test_rest_days_unload_a_whole_week_not_a_stub():
+    """A whole week of rest days is a holiday, ahead of today or behind it. A
+    plan made on a Thursday after the rider has ridden the week's load opens
+    with Thursday to Sunday at rest: that calendar week loaded them, and read
+    as an unload it moved every owner-mode continuous plan's stepback."""
+    def rest_row(start, days):
+        return tp.PlannedWeek(
+            week_num=1, start=start, end=start + timedelta(days=days - 1), phase="base",
+            tss_target=300, is_stepback=False,
+            sessions=[tp.PlannedSession(day=start + timedelta(days=d), day_name="",
+                                        session_type="rest", duration_min=0,
+                                        tss_estimate=0.0, description="")
+                      for d in range(days)])
+    _TODAY[0] = MONDAY
+    ahead, behind = MONDAY + timedelta(weeks=1), MONDAY - timedelta(weeks=2)
+    assert tp._went_unridden(rest_row(ahead, 7)) and tp._went_unridden(rest_row(behind, 7))
+    assert not tp._went_unridden(rest_row(ahead + timedelta(days=3), 4))
+    assert not tp._went_unridden(rest_row(behind + timedelta(days=3), 4))
+
+
+def test_a_week_ridden_as_prescribed_loaded_the_rider_whatever_its_budget():
+    """D6 reads what a week prescribed, not its budget. A builder that fell
+    short of a 500 budget with 300 TSS, all of it ridden, loaded the rider;
+    read against the budget the week looked unridden, and three of them in a
+    row never came round to a stepback. The first test's weeks prescribed
+    exactly their budget, so they could not tell (the second part 3 review,
+    M-3)."""
+    _TODAY[0] = MONDAY + timedelta(weeks=4)
+    weeks = [_ridden_week(i, "done", target=500) for i in (1, 2, 3)]
+    assert not any(tp._went_unridden(w) for w in weeks)
+    assert tp.stepback_due(weeks, "build1")
 
 
 def test_the_home_cards_week_unloads_when_the_plan_does(tmp_path, monkeypatch):

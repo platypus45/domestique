@@ -618,8 +618,9 @@ every rebuilt load week sits under the ACWR ceiling.
 
 *That does not hold in general (the Step 5 review, M6).* Take a rider at
 150 TSS a week (CTL 28, ceiling 195). Recalculate still has 5 of 12 weeks
-over, up to 267 TSS (1.37× the ceiling), and generate has 5 of 14. Every
-such week is all hard sessions, and the week-total pass never shrinks a hard
+over, up to 267 TSS (1.37× the ceiling). Generate has 5 of 14 with the
+legacy builder (0 of 14 in owner mode). Every such week is all hard
+sessions, and the week-total pass never shrinks a hard
 session. That is the intensity budget, D1's first rule, and part 3's
 question.
 
@@ -649,8 +650,9 @@ still. So only refit's plans and the owner's regenerate could change, and
 the characterization moves only refit@3 cases (11 and 12 per owner mode):
 - **Fixed plan.** With the legacy builder, a fixed_core plan's refit keeps
   its generated week: two long rides and one sweet spot, 456 TSS. The sampler
-  had swapped Thursday's sweet spot for vo2max and cut one long ride to an
-  hour of z2. That week totalled 339, counting the missed session.
+  had swapped Thursday's sweet spot for vo2max, cut Saturday's long ride to
+  an hour of z2, and cut Sunday's from 150 to 120 minutes. That week
+  totalled 339, counting the missed session.
   - *Corrected after the Step 5 review:* the first write-up said "two
     vo2max sessions and no long ride".
   - In owner mode, refit still bypasses the owner's sizing (L6, below).
@@ -686,7 +688,8 @@ characterization is unchanged (217 cases).
     since.
 - **M4. A restore ignored 48 h spacing.**
   - A rider who moved an eased day next to a hard one got the hard original
-    back there: 18 of 37 moves in a probe.
+    back there: 35 of 37 moves in a probe, counting today's session. (The
+    first count, 18, left today out.)
   - A hard original now goes back only where `_slot_breaks_hard_spacing`
     allows it (D1); otherwise the day stays eased. Now 0 of 37.
 - **M2. The strict codec answered 500 on the ride-sync path.**
@@ -717,19 +720,23 @@ characterization is unchanged (217 cases).
 **Recorded, for the step that owns each.**
 - **M5, for Step 6.**
   - A rebuild keeps a fatigue-eased day as the rider's own and plans the
-    week around its easy load. The restore then puts the original back:
-    about one hard session, up to 60 TSS, over a never-eased rebuild.
-  - The restore now keeps 48 h spacing, but the load is the ownership
-    question (DUP-23). An adaptation the planner made is derived state, and
-    a rebuild should re-derive it rather than own it.
+    week around its easy load. The restore then puts the original back: up
+    to 68 TSS on the week and 139 hard TSS over a never-eased rebuild
+    (regenerate, legacy builder; corrected by the fix review, F5).
+  - The 48 h check does not reduce it, because the rebuild never puts a
+    hard day beside the eased one. The load is the ownership question
+    (DUP-23). An adaptation the planner made is derived state, and a
+    rebuild should re-derive it rather than own it.
 - **G3 walks through the plan. Pre-existing; found while fixing M3.**
   - While one polarization breach persists, each reforecast lowers the next
     two hard sessions not yet adapted, so each run reaches further ahead.
     After 6 runs, 12 sessions were lowered, reaching 6 weeks out, in both
     owner modes.
-  - Only the Reforecast button arms G3: `/api/plan/reforecast` is the one
-    caller that passes the polarization inputs. So it walks once per click,
-    not once per sync.
+  - Only `/api/plan/reforecast` passes the polarization inputs, and nothing
+    in the dashboard calls it any more: its button went in v1.8.24, and
+    `reforecastPlan()` is dead code. So G3 walks only on a direct API call.
+    (Corrected by the fix review, F4: the first write-up said "once per
+    click".)
   - It is the DUP-22 ratchet spread across sessions. Step 6 settles it with
     the fatigue loop's pattern: the coming week only, a record of the
     original, undone when the breach clears.
@@ -752,6 +759,54 @@ characterization is unchanged (217 cases).
 - **A library file with impossible load, for Step 9.**
   `vo2_short_10x30s-30s_105pct_40min.zwo` is served at 117–128 TSS for 40
   minutes, which is 175–190 TSS an hour.
+
+### The review of those fixes
+
+A third independent review ran the fixes above. Of 22 claims, 19 held, 2
+held in part and 1 did not. The report is kept in the scratchpad's
+review/step5b.md.
+
+The fixes held under the review's own probes:
+- M1, through the app;
+- M3, in both owner modes;
+- M4, across week boundaries and double moves;
+- M2, over 14 malformed session shapes and all 24 endpoint cases;
+- the FTP test, in 48 of 48 refits;
+- the athlete helper, over 20 profile states.
+
+**Fixed.** Each fix has a test that fails on the previous code, and the
+characterization is unchanged (217 cases).
+- **F1 (medium, from Step 4c). A restore overrode the rider's
+  availability.**
+  - An eased day set to 0 h got its hard original back once the reading
+    cleared. Through the app, that put threshold 63 minutes on a 0 h day.
+  - The easing now records what it made of the day, and a restore undoes
+    only that. A day another writer has changed since stays as it is (D5).
+  - In the review's probe, 8 of 8 cut days keep their hours, and 860 of 860
+    restores in unmoved plans still go through.
+- **F2 (low). A dismissed neighbour blocked a restore.** D6 says a session
+  not ridden costs nothing, so `_slot_breaks_hard_spacing` no longer counts
+  a missed or dismissed one.
+- **F3 (low). After the plan's end, the home card switched to ISO weeks.**
+  That put up to 8 weeks between two unloads. The card now carries the
+  plan's 3:1 on from the last week the plan unloads.
+
+**Kept, with the reason.** Inside the plan, the card mirrors the week's own
+stepback flag, not `_is_unload_week`. The review suggested the second, so
+that taper weeks would show as unloads. But the card's load comes from the
+phase's target, which in a taper is already reduced. A stepback cut on top
+would cut it twice.
+
+**Corrected above.**
+- M4's before-count: 35 of 37 (F6).
+- M5's size (F5).
+- The G3 walk's reach: there is no button (F4).
+- Part 4's fixed-plan refit: Sunday's long ride was cut too.
+- Part 2's generate count: owner mode is 0 of 14.
+
+**Recorded, for Step 8.** `/api/weekly-plan` ignores `week_offset`. The card
+takes its Monday from today, so offsets 0, 1 and −1 all return this week
+(F7, pre-existing).
 
 ### Step 5b — the sampler honours its science tables (SCI-1)
 

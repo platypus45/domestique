@@ -4,6 +4,7 @@
 
 - **Fixed: rides that reach intervals.icu through Strava no longer show on the home page as an empty "Activity" that fails to open.** intervals.icu does not pass on Strava's data, so all it can offer for such a ride is a placeholder with no name, type or duration. Since 3.8.1 the calendar left those out, but the "Recent activities" card on the home page still listed them as "Activity · 0min", and opening one gave "Failed to load activity (404)" — which looked exactly like a broken sync. The card now leaves them out too, as does the local activity mirror behind the recovery checks. The rides themselves are not lost: connect your indoor platform to intervals.icu directly, or import the ride's FIT file, and they come in with full data. Reported in [#11](https://github.com/platypus45/domestique/issues/11).
 - A ride file left empty by an interrupted write is now cleaned up on the next sync, instead of raising the same warning every time the power curve loads.
+- Diagnostics no longer warn three times per start that the workout classification is stale and ask you to run a developer script the app does not ship. The check compared file timestamps that no installer preserves, so every install tripped it; it now checks that each workout in the folder has a classification, and says so once, in plain words, only when one is missing.
 
 ## v3.11.5 — Missed sessions are registered, recycled where safe, and explained (2026-09-11)
 

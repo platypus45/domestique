@@ -222,6 +222,23 @@ _CONTENT_TO_PROTOCOL = {
 }
 
 
+_DEV_RECLASSIFY_HINT = " — rerun `python3 scripts/classify_library_content.py --all`"
+_CLASSIFICATION_WARNED: set[str] = set()
+
+
+def _frozen_build() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def _warn_once(key: str, msg: str, *args) -> None:
+    """v3.11.6 — the classification-index warnings fired three times per boot
+    (parallel first loads at startup); one line per process per folder."""
+    if key in _CLASSIFICATION_WARNED:
+        return
+    _CLASSIFICATION_WARNED.add(key)
+    log.warning(msg, *args)
+
+
 def _load_content_classifications() -> dict[str, dict]:
     """Lazy-load the content-classification cache produced by
     ``scripts/classify_library_content.py``. Returns {} if the cache is
@@ -240,32 +257,52 @@ def _load_content_classifications() -> dict[str, dict]:
         return cached
     cache_path = WORKOUT_DIR / ".content_classification.json"
     if not cache_path.exists():
-        log.warning(
-            "content_classification cache missing — run "
-            "`python3 scripts/classify_library_content.py --all` to enable "
-            "content-based protocol classification (falling back to "
-            "filename heuristic for now)"
+        _warn_once(
+            f"missing-index:{_dir_key}",
+            "no content classification index for this workout folder — "
+            "workouts are classified by name for now%s",
+            "" if _frozen_build() else _DEV_RECLASSIFY_HINT,
         )
         _CONTENT_CLASSIFICATION_CACHE[_dir_key] = {}
         return _CONTENT_CLASSIFICATION_CACHE[_dir_key]
     try:
         with cache_path.open(encoding="utf-8") as f:
             payload = json.load(f)
-        # Compare workouts dir hash; if drifted, log a warning but still use
-        # what we have (the planner shouldn't auto-run a 30-second classifier
-        # pass on every boot — the user must rerun explicitly).
+        classifications = payload.get("classifications", {}) or {}
+        # v3.11.6 — what matters to the planner is whether every workout in
+        # the folder has an entry, not whether the folder's mtimes still match
+        # the build machine's: no install pipeline (DMG, zip, AppImage, cask)
+        # preserves them, so the old mtime hash mismatched on every packaged
+        # install, forever, and told riders to run a script the app does not
+        # ship. Files without an entry fall back to the filename heuristic;
+        # say so once, plainly. The mtime hash stays as a developer hint from
+        # a source checkout, where an in-place edit is the likely cause.
         try:
-            current_hash = _compute_workouts_dir_hash()
-            cached_hash = payload.get("workouts_dir_hash")
-            if cached_hash and cached_hash != current_hash:
-                log.warning(
-                    "content_classification cache stale (workouts dir has "
-                    "changed since last classification) — rerun "
-                    "`python3 scripts/classify_library_content.py --all`"
-                )
-        except Exception:
-            pass
-        _CONTENT_CLASSIFICATION_CACHE[_dir_key] = payload.get("classifications", {})
+            missing = sorted(p.name for p in WORKOUT_DIR.glob("*.zwo")
+                             if p.name not in classifications)
+        except OSError:
+            missing = []
+        if missing:
+            _warn_once(
+                f"missing-entries:{_dir_key}",
+                "%d workout(s) in the library have no content classification "
+                "yet and are classified by name for now (first: %s)%s",
+                len(missing), missing[0],
+                "" if _frozen_build() else _DEV_RECLASSIFY_HINT,
+            )
+        elif not _frozen_build():
+            try:
+                current_hash = _compute_workouts_dir_hash()
+                cached_hash = payload.get("workouts_dir_hash")
+                if cached_hash and cached_hash != current_hash:
+                    _warn_once(
+                        f"stale-hash:{_dir_key}",
+                        "content_classification cache stale (workouts dir has "
+                        "changed since last classification)" + _DEV_RECLASSIFY_HINT,
+                    )
+            except Exception:
+                pass
+        _CONTENT_CLASSIFICATION_CACHE[_dir_key] = classifications
     except (OSError, json.JSONDecodeError) as e:
         log.warning("content_classification cache load failed: %s", e)
         _CONTENT_CLASSIFICATION_CACHE[_dir_key] = {}

@@ -1288,8 +1288,19 @@ Branching this pass has already met, as a starting list:
 
 ## Deployment note
 
-Production runs the live checkout at `~/Documents/cycling-stack/domestique`,
-on `refactor/session-sizing`; the running process loaded `9f30cf93` at 16:24
-on 2026-09-10. `cs-update` runs Sunday 03:59 with `TRACK=stable` and will move
-that checkout to the newest stable tag. Nothing from this branch is deployed;
+Production runs the live checkout at `~/Documents/cycling-stack/domestique`.
+`cs-update` runs Sunday 03:59 with `TRACK=stable`, and on 2026-09-13 it moved
+that checkout to the tag `v3.11.6`; the service restarted at 03:41. It is no
+longer on `refactor/session-sizing`. Nothing from this branch is deployed;
 that is the owner's decision.
+
+**What the bug class looks like in production.** On 2026-09-13, before the
+owner had it regenerated, their live plan prescribed 623 TSS for the week
+ahead against its own 281 budget, and 695 and 675 for the two after it: every
+weekday filled to the 3 h availability cap, each session marked "availability
+adjusted". They had ridden 369 TSS by the Wednesday of the week before, and
+that week's rows still prescribed a sprint on Thursday and another on Friday,
+which they skipped. Regenerating on v3.11.6 rebuilt the four weeks close to
+their budgets (254/249, 290/249, 234/249, 177/179), so what inflated them was
+a pass that ran after the plan was built, not the build itself. That is what
+D2's one budget and Step 6's one week pipeline are for.

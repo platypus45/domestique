@@ -1304,3 +1304,17 @@ which they skipped. Regenerating on v3.11.6 rebuilt the four weeks close to
 their budgets (254/249, 290/249, 234/249, 177/179), so what inflated them was
 a pass that ran after the plan was built, not the build itself. That is what
 D2's one budget and Step 6's one week pipeline are for.
+
+**The pass, and the cap it now carries.** It was `reforecast()`'s
+availability block: a rest day became a z2 ride of the day's free hours, and
+other days were stretched to them, without ever reading the week's
+`tss_target`. Three minutes after each regeneration a dashboard visit put the
+week back at 594, then 628. Since `9138110d` an upward move — restoring a
+rest day, or growing a session — may not push a week past its budget; a day
+that no longer fits keeps what it had, downward moves are untouched, and a
+row with no budget of its own stays unbounded, which is what the v173
+restore-after-cap contract rests on. It does not shrink a week already over:
+it stops a correct one from being inflated. On the owner's own plan the week
+then held at 274 TSS against 276 through a regenerate, a reforecast and the
+dashboard's fetches. Step 6 still owns the general rule; this is the one
+pass that was breaking every plan in production.

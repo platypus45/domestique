@@ -11926,6 +11926,24 @@ def reforecast(
             else:
                 raw_scale = available_mins / current_mins
                 scale = min(2.0, max(0.4, raw_scale))
+            # The rider's free hours are a ceiling, never a target: raising
+            # them may not push a week past the budget the ramp gave it (D5).
+            # In production on 2026-09-13 this pass turned a regenerated
+            # 249 TSS week into 594, and the two after it into 695 and 629,
+            # by filling every free weekday to the 3 h the calendar offered.
+            # A row with no budget of its own -- a hand-made plan -- stays
+            # unbounded, as it was.
+            _budget = float(getattr(pw, "tss_target", 0) or 0)
+            _planned = sum(float(s2.tss_estimate or 0) for s2 in pw.sessions
+                           if s2.session_type != "rest")
+
+            def _fits(minutes: int, tss_per_h: float, replacing: float) -> int:
+                """``minutes``, trimmed to what the week's budget still holds."""
+                if _budget <= 0 or tss_per_h <= 0:
+                    return minutes
+                room = _budget - (_planned - replacing)
+                return max(0, min(minutes, int(room / tss_per_h * 60)))
+
             for s in pw.sessions:
                 d_iso = s.day.isoformat()
                 if d_iso not in availability_overrides:
@@ -11942,6 +11960,7 @@ def reforecast(
                     # v1.3.5 fix: also clear ZWO + description so the
                     # dashboard renders the cell as REST (mirrors the
                     # generate_plan block at line ~4202).
+                    _planned -= float(s.tss_estimate or 0)
                     s.session_type = "rest"
                     s.duration_min = 0
                     s.tss_estimate = 0
@@ -11957,10 +11976,14 @@ def reforecast(
                     # Use `hours * 60` literally because scale = available /
                     # current and current=0 makes the ratio undefined.
                     new_dur = min(int(round(hours * 60)), MAX_AVAIL_SESSION_MIN)
+                    tss_per_h = TSS_PER_HOUR.get("z2", 45)
+                    new_dur = _fits(new_dur, tss_per_h, 0.0)
+                    if new_dur <= 0:
+                        continue        # the week is already at its budget
                     s.session_type = "z2"
                     s.duration_min = new_dur
-                    tss_per_h = TSS_PER_HOUR.get("z2", 45)
                     s.tss_estimate = round(new_dur / 60 * tss_per_h)
+                    _planned += float(s.tss_estimate or 0)
                     s.description = f"z2 ({new_dur}min) — restored from rest"
                     s.zwo_file = ""
                     s.zwo_name = ""
@@ -12012,11 +12035,19 @@ def reforecast(
                     target_min = min(int(round(hours * 60)), MAX_AVAIL_SESSION_MIN)
                     if _type_ceil:
                         target_min = min(target_min, _type_ceil)
+                    tss_per_h = TSS_PER_HOUR.get(s.session_type, 45)
+                    if target_min > s.duration_min:
+                        # Growing a day is bounded by the week's budget; a day
+                        # that no longer fits simply keeps what it had.
+                        target_min = max(s.duration_min,
+                                         _fits(target_min, tss_per_h,
+                                               float(s.tss_estimate or 0)))
                     if target_min != s.duration_min:
                         old_dur = s.duration_min
+                        _planned -= float(s.tss_estimate or 0)
                         s.duration_min = max(0, target_min)
-                        tss_per_h = TSS_PER_HOUR.get(s.session_type, 45)
                         s.tss_estimate = round(s.duration_min / 60 * tss_per_h)
+                        _planned += float(s.tss_estimate or 0)
                         # v3.2.0 sprint-fiction FIX 1 (reforecast twin): the
                         # description must speak the NEW duration, not the
                         # pre-reflow one (mirrors _make_session_from_row's

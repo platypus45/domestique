@@ -27,6 +27,7 @@ through the endpoint additionally needs the Goal-reconstruction fix
 test_regen_goal_fidelity.py.
 """
 import json
+import sys
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta
@@ -51,6 +52,24 @@ def _json_sessions_by_day(plan: dict) -> dict:
     """iso-date -> session dict over a persisted plan's weeks."""
     return {s["day"]: s for w in plan.get("weeks", [])
             for s in w.get("sessions", [])}
+
+
+_REAL_DATE = date          # the name `date` is patched below; this is not
+
+
+class _Wednesday(date):
+    """The coming Wednesday, so the week in progress is a row of several days.
+
+    Weeks anchor on Mondays (afdc8c91), so a plan laid on a Sunday opens with
+    that Sunday alone: one session, where the endpoint test below plants
+    three. The weekday is what is fixed, not the date -- the plan is laid
+    from it either way.
+    """
+
+    @classmethod
+    def today(cls):
+        d = _REAL_DATE.today()
+        return cls.fromordinal((d + timedelta(days=(2 - d.weekday()) % 7)).toordinal())
 
 
 class TestRecalcEnginePreservesState(unittest.TestCase):
@@ -144,9 +163,16 @@ class TestAutoRecalcWritePreservesState(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="recalcpres_"))
         self._patch = patch.object(app_module, "_plan_dir", return_value=self.tmp)
         self._patch.start()
+        # The endpoint, the planner and this test must read one "today".
+        self._frozen = [patch.object(m, "date", _Wednesday)
+                        for m in (app_module, tp, sys.modules[__name__])]
+        for p in self._frozen:
+            p.start()
         self.client = TestClient(app_module.app)
 
     def tearDown(self):
+        for p in reversed(self._frozen):
+            p.stop()
         self._patch.stop()
 
     def _mocks(self):

@@ -749,13 +749,19 @@ Measured with the legacy builder, the load carried taken as the 28-day EWMA:
   - CTL at the taper, by session day: 49, 58, 63, 61, 64 (owner mode: 42,
     59, 63, 61, 64).
   - No week but a taper over 1.05× its budget.
-  - No week over 1.5× the load carried, with the auditor's 1.05 tolerance.
-    The highest is the 150-TSS rider's, at 1.49×. In owner mode it is
-    1.38×, where the rolling mean had one week at 1.58×.
-  - Weeks over the sweet spot, with the tolerance: 3, 2, 1, 0 and 0 (owner
-    mode: one, the 150-TSS rider's). Each is a week the ramp budgeted at
-    1.3× what it carried, after passes cut weeks it had counted (below).
+  - The 150-TSS rider's week 10 reads 1.55× the load carried, over
+    Gabbett's danger line: 364 TSS against 235, where the ramp budgeted
+    1.3× the 280 it had counted. Passes cut the weeks before it after the
+    ramp counted them (below). In owner mode the highest is 1.41×.
+    `test_no_rider_crosses_the_danger_line` reads what the rider gets with
+    no tolerance now, and that rider is a strict xfail for Step 6.
+  - Weeks over the sweet spot, with the auditor's 1.05 tolerance: 3, 0, 1,
+    0 and 1 (owner mode 1, 0, 1, 0 and 1). Each is a week the ramp budgeted
+    at 1.3× what it carried.
   - 3 of 60 load weeks under 70% of their budget (owner mode: 2).
+  - *Corrected after the third review:* the first write-up gave 1.49× and
+    3, 2, 1, 0, 0. The probe behind those numbers still measured the 4-week
+    rolling mean the EWMA had replaced.
   - Lowest projected TSB, starting from rest: −8 to −18 over evenly spread
     days, and −16 to −29 by session day in either mode.
 - **Characterization.**
@@ -769,6 +775,32 @@ Measured with the legacy builder, the load carried taken as the 28-day EWMA:
     owner mode. The second review's other fixes moved none.
 
 The new findings, by cause:
+- **What a week's hard work costs is not bounded by its budget (M6).** The
+  week-total pass may shrink easy rides, never hard ones, so a week built
+  over its budget stays hard, and the load ramp cannot hold the intensity
+  budget on its own.
+  - The intensity rail: on 2026-09-11 a 6 h polarized plan's build2 week
+    read 18.1% of its minutes above 106% FTP, against the 18% rail, and
+    `test_tid_plan_properties` was red. That suite lays its plans from the
+    day it runs: on 2026-09-13 the same three 6 h plans read 16.7%, 15.1%
+    and 16.7%, green, where on the parent that day they read 17.6%, 15.8%
+    and 14.9%. They sit at 15–18% either way, so which files the sampler
+    draws decides whether the rail holds. The rail is left live for every
+    plan, and Step 6 is what bounds them.
+  - What the rider gets, over 1.5× the load carried, with the parent's
+    figure in brackets: the 150-TSS rider 1.55 (1.46); a novice 2.18 (2.19)
+    and 1.74 (1.57); a continuous novice 1.99 (2.39); a three-week holiday
+    2.24 (2.01); a holiday novice 2.34, and 1.68 in owner mode; a
+    regenerate after six weeks off 1.74 (1.71).
+  - Most of that is the week itself built far over its budget and all hard:
+    a novice's week 3 is 208 TSS against a 162 budget.
+  - Step 6, where every week is built through the owner and its
+    `HARD_CEILING_SHARE`.
+- **Intensity moved with the budgets.** Over the characterization, total
+  hard TSS fell 2.7% with the legacy builder and 1.2% in owner mode, but it
+  rose in 17 and 21 of 74 cases, and the hardest week rose in 16 and 23. Of
+  the five 12 h riders, four gained hard TSS with the legacy builder
+  (3.8–6.3%), and the 55/385 rider's hardest week went from 242 to 308.
 - **Nothing in the legacy chain bounds hard work by the budget (M6).** The
   owner does (`HARD_CEILING_SHARE`). `hard_share`, 8 cases. Step 6.
   - A 3 h/week rider's budget is the 195 TSS their hours carry, so the same
@@ -936,6 +968,46 @@ scratchpad's `review/p3r2/`.
   blocks from stepbacks alone, as the B3 pass did. It flagged an unload
   lighter than every load week before it, because a recovery ramp sat in
   its block. The planner and the auditor share `UNLOAD_PHASES` now.
+
+#### The third part 3 review
+
+A third independent reviewer ran 59500caa and found 2 high, 4 medium and 6
+low issues. Its probes are in the scratchpad's `review/p3r3/`.
+- **H1, the intensity rail, and H2, the danger line.** Both recorded above.
+  The owner's decision (2026-09-13): fix what belongs to part 3, record
+  these two for Step 6, and push the branch. Nothing is deployed from it.
+- **M1, a week of rest days the rider had already ridden read as a
+  holiday.** A plan made on a Monday after a 420 TSS ride prescribes
+  nothing for the days left of that week. A holiday is told now by the mark
+  the planner writes on a day away (`plan_invariants.REST_UNAVAILABLE`,
+  `asks_nothing`), which the rhythm, the ramp, the B3 pass and the auditor
+  all read.
+- **M2, fixes nothing would have caught.** The B3 pass and the ramp back on
+  stepback flags, and a ramp that advances a week for every row, each fail
+  a test now.
+- **M3, knife-edge gates.** The build's TSB bound is widened to −31…−27,
+  which still rejects k = 45 and k = 35. The plan-level ACWR xfails still
+  turn on a TSS or two; they are Step 6's to remove.
+- **M4, intensity moved.** Recorded above.
+- **Low.** `check_acwr` no longer divides by a zero-day row (L2), and its
+  blocks restart at a holiday (L3); each has a test that fails without the
+  fix. `limit=None` was never an input: the second review's NameError was a
+  deleted name, and the parameter takes a number (L1).
+- **Three tests the date exposed, from an earlier step.** On 2026-09-13, a
+  Sunday, `test_v208_volume_ceiling`'s HIT check, `test_plan_entry_api`'s
+  backdated runway and `test_recalc_preserves_state` went red on the branch
+  and green on clean-main. All three fail at 27642302 too, and a bisect
+  against clean-main lands on `afdc8c91`, where weeks began to anchor on
+  Mondays: a plan laid on a Sunday opens with that Sunday alone, a declared
+  start off the Monday grid adds a sliver row (18, where the test allowed
+  17), and a phase seam can leave a one-day row that carries one easy
+  session and no HIT. The three tests read clean-main's full weeks; each now
+  reads the geometry that step decided, without loosening what it checks.
+- **Recorded, not fixed.** The dry run's labels cannot see a holiday, so
+  after one they run 1.4–7.5× the rows (L4). The app's deload advance reads
+  stepback flags alone, so a first week back from a holiday can take an
+  advanced deload (L5, pre-existing). `characterize_planner --self-test`
+  has two reforecast cases it cannot perturb, here and on the parent (L6).
 
 #### Step 5, part 4 — one week context (DUP-4, OWN-9) — DONE
 
@@ -1166,7 +1238,11 @@ From part 3:
   skip the B3 pass; extend and refit skip the week-total pass.
 - A kept week is re-budgeted from the rider's state rather than kept at the
   old plan's number: recalculate's week in progress, and extend's kept weeks.
-- Hard work is bounded by the budget (M6).
+- Hard work is bounded by the budget (M6). Until it is, a 6 h plan crosses
+  the intensity rail and novices' weeks reach 1.7–2.3× the load they carry
+  (part 3's findings, above). This is the intensity budget, D1's first rule.
+- The app's own deload advance reads stepback flags rather than the unload
+  test (`app.py`), and the dry run's labels cannot see a holiday.
 - Reforecast eases a hard day when the rider's TSB is under what the plan
   projects for that day, not under an absolute −30. The plan's own long
   weekends take a fit rider's daily TSB past −30 (the owner's decision,

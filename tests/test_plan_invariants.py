@@ -169,6 +169,25 @@ class CapsAndContent(unittest.TestCase):
         self.assertIn("stepback_lightest", rules(blk(350)))
         self.assertNotIn("stepback_lightest", rules(blk(200)))
 
+    def test_a_row_with_no_days_does_not_break_the_audit(self):
+        """A row whose end precedes its start has no days to spread a load
+        over, and the acute:chronic check divided by them (the third part 3
+        review, L2)."""
+        self.assertEqual(pi.check_acwr([week([sess(0, tss=100)], n=1, first=6, last=5)],
+                                       300.0), [])
+
+    def test_a_week_away_is_not_in_the_unload_weeks_block(self):
+        """A holiday unloads the rider, so the block the next unload is
+        measured against starts after it. Counted through the holiday, a
+        light week from before it was the block's lightest (the third part 3
+        review, L3)."""
+        before = week([sess(0, tss=250)], n=1, phase="base")
+        away = week([sess(0, t="rest", dur=0, tss=0, description=pi.REST_UNAVAILABLE)],
+                    n=2, phase="base")
+        after = [week([sess(0, tss=400)], n=i + 3, phase="base") for i in range(2)]
+        unload = week([sess(0, tss=255)], n=5, phase="base", stepback=True)
+        self.assertNotIn("stepback_lightest", rules([before, away, *after, unload]))
+
     def test_a_recovery_ramp_is_not_in_the_unload_weeks_block(self):
         """The block is the load weeks since the last unload, an unload phase
         included. Counted from stepbacks alone, a regenerate's recovery weeks

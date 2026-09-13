@@ -210,22 +210,26 @@ def test_weeks_the_rider_missed_restart_the_count():
     assert tp.stepback_due([_ridden_week(i, "done") for i in (1, 2, 3)], "build1")
 
 
-def test_rest_days_unload_a_whole_week_not_a_stub():
-    """A whole week of rest days is a holiday, ahead of today or behind it. A
-    plan made on a Thursday after the rider has ridden the week's load opens
-    with Thursday to Sunday at rest: that calendar week loaded them, and read
-    as an unload it moved every owner-mode continuous plan's stepback."""
-    def rest_row(start, days):
+def test_a_week_away_unloads_the_rider_not_any_week_of_rest_days():
+    """A week the rider is away for unloads them, ahead of today or behind
+    it. Not every week of rest days, though: a plan made on a Monday after a
+    420 TSS ride prescribes nothing for the days left, and that week loaded
+    them (the third part 3 review, M1). Nor a stub: a plan made on a
+    Thursday opens with Thursday to Sunday at rest, and read as an unload it
+    moved every owner-mode continuous plan's stepback."""
+    def rest_row(start, days, away=True):
         return tp.PlannedWeek(
             week_num=1, start=start, end=start + timedelta(days=days - 1), phase="base",
             tss_target=300, is_stepback=False,
             sessions=[tp.PlannedSession(day=start + timedelta(days=d), day_name="",
-                                        session_type="rest", duration_min=0,
-                                        tss_estimate=0.0, description="")
+                                        session_type="rest", duration_min=0, tss_estimate=0.0,
+                                        description=tp.REST_UNAVAILABLE if away else "Rest day")
                       for d in range(days)])
     _TODAY[0] = MONDAY
     ahead, behind = MONDAY + timedelta(weeks=1), MONDAY - timedelta(weeks=2)
     assert tp._went_unridden(rest_row(ahead, 7)) and tp._went_unridden(rest_row(behind, 7))
+    assert not tp._went_unridden(rest_row(ahead, 7, away=False))
+    assert not tp._went_unridden(rest_row(behind, 7, away=False))
     assert not tp._went_unridden(rest_row(ahead + timedelta(days=3), 4))
     assert not tp._went_unridden(rest_row(behind + timedelta(days=3), 4))
 

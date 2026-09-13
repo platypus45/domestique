@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 # Hard by prescription -- the athlete was told to ride hard.
@@ -347,6 +347,42 @@ def check_hard_share(weeks, rides=None, today=None, tolerance=1.10) -> list[Viol
 # consolidation week that closes a non-event plan (Mujika 2010). The
 # planner's rhythm and ramp read the same list.
 UNLOAD_PHASES = ("taper", "recon", "recovery_ramp", "consolidation")
+# What the planner writes on a day the rider is away (training_planner and
+# week_plan both mark it), which is how a holiday is told from a week the
+# rider has already ridden.
+REST_UNAVAILABLE = "Rest (unavailable)"
+
+
+def _field(o):
+    return o.get if isinstance(o, dict) else (lambda k, d=None: getattr(o, k, d))
+
+
+def _day(value):
+    return date.fromisoformat(value) if isinstance(value, str) else value
+
+
+def asks_nothing(w) -> bool:
+    """A whole week of rest days the rider is away for: a holiday, which
+    unloads them whether it is ahead of today or behind it.
+
+    Not every week of rest days. A plan made on a Monday after a 420 TSS ride
+    prescribes nothing for the days left of that week, and that week loaded
+    the rider (the third part 3 review, M1). Nor a shorter row: it says
+    nothing about its calendar week.
+    """
+    get = _field(w)
+    start, end, sessions = get("start"), get("end"), get("sessions") or []
+    if start is None or end is None or not sessions:
+        return False
+    if (_day(end) - _day(start)).days + 1 < 7:
+        return False
+    away = False
+    for s in sessions:
+        sget = _field(s)
+        if sget("session_type", "") != "rest":
+            return False
+        away = away or sget("description", "") == REST_UNAVAILABLE
+    return away
 
 
 def check_stepback_lightest(weeks, today=None) -> list[Violation]:
@@ -354,17 +390,17 @@ def check_stepback_lightest(weeks, today=None) -> list[Violation]:
 
     Issurin's 3:1 loading: the unload week exists to let the three before it
     be absorbed, so it has to be the lightest of them. The block is the load
-    weeks since the last unload, a stepback or an unload phase: counted from
-    stepbacks alone, a regenerate's recovery weeks sat in the block, and an
-    unload lighter than every load week before it was flagged. Weeks that
-    began before ``today`` are history -- half-ridden, half-dismissed -- and
-    are compared with nothing.
+    weeks since the last unload: a stepback, an unload phase or a holiday.
+    Counted from stepbacks alone, a regenerate's recovery weeks sat in the
+    block, and an unload lighter than every load week before it was flagged.
+    Weeks that began before ``today`` are history -- half-ridden,
+    half-dismissed -- and are compared with nothing.
     """
     out, block = [], []
     for w in weeks:
         if today is not None and w.start < today:
             continue
-        if str(getattr(w, "phase", "")).lower() in UNLOAD_PHASES:
+        if str(getattr(w, "phase", "")).lower() in UNLOAD_PHASES or asks_nothing(w):
             block = []
             continue
         full = (w.end - w.start).days >= 6
@@ -419,6 +455,8 @@ def check_acwr(weeks, chronic, today=None, tolerance=1.05,
     carried, out = float(chronic), []
     for w in _weeks_ahead(weeks, today):
         days = (w.end - w.start).days + 1
+        if days <= 0:
+            continue
         load = sum(float(s.tss_estimate or 0) for s in w.sessions if _ridden(s)) * 7 / days
         phase = str(getattr(w, "phase", "")).lower()
         if (days >= 4 and phase != "taper" and carried > 0

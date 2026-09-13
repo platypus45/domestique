@@ -200,6 +200,10 @@ def test_ceiling_pass_preserves_at_least_one_hit_in_build_weeks():
     for w in weeks:
         if w.phase not in ("build1", "build2", "peak") or w.is_stepback:
             continue
+        if (w.end - w.start).days < 6:
+            # A sliver at a phase seam, since weeks anchor on Mondays
+            # (afdc8c91): one day carries one easy session, never a HIT.
+            continue
         assert tp._week_hit_count(w) >= 1, (
             f"week={w.week_num} phase={w.phase}: ceiling pass dropped all HIT "
             f"sessions ({[s.session_type for s in w.sessions if s.session_type != 'rest']})"

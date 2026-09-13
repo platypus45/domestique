@@ -54,7 +54,7 @@ log = logging.getLogger(__name__)
 # avoids a circular import (app -> tp -> app).
 import error_codes  # leaf module — no circular risk
 from plan_invariants import (  # leaf: the auditor's rules are the planner's
-    ACWR_SWEET_SPOT, UNLOAD_PHASES, chronic_after)
+    ACWR_SWEET_SPOT, REST_UNAVAILABLE, UNLOAD_PHASES, asks_nothing, chronic_after)
 import week_plan  # single owner of week/session state (lazy tp import inside)
 import workout_facts  # v3.2.0 watertight classifier — L1 facts layer (leaf module)
 _LOG_ERROR_HOOK = None
@@ -1053,16 +1053,14 @@ def _went_unridden(w) -> bool:
     3:1 count restarts after it: someone back from two weeks off is not due
     a deload (Step 5 review, L4). Measured against the prescription, not the
     week's budget: a budget the builders fell short of made a fully ridden
-    week look unridden. A whole week of rest days, which is how the planner
-    writes a holiday, asks nothing, ahead of today as behind it: read only
-    once it was past, a holiday planned ahead made the first week back a
-    deload (the part 3 review, M-5). A shorter row of rest days says nothing
-    about its calendar week: a plan made on a Thursday opens with one when
-    the rider has already ridden the week's load.
+    week look unridden. A week the rider is away for asks nothing of them,
+    ahead of today as behind it (`asks_nothing`): read only once it was past,
+    a holiday planned ahead made the first week back a deload (the part 3
+    review, M-5).
     """
     get = w.get if isinstance(w, dict) else (lambda k, d=None: getattr(w, k, d))
-    start, end, sessions = get("start"), get("end"), get("sessions") or []
-    if start is None or end is None or not sessions:
+    end, sessions = get("end"), get("sessions") or []
+    if end is None or not sessions:
         return False
     prescribed = ridden = 0.0
     for s in sessions:
@@ -1074,7 +1072,7 @@ def _went_unridden(w) -> bool:
         if not (sget("dismissed_at", "") or sget("status", "") in ("missed", "dismissed")):
             ridden += tss
     if not prescribed:
-        return (_as_date(end) - _as_date(start)).days + 1 >= 7
+        return asks_nothing(w)
     if _as_date(end) >= date.today():
         return False
     return ridden <= STEPBACK_LOAD_FACTOR * prescribed
@@ -8920,7 +8918,7 @@ def generate_plan(
                         s.session_type = "rest"
                         s.duration_min = 0
                         s.tss_estimate = 0
-                        s.description = "Rest (unavailable)"
+                        s.description = REST_UNAVAILABLE
                         s.zwo_file = ""
                         s.zwo_name = ""
                         continue
@@ -9028,7 +9026,7 @@ def generate_plan(
                     s.session_type = "rest"
                     s.duration_min = 0
                     s.tss_estimate = 0
-                    s.description = "Rest (unavailable)"
+                    s.description = REST_UNAVAILABLE
                     s.zwo_file = ""
                     s.zwo_name = ""
                 else:
@@ -11947,7 +11945,7 @@ def reforecast(
                     s.session_type = "rest"
                     s.duration_min = 0
                     s.tss_estimate = 0
-                    s.description = "Rest (unavailable)"
+                    s.description = REST_UNAVAILABLE
                     s.zwo_file = ""
                     s.zwo_name = ""
                 elif s.session_type == "rest":

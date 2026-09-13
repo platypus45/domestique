@@ -37,6 +37,8 @@ import logging
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from plan_invariants import REST_UNAVAILABLE  # leaf module — no circular risk
+
 log = logging.getLogger(__name__)
 
 def _hard(session) -> bool:
@@ -343,7 +345,7 @@ class TrainingWeek:
 
         # 1. Days the athlete cannot ride carry nothing.
         if self.ctx.unavailable and self.ctx.unavailable(session.day):
-            return self._accept(self._as_rest(session, "Rest (unavailable)"))
+            return self._accept(self._as_rest(session, REST_UNAVAILABLE))
         wd = session.day.weekday()
         if wd in (goal.rest_days or []) or (
                 goal.available_days and wd not in goal.available_days):

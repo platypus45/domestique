@@ -48,15 +48,20 @@ class TestBackdatedGenerateRecomputesWeeks(unittest.TestCase):
 
         plan = json.loads((self.tmp / "current_plan.json").read_text())
         weeks = plan["weeks"]
-        # Full ~16-week runway (16/17 rows by weekday alignment), anchored on
-        # the backdated start; the H1 bug produced the UI's TODAY-anchored 12.
+        # Full ~16-week runway (16-18 rows by weekday alignment: weeks anchor
+        # on Mondays since afdc8c91, so a start off that grid opens with a
+        # sliver row, and a phase seam can leave another), anchored on the
+        # backdated start; the H1 bug produced the UI's TODAY-anchored 12.
         self.assertEqual(weeks[0]["start"], start.isoformat())
         self.assertGreaterEqual(len(weeks), 15,
                                 f"stale plan_weeks won (H1): {len(weeks)} weeks")
-        self.assertLessEqual(len(weeks), 17)
+        self.assertLessEqual(len(weeks), 18)
         self.assertEqual(plan["goal"].get("start_date"), start.isoformat())
         # H1 signature was a stretched multi-week peak: cap consecutive peaks.
-        phases = [w.get("phase") for w in weeks]
+        # Counted in weeks, not rows: a phase seam can leave a sliver row of
+        # its own since weeks anchor on Mondays (afdc8c91).
+        phases = [w.get("phase") for w in weeks
+                  if (date.fromisoformat(w["end"]) - date.fromisoformat(w["start"])).days >= 3]
         longest_peak = cur = 0
         for p in phases:
             cur = cur + 1 if p == "peak" else 0

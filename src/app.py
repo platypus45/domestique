@@ -11758,7 +11758,7 @@ async def api_plan_generate(request: Request):
             current_ctl = None
         try:
             import ride_storage as _rs
-            recent_weekly_tss = _rs.recent_mean_weekly_tss()
+            recent_weekly_tss = _rs.chronic_weekly_tss(_load_all_rides_safe())
         except Exception:
             recent_weekly_tss = None
 
@@ -12370,7 +12370,7 @@ def _regenerate_plan_dict(
     # the drift chip's snapshot read the same number.
     try:
         import ride_storage as _rs
-        _recent_wtss = _rs.recent_mean_weekly_tss()
+        _recent_wtss = _rs.chronic_weekly_tss(_load_all_rides_safe())
     except Exception:
         _recent_wtss = None
     _regen_kwargs = dict(

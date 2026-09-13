@@ -110,7 +110,7 @@ def test_regenerate_stamps_fresh_snapshot(monkeypatch):
     """The regenerate serialization site refreshes ctl_snapshot from the
     regen's current_ctl (a regen re-anchors the plan → baseline moves)."""
     import ride_storage
-    monkeypatch.setattr(ride_storage, "recent_mean_weekly_tss",
+    monkeypatch.setattr(ride_storage, "chronic_weekly_tss",
                         lambda *a, **k: 390.0)
     today = date.today()
     monday = today - timedelta(days=today.weekday())

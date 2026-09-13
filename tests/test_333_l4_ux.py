@@ -216,7 +216,7 @@ class GenerateBase(unittest.TestCase):
         import ride_storage as _rs
         self._p_rides = patch.object(_rs, "list_rides", return_value=[])
         self._p_rides.start()
-        self._p_tss = patch.object(_rs, "recent_mean_weekly_tss",
+        self._p_tss = patch.object(_rs, "chronic_weekly_tss",
                                    return_value=330.0)
         self._p_tss.start()
         self.client = TestClient(app_module.app)

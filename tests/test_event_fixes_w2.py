@@ -776,8 +776,8 @@ def test_d4_generate_endpoint_carries_warning(_app_plan_env, tmp_path,
     monkeypatch.setattr(app_module, "cached",
                         lambda *a, **k: {"ctl": 50.0})
     import ride_storage
-    monkeypatch.setattr(ride_storage, "recent_mean_weekly_tss",
-                        lambda: 650.0, raising=False)
+    monkeypatch.setattr(ride_storage, "chronic_weekly_tss",
+                        lambda *a, **k: 650.0, raising=False)
     monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
     target = ANCHOR + timedelta(days=1)
     resp = asyncio.run(app_module.api_plan_generate(_Req({

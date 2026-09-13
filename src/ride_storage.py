@@ -1735,6 +1735,85 @@ def recent_mean_weekly_tss(
     return round(sum(per_week.values()) / len(per_week), 1)
 
 
+_CHRONIC_WINDOW_DAYS = 28        # the ACWR's chronic side (Gabbett 2016)
+_CHRONIC_SETTLE_DAYS = 56        # an EWMA seeded at zero, within ~2% of true
+
+
+def chronic_weekly_tss(
+    rides: list[dict] | None = None,
+    today=None,
+) -> float | None:
+    """The load the rider carries, in TSS a week: a 28-day EWMA of daily TSS.
+
+    The chronic side of the ACWR (Williams et al. 2017), on the convention the
+    planner's ramp and its auditor already share
+    (``plan_invariants.chronic_after``), so the load carried means one thing
+    everywhere.
+
+    Reads ``load_all_rides`` — ICU-synced records as well as FIT imports —
+    where ``recent_mean_weekly_tss`` reads only the FIT archive. A rider whose
+    rides arrive through intervals.icu has an empty ``list_rides()``, so the
+    planner saw no load at all and every plan fell back to CTL x 7: the
+    owner's own 256 TSS a week read as 228, and their first week was budgeted
+    at 297 where 333 was safe (2026-09-13).
+
+    A day without a ride counts as a zero, so the load decays through a
+    lay-off instead of holding at what the rider did before it — which the
+    mean over active weeks could not do, and which the ramp used to guard
+    against by flooring at CTL x 7 (the Step 5 review, L1).
+
+    Returns None, so the caller keeps its CTL x 7 fallback, when the archive
+    holds no TSS, when it is too short to have settled (CTL is a longer EWMA
+    of the same rides and says it better), or when nothing was ridden in the
+    window at all — a rider returning from months off is described by their
+    CTL, not by an EWMA decayed to nothing.
+    """
+    import datetime as _dt
+
+    from plan_invariants import chronic_after
+
+    if rides is None:
+        rides = load_all_rides()
+    if not rides:
+        return None
+    per_day: dict[_dt.date, float] = {}
+    for r in rides:
+        # Both shapes, as compute_local_atl reads them: list_rides() nests the
+        # load under summary, load_all_rides() carries it at the top level.
+        tss = r.get("tss")
+        if tss is None:
+            tss = (r.get("summary") or {}).get("tss") or 0
+        if not tss:
+            continue
+        try:
+            # Parsed here, not stored as text: one record with an unreadable
+            # date would otherwise be the archive's max() and void it whole.
+            day = _dt.date.fromisoformat((r.get("started_at") or "")[:10])
+            per_day[day] = per_day.get(day, 0.0) + float(tss)
+        except (TypeError, ValueError):
+            continue
+    if not per_day:
+        return None
+    if today is None:
+        today = _dt.date.today()
+    first, last = min(per_day), max(per_day)
+    if (today - first).days < _CHRONIC_SETTLE_DAYS:
+        return None
+    if (today - last).days >= _CHRONIC_WINDOW_DAYS:
+        return None
+    # Whole weeks back from today, oldest first: the ramp and the auditor step
+    # this EWMA a week at a time, and a trailing week holds the rider's pattern
+    # whatever weekday it is asked on. Walked day by day instead, the same
+    # archive reads 278 TSS a week for a Mon/Wed/Fri rider at 300 when asked on
+    # a Sunday -- the trough of its own within-week sawtooth.
+    carried = 0.0
+    for i in range((today - first).days // 7, -1, -1):
+        end = today - _dt.timedelta(days=7 * i)
+        week = sum(per_day.get(end - _dt.timedelta(days=j), 0.0) for j in range(7))
+        carried = chronic_after(carried, week, 7)
+    return round(carried, 1)
+
+
 def persist_wellness(record: dict) -> Path | None:
     """v4.5.0 — write a single ICU wellness record to ``~/.domestique/wellness/``.
 

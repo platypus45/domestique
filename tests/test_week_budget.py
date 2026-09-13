@@ -141,6 +141,8 @@ _STEP6 = "passes move weeks after the ramp has counted them (Step 6)"
     pytest.param(43, 300, marks=pytest.mark.xfail(strict=True, reason=_STEP6)),
     (55, 385),
     pytest.param(70, 490, marks=pytest.mark.xfail(strict=True, reason=_STEP6)),
+    # the owner, carrying more than CTL x 7: week 6 reads 1.45x (Step 6).
+    pytest.param(33, 256, marks=pytest.mark.xfail(strict=True, reason=_STEP6)),
 ])
 def test_the_acwr_holds(ctl, chronic):
     """No week over 1.3x the load the rider carries into it (a 28-day EWMA),
@@ -157,7 +159,7 @@ def test_the_acwr_holds(ctl, chronic):
 
 @pytest.mark.parametrize("ctl, chronic", [
     pytest.param(28, 150, marks=pytest.mark.xfail(strict=True, reason=_STEP6)),
-    (36, 250), (43, 300), (55, 385), (70, 490)])
+    (36, 250), (43, 300), (55, 385), (70, 490), (33, 256)])
 def test_no_rider_crosses_the_danger_line(ctl, chronic):
     """Gabbett's danger zone starts at 1.5x. The build was budgeted at it, and
     the 150- and 250-TSS riders crossed it (the part 3 review, H2). What the
@@ -167,6 +169,20 @@ def test_no_rider_crosses_the_danger_line(ctl, chronic):
     had hidden it (the third review, H2)."""
     bad = pi.check_acwr(_plan(ctl, chronic), chronic, tolerance=1.0, limit=pi.ACWR_DANGER)
     assert not bad, (ctl, [str(v) for v in bad])
+
+
+def test_the_ramp_starts_from_the_load_the_rider_carries():
+    """A rider training above CTL x 7 is budgeted from what they carry.
+
+    The start was floored at CTL x 7 against a recent mean that could not
+    decay (L1); ride_storage.chronic_weekly_tss decays on its own, so the
+    floor only cost fit riders load. The owner carries 256 TSS a week at CTL
+    32.6, and the floor budgeted their first build week at 297 where 333 is
+    within the sweet spot. Restoring the floor puts the first line back to
+    297, and the last line fails if the ceiling is simply gone."""
+    assert tp.LoadRamp(32.6, 256.0).budget("build1") == 333
+    assert tp.LoadRamp(32.6, None).budget("build1") == 297     # nothing known
+    assert tp.LoadRamp(32.6, 180.0).budget("build1") == 234    # and it still cuts
 
 
 def test_a_rider_with_no_history_starts_somewhere():

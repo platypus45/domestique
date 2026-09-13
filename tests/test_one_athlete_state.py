@@ -36,7 +36,7 @@ def _rider(monkeypatch):
     import ride_storage
     _TODAY[0] = MONDAY
     monkeypatch.setattr(tp, "date", _Today)
-    monkeypatch.setattr(ride_storage, "recent_mean_weekly_tss", lambda *a, **k: RECENT)
+    monkeypatch.setattr(ride_storage, "chronic_weekly_tss", lambda *a, **k: RECENT)
 
 
 def _goal(goal_type="event", **kw):

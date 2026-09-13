@@ -2844,17 +2844,21 @@ class LoadRamp:
     ``ctl`` is the rider's CTL where the ramp starts, ``chronic`` their weekly
     load (athlete_weekly_load), ``target_ctl`` where the ramp stops (None: a
     continuous plan, bounded only by the guards). The load the rider carries,
-    the ACWR's chronic side (plan_invariants.chronic_after), starts at the
-    lower of ``chronic`` and CTL x 7: the archive's recent mean averages only
-    weeks with a ride, so after an absence it overstated the load the rider
-    carries (the Step 5 review, L1).
+    the ACWR's chronic side (plan_invariants.chronic_after), starts at
+    ``chronic``; CTL x 7 stands in when nothing else is known about them.
+
+    That start was floored at CTL x 7, because the archive's recent mean
+    averaged only weeks with a ride and so overstated the load carried after
+    an absence (the Step 5 review, L1).
+    ``ride_storage.chronic_weekly_tss`` counts a day off as a zero, so it
+    decays through a lay-off on its own and the floor only held fit riders
+    back: it budgeted the owner's first week at 297 TSS where the 256 a week
+    they carry allows 333 (2026-09-13).
     """
 
     def __init__(self, ctl, chronic=None, target_ctl=None):
         self.ctl = float(ctl or 0.0)
-        start = self.ctl * 7
-        if chronic:
-            start = min(float(chronic), start) if start > 0 else float(chronic)
+        start = float(chronic or 0.0) or self.ctl * 7
         if start <= 0:
             # Nothing known about the rider: Couzens' loading rule at CTL 0.
             start = 7.0 * LOAD_K_DEFAULT
@@ -3294,10 +3298,14 @@ def _continuous_phases(goal: "Goal", current_ctl: float,
 def athlete_weekly_load(current_ctl, recent_weekly_tss=None):
     """The rider's chronic weekly load: what the ACWR ceiling multiplies.
 
-    The recent mean from the ride archive, else CTL x 7 -- CTL is the chronic
-    daily load, so a rider with no local archive (ICU-only, fresh install)
-    still gets a ceiling from their training rather than from their free time
-    (v2.1.0 B3). One derivation for every caller of generate_phases. Generate
+    The 28-day EWMA of the rider's own rides (ride_storage.chronic_weekly_tss,
+    the convention the ramp and the auditor share), else CTL x 7 -- CTL is the
+    chronic daily load, so a rider whose archive cannot answer still gets a
+    ceiling from their training rather than from their free time (v2.1.0 B3).
+    It read recent_mean_weekly_tss, which sees FIT imports only: with the
+    rides arriving from intervals.icu, that returned None for every plan the
+    owner has ever been given, and CTL x 7 answered instead.
+    One derivation for every caller of generate_phases. Generate
     and extend fetched it; regenerate, recalculate, the phase preview and the
     entry scan fell back to hours_per_week x 65, so regenerate prescribed 17 of
     22 weeks over the ACWR-safe load, and the preview showed 1.8x the load
@@ -3306,9 +3314,9 @@ def athlete_weekly_load(current_ctl, recent_weekly_tss=None):
     if recent_weekly_tss is None:
         try:
             import ride_storage as _rs
-            recent_weekly_tss = _rs.recent_mean_weekly_tss()
+            recent_weekly_tss = _rs.chronic_weekly_tss()
         except Exception as _e:  # noqa: BLE001
-            log.debug(f"recent_mean_weekly_tss fetch failed: {_e}")
+            log.debug(f"chronic_weekly_tss fetch failed: {_e}")
     if recent_weekly_tss is None and current_ctl and current_ctl > 0:
         recent_weekly_tss = round(current_ctl * 7)
     return recent_weekly_tss

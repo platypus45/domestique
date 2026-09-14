@@ -9240,6 +9240,38 @@ def api_gpx_data(region: str, filename: str):
 # WEEKLY MESOCYCLE API
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _read_stored_plan() -> "dict | None":
+    """current_plan.json, or None when there is none or it does not parse."""
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return None
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _stored_week_view(plan: "dict | None", week_offset: int = 0):
+    """The ISO week ``week_offset`` weeks from today's, as ``plan`` stores it:
+    the one week_view.WeekView every card reads."""
+    import week_view as _wv
+
+    start, _end = _wv.iso_week(clock.today(), week_offset)
+    try:
+        lib_by_file = _wv.library_by_file(tp.load_workout_library())
+    except Exception:  # noqa: BLE001
+        lib_by_file = {}
+    try:
+        classifications = tp._load_content_classifications() or {}
+    except Exception:  # noqa: BLE001
+        classifications = {}
+    return _wv.build(
+        plan, start, lib_by_file, tp._session_type_from_row,
+        naming=lambda zf: _session_naming_lookup(zf, classifications, lib_by_file),
+        offset=week_offset)
+
+
 @app.get("/api/weekly-plan")
 def api_weekly_plan(week_offset: int = Query(0)):
     """The stored week, as one view (src/week_view.py). week_offset=0 is the
@@ -9252,37 +9284,12 @@ def api_weekly_plan(week_offset: int = Query(0)):
     plan on disk now, and a week with no plan on record says so:
     tss_target None, every day a placeholder with on_record False.
     """
-    import week_view as _wv
-
     training = cached("training", get_today_metrics)
     current_ctl = training.get("ctl") or 30
-    json_path = _plan_dir() / "current_plan.json"
-    plan = None
-    if json_path.exists():
-        try:
-            with open(json_path, encoding="utf-8") as f:
-                plan = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            plan = None
-    start, _end = _wv.iso_week(clock.today(), week_offset)
+    plan = _read_stored_plan()
+    result = _stored_week_view(plan, week_offset).as_weekly_plan()
     try:
-        _lib_by_file = _wv.library_by_file(tp.load_workout_library())
-    except Exception:  # noqa: BLE001
-        _lib_by_file = {}
-    try:
-        _classifications = tp._load_content_classifications() or {}
-    except Exception:  # noqa: BLE001
-        _classifications = {}
-    view = _wv.build(
-        plan, start, _lib_by_file, tp._session_type_from_row,
-        naming=lambda zf: _session_naming_lookup(zf, _classifications, _lib_by_file),
-        offset=week_offset)
-    result = view.as_weekly_plan()
-    try:
-        json_path = _plan_dir() / "current_plan.json"
-        if json_path.exists():
-            with open(json_path, encoding="utf-8") as f:
-                plan = json.load(f)
+        if plan:
             g = plan.get("goal", {})
             plan_goal = tp.goal_from_dict(g)
             # Readiness needs an event date that parses; a corrupt one used to
@@ -10487,53 +10494,32 @@ def _api_today_session_impl():
     except Exception as _e:
         _log.debug(f"/api/today-session: lazy ICU sync kick swallowed: {_e}")
 
-    # week_data (the regenerated Mon–Sun week) is still used below for the
-    # yesterday-TSS-ratio heuristic, so keep it.
-    week_data = api_weekly_plan(week_offset=0)
     today_str = clock.today().isoformat()
-
-    # v3.2.1 BUG-FIX: the home card's LABEL must come from the SAME stored plan
-    # its CLICK opens (/api/calendar → merge_plan_with_rides on
-    # current_plan.json). Previously the label came from api_weekly_plan()'s
-    # REGENERATED week, which diverges from the stored plan whenever the plan's
-    # week boundary isn't a Monday — a Sunday-start plan showed one day's
-    # prescription while the click opened a different stored day (label said
-    # REST, click opened the Z2 ride). Prefer today's session from the stored
-    # plan; fall back to the regenerated week only when it isn't there.
-    planned_data = None
-    _stored = None
     _jp = _plan_dir() / "current_plan.json"
-    try:
-        if _jp.exists():
-            with open(_jp, encoding="utf-8") as _f:
-                _stored = json.load(_f)
-    except Exception as _e:
-        _stored = None
-        _log.debug(f"/api/today-session: stored-plan read failed, using regen: {_e}")
+    _stored = _read_stored_plan()
     # 3.4.0 W2 (amendment C): continuous deload advance — the today card IS
     # the "each app open" surface, so the monotony/ACWR check runs here.
     # Idempotent (week-latched) and best-effort: a failure must never break
-    # the today card. Runs BEFORE the planned-session pick so a freshly
-    # advanced deload is what the card shows.
+    # the today card. Runs BEFORE the view is built so a freshly advanced
+    # deload (it rewrites _stored in place) is what the card shows.
+    # TODO(week-view step 6): a GET that writes the plan (P8).
     _deload_chip = None
     if _plan_is_continuous(_stored):
         try:
             _deload_chip = _maybe_advance_continuous_deload(_stored, _jp)
         except Exception as _e:  # noqa: BLE001
             _log.warning(f"/api/today-session: continuous deload check failed: {_e}")
-    if _stored:
-        try:
-            planned_data = next(
-                (s for w in _stored.get("weeks", [])
-                 for s in w.get("sessions", []) if s.get("day") == today_str),
-                None,
-            )
-        except Exception as _e:
-            _log.debug(f"/api/today-session: stored-plan read failed, using regen: {_e}")
 
-    if planned_data is None:
-        planned_data = next(
-            (s for s in week_data["sessions"] if s["day"] == today_str), None)
+    # Today's session is the stored week's, read through the one week view
+    # (src/week_view.py) the This Week list and the calendar read: its
+    # session_type is the served file's content, not the slot's label, so the
+    # Today card cannot say SWEETSPOT over a threshold file again
+    # (notes/week-view-contract.md A2). A day no stored row covers has no
+    # session; nothing is regenerated to fill it (P1, P4).
+    week_data = _stored_week_view(_stored, 0).as_weekly_plan()
+    planned_data = next(
+        (s for s in week_data["sessions"]
+         if s["day"] == today_str and s.get("on_record")), None)
     if not planned_data:
         return {"planned": None, "adjusted": None, "reason": "No session planned today"}
 
@@ -10626,8 +10612,11 @@ def _api_today_session_impl():
             else:
                 yesterday_weighted_tss += tss * weight
 
+    # On a Monday yesterday is last week's Sunday, so read that week's view.
+    _yesterday_week = (week_data if clock.today().weekday() > 0
+                       else _stored_week_view(_stored, -1).as_weekly_plan())
     yesterday_planned = next(
-        (s["tss_estimate"] for s in week_data["sessions"]
+        (s["tss_estimate"] for s in _yesterday_week["sessions"]
          if s["day"] == yesterday and s["tss_estimate"] > 0),
         None,
     )

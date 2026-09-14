@@ -145,7 +145,6 @@ class WeekViewAgreement(unittest.TestCase):
                    "calendar": float(current.get("planned_tss") or 0)}
         self.assertEqual(len(set(answers.values())), 1, answers)
 
-    @unittest.expectedFailure
     def test_todays_label_is_the_served_file(self):
         """A2 / P9. The Today card reads session_type, the This Week cell reads
         zwo_name, and the stored record carries both, disagreeing: a

@@ -299,5 +299,38 @@ class TestTodayUsesLocalDate(HomepageTodayConsistencyBase):
             self.assertEqual(data["planned"]["session_type"], "tempo")
 
 
+class TestYesterdayOnAMonday(HomepageTodayConsistencyBase):
+    """G1 compares yesterday's ridden load to yesterday's planned one. On a
+    Monday yesterday is last ISO week's Sunday; the handler looked it up in
+    this week's sessions only, found nothing, and every Monday read as
+    "yesterday went to plan" whatever was ridden (found 2026-09-14)."""
+
+    def test_sundays_plan_is_found_on_monday(self):
+        import clock
+        monday = date(2026, 9, 14)
+        sunday = monday - timedelta(days=1)
+        clock.freeze(monday)
+        self.addCleanup(clock.unfreeze)
+        plan = _mk_today_plan_dict(sunday, "z2", 120, 100, "Endurance")
+        plan["weeks"] += _mk_today_plan_dict(monday, "tempo", 75, 60, "Tempo")["weeks"]
+        plan["weeks"][1]["week_num"] = 2
+        (self._tmp / "current_plan.json").write_text(json.dumps(plan))
+        ride = {"date": sunday.isoformat(), "sport": "Ride", "tss": 200,
+                "duration_sec": 7200, "raw_json": "{}"}
+        with patch.object(
+            app_module, "get_sleep_metrics",
+            return_value={"red_hrv_streak": 0, "ln_rmssd_7d": None,
+                          "swc_lower": None, "swc_upper": None,
+                          "sleep_h": 7.5, "rhr_delta": 0},
+        ), patch.object(
+            app_module, "get_today_metrics",
+            return_value={"ctl": 50, "atl": 45, "tsb": 5},
+        ), patch.object(app_module.db, "query_activities", return_value=[ride]):
+            data = self.client.get("/api/today-session").json()
+        self.assertEqual(data["planned"]["session_type"], "tempo")
+        self.assertEqual(data["adjusted"]["session_type"], "z2")
+        self.assertIn("G1 yesterday 2.0", data["reason"])
+
+
 if __name__ == "__main__":
     unittest.main()

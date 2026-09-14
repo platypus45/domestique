@@ -50,6 +50,19 @@ answered with a test that fails on the code it found.
 | review | 34072406 | skipped/moved days in the strip with undo; stub-row Plan-tab Actual; calendar dedupe prefers the current plan's row; `zwo_name` on today's planned |
 | review | (the commit carrying this note) | rides the lazy sync stored adapt on the next POST (`adapted_ride_total`); a stamp-only write is not `plan_adapted`; a stored row beats a history shell in the calendar dedupe; the eFTP apply fetches only when opted in, and is tested in the sync loop |
 
+## Upstream given up (owner's decision, 2026-09-14, night)
+
+"Current version is finally working as intended": the fork no longer follows
+platypus45/domestique. Its clean-main has 20 commits this branch does not
+(v3.11.4–v3.11.6), and a trial merge conflicts in app.py and
+training_planner.py. Two of those commits run against rules decided here:
+- the plan self-heal writes the plan on load (P8);
+- missed sessions are re-owed and recycled (D6).
+They are not merged. The fork's `main` carries this branch and is its default
+branch; `clean-main` stays as the old upstream snapshot and the gate's
+baseline. `cycling-stack`'s patches/domestique-000*.patch applied to upstream
+through cs-update, which stays disabled; they are history now.
+
 ## After Wave 1: one fitness owner (070ad407)
 
 `fitness.state()` is the only CTL/ATL/TSB source: intervals.icu live, else its

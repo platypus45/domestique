@@ -45,7 +45,8 @@ clean-main baseline; characterization 217 cases unchanged; self-test PASS):
 - **FIT export** (fc5f1edb): durations through the seconds sub-field; the
   known-failures list is 8 lines, all environmental (pywebview, TLS fixture).
 - **`cache.cached`** is single-flight per key (c49d7796).
-- **First Wave 1 seam** (324cd038): `src/week_view.py` and `/api/weekly-plan`
+- **First Wave 1 seam** (324cd038, gated: 8 known failures, 0 new against
+  the same-day clean-main baseline): `src/week_view.py` and `/api/weekly-plan`
   reading it. `week_view.build(plan, monday, lib_by_file, tp._session_type_from_row,
   naming=...)` returns a `WeekView`: `planned_tss` (Σ stored sessions),
   `budget` (the row's `tss_target` when one row owns the week), `on_record`,
@@ -201,3 +202,7 @@ programme before Steps 5b and 6; no relitigating D1–D8.
   intervals.icu's. Everything else in Wave 2 can proceed without it.
 - Whether the Last-week card should show the budget beside the prescribed
   load once history is kept (step 4), or the prescribed load alone.
+
+## Tip at handover
+
+`b9391598` plus this note's commit, on the owner's fork. Production: 03237915.

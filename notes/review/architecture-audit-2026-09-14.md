@@ -164,6 +164,16 @@ memoised plans, one client fixture, timing tests out of the parallel run).
 5. `cache.cached` is single-flight per key (c49d7796): four threads on a
    cold key run the function once, where the old module ran it four times.
 
+## Wave 1 — done on 2026-09-14, the same night
+
+Steps 1–7 of `notes/handoff-week-view.md`'s previous version, each gated
+(0 new failures against a same-day clean-main baseline, characterization
+unchanged), plus two rounds of fixes from independent adversarial reviews that
+drove the API and a sandboxed dashboard. The commits and the measurements are
+in the current `notes/handoff-week-view.md`; the contract's status table says
+which assertions are met. Step 8 (identity at write time) moves to Wave 3 with
+the planner package, as planned.
+
 ## Sequencing against the plan of record
 
 This programme absorbs Steps 7, 8 and 9 and the "second pass" of

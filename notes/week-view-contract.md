@@ -1,9 +1,23 @@
 # One week view — the contract (DRAFT, 2026-09-14, revised after the audit)
 
-Status: drafted for the owner's grill. The six-lens audit
+Status (2026-09-14, night): Wave 1 implemented, gated and reviewed three
+times (`notes/handoff-week-view.md` has the commits). The six-lens audit
 (`notes/review/architecture-audit-2026-09-14.md`) verified every premise and
-added the assertions marked *audit*. Nothing below is implemented. Assertions are what gets graded; the
+added the assertions marked *audit*. Assertions are what gets graded; the
 implementer never grades its own work.
+
+| assertion | state | where |
+|---|---|---|
+| A1 | planned load and today's label agree across weekly-plan, week-summary, calendar, today-session; done load, budget and boundary across all six not yet asserted | `test_week_view_agreement.py` |
+| A2 | reader side met (every card derives the type from the served file); write side open (Step 8, Wave 3) | `test_week_view_agreement.py`, `test_calendar_cells_open.py` |
+| A3 | open (implied for the known paths by A4, not asserted) | |
+| A4 | met for every parameterless GET | `test_reads_do_not_write.py` |
+| A5 | met (`replaced_weeks`) | `test_generate_keeps_history.py` |
+| A6 | met; `tp._SESSION_TYPE_TO_BAND` (five intensity bands) kept, see the handoff | `test_training_planner.py::TestSessionTypeToBandLockedValues` |
+| A7, A8, A14 | open (Wave 2) | |
+| A9 | met at every step (0 new failures; characterization unchanged) | the handoff |
+| A10 | met; residual sequential repeats measured | `test_dashboard_one_object.py` |
+| A11–A13 | met in Wave 0 | |
 
 ## Why
 

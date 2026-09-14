@@ -30,19 +30,19 @@
         <SteadyState Duration="60" Power="0.92" pace="0" />
         <SteadyState Duration="60" Power="0.96" pace="0" />
         <SteadyState Duration="60" Power="1" pace="0" />
-        <SteadyState Duration="60" Power="1.04" pace="ramp" />
-        <SteadyState Duration="60" Power="1.08" pace="ramp" />
-        <SteadyState Duration="60" Power="1.12" pace="ramp" />
-        <SteadyState Duration="60" Power="1.16" pace="ramp" />
-        <SteadyState Duration="60" Power="1.2" pace="ramp" />
-        <SteadyState Duration="60" Power="1.24" pace="ramp" />
-        <SteadyState Duration="60" Power="1.28" pace="ramp" />
-        <SteadyState Duration="60" Power="1.32" pace="ramp" />
-        <SteadyState Duration="60" Power="1.36" pace="ramp" />
-        <SteadyState Duration="60" Power="1.4" pace="ramp" />
-        <SteadyState Duration="60" Power="1.44" pace="ramp" />
-        <SteadyState Duration="60" Power="1.48" pace="ramp" />
-        <SteadyState Duration="60" Power="1.52" pace="ramp" />
+        <SteadyState Duration="60" Power="1.04" pace="0" />
+        <SteadyState Duration="60" Power="1.08" pace="0" />
+        <SteadyState Duration="60" Power="1.12" pace="0" />
+        <SteadyState Duration="60" Power="1.16" pace="0" />
+        <SteadyState Duration="60" Power="1.2" pace="0" />
+        <SteadyState Duration="60" Power="1.24" pace="0" />
+        <SteadyState Duration="60" Power="1.28" pace="0" />
+        <SteadyState Duration="60" Power="1.32" pace="0" />
+        <SteadyState Duration="60" Power="1.36" pace="0" />
+        <SteadyState Duration="60" Power="1.4" pace="0" />
+        <SteadyState Duration="60" Power="1.44" pace="0" />
+        <SteadyState Duration="60" Power="1.48" pace="0" />
+        <SteadyState Duration="60" Power="1.52" pace="0" />
         <SteadyState Duration="600" Power="0.3" pace="0" />
     </workout>
 </workout_file>

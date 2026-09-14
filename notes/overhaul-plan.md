@@ -206,8 +206,9 @@ which rule it serves, so a later change can be argued on the same ground.
   unridden session imposes no recovery cost.
 - **D7** The auditor stays independent by what it reads (the served file,
   the goal's caps, the rides), not by keeping a copied type set.
-- **D8** For the owner to decide: HTTP verb changes. GET auto-recalc writes,
-  and `cs-domestique-adapt` depends on it.
+- **D8** Decided 2026-09-14: auto-recalculate's writes move to POST, and
+  `cs-domestique-adapt` changes in the same deployment (Step 7). GET
+  auto-recalc writes today, and the adapter depends on it.
 
 ## The plan
 
@@ -1115,7 +1116,8 @@ characterization is unchanged (217 cases).
     original, undone when the breach clears.
 - **M6, for Step 6.** Part 3 made the budget one number, but nothing in the
   legacy chain bounds hard work by it; the owner does (see part 3).
-- **L1, a decision for the owner.**
+- **L1, decided 2026-09-14: fresh runway, guarded** (see "The load the
+  rider carries").
   - A goal without a target date, rebuilt after an absence, now aims higher
     than before. After a 3-week break, the CTL target went 65 → 86 and the
     phase peak 453 → 605.
@@ -1182,6 +1184,63 @@ would cut it twice.
 takes its Monday from today, so offsets 0, 1 and −1 all return this week
 (F7, pre-existing).
 
+### The load the rider carries — DONE (2026-09-13/14)
+
+Part 3's ramp starts from the load the rider carries, and the planner had
+never seen the owner's. `athlete_weekly_load` asked
+`recent_mean_weekly_tss`, which reads the FIT import archive only; their
+rides arrive from intervals.icu, so it returned None and every plan they
+were ever given ramped from CTL × 7: 228 TSS a week against the 281 they
+carry. `ride_storage.chronic_weekly_tss` (ba872ebc) reads every ride as the
+28-day EWMA the ramp and the auditor share, walking whole weeks back from
+today, and the ramp's floor at CTL × 7 is gone. On the owner's archive the
+first build week goes 296 to 366 and the danger line to 422. The session's
+full record is `notes/handoff-chronic-load.md`.
+
+**Why the characterization moved.** It was not a leak: the gate's own riders
+supply a load above CTL × 7 (320 against a CTL of 45, 380 against 50), and
+the old floor clipped it. Rebuilt under the hermetic harness, week 0 of
+`cont/every-day/3h` goes 410 to 416 at 320 and stays 410 at 315 or None.
+The eight new invariant hits are the builders' shortfall and the intensity
+share at higher budgets: Steps 5b and 6. Blessed on that basis.
+
+**The ultrareview** (`notes/review/ultrareview-chronic-load.md`, against
+59500caa: the full branch diff is 95k lines, mostly the characterization).
+Three findings, all nits, all applied (b83b3c11): the load is derived once
+per entry point off the archive in hand, where the entry scan paid 15
+archive parses, measured; `_went_unridden` uses the shared `_field`; the
+availability cap's `_fits` is a module function with explicit arguments.
+
+**Found on the way.**
+- The availability cap (9138110d) broke four cases of
+  `test_v136_availability_restore`, which its message did not run. They
+  asserted the literal fill; they now expect what the budget leaves, and a
+  new case keeps the hand-made row unbounded (5f37aae2).
+- `test_tid_plan_properties` laid its goals from the live clock, so the
+  intensity rail flipped with the calendar: on 09-13 the chronic change
+  failed it, on 09-14 the same change passed it and the parent failed. The
+  clock is pinned (3b5c3b6f). Its 6 h rider carried 450 TSS, 75 an hour;
+  it carries 300 now. Swept under pytest over 8 seeds, the 6 h rider
+  breaches the 18% rail at every load, and the 55% easy floor 2 weeks in
+  288 at 300 or 330: the rail is a strict xfail for Step 6, the floor
+  passes at this seed by a choice the suite states.
+- Plain-python probes read the owner's live profile; the pytest conftest
+  sandboxes HOME and bootstraps a fresh one, and the two build different
+  plans. Evidence about a test is only evidence when gathered under pytest.
+
+**The owner's decisions, 2026-09-14.**
+- Ship after the fixture fix (option D of the handoff), not an xfail of
+  the rail alone, not a hold for Step 6, not an early rail.
+- The headroom a higher budget opens is easy volume only: hard minutes
+  stay at the intensity budget the distribution model sets. This is M6's
+  rule for Step 6.
+- L1: a targetless goal rebuilt after an absence lays a fresh runway,
+  guarded by the ACWR ceiling and the TSB floor. The chronic EWMA now
+  decays through the break, so the guard bites where the recent mean did
+  not.
+- D8: auto-recalculate's writes move to POST, and `cs-domestique-adapt`
+  changes in the same deployment (Step 7, HTTP-1).
+
 ### Step 5b — the sampler honours its science tables (SCI-1)
 
 Choose the content CLASS by the phase's mix preference, the goal's emphasis and
@@ -1241,6 +1300,10 @@ From part 3:
 - Hard work is bounded by the budget (M6). Until it is, a 6 h plan crosses
   the intensity rail and novices' weeks reach 1.7–2.3× the load they carry
   (part 3's findings, above). This is the intensity budget, D1's first rule.
+  The owner's rule (2026-09-14): the headroom a higher budget opens is easy
+  volume only; hard minutes stay at the model's intensity budget. Two
+  strict xfails wait on it: the rail in `test_tid_plan_properties`, and
+  the easy floor there breaches the same way at a lower rate.
 - The app's own deload advance reads stepback flags rather than the unload
   test (`app.py`), and the dry run's labels cannot see a holiday.
 - Reforecast eases a hard day when the rider's TSB is under what the plan
@@ -1248,8 +1311,9 @@ From part 3:
   weekends take a fit rider's daily TSB past −30 (the owner's decision,
   2026-09-11; the second part 3 review, M-4).
 
-Three strict xfails turn green when it is done: `test_the_acwr_holds` for
-the 300- and 490-TSS riders, and `test_recalculate_rebudgets_the_week_in_progress`.
+Four strict xfails turn green when it is done: `test_the_acwr_holds` for
+the 300- and 490-TSS riders, `test_recalculate_rebudgets_the_week_in_progress`,
+and `test_no_week_breaches_the_intensity_ceiling`.
 
 *Verify:* STRICT_SEAL over every gate case → 0 trips; invariants clean
 across all entry points; test_event_and_goal_focus 10/10.

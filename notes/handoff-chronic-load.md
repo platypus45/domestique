@@ -1,6 +1,14 @@
 # Handoff — the load the rider carries (Step 5 part 3, Option 2)
 
 2026-09-13, evening. Branch `refactor/backend-architecture`, tip **743c1eda**.
+
+> **Superseded, 2026-09-14.** The work below was committed as ba872ebc that
+> same evening, and this note with it. The next session answered §7 (the
+> gate's own riders supply a load above CTL × 7; the old floor clipped it),
+> ran the ultrareview, and the owner chose option D. The record is in
+> `notes/overhaul-plan.md`, "The load the rider carries". What follows is
+> kept as written.
+
 **Nothing is committed. Nothing is deployed.** The work sits in the working
 tree of `~/Documents/domestique-refactor`.
 

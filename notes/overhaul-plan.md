@@ -1,6 +1,6 @@
 # Domestique overhaul — consolidated review and plan
 
-Written 2026-09-10 (evening). **Supersedes §3–§4 of `planner-cleanup-plan.md`**:
+Written 2026-09-10 (evening). **Supersedes §3–§4 of `planner-cleanup-plan.md`** (removed 2026-09-14; in git history before 324cd038):
 an adversarial review, done before any code changed, found that several of
 that plan's premises do not hold (see "Handover claims that did not hold").
 
@@ -1208,7 +1208,7 @@ carry. `ride_storage.chronic_weekly_tss` (ba872ebc) reads every ride as the
 28-day EWMA the ramp and the auditor share, walking whole weeks back from
 today, and the ramp's floor at CTL × 7 is gone. On the owner's archive the
 first build week goes 296 to 366 and the danger line to 422. The session's
-full record is `notes/handoff-chronic-load.md`.
+full record was `notes/handoff-chronic-load.md`, removed 2026-09-14 once this section carried it (git history before 324cd038).
 
 **Why the characterization moved.** It was not a leak: the gate's own riders
 supply a load above CTL × 7 (320 against a CTL of 45, 380 against 50), and

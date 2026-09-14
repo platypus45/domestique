@@ -160,7 +160,7 @@ class TestRegenGoalFidelity(unittest.TestCase):
 
             seen, spy = self._models_seen()
             with spy:
-                r = self.client.get("/api/plan/auto-recalc")
+                r = self.client.post("/api/plan/auto-recalc")
             self.assertEqual(r.status_code, 200, r.text)
             self.assertTrue(seen, "the weekly recalc made no budget lookup")
             self.assertEqual({m for m, _ in seen}, {"pyramidal"},

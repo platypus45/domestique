@@ -713,7 +713,7 @@ async def lifespan(app):
     # Boot-time writes are instead mirrored by the once-a-day reconcile
     # riding the sync loop (D3b).
     tp.post_write_callback = _icu_push_schedule_debounced
-    db.post_sync_callback = _icu_push_daily_from_sync
+    db.post_sync_callback = _after_background_sync
 
     try:
         yield
@@ -8073,6 +8073,21 @@ def _icu_push_cancel_pending() -> None:
 _icu_push_last_daily: "str | None" = None
 
 
+def _after_background_sync() -> None:
+    """db.post_sync_callback: what follows each pass of the 30-min sync loop.
+    The daily calendar reconcile, and the F5 eFTP auto-apply (opt-in, behind
+    the plausibility guard), which /api/weekly-plan used to run on a read."""
+    _icu_push_daily_from_sync()
+    try:
+        # 14 days, so a 7-day streak ending yesterday stays in the window.
+        auto = _guarded_check_and_auto_apply_eftp(fetch_wellness(14))
+        if auto:
+            _log.info(f"EVENT=eftp_auto_applied {auto}")
+            clear_cache()
+    except Exception as _e:  # noqa: BLE001 - never break the sync loop
+        _log.debug(f"eftp auto-apply skipped: {_e}")
+
+
 def _icu_push_daily_from_sync() -> None:
     """db.post_sync_callback (boot-registered): ONE reconcile per calendar
     day, riding the 30-min sync loop (D3b). This is what rolls the 14-day
@@ -9300,11 +9315,8 @@ def api_weekly_plan(week_offset: int = Query(0)):
                     plan_goal.longest_ride_h_90d = _longest_ride_h_90d()
                 result["event_readiness"] = tp.compute_event_readiness(plan_goal, current_ctl)
 
-        # eFTP drift detection (+ F5 auto-apply after 7+ days)
+        # eFTP drift detection
         wellness = cached("wellness_7", lambda: fetch_wellness(7))
-        # For the 7-day-streak auto-apply we actually need 14 days so a drift
-        # ending yesterday doesn't fall out of the window; fetch a wider slice.
-        wellness_14 = cached("wellness_14", lambda: fetch_wellness(14))
         if wellness:
             for w in reversed(wellness):
                 si = w.get("sportInfo", [])
@@ -9314,16 +9326,9 @@ def api_weekly_plan(week_offset: int = Query(0)):
                     if drift:
                         result["eftp_drift"] = drift
                     break
-        # F5 (v4.1.0): 7+-day sustained >3% up-drift triggers auto-apply.
-        # 3.3.1 hotfix (B5): routed through the plausibility guard.
-        if wellness_14:
-            try:
-                auto = _guarded_check_and_auto_apply_eftp(wellness_14)
-                if auto:
-                    result["eftp_auto_applied"] = auto
-                    clear_cache()
-            except Exception as _e:
-                _log.debug(f"eftp auto-apply skipped: {_e}")
+        # F5 (v4.1.0): the 7+-day up-drift auto-apply writes the profile, so
+        # it runs after the background sync (_after_background_sync), not on
+        # this read (week-view contract P8). Drift is still detected above.
     except Exception as _e:
         import logging
         logging.getLogger(__name__).warning("event_readiness failed: %s", _e)
@@ -10310,6 +10315,18 @@ def _maybe_advance_continuous_deload(plan: dict, json_path: Path,
     return _advance_continuous_deload(plan, json_path, cur_idx, trip, today)
 
 
+def _deload_chip_for_today(plan: "dict | None", today: "date | None" = None) -> "dict | None":
+    """The chip for a deload advance already recorded for the current week,
+    read-only (None when none, or when the rider reverted it)."""
+    today_iso = (today or clock.today()).isoformat()
+    cur = next((w for w in (plan or {}).get("weeks") or []
+                if (w.get("start") or "") <= today_iso <= (w.get("end") or "")), None)
+    rec = (plan or {}).get("deload_advance") or {}
+    if cur is None or not rec or rec.get("week_num") != cur.get("week_num") or rec.get("reverted"):
+        return None
+    return _deload_chip_payload(rec)
+
+
 def _advance_continuous_deload(plan: dict, json_path: Path, cur_idx: int,
                                trip: dict, today: date) -> "dict | None":
     """Convert plan["weeks"][cur_idx] to the deload shape via the machinery:
@@ -10467,18 +10484,11 @@ def _api_today_session_impl():
     today_str = clock.today().isoformat()
     _jp = _plan_dir() / "current_plan.json"
     _stored = _read_stored_plan()
-    # 3.4.0 W2 (amendment C): continuous deload advance — the today card IS
-    # the "each app open" surface, so the monotony/ACWR check runs here.
-    # Idempotent (week-latched) and best-effort: a failure must never break
-    # the today card. Runs BEFORE the view is built so a freshly advanced
-    # deload (it rewrites _stored in place) is what the card shows.
-    # TODO(week-view step 6): a GET that writes the plan (P8).
-    _deload_chip = None
-    if _plan_is_continuous(_stored):
-        try:
-            _deload_chip = _maybe_advance_continuous_deload(_stored, _jp)
-        except Exception as _e:  # noqa: BLE001
-            _log.warning(f"/api/today-session: continuous deload check failed: {_e}")
+    # 3.4.0 W2 (amendment C): the continuous deload advance's chip. The
+    # advance itself runs where rides arrive (_maybe_auto_reforecast, reached
+    # by the load's POST /api/rides/sync): this read used to run it and write
+    # the plan (week-view contract P8).
+    _deload_chip = _deload_chip_for_today(_stored) if _plan_is_continuous(_stored) else None
 
     # Today's session is the stored week's, read through the one week view
     # (src/week_view.py) the This Week list and the calendar read: its
@@ -11762,7 +11772,7 @@ async def api_plan_generate(request: Request):
         return JSONResponse({"detail": "Plan update failed"}, status_code=500)
 
 
-def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
+def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> "str | None":
     """v1.0.3 / v1.8.24 — best-effort auto-ADAPT on ride sync / FIT import.
 
     When ``new_rides > 0`` this routes through the shared ``_apply_plan_update``
@@ -11776,11 +11786,16 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
 
     Wraps everything in try/except: logs warnings but never raises. Sync /
     import responses must stay clean even if adaptation errors.
+
+    For a continuous plan it then runs the deload advance (monotony / ACWR),
+    which /api/today-session used to run on a read (week-view contract P8).
+    Returns what it wrote -- the update's action, "deload_advanced", or None.
     """
+    written = None
     try:
         json_path = _plan_dir() / "current_plan.json"
         if not json_path.exists():
-            return
+            return None
 
         with tp.plan_write_lock():
             # Re-read inside the lock so a concurrent writer's fresher state
@@ -11801,7 +11816,7 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
             today = clock.today()
             stamped = plan.get("reconcile_date") != today.isoformat()
             if new_rides <= 0 and not stamped:
-                return
+                return None
             plan["reconcile_date"] = today.isoformat()
 
             activities = db.query_activities(days=120)
@@ -11820,11 +11835,22 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
             # still has to land, or every sync for the rest of the day re-runs
             # the full chain.
             if action == "skipped" and not stamped:
-                return
+                return None
 
             tp.atomic_write_plan(json_path, plan_dict)
+            written = action
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+        if _plan_is_continuous(plan):
+            try:
+                if _maybe_advance_continuous_deload(plan, json_path) and plan.get(
+                        "deload_advance", {}).get("advanced_on") == clock.today().isoformat():
+                    written = "deload_advanced"
+            except Exception as _e:  # noqa: BLE001
+                _log.warning(f"continuous deload check failed: {_e}")
     except Exception as e:  # noqa: BLE001
         _log.warning(f"auto-adapt skipped: {e}")
+    return written
 
 
 @app.post("/api/plan/reforecast")
@@ -16731,9 +16757,12 @@ async def api_plan_dismiss_session(request: Request):
         return JSONResponse({"detail": "Dismiss failed"}, 500)
 
 
-@app.get("/api/plan/auto-recalc")
+@app.post("/api/plan/auto-recalc")
 def api_plan_auto_recalc():
-    """Auto-recalculate plan if >7 days since last recalc. Called on tab load."""
+    """Auto-recalculate plan if >7 days since last recalc. Called on tab load.
+
+    A POST since 2026-09-14 (decision D8): it rebuilds and writes the plan,
+    and was a GET the Plan tab and the morning adapter called as a read."""
 
     json_path = _plan_dir() / "current_plan.json"
     if not json_path.exists():
@@ -18096,9 +18125,9 @@ def _sync_icu_activities_locked(force: bool = False) -> dict:
     if added or updated:
         clear_cache()
     total = len(_load_all_rides_safe())
-    # v1.0.3 — best-effort auto-reforecast on new rides. Helper swallows
-    # all exceptions so the sync result stays clean.
-    _maybe_auto_reforecast("default", added)
+    # The sync fetches and stores; adapting the plan to what arrived is the
+    # caller's (POST /api/rides/sync). The lazy sync that reads kick off used
+    # to adapt here, and so a GET wrote the plan (week-view contract P8).
     # v1.3.0 IMPL-PR-DETECTION: queue toasts for newly-imported rides that
     # landed at least one major PR. Per PATCH G7: ONE line per ride. Best-
     # effort — failures must not break the sync return shape.
@@ -18651,6 +18680,8 @@ def api_rides_sync(force: int = Query(0)):
     a same-day ride's TSS exceeds today's planned tss_estimate by >1.5×
     (Foster 1998 session-load spike). Read-only — does not mutate the plan.
     """
+    # The sync fetches; this handler adapts, once (it did twice: inside the
+    # sync and again below, the second finding the day already stamped).
     if force:
         result = _sync_icu_rides_and_wellness(force=True)
     else:
@@ -18662,8 +18693,9 @@ def api_rides_sync(force: int = Query(0)):
     # ride still posts via a separate ICU push).
     result["plan_load_alert"] = _detect_plan_load_alert()
     # v1.0.3 — best-effort auto-reforecast on new rides. Helper swallows
-    # all exceptions so the sync response stays unchanged.
-    _maybe_auto_reforecast("default", result.get("added", 0))
+    # all exceptions. plan_adapted names what it wrote (None: nothing), so
+    # the dashboard knows to repaint the cards that read the plan.
+    result["plan_adapted"] = _maybe_auto_reforecast("default", result.get("added", 0))
     return result
 
 

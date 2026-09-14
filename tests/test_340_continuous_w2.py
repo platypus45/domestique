@@ -307,11 +307,10 @@ class DeloadAdvanceBase(unittest.TestCase):
 
 
 class TestTodayCardShowsTheFreshDeload(DeloadAdvanceBase):
-    """/api/today-session runs the deload advance and then reads today's
-    session through the week view (2026-09-14). The view must be built from
-    the plan the advance rewrote, on the same request: a view built first
-    showed the load week the rider was just relieved of (found by the
-    adversarial review of that change, which no test here caught)."""
+    """/api/today-session reads today's session through the week view. After
+    the sync advances the deload, the card must show the refit session the
+    advance wrote, with its chip (the adversarial review of 2026-09-14 found
+    no test caught a view built from the plan before the advance)."""
 
     def test_the_refit_session_is_what_the_card_says(self):
         import clock
@@ -321,13 +320,17 @@ class TestTodayCardShowsTheFreshDeload(DeloadAdvanceBase):
         self._write(_mk_continuous_plan(tue))
         with patch.object(app_module, "_load_all_rides_safe", return_value=_monotone_rides(tue)), \
              patch.object(app_module, "_kick_lazy_icu_sync", return_value=None), \
+             patch.object(app_module, "_sync_icu_activities",
+                          return_value={"added": 0, "updated": 0, "status": "no_credentials"}), \
              patch.object(app_module, "get_sleep_metrics",
                           return_value={"red_hrv_streak": 0, "sleep_h": 7.5, "rhr_delta": 0}), \
              patch.object(app_module, "get_today_metrics",
                           return_value={"ctl": 50, "atl": 45, "tsb": 5}), \
              patch.object(app_module.db, "query_activities", return_value=[]):
-            d = TestClient(app_module.app).get("/api/today-session").json()
-        self.assertTrue(d.get("deload_advance"), "the fixture must trip the advance")
+            client = TestClient(app_module.app)
+            self.assertEqual(client.post("/api/rides/sync").json()["plan_adapted"], "deload_advanced")
+            d = client.get("/api/today-session").json()
+        self.assertTrue(d.get("deload_advance"), "the card shows the chip")
         saved = json.loads((self._tmp / "current_plan.json").read_text())
         s = next(x for w in saved["weeks"] for x in w["sessions"] if x["day"] == tue.isoformat())
         self.assertEqual(d["planned"]["zwo_file"], s.get("zwo_file") or None)
@@ -525,6 +528,16 @@ class TodaySessionBase(unittest.TestCase):
         assert r.status_code == 200, r.text
         return r.json()
 
+    def _sync(self, rides):
+        """The dashboard's POST /api/rides/sync, where the deload advance runs
+        since 2026-09-14 (a GET used to run it). No ICU: nothing new arrives."""
+        with patch.object(app_module, "_load_all_rides_safe", return_value=rides), \
+             patch.object(app_module, "_sync_icu_activities",
+                          return_value={"added": 0, "updated": 0, "status": "no_credentials"}):
+            r = self.client.post("/api/rides/sync")
+        assert r.status_code == 200, r.text
+        return r.json()
+
 
 class TestTodaySessionContinuousFields(TodaySessionBase):
     def test_continuous_goal_carries_suggestion(self):
@@ -555,6 +568,11 @@ class TestTodaySessionContinuousFields(TodaySessionBase):
         plan = _mk_continuous_plan(self.today)
         path = self._tmp / "current_plan.json"
         path.write_text(json.dumps(plan))
+        # A read does not advance it...
+        self.assertNotIn("deload_advance", self._get(_monotone_rides(self.today)))
+        self.assertFalse(json.loads(path.read_text())["weeks"][0]["is_stepback"])
+        # ...the sync does, and says so; the card then shows the chip.
+        self.assertEqual(self._sync(_monotone_rides(self.today))["plan_adapted"], "deload_advanced")
         data = self._get(_monotone_rides(self.today))
         self.assertIn("deload_advance", data)
         chip = data["deload_advance"]

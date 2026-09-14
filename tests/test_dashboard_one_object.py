@@ -68,6 +68,36 @@ function fetch(path) {
     assert res.returncode == 0, res.stderr
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_a_refresh_after_a_write_does_not_join_an_earlier_read():
+    """Any completed POST forgets the shared reads: the home load's sync
+    repaint, a tier-down, a move -- every write, through one choke point."""
+    harness = _fn("getResource") + _fn("forgetInflight") + r"""
+let calls = 0, finishPost;
+const window = {
+  fetch(path, init) {
+    if (init && init.method === 'POST') return new Promise(res => { finishPost = () => res({ ok: true }); });
+    calls++; return new Promise(() => {});                        // a read still in flight
+  },
+};
+const fetch = (...a) => window.fetch(...a);
+(async () => {
+  getResource('/api/today-session');                               // installs the choke point
+  getResource('/api/today-session');
+  if (calls !== 1) throw new Error('concurrent reads share one request, got ' + calls);
+  const post = window.fetch('/api/rides/sync', { method: 'POST' });
+  getResource('/api/today-session');
+  if (calls !== 1) throw new Error('a read during the write still shares, got ' + calls);
+  finishPost(); await post; await new Promise(r => setTimeout(r, 0));
+  getResource('/api/today-session');                               // the refresh after the write
+  if (calls !== 2) throw new Error('the refresh joined a read from before the write');
+  console.log('OK');
+})().catch(e => { console.error(e.message); process.exit(1); });
+"""
+    res = subprocess.run(["node", "-e", harness], capture_output=True, text=True, timeout=30)
+    assert res.returncode == 0, res.stderr
+
+
 def test_the_home_reads_go_through_it():
     plain = re.findall(r"\bfetch\('(/api/(?:readiness|activities|settings|icu/connection|"
                        r"week-summary[^']*|calendar|weekly-plan|today-session))'\)", SRC)

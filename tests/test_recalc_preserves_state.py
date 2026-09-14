@@ -229,7 +229,7 @@ class TestAutoRecalcWritePreservesState(unittest.TestCase):
             plan["recalc_date"] = (datetime.now() - timedelta(days=8)).isoformat()
             (self.tmp / "current_plan.json").write_text(json.dumps(plan))
 
-            r = self.client.get("/api/plan/auto-recalc")
+            r = self.client.post("/api/plan/auto-recalc")
             self.assertEqual(r.status_code, 200, r.text)
             self.assertEqual(r.json().get("action"), "recalculated", r.text)
 

@@ -6988,7 +6988,22 @@ async function loadPlanAdoptionToast() {
 // refreshed after an action fetches fresh data; nothing is ever served stale.
 function getResource(path) {
   // Declared lazily: the first callers run before this script reaches here.
-  const inflight = (window._inflight = window._inflight || new Map());
+  if (!window._inflight) {
+    window._inflight = new Map();
+    // A write that completes forgets every shared read, so a card refreshed
+    // after any of the dashboard's POSTs never joins a read that began before
+    // the write. One choke point rather than a call at each of ~74 writes.
+    if (typeof window.fetch === 'function') {
+      const _fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const p = _fetch(input, init);
+        const method = String((init && init.method) || 'GET').toUpperCase();
+        if (method !== 'GET' && method !== 'HEAD') p.then(forgetInflight, forgetInflight);
+        return p;
+      };
+    }
+  }
+  const inflight = window._inflight;
   let p = inflight.get(path);
   if (!p) {
     p = fetch(path);
@@ -6998,6 +7013,10 @@ function getResource(path) {
     p.then(r => r.clone().arrayBuffer()).then(done, done);
   }
   return p.then(r => r.clone());
+}
+// After a write, a refresh must not join a read that started before it.
+function forgetInflight() {
+  if (window._inflight) window._inflight.clear();
 }
 
 async function loadHome() {
@@ -7211,6 +7230,20 @@ async function loadHome() {
       loadWeeklyCalendar().catch(() => {}),
       loadCalendar().catch(() => {}),
     ]);
+
+    // Opening Home adapts the plan to the rides, as it always has, but through
+    // a POST: the reads above used to do it (the lazy sync's adaptation, the
+    // deload advance), and no GET writes the plan now (week-view contract P8).
+    // No force=1, so the 1 h sync throttle holds; the adaptation still runs
+    // once a day. When it wrote, the cards that read the plan repaint.
+    fetch('/api/rides/sync', {method: 'POST'})
+      .then(r => r.ok ? r.json() : null)
+      .then(j => {
+        if (!j || !(j.plan_adapted || j.added > 0)) return;
+        try { loadTodaySession(); } catch (_) {}
+        Promise.all([loadWeeklyCalendar().catch(() => {}), loadCalendar().catch(() => {})]);
+      })
+      .catch(() => {});
 
     // v1.3.3 perf — dashboard load was blocking 200-700ms on /api/today-session
     // here, leaving every card below ("recent activities", power curve, body
@@ -15391,7 +15424,7 @@ function renderPlanDriftChip(drift) {
 
 async function triggerPlanAutoRecalc() {
   try {
-    const res = await fetch('/api/plan/auto-recalc');
+    const res = await fetch('/api/plan/auto-recalc', {method: 'POST'});
     const d = await res.json();
     if (d.action === 'recalculated' && d.plan_json) {
       // Plan was auto-recalculated — reload it

@@ -14,7 +14,8 @@ implementer never grades its own work.
 | A4 | met for every parameterless GET | `test_reads_do_not_write.py` |
 | A5 | met (`replaced_weeks`) | `test_generate_keeps_history.py` |
 | A6 | met; `tp._SESSION_TYPE_TO_BAND` (five intensity bands) kept, see the handoff | `test_training_planner.py::TestSessionTypeToBandLockedValues` |
-| A7, A8, A14 | open (Wave 2) | |
+| A7, A14 | open (Wave 2) | |
+| A8 | met: one `fitness.state()`, intervals.icu (the owner's decision) | `test_one_fitness_state.py` |
 | A9 | met at every step (0 new failures; characterization unchanged) | the handoff |
 | A10 | met; residual sequential repeats measured | `test_dashboard_one_object.py` |
 | A11–A13 | met in Wave 0 | |

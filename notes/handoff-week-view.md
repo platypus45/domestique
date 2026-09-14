@@ -1,9 +1,22 @@
 # Handoff — one week view: Wave 1 done (2026-09-14, night)
 
 For whoever picks this up. Branch `refactor/backend-architecture`, tip named at
-the bottom, pushed to the owner's fork. Production runs **03237915**, detached
-in `~/Documents/cycling-stack/domestique`; nothing of Wave 1 is deployed, and
-the owner has not been asked to deploy it.
+the bottom, pushed to the owner's fork.
+
+**Deployed on 2026-09-14 at the owner's request** (a43f5d1c, then the CTL owner
+below): production runs the branch, detached in
+`~/Documents/cycling-stack/domestique`. The six `ftp_test_*.zwo` repairs are
+still working-tree edits there. The pre-deploy plan is kept in the session
+scratchpad only; git history has 03237915 to roll back to.
+
+**Owner decisions of 2026-09-14 (night), all done:**
+- Deploy Wave 1.
+- The morning adapter adapts the plan: `cycling-stack` commit 1d12ba2 applies
+  the D8 patch (auto-recalc as POST) and adds step 2b, `POST
+  /api/rides/sync?force=1`, in both modes. Checked against a fake Domestique
+  that records requests and refuses GETs on write endpoints.
+- CTL values from intervals.icu (P7): `src/fitness.py`, commit 070ad407;
+  see "After Wave 1" below.
 
 ## Read first, in this order
 
@@ -36,6 +49,20 @@ answered with a test that fails on the code it found.
 | 7 | 95528598 | `generate_weekly_plan` deleted (345 lines) |
 | review | 34072406 | skipped/moved days in the strip with undo; stub-row Plan-tab Actual; calendar dedupe prefers the current plan's row; `zwo_name` on today's planned |
 | review | (the commit carrying this note) | rides the lazy sync stored adapt on the next POST (`adapted_ride_total`); a stamp-only write is not `plan_adapted`; a stored row beats a history shell in the calendar dedupe; the eFTP apply fetches only when opted in, and is tested in the sync loop |
+
+## After Wave 1: one fitness owner (070ad407)
+
+`fitness.state()` is the only CTL/ATL/TSB source: intervals.icu live, else its
+last values in the SQLite wellness table (dated, at most 7 days old), else
+unknown. The readiness card, the composite readiness and training severity
+(today's TSB), the calendar's actual CTL, the programme summary's CTL gain and
+every planning call read it; the planned-CTL curve starts from the plan's
+generation-time ICU anchor (`ctl_snapshot`). The local EWMA over the FIT-only
+ride list is no fallback; the 30/37/50 constants are one
+`_PLANNING_CTL_UNKNOWN` (37). Contract A8 is met by
+`tests/test_one_fitness_state.py`. Still reading the local archive: the
+planner's own fallback inside `generate_plan` when handed None (planner
+internals, Wave 3), and `ride_storage.compute_local_ctl` itself.
 
 ## Instruments built this session (reuse them)
 
@@ -73,24 +100,17 @@ answered with a test that fails on the code it found.
 - After step 6 a Home load issues `POST /api/rides/sync`; when it adapts, the
   Today card and the week repaint, and the Today read is a fresh request.
 
-## Deployment notes (when the owner asks; not before)
+## Deployment notes
 
-- D8: `notes/deploy/cs-domestique-adapt-D8.patch` turns the adapter's
-  `GET /api/plan/auto-recalc` into a POST; `patch --dry-run -p1` applies
-  cleanly in `~/Documents/cycling-stack`. Production's adapter runs
-  `ADAPT_MODE=observe`, which never calls it, but apply mode would get 405
-  without the patch. Apply it in the same deployment.
-- Nothing adapts the plan on a schedule, before or after Wave 1: the
-  server's 30-min loop (`db.run_sync`) never adapts, and
-  `cs-repair-strava-husks` POSTs `/api/rides/sync?force=1` only when it
-  repaired a husk. (Step 6's commit message claimed a 30-min server-side
-  adaptation; the third review showed it false.) Adaptation happens on a
-  dashboard visit (Home or Plan tab, through POST `/api/rides/sync`) or a
-  ride import. If the owner wants it scheduled, the morning adapter should
-  POST `/api/rides/sync`: an owner question below.
-- Opening Home still adapts the plan, through a POST. The README's warning
-  in `cycling-stack` ("opening the dashboard can mutate the plan") stays true
-  and should say "through POST /api/rides/sync" after deployment.
+- D8: applied in `cycling-stack` 1d12ba2 with the deployment (the patch file
+  stays in `notes/deploy/` as the record).
+- Scheduled adaptation: the morning adapter's step 2b (1d12ba2). The server's
+  30-min loop (`db.run_sync`) never adapts, and `cs-repair-strava-husks`
+  POSTs `/api/rides/sync?force=1` only when it repaired a husk. (Step 6's
+  commit message claimed a 30-min server-side adaptation; the third review
+  showed it false.)
+- Opening Home still adapts the plan, through a POST; the stack README says
+  so since 1d12ba2.
 - Deploy as before: discard the two workout caches, `git checkout --detach
   <sha>`, `systemctl --user restart domestique`, check `/api/diag/health`.
   The six `ftp_test_*.zwo` repairs are working-tree edits there; never reset
@@ -105,9 +125,9 @@ answered with a test that fails on the code it found.
 - **Contract assertions not yet met**: A1 across all six endpoints for done
   load, budget and boundary (planned load and today's label are covered);
   A2 on the write side; A3 (no GET invokes the sampler — implied for the known
-  paths by A4, not asserted); A7, A8, A14 (Wave 2).
+  paths by A4, not asserted); A7, A14 (Wave 2). A8 is met (070ad407).
 - **Wave 2** (one owner per fact): `notes/review/audit-2026-09-14/state.md`,
-  "One owner per fact"; S-1 (FTP) first.
+  "One owner per fact"; the fitness row is done; S-1 (FTP) next.
 - Then Wave 3 (structure, Step 6 of the plan inside it), Wave 4 (branching),
   Wave 5 (performance, tests).
 - GETs still write non-plan state (outside P8's plan file, seen by the third
@@ -137,12 +157,10 @@ answered with a test that fails on the code it found.
 
 ## Open for the owner
 
-- Which CTL is the real one for P7: local Banister over the archive, or
-  intervals.icu's.
 - Whether the Last-week card should show the budget beside the prescribed load.
-- When to deploy Wave 1, and with it the adapter patch.
-- Whether the plan should adapt on a schedule without a dashboard visit
-  (the morning adapter POSTing `/api/rides/sync`); it never has.
+- The Today card's description still carries the slot's old words ("sweetspot
+  (79min)") over a threshold file: the stored description, written by the
+  planner. It goes with Step 8 (identity at write time), Wave 3.
 
 ## Tip at handover
 

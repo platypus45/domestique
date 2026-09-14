@@ -30,15 +30,25 @@ class TestLocalTrainingLoadFallback(unittest.TestCase):
     # (ICU CTL beside a local ATL) cannot happen.
 
     def _store(self, ctl, atl, days_ago=1):
+        """ICU's last values as the wellness table would hold them. Stubbed at
+        the owner's store read, not written to SQLite: these tests are about
+        what the endpoint answers, and a shared test database is order-
+        dependent under xdist (seen in the gate of 070ad407).
+        tests/test_one_fitness_state.py reads the real table."""
         import clock
-        import db
+        import fitness
         from datetime import timedelta
-        conn = db.get_db()
-        conn.execute("DELETE FROM wellness")
         d = (clock.today() - timedelta(days=days_ago)).isoformat()
-        conn.execute("INSERT INTO wellness (date, ctl, atl) VALUES (?, ?, ?)", (d, ctl, atl))
-        conn.commit()
-        self.addCleanup(lambda: (conn.execute("DELETE FROM wellness"), conn.commit()))
+        p = patch.object(fitness, "_cached_row",
+                         return_value={"date": d, "ctl": ctl, "atl": atl})
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _no_store(self):
+        import fitness
+        p = patch.object(fitness, "_cached_row", return_value=None)
+        p.start()
+        self.addCleanup(p.stop)
 
     def test_readiness_falls_back_to_icus_stored_values_when_icu_empty(self):
         """ICU unreachable: the readiness card shows ICU's last stored values,
@@ -54,9 +64,7 @@ class TestLocalTrainingLoadFallback(unittest.TestCase):
 
     def test_training_load_source_field_icu_cached_none(self):
         """``source`` is "icu", "icu_cached" or "none"; never "local" or "mixed"."""
-        import db
-        db.get_db().execute("DELETE FROM wellness")
-        db.get_db().commit()
+        self._no_store()
         with patch.object(app_module, "get_today_metrics", return_value={"ctl": 65.0, "atl": 60.0, "tsb": 5.0}), \
              patch.object(app_module, "get_sleep_metrics", return_value={}):
             t = self.client.get("/api/readiness").json().get("training") or {}
@@ -71,9 +79,11 @@ class TestLocalTrainingLoadFallback(unittest.TestCase):
             self.assertEqual((t.get("source"), t.get("ctl"), t.get("atl")), ("none", None, None))
 
         app_module.clear_cache()
-        self._store(40.0, 30.0)
+        import fitness
         with patch.object(app_module, "get_today_metrics", return_value={}), \
-             patch.object(app_module, "get_sleep_metrics", return_value={}):
+             patch.object(app_module, "get_sleep_metrics", return_value={}), \
+             patch.object(fitness, "_cached_row",
+                          return_value={"date": "2026-01-01", "ctl": 40.0, "atl": 30.0}):
             t = self.client.get("/api/readiness").json().get("training") or {}
             self.assertEqual((t.get("source"), t.get("ctl")), ("icu_cached", 40.0))
 

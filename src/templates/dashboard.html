@@ -7009,7 +7009,7 @@ function getResource(path) {
     p = fetch(path);
     inflight.set(path, p);
     // Held until the body is in (fetch resolves at the headers).
-    const done = () => inflight.delete(path);
+    const done = () => { if (inflight.get(path) === p) inflight.delete(path); };
     p.then(r => r.clone().arrayBuffer()).then(done, done);
   }
   return p.then(r => r.clone());

@@ -8079,6 +8079,9 @@ def _after_background_sync() -> None:
     the plausibility guard), which /api/weekly-plan used to run on a read."""
     _icu_push_daily_from_sync()
     try:
+        from profile_manager import ProfileManager
+        if not ProfileManager.get().prefs.get("eftp_auto_apply", False):
+            return      # opt-in; don't call intervals.icu every pass for nothing
         # 14 days, so a 7-day streak ending yesterday stays in the window.
         auto = _guarded_check_and_auto_apply_eftp(fetch_wellness(14))
         if auto:
@@ -11815,10 +11818,19 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> "str | None":
             # presses it. Rides arriving still drive it immediately; otherwise
             # it runs once per day so a day that passed unridden is seen.
             today = clock.today()
+            # Rides stored since the last adaptation are new, whoever fetched
+            # them: the lazy sync a read kicks off stores rides but may not
+            # adapt (P8), and the POST that follows it then finds the sync
+            # throttled or already running and reports none added.
+            ride_total = len(_load_all_rides_safe())
+            seen = plan.get("adapted_ride_total")
+            if isinstance(seen, int) and ride_total > seen:
+                new_rides = max(new_rides, ride_total - seen)
             stamped = plan.get("reconcile_date") != today.isoformat()
             if new_rides <= 0 and not stamped:
                 return None
             plan["reconcile_date"] = today.isoformat()
+            plan["adapted_ride_total"] = ride_total
 
             activities = db.query_activities(days=120)
             training = cached("training", get_today_metrics)
@@ -11838,8 +11850,11 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> "str | None":
             if action == "skipped" and not stamped:
                 return None
 
+            plan_dict["adapted_ride_total"] = ride_total
             tp.atomic_write_plan(json_path, plan_dict)
-            written = action
+            # Only the daily stamp landed when the reforecast debounced: nothing
+            # the cards show changed, so nothing to repaint.
+            written = action if action != "skipped" else None
         with open(json_path, encoding="utf-8") as f:
             plan = json.load(f)
         if _plan_is_continuous(plan):
@@ -15265,12 +15280,15 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
             seen_iso[key] = len(deduped)
             deduped.append(w)
             continue
-        # Duplicate ISO key → prefer the current plan's row (a Generate's
-        # replaced rows never own a week, as in week_view.build), then the
-        # one with planned content.
+        # Duplicate ISO key → prefer a stored row over a history shell, then
+        # the current plan's row (a Generate's replaced rows never own a week
+        # when the current plan has one, as in week_view.build), then the one
+        # with planned content.
         existing = deduped[existing_idx]
         def _rank(row):
-            return (not row.get("carried_from_generate"),
+            sessions = row.get("sessions") or []
+            return (not all(s.get("_synthetic_history") for s in sessions),
+                    not row.get("carried_from_generate"),
                     any((s.get("zwo_file") or "") and not s.get("_synthetic_history")
                         for s in (row.get("sessions") or [])))
         if _rank(w) > _rank(existing):

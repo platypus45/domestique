@@ -1370,9 +1370,11 @@ Branching this pass has already met, as a starting list:
 
 Production runs the live checkout at `~/Documents/cycling-stack/domestique`.
 `cs-update` runs Sunday 03:59 with `TRACK=stable`, and on 2026-09-13 it moved
-that checkout to the tag `v3.11.6`; the service restarted at 03:41. It is no
-longer on `refactor/session-sizing`. Nothing from this branch is deployed;
-that is the owner's decision.
+that checkout to the tag `v3.11.6`; the service restarted at 03:41. The owner
+then disabled the timer and pinned production to this branch: detached at
+9138110d that evening, and at 03237915 on 2026-09-14 (the chronic-load read,
+gated clean the same day, reviewed twice). The owner tests that build on
+their own rides before the second pass, which reduces branching everywhere.
 
 **What the bug class looks like in production.** On 2026-09-13, before the
 owner had it regenerated, their live plan prescribed 623 TSS for the week

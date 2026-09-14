@@ -164,10 +164,29 @@ def test_stepback_weeks_scored_against_discounted_targets():
     assert min(targets[:c]) < max(targets[:c]), "no stepback landed in-window"
 
     weekly = {c - k + 1: 0.65 * targets[k - 1] for k in range(1, c + 1)}
-    res = _scan(_goal(), _rides(weekly))
+    rides = _rides(weekly)
+    # The scan lays its hypotheses from the load those rides carry (the
+    # public derivation, athlete_weekly_load), and the ACWR ceiling caps each
+    # week at 1.3x it -- so the targets it scores against are these, not the
+    # CTL x 7 ones above. Until 2026-09-14 the EWMA read the real clock while
+    # the scan read the pinned one, the rides were months stale, and the
+    # ceiling never bit here.
+    load = tp.athlete_weekly_load(50.0, rides=rides)
+    scored = []
+    gw = 0
+    for p in tp.generate_phases(hyp, 50.0, recent_weekly_tss=load):
+        cur = p.start
+        while cur <= p.end:
+            gw += 1
+            t = float(p.weekly_tss_target)
+            if gw % tp.STEP_BACK_EVERY == 0 and p.name != "taper":
+                t = float(round(t * 0.72))
+            scored.append(t)
+            cur += timedelta(weeks=1)
+    res = _scan(_goal(), rides)
     assert res["proposal_weeks"] == c
     assert all(r["qualifies"] for r in res["weeks"])
-    assert [r["target_tss"] for r in res["weeks"]] == [round(t, 1) for t in targets[:c]]
+    assert [r["target_tss"] for r in res["weeks"]] == [round(t, 1) for t in scored[:c]]
 
 
 # ── illness gap — 1-in-4 tolerated; 2 consecutive misses end the streak ─────

@@ -1211,7 +1211,23 @@ per entry point off the archive in hand, where the entry scan paid 15
 archive parses, measured; `_went_unridden` uses the shared `_field`; the
 availability cap's `_fits` is a module function with explicit arguments.
 
+**The reviewer of those fixes** (independent, by running): every claim
+held. Its defects, fixed in the commit after bdcb7e68: `athlete_weekly_load`
+swallowed every exception from the EWMA and answered CTL × 7 for a
+wrong-shaped archive (only the archive fetch may fail quietly now); the
+EWMA read the real clock while the planner read its pinned one, so under a
+date pin the rides were months stale and the ceiling never bit (it takes
+the planner's `date.today()` now, which moved one recognizer expectation
+onto the ceiling the scan really scores against); `_is_unload_week` still
+inlined the adapter. Left: the rail's strict xfail carries its reason in
+the docstring only, since `unittest.expectedFailure` takes none.
+
 **Found on the way.**
+- The entry scan scores the rider's weeks against targets the ACWR ceiling
+  caps at 1.3 × the load those same weeks carry (B3's ceiling, since
+  ba872ebc read for ICU riders too). A rider at any steady level therefore
+  reads about 0.77 of target and qualifies at every width. Pre-existing
+  design; for Step 9's list, with the owner's judgement.
 - The availability cap (9138110d) broke four cases of
   `test_v136_availability_restore`, which its message did not run. They
   asserted the literal fill; they now expect what the budget leaves, and a

@@ -1080,7 +1080,7 @@ def _went_unridden(w) -> bool:
 
 
 def _is_unload_week(w) -> bool:
-    get = w.get if isinstance(w, dict) else (lambda k, d=None: getattr(w, k, d))
+    get = _field(w)
     return (bool(get("is_stepback", False)) or (get("phase", "") or "") in UNLOAD_PHASES
             or _went_unridden(w))
 
@@ -3301,7 +3301,10 @@ def athlete_weekly_load(current_ctl, recent_weekly_tss=None, rides=None):
 
     ``rides`` is the archive already in hand (app._load_all_rides_safe, or
     the list recognize_entry was given): without it the fallback parses the
-    whole archive, about half a second, once per call.
+    whole archive, about half a second, once per call. Only that fetch may
+    fail quietly; a list handed in is read as given, so a wrong shape raises
+    rather than answering CTL x 7 (the reviewer of 2026-09-14). The EWMA is
+    read on the planner's clock, which the pinned suites freeze.
 
     The 28-day EWMA of the rider's own rides (ride_storage.chronic_weekly_tss,
     the convention the ramp and the auditor share), else CTL x 7 -- CTL is the
@@ -3317,11 +3320,14 @@ def athlete_weekly_load(current_ctl, recent_weekly_tss=None, rides=None):
     Generate then built (notes/review/dupes.md DUP-1, DUP-14).
     """
     if recent_weekly_tss is None:
-        try:
-            import ride_storage as _rs
-            recent_weekly_tss = _rs.chronic_weekly_tss(rides)
-        except Exception as _e:  # noqa: BLE001
-            log.debug(f"chronic_weekly_tss fetch failed: {_e}")
+        import ride_storage as _rs
+        if rides is not None:
+            recent_weekly_tss = _rs.chronic_weekly_tss(rides, today=date.today())
+        else:
+            try:
+                recent_weekly_tss = _rs.chronic_weekly_tss(today=date.today())
+            except Exception as _e:  # noqa: BLE001
+                log.debug(f"chronic_weekly_tss fetch failed: {_e}")
     if recent_weekly_tss is None and current_ctl and current_ctl > 0:
         recent_weekly_tss = round(current_ctl * 7)
     return recent_weekly_tss

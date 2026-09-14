@@ -54,7 +54,8 @@ log = logging.getLogger(__name__)
 # avoids a circular import (app -> tp -> app).
 import error_codes  # leaf module — no circular risk
 from plan_invariants import (  # leaf: the auditor's rules are the planner's
-    ACWR_SWEET_SPOT, REST_UNAVAILABLE, UNLOAD_PHASES, asks_nothing, chronic_after)
+    ACWR_SWEET_SPOT, REST_UNAVAILABLE, UNLOAD_PHASES, _field, asks_nothing,
+    chronic_after)
 import week_plan  # single owner of week/session state (lazy tp import inside)
 import workout_facts  # v3.2.0 watertight classifier — L1 facts layer (leaf module)
 _LOG_ERROR_HOOK = None
@@ -1058,13 +1059,13 @@ def _went_unridden(w) -> bool:
     a holiday planned ahead made the first week back a deload (the part 3
     review, M-5).
     """
-    get = w.get if isinstance(w, dict) else (lambda k, d=None: getattr(w, k, d))
+    get = _field(w)
     end, sessions = get("end"), get("sessions") or []
     if end is None or not sessions:
         return False
     prescribed = ridden = 0.0
     for s in sessions:
-        sget = s.get if isinstance(s, dict) else (lambda k, d=None, _s=s: getattr(_s, k, d))
+        sget = _field(s)
         if sget("session_type", "") == "rest":
             continue
         tss = float(sget("tss_estimate", 0) or 0)
@@ -2852,8 +2853,8 @@ class LoadRamp:
     an absence (the Step 5 review, L1).
     ``ride_storage.chronic_weekly_tss`` counts a day off as a zero, so it
     decays through a lay-off on its own and the floor only held fit riders
-    back: it budgeted the owner's first week at 297 TSS where the 256 a week
-    they carry allows 333 (2026-09-13).
+    back: it budgeted the owner's first week at 297 TSS where the 281 a week
+    they carry allows 366 (2026-09-13).
     """
 
     def __init__(self, ctl, chronic=None, target_ctl=None):
@@ -3295,8 +3296,12 @@ def _continuous_phases(goal: "Goal", current_ctl: float,
     )]
 
 
-def athlete_weekly_load(current_ctl, recent_weekly_tss=None):
+def athlete_weekly_load(current_ctl, recent_weekly_tss=None, rides=None):
     """The rider's chronic weekly load: what the ACWR ceiling multiplies.
+
+    ``rides`` is the archive already in hand (app._load_all_rides_safe, or
+    the list recognize_entry was given): without it the fallback parses the
+    whole archive, about half a second, once per call.
 
     The 28-day EWMA of the rider's own rides (ride_storage.chronic_weekly_tss,
     the convention the ramp and the auditor share), else CTL x 7 -- CTL is the
@@ -3314,7 +3319,7 @@ def athlete_weekly_load(current_ctl, recent_weekly_tss=None):
     if recent_weekly_tss is None:
         try:
             import ride_storage as _rs
-            recent_weekly_tss = _rs.chronic_weekly_tss()
+            recent_weekly_tss = _rs.chronic_weekly_tss(rides)
         except Exception as _e:  # noqa: BLE001
             log.debug(f"chronic_weekly_tss fetch failed: {_e}")
     if recent_weekly_tss is None and current_ctl and current_ctl > 0:
@@ -3930,6 +3935,10 @@ def recognize_entry(goal: "Goal", ride_loads: list, current_ctl: float = 50.0) -
         return rows
 
     widest_rows: list[dict] = []
+    # The rider's load, read once: generate_phases derives it per call, and
+    # the fallback parses the archive, so the scan paid it once per
+    # candidate week (the ultrareview of 2026-09-14, finding 1).
+    recent_weekly_tss = athlete_weekly_load(current_ctl, rides=ride_loads)
     for c in range(c_max, 0, -1):
         hyp_start = today - timedelta(days=7 * c)
         hyp_weeks = goal.plan_weeks
@@ -3940,7 +3949,8 @@ def recognize_entry(goal: "Goal", ride_loads: list, current_ctl: float = 50.0) -
         hyp = replace(goal, start_date=hyp_start, entry_mode=None,
                       plan_weeks=hyp_weeks)
         try:
-            targets = _entry_week_targets(generate_phases(hyp, current_ctl))
+            targets = _entry_week_targets(generate_phases(
+                hyp, current_ctl, recent_weekly_tss=recent_weekly_tss))
         except (ValueError, AssertionError):
             continue  # unviable hypothesis geometry — not a scan failure
         # G1 (v3.3.3 L4): the old guard here only rejected candidates with
@@ -11781,6 +11791,17 @@ def _last_completed_week_acwr(
     return actual / max(planned, 1.0)
 
 
+def _fits_budget(minutes: int, tss_per_h: float, budget: float, planned: float,
+                 replacing: float = 0.0) -> int:
+    """``minutes``, trimmed to what a week's ``budget`` still holds once
+    ``planned`` is on it, ``replacing`` being the load of the day being
+    resized. A week with no budget of its own (a hand-made row) is unbounded."""
+    if budget <= 0 or tss_per_h <= 0:
+        return minutes
+    room = budget - (planned - replacing)
+    return max(0, min(minutes, int(room / tss_per_h * 60)))
+
+
 def reforecast(
     goal: Goal,
     plan_weeks: list[PlannedWeek],
@@ -11945,13 +11966,6 @@ def reforecast(
             _planned = sum(float(s2.tss_estimate or 0) for s2 in pw.sessions
                            if s2.session_type != "rest")
 
-            def _fits(minutes: int, tss_per_h: float, replacing: float) -> int:
-                """``minutes``, trimmed to what the week's budget still holds."""
-                if _budget <= 0 or tss_per_h <= 0:
-                    return minutes
-                room = _budget - (_planned - replacing)
-                return max(0, min(minutes, int(room / tss_per_h * 60)))
-
             for s in pw.sessions:
                 d_iso = s.day.isoformat()
                 if d_iso not in availability_overrides:
@@ -11985,7 +11999,7 @@ def reforecast(
                     # current and current=0 makes the ratio undefined.
                     new_dur = min(int(round(hours * 60)), MAX_AVAIL_SESSION_MIN)
                     tss_per_h = TSS_PER_HOUR.get("z2", 45)
-                    new_dur = _fits(new_dur, tss_per_h, 0.0)
+                    new_dur = _fits_budget(new_dur, tss_per_h, _budget, _planned)
                     if new_dur <= 0:
                         continue        # the week is already at its budget
                     s.session_type = "z2"
@@ -12048,8 +12062,8 @@ def reforecast(
                         # Growing a day is bounded by the week's budget; a day
                         # that no longer fits simply keeps what it had.
                         target_min = max(s.duration_min,
-                                         _fits(target_min, tss_per_h,
-                                               float(s.tss_estimate or 0)))
+                                         _fits_budget(target_min, tss_per_h, _budget,
+                                                      _planned, float(s.tss_estimate or 0)))
                     if target_min != s.duration_min:
                         old_dur = s.duration_min
                         _planned -= float(s.tss_estimate or 0)
@@ -13794,7 +13808,8 @@ def recalculate_plan(
         return extend_continuous_plan(
             goal, current_plan_weeks, current_ctl,
             recent_activities=recent_activities,
-            current_eftp=current_eftp, athlete=athlete)
+            current_eftp=current_eftp, athlete=athlete,
+            recent_weekly_tss=recent_weekly_tss)
 
     today = date.today()
     today_str = today.isoformat()

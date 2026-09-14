@@ -11342,7 +11342,8 @@ def api_plan_preview(
     except Exception:
         current_ctl = 37.0
 
-    phases = tp.generate_phases(g, current_ctl)
+    phases = tp.generate_phases(g, current_ctl,
+                                recent_weekly_tss=_chronic_weekly_tss_safe())
     _pw_status = (getattr(g, "_phase_weeks_status", None)
                   or (f"fallback:{_pw_parse_err}" if _pw_parse_err else None))
     return {
@@ -11756,11 +11757,7 @@ async def api_plan_generate(request: Request):
             current_ctl = training.get("ctl")
         except Exception:
             current_ctl = None
-        try:
-            import ride_storage as _rs
-            recent_weekly_tss = _rs.chronic_weekly_tss(_load_all_rides_safe())
-        except Exception:
-            recent_weekly_tss = None
+        recent_weekly_tss = _chronic_weekly_tss_safe()
 
         # Re-entry shaping inputs (SCIENCE.md "Returning after a break"):
         # how long since the last ride, and TSB now. Best-effort — None keeps
@@ -12368,11 +12365,7 @@ def _regenerate_plan_dict(
     # Regenerate (seed_salt forces shuffle variance per call — B3)
     # The rider's chronic load, fetched once: the rebuild's ACWR ceiling and
     # the drift chip's snapshot read the same number.
-    try:
-        import ride_storage as _rs
-        _recent_wtss = _rs.chronic_weekly_tss(_load_all_rides_safe())
-    except Exception:
-        _recent_wtss = None
+    _recent_wtss = _chronic_weekly_tss_safe()
     _regen_kwargs = dict(
         goal=goal, old_plan_weeks=old_weeks,
         current_ctl=current_ctl,
@@ -16993,6 +16986,7 @@ def api_plan_auto_recalc():
             goal=goal, current_plan_weeks=old_weeks,
             current_ctl=current_ctl, current_eftp=eftp,
             athlete=recalc_athlete,
+            recent_weekly_tss=_chronic_weekly_tss_safe(),
         )
 
         if recalc_info.get("action") == "no_change":
@@ -18285,6 +18279,18 @@ def _sync_icu_rides_and_wellness(force: bool = False) -> dict:
         "wellness_total": wellness_result.get("total", 0),
         "wellness_skipped": wellness_result.get("skipped"),
     }
+
+
+def _chronic_weekly_tss_safe() -> "float | None":
+    """The rider's chronic weekly load off the memoised archive; None when
+    the archive cannot answer, so the planner falls back to CTL x 7. Every
+    planning entry point passes this in: derived inside the planner, the
+    fallback parsed the archive again (the ultrareview of 2026-09-14)."""
+    try:
+        import ride_storage as _rs
+        return _rs.chronic_weekly_tss(_load_all_rides_safe())
+    except Exception:
+        return None
 
 
 def _load_all_rides_safe() -> list[dict]:

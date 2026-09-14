@@ -155,7 +155,6 @@ class WeekViewAgreement(unittest.TestCase):
         row = lib[planned.get("zwo_file") or "threshold_3x15min-5min_100pct_76min.zwo"]
         self.assertEqual(planned.get("session_type"), tp._session_type_from_row(row))
 
-    @unittest.expectedFailure
     def test_last_week_has_one_planned_answer(self):
         """P4. Last ISO week has no plan on record. The calendar's history row
         says planned 0; /api/week-summary?week_offset=-1 invents a target from
@@ -167,6 +166,35 @@ class WeekViewAgreement(unittest.TestCase):
         row = next(w for w in cal["weeks"] if w.get("start_date", w.get("start")) == last_monday.isoformat())
         self.assertIsNone(summary.get("tss_target"))
         self.assertIsNone(row.get("planned_tss"))
+
+    def test_the_calendar_cell_is_the_served_file(self):
+        """A2 on the calendar. Its cell sent the stored label, and its
+        content_class read a key no library row carries, so it was "" on
+        every cell (the audit's readers report, section 3)."""
+        cal = self._get("/api/calendar")
+        cell = next(d for w in cal["weeks"] for d in w["days"]
+                    if d["date"] == TODAY.isoformat())["planned"]
+        lib = {r["File"]: r for r in tp.load_workout_library()}
+        row = lib[cell["zwo_file"]]
+        self.assertEqual(cell["session_type"], tp._session_type_from_row(row))
+        self.assertEqual(cell["content_class"], tp._content_class_for_row(row))
+        self.assertTrue(cell["content_class"])
+
+    def test_a_week_with_no_plan_is_not_graded(self):
+        """P4. Last week has no plan on record, and the rider rode hard in
+        it. Nothing was prescribed, so there is no adherence to grade and no
+        overreach against a plan: not 0 %, not "40 min above Z2 with 0 min
+        planned"."""
+        last_wed = TODAY - timedelta(days=TODAY.weekday() + 5)
+        ride = {"date": last_wed.isoformat(), "tss": 200, "duration_min": 180,
+                "name": "Hard ride", "sport": "Ride", "avg_hr": 250,
+                "time_in_zone": {"z1": 0, "z2": 60, "z3": 80, "z4": 30, "z5": 10}}
+        with patch.object(app_module, "api_activities", return_value=[ride]):
+            summary = self._get("/api/week-summary?week_offset=-1")
+        self.assertEqual(summary["tss_done"], 200)
+        self.assertIsNone(summary["tss_target"])
+        self.assertIsNone(summary["tss_adherence_pct"])
+        self.assertFalse(summary["overreach"], summary.get("overreach_reasons"))
 
     def test_the_fixture_is_the_owners_record(self):
         """A control that must pass today: the stored record really carries

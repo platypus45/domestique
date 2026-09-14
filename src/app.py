@@ -9640,7 +9640,7 @@ def api_week_summary(week_offset: int = Query(0)):
                 round(100.0 - min(100.0, (tss_done / 50.0) * 100.0)),
             )
     else:
-        tss_adherence_pct = 0
+        tss_adherence_pct = None      # no plan on record: nothing to adhere to
 
     duration_min_done = int(round(sum((a.get("duration_min") or 0) for a in week_activities)))
 
@@ -9820,7 +9820,9 @@ def api_week_summary(week_offset: int = Query(0)):
                 f"TSS {tss_done:.0f} vs target {tss_target:.0f} "
                 f"({round(tss_done / tss_target * 100)}%)"
             )
-    if high_zone_planned == 0 and high_zone_done >= 30:
+    if tss_target is None:
+        pass    # no plan on record: riding harder than no plan is not overreach
+    elif high_zone_planned == 0 and high_zone_done >= 30:
         overreach_flag = True
         overreach_reasons.append(
             f"{high_zone_done} min above Z2 with 0 min planned"
@@ -15084,6 +15086,8 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
     Returns the canonical calendar payload per MASTER §3 — ready to ship as
     the ``/api/calendar`` JSON body.
     """
+    import week_view as _wv
+
     today = clock.today()
     today_iso = today.isoformat()
     iso_year, iso_week, _iso_day = today.isocalendar()
@@ -15276,6 +15280,7 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
         planned_tss_td = 0.0
         planned_z12_td = planned_z34_td = planned_z5p_td = 0.0
         days_elapsed = 0
+        on_record = False   # a stored session covers some day of this week
 
         days_out: list[dict] = []
         # v4.4.0 §6 — pull sessions from the *global* plan map (across all
@@ -15350,15 +15355,22 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
 
             planned_payload = None
             if sess and not sess.get("_synthetic_history"):
+                on_record = True
                 # v1.0.4 IMPL-WIRING — display_name + zwo_duration_min on every
                 # calendar planned cell so the dashboard cascade can pick the
                 # canonical title and the actual library duration.
                 _zwo = sess.get("zwo_file") or ""
                 _dn, _zdur = _session_naming_lookup(_zwo, classifications, lib_by_file)
+                _row = lib_by_file.get(_zwo)
                 planned_payload = {
-                    "session_type": sess.get("session_type") or "",
+                    # The served file's identity, the one the Today card and
+                    # the This Week list read (src/week_view.py). The library
+                    # row carries ContentClass; "content_class" was read here
+                    # and no row has it, so every cell sent "".
+                    "session_type": _wv.derived_type(
+                        sess, lib_by_file, tp._session_type_from_row),
                     "content_class": (
-                        (lib_by_file.get(_zwo) or {}).get("content_class")
+                        (tp._content_class_for_row(_row) if _row else "")
                         or sess.get("content_class")
                         or ""
                     ),
@@ -15454,7 +15466,9 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
             "phase": w.get("phase") or "",
             "is_stepback": bool(w.get("is_stepback")),
             "is_current": is_current,
-            "planned_tss": round(planned_tss, 1),
+            # None, not 0, for a week no stored plan covers: "no plan on
+            # record" (week-view contract P4), as /api/week-summary says it.
+            "planned_tss": round(planned_tss, 1) if on_record else None,
             "actual_tss": round(actual_tss, 1),
             "planned_z1z2_min": round(planned_z12, 1),
             "actual_z1z2_min": round(actual_z12, 1),

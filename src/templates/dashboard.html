@@ -7912,6 +7912,9 @@ async function loadLastWeekFeedback() {
       card.style.display = 'none';
       return;
     }
+    // tss_target null: no plan on record for that week (P4). Say so rather
+    // than grade the ridden load against a planned 0.
+    const noPlan = d.tss_target === null;
     const tssTgt = Number(d.tss_target || 0);
     const tssDone = Number(d.tss_done || 0);
     const adherence = Number(d.tss_adherence_pct || 0);
@@ -7927,12 +7930,13 @@ async function loadLastWeekFeedback() {
     const reasons = Array.isArray(d.overreach_reasons) ? d.overreach_reasons : [];
 
     const row = (label, done, planned, badStyle) => {
-      const tag = badStyle && planned !== 0 && done > planned ? 'var(--orange)'
+      const tag = noPlan ? 'var(--text)'
+                : badStyle && planned !== 0 && done > planned ? 'var(--orange)'
                 : badStyle === 'over' && planned === 0 && done > 0 ? 'var(--orange)'
                 : 'var(--text)';
       return `<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:12px;">
                 <span style="color:var(--text2);">${esc(label)}</span>
-                <span style="color:${tag};"><b>${done}</b> / ${planned}</span>
+                <span style="color:${tag};"><b>${done}</b> / ${noPlan ? '—' : planned}</span>
               </div>`;
     };
 
@@ -7950,7 +7954,7 @@ async function loadLastWeekFeedback() {
     host.innerHTML = `
       <div style="display:flex;gap:24px;flex-wrap:wrap;">
         <div style="flex:1;min-width:180px;">
-          <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">${esc(d.week_start)} → ${esc(d.week_end)}</div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">${esc(d.week_start)} → ${esc(d.week_end)}${noPlan ? ' &middot; no plan on record' : ''}</div>
           ${row('TSS', tssDone, tssTgt, 'over')}
           ${row('Duration (min)', d.duration_min_done || 0, d.duration_min_planned || 0)}
         </div>
@@ -13880,6 +13884,8 @@ function renderCalendar(data) {
       : '';
 
     // TSS pill (planned/actual). Met/miss colour vs planned.
+    // planned_tss is null for a week no stored plan covers: show "—", not 0.
+    const pOnRecord = w.planned_tss != null;
     const pTss = Math.round(Number(w.planned_tss || 0));
     const aTss = Math.round(Number(w.actual_tss || 0));
     let tssCls = '';
@@ -13887,7 +13893,7 @@ function renderCalendar(data) {
       tssCls = aTss >= pTss * 0.9 ? 'cal-tss-met' : (aTss < pTss * 0.7 ? 'cal-tss-miss' : '');
     }
     const tssPill = pTss > 0 || aTss > 0
-      ? `<span class="cal-tss-pill ${tssCls}" title="TSS actual / planned">${aTss} / ${pTss}</span>`
+      ? `<span class="cal-tss-pill ${tssCls}" title="TSS actual / planned">${aTss} / ${pOnRecord ? pTss : '—'}</span>`
       : '';
     const z12 = `<span class="cal-z-pill" title="Low aerobic minutes (Z1+Z2) actual/planned">Z1+Z2: ${Math.round(w.actual_z1z2_min || 0)}/${Math.round(w.planned_z1z2_min || 0)} min</span>`;
     const z34 = `<span class="cal-z-pill" title="Mid/High aerobic minutes (Z3+Z4) actual/planned">Z3+Z4: ${Math.round(w.actual_z3z4_min || 0)}/${Math.round(w.planned_z3z4_min || 0)} min</span>`;

@@ -27,6 +27,13 @@ restoration description.
 Wave 2 Grill #2 also forced a fix to ``current_mins <= 0``: pre-fix
 this short-circuited the entire week, so a holiday week (every override
 day at 0) could never be restored.
+
+2026-09-13 (9138110d): the rider's free hours are a ceiling, not a target.
+A restore or an expansion may not push the week past its ``tss_target``;
+the day gets ``hours * 60`` only when the budget holds it, else what the
+budget leaves, and a week with no budget of its own stays unbounded. The
+fixture budgets 270 a week: a 4 h restore onto a weekend already rested
+(105 planned) is 165 TSS of room, 220 min at 45 TSS/h, not 240.
 """
 from __future__ import annotations
 
@@ -208,13 +215,32 @@ class TestRestRestoredToZ2(_AvailRestoreBase):
         after_sat = self._session(after_plan, self._sat)
         self.assertEqual(after_sat["session_type"], "z2",
                          "Sat must restore to z2 when hours raised from 0")
-        self.assertEqual(after_sat["duration_min"], 240,
-                         "duration_min must reflect 4h × 60min")
+        # 4 h asks 240 min; the week's budget of 270 holds 165 TSS more
+        # than the 105 planned, 220 min at 45 TSS/h.
+        self.assertEqual(after_sat["duration_min"], 220,
+                         "duration_min is the rider's hours, trimmed to the budget")
         self.assertGreater(after_sat["tss_estimate"], 0,
                            "tss_estimate must be positive after restore")
         self.assertEqual(after_sat["zwo_file"], "",
                          "zwo_file cleared so renderer re-matches")
         self.assertEqual(after_sat["zwo_name"], "")
+
+    def test_a_week_without_a_budget_restores_the_hours_literally(self):
+        # A hand-made row carries no tss_target: the cap leaves it
+        # unbounded, and the restore is the rider's hours to the minute.
+        for w in self._plan["weeks"]:
+            w["tss_target"] = 0
+        (self._tmp / "current_plan.json").write_text(json.dumps(self._plan))
+        body = {
+            "availability": {
+                self._sat.isoformat(): {"hours": 4, "type": "available"},
+            }
+        }
+        r = self.client.post("/api/plan/save-availability", json=body)
+        self.assertEqual(r.status_code, 200, r.text)
+        after_sat = self._session(self._read_plan(), self._sat)
+        self.assertEqual(after_sat["session_type"], "z2")
+        self.assertEqual(after_sat["duration_min"], 240)
 
 
 class TestRoundTripRestThenRestore(_AvailRestoreBase):
@@ -254,7 +280,9 @@ class TestRoundTripRestThenRestore(_AvailRestoreBase):
         sat1 = self._session(plan1, self._sat)
         self.assertEqual(sat1["session_type"], "z2",
                          "round-trip restore: Sat must un-rest")
-        self.assertEqual(sat1["duration_min"], 240)
+        # Sat began as 90 TSS of the 260 planned; zeroed, the week holds 100
+        # TSS more than the 170 left, 133 min at 45 TSS/h, not 240.
+        self.assertEqual(sat1["duration_min"], 133)
 
 
 class TestPartialRestore(_AvailRestoreBase):
@@ -276,7 +304,7 @@ class TestPartialRestore(_AvailRestoreBase):
         after_sun = self._session(after_plan, self._sun)
 
         self.assertEqual(after_sat["session_type"], "z2")
-        self.assertEqual(after_sat["duration_min"], 240)
+        self.assertEqual(after_sat["duration_min"], 220)   # 165 TSS of room at 45/h
         self.assertEqual(after_sun["session_type"], "rest",
                          "Sun must remain REST when override is 0")
         self.assertEqual(after_sun["duration_min"], 0)
@@ -331,8 +359,10 @@ class TestNonRestSessionScalingUnchanged(_AvailRestoreBase):
         # session_type remains long_z2.
         self.assertEqual(after_sat["session_type"], "long_z2",
                          "Non-rest scaling must not change session_type")
-        self.assertEqual(after_sat["duration_min"], 150,
-                         "Sat scales to 2.5h = 150min")
+        # 2.5 h asks 150 min; growing Sat (90 TSS of the 260 planned) is
+        # bounded by the 270 budget: 100 TSS of room, 133 min at 45 TSS/h.
+        self.assertEqual(after_sat["duration_min"], 133,
+                         "Sat grows to what the week's budget holds")
 
 
 class TestPartialRestoreOnlyOneKeyInDict(_AvailRestoreBase):

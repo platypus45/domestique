@@ -306,6 +306,33 @@ class DeloadAdvanceBase(unittest.TestCase):
         return chip, path
 
 
+class TestTodayCardShowsTheFreshDeload(DeloadAdvanceBase):
+    """/api/today-session runs the deload advance and then reads today's
+    session through the week view (2026-09-14). The view must be built from
+    the plan the advance rewrote, on the same request: a view built first
+    showed the load week the rider was just relieved of (found by the
+    adversarial review of that change, which no test here caught)."""
+
+    def test_the_refit_session_is_what_the_card_says(self):
+        import clock
+        tue = date(2026, 9, 15)
+        clock.freeze(tue)
+        self.addCleanup(clock.unfreeze)
+        self._write(_mk_continuous_plan(tue))
+        with patch.object(app_module, "_load_all_rides_safe", return_value=_monotone_rides(tue)), \
+             patch.object(app_module, "_kick_lazy_icu_sync", return_value=None), \
+             patch.object(app_module, "get_sleep_metrics",
+                          return_value={"red_hrv_streak": 0, "sleep_h": 7.5, "rhr_delta": 0}), \
+             patch.object(app_module, "get_today_metrics",
+                          return_value={"ctl": 50, "atl": 45, "tsb": 5}), \
+             patch.object(app_module.db, "query_activities", return_value=[]):
+            d = TestClient(app_module.app).get("/api/today-session").json()
+        self.assertTrue(d.get("deload_advance"), "the fixture must trip the advance")
+        saved = json.loads((self._tmp / "current_plan.json").read_text())
+        s = next(x for w in saved["weeks"] for x in w["sessions"] if x["day"] == tue.isoformat())
+        self.assertEqual(d["planned"]["zwo_file"], s.get("zwo_file") or None)
+
+
 class TestDeloadAdvance(DeloadAdvanceBase):
     def test_monotony_trip_converts_current_week(self):
         plan = _mk_continuous_plan(self.today)

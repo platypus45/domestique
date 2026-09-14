@@ -332,5 +332,36 @@ class TestYesterdayOnAMonday(HomepageTodayConsistencyBase):
         self.assertIn("G1 yesterday 2.0", data["reason"])
 
 
+class TestNoSessionInsideAPlan(HomepageTodayConsistencyBase):
+    """A day no stored row covers has no session (the view never invents one),
+    but the rider has a plan: the card must say rest, not offer to create a
+    first plan. The dashboard used to tell the two apart by a global only the
+    Plan tab sets (the adversarial review, 2026-09-14)."""
+
+    def test_a_plan_starting_tomorrow(self):
+        plan = _mk_today_plan_dict(self._today + timedelta(days=1), "tempo", 75, 60, "Tempo")
+        for w in plan["weeks"]:
+            w["sessions"] = [x for x in w["sessions"] if x["day"] > self._today.isoformat()]
+            w["start"] = (self._today + timedelta(days=1)).isoformat()
+        (self._tmp / "current_plan.json").write_text(json.dumps(plan))
+        data = self.client.get("/api/today-session").json()
+        self.assertIsNone(data["planned"])
+        self.assertTrue(data["has_plan"])
+        self.assertIn("retest_nudge", data)
+
+    def test_no_plan_at_all(self):
+        (self._tmp / "current_plan.json").unlink()
+        data = self.client.get("/api/today-session").json()
+        self.assertIsNone(data["planned"])
+        self.assertFalse(data["has_plan"])
+
+    def test_the_card_branches_on_has_plan(self):
+        """The dashboard reads the server's flag before its Plan-tab global."""
+        src = (Path(app_module.__file__).parent / "templates" / "dashboard.html").read_text(encoding="utf-8")
+        i = src.index("if (!d.planned) {")
+        branch = src[i:i + 1500]
+        self.assertLess(branch.index("d.has_plan"), branch.index("window._planData"))
+
+
 if __name__ == "__main__":
     unittest.main()

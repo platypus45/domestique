@@ -10491,7 +10491,13 @@ def _api_today_session_impl():
         (s for s in week_data["sessions"]
          if s["day"] == today_str and s.get("on_record")), None)
     if not planned_data:
-        return {"planned": None, "adjusted": None, "reason": "No session planned today"}
+        # has_plan tells a rest day inside a plan (or before it starts, or
+        # after it ends) from having no plan at all, which the card offers
+        # to create. The retest nudge does not depend on a session.
+        from profile_manager import ProfileManager as _PM
+        return {"planned": None, "adjusted": None, "reason": "No session planned today",
+                "has_plan": bool(_stored and _stored.get("weeks")),
+                "retest_nudge": _retest_nudge_payload(_PM.get())}
 
     planned = tp.PlannedSession(
         day=clock.today(), day_name=planned_data.get("day_name", ""),
@@ -15370,19 +15376,19 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
                 # canonical title and the actual library duration.
                 _zwo = sess.get("zwo_file") or ""
                 _dn, _zdur = _session_naming_lookup(_zwo, classifications, lib_by_file)
-                _row = lib_by_file.get(_zwo)
                 planned_payload = {
                     # The served file's identity, the one the Today card and
-                    # the This Week list read (src/week_view.py). The library
-                    # row carries ContentClass; "content_class" was read here
-                    # and no row has it, so every cell sent "".
+                    # the This Week list read (src/week_view.py).
                     "session_type": _wv.derived_type(
                         sess, lib_by_file, tp._session_type_from_row),
-                    "content_class": (
-                        (tp._content_class_for_row(_row) if _row else "")
-                        or sess.get("content_class")
-                        or ""
-                    ),
+                    # Always "": the dashboard names, colours, gates and opens
+                    # a cell by session_type, with content_class as an override
+                    # through tables of its own that know only the broad
+                    # classes. The read here was of a key no library row
+                    # carries; filling it from ContentClass refused to open
+                    # 624 of 4,307 files (tempo_intervals, threshold_ladder...)
+                    # and turned long rides into plain endurance cells.
+                    "content_class": "",
                     "name": sess.get("zwo_name") or sess.get("description") or "",
                     "display_name": _dn,
                     "zwo_duration_min": _zdur,

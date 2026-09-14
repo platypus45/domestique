@@ -97,18 +97,32 @@ class TestLocalTrainingLoadFallback(unittest.TestCase):
         # Empty training → readiness will be INSUFFICIENT_DATA.
         # No local CTL either → score should be None (consistent with
         # readiness when truly no data).
-        with patch.object(app_module, "get_today_metrics", return_value={}), \
+        # A session today, so the endpoint reaches readiness. Without one it
+        # returns before readiness and this test used to skip itself (the
+        # regenerated fallback week that once supplied one is gone).
+        import json, tempfile
+        from datetime import timedelta
+        from pathlib import Path
+        import clock
+        today = clock.today()
+        monday = today - timedelta(days=today.weekday())
+        tmp = Path(tempfile.mkdtemp(prefix="today_score_"))
+        (tmp / "current_plan.json").write_text(json.dumps({
+            "goal": {"type": "general"}, "phases": [],
+            "weeks": [{"week_num": 1, "start": monday.isoformat(),
+                       "end": (monday + timedelta(days=6)).isoformat(), "phase": "base",
+                       "tss_target": 300, "is_stepback": False,
+                       "sessions": [{"day": today.isoformat(), "day_name": today.strftime("%a"),
+                                     "session_type": "z2", "duration_min": 60, "tss_estimate": 45,
+                                     "description": "", "zwo_file": "", "zwo_name": "",
+                                     "status": "pending"}]}]}))
+        with patch.object(app_module, "_plan_dir", return_value=tmp), \
+             patch.object(app_module, "get_today_metrics", return_value={}), \
              patch.object(app_module, "get_sleep_metrics", return_value={}), \
              patch("ride_storage.compute_local_ctl", return_value=None), \
              patch.object(app_module, "_compute_local_atl", return_value=None):
-            r = self.client.get("/api/today-session")
-            # Endpoint may 200 with planned=null on empty plan; that's fine —
-            # we only assert the helper structure if a session is returned.
-            data = r.json()
-            if data.get("planned") is None:
-                # No plan today — endpoint short-circuited before calling
-                # readiness. Skip; helper exercised via /api/readiness above.
-                self.skipTest("No planned session today; helper covered in readiness test")
+            data = self.client.get("/api/today-session").json()
+            self.assertIsNotNone(data.get("planned"))
             # Final-fallback path: score=50 retained when no local data.
             self.assertEqual(data.get("readiness"), 50)
 

@@ -54,7 +54,10 @@ def library_by_file(rows) -> dict:
 
 def derived_type(session: dict, lib: dict, type_of_row: Callable[[dict], str]) -> str:
     """The session's identity: the type its served file's content carries;
-    the stored label only when no file is served. Rest is rest."""
+    the stored label only when no file is served. Rest is rest, and a long
+    ride serving endurance content stays a long ride (the same band and the
+    same hardness; the cards colour and name it, and the Today card's
+    adjustments treat it, as long)."""
     slot = (session.get("session_type") or "rest").lower()
     if slot == "rest":
         return "rest"
@@ -62,9 +65,10 @@ def derived_type(session: dict, lib: dict, type_of_row: Callable[[dict], str]) -
     if row is None:
         return slot
     try:
-        return type_of_row(row) or slot
+        served = type_of_row(row) or slot
     except Exception:  # noqa: BLE001 - a row the classifier cannot read keeps its slot
         return slot
+    return "long_z2" if slot == "long_z2" and served == "z2" else served
 
 
 def zone_minutes(session: dict, lib: dict, session_type: str) -> dict:

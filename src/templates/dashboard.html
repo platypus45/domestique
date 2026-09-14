@@ -17861,7 +17861,10 @@ async function loadTodaySession() {
       const _el = $('home-recommendation');
       if (_el) {
         _el.classList.remove('loading');
-        const hasPlan = !!(window._planData && (window._planData.weeks || []).length);
+        // The server says whether a plan exists (has_plan); _planData is only
+        // set once the Plan tab has been opened.
+        const hasPlan = d.has_plan != null ? !!d.has_plan
+          : !!(window._planData && (window._planData.weeks || []).length);
         _el.innerHTML = hasPlan
           ? `<div style="font-size:13px;color:var(--text2);padding:8px 0;">Rest day &mdash; no session scheduled today. Enjoy the recovery.</div>`
           : `<div style="text-align:center;padding:14px 8px;">
@@ -17870,6 +17873,7 @@ async function loadTodaySession() {
               <button class="btn btn-primary" onclick="goToPlanBuilder()">Create your first training plan</button>
             </div>`;
       }
+      try { renderRetestNudge(d.retest_nudge); } catch (_) {}
       return;
     }
 

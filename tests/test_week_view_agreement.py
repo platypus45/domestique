@@ -168,17 +168,19 @@ class WeekViewAgreement(unittest.TestCase):
         self.assertIsNone(row.get("planned_tss"))
 
     def test_the_calendar_cell_is_the_served_file(self):
-        """A2 on the calendar. Its cell sent the stored label, and its
-        content_class read a key no library row carries, so it was "" on
-        every cell (the audit's readers report, section 3)."""
+        """A2 on the calendar. Its cell sent the stored label. content_class
+        stays "" (the dashboard keys on session_type; see
+        test_calendar_cells_open), and a long ride stays long."""
         cal = self._get("/api/calendar")
-        cell = next(d for w in cal["weeks"] for d in w["days"]
-                    if d["date"] == TODAY.isoformat())["planned"]
+        days = {d["date"]: d["planned"] for w in cal["weeks"] for d in w["days"] if d.get("planned")}
+        cell = days[TODAY.isoformat()]
         lib = {r["File"]: r for r in tp.load_workout_library()}
-        row = lib[cell["zwo_file"]]
-        self.assertEqual(cell["session_type"], tp._session_type_from_row(row))
-        self.assertEqual(cell["content_class"], tp._content_class_for_row(row))
-        self.assertTrue(cell["content_class"])
+        self.assertEqual(cell["session_type"], tp._session_type_from_row(lib[cell["zwo_file"]]))
+        self.assertEqual(cell["content_class"], "")
+        sunday = (TODAY + timedelta(days=3)).isoformat()
+        self.assertEqual(days[sunday]["session_type"], "long_z2")
+        weekly = self._get("/api/weekly-plan")
+        self.assertEqual(next(s for s in weekly["sessions"] if s["day"] == sunday)["session_type"], "long_z2")
 
     def test_a_week_with_no_plan_is_not_graded(self):
         """P4. Last week has no plan on record, and the rider rode hard in

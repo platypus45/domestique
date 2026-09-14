@@ -10,6 +10,7 @@ The fatigue-resistance memo cannot live here: it forward-references profile
 resolution, which would drag the profile machinery into the substrate and
 defeat the point. app.py registers it instead.
 """
+import threading
 import time
 
 from obs import error_codes, _log_error
@@ -43,7 +44,31 @@ def _defensive_copy(value):
     return value
 
 
+_locks: dict = {}
+_locks_guard = threading.Lock()
+
+
+def _lock_for(key):
+    with _locks_guard:
+        lock = _locks.get(key)
+        if lock is None:
+            lock = _locks[key] = threading.Lock()
+        return lock
+
+
 def cached(key, fn, ttl=300):
+    now = time.time()
+    if key in _cache and now - _cache_ts.get(key, 0) < ttl:
+        return _defensive_copy(_cache[key])
+    # Single flight per key. Without it a cold home page fired four
+    # concurrent archive parses through this function, 17 s of CPU, every
+    # request waiting for its own copy (the audit's performance lens,
+    # 2026-09-14). The second thread waits for the first and reads its result.
+    with _lock_for(key):
+        return _fill(key, fn, ttl)
+
+
+def _fill(key, fn, ttl):
     now = time.time()
     if key in _cache and now - _cache_ts.get(key, 0) < ttl:
         return _defensive_copy(_cache[key])

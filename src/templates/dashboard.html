@@ -20220,19 +20220,27 @@ function renderOnTrackBar(data) {
   const cmpChipBg = cmpBand === 'green' ? 'rgba(34,197,94,0.15)' : cmpBand === 'amber' ? 'rgba(234,179,8,0.15)' : 'rgba(239,68,68,0.15)';
 
   // CTL delta vs target
+  // Either side can be unknown (no intervals.icu value; a plan with no CTL
+  // anchor): show "—", not 0.0.
+  const ctlKnown = summary.ctl_actual != null && summary.ctl_planned_today != null;
   const ctlActual = Number(summary.ctl_actual || 0);
   const ctlPlanned = Number(summary.ctl_planned_today || 0);
   const ctlDelta = ctlActual - ctlPlanned;
   const ctlSign = ctlDelta >= 0 ? '+' : '';
   const ctlDeltaColor = Math.abs(ctlDelta) <= 5 ? 'var(--green)' : Math.abs(ctlDelta) <= 10 ? 'var(--yellow)' : 'var(--red)';
 
-  // Polarized actual vs target (with drift color)
-  const pa = summary.polarized_actual || {z1z2_pct:0,z3_pct:0,z4plus_pct:0};
-  const pt = summary.polarized_target || {z1z2_pct:0,z3_pct:0,z4plus_pct:0};
+  // Intensity distribution, actual vs target (with drift color). The server
+  // sends three zones, z1_pct / z2_pct / z3_pct (below LT1 / between / above
+  // LT2), since the three-zone model of 2026-09-10 (e14fb3b5); this card read
+  // the older z1z2_pct / z3_pct / z4plus_pct and printed "undefined/9/undefined".
+  const _z3 = o => ({ z1_pct: Number((o || {}).z1_pct || 0), z2_pct: Number((o || {}).z2_pct || 0),
+                      z3_pct: Number((o || {}).z3_pct || 0) });
+  const pa = _z3(summary.polarized_actual);
+  const pt = _z3(summary.polarized_target);
   const polDrift = Math.max(
-    Math.abs(pa.z1z2_pct - pt.z1z2_pct),
-    Math.abs(pa.z3_pct - pt.z3_pct),
-    Math.abs(pa.z4plus_pct - pt.z4plus_pct)
+    Math.abs(pa.z1_pct - pt.z1_pct),
+    Math.abs(pa.z2_pct - pt.z2_pct),
+    Math.abs(pa.z3_pct - pt.z3_pct)
   );
   const polColor = polDrift > 10 ? 'var(--yellow)' : 'var(--text)';
 
@@ -20458,13 +20466,13 @@ function renderOnTrackBar(data) {
       </div>
       <div class="ot-stat">
         <div class="ot-stat-label">CTL</div>
-        <div class="ot-stat-val">${ctlActual.toFixed(1)} / ${ctlPlanned.toFixed(1)}</div>
-        <div style="font-size:10px;color:${ctlDeltaColor};">delta ${ctlSign}${ctlDelta.toFixed(1)}</div>
+        <div class="ot-stat-val">${summary.ctl_actual != null ? ctlActual.toFixed(1) : '—'} / ${summary.ctl_planned_today != null ? ctlPlanned.toFixed(1) : '—'}</div>
+        <div style="font-size:10px;color:${ctlKnown ? ctlDeltaColor : 'var(--text3)'};">${ctlKnown ? 'delta ' + ctlSign + ctlDelta.toFixed(1) : 'no CTL on record'}</div>
       </div>
       <div class="ot-stat">
         <div class="ot-stat-label">POLARIZED</div>
-        <div class="ot-stat-val" style="color:${polColor};">${pa.z1z2_pct}/${pa.z3_pct}/${pa.z4plus_pct}</div>
-        <div style="font-size:10px;color:var(--text3);">target ${pt.z1z2_pct}/${pt.z3_pct}/${pt.z4plus_pct}</div>
+        <div class="ot-stat-val" style="color:${polColor};">${pa.z1_pct}/${pa.z2_pct}/${pa.z3_pct}</div>
+        <div style="font-size:10px;color:var(--text3);">target ${pt.z1_pct}/${pt.z2_pct}/${pt.z3_pct}</div>
       </div>
       <div class="ot-stat">
         <div class="ot-stat-label">PHASE</div>

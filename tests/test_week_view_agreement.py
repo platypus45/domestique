@@ -128,11 +128,11 @@ class WeekViewAgreement(unittest.TestCase):
                    if week_start.isoformat() <= s["day"] <= week_end.isoformat()
                    and s.get("session_type") != "rest")
 
-    @unittest.expectedFailure
     def test_planned_load_for_this_week_is_one_number(self):
-        """A1. /api/weekly-plan and /api/week-summary serve a target that a
-        second planner regenerates on every read (HTTP-2), not the stored
-        week's, so the home badge, the rollup and the calendar disagree."""
+        """A1. Until week_view (2026-09-14) /api/weekly-plan and
+        /api/week-summary served a target a second planner regenerated on
+        every read (HTTP-2), not the stored week's, so the home badge, the
+        rollup and the calendar disagreed: 441 against the stored 234."""
         monday = TODAY - timedelta(days=TODAY.weekday())
         stored = self._stored_planned(self._get("/api/plan")["plan_json"], monday)
         self.assertEqual(stored, WEEK_TARGET)

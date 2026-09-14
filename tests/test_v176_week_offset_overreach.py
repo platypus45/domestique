@@ -50,10 +50,13 @@ def _seed_plan_for_last_week(plan_dir: Path) -> Path:
                 "start": last_monday.isoformat(),
                 "end": last_sunday.isoformat(),
                 "tss_target": 237,
+                # The sessions sum to the row's 237: the rollup grades the
+                # ridden load against what the week prescribed (week_view,
+                # 2026-09-14), not against a target nobody was given.
                 "sessions": [
                     {"day": (last_monday + timedelta(days=i)).isoformat(),
                      "day_name": "D", "session_type": "z2",
-                     "duration_min": 45, "tss_estimate": 34,
+                     "duration_min": 45, "tss_estimate": 47 if i < 3 else 48,
                      "description": "", "zwo_file": "",
                      "zwo_name": "", "status": "pending"}
                     for i in range(5)

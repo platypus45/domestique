@@ -9242,212 +9242,42 @@ def api_gpx_data(region: str, filename: str):
 
 @app.get("/api/weekly-plan")
 def api_weekly_plan(week_offset: int = Query(0)):
-    """Generate or retrieve weekly mesocycle plan.
-    week_offset=0 → current week, -1 → last week, 1 → next week.
+    """The stored week, as one view (src/week_view.py). week_offset=0 is the
+    current ISO week, -1 last week, 1 next week.
+
+    Until 2026-09-14 this ran a second planner on every GET and served its
+    regenerated target as the home badge and the rollup; the stored week's
+    sessions were overlaid by date and days before the plan were filled with
+    sessions nobody was given (notes/review/http.md HTTP-2). It reads the
+    plan on disk now, and a week with no plan on record says so:
+    tss_target None, every day a placeholder with on_record False.
     """
+    import week_view as _wv
 
     training = cached("training", get_today_metrics)
     current_ctl = training.get("ctl") or 30
-
-    # Check for active plan to get current phase
-    current_phase = None
     json_path = _plan_dir() / "current_plan.json"
+    plan = None
     if json_path.exists():
         try:
             with open(json_path, encoding="utf-8") as f:
                 plan = json.load(f)
-            today = clock.today() + timedelta(weeks=week_offset)
-            today_str = today.isoformat()
-            for p in plan.get("phases", []):
-                if p.get("start", "") <= today_str <= p.get("end", ""):
-                    current_phase = tp.Phase(
-                        name=p["name"], start=date.fromisoformat(p["start"]),
-                        end=date.fromisoformat(p["end"]), weeks=p.get("weeks", 1),
-                        focus=p.get("focus", ""), weekly_tss_target=p.get("weekly_tss", current_ctl * 7),
-                        z2_pct=70, hit_per_week=p.get("hit_per_week", 2),
-                        session_types=p.get("session_types", ["z2", "threshold", "vo2max", "sweetspot", "overunder", "tempo", "sprint"]),
-                    )
-                    break
-        except (json.JSONDecodeError, OSError, KeyError):
-            pass
-
-    # Load goal from current_plan.json if available
-    goal = None
+        except (json.JSONDecodeError, OSError):
+            plan = None
+    start, _end = _wv.iso_week(clock.today(), week_offset)
     try:
-        if json_path.exists():
-            with open(json_path, encoding="utf-8") as f:
-                plan_data = json.load(f)
-            g = plan_data.get("goal", {})
-            goal = tp.goal_from_dict(g)
-        else:
-            goal = tp.Goal(goal_type="general", hours_per_week=8.0)
-    except Exception:
-        goal = tp.Goal(goal_type="general", hours_per_week=8.0)
-    # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
-    if goal.longest_ride_h_90d is None:
-        goal.longest_ride_h_90d = _longest_ride_h_90d()
-
-    # P1 (v4.1.0): feed cross-week used_names from the persisted plan so
-    # /api/weekly-plan picks up the same 6-week sliding-window dedupe that
-    # generate_plan uses. Without this, the simple weekly planner gets a
-    # fresh empty set on every request → the UI weekly card was handing
-    # the user the same threshold workout week after week.
-    cross_week_used_names: set[str] = set()
-    try:
-        if json_path.exists():
-            with open(json_path, encoding="utf-8") as f:
-                _persist = json.load(f)
-            today = clock.today() + timedelta(weeks=week_offset)
-            today_str = today.isoformat()
-            # Window: sessions from the last 6 weeks of the stored plan
-            # (mirrors generate_plan's sliding-window ≥6 stale threshold).
-            window_start = (today - timedelta(weeks=6)).isoformat()
-            for w_json in _persist.get("weeks", []):
-                if w_json.get("end", "") < window_start:
-                    continue
-                if w_json.get("start", "") > today_str:
-                    continue
-                for s_json in w_json.get("sessions", []):
-                    nm = s_json.get("zwo_name") or ""
-                    if nm:
-                        cross_week_used_names.add(nm)
-    except Exception as _e:
-        _log.debug(f"weekly-plan used_names rollup failed: {_e}")
-
-    week = tp.generate_weekly_plan(
-        goal=goal, current_phase=current_phase,
-        current_ctl=current_ctl,
-        used_names=cross_week_used_names,
-    )
-
-    # Match ZWO files for every non-rest session
-    try:
-        library = tp.load_workout_library()
-        for i, s in enumerate(week.sessions):
-            if s.session_type == "rest" or getattr(s, "zwo_file", ""):
-                continue
-            try:
-                tp.match_zwo(
-                    s, library,
-                    week_num=week.week_num, day_idx=i,
-                    used_names=cross_week_used_names,
-                    hr_bias=_hr_bias(),
-                 micro_only=bool(getattr(goal, "vo2_microintervals_only", False)),)
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    # fix26 §6.4/§6.8/§6.12 — merge status fields from stored current_plan.json.
-    # /api/weekly-plan regenerates the week on-the-fly from the goal/phase, but
-    # user-moved slots / done statuses / dismissed flags live in the stored
-    # plan JSON. Without this merge the UI would show the regen'd week without
-    # any of the user's persisted edits and the drag-to-move would appear to
-    # have no effect.
-    stored_by_day: dict[str, dict] = {}
-    try:
-        json_path_sess = _plan_dir() / "current_plan.json"
-        if json_path_sess.exists():
-            with open(json_path_sess, encoding="utf-8") as f:
-                stored_plan = json.load(f)
-            # P4 (v4.1.0) — merge by DATE OVERLAP (not just ISO-week match).
-            # The stored plan's weeks may start on Sat (legacy) or Mon (new
-            # plans). Our weekly-plan reply is always Mon–Sun. Matching on
-            # ISO-week alone silently drops 5 of 7 days of merge coverage
-            # when stored weeks started on Sat — because week 1 Sat is in
-            # ISO week N, but week 2 Mon–Sun is in ISO week N+1. Iterate
-            # EVERY stored session and key by day ISO directly — that guarantees
-            # the user_moved/done/dismissed fields round-trip regardless of
-            # the stored-week boundary convention.
-            week_start_iso = week.start.isoformat()
-            week_end_iso = week.end.isoformat()
-            for w_json in stored_plan.get("weeks", []):
-                for s_json in w_json.get("sessions", []):
-                    day_iso = s_json.get("day", "")
-                    if not day_iso:
-                        continue
-                    if week_start_iso <= day_iso <= week_end_iso:
-                        stored_by_day[day_iso] = s_json
-    except Exception as _e:
-        _log.debug(f"weekly-plan stored merge failed: {_e}")
-
-    # v4.1.1 FIX-PLANNER B: build a ZWO→metadata index once so every session
-    # can surface zone_dist + score without re-parsing the library.
-    _lib_by_file: dict[str, dict] = {}
-    try:
-        for _w in tp.load_workout_library():
-            _fname = _w.get("File")
-            if _fname:
-                _lib_by_file[_fname] = _w
-    except Exception:
+        _lib_by_file = _wv.library_by_file(tp.load_workout_library())
+    except Exception:  # noqa: BLE001
         _lib_by_file = {}
-
-    # v1.0.4 IMPL-WIRING: load content classifications once so every session
-    # can surface display_name (Layer 3) without re-reading the JSON.
     try:
         _classifications = tp._load_content_classifications() or {}
-    except Exception:
+    except Exception:  # noqa: BLE001
         _classifications = {}
-
-    def _session_out(s):
-        day_iso = s.day.isoformat()
-        stored = stored_by_day.get(day_iso) or {}
-        zwo_file = stored.get("zwo_file") or getattr(s, "zwo_file", "")
-        # v1.0.4 IMPL-WIRING — resolve canonical title + actual library duration.
-        display_name, zwo_duration_min = _session_naming_lookup(
-            zwo_file, _classifications, _lib_by_file,
-        )
-        out = {
-            "day": day_iso,
-            "day_name": s.day_name,
-            "session_type": stored.get("session_type") or s.session_type,
-            "duration_min": stored.get("duration_min", s.duration_min),
-            "tss_estimate": stored.get("tss_estimate", s.tss_estimate),
-            "description": stored.get("description") or s.description,
-            "zwo_file": zwo_file,
-            "zwo_name": stored.get("zwo_name") or getattr(s, "zwo_name", ""),
-            "display_name": display_name,
-            "zwo_duration_min": zwo_duration_min,
-            # fix26 §6 — status + move + completion round-trips
-            "status": stored.get("status", "pending"),
-            "user_moved": stored.get("user_moved", False),
-            "moved_from": stored.get("moved_from", ""),
-            "completion_matches": stored.get("completion_matches") or None,
-            "dismissed_at": stored.get("dismissed_at", ""),
-            # issue #7 — race day flag + meta (name/km/climb/type/priority).
-            "is_race": stored.get("is_race", getattr(s, "is_race", False)),
-            "race": stored.get("race") or getattr(s, "race", None),
-        }
-        # v4.1.1 FIX-PLANNER B: per-session zone_dist from the ACTUAL ZWO.
-        meta = _lib_by_file.get(zwo_file) if zwo_file else None
-        if meta:
-            out["zone_dist"] = {
-                "z1": meta.get("Z1%", 0), "z2": meta.get("Z2%", 0),
-                "z3": meta.get("Z3%", 0), "z4": meta.get("Z4%", 0),
-                "z5": meta.get("Z5%", 0), "z6": meta.get("Z6%", 0),
-            }
-            out["score"] = meta.get("Score")
-            out["protocol"] = meta.get("Protocol")
-            # v3.4.5 — matched FILE's TSS (index row), so the day modal can show
-            # what the rider actually rides; tss_estimate stays the slot budget.
-            out["zwo_tss"] = meta.get("TSS")
-        else:
-            out["zone_dist"] = None
-            out["score"] = None
-            out["zwo_tss"] = None
-        return out
-
-    result = {
-        "week_num": week.week_num,
-        "start": week.start.isoformat(),
-        "end": week.end.isoformat(),
-        "phase": week.phase,
-        "tss_target": week.tss_target,
-        "is_stepback": week.is_stepback,
-        "sessions": [_session_out(s) for s in week.sessions],
-    }
-
-    # Add event readiness + eFTP drift if plan exists
+    view = _wv.build(
+        plan, start, _lib_by_file, tp._session_type_from_row,
+        naming=lambda zf: _session_naming_lookup(zf, _classifications, _lib_by_file),
+        offset=week_offset)
+    result = view.as_weekly_plan()
     try:
         json_path = _plan_dir() / "current_plan.json"
         if json_path.exists():

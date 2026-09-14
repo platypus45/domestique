@@ -12905,14 +12905,14 @@ async function renderPlanJSON(plan) {
     // actual blocks only appearing on the NEXT repaint. /api/activities is
     // the wellness-summary hot path and carries no laps, so the sprites'
     // actual blocks come from their own ride-store endpoint.
-    const [blkRes, actRes] = await Promise.all([
+    const [blkRes, actRes, calRes] = await Promise.all([
       fetch('/api/activities/blocks?days=64').catch(() => null),
       getResource('/api/activities'),
+      getResource('/api/calendar').catch(() => null),
     ]);
     try { window._pgActualBlocks = (blkRes && blkRes.ok) ? await blkRes.json() : {}; } catch (_) {}
     try {
-      const calRes = await getResource('/api/calendar');
-      const cal = calRes.ok ? await calRes.json() : null;
+      const cal = (calRes && calRes.ok) ? await calRes.json() : null;
       for (const cw of ((cal && cal.weeks) || [])) {
         for (const d of (cw.days || [])) {
           const t = [d.actual, ...(d.actual_secondary || [])]
@@ -13211,7 +13211,11 @@ async function renderPlanJSON(plan) {
     let actualTss = null;
     for (let k = 0; k < 7; k++) {
       const ds = weekdayDate[k];
-      if (ds && calActualTssByDate[ds] !== undefined) actualTss = (actualTss || 0) + calActualTssByDate[ds];
+      // Only the row's own days: a stub row (a Generate made mid-week) spans
+      // Thursday..Sunday, and the seven days from its start reach into the
+      // next row's week, whose rides it would count twice.
+      if (!ds || ds < w.start || ds > w.end) continue;
+      if (calActualTssByDate[ds] !== undefined) actualTss = (actualTss || 0) + calActualTssByDate[ds];
     }
     let actualHtml = '';
     if (actualTss !== null) {
@@ -14686,7 +14690,9 @@ async function calOpenDay(dateStr) {
     description: p.name || day.description || '',
     zone_dist: p.zone_dist || null,  // v4.4.2 B4: pass through for waveform
     score: p.score,
-    status: 'pending',
+    // The session's real status, so a skipped day opens on "Un-dismiss".
+    status: p.status || 'pending',
+    user_moved: !!p.user_moved,
   };
   // Stash so existing helpers (e.g. dismiss buttons) keep working.
   window._weekPlanSessions = [synth];
@@ -14927,7 +14933,7 @@ function renderThisWeekFromCalendar(data) {
       // activity that arrived without a load number) is DONE, not failed.
       // Leave it neutral rather than grading it red on a missing data point.
       tintCls = '';
-    } else if (planned && isPast && !actual && cs !== 'rest') {
+    } else if (planned && isPast && !actual && cs !== 'rest' && planned.status !== 'dismissed') {
       tintCls = 'twk-tss-red';
     }
 
@@ -14954,6 +14960,13 @@ function renderThisWeekFromCalendar(data) {
       </div>`;
     } else if (isUserBlocked && !actual) {
       plannedHtml = `<div class="twk-planned"><div class="wc-type" style="font-size:10px;color:var(--red);opacity:0.75;letter-spacing:0.05em;">UNAVAILABLE</div></div>`;
+    } else if (planned && planned.status === 'dismissed') {
+      // A skipped day: visible, greyed, with its undo (it was only on the
+      // legacy painter, which a home load never showed).
+      plannedHtml = `<div class="twk-planned" style="opacity:0.45;filter:grayscale(1);">
+        <div class="wc-type" style="font-size:10px;padding:1px 3px;text-decoration:line-through;">${esc(calCardTitleWithStructure(planned))}</div>
+        <div class="wc-meta">skipped · <span style="color:var(--accent);cursor:pointer;text-decoration:underline;" onclick="event.stopPropagation();undismissSession('${d.date}')">undo</span></div>
+      </div>`;
     } else if (planned) {
       const phaseKey = (cur.phase || 'history').toLowerCase();
       const phaseCol = CAL_PHASE_COLORS[phaseKey] || CAL_PHASE_COLORS.history;
@@ -14966,6 +14979,7 @@ function renderThisWeekFromCalendar(data) {
       plannedHtml = `<div class="twk-planned" style="border-left-color:${phaseCol};">
         <div class="wc-type ${cssCls}" style="font-size:10px;padding:1px 3px;">${esc(title)}</div>
         <div class="wc-meta">${planned.duration_min ? Math.round(planned.duration_min) + 'm' : ''}${planned.tss ? ' · ' + Math.round(planned.tss) + 'T' : ''} ${warn}</div>
+        ${planned.user_moved ? '<div class="wc-meta" style="color:#60a5fa;font-style:italic;">moved</div>' : ''}
       </div>`;
     } else if (cs === 'rest' && !actual) {
       // v4.5.1 FIX-UI B2 — only show REST when there's no actual ride. If user
@@ -15006,7 +15020,7 @@ function renderThisWeekFromCalendar(data) {
         <div style="font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(name) || 'Activity'}${moreTag}</div>
         <div style="color:var(--text2);">${durLabel}${tssLabel}</div>
       </div>`;
-    } else if (planned && isPast && cs !== 'rest') {
+    } else if (planned && isPast && cs !== 'rest' && planned.status !== 'dismissed') {
       actualHtml = `<div class="twk-actual twk-act-red"><div style="color:var(--red);font-style:italic;">missed</div></div>`;
     }
 
@@ -15033,7 +15047,7 @@ function renderThisWeekFromCalendar(data) {
       doneBadge = `<span class="twk-done-badge" title="${esc(exTip)}">✓ ${Math.round(execBlock.score)}</span>`;
     }
     else if (actual) doneBadge = '<span class="twk-done-badge">✓ done</span>';
-    else if (planned && isPast && cs !== 'rest') doneBadge = '<span class="twk-missed-badge">✕ missed</span>';
+    else if (planned && isPast && cs !== 'rest' && planned.status !== 'dismissed') doneBadge = '<span class="twk-missed-badge">✕ missed</span>';
     html += `<div class="twk-day ${stateCls}${tintCls ? ' ' + tintCls : ''}${isToday ? ' wc-today twk-is-today' : ''}"
       data-cs="${cs}" data-date="${d.date}" style="${cursorRule}"${tipAttrTW}
       onclick="calOpenDay('${d.date}')">
@@ -17179,6 +17193,9 @@ function _continuousCountdownHtml(week, planWeeks, todayStr) {
 
 async function loadWeeklyCalendar() {
   try {
+    // Started now, so it shares the home tiles' request for the same summary.
+    const summaryP = getResource('/api/week-summary');
+    summaryP.catch(() => {});
     const weekRes = await getResource('/api/weekly-plan');
     const week = await weekRes.json();
     const todayStr = new Date().toLocaleDateString('en-CA');
@@ -17211,7 +17228,7 @@ async function loadWeeklyCalendar() {
     // summary leaves the rollup as it was rather than a second answer.
     (async () => {
       try {
-        const res = await getResource('/api/week-summary');
+        const res = await summaryP;
         if (res.ok) _renderWeeklyRollup(await res.json(), EXPOSURE_META);
       } catch(e) { /* network/404: leave the rollup */ }
     })();
@@ -18198,71 +18215,6 @@ function openTodaySessionDetail() {
 // ═══════════════════════════════════════════════════════════════════════════
 // fix26 §6.2/§6.3/§6.4 — plan interactions (move, rematch, dismiss)
 // ═══════════════════════════════════════════════════════════════════════════
-
-function onPlanDragStart(e, srcDay) {
-  try {
-    e.dataTransfer.setData('text/plain', srcDay);
-    e.dataTransfer.effectAllowed = 'move';
-    if (e.currentTarget && e.currentTarget.classList) {
-      e.currentTarget.classList.add('wc-dragging');
-    }
-  } catch(_) {}
-}
-function onPlanDragOver(e) {
-  e.preventDefault();
-  try { e.dataTransfer.dropEffect = 'move'; } catch(_) {}
-  if (e.currentTarget && e.currentTarget.classList) {
-    e.currentTarget.classList.add('wc-drop-target');
-  }
-}
-function onPlanDragLeave(e) {
-  if (e.currentTarget && e.currentTarget.classList) {
-    e.currentTarget.classList.remove('wc-drop-target');
-  }
-}
-async function onPlanDrop(e, dstDay) {
-  e.preventDefault();
-  e.stopPropagation();
-  document.querySelectorAll('.wc-drop-target').forEach(el => el.classList.remove('wc-drop-target'));
-  document.querySelectorAll('.wc-dragging').forEach(el => el.classList.remove('wc-dragging'));
-  let srcDay = '';
-  try { srcDay = e.dataTransfer.getData('text/plain'); } catch(_) {}
-  if (!srcDay || srcDay === dstDay) return;
-  // v4.2.0 IMPL-WEEKLY item 9: toast message format per Master §3
-  // ("Moved {workout} from {src_day} to {dst_day}").
-  let srcName = 'session', srcLabel = srcDay, dstLabel = dstDay;
-  try {
-    const sessions = window._weekPlanSessions || [];
-    for (const s of sessions) {
-      if (s.day === srcDay) {
-        srcName = s.zwo_name || (s.session_type || '').toUpperCase() || 'session';
-        srcLabel = s.day_name || srcDay;
-      }
-      if (s.day === dstDay) dstLabel = s.day_name || dstDay;
-    }
-  } catch(_) {}
-  try {
-    const res = await fetch('/api/plan/move-session', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ date: srcDay, new_date: dstDay }),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.ok) {
-      // v4.3.0 B1 — friendly toast for the structured 422.
-      const friendly = (res.status === 422 && data && data.error === 'source_session_not_found')
-        ? "Couldn't find that session. Try refreshing."
-        : `Move failed: ${data.error || data.detail || 'unknown'}`;
-      try { showToast(friendly, 3500); } catch(_) {}
-      return;
-    }
-    try { showToast(`Moved ${srcName} from ${srcLabel} to ${dstLabel}`, 3000); } catch(_) {}
-    loadWeeklyCalendar();  // re-render week with user_moved + status updates
-    try { await loadCalendar(); } catch(_) {}
-  } catch(err) {
-    try { showToast('Move failed: network error', 3000); } catch(_) {}
-  }
-}
 
 // v1.8.25 — the "Reconcile Week" button + modal were removed: reconciliation
 // (matching completed rides → done/missed status) now runs AUTOMATICALLY inside

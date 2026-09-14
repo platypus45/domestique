@@ -10678,6 +10678,7 @@ def _api_today_session_impl():
             # v3.2.1: matched library file so the home card can preview the
             # actual blocks (same source the day-detail modal charts).
             "zwo_file": planned_data.get("zwo_file") or None,
+            "zwo_name": planned_data.get("zwo_name") or None,
         },
         "adjusted": {
             "session_type": adjusted.session_type,
@@ -15264,17 +15265,15 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
             seen_iso[key] = len(deduped)
             deduped.append(w)
             continue
-        # Duplicate ISO key → prefer the one with planned content.
+        # Duplicate ISO key → prefer the current plan's row (a Generate's
+        # replaced rows never own a week, as in week_view.build), then the
+        # one with planned content.
         existing = deduped[existing_idx]
-        existing_has_planned = any(
-            (s.get("zwo_file") or "") and not s.get("_synthetic_history")
-            for s in (existing.get("sessions") or [])
-        )
-        cand_has_planned = any(
-            (s.get("zwo_file") or "") and not s.get("_synthetic_history")
-            for s in (w.get("sessions") or [])
-        )
-        if cand_has_planned and not existing_has_planned:
+        def _rank(row):
+            return (not row.get("carried_from_generate"),
+                    any((s.get("zwo_file") or "") and not s.get("_synthetic_history")
+                        for s in (row.get("sessions") or [])))
+        if _rank(w) > _rank(existing):
             deduped[existing_idx] = w
         # Otherwise keep the first (already in `deduped`).
     combined_weeks = deduped
@@ -15425,6 +15424,11 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
                     "zwo_tss": (lib_by_file.get(_zwo) or {}).get("TSS"),
                     "score": sess.get("score"),
                     "zwo_file": _zwo,
+                    # The rider's own marks on the day, so the This Week strip
+                    # (which reads this cell) can show a skip with its undo,
+                    # and the day modal opens on the real status.
+                    "status": sess.get("status") or "pending",
+                    "user_moved": bool(sess.get("user_moved")),
                     "is_race": bool(sess.get("is_race")),
                     "race": sess.get("race"),
                     # P2.1 (G10): execution score for the week-strip badge

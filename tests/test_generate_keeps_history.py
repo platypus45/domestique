@@ -130,6 +130,18 @@ class GenerateKeepsHistory(unittest.TestCase):
         weekly = self._get("/api/weekly-plan")
         self.assertEqual(weekly["budget"], float(stub["tss_target"]))
         self.assertEqual(weekly["week_num"], stub["week_num"])
+        # The calendar's row for the week agrees: the new plan's phase and
+        # flag, not the replaced row's (the second review, S4). Make the
+        # replaced row look like a recovery week of another phase, with files.
+        plan = json.loads(self.pp.read_text())
+        for w in plan["replaced_weeks"]:
+            w.update(phase="oldphase", is_stepback=True)
+            for x in w["sessions"]:
+                x["zwo_file"] = x["zwo_file"] or "endurance_steady_74pct_70min.zwo"
+        self.pp.write_text(json.dumps(plan))
+        cache.clear_cache()
+        row = next(w for w in self._get("/api/calendar")["weeks"] if w["is_current"])
+        self.assertEqual((row["phase"], row["is_stepback"]), (stub["phase"], bool(stub["is_stepback"])))
 
     def test_a_second_generate_keeps_the_first_history(self):
         self._generate()

@@ -343,7 +343,7 @@ def test_grid_week_actual_is_the_calendars():
       ? { today: iso(shift(0)), weeks: [{ days: [
           { date: dDone, actual: { tss: 82 }, actual_secondary: [{ tss: 10 }] },
           { date: dMissed, actual: null },
-          { date: dPlanned, actual: null } ] }] }
+          { date: dPlanned, actual: { tss: 50 } } ] }] }
       : []),
 });
 """
@@ -351,4 +351,44 @@ def test_grid_week_actual_is_the_calendars():
                .replace("    is_stepback: false,\n", "    is_stepback: false, actual_tss: 999,\n", 1))
     html = json.loads(_run_node(harness))["html"]
     m = re.search(r'pg-tss-actual-val[^"]*">(\d+)<', html)
+    # 82 + 10 from yesterday's rides; tomorrow's (impossible, planted) 50 is
+    # after today and never counts.
     assert m and m.group(1) == "92", html[-600:]
+    # A row ending before yesterday (a stub, or a week cut short) counts only
+    # its own days: the seven days from its start reach yesterday's rides.
+    assert "start: wStart, end: wEnd," in harness
+    short = harness.replace("start: wStart, end: wEnd,", "start: wStart, end: dMissed,", 1)
+    m = re.search(r'pg-tss-actual-val[^"]*">(\d+)<', json.loads(_run_node(short))["html"])
+    assert m and m.group(1) == "0"
+
+
+def test_this_week_strip_shows_a_skip_and_its_undo():
+    """The This Week strip has one painter since 2026-09-14
+    (renderThisWeekFromCalendar), and the calendar cell carries the session's
+    status. A skipped day is greyed with its undo and never graded missed; it
+    showed as an ordinary day until the second review of the week-view
+    programme (S1)."""
+    harness = (
+        "const window = {};\n"
+        "const host = { innerHTML: '' };\n"
+        "const document = { getElementById: id => id === 'weekly-calendar' ? host : null };\n"
+        + _SHARED_FNS + "\n"
+        + _extract_const(SRC, "CAL_PHASE_COLORS") + "\n"
+        + _extract_js_function(SRC, "calCellTooltip") + "\n"
+        + _extract_js_function(SRC, "calActualClass") + "\n"
+        + _extract_js_function(SRC, "renderThisWeekFromCalendar") + "\n"
+        + r"""
+const cell = (date, status) => ({ date, is_today: false, card_state: 'planned', actual: null,
+  planned: { session_type: 'z2', content_class: '', name: 'Endurance', display_name: 'Endurance',
+             duration_min: 60, tss: 45, zwo_file: 'e.zwo', status, user_moved: status === 'moved' } });
+renderThisWeekFromCalendar({ today: '2026-09-16', weeks: [{ is_current: true, phase: 'base', days: [
+  cell('2026-09-14', 'dismissed'), cell('2026-09-15', 'pending'), cell('2026-09-17', 'moved') ] }] });
+console.log(JSON.stringify(host.innerHTML));
+""")
+    html = json.loads(_run_node(harness))
+    days = html.split('class="twk-day')[1:]
+    skipped, missed, moved = days
+    assert "skipped" in skipped and "undismissSession('2026-09-14')" in skipped
+    assert "missed" not in skipped and "twk-tss-red" not in skipped
+    assert "missed" in missed                         # a past pending day still is
+    assert ">moved<" in moved

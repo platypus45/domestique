@@ -12,6 +12,7 @@ is a no-op; ``migrate_to_v4`` is similarly idempotent (it writes the
 schema-version sentinel so subsequent runs detect an up-to-date profile).
 """
 
+import clock  # the one clock every module reads (see src/clock.py)
 import json
 import logging
 import os
@@ -278,7 +279,7 @@ def migrate_to_profiles() -> None:
     name = _sanitize_user_name(
         os.environ.get("USER") or os.environ.get("USERNAME") or _fallback_user
     )
-    now = datetime.now().isoformat()
+    now = clock.now().isoformat()
     reg = {
         "version": 1,
         "active_profile": "default",
@@ -538,7 +539,7 @@ def migrate_archives_to_profiles(base: "Path | None" = None) -> dict:
             "assigned_to": active_id,
             "assigned_to_name": active_name,
             "unmatched": stats["unmatched"],
-            "at": datetime.now().isoformat(),
+            "at": clock.now().isoformat(),
             "banner": True,
         }
         try:

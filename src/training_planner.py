@@ -33,6 +33,7 @@ Usage:
   python3 training_planner.py --reforecast
 """
 
+import clock  # the one clock every module reads (see src/clock.py)
 import argparse
 import hashlib
 import json
@@ -481,7 +482,7 @@ def plan_ctl_snapshot(current_ctl, recent_weekly_tss,
     return {
         "current_ctl": _num(current_ctl),
         "recent_weekly_tss": _num(recent_weekly_tss),
-        "generated_on": generated_on or date.today().isoformat(),
+        "generated_on": generated_on or clock.today().isoformat(),
     }
 
 
@@ -567,7 +568,7 @@ def rewrite_stale_plan_classifications(plan_path: "Path | str") -> int:
         # v1.8.18 (grill B1) — the seed anchor MUST be the plan's stable birth
         # date so match_zwo is deterministic across launches. The live plan key
         # is ``generated`` (the old code read ``generated_at`` → always fell to
-        # date.today() → the seed drifted daily → every re-matched session
+        # clock.today() → the seed drifted daily → every re-matched session
         # re-rolled to a different file on each launch). Read both keys.
         plan_start = None
         for k in ("generated", "generated_at"):
@@ -579,11 +580,11 @@ def rewrite_stale_plan_classifications(plan_path: "Path | str") -> int:
                 except Exception:
                     pass
         if plan_start is None:
-            plan_start = date.today()
+            plan_start = clock.today()
         # v1.8.18 (grill B7) — FREEZE THE PAST. Healing a session dated before
         # today would silently rewrite the user's training history (what was
         # planned/done on a past day). Only future sessions are re-matched.
-        today = date.today()
+        today = clock.today()
 
         rewritten = 0
         # Rolling used_names window — mirrors generate_plan's sliding-window
@@ -832,7 +833,7 @@ def _last_48h_z5plus_min(rides: list[dict]) -> float:
     """
     if not rides:
         return 0.0
-    cutoff = datetime.now() - timedelta(hours=48)
+    cutoff = clock.now() - timedelta(hours=48)
     total_seconds = 0.0
     for r in rides:
         start_str = r.get("start_date_local") or r.get("date") or ""
@@ -901,7 +902,7 @@ def _yesterday_glyco_z67_s(rides: list[dict]) -> tuple[float, float]:
     """
     if not rides:
         return 0.0, 0.0
-    y_iso = (date.today() - timedelta(days=1)).isoformat()
+    y_iso = (clock.today() - timedelta(days=1)).isoformat()
     total = 0.0
     z7_total = 0.0
     for r in rides:
@@ -929,7 +930,7 @@ def _last_3d_mean_feel(rides: list[dict]) -> float | None:
     """
     if not rides:
         return None
-    today = date.today()
+    today = clock.today()
     cutoff_iso = (today - timedelta(days=3)).isoformat()
     samples: list[float] = []
     for r in rides:
@@ -1074,7 +1075,7 @@ def _went_unridden(w) -> bool:
             ridden += tss
     if not prescribed:
         return asks_nothing(w)
-    if _as_date(end) >= date.today():
+    if _as_date(end) >= clock.today():
         return False
     return ridden <= STEPBACK_LOAD_FACTOR * prescribed
 
@@ -1718,7 +1719,7 @@ def _project_event_capability(
         climb_readiness_pct = 100
 
     if goal.target_date:
-        days_to_event = (goal.target_date - date.today()).days
+        days_to_event = (goal.target_date - clock.today()).days
         weeks_to_event = max(0, days_to_event // 7)
     else:
         weeks_to_event = 0
@@ -1895,7 +1896,7 @@ class Goal:
             # split covers elapsed weeks too); None — or an override-bearing
             # refit/recalc goal (B-LOCKED-5) — keeps the legacy today-anchor
             # byte-for-byte.
-            anchor = _entry_anchor(self) or date.today()
+            anchor = _entry_anchor(self) or clock.today()
             return max(1, (self.target_date - anchor).days // 7)
         return 16  # default
 
@@ -2918,7 +2919,7 @@ class LoadRamp:
         weeks -- moves nothing: the rider's CTL today already holds whatever
         they rode, and a ramp fed those weeks budgeted today from fitness
         never built."""
-        if pw.end < date.today():
+        if pw.end < clock.today():
             return
         self.advance(_row_load(pw, budget), (pw.end - pw.start).days + 1,
                      not _is_unload_week(pw))
@@ -3016,7 +3017,7 @@ def _event_demand_targets(goal: "Goal", athlete: dict | None,
     ftp = float((athlete or {}).get("ftp", 0) or 0)
     if not (30.0 <= weight <= 200.0) or ftp <= 0:    # need real athlete for the demand model
         return None
-    if goal.target_date and (goal.target_date - date.today()).days < 0:
+    if goal.target_date and (goal.target_date - clock.today()).days < 0:
         return None                                  # event in the past → legacy
     try:
         cap = _project_event_capability(goal, athlete, fitness_state or {})
@@ -3112,14 +3113,14 @@ def _recommended_phase_weeks(goal: "Goal") -> "tuple[dict | None, str]":
         # 3.4.0 W1: no macrostructure → the editor is disabled outright.
         return None, _PW_REASON_CONTINUOUS
     total_weeks = goal.weeks_available()
-    _anchor = _entry_anchor(goal) or date.today()
+    _anchor = _entry_anchor(goal) or clock.today()
     target_date = goal.target_date or (_anchor + timedelta(weeks=16))
 
     taper_weeks = 0
     if goal.goal_type in ("event", "ctl"):
         # Mirrors the F4c micro-plan trigger in generate_phases exactly.
-        _micro_start = getattr(goal, "_phase_start_override", None) or date.today()
-        _runway_days = (target_date - date.today()).days
+        _micro_start = getattr(goal, "_phase_start_override", None) or clock.today()
+        _runway_days = (target_date - clock.today()).days
         if 0 < _runway_days < 14 and _micro_start <= target_date:
             return None, _PW_REASON_MICRO
         # Evaluator HIGH-1: for 14-27d real runways the app-side max(4,·)
@@ -3131,7 +3132,7 @@ def _recommended_phase_weeks(goal: "Goal") -> "tuple[dict | None, str]":
         # backdated plan with a full runway keeps its editor.
         if (target_date - _anchor).days < 28:
             return None, _PW_REASON_SHORT
-        taper_start = max(date.today(), target_date - timedelta(days=TAPER_DAYS))
+        taper_start = max(clock.today(), target_date - timedelta(days=TAPER_DAYS))
         _taper_span = (target_date - taper_start).days + 1
         taper_weeks = max(1, -(-_taper_span // 7))
 
@@ -3276,7 +3277,7 @@ def _continuous_phases(goal: "Goal", current_ctl: float,
     78/6/16). No taper, no consolidation — extending the 3.3.2 rule that
     only event/ctl goals taper."""
     start = start or (getattr(goal, "_phase_start_override", None)
-                      or _entry_anchor(goal) or date.today())
+                      or _entry_anchor(goal) or clock.today())
     weeks = weeks or CONTINUOUS_HORIZON_WEEKS
     focus = getattr(goal, "focus", "both") or "both"
     label = {"ftp": "FTP", "vo2": "VO2max",
@@ -3322,10 +3323,10 @@ def athlete_weekly_load(current_ctl, recent_weekly_tss=None, rides=None):
     if recent_weekly_tss is None:
         import ride_storage as _rs
         if rides is not None:
-            recent_weekly_tss = _rs.chronic_weekly_tss(rides, today=date.today())
+            recent_weekly_tss = _rs.chronic_weekly_tss(rides, today=clock.today())
         else:
             try:
-                recent_weekly_tss = _rs.chronic_weekly_tss(today=date.today())
+                recent_weekly_tss = _rs.chronic_weekly_tss(today=clock.today())
             except Exception as _e:  # noqa: BLE001
                 log.debug(f"chronic_weekly_tss fetch failed: {_e}")
     if recent_weekly_tss is None and current_ctl and current_ctl > 0:
@@ -3375,8 +3376,8 @@ def plan_target_ctl(goal, current_ctl, event_targets=None):
     # None ⇒ elapsed 0 ⇒ legacy expression byte-for-byte.
     _elapsed_weeks = 0
     _sd = _entry_anchor(goal)
-    if _sd is not None and _sd < date.today():
-        _elapsed_weeks = min(total_weeks, (date.today() - _sd).days // 7)
+    if _sd is not None and _sd < clock.today():
+        _elapsed_weeks = min(total_weeks, (clock.today() - _sd).days // 7)
     # A rebuild's phases start after its recovery ramp, or next week for a
     # recalculation (_phase_start_override): those are the weeks the ramp has.
     ramp_weeks = total_weeks
@@ -3415,7 +3416,7 @@ def generate_phases(goal: Goal, current_ctl: float,
     total_weeks = goal.weeks_available()
     # PART B: no-target default runway hangs off the plan anchor (backdated
     # start_date when set and no refit override, else today — unchanged).
-    _anchor = _entry_anchor(goal) or date.today()
+    _anchor = _entry_anchor(goal) or clock.today()
     target_date = goal.target_date or (_anchor + timedelta(weeks=16))
 
     _rule_target, target = plan_target_ctl(goal, current_ctl, event_targets)
@@ -3439,8 +3440,8 @@ def generate_phases(goal: Goal, current_ctl: float,
         # micro-plan at a single hard touch. Kept under the "taper" name so
         # every taper-keyed guard (budget table, stepback skip, eve guard,
         # FC2a shrink order) applies unchanged.
-        _micro_start = getattr(goal, "_phase_start_override", None) or date.today()
-        _runway_days = (target_date - date.today()).days
+        _micro_start = getattr(goal, "_phase_start_override", None) or clock.today()
+        _runway_days = (target_date - clock.today()).days
         if 0 < _runway_days < 14 and _micro_start <= target_date:
             if getattr(goal, "phase_weeks", None):
                 # Phase-split editor (v3.2.0, GP4): the race-week micro-plan
@@ -3465,7 +3466,7 @@ def generate_phases(goal: Goal, current_ctl: float,
         # day belongs to the plan; the emitters clip the final week at the phase
         # end instead of spilling to target+1), and Phase.weeks is the ceil of
         # the ACTUAL day-span (was hardcoded 2 — lied for sub-week runways).
-        taper_start = max(date.today(), cursor - timedelta(days=TAPER_DAYS))
+        taper_start = max(clock.today(), cursor - timedelta(days=TAPER_DAYS))
         _taper_span = (cursor - taper_start).days + 1
         taper_weeks = max(1, -(-_taper_span // 7))
         phases.append(Phase(
@@ -3518,7 +3519,7 @@ def generate_phases(goal: Goal, current_ctl: float,
                 # requested "2" is a real re-lay to 14d — which is why A3
                 # compares vectors, not spans.
                 _t_end = phases[-1].end  # == resolved target date
-                taper_start = max(date.today(),
+                taper_start = max(clock.today(),
                                   _t_end - timedelta(days=7 * _pw_vec["taper"] - 1))
                 _taper_span = (_t_end - taper_start).days + 1
                 taper_weeks = max(1, -(-_taper_span // 7))
@@ -3695,7 +3696,7 @@ def generate_phases(goal: Goal, current_ctl: float,
     # start_date ignored; absent → start_date anchors; both absent → today.
     cursor_fwd = (getattr(goal, "_phase_start_override", None)
                   or _entry_anchor(goal)
-                  or date.today())
+                  or clock.today())
     for name, weeks, tss, focus, z2, hit, types in phase_defs:
         end = _phase_end_for_weeks(cursor_fwd, weeks)
         phases.insert(-1 if taper_weeks > 0 else len(phases), Phase(  # insert before taper (or append if no taper)
@@ -3822,7 +3823,7 @@ def _entry_week_targets(phases: list, goal=None, ramp=None) -> list[dict]:
             is_sb = stepback_due(rows, phase.name, end)
             if ramp is not None:
                 t = _row_budget(ramp, goal, phase, cursor, is_sb)
-                if end >= date.today():     # as LoadRamp.follow: the past moves nothing
+                if end >= clock.today():     # as LoadRamp.follow: the past moves nothing
                     ramp.advance(t, (end - cursor).days + 1,
                                  not is_sb and phase.name not in UNLOAD_PHASES)
             else:
@@ -3904,7 +3905,7 @@ def recognize_entry(goal: "Goal", ride_loads: list, current_ctl: float = 50.0) -
     Returns {proposal_weeks, equivalent_start_date, capped, weeks_remaining,
     weeks:[{index, window_start, actual_tss, target_tss, qualifies,
     shape_note}]}."""
-    today = date.today()
+    today = clock.today()
     loads, easy, total, earliest = _entry_week_actuals(ride_loads, today)
     archive_span = ((today - earliest).days // 7) if earliest else 0
     runway_weeks = goal.weeks_available()
@@ -4220,7 +4221,7 @@ def _pick_session(
         if is_weekend:
             dur = _fit_budget(min(max_min, 150), "z2", floor_min=60)
             return PlannedSession(
-                day=date.today(), day_name="", session_type="long_z2",
+                day=clock.today(), day_name="", session_type="long_z2",
                 duration_min=dur, tss_estimate=dur / 60 * TSS_PER_HOUR["z2"],
                 description=f"Step-back: lang Z2 ({dur}min), HR <156 bpm",
             )
@@ -4231,7 +4232,7 @@ def _pick_session(
             if hit_count == 0 and day_in_week <= 2:
                 dur = _fit_budget(min(max_min, 60), "tempo", floor_min=40)
                 return PlannedSession(
-                    day=date.today(), day_name="", session_type="tempo",
+                    day=clock.today(), day_name="", session_type="tempo",
                     duration_min=dur,
                     tss_estimate=round(dur / 60 * TSS_PER_HOUR.get("tempo", 75) * 0.7),
                     description=f"Step-back easy tempo ({dur}min), HR 146-156 bpm",
@@ -4239,13 +4240,13 @@ def _pick_session(
         elif flavour == 2:
             dur = _fit_budget(min(max_min, 75), "z2", floor_min=45)
             return PlannedSession(
-                day=date.today(), day_name="", session_type="z2",
+                day=clock.today(), day_name="", session_type="z2",
                 duration_min=dur, tss_estimate=round(dur / 60 * TSS_PER_HOUR["z2"]),
                 description=f"Step-back Z2 spin ({dur}min), HR 142-156 bpm",
             )
         dur = _fit_budget(min(max_min, 60), "recovery", floor_min=30)
         return PlannedSession(
-            day=date.today(), day_name="", session_type="recovery",
+            day=clock.today(), day_name="", session_type="recovery",
             duration_min=dur, tss_estimate=dur / 60 * TSS_PER_HOUR["recovery"],
             description=f"Step-back: recovery spin ({dur}min), HR <130 bpm",
         )
@@ -4266,7 +4267,7 @@ def _pick_session(
         else:
             desc = f"Lange Z2 rit ({dur}min), HR 142-156 bpm — key session of the week"
         return PlannedSession(
-            day=date.today(), day_name="", session_type="long_z2",
+            day=clock.today(), day_name="", session_type="long_z2",
             duration_min=dur, tss_estimate=round(tss),
             description=desc,
         )
@@ -4455,7 +4456,7 @@ def _pick_session(
             dur = _fit_budget(min(max_min, 90), hit_type, floor_min=45)
             desc = desc_template.replace("{dur}", str(dur))
             return PlannedSession(
-                day=date.today(), day_name="", session_type=hit_type,
+                day=clock.today(), day_name="", session_type=hit_type,
                 duration_min=dur, tss_estimate=round(dur / 60 * TSS_PER_HOUR.get(hit_type, 75)),
                 description=desc,
             )
@@ -4466,7 +4467,7 @@ def _pick_session(
     # see a duration consistent with the time budget.
     dur = _fit_budget(min(max_min, 180), "z2", floor_min=45)
     return PlannedSession(
-        day=date.today(), day_name="", session_type="z2",
+        day=clock.today(), day_name="", session_type="z2",
         duration_min=dur, tss_estimate=round(dur / 60 * TSS_PER_HOUR["z2"]),
         description=f"Z2 endurance ({dur}min), HR <LTHR. {'Long session — key training session of the week.' if dur >= 120 else ''}",
     )
@@ -5667,7 +5668,7 @@ def _match_zwo_unclamped(
     # if the caller stamped it, else derived from ICU_ATHLETE_ID, else "anon".
     anchor_date = (
         plan_start_date if plan_start_date is not None
-        else (getattr(session, "day", None) or date.today())
+        else (getattr(session, "day", None) or clock.today())
     )
     pid = getattr(session, "profile_id", None)
     if not pid:
@@ -8641,7 +8642,7 @@ def generate_plan(
     # degenerate backward taper + an EMPTY plan (weeks_available clamps to ≥1,
     # the reconcile loop pops every forward phase). Refuse it up front with a
     # user-facing message; app.py surfaces this as a 400.
-    if goal.target_date is not None and goal.target_date <= date.today():
+    if goal.target_date is not None and goal.target_date <= clock.today():
         raise ValueError(
             f"Target date {goal.target_date.isoformat()} is today or in the "
             "past — pick a future date (tomorrow at the earliest)."
@@ -8652,7 +8653,7 @@ def generate_plan(
     # (app.py surfaces these as a 400).
     _entry_sd = getattr(goal, "start_date", None)
     if _entry_sd is not None:
-        if _entry_sd > date.today():
+        if _entry_sd > clock.today():
             raise ValueError(
                 f"Start date {_entry_sd.isoformat()} is in the future — "
                 "\"training since\" must be today or earlier."
@@ -8671,7 +8672,7 @@ def generate_plan(
         # Short 1..3-week remainders stay ALLOWED; the UI warns instead.
         if goal.target_date is None:
             _weeks_total = goal.weeks_available()
-            _weeks_elapsed = (date.today() - _entry_sd).days // 7
+            _weeks_elapsed = (clock.today() - _entry_sd).days // 7
             if _weeks_total - _weeks_elapsed < 1:
                 raise ValueError(
                     f"Start date {_entry_sd.isoformat()} is {_weeks_elapsed} "
@@ -8743,7 +8744,7 @@ def generate_plan(
     library = load_workout_library()
 
     # The plan's anchor date for stable seeding: start of the first phase.
-    plan_start_date = phases[0].start if phases else date.today()
+    plan_start_date = phases[0].start if phases else clock.today()
 
     # v4.5.0 IMPL-PLANNER: build pool index ONCE for the whole plan (3054 files
     # → ~1818 score>=5 → bucketed into HIT/endurance pools). All weeks share it.
@@ -9314,7 +9315,7 @@ def _strip_elapsed_sessions(weeks: list, start_date: "date | None") -> None:
     """
     if start_date is None:
         return
-    today = date.today()
+    today = clock.today()
     if start_date >= today:
         return
     for w in weeks:
@@ -9340,7 +9341,7 @@ def _rested_test_day(week, around=()) -> "PlannedSession | None":
     easy = ("rest", "z2", "long_z2", "recovery")
     by_day = {s.day: s for s in [*around, *week.sessions]
               if getattr(s, "day", None) is not None}
-    today = date.today()
+    today = clock.today()
     days = [s for s in sorted((s for s in week.sessions
                                if getattr(s, "day", None) is not None),
                               key=lambda s: s.day, reverse=True)
@@ -9441,7 +9442,7 @@ def _inject_mid_cycle_ftp_tests(weeks: list, phases: list) -> None:
     # gets the recalibration test AT entry instead of losing it to the
     # elapsed strip. Fresh plans start today → every phase start is already
     # schedulable → strict no-op (GB1).
-    today = date.today()
+    today = clock.today()
     first_sched = next((w.start for w in weeks
                         if w.end >= today and not getattr(w, "is_stepback", False)),
                        None)
@@ -10034,7 +10035,7 @@ def _ensure_fresh_legs_before_ftp_tests(weeks: list) -> None:
         # those, and never rewrite a day that is already in the past.
         if (getattr(prev, "status", "pending") not in ("pending", "planned")
                 or getattr(prev, "user_moved", False)
-                or getattr(prev, "day", None) is not None and prev.day < date.today()):
+                or getattr(prev, "day", None) is not None and prev.day < clock.today()):
             continue
         prev.session_type = "recovery"
         prev.zwo_file = ""
@@ -11781,7 +11782,7 @@ def _last_completed_week_acwr(
     each dict has ``date`` (or ``start_date_local`` ISO prefix) and
     ``tss`` (or ``icu_training_load``) keys.
     """
-    today = date.today()
+    today = clock.today()
     completed = [w for w in plan_weeks if w.end < today]
     if not completed:
         return 0.0
@@ -11901,7 +11902,7 @@ def reforecast(
             "acwr_scaled_week": int | None, # week_num that got *=0.85
           }
     """
-    today = date.today()
+    today = clock.today()
 
     def _tsb_at(d: date) -> float | None:
         if tsb_series is not None:
@@ -12958,7 +12959,7 @@ def detect_plan_gaps(
     20-49% = substantially missed (regen after 2+ consecutive)
     <20% = missed (regen recommended)
     """
-    today = date.today()
+    today = clock.today()
     today_str = today.isoformat()
 
     # Sum actual TSS per plan week
@@ -13098,7 +13099,7 @@ def build_recovery_ramp(
         z2_only_weeks = 2
 
     recovery_weeks = []
-    start = date.today()
+    start = clock.today()
     rest_days = goal.rest_days if goal else [0]
     chronic_tss = maintenance_tss  # rolling chronic load tracker
 
@@ -13183,7 +13184,7 @@ def regenerate_from_today(
     - Gabbett 2016: ACWR < 1.3 during recovery ramp
     - Gundersen 2016: muscle memory = faster reconditioning for trained athletes
     """
-    today = date.today()
+    today = clock.today()
 
     # FC5d (v2.5.0, L3-6): route the regen through the same generator invariant
     # as generate_plan (F4b) — a stale PAST target used to rebuild a recovery
@@ -13704,7 +13705,7 @@ def compute_event_readiness(goal: Goal, current_ctl: float) -> dict:
             "event_name": goal.event_name, "event_date": None,
         }
 
-    today = date.today()
+    today = clock.today()
     remaining_days = (goal.target_date - today).days
     if remaining_days < 0:
         return {"status": "event_passed", "weeks_remaining": 0, "days_remaining": remaining_days,
@@ -13817,7 +13818,7 @@ def recalculate_plan(
             current_eftp=current_eftp, athlete=athlete,
             recent_weekly_tss=recent_weekly_tss)
 
-    today = date.today()
+    today = clock.today()
     today_str = today.isoformat()
 
     # 1. Keep completed weeks (including current in-progress week)
@@ -14308,7 +14309,7 @@ def extend_continuous_plan(
     cache fault degrades the horizon (temporarily shorter) instead of
     appending placeholder junk; recalc_date stays stale so it retries.
     """
-    today = date.today()
+    today = clock.today()
     event_readiness = compute_event_readiness(goal, current_ctl)  # no_event
 
     def _no_change(reason: str, detail: str = "") -> tuple:
@@ -14427,8 +14428,8 @@ def extend_continuous_plan(
     # plan has no target; its guards bound it.
     _ramp = LoadRamp(current_ctl, recent_weekly_tss)
     for w in sorted(current_plan_weeks, key=lambda w: w.start):
-        if w.end >= date.today():
-            _ramp.advance(_row_load(w, w.tss_target), (w.end - max(w.start, date.today())).days + 1,
+        if w.end >= clock.today():
+            _ramp.advance(_row_load(w, w.tss_target), (w.end - max(w.start, clock.today())).days + 1,
                           not _is_unload_week(w))
     for _ in range(deficit):
         # The plan's 3:1 rhythm, continued from the weeks already there --
@@ -15111,7 +15112,7 @@ def daily_adapt_plan(
         current_week: the PlannedWeek with sessions for Mon-Sun (READ-ONLY)
         actual_activities: list of {date: "YYYY-MM-DD", tss: float, sport: str}
                           from Intervals.icu sync or local ride archive
-        today: override for testing (defaults to date.today())
+        today: override for testing (defaults to clock.today())
         tsb:  optional current Training Stress Balance (CTL - ATL). When
               deeply negative (< -30), projected de-loads are surfaced but
               NOT applied.
@@ -15121,7 +15122,7 @@ def daily_adapt_plan(
         was passed in, unchanged. `info_dict["projection_only"] == True`.
     """
     if today is None:
-        today = date.today()
+        today = clock.today()
 
     sessions = current_week.sessions
     weekly_target = current_week.tss_target
@@ -15385,7 +15386,7 @@ def rematch_week(
       - §6.11: missed never auto-dismisses.
     """
     if today is None:
-        today = date.today()
+        today = clock.today()
 
     by_date: dict[str, list[dict]] = {}
     for a in activities:
@@ -15613,14 +15614,14 @@ def generate_weekly_plan(
     from config import (ATHLETE_WEIGHT_KG, ATHLETE_FTP_W,
                         MAX_HIT_PER_WEEK, LONG_RIDE_DAY)
 
-    # Week-start convention: we use the host's LOCAL date (date.today()) as the
+    # Week-start convention: we use the host's LOCAL date (clock.today()) as the
     # reference for "today" throughout the planner. Rationale: training sessions
     # are stored as plain dates (no timezone) and the athlete experiences a week
     # boundary at local midnight, not at UTC midnight. If you need strict UTC
     # behaviour (e.g. for a hosted/shared planner) swap to
-    #   today = datetime.now(timezone.utc).date()
-    # and update every other date.today() call in this module for consistency.
-    today = date.today()
+    #   today = clock.now(timezone.utc).date()
+    # and update every other clock.today() call in this module for consistency.
+    today = clock.today()
     monday = today - timedelta(days=today.weekday())  # This week's Monday (local)
 
     # Determine weekly parameters from phase or defaults
@@ -16289,7 +16290,7 @@ def export_plan_md(
             value means exporting an old plan does not silently re-scale all of
             its session descriptions to a newer FTP.
     """
-    path = PLAN_DIR / f"plan_{date.today().isoformat()}.md"
+    path = PLAN_DIR / f"plan_{clock.today().isoformat()}.md"
     # First-write mkdir per the deferred-PLAN_DIR contract (see the PLAN_DIR
     # note ~tp:119): every other writer creates the dir; this bare open()
     # 500'd the whole /api/plan/generate on a FRESH install (no plans/ yet).
@@ -16299,7 +16300,7 @@ def export_plan_md(
 
     with open(path, "w", encoding="utf-8") as f:
         f.write(f"# Training Plan — {goal.goal_type.upper()}\n\n")
-        f.write(f"*Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}*\n\n")
+        f.write(f"*Generated: {clock.now().strftime('%Y-%m-%d %H:%M')}*\n\n")
 
         if goal.goal_type == "event":
             f.write(f"**Event:** {goal.event_name or 'Target event'}\n")

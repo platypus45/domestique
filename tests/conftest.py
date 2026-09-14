@@ -81,6 +81,64 @@ import pytest
 
 import app as app_module
 import training_planner as _tp
+import clock as _clock
+import datetime as _dtmod
+
+# ── The one clock, and the suites that pinned a module's `date` before it ──
+# The product reads src/clock.py alone since 2026-09-14 (218 sites in 14
+# modules moved off date.today()/datetime.now()). Thirty-one suites still pin
+# by replacing a module attribute -- patch.object(tp, "date", Frozen),
+# app_module.datetime = FrozenDT, _gate_env's tp.date -- so the clock mirrors
+# the first such pin it finds. Test-side compatibility only; the product never
+# looks at those names. New tests use the freeze_clock fixture (or
+# clock.freeze), which takes precedence.
+_REAL_TODAY, _REAL_NOW, _REAL_UTCNOW = _clock.today, _clock.now, _clock.utcnow
+
+
+def _pinned_module_date():
+    for mod in (_tp, app_module):
+        d = getattr(mod, "date", None)
+        if isinstance(d, type) and d is not _dtmod.date and issubclass(d, _dtmod.date):
+            return d.today()
+    return None
+
+
+def _pinned_module_datetime():
+    for mod in (app_module, _tp):
+        d = getattr(mod, "datetime", None)
+        if isinstance(d, type) and d is not _dtmod.datetime and issubclass(d, _dtmod.datetime):
+            return d
+    return None
+
+
+def _shim_today():
+    if _clock._frozen is not None:
+        return _REAL_TODAY()
+    p = _pinned_module_date()
+    return _dtmod.date(p.year, p.month, p.day) if p is not None else _REAL_TODAY()
+
+
+def _shim_now(tz=None):
+    if _clock._frozen is not None:
+        return _REAL_NOW(tz)
+    dcls = _pinned_module_datetime()
+    if dcls is not None:
+        return dcls.now(tz)
+    p = _pinned_module_date()
+    if p is None:
+        return _REAL_NOW(tz)
+    base = _dtmod.datetime(p.year, p.month, p.day, 12, 0, 0)
+    return base if tz is None else base.replace(tzinfo=_dtmod.timezone.utc).astimezone(tz)
+
+
+def _shim_utcnow():
+    if _clock._frozen is not None:
+        return _REAL_UTCNOW()
+    p = _pinned_module_date()
+    return _dtmod.datetime(p.year, p.month, p.day, 12, 0, 0) if p is not None else _REAL_UTCNOW()
+
+
+_clock.today, _clock.now, _clock.utcnow = _shim_today, _shim_now, _shim_utcnow
 
 # Bootstrap the sandbox home exactly like a FIRST APP BOOT (lifespan order:
 # migrate_to_profiles() creates the `default` profile + profiles.json, then
@@ -145,6 +203,17 @@ def planner_pinned_env():
         mp.setattr(_tp, "date", FrozenPlannerDate)
         mp.setattr(_tp, "get_today_metrics", lambda: {})
         yield
+
+
+@pytest.fixture
+def freeze_clock():
+    """Pin the one clock: freeze_clock(date(2026, 9, 10)) or a datetime.
+    Every module -- planner, app, ride store, database, ICU client -- reads
+    it, so there is no second clock to disagree with."""
+    def _freeze(when):
+        _clock.freeze(when)
+    yield _freeze
+    _clock.unfreeze()
 
 
 @pytest.fixture(autouse=True)

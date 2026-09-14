@@ -7,6 +7,7 @@ Open: http://127.0.0.1:22400  (or $DOMESTIQUE_PORT, if set)
 Pure HTML + CSS + vanilla JS. No npm, no frameworks.
 """
 
+import clock  # the one clock every module reads (see src/clock.py)
 import collections
 import functools
 import hashlib
@@ -1088,7 +1089,7 @@ def setup_check_activities(body: dict):
 
     import httpx
     from datetime import timedelta as _td
-    today = date.today()
+    today = clock.today()
     oldest = (today - _td(days=42)).isoformat()
     newest = today.isoformat()
     try:
@@ -1189,8 +1190,8 @@ def setup_icu_hr(athlete_id: str = Query(""), api_key: str = Query("")):
         # Rolling 12-month window (W2d): the old hardcoded 2024→2026 range was
         # both a staleness source and a Jan-2027 time bomb.
         from datetime import date as _date, timedelta as _td
-        _new = (_date.today() + _td(days=1)).isoformat()
-        _old = (_date.today() - _td(days=365)).isoformat()
+        _new = (clock.today() + _td(days=1)).isoformat()
+        _old = (clock.today() - _td(days=365)).isoformat()
         url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities?oldest={_old}&newest={_new}"
         resp = httpx.get(url, auth=("API_KEY", api_key), timeout=15, verify=_icu_verify())
         if resp.status_code != 200:
@@ -1569,7 +1570,7 @@ def setup_save(body: dict):
         # Mark setup complete — single global marker (per-profile marker dropped to avoid drift).
         _setup_marker().parent.mkdir(parents=True, exist_ok=True)
         _setup_marker().write_text(
-            json.dumps({"completed": datetime.now().isoformat(), "version": "1.0.0"}, indent=2),
+            json.dumps({"completed": clock.now().isoformat(), "version": "1.0.0"}, indent=2),
             encoding="utf-8",
         )
 
@@ -3232,7 +3233,7 @@ def api_rider_stats():
     except Exception as e:
         _fail("rides", e)
     try:
-        today = date.today()
+        today = clock.today()
         ef_rows = []  # (date_iso, ef)
         for r in rides_all:
             if not isinstance(r, dict):
@@ -3285,7 +3286,7 @@ def api_rider_stats():
         merged = _merge_training_load(cached("training", get_today_metrics))
         src = {"icu": "icu", "local": "derived",
                "mixed": "derived"}.get(merged.get("source"), "fallback")
-        today_iso = date.today().isoformat()
+        today_iso = clock.today().isoformat()
         for k in ("ctl", "atl", "tsb"):
             v = merged.get(k)
             load[k] = (_prov(round(float(v), 1), src, today_iso)
@@ -3313,7 +3314,7 @@ def api_rider_stats():
 
     # ── season totals (G14 computation #2) ──────────────────────────────────
     try:
-        today = date.today()
+        today = clock.today()
         out["season"] = {
             "year": _rider_stats_season_block(
                 rides_all, date(today.year, 1, 1).isoformat(),
@@ -3529,7 +3530,7 @@ def _age_days_from_iso(d: "str | None") -> "int | None":
         return None
     try:
         from datetime import date as _date
-        return (_date.today() - _date.fromisoformat(str(d)[:10])).days
+        return (clock.today() - _date.fromisoformat(str(d)[:10])).days
     except (ValueError, TypeError):
         return None
 
@@ -3631,7 +3632,7 @@ def _mark_readiness_cap_reverted_today() -> None:
         p = _readiness_revert_flag_path()
         p.write_text(
             json.dumps({"date": _d.today().isoformat(),
-                        "at": datetime.now().isoformat()}),
+                        "at": clock.now().isoformat()}),
             encoding="utf-8",
         )
     except Exception as e:
@@ -3652,7 +3653,7 @@ def _compute_local_atl(days: int = 90, tau: int = 7) -> float | None:
     rides = _rs.list_rides()
     if not rides:
         return None
-    cutoff_iso = (date.today() - timedelta(days=days)).isoformat()
+    cutoff_iso = (clock.today() - timedelta(days=days)).isoformat()
     per_day: dict[str, float] = {}
     for r in rides:
         started = (r.get("started_at") or "")[:10]
@@ -3668,7 +3669,7 @@ def _compute_local_atl(days: int = 90, tau: int = 7) -> float | None:
             continue
     if not per_day:
         return None
-    today = date.today()
+    today = clock.today()
     atl = 0.0
     d = date.fromisoformat(min(per_day.keys()))
     while d <= today:
@@ -3929,7 +3930,7 @@ async def api_readiness_revert_cap(request: Request):
             with tp.plan_write_lock():
                 with open(json_path, encoding="utf-8") as f:
                     plan = json.load(f)
-                today_iso = date.today().isoformat()
+                today_iso = clock.today().isoformat()
                 for w in plan.get("weeks", []):
                     for s in w.get("sessions", []):
                         if (s.get("day") == today_iso and s.get("adapted")
@@ -4025,7 +4026,7 @@ async def api_readiness_apply_tier_down(request: Request):
     zwo_file, zwo_name}``.
     """
     body = await _get_json_body(request)
-    day_iso = str(body.get("date") or date.today().isoformat()).strip()
+    day_iso = str(body.get("date") or clock.today().isoformat()).strip()
     try:
         date.fromisoformat(day_iso)
     except ValueError:
@@ -4118,7 +4119,7 @@ async def api_readiness_apply_tier_down(request: Request):
 
         plan["last_tier_down"] = {
             "date": day_iso,
-            "at": datetime.now().isoformat(),
+            "at": clock.now().isoformat(),
             "old_type": old_type,
             "new_type": new_type,
         }
@@ -4151,7 +4152,7 @@ async def api_readiness_apply_tier_down(request: Request):
             }
             plan, _modified, _ri = tp.reforecast_dict(
                 plan,
-                today_iso=date.today().isoformat(),
+                today_iso=clock.today().isoformat(),
                 tsb_series=tsb_series,
                 recent_activities=activities,
                 availability_overrides=avail,
@@ -4219,10 +4220,10 @@ async def api_plan_auto_adjust(request: Request):
     if severity_override is not None:
         severity_override = str(severity_override).strip().lower() or None
 
-    today_iso = date.today().isoformat()
+    today_iso = clock.today().isoformat()
     # v1.8.8 Bug 7 — `scope='day'` targets tomorrow's session.
     target_iso = (
-        (date.today() + timedelta(days=1)).isoformat()
+        (clock.today() + timedelta(days=1)).isoformat()
         if scope == "day" else today_iso
     )
     profile_id = "default"
@@ -4543,7 +4544,7 @@ async def api_wellness_manual_hrv(request: Request):
     distinguishes this path from ICU-pulled `hrv` in audit logs.
     """
     body = await _get_json_body(request)
-    d = (body.get("date") or date.today().isoformat()).strip()
+    d = (body.get("date") or clock.today().isoformat()).strip()
     rmssd_raw = body.get("hrv_manual_rmssd", body.get("rmssd"))
     try:
         rmssd = float(rmssd_raw)
@@ -4579,7 +4580,7 @@ def api_activities_blocks(days: int = Query(42)):
     store, shaped for miniPowerBlockSVG."""
     try:
         days = max(1, min(int(days or 42), 120))
-        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        cutoff = (clock.today() - timedelta(days=days)).isoformat()
         try:
             from profile_manager import ProfileManager
             _pm_ftp = ProfileManager.get().ftp or None
@@ -4629,7 +4630,7 @@ def api_activities():
             rides = []
         if rides:
             out = []
-            cutoff = (date.today() - timedelta(days=7)).isoformat()
+            cutoff = (clock.today() - timedelta(days=7)).isoformat()
             for r in rides:
                 d = _ride_started_local_iso_date(r) or ""
                 if not d or d < cutoff:
@@ -4824,7 +4825,7 @@ def api_wellness(days: int = Query(28),
         if f and t and f > t:
             raise HTTPException(status_code=422, detail="from must be <= to")
         if f:
-            days = max(days, (date.today() - f).days + 1)
+            days = max(days, (clock.today() - f).days + 1)
         f_iso = f.isoformat() if f else None
         t_iso = t.isoformat() if t else None
 
@@ -7540,7 +7541,7 @@ def _write_update_check_cache(payload):
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         body = dict(payload)
-        body["cache_written_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        body["cache_written_at"] = clock.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         p.write_text(json.dumps(body, indent=2), encoding="utf-8")
     except Exception:
         pass
@@ -7985,7 +7986,7 @@ def _icu_push_note_result(res: dict) -> None:
     """Record a reconcile result (+timestamp) for the status endpoint."""
     global _icu_push_last_result
     try:
-        _icu_push_last_result = {"at": datetime.now().isoformat(), **res}
+        _icu_push_last_result = {"at": clock.now().isoformat(), **res}
     except Exception:
         pass
 
@@ -8081,7 +8082,7 @@ def _icu_push_daily_from_sync() -> None:
     try:
         if not _icu_push_sync_enabled():
             return
-        today = date.today().isoformat()
+        today = clock.today().isoformat()
         if _icu_push_last_daily == today:
             return
         _icu_push_last_daily = today
@@ -8230,7 +8231,7 @@ def api_calendar_push_workout(body: "dict | None" = None):
         # date REQUIRED for both sources (amendment 1): planner needs it to locate
         # the day; library is the user-picked target. today..+365 — past/garbage
         # rejected so nothing stale or malformed reaches the calendar.
-        today = date.today()
+        today = clock.today()
         try:
             target = date.fromisoformat(date_str)
         except (ValueError, TypeError):
@@ -8398,7 +8399,7 @@ def api_update_check(force: int = Query(0)):
     from packaging.version import parse as _vparse, InvalidVersion
 
     plat = sys.platform
-    now = datetime.now(timezone.utc)
+    now = clock.now(timezone.utc)
     cache = _read_update_check_cache()
 
     def _overlay_live_current(out):
@@ -8633,7 +8634,7 @@ def update_settings(request_body: dict):
         from datetime import date as _date
         _hint = str(request_body.get("lthr_source_hint") or "").strip().lower()
         athlete_updates["lthr_source"] = "icu" if _hint == "icu" else "manual"
-        athlete_updates["lthr_source_date"] = _date.today().isoformat()
+        athlete_updates["lthr_source_date"] = clock.today().isoformat()
 
     # Red-team S1/S2: validate lthr/max_hr HERE with the ranges that actually
     # PERSIST. save_athlete accepts max_hr [120,240] but the _set_max_hr write
@@ -8826,10 +8827,10 @@ def _hrr_rhr_anchor(pm) -> "tuple[int | None, str]":
         return str(w.get("id") or "")[:10]
     dated = sorted((( _day(w), int(w["restingHR"]) ) for w in wl
                     if w.get("restingHR")), reverse=True)
-    recent14 = [v for d, v in dated[:60] if d >= (date.today() - timedelta(days=14)).isoformat()]
+    recent14 = [v for d, v in dated[:60] if d >= (clock.today() - timedelta(days=14)).isoformat()]
     if len(recent14) < 4:
         return None, "needs at least 4 resting-HR samples in the last 14 days"
-    in_window = [v for d, v in dated if d >= (date.today() - timedelta(days=window)).isoformat()]
+    in_window = [v for d, v in dated if d >= (clock.today() - timedelta(days=window)).isoformat()]
     src = in_window if in_window else recent14
     src = sorted(src)
     mid = len(src) // 2
@@ -8968,7 +8969,7 @@ def api_metrics_latest():
 async def api_metrics_log(request: Request):
     """Manually log a metric value (VO2max, body_fat, etc.)."""
     body = await _get_json_body(request)
-    dt = body.get("date", date.today().isoformat())
+    dt = body.get("date", clock.today().isoformat())
     metric = body.get("metric")
     value = body.get("value")
     if not metric or value is None:
@@ -9003,7 +9004,7 @@ async def api_daily_log_post(request: Request):
     hooper_index ≥ 18 = significant accumulated fatigue (IMPL-B G6 gate).
     """
     body = await _get_json_body(request)
-    dt = body.get("date", date.today().isoformat())
+    dt = body.get("date", clock.today().isoformat())
     try:
         entry = db.upsert_daily_log(
             dt=dt,
@@ -9087,7 +9088,7 @@ def api_blood_markers():
 async def api_blood_markers_post(request: Request):
     """Add a blood test result."""
     body = await _get_json_body(request)
-    dt = body.get("date", date.today().isoformat())
+    dt = body.get("date", clock.today().isoformat())
     marker = body.get("marker")
     value = body.get("value")
     if not marker or value is None:
@@ -9112,7 +9113,7 @@ def api_power_curve(days: int = Query(90), compare_days: int = Query(365)):
     }
 
     activities = db.query_activities(days=max(days, compare_days))
-    today = date.today()
+    today = clock.today()
     cutoff_current = (today - timedelta(days=days)).isoformat()
     cutoff_compare = (today - timedelta(days=compare_days)).isoformat()
 
@@ -9255,7 +9256,7 @@ def api_weekly_plan(week_offset: int = Query(0)):
         try:
             with open(json_path, encoding="utf-8") as f:
                 plan = json.load(f)
-            today = date.today() + timedelta(weeks=week_offset)
+            today = clock.today() + timedelta(weeks=week_offset)
             today_str = today.isoformat()
             for p in plan.get("phases", []):
                 if p.get("start", "") <= today_str <= p.get("end", ""):
@@ -9296,7 +9297,7 @@ def api_weekly_plan(week_offset: int = Query(0)):
         if json_path.exists():
             with open(json_path, encoding="utf-8") as f:
                 _persist = json.load(f)
-            today = date.today() + timedelta(weeks=week_offset)
+            today = clock.today() + timedelta(weeks=week_offset)
             today_str = today.isoformat()
             # Window: sessions from the last 6 weeks of the stored plan
             # (mirrors generate_plan's sliding-window ≥6 stale threshold).
@@ -9753,10 +9754,10 @@ def api_week_summary(week_offset: int = Query(0)):
         from zoneinfo import ZoneInfo
         settings = api_settings()
         tz_name = settings.get("timezone") if isinstance(settings, dict) else None
-        tz = ZoneInfo(tz_name) if tz_name else datetime.now().astimezone().tzinfo
+        tz = ZoneInfo(tz_name) if tz_name else clock.now().astimezone().tzinfo
     except Exception:
-        tz = datetime.now().astimezone().tzinfo
-    today = datetime.now(tz).date()
+        tz = clock.now().astimezone().tzinfo
+    today = clock.now(tz).date()
     iso_year, iso_week, iso_weekday = today.isocalendar()
     # v1.7.6 — shift the target Monday by week_offset weeks so negative
     # offsets surface prior weeks. week_offset=0 keeps the legacy
@@ -10041,7 +10042,7 @@ async def api_today_session_persist(request: Request):
         if not new_type:
             return JSONResponse({"error": "session_type required"}, 400)
 
-        today_iso = date.today().isoformat()
+        today_iso = clock.today().isoformat()
         with open(json_path, encoding="utf-8") as f:
             plan = json.load(f)
 
@@ -10169,7 +10170,7 @@ def _next_ftp_test_slot() -> "str | None":
             plan = json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
-    today = date.today()
+    today = clock.today()
     next_monday = today + timedelta(days=7 - today.weekday())
     hard_types = {"vo2max", "threshold", "overunder", "sweetspot", "tempo"}
     candidates: list[tuple[date, bool]] = []
@@ -10209,7 +10210,7 @@ def _retest_nudge_payload(pm=None, today: "date | None" = None) -> "dict | None"
             from profile_manager import ProfileManager
             pm = ProfileManager.get()
         athlete = getattr(pm, "_athlete", {}) or {}
-        today = today or date.today()
+        today = today or clock.today()
 
         snooze = athlete.get("retest_snooze_until")
         if snooze:
@@ -10268,7 +10269,7 @@ def api_retest_nudge_snooze():
     """Snooze the retest banner for 14 days (persisted in athlete.json via
     the sanctioned save_athlete path, so it survives webview storage
     clears). The date is computed server-side — nothing client-supplied."""
-    until = (date.today() + timedelta(days=RETEST_SNOOZE_DAYS)).isoformat()
+    until = (clock.today() + timedelta(days=RETEST_SNOOZE_DAYS)).isoformat()
     try:
         from profile_manager import ProfileManager
         ProfileManager.get().save_athlete({"retest_snooze_until": until})
@@ -10411,7 +10412,7 @@ def _continuous_today_suggestion(plan: dict, sleep: dict, training: dict,
                                  rides: list[dict],
                                  today: "date | None" = None) -> dict:
     """Amendment D wiring: assemble the policy-fn inputs from stored state."""
-    today = today or date.today()
+    today = today or clock.today()
     today_iso = today.isoformat()
     cur = next((w for w in plan.get("weeks", [])
                 if (w.get("start") or "") <= today_iso <= (w.get("end") or "")),
@@ -10472,7 +10473,7 @@ def _maybe_advance_continuous_deload(plan: dict, json_path: Path,
     when monotony/ACWR trip. Idempotent per week (latched via the
     plan["deload_advance"] record, which a revert also latches). Returns the
     chip payload when a deload advance is active for the current week."""
-    today = today or date.today()
+    today = today or clock.today()
     weeks_json = plan.get("weeks") or []
     today_iso = today.isoformat()
     cur_idx = next((i for i, w in enumerate(weeks_json)
@@ -10606,7 +10607,7 @@ async def api_continuous_deload_revert(request: Request):
         rec = plan.get("deload_advance") or {}
         if not rec or rec.get("reverted"):
             return {"reverted": False, "reason": "nothing_to_revert"}
-        today = date.today()
+        today = clock.today()
         orig = rec.get("original_week") or {}
         wj = next((w for w in plan.get("weeks", [])
                    if w.get("week_num") == rec.get("week_num")), None)
@@ -10659,7 +10660,7 @@ def _api_today_session_impl():
     # week_data (the regenerated Mon–Sun week) is still used below for the
     # yesterday-TSS-ratio heuristic, so keep it.
     week_data = api_weekly_plan(week_offset=0)
-    today_str = date.today().isoformat()
+    today_str = clock.today().isoformat()
 
     # v3.2.1 BUG-FIX: the home card's LABEL must come from the SAME stored plan
     # its CLICK opens (/api/calendar → merge_plan_with_rides on
@@ -10707,7 +10708,7 @@ def _api_today_session_impl():
         return {"planned": None, "adjusted": None, "reason": "No session planned today"}
 
     planned = tp.PlannedSession(
-        day=date.today(), day_name=planned_data.get("day_name", ""),
+        day=clock.today(), day_name=planned_data.get("day_name", ""),
         session_type=planned_data.get("session_type", "rest"),
         duration_min=planned_data.get("duration_min", 0),
         tss_estimate=planned_data.get("tss_estimate", 0),
@@ -10760,7 +10761,7 @@ def _api_today_session_impl():
         activities = db.query_activities(days=3)
     except Exception:  # noqa: BLE001
         activities = []
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    yesterday = (clock.today() - timedelta(days=1)).isoformat()
     yesterday_weighted_tss = 0
     for a in activities:
         if a.get("date") == yesterday:
@@ -10816,7 +10817,7 @@ def _api_today_session_impl():
         _all_rides = _load_all_rides_safe()
     except Exception:  # noqa: BLE001
         _all_rides = []
-    _cutoff_4d = (date.today() - timedelta(days=4)).isoformat()
+    _cutoff_4d = (clock.today() - timedelta(days=4)).isoformat()
     rides_recent: list[dict] = []
     for rd in _all_rides:
         d_iso = rd.get("date") or _ride_started_local_iso_date(rd)
@@ -11230,7 +11231,7 @@ def api_plan():
             # un-enriched plans become visible in /api/diag/recent-errors.
             try:
                 _enrich_plan_for_response(
-                    plan_data, today_iso=date.today().isoformat(),
+                    plan_data, today_iso=clock.today().isoformat(),
                 )
             except Exception as _e:
                 _log_error(
@@ -11301,7 +11302,7 @@ def api_plan_preview(
             start_dt = date.fromisoformat(str(start_date)[:10])
         except (ValueError, TypeError):
             start_dt = None
-    if start_dt is not None and start_dt >= date.today():
+    if start_dt is not None and start_dt >= clock.today():
         start_dt = None  # future/today start = fresh start (legacy)
 
     # For event-prep, plan_weeks is auto-computed from event_date; UI
@@ -11309,7 +11310,7 @@ def api_plan_preview(
     # so a stale/forced-edit value can't desync the right panel from the
     # generated grid.
     if goal in ("event", "event_preparation") and target_date is not None:
-        days_to_event = (target_date - (start_dt or date.today())).days
+        days_to_event = (target_date - (start_dt or clock.today())).days
         plan_weeks = max(4, -(-days_to_event // 7))  # ceil division
     else:
         plan_weeks = max(4, int(plan_weeks or 0))
@@ -11405,7 +11406,7 @@ def api_plan_entry_scan(
                                 detail="event_date is required for an event goal")
         # H1 parity with preview/generate: the runway is derived from the
         # today→target span, never trusted from the today-anchored slider.
-        days_to_event = (target_date - date.today()).days
+        days_to_event = (target_date - clock.today()).days
         plan_weeks = max(4, -(-days_to_event // 7))  # ceil division
     elif plan_weeks < 1 and target_date is None:
         raise HTTPException(status_code=400,
@@ -11520,7 +11521,7 @@ def api_event_projection():
     best_efforts: dict = {}
     try:
         if rides:
-            cutoff_30 = (date.today() - timedelta(days=30)).isoformat()
+            cutoff_30 = (clock.today() - timedelta(days=30)).isoformat()
             recent_count = sum(1 for r in rides if (r.get("started_at") or "")[:10] >= cutoff_30)
             if recent_count >= 5:
                 best_efforts = _aggregate_best_efforts_90d(rides)
@@ -11548,7 +11549,7 @@ def api_event_projection():
     try:
         from collections import defaultdict
         buckets: dict[tuple, float] = defaultdict(float)
-        cutoff_iso = (date.today() - timedelta(days=12 * 7)).isoformat()
+        cutoff_iso = (clock.today() - timedelta(days=12 * 7)).isoformat()
         for r in rides or []:
             s = (r.get("started_at") or "")[:10]
             if not s or s < cutoff_iso:
@@ -11564,7 +11565,7 @@ def api_event_projection():
                 buckets[key] = dur_h
         weekly_history = []
         for wk_back in range(12, -1, -1):
-            target = date.today() - timedelta(weeks=wk_back)
+            target = clock.today() - timedelta(weeks=wk_back)
             iso = target.isocalendar()
             weekly_history.append({
                 "week_offset": -wk_back,
@@ -11626,8 +11627,8 @@ async def api_plan_generate(request: Request):
         # anchor→target span, never trusted from the form.
         if body.get("goal") in ("event", "event_preparation") and target_date:
             _anchor_for_weeks = (start_date
-                                 if (start_date and start_date < date.today())
-                                 else date.today())
+                                 if (start_date and start_date < clock.today())
+                                 else clock.today())
             _days = (target_date - _anchor_for_weeks).days
             plan_weeks = max(4, -(-_days // 7))  # ceil division
 
@@ -11770,7 +11771,7 @@ async def api_plan_generate(request: Request):
             last = max((r.get("started_at") or "")[:10]
                        for r in _rs2.load_all_rides())
             if last:
-                days_since_last_ride = (_date.today()
+                days_since_last_ride = (clock.today()
                                         - _date.fromisoformat(last)).days
         except Exception:
             days_since_last_ride = None
@@ -11815,7 +11816,7 @@ async def api_plan_generate(request: Request):
             # the double-threshold pairing were lost at birth, and so was the
             # week's own budget (dupes.md DUP-25, http.md HTTP-9).
             "weeks": [tp.week_to_dict(w) for w in weeks],
-            "generated": datetime.now().isoformat(),
+            "generated": clock.now().isoformat(),
             # P4.2 (v3.0.0) — generation-time fitness snapshot for the
             # Training-Plan-tab drift chip (live CTL vs plan assumption).
             "ctl_snapshot": tp.plan_ctl_snapshot(current_ctl, recent_weekly_tss),
@@ -11849,8 +11850,8 @@ async def api_plan_generate(request: Request):
             # PART B (B-LOCKED-1 availability span): on a backdated plan the
             # calendar starts TODAY — elapsed days are not schedulable, so
             # they carry no availability rows. Fresh plans start today anyway.
-            if getattr(goal, "start_date", None) and _d < date.today():
-                _d = date.today()
+            if getattr(goal, "start_date", None) and _d < clock.today():
+                _d = clock.today()
             _end = weeks[-1].end
             _one = timedelta(days=1)
             while _d <= _end:
@@ -11900,7 +11901,7 @@ async def api_plan_generate(request: Request):
         # zone_dist / score / protocol / zwo_duration_min per session.
         # v1.6.0 — surface failure under E_ENRICH_FAILED.
         try:
-            _enrich_plan_for_response(plan_dict, today_iso=date.today().isoformat())
+            _enrich_plan_for_response(plan_dict, today_iso=clock.today().isoformat())
         except Exception as _e:
             _log_error(
                 error_codes.Codes.ENRICH_FAILED, exc=_e,
@@ -11962,7 +11963,7 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
             # hand. A rider who stops riding is exactly the rider who never
             # presses it. Rides arriving still drive it immediately; otherwise
             # it runs once per day so a day that passed unridden is seen.
-            today = date.today()
+            today = clock.today()
             stamped = plan.get("reconcile_date") != today.isoformat()
             if new_rides <= 0 and not stamped:
                 return
@@ -12019,7 +12020,7 @@ async def api_plan_reforecast():
                     break
 
         # Annotate weeks with actual data
-        today_str = date.today().isoformat()
+        today_str = clock.today().isoformat()
         for w in plan.get("weeks", []):
             wk = w["week_num"]
             w["actual_tss"] = round(actual_weekly.get(wk, 0), 1)
@@ -12056,7 +12057,7 @@ async def api_plan_reforecast():
         # button computed acwr_ratio against an empty list → G4 dead; G3
         # branch never had inputs → polarization breach never fired.
         try:
-            today_d = date.today()
+            today_d = clock.today()
             actual_pol_kwarg = _polarized_actual_from_rides(
                 _load_all_rides_safe(), today_d, last_n_days=7,
             )
@@ -12102,7 +12103,7 @@ async def api_plan_reforecast():
         )
 
         # Save updated plan
-        plan["reforecast_date"] = datetime.now().isoformat()
+        plan["reforecast_date"] = clock.now().isoformat()
         plan["last_reforecast_info"] = reforecast_info
         tp.atomic_write_plan(json_path, plan)
 
@@ -12332,7 +12333,7 @@ def _regenerate_plan_dict(
     goal = _goal_from_plan_dict(g)
     if goal.target_date is None:
         # Non-event goals: keep the legacy regen horizon (12 weeks out).
-        goal.target_date = date.today() + timedelta(weeks=12)
+        goal.target_date = clock.today() + timedelta(weeks=12)
     # The persisted plan_weeks is the GENERATION-time week count; on a rebuild
     # it is stale (weeks_available() short-circuits on plan_weeks>0 — the H1
     # trap), which would split phases into a longer budget than the remaining
@@ -12403,13 +12404,13 @@ def _regenerate_plan_dict(
         for p in new_phases
     ]
     plan_dict["weeks"] = [tp.week_to_dict(w) for w in all_weeks]
-    plan_dict["regenerated"] = datetime.now().isoformat()
+    plan_dict["regenerated"] = clock.now().isoformat()
     # 3.3.2 (Lapo #2): a regen is as fresh as a recalc — stamp recalc_date
     # too. The shallow copy carried the OLD stamp verbatim, so a user whose
     # recalc_date was stale (3.3.0 storm history) re-armed the auto-recalc
     # gate on every Plan-tab visit no matter how often they regenerated —
     # the visit then rebuilt (and, pre-fix, taper-flattened) their fresh plan.
-    plan_dict["recalc_date"] = datetime.now().isoformat()
+    plan_dict["recalc_date"] = clock.now().isoformat()
     plan_dict["regen_info"] = regen_info
     # Phase-split editor (v3.2.0, A1): the shallow copy above would carry a
     # STALE phase_weeks_status from the old plan while the phases were just
@@ -12629,7 +12630,7 @@ def _apply_plan_update(
     own plan_write_lock so the latch/status writes are in the same critical
     section.
     """
-    now_iso = datetime.now().isoformat()
+    now_iso = clock.now().isoformat()
     current_ctl = training.get("ctl") or 30
     current_tsb = training.get("tsb")
 
@@ -12788,7 +12789,7 @@ def _apply_plan_update(
     if reforecast_min_interval_iso:
         try:
             last_dt = datetime.fromisoformat(reforecast_min_interval_iso)
-            if (datetime.now() - last_dt).total_seconds() < 300:
+            if (clock.now() - last_dt).total_seconds() < 300:
                 # "reconciled" when the bookkeeping passes above actually
                 # changed something: the debounce is about reforecast churn,
                 # and callers treat only "skipped" as nothing-to-write, so a
@@ -12941,7 +12942,7 @@ async def api_plan_add_race(request: Request):
         d = date.fromisoformat(ev_date)
     except ValueError:
         return JSONResponse({"error": "date must be YYYY-MM-DD"}, status_code=400)
-    if d < date.today():
+    if d < clock.today():
         return JSONResponse({"error": "race date is in the past"}, status_code=400)
     prio = str((body or {}).get("priority") or "B").upper()
     if prio not in ("B", "C"):
@@ -13011,7 +13012,7 @@ async def api_plan_update(debounce: int = Query(0)):
                 plan,
                 training=training,
                 activities=activities,
-                today=date.today(),
+                today=clock.today(),
                 allow_regen=True,
                 gap_debounce=True,
                 reforecast_min_interval_iso=(plan.get("reforecast_date") if debounce else None),
@@ -13023,7 +13024,7 @@ async def api_plan_update(debounce: int = Query(0)):
                         "plan_json": plan, "gaps": (info or {}).get("gaps")}
             tp.atomic_write_plan(json_path, plan_dict)
         try:
-            _enrich_plan_for_response(plan_dict, today_iso=date.today().isoformat())
+            _enrich_plan_for_response(plan_dict, today_iso=clock.today().isoformat())
         except Exception:  # noqa: BLE001
             pass
         return {"ok": True, "action": action, "status_message": status,
@@ -13245,7 +13246,7 @@ def _build_fit_workout(name: str, blocks: list[dict], ftp: int,
     # time_created is REQUIRED by TrainingPeaks / Vekta / Garmin Connect — a
     # workout FIT without it imports as EMPTY (the reported bug). Value is ms
     # since the Unix epoch; fit_tool converts to the FIT epoch on encode.
-    file_id.time_created = int(datetime.now().timestamp() * 1000)
+    file_id.time_created = int(clock.now().timestamp() * 1000)
     builder.add(file_id)
 
     # Workout header
@@ -13460,7 +13461,7 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int,
     file_id.serial_number = 12345
     # REQUIRED by TrainingPeaks / Vekta — without time_created the workout
     # imports as empty. ms since Unix epoch; fit_tool converts to FIT epoch.
-    file_id.time_created = int(datetime.now().timestamp() * 1000)
+    file_id.time_created = int(clock.now().timestamp() * 1000)
     builder.add(file_id)
 
     workout = WorkoutMessage()
@@ -13642,7 +13643,7 @@ def api_plan_daily_adapt():
         with open(json_path, encoding="utf-8") as f:
             plan = json.load(f)
 
-        today = date.today()
+        today = clock.today()
         current_week, _idx = _load_current_week_dto(plan, today)
         if not current_week:
             return {"action": "no_current_week", "projection_only": True}
@@ -13774,7 +13775,7 @@ def _apply_move_session(
             new_dst.append(moved_payload)
         dst_week["sessions"] = new_dst
 
-    plan["last_move"] = {"date": src_iso, "new_date": dst_iso, "at": datetime.now().isoformat()}
+    plan["last_move"] = {"date": src_iso, "new_date": dst_iso, "at": clock.now().isoformat()}
     return moved_payload
 
 
@@ -14181,7 +14182,7 @@ def api_plan_missed_suggestions():
 
         # Delegates to the shared suggestion builder (also used by the
         # auto-reschedule path in _apply_plan_update).
-        return {"suggestions": _compute_missed_suggestions(plan, date.today())}
+        return {"suggestions": _compute_missed_suggestions(plan, clock.today())}
 
     except Exception:
         _log.exception("missed-suggestions failed")
@@ -15264,7 +15265,7 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
     Returns the canonical calendar payload per MASTER §3 — ready to ship as
     the ``/api/calendar`` JSON body.
     """
-    today = date.today()
+    today = clock.today()
     today_iso = today.isoformat()
     iso_year, iso_week, _iso_day = today.isocalendar()
 
@@ -15731,7 +15732,7 @@ def api_calendar():
                 "weeks": [],
                 "summary": {},
                 "current_iso_week": None,
-                "today": date.today().isoformat(),
+                "today": clock.today().isoformat(),
             }
         except OSError as _e:
             # OS-level read failure is recoverable (perms, transient I/O).
@@ -15765,7 +15766,7 @@ def api_calendar():
             "weeks": [],
             "summary": {},
             "current_iso_week": None,
-            "today": date.today().isoformat(),
+            "today": clock.today().isoformat(),
         }
 
 
@@ -15831,7 +15832,7 @@ def _execution_for_match(s_json: dict, activity_id) -> "dict | None":
     # settle the question simply has no "blocks" key.
     blocks = _block_eval_for(s_json, ride) if BLOCK_EVAL_SURFACED else None
     out = {**result, "activity_id": activity_id,
-           "computed_at": datetime.now().isoformat()}
+           "computed_at": clock.now().isoformat()}
     if blocks is not None:
         out["blocks"] = blocks
     return out
@@ -15920,7 +15921,7 @@ def _apply_rematch_preview_to_plan(plan: dict, week_idx: int, preview: dict) -> 
                 "score": m["score"],
                 "axes": m["axes"],
                 "details": m.get("details"),
-                "applied_at": datetime.now().isoformat(),
+                "applied_at": clock.now().isoformat(),
             }
             # dedup by activity_id, UPDATE-in-place (auto-reconcile runs every
             # sync now — a blind append would stack duplicates).
@@ -15968,7 +15969,7 @@ def _reconcile_current_week(plan: dict, today: date) -> "tuple[int, dict | None]
     preview = tp.rematch_week(current_week, actual, today)
     n = _apply_rematch_preview_to_plan(plan, week_idx, preview)
     if n:
-        plan["last_rematch"] = datetime.now().isoformat()
+        plan["last_rematch"] = clock.now().isoformat()
     return n, preview
 
 
@@ -15992,7 +15993,7 @@ async def api_plan_rematch(request: Request, apply: int = Query(0)):
         with open(json_path, encoding="utf-8") as f:
             plan = json.load(f)
 
-        today = date.today()
+        today = clock.today()
         current_week, week_idx = _load_current_week_dto(plan, today)
         if not current_week:
             return {"action": "no_current_week"}
@@ -16008,7 +16009,7 @@ async def api_plan_rematch(request: Request, apply: int = Query(0)):
         # week's cumulative match total ("6 rides reconciled") on every
         # planner open even when nothing new happened.
         changed = _apply_rematch_preview_to_plan(plan, week_idx, preview)
-        plan["last_rematch"] = datetime.now().isoformat()
+        plan["last_rematch"] = clock.now().isoformat()
         tp.atomic_write_plan(json_path, plan)
 
         return {"ok": True, "apply": True, "changed": changed, **preview}
@@ -16058,7 +16059,7 @@ async def api_plan_re_draw(request: Request):
                 if json_path.exists():
                     with open(json_path, encoding="utf-8") as f:
                         plan = json.load(f)
-                    today = date.today()
+                    today = clock.today()
                     wk, _wi = _load_current_week_dto(plan, today)
                     if wk:
                         day_iso = (wk.start + timedelta(days=idx)).isoformat()
@@ -16294,7 +16295,7 @@ def _accept_redraw_apply(plan: dict, day_iso: str, candidate: dict) -> dict:
 
     plan["last_rematch_day"] = {
         "date": day_iso,
-        "at": datetime.now().isoformat(),
+        "at": clock.now().isoformat(),
         "new_zwo": target["zwo_file"],
     }
 
@@ -16333,7 +16334,7 @@ def _accept_redraw_apply(plan: dict, day_iso: str, candidate: dict) -> dict:
         # the cascade and per-day duration overrides remain correct.
         plan, sessions_modified, _ri = tp.reforecast_dict(
             plan,
-            today_iso=date.today().isoformat(),
+            today_iso=clock.today().isoformat(),
             tsb_series=tsb_series,
             recent_activities=activities,
             availability_overrides=availability_overrides,
@@ -16510,7 +16511,7 @@ def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: i
                     and not prev.get("user_swapped")
                     and not prev.get("user_moved")
                     and not prev.get("is_race")
-                    and prev_iso >= date.today().isoformat()):
+                    and prev_iso >= clock.today().isoformat()):
                 prev["session_type"] = "recovery"
                 prev["zwo_file"] = ""
                 prev["zwo_name"] = ""
@@ -16523,7 +16524,7 @@ def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: i
         except Exception:
             _log.exception("ftp-test fresh-legs easing skipped")
 
-    plan["last_swap_day"] = {"date": day_iso, "at": datetime.now().isoformat(),
+    plan["last_swap_day"] = {"date": day_iso, "at": clock.now().isoformat(),
                              "new_type": new_type}
 
     # Reforecast the rest (mirror accept-redraw). The pinned swapped day is
@@ -16555,7 +16556,7 @@ def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: i
             if isinstance(entry, dict) and "hours" in entry
         }
         plan, sessions_modified, _ri = tp.reforecast_dict(
-            plan, today_iso=date.today().isoformat(),
+            plan, today_iso=clock.today().isoformat(),
             tsb_series=tsb_series, recent_activities=activities,
             availability_overrides=availability_overrides,
         )
@@ -16813,7 +16814,7 @@ async def api_plan_rematch_day(day: str):
         target_session["zwo_name"] = planned.zwo_name
         target_session["variation"] = variation
         target_session["status"] = "pending"
-        plan["last_rematch_day"] = {"date": day, "at": datetime.now().isoformat(),
+        plan["last_rematch_day"] = {"date": day, "at": clock.now().isoformat(),
                                     "new_zwo": planned.zwo_file}
 
         tp.atomic_write_plan(json_path, plan)
@@ -16871,7 +16872,7 @@ async def api_plan_dismiss_session(request: Request):
                 s["dismissed_at"] = ""
             else:
                 s["status"] = "dismissed"
-                s["dismissed_at"] = datetime.now().isoformat()
+                s["dismissed_at"] = clock.now().isoformat()
 
         tp.atomic_write_plan(json_path, plan)
 
@@ -16902,10 +16903,10 @@ def api_plan_auto_recalc():
                 # Normalize so naive/aware mismatch can't raise TypeError.
                 # Saved plans may include a tz offset (saved_at uses
                 # `.astimezone().isoformat()` elsewhere); strip it so the
-                # subtraction with `datetime.now()` is always homogeneous.
+                # subtraction with `clock.now()` is always homogeneous.
                 if last_dt.tzinfo is not None:
                     last_dt = last_dt.replace(tzinfo=None)
-                days_since = (datetime.now() - last_dt).days
+                days_since = (clock.now() - last_dt).days
                 if days_since < 7:
                     # Still fresh — return event readiness only.
                     # 3.3.2 (Lapo #2): readiness is DECORATIVE on this branch —
@@ -16949,7 +16950,7 @@ def api_plan_auto_recalc():
             # weeks out. 3.4.0 W2: NOT for continuous — the rolling goal has
             # no target by definition (grill P1 item 16, the A1 fabrication);
             # recalculate_plan routes it to the extend path regardless.
-            goal.target_date = date.fromisoformat(g["target_date"]) if g.get("target_date") else (date.today() + timedelta(weeks=12))
+            goal.target_date = date.fromisoformat(g["target_date"]) if g.get("target_date") else (clock.today() + timedelta(weeks=12))
         # Stale generation-time week count must not outlive the shrinking
         # runway (weeks_available short-circuits on plan_weeks>0 — H1 trap).
         goal.plan_weeks = 0
@@ -17009,7 +17010,7 @@ def api_plan_auto_recalc():
                 for p in new_phases
             ]
         plan_dict["weeks"] = [tp.week_to_dict(w) for w in all_weeks]
-        plan_dict["recalc_date"] = datetime.now().isoformat()
+        plan_dict["recalc_date"] = clock.now().isoformat()
         plan_dict["recalc_info"] = recalc_info
         # Phase-split editor (v3.2.0, A1): the overlay copy above keeps every
         # old top-level key, so the previous rebuild's phase_weeks_status
@@ -17450,7 +17451,7 @@ async def api_ride_import(
         raise HTTPException(status_code=400, detail="file too small to be a FIT")
 
     # Stable id: upload time in ISO form (filesystem-safe ":" replacement).
-    now = datetime.now(timezone.utc).astimezone()
+    now = clock.now(timezone.utc).astimezone()
     ride_id = now.strftime("%Y-%m-%dT%H-%M-%S")
     fit_path = _rides_fit_dir() / f"{ride_id}.fit"
 
@@ -18327,7 +18328,7 @@ def _longest_ride_h_90d(rides: list[dict] | None = None) -> float | None:
         rides = _load_all_rides_safe()
     if not rides:
         return None
-    cutoff = (date.today() - timedelta(days=90)).isoformat()
+    cutoff = (clock.today() - timedelta(days=90)).isoformat()
     longest_s = 0
     for r in rides:
         started = (r.get("started_at") or "")[:10]
@@ -18503,7 +18504,7 @@ async def api_ride_rpe(ride_id: str, request: Request):
     if ride_id.startswith("fit_"):
         ok = _rs.set_fit_rpe(
             ride_id[4:], rpe,
-            datetime.now().isoformat() if rpe is not None else None)
+            clock.now().isoformat() if rpe is not None else None)
         if not ok:
             return JSONResponse({"error": "unknown ride"}, 404)
         clear_cache()
@@ -18520,7 +18521,7 @@ async def api_ride_rpe(ride_id: str, request: Request):
                 rec.pop(k, None)
         else:
             rec["rpe"] = rpe
-            rec["rpe_at"] = datetime.now().isoformat()
+            rec["rpe_at"] = clock.now().isoformat()
             rec["rpe_scale"] = "foster_cr10"
         path.write_text(json.dumps(rec, indent=2), encoding="utf-8")
     except (OSError, json.JSONDecodeError) as e:
@@ -18717,7 +18718,7 @@ def _maybe_lazy_icu_sync(force_if_today_missing: bool = False) -> None:
             # too recent — but still try wellness below
             pass
         else:
-            today_iso = date.today().isoformat()
+            today_iso = clock.today().isoformat()
             try:
                 rides = _load_all_rides_safe()
                 has_today = any(
@@ -18757,7 +18758,7 @@ def _detect_plan_load_alert() -> bool:
             return False
         with open(json_path, encoding="utf-8") as f:
             plan = json.load(f)
-        today_iso = date.today().isoformat()
+        today_iso = clock.today().isoformat()
         # Find today's planned session (skip rest days with tss_estimate == 0).
         planned_estimate = 0.0
         for w in plan.get("weeks", []):
@@ -19715,7 +19716,7 @@ async def api_ride_ftp_test_review(ride_id: str, request: Request):
     icu["ftp_test_review"] = {
         "action": action,
         "ftp": _ftp_val,
-        "at": datetime.now().isoformat(timespec="seconds"),
+        "at": clock.now().isoformat(timespec="seconds"),
     }
     try:
         ext = str(icu.get("external_id"))
@@ -19839,11 +19840,11 @@ def _build_programme_summary(plan: dict) -> dict:
         (w.get("phase") or "") == "continuous" for w in weeks[:1])
     if is_continuous and start_date:
         from datetime import date as _date, timedelta as _td
-        trailing = (_date.today() - _td(days=28)).isoformat()
+        trailing = (clock.today() - _td(days=28)).isoformat()
         if trailing < start_date:
             start_date = trailing
         if end_date:
-            end_date = min(end_date, _date.today().isoformat())
+            end_date = min(end_date, clock.today().isoformat())
 
     # ── FTP / VO2max ledger lookups ────────────────────────────────────────
     def _value_at_or_before(metric: str, target_date: str) -> float | None:
@@ -20466,7 +20467,7 @@ def api_diag_health(request: Request):
     if plan_data is not None and isinstance(plan_data, dict):
         try:
             sample = json.loads(json.dumps(plan_data, default=str))
-            _enrich_plan_for_response(sample, today_iso=date.today().isoformat())
+            _enrich_plan_for_response(sample, today_iso=clock.today().isoformat())
             # Spot-check at least one session got an enrichment field.
             ok = False
             for w in (sample.get("weeks") or []):
@@ -20500,7 +20501,7 @@ def api_diag_health(request: Request):
     result = {
         "ok": overall_ok,
         "checks": checks,
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": clock.now(timezone.utc).isoformat(),
         "ring_size": len(_DIAG_RING),
     }
     _DIAG_HEALTH_CACHE["result"] = result

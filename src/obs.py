@@ -9,6 +9,7 @@ importable without pulling FastAPI or any feature module in behind it.
 Nothing here is new. The behaviour is byte-for-byte what app.py did; app.py
 re-exports every name so the 60 test files that reach `app.X` keep working.
 """
+import clock  # the one clock every module reads (see src/clock.py)
 import collections
 import logging
 import threading
@@ -52,7 +53,7 @@ def _log_error(code: str, exc: Exception | None = None, **context) -> None:
         meta = error_codes.metadata(code)
         severity = (meta or {}).get("severity", "ERROR")
         entry: dict = {
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": clock.now(timezone.utc).isoformat(),
             "code": code,
             "severity": severity,
             "context": dict(context),

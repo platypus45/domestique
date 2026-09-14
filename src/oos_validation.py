@@ -35,6 +35,7 @@ the cache rows (`banister_oos_run_at`, `banister_oos_mae_pct`,
 """
 from __future__ import annotations
 
+import clock  # the one clock every module reads (see src/clock.py)
 import logging
 from datetime import date, timedelta
 from typing import Any
@@ -322,7 +323,7 @@ def validate_banister_oos(
     Returns the master-§1 dict with `fit_status` ∈ {"success",
     "low_confidence", "insufficient_data"}.
     """
-    today = date.today()
+    today = clock.today()
     holdout_end = today
     holdout_start = today - timedelta(weeks=holdout_weeks)
     fit_horizon_days = 365  # match tau_fitting._ horizon

@@ -33,6 +33,7 @@ from pathlib import Path
 import pytest
 
 import app as app_module
+import clock
 import training_planner as tp
 from conftest import PLANNER_PIN_ANCHOR as ANCHOR, PLANNER_PIN_ARGS
 
@@ -613,8 +614,10 @@ def _app_plan_env(tmp_path, monkeypatch):
 
 def test_l3_7_auto_adjust_rest_never_wipes_race_day(_app_plan_env):
     write, read = _app_plan_env
-    race_tmrw = date.today() + timedelta(days=1)
-    monday = date.today() - timedelta(days=date.today().weekday())
+    # The module pins the planner's clock; the app reads the same clock now,
+    # so the race must be laid on the pinned tomorrow, not the real one.
+    race_tmrw = clock.today() + timedelta(days=1)
+    monday = clock.today() - timedelta(days=clock.today().weekday())
     # Two stored weeks so "tomorrow" is covered even when today is Sunday.
     weeks = []
     for wn in (0, 1):

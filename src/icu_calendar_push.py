@@ -31,6 +31,7 @@ Contract highlights (GRILL OUTCOME — LOCKED, /tmp/IP_ICU_PUSH.md):
 """
 from __future__ import annotations
 
+import clock  # the one clock every module reads (see src/clock.py)
 import base64
 import json
 import logging
@@ -447,7 +448,7 @@ def reconcile(horizon_days: int = HORIZON_DAYS) -> dict:
         plan = _load_plan()
         if plan is None:
             return _result(error="no_plan")
-        today = date.today()
+        today = clock.today()
         desired, skipped, broken_ids = _desired_events(
             pm, plan, today, horizon_days, profile_id)
         result = _result(skipped=skipped)
@@ -543,7 +544,7 @@ def sweep_all(horizon_days: int = HORIZON_DAYS) -> dict:
         athlete_id, err = _connection(pm)
         if err:
             return _result(error=err)
-        today = date.today()
+        today = clock.today()
         existing, err_res = _get_window_events(athlete_id, today, horizon_days)
         if err_res is not None:
             return err_res

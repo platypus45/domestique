@@ -8,6 +8,7 @@ The columnar sample format keeps a 2-hour ride under 500KB (50KB gzipped).
 
 from __future__ import annotations
 
+import clock  # the one clock every module reads (see src/clock.py)
 import json
 import logging
 from pathlib import Path
@@ -583,7 +584,7 @@ def prune_deleted_icu_records(fetched_ids: "set[str]",
         icu_dir = _icu_rides_dir()
     except RuntimeError:
         return 0
-    oldest = (_date.today() - _td(days=max(0, window_days - 1))).isoformat()
+    oldest = (clock.today() - _td(days=max(0, window_days - 1))).isoformat()
     stale = []
     for f in icu_dir.glob("*.json"):
         rid = f.stem
@@ -1655,7 +1656,7 @@ def compute_local_ctl(
     rides = list_rides()
     if not rides:
         return None
-    cutoff_iso = (_dt.date.today() - _dt.timedelta(days=days)).isoformat()
+    cutoff_iso = (clock.today() - _dt.timedelta(days=days)).isoformat()
     per_day: dict[str, float] = {}
     for r in rides:
         started = (r.get("started_at") or "")[:10]
@@ -1671,7 +1672,7 @@ def compute_local_ctl(
             continue
     if not per_day:
         return None
-    today = _dt.date.today()
+    today = clock.today()
     ctl = 0.0
     d = _dt.date.fromisoformat(min(per_day.keys()))
     while d <= today:
@@ -1707,7 +1708,7 @@ def recent_mean_weekly_tss(
         rides = rides + list(extra_rides)
     if not rides:
         return None
-    today = _dt.date.today()
+    today = clock.today()
     cutoff = today - _dt.timedelta(weeks=max(1, weeks))
     cutoff_iso = cutoff.isoformat()
     per_week: dict[tuple[int, int], float] = {}
@@ -1795,7 +1796,7 @@ def chronic_weekly_tss(
     if not per_day:
         return None
     if today is None:
-        today = _dt.date.today()
+        today = clock.today()
     first, last = min(per_day), max(per_day)
     if (today - first).days < _CHRONIC_SETTLE_DAYS:
         return None
@@ -1881,7 +1882,7 @@ def compute_local_atl(
     if not rides:
         return None
     if today is None:
-        today = _dt.date.today()
+        today = clock.today()
     cutoff = today - _dt.timedelta(days=90)
     cutoff_iso = cutoff.isoformat()
     per_day: dict[str, float] = {}

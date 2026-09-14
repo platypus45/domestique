@@ -29,6 +29,7 @@ Locked invariants:
 
 from __future__ import annotations
 
+import clock  # the one clock every module reads (see src/clock.py)
 import json
 import logging
 import os
@@ -159,7 +160,7 @@ def _filter_rides_by_window(rides: list[dict], window_days: int) -> list[dict]:
     """Filter rides to those started within ``window_days`` of today."""
     if not rides:
         return []
-    cutoff = (date.today() - timedelta(days=window_days)).isoformat()
+    cutoff = (clock.today() - timedelta(days=window_days)).isoformat()
     return [r for r in rides if _ride_started_iso_date(r) >= cutoff]
 
 
@@ -477,7 +478,7 @@ def compute_ride_prs(ride_id: str, window_days: int = 90) -> list[dict]:
     if not isinstance(target_efforts, list) or not target_efforts:
         return []
 
-    cutoff = (date.today() - timedelta(days=window_days)).isoformat()
+    cutoff = (clock.today() - timedelta(days=window_days)).isoformat()
     prior_rides = [
         r for r in rides
         if _ride_started_iso_date(r) >= cutoff

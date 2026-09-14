@@ -18,6 +18,7 @@ though no platform renders a "via Domestique" source label.
 
 from __future__ import annotations
 
+import clock  # the one clock every module reads (see src/clock.py)
 import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
@@ -425,7 +426,7 @@ def _ride_start_dt(ride: dict) -> datetime:
     dur = int(summary.get("duration_sec", 0))
     # Fallback per docstring: "now - duration" so record timestamps don't run
     # into the future when started_at is missing/malformed.
-    return (datetime.now(timezone.utc) - timedelta(seconds=dur)).replace(microsecond=0)
+    return (clock.now(timezone.utc) - timedelta(seconds=dur)).replace(microsecond=0)
 
 
 def build_activity_fit(ride: dict, profile_id: str) -> bytes:
@@ -584,7 +585,7 @@ def build_activity_fit(ride: dict, profile_id: str) -> bytes:
         # a sane fallback so downstream consumers still see *some* start_time.
         log.warning("FIT start_time fallback: %s", e)
         dur = int(summary.get("duration_sec", 0))
-        fallback_dt = datetime.now(timezone.utc) - timedelta(seconds=dur)
+        fallback_dt = clock.now(timezone.utc) - timedelta(seconds=dur)
         try:
             session.start_time = int(fallback_dt.timestamp() * 1000)
         except Exception:

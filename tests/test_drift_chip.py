@@ -130,7 +130,7 @@ def test_generate_site_stamps_snapshot_source_level():
     (the generate endpoint is exercised end-to-end by the planner suites)."""
     src = (ROOT / "src" / "app.py").read_text(encoding="utf-8")
     assert src.count("tp.plan_ctl_snapshot(") == 2
-    gen = src.index('"generated": datetime.now().isoformat(),\n            '
+    gen = src.index('"generated": clock.now().isoformat(),\n            '
                     '# P4.2')
     assert gen != -1
 

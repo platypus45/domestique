@@ -46,6 +46,8 @@ ANCHOR = _dt.date(2026, 9, 14)      # a Monday, fixed forever
 SEED = 20260914
 ATHLETE = {"ftp": 240, "weight_kg": 72}
 _TODAY = [ANCHOR]
+import clock as _clock  # noqa: E402
+_clock.freeze(ANCHOR)
 
 
 class _FrozenDate(_dt.date):
@@ -60,6 +62,10 @@ tp.date = _FrozenDate
 
 def at(d):
     _TODAY[0] = d
+    # The product reads src/clock.py alone since 04da2976; tp.date above is
+    # kept for the planner's own type annotations and the tests that read it.
+    import clock
+    clock.freeze(d)
 
 
 def today():

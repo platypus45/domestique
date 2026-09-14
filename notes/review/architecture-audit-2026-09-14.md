@@ -146,6 +146,24 @@ excepts made loud.
 suite's cost (tests' eight changes: shared library fixture in `test_357`,
 memoised plans, one client fixture, timing tests out of the parallel run).
 
+## Wave 0 — done on 2026-09-14, the same day
+
+1. `freeze_clock` and the one clock: the product reads `src/clock.py` alone
+   (218 sites moved, grep 0 outside it; 04da2976); the conftest mirrors the
+   thirty-one module-attribute pins into it until they migrate; the
+   characterization harness freezes it directly.
+2. The agreement tests, `tests/test_week_view_agreement.py` (3eadfdf8):
+   three strict expected failures on the owner's own record, each failing
+   for its stated reason (stored 234 vs served 441; sweetspot vs threshold;
+   441 invented for a week with no record), plus a control that passes.
+3. The compare fails on new invariant hits, by rule (e37f71b8), and the
+   self-test passes: the reforecast@21 driver now exercises the
+   availability block. One `daily_duration_cap` from that, for Step 7.
+4. The seven FIT failures fixed at the cause (fc5f1edb): 106 FIT-path tests
+   pass; the known-failures list is eight lines.
+5. `cache.cached` is single-flight per key (c49d7796): four threads on a
+   cold key run the function once, where the old module ran it four times.
+
 ## Sequencing against the plan of record
 
 This programme absorbs Steps 7, 8 and 9 and the "second pass" of

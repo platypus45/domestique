@@ -17511,17 +17511,11 @@ function _buildWeekSummaryFallback(week, activities, actsByDate, lthr, todayStr)
   const CYCLING_SPORTS = new Set(['Ride','VirtualRide','EBikeRide',
     'GravelRide','MountainBikeRide','EMountainBikeRide',
     'Handcycle','Velomobile']);
-  const _SESSION_TYPE_TO_BAND = {
-    recovery:  'low_aerobic',
-    z2:        'low_aerobic',
-    long_z2:   'low_aerobic',
-    tempo:     'mid_aerobic',
-    sweetspot: 'high_aerobic',
-    threshold: 'high_aerobic',
-    vo2max:    'anaerobic',
-    overunder: 'anaerobic',
-  };
-  const exposurePlanned = { low_aerobic: 0, mid_aerobic: 0, high_aerobic: 0, anaerobic: 0 };
+  // Planned band minutes come from the week view the server built (the
+  // served files' zone shares), not from a second type→band table here.
+  const exposurePlanned = Object.assign(
+    { low_aerobic: 0, mid_aerobic: 0, high_aerobic: 0, anaerobic: 0 },
+    week.exposure_minutes_planned || {});
   let plannedWith = 0, plannedDone = 0, plannedMissed = 0, durPlanned = 0;
   const missed = [];
   for (const s of sessions) {
@@ -17531,8 +17525,6 @@ function _buildWeekSummaryFallback(week, activities, actsByDate, lthr, todayStr)
     const didCycling = dayActs.some(a => CYCLING_SPORTS.has(a.sport || ''));
     const isReal = s.session_type && s.session_type !== 'rest';
     durPlanned += Number(s.duration_min || 0);
-    const band = _SESSION_TYPE_TO_BAND[s.session_type];
-    if (band) exposurePlanned[band] += Number(s.duration_min || 0);
     if (isReal) {
       plannedWith++;
       // Today counts as DONE but never as MISSED — the day is not over. Must

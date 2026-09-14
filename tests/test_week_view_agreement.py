@@ -196,6 +196,15 @@ class WeekViewAgreement(unittest.TestCase):
         self.assertIsNone(summary["tss_adherence_pct"])
         self.assertFalse(summary["overreach"], summary.get("overreach_reasons"))
 
+    def test_planned_band_minutes_are_one_answer(self):
+        """A6. /api/week-summary banded planned minutes by the session's label
+        through its own table; /api/weekly-plan bands them by the served
+        file's zone shares. The rollup and the home bars read one answer."""
+        weekly = self._get("/api/weekly-plan")
+        summary = self._get("/api/week-summary")
+        self.assertEqual(summary["exposure_minutes_planned"], weekly["exposure_minutes_planned"])
+        self.assertGreater(sum(weekly["exposure_minutes_planned"].values()), 0)
+
     def test_the_fixture_is_the_owners_record(self):
         """A control that must pass today: the stored record really carries
         both identities, so the two tests above fail for the stated reason."""

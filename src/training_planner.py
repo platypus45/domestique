@@ -59,6 +59,7 @@ from plan_invariants import (  # leaf: the auditor's rules are the planner's
     chronic_after)
 import week_plan  # single owner of week/session state (lazy tp import inside)
 import workout_facts  # v3.2.0 watertight classifier — L1 facts layer (leaf module)
+import week_view  # leaf: the one session type → exposure band table
 _LOG_ERROR_HOOK = None
 
 
@@ -15268,21 +15269,6 @@ def daily_adapt_plan(
 REMATCH_TOL_TSS_PCT      = 0.15
 REMATCH_TOL_DURATION_PCT = 0.20
 
-# Session type → IF-band (coarse zones). Mirrors the JS
-# _SESSION_TYPE_TO_BAND in dashboard.html so UI and backend agree.
-SESSION_TYPE_TO_BAND = {
-    "recovery":  "low_aerobic",
-    "z2":        "low_aerobic",
-    "long_z2":   "low_aerobic",
-    "tempo":     "mid_aerobic",
-    "sweetspot": "high_aerobic",
-    "threshold": "high_aerobic",
-    "vo2max":    "anaerobic",
-    "overunder": "anaerobic",
-    "sprint":    "anaerobic",
-    "ftp_test":  "high_aerobic",
-    "rest":      None,
-}
 
 
 def _activity_if_band(activity: dict) -> str | None:
@@ -15336,7 +15322,9 @@ def classify_rematch(session: PlannedSession, activity: dict) -> dict:
     dur_diff_pct = abs(actual_dur - planned_dur) / max(planned_dur, 1)
     duration_ok = (planned_dur > 0 and actual_dur > 0 and dur_diff_pct <= REMATCH_TOL_DURATION_PCT)
 
-    planned_band = SESSION_TYPE_TO_BAND.get(session.session_type)
+    # Session type → IF-band (coarse zones): the one table the week view and
+    # the dashboard's bars read (week_view.TYPE_BAND). Rest has no band.
+    planned_band = week_view.TYPE_BAND.get(session.session_type)
     actual_band = _activity_if_band(activity)
     if_band_ok = (planned_band is not None and planned_band == actual_band)
 

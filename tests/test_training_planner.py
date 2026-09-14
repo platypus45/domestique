@@ -18,7 +18,6 @@ from datetime import date, timedelta
 from training_planner import (
     PlannedSession,
     PlannedWeek,
-    SESSION_TYPE_TO_BAND,
     REMATCH_TOL_TSS_PCT,
     REMATCH_TOL_DURATION_PCT,
     classify_rematch,
@@ -364,9 +363,13 @@ class TestPlanRegenPreservesUserMoved(unittest.TestCase):
 
 
 class TestSessionTypeToBandLockedValues(unittest.TestCase):
-    """SESSION_TYPE_TO_BAND must stay consistent with dashboard.html."""
+    """One session type → exposure band table, week_view.TYPE_BAND (week-view
+    contract A6). Until 2026-09-14 app.py, training_planner.py and the
+    dashboard each kept a copy, and they disagreed on ftp_test and
+    neuromuscular."""
 
     def test_expected_bands(self):
+        import week_view
         expected = {
             "recovery": "low_aerobic",
             "z2": "low_aerobic",
@@ -378,7 +381,19 @@ class TestSessionTypeToBandLockedValues(unittest.TestCase):
             "overunder": "anaerobic",
         }
         for k, v in expected.items():
-            self.assertEqual(SESSION_TYPE_TO_BAND[k], v)
+            self.assertEqual(week_view.TYPE_BAND[k], v)
+
+    def test_no_second_table(self):
+        """A copy maps a session type straight to an exposure band name; only
+        week_view.py may."""
+        import re
+        from pathlib import Path
+        src = Path(__file__).resolve().parent.parent / "src"
+        entry = re.compile(r"""["']?(z2|long_z2|tempo|threshold)["']?\s*:\s*["'](low|mid|high)_aerobic["']""")
+        files = [src / "app.py", src / "training_planner.py", src / "templates" / "dashboard.html"]
+        for f in files:
+            self.assertEqual(entry.findall(f.read_text(encoding="utf-8")), [], f.name)
+        self.assertTrue(entry.findall((src / "week_view.py").read_text(encoding="utf-8")))
 
 
 if __name__ == "__main__":

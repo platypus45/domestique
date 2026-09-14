@@ -9460,31 +9460,6 @@ _CYCLING_SPORTS = frozenset({
 })
 
 
-# Map planned session_type → expected exposure band (used by /api/week-summary
-# to render planned-vs-actual exposure bars). Anything not in this map (e.g.
-# rest) contributes no minutes to any band.
-_SESSION_TYPE_TO_BAND = {
-    "recovery":       "low_aerobic",
-    "z2":             "low_aerobic",
-    "long_z2":        "low_aerobic",
-    "tempo":          "mid_aerobic",
-    "sweetspot":      "high_aerobic",
-    "threshold":      "high_aerobic",
-    "vo2max":         "anaerobic",
-    "overunder":      "anaerobic",
-    # v3.5.4 — sprint/neuromuscular/anaerobic were MISSING, so a scheduled
-    # sprint session contributed 0 planned minutes to every exposure band and
-    # the week-summary bars read as if the day were empty. The planner's own
-    # SESSION_TYPE_TO_BAND (training_planner.py:1811) has always carried them;
-    # only this copy drifted. "sprint" is the emitted session_type;
-    # "neuromuscular"/"anaerobic" are content-class labels that reach here via
-    # adjusted/effective sessions.
-    "sprint":         "anaerobic",
-    "neuromuscular":  "anaerobic",
-    "anaerobic":      "anaerobic",
-}
-
-
 def _matches_planned(activities: list, session_type: str) -> bool:
     """A planned cycling workout is DONE only if a cycling activity was
     actually performed that day. Cross-sport doesn't count — the user still
@@ -9497,7 +9472,7 @@ def _exposure_split_from_tiz(tiz: dict | None) -> dict[str, float] | None:
     """Split one ride's minutes across the exposure bands using its MEASURED
     time-in-zone, rather than filing the whole ride under one average.
 
-    Coggan power zones land on the four bands exactly as _SESSION_TYPE_TO_BAND
+    Coggan power zones land on the four bands exactly as week_view.TYPE_BAND
     maps session types, which is what makes the planned and actual bars
     comparable at all:
 
@@ -9788,19 +9763,12 @@ def api_week_summary(week_offset: int = Query(0)):
                 "did_non_cycling": bool(day_acts),
             })
 
-    # Planned exposure-minutes: attribute every planned session's duration to
-    # its expected band so the rollup can render a "Planned vs Actual" bar.
-    # Sessions outside _SESSION_TYPE_TO_BAND (e.g. rest) contribute nothing.
-    exposure_minutes_planned = {
+    # Planned exposure-minutes, from the week view: each served file's zone
+    # shares, the session's type only when no file is served. The same
+    # numbers /api/weekly-plan serves (week-view contract A6).
+    exposure_minutes_planned = dict(plan.get("exposure_minutes_planned") or {
         "low_aerobic": 0, "mid_aerobic": 0, "high_aerobic": 0, "anaerobic": 0,
-    }
-    for s in sessions:
-        st = (s.get("session_type") or "").lower()
-        band = _SESSION_TYPE_TO_BAND.get(st)
-        if not band:
-            continue
-        dur = int(round(s.get("duration_min") or 0))
-        exposure_minutes_planned[band] = exposure_minutes_planned.get(band, 0) + dur
+    })
 
     # v1.7.6 — overreach flag for the "last week feedback" UI. Triggers
     # when actual TSS exceeds plan by >30 %, OR when high-zone minutes

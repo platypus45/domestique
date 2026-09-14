@@ -30,11 +30,31 @@ def test_a_ride_the_lazy_sync_fetched_adapts_on_the_next_post():
     """S1. The lazy sync a read kicks off stores a ride but does not adapt;
     the Home POST that follows finds the sync throttled and reports none
     added. On a day already adapted, the ride waited until tomorrow."""
+    import ride_storage
     today = clock.today()
     tmp = Path(tempfile.mkdtemp())
+    # The ride it syncs lands in a store of its own, not the worker's sandbox
+    # archive, where later tests would find it.
+    (tmp / "rides" / "icu").mkdir(parents=True)
+    store = [patch.object(ride_storage, "_icu_rides_dir", return_value=tmp / "rides" / "icu"),
+             patch.object(ride_storage, "_fit_rides_dir", return_value=tmp / "rides"),
+             patch.object(app_module, "_rides_fit_dir", return_value=tmp / "rides")]
+    for p in store:
+        p.start()
+    app_module.clear_cache()
+    try:
+        _lazy_ride_adapts(today, tmp)
+    finally:
+        for p in store:
+            p.stop()
+        app_module.clear_cache()
+
+
+def _lazy_ride_adapts(today, tmp):
     plan = _week_plan(today)
     plan["reconcile_date"] = today.isoformat()
     plan["adapted_ride_total"] = len(app_module._load_all_rides_safe())
+    assert plan["adapted_ride_total"] == 0
     (tmp / "current_plan.json").write_text(json.dumps(plan))
     state = {"last": time.time() - 7200}
     calls = []

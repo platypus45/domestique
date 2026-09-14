@@ -236,6 +236,9 @@ const $ = id => els[id] || null;
 const document = { getElementById: id => els[id] || null };
 const window = { _planData: { weeks: [{}] }, _athleteFtp: 250 };
 const fetch = async () => ({ ok: true, json: async () => payload });
+
+// The dashboard reads GETs through getResource (an in-flight memo over fetch).
+const getResource = (path) => fetch(path);
 const fixZeroMin = s => s;
 const _continuousSuggestionHtml = () => '';
 const _deloadAdvanceChipHtml = () => '';

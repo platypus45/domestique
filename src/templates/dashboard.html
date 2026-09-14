@@ -3640,7 +3640,7 @@ loadProfileBadge();
 // Pre-load FTP for workout library mini SVGs (don't wait for Settings tab).
 // _targetMode too — red-team F6: it was only set on the Settings tab, so every
 // hr-mode surface outside Settings saw `undefined` until that tab was visited.
-fetch('/api/settings').then(r=>r.json()).then(d=>{window._athleteFtp=d.ftp||250;window._athleteLthr=d.lthr||170;window._athleteMaxHr=d.max_hr||195;window._targetMode=d.target_mode||'power';window._lthrIsSet=!!d.lthr_is_set;window._hrRows=d.hr_rows||null;}).catch(()=>{});
+getResource('/api/settings').then(r=>r.json()).then(d=>{window._athleteFtp=d.ftp||250;window._athleteLthr=d.lthr||170;window._athleteMaxHr=d.max_hr||195;window._targetMode=d.target_mode||'power';window._lthrIsSet=!!d.lthr_is_set;window._hrRows=d.hr_rows||null;}).catch(()=>{});
 
 // AC2d — active profile id (server-rendered). Per-profile localStorage keys
 // (volume unit, DFA throttles) append ':<profile_id>' so profiles don't share
@@ -5946,7 +5946,7 @@ async function maybeKickBackfill(data) {
 // even on reload. No-op for fully-synced accounts.
 async function pollFirstSyncTopbar() {
   try {
-    const c = await (await fetch('/api/icu/connection')).json();
+    const c = await (await getResource('/api/icu/connection')).json();
     if (!c || !c.connected) return;
     let pc;
     try { pc = await (await fetch('/api/profile/power-curve?window_days=90')).json(); }
@@ -6979,6 +6979,27 @@ async function loadPlanAdoptionToast() {
   }
 }
 
+// One request per resource while it is in flight. A home load used to ask for
+// /api/readiness three times, /api/activities, /api/settings and
+// /api/icu/connection twice each, all within the same 100 ms: the cards were
+// each fetching their own copy (the audit's S-8, week-view contract A10).
+// Callers get their own clone of the one response, so each can still read
+// .ok and .json(). The entry is dropped once the response is in, so a card
+// refreshed after an action fetches fresh data; nothing is ever served stale.
+function getResource(path) {
+  // Declared lazily: the first callers run before this script reaches here.
+  const inflight = (window._inflight = window._inflight || new Map());
+  let p = inflight.get(path);
+  if (!p) {
+    p = fetch(path);
+    inflight.set(path, p);
+    // Held until the body is in (fetch resolves at the headers).
+    const done = () => inflight.delete(path);
+    p.then(r => r.clone().arrayBuffer()).then(done, done);
+  }
+  return p.then(r => r.clone());
+}
+
 async function loadHome() {
   // v1.0.2 IMPL-MIGRATION: fire-and-forget upgrade-toast check (non-blocking).
   try { loadMigrationToast(); } catch (_) {}
@@ -6993,7 +7014,7 @@ async function loadHome() {
     let rRes, wRes, aRes;
     try {
       [rRes, wRes, aRes] = await Promise.all([
-        fetch('/api/readiness'), fetch('/api/wellness?days=90'), fetch('/api/activities')
+        getResource('/api/readiness'), fetch('/api/wellness?days=90'), getResource('/api/activities')
       ]);
     } catch (eFetch) {
       // Network error in any of the three. Best-effort tag: prefer the
@@ -7149,27 +7170,9 @@ async function loadHome() {
       try { window._diagFrontendError('E_FRONTEND_EFTP_RENDER', {msg: String(e && e.message || e)}); } catch(_) {}
     }
 
-    // Weekly summary
-    const today = new Date();
-    const dayOfWeek = today.getDay() || 7; // 1=Mon, 7=Sun
-    const thisWeekActs = (activities||[]).filter(a => {
-      const ad = new Date(a.date + "T12:00:00");
-      const diffDays = Math.floor((today - ad) / 86400000);
-      return diffDays < dayOfWeek;
-    });
-    const lastWeekActs = (activities||[]).filter(a => {
-      const ad = new Date(a.date + "T12:00:00");
-      const diffDays = Math.floor((today - ad) / 86400000);
-      return diffDays >= dayOfWeek && diffDays < dayOfWeek + 7;
-    });
-    const sumField = (acts, field) => acts.reduce((s, a) => s + (a[field] || 0), 0);
-    const thisHours = Math.round(sumField(thisWeekActs, 'duration_min') / 6) / 10;
-    const lastHours = Math.round(sumField(lastWeekActs, 'duration_min') / 6) / 10;
-    const thisTSS = Math.round(sumField(thisWeekActs, 'tss'));
-    const lastTSS = Math.round(sumField(lastWeekActs, 'tss'));
-    const thisCount = thisWeekActs.length;
-    const lastCount = lastWeekActs.length;
-
+    // Weekly summary tiles: this ISO week against last, as /api/week-summary
+    // counts them -- the rollup's and the Last-week card's numbers. These were
+    // derived here from /api/activities over a window of their own.
     function wbItem(val, label, prev, unit='') {
       let delta = '';
       if (prev !== null && prev !== undefined && typeof val === 'number' && typeof prev === 'number') {
@@ -7182,21 +7185,32 @@ async function loadHome() {
       return `<div class="wb-item"><div class="wb-val">${display}</div><div class="wb-label">${label}</div>${delta}</div>`;
     }
     // QA-UX regression: the TSS tile duplicated the new rollup's TSS bar
-    // three feet above. Two different windows (here: dayOfWeek-based, rollup:
-    // ISO Mon-Sun) could show slightly different numbers stacked vertically.
-    // Dropped; Activities/Duration/CTL stay because the rollup doesn't cover
-    // those.
-    $('weekly-summary').innerHTML = wbItem(thisCount, 'Activities', lastCount) +
-      wbItem(thisHours, 'Duration', lastHours, 'h') +
-      wbItem(t.ctl != null ? Math.round(t.ctl) : '—', 'CTL', null);
-
-    // Weekly mesocycle calendar — wait for the legacy single-half view to
-    // paint, then v4.3.0 B5 dual-half overlay overwrites the same host
-    // (#weekly-calendar) with the planned+actual split-cell layout.
+    // three feet above. Dropped; Activities/Duration/CTL stay because the
+    // rollup doesn't cover those.
+    const _ctlTile = wbItem(t.ctl != null ? Math.round(t.ctl) : '—', 'CTL', null);
+    $('weekly-summary').innerHTML = _ctlTile;
     (async () => {
-      try { await loadWeeklyCalendar(); } catch(_) {}
-      try { await loadCalendar(); } catch(_) {}
+      try {
+        const [cur, prev] = await Promise.all([
+          getResource('/api/week-summary').then(r => r.ok ? r.json() : null),
+          getResource('/api/week-summary?week_offset=-1').then(r => r.ok ? r.json() : null),
+        ]);
+        if (!cur) return;
+        const count = ws => Object.values((ws && ws.sports) || {}).reduce((a, b) => a + b, 0);
+        const hours = ws => Math.round(Number((ws && ws.duration_min_done) || 0) / 6) / 10;
+        $('weekly-summary').innerHTML =
+          wbItem(count(cur), 'Activities', prev ? count(prev) : null) +
+          wbItem(hours(cur), 'Duration', prev ? hours(prev) : null, 'h') + _ctlTile;
+      } catch (_) { /* the CTL tile stays */ }
     })();
+
+    // Weekly mesocycle calendar and the week's badges and rollup. Both read
+    // /api/calendar for the This Week strip, so they run together and share
+    // the one request.
+    Promise.all([
+      loadWeeklyCalendar().catch(() => {}),
+      loadCalendar().catch(() => {}),
+    ]);
 
     // v1.3.3 perf — dashboard load was blocking 200-700ms on /api/today-session
     // here, leaving every card below ("recent activities", power curve, body
@@ -7260,7 +7274,7 @@ async function loadReadinessComposite() {
   const host = document.getElementById('today-verdict');
   if (!host) return;
   try {
-    const res = await fetch('/api/readiness');
+    const res = await getResource('/api/readiness');
     if (!res.ok) {
       host.innerHTML = '<div style="font-size:12px;color:var(--text3);">Readiness unavailable.</div>';
       return;
@@ -7905,7 +7919,7 @@ async function loadLastWeekFeedback() {
   const host = document.getElementById('last-week-feedback-content');
   if (!card || !host) return;
   try {
-    const res = await fetch('/api/week-summary?week_offset=-1');
+    const res = await getResource('/api/week-summary?week_offset=-1');
     if (!res.ok) { card.style.display = 'none'; return; }
     const d = await res.json();
     if (!d || (d.tss_target === null && d.tss_done === 0)) {
@@ -12499,7 +12513,7 @@ function initAvailCalendar() {
 
 async function loadPlanMetrics() {
   try {
-    const [rRes, sRes] = await Promise.all([fetch('/api/readiness'), fetch('/api/settings')]);
+    const [rRes, sRes] = await Promise.all([getResource('/api/readiness'), getResource('/api/settings')]);
     const r = await rRes.json();
     const s = await sRes.json();
     const ctl = r.training?.ctl ? Math.round(r.training.ctl) : '—';
@@ -12848,6 +12862,9 @@ async function renderPlanJSON(plan) {
 
   // Fetch actual activities for overlay
   let actualByDate = {};
+  // A day's ridden TSS as /api/calendar counts it (primary and secondary
+  // rides): the one actual every week card reads.
+  const calActualTssByDate = {};
   window._pgActualBlocks = {};
   try {
     // Awaited alongside the activities list — fire-and-forget here would race
@@ -12857,9 +12874,20 @@ async function renderPlanJSON(plan) {
     // actual blocks come from their own ride-store endpoint.
     const [blkRes, actRes] = await Promise.all([
       fetch('/api/activities/blocks?days=64').catch(() => null),
-      fetch('/api/activities'),
+      getResource('/api/activities'),
     ]);
     try { window._pgActualBlocks = (blkRes && blkRes.ok) ? await blkRes.json() : {}; } catch (_) {}
+    try {
+      const calRes = await getResource('/api/calendar');
+      const cal = calRes.ok ? await calRes.json() : null;
+      for (const cw of ((cal && cal.weeks) || [])) {
+        for (const d of (cw.days || [])) {
+          const t = [d.actual, ...(d.actual_secondary || [])]
+            .reduce((acc, a) => acc + Number((a && a.tss) || 0), 0);
+          if (d.date <= (cal.today || '')) calActualTssByDate[d.date] = t;   // ridden days, and days not ridden, up to today
+        }
+      }
+    } catch (_) {}
     const activities = await actRes.json();
     for (const a of (activities || [])) {
       // Cycling plan view: a run/swim must not appear in the overlay or count
@@ -13144,17 +13172,13 @@ async function renderPlanJSON(plan) {
 
     // v4.2.0 IMPL-WEEKLY item 7: Weekly TSS column reformat (Planned/Actual)
     const weekTss = (w.sessions || []).reduce((s, sess) => s + (sess.tss_estimate || 0), 0);
-    let actualTss = w.actual_tss !== undefined && w.actual_tss !== null ? Number(w.actual_tss) : null;
-    // If the API didn't supply actual_tss, derive from imported activities
-    // for the week (helps when /api/plan hasn't joined ride records yet).
-    if (actualTss === null) {
-      let acc = 0;
-      for (let k = 0; k < 7; k++) {
-        const ds = weekdayDate[k];
-        if (!ds) continue;
-        for (const a of (actualByDate[ds] || [])) acc += Number(a.tss || 0);
-      }
-      if (acc > 0) actualTss = acc;
+    // The week's ridden load, from the calendar's days. It read the
+    // actual_tss the last reforecast stored in the plan (a snapshot, from
+    // another activity source), else summed /api/activities itself.
+    let actualTss = null;
+    for (let k = 0; k < 7; k++) {
+      const ds = weekdayDate[k];
+      if (ds && calActualTssByDate[ds] !== undefined) actualTss = (actualTss || 0) + calActualTssByDate[ds];
     }
     let actualHtml = '';
     if (actualTss !== null) {
@@ -13720,7 +13744,7 @@ async function loadCalendar() {
   // Skeleton stays on if /api/calendar fails or 404s.
   let data = null;
   try {
-    const res = await fetch('/api/calendar');
+    const res = await getResource('/api/calendar');
     if (!res.ok) {
       // Could be 404 (endpoint missing) — show empty-state.
       renderCalendarEmpty();
@@ -15522,7 +15546,7 @@ async function runPlanOpenSequence() {
     // time the reconcile finishes, readiness is usually already done → the
     // DFA/recovery step is near-instant and the plan opens faster. Never rejects
     // (a timeout is surfaced as {timeout:true} and handled in step 3).
-    const recoveryP = _planStepRace(fetch('/api/readiness'), PLAN_STEP_TIMEOUT_MS, 'recovery')
+    const recoveryP = _planStepRace(getResource('/api/readiness'), PLAN_STEP_TIMEOUT_MS, 'recovery')
       .then(r => r.json()).then(rd => ({rd})).catch(e => ({timeout: !!(e && e.name === 'TimeoutError')}));
     let reconciled = 0, reconTotal = 0;
     try {
@@ -15772,7 +15796,7 @@ async function viewVersion() {
 }
 
 async function loadSettings() {
-  const d = await (await fetch('/api/settings')).json();
+  const d = await (await getResource('/api/settings')).json();
   // Expose FTP globally so workout library mini SVGs use correct zone colors
   window._athleteFtp = d.ftp || 250;
   window._athleteLthr = d.lthr || window._athleteLthr || 170;
@@ -16157,7 +16181,7 @@ async function loadReadinessActionBanner() {
   if (!banner) return;
   let r;
   try {
-    const res = await fetch('/api/readiness');
+    const res = await getResource('/api/readiness');
     if (!res.ok) throw new Error('status ' + res.status);
     r = await res.json();
   } catch(e) { banner.style.display = 'none'; return; }
@@ -16397,7 +16421,7 @@ async function saveSettings() {
     setTimeout(() => $('settings-saved').style.display = 'none', 2000);
     // Refresh cached FTP so downstream SVG renderers pick up the new value
     try {
-      const s = await fetch('/api/settings').then(r => r.json());
+      const s = await getResource('/api/settings').then(r => r.json());
       window._athleteFtp = s.ftp || window._athleteFtp;
     } catch(_) {}
     loadSettings(); // refresh zones
@@ -16412,7 +16436,7 @@ async function saveSettings() {
 async function loadIcuConnection() {
   const statusEl = $('icu-conn-status');
   try {
-    const c = await (await fetch('/api/icu/connection')).json();
+    const c = await (await getResource('/api/icu/connection')).json();
     const connBtn = $('icu-connect-btn'), disBtn = $('icu-disconnect-btn'),
           oauthBlk = $('icu-oauth-block'), help = $('icu-conn-help');
     const oauth = c.method === 'oauth';
@@ -16646,7 +16670,7 @@ function handleIcuOauthReturn() {
 async function maybePromptIcuMigration() {
   try {
     if (sessionStorage.getItem('icuMigrateDismissed') === '1') return;
-    const c = await (await fetch('/api/icu/connection')).json();
+    const c = await (await getResource('/api/icu/connection')).json();
     if (!c || !c.oauth_available || c.method === 'oauth') return;
     const banner = document.getElementById('icu-migrate-banner');
     const msg = document.getElementById('icu-migrate-msg');
@@ -17038,26 +17062,6 @@ async function submitSoreness(level) {
 
 // ═══ WEEKLY MESOCYCLE CALENDAR ════════════════════════════════════════════
 
-// Classify one activity's intensity exposure into 4 bands, sport-agnostic.
-// Priority: HR vs LTHR > TRIMP-per-minute > fall-through.
-// Returns one of: 'low_aerobic', 'mid_aerobic', 'high_aerobic', 'anaerobic'.
-function _classifyExposure(act, lthr) {
-  const hr = Number(act.avg_hr) || 0;
-  if (hr && lthr) {
-    const pct = hr / lthr;
-    if (pct < 0.75) return 'low_aerobic';   // Z1-Z2 — recovery/easy endurance
-    if (pct < 0.88) return 'mid_aerobic';   // Z3 — tempo
-    if (pct < 0.96) return 'high_aerobic';  // Z4 — threshold
-    return 'anaerobic';                      // Z5+ — intervals/sprint
-  }
-  // Fallback: TRIMP-per-minute density (works even if avg_hr is missing)
-  const tpm = Number(act.trimp || 0) / Math.max(1, Number(act.duration_min || 1));
-  if (tpm < 0.6) return 'low_aerobic';
-  if (tpm < 1.2) return 'mid_aerobic';
-  if (tpm < 2.0) return 'high_aerobic';
-  return 'anaerobic';
-}
-
 // Sport → emoji map for the activity strip. QA-EDGE #7 / bonus: was missing
 // Rowing/Ski/Kayak/RockClimbing/IceSkate/Elliptical/StairStepper — all fell
 // back to 🏃 which actively misleads (a skier rendering as a runner isn't
@@ -17079,31 +17083,6 @@ const _SPORT_ICON = {
 };
 function _sportEmoji(sport) { return _SPORT_ICON[sport] || '❓'; }
 
-// Aggregate a day's activity list into a dominant exposure label + total stats.
-// If activities span >1 exposure band, returns "MIXED".
-function _dayAggregate(dayActs, lthr) {
-  let totMin = 0, totTSS = 0;
-  const bandMin = { low_aerobic: 0, mid_aerobic: 0, high_aerobic: 0, anaerobic: 0 };
-  const sports = new Set();
-  for (const a of dayActs) {
-    const dur = Number(a.duration_min || 0);
-    totMin += dur;
-    totTSS += Number(a.tss || 0);
-    if (a.sport) sports.add(a.sport);
-    bandMin[_classifyExposure(a, lthr)] += dur;
-  }
-  // Dominant band by weighted duration; mixed if no single band ≥60%
-  const bands = Object.entries(bandMin).sort((a, b) => b[1] - a[1]);
-  const winner = bands[0];
-  const mixed = totMin > 0 && (winner[1] / totMin) < 0.60 && bands[1][1] > 0;
-  return {
-    total_min: totMin,
-    total_tss: Math.round(totTSS),
-    exposure: mixed ? 'mixed' : winner[0],
-    sports: Array.from(sports),
-    bands: bandMin,
-  };
-}
 
 // 3.4.0 W3 — continuous variant of the event-countdown card: an open-ended
 // plan has no "N weeks / M days remaining", so the panel counts to the NEXT
@@ -17167,35 +17146,10 @@ function _continuousCountdownHtml(week, planWeeks, todayStr) {
 
 async function loadWeeklyCalendar() {
   try {
-    const [weekRes, actRes, settingsRes] = await Promise.all([
-      fetch('/api/weekly-plan'),
-      fetch('/api/activities'),
-      fetch('/api/settings'),
-    ]);
+    const weekRes = await getResource('/api/weekly-plan');
     const week = await weekRes.json();
-    const activities = await actRes.json();
-    const settings = await settingsRes.json().catch(() => ({}));
-    const lthr = settings.lthr || 175;
     const todayStr = new Date().toLocaleDateString('en-CA');
 
-    // Group activities by date, full objects (not pre-flattened)
-    const actsByDate = {};
-    for (const a of (activities || [])) {
-      const d = a.date || '';
-      if (!d) continue;
-      (actsByDate[d] = actsByDate[d] || []).push(a);
-    }
-
-    // Planned session metadata (for the "plan was X" ghost line)
-    const SESSION_TYPE_CSS = {
-      rest: 'wc-rest-type', recovery: 'wc-z2', z2: 'wc-z2', long_z2: 'wc-long',
-      sweetspot: 'wc-hit', threshold: 'wc-hit', vo2max: 'wc-hit',
-      overunder: 'wc-hit', tempo: 'wc-z2',
-    };
-    const SESSION_SHORT = {
-      rest: 'REST', recovery: 'REC', z2: 'Z2', long_z2: 'LONG', tempo: 'TEMPO',
-      sweetspot: 'SS', threshold: 'FTP', vo2max: 'VO2', overunder: 'Over-Under',
-    };
     // Exposure palette — green (low) → red (anaerobic), mixed = purple.
     // Aligned with the Library category heat-ramp so users learn one palette.
     const EXPOSURE_META = {
@@ -17206,170 +17160,34 @@ async function loadWeeklyCalendar() {
       mixed:        { label: 'MIXED',        color: '#8b5cf6' },  // purple
     };
 
-    // fix26 §6.4 — status badge palette
-    //   pending  ⏳ grey  done ✓ green  missed ⚠ red  moved ↔ blue
-    //   dismissed ✕ muted grey  ambiguous ? amber  done_partial ✓₂ light green
-    const STATUS_META = {
-      pending:       { emoji: '⏳', color: 'var(--text3)', bg: '#5a5a5a22', label: 'PENDING' },
-      done:          { emoji: '✓',  color: '#22c55e',     bg: '#22c55e22', label: 'DONE' },
-      done_partial:  { emoji: '✓₂', color: '#86efac',     bg: '#86efac22', label: 'PARTIAL' },
-      missed:        { emoji: '⚠',  color: '#ef4444',     bg: '#ef444422', label: 'MISSED' },
-      dismissed:     { emoji: '✕',  color: '#6b7280',     bg: '#6b728022', label: 'DISMISSED' },
-      ambiguous:     { emoji: '?',  color: '#eab308',     bg: '#eab30822', label: 'REVIEW' },
-    };
-    // moved_from:<date> is dynamic — computed below
-
-    let html = '';
-    const _sessIdxByDay = new Map();
-    (week.sessions || []).forEach((s, i) => _sessIdxByDay.set(s.day, i));
-    for (const s of (week.sessions || [])) {
-      const isToday = s.day === todayStr;
-      const isPast = s.day < todayStr;
-      const isFuture = s.day > todayStr;
-      const dayActs = actsByDate[s.day];
-      const hasActual = dayActs && dayActs.length > 0;
-      const plannedTypeCls = SESSION_TYPE_CSS[s.session_type] || 'wc-z2';
-      const plannedShort = SESSION_SHORT[s.session_type] || (s.session_type || '').toUpperCase();
-
-      const dayDate = new Date(s.day + 'T12:00:00');
-      const dateLabel = dayDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-
-      // fix26 §6.4/§6.8 — status metadata
-      const rawStatus = s.status || 'pending';
-      const isMovedFrom = typeof rawStatus === 'string' && rawStatus.startsWith('moved_from:');
-      const movedTo = isMovedFrom ? rawStatus.split(':', 2)[1] : '';
-      const statusKey = isMovedFrom ? 'moved' : rawStatus;
-      const statusMeta = isMovedFrom
-        ? { emoji: '↔', color: '#60a5fa', bg: '#60a5fa22', label: `MOVED TO ${movedTo}` }
-        : (STATUS_META[rawStatus] || STATUS_META.pending);
-      const isDismissed = rawStatus === 'dismissed';
-      const isUserMoved = !!s.user_moved;
-
-      // Dismissed styling (§6.8 — grayed but visible)
-      const dismissedStyle = isDismissed
-        ? 'opacity:0.4;filter:grayscale(1);'
-        : '';
-      const cls = `wc-day ${isToday ? 'wc-today' : ''} ${s.session_type === 'rest' ? 'wc-rest' : ''}`;
-
-      // ── Build day body based on past/today/future ─────────────────
-      let body = '';
-
-      if ((isPast || isToday) && hasActual) {
-        // Actual takes visual priority. Plan becomes a small ghost line.
-        const agg = _dayAggregate(dayActs, lthr);
-        const expo = EXPOSURE_META[agg.exposure];
-        const sportIcons = agg.sports.map(_sportEmoji).slice(0, 3).join('');
-        const adherence = s.tss_estimate > 0 ? Math.round(agg.total_tss / s.tss_estimate * 100) : null;
-        const adhTxt = adherence !== null ? `<div style="font-size:8px;color:${adherence >= 80 ? 'var(--green)' : adherence >= 50 ? 'var(--yellow)' : 'var(--text3)'};font-weight:700;">vs plan: ${adherence}%</div>` : '';
-        // Must match app._CYCLING_SPORTS — a narrower set here paints a
-        // mountain-bike or gravel day red as "missed".
-        const CYCLING_SPORTS = new Set(['Ride','VirtualRide','EBikeRide',
-          'GravelRide','MountainBikeRide','EMountainBikeRide',
-          'Handcycle','Velomobile']);
-        const didCycling = dayActs.some(a => CYCLING_SPORTS.has(a.sport || ''));
-        const cyclingPlanned = s.session_type && s.session_type !== 'rest';
-        const planMissed = cyclingPlanned && !didCycling && isPast;
-        const planGhost = cyclingPlanned
-          ? (planMissed
-              ? `<div style="font-size:8px;color:var(--red);font-weight:700;font-style:italic;">plan: ${plannedShort} missed</div>`
-              : `<div style="font-size:8px;color:var(--text3);font-style:italic;">plan: ${plannedShort}${s.tss_estimate ? ' · ' + s.tss_estimate + 'T' : ''}</div>`)
-          : '';
-        // v1.8.0 — polarization classification border. Pick the first
-        // cycling activity carrying a classification; fall back to none.
-        const _polAct = dayActs.find(a => (a.polarization && a.polarization.classification) || a.classification);
-        const _polClassif = _polAct ? ((_polAct.polarization && _polAct.polarization.classification) || _polAct.classification) : null;
-        const _polColor = _classifColor(_polClassif);
-        const _polCls = _polClassif ? ` pol-${esc(String(_polClassif).toLowerCase())}` : '';
-        const _polBorder = _polColor ? `border-left:3px solid ${_polColor};` : '';
-        body = `
-          ${planGhost}
-          <div class="wc-type${_polCls}" style="background:${expo.color}22;color:${expo.color};border:1px solid ${expo.color};${_polBorder}font-weight:700;">${sportIcons} ${expo.label}</div>
-          <div class="wc-meta">${volFmt(agg.total_min)} · ${agg.total_tss} TSS</div>
-          ${adhTxt}
-        `;
-      } else if (isPast && !hasActual && s.session_type !== 'rest' && !isDismissed) {
-        body = `
-          <div style="display:flex;align-items:center;gap:3px;justify-content:center;margin-bottom:2px;">
-            <div style="width:6px;height:6px;border-radius:50%;background:var(--red);"></div>
-            <div style="font-size:8px;color:var(--red);font-weight:800;letter-spacing:0.05em;">MISSED</div>
-          </div>
-          <div class="wc-type ${plannedTypeCls}" style="border-left:3px solid var(--red);">${plannedShort}</div>
-          ${s.duration_min ? `<div class="wc-meta">${s.duration_min}min</div>` : ''}
-          ${s.tss_estimate ? `<div class="wc-meta">${s.tss_estimate} TSS</div>` : ''}
-          <div style="font-size:8px;color:var(--text3);font-style:italic;margin-top:2px;">make it up?</div>
-        `;
-      } else {
-        body = `
-          <div class="wc-type ${plannedTypeCls}">${plannedShort}</div>
-          ${s.duration_min ? `<div class="wc-meta">${s.duration_min}min</div>` : ''}
-          ${s.tss_estimate ? `<div class="wc-meta">${s.tss_estimate} TSS</div>` : ''}
-        `;
+    // The This Week strip has one painter, renderThisWeekFromCalendar, over
+    // /api/calendar. This function painted it too, from /api/activities and
+    // its own labels, and whichever ran last won: the calendar's on a home
+    // load, this one after a tier-down, a sync or a rematch.
+    try {
+      const calRes = await getResource('/api/calendar');
+      if (calRes.ok) {
+        const cal = await calRes.json();
+        if (cal && Array.isArray(cal.weeks) && cal.weeks.length) renderThisWeekFromCalendar(cal);
       }
-
-      // §6.4 — status badge on every tile (even rest days show pending-for-rest)
-      const statusBadge = s.session_type !== 'rest' || isMovedFrom
-        ? `<div class="wc-status-badge" title="${statusMeta.label}" style="position:absolute;top:2px;right:2px;font-size:9px;padding:1px 4px;border-radius:3px;background:${statusMeta.bg};color:${statusMeta.color};font-weight:700;">${statusMeta.emoji}</div>`
-        : '';
-      // §6.4 — drag handle (only for pending non-rest sessions so users can move
-      // Thursday's VO2max onto Monday without the recomputer fighting back)
-      const dragHandle = (s.session_type !== 'rest' && rawStatus === 'pending')
-        ? `<div class="wc-drag-handle" title="Drag to move" style="position:absolute;top:2px;left:2px;cursor:grab;font-size:10px;color:var(--text3);user-select:none;">⠿</div>`
-        : '';
-      // §6.8 — un-dismiss action when dismissed
-      const undismissBtn = isDismissed
-        ? `<div onclick="event.stopPropagation();undismissSession('${s.day}')" style="position:absolute;bottom:2px;right:2px;font-size:9px;color:var(--accent);cursor:pointer;text-decoration:underline;">undo</div>`
-        : '';
-      // user_moved badge
-      const movedIndicator = isUserMoved
-        ? `<div style="font-size:8px;color:#60a5fa;font-style:italic;margin-top:2px;">moved</div>`
-        : '';
-
-      // v3.7.1 — key the click by DATE, not by an index into
-      // window._weekPlanSessions. That global is reassigned from four places
-      // (the home calendar, the today-adjustment synth, the week grid), so a
-      // row rendered against one week could resolve into another week's
-      // array — the rider clicked a VO2max card and got the row above it,
-      // a different day's tempo session, with no sign anything was wrong.
-      const sIdx = _sessIdxByDay.get(s.day);
-      const draggable = (s.session_type !== 'rest' && rawStatus === 'pending') ? 'true' : 'false';
-      html += `<div class="${cls}" data-day="${s.day}" data-session-type="${s.session_type}" data-status="${rawStatus}"
-        draggable="${draggable}"
-        ondragstart="onPlanDragStart(event,'${s.day}')"
-        ondragover="onPlanDragOver(event)"
-        ondragleave="onPlanDragLeave(event)"
-        ondrop="onPlanDrop(event,'${s.day}')"
-        style="cursor:pointer;position:relative;${dismissedStyle}"
-        onclick="openDayWorkout(${sIdx}, '${s.day}')">
-        ${statusBadge}
-        ${dragHandle}
-        ${undismissBtn}
-        <div class="wc-name">${s.day_name}</div>
-        <div style="font-size:8px;color:var(--text3);">${dateLabel}</div>
-        ${body}
-        ${movedIndicator}
-      </div>`;
-    }
-    $('weekly-calendar').innerHTML = html;
+    } catch (_) { /* the strip keeps what it showed */ }
     window._weekPlanSessions = week.sessions;
 
-    // Weekly rollup: fetch live endpoint, fall back to client-side computation
-    // against the same sources we already loaded. Palette + helpers shared.
+    // Weekly rollup, from /api/week-summary. Its client-side reconstruction
+    // from the activities list is gone (week-view contract A10): a failed
+    // summary leaves the rollup as it was rather than a second answer.
     (async () => {
-      let summary = null;
       try {
-        const res = await fetch('/api/week-summary');
-        if (res.ok) summary = await res.json();
-      } catch(e) { /* network/404 → fallback */ }
-      if (!summary) {
-        summary = _buildWeekSummaryFallback(week, activities, actsByDate, lthr, todayStr);
-      }
-      if (summary) _renderWeeklyRollup(summary, EXPOSURE_META);
+        const res = await getResource('/api/week-summary');
+        if (res.ok) _renderWeeklyRollup(await res.json(), EXPOSURE_META);
+      } catch(e) { /* network/404: leave the rollup */ }
     })();
 
     // Phase badge
     const phaseBadge = week.phase ? `<span class="badge b-good">${week.phase.toUpperCase()}</span>` : '';
     const stepback = week.is_stepback ? '<span class="badge b-med" style="margin-left:4px;">RECOVERY WEEK</span>' : '';
-    $('week-phase-badge').innerHTML = `${phaseBadge}${stepback} <span style="font-size:9px;color:var(--text3);">TSS target: ${week.tss_target}</span>`;
+    const _tgt = week.tss_target == null ? 'no plan on record' : `TSS target: ${Math.round(week.tss_target)}`;
+    $('week-phase-badge').innerHTML = `${phaseBadge}${stepback} <span style="font-size:9px;color:var(--text3);">${_tgt}</span>`;
 
     // Event countdown card
     const er = week.event_readiness;
@@ -17450,129 +17268,6 @@ async function loadWeeklyCalendar() {
   }
 }
 
-// Client-side reconstruction of the /api/week-summary payload. Runs when the
-// backend endpoint 404s or errors — keeps the rollup meaningful in dev.
-// QA-MATH #2/#3/#4 alignment: iterate the full ISO week (not just sessions),
-// use strict-past for missed (matches backend), one-decimal TSS rounding,
-// and always return planned_days_total=7 per ISO contract.
-function _buildWeekSummaryFallback(week, activities, actsByDate, lthr, todayStr) {
-  if (!week) return null;
-  const sessions = Array.isArray(week.sessions) ? week.sessions : [];
-  const weekStart = sessions[0]?.day || null;
-  const weekEnd = sessions[sessions.length - 1]?.day || null;
-  const tssTarget = Number(week.tss_target || 0);
-
-  // Build the full 7-day ISO window (Mon-Sun). Using sessions alone would
-  // drop activities logged on days without a planned session.
-  const sessionByDay = new Map(sessions.map(s => [s.day, s]));
-  const dayKeys = [];
-  if (weekStart) {
-    const d0 = new Date(weekStart + 'T12:00:00');
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(d0); d.setDate(d0.getDate() + i);
-      dayKeys.push(d.toLocaleDateString('en-CA'));
-    }
-  }
-
-  const exposure = { low_aerobic: 0, mid_aerobic: 0, high_aerobic: 0, anaerobic: 0 };
-  let unclassified = 0;
-  const sports = {};
-  const activitiesByDay = {};
-  let tssDone = 0, durDone = 0;
-  for (const dk of dayKeys) {
-    const dayActs = actsByDate[dk] || [];
-    if (dayActs.length) activitiesByDay[dk] = dayActs;
-    for (const a of dayActs) {
-      tssDone += Number(a.tss || 0);
-      const dur = Number(a.duration_min || 0);
-      durDone += dur;
-      // Signal detection mirrors _classify_exposure_with_signal on the backend.
-      const hr = Number(a.avg_hr) || 0;
-      const trimp = Number(a.trimp) || 0;
-      const hasHR = hr > 0 && (Number(lthr) || 0) > 0;
-      const hasTrimp = trimp > 0 && dur > 0;
-      if (!hasHR && !hasTrimp) {
-        unclassified += dur;
-      } else {
-        exposure[_classifyExposure(a, lthr)] += dur;
-      }
-      if (a.sport) sports[a.sport] = (sports[a.sport] || 0) + 1;
-    }
-  }
-  tssDone = Math.round(tssDone * 10) / 10;
-  durDone = Math.round(durDone);
-
-  // Planned-session accounting; "missed" = STRICTLY past day with non-rest
-  // cycling plan AND no cycling activity (a hike on a planned SS day still
-  // counts as missed — the user owes the bike session).
-  // Must match app._CYCLING_SPORTS exactly — this fallback stands in for
-  // /api/week-summary, so a narrower set silently downgrades a
-  // mountain-bike or gravel day from done to missed when it is used.
-  const CYCLING_SPORTS = new Set(['Ride','VirtualRide','EBikeRide',
-    'GravelRide','MountainBikeRide','EMountainBikeRide',
-    'Handcycle','Velomobile']);
-  // Planned band minutes come from the week view the server built (the
-  // served files' zone shares), not from a second type→band table here.
-  const exposurePlanned = Object.assign(
-    { low_aerobic: 0, mid_aerobic: 0, high_aerobic: 0, anaerobic: 0 },
-    week.exposure_minutes_planned || {});
-  let plannedWith = 0, plannedDone = 0, plannedMissed = 0, durPlanned = 0;
-  const missed = [];
-  for (const s of sessions) {
-    const isStrictlyPast = s.day < todayStr;
-    const isFuture = s.day > todayStr;
-    const dayActs = actsByDate[s.day] || [];
-    const didCycling = dayActs.some(a => CYCLING_SPORTS.has(a.sport || ''));
-    const isReal = s.session_type && s.session_type !== 'rest';
-    durPlanned += Number(s.duration_min || 0);
-    if (isReal) {
-      plannedWith++;
-      // Today counts as DONE but never as MISSED — the day is not over. Must
-      // mirror api_week_summary exactly, or a rider whose /api/week-summary
-      // errors sees a different adherence figure than one whose does not.
-      if (!isFuture && didCycling) {
-        plannedDone++;
-      } else if (isStrictlyPast) {
-        plannedMissed++;
-        missed.push({
-          day: s.day, day_name: s.day_name,
-          session_type: s.session_type,
-          tss_estimate: Number(s.tss_estimate || 0),
-          duration_min: Number(s.duration_min || 0),
-          name: s.name || '',
-          did_non_cycling: dayActs.length > 0,
-        });
-      }
-    }
-  }
-
-  const entries = Object.entries(exposure).sort((a, b) => b[1] - a[1]);
-  const dominant = entries[0] && entries[0][1] > 0 ? entries[0][0] : 'low_aerobic';
-
-  return {
-    week_start: weekStart, week_end: weekEnd, today: todayStr,
-    tss_target: tssTarget,
-    tss_done: tssDone,
-    tss_adherence_pct: tssTarget > 0 ? Math.round(tssDone / tssTarget * 100) : 0,
-    duration_min_done: durDone,
-    duration_min_planned: Math.round(durPlanned),
-    exposure_minutes: exposure,
-    exposure_minutes_planned: exposurePlanned,
-    unclassified_minutes: unclassified,
-    exposure_dominant: dominant,
-    sports,
-    missed_sessions: missed,
-    planned_days_total: 7,   // ISO week always 7 — hard-coded (QA-MATH #5)
-    planned_days_with_session: plannedWith,
-    planned_days_done: plannedDone,
-    planned_days_missed: plannedMissed,
-    activities_by_day: activitiesByDay,
-  };
-}
-
-// Render the weekly rollup. Order (per QA-UX #1 top-finding): Adherence
-// first — the user's primary question is "am I on track?". TSS, Exposure,
-// Sports follow. All sections degrade gracefully when inputs are empty.
 function _renderWeeklyRollup(s, EXPOSURE_META) {
   const host = $('weekly-rollup');
   if (!host) return;
@@ -17840,7 +17535,7 @@ function goToPlanBuilder() {
 async function loadTodaySession() {
   try {
     let res;
-    try { res = await fetch('/api/today-session'); }
+    try { res = await getResource('/api/today-session'); }
     catch (eF) {
       try { window._diagFrontendError('E_FRONTEND_TODAY_SESSION_FETCH', {msg: String(eF && eF.message || eF)}); } catch(_) {}
       throw eF;
@@ -18630,7 +18325,7 @@ async function _todayDayModalModel(session) {
   let d = window._todaySessionData;
   if (!d || !d.planned) {
     try {
-      const r = await fetch('/api/today-session');
+      const r = await getResource('/api/today-session');
       if (r.ok) { d = await r.json(); window._todaySessionData = d; }
     } catch (_) { return null; }
   }
@@ -18925,7 +18620,7 @@ async function openDayWorkout(sessionIdx, day) {
   let settingsFtp = ftp;
   let sData = {};
   try {
-    const sRes = await fetch('/api/settings');
+    const sRes = await getResource('/api/settings');
     sData = await sRes.json();
     settingsFtp = sData.ftp || ftp;
   } catch(e) {}
@@ -19913,7 +19608,7 @@ function renderPowerBlocksSVG(blocks, ftp) {
 
 async function downloadGeneratedZwo(type, durationMin, name) {
   let ftp = 250;
-  try { const s = await (await fetch('/api/settings')).json(); ftp = s.ftp || 250; } catch(e) {}
+  try { const s = await (await getResource('/api/settings')).json(); ftp = s.ftp || 250; } catch(e) {}
   const blocks = buildPowerBlocks(type, durationMin, ftp);
   let xml = `<?xml version="1.0" encoding="utf-8"?>\n<workout_file>\n  <author>Domestique Library</author>\n  <name>${esc(name)}</name>\n  <sportType>bike</sportType>\n  <workout>\n`;
   for (const b of blocks) {

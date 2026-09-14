@@ -126,8 +126,9 @@ internals, Wave 3), and `ride_storage.compute_local_ctl` itself.
   so since 1d12ba2.
 - Deploy as before: discard the two workout caches, `git checkout --detach
   <sha>`, `systemctl --user restart domestique`, check `/api/diag/health`.
-  The six `ftp_test_*.zwo` repairs are working-tree edits there; never reset
-  them. `cs-update.timer` stays disabled.
+  The six `ftp_test_*.zwo` repairs are a commit since 7feb6384, so the tree is
+  clean apart from the two caches. cs-update is gone from the stack
+  (cycling-stack e03b76e); updating is manual, README "Updating".
 
 ## What is left
 

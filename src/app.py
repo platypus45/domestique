@@ -3284,12 +3284,11 @@ def api_rider_stats():
     load: dict = {}
     try:
         merged = _merge_training_load(cached("training", get_today_metrics))
-        src = {"icu": "icu", "local": "derived",
-               "mixed": "derived"}.get(merged.get("source"), "fallback")
-        today_iso = clock.today().isoformat()
+        src = "icu" if merged.get("source") in ("icu", "icu_cached") else "fallback"
+        as_of = merged.get("as_of") or clock.today().isoformat()
         for k in ("ctl", "atl", "tsb"):
             v = merged.get(k)
-            load[k] = (_prov(round(float(v), 1), src, today_iso)
+            load[k] = (_prov(round(float(v), 1), src, as_of)
                        if v is not None else dict(_PROV_EMPTY))
     except Exception as e:
         _fail("load", e)
@@ -3639,96 +3638,44 @@ def _mark_readiness_cap_reverted_today() -> None:
         _log.warning(f"readiness revert flag write failed: {e}")
 
 
-def _compute_local_atl(days: int = 90, tau: int = 7) -> float | None:
-    """v4.4.2 §B3 — 7-day EWMA over local ride TSS (mirror of
-    ride_storage.compute_local_ctl with τ=7 for ATL).
-
-    Returns None when no usable local TSS is found so callers can decide
-    whether to keep ICU values or surface ``data_status``.
-    """
-    try:
-        import ride_storage as _rs
-    except Exception:
-        return None
-    rides = _rs.list_rides()
-    if not rides:
-        return None
-    cutoff_iso = (clock.today() - timedelta(days=days)).isoformat()
-    per_day: dict[str, float] = {}
-    for r in rides:
-        started = (r.get("started_at") or "")[:10]
-        if not started or started < cutoff_iso:
-            continue
-        summary = r.get("summary") or {}
-        tss = summary.get("tss") or 0
-        if not tss:
-            continue
-        try:
-            per_day[started] = per_day.get(started, 0.0) + float(tss)
-        except (TypeError, ValueError):
-            continue
-    if not per_day:
-        return None
-    today = clock.today()
-    atl = 0.0
-    d = date.fromisoformat(min(per_day.keys()))
-    while d <= today:
-        tss_today = per_day.get(d.isoformat(), 0.0)
-        atl = atl + (tss_today - atl) / float(tau)
-        d += timedelta(days=1)
-    return round(atl, 1)
+def _fitness_state(today: "date | None" = None) -> dict:
+    """CTL/ATL/TSB from their one owner (src/fitness.py): intervals.icu live,
+    else its last stored values, else unknown."""
+    import fitness
+    return fitness.state(cached("training", get_today_metrics), today)
 
 
-def _local_training_load() -> dict:
-    """v4.4.2 §B3 — single helper that returns CTL/ATL/TSB derived from the
-    local rides archive.
+# The CTL a planning or projection call starts from when the rider's is
+# unknown (intervals.icu never answered and nothing is stored): the planner's
+# own start (training_planner.generate_plan). One number where handlers used
+# 30, 37 and 50.
+_PLANNING_CTL_UNKNOWN = 37.0
 
-    Output shape: ``{ctl, atl, tsb, source}`` where ``source`` is always
-    "local" (callers compose with ICU values to produce "icu"/"mixed"/"local").
-    Any of ctl/atl/tsb may be None if local rides have no TSS values at all.
-    """
-    try:
-        import ride_storage as _rs
-        ctl = _rs.compute_local_ctl()
-    except Exception:
-        ctl = None
-    atl = _compute_local_atl()
-    tsb = None
-    if ctl is not None and atl is not None:
-        tsb = round(ctl - atl, 1)
-    return {"ctl": ctl, "atl": atl, "tsb": tsb, "source": "local"}
+
+def _planning_ctl() -> float:
+    ctl = _fitness_state()["ctl"]
+    return _PLANNING_CTL_UNKNOWN if ctl is None else ctl
+
+
+import readiness_composite as _readiness_composite_mod  # noqa: E402
+# The composite readiness reads today's TSB from the same owner (the S-3 split).
+_readiness_composite_mod.today_load_provider = lambda: _fitness_state()
 
 
 def _merge_training_load(icu_t: dict | None) -> dict:
-    """v4.4.2 §B3 — merge ICU-derived training metrics with local fallback.
+    """The training-load block the readiness surfaces serve: CTL/ATL/TSB from
+    the fitness owner (intervals.icu, the owner's decision of 2026-09-14), with
+    ICU's acwr/ramp/monotony/strain beside them.
 
-    Rule: prefer ICU value when present; fall back to local on a per-field
-    basis. Source label:
-      - "icu" if all ICU fields present
-      - "local" if no ICU fields and local fallback used
-      - "mixed" otherwise
+    Until then it merged live ICU values with a local EWMA over the FIT-only
+    ride list, per field, and could answer "mixed" (the audit's S-2).
+    ``source`` is "icu", "icu_cached" (its last stored values, dated by
+    ``as_of``) or "none".
     """
+    import fitness
     icu = icu_t or {}
-    local = _local_training_load()
-    icu_ctl = icu.get("ctl")
-    icu_atl = icu.get("atl")
-    icu_tsb = icu.get("tsb")
-    out = {
-        "ctl": icu_ctl if icu_ctl is not None else local["ctl"],
-        "atl": icu_atl if icu_atl is not None else local["atl"],
-        "tsb": icu_tsb if icu_tsb is not None else local["tsb"],
-        "acwr": icu.get("acwr"),
-        "ramp_rate": icu.get("ramp_rate"),
-        "monotony": icu.get("monotony"),
-        "strain": icu.get("strain"),
-    }
-    icu_count = sum(1 for v in (icu_ctl, icu_atl, icu_tsb) if v is not None)
-    if icu_count == 3:
-        out["source"] = "icu"
-    elif icu_count == 0:
-        out["source"] = "local" if any(v is not None for v in (out["ctl"], out["atl"], out["tsb"])) else "none"
-    else:
-        out["source"] = "mixed"
+    out = fitness.state(icu)
+    out.update({k: icu.get(k) for k in ("acwr", "ramp_rate", "monotony", "strain")})
     return out
 
 
@@ -3976,8 +3923,7 @@ def api_readiness_composite(date: str = Query(None)):
     v1.8.0 §F1 — chains compute_training_severity to merge severity, source,
     and severity_reasons fields onto the returned dict. Legacy fields preserved.
     """
-    from datetime import date as _date_cls
-    target_iso = date or _date_cls.today().isoformat()
+    target_iso = date or clock.today().isoformat()
     profile_id = "default"  # single-rider scope; profile_manager is a separate concern
     cache_key = f"readiness_composite_{profile_id}_{target_iso}"
     result = cached(cache_key, lambda: compute_readiness_composite(profile_id, target_iso))
@@ -9303,7 +9249,7 @@ def api_weekly_plan(week_offset: int = Query(0)):
     tss_target None, every day a placeholder with on_record False.
     """
     training = cached("training", get_today_metrics)
-    current_ctl = training.get("ctl") or 30
+    current_ctl = _planning_ctl()
     plan = _read_stored_plan()
     result = _stored_week_view(plan, week_offset).as_weekly_plan()
     try:
@@ -11148,9 +11094,9 @@ def api_plan_preview(
 
     try:
         training = cached("training", get_today_metrics)
-        current_ctl = float(training.get("ctl") or 37.0)
+        current_ctl = _planning_ctl()
     except Exception:
-        current_ctl = 37.0
+        current_ctl = _PLANNING_CTL_UNKNOWN
 
     phases = tp.generate_phases(g, current_ctl,
                                 recent_weekly_tss=_chronic_weekly_tss_safe())
@@ -11232,9 +11178,9 @@ def api_plan_entry_scan(
 
     try:
         training = cached("training", get_today_metrics)
-        current_ctl = float(training.get("ctl") or 37.0)
+        current_ctl = _planning_ctl()
     except Exception:
-        current_ctl = 37.0
+        current_ctl = _PLANNING_CTL_UNKNOWN
 
     result = tp.recognize_entry(g, _load_all_rides_safe(), current_ctl=current_ctl)
 
@@ -11321,9 +11267,9 @@ def api_event_projection():
     # Current CTL.
     try:
         training = cached("training", get_today_metrics)
-        current_ctl = float(training.get("ctl") or 50.0)
+        current_ctl = _planning_ctl()
     except Exception:
-        current_ctl = 50.0
+        current_ctl = _PLANNING_CTL_UNKNOWN
 
     # Best-efforts aggregate for CP/W' Monod fit (only when we have ≥5 rides
     # in the last 30 days — gate prevents fitting on stale data).
@@ -11595,7 +11541,7 @@ async def api_plan_generate(request: Request):
         recent_weekly_tss = None
         try:
             training = cached("training", get_today_metrics)
-            current_ctl = training.get("ctl")
+            current_ctl = _fitness_state()["ctl"]     # None: the planner's own fallback
         except Exception:
             current_ctl = None
         recent_weekly_tss = _chronic_weekly_tss_safe()
@@ -11912,7 +11858,7 @@ async def api_plan_reforecast():
         # only annotated actual_tss + surfaced gaps; the "Reforecast" UI
         # button was a silent no-op for intensity.
         training = cached("training", get_today_metrics)
-        current_ctl = training.get("ctl") or 30
+        current_ctl = _planning_ctl()
         current_tsb = training.get("tsb")
 
         # Flat-TSB projection for every future day unless ICU gives us more.
@@ -12508,7 +12454,7 @@ def _apply_plan_update(
     section.
     """
     now_iso = clock.now().isoformat()
-    current_ctl = training.get("ctl") or 30
+    current_ctl = _planning_ctl()
     current_tsb = training.get("tsb")
 
 
@@ -12773,7 +12719,7 @@ async def api_plan_regenerate_dynamic(request: Request):
 
         # Get current CTL
         training = cached("training", get_today_metrics)
-        current_ctl = training.get("ctl") or 30
+        current_ctl = _planning_ctl()
 
         activities = db.query_activities(days=120)
 
@@ -12842,7 +12788,7 @@ async def api_plan_add_race(request: Request):
 
         seed_salt = time.time_ns()
         training = cached("training", get_today_metrics)
-        current_ctl = training.get("ctl") or 30
+        current_ctl = _planning_ctl()
         activities = db.query_activities(days=120)
         plan_dict, regen_info = _regenerate_plan_dict(
             plan, current_ctl=current_ctl, activities=activities, seed_salt=seed_salt,
@@ -14734,45 +14680,14 @@ def _annotate_phase_week_indices(weeks: list[dict]) -> None:
 
 
 def _annotate_planned_ctl_eow(weeks: list[dict], plan: dict) -> None:
-    """Fill ``planned_ctl_eow`` for each week using forecast_ctl over the
-    daily TSS estimates pulled from the plan. Mutates ``weeks`` in place.
-    """
-    if not plan or not plan.get("weeks"):
-        return
-    # Resolve a starting CTL: prefer ICU wellness, fallback to local archive,
-    # final fallback to 37.0 (matches generate_plan).
-    try:
-        import ride_storage as _rs
-        start_ctl = _rs.compute_local_ctl()
-    except Exception:
-        start_ctl = None
-    if start_ctl is None:
-        start_ctl = float(getattr(config, "CURRENT_CTL", 37.0) or 37.0)
-
-    plan_weeks = plan.get("weeks", [])
-    daily_tss: list[float] = []
-    week_end_index: dict[str, int] = {}  # iso start_date → end-of-week idx
-    cursor = 0
-    for pw in plan_weeks:
-        for s in (pw.get("sessions") or []):
-            try:
-                daily_tss.append(float(s.get("tss_estimate") or 0))
-            except (TypeError, ValueError):
-                daily_tss.append(0.0)
-            cursor += 1
-        # End-of-week CTL is at index cursor (forecast_ctl prepends start).
-        week_end_index[pw.get("start") or ""] = cursor
-
-    if not daily_tss:
-        return
-    series = tp.forecast_ctl(start_ctl, daily_tss)  # length = len(daily_tss)+1
-
+    """Fill each calendar week's ``planned_ctl_eow``: the CTL the plan projects
+    at the end of the week's last projected day (see _planned_ctl_by_day)."""
+    by_day = _planned_ctl_by_day(plan)
     for w in weeks:
-        sd = w.get("start_date") or ""
-        idx = week_end_index.get(sd)
-        if idx is None or idx >= len(series):
-            continue
-        w["planned_ctl_eow"] = float(series[idx])
+        start, end = w.get("start_date") or "", w.get("end_date") or ""
+        inside = [d for d in by_day if start <= d <= end]
+        if inside:
+            w["planned_ctl_eow"] = by_day[max(inside)]
 
 
 def _recent_activities_for_planner(days: int = 30) -> list:
@@ -14839,72 +14754,51 @@ def _polarized_actual_from_rides(
     }
 
 
-def _planned_ctl_today(plan: dict, today: date) -> float | None:
-    """End-of-today planned CTL via forecast_ctl over daily TSS."""
-    if not plan or not plan.get("weeks"):
-        return None
+def _planned_ctl_by_day(plan: dict) -> dict:
+    """{day_iso: end-of-day CTL the plan projects}, from the plan's anchor:
+    the intervals.icu CTL stamped when it was generated (plan["ctl_snapshot"]),
+    on the day it was generated, forward over the stored sessions' TSS.
+
+    It started from a local EWMA over the FIT-only ride list, None for a rider
+    whose rides arrive from intervals.icu, and then from 37: a plan generated
+    at CTL 29.6 drew its band around 38.6 (the audit's S-2). A plan with no
+    anchor has no curve."""
+    snap = (plan or {}).get("ctl_snapshot") or {}
     try:
-        import ride_storage as _rs
-        start_ctl = _rs.compute_local_ctl()
-    except Exception:
-        start_ctl = None
-    if start_ctl is None:
-        start_ctl = 37.0
-
-    # Walk plan sessions chronologically, picking up daily TSS by day-iso.
-    daily_tss: list[float] = []
-    days: list[str] = []
-    for w in plan.get("weeks", []):
-        for s in (w.get("sessions") or []):
+        start_ctl = float(snap.get("current_ctl"))
+    except (TypeError, ValueError):
+        return {}
+    anchor = str(snap.get("generated_on") or "")[:10]
+    tss_by_day: dict = {}
+    for w in (plan or {}).get("weeks") or []:
+        for s in w.get("sessions") or []:
             day = s.get("day") or ""
-            if not day:
-                continue
-            try:
-                t = float(s.get("tss_estimate") or 0)
-            except (TypeError, ValueError):
-                t = 0.0
-            days.append(day)
-            daily_tss.append(t)
+            if day and anchor and day >= anchor:
+                try:
+                    tss_by_day[day] = tss_by_day.get(day, 0.0) + float(s.get("tss_estimate") or 0)
+                except (TypeError, ValueError):
+                    pass
+    if not tss_by_day:
+        return {}
+    first = date.fromisoformat(anchor)
+    last = date.fromisoformat(max(tss_by_day))
+    days = [(first + timedelta(days=i)).isoformat() for i in range((last - first).days + 1)]
+    series = tp.forecast_ctl(start_ctl, [tss_by_day.get(d, 0.0) for d in days])
+    # forecast_ctl prepends the start: series[i + 1] is the end of days[i].
+    return {d: float(series[i + 1]) for i, d in enumerate(days)}
 
-    if not days:
-        return None
-    series = tp.forecast_ctl(start_ctl, daily_tss)
+
+def _planned_ctl_today(plan: dict, today: date) -> float | None:
+    """End-of-today CTL the plan projects (see _planned_ctl_by_day)."""
+    by_day = _planned_ctl_by_day(plan)
     today_iso = today.isoformat()
-    # forecast_ctl prepends start_ctl, so series[i+1] = end of days[i].
-    for i, d in enumerate(days):
-        if d == today_iso:
-            return float(series[i + 1])
-        if d > today_iso:
-            return float(series[i])  # prior day's end-of-day CTL
-    return float(series[-1])
+    past = [d for d in by_day if d <= today_iso]
+    return by_day[max(past)] if past else None
 
 
 def _actual_ctl_today(rides: list[dict], today: date) -> float | None:
-    """Best-effort actual CTL: prefer ICU wellness, fall back to local.
-
-    v1.3.3 perf: route through ``cached()`` (5-min TTL) instead of calling
-    ``fetch_wellness`` directly. Pre-fix every /api/calendar served the
-    homepage triggered a 200-400ms ICU HTTP round-trip here AND another in
-    ``_hrv_trend_score``, blocking the dashboard's main paint. The cache
-    key matches the one ``/api/wellness?days=7`` already uses so the two
-    paths share a single TTL window.
-    """
-    try:
-        wellness = cached("wellness_7", lambda: fetch_wellness(7))
-        if wellness:
-            for w in reversed(wellness):
-                if w.get("ctl") is not None:
-                    return float(w["ctl"])
-    except Exception:
-        pass
-    try:
-        import ride_storage as _rs
-        v = _rs.compute_local_ctl()
-        if v is not None:
-            return float(v)
-    except Exception:
-        pass
-    return None
+    """Today's CTL from the fitness owner (intervals.icu); None when unknown."""
+    return _fitness_state(today)["ctl"]
 
 
 def _intensity_dist_match(actual: dict, target: dict) -> float:
@@ -16816,7 +16710,7 @@ def api_plan_auto_recalc():
                     readiness = {}
                     try:
                         training = cached("training", get_today_metrics)
-                        current_ctl = training.get("ctl") or 30
+                        current_ctl = _planning_ctl()
                         g = plan.get("goal", {})
                         goal = tp.goal_from_dict(g)
                         if goal.target_date:           # one that parses
@@ -16832,7 +16726,7 @@ def api_plan_auto_recalc():
 
         # Recalc needed — rebuild plan
         training = cached("training", get_today_metrics)
-        current_ctl = training.get("ctl") or 30
+        current_ctl = _planning_ctl()
 
         # Reconstruct Goal via the canonical helper — the old inline build here
         # dropped distribution/custom_bands/events/block_periodization/
@@ -19877,35 +19771,15 @@ def _build_programme_summary(plan: dict) -> dict:
         eftp_end_w = int(round(ftp_end)) if ftp_end else None
 
     # ── CTL gain ───────────────────────────────────────────────────────────
-    try:
-        import ride_storage as _rs
-        ctl_end_val = _rs.compute_local_ctl()
-    except Exception:
-        ctl_end_val = None
-    ctl_start_val = None
-    try:
-        import datetime as _dt
-        if start_date:
-            start_d = _dt.date.fromisoformat(start_date)
-            per_day: dict[str, float] = {}
-            for r in all_rides:
-                d = _ride_started_iso_date(r)
-                if not d or d > start_date:
-                    continue
-                tss = (r.get("summary") or {}).get("tss") or 0
-                if not tss:
-                    continue
-                per_day[d] = per_day.get(d, 0.0) + float(tss)
-            if per_day:
-                ctl = 0.0
-                d_iter = _dt.date.fromisoformat(min(per_day.keys()))
-                while d_iter <= start_d:
-                    tss_today = per_day.get(d_iter.isoformat(), 0.0)
-                    ctl = ctl + (tss_today - ctl) / 42.0
-                    d_iter += _dt.timedelta(days=1)
-                ctl_start_val = round(ctl, 1)
-    except Exception:
-        ctl_start_val = None
+    # intervals.icu's CTL on the first day and on the last (today's live when
+    # the window runs to today). It was a local EWMA over the FIT-only rides,
+    # None at the end and a guess at the start for a rider on intervals.icu.
+    import fitness
+    ctl_start_val = fitness.stored_ctl_on(start_date) if start_date else None
+    if end_date and end_date < clock.today().isoformat():
+        ctl_end_val = fitness.stored_ctl_on(end_date)
+    else:
+        ctl_end_val = _fitness_state()["ctl"]
 
     ctl_block = {
         "start": ctl_start_val,

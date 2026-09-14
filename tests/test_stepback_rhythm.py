@@ -247,39 +247,29 @@ def test_a_week_ridden_as_prescribed_loaded_the_rider_whatever_its_budget():
     assert tp.stepback_due(weeks, "build1")
 
 
-def test_the_home_cards_week_unloads_when_the_plan_does(tmp_path, monkeypatch):
+def test_the_home_cards_week_unloads_when_the_plan_does():
     """The home page's week counted weeks from the plan's first Monday and
     unloaded one late: weeks 5, 9 and 13 against the plan's 4, 8 and 12 (the
-    Step 5 review, L3). It reads the plan's own week."""
+    Step 5 review, L3). Since 2026-09-14 the card reads the stored week
+    through src/week_view.py, whose flag is the row's own."""
+    import week_view
     weeks = _generated()
-    (tmp_path / "current_plan.json").write_text(
-        json.dumps({"weeks": [tp.week_to_dict(w) for w in weeks]}))
-    monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
-    card, plan = [], []
-    for w in weeks[:12]:
-        _TODAY[0] = w.start
-        card.append(tp.generate_weekly_plan(_goal(), current_ctl=50).is_stepback)
-        plan.append(w.is_stepback)
-    assert any(plan), "no stepback in the first twelve weeks, so this proves nothing"
-    assert card == plan
-
-
-def test_after_the_plan_the_home_card_keeps_its_rhythm(tmp_path, monkeypatch):
-    """Past the plan's last week the card switched to ISO week numbers, which
-    put up to 8 weeks between two unloads (the fix review, F3). It carries the
-    plan's 3:1 on from the plan's last unload week."""
-    weeks = _generated()
-    (tmp_path / "current_plan.json").write_text(
-        json.dumps({"weeks": [tp.week_to_dict(w) for w in weeks]}))
-    monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
-    anchor = max(w.end for w in weeks if _unload(w))       # the last week it unloads
-    anchor -= timedelta(days=anchor.weekday())
-    first = weeks[-1].end + timedelta(days=7 - weeks[-1].end.weekday())
-    card, want = [], []
-    for i in range(9):
-        monday = first + timedelta(weeks=i)
-        _TODAY[0] = monday
-        card.append(tp.generate_weekly_plan(_goal(), current_ctl=50).is_stepback)
-        want.append((monday - anchor).days // 7 % tp.STEP_BACK_EVERY == 0)
-    assert any(want)
+    plan = {"weeks": [tp.week_to_dict(w) for w in weeks]}
+    card = [week_view.build(plan, w.start - timedelta(days=w.start.weekday()), {},
+                            tp._session_type_from_row).is_stepback for w in weeks[:12]]
+    want = [w.is_stepback for w in weeks[:12]]
+    assert any(want), "no stepback in the first twelve weeks, so this proves nothing"
     assert card == want
+
+
+def test_after_the_plan_the_home_card_has_no_week():
+    """Past the plan's last week the card used to invent a 3:1 rhythm of its
+    own (the fix review, F3, then carried the plan's on). A week no stored
+    row covers is "no plan on record" now: no stepback, no budget."""
+    import week_view
+    weeks = _generated()
+    plan = {"weeks": [tp.week_to_dict(w) for w in weeks]}
+    first = weeks[-1].end + timedelta(days=7 - weeks[-1].end.weekday())
+    for i in range(9):
+        view = week_view.build(plan, first + timedelta(weeks=i), {}, tp._session_type_from_row)
+        assert (view.on_record, view.is_stepback, view.budget, view.planned_tss) == (False, False, None, None)

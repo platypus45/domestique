@@ -258,26 +258,26 @@ def test_extend_budgets_the_week_it_appends():
     assert appended.tss_target != fallback, (appended.tss_target, label)
 
 
-def test_the_home_card_sizes_the_plans_own_week(monkeypatch, tmp_path):
+def test_the_home_card_sizes_the_plans_own_week():
     """The home card (/api/weekly-plan) sized its week from the phase's label,
     a projection that runs above the built weeks: 694 TSS for a build week the
-    plan budgets at 540 (the part 3 review, M2). It reads the plan's own rows."""
-    import json
+    plan budgets at 540 (the part 3 review, M2). Since 2026-09-14 it reads the
+    stored week through src/week_view.py: its planned load is the week's
+    sessions and its budget the row's."""
+    import week_view
     goal = tp.Goal(goal_type="event", event_type="granfondo", event_km=160,
                    event_climb_m=2000, target_date=MONDAY + timedelta(weeks=16, days=5),
                    hours_per_week=12.0, max_weekday_hours=2.0, max_weekend_hours=4.5,
                    available_days=[1, 2, 3, 4, 5, 6], rest_days=[0], plan_weeks=0)
     phases, weeks = tp.generate_plan(goal, seed_salt=1, current_ctl=43.0,
                                      recent_weekly_tss=300.0, athlete=ATHLETE)
-    monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
-    (tmp_path / "current_plan.json").write_text(json.dumps(
-        {"goal": tp.goal_to_dict(goal), "weeks": [tp.week_to_dict(w) for w in weeks]}))
     week = next(w for w in weeks if w.phase == "build2" and not w.is_stepback)
     phase = next(p for p in phases if p.name == "build2")
     assert phase.weekly_tss_target > 1.15 * week.tss_target      # the label runs above
-    _TODAY[0] = week.start
-    card = tp.generate_weekly_plan(goal=goal, current_phase=phase, current_ctl=43.0)
-    assert _load(card) <= 1.10 * week.tss_target, (_load(card), week.tss_target)
+    plan = {"weeks": [tp.week_to_dict(w) for w in weeks]}
+    card = week_view.build(plan, week.start, {}, tp._session_type_from_row)
+    assert card.planned_tss == _load(week)
+    assert card.budget == week.tss_target
 
 
 def _week(i, loads, stepback=False, target=0.0, away=False):

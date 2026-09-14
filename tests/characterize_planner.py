@@ -10,9 +10,10 @@ blessed.
 HOW. Everything runs hermetically (tests/_gate_env.py: empty data home, no
 network, frozen "today", pinned athlete id), over two matrices:
 
-  builders  plan_week and generate_weekly_plan over availability x target x
+  builders  plan_week over availability x target x
             stepback x completed load x week number. Cheap; they pin the week
-            skeleton and the home page's week.
+            skeleton. (generate_weekly_plan, the home page's second planner,
+            was deleted on 2026-09-14; its eight cases went with it.)
   entries   every entry point driven into its real body -- generate (Monday,
             and Thursday with Mon-Wed already ridden), regenerate around owned
             sessions, extend with a horizon gap (and one reaching a stepback),
@@ -102,11 +103,6 @@ def builder_cases():
     for wk in (1, 2, 3, 5, 8):
         out.append((f"weeknum/{wk}", lambda w=wk: tp.plan_week(
             w, ANCHOR, _phase(272), _goal((5, 6), 3.0), False, seed_salt=SEED)))
-    for sname, rest in shapes:
-        for target in (200, 350):
-            out.append((f"weekly/{sname}/target{target}",
-                        lambda r=rest, t=target: tp.generate_weekly_plan(
-                            goal=_goal(r, 3.0), current_phase=_phase(t), current_ctl=40.0)))
     return out
 
 

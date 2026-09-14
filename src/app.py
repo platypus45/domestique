@@ -13925,7 +13925,7 @@ async def api_plan_move_session(request: Request):
         # required BOTH src and dst to be inside the same stored week,
         # but stored weeks in current_plan.json may use legacy Fri-Thu
         # boundaries (or Sat-Fri on older plans), while the dashboard
-        # UI renders the week as Mon-Sun (``tp.generate_weekly_plan``).
+        # UI renders the week as Mon-Sun (src/week_view.py).
         # That meant Tue 04-21 → Fri 04-24 (same ISO week 17) was
         # rejected because they sat in adjacent stored Fri-Thu slices.
         # Root cause: comparison axis mismatch between UI (ISO) and

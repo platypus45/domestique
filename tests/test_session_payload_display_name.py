@@ -287,10 +287,10 @@ class TestWeeklyPlanPayloadIncludesDisplayName(_BasePayloadTest):
     zwo_duration_min on each session. The endpoint is what /api/today-session
     consumes for the today card, so the cascade must work there too.
 
-    Note: /api/weekly-plan regenerates the weekly tile on-the-fly via
-    tp.generate_weekly_plan, then merges stored fields by date overlap. The
-    display_name lookup happens after the merge — so the field is present
-    on every session whose stored zwo_file matches a fixture entry.
+    Note: /api/weekly-plan serves the stored week through src/week_view.py
+    (it regenerated the tile with tp.generate_weekly_plan until 2026-09-14),
+    so the field is present on every session whose stored zwo_file matches a
+    fixture entry.
     """
 
     def test_weekly_plan_payload_includes_display_name(self):

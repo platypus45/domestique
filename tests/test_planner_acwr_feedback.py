@@ -1,13 +1,12 @@
 """v4.6.6 IMPL-A — ACWR injury-prevention feedback loops.
 
-Five tests cover the new injury-prevention paths:
+Four tests cover the injury-prevention paths:
   G4 ACWR weekly scaling (Gabbett 2016 Br J Sports Med 50:273-280)
     1. test_acwr_under_threshold_no_scaling   — 100% week is fine
     2. test_acwr_over_threshold_scales_next_week — 200% week → 0.85× next
     3. test_acwr_decrements_hit_per_week      — same → hit_per_week -= 1
-  generate_weekly_plan rolling-deficit subtract path (Soligard 2016
-  IOC consensus Br J Sports Med 50:1030-1041)
-    4. test_rollover_surplus_subtracts        — 130%+ overshoot → cut
+  (4. test_rollover_surplus_subtracts pinned generate_weekly_plan, the home
+  card's second planner, deleted 2026-09-14: the card reads the stored week.)
   /api/rides/sync post-ride sync hook (Foster 1998 Med Sci Sports
   Exerc 30:1164-1168)
     5. test_rides_sync_emits_load_alert       — TSS=2× estimate → flag
@@ -138,95 +137,6 @@ class TestACWRReforecastGate(unittest.TestCase):
         # Floor at 1 — even huge ratios shouldn't zero out HIT.
         self.assertEqual(self.weeks[2].hit_per_week, 2)
         self.assertTrue(self.weeks[2].auto_acwr_scaled)
-
-
-class TestRolloverSurplusSubtract(unittest.TestCase):
-    """generate_weekly_plan() must subtract surplus when last week >130% target."""
-
-    def test_rollover_surplus_subtracts(self):
-        """Last week 200% of weekly_tss → current week reduced + HIT cut.
-
-        Compares the surplus case against the baseline (no recent activities)
-        with identical phase/goal to isolate the subtract path. The directive
-        is to "subtract min(surplus, weekly_tss × 0.20) AND decrement
-        hit_per_week by 1" — both observable effects are asserted.
-        """
-        # The planner clock MUST be pinned here. generate_weekly_plan derives
-        # its step-back flag from the real calendar — is_stepback = ISO week %
-        # 4 == 0 — so on any week divisible by 4 the baseline week is itself a
-        # deload and the measured reduction is the deload plus the surplus cut,
-        # not the surplus cut. Unpinned, this test passed for three weeks out
-        # of every four and asserted nothing about the surplus path on the
-        # fourth. conftest.PLANNER_PIN_ANCHOR is ISO week 2.
-        from conftest import FrozenPlannerDate
-        mp = pytest.MonkeyPatch()
-        self.addCleanup(mp.undo)
-        mp.setattr(tp, "date", FrozenPlannerDate)
-        today = tp.date.today()
-        monday = today - timedelta(days=today.weekday())
-        last_week_start = monday - timedelta(days=7)
-        phase = tp.Phase(
-            name="base",
-            start=monday - timedelta(days=30),
-            end=monday + timedelta(days=60),
-            weeks=12,
-            focus="aerobic base",
-            weekly_tss_target=400.0,
-            z2_pct=80.0,
-            hit_per_week=2,
-            session_types=["z2", "threshold", "vo2max"],
-        )
-        goal = tp.Goal(goal_type="general", hours_per_week=8.0,
-                       rest_days=[0], available_days=[1, 2, 3, 4, 5, 6])
-        # Baseline: no activities → surplus path skipped entirely.
-        week_baseline = tp.generate_weekly_plan(
-            goal=goal, current_phase=phase, current_ctl=50.0,
-            recent_activities=[],
-        )
-        baseline_hit_count = sum(
-            1 for s in week_baseline.sessions
-            if s is not None and s.session_type in {
-                "vo2max", "threshold", "overunder",
-                "sweetspot", "sprint", "tempo",
-            }
-        )
-        # Surplus case: last week 600 TSS = 150% of 400 → trips 1.3× gate.
-        recent_activities = [
-            {"date": (last_week_start + timedelta(days=i)).isoformat(),
-             "tss": 200.0}
-            for i in (1, 3, 5)
-        ]
-        week_surplus = tp.generate_weekly_plan(
-            goal=goal, current_phase=phase, current_ctl=50.0,
-            recent_activities=recent_activities,
-        )
-        surplus_hit_count = sum(
-            1 for s in week_surplus.sessions
-            if s is not None and s.session_type in {
-                "vo2max", "threshold", "overunder",
-                "sweetspot", "sprint", "tempo",
-            }
-        )
-        # 1) tss_target visibly reduced vs baseline (the cut went through
-        #    weekly_tss → fewer/shorter sessions placed downstream).
-        self.assertLess(
-            week_surplus.tss_target, week_baseline.tss_target,
-            f"surplus tss_target ({week_surplus.tss_target}) should be "
-            f"strictly less than baseline ({week_baseline.tss_target})",
-        )
-        # The reduction must respect the 20%-of-weekly_tss cap (≤80 cut)
-        # plus rounding/HIT-placement slack.
-        reduction = week_baseline.tss_target - week_surplus.tss_target
-        self.assertLessEqual(
-            reduction, 400 * 0.20 + 50,
-            f"reduction {reduction} exceeded 20%-of-target cap (+slack)",
-        )
-        # 2) hit_per_week decremented by 1 → at least one fewer HIT placed.
-        self.assertLess(
-            surplus_hit_count, baseline_hit_count,
-            f"surplus HIT count ({surplus_hit_count}) should be "
-            f"strictly less than baseline ({baseline_hit_count})",
-        )
 
 
 class TestRidesSyncLoadAlert(unittest.TestCase):

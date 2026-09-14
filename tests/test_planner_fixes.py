@@ -18,7 +18,6 @@ from training_planner import (
     Phase,
     generate_plan,
     generate_phases,
-    generate_weekly_plan,
     plan_week,
     _pick_session,
 )
@@ -97,40 +96,6 @@ class TestFix1StepbackReduction(unittest.TestCase):
         # midpoint. One named constant, so no builder can drift from it.
         import training_planner as tp
         self.assertEqual(tp.STEPBACK_LOAD_FACTOR, 0.72)
-
-    def test_plan_week_and_generate_weekly_plan_match(self):
-        # The same factor in both builders, measured on what they return. The
-        # old checks searched their source for the literal "0.72", so naming
-        # the constant broke them while changing nothing a rider sees.
-        import tempfile
-        from datetime import timedelta
-        from pathlib import Path
-        from unittest import mock
-        import training_planner as tp
-        phase = _make_base_phase(date(2026, 4, 6), weekly_tss=500)
-        goal = _make_goal()
-        # With no stored plan, generate_weekly_plan unloads by ISO week number:
-        # a Monday on such a week, and the Monday after it.
-        monday = date(2026, 9, 7)
-        while monday.isocalendar()[1] % tp.STEP_BACK_EVERY:
-            monday += timedelta(days=7)
-
-        def week_tss(d):
-            class _Today(date):
-                @classmethod
-                def today(cls):
-                    return cls(d.year, d.month, d.day)
-            with tempfile.TemporaryDirectory() as tmp, \
-                    mock.patch.object(tp, "PLAN_DIR", Path(tmp)), \
-                    mock.patch.object(tp, "date", _Today):
-                return tp.generate_weekly_plan(goal, current_phase=phase,
-                                               current_ctl=40).tss_target
-
-        weekly = week_tss(monday) / week_tss(monday + timedelta(days=7))
-        planned = (plan_week(2, monday, phase, goal, is_stepback=True).tss_target
-                   / plan_week(1, monday, phase, goal, is_stepback=False).tss_target)
-        self.assertAlmostEqual(weekly, tp.STEPBACK_LOAD_FACTOR, places=2)
-        self.assertAlmostEqual(planned, tp.STEPBACK_LOAD_FACTOR, places=2)
 
 class TestFix2TempoNotHIT(unittest.TestCase):
     """Tempo sessions are not counted as HIT."""
@@ -214,16 +179,16 @@ class TestFix2TempoNotHIT(unittest.TestCase):
 class TestFix3ThreeDayWeekHITScaling(unittest.TestCase):
     """3-day weeks cap HIT at 1 so at least one Z2 session remains."""
 
-    def _gen_week_with_days(self, available_days, rest_days, phase_name="build2"):
+    def _gen_week_with_days(self, available_days, rest_days, phase_name="build2", seed=0):
+        """The week the planner builds (plan_week). These tests pinned
+        generate_weekly_plan, the home card's second planner, until it was
+        deleted on 2026-09-14; plan_week honours the same cap."""
         goal = _make_goal(available_days=available_days, rest_days=rest_days)
         if phase_name == "build2":
             phase = _make_build2_phase(date(2026, 4, 6), weekly_tss=700)
         else:
             phase = _make_base_phase(date(2026, 4, 6), weekly_tss=500)
-        # Use generate_weekly_plan which contains the max_hit scaling logic.
-        # Patch PLAN_DIR so no file IO is needed.
-        with patch("training_planner.get_today_metrics", return_value={"ctl": 45.0}):
-            return generate_weekly_plan(goal=goal, current_phase=phase, current_ctl=45.0)
+        return plan_week(1, date(2026, 4, 6), phase, goal, False, seed_salt=seed)
 
     def test_three_day_week_has_at_least_one_z2(self):
         # Tue (1), Thu (3), Sun (6). Rest on all others.

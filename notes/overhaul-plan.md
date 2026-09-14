@@ -257,6 +257,19 @@ tests/probe_entry_point_parity.py 40 [--owner]      # invariants per entry point
   21/21 event regenerate, recalculate and reforecast runs; weekly volume over
   budget for 10–33 riders on every entry point.
 
+**Corrected 2026-09-14 (the audit's test lens).** The self-test had been
+failing: `reforecast@21` on the event riders changed nothing, so two entry
+cases were blind to any fault. The driver now zeroes the day after t and
+frees 3 h the day after that, which reaches the availability block (the pass
+that inflated production until 9138110d), and the self-test passes: 7/7
+entry points, 5/5 planted faults. The compare now fails on a new invariant
+hit, which it had only printed before; 93 hits sit in the golden from
+earlier blesses, each recorded there. The driver repair itself moved four
+cases and raised one new `daily_duration_cap`: an explicit 3 h override on a
+weekday capped at 2 h grows the day past the goal's cap. That is the
+recorded rule (an explicit block beats the goal, D5) and the auditor's rule
+disagreeing: for Step 7, availability as one derivation.
+
 ### Step 1 — one workout identity (R2) — DONE
 
 - One content-class resolver: `_content_class_for_zwo` falls back to the same

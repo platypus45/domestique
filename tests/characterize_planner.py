@@ -219,7 +219,10 @@ def compare(want, got):
         if not (added or removed or changed or inv_new or inv_gone):
             print(f"  {section}: {len(g)} cases, all unchanged")
             continue
-        if added or removed or changed:
+        # A new invariant hit fails the compare like a fingerprint change:
+        # until 2026-09-14 it was only printed, and 93 hits were blessed
+        # into the golden without the gate ever refusing one.
+        if added or removed or changed or inv_new:
             rc = 1
         print(f"  {section}: {len(changed)} changed ({len(changed) - len(content_only)} load, "
               f"{len(content_only)} content only), {len(added)} added, "
@@ -239,6 +242,13 @@ def compare(want, got):
         n_gone = sum(len(v) for v in inv_gone.values())
         if n_new or n_gone:
             print(f"    invariants: {n_new} new, {n_gone} resolved")
+            by_rule: dict = {}
+            for v in inv_new.values():
+                for f in v:
+                    r = f.split(':', 1)[0]
+                    by_rule[r] = by_rule.get(r, 0) + 1
+            if by_rule:
+                print('    new by rule: ' + ', '.join(f'{r} {n}' for r, n in sorted(by_rule.items())))
         for k, v in sorted(inv_new.items())[:10]:
             print(f"    !! {k}: new {v}")
         for k, v in sorted(inv_gone.items())[:10]:

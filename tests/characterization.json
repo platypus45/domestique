@@ -28362,9 +28362,9 @@
       ],
       [
        "2026-10-07",
-       "rest",
-       0,
-       0.0,
+       "z2",
+       21,
+       16.0,
        "",
        "pending"
       ],
@@ -36039,17 +36039,17 @@
       ],
       [
        "2026-10-06",
-       "z2",
-       92,
-       67.0,
-       "endurance_steady_61pct_91min.zwo",
+       "rest",
+       0,
+       0.0,
+       "",
        "pending"
       ],
       [
        "2026-10-07",
-       "rest",
-       0,
-       0.0,
+       "z2",
+       136,
+       102.0,
        "",
        "pending"
       ],
@@ -36766,7 +36766,9 @@
      ]
     ]
    ],
-   "inv": []
+   "inv": [
+    "daily_duration_cap:4"
+   ]
   },
   "event/wkend5h/regenerate@17": {
    "fp": [
@@ -62426,18 +62428,18 @@
       ],
       [
        "2026-10-06",
-       "z2",
-       105,
-       75.0,
-       "endurance_steady_68pct_105min.zwo",
+       "rest",
+       0,
+       0.0,
+       "",
        "pending"
       ],
       [
        "2026-10-07",
        "z2",
-       41,
-       29.7,
-       "tempo_6x40s_76pct_41min.zwo",
+       180,
+       135.0,
+       "endurance_steady_74pct_170min.zwo",
        "pending"
       ],
       [
@@ -63153,7 +63155,9 @@
      ]
     ]
    ],
-   "inv": []
+   "inv": [
+    "daily_duration_cap:4"
+   ]
   },
   "event/wkend3h/regenerate@17": {
    "fp": [
@@ -70113,18 +70117,18 @@
       ],
       [
        "2026-10-06",
-       "z2",
-       100,
-       72.0,
-       "endurance_steady_68pct_95min.zwo",
+       "rest",
+       0,
+       0.0,
+       "",
        "pending"
       ],
       [
        "2026-10-07",
        "z2",
-       48,
-       35.0,
-       "endurance_steady_68pct_48min_v2.zwo",
+       174,
+       130.0,
+       "endurance_steady_74pct_180min.zwo",
        "pending"
       ],
       [
@@ -70840,7 +70844,9 @@
      ]
     ]
    ],
-   "inv": []
+   "inv": [
+    "daily_duration_cap:4"
+   ]
   },
   "event/wkend5h/regenerate@17": {
    "fp": [

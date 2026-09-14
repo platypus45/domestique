@@ -225,20 +225,30 @@ def _refit(days):
     return drive
 
 
-def _reforecast(days, tsb=None):
+def _reforecast(days, tsb=None, avail=False):
     """tsb: a Training Stress Balance held for the past two weeks, which is
     what reaches the TSB downshift loop -- the one that rewrote sessions the
-    athlete had dragged or dismissed (dupes.md DUP-23)."""
+    athlete had dragged or dismissed (dupes.md DUP-23).
+    avail: the rider zeroes tomorrow and frees 3 h the day after, which is
+    what reaches the availability block -- the pass that inflated every
+    production plan until it was capped (9138110d). Without a reading or an
+    override the entry point changes nothing, and the self-test said so for
+    every reforecast@21 case (the audit's test lens, 2026-09-14)."""
     def drive(r, base):
         t = _day(days)
         rs = rides(t - _dt.timedelta(days=14), t - _dt.timedelta(days=1))
         series = (None if tsb is None else
                   {t - _dt.timedelta(days=i): float(tsb) for i in range(15)})
+        overrides = None
+        if avail:
+            overrides = {(t + _dt.timedelta(days=1)).isoformat(): 0.0,
+                         (t + _dt.timedelta(days=2)).isoformat(): 3.0}
         wk = copy.deepcopy(base)
         if tsb is not None:
             own_some(wk, t)
         at(t)
-        return tp.reforecast(r.goal(), wk, tsb_series=series, recent_activities=rs)[0], rs, t
+        return tp.reforecast(r.goal(), wk, tsb_series=series, recent_activities=rs,
+                             availability_overrides=overrides)[0], rs, t
     return drive
 
 
@@ -369,7 +379,7 @@ DRIVERS = {
     "refit@3": _refit(3),
     # Thursday of week 4: the current week is itself a stepback (gates.md E08).
     "refit@24": _refit(24),
-    "reforecast@21": _reforecast(21),
+    "reforecast@21": _reforecast(21, avail=True),
     "reforecast-tsb@3": _reforecast(3, tsb=-40),
     "reforecast-dict@3": _reforecast_dict(3, tsb=-40),
     "daily-adapt@3": _daily_adapt(3),

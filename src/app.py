@@ -11369,6 +11369,36 @@ def api_event_projection():
     return projection
 
 
+def _replaced_weeks_before(old_plan: dict, cutoff: date) -> list[dict]:
+    """The rows of ``old_plan`` a Generate replaces, as far as they were
+    prescribed before ``cutoff``: every session dated before it, in its row,
+    the row's end clipped to the day before. Rows the old plan had itself
+    carried come along, and a day is kept once (the newer plan's).
+
+    They are stored apart from ``weeks`` because the planner reads a plan's
+    elapsed ``weeks`` as its own past (Regenerate's week numbers and 3:1
+    rhythm); only the readers read these (week_view.build, the calendar)."""
+    cutoff_iso = cutoff.isoformat()
+    stamp = clock.today().isoformat()
+    taken: set[str] = set()
+    out: list[dict] = []
+    for row in list(old_plan.get("weeks") or []) + list(old_plan.get("replaced_weeks") or []):
+        if not isinstance(row, dict) or (row.get("start") or "") >= cutoff_iso:
+            continue
+        sessions = [s for s in (row.get("sessions") or [])
+                    if isinstance(s, dict) and "" < (s.get("day") or "") < cutoff_iso
+                    and s["day"] not in taken]
+        if not sessions:
+            continue
+        taken.update(s["day"] for s in sessions)
+        kept = dict(row, sessions=sessions)
+        if (kept.get("end") or "") >= cutoff_iso:
+            kept["end"] = (cutoff - timedelta(days=1)).isoformat()
+        kept.setdefault("carried_from_generate", stamp)
+        out.append(kept)
+    return sorted(out, key=lambda w: w.get("start") or "")
+
+
 @app.post("/api/plan/generate")
 async def api_plan_generate(request: Request):
     """Generate a training plan from UI form data."""
@@ -11513,6 +11543,7 @@ async def api_plan_generate(request: Request):
         json_path = _plan_dir() / "current_plan.json"
         availability_overrides: dict[str, float] = {}
         old_availability_full: dict = {}  # v1.8.21 — keep type info for block-preserve
+        _existing_plan = None
         if json_path.exists():
             try:
                 with open(json_path, encoding="utf-8") as f:
@@ -11654,6 +11685,15 @@ async def api_plan_generate(request: Request):
                                         "type": "available" if _h > 0 else "rest"}
                 _d += _one
             plan_dict["availability"] = _new_avail
+
+        # What the rider was prescribed before this plan stays on record
+        # (week-view contract P4, A5): the calendar's history rows and the
+        # Last-week card read it through the week view.
+        if weeks and isinstance(_existing_plan, dict):
+            _replaced = _replaced_weeks_before(
+                _existing_plan, min(min(w.start for w in weeks), clock.today()))
+            if _replaced:
+                plan_dict["replaced_weeks"] = _replaced
 
         # v2.3.0 — realized training-type distribution (honest, computed from the
         # generated sessions) for the UI's "% distribution" readout.
@@ -15102,7 +15142,8 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
     }
 
     # ── Past 12 weeks of history + plan weeks (avoid double-counting) ───────
-    plan_weeks = plan.get("weeks", []) if plan else []
+    # A replaced plan's prescriptions (api_plan_generate) are on record too.
+    plan_weeks = ((plan.get("replaced_weeks") or []) + (plan.get("weeks") or [])) if plan else []
     plan_dates: set[str] = set()
     for w in plan_weeks:
         for s in (w.get("sessions") or []):

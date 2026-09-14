@@ -140,7 +140,9 @@ def build(plan: Optional[dict], start: date, lib: dict, type_of_row: Callable[[d
     """The week beginning ``start`` (a Monday) as the stored ``plan`` has it."""
     end = start + timedelta(days=6)
     s_iso, e_iso = start.isoformat(), end.isoformat()
-    rows = [w for w in ((plan or {}).get("weeks") or [])
+    # A replaced plan's prescriptions (kept by Generate) are on record too.
+    stored = ((plan or {}).get("replaced_weeks") or []) + ((plan or {}).get("weeks") or [])
+    rows = [w for w in stored
             if (w.get("start") or "") <= e_iso and (w.get("end") or "") >= s_iso]
     by_day: dict[str, dict] = {}
     for w in rows:
@@ -191,11 +193,14 @@ def build(plan: Optional[dict], start: date, lib: dict, type_of_row: Callable[[d
             minutes += int(round(float(stored.get("duration_min") or 0)))
         sessions.append(out)
     owner = None
-    if rows:
+    # The current plan's rows own the week; a replaced plan's only when it has
+    # no row here (its budget is not the current one).
+    owners = [w for w in rows if not w.get("carried_from_generate")] or rows
+    if owners:
         # The row that owns the week: the one covering Monday, else the first.
-        owner = next((w for w in rows if (w.get("start") or "") <= s_iso), rows[0])
+        owner = next((w for w in owners if (w.get("start") or "") <= s_iso), owners[0])
     budget = None
-    if owner is not None and len(rows) == 1 and owner.get("tss_target") not in (None, ""):
+    if owner is not None and len(owners) == 1 and owner.get("tss_target") not in (None, ""):
         budget = float(owner["tss_target"])
     return WeekView(
         start=start, end=end, offset=offset, on_record=on_record,

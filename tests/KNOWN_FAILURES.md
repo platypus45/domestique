@@ -33,10 +33,14 @@ diff of failing IDs   empty, both directions
 
 | File | Failures | Why, as far as it goes |
 |---|---|---|
-| `test_fit_hr_mode.py` | 5 | FIT export in HR mode |
 | `test_tls_trust.py` | 4 | OpenSSL root/interceptor handling — environmental |
 | `test_download_pywebview_bridge.py` | 4 | `pywebview` is deliberately absent from the headless venv |
-| `test_ftp_test_freeride.py` | 2 | FIT export, open-target blocks |
+
+The seven FIT export failures once listed here (`test_fit_hr_mode.py` 5,
+`test_ftp_test_freeride.py` 2) were a real bug, not the environment: step
+durations were pre-multiplied by 1000 and fit_tool applied the field's 1000x
+scale again, so a 60-minute step decoded as 1,000 hours. Fixed 2026-09-14 by
+setting the seconds sub-field (`duration_time`) instead.
 
 A likely contributor to the first and last: a fresh worktree checks out
 **upstream's malformed `ftp_test_*.zwo` files**, the ones carrying `pace="warmup"`

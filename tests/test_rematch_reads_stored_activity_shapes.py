@@ -84,9 +84,16 @@ def _reconcile(rows, today=TODAY, plan=None, day_type=None):
     return by_day, moves
 
 
+_STARTS = iter(range(10_000))
+
+
 def _row(tss, minutes, intensity_pct, day=MONDAY, rid="r"):
+    """A ride as the activities table stores it, starting an hour after the
+    previous one built here (distinct rides do not start together)."""
+    hour = next(_STARTS) % 14 + 6
     return {**SQLITE_ROW, "id": rid, "date": day.isoformat(), "tss": float(tss), "duration_sec": minutes * 60,
-            "raw_json": json.dumps({"moving_time": minutes * 60, "icu_intensity": intensity_pct})}
+            "raw_json": json.dumps({"moving_time": minutes * 60, "icu_intensity": intensity_pct,
+                                    "start_date_local": f"{day}T{hour:02d}:00:00"})}
 
 
 MON = MONDAY.isoformat()
@@ -232,6 +239,17 @@ def test_sprints_beside_a_long_easy_ride_do_not_make_a_vo2_day():
 def test_commutes_alone_do_not_settle_an_interval_day():
     _, moves = _reconcile([_row(20, 30, 60, rid="am"), _row(24, 35, 62, rid="pm")], day_type=VO2_DAY)
     assert [m["from"] for m in moves] == [MON]
+
+
+def test_the_same_ride_from_two_sources_is_one_ride():
+    """Same buckets, same start (an intervals.icu copy and a FIT import)."""
+    a = {**_row(60, 50, 75, rid="icu"), "raw_json": json.dumps({"moving_time": 3000, "icu_intensity": 75,
+                                                             "start_date_local": f"{MONDAY}T10:00:05"})}
+    b = {**a, "id": "fit", "raw_json": json.dumps({"moving_time": 3000, "icu_intensity": 75,
+                                                   "start_date_local": f"{MONDAY}T10:00:00"})}
+    easy = {"session_type": "z2", "duration_min": 120, "tss_estimate": 100}
+    by_day, _ = _reconcile([a, b], day_type=easy)
+    assert by_day[MON]["status"] == "done_partial", "counted twice, 60 TSS would be 120: done"
 
 
 def test_two_identical_commutes_are_two_rides():

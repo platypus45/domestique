@@ -13399,7 +13399,7 @@ def _collect_week_activities(current_week, today: date, include_today: bool = Fa
     week_start_iso = current_week.start.isoformat()
     upper_iso = (today + timedelta(days=1)).isoformat() if include_today else today.isoformat()
     actual = []
-    seen_keys = set()
+    seen_keys: list = []
 
     def _add(a: dict):
         if not _is_cycling_sport(a.get("sport", "")):
@@ -13430,13 +13430,21 @@ def _collect_week_activities(current_week, today: date, include_today: bool = Fa
         # rides (e.g. a short hard session + a long commute) with near-equal TSS
         # are NOT collapsed; cross-source copies of the SAME ride share
         # date+tss+duration and still dedup.
-        # By activity id where there is one: two identical commutes are two
-        # rides. The fuzzy key is for rows without an id.
-        rid = a.get("id") or a.get("icu_id")
-        key = ("id", str(rid)) if rid else (d, round(tss / 5) * 5, round(dur_min / 5) * 5)
-        if key in seen_keys:
-            return
-        seen_keys.add(key)
+        # Two identical commutes are two rides, though: copies of one ride
+        # start within seconds of each other, commutes hours apart. So rows in
+        # the same buckets are one ride when their start times agree within
+        # two minutes, or when either start time is unknown.
+        key = (d, round(tss / 5) * 5, round(dur_min / 5) * 5)
+        start = None
+        try:
+            start = datetime.fromisoformat(str(raw.get("start_date_local") or a.get("start_date_local") or "")[:19])
+        except ValueError:
+            start = None
+        for seen_key, seen_start in seen_keys:
+            if seen_key == key and (start is None or seen_start is None
+                                    or abs((start - seen_start).total_seconds()) <= 120):
+                return
+        seen_keys.append((key, start))
         actual.append({
             "date": d,
             "tss": tss,

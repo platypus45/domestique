@@ -13430,7 +13430,10 @@ def _collect_week_activities(current_week, today: date, include_today: bool = Fa
         # rides (e.g. a short hard session + a long commute) with near-equal TSS
         # are NOT collapsed; cross-source copies of the SAME ride share
         # date+tss+duration and still dedup.
-        key = (d, round(tss / 5) * 5, round(dur_min / 5) * 5)
+        # By activity id where there is one: two identical commutes are two
+        # rides. The fuzzy key is for rows without an id.
+        rid = a.get("id") or a.get("icu_id")
+        key = ("id", str(rid)) if rid else (d, round(tss / 5) * 5, round(dur_min / 5) * 5)
         if key in seen_keys:
             return
         seen_keys.add(key)
@@ -15767,12 +15770,18 @@ def _reconcile_current_week(plan: dict, today: date) -> "tuple[int, dict | None]
     (_apply_plan_update, fired by ride-sync) calls it so completed rides are
     matched to planned sessions on sync — no manual "Reconcile Week" click.
     """
-    current_week, week_idx = _load_current_week_dto(plan, today)
-    if not current_week:
-        return 0, None
-    actual = _collect_week_activities(current_week, today, include_today=True)
-    preview = tp.rematch_week(current_week, actual, today)
-    n = _apply_rematch_preview_to_plan(plan, week_idx, preview)
+    # Yesterday's week too when today opens a new one: the rule for ridden
+    # days judges only days that are over, so a week's last day is judged the
+    # morning after, when it already belongs to the previous week.
+    n, preview, seen = 0, None, set()
+    for anchor in (today - timedelta(days=1), today):
+        week, week_idx = _load_current_week_dto(plan, anchor)
+        if not week or week_idx in seen:
+            continue
+        seen.add(week_idx)
+        actual = _collect_week_activities(week, today, include_today=True)
+        preview = tp.rematch_week(week, actual, today)
+        n += _apply_rematch_preview_to_plan(plan, week_idx, preview)
     if n:
         plan["last_rematch"] = clock.now().isoformat()
     return n, preview

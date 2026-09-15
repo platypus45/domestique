@@ -412,13 +412,16 @@ class TestFullWeekRestThenRestore(_AvailRestoreBase):
         (self._tmp / "current_plan.json").write_text(json.dumps(self._plan))
 
     def test_full_week_was_rest_then_one_day_restored(self):
-        # Restore Tue=4h while every other day stays at 0h.
-        tue = self._monday + timedelta(days=1)
+        # Restore Thu=4h while every other day stays at 0h. (It restored
+        # Tuesday until 2026-09-15; with "today" frozen on Wednesday that is a
+        # day already over, and the availability pass no longer rewrites
+        # those -- in production it turned a past rest stub into a z2 ride.)
+        thu = self._monday + timedelta(days=3)
         avail = {
             d.isoformat(): {"hours": 0, "type": "holiday"}
             for d in (self._monday + timedelta(days=i) for i in range(7))
         }
-        avail[tue.isoformat()] = {"hours": 4, "type": "available"}
+        avail[thu.isoformat()] = {"hours": 4, "type": "available"}
         # Cover next week too (just keep all rest).
         for off in range(7):
             d = self._monday + timedelta(days=7 + off)
@@ -428,10 +431,10 @@ class TestFullWeekRestThenRestore(_AvailRestoreBase):
         r = self.client.post("/api/plan/save-availability", json=body)
         self.assertEqual(r.status_code, 200, r.text)
         after_plan = self._read_plan()
-        after_tue = self._session(after_plan, tue)
-        self.assertEqual(after_tue["session_type"], "z2",
-                         "Tue must restore to z2 even when current_mins=0 across the week")
-        self.assertEqual(after_tue["duration_min"], 240)
+        after_thu = self._session(after_plan, thu)
+        self.assertEqual(after_thu["session_type"], "z2",
+                         "Thu must restore to z2 even when current_mins=0 across the week")
+        self.assertEqual(after_thu["duration_min"], 240)
 
 
 if __name__ == "__main__":

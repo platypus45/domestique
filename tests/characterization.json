@@ -16642,7 +16642,7 @@
        "tss_diff_pct": 3.9
       },
       "matched_axes": 1,
-      "new_status": "done_partial",
+      "new_status": "done",
       "score": 0.3333333333333333,
       "session_date": "2026-09-14",
       "session_type": "z2"
@@ -16666,7 +16666,7 @@
        "tss_diff_pct": 60.0
       },
       "matched_axes": 0,
-      "new_status": "done_partial",
+      "new_status": "missed",
       "score": 0.0,
       "session_date": "2026-09-15",
       "session_type": "sprint"
@@ -16690,7 +16690,7 @@
        "tss_diff_pct": 63.3
       },
       "matched_axes": 0,
-      "new_status": "done_partial",
+      "new_status": "done",
       "score": 0.0,
       "session_date": "2026-09-16",
       "session_type": "z2"
@@ -16730,9 +16730,9 @@
     "summary": {
      "ambiguous": 0,
      "dismissed": 0,
-     "done": 0,
-     "done_partial": 3,
-     "missed": 0,
+     "done": 2,
+     "done_partial": 0,
+     "missed": 1,
      "missed_race": 0,
      "no_match": 0,
      "pending": 2
@@ -37189,7 +37189,7 @@
        "tss_diff_pct": 22.3
       },
       "matched_axes": 0,
-      "new_status": "done_partial",
+      "new_status": "missed",
       "score": 0.0,
       "session_date": "2026-09-15",
       "session_type": "overunder"
@@ -37213,7 +37213,7 @@
        "tss_diff_pct": 73.9
       },
       "matched_axes": 0,
-      "new_status": "done_partial",
+      "new_status": "done",
       "score": 0.0,
       "session_date": "2026-09-16",
       "session_type": "z2"
@@ -37283,9 +37283,9 @@
     "summary": {
      "ambiguous": 0,
      "dismissed": 0,
-     "done": 0,
-     "done_partial": 2,
-     "missed": 0,
+     "done": 1,
+     "done_partial": 0,
+     "missed": 1,
      "missed_race": 0,
      "no_match": 0,
      "pending": 4
@@ -50724,7 +50724,7 @@
        "tss_diff_pct": 3.9
       },
       "matched_axes": 1,
-      "new_status": "done_partial",
+      "new_status": "done",
       "score": 0.3333333333333333,
       "session_date": "2026-09-14",
       "session_type": "z2"
@@ -50748,7 +50748,7 @@
        "tss_diff_pct": 60.0
       },
       "matched_axes": 0,
-      "new_status": "done_partial",
+      "new_status": "missed",
       "score": 0.0,
       "session_date": "2026-09-15",
       "session_type": "sprint"
@@ -50772,7 +50772,7 @@
        "tss_diff_pct": 63.3
       },
       "matched_axes": 0,
-      "new_status": "done_partial",
+      "new_status": "done",
       "score": 0.0,
       "session_date": "2026-09-16",
       "session_type": "z2"
@@ -50812,9 +50812,9 @@
     "summary": {
      "ambiguous": 0,
      "dismissed": 0,
-     "done": 0,
-     "done_partial": 3,
-     "missed": 0,
+     "done": 2,
+     "done_partial": 0,
+     "missed": 1,
      "missed_race": 0,
      "no_match": 0,
      "pending": 2
@@ -71268,7 +71268,7 @@
        "tss_diff_pct": 22.3
       },
       "matched_axes": 0,
-      "new_status": "done_partial",
+      "new_status": "missed",
       "score": 0.0,
       "session_date": "2026-09-15",
       "session_type": "overunder"
@@ -71292,7 +71292,7 @@
        "tss_diff_pct": 73.9
       },
       "matched_axes": 0,
-      "new_status": "done_partial",
+      "new_status": "done",
       "score": 0.0,
       "session_date": "2026-09-16",
       "session_type": "z2"
@@ -71362,9 +71362,9 @@
     "summary": {
      "ambiguous": 0,
      "dismissed": 0,
-     "done": 0,
-     "done_partial": 2,
-     "missed": 0,
+     "done": 1,
+     "done_partial": 0,
+     "missed": 1,
      "missed_race": 0,
      "no_match": 0,
      "pending": 4

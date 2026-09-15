@@ -16009,6 +16009,8 @@ async def api_plan_rematch(request: Request, apply: int = Query(0)):
                 changed, preview = _reconcile_current_week(plan, today)
                 plan["last_rematch"] = clock.now().isoformat()
                 tp.atomic_write_plan(json_path, plan)
+            # R3 (2026-07-07): "changed" is what this call matched; the UI
+            # showed the week's cumulative total on every planner open.
             return {"ok": True, "apply": True, "changed": changed, **preview}
 
         with open(json_path, encoding="utf-8") as f:
@@ -16022,18 +16024,7 @@ async def api_plan_rematch(request: Request, apply: int = Query(0)):
         actual = _collect_week_activities(current_week, today, include_today=True)
         preview = tp.rematch_week(current_week, actual, today)
 
-        if not apply:
-            return {"ok": True, "apply": False, **preview}
-
-        # R3 (2026-07-07): surface the CHANGED count — the helper always
-        # computed it and the endpoint discarded it, so the UI showed the
-        # week's cumulative match total ("6 rides reconciled") on every
-        # planner open even when nothing new happened.
-        changed = _apply_rematch_preview_to_plan(plan, week_idx, preview)
-        plan["last_rematch"] = clock.now().isoformat()
-        tp.atomic_write_plan(json_path, plan)
-
-        return {"ok": True, "apply": True, "changed": changed, **preview}
+        return {"ok": True, "apply": False, **preview}
 
     except Exception:
         _log.exception("Plan rematch failed")

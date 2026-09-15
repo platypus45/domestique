@@ -13863,6 +13863,16 @@ def _auto_apply_missed_moves(plan: dict, today: date) -> list[dict]:
     except Exception:
         _log.exception("auto-reschedule: suggestion compute failed")
         return []
+    # Only misses in the plan week containing today move on their own; an
+    # older week's are history. Reconcile also judges the previous plan week,
+    # and with weeks that are not Monday-Sunday its last day shares an ISO
+    # week with today, so a miss there was moved into the next plan week.
+    current = next((w for w in plan.get("weeks", []) or []
+                    if str(w.get("start", "")) <= today.isoformat() <= str(w.get("end", ""))), None)
+    if current is None:
+        return []
+    suggestions = [x for x in suggestions
+                   if str(current["start"]) <= str(x.get("missed_date", "")) <= str(current["end"])]
     applied: list[dict] = []
     for s in suggestions:
         src = s.get("missed_date")

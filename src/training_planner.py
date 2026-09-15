@@ -12013,6 +12013,10 @@ def reforecast(
                     s.description = REST_UNAVAILABLE
                     s.zwo_file = ""
                     s.zwo_name = ""
+                    if getattr(s, "status", "") == "missed":
+                        # A rest day is not owed: left "missed", the
+                        # auto-reschedule moved the rest onto another day.
+                        s.status = "pending"
                 elif s.session_type == "rest":
                     # v1.3.6 fix: rest-day → training-day restore. When the
                     # user raises hours from 0 → positive on a day previously
@@ -15293,25 +15297,8 @@ def _activity_if_band(activity: dict) -> str | None:
     Prefer intensity_factor. Fall back to sqrt(TSS / (duration_h * 100))
     which approximates IF via Coggan's TSS = IF^2 * hours * 100.
     """
-    if_ = activity.get("intensity_factor") or activity.get("icu_intensity")
-    try:
-        # intervals.icu's icu_intensity is a percentage (89.1 for IF 0.891);
-        # read as a factor, every ride landed in "anaerobic".
-        if if_ is not None and float(if_) > 3:
-            if_ = float(if_) / 100
-    except (TypeError, ValueError):
-        pass
+    if_ = _activity_if(activity)
     if if_ is None:
-        tss = float(activity.get("tss") or activity.get("icu_training_load") or 0)
-        dur_min = float(activity.get("duration_min") or (activity.get("moving_time", 0) or 0) / 60 or 0)
-        if dur_min > 0 and tss > 0:
-            if_sq = tss / (dur_min / 60 * 100)
-            if_ = if_sq ** 0.5 if if_sq > 0 else 0
-    try:
-        if_ = float(if_) if if_ is not None else 0.0
-    except (TypeError, ValueError):
-        return None
-    if if_ <= 0:
         return None
     if if_ < 0.65:
         return "low_aerobic"
@@ -15323,25 +15310,57 @@ def _activity_if_band(activity: dict) -> str | None:
         return "anaerobic"
 
 
-def _ridden_status(rides: list[dict]) -> str | None:
+def _activity_if(activity: dict) -> float | None:
+    """A ride's intensity factor: stored (icu_intensity is a percentage), else
+    from TSS and duration (TSS = IF^2 x hours x 100)."""
+    if_ = activity.get("intensity_factor") or activity.get("icu_intensity")
+    try:
+        if if_ is not None:
+            if_ = float(if_)
+            return if_ / 100 if if_ > 3 else (if_ if if_ > 0 else None)
+    except (TypeError, ValueError):
+        pass
+    tss = float(activity.get("tss") or activity.get("icu_training_load") or 0)
+    dur_min = float(activity.get("duration_min") or (activity.get("moving_time", 0) or 0) / 60 or 0)
+    if dur_min > 0 and tss > 0:
+        return (tss / (dur_min / 60 * 100)) ** 0.5
+    return None
+
+
+def _session_planned_if(session) -> float | None:
+    """The intensity the served workout averages: its library IF, else the
+    session's own TSS and duration. Interval workouts average far below the
+    band their intervals are in (a VO2 workout around 0.73), so a type band
+    cannot say whether one was ridden."""
+    zwo = getattr(session, "zwo_file", "") or ""
+    if zwo:
+        try:
+            for w in load_workout_library():
+                if w.get("File") == zwo and float(w.get("IF") or 0) > 0:
+                    return float(w["IF"])
+        except Exception:  # noqa: BLE001 - no library: fall back to the estimate
+            pass
+    tss = float(getattr(session, "tss_estimate", 0) or 0)
+    dur = float(getattr(session, "duration_min", 0) or 0)
+    return (tss / (dur / 60 * 100)) ** 0.5 if tss > 0 and dur > 0 else None
+
+
+def _ridden_status(rides: list[dict], planned_if: float | None) -> str | None:
     """What a finished day's rides did for a session none of them matched.
 
-    ``rides``: classify_rematch results for every ride on the day, judged
-    together so neither the order of the rows nor a commute beside the
-    workout decides. Intensity counts only as far as load was ridden at it:
-    ten minutes of sprints beside a long easy ride did not make a VO2 day.
+    ``rides``: classify_rematch results (with their activity) for every ride
+    on the day, judged together so neither the order of the rows nor a
+    commute beside the workout decides.
 
     "done": the day carried the planned load (no more than the TSS tolerance
-    under it), and at least half the planned load was ridden at the planned
-    band or harder -- a longer or harder ride counts.
-    "done_partial": at least half the planned load was ridden no more than one
-    band below the plan -- the session's point was partly made, and moving it
-    onto another day would stack a second session on a ridden one.
-    None otherwise -- a spin, commutes on an interval day, an endurance ride
-    in place of a threshold session -- which leaves the session missed and
-    free to be rescheduled.
-
-    A ride whose band is unknown counts as the lowest band.
+    under it) and a ride carrying at least a quarter of it averaged the served
+    workout's intensity (``planned_if``, 0.05 of slack) -- a longer or harder
+    ride counts.
+    "done_partial": the day carried at least half the planned load, whatever
+    its intensity. A day ridden that much is never missed: moving the session
+    onto the next day would stack it on a ridden one (the owner, 2026-09-15).
+    None below half the load -- a spin, a short ride -- which leaves the
+    session missed and free to be rescheduled.
 
     Before 2026-09-15 any same-day ride outside the tolerances made the session
     "missed", and the auto-reschedule moved a hard session the rider had just
@@ -15353,17 +15372,14 @@ def _ridden_status(rides: list[dict]) -> str | None:
     planned = float(details[0].get("planned_tss") or 0)
     if planned <= 0:
         return None
-    order = week_view.BANDS
-    band = details[0].get("planned_band")
-    want = order.index(band) if band in order else 0
-
-    def load_at(min_idx: int) -> float:
-        return sum(float(d.get("actual_tss") or 0) for d in details
-                   if (order.index(d["actual_band"]) if d.get("actual_band") in order else 0) >= min_idx)
-
-    if load_at(0) >= planned * (1 - REMATCH_TOL_TSS_PCT) and load_at(want) >= planned * 0.5:
+    total = sum(float(d.get("actual_tss") or 0) for d in details)
+    carried = [_activity_if(r.get("activity") or {}) for r, d in zip(rides, details)
+               if float(d.get("actual_tss") or 0) >= planned * 0.25]
+    delivered = max((x for x in carried if x is not None), default=None)
+    if (total >= planned * (1 - REMATCH_TOL_TSS_PCT) and planned_if is not None
+            and delivered is not None and delivered >= planned_if - 0.05):
         return "done"
-    if load_at(max(want - 1, 0)) >= planned * 0.5:
+    if total >= planned * 0.5:
         return "done_partial"
     return None
 
@@ -15513,7 +15529,7 @@ def rematch_week(
             if resolved is None and s.day < today:
                 # A race day too: a race ridden shorter than its placeholder
                 # is not a missed race. Nothing reschedules a race day.
-                resolved = _ridden_status(judged)
+                resolved = _ridden_status(judged, _session_planned_if(s))
                 if resolved is not None:
                     # The match recorded is the day's heaviest ride.
                     best = max(judged, key=lambda j: float((j.get("details") or {}).get("actual_tss") or 0))

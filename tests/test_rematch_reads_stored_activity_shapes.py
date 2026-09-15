@@ -120,11 +120,12 @@ def test_a_harder_longer_ride_is_done_and_the_session_is_not_rescheduled():
     assert moves == []
 
 
-def test_an_endurance_ride_on_a_sweetspot_day_leaves_the_session_to_reschedule():
-    """110 TSS of endurance is not the sweetspot session: its intensity was
-    never ridden, so the session is still owed."""
-    _, moves = _reconcile([_row(110, 150, 60)])
-    assert [m["from"] for m in moves] == [MON]
+def test_an_endurance_ride_on_a_sweetspot_day_is_partly_done_and_not_moved():
+    """110 TSS of endurance is not the sweetspot session, but a day ridden that
+    much is not owed a second one tomorrow."""
+    by_day, moves = _reconcile([_row(110, 150, 70)])
+    assert by_day[MON]["status"] == "done_partial"
+    assert moves == []
 
 
 def test_half_the_load_is_partly_done_and_not_moved():
@@ -232,12 +233,20 @@ VO2_DAY = {"session_type": "vo2max", "duration_min": 60, "tss_estimate": 80}
 
 
 def test_sprints_beside_a_long_easy_ride_do_not_make_a_vo2_day():
-    _, moves = _reconcile([_row(90, 150, 62, rid="long"), _row(12, 10, 105, rid="sprints")], day_type=VO2_DAY)
-    assert [m["from"] for m in moves] == [MON]
+    """The intensity must come from a ride that carried the load."""
+    by_day, moves = _reconcile([_row(90, 150, 62, rid="long"), _row(12, 10, 105, rid="sprints")], day_type=VO2_DAY)
+    assert by_day[MON]["status"] == "done_partial"
+    assert moves == []
 
 
-def test_commutes_alone_do_not_settle_an_interval_day():
-    _, moves = _reconcile([_row(20, 30, 60, rid="am"), _row(24, 35, 62, rid="pm")], day_type=VO2_DAY)
+def test_commutes_to_half_the_load_are_partly_done_not_the_interval_session():
+    by_day, moves = _reconcile([_row(20, 30, 60, rid="am"), _row(24, 35, 62, rid="pm")], day_type=VO2_DAY)
+    assert by_day[MON]["status"] == "done_partial"
+    assert moves == []
+
+
+def test_a_commute_under_half_the_load_leaves_the_interval_session_owed():
+    _, moves = _reconcile([_row(30, 45, 62)], day_type=VO2_DAY)
     assert [m["from"] for m in moves] == [MON]
 
 
@@ -253,7 +262,7 @@ def test_the_same_ride_from_two_sources_is_one_ride():
 
 
 def test_two_identical_commutes_are_two_rides():
-    z2 = {"session_type": "z2", "duration_min": 70, "tss_estimate": 45}
+    z2 = {"session_type": "z2", "duration_min": 70, "tss_estimate": 45, "zwo_file": ""}
     by_day, moves = _reconcile([_row(23, 36, 60, rid="am"), _row(23, 36, 60, rid="pm")], day_type=z2)
     assert by_day[MON]["status"] == "done"
     assert moves == []
@@ -288,3 +297,56 @@ def test_zero_hours_rests_a_future_session_still_marked_missed():
     finally:
         clock.unfreeze()
     assert {x.day.isoformat(): x for x in weeks[0].sessions}[thu_iso].session_type == "rest"
+
+
+def test_an_interval_workout_ridden_long_is_done_by_its_own_intensity():
+    """A VO2 workout averages about IF 0.73 over the ride (the library median);
+    judged against the vo2max band it read as not ridden and was moved (the
+    third review). The served workout's own intensity decides."""
+    day = {**VO2_DAY, "zwo_file": ""}      # estimate: 80 TSS in 60 min -> IF 0.89
+    by_day, moves = _reconcile([_row(110, 80, 90)], day_type=day)
+    assert by_day[MON]["status"] == "done"
+    assert moves == []
+
+
+def test_interval_days_ridden_off_tolerance_are_never_moved():
+    for kind, tss, dur, pct in (("vo2max", 110, 81, 73), ("vo2max", 48, 36, 73), ("sprint", 70, 63, 71),
+                                ("ftp_test", 70, 84, 56), ("overunder", 145, 126, 80)):
+        planned = {"session_type": kind, "duration_min": 60 if kind != "overunder" else 90,
+                   "tss_estimate": 80 if kind != "overunder" else 103}
+        by_day, moves = _reconcile([_row(tss, dur, pct)], day_type=planned)
+        assert moves == [], (kind, tss, by_day[MON]["status"])
+
+
+def test_a_session_zeroed_while_missed_is_not_moved_as_a_rest():
+    plan = _plan()
+    thu = plan["weeks"][0]["sessions"][3]
+    thu.update({"session_type": "sweetspot", "duration_min": 79, "tss_estimate": 105, "status": "missed"})
+    weeks = [tp.week_from_dict(w) for w in plan["weeks"]]
+    clock.freeze(TODAY)
+    try:
+        tp.reforecast(tp.Goal(goal_type="continuous"), weeks,
+                      tsb_series={MONDAY + timedelta(days=i): 0.0 for i in range(7)},
+                      availability_overrides={thu["day"]: 0.0})
+    finally:
+        clock.unfreeze()
+    zeroed = {x.day.isoformat(): x for x in weeks[0].sessions}[thu["day"]]
+    assert (zeroed.session_type, zeroed.status) == ("rest", "pending")
+
+
+def test_a_miss_in_the_previous_plan_week_is_not_moved_into_this_one():
+    """Friday-to-Thursday plan weeks: on Friday, Thursday belongs to last week
+    but the same ISO week as today."""
+    fri = MONDAY + timedelta(days=4)
+    def week(start, n):
+        return {"week_num": n, "start": start.isoformat(), "end": (start + timedelta(days=6)).isoformat(),
+                "phase": "base", "tss_target": 300, "is_stepback": False,
+                "sessions": [{"day": (start + timedelta(days=i)).isoformat(), "day_name": "",
+                              "session_type": "rest", "duration_min": 0, "tss_estimate": 0,
+                              "status": "pending", "zwo_file": ""} for i in range(7)]}
+    plan = {"goal": {"type": "continuous", "available_days": [0, 1, 2, 3, 4, 5, 6], "rest_days": []},
+            "availability": {}, "weeks": [week(fri - timedelta(days=7), 1), week(fri, 2)]}
+    thu = plan["weeks"][0]["sessions"][6]
+    thu.update({"session_type": "vo2max", "duration_min": 60, "tss_estimate": 80})
+    _, moves = _reconcile([], today=fri, plan=plan)
+    assert moves == []

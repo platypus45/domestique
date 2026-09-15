@@ -13906,21 +13906,26 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
     return suggestions
 
 
+_RIDDEN_RANK = {"done": 3, "ambiguous": 2, "done_partial": 1}
+
+
 def _undo_auto_moves_for_ridden_days(plan: dict, today: date) -> list[dict]:
-    """Undo an auto-move whose session turns out to have been ridden on its day.
+    """Undo an auto-move whose session turns out to have been ridden earlier.
 
     A ride can reach intervals.icu a day or two late (the phone syncs the head
     unit late). By then the session was marked missed and moved, perhaps more
-    than once, and the ride landed on a rest stub nothing matches. When the
-    session's own day now carries enough riding to count (the rematch rules
-    applied to the session as it was planned: two of three axes, or
-    ``_ridden_status``), every day the move touched gets back what it held --
-    the session its own day, each day it passed through its previous content
-    -- all pending, and the rematch judges them afresh. Whatever was ridden
-    where the session was put is then judged against that day's own session.
+    than once, and the ride landed on a stub nothing matches. The session is
+    judged, as planned, against the rides of every day it was moved away
+    from, in order; on the first day whose rides count (two of three axes, or
+    ``_ridden_status``) and match it better than whatever was ridden where it
+    now sits, it goes back to that day, and each later day the move touched
+    gets back what it held. Everything restored is pending; the rematch that
+    follows judges each day against its own rides.
 
-    Only for a session day the rematch still covers (the plan weeks of
-    yesterday and today); records older than 14 days are dropped.
+    Days that no longer hold what the move left there (a manual drag, an
+    edit) are not touched, and a record whose chain was broken that way is
+    dropped. Only days the rematch still covers (the plan weeks of yesterday
+    and today) are undone; records older than 14 days are dropped.
     """
     records = plan.get("auto_moves") or []
     if not records:
@@ -13940,9 +13945,24 @@ def _undo_auto_moves_for_ridden_days(plan: dict, today: date) -> list[dict]:
         base = snapshot or {"session_type": "rest", "duration_min": 0, "tss_estimate": 0,
                             "description": "Rest", "zwo_file": "", "zwo_name": ""}
         out = json.loads(json.dumps(base))
+        out.pop("execution", None)
         out.update({"day": day_iso, "day_name": out.get("day_name") or fallback_name, "status": "pending",
-                    "completion_matches": None, "dismissed_at": "", "auto_moved": False, "moved_from": ""})
+                    "completion_matches": None, "dismissed_at": "", "auto_moved": False,
+                    "user_moved": False, "moved_from": ""})
         return out
+
+    def _rank(planned_probe, day_iso):
+        d = date.fromisoformat(day_iso)
+        week, _ = _load_current_week_dto(plan, d)
+        acts = [x for x in _collect_week_activities(week, today, include_today=True)
+                if x.get("date") == day_iso] if week else []
+        judged = [{**tp.classify_rematch(planned_probe, x), "activity": x} for x in acts]
+        best = max((j["matched_axes"] for j in judged), default=0)
+        if best == 3:
+            return 3
+        if best == 2:
+            return 2
+        return 1 if judged and tp._ridden_status(judged, tp._session_planned_if(planned_probe)) else 0
 
     undone, keep = [], []
     for rec in records:
@@ -13950,37 +13970,37 @@ def _undo_auto_moves_for_ridden_days(plan: dict, today: date) -> list[dict]:
         if str(rec.get("at", "")) < horizon:
             continue
         try:
-            src_w, src_i, src_s = _slot(src)
+            hops = [h.get("day", "") for h in (rec.get("hops") or [])]
+            path = [src] + hops                       # the days the session left, in order
+            stubs = [_slot(d) for d in path]
             dst_w, dst_i, dst_s = _slot(dst)
-            still_moved = (src_s is not None and dst_s is not None
-                           and str(src_s.get("status") or "").startswith("moved_from:")
-                           and dst_s.get("auto_moved") and dst_s.get("moved_from") == rec.get("via"))
-            if not still_moved:
-                continue                  # superseded by later edits: forget it
-            if src < window_start or src >= today.isoformat():
-                keep.append(rec)          # outside what the rematch judges
+            intact = (dst_s is not None and dst_s.get("auto_moved") and dst_s.get("moved_from") == rec.get("via")
+                      and all(s is not None and str(s.get("status") or "").startswith("moved_from:")
+                              for _, _, s in stubs))
+            if not intact:
+                continue                              # edited since: forget it
+            if any(d < window_start or d >= today.isoformat() for d in path):
+                keep.append(rec)                      # outside what the rematch judges
                 continue
             planned = rec.get("session") or dst_s
-            src_d = date.fromisoformat(src)
-            week, _ = _load_current_week_dto(plan, src_d)
-            acts = [x for x in _collect_week_activities(week, today, include_today=True)
-                    if x.get("date") == src] if week else []
-            probe = tp.session_from_dict({**planned, "day": src, "status": "pending"})
-            judged = [{**tp.classify_rematch(probe, x), "activity": x} for x in acts]
-            ridden = any(j["matched_axes"] >= 2 for j in judged) or (
-                bool(judged) and tp._ridden_status(judged, tp._session_planned_if(probe)) is not None)
-            if not ridden:
+            probe_for = lambda day: tp.session_from_dict({**planned, "day": day, "status": "pending"})  # noqa: E731
+            dst_rank = _RIDDEN_RANK.get(str(dst_s.get("status") or ""), 0)
+            back_to = next((k for k, d in enumerate(path)
+                            if (r := _rank(probe_for(d), d)) > 0 and r > dst_rank), None)
+            if back_to is None:
                 keep.append(rec)
                 continue
-            hops = rec.get("hops") or []
-            src_w["sessions"][src_i] = _pending(planned, src, src_s.get("day_name", ""))
-            for hop in hops:
-                hw, hi, hs = _slot(hop.get("day", ""))
-                if hs is not None:
-                    hw["sessions"][hi] = _pending(hop.get("displaced"), hop["day"], hs.get("day_name", ""))
-            dst_w, dst_i, dst_s = _slot(dst)
-            dst_w["sessions"][dst_i] = _pending(rec.get("displaced"), dst, dst_s.get("day_name", ""))
-            undone.append({"from": dst, "to": src})
+            day = path[back_to]
+            w, i, s = stubs[back_to]
+            w["sessions"][i] = _pending(planned, day, s.get("day_name", ""))
+            displaced = [h.get("displaced") for h in (rec.get("hops") or [])] + [rec.get("displaced")]
+            # path[k] (k >= 1) held displaced[k - 1] before the session arrived;
+            # the destination held the last one.
+            for k in range(back_to + 1, len(path)):
+                hw, hi, hs = stubs[k]
+                hw["sessions"][hi] = _pending(displaced[k - 1], path[k], hs.get("day_name", ""))
+            dst_w["sessions"][dst_i] = _pending(displaced[-1], dst, dst_s.get("day_name", ""))
+            undone.append({"from": dst, "to": day})
         except Exception:  # noqa: BLE001 - undo is best effort; the move stands
             _log.exception("auto-move undo: %s -> %s failed", src, dst)
             keep.append(rec)
@@ -15958,17 +15978,36 @@ async def api_plan_rematch(request: Request, apply: int = Query(0)):
         return JSONResponse({"error": "No active plan found"}, 404)
 
     try:
+        if apply:
+            # Read, undo, rematch and write under the plan-write lock the
+            # ride-sync adaptation holds: both now rewrite days.
+            with tp.plan_write_lock():
+                with open(json_path, encoding="utf-8") as f:
+                    plan = json.load(f)
+                today = clock.today()
+                # As the ride-sync path does: a late ride undoes its session's
+                # auto-move, and the days it restored are judged at once --
+                # yesterday's plan week included, which the rematch below
+                # (today's week, for the response) does not cover.
+                try:
+                    _undo_auto_moves_for_ridden_days(plan, today)
+                except Exception:  # noqa: BLE001 - best effort
+                    _log.exception("auto-move undo skipped")
+                _reconcile_current_week(plan, today)
+                current_week, week_idx = _load_current_week_dto(plan, today)
+                if not current_week:
+                    return {"action": "no_current_week"}
+                actual = _collect_week_activities(current_week, today, include_today=True)
+                preview = tp.rematch_week(current_week, actual, today)
+                changed = _apply_rematch_preview_to_plan(plan, week_idx, preview)
+                plan["last_rematch"] = clock.now().isoformat()
+                tp.atomic_write_plan(json_path, plan)
+            return {"ok": True, "apply": True, "changed": changed, **preview}
+
         with open(json_path, encoding="utf-8") as f:
             plan = json.load(f)
 
         today = clock.today()
-        if apply:
-            # As the ride-sync path does: a late ride undoes its session's
-            # auto-move before the rematch judges the day it was moved to.
-            try:
-                _undo_auto_moves_for_ridden_days(plan, today)
-            except Exception:  # noqa: BLE001 - best effort
-                _log.exception("auto-move undo skipped")
         current_week, week_idx = _load_current_week_dto(plan, today)
         if not current_week:
             return {"action": "no_current_week"}

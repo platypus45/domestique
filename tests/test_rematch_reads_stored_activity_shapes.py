@@ -557,3 +557,99 @@ def test_the_manual_rematch_undoes_a_move_first(tmp_path):
     mon = saved["weeks"][0]["sessions"][0]
     assert (mon["session_type"], mon["status"]) == ("sweetspot", "done")
 
+
+
+def _chain_plan():
+    """Monday's sweetspot moved to Wednesday (Tuesday sync), then on to
+    Thursday (Thursday sync: Wednesday unridden). Returns plan, wed, thu."""
+    plan = _plan()
+    for x in plan["weeks"][0]["sessions"][2:5]:
+        x.update({"session_type": "rest"})
+    plan["weeks"][0]["sessions"][1]["status"] = "done"
+    _, m1 = _reconcile([], plan=plan)
+    wed = m1[0]["to"]
+    _, m2 = _reconcile([], today=date.fromisoformat(wed) + timedelta(days=1), plan=plan)
+    return plan, wed, m2[0]["to"]
+
+
+def test_a_late_ride_on_a_day_the_session_passed_through_brings_it_back_there():
+    plan, wed, thu = _chain_plan()
+    wed_ride = {**_row(115, 85, 89, day=date.fromisoformat(wed), rid="wed")}
+    friday = date.fromisoformat(thu) + timedelta(days=1)
+    by_day, moves = _reconcile([wed_ride], today=friday, plan=plan)
+    assert (by_day[wed]["session_type"], by_day[wed]["status"]) == ("sweetspot", "done")
+    assert by_day[thu]["session_type"] == "rest"
+    assert by_day[MON]["status"].startswith("moved_from:")
+    assert moves == []
+
+
+def test_a_session_dragged_onto_a_day_the_move_passed_through_is_left_alone():
+    plan, wed, thu = _chain_plan()
+    for w in plan["weeks"]:
+        for x in w["sessions"]:
+            if x["day"] == wed:
+                x.update({"session_type": "vo2max", "duration_min": 60, "tss_estimate": 80,
+                          "status": "pending", "user_moved": True})
+    friday = date.fromisoformat(thu) + timedelta(days=1)
+    by_day, _ = _reconcile([SQLITE_ROW], today=friday, plan=plan)
+    kinds = [x["session_type"] for w in plan["weeks"] for x in w["sessions"]]
+    assert kinds.count("vo2max") == 1, "the dragged session survives (rescheduled if unridden)"
+    assert kinds.count("sweetspot") == 1
+    assert all(r.get("from") != MON for r in plan.get("auto_moves") or [])
+
+
+def test_a_destination_ridden_as_the_session_keeps_it_over_a_smaller_late_ride():
+    plan = _plan()
+    _, moves = _reconcile([], plan=plan)
+    dst = moves[0]["to"]
+    dst_ride = _row(110, 80, 89, day=date.fromisoformat(dst), rid="dst")
+    after = date.fromisoformat(dst) + timedelta(days=1)
+    _reconcile([dst_ride], today=after, plan=plan)
+    by_day, _ = _reconcile([dst_ride, _row(55, 45, 80, rid="small-monday")], today=after, plan=plan)
+    assert (by_day[dst]["session_type"], by_day[dst]["status"]) == ("sweetspot", "done")
+    assert by_day[MON]["status"].startswith("moved_from:")
+
+
+def test_a_restored_session_is_not_marked_as_the_riders_own_move():
+    plan = _plan()
+    plan["weeks"][0]["sessions"][0]["user_moved"] = True
+    _reconcile([], plan=plan)
+    by_day, _ = _reconcile([SQLITE_ROW], plan=plan)
+    assert by_day[MON]["user_moved"] is False
+
+
+def test_the_manual_rematch_judges_yesterdays_week_after_an_undo(tmp_path):
+    """Saturday's session moved onto Sunday; on Monday Saturday's ride is in.
+    The endpoint rematched only today's week and left both days unjudged."""
+    from fastapi.testclient import TestClient
+    plan = _plan()
+    sessions = plan["weeks"][0]["sessions"]
+    for x in sessions[:5]:
+        x.update({"session_type": "rest", "status": "pending", "zwo_file": ""})
+    sat, sun = sessions[5], sessions[6]
+    sat.update({"session_type": "sweetspot", "duration_min": 79, "tss_estimate": 105})
+    plan["goal"]["available_days"] = [0, 1, 2, 3, 4, 5, 6]
+    plan["goal"]["rest_days"] = []
+    saturday, sunday = date.fromisoformat(sat["day"]), date.fromisoformat(sun["day"])
+    nxt = MONDAY + timedelta(days=7)
+    plan["weeks"].append({"week_num": 2, "start": nxt.isoformat(), "end": (nxt + timedelta(days=6)).isoformat(),
+                          "phase": "base", "tss_target": 300, "is_stepback": False,
+                          "sessions": [{"day": (nxt + timedelta(days=i)).isoformat(), "day_name": "",
+                                        "session_type": "rest", "duration_min": 0, "tss_estimate": 0,
+                                        "status": "pending", "zwo_file": ""} for i in range(7)]})
+    _, moves = _reconcile([], today=sunday, plan=plan)
+    assert [(m["from"], m["to"]) for m in moves] == [(sat["day"], sun["day"])]
+    (tmp_path / "current_plan.json").write_text(json.dumps(plan))
+    sat_ride = _row(120, 91, 89, day=saturday, rid="sat")
+    clock.freeze(nxt)
+    try:
+        with patch.object(app_module, "_plan_dir", return_value=tmp_path), \
+             patch("db.query_activities", return_value=[sat_ride]), patch("ride_storage.list_rides", return_value=[]):
+            r = TestClient(app_module.app).post("/api/plan/rematch?apply=1",
+                                                headers={"Origin": "http://127.0.0.1:22400"})
+    finally:
+        clock.unfreeze()
+    assert r.status_code == 200, r.text
+    saved = {x["day"]: x for w in json.loads((tmp_path / "current_plan.json").read_text())["weeks"] for x in w["sessions"]}
+    assert (saved[sat["day"]]["session_type"], saved[sat["day"]]["status"]) == ("sweetspot", "done")
+    assert saved[sun["day"]]["session_type"] == "rest"

@@ -553,6 +553,7 @@ def test_the_manual_rematch_undoes_a_move_first(tmp_path):
     finally:
         clock.unfreeze()
     assert r.status_code == 200, r.text
+    assert r.json()["changed"] >= 1, "the dashboard says 'already up to date' on 0"
     saved = json.loads((tmp_path / "current_plan.json").read_text())
     mon = saved["weeks"][0]["sessions"][0]
     assert (mon["session_type"], mon["status"]) == ("sweetspot", "done")
@@ -653,3 +654,29 @@ def test_the_manual_rematch_judges_yesterdays_week_after_an_undo(tmp_path):
     saved = {x["day"]: x for w in json.loads((tmp_path / "current_plan.json").read_text())["weeks"] for x in w["sessions"]}
     assert (saved[sat["day"]]["session_type"], saved[sat["day"]]["status"]) == ("sweetspot", "done")
     assert saved[sun["day"]]["session_type"] == "rest"
+
+
+def test_a_full_ride_that_fits_no_tolerance_wins_back_a_session_partly_done_elsewhere():
+    """The eighth review: a 3 h group ride (a Strava husk until its .fit came)
+    for Monday's sweetspot; the moved session was judged done_partial on
+    Wednesday against a spin. The ride is "done" by _ridden_status (one axis)
+    and must outrank done_partial."""
+    plan = _plan()
+    _, moves = _reconcile([], plan=plan)
+    dst = moves[0]["to"]
+    after = date.fromisoformat(dst) + timedelta(days=1)
+    spin = _row(55, 45, 80, day=date.fromisoformat(dst), rid="spin")
+    _reconcile([spin], today=after, plan=plan)
+    by_day, _ = _reconcile([spin, _row(200, 180, 89, rid="group")], today=after, plan=plan)
+    assert (by_day[MON]["session_type"], by_day[MON]["status"]) == ("sweetspot", "done")
+    assert by_day[dst]["session_type"] == "rest"
+
+
+def test_the_undo_picks_the_day_that_matches_best():
+    plan, wed, thu = _chain_plan()
+    friday = date.fromisoformat(thu) + timedelta(days=1)
+    rides = [_row(55, 45, 75, rid="half-monday"), _row(115, 85, 89, day=date.fromisoformat(wed), rid="wed")]
+    by_day, _ = _reconcile(rides, today=friday, plan=plan)
+    assert (by_day[wed]["session_type"], by_day[wed]["status"]) == ("sweetspot", "done")
+    assert by_day[MON]["status"].startswith("moved_from:")
+

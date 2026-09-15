@@ -13962,7 +13962,8 @@ def _undo_auto_moves_for_ridden_days(plan: dict, today: date) -> list[dict]:
             return 3
         if best == 2:
             return 2
-        return 1 if judged and tp._ridden_status(judged, tp._session_planned_if(planned_probe)) else 0
+        rs = tp._ridden_status(judged, tp._session_planned_if(planned_probe)) if judged else None
+        return _RIDDEN_RANK.get(rs or "", 0)
 
     undone, keep = [], []
     for rec in records:
@@ -13985,8 +13986,10 @@ def _undo_auto_moves_for_ridden_days(plan: dict, today: date) -> list[dict]:
             planned = rec.get("session") or dst_s
             probe_for = lambda day: tp.session_from_dict({**planned, "day": day, "status": "pending"})  # noqa: E731
             dst_rank = _RIDDEN_RANK.get(str(dst_s.get("status") or ""), 0)
-            back_to = next((k for k, d in enumerate(path)
-                            if (r := _rank(probe_for(d), d)) > 0 and r > dst_rank), None)
+            ranks = [_rank(probe_for(d), d) for d in path]
+            best = max(ranks, default=0)
+            # The best-matching day, the earliest of equals.
+            back_to = ranks.index(best) if best > 0 and best > dst_rank else None
             if back_to is None:
                 keep.append(rec)
                 continue
@@ -15953,9 +15956,14 @@ def _reconcile_current_week(plan: dict, today: date) -> "tuple[int, dict | None]
         if not week or week_idx in seen:
             continue
         seen.add(week_idx)
-        actual = _collect_week_activities(week, today, include_today=True)
-        preview = tp.rematch_week(week, actual, today)
-        n += _apply_rematch_preview_to_plan(plan, week_idx, preview)
+        try:
+            actual = _collect_week_activities(week, today, include_today=True)
+            preview = tp.rematch_week(week, actual, today)
+            n += _apply_rematch_preview_to_plan(plan, week_idx, preview)
+        except Exception:  # noqa: BLE001 - one week failing must not block the other
+            if anchor == today:
+                raise
+            _log.exception("rematch of the previous plan week skipped")
     if n:
         plan["last_rematch"] = clock.now().isoformat()
     return n, preview
@@ -15993,13 +16001,12 @@ async def api_plan_rematch(request: Request, apply: int = Query(0)):
                     _undo_auto_moves_for_ridden_days(plan, today)
                 except Exception:  # noqa: BLE001 - best effort
                     _log.exception("auto-move undo skipped")
-                _reconcile_current_week(plan, today)
-                current_week, week_idx = _load_current_week_dto(plan, today)
+                current_week, _week_idx = _load_current_week_dto(plan, today)
                 if not current_week:
                     return {"action": "no_current_week"}
-                actual = _collect_week_activities(current_week, today, include_today=True)
-                preview = tp.rematch_week(current_week, actual, today)
-                changed = _apply_rematch_preview_to_plan(plan, week_idx, preview)
+                # Both plan weeks; the preview returned is today's week as it
+                # was judged, so "changed" counts what this call matched.
+                changed, preview = _reconcile_current_week(plan, today)
                 plan["last_rematch"] = clock.now().isoformat()
                 tp.atomic_write_plan(json_path, plan)
             return {"ok": True, "apply": True, "changed": changed, **preview}

@@ -13404,13 +13404,27 @@ def _collect_week_activities(current_week, today: date, include_today: bool = Fa
     def _add(a: dict):
         if not _is_cycling_sport(a.get("sport", "")):
             return  # non-cycling (rock climbing, run, …) — don't reconcile as a ride
-        d = (a.get("date") or a.get("start_date_local", "") or "")[:10]
+        # The two sources have their own shapes, and neither is the one the
+        # classifier reads: an activities row carries duration_sec and keeps
+        # icu_intensity inside raw_json; a ride-store record carries
+        # started_at and duration_s (elapsed). Read as they were, a ridden
+        # session scored 0 min and no intensity, was marked missed, and the
+        # auto-reschedule moved it onto the next day (2026-09-15).
+        raw = {}
+        if isinstance(a.get("raw_json"), str):
+            try:
+                raw = json.loads(a["raw_json"]) or {}
+            except ValueError:
+                raw = {}
+        d = (a.get("date") or a.get("start_date_local") or a.get("started_at") or "")[:10]
         if not (week_start_iso <= d < upper_iso):
             return
         tss = float(a.get("tss") or a.get("icu_training_load") or 0)
         if tss <= 0:
             return
-        dur_min = float(a.get("duration_min") or (a.get("moving_time", 0) or 0) / 60 or 0)
+        moving_s = a.get("moving_time") or raw.get("moving_time") or a.get("duration_sec") or a.get("duration_s") or 0
+        dur_min = float(a.get("duration_min") or (moving_s or 0) / 60 or 0)
+        if_ = a.get("intensity_factor") or a.get("icu_intensity") or raw.get("icu_intensity")
         # v2.4.0 — dedup key includes DURATION so two genuinely-different same-day
         # rides (e.g. a short hard session + a long commute) with near-equal TSS
         # are NOT collapsed; cross-source copies of the SAME ride share
@@ -13423,7 +13437,7 @@ def _collect_week_activities(current_week, today: date, include_today: bool = Fa
             "date": d,
             "tss": tss,
             "duration_min": dur_min,
-            "intensity_factor": a.get("intensity_factor") or a.get("icu_intensity"),
+            "intensity_factor": if_,
             "id": a.get("id") or a.get("icu_id"),
             "sport": a.get("sport", ""),
         })

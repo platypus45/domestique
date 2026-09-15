@@ -15290,6 +15290,10 @@ def _activity_if_band(activity: dict) -> str | None:
         return None
     if if_ <= 0:
         return None
+    # intervals.icu's icu_intensity is a percentage (89.1 for IF 0.891); read
+    # as a factor, every ride landed in "anaerobic".
+    if if_ > 3:
+        if_ /= 100
     if if_ < 0.65:
         return "low_aerobic"
     elif if_ < 0.82:
@@ -15298,6 +15302,36 @@ def _activity_if_band(activity: dict) -> str | None:
         return "high_aerobic"
     else:
         return "anaerobic"
+
+
+def _ridden_status(details: dict) -> str | None:
+    """What a same-day ride that fits no tolerance still did for the session.
+
+    "done" when it delivered the planned stimulus: load no more than the TSS
+    tolerance under the plan, at the planned intensity band or harder -- a
+    longer or harder ride. "done_partial" when it reached half the planned
+    load, or the planned band: the session's point was partly made, and
+    moving the session onto another day would stack a second hard day on a
+    ridden one. None for a ride too small to count (a short easy spin), which
+    leaves the session missed and free to be rescheduled.
+
+    Before 2026-09-15 any same-day ride outside the tolerances made the session
+    "missed", and the auto-reschedule moved a hard session the rider had just
+    ridden, harder, onto the next day.
+    """
+    planned_tss = float(details.get("planned_tss") or 0)
+    actual_tss = float(details.get("actual_tss") or 0)
+    order = week_view.BANDS
+    planned_band, actual_band = details.get("planned_band"), details.get("actual_band")
+    band_reached = (planned_band in order and actual_band in order
+                    and order.index(actual_band) >= order.index(planned_band))
+    if planned_tss <= 0 or actual_tss <= 0:
+        return None
+    if actual_tss >= planned_tss * (1 - REMATCH_TOL_TSS_PCT) and (band_reached or planned_band not in order):
+        return "done"
+    if actual_tss >= planned_tss * 0.5 or band_reached:
+        return "done_partial"
+    return None
 
 
 def classify_rematch(session: PlannedSession, activity: dict) -> dict:
@@ -15431,9 +15465,10 @@ def rematch_week(
             })
         else:
             status_map = {"done": "done", "ambiguous": "ambiguous"}
-            resolved = status_map.get(best["status"])
+            resolved = status_map.get(best["status"]) or _ridden_status(best["details"] or {})
             if resolved is None:
-                # no_match with a same-day activity: treat as missed if past, pending if future
+                # no_match with a same-day ride too small to count: missed if
+                # past, pending if today (the rider may still ride).
                 # FC3 (L3-2): a race day resolves to the terminal missed_race.
                 if s.day < today:
                     new_status = "missed_race" if _protect_race(s) else "missed"

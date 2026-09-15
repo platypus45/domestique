@@ -418,17 +418,21 @@ def test_a_ride_that_arrives_after_its_session_was_moved_brings_it_back():
     assert plan.get("auto_moves") == []
 
 
-def test_a_moved_session_ridden_where_it_was_put_stays_there():
+def test_a_late_ride_undoes_the_move_even_after_the_destination_was_judged():
+    """The sixth review: the plan-open rematch judged the moved session on its
+    new day against that day's easy ride before the undo ran, and the undo
+    then refused to act. Every day gets its own session back and is judged
+    again against its own rides."""
     plan = _plan()
     _, moves = _reconcile([], plan=plan)
     dst = moves[0]["to"]
     for w in plan["weeks"]:
         for x in w["sessions"]:
             if x["day"] == dst:
-                x["status"] = "done"
+                x["status"] = "done_partial"
     by_day, _ = _reconcile([SQLITE_ROW], plan=plan)
-    assert by_day[dst]["session_type"] == "sweetspot"
-    assert by_day[MON]["status"].startswith("moved_from:")
+    assert (by_day[MON]["session_type"], by_day[MON]["status"]) == ("sweetspot", "done")
+    assert by_day[dst]["session_type"] == "rest"
 
 
 def test_a_missed_session_dragged_onto_a_day_to_come_is_owed_there():
@@ -480,3 +484,76 @@ def test_a_copy_of_a_ride_without_a_load_is_the_same_ride():
         finally:
             clock.unfreeze()
         assert [(a["id"], a["tss"]) for a in acts] == [("real", 25.0)], rows[0]["id"]
+
+
+def test_a_session_moved_twice_still_goes_back_to_its_day():
+    """Monday to Wednesday, then (Wednesday unridden) on to Thursday; Monday's
+    ride arrives on Friday."""
+    plan = _plan()
+    for x in plan["weeks"][0]["sessions"][2:5]:
+        x.update({"session_type": "rest"})
+    plan["weeks"][0]["sessions"][1]["status"] = "done"          # Tuesday ridden
+    _, m1 = _reconcile([], plan=plan)
+    assert [m["from"] for m in m1] == [MON]
+    first = m1[0]["to"]
+    nxt = date.fromisoformat(first) + timedelta(days=1)
+    _, m2 = _reconcile([], today=nxt, plan=plan)
+    assert [m["from"] for m in m2] == [first]
+    friday = date.fromisoformat(m2[0]["to"])
+    by_day, _ = _reconcile([SQLITE_ROW], today=friday, plan=plan)
+    assert by_day[MON]["session_type"] == "sweetspot" and by_day[MON]["status"] in ("done", "pending")
+    assert by_day[first]["session_type"] == "rest"
+    assert by_day[m2[0]["to"]]["session_type"] == "rest"
+
+
+def test_an_undo_brings_back_the_session_as_planned_not_as_edited_where_it_was_moved():
+    plan = _plan()
+    _, moves = _reconcile([], plan=plan)
+    dst = moves[0]["to"]
+    for w in plan["weeks"]:
+        for x in w["sessions"]:
+            if x["day"] == dst:
+                x.update({"duration_min": 30, "description": "shortened by a reforecast"})
+    by_day, _ = _reconcile([SQLITE_ROW], plan=plan)
+    assert by_day[MON]["duration_min"] == 79
+    assert by_day[MON]["status"] == "done"
+
+
+def test_a_move_from_a_week_no_longer_judged_is_not_undone():
+    plan = _plan()
+    _, moves = _reconcile([], plan=plan)
+    later = MONDAY + timedelta(days=9)             # the next week's Wednesday
+    nxt = MONDAY + timedelta(days=7)
+    plan["weeks"].append({"week_num": 2, "start": nxt.isoformat(), "end": (nxt + timedelta(days=6)).isoformat(),
+                          "phase": "base", "tss_target": 300, "is_stepback": False,
+                          "sessions": [{"day": (nxt + timedelta(days=i)).isoformat(), "day_name": "",
+                                        "session_type": "rest", "duration_min": 0, "tss_estimate": 0,
+                                        "status": "pending", "zwo_file": ""} for i in range(7)]})
+    undone = None
+    clock.freeze(later)
+    try:
+        with patch("db.query_activities", return_value=[SQLITE_ROW]), patch("ride_storage.list_rides", return_value=[]):
+            undone = app_module._undo_auto_moves_for_ridden_days(plan, later)
+    finally:
+        clock.unfreeze()
+    assert undone == []
+
+
+def test_the_manual_rematch_undoes_a_move_first(tmp_path):
+    from fastapi.testclient import TestClient
+    plan = _plan()
+    _, moves = _reconcile([], plan=plan)
+    (tmp_path / "current_plan.json").write_text(json.dumps(plan))
+    clock.freeze(TODAY)
+    try:
+        with patch.object(app_module, "_plan_dir", return_value=tmp_path), \
+             patch("db.query_activities", return_value=[SQLITE_ROW]), patch("ride_storage.list_rides", return_value=[]):
+            r = TestClient(app_module.app).post("/api/plan/rematch?apply=1",
+                                                headers={"Origin": "http://127.0.0.1:22400"})
+    finally:
+        clock.unfreeze()
+    assert r.status_code == 200, r.text
+    saved = json.loads((tmp_path / "current_plan.json").read_text())
+    mon = saved["weeks"][0]["sessions"][0]
+    assert (mon["session_type"], mon["status"]) == ("sweetspot", "done")
+

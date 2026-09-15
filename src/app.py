@@ -13622,15 +13622,27 @@ def _apply_move_session(
         # "missed", the auto-reschedule moved it off the day it was put on.
         moved_payload["status"] = "pending"
     if auto:
-        # What the move displaced, so a ride that turns up later on the
-        # source day can undo it (_undo_auto_moves_for_ridden_days). Kept at
-        # plan level: session fields outside the planner's DTO do not survive
-        # a reforecast.
-        plan.setdefault("auto_moves", []).append({
-            "from": src_iso, "to": dst_iso, "at": clock.now().isoformat(),
-            "displaced": json.loads(json.dumps(dst_session)) if dst_session else None,
-        })
-        plan["auto_moves"] = plan["auto_moves"][-20:]
+        # What the move changed, so a ride that turns up later on the
+        # session's own day can undo it (_undo_auto_moves_for_ridden_days):
+        # the session as it was, and what every day it passed through held.
+        # A move of a session an earlier auto-move put here extends that
+        # record, so the undo still starts from the day it was planned on.
+        # Kept at plan level: session fields outside the planner's DTO do not
+        # survive a reforecast.
+        def _snap(x):
+            return json.loads(json.dumps(x)) if x else None
+        records = plan.setdefault("auto_moves", [])
+        prior = next((r for r in records if r.get("to") == src_iso
+                      and src_session.get("auto_moved") and src_session.get("moved_from") == r.get("via")), None)
+        if prior is not None:
+            prior.setdefault("hops", []).append({"day": src_iso, "displaced": prior.get("displaced")})
+            prior.update({"to": dst_iso, "via": src_iso, "displaced": _snap(dst_session),
+                          "at": clock.now().isoformat()})
+        else:
+            records.append({"from": src_iso, "to": dst_iso, "via": src_iso, "hops": [],
+                            "session": _snap(src_session), "displaced": _snap(dst_session),
+                            "at": clock.now().isoformat()})
+        plan["auto_moves"] = records[-20:]
 
     new_src = []
     for s in src_sessions:
@@ -13895,60 +13907,83 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
 
 
 def _undo_auto_moves_for_ridden_days(plan: dict, today: date) -> list[dict]:
-    """Undo an auto-move whose source day turns out to have been ridden.
+    """Undo an auto-move whose session turns out to have been ridden on its day.
 
-    A ride can reach intervals.icu a day late (the phone syncs the head unit
-    the next afternoon). By then the session was marked missed and moved, and
-    the ride landed on a rest stub nothing matches. When the source day now
-    carries enough riding to count (the rematch rules: two of three axes, or
-    ``_ridden_status``) and the moved session is still unridden where it was
-    put, the session goes back to its day and the destination gets back what
-    it displaced. The next rematch then judges the session against the ride.
+    A ride can reach intervals.icu a day or two late (the phone syncs the head
+    unit late). By then the session was marked missed and moved, perhaps more
+    than once, and the ride landed on a rest stub nothing matches. When the
+    session's own day now carries enough riding to count (the rematch rules
+    applied to the session as it was planned: two of three axes, or
+    ``_ridden_status``), every day the move touched gets back what it held --
+    the session its own day, each day it passed through its previous content
+    -- all pending, and the rematch judges them afresh. Whatever was ridden
+    where the session was put is then judged against that day's own session.
+
+    Only for a session day the rematch still covers (the plan weeks of
+    yesterday and today); records older than 14 days are dropped.
     """
     records = plan.get("auto_moves") or []
     if not records:
         return []
-    sessions = {s.get("day"): (w, s) for w in plan.get("weeks", []) or []
-                for s in w.get("sessions", []) or []}
+    window_week, _ = _load_current_week_dto(plan, today - timedelta(days=1))
+    window_start = (window_week.start if window_week else today - timedelta(days=1)).isoformat()
+    horizon = (clock.now() - timedelta(days=14)).isoformat()
+
+    def _slot(day_iso):
+        for w in plan.get("weeks", []) or []:
+            for i, x in enumerate(w.get("sessions", []) or []):
+                if x.get("day") == day_iso:
+                    return w, i, x
+        return None, -1, None
+
+    def _pending(snapshot, day_iso, fallback_name):
+        base = snapshot or {"session_type": "rest", "duration_min": 0, "tss_estimate": 0,
+                            "description": "Rest", "zwo_file": "", "zwo_name": ""}
+        out = json.loads(json.dumps(base))
+        out.update({"day": day_iso, "day_name": out.get("day_name") or fallback_name, "status": "pending",
+                    "completion_matches": None, "dismissed_at": "", "auto_moved": False, "moved_from": ""})
+        return out
+
     undone, keep = [], []
     for rec in records:
         src, dst = rec.get("from", ""), rec.get("to", "")
-        src_w, src_s = sessions.get(src, (None, None))
-        dst_w, dst_s = sessions.get(dst, (None, None))
-        still_moved = (src_s is not None and dst_s is not None
-                       and str(src_s.get("status") or "") == f"moved_from:{dst}"
-                       and dst_s.get("auto_moved") and dst_s.get("moved_from") == src)
-        if not still_moved:
-            continue                      # superseded by later edits: forget it
-        if str(dst_s.get("status") or "pending") not in ("pending", "missed"):
-            keep.append(rec)              # ridden where it was put: the move stands
+        if str(rec.get("at", "")) < horizon:
             continue
         try:
+            src_w, src_i, src_s = _slot(src)
+            dst_w, dst_i, dst_s = _slot(dst)
+            still_moved = (src_s is not None and dst_s is not None
+                           and str(src_s.get("status") or "").startswith("moved_from:")
+                           and dst_s.get("auto_moved") and dst_s.get("moved_from") == rec.get("via"))
+            if not still_moved:
+                continue                  # superseded by later edits: forget it
+            if src < window_start or src >= today.isoformat():
+                keep.append(rec)          # outside what the rematch judges
+                continue
+            planned = rec.get("session") or dst_s
             src_d = date.fromisoformat(src)
             week, _ = _load_current_week_dto(plan, src_d)
-            acts = [a for a in _collect_week_activities(week, today, include_today=True)
-                    if a.get("date") == src] if week else []
-            probe = tp.session_from_dict({**dst_s, "day": src, "status": "pending"})
-            judged = [{**tp.classify_rematch(probe, a), "activity": a} for a in acts]
+            acts = [x for x in _collect_week_activities(week, today, include_today=True)
+                    if x.get("date") == src] if week else []
+            probe = tp.session_from_dict({**planned, "day": src, "status": "pending"})
+            judged = [{**tp.classify_rematch(probe, x), "activity": x} for x in acts]
             ridden = any(j["matched_axes"] >= 2 for j in judged) or (
                 bool(judged) and tp._ridden_status(judged, tp._session_planned_if(probe)) is not None)
+            if not ridden:
+                keep.append(rec)
+                continue
+            hops = rec.get("hops") or []
+            src_w["sessions"][src_i] = _pending(planned, src, src_s.get("day_name", ""))
+            for hop in hops:
+                hw, hi, hs = _slot(hop.get("day", ""))
+                if hs is not None:
+                    hw["sessions"][hi] = _pending(hop.get("displaced"), hop["day"], hs.get("day_name", ""))
+            dst_w, dst_i, dst_s = _slot(dst)
+            dst_w["sessions"][dst_i] = _pending(rec.get("displaced"), dst, dst_s.get("day_name", ""))
+            undone.append({"from": dst, "to": src})
         except Exception:  # noqa: BLE001 - undo is best effort; the move stands
-            _log.exception("auto-move undo: judging %s failed", src)
+            _log.exception("auto-move undo: %s -> %s failed", src, dst)
             keep.append(rec)
-            continue
-        if not ridden:
-            keep.append(rec)
-            continue
-        restored = {k: v for k, v in dst_s.items()}
-        restored.update({"day": src, "day_name": src_s.get("day_name", restored.get("day_name")),
-                         "status": "pending", "auto_moved": False, "moved_from": ""})
-        src_w["sessions"][src_w["sessions"].index(src_s)] = restored
-        back = rec.get("displaced") or {
-            "day": dst, "day_name": dst_s.get("day_name", ""), "session_type": "rest",
-            "duration_min": 0, "tss_estimate": 0, "description": "Rest", "zwo_file": "",
-            "zwo_name": "", "status": "pending"}
-        dst_w["sessions"][dst_w["sessions"].index(dst_s)] = back
-        undone.append({"from": dst, "to": src})
     plan["auto_moves"] = keep
     return undone
 
@@ -15927,6 +15962,13 @@ async def api_plan_rematch(request: Request, apply: int = Query(0)):
             plan = json.load(f)
 
         today = clock.today()
+        if apply:
+            # As the ride-sync path does: a late ride undoes its session's
+            # auto-move before the rematch judges the day it was moved to.
+            try:
+                _undo_auto_moves_for_ridden_days(plan, today)
+            except Exception:  # noqa: BLE001 - best effort
+                _log.exception("auto-move undo skipped")
         current_week, week_idx = _load_current_week_dto(plan, today)
         if not current_week:
             return {"action": "no_current_week"}

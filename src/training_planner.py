@@ -11936,9 +11936,20 @@ def reforecast(
             # the current week's future days be re-rested.
             if pw.end < today:
                 continue  # fully-past weeks — don't touch
+
+            # Only days still to be ridden. The per-day loop used to reach
+            # the current week's past days too, and any rest stub: on
+            # 2026-09-15 the stub an auto-move left on Monday came back the
+            # next morning as "z2 (73min) — restored from rest" on a day
+            # already over. A moved-away slot stays rest; a day with a
+            # settled status (done, missed, dismissed) keeps its session.
+            def _open_day(sess) -> bool:
+                st = str(getattr(sess, "status", "") or "pending")
+                return sess.day >= today and st == "pending"
+
             week_keys = [
                 s.day.isoformat() for s in pw.sessions
-                if s.day.isoformat() in availability_overrides
+                if s.day.isoformat() in availability_overrides and _open_day(s)
             ]
             if not week_keys:
                 continue
@@ -11947,7 +11958,7 @@ def reforecast(
             )
             current_mins = sum(
                 s.duration_min for s in pw.sessions
-                if s.day.isoformat() in availability_overrides
+                if s.day.isoformat() in availability_overrides and _open_day(s)
             )
             # v1.3.6 fix: pre-fix `if current_mins <= 0: continue` short-
             # circuited weeks where every override day was already REST
@@ -11976,7 +11987,7 @@ def reforecast(
 
             for s in pw.sessions:
                 d_iso = s.day.isoformat()
-                if d_iso not in availability_overrides:
+                if d_iso not in availability_overrides or not _open_day(s):
                     continue
                 # FC3 (v2.5.0, E12 — writer #12): the availability rescale must
                 # never touch the race entry. hours=0 on the race date used to
@@ -15278,6 +15289,13 @@ def _activity_if_band(activity: dict) -> str | None:
     which approximates IF via Coggan's TSS = IF^2 * hours * 100.
     """
     if_ = activity.get("intensity_factor") or activity.get("icu_intensity")
+    try:
+        # intervals.icu's icu_intensity is a percentage (89.1 for IF 0.891);
+        # read as a factor, every ride landed in "anaerobic".
+        if if_ is not None and float(if_) > 3:
+            if_ = float(if_) / 100
+    except (TypeError, ValueError):
+        pass
     if if_ is None:
         tss = float(activity.get("tss") or activity.get("icu_training_load") or 0)
         dur_min = float(activity.get("duration_min") or (activity.get("moving_time", 0) or 0) / 60 or 0)
@@ -15290,10 +15308,6 @@ def _activity_if_band(activity: dict) -> str | None:
         return None
     if if_ <= 0:
         return None
-    # intervals.icu's icu_intensity is a percentage (89.1 for IF 0.891); read
-    # as a factor, every ride landed in "anaerobic".
-    if if_ > 3:
-        if_ /= 100
     if if_ < 0.65:
         return "low_aerobic"
     elif if_ < 0.82:
@@ -15304,34 +15318,40 @@ def _activity_if_band(activity: dict) -> str | None:
         return "anaerobic"
 
 
-def _ridden_status(details: dict) -> str | None:
-    """What a same-day ride that fits no tolerance still did for the session.
+def _ridden_status(rides: list[dict]) -> str | None:
+    """What a finished day's rides did for a session none of them matched.
 
-    "done" when it delivered the planned stimulus: load no more than the TSS
-    tolerance under the plan, at the planned intensity band or harder -- a
-    longer or harder ride. "done_partial" when it reached half the planned
-    load, or the planned band: the session's point was partly made, and
-    moving the session onto another day would stack a second hard day on a
-    ridden one. None for a ride too small to count (a short easy spin), which
-    leaves the session missed and free to be rescheduled.
+    ``rides``: classify_rematch results for every ride on the day. They are
+    judged together -- the day's total load and its hardest intensity band --
+    so neither the order of the rows nor a commute beside the workout decides.
+
+    "done" when the day delivered the planned stimulus: load no more than the
+    TSS tolerance under the plan, at the planned band or harder (a longer or
+    harder ride). "done_partial" when it reached half the planned load: the
+    session's point was partly made, and moving it onto another day would stack
+    a second session on a ridden one. None below half the load (a spin, a
+    commute), which leaves the session missed and free to be rescheduled.
+
+    Only for days that are over: today's rides may be followed by the workout.
 
     Before 2026-09-15 any same-day ride outside the tolerances made the session
     "missed", and the auto-reschedule moved a hard session the rider had just
     ridden, harder, onto the next day.
     """
-    planned_tss = float(details.get("planned_tss") or 0)
-    actual_tss = float(details.get("actual_tss") or 0)
-    order = week_view.BANDS
-    planned_band, actual_band = details.get("planned_band"), details.get("actual_band")
-    band_reached = (planned_band in order and actual_band in order
-                    and order.index(actual_band) >= order.index(planned_band))
-    if planned_tss <= 0 or actual_tss <= 0:
+    if not rides:
         return None
-    if actual_tss >= planned_tss * (1 - REMATCH_TOL_TSS_PCT) and (band_reached or planned_band not in order):
+    details = [r.get("details") or {} for r in rides]
+    planned_tss = float(details[0].get("planned_tss") or 0)
+    day_tss = sum(float(d.get("actual_tss") or 0) for d in details)
+    if planned_tss <= 0 or day_tss < planned_tss * 0.5:
+        return None
+    order = week_view.BANDS
+    planned_band = details[0].get("planned_band")
+    reached = [order.index(d["actual_band"]) for d in details if d.get("actual_band") in order]
+    band_reached = planned_band not in order or (bool(reached) and max(reached) >= order.index(planned_band))
+    if day_tss >= planned_tss * (1 - REMATCH_TOL_TSS_PCT) and band_reached:
         return "done"
-    if actual_tss >= planned_tss * 0.5 or band_reached:
-        return "done_partial"
-    return None
+    return "done_partial"
 
 
 def classify_rematch(session: PlannedSession, activity: dict) -> dict:
@@ -15424,9 +15444,11 @@ def rematch_week(
         if cur_status == "dismissed":
             summary["dismissed"] += 1
             continue
-        if cur_status in ("done", "done_partial"):
-            summary[cur_status] += 1
+        if cur_status == "done":
+            summary["done"] += 1
             continue
+        # done_partial is re-judged: a ride that arrives after the day was
+        # settled (a late upload) may complete it. It only ever moves up.
         if cur_status == "missed_race":
             # FC3 (v2.5.0, L3-2): terminal — a past unridden race is never
             # re-evaluated back to pending/missed (and never rescheduled).
@@ -15437,8 +15459,10 @@ def rematch_week(
 
         day_acts = by_date.get(s.day.isoformat(), [])
         best = None
+        judged = []
         for a in day_acts:
             cls = classify_rematch(s, a)
+            judged.append({**cls, "activity": a})
             if best is None or cls["matched_axes"] > best["matched_axes"]:
                 best = {**cls, "activity": a}
 
@@ -15447,6 +15471,9 @@ def rematch_week(
             # "missed_race" — never plain "missed", which the auto-reschedule
             # layer would relocate to the next rest slot (the audit saw the
             # race entry rendered 2 days after the event).
+            if cur_status == "done_partial":
+                summary["done_partial"] += 1
+                continue
             if s.day < today:
                 new_status = "missed_race" if _protect_race(s) else "missed"
             else:
@@ -15465,7 +15492,12 @@ def rematch_week(
             })
         else:
             status_map = {"done": "done", "ambiguous": "ambiguous"}
-            resolved = status_map.get(best["status"]) or _ridden_status(best["details"] or {})
+            resolved = status_map.get(best["status"])
+            if resolved is None and s.day < today and not _protect_race(s):
+                resolved = _ridden_status(judged)
+                if resolved is not None:
+                    # The match recorded is the day's heaviest ride.
+                    best = max(judged, key=lambda j: float((j.get("details") or {}).get("actual_tss") or 0))
             if resolved is None:
                 # no_match with a same-day ride too small to count: missed if
                 # past, pending if today (the rider may still ride).
@@ -15476,6 +15508,9 @@ def rematch_week(
                     new_status = "pending"
             else:
                 new_status = resolved
+            if cur_status == "done_partial" and new_status != "done":
+                summary["done_partial"] += 1
+                continue
             summary[new_status] = summary.get(new_status, 0) + 1
             matches.append({
                 "session_date": s.day.isoformat(),

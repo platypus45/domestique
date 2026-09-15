@@ -437,14 +437,7 @@ def test_l3_1_easy_missed_session_may_move_into_window():
 
 def test_l3_2_rematch_marks_unridden_race_missed_race():
     goal, weeks, race = _race_fixture()
-    # The morning after, nothing ridden is not yet a miss: the race's ride may
-    # still be on its way to intervals.icu, and missed_race is terminal
-    # (grace day added 2026-09-15). The morning after that, it is.
     _FrozenDate._today = goal.target_date + timedelta(days=1)
-    early = tp.rematch_week(weeks[1], [], _FrozenDate.today())
-    assert not any(x["session_date"] == goal.target_date.isoformat() and x["new_status"] == "missed_race"
-                   for x in early["matches"])
-    _FrozenDate._today = goal.target_date + timedelta(days=2)
     preview = tp.rematch_week(weeks[1], [], _FrozenDate.today())
     m = next(x for x in preview["matches"]
              if x["session_date"] == goal.target_date.isoformat())

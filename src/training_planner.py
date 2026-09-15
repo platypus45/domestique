@@ -15516,14 +15516,11 @@ def rematch_week(
             if cur_status == "done_partial":
                 summary["done_partial"] += 1
                 continue
-            # A day with nothing ridden is missed only once the day after it
-            # is over too: a ride reaches intervals.icu when the phone syncs
-            # the head unit, which can be the next afternoon, and a miss is
-            # rescheduled at once and never moved back when the ride arrives.
-            if s.day < today - timedelta(days=1):
+            # A ride that reaches intervals.icu late (the phone syncs the head
+            # unit the next afternoon) undoes an auto-move it would have
+            # prevented: app._undo_auto_moves_for_ridden_days.
+            if s.day < today:
                 new_status = "missed_race" if _protect_race(s) else "missed"
-            elif cur_status == "missed":
-                new_status = "missed"
             else:
                 new_status = "pending"
             summary[new_status] = summary.get(new_status, 0) + 1
@@ -15549,14 +15546,11 @@ def rematch_week(
                     # The match recorded is the day's heaviest ride.
                     best = max(judged, key=lambda j: float((j.get("details") or {}).get("actual_tss") or 0))
             if resolved is None:
-                # no_match with a same-day ride too small to count: missed
-                # once the grace day is over too (another ride may still
-                # arrive), pending until then.
+                # no_match with a same-day ride too small to count: missed if
+                # past, pending if today (the rider may still ride).
                 # FC3 (L3-2): a race day resolves to the terminal missed_race.
-                if s.day < today - timedelta(days=1):
+                if s.day < today:
                     new_status = "missed_race" if _protect_race(s) else "missed"
-                elif cur_status == "missed":
-                    new_status = "missed"
                 else:
                     new_status = "pending"
             else:

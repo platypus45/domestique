@@ -76,6 +76,8 @@ def _reconcile(rows, today=TODAY, plan=None, day_type=None):
     try:
         with patch("db.query_activities", return_value=rows), \
              patch("ride_storage.list_rides", return_value=[]):
+            # The order _apply_plan_update runs them in.
+            app_module._undo_auto_moves_for_ridden_days(plan, today)
             app_module._reconcile_current_week(plan, today)
             moves = app_module._auto_apply_missed_moves(plan, today)
     finally:
@@ -97,7 +99,6 @@ def _row(tss, minutes, intensity_pct, day=MONDAY, rid="r"):
 
 
 MON = MONDAY.isoformat()
-WEDNESDAY = MONDAY + timedelta(days=2)   # Monday's grace day is over
 
 
 def test_a_ridden_session_is_done_and_stays_on_its_day():
@@ -137,13 +138,13 @@ def test_half_the_load_is_partly_done_and_not_moved():
 
 def test_a_short_hard_ride_under_half_the_load_is_missed_and_rescheduled():
     """The band alone is not the session: 25 TSS at IF 0.85 on a 105 TSS day."""
-    _, moves = _reconcile([_row(25, 20, 85)], today=WEDNESDAY)
+    _, moves = _reconcile([_row(25, 20, 85)])
     assert [m["from"] for m in moves] == [MON]
 
 
 def test_a_spin_on_an_easy_day_is_not_the_easy_day():
     long_day = {"session_type": "long_z2", "duration_min": 180, "tss_estimate": 150}
-    _, moves = _reconcile([_row(20, 25, 60)], day_type=long_day, today=WEDNESDAY)
+    _, moves = _reconcile([_row(20, 25, 60)], day_type=long_day)
     assert [m["from"] for m in moves] == [MON]
 
 
@@ -164,7 +165,7 @@ def test_today_is_not_judged_before_it_is_over():
 
 
 def test_an_unridden_race_day_is_still_a_missed_race():
-    by_day, moves = _reconcile([_row(15, 20, 55)], plan=_plan(race=True), today=WEDNESDAY)
+    by_day, moves = _reconcile([_row(15, 20, 55)], plan=_plan(race=True))
     assert by_day[MON]["status"] == "missed_race"
     assert moves == []
 
@@ -203,7 +204,7 @@ def test_a_partly_done_day_the_listed_rides_do_not_support_is_missed():
     done_partial; the next day's reconcile must undo that."""
     plan = _plan()
     plan["weeks"][0]["sessions"][0]["status"] = "done_partial"
-    _, moves = _reconcile([_row(12, 20, 60, rid="commute")], plan=plan, today=WEDNESDAY)
+    _, moves = _reconcile([_row(12, 20, 60, rid="commute")], plan=plan)
     assert [m["from"] for m in moves] == [MON]
 
 
@@ -247,7 +248,7 @@ def test_commutes_to_half_the_load_are_partly_done_not_the_interval_session():
 
 
 def test_a_commute_under_half_the_load_leaves_the_interval_session_owed():
-    _, moves = _reconcile([_row(20, 25, 62)], day_type=VO2_DAY, today=WEDNESDAY)
+    _, moves = _reconcile([_row(20, 25, 62)], day_type=VO2_DAY)
     assert [m["from"] for m in moves] == [MON]
 
 
@@ -353,46 +354,30 @@ def test_a_miss_in_the_previous_plan_week_is_not_moved_into_this_one():
     assert moves == []
 
 
-def test_a_day_with_no_ride_yet_waits_a_day_before_it_is_missed():
-    """The fourth review: Monday's ride reached intervals.icu on Tuesday
-    afternoon; a Tuesday-morning sync had already moved the session, and
-    nothing moved it back when the ride arrived."""
-    plan = _plan()
-    by_day, moves = _reconcile([], plan=plan)                 # Tuesday morning: no ride yet
-    assert by_day[MON]["status"] == "pending" and moves == []
-    by_day, moves = _reconcile([SQLITE_ROW], plan=plan)       # Tuesday afternoon: it arrives
-    assert by_day[MON]["status"] == "done" and moves == []
-
-
-def test_a_day_with_no_ride_is_missed_once_its_grace_day_is_over():
-    by_day, moves = _reconcile([], today=WEDNESDAY)
-    assert [m["from"] for m in moves] == [MON]
-
-
 def test_a_ride_stored_without_a_load_still_counts():
     no_tss = {**SQLITE_ROW, "tss": None, "raw_json": json.dumps({"moving_time": 5440, "icu_intensity": 89})}
-    by_day, moves = _reconcile([no_tss], today=WEDNESDAY)
+    by_day, moves = _reconcile([no_tss])
     assert by_day[MON]["status"] in ("done", "done_partial")
     assert moves == []
 
 
 def test_a_long_ride_reported_at_a_low_load_is_partly_done():
     """90 min at 45 TSS: an HR-based load, or a higher FTP on intervals.icu."""
-    by_day, moves = _reconcile([_row(45, 90, 55)], today=WEDNESDAY)
+    by_day, moves = _reconcile([_row(45, 90, 55)])
     assert by_day[MON]["status"] == "done_partial"
     assert moves == []
 
 
 def test_a_session_without_a_planned_load_is_judged_by_duration():
     day = {"session_type": "sweetspot", "duration_min": 79, "tss_estimate": 0}
-    by_day, moves = _reconcile([_row(120, 90, 89)], day_type=day, today=WEDNESDAY)
+    by_day, moves = _reconcile([_row(120, 90, 89)], day_type=day)
     assert by_day[MON]["status"] in ("done", "done_partial", "ambiguous")
     assert moves == []
 
 
 def test_a_race_ridden_well_under_its_placeholder_is_not_missed():
     """A 60-minute crit against a 300-minute, 250 TSS placeholder."""
-    by_day, _ = _reconcile([_row(100, 60, 95)], plan=_plan(race=True), today=WEDNESDAY)
+    by_day, _ = _reconcile([_row(100, 60, 95)], plan=_plan(race=True))
     assert by_day[MON]["status"] == "done_partial"
 
 
@@ -417,17 +402,81 @@ def test_a_miss_is_not_moved_into_the_next_plan_week():
     assert all(m["to"] <= thursday.isoformat() for m in moves), moves
 
 
-def test_a_weeks_last_day_with_no_ride_is_missed_two_mornings_later():
+def test_a_ride_that_arrives_after_its_session_was_moved_brings_it_back():
+    """The fifth review: Monday's ride reached intervals.icu on Tuesday
+    afternoon. Tuesday morning's sync had marked Monday missed and moved the
+    session; the ride then landed on a rest stub nothing matched."""
     plan = _plan()
-    sun = plan["weeks"][0]["sessions"][6]
-    sun.update({"session_type": "long_z2", "duration_min": 180, "tss_estimate": 130})
-    nxt = MONDAY + timedelta(days=7)
-    plan["weeks"].append({"week_num": 2, "start": nxt.isoformat(), "end": (nxt + timedelta(days=6)).isoformat(),
-                          "phase": "base", "tss_target": 300, "is_stepback": False,
-                          "sessions": [{"day": (nxt + timedelta(days=i)).isoformat(), "day_name": "",
-                                        "session_type": "rest", "duration_min": 0, "tss_estimate": 0,
-                                        "status": "pending", "zwo_file": ""} for i in range(7)]})
-    _reconcile([], today=nxt, plan=plan)
-    assert plan["weeks"][0]["sessions"][6]["status"] == "pending", "Monday: still its grace day"
-    _reconcile([], today=nxt + timedelta(days=1), plan=plan)
-    assert plan["weeks"][0]["sessions"][6]["status"] == "missed"
+    by_day, moves = _reconcile([], plan=plan)                   # Tuesday morning: no ride yet
+    assert [m["from"] for m in moves] == [MON]
+    dst = moves[0]["to"]
+    by_day, moves = _reconcile([SQLITE_ROW], plan=plan)         # Tuesday afternoon: it arrives
+    assert by_day[MON]["session_type"] == "sweetspot"
+    assert by_day[MON]["status"] == "done"
+    assert (by_day[dst]["session_type"], by_day[dst]["status"]) == ("rest", "pending"), "what it displaced is back"
+    assert moves == []
+    assert plan.get("auto_moves") == []
+
+
+def test_a_moved_session_ridden_where_it_was_put_stays_there():
+    plan = _plan()
+    _, moves = _reconcile([], plan=plan)
+    dst = moves[0]["to"]
+    for w in plan["weeks"]:
+        for x in w["sessions"]:
+            if x["day"] == dst:
+                x["status"] = "done"
+    by_day, _ = _reconcile([SQLITE_ROW], plan=plan)
+    assert by_day[dst]["session_type"] == "sweetspot"
+    assert by_day[MON]["status"].startswith("moved_from:")
+
+
+def test_a_missed_session_dragged_onto_a_day_to_come_is_owed_there():
+    """Left "missed", the auto-reschedule moved it off the day it was put on."""
+    plan = _plan()
+    plan["weeks"][0]["sessions"][0]["status"] = "missed"
+    wed = (MONDAY + timedelta(days=2)).isoformat()
+    clock.freeze(TODAY)
+    try:
+        moved = app_module._apply_move_session(plan, MON, wed)
+    finally:
+        clock.unfreeze()
+    assert moved["status"] == "pending"
+    _, moves = _reconcile([], plan=plan)
+    assert wed not in [m["from"] for m in moves]
+
+
+
+def test_undoing_a_move_gives_the_easy_day_it_took_over_back():
+    plan = _plan()
+    for x in plan["weeks"][0]["sessions"][2:5]:                     # Wed-Fri: easy rides, no rest slot
+        x.update({"session_type": "z2", "duration_min": 60, "tss_estimate": 40,
+                  "zwo_file": "endurance_steady_68pct_75min.zwo"})
+    _, moves = _reconcile([], plan=plan)
+    assert [m["from"] for m in moves] == [MON]
+    dst = moves[0]["to"]
+    by_day, _ = _reconcile([SQLITE_ROW], plan=plan)
+    assert by_day[MON]["session_type"] == "sweetspot"
+    assert (by_day[dst]["session_type"], by_day[dst]["duration_min"]) in (("z2", 73), ("z2", 60))
+
+
+def test_a_copy_of_a_ride_without_a_load_is_the_same_ride():
+    """The fifth review: a copy stored without a load fell in another TSS
+    bucket, so both copies were counted and their minutes doubled."""
+    easy = {"session_type": "long_z2", "duration_min": 120, "tss_estimate": 90, "zwo_file": ""}
+    real = {**_row(25, 35, 60, rid="real"), "raw_json": json.dumps({"moving_time": 2100, "icu_intensity": 60,
+                                                                     "start_date_local": f"{MONDAY}T10:00:00"})}
+    copy_ = {**real, "id": "copy", "tss": None,
+             "raw_json": json.dumps({"moving_time": 2100, "start_date_local": f"{MONDAY}T10:00:04"})}
+    for rows in ([real, copy_], [copy_, real]):
+        plan = _plan()
+        week, _ = app_module._load_current_week_dto({**plan, "weeks": [{**plan["weeks"][0],
+                                                     "sessions": [{**plan["weeks"][0]["sessions"][0], **easy}]
+                                                     + plan["weeks"][0]["sessions"][1:]}]}, TODAY)
+        clock.freeze(TODAY)
+        try:
+            with patch("db.query_activities", return_value=rows), patch("ride_storage.list_rides", return_value=[]):
+                acts = app_module._collect_week_activities(week, TODAY, include_today=True)
+        finally:
+            clock.unfreeze()
+        assert [(a["id"], a["tss"]) for a in acts] == [("real", 25.0)], rows[0]["id"]

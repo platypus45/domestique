@@ -15345,7 +15345,7 @@ def _session_planned_if(session) -> float | None:
     return (tss / (dur / 60 * 100)) ** 0.5 if tss > 0 and dur > 0 else None
 
 
-def _ridden_status(rides: list[dict], planned_if: float | None) -> str | None:
+def _ridden_status(rides: list[dict], planned_if: float | None, race: bool = False) -> str | None:
     """What a finished day's rides did for a session none of them matched.
 
     ``rides``: classify_rematch results (with their activity) for every ride
@@ -15353,14 +15353,17 @@ def _ridden_status(rides: list[dict], planned_if: float | None) -> str | None:
     commute beside the workout decides.
 
     "done": the day carried the planned load (no more than the TSS tolerance
-    under it) and a ride carrying at least a quarter of it averaged the served
-    workout's intensity (``planned_if``, 0.05 of slack) -- a longer or harder
-    ride counts.
-    "done_partial": the day carried at least half the planned load, whatever
-    its intensity. A day ridden that much is never missed: moving the session
-    onto the next day would stack it on a ridden one (the owner, 2026-09-15).
-    None below half the load -- a spin, a short ride -- which leaves the
-    session missed and free to be rescheduled.
+    under it; the planned duration when the session has no TSS) and a ride
+    carrying at least a quarter of it averaged the served workout's intensity
+    (``planned_if``, 0.05 of slack) -- a longer or harder ride counts.
+    "done_partial": the day carried half the planned load, or half the planned
+    duration (a load reported low: HR-based, or a higher FTP on
+    intervals.icu), whatever its intensity; on a race day, any ride of 30
+    minutes, since a race placeholder's load is a guess. A day ridden that
+    much is never missed: moving the session onto the next day would stack it
+    on a ridden one (the owner, 2026-09-15).
+    None below that -- a spin, a short ride -- which leaves the session
+    missed and free to be rescheduled.
 
     Before 2026-09-15 any same-day ride outside the tolerances made the session
     "missed", and the auto-reschedule moved a hard session the rider had just
@@ -15370,16 +15373,22 @@ def _ridden_status(rides: list[dict], planned_if: float | None) -> str | None:
         return None
     details = [r.get("details") or {} for r in rides]
     planned = float(details[0].get("planned_tss") or 0)
-    if planned <= 0:
-        return None
+    planned_dur = float(details[0].get("planned_duration") or 0)
     total = sum(float(d.get("actual_tss") or 0) for d in details)
-    carried = [_activity_if(r.get("activity") or {}) for r, d in zip(rides, details)
-               if float(d.get("actual_tss") or 0) >= planned * 0.25]
-    delivered = max((x for x in carried if x is not None), default=None)
-    if (total >= planned * (1 - REMATCH_TOL_TSS_PCT) and planned_if is not None
-            and delivered is not None and delivered >= planned_if - 0.05):
+    minutes = sum(float(d.get("actual_duration") or 0) for d in details)
+    if planned > 0:
+        full = total >= planned * (1 - REMATCH_TOL_TSS_PCT)
+        carriers = [r for r, d in zip(rides, details) if float(d.get("actual_tss") or 0) >= planned * 0.25]
+    else:
+        full = planned_dur > 0 and minutes >= planned_dur * (1 - REMATCH_TOL_DURATION_PCT)
+        carriers = [r for r, d in zip(rides, details)
+                    if planned_dur > 0 and float(d.get("actual_duration") or 0) >= planned_dur * 0.25]
+    delivered = max((x for x in (_activity_if(r.get("activity") or {}) for r in carriers) if x is not None),
+                    default=None)
+    if full and planned_if is not None and delivered is not None and delivered >= planned_if - 0.05:
         return "done"
-    if total >= planned * 0.5:
+    if ((planned > 0 and total >= planned * 0.5) or (planned_dur > 0 and minutes >= planned_dur * 0.5)
+            or (race and any(float(d.get("actual_duration") or 0) >= 30 for d in details))):
         return "done_partial"
     return None
 
@@ -15507,8 +15516,14 @@ def rematch_week(
             if cur_status == "done_partial":
                 summary["done_partial"] += 1
                 continue
-            if s.day < today:
+            # A day with nothing ridden is missed only once the day after it
+            # is over too: a ride reaches intervals.icu when the phone syncs
+            # the head unit, which can be the next afternoon, and a miss is
+            # rescheduled at once and never moved back when the ride arrives.
+            if s.day < today - timedelta(days=1):
                 new_status = "missed_race" if _protect_race(s) else "missed"
+            elif cur_status == "missed":
+                new_status = "missed"
             else:
                 new_status = "pending"
             summary[new_status] = summary.get(new_status, 0) + 1
@@ -15529,16 +15544,19 @@ def rematch_week(
             if resolved is None and s.day < today:
                 # A race day too: a race ridden shorter than its placeholder
                 # is not a missed race. Nothing reschedules a race day.
-                resolved = _ridden_status(judged, _session_planned_if(s))
+                resolved = _ridden_status(judged, _session_planned_if(s), race=bool(_protect_race(s)))
                 if resolved is not None:
                     # The match recorded is the day's heaviest ride.
                     best = max(judged, key=lambda j: float((j.get("details") or {}).get("actual_tss") or 0))
             if resolved is None:
-                # no_match with a same-day ride too small to count: missed if
-                # past, pending if today (the rider may still ride).
+                # no_match with a same-day ride too small to count: missed
+                # once the grace day is over too (another ride may still
+                # arrive), pending until then.
                 # FC3 (L3-2): a race day resolves to the terminal missed_race.
-                if s.day < today:
+                if s.day < today - timedelta(days=1):
                     new_status = "missed_race" if _protect_race(s) else "missed"
+                elif cur_status == "missed":
+                    new_status = "missed"
                 else:
                     new_status = "pending"
             else:

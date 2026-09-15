@@ -13420,12 +13420,23 @@ def _collect_week_activities(current_week, today: date, include_today: bool = Fa
         d = (a.get("date") or a.get("start_date_local", "") or "")[:10]
         if not (week_start_iso <= d < upper_iso):
             return
-        tss = float(a.get("tss") or a.get("icu_training_load") or 0)
-        if tss <= 0:
-            return
+        tss = float(a.get("tss") or a.get("icu_training_load") or raw.get("icu_training_load") or 0)
         moving_s = a.get("moving_time") or raw.get("moving_time") or a.get("duration_sec") or 0
         dur_min = float(a.get("duration_min") or (moving_s or 0) / 60 or 0)
         if_ = a.get("intensity_factor") or a.get("icu_intensity") or raw.get("icu_intensity")
+        if tss <= 0:
+            # A ride stored without a load (intervals.icu had no FTP for it,
+            # or never analysed it) is still a ride: estimated from duration
+            # and intensity where there is one, else kept at 0 TSS so its
+            # duration counts. Before, it was dropped and its day was missed.
+            try:
+                f = float(if_) if if_ is not None else 0.0
+                f = f / 100 if f > 3 else f
+            except (TypeError, ValueError):
+                f = 0.0
+            tss = round(dur_min / 60 * f * f * 100, 1) if f > 0 else 0.0
+            if dur_min <= 0:
+                return
         # v2.4.0 — dedup key includes DURATION so two genuinely-different same-day
         # rides (e.g. a short hard session + a long commute) with near-equal TSS
         # are NOT collapsed; cross-source copies of the SAME ride share
@@ -13872,7 +13883,8 @@ def _auto_apply_missed_moves(plan: dict, today: date) -> list[dict]:
     if current is None:
         return []
     suggestions = [x for x in suggestions
-                   if str(current["start"]) <= str(x.get("missed_date", "")) <= str(current["end"])]
+                   if str(current["start"]) <= str(x.get("missed_date", "")) <= str(current["end"])
+                   and str(current["start"]) <= str(x.get("suggested_date", "")) <= str(current["end"])]
     applied: list[dict] = []
     for s in suggestions:
         src = s.get("missed_date")
@@ -15788,11 +15800,11 @@ def _reconcile_current_week(plan: dict, today: date) -> "tuple[int, dict | None]
     (_apply_plan_update, fired by ride-sync) calls it so completed rides are
     matched to planned sessions on sync — no manual "Reconcile Week" click.
     """
-    # Yesterday's week too when today opens a new one: the rule for ridden
-    # days judges only days that are over, so a week's last day is judged the
-    # morning after, when it already belongs to the previous week.
+    # The plan weeks of the last two days too: a finished day is judged the
+    # morning after, and a day with nothing ridden the morning after that,
+    # when a week's last days already belong to the previous week.
     n, preview, seen = 0, None, set()
-    for anchor in (today - timedelta(days=1), today):
+    for anchor in (today - timedelta(days=2), today - timedelta(days=1), today):
         week, week_idx = _load_current_week_dto(plan, anchor)
         if not week or week_idx in seen:
             continue

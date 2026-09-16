@@ -9,12 +9,12 @@
         <tag name="ftp_test_coggan" />
     </tags>
     <workout>
-        <Warmup Duration="600" PowerLow="0.45" PowerHigh="0.70" pace="warmup" />
-        <IntervalsT Repeat="3" OnDuration="60" OffDuration="60" OnPower="0.95" OffPower="0.50" pace="openers" />
-        <SteadyState Duration="240" Power="0.50" pace="easy" />
-        <FreeRide Duration="300" FlatRoad="1" pace="depletion" />
-        <SteadyState Duration="540" Power="0.50" pace="easy" />
-        <FreeRide Duration="1200" FlatRoad="1" pace="test" />
-        <Cooldown Duration="300" PowerLow="0.60" PowerHigh="0.40" pace="cooldown" />
+        <Warmup Duration="600" PowerLow="0.45" PowerHigh="0.70" pace="0" />
+        <IntervalsT Repeat="3" OnDuration="60" OffDuration="60" OnPower="0.95" OffPower="0.50" pace="0" />
+        <SteadyState Duration="240" Power="0.50" pace="0" />
+        <FreeRide Duration="300" FlatRoad="1" pace="0" />
+        <SteadyState Duration="540" Power="0.50" pace="0" />
+        <FreeRide Duration="1200" FlatRoad="1" pace="0" />
+        <Cooldown Duration="300" PowerLow="0.60" PowerHigh="0.40" pace="0" />
     </workout>
 </workout_file>

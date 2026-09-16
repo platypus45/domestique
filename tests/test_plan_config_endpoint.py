@@ -39,8 +39,19 @@ class PlanPreviewEndpointTests(unittest.TestCase):
         self.assertGreater(len(phases), 0)
         # General has no taper but should still cover 20 weeks across
         # base + build1 + build2 + peak.
-        self.assertEqual(self._phases_sum(phases), 20,
-                         f"phase sum != 20: {phases}")
+        # 20 or 21, and 21 is the HONEST number when the plan opens mid-week.
+        # Both ends of the runway are partial rows -- a short opening week and
+        # a taper ending on race day -- so 20 weeks of runway spans 21 emitted
+        # weeks. Measured for a 20-week event goal generated on a Thursday:
+        #
+        #   before Monday anchoring   peak: weeks=2, rows=3   sum=20, rows=21
+        #   after                     peak: weeks=3, rows=3   sum=21, rows=21
+        #
+        # i.e. the old sum only reached 20 because the peak label UNDER-COUNTED
+        # the weeks it actually emits. The property this guards -- the split
+        # covers the runway and loses nothing -- holds either way.
+        self.assertIn(self._phases_sum(phases), (20, 21),
+                      f"phase sum not 20-21: {phases}")
 
     def test_event_prep_20_weeks_returns_5_phases_summing_to_20(self) -> None:
         """goal=event, event ~140 days out, plan_weeks=20 → 5 phases sum=20."""
@@ -62,8 +73,19 @@ class PlanPreviewEndpointTests(unittest.TestCase):
         self.assertIn("build2", names)
         self.assertIn("peak", names)
         self.assertIn("taper", names)
-        self.assertEqual(self._phases_sum(phases), 20,
-                         f"phase sum != 20: {phases}")
+        # 20 or 21, and 21 is the HONEST number when the plan opens mid-week.
+        # Both ends of the runway are partial rows -- a short opening week and
+        # a taper ending on race day -- so 20 weeks of runway spans 21 emitted
+        # weeks. Measured for a 20-week event goal generated on a Thursday:
+        #
+        #   before Monday anchoring   peak: weeks=2, rows=3   sum=20, rows=21
+        #   after                     peak: weeks=3, rows=3   sum=21, rows=21
+        #
+        # i.e. the old sum only reached 20 because the peak label UNDER-COUNTED
+        # the weeks it actually emits. The property this guards -- the split
+        # covers the runway and loses nothing -- holds either way.
+        self.assertIn(self._phases_sum(phases), (20, 21),
+                      f"phase sum not 20-21: {phases}")
 
     def test_preview_matches_generate_phase_counts(self) -> None:
         """/api/plan/preview must produce the same phase split as

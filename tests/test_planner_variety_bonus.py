@@ -203,10 +203,21 @@ class TestHITCategoryFloors:
                 if _content_class_of(s.zwo_file or "") == "vo2_short":
                     n += 1
         # W8 measured: pinned plan (ctl=50, weekly_tss=650, today=2026-01-05,
-        # seed_salt=12345) yields exactly 9 vo2_short picks. 8 = measured
-        # minus a small margin. Re-measure after the W6 classifier apply
-        # (~59 easy→hard files) shifts pool composition.
-        assert n >= 8, f"only {n} vo2_short picks across 24w (want ≥8)"
+        # seed_salt=12345) yielded exactly 9 vo2_short picks, so the floor was
+        # pinned at 8 -- measured minus a small margin.
+        #
+        # Re-measured at 7 once 48 h hard-day spacing became a constraint the
+        # phase-floor pass consults when choosing a slot. Some vo2_short picks
+        # sat next to another hard day and now land elsewhere or not at all;
+        # the same 24-week plan delivers 35 hard sessions with ZERO pairs
+        # closer than 48 h. Recovery spacing is a safety rail (Seiler 2010,
+        # Gabbett 2016); a per-class variety quota is not, so the quota is what
+        # yields when the two disagree.
+        #
+        # This is a MEASUREMENT PIN, not a training contract -- it exists to
+        # catch an unintended collapse in vo2_short usage, so it tracks the
+        # measurement rather than asserting a number the science requires.
+        assert n >= 7, f"only {n} vo2_short picks across 24w (want ≥7)"
 
 
 class TestBuild2PeakPhaseFloors:
@@ -227,12 +238,27 @@ class TestBuild2PeakPhaseFloors:
                     counts[cc] += 1
         if not any_build2:
             pytest.skip("no build2 phase in this plan")
-        # W8 measured: pinned plan (ctl=50, weekly_tss=650, today=2026-01-05,
-        # seed_salt=12345) build2 = anaerobic 1, vo2_short 3, neuromuscular 0.
-        # The neuromuscular ≥1 floor moved to test_build2_neuromuscular_floor
-        # (xfail) — a measured 0 admits no true-with-margin floor above
-        # always-true. Re-measure after the event-planner fix wave.
-        assert counts["anaerobic"] >= 1, f"build2 anaerobic={counts['anaerobic']} (≥1)"
+        # W8 measured: build2 = anaerobic 1, vo2_short 3, neuromuscular 0, and
+        # the floor was pinned to those exact numbers.
+        #
+        # Re-measured once 48 h hard-day spacing became a constraint the floor
+        # pass consults when choosing a slot (rather than a later pass that
+        # undid its choice): build2 = anaerobic 0, vo2_short 3,
+        # neuromuscular 1. The same number of short-recovery sessions is
+        # placed; WHICH of the two the library answers with is a pool-
+        # composition detail, not a training decision, and pinning one of them
+        # by name made the suite fail on a plan that is strictly better —
+        # the 24-week plan now delivers 35 hard sessions with ZERO pairs closer
+        # than 48 h, where the pinned behaviour left several.
+        #
+        # So the floor is asserted as what it actually means: the phase gets
+        # its short-recovery work, whichever of the two classes carries it.
+        # vo2_short keeps its own floor because it is the phase's main
+        # intensity and is never a substitute for the other two.
+        short_recovery = counts["anaerobic"] + counts["neuromuscular"]
+        assert short_recovery >= 1, (
+            f"build2 anaerobic={counts['anaerobic']} + "
+            f"neuromuscular={counts['neuromuscular']} (want ≥1 between them)")
         assert counts["vo2_short"] >= 2, f"build2 vo2_short={counts['vo2_short']} (≥2)"
 
     @pytest.mark.xfail(

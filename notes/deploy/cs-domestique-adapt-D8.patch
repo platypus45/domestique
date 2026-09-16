@@ -1,0 +1,18 @@
+--- a/bin/cs-domestique-adapt	2026-09-14 18:42:00.386162476 +0200
++++ b/bin/cs-domestique-adapt	2026-09-14 18:42:00.398075513 +0200
+@@ -94,10 +94,11 @@
+ log "-> POST /api/sync ok"
+ 
+ if [ "$MODE" = "apply" ]; then
+-  # auto-recalc is a GET but it WRITES: >7 days since the last recalc and it
+-  # rebuilds the plan (tp.atomic_write_plan) and schedules a calendar push.
+-  # That is why it is inside the apply branch and nowhere else.
+-  soft_step auto_recalc GET  /api/plan/auto-recalc '' 300 || true
++  # auto-recalc WRITES: >7 days since the last recalc and it rebuilds the
++  # plan (tp.atomic_write_plan) and schedules a calendar push. That is why it
++  # is inside the apply branch and nowhere else. A POST since Domestique's
++  # D8 (refactor/backend-architecture, 2026-09-14): a GET there answers 405.
++  soft_step auto_recalc POST /api/plan/auto-recalc '' 300 || true
+   soft_step reforecast  POST /api/plan/reforecast  '' 300 || true
+   soft_step auto_adjust POST /api/plan/auto-adjust "{\"scope\":\"$SCOPE\",\"dry_run\":false}" 300 || true
+ else

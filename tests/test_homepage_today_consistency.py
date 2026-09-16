@@ -299,5 +299,69 @@ class TestTodayUsesLocalDate(HomepageTodayConsistencyBase):
             self.assertEqual(data["planned"]["session_type"], "tempo")
 
 
+class TestYesterdayOnAMonday(HomepageTodayConsistencyBase):
+    """G1 compares yesterday's ridden load to yesterday's planned one. On a
+    Monday yesterday is last ISO week's Sunday; the handler looked it up in
+    this week's sessions only, found nothing, and every Monday read as
+    "yesterday went to plan" whatever was ridden (found 2026-09-14)."""
+
+    def test_sundays_plan_is_found_on_monday(self):
+        import clock
+        monday = date(2026, 9, 14)
+        sunday = monday - timedelta(days=1)
+        clock.freeze(monday)
+        self.addCleanup(clock.unfreeze)
+        plan = _mk_today_plan_dict(sunday, "z2", 120, 100, "Endurance")
+        plan["weeks"] += _mk_today_plan_dict(monday, "tempo", 75, 60, "Tempo")["weeks"]
+        plan["weeks"][1]["week_num"] = 2
+        (self._tmp / "current_plan.json").write_text(json.dumps(plan))
+        ride = {"date": sunday.isoformat(), "sport": "Ride", "tss": 200,
+                "duration_sec": 7200, "raw_json": "{}"}
+        with patch.object(
+            app_module, "get_sleep_metrics",
+            return_value={"red_hrv_streak": 0, "ln_rmssd_7d": None,
+                          "swc_lower": None, "swc_upper": None,
+                          "sleep_h": 7.5, "rhr_delta": 0},
+        ), patch.object(
+            app_module, "get_today_metrics",
+            return_value={"ctl": 50, "atl": 45, "tsb": 5},
+        ), patch.object(app_module.db, "query_activities", return_value=[ride]):
+            data = self.client.get("/api/today-session").json()
+        self.assertEqual(data["planned"]["session_type"], "tempo")
+        self.assertEqual(data["adjusted"]["session_type"], "z2")
+        self.assertIn("G1 yesterday 2.0", data["reason"])
+
+
+class TestNoSessionInsideAPlan(HomepageTodayConsistencyBase):
+    """A day no stored row covers has no session (the view never invents one),
+    but the rider has a plan: the card must say rest, not offer to create a
+    first plan. The dashboard used to tell the two apart by a global only the
+    Plan tab sets (the adversarial review, 2026-09-14)."""
+
+    def test_a_plan_starting_tomorrow(self):
+        plan = _mk_today_plan_dict(self._today + timedelta(days=1), "tempo", 75, 60, "Tempo")
+        for w in plan["weeks"]:
+            w["sessions"] = [x for x in w["sessions"] if x["day"] > self._today.isoformat()]
+            w["start"] = (self._today + timedelta(days=1)).isoformat()
+        (self._tmp / "current_plan.json").write_text(json.dumps(plan))
+        data = self.client.get("/api/today-session").json()
+        self.assertIsNone(data["planned"])
+        self.assertTrue(data["has_plan"])
+        self.assertIn("retest_nudge", data)
+
+    def test_no_plan_at_all(self):
+        (self._tmp / "current_plan.json").unlink()
+        data = self.client.get("/api/today-session").json()
+        self.assertIsNone(data["planned"])
+        self.assertFalse(data["has_plan"])
+
+    def test_the_card_branches_on_has_plan(self):
+        """The dashboard reads the server's flag before its Plan-tab global."""
+        src = (Path(app_module.__file__).parent / "templates" / "dashboard.html").read_text(encoding="utf-8")
+        i = src.index("if (!d.planned) {")
+        branch = src[i:i + 1500]
+        self.assertLess(branch.index("d.has_plan"), branch.index("window._planData"))
+
+
 if __name__ == "__main__":
     unittest.main()

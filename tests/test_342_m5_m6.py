@@ -216,6 +216,9 @@ const window = { _planData: { weeks: [{}] }, _athleteFtp: 250,
   _weekPlanSessions: [{ day: new Date().toLocaleDateString('en-CA'),
                         zwo_name: 'Sweet Spot Steady 80min' }] };
 const fetch = async () => ({ ok: true, json: async () => payload });
+
+// The dashboard reads GETs through getResource (an in-flight memo over fetch).
+const getResource = (path) => fetch(path);
 const fixZeroMin = s => s;
 const _continuousSuggestionHtml = () => '';
 const _deloadAdvanceChipHtml = () => '';

@@ -13,7 +13,8 @@ entry_mode / available_days / daily_max_hours. Consequences under test here:
     future weeks (a pending race row is NOT preserved by the §6.12 predicate
     — it is normally REBUILT from goal.events, which were gone).
 
-Both fixed by routing through _goal_from_plan_dict + set_active_distribution.
+Both fixed by routing through _goal_from_plan_dict; the model now travels
+with the goal (there is no process-wide setting left to re-pin).
 Drives the real HTTP /api/plan/generate + /api/plan/regenerate path (the
 FS1-regen-persistence pattern).
 """
@@ -62,8 +63,21 @@ class TestRegenGoalFidelity(unittest.TestCase):
     def tearDown(self):
         self._patch.stop()
         self._patch_tp.stop()
-        # Never leak a pinned model into other suites.
-        tp.set_active_distribution("polarized", None)
+
+    @staticmethod
+    def _models_seen():
+        """Every model a budget lookup ran under, while the block runs. Only
+        lookups made with a goal: the goal-free ones read the HIT count, which
+        every model shares. There is no process state left to reset, so the
+        old "simulate an app restart" step has nothing to act on -- which is
+        the point (notes/review/state.md STA-1)."""
+        seen, real = [], tp.budget_table
+
+        def spy(goal=None):
+            if goal is not None:
+                seen.append(tp._model_of(goal))
+            return real(goal)
+        return seen, patch.object(tp, "budget_table", side_effect=spy)
 
     def _mocks(self):
         stub = {"training": {"ctl": 45}, "wellness_7": []}
@@ -95,15 +109,14 @@ class TestRegenGoalFidelity(unittest.TestCase):
             b_iso = self.b_date.isoformat()
             self.assertIn(b_iso, _race_rows(gen), "generate must place the B race row")
 
-            # Simulate an app restart: the sticky process-global reverts.
-            tp.set_active_distribution("polarized", None)
-
-            r2 = self.client.post("/api/plan/regenerate")
+            seen, spy = self._models_seen()
+            with spy:
+                r2 = self.client.post("/api/plan/regenerate")
             self.assertEqual(r2.status_code, 200, r2.text)
-            # The regen core must re-pin the plan's model from its goal block
-            # (pre-fix: budgets stayed polarized).
-            self.assertEqual(tp.get_active_distribution(), "pyramidal",
-                             "regenerate ran on polarized budgets")
+            # Every budget the regen core looked up is the plan's own model.
+            self.assertTrue(seen, "regenerate made no budget lookup")
+            self.assertEqual({m for m, _ in seen}, {"pyramidal"},
+                             "regenerate budgeted under another model")
 
             reg = json.loads((self.tmp / "current_plan.json").read_text())
             self.assertEqual(reg["goal"].get("distribution"), "pyramidal")
@@ -124,12 +137,14 @@ class TestRegenGoalFidelity(unittest.TestCase):
                                                "vo2": 5, "sprint": 5})
             self.assertEqual(gen["goal"].get("distribution"), "custom")
 
-            tp.set_active_distribution("polarized", None)  # app restart
-
-            r2 = self.client.post("/api/plan/regenerate")
+            seen, spy = self._models_seen()
+            with spy:
+                r2 = self.client.post("/api/plan/regenerate")
             self.assertEqual(r2.status_code, 200, r2.text)
-            self.assertEqual(tp.get_active_distribution(), "custom",
+            self.assertTrue(seen, "regenerate made no budget lookup")
+            self.assertEqual({m for m, _ in seen}, {"custom"},
                              "regenerate lost the custom distribution")
+            self.assertTrue(all((b or {}).get("tempo_ss") == 70 for _, b in seen))
             reg = json.loads((self.tmp / "current_plan.json").read_text())
             self.assertEqual(reg["goal"].get("custom_bands", {}).get("tempo_ss"), 70)
 
@@ -143,12 +158,13 @@ class TestRegenGoalFidelity(unittest.TestCase):
             plan["recalc_date"] = (datetime.now() - timedelta(days=8)).isoformat()
             (self.tmp / "current_plan.json").write_text(json.dumps(plan))
 
-            tp.set_active_distribution("polarized", None)  # app restart
-
-            r = self.client.get("/api/plan/auto-recalc")
+            seen, spy = self._models_seen()
+            with spy:
+                r = self.client.post("/api/plan/auto-recalc")
             self.assertEqual(r.status_code, 200, r.text)
-            self.assertEqual(tp.get_active_distribution(), "pyramidal",
-                             "weekly recalc ran on polarized budgets")
+            self.assertTrue(seen, "the weekly recalc made no budget lookup")
+            self.assertEqual({m for m, _ in seen}, {"pyramidal"},
+                             "weekly recalc ran on another model's budgets")
 
 
 if __name__ == "__main__":

@@ -36,6 +36,7 @@ from datetime import date, timedelta
 import pytest
 
 import training_planner as tp
+import week_plan as wp  # noqa: E402
 
 
 # ── shared fixtures / helpers ────────────────────────────────────────────────
@@ -283,16 +284,14 @@ def _session_type_counts(goal_type: str, *, seed_salt: int,
     week_start0 = _next_monday()
     for wk in range(1, weeks + 1):
         sessions = tp.sample_week_workouts(
-            phase=phase, budget=budget, library=library,
-            used_names=used, week_num=wk, seed_salt=seed_salt,
-            week_start=week_start0 + timedelta(weeks=wk),
-            available_days=g.available_days, rest_days=g.rest_days,
-            daily_max_hours=g.daily_max_hours,
-            max_weekday_hours=g.max_weekday_hours,
-            max_weekend_hours=g.max_weekend_hours,
-            pool_index=pool_index, recent_hit_types=rot,
-            goal_type=goal_type,
-        )
+            wp.WeekContext(week_num=wk, start=week_start0 + timedelta(weeks=wk),
+                           phase=phase, goal=g, seed_salt=seed_salt),
+            wp.PlanState(library=library, used_names=used, pool_index=pool_index,
+                         recent_hit_by_phase={phase.name: rot},
+                         # the old call's defaults: no plan-wide bookkeeping
+                         plan_pick_counts=None, class_session_counts=None,
+                         class_distinct_files=None, seen_cc_dur_tuples=None),
+            budget)
         for s in sessions:
             st = getattr(s, "session_type", "") if s else ""
             if st:

@@ -236,8 +236,8 @@ def test_fast_path_skips_g3_polarization_recompute():
 
     # Polarization shapes that trip _polarization_breach (Z4+ >>
     # target+8): actual Z4 = 40 %, target Z4 = 10 % → +30 over target.
-    actual_pol = {"z1z2_pct": 50, "z3_pct": 10, "z4plus_pct": 40}
-    target_pol = {"z1z2_pct": 80, "z3_pct": 10, "z4plus_pct": 10}
+    actual_pol = {"z1_pct": 50, "z2_pct": 10, "z3_pct": 40}
+    target_pol = {"z1_pct": 80, "z2_pct": 10, "z3_pct": 10}
 
     _, _smod_full, info_full = tp.reforecast_dict(
         plan_full,
@@ -275,8 +275,8 @@ def test_default_behaviour_unchanged_no_kwarg():
     monday = date.today() - timedelta(days=date.today().weekday())
     plan = _mk_plan_dict(monday, weeks_count=3, include_hard=True)
 
-    actual_pol = {"z1z2_pct": 50, "z3_pct": 10, "z4plus_pct": 40}
-    target_pol = {"z1z2_pct": 80, "z3_pct": 10, "z4plus_pct": 10}
+    actual_pol = {"z1_pct": 50, "z2_pct": 10, "z3_pct": 40}
+    target_pol = {"z1_pct": 80, "z2_pct": 10, "z3_pct": 10}
 
     _, _smod, info = tp.reforecast_dict(
         plan,

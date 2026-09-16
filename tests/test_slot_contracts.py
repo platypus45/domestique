@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import training_planner as tp  # noqa: E402
+import week_plan as wp  # noqa: E402
 import workout_facts as wf  # noqa: E402
 
 WK = ROOT / "src" / "workouts"
@@ -212,11 +213,15 @@ def test_emergency_fallback_never_serves_ftp_class(tmp_path, monkeypatch):
     budget = tp.get_budget_for_phase("base")
     phase = type("P", (), {"name": "base"})()
     sessions = tp.sample_week_workouts(
-        phase=phase, budget=budget, library=[mis, tagged], used_names=set(),
-        week_num=1, seed_salt=0, week_start=__import__("datetime").date(2026, 7, 6),
-        available_days=[0, 1, 2, 3, 4, 5, 6], rest_days=[],
-        daily_max_hours=None, max_weekday_hours=1.0, max_weekend_hours=1.5,
-        pool_index=pools)
+        wp.WeekContext(
+            week_num=1, start=__import__("datetime").date(2026, 7, 6), phase=phase,
+            goal=tp.Goal(goal_type="general", available_days=[0, 1, 2, 3, 4, 5, 6],
+                         rest_days=[], max_weekday_hours=1.0, max_weekend_hours=1.5)),
+        wp.PlanState(library=[mis, tagged], used_names=set(), pool_index=pools,
+                         # the old call's defaults: no plan-wide bookkeeping
+                         plan_pick_counts=None, class_session_counts=None,
+                         class_distinct_files=None, seen_cc_dur_tuples=None),
+        budget)
     for s in sessions:
         if s is None or s.session_type == "rest":
             continue

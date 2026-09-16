@@ -252,12 +252,14 @@ def compute_polarization_block(time_in_zone: dict | None) -> dict | None:
     if total <= 0:
         return None
 
-    def _pct(s: int) -> float:
-        return round(100.0 * s / total, 1)
-
-    z1z2 = _pct(secs["z1"] + secs["z2"])
-    z3z4 = _pct(secs["z3"] + secs["z4"])
-    z5plus = _pct(secs["z5"] + secs["z6"] + secs["z7"])
+    # zones.THREE_ZONE_FROM_COGGAN, not a local grouping. Three different folds
+    # of these same seven zones once coexisted in this codebase and the same
+    # ride read differently depending on which screen showed it.
+    import zones as _zones
+    _tz = _zones.three_zone_pct(secs)
+    z1z2 = round(_tz["z1"], 1)
+    z3z4 = round(_tz["z2"], 1)
+    z5plus = round(_tz["z3"], 1)
     # Additive PI drives the internal cascade + confidence (its `> 2.0`
     # cutoff and band centres are calibrated to this scale).
     pi = polarization_index(z1z2, z3z4, z5plus)

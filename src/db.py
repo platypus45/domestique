@@ -1,5 +1,6 @@
 """SQLite persistence layer for wellness & activity data from Intervals.icu."""
 
+import clock  # the one clock every module reads (see src/clock.py)
 import json
 import logging
 import os
@@ -697,7 +698,7 @@ def _refresh_hr_from_activities(snapshot=None) -> None:
                 pm.save_athlete({
                     "lthr": lthr,
                     "lthr_source": "icu",
-                    "lthr_source_date": date.today().isoformat(),
+                    "lthr_source_date": clock.today().isoformat(),
                 })
                 changed.append(f"lthr={lthr}")
             if write_max:
@@ -808,10 +809,10 @@ def run_sync(days: int = 90) -> dict:
         # URLs need the athlete id in the path — surface WHY we skipped.
         has_token = bool(getattr(config, "ICU_ACCESS_TOKEN", None))
         log.info("EVENT=sync_skipped reason=no_athlete_id oauth_token=%s", has_token)
-        return {"timestamp": datetime.now().isoformat(), "wellness": 0,
+        return {"timestamp": clock.now().isoformat(), "wellness": 0,
                 "activities": 0, "status": "skipped", "error": "No ICU credentials"}
     snapshot = snapshot_sync_identity()
-    ts = datetime.now().isoformat()
+    ts = clock.now().isoformat()
     w_count = a_count = 0
     error = None
     status = "ok"
@@ -861,7 +862,7 @@ def run_sync(days: int = 90) -> dict:
 def query_wellness(days: int = 28) -> list[dict]:
     """Query wellness from local SQLite."""
     db = get_db()
-    oldest = (date.today() - timedelta(days=days)).isoformat()
+    oldest = (clock.today() - timedelta(days=days)).isoformat()
     rows = db.execute(
         "SELECT * FROM wellness WHERE date >= ? ORDER BY date", (oldest,)
     ).fetchall()
@@ -871,7 +872,7 @@ def query_wellness(days: int = 28) -> list[dict]:
 def query_activities(days: int = 14) -> list[dict]:
     """Query activities from local SQLite."""
     db = get_db()
-    oldest = (date.today() - timedelta(days=days)).isoformat()
+    oldest = (clock.today() - timedelta(days=days)).isoformat()
     rows = db.execute(
         "SELECT * FROM activities WHERE date >= ? ORDER BY date", (oldest,)
     ).fetchall()
@@ -927,7 +928,7 @@ def log_metric(dt: str, metric: str, value: float, source: str = "manual", notes
 
 def log_metrics_from_settings(updates: dict):
     """Auto-log metrics when settings are saved."""
-    today_str = date.today().isoformat()
+    today_str = clock.today().isoformat()
     metric_map = {
         "ATHLETE_WEIGHT_KG": "weight",
         "ATHLETE_FTP_W": "ftp",
@@ -949,7 +950,7 @@ def log_metrics_from_settings(updates: dict):
 def query_metric_history(metric: str, days: int = 365) -> list[dict]:
     """Query history for a single metric."""
     db = get_db()
-    oldest = (date.today() - timedelta(days=days)).isoformat()
+    oldest = (clock.today() - timedelta(days=days)).isoformat()
     rows = db.execute(
         "SELECT date, value, source, notes FROM athlete_metrics WHERE metric = ? AND date >= ? ORDER BY date",
         (metric, oldest),
@@ -960,7 +961,7 @@ def query_metric_history(metric: str, days: int = 365) -> list[dict]:
 def query_wkg_history(days: int = 365) -> list[dict]:
     """Query W/kg history (derived from weight + ftp)."""
     db = get_db()
-    oldest = (date.today() - timedelta(days=days)).isoformat()
+    oldest = (clock.today() - timedelta(days=days)).isoformat()
     rows = db.execute(
         """SELECT w.date, ROUND(f.value / w.value, 2) as value
            FROM athlete_metrics w
@@ -1045,7 +1046,7 @@ def upsert_daily_log(dt: str, sleep_quality: int, fatigue: int, soreness: int,
 def query_daily_log(days: int = 14) -> list[dict]:
     """Return daily log entries for recent days."""
     db = get_db()
-    oldest = (date.today() - timedelta(days=days)).isoformat()
+    oldest = (clock.today() - timedelta(days=days)).isoformat()
     rows = db.execute(
         "SELECT * FROM daily_log WHERE date >= ? ORDER BY date DESC", (oldest,)
     ).fetchall()
@@ -1056,7 +1057,7 @@ def get_daily_log_today() -> dict | None:
     """Return today's daily log entry, or None."""
     db = get_db()
     row = db.execute(
-        "SELECT * FROM daily_log WHERE date = ?", (date.today().isoformat(),)
+        "SELECT * FROM daily_log WHERE date = ?", (clock.today().isoformat(),)
     ).fetchone()
     return dict(row) if row else None
 
@@ -1076,7 +1077,7 @@ def upsert_blood_marker(dt: str, marker: str, value: float, unit: str = None, no
 def query_blood_markers(days: int = 730) -> list[dict]:
     """Return all blood marker entries."""
     db = get_db()
-    oldest = (date.today() - timedelta(days=days)).isoformat()
+    oldest = (clock.today() - timedelta(days=days)).isoformat()
     rows = db.execute(
         "SELECT * FROM blood_markers WHERE date >= ? ORDER BY date DESC", (oldest,)
     ).fetchall()

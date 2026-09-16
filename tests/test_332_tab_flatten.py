@@ -133,7 +133,7 @@ def test_fresh_branch_readiness_exception_returns_fresh(monkeypatch, tmp_path):
 
     from fastapi.testclient import TestClient
     client = TestClient(app_module.app, raise_server_exceptions=False)
-    r = client.get("/api/plan/auto-recalc")
+    r = client.post("/api/plan/auto-recalc")
     assert r.status_code == 200
     body = r.json()
     assert body.get("action") == "fresh", (

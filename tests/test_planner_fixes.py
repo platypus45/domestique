@@ -18,7 +18,6 @@ from training_planner import (
     Phase,
     generate_plan,
     generate_phases,
-    generate_weekly_plan,
     plan_week,
     _pick_session,
 )
@@ -92,35 +91,11 @@ class TestFix1StepbackReduction(unittest.TestCase):
             self.assertEqual(sb.tss_target, round(tss * 0.72),
                              f"Stepback factor mismatch for tss={tss}")
 
-    def test_generate_weekly_plan_uses_0_72(self):
-        # Search the source to confirm the factor.
-        src = PLANNER_PY.read_text()
-        # Look for generate_weekly_plan's stepback branch. Must use 0.72.
-        # The relevant line is: weekly_tss = round(weekly_tss * 0.72) inside generate_weekly_plan.
-        gwp_start = src.index("def generate_weekly_plan(")
-        gwp_end = src.index("def ", gwp_start + 1)
-        gwp_src = src[gwp_start:gwp_end]
-        self.assertIn("weekly_tss * 0.72", gwp_src,
-                      "generate_weekly_plan does not use 0.72 factor")
-        # Make sure no OTHER stepback factor is present in that function
-        # (e.g., 0.50 or 0.55). Check for common wrong values inside a
-        # `round(weekly_tss * X)` pattern.
-        bad = re.findall(r"weekly_tss\s*\*\s*0\.(?!72)\d+", gwp_src)
-        # Filter to patterns that look like stepback reductions (0.4-0.7)
-        bad = [b for b in bad if re.match(r"weekly_tss\s*\*\s*0\.[4567]", b)]
-        self.assertEqual(bad, [],
-                         f"Unexpected non-0.72 stepback factors found: {bad}")
-
-    def test_plan_week_and_generate_weekly_plan_match(self):
-        # Both should use the same 0.72 factor. Verify via source inspection
-        # that plan_week also uses 0.72.
-        src = PLANNER_PY.read_text()
-        pw_start = src.index("def plan_week(")
-        pw_end = src.index("def ", pw_start + 1)
-        pw_src = src[pw_start:pw_end]
-        self.assertIn("tss_target * 0.72", pw_src,
-                      "plan_week does not use 0.72 factor")
-
+    def test_one_named_factor_is_issurins_cut(self):
+        # Issurin 2010: an unloading week cuts load by 20-30%; 0.72 is the
+        # midpoint. One named constant, so no builder can drift from it.
+        import training_planner as tp
+        self.assertEqual(tp.STEPBACK_LOAD_FACTOR, 0.72)
 
 class TestFix2TempoNotHIT(unittest.TestCase):
     """Tempo sessions are not counted as HIT."""
@@ -183,31 +158,37 @@ class TestFix2TempoNotHIT(unittest.TestCase):
             )
             phases, weeks = generate_plan(goal)
 
-        hit_types = {"vo2max", "threshold", "overunder", "sweetspot", "sprint"}
-        # Find at least one base week, count hit sessions and tempo sessions.
+        import training_planner as _tp
         base_weeks = [w for w in weeks if w.phase == "base" and not w.is_stepback]
         self.assertTrue(len(base_weeks) >= 1, "Expected at least one base week")
-        # For every base week, HIT count must be <= phase hit_per_week (1).
-        # Confirms tempo doesn't inflate the HIT budget.
+        # Every base week stays inside its hard-session budget, and tempo does
+        # not inflate the count. Counted by SERVED content -- the planner's one
+        # hardness predicate -- against the budget the sampler actually plans
+        # to: the base IntensityBudget's hit_count_max, two quality days from
+        # 7 h/week (Zapico 2007). This used to count LABELS against
+        # Phase.hit_per_week (1), a field the sampler does not read, and passed
+        # on weeks whose only hard work was a 97-minute sweet-spot file on a z2
+        # slot -- a label count of zero (notes/review/owner.md OWN-4).
+        cap = _tp.get_budget_for_phase("base").hit_count_max
         for w in base_weeks:
-            hit = sum(1 for s in w.sessions if s.session_type in hit_types)
-            self.assertLessEqual(hit, 1,
-                                 f"Base week {w.week_num}: HIT count {hit} exceeds budget 1")
+            hit = _tp._week_hit_count(w)
+            self.assertLessEqual(hit, cap,
+                                 f"Base week {w.week_num}: {hit} hard sessions > budget {cap}")
 
 
 class TestFix3ThreeDayWeekHITScaling(unittest.TestCase):
     """3-day weeks cap HIT at 1 so at least one Z2 session remains."""
 
-    def _gen_week_with_days(self, available_days, rest_days, phase_name="build2"):
+    def _gen_week_with_days(self, available_days, rest_days, phase_name="build2", seed=0):
+        """The week the planner builds (plan_week). These tests pinned
+        generate_weekly_plan, the home card's second planner, until it was
+        deleted on 2026-09-14; plan_week honours the same cap."""
         goal = _make_goal(available_days=available_days, rest_days=rest_days)
         if phase_name == "build2":
             phase = _make_build2_phase(date(2026, 4, 6), weekly_tss=700)
         else:
             phase = _make_base_phase(date(2026, 4, 6), weekly_tss=500)
-        # Use generate_weekly_plan which contains the max_hit scaling logic.
-        # Patch PLAN_DIR so no file IO is needed.
-        with patch("training_planner.get_today_metrics", return_value={"ctl": 45.0}):
-            return generate_weekly_plan(goal=goal, current_phase=phase, current_ctl=45.0)
+        return plan_week(1, date(2026, 4, 6), phase, goal, False, seed_salt=seed)
 
     def test_three_day_week_has_at_least_one_z2(self):
         # Tue (1), Thu (3), Sun (6). Rest on all others.

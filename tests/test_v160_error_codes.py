@@ -17,7 +17,26 @@ from pathlib import Path
 import error_codes as ec
 
 
-_APP_PY = Path(__file__).resolve().parent.parent / "src" / "app.py"
+_SRC = Path(__file__).resolve().parent.parent / "src"
+_APP_PY = _SRC / "app.py"
+
+
+def _shipped_source() -> str:
+    """Every backend module, concatenated.
+
+    Was app.py alone, which stood in for "the shipped code" while the
+    shipped code was one file. The observability funnel now spans
+    obs.py and cache.py too, so scanning app.py would report a code as
+    deleted when it had merely moved. The intent -- these codes are
+    referenced somewhere, not nowhere -- is unchanged and now strictly
+    wider.
+    """
+    # error_codes.py is excluded on purpose: it DEFINES the constants, so
+    # including it would let "is this code still used" pass on the definition
+    # alone. The question is whether a consumer references it.
+    return "\n".join(f.read_text(encoding="utf-8")
+                     for f in sorted(_SRC.glob("*.py"))
+                     if f.name != "error_codes.py")
 
 
 class ErrorCodeRegistryConsistencyTests(unittest.TestCase):
@@ -76,7 +95,7 @@ class CodeReferencesInAppPyTests(unittest.TestCase):
     """
 
     def test_referenced_codes_exist_in_registry(self):
-        text = _APP_PY.read_text(encoding="utf-8")
+        text = _shipped_source()
         # Grab any Codes.<NAME> attribute access. Each must be a real attr.
         attr_pattern = re.compile(r"error_codes\.Codes\.([A-Z_]+)\b")
         refs = set(attr_pattern.findall(text))
@@ -84,20 +103,23 @@ class CodeReferencesInAppPyTests(unittest.TestCase):
                           if not n.startswith("_") and isinstance(v, str)}
         for ref in refs:
             self.assertIn(ref, constant_names,
-                          f"app.py references error_codes.Codes.{ref} but no such constant exists")
+                          f"src/ references error_codes.Codes.{ref} but no such constant exists")
 
     def test_at_least_some_codes_are_referenced(self):
         # Smoke check: app.py must reference _log_error for at least the
         # five high-priority codes from the IP. Catches an accidental
         # delete of the helper everywhere.
-        text = _APP_PY.read_text(encoding="utf-8")
+        text = _shipped_source()
         for code in [
             "PLAN_PARSE_CORRUPT",
             "ENRICH_FAILED",
             "CACHE_GENERIC",
         ]:
-            self.assertIn(code, text,
-                          f"app.py does not reference Codes.{code}")
+            # assertTrue, not assertIn: assertIn embeds `text` in the
+            # failure message, and `text` is now every backend module
+            # concatenated -- a 2.8 MB assertion message nobody can read.
+            self.assertTrue(code in text,
+                            f"no backend module references Codes.{code}")
 
 
 if __name__ == "__main__":

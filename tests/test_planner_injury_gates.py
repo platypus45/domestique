@@ -125,7 +125,7 @@ def test_g2_48h_z5plus_ceiling():
 # ── G3 — polarization breach drops next 1-2 hard sessions ───────────────────
 
 def test_g3_polarization_breach_drops_next_hard():
-    """Synth weekly actual.z4plus_pct = 30 vs target 8 → reforecast drops next hard.
+    """Synth weekly actual.z3_pct = 30 vs target 8 → reforecast drops next hard.
 
     Reforecast is the home of G3 (per /tmp/MASTER_DECISIONS_v466.md §3).
     """
@@ -153,8 +153,8 @@ def test_g3_polarization_breach_drops_next_hard():
     )
 
     # Actual breach: 30% Z4+ vs target 8% (HIT ceiling busted)
-    actual_pol = {"z1z2_pct": 50, "z3_pct": 20, "z4plus_pct": 30}
-    target_pol = tp.PHASE_POLARIZED_TARGETS["base"]
+    actual_pol = {"z1_pct": 50, "z2_pct": 20, "z3_pct": 30}
+    target_pol = tp.BUDGETS["base"].polarized_target
     assert tp._polarization_breach(actual_pol, target_pol) is True
 
     goal = tp.Goal(goal_type="general", target_date=today + timedelta(weeks=12))
@@ -304,23 +304,24 @@ def test_no_gates_fire_on_clean_inputs():
 # ── Helper unit tests ───────────────────────────────────────────────────────
 
 def test_polarization_breach_helper_z4_ceiling():
-    actual = {"z1z2_pct": 70, "z3_pct": 12, "z4plus_pct": 18}
-    target = tp.PHASE_POLARIZED_TARGETS["base"]  # z4plus_pct = 5
+    actual = {"z1_pct": 70, "z2_pct": 12, "z3_pct": 18}
+    # A base-phase target for a typical 10 h week. three-zone keys: z1 <76% FTP, z2 76-105% (spanning LT2), z3 >=106%. The old z1z2/z3/z4plus grouping counted threshold work as the hard pole; zones.THREE_ZONE_FROM_COGGAN is the one fold now.
+    target = tp.BUDGETS["base"].polarized_target
     assert tp._polarization_breach(actual, target) is True, (
         "18% Z4+ vs target 5% (delta 13 > 8) must trip breach"
     )
 
 
 def test_polarization_breach_helper_z12_floor():
-    actual = {"z1z2_pct": 60, "z3_pct": 30, "z4plus_pct": 10}
-    target = tp.PHASE_POLARIZED_TARGETS["base"]  # z1z2_pct = 80
+    actual = {"z1_pct": 60, "z2_pct": 30, "z3_pct": 10}
+    target = tp.BUDGETS["base"].polarized_target  # z1z2_pct = 80
     # 60 < 80-10 = 70 → breach
     assert tp._polarization_breach(actual, target) is True
 
 
 def test_polarization_breach_helper_no_breach():
-    actual = {"z1z2_pct": 78, "z3_pct": 17, "z4plus_pct": 5}
-    target = tp.PHASE_POLARIZED_TARGETS["base"]
+    actual = {"z1_pct": 78, "z2_pct": 17, "z3_pct": 5}
+    target = tp.BUDGETS["base"].polarized_target
     assert tp._polarization_breach(actual, target) is False
 
 

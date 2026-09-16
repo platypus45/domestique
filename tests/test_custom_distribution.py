@@ -18,13 +18,14 @@ import app
 
 # ── budget engine ────────────────────────────────────────────────────────────
 
+def _goal(model, bands=None):
+    return tp.Goal(goal_type="general", distribution=model, custom_bands=bands or {})
+
+
 def test_custom_budget_reallocates_hard_keeping_easy_tss_total():
-    tp.set_active_distribution("custom", {"tempo_ss": 50, "threshold": 30, "vo2": 15, "sprint": 5})
-    try:
-        cust = tp.get_budget_for_phase("build1")
-    finally:
-        tp.set_active_distribution("polarized")
-    base = tp.get_budget_for_phase("build1")
+    cust = tp.get_budget_for_phase("build1", _goal(
+        "custom", {"tempo_ss": 50, "threshold": 30, "vo2": 15, "sprint": 5}))
+    base = tp.get_budget_for_phase("build1", _goal("polarized"))
     # Easy volume, weekly TSS and TOTAL hard minutes are preserved...
     assert cust.z1z2_minutes_per_week == base.z1z2_minutes_per_week
     assert cust.tss_per_week == base.tss_per_week
@@ -36,20 +37,16 @@ def test_custom_budget_reallocates_hard_keeping_easy_tss_total():
 
 
 def test_custom_polarized_targets_do_not_crash():
-    # get_active_polarized_targets() must handle the custom model (the recalc
-    # breach gate calls it) — would KeyError before the fix.
-    tp.set_active_distribution("custom", {"tempo_ss": 40, "threshold": 40, "vo2": 20, "sprint": 0})
-    try:
-        targets = tp.get_active_polarized_targets()
-        assert "build1" in targets and "z1z2_pct" in targets["build1"]
-    finally:
-        tp.set_active_distribution("polarized")
+    # polarized_targets() must handle the custom model (the recalc breach
+    # gate calls it) — would KeyError before the fix.
+    targets = tp.polarized_targets(_goal(
+        "custom", {"tempo_ss": 40, "threshold": 40, "vo2": 20, "sprint": 0}))
+    assert "build1" in targets and "z1_pct" in targets["build1"]
 
 
-def test_empty_custom_falls_back_to_polarized():
-    assert tp.set_active_distribution("custom", {}) == "polarized"
-    assert tp.set_active_distribution("custom", None) == "polarized"
-    tp.set_active_distribution("polarized")
+def test_empty_custom_falls_back_to_auto():
+    assert tp.budget_table(_goal("custom", {})) is tp.BUDGETS
+    assert tp.budget_table(_goal("custom", None)) is tp.BUDGETS
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────

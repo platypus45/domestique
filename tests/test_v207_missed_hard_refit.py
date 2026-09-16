@@ -473,6 +473,46 @@ class TestMissedAdjacentDoesNotBlock(unittest.TestCase):
 
 # ── app-layer tier: latch / idempotency through _apply_plan_update ───────────
 
+class TestScheduledFtpTestSurvivesRefit(unittest.TestCase):
+    """A refit on the day an FTP test is scheduled replaced the test with
+    threshold: the week builder it re-draws the week with never places one.
+    16 of 16 fixed_core and template refits on a test day did (the Step 5
+    review). The plan puts a test on fresh legs on purpose (Allen & Coggan),
+    so a refit keeps it."""
+
+    def test_the_test_day_keeps_its_test(self):
+        from unittest import mock
+        monday = date(2026, 9, 14)
+        now = [monday]
+
+        class _Today(date):
+            @classmethod
+            def today(cls):
+                d = now[0]
+                return cls(d.year, d.month, d.day)
+
+        goal = tp.Goal(goal_type="event", event_type="granfondo", event_km=200,
+                       event_climb_m=3500, target_date=monday + timedelta(weeks=10),
+                       hours_per_week=10.0, max_weekday_hours=2.0, max_weekend_hours=4.0,
+                       available_days=list(range(7)), rest_days=[0], daily_max_hours={},
+                       plan_weeks=10, plan_mode="fixed_core")
+        athlete = {"ftp": 240, "weight_kg": 72}
+        with mock.patch.object(tp, "date", _Today):
+            weeks = tp.generate_plan(goal, seed_salt=1, current_ctl=50.0,
+                                     recent_weekly_tss=380.0, athlete=athlete)[1]
+            test = next(s for w in weeks for s in w.sessions if s.session_type == "ftp_test")
+            week = next(w for w in weeks if w.start <= test.day <= w.end)
+            # A missed hard session earlier in the test's week is what sends
+            # the refit in. A test now ends an unload week, whose first days
+            # are often rest, so the week's first day is marked one.
+            missed = next(s for s in week.sessions if s.day < test.day)
+            missed.session_type, missed.status = "vo2max", "missed"
+            now[0] = test.day
+            tp.refit_remaining_week(goal, weeks, test.day, seed_salt=1, athlete=athlete)
+        after = next(s for s in week.sessions if s.day == test.day)
+        self.assertEqual(after.session_type, "ftp_test")
+
+
 class TestAppTierLatch(unittest.TestCase):
     """The app tier refits once, sets missed_refit_latch, and is a no-op on the
     second identical adapt (no re-churn)."""

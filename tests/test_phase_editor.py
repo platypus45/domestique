@@ -152,10 +152,12 @@ def test_gp2_event_custom_labels_dates_tss():
     assert phases[0].start == ANCHOR
     for a, b in zip(phases, phases[1:]):
         assert (b.start - a.end).days == 1
-    # TSS formulas per phase unchanged (lengths only) + progressive overload.
+    # Lengths only: one load ramp lays out both splits, so a phase's label (the
+    # mean of its load weeks' budgets) moves with its length -- a longer base
+    # climbs further up the ramp -- and overload still progresses.
     tss_rec = {p.name: p.weekly_tss_target for p in rec_phases}
     tss_cus = {p.name: p.weekly_tss_target for p in phases}
-    assert tss_rec == tss_cus
+    assert tss_cus["base"] >= tss_rec["base"]        # five base weeks against four
     assert (tss_cus["base"] <= tss_cus["build1"] <= tss_cus["build2"]
             <= tss_cus["peak"])
 
@@ -405,7 +407,7 @@ def test_gp6_nonevent_recalc_auto_applies(nonevent_custom_plan):
     assert g2.phase_weeks == custom
 
 
-# ── build2=0 — mid-cycle FTP test retargets to peak start ────────────────────
+# ── build2=0 — the mid-cycle FTP test retargets to the peak block ────────────
 
 def test_build2_zero_ftp_test_retargets_to_peak():
     custom = {"base": 8, "build1": 4, "build2": 0, "peak": 2, "taper": 2}
@@ -418,5 +420,7 @@ def test_build2_zero_ftp_test_retargets_to_peak():
     tests = [s for w in weeks for s in w.sessions
              if s.session_type == "ftp_test"]
     assert tests, "build2=0 must not lose the mid-cycle FTP test"
-    assert all(s.day >= peak.start for s in tests)
-    assert min((s.day - peak.start).days for s in tests) < 7
+    # It calibrates the peak block, taken rested: at the end of the unload
+    # week before the peak (the owner's decision), or in the peak's first
+    # week when no unload week precedes it.
+    assert all(-7 < (peak.start - s.day).days <= 28 for s in tests)

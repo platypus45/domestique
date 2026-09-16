@@ -79,7 +79,11 @@ def test_continuous_generates_rolling_horizon_no_taper():
 
     # 3 load : 1 deload — the deload rides the stepback cadence at W4.
     assert [w.is_stepback for w in weeks] == [False, False, False, True]
-    assert weeks[3].tss_target < weeks[0].tss_target  # ×0.72 discount
+    # ×0.72 discount, measured against a FULL load week. weeks[0] is the
+    # opening week, which is short (today..Sunday) whenever the plan is
+    # generated mid-week and carries a prorated target -- comparing the deload
+    # to it compares two different things.
+    assert weeks[3].tss_target < weeks[2].tss_target
     assert not any(s.session_type in HIT_TYPES for s in weeks[3].sessions), \
         "deload week must carry no HIT session"
     # Load weeks actually train (the horizon isn't a Z2 skeleton).
@@ -171,16 +175,16 @@ def test_extend_full_horizon_deficit_keeps_deload_cadence():
     assert appended[3].tss_target < appended[0].tss_target
     # FTP-tests W1e retest cadence (weeks-since-last-test, not week_num % 6):
     # the continuous generate path baselines the rider with a week-2 test, so
-    # the next test is due at W8 — a deload — and DEFERS to the next appended
-    # non-deload week instead of landing on tired legs or (the old %6 bug)
-    # silently vanishing into a 12-week hole. No test in this batch is the
-    # correct behaviour; the base plan must carry the week-2 baseline.
+    # the next test is due at W8 -- a deload, which is where it goes: a test is
+    # taken rested, in an unload week (the owner's decision; Allen & Coggan).
+    # It used to defer to the next load week; the old %6 form lost it into a
+    # 12-week hole.
     base_weeks = all_weeks[:-4]
     assert any(s.session_type == "ftp_test"
                for w in base_weeks for s in w.sessions), \
         "continuous generation must baseline with a week-2 FTP test"
-    assert not any(s.session_type == "ftp_test"
-                   for w in appended for s in w.sessions)
+    assert [any(s.session_type == "ftp_test" for s in w.sessions)
+            for w in appended] == [False, False, False, True]
     # The appended horizon serves today onward (no dead past weeks).
     assert appended[-1].end >= date.today()
 
@@ -269,13 +273,10 @@ def test_finite_plan_consumers_dont_crash_on_continuous():
 
     # Budget lookup maps the continuous block onto build1 under EVERY model
     # (P1: get_budget_for_phase must not fall back to the base budget).
-    try:
-        for model in ("polarized", "pyramidal", "threshold"):
-            tp.set_active_distribution(model)
-            assert tp.get_budget_for_phase("continuous") is \
-                tp.get_budget_for_phase("build1")
-    finally:
-        tp.set_active_distribution("polarized")
+    for model in ("polarized", "pyramidal", "threshold"):
+        g = tp.Goal(goal_type="continuous", distribution=model)
+        assert tp.get_budget_for_phase("continuous", g) is \
+            tp.get_budget_for_phase("build1", g)
 
     # Recovery/gap rebuild (P1 items 8/11): regenerate_from_today on a
     # continuous plan re-emits the rolling block, never a taper.

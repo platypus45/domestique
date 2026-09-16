@@ -32,6 +32,7 @@ column + the API endpoints + the dashboard panel.
 """
 from __future__ import annotations
 
+import clock  # the one clock every module reads (see src/clock.py)
 import json
 import logging
 from datetime import date, timedelta
@@ -149,7 +150,7 @@ def count_weighted_markers(profile_id: str, horizon_days: int) -> float:
     contract for v1.2.0 OOS-validation re-use.
     """
     conn = db.get_db()
-    today = date.today()
+    today = clock.today()
     horizon_start = (today - timedelta(days=int(horizon_days))).isoformat()
     horizon_end = today.isoformat()
     return _count_weighted_markers_in_range(conn, horizon_start, horizon_end)
@@ -408,7 +409,7 @@ def _persist_metric(conn, metric: str, value: float, notes_dict: dict[str, Any])
     'nls_fit'. We respect the existing ladder: manual > intervals.icu /
     nls_fit > settings.
     """
-    today_iso = date.today().isoformat()
+    today_iso = clock.today().isoformat()
     existing = conn.execute(
         "SELECT source FROM athlete_metrics WHERE date = ? AND metric = ?",
         (today_iso, metric),
@@ -445,7 +446,7 @@ def fit_tau_per_athlete(profile_id: str, persist: bool = True,
       * ``"insufficient_data"`` — weighted_n < 5 OR scipy didn't converge
     """
     horizon_days = 365  # 12 months — wider than the audit's 6-month floor
-    today = horizon_end_date or date.today()
+    today = horizon_end_date or clock.today()
     horizon_end_iso = today.isoformat()
     horizon_start_iso = (today - timedelta(days=horizon_days)).isoformat()
 

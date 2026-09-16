@@ -110,7 +110,9 @@ class TestFitFromZwo(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         steps = _decode_workout_steps(r.content)
         self.assertGreaterEqual(len(steps), 2)
-        fit_total_s = sum((s.duration_value or 0) for s in steps) / 1000.0
+        # duration_time is the seconds sub-field; fit_tool applies the 1000x
+        # scale on both sides, so this is seconds, not raw milliseconds.
+        fit_total_s = sum((s.duration_time or 0) for s in steps)
         zwo_total_s = _zwo_total_seconds(self.zwo_path)
         self.assertEqual(round(fit_total_s), zwo_total_s,
                          f"FIT total {fit_total_s}s != ZWO total {zwo_total_s}s")

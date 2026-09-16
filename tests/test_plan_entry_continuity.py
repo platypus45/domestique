@@ -183,8 +183,8 @@ def test_gb2_taper_race_guards_hold(backdated_event):
 # ── B-LOCKED-2 — MODE 1 safety floor: remaining-weeks ramp credit ────────────
 
 def test_ramp_clamp_remaining_weeks_only():
-    """Zero-history claimer backdates 8 of 12 weeks ⇒ ramp credit spans the
-    4 remaining (−2 taper buffer) weeks only — no 440-TSS build entry."""
+    """Zero-history claimer backdates 8 of 12 weeks ⇒ the ramp climbs over the
+    4 remaining weeks only — no 440-TSS build entry."""
     ctl = 35.0
     legacy = tp.Goal(goal_type="general", plan_weeks=12, hours_per_week=20.0)
     claimed = tp.Goal(goal_type="general", plan_weeks=12, hours_per_week=20.0,
@@ -196,9 +196,12 @@ def test_ramp_clamp_remaining_weeks_only():
                       for p in tp.generate_phases(claimed, ctl))
     assert max_claimed < max_legacy, "backdating must not inflate the ramp"
     assert max_claimed < 440, "no build2/440-TSS entry off a bare claim"
-    # Exact ceiling: CTL + safe_ramp × (total − elapsed − 2), ×7 for weekly TSS.
-    ramp = tp.safe_ramp_rate(ctl)
-    assert max_claimed <= (ctl + ramp * (12 - 8 - 2)) * 7 + 1e-6
+    # The ramp starts at today's fitness: the phases already behind today
+    # carry what it allows over the load a zero-history rider carries, CTL x 7
+    # (the weeks left may ramp on from there).
+    elapsed = [p for p in tp.generate_phases(claimed, ctl) if p.end < ANCHOR]
+    assert elapsed and all(p.weekly_tss_target <= tp.ACWR_CEILING * ctl * 7 + 1
+                           for p in elapsed)
 
 
 # ── input gate ───────────────────────────────────────────────────────────────

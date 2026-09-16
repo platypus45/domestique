@@ -65,17 +65,20 @@ def test_user_swapped_roundtrips_path_a():
 @pytest.mark.parametrize("anchor", [date(2026, 6, 28),   # Sunday
                                     date(2026, 7, 1)])   # Wednesday
 def test_swapped_day_pinned_through_reforecast(anchor, monkeypatch):
-    # Two future vo2max days, both under deep fatigue (TSB -30): the SWAPPED one
-    # must stay vo2max; the control one is free to be auto-downshifted.
+    # Two vo2max days in the coming week, both under deep fatigue (TSB -35,
+    # below reforecast's easing at tp.TSB_EASE_BELOW = -30):
+    # the SWAPPED one must stay vo2max; the control one is free to be eased.
+    # Inside the week: today's fatigue reading only speaks for the coming week
+    # (tp.TSB_EASE_HORIZON_DAYS -- ATL is a 7-day average).
     class _Frozen(date):
         @classmethod
         def today(cls):
             return cls(anchor.year, anchor.month, anchor.day)
     monkeypatch.setattr(tp, "date", _Frozen)
     today = anchor
-    d_swapped = today + timedelta(days=10)
-    d_control = today + timedelta(days=12)
-    wk_start = today + timedelta(days=7)
+    d_swapped = today + timedelta(days=3)
+    d_control = today + timedelta(days=5)
+    wk_start = today + timedelta(days=1)
     wk_end = wk_start + timedelta(days=13)
 
     def sess(d, swapped):
@@ -94,7 +97,7 @@ def test_swapped_day_pinned_through_reforecast(anchor, monkeypatch):
     tsb_series = {}
     d = today
     while d <= wk_end:
-        tsb_series[d] = -30.0
+        tsb_series[d] = -35.0
         d += timedelta(days=1)
 
     plan2, _mod, _info = tp.reforecast_dict(

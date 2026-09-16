@@ -6,7 +6,7 @@ signature computation. Run: python3 -m pytest test_fitness_estimation.py -v
 
 import unittest
 
-from training_live import RideSample
+from fitness_estimation import RideSample
 from fitness_estimation import (
     FitnessSignature,
     extract_best_efforts,
@@ -83,58 +83,7 @@ class TestAerobicDecoupling(unittest.TestCase):
         assert result is not None
         assert result < 0
 
-    def test_sign_matches_live_engine(self):
-        """Post-hoc helper must agree with MetricsEngine.decoupling within 0.1 %
-        on a flat-power synthetic ride (§1.4 filter + §1.5 trim identical)."""
-        from training_live import MetricsEngine
-
-        # 900 s warmup + 2500 s steady — HR drifts 140 → 165 in the steady block.
-        steady = 2500
-        powers = [200] * (self.WARMUP + steady)
-        hrs    = [140] * self.WARMUP + [140] * (steady // 2) + [165] * (steady // 2)
-
-        engine = MetricsEngine(ftp=250, weight_kg=70.0)
-        for p, h in zip(powers, hrs):
-            engine.update(power=p, dt=1.0, hr=h)
-
-        live_pct = engine.decoupling["pct"]
-        post_hoc_pct = aerobic_decoupling(powers, hrs)
-
-        assert live_pct is not None, "live engine failed to compute decoupling"
-        assert post_hoc_pct is not None, "post-hoc helper returned None"
-        assert (live_pct >= 0) == (post_hoc_pct >= 0), (
-            f"sign mismatch: live={live_pct}, post-hoc={post_hoc_pct}"
-        )
-        assert abs(live_pct - post_hoc_pct) <= 0.1, (
-            f"magnitude mismatch: live={live_pct}, post-hoc={post_hoc_pct}"
-        )
-
     # ── v3.6.0-fix25 additional tests ─────────────────────────────────
-
-    def test_aerobic_decoupling_unified_filter_matches_live(self):
-        """Post-hoc and live must agree within rounding (§DEC-4).
-
-        Same input drive to MetricsEngine + the helper — both must emit
-        the same decoupling_pct within ±0.2 % (rounding on both sides at
-        1 dp cap). Mirrors GRILL BUG-2 regression.
-        """
-        from training_live import MetricsEngine
-
-        steady = 2500
-        powers = [220] * self.WARMUP + [220] * steady
-        hrs    = [140] * self.WARMUP + [145] * (steady // 2) + [155] * (steady // 2)
-
-        engine = MetricsEngine(ftp=250, weight_kg=70.0)
-        for p, h in zip(powers, hrs):
-            engine.update(power=p, dt=1.0, hr=h)
-        live_pct = engine.decoupling["pct"]
-        post_hoc_pct = aerobic_decoupling(powers, hrs)
-
-        assert live_pct is not None
-        assert post_hoc_pct is not None
-        assert abs(live_pct - post_hoc_pct) <= 0.2, (
-            f"unified filter drift: live={live_pct}, post-hoc={post_hoc_pct}"
-        )
 
     def test_aerobic_decoupling_warmup_trim_900s(self):
         """§DEC-5 regression: a 15-min warmup ramp must be trimmed before

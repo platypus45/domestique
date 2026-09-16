@@ -190,7 +190,16 @@ echo "[1b5/9] Runtime gate OK — version $PROBE_VER, library $PROBE_LIB, OAuth 
 # was renamed — and it failed for the one reason a smoke test must not, a stale
 # fixture rather than a real defect in the thing under test. Any threshold file
 # exercises the same code path.
-FIT_SMOKE="$(python3.12 - <<'PYEOF'
+# The smoke needs a profile with an LTHR on record (lthr_is_set) and HR
+# targets on; it used to read the builder's live ~/.domestique and passed or
+# failed with whichever profile happened to be active there. A fixture home
+# makes it a property of the code, not of the build machine.
+SMOKE_HOME="$(mktemp -d)"
+mkdir -p "$SMOKE_HOME/profiles/fixture"
+printf '%s' '{"version":1,"active_profile":"fixture","skip_picker":true,"profiles":[{"id":"fixture","name":"Fixture"}]}' > "$SMOKE_HOME/profiles.json"
+printf '%s' '{"lthr":170,"lthr_source":"manual","max_hr":190,"ftp":250,"target_mode":"hr"}' > "$SMOKE_HOME/profiles/fixture/athlete.json"
+touch "$SMOKE_HOME/.setup_complete"
+FIT_SMOKE="$(DOMESTIQUE_HOME="$SMOKE_HOME" python3.12 - <<'PYEOF'
 import sys
 sys.path.insert(0, "src")
 try:
@@ -210,6 +219,7 @@ except Exception as e:  # noqa: BLE001
     print(f"ERROR {e}")
 PYEOF
 )"
+rm -rf "$SMOKE_HOME"
 if [ "$FIT_SMOKE" != "OK" ]; then
     echo "FATAL: HR-mode FIT smoke failed: $FIT_SMOKE — the desktop FIT save would ship broken for HR riders. Aborting build." >&2
     exit 1

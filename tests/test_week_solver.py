@@ -205,8 +205,11 @@ class ItFailsSafely(unittest.TestCase):
         self.assertIsNone(ws.solve(ws.WeekProblem(slots=[[]], target={})))
 
     def test_the_same_problem_gives_the_same_answer(self):
+        # Determinism, not speed: under a loaded gate (xdist -n 4) the default
+        # 2 s limit can expire on one of the two solves, which then returns
+        # None by design ("fails safely") and the comparison is meaningless.
         p = _problem(random.Random(7))
-        self.assertEqual(ws.solve(p), ws.solve(p))
+        self.assertEqual(ws.solve(p, time_limit_s=60.0), ws.solve(p, time_limit_s=60.0))
 
     def test_a_rest_only_week_is_representable(self):
         """Every slot can take the zero candidate, which is how the model says

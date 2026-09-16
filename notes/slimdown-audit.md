@@ -8,7 +8,8 @@ instrument produced; re-run the instruments before trusting any of it again.
 ```sh
 python3 tools/arch/astmap.py src > /tmp/src.json          # symbols, refs, imports, endpoints, clones
 python3 tools/arch/report.py /tmp/src.json                # the numbers a slimming plan needs
-python3 tools/arch/endpoints.py /tmp/src.json src/templates ~/Documents/cycling-stack/bin
+python3 tools/arch/endpoints.py /tmp/src.json src/templates src/static ~/Documents/cycling-stack/bin
+python3 tools/arch/endpoints_control.py /tmp/src.json     # negative control: must print 0 misidentified
 python3 tools/arch/reach.py src /tmp/src.json src/templates ~/Documents/cycling-stack/bin
 ```
 
@@ -49,36 +50,66 @@ microinterval classifier.
 
 ## Wave 2 — endpoints no client reaches
 
-`endpoints.py` lists 20; three of those are LIVE and must stay:
+**Re-audited 2026-09-16 with a rewritten instrument.** The first pass matched
+each route's literal parts against the client text with a short wildcard
+between them and got three of twenty wrong, because the dashboard builds
 
-- `/api/plan/rematch/{day}` — the dashboard calls `/api/plan/rematch?apply=1`;
-  the `{day}` variant is a different function, 104 LOC, and nothing calls it.
-  (The *base* endpoint is live; the day variant is a real candidate.)
-- `/api/course/{region}/{filename}/download` — LIVE, built dynamically in
-  `dashboard.html` with `encodeURIComponent`, which the regex matcher missed.
-- `/oauth/icu/callback` — 280 LOC, unreachable on a from-source install
-  (no client secret) but part of the packaged build. KEEP.
+```js
+`/api/course/${encodeURIComponent(region)}/${encodeURIComponent(name)}/download`
+```
 
-The rest, with the lines exclusive to each (`reach.py`), total ~560 LOC:
+and 24 characters of `${encodeURIComponent(` blew past the gap. `endpoints.py`
+now parses URLs instead of text: interpolation is collapsed to a wildcard
+segment *before* strings are extracted (so `'/api/ride/' + id + '/detail'` is
+read whole), a trailing slash implies a segment, and routes match segment by
+segment.
 
-| endpoint | LOC | notes |
-|---|---|---|
-| `/api/climb-zwo/{region}/{filename}` | 91 | climb/GPX cluster |
-| `/api/climb-workout` | 83 | climb/GPX cluster |
-| `/api/gpx/{region}/{filename}` | 77 | climb/GPX cluster |
-| `/api/setup/test-icu` | 63 | also named by `packaging/tls_intercept_probe_win.py` |
-| `/api/workout/download/{filename}` | 40 | UI uses `/api/download/zwo/...` instead |
-| `/api/setup/icu-hr` | 32 | setup.html does not call it |
-| `/api/ride/{id}/prs/recompute` | 32 | |
-| `/api/rides/legacy-envelope` | 31 | |
-| `/api/plan/missed-suggestions` | 27 | |
-| `/api/blood-markers` GET+POST | 31 | no UI at all |
-| `/api/routes/surfaces` | 13 | |
-| `/api/gc/status` | 9 | |
-| `/api/download/crs/{region}/{filename}` | 8 | climb/GPX cluster |
-| `/api/download/gpx/{region}/{filename}` | 5 | climb/GPX cluster |
-| `/api/metrics/latest` | 3 | |
-| `/api/setup/status` | 2 | |
+**It is checked against a negative control**: every `/api` path that appears
+inside a `fetch()` in the dashboard or the static JS — 105 of them — must come
+back "reached". It does. Re-run that control after any change to the matcher;
+a tool nobody has tried to break is not evidence.
+
+Verdicts over the 142 `/api` routes: **122 reached, 3 ambiguous, 17 unreached.**
+
+Ambiguous — a client URL lines up only through an interpolated segment
+(`/api/routes/${id}` lines up with `/api/routes/surfaces`), so the source
+cannot say either way. Read the call site before touching these:
+
+- `GET /api/rides/legacy-envelope`
+- `GET /api/routes/surfaces`
+- `GET /api/workout/download/{filename}`
+
+Unreached by any client:
+
+| endpoint | note |
+|---|---|
+| `GET/POST /api/blood-markers` | no UI at all |
+| `GET /api/climb-workout` | climb/GPX cluster |
+| `GET /api/climb-zwo/{region}/{filename}` | climb/GPX cluster |
+| `GET /api/gpx/{region}/{filename}` | climb/GPX cluster |
+| `GET /api/download/crs/{region}/{filename}` | climb/GPX cluster |
+| `GET /api/download/gpx/{region}/{filename}` | climb/GPX cluster |
+| `GET /api/gc/status` | |
+| `GET /api/metrics/latest` | |
+| `GET /api/plan/missed-suggestions` | 1 test |
+| `POST /api/plan/rematch/{day}` | the dashboard calls `/api/plan/rematch?apply=1`, a different route; 4 tests |
+| `GET /api/power-curve` | dashboard names it only in a comment: "legacy loadPowerCurve(...)" |
+| `GET /api/readiness/composite` | dashboard says "the deprecated /api/readiness/composite is no longer used" |
+| `POST /api/ride/{ride_id}/prs/recompute` | nothing in the repo names it |
+| `GET /api/setup/icu-hr` | setup.html does not call it |
+| `GET /api/setup/status` | 1 test |
+| `POST /api/setup/test-icu` | also named by `packaging/tls_intercept_probe_win.py` |
+
+What the re-audit changed, and why it matters more than the list:
+
+- **Wrongly called dead before, actually live:** `/api/course/.../download`,
+  `/api/ride/{ride_id}/prs`, `POST /api/activity/{activity_id}/race`. All three
+  are reached through interpolated URLs.
+- **Wrongly called live before, actually dead:** `/api/power-curve` and
+  `/api/readiness/composite`. Both appear in `dashboard.html` — in comments
+  saying they are no longer used. A grep for the string said "referenced".
+- `/oauth/icu/callback` is out of scope now (the instrument reports `/api`
+  routes); it stays regardless, as part of the packaged build.
 
 Deleting the climb/GPX cluster also retires `gpx_to_gc.py` (391 LOC) and its
 test. `src/workout_analysis.csv` (428 KB) is named only in two comments that

@@ -94,6 +94,12 @@ echo "[2/9] Building with PyInstaller..."
 # always 0, so `set -e` never saw a failed build — the script carried on and
 # version-checked whatever happened to be in dist/ already.
 set -o pipefail
+# The derived library caches (.library_index.json, .workout_facts.json) are not
+# tracked: they rebuild themselves, and a checkout resets the .zwo mtimes their
+# headers pin. PyInstaller copies workouts/ as it finds it, so build them here.
+python3 tools/build-library-caches.py || {
+    echo "FATAL: could not build the library caches" >&2; exit 1; }
+
 pyinstaller packaging/domestique.spec --clean --noconfirm 2>&1 | tail -3
 set +o pipefail
 [ -x "${DIST}/${APP_NAME}" ] || { echo "✗ FATAL: ${DIST}/${APP_NAME} not produced"; exit 1; }

@@ -22,6 +22,15 @@ if not exist assets mkdir assets
 
 REM 4. Build with PyInstaller
 echo Building...
+REM The derived library caches (.library_index.json, .workout_facts.json) are
+REM not tracked: they rebuild themselves, and a checkout resets the .zwo mtimes
+REM their headers pin. PyInstaller copies workouts\ as it finds it.
+python tools/build-library-caches.py
+if errorlevel 1 (
+    echo FATAL: could not build the library caches
+    exit /b 1
+)
+
 pyinstaller packaging/domestique.spec --clean --noconfirm
 
 echo.

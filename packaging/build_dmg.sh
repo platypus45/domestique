@@ -77,6 +77,15 @@ for mp in $(ls -d "/Volumes/${DMG_NAME}"* 2>/dev/null); do
 done
 
 # 1. Build with PyInstaller
+# The two derived library caches are not tracked: they rebuild themselves, and
+# a checkout resets the .zwo mtimes their headers pin, so a tracked copy is
+# always rejected and rewritten. PyInstaller copies workouts/ as it finds it,
+# and the gate at [1b2/9] refuses a bundle without them, so build them first,
+# from the app's own code path rather than a second implementation.
+echo "[0/9] Building the derived library caches..."
+python3 tools/build-library-caches.py || {
+    echo "FATAL: could not build the library caches" >&2; exit 1; }
+
 echo "[1/9] Building app with PyInstaller..."
 "$PYINSTALLER" packaging/domestique.spec --clean --noconfirm 2>&1 | tail -3
 

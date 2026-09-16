@@ -82,3 +82,11 @@ plans/
 # reuses rather than accumulates. `rm gen_*.zwo` is always safe.
 workouts/gen_*.zwo
 gen_*.zwo
+
+# Generated library caches. Both rebuild themselves on demand, and neither
+# survives a checkout anyway: their headers pin the .zwo files' max mtime,
+# which git resets on every clone, so a tracked copy is always rejected and
+# always rewritten. 4.5 MB of churn that dirtied every working tree.
+# Packaging generates them: see tools/build-library-caches.py.
+src/workouts/.library_index.json
+src/workouts/.workout_facts.json

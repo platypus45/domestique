@@ -77,6 +77,8 @@ if _REAL_USER_SITE and os.path.isdir(_REAL_USER_SITE):
         if os.environ.get("PYTHONPATH") else "")
 os.environ["HOME"] = _SANDBOX_HOME
 
+import hashlib
+import pathlib
 import pytest
 
 import app as app_module
@@ -366,3 +368,47 @@ def _no_live_icu_network():
         # can't reach the live API either.
         mp.setenv("DOMESTIQUE_NO_NET", "1")
         yield
+
+
+# ── the derived library caches, built once per session ───────────────────────
+# They are not tracked (they rebuild themselves, and a checkout resets the
+# .zwo mtimes their headers pin), so a fresh clone starts without them. The
+# build is a 36-second sweep of 4,307 files: left to chance, every xdist
+# worker pays it at once, which is how two tests that pass alone started
+# failing under -n 5. One worker builds, the rest wait for the file.
+@pytest.fixture(scope="session", autouse=True)
+def _derived_library_caches():
+    import tempfile
+    import time
+    import training_planner as _tp
+
+    import workout_facts as _wf
+
+    wdir = pathlib.Path(_tp.WORKOUT_DIR)
+    index = wdir / _tp._LIBRARY_INDEX_FILENAME
+    facts = wdir / ".workout_facts.json"
+
+    def _both() -> bool:
+        return index.is_file() and facts.is_file()
+
+    if _both():
+        return
+    lock = pathlib.Path(tempfile.gettempdir()) / (
+        "domestique-libcache-" + hashlib.blake2b(
+            str(index).encode(), digest_size=8).hexdigest() + ".lock")
+    try:
+        lock.mkdir()                       # atomic: exactly one winner
+    except FileExistsError:
+        for _ in range(240):               # the others wait for the artefacts
+            if _both():
+                return
+            time.sleep(0.5)
+        return
+    try:
+        _tp.load_workout_library()
+        _wf.load_facts(wdir)
+    finally:
+        try:
+            lock.rmdir()
+        except OSError:
+            pass

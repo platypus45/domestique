@@ -84,7 +84,7 @@ def test_profile_wizard_markup_has_the_three_controls():
     assert 'id="connect-icu-btn" onclick="connectIcu()">Sign in to intervals.icu</button>' in s
     assert 'class="skip-link" id="step3-done"' in s and 'Continue without intervals.icu' in s
     assert 'href="https://intervals.icu/signup" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" id="step3-signup">Create a free account</a>' in s
-    assert 'id="icu-choice"' in s and s.count('class="choice-card') == 2
+    assert 'id="icu-choice"' in s and s.count('<div class="cmp-label">') == 6 and 'class="cc-tag">Recommended' in s
     assert 'id="link-status" role="status" aria-live="polite"' in s
     assert "Re-link a different account" not in s
     assert "Go to dashboard" not in s and "Skip for now" not in s
@@ -94,7 +94,7 @@ def test_first_run_wizard_markup_keeps_continue_as_the_primary():
     s = SETUP.read_text()
     assert 'id="setup-link-status" role="status" aria-live="polite"' in s
     assert 'class="btn btn-secondary" onclick="nextStep(2)" id="step1-next">Continue without intervals.icu</button>' in s
-    assert 'id="setup-signup">Create a free account</a>' in s and 'id="setup-icu-choice"' in s
+    assert 'id="setup-signup">Create a free account</a>' in s and 'id="setup-icu-choice"' in s and s.count('<div class="cmp-label">') == 6
     assert "Re-link a different account" not in s
 
 

@@ -1,0 +1,29 @@
+name: Tests
+
+# The pull-request gate for clean-main: the full suite on macOS, the platform
+# the dev gate runs on (0 known failures there). Linux hosts fail 8 tests for
+# environment reasons (pywebview bridge, OpenSSL behaviour) and are covered by
+# the release workflow's AppImage smoke instead.
+on:
+  pull_request:
+    branches: [clean-main]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: tests
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest pytest-xdist pytest-timeout fitparse Pillow
+      - name: Parallel bulk
+        run: python -m pytest tests -q -p no:cacheprovider -n 3 -m "not release_serial" --timeout=900 -rfE
+      - name: Serial tail
+        run: python -m pytest tests -q -p no:cacheprovider -m release_serial --timeout=900 -rfE

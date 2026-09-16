@@ -1,5 +1,19 @@
 # Changelog
 
+## v3.12.0 — One plan, everywhere (unreleased)
+
+The planner core is rebuilt on the work of a contributor's fork (taladjidi/domestique), brought upstream in one reviewed merge. What you see:
+
+- **Every card reads the same plan.** The home page's weekly target, the Today card, This Week, the calendar and the week summary all derive from the stored plan, through one view. Before, the home page ran a second planner of its own and could show a target the plan never had.
+- **Changing availability or tiering a day down can no longer raise your load.** Free hours are a ceiling, never a prescription.
+- **Regenerate and recalculate keep the safety cap.** Both now see your recent load, so the acute-to-chronic ratio guard holds on every rebuild.
+- **A session is only adapted once.** Reforecast no longer downgrades the same workout a step further on every sync.
+- **Missed sessions cost nothing.** A missed or dismissed session adds no load and blocks no hard day. A missed hard session is moved once to a day that keeps 48 hours from any hard session ridden or still planned; the easy-volume recycling introduced in 3.11.5 is gone, and so is its card note. Fatigue comes from training performed, not planned.
+- **Weeks start on Monday.** New and regenerated plans anchor their weeks Monday to Sunday, with a short opening week; a plan you already have keeps its weeks until you regenerate.
+- **Fitness numbers have one source.** Your CTL, ATL and form come from intervals.icu, or its last known values; without an intervals.icu connection they come from the rides you import.
+- **Calendar push works for FTP-test workouts.** Six test workouts carried a pace label intervals.icu rejects; every push that included one failed.
+- **Nothing is written when you only look.** Opening a page never rebuilds or repairs your plan. The repair of plans that lost their workout files (3.11.5) runs at startup and after changes instead.
+
 ## v3.11.6 — Placeholder rides off the home page, and a warning that was never true (2026-09-11)
 
 - **Fixed: rides that reach intervals.icu through Strava no longer show on the home page as an empty "Activity" that fails to open.** intervals.icu does not pass on Strava's data, so all it can offer for such a ride is a placeholder with no name, type or duration. Since 3.8.1 the calendar left those out, but the "Recent activities" card on the home page still listed them as "Activity · 0min", and opening one gave "Failed to load activity (404)" — which looked exactly like a broken sync. The card now leaves them out too, as does the local activity mirror behind the recovery checks. The rides themselves are not lost: connect your indoor platform to intervals.icu directly, or import the ride's FIT file, and they come in with full data. Reported in [#11](https://github.com/platypus45/domestique/issues/11).

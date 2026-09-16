@@ -13865,6 +13865,23 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
         entry = availability.get(d_iso)
         if isinstance(entry, dict) and entry.get("type") == "unavailable":
             return False
+        # C2 (v3.12.0, merge contract): a re-owed HARD session keeps 48 h from
+        # every hard session that was ridden or is still planned, on ANY
+        # destination -- a free rest slot included, not only an easy-day
+        # takeover (the guard below used to live in that branch alone, so a
+        # missed VO2 could land the day after a ridden threshold). A missed or
+        # dismissed neighbour does not count (D6): it will not be ridden.
+        if (missed_sess is not None and tp._session_is_hit(missed_sess)
+                and not missed_sess.get("is_opener")):
+            for nb in (d - timedelta(days=1), d + timedelta(days=1)):
+                nb_iso = nb.isoformat()
+                if nb_iso == missed_iso:
+                    continue
+                nb_sess = sess_by_day.get(nb_iso)
+                if (nb_sess and tp._session_is_hit(nb_sess)
+                        and (nb_sess.get("status") or "pending") not in ("missed", "dismissed")
+                        and not str(nb_sess.get("status") or "").startswith("moved_from:")):
+                    return False
         sess = sess_by_day.get(d_iso)
         if sess is None:
             return False

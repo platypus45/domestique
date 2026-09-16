@@ -63,7 +63,7 @@ def stored_ctl_on(day_iso: str) -> Optional[float]:
 
 
 def state(icu_metrics: Optional[dict], today: Optional[date] = None) -> dict:
-    """{ctl, atl, tsb, source: "icu" | "icu_cached" | "none", as_of}."""
+    """{ctl, atl, tsb, source: "icu" | "icu_cached" | "local" | "none", as_of}."""
     today = today or clock.today()
     icu = icu_metrics or {}
     ctl, atl = _num(icu.get("ctl")), _num(icu.get("atl"))
@@ -72,4 +72,32 @@ def state(icu_metrics: Optional[dict], today: Optional[date] = None) -> dict:
     row = _cached_row(today)
     if row is not None:
         return _state(float(row["ctl"]), float(row["atl"]), "icu_cached", row["date"])
+    local = _local_state(today)
+    if local is not None:
+        return local
     return dict(UNKNOWN)
+
+
+def _local_state(today: date) -> Optional[dict]:
+    """C13 (v3.12.0): a rider with NO intervals.icu connection trains from the
+    rides they import, so their CTL/ATL come from that archive (the same
+    Coggan EWMAs the planner used before), source "local". A rider WITH a
+    connection never gets this: for them a missing ICU value means unknown,
+    not a number from a FIT-only archive that ICU already covers."""
+    try:
+        import training
+        try:
+            training._require_credentials()
+            return None                      # an ICU rider: unknown stays unknown
+        except training.ICUCredentialsMissing:
+            pass
+        import ride_storage
+        ctl = ride_storage.compute_local_ctl()
+        if ctl is None:
+            return None
+        atl = ride_storage.compute_local_atl(ride_storage.load_all_rides(), today=today)
+        if atl is None:
+            return None
+        return _state(float(ctl), float(atl), "local", today.isoformat())
+    except Exception:  # noqa: BLE001 — a fallback that fails is "unknown", never a 500
+        return None

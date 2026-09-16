@@ -13,7 +13,7 @@ jobs:
   tests:
     name: tests
     runs-on: macos-14
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

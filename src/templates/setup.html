@@ -63,6 +63,14 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,108,247
 .day-btn.selected { background: var(--accent); color: #fff; border-color: var(--accent); }
 .day-btn.rest { background: var(--surface2); color: var(--text3); border-color: var(--surface2); }
 .skip-link { font-size: 12px; color: var(--text3); cursor: pointer; }
+a.btn { text-decoration: none; display: inline-block; }
+.btn[hidden] { display: none; }   /* the class rule above would otherwise beat the hidden attribute */
+.linked-card { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--green); background: rgba(34,197,94,0.08); border-radius: 8px; padding: 10px 12px; margin: 8px 0; text-align: left; }
+.linked-card .lc-check { color: var(--green); font-size: 18px; line-height: 1.2; }
+.linked-card .lc-title { font-size: 12px; color: var(--text2); }
+.linked-card .lc-name { font-size: 15px; font-weight: 600; }
+.linked-card .lc-id { font-size: 12px; color: var(--text3); }
+.linked-card .lc-next { font-size: 12px; color: var(--text2); margin-top: 4px; }
 .skip-link:hover { color: var(--text2); }
 .summary-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
 .summary-table td { padding: 8px 0; font-size: 14px; border-bottom: 1px solid var(--surface2); }
@@ -72,6 +80,21 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,108,247
 .toggle-btn.active { background: var(--accent); color: #fff; }
 /* Inline validation (client mirror of /api/setup/save's checks) */
 .btn-success:disabled { background: var(--surface2); color: var(--text3); cursor: not-allowed; }
+.btn-sm { padding: 5px 10px; font-size: 12px; font-weight: 500; }
+.btn-secondary.btn-sm { background: transparent; color: var(--text2); border: 1px solid var(--border); }
+.btn-secondary.btn-sm:hover { color: var(--text); border-color: var(--text3); }
+.choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0 8px; }
+.choice-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface2); }
+.choice-card--icu { border-color: var(--accent); background: rgba(59,130,246,0.08); }
+.choice-card .cc-title { font-size: 13px; font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+.choice-card .cc-tag { font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 1px 7px; }
+.choice-card ul { margin: 0; padding-left: 0; list-style: none; }
+.choice-card li { font-size: 12.5px; line-height: 1.5; color: var(--text2); padding-left: 18px; position: relative; margin: 2px 0; }
+.choice-card li::before { content: '\2713'; position: absolute; left: 0; color: var(--green); font-weight: 700; }
+.choice-card li.cc-no::before { content: '\2013'; color: var(--text3); }
+.how-it-works { font-size: 12px; color: var(--text2); margin: 6px 0 10px; }
+.how-it-works b { color: var(--text); }
+.actions-left { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .field-err { display: none; font-size: 11px; color: var(--red); margin-top: 3px; }
 input.invalid { border-color: var(--red); }
 /* "from intervals.icu" prefill tag — cleared as soon as the user edits */
@@ -94,32 +117,41 @@ input.invalid { border-color: var(--red); }
 
   <!-- STEP 1: Connect your data (Intervals.icu + Garmin) -->
   <div class="step-panel active" id="step-1">
-    <h2>Connect your data</h2>
+    <h2>Your training data</h2>
     <p class="info">
-      Domestique reads your training data (fitness, fatigue, form, HRV, activities)
-      from <b>Intervals.icu</b> — a free training-analysis service. You connect by
-      <b>signing in on intervals.icu</b> in your browser — no API keys to copy.
+      Domestique plans from what you actually ride. It can read that from
+      <a href="https://intervals.icu/" target="_blank" rel="noopener noreferrer" class="help-link">intervals.icu</a>,
+      a free training-analysis service, or from ride files you import yourself.
     </p>
-
-    <h3 class="sub">1 · Intervals.icu account</h3>
-    <div class="callout">
-      <div style="font-size:13px;color:var(--text2);line-height:1.6;">
-        <b>No account yet?</b> It's free — create one at
-        <a href="https://intervals.icu/" target="_blank" rel="noopener noreferrer" class="help-link">intervals.icu</a>.
-        You can sign in with your <b>Garmin</b> or <b>Strava</b> account (one click, no new password).
+    <div id="setup-icu-choice">
+      <div class="choice-grid">
+        <div class="choice-card choice-card--icu">
+          <div class="cc-title">With intervals.icu <span class="cc-tag">recommended</span></div>
+          <ul>
+            <li>Rides arrive by themselves from Garmin, Wahoo, Zwift and more</li>
+            <li>Fitness, fatigue and form update every day</li>
+            <li>HRV and sleep feed your daily readiness</li>
+            <li>Workouts land on your head unit through the intervals.icu calendar</li>
+            <li>Free; sign in with Garmin or Strava, no new password</li>
+          </ul>
+        </div>
+        <div class="choice-card">
+          <div class="cc-title">Without</div>
+          <ul>
+            <li>The full plan, adapting to what you ride</li>
+            <li>Every workout as a ZWO or FIT download</li>
+            <li>Import the FIT file yourself after each ride</li>
+            <li>Fitness computed from the rides you import</li>
+            <li class="cc-no">Readiness needs HRV typed in by hand; no calendar push</li>
+          </ul>
+        </div>
       </div>
+      <div class="how-it-works">How linking works: <b>1</b> Sign in on intervals.icu in your browser &middot; <b>2</b> Approve once &middot; <b>3</b> You are back here, linked. You can always connect later in Settings.</div>
     </div>
-
-    <h3 class="sub">2 · Connect — one click, no keys</h3>
-    <div class="callout" style="background:rgba(59,130,246,0.08);border:1px solid #3b82f6;">
-      <div style="font-size:13px;line-height:1.6;">
-        ✨ <b>Sign in to intervals.icu</b> — it opens in your browser, you log in and approve
-        once, and we link <b>that account</b> here (no API keys to copy). Optional now; you can
-        also connect later in <b>Settings</b>. Until then, fitness (CTL/ATL/TSB) is computed from
-        any FIT files you import.
-      </div>
-      <div id="setup-link-status" style="font-size:13px;margin-top:8px;min-height:18px;"></div>
-      <button type="button" class="btn" id="setup-connect-btn" style="margin-top:8px;" onclick="connectIcu()">Sign in to intervals.icu</button>
+    <div id="setup-link-status" role="status" aria-live="polite" style="font-size:13px;margin-top:8px;min-height:18px;"></div>
+    <div class="actions-left" style="margin-top:8px;">
+      <button type="button" class="btn btn-primary" id="setup-connect-btn" onclick="connectIcu()">Sign in to intervals.icu</button>
+      <a href="https://intervals.icu/signup" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" id="setup-signup">Create a free account</a>
     </div>
     <!-- Manual API-key entry removed (OAuth is the only setup path); the legacy
          hidden stubs went with the api-key JS (AC5a). -->
@@ -146,7 +178,7 @@ input.invalid { border-color: var(--red); }
     </div>
 
     <div class="actions">
-      <button type="button" class="btn btn-primary" onclick="nextStep(2)" id="step1-next">Continue</button>
+      <button type="button" class="btn btn-secondary" onclick="nextStep(2)" id="step1-next">Continue without intervals.icu</button>
     </div>
   </div>
 
@@ -720,28 +752,64 @@ function connectIcu() {
   try { persistState(); } catch (_) {}
   window.location.href = '/oauth/icu/start?return_to=' + encodeURIComponent('/setup');
 }
+// The linked state is a card, not a line: which account, what happens next.
+// Built with textContent -- the athlete's name is never interpreted as HTML.
+function _renderLinkedCard(el, name, athleteId, nextText) {
+  el.textContent = '';
+  const card = document.createElement('div'); card.className = 'linked-card';
+  const check = document.createElement('span'); check.className = 'lc-check'; check.textContent = '\u2713';
+  const body = document.createElement('div');
+  const title = document.createElement('div'); title.className = 'lc-title'; title.textContent = 'Connected to intervals.icu';
+  const nm = document.createElement('div'); nm.className = 'lc-name'; nm.textContent = name || 'Your account';
+  body.appendChild(title); body.appendChild(nm);
+  if (athleteId) { const id = document.createElement('div'); id.className = 'lc-id'; id.textContent = 'athlete ' + athleteId; body.appendChild(id); }
+  const next = document.createElement('div'); next.className = 'lc-next'; next.textContent = nextText; body.appendChild(next);
+  card.appendChild(check); card.appendChild(body); el.appendChild(card);
+}
+
+// Linked: the re-link becomes the small option; "Continue" (already the
+// primary in the actions row) is the way forward. Unlinked/error: sign in.
+function _setLinkState(state) {
+  const btn = document.getElementById('setup-connect-btn');
+  const signup = document.getElementById('setup-signup');
+  const choice = document.getElementById('setup-icu-choice');
+  const next = document.getElementById('step1-next');
+  const linked = (state === 'linked');
+  if (choice) choice.hidden = linked;          // the comparison is for choosing; once linked it is noise
+  if (signup) signup.hidden = linked;
+  if (next) {                                  // the recommended path is the primary until it is taken
+    next.textContent = linked ? 'Continue' : 'Continue without intervals.icu';
+    next.className = linked ? 'btn btn-primary' : 'btn btn-secondary';
+  }
+  if (!btn) return;
+  if (linked) { btn.textContent = 'Use a different account'; btn.className = 'btn btn-secondary btn-sm'; return; }
+  btn.className = 'btn btn-primary';
+  btn.textContent = (state === 'error') ? 'Try again' : 'Sign in to intervals.icu';
+}
+
 async function refreshLinkStatus(icuParam, reason) {
   const el = document.getElementById('setup-link-status');
-  const btn = document.getElementById('setup-connect-btn');
   if (!el) return;
   if (icuParam === 'error' || icuParam === 'unavailable') {
-    // AC3d: no_athlete_id is a hard, actionable error — say what happened.
+    // AC3d: no_athlete_id is a hard, actionable error -- say what happened.
     const msg = (reason === 'no_athlete_id')
-      ? "intervals.icu didn't return an athlete id for that account. Nothing was linked — try again."
-      : 'Couldn’t link your account — please try again.';
-    el.innerHTML = '<span style="color:var(--red);">' + msg + '</span>';
-    if (btn) btn.textContent = 'Retry — sign in to intervals.icu';
+      ? "intervals.icu didn't return an athlete id for that account. Nothing was linked \u2014 try again."
+      : 'Couldn\u2019t link your account \u2014 please try again.';
+    el.textContent = '';
+    const span = document.createElement('span'); span.style.color = 'var(--red)'; span.textContent = msg;
+    el.appendChild(span);
+    _setLinkState('error');
     return;
   }
   try {
     const c = await (await fetch('/api/icu/connection')).json();
     if (c && c.method === 'oauth') {
-      const who = c.name || (c.athlete_id ? ('athlete ' + c.athlete_id) : 'your account');
-      el.innerHTML = '✓ Linked as <b>' + who.replace(/</g, '&lt;') + '</b>';
-      el.style.color = 'var(--green)';
-      if (btn) btn.textContent = 'Re-link a different account';
+      _renderLinkedCard(el, c.name, c.athlete_id, 'Your fitness and rides come in once the setup is complete.');
+      _setLinkState('linked');
+    } else {
+      _setLinkState('unlinked');
     }
-    // AC5a: connection-gated affordances — the step-2 auto-fill and the
+    // AC5a: connection-gated affordances -- the step-2 auto-fill and the
     // Garmin sub-step only make sense with a live connection.
     if (c && (c.connected || c.method === 'oauth' || c.method === 'apikey')) {
       const ar = document.getElementById('autofill-row');

@@ -49,6 +49,29 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,156,247
 .actions { display: flex; justify-content: space-between; align-items: center; margin-top: 24px; }
 .skip-link { font-size: 12px; color: var(--text3); cursor: pointer; background: none; border: none; }
 .skip-link:hover { color: var(--text2); }
+a.btn { text-decoration: none; display: inline-block; }
+.btn[hidden] { display: none; }   /* the class rule above would otherwise beat the hidden attribute */
+.btn-sm { padding: 5px 10px; font-size: 12px; font-weight: 500; }
+.btn-secondary.btn-sm { background: transparent; color: var(--text2); border: 1px solid var(--border); }
+.btn-secondary.btn-sm:hover { color: var(--text); border-color: var(--text3); }
+.choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0 8px; }
+.choice-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface2); }
+.choice-card--icu { border-color: var(--accent); background: rgba(59,130,246,0.08); }
+.choice-card .cc-title { font-size: 13px; font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+.choice-card .cc-tag { font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 1px 7px; }
+.choice-card ul { margin: 0; padding-left: 0; list-style: none; }
+.choice-card li { font-size: 12.5px; line-height: 1.5; color: var(--text2); padding-left: 18px; position: relative; margin: 2px 0; }
+.choice-card li::before { content: '\2713'; position: absolute; left: 0; color: var(--green); font-weight: 700; }
+.choice-card li.cc-no::before { content: '\2013'; color: var(--text3); }
+.how-it-works { font-size: 12px; color: var(--text2); margin: 6px 0 10px; }
+.how-it-works b { color: var(--text); }
+.actions-left { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.linked-card { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--green); background: rgba(34,197,94,0.08); border-radius: 8px; padding: 10px 12px; margin: 8px 0; text-align: left; }
+.linked-card .lc-check { color: var(--green); font-size: 18px; line-height: 1.2; }
+.linked-card .lc-title { font-size: 12px; color: var(--text2); }
+.linked-card .lc-name { font-size: 15px; font-weight: 600; }
+.linked-card .lc-id { font-size: 12px; color: var(--text3); }
+.linked-card .lc-next { font-size: 12px; color: var(--text2); margin-top: 4px; }
 .status { padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-top: 10px; display: none; }
 .status.ok { display: block; background: rgba(34,197,94,0.12); color: var(--green); }
 .status.err { display: block; background: rgba(239,68,68,0.12); color: var(--red); }
@@ -174,24 +197,49 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,156,247
        so the OAuth state binds to the NEW profile (AC3a), and abandoning the
        earlier steps never leaves a phantom profile (AC4b). -->
   <div class="step-panel" id="step-3">
-    <h2>Connect Intervals.icu</h2>
+    <h2>Your training data</h2>
     <p class="info">
-      Profile created ✓ — optionally link an
-      <a href="https://intervals.icu/" target="_blank" rel="noopener noreferrer" class="help-link">intervals.icu</a>
-      account to sync training data (CTL, ATL, TSB, HRV). You can also do this
-      later in <b>Settings</b>.
+      Profile created &#x2713;. Domestique plans from what you actually ride. It can read
+      that from <a href="https://intervals.icu/" target="_blank" rel="noopener noreferrer" class="help-link">intervals.icu</a>,
+      a free training-analysis service, or from ride files you import yourself.
     </p>
-    <div class="info" style="background:rgba(59,130,246,0.08);border:1px solid #3b82f6;border-radius:8px;padding:10px 12px;margin:8px 0;">
-      Click <b>Sign in to intervals.icu</b> — it opens in your browser, you log in and approve
-      once, and we link <b>that account</b> to this profile.
+    <div id="icu-choice">
+      <div class="choice-grid">
+        <div class="choice-card choice-card--icu">
+          <div class="cc-title">With intervals.icu <span class="cc-tag">recommended</span></div>
+          <ul>
+            <li>Rides arrive by themselves from Garmin, Wahoo, Zwift and more</li>
+            <li>Fitness, fatigue and form update every day</li>
+            <li>HRV and sleep feed your daily readiness</li>
+            <li>Workouts land on your head unit through the intervals.icu calendar</li>
+            <li>Free; sign in with Garmin or Strava, no new password</li>
+          </ul>
+        </div>
+        <div class="choice-card">
+          <div class="cc-title">Without</div>
+          <ul>
+            <li>The full plan, adapting to what you ride</li>
+            <li>Every workout as a ZWO or FIT download</li>
+            <li>Import the FIT file yourself after each ride</li>
+            <li>Fitness computed from the rides you import</li>
+            <li class="cc-no">Readiness needs HRV typed in by hand; no calendar push</li>
+          </ul>
+        </div>
+      </div>
+      <div class="how-it-works">How linking works: <b>1</b> Sign in on intervals.icu in your browser &middot; <b>2</b> Approve once &middot; <b>3</b> You are back here, linked. You can always connect later in Settings.</div>
     </div>
-    <!-- Link status: shows "✓ Linked as <name>" after a successful OAuth round-trip,
-         or an error + retry. Populated by refreshLinkStatus() on return. -->
-    <div id="link-status" style="font-size:13px;margin:8px 0;min-height:18px;"></div>
+    <div id="link-status" role="status" aria-live="polite" style="font-size:13px;margin:8px 0;min-height:18px;"></div>
     <div class="status" id="step3-status"></div>
+    <!-- Three states, one primary action each: not linked -> "Sign in" (+ create
+         account, + continue without); linked -> "Finish setup" with the re-link
+         demoted to a small button; error -> "Try again". refreshLinkStatus() switches them. -->
     <div class="actions">
-      <button type="button" class="btn btn-primary" id="connect-icu-btn" onclick="connectIcu()">Sign in to intervals.icu</button>
-      <a href="/" class="skip-link" id="step3-done">Go to dashboard →</a>
+      <div class="actions-left">
+        <a href="/" class="btn btn-primary" id="step3-finish" hidden>Finish setup</a>
+        <button type="button" class="btn btn-primary" id="connect-icu-btn" onclick="connectIcu()">Sign in to intervals.icu</button>
+        <a href="https://intervals.icu/signup" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" id="step3-signup">Create a free account</a>
+      </div>
+      <a href="/" class="skip-link" id="step3-done" title="Import your ride files yourself; connect intervals.icu any time in Settings">Continue without intervals.icu &rarr;</a>
     </div>
   </div>
 </div>
@@ -411,24 +459,60 @@ function connectIcu() {
     encodeURIComponent('/profile-setup');
 }
 
+// The linked state is a card, not a line: which account, what happens next.
+// Built with textContent -- the athlete's name is never interpreted as HTML.
+function _renderLinkedCard(el, name, athleteId, nextText) {
+  el.textContent = '';
+  const card = document.createElement('div'); card.className = 'linked-card';
+  const check = document.createElement('span'); check.className = 'lc-check'; check.textContent = '\u2713';
+  const body = document.createElement('div');
+  const title = document.createElement('div'); title.className = 'lc-title'; title.textContent = 'Connected to intervals.icu';
+  const nm = document.createElement('div'); nm.className = 'lc-name'; nm.textContent = name || 'Your account';
+  body.appendChild(title); body.appendChild(nm);
+  if (athleteId) { const id = document.createElement('div'); id.className = 'lc-id'; id.textContent = 'athlete ' + athleteId; body.appendChild(id); }
+  const next = document.createElement('div'); next.className = 'lc-next'; next.textContent = nextText; body.appendChild(next);
+  card.appendChild(check); card.appendChild(body); el.appendChild(card);
+}
+
+// One primary action per state; the rare action (re-link) is the small one.
+function _setLinkState(state) {
+  const btn = document.getElementById('connect-icu-btn');
+  const fin = document.getElementById('step3-finish');
+  const skip = document.getElementById('step3-done');
+  const signup = document.getElementById('step3-signup');
+  const choice = document.getElementById('icu-choice');
+  const linked = (state === 'linked');
+  if (choice) choice.hidden = linked;          // the comparison is for choosing; once linked it is noise
+  if (signup) signup.hidden = linked;
+  if (skip) skip.hidden = linked;
+  if (fin) fin.hidden = !linked;
+  if (linked) {
+    if (fin) { try { fin.focus(); } catch (_) {} }
+    if (btn) { btn.textContent = 'Use a different account'; btn.className = 'btn btn-secondary btn-sm'; }
+    return;
+  }
+  if (btn) { btn.className = 'btn btn-primary'; btn.textContent = (state === 'error') ? 'Try again' : 'Sign in to intervals.icu'; }
+}
+
 async function refreshLinkStatus(icuParam) {
   const el = document.getElementById('link-status');
-  const btn = document.getElementById('connect-icu-btn');
   if (!el) return;
   if (icuParam === 'error' || icuParam === 'unavailable') {
-    el.innerHTML = '<span style="color:var(--red);">Couldn’t link your account — please try again.</span>';
-    if (btn) btn.textContent = 'Retry — sign in to intervals.icu';
+    el.textContent = '';
+    const msg = document.createElement('span'); msg.style.color = 'var(--red)';
+    msg.textContent = 'Couldn\u2019t link your account \u2014 please try again.';
+    el.appendChild(msg);
+    _setLinkState('error');
     return;
   }
   try {
     const c = await (await fetch('/api/icu/connection')).json();
     if (c && c.method === 'oauth') {
-      const who = c.name || (c.athlete_id ? ('athlete ' + c.athlete_id) : 'your account');
-      el.innerHTML = '✓ Linked as <b>' + (who.replace(/</g, '&lt;')) + '</b>';
-      el.style.color = 'var(--green)';
-      if (btn) btn.textContent = 'Re-link a different account';
+      _renderLinkedCard(el, c.name, c.athlete_id, 'Your fitness, fatigue and recent rides come in when you finish.');
+      _setLinkState('linked');
     } else {
       el.textContent = '';
+      _setLinkState('unlinked');
     }
   } catch (_) {}
 }

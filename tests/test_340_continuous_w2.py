@@ -461,9 +461,14 @@ class TestDeloadRevert(DeloadAdvanceBase):
         self.assertEqual(wk["tss_target"], original["tss_target"])
         by_day = {s["day"]: s for s in original["sessions"]}
         today_iso = self.today.isoformat()
+        # The plan self-heal runs after every plan write (P8, v3.12.0) and
+        # gives the restored blank fixture sessions a workout file; the
+        # snapshot restore is judged on everything else.
+        healed = {"zwo_file", "zwo_name", "matched"}
         for s in wk["sessions"]:
             if s["day"] >= today_iso:
-                self.assertEqual(s, by_day[s["day"]],
+                self.assertEqual({k: v for k, v in s.items() if k not in healed},
+                                 {k: v for k, v in by_day[s["day"]].items() if k not in healed},
                                  "remaining days must restore the snapshot")
         rec = saved["deload_advance"]
         self.assertTrue(rec["reverted"])

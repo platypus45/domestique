@@ -10962,13 +10962,27 @@ def _heal_plan_on_disk() -> None:
         _log.warning("EVENT=plan_selfheal_failed where=on_disk error=%s", str(e)[:200])
 
 
+def _plan_file_mtime_ns() -> "int | None":
+    try:
+        return (_plan_dir() / "current_plan.json").stat().st_mtime_ns
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @app.middleware("http")
 async def _heal_after_plan_writes(request, call_next):
-    """P8: after any POST under /api/plan or /api/profiles the plan file may
-    have changed (a rebuild, a rematch, a profile switch); heal it then, once
-    per file version, off the event loop."""
+    """P8: the heal runs after a plan WRITE, never after a read. A POST under
+    /api/plan counts only if it changed the plan file during the request (a
+    preview POST that writes nothing heals nothing, so "apply=0 does not
+    write" stays true); a POST under /api/profiles (a switch) heals the
+    newly active plan unconditionally, once per file version. Off the event
+    loop either way."""
+    is_post = request.method == "POST"
+    path = request.url.path
+    before = _plan_file_mtime_ns() if is_post and path.startswith("/api/plan") else None
     response = await call_next(request)
-    if request.method == "POST" and request.url.path.startswith(("/api/plan", "/api/profiles")):
+    if is_post and (path.startswith("/api/profiles") or
+                    (path.startswith("/api/plan") and _plan_file_mtime_ns() != before)):
         try:
             from starlette.concurrency import run_in_threadpool
             await run_in_threadpool(_heal_plan_on_disk)

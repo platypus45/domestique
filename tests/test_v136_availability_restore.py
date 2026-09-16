@@ -221,9 +221,12 @@ class TestRestRestoredToZ2(_AvailRestoreBase):
                          "duration_min is the rider's hours, trimmed to the budget")
         self.assertGreater(after_sat["tss_estimate"], 0,
                            "tss_estimate must be positive after restore")
-        self.assertEqual(after_sat["zwo_file"], "",
-                         "zwo_file cleared so renderer re-matches")
-        self.assertEqual(after_sat["zwo_name"], "")
+        # v3.11.5/v3.12.0: the restore clears the file and the plan self-heal,
+        # which runs after every plan write (P8), re-matches it in the same
+        # request -- the rider never sees a blank day.
+        self.assertNotEqual(after_sat["zwo_file"], "",
+                            "zwo_file re-matched by the heal after the write")
+        self.assertNotEqual(after_sat["zwo_name"], "")
 
     def test_a_week_without_a_budget_restores_the_hours_literally(self):
         # A hand-made row carries no tss_target: the cap leaves it

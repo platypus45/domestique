@@ -26,6 +26,7 @@ from datetime import date, timedelta
 from unittest.mock import patch
 
 import pytest
+import datetime as _dt
 
 import plan_invariants as pi
 import ride_storage as rs
@@ -138,7 +139,8 @@ def test_no_history_uses_ctl_load_ceiling_not_availability(seed_salt):
 
 # ── 3. monotonic: higher recent load → higher ceiling (same availability) ─────
 
-def test_higher_recent_load_yields_higher_ceiling():
+def test_higher_recent_load_yields_higher_ceiling(freeze_clock):
+    freeze_clock(_dt.date(2026, 9, 14))   # a Monday: the week anchoring makes the outcome depend on the weekday
     """For the SAME generous availability, a rider with higher recent weekly TSS
     gets a strictly higher peak weekly ceiling than a detrained rider."""
     goal = _generous_goal()

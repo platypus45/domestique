@@ -230,23 +230,34 @@ def test_heal_runs_once_per_file_version(monkeypatch, tmp_path):
     assert calls == [1, 1]
 
 
-def test_a_post_under_api_plan_triggers_the_heal_a_get_does_not(monkeypatch, tmp_path):
-    """The middleware: any POST under /api/plan (even one that 404s) is a
-    moment the plan may have changed; the heal runs after it, never after a GET."""
+def test_the_heal_follows_a_plan_write_not_a_read_and_not_a_preview(monkeypatch, tmp_path):
+    """The middleware: a GET never heals; a POST under /api/plan heals only
+    when it changed the plan file (a preview that writes nothing heals
+    nothing, so "apply=0 does not write" stays true); a POST under
+    /api/profiles (a switch) heals the newly active plan."""
     import app as app_module
     from fastapi.testclient import TestClient
     monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
-    (tmp_path / "current_plan.json").write_text(json.dumps(_plan_dict(_next_monday())))
+    json_path = tmp_path / "current_plan.json"
+    json_path.write_text(json.dumps(_plan_dict(_next_monday())))
     app_module._PLAN_HEAL_SEEN.clear()
     calls = []
     monkeypatch.setattr(tp, "heal_unmatched_sessions_dict",
                         lambda *a, **k: (calls.append(1), {"candidates": 5, "healed": 0, "still_unmatched": 5})[1])
     client = TestClient(app_module.app)
     client.get("/api/plan"); client.get("/api/calendar"); client.get("/api/diag/health")
-    assert calls == []
-    r = client.post("/api/plan/_p8_probe")
-    assert r.status_code in (404, 405)
-    assert calls == [1]
+    assert calls == [], "a GET never heals"
+    r = client.post("/api/plan/_p8_probe")                          # a POST that wrote nothing
+    assert r.status_code in (404, 405) and calls == []
+    r = client.post("/api/plan/rematch?apply=0")                    # a preview: no write, no heal
+    assert r.status_code == 200 and calls == []
+    r = client.post("/api/profiles/_p8_probe")                      # a switch heals the active plan
+    assert r.status_code in (404, 405) and calls == [1]
+    import os, time
+    json_path.write_text(json.dumps(_plan_dict(_next_monday())))    # simulate a POST that wrote the plan
+    os.utime(json_path, ns=(time.time_ns(), time.time_ns()))
+    app_module._heal_plan_on_disk()
+    assert calls == [1, 1]
 
 
 def test_heal_never_overwrites_a_plan_written_in_between(monkeypatch, tmp_path, library):

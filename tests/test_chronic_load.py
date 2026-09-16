@@ -63,7 +63,8 @@ def test_it_reads_the_rides_intervals_icu_sent():
     assert rs.chronic_weekly_tss(icu, today=TODAY) > 0
 
 
-def test_a_lay_off_decays_the_load_carried():
+def test_a_lay_off_decays_the_load_carried(freeze_clock):
+    freeze_clock(TODAY)   # recent_mean_weekly_tss reads the clock; the fixture dates are fixed
     """Three weeks off leave a rider carrying far less than they did. This is
     what the ramp's CTL x 7 floor stood in for (the Step 5 review, L1): the
     mean over active weeks still read 300 here, because it never saw a week

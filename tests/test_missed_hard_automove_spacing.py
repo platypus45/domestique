@@ -71,3 +71,25 @@ def test_a_missed_hard_day_blocks_nothing():
                        if s["session_type"] in ("vo2max", "threshold") and s["status"] != "missed")
     for a, b in zip(hard_days, hard_days[1:]):
         assert (date.fromisoformat(b) - date.fromisoformat(a)).days >= 2, hard_days
+
+
+def test_two_re_owed_hard_sessions_keep_48h_from_each_other():
+    """Mon vo2max missed, Tue threshold missed, Thu and Fri free. The guard
+    reads the plan as it stands, so without remembering what this pass has
+    already placed, the two land on consecutive free days: each legal against
+    the plan it was checked against, illegal in the plan that results."""
+    plan = _plan([
+        _sess("2026-06-22", "vo2max", 60, status="missed"),
+        _sess("2026-06-23", "threshold", 60, status="missed"),
+        _sess("2026-06-24", "z2", 60),
+        _sess("2026-06-25", "rest", 0),
+        _sess("2026-06-26", "rest", 0),
+        _sess("2026-06-27", "z2", 60),
+        _sess("2026-06-28", "rest", 0),
+    ])
+    out = app._compute_missed_suggestions(plan, date(2026, 6, 22))
+    hard = sorted(s["suggested_date"] for s in out
+                  if s["missed_session_type"] in ("vo2max", "threshold"))
+    if len(hard) == 2:
+        gap = (date.fromisoformat(hard[1]) - date.fromisoformat(hard[0])).days
+        assert gap >= 2, f"re-owed hard sessions 24 h apart: {hard}"

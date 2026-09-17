@@ -13891,6 +13891,8 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
                 nb_iso = nb.isoformat()
                 if nb_iso == missed_iso:
                     continue
+                if nb_iso in placed_hard:
+                    return False  # a hard session this pass has already placed
                 nb_sess = sess_by_day.get(nb_iso)
                 if (nb_sess and tp._session_is_hit(nb_sess)
                         and (nb_sess.get("status") or "pending") not in ("missed", "dismissed")
@@ -13955,6 +13957,7 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
     misses.sort(key=lambda s: s.get("day", ""))
 
     used: set[str] = set()
+    placed_hard: set[str] = set()  # days this pass has given a re-owed HARD session
     takeover_weeks: set = set()   # at most ONE easy-day takeover per ISO week
     suggestions: list[dict] = []
     for miss in misses:
@@ -14006,6 +14009,8 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
             continue
 
         used.add(chosen)
+        if tp._session_is_hit(miss) and not miss.get("is_opener"):
+            placed_hard.add(chosen)
         try:
             suggested_day_name = date.fromisoformat(chosen).strftime("%a")
         except ValueError:

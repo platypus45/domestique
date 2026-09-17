@@ -204,3 +204,86 @@ class CapsAndContent(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── a recovery week that LOOKS lighter: one definition ──────────────────────
+
+def _wk(start, days, sessions, stepback=False, num=1):
+    import datetime as _dt
+    from types import SimpleNamespace as NS
+    s0 = _dt.date.fromisoformat(start)
+    return NS(start=s0, end=s0 + _dt.timedelta(days=days - 1), week_num=num,
+              is_stepback=stepback, phase="build1",
+              sessions=[NS(session_type=t, duration_min=m, tss_estimate=tss,
+                           status="pending", is_race=False)
+                        for t, m, tss in sessions])
+
+
+def test_a_partial_first_week_is_not_a_build_to_compare_with():
+    """A plan that starts on a Friday has a two-day W1, and if it holds nothing
+    but a short recovery spin, its intensity is lower than any real recovery
+    week's. Counted as a build, it made every recovery week after it fail --
+    which is how the old check came to depend on the weekday a plan started."""
+    import plan_invariants as pi
+    rest = ("rest", 0, 0)
+    partial_w1 = _wk("2026-09-04", 2, [("recovery", 30, 12), rest], num=1)
+    full_build = _wk("2026-09-07", 7, [("z2", 90, 70), ("vo2max", 60, 80),
+                                       ("z2", 90, 70), ("sweetspot", 75, 85),
+                                       ("z2", 60, 45), rest, rest], num=2)
+    deload = _wk("2026-09-14", 7, [("z2", 60, 42), ("z2", 60, 42), ("z2", 60, 42),
+                                   ("z2", 60, 42), ("z2", 45, 30), rest, rest],
+                 stepback=True, num=3)
+    ok, why = pi.stepback_looks_lighter(deload, [full_build, partial_w1])
+    assert ok, why
+    assert "load type" in why, why
+
+
+def test_a_recovery_week_with_a_hard_session_is_not_lighter_by_load_type():
+    import plan_invariants as pi
+    rest = ("rest", 0, 0)
+    build = _wk("2026-09-07", 7, [("z2", 90, 70), ("vo2max", 60, 80), ("z2", 90, 70),
+                                  ("z2", 60, 45), ("z2", 60, 45), rest, rest], num=1)
+    deload = _wk("2026-09-14", 7, [("z2", 60, 42), ("threshold", 45, 55), ("z2", 60, 42),
+                                   ("z2", 60, 42), ("z2", 45, 30), rest, rest],
+                 stepback=True, num=2)
+    ok, why = pi.stepback_looks_lighter(deload, [build])
+    assert not ok, why
+
+
+def test_more_rest_days_is_enough_on_its_own():
+    import plan_invariants as pi
+    rest = ("rest", 0, 0)
+    build = _wk("2026-09-07", 7, [("z2", 60, 40)] * 5 + [rest, rest], num=1)
+    deload = _wk("2026-09-14", 7, [("z2", 60, 40)] * 4 + [rest, rest, rest],
+                 stepback=True, num=2)
+    ok, why = pi.stepback_looks_lighter(deload, [build])
+    assert ok and why == "more rest days", why
+
+
+def test_a_build_week_with_an_ftp_test_is_harder_than_an_all_easy_recovery_week():
+    """The three-day rider the characterization caught: a recovery week of
+    three Z2 rides (126 TSS) against a build week of a Z2 ride, a sweet-spot
+    session and an FTP test (88 TSS without the test). Compared by load alone
+    the recovery week is heavier; ridden, it is the easy one."""
+    import plan_invariants as pi
+    rest = ("rest", 0, 0)
+    build = _wk("2026-09-21", 7, [("z2", 45, 30), ("ftp_test", 60, 70), rest,
+                                  ("sweetspot", 60, 58), rest, rest, rest], num=2)
+    deload = _wk("2026-10-05", 7, [("z2", 75, 50), ("z2", 71, 48), rest,
+                                   ("z2", 45, 28), rest, rest, rest], stepback=True, num=4)
+    ok, why = pi.stepback_looks_lighter(deload, [build])
+    assert ok, why
+
+
+def test_an_ftp_test_alone_makes_a_build_week_hard():
+    """Counted as hard work in a build week even with no other hard session:
+    otherwise the week falls through to the load comparison."""
+    import plan_invariants as pi
+    rest = ("rest", 0, 0)
+    build = _wk("2026-09-21", 7, [("z2", 45, 30), ("ftp_test", 60, 70), rest,
+                                  ("z2", 40, 25), rest, rest, rest], num=2)
+    deload = _wk("2026-10-05", 7, [("z2", 75, 50), ("z2", 71, 48), rest,
+                                   ("z2", 45, 28), rest, rest, rest], stepback=True, num=4)
+    ok, why = pi.stepback_looks_lighter(deload, [build])
+    assert ok, why
+    assert "hard minutes" in why, why

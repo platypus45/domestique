@@ -1,6 +1,6 @@
 # Changelog
 
-## v3.12.0 — One plan, everywhere (unreleased)
+## v3.12.0 — One plan, everywhere (2026-09-19)
 
 The planner core is rebuilt on the work of a contributor's fork (taladjidi/domestique), brought upstream in one reviewed merge. What you see:
 
@@ -14,6 +14,8 @@ The planner core is rebuilt on the work of a contributor's fork (taladjidi/domes
 - **Fitness numbers have one source.** Your CTL, ATL and form come from intervals.icu, or its last known values; without an intervals.icu connection they come from the rides you import.
 - **Calendar push works for FTP-test workouts.** Six test workouts carried a pace label intervals.icu rejects; every push that included one failed.
 - **Nothing is written when you only look.** Opening a page never rebuilds or repairs your plan. The repair of plans that lost their workout files (3.11.5) runs at startup and after changes instead.
+- **Setup explains the intervals.icu choice.** The step now shows, side by side, what works with and without an intervals.icu account, offers to create a free one, and once you are connected it says which account is linked and gives you a clear Finish button. Connecting another account is the small option, not the big one.
+- The "Change training type" button in the workout view no longer looks like a pull-request icon.
 - Every release build now exports a workout from the finished app and checks its length with an independent reader before anything is published, on all three platforms.
 ## v3.11.6 — Placeholder rides off the home page, and a warning that was never true (2026-09-11)
 

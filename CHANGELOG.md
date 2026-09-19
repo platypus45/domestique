@@ -1,5 +1,10 @@
 # Changelog
 
+## v3.11.7 — FIT workouts with the right step lengths (unreleased)
+
+- **Fixed: downloaded FIT workouts had every step 1,000 times too long.** A one-hour workout arrived on a Garmin, Wahoo or Hammerhead as a first step that never ends. The same file is what heart-rate-mode riders get through the intervals.icu calendar. macOS builds were affected from 3.11.2, Windows and Linux builds since 3.9. ZWO downloads and power-mode calendar pushes were never affected. If you downloaded a FIT workout from one of those versions, download it again after updating. Found by a contributor while reviewing the planner merge.
+- Every release build now exports a workout from the finished app and checks its length with an independent reader before anything is published, on all three platforms.
+
 ## v3.11.6 — Placeholder rides off the home page, and a warning that was never true (2026-09-11)
 
 - **Fixed: rides that reach intervals.icu through Strava no longer show on the home page as an empty "Activity" that fails to open.** intervals.icu does not pass on Strava's data, so all it can offer for such a ride is a placeholder with no name, type or duration. Since 3.8.1 the calendar left those out, but the "Recent activities" card on the home page still listed them as "Activity · 0min", and opening one gave "Failed to load activity (404)" — which looked exactly like a broken sync. The card now leaves them out too, as does the local activity mirror behind the recovery checks. The rides themselves are not lost: connect your indoor platform to intervals.icu directly, or import the ride's FIT file, and they come in with full data. Reported in [#11](https://github.com/platypus45/domestique/issues/11).

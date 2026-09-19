@@ -14978,7 +14978,7 @@ def _build_fit_workout(name: str, blocks: list[dict], ftp: int,
         step = WorkoutStepMessage()
         step.message_index = i
         step.duration_type = WorkoutStepDuration.TIME
-        step.duration_value = b["min"] * 60 * 1000  # milliseconds
+        step.duration_time = b["min"] * 60  # seconds; fit-tool 0.9.16 applies the profile's x1000 scale itself
         step.intensity = INTENSITY_MAP.get(b.get("intensity", "active"), Intensity.ACTIVE)
         # v2.4.2 — every step needs a name. Garmin's own canonical workout files
         # (and TrainingPeaks / Vekta) expect wkt_step_name on each step; without it
@@ -15180,7 +15180,7 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int,
         step = WorkoutStepMessage()
         step.message_index = i
         step.duration_type = WorkoutStepDuration.TIME
-        step.duration_value = dur_s * 1000  # milliseconds
+        step.duration_time = dur_s  # seconds; fit-tool 0.9.16 applies the profile's x1000 scale itself
         step.intensity = INTENSITY_MAP.get(intensity_kind, Intensity.ACTIVE)
         # v2.4.2 — name every step (Garmin canonical / TrainingPeaks / Vekta expect
         # wkt_step_name; missing names → "no workout in this file" on import).

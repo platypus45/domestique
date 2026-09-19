@@ -18873,7 +18873,7 @@ async function openDayWorkout(sessionIdx, day) {
     <div style="font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Change this workout</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
       <button class="btn" onclick="rematchDaySession('${session.day}')" style="font-size:12px;">&#x21bb; Swap workout — same type, different session</button><span class="info-icon" data-popover="planpop-rematch" tabindex="0" role="button" aria-label="What does &quot;Swap workout&quot; do?" title="Swaps in another workout of the same type and duration.">i</span>
-      <button class="btn" onclick="swapTypeOpen('${session.day}')" style="font-size:12px;">&#x21c4; Change training type (VO2, tempo, &hellip;)</button><span class="info-icon" data-popover="planpop-swaptype" tabindex="0" role="button" aria-label="What does &quot;Change training type&quot; do?" title="Pick a different training type for this day.">i</span>
+      <button class="btn" onclick="swapTypeOpen('${session.day}')" style="font-size:12px;">&#x2194; Change training type (VO2, tempo, &hellip;)</button><span class="info-icon" data-popover="planpop-swaptype" tabindex="0" role="button" aria-label="What does &quot;Change training type&quot; do?" title="Pick a different training type for this day.">i</span>
       ${_canEase ? `<button class="btn" onclick="applyReadinessTierDown();closeModal()" style="font-size:12px;">&#x2193; Make it easier today</button><span class="info-icon" data-popover="planpop-easier" tabindex="0" role="button" aria-label="What does &quot;Make it easier today&quot; do?" title="Drops today one intensity notch.">i</span>` : ''}
     </div>
   </div>`;

@@ -179,13 +179,27 @@ def get_db() -> sqlite3.Connection:
 
 
 def set_db_path(path: "Path | None") -> None:
-    """Update the global DB_PATH. Call close_all_connections() first.
+    """Point the process at another database, and make every thread follow.
 
     ``None`` is the AC6a no-active-profile sentinel (set by delete-last):
     get_db()/init_db() then raise / no-op instead of resurrecting files.
+
+    The version bump is part of moving the path, not a second call the caller
+    has to remember. Connections are per-thread (``_local.conn``), so a caller
+    that repoints DB_PATH alone leaves every OTHER thread reading the OLD
+    file: the request threads behind TestClient, the sync daemon, any pool
+    thread that has already opened one. They keep that connection until
+    something bumps ``_db_version``.
+
+    That is not hypothetical. Four test fixtures restore the path this way in
+    teardown, and the next test then seeds rows on the main thread while its
+    endpoint reads the previous test's deleted temp database and answers "no
+    data" -- test_one_fitness_state's readiness cases, failing in CI and
+    passing alone, for as long as the two calls could be separated.
     """
     global DB_PATH
     DB_PATH = path
+    close_all_connections()   # bumps _db_version; every thread reopens at `path`
 
 
 def close_all_connections() -> None:

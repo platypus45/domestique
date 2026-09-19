@@ -195,3 +195,17 @@ def test_templates_still_render():
         assert r.status_code in (200, 302, 303, 307), (path, r.status_code)
         if r.status_code == 200:
             assert "linked-card" in r.text
+
+
+def test_the_comparison_claims_no_table_role_it_cannot_honour():
+    """An element with role="table" must own rows; the comparison is a CSS
+    grid whose children are the cells, so a screen reader was offered a table
+    with no rows in it (review of #15). Without the role the cells read in
+    order, each preceded by its label. `display: contents` row wrappers would
+    keep the grid, but the macOS app runs on the system WebKit, where that
+    property has a history of dropping semantics."""
+    for path in (PROFILE_SETUP, SETUP):
+        s = path.read_text()
+        assert 'class="cmp"' in s
+        if 'role="table"' in s:
+            assert 'role="row"' in s and 'role="cell"' in s, f"{path.name}: role=table without rows"

@@ -110,10 +110,14 @@ class TestFitFromZwo(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         steps = _decode_workout_steps(r.content)
         self.assertGreaterEqual(len(steps), 2)
-        # The raw field is milliseconds (FIT profile: duration_value, scale
-        # 1000 for a time duration). fit_tool 0.9.15 writes the raw value as
-        # given, so the builder must hand it seconds x 1000.
-        fit_total_s = sum((s.duration_value or 0) for s in steps) / 1000.0
+        # Decoded by an independent decoder (fitparse), never by fit_tool's own
+        # accessors: fit_tool 0.9.15 and 0.9.16 disagree on whether the raw
+        # field is already scaled, and reading back through the library that
+        # wrote the file hid a 1000x error in every shipped build (v3.11.7).
+        import io
+        import fitparse
+        fit_total_s = sum((m.get_value("duration_time") or 0)
+                          for m in fitparse.FitFile(io.BytesIO(r.content)).get_messages("workout_step"))
         zwo_total_s = _zwo_total_seconds(self.zwo_path)
         self.assertEqual(round(fit_total_s), zwo_total_s,
                          f"FIT total {fit_total_s}s != ZWO total {zwo_total_s}s")

@@ -443,6 +443,17 @@ jobs:
               Write-Host "::error::icu_oauth.can_upload_activities missing from diag (v3.11.5 contract)"
               exit 1
             }
+            # v3.11.7: the FIT a rider downloads must carry the workout's real step
+            # lengths -- exported by the frozen EXE, decoded independently (fitparse).
+            $fitOut = Join-Path $env:RUNNER_TEMP "probe.fit"
+            Invoke-WebRequest -Uri "http://127.0.0.1:22400/api/export/fit-workout?session_type=z2&duration_min=60&name=probe&zwo_file=endurance_steady_55pct_60min.zwo" -OutFile $fitOut -TimeoutSec 60
+            python -m pip install --quiet fitparse
+            python packaging/check_fit_durations.py $fitOut 3600
+            if ($LASTEXITCODE -ne 0) {
+              Dump-Diagnostics
+              Write-Host "::error::the frozen EXE exports FIT workouts with wrong step durations"
+              exit 1
+            }
             Write-Host "Smoke-test passed: EXE serves version $served, library=$libcount, hit=$hitn, oauth_secret=loaded, tls=$tlsb, e2e-through-interceptor=ok, sessions_without_file=0"
           } finally {
             if ($fake -and -not $fake.HasExited) { Stop-Process -Id $fake.Id -Force -ErrorAction SilentlyContinue }
@@ -748,6 +759,14 @@ jobs:
           # jq's // treats false as missing — read the boolean explicitly.
           cu="$(printf '%s' "$hb" | jq -r 'if .checks.icu_oauth.can_upload_activities == null then "missing" else (.checks.icu_oauth.can_upload_activities | tostring) end')"
           [ "$cu" = "false" ] || fail "icu_oauth.can_upload_activities is '$cu' on a fresh install (expected false, present)"
+
+          # v3.11.7: the FIT a rider downloads must carry the workout's real step
+          # lengths -- exported by the frozen AppImage, decoded independently (fitparse).
+          curl -fsS --max-time 60 -o /tmp/probe.fit "http://localhost:22400/api/export/fit-workout?session_type=z2&duration_min=60&name=probe&zwo_file=endurance_steady_55pct_60min.zwo" \
+            || fail "/api/export/fit-workout did not answer"
+          python3.12 -m pip install --quiet fitparse || fail "could not install fitparse for the FIT-duration gate"
+          python3.12 packaging/check_fit_durations.py /tmp/probe.fit 3600 \
+            || fail "the frozen AppImage exports FIT workouts with wrong step durations"
 
           #    ...and the listener must BE the GUI process, not a stage-A leftover.
           PORT_PID="$(ss -ltnp 2>/dev/null | awk '/:22400 /{ if (match($0, /pid=[0-9]+/)) print substr($0, RSTART+4, RLENGTH-4) }' | head -1)"

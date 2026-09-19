@@ -13,6 +13,10 @@ The planner core is rebuilt on the work of a contributor's fork (taladjidi/domes
 - **Fitness numbers have one source.** Your CTL, ATL and form come from intervals.icu, or its last known values; without an intervals.icu connection they come from the rides you import.
 - **Calendar push works for FTP-test workouts.** Six test workouts carried a pace label intervals.icu rejects; every push that included one failed.
 - **Nothing is written when you only look.** Opening a page never rebuilds or repairs your plan. The repair of plans that lost their workout files (3.11.5) runs at startup and after changes instead.
+## v3.11.7 — FIT workouts with the right step lengths (unreleased)
+
+- **Fixed: downloaded FIT workouts had every step 1,000 times too long.** A one-hour workout arrived on a Garmin, Wahoo or Hammerhead as a first step that never ends. The same file is what heart-rate-mode riders get through the intervals.icu calendar. macOS builds were affected from 3.11.2, Windows and Linux builds since 3.9. ZWO downloads and power-mode calendar pushes were never affected. If you downloaded a FIT workout from one of those versions, download it again after updating. Found by a contributor while reviewing the planner merge.
+- Every release build now exports a workout from the finished app and checks its length with an independent reader before anything is published, on all three platforms.
 
 ## v3.11.6 — Placeholder rides off the home page, and a warning that was never true (2026-09-11)
 

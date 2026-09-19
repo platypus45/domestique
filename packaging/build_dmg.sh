@@ -164,6 +164,8 @@ for _i in $(seq 45); do
 done
 PROBE_VER="$(curl -fsS --max-time 5 "http://127.0.0.1:${PROBE_PORT}/api/version" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null)"
 PROBE_HB="$(curl -fsS --max-time 180 "http://127.0.0.1:${PROBE_PORT}/api/diag/health" 2>/dev/null)"
+PROBE_FIT="$(mktemp -t domestique_probe_fit)"
+curl -fsS --max-time 60 -o "$PROBE_FIT" "http://127.0.0.1:${PROBE_PORT}/api/export/fit-workout?session_type=z2&duration_min=60&name=probe&zwo_file=endurance_steady_55pct_60min.zwo" 2>/dev/null || true
 kill "$PROBE_PID" >/dev/null 2>&1 || true; sleep 1; rm -rf "$PROBE_HOME"
 PROBE_LIB="$(printf '%s' "$PROBE_HB" | python3 -c 'import json,sys; print(json.load(sys.stdin)["checks"]["workout_library"]["count"])' 2>/dev/null || echo 0)"
 PROBE_SECRET="$(printf '%s' "$PROBE_HB" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["checks"]["icu_oauth"]["secret_loaded"]).lower())' 2>/dev/null || echo false)"
@@ -177,6 +179,14 @@ if [ "$PROBE_SECRET" != "true" ]; then
     echo "FATAL: frozen app did NOT load the OAuth client secret — intervals.icu sign-in would fail" >&2; exit 1
 fi
 echo "[1b5/9] Runtime gate OK — version $PROBE_VER, library $PROBE_LIB, OAuth secret loaded"
+# 1b6. v3.11.7 -- the FIT a rider downloads, exported by the FROZEN app and
+# decoded by an independent decoder, must carry the workout's real step lengths.
+if ! python3.12 packaging/check_fit_durations.py "$PROBE_FIT" 3600; then
+    echo "FATAL: the frozen app exports FIT workouts with wrong step durations -- fit-tool pin and app.py's duration_time spelling disagree. Aborting build." >&2
+    exit 1
+fi
+rm -f "$PROBE_FIT"
+echo "[1b6/9] FIT-duration gate OK -- a 60-minute workout exports as 60 minutes"
 
 # 1c. HR-mode FIT smoke (v2.5.0 P1.5) — the desktop save path builds FIT bytes
 # in-process (launcher.JsApi save_fit bridge), a path the web tests can't reach.

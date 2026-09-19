@@ -113,7 +113,7 @@ class TestFitFromZwo(unittest.TestCase):
         # Decoded by an independent decoder (fitparse), never by fit_tool's own
         # accessors: fit_tool 0.9.15 and 0.9.16 disagree on whether the raw
         # field is already scaled, and reading back through the library that
-        # wrote the file hid a 1000x error in every shipped build (v3.11.7).
+        # wrote the file hid a 1000x error in every shipped build (2026-09).
         import io
         import fitparse
         fit_total_s = sum((m.get_value("duration_time") or 0)

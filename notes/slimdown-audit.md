@@ -26,12 +26,11 @@ check the flag actually evaluates false in production) before deleting it.
 
 ## Where the tree stands
 
-| | 2026-09-15 (`3a75d688`) | today (`e6d52b7d`) |
-|---|---|---|
-| modules | 77 | 56 |
-| symbols | 1,946 | 1,418 |
-| src LOC | 80,102 | 66,035 |
-| endpoints | 150 | 150 |
+| | 2026-09-15 (`3a75d688`) | after wave 1 | after wave 2 |
+|---|---|---|---|
+| modules | 77 | 56 | 55 |
+| src LOC | 80,102 | 66,035 | 64,827 |
+| `/api` endpoints | 142 | 142 | 127 |
 
 Two files hold 56 % of it: `app.py` 20,567 (403 defs, worst function 452
 lines / complexity 189) and `training_planner.py` 16,350 (241 defs, worst
@@ -114,6 +113,50 @@ What the re-audit changed, and why it matters more than the list:
 Deleting the climb/GPX cluster also retires `gpx_to_gc.py` (391 LOC) and its
 test. `src/workout_analysis.csv` (428 KB) is named only in two comments that
 say it no longer exists — an orphan.
+
+## Wave 2 — done
+
+1,305 lines of Python and a 2,460-line orphan CSV, with the characterization
+byte-identical and the full gate green:
+
+- 15 of the 17 unreached endpoints (550 lines of `app.py`).
+- `gpx_to_gc.py` (390) — the climb/GPX endpoints were its only callers.
+- `routes_lib._build_climb_zwo` + `_gradient_to_power_factor` (64), orphaned
+  by those endpoints, and the `config` import they held up.
+- Seven defs with no caller and no test: `ride_storage._build_summary_dict`
+  (105), `training_planner._enforce_hard_day_spacing` (53),
+  `classify_library_content._mask_cooldown` + `_audit_reason` (63),
+  `oos_validation._predict_ftp_for_date` (28), `sleep.compute_sleep_score`
+  (24), `structure_fidelity._plan_rest_frac` (21).
+- `src/workout_analysis.csv` (428 KB), named only in two comments saying it
+  no longer exists.
+
+**Kept, with the reason, from the 17:**
+
+- `POST /api/setup/test-icu` — `packaging/tls_intercept_probe_win.py` posts to
+  it during the Windows TLS-interception probe. No client calls it; a build
+  does.
+- `GET /api/setup/status` — 3 lines, two tests, named in the packaging plan.
+
+**Coverage was moved, not dropped.** Three deleted endpoints were thin
+wrappers over live code, and their tests now call that code directly:
+`_compute_missed_suggestions` (still behind `/api/plan`),
+`power_curve.compute_ride_prs`, and — for `/api/readiness/composite`, which
+the dashboard stopped calling in v2.2.5 — the two remaining readers in
+`test_one_fitness_state`.
+
+## Still to decide (measured, not deleted)
+
+These are dead in production but have real test surfaces, so deleting them is
+a decision about the capability, not a cleanup:
+
+| def | lines | test hits | note |
+|---|---|---|---|
+| `plan_invariants.check_acwr` (+ `projected_ctl`) | 48 | 13 | **A bug, not dead code:** it is a written, tested ACWR safety check that `ALL_CHECKS` never runs, so `audit()` has never enforced it. Wire it in rather than delete it. |
+| `ride_report_png.render_ride_report_png` | 93 | 0 | An entire PNG feature, unwired. The owner said to keep PNG export — this is a different, unreferenced one. |
+| `fitness_estimation.aerobic_decoupling` | 100 | 10 | The product reads `decoupling_pct` from intervals.icu (`ride_storage:498`), never this local computation. |
+| `ride_storage.recent_mean_weekly_tss` | 52 | 10 | Superseded by `chronic_weekly_tss`; its own module docstring says why. |
+| `compute_fitness_signature`, `compute_local_atl`, `detect_wbal_overshoot`, `compute_sr_avg`, `count_weighted_markers`, `audit_labels`, `set_level`, `title_from_zwo`, `legacy_card_state`, `schedule_double_threshold_pair`, `_install_seal` | ~430 | 60+ | Utilities whose only exercise is their own unit tests. |
 
 ## Candidates the instruments flagged that are NOT dead
 

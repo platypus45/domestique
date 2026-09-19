@@ -1461,27 +1461,6 @@ def _prescribed_gap_frac(planned_segments, reps, i) -> float:
     return out
 
 
-def _plan_rest_frac(planned_segments, reps, lo: float, hi: float) -> float:
-    """Time-weighted prescribed intensity over plan interval [lo, hi],
-    counting non-block segments only (block seconds contribute nothing —
-    they are the thing whose presence is being tested)."""
-    rep_starts = {r["start_s"] for r in reps}
-    acc = dur = 0.0
-    for seg in (planned_segments or []):
-        d = seg.get("dur_s") or 0
-        st = float(seg.get("start_s") or 0)
-        if not d or st + d <= lo or st >= hi:
-            continue
-        ov = min(hi, st + d) - max(lo, st)
-        if seg.get("start_s") in rep_starts:
-            dur += ov          # block time inside the span, at zero
-            continue
-        f = _seg_frac_at(seg, int(d) // 2)
-        acc += ov * (f if f is not None else 0.5)
-        dur += ov
-    return acc / dur if dur > 0 else 0.5
-
-
 def _plan_bands(planned_segments, reps) -> "list[tuple[float, float, float, float]]":
     """(start_s, end_s, lo_frac, hi_frac) of every prescribed NON-block segment.
 

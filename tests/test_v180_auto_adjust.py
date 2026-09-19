@@ -371,22 +371,3 @@ def test_auto_adjust_no_plan_returns_404(tmp_path, monkeypatch):
     assert r.status_code == 404
 
 
-def test_readiness_composite_carries_severity_fields(tmp_path, monkeypatch):
-    """GET /api/readiness/composite merges severity/source/severity_reasons."""
-    _patch_severity(monkeypatch, "tier_down", "hooper")
-    # Also stub compute_readiness_composite to return a known dict.
-    monkeypatch.setattr(
-        app_module, "compute_readiness_composite",
-        lambda profile_id, day_iso: {"score": 4.0, "status": "static_weights"},
-        raising=True,
-    )
-    # Bypass the cache so our patched function is actually invoked.
-    monkeypatch.setattr(app_module, "cached",
-                        lambda key, fn, ttl=300: fn(), raising=True)
-    client = TestClient(app_module.app)
-    r = client.get("/api/readiness/composite")
-    assert r.status_code == 200
-    body = r.json()
-    assert body.get("severity") == "tier_down"
-    assert body.get("source") == "hooper"
-    assert body.get("severity_reasons") == ["test"]

@@ -186,34 +186,6 @@ def _collect_holdout_markers(
     return markers
 
 
-def _predict_ftp_for_date(
-    fit: dict, daily_loads: list[float], date_to_idx: dict[str, int],
-    target_iso: str,
-) -> float | None:
-    """Forward-simulate predicted FTP at a target date using the fitted model.
-
-    Uses the fit's ``k1, k2, p_base, ctl_tau, atl_tau`` to reconstruct the
-    Banister equation P(t) = p_base + k1*CTL - k2*ATL.
-
-    For v1.2.0 the fit dict from tau_fitting only persists ``ctl_tau_fit``
-    and ``atl_tau_fit`` — k1/k2/p_base are NOT exposed. We re-derive them
-    by re-fitting the (k1, k2, p_base) trio against the pre-holdout markers
-    with τ values frozen at the fitted τ_CTL / τ_ATL. This is a 3-param
-    linear-LS problem against the EWMA features.
-    """
-    ctl_tau = fit.get("ctl_tau_fit")
-    atl_tau = fit.get("atl_tau_fit")
-    if ctl_tau is None or atl_tau is None:
-        return None
-    if target_iso not in date_to_idx:
-        return None
-
-    ctl = _ewma_series(daily_loads, float(ctl_tau))
-    atl = _ewma_series(daily_loads, float(atl_tau))
-    idx = date_to_idx[target_iso]
-    return float(ctl[idx]), float(atl[idx])
-
-
 def _refit_k_params_with_frozen_tau(
     daily_loads: list[float],
     marker_indices: np.ndarray,

@@ -25,7 +25,6 @@ import re
 import threading
 from pathlib import Path
 
-import config
 from cache import cached
 from obs import _log
 from paths import ROUTE_DATA, ROUTE_PROFILES_DIR, ROUTE_PROFILES_INDEX
@@ -743,66 +742,3 @@ def _load_route_detail(url: str) -> dict | None:
                     continue
     return None
 
-def _gradient_to_power_factor(grade_pct: float) -> float:
-    """Map a terrain gradient (%) to a fraction of FTP for climb-ZWO generation.
-
-    Single source of truth — previously duplicated byte-for-byte between the CRS
-    and virtual-route climb ZWO builders.
-    """
-    if grade_pct >= 10: return 0.95
-    if grade_pct >= 7:  return 0.90
-    if grade_pct >= 5:  return 0.85
-    if grade_pct >= 3:  return 0.75
-    if grade_pct >= 1:  return 0.68
-    if grade_pct >= -2: return 0.60
-    return 0.50
-
-def _build_climb_zwo(points: list[dict], course_name: str, warmup_min: int = 10) -> str:
-    """Generate ZWO XML string from profile points. Shared by CRS and virtual routes."""
-    ftp = config.ATHLETE_FTP_W
-    total_dist = points[-1]["d"] if points else 0
-    total_climb = sum(max(0, points[i]["e"] - points[i-1]["e"]) for i in range(1, len(points)))
-
-    segments_xml = ""
-    if warmup_min > 0:
-        segments_xml += f'    <Warmup Duration="{warmup_min * 60}" PowerLow="0.45" PowerHigh="0.65"/>\n'
-
-    num_segs = min(40, max(10, len(points) // 5))
-    seg_step = max(1, len(points) // num_segs)
-
-    for i in range(0, len(points) - seg_step, seg_step):
-        j = min(i + seg_step, len(points) - 1)
-        dist_km = points[j]["d"] - points[i]["d"]
-        if dist_km <= 0:
-            continue
-        avg_grad = sum(points[k]["g"] for k in range(i, j + 1)) / (j - i + 1)
-
-        power_pct = _gradient_to_power_factor(avg_grad)
-
-        if avg_grad >= 5:    speed_kmh = max(8, 20 - avg_grad * 1.2)
-        elif avg_grad >= 0:  speed_kmh = 25
-        else:                speed_kmh = min(45, 25 - avg_grad * 2)
-
-        duration_sec = max(30, int(dist_km / speed_kmh * 3600))
-        segments_xml += f'    <SteadyState Duration="{duration_sec}" Power="{power_pct:.2f}"/>\n'
-
-    # v3.7.0 — a Cooldown ramps PowerLow -> PowerHigh, so 0.40 -> 0.60 was an
-    # ascending "cooldown": it finished the rider at 60 % FTP. Same defect the
-    # library carried; invisible to the library test because this is generated
-    # into an HTTP response rather than written to workouts/.
-    segments_xml += '    <Cooldown Duration="300" PowerLow="0.60" PowerHigh="0.45"/>\n'
-
-    from xml.sax.saxutils import escape as xml_escape
-    desc = f"Climb simulation: {course_name}. {total_dist:.1f}km, {total_climb:.0f}m elevation."
-    if warmup_min > 0:
-        desc = f"{warmup_min}min warmup + {desc}"
-
-    return f"""<?xml version='1.0' encoding='utf-8'?>
-<workout_file>
-  <author>Domestique</author>
-  <name>{xml_escape(course_name)}</name>
-  <description>{xml_escape(desc)}</description>
-  <sportType>bike</sportType>
-  <workout>
-{segments_xml}  </workout>
-</workout_file>"""

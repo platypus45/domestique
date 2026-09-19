@@ -48,20 +48,5 @@ class TestReadinessUnified(unittest.TestCase):
         # Consistency: score_0_100 ≈ score_0_10 * 10 (±2 tolerance).
         self.assertAlmostEqual(s100, s10 * 10, delta=2.0)
 
-    def test_readiness_composite_marked_deprecated(self):
-        """/api/readiness/composite payload carries ``deprecated: true``."""
-        with patch("readiness_composite.compute_readiness_composite",
-                   return_value={"score": 6.5, "status": "static_weights",
-                                 "components": {}, "weights": {},
-                                 "confidence": 1.0, "advice": ""}), \
-             patch("readiness_composite.compute_training_severity",
-                   return_value={}):
-            r = self.client.get("/api/readiness/composite")
-        self.assertEqual(r.status_code, 200, r.text)
-        data = r.json()
-        self.assertTrue(data.get("deprecated"),
-                        f"expected deprecated=true in {data}")
-
-
 if __name__ == "__main__":
     unittest.main()

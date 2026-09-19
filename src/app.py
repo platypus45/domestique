@@ -67,7 +67,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 from training import get_today_metrics, fetch_wellness, fetch_activities, TRIMP_TO_TSS_FACTOR
 from sleep import get_sleep_metrics
 from readiness import compute_readiness
-from readiness_composite import compute_readiness_composite  # v1.1.0 IMPL-HRV-RECOVERY
 import config
 import db
 import zones as _zones_mod
@@ -810,8 +809,6 @@ from routes_lib import (  # noqa: F401
     _route_profile_points,
     _load_route_index,
     _load_route_detail,
-    _gradient_to_power_factor,
-    _build_climb_zwo,
 )
 
 
@@ -1179,41 +1176,6 @@ def setup_pick_folder():
     t.start()
     t.join(timeout=60)
     return {"path": result["path"]}
-
-
-@app.get("/api/setup/icu-hr")
-def setup_icu_hr(athlete_id: str = Query(""), api_key: str = Query("")):
-    """Fetch LTHR and Max HR from Intervals.icu activity data."""
-    if not athlete_id or not api_key:
-        return {"lthr": None, "max_hr": None}
-    import httpx
-    try:
-        # Get recent activities to find max HR and threshold HR.
-        # Rolling 12-month window (W2d): the old hardcoded 2024→2026 range was
-        # both a staleness source and a Jan-2027 time bomb.
-        from datetime import date as _date, timedelta as _td
-        _new = (clock.today() + _td(days=1)).isoformat()
-        _old = (clock.today() - _td(days=365)).isoformat()
-        url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities?oldest={_old}&newest={_new}"
-        resp = httpx.get(url, auth=("API_KEY", api_key), timeout=15, verify=_icu_verify())
-        if resp.status_code != 200:
-            return {"lthr": None, "max_hr": None}
-        activities = resp.json()
-        max_hr = 0
-        lthr_candidates = []
-        for a in activities:
-            hr = a.get("max_heartrate") or 0
-            if hr > max_hr:
-                max_hr = hr
-            # Estimate LTHR from activities with high intensity (IF > 0.9)
-            avg_hr = a.get("average_heartrate") or 0
-            icu_if = a.get("icu_intensity") or 0
-            if 0.85 <= icu_if <= 1.05 and avg_hr > 100:
-                lthr_candidates.append(avg_hr)
-        lthr = round(sum(lthr_candidates) / len(lthr_candidates)) if lthr_candidates else None
-        return {"lthr": lthr, "max_hr": max_hr if max_hr > 100 else None}
-    except Exception:
-        return {"lthr": None, "max_hr": None}
 
 
 # Guards against concurrent wizard submissions clobbering each other.
@@ -3914,38 +3876,6 @@ async def api_readiness_revert_cap(request: Request):
 # score that requires ≥30 days of wellness data; it surfaces on the home
 # page as a separate card and is consumed by the planner advisory only when
 # status='dynamic_weights'. See readiness_composite.py for the contract.
-
-@app.get("/api/readiness/composite")
-def api_readiness_composite(date: str = Query(None)):
-    """v1.1.0 IMPL-HRV-RECOVERY — Bayesian HRV-readiness composite (0-10).
-
-    Cached for 5 min (key includes the date so per-day re-fetch works).
-    Returns the dict shape from compute_readiness_composite() unchanged.
-
-    v1.8.0 §F1 — chains compute_training_severity to merge severity, source,
-    and severity_reasons fields onto the returned dict. Legacy fields preserved.
-    """
-    target_iso = date or clock.today().isoformat()
-    profile_id = "default"  # single-rider scope; profile_manager is a separate concern
-    cache_key = f"readiness_composite_{profile_id}_{target_iso}"
-    result = cached(cache_key, lambda: compute_readiness_composite(profile_id, target_iso))
-    # v1.8.0 — chain severity helper (A-BACKEND owns the impl). Tolerate
-    # absence: helper may not be exported yet during cross-agent rollout.
-    try:
-        from readiness_composite import compute_training_severity as _cts
-        sev = _cts(profile_id, target_iso) or {}
-        if isinstance(result, dict) and isinstance(sev, dict):
-            result["severity"] = sev.get("severity")
-            result["source"] = sev.get("source")
-            result["severity_reasons"] = sev.get("reasons") or []
-    except Exception:
-        pass
-    # v1.8.8 Bug 8 — mark this endpoint deprecated; callers should use
-    # /api/readiness (which now returns BOTH score_0_10 and score_0_100).
-    if isinstance(result, dict):
-        result["deprecated"] = True
-    return result
-
 
 @app.post("/api/readiness/apply-tier-down")
 async def api_readiness_apply_tier_down(request: Request):
@@ -7118,30 +7048,6 @@ def api_route_profile(url: str = Query(...)):
 
 
 
-@app.get("/api/climb-workout")
-def api_climb_workout(url: str = Query(...), warmup: int = Query(10)):
-    """Generate a ZWO workout from a virtual route profile."""
-    route_data = _load_route_detail(url)
-    if not route_data:
-        return JSONResponse({"error": "Route not scraped yet"}, 404)
-
-    points = _route_profile_points(route_data.get("lat_lon_grade", []))
-    if len(points) < 2:
-        return JSONResponse({"error": "Not enough profile data"}, 400)
-
-    # Extract route name from URL
-    route_name = url.rstrip("/").split("/")[-1].replace("-", " ").title()
-    zwo_xml = _build_climb_zwo(points, route_name, warmup)
-
-    from fastapi.responses import Response
-    safe_name = route_name.replace('"', '_')
-    return Response(
-        content=zwo_xml,
-        media_type="application/xml",
-        headers={"Content-Disposition": f'attachment; filename="{safe_name}.zwo"'},
-    )
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # DOWNLOAD APIs
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -7201,98 +7107,6 @@ def download_zwo(category: str, filename: str, outdoor: int = Query(0),
                                  cap_active=_cap_active_for_download(cap))
 
 
-@app.get("/api/climb-zwo/{region}/{filename}")
-def api_climb_zwo(region: str, filename: str, warmup: int = Query(10)):
-    """Generate a ZWO workout from a climb profile, optionally with warmup."""
-    # Get course profile
-    profile = api_course_profile(region, filename)
-    if isinstance(profile, dict) and profile.get("error"):
-        return JSONResponse({"error": profile["error"]}, 404)
-    points = profile.get("points", [])
-    if len(points) < 2:
-        return JSONResponse({"error": "Not enough profile data"}, 400)
-
-    ftp = config.ATHLETE_FTP_W
-    course_name = filename.rsplit(".", 1)[0]
-    total_dist = points[-1]["d"]
-    total_climb = sum(
-        max(0, points[i]["e"] - points[i - 1]["e"])
-        for i in range(1, len(points))
-    )
-
-    # Build ZWO segments from gradient profile
-    # Group into ~500m segments and map gradient to power
-    segments_xml = ""
-    if warmup > 0:
-        warmup_sec = warmup * 60
-        segments_xml += f'    <Warmup Duration="{warmup_sec}" PowerLow="0.45" PowerHigh="0.65"/>\n'
-
-    # Sample profile into ~20-40 segments for the ZWO
-    num_segs = min(40, max(10, len(points) // 5))
-    seg_step = max(1, len(points) // num_segs)
-
-    for i in range(0, len(points) - seg_step, seg_step):
-        j = min(i + seg_step, len(points) - 1)
-        dist_km = points[j]["d"] - points[i]["d"]
-        if dist_km <= 0:
-            continue
-        avg_grad = sum(points[k]["g"] for k in range(i, j + 1)) / (j - i + 1)
-
-        # Map gradient to power (% FTP)
-        power_pct = _gradient_to_power_factor(avg_grad)
-
-        # Estimate duration: assume ~15km/h uphill, ~30km/h flat, ~40km/h downhill
-        if avg_grad >= 5:
-            speed_kmh = max(8, 20 - avg_grad * 1.2)
-        elif avg_grad >= 0:
-            speed_kmh = 25
-        else:
-            speed_kmh = min(45, 25 - avg_grad * 2)
-
-        duration_sec = max(30, int(dist_km / speed_kmh * 3600))
-        segments_xml += f'    <SteadyState Duration="{duration_sec}" Power="{power_pct:.2f}"/>\n'
-
-    # Cooldown
-    # v3.7.0 — a Cooldown ramps PowerLow -> PowerHigh, so 0.40 -> 0.60 was an
-    # ascending "cooldown": it finished the rider at 60 % FTP. Same defect the
-    # library carried; invisible to the library test because this is generated
-    # into an HTTP response rather than written to workouts/.
-    segments_xml += '    <Cooldown Duration="300" PowerLow="0.60" PowerHigh="0.45"/>\n'
-
-    from xml.sax.saxutils import escape as xml_escape
-    desc = f"Climb simulation: {course_name}. {total_dist:.1f}km, {total_climb:.0f}m elevation."
-    if warmup > 0:
-        desc = f"{warmup}min warmup + {desc}"
-
-    zwo_xml = f"""<?xml version='1.0' encoding='utf-8'?>
-<workout_file>
-  <author>Domestique</author>
-  <name>{xml_escape(course_name)}</name>
-  <description>{xml_escape(desc)}</description>
-  <sportType>bike</sportType>
-  <workout>
-{segments_xml}  </workout>
-</workout_file>"""
-
-    from fastapi.responses import Response
-    return Response(
-        content=zwo_xml,
-        media_type="application/xml",
-        headers={"Content-Disposition": f'attachment; filename="{course_name.replace(chr(34), "_")}.zwo"'},
-    )
-
-
-@app.get("/api/download/crs/{region}/{filename}")
-def download_crs(region: str, filename: str):
-    path = _safe_path(COURSE_DIR, region, filename)
-    if not path or not path.exists():
-        # Virtual routes live under courses/virtual/<region>/<filename>
-        path = _safe_path(COURSE_DIR, "virtual", region, filename)
-    if not path or not path.exists():
-        return JSONResponse({"error": "not found"}, 404)
-    return FileResponse(path, filename=filename, media_type="text/plain")
-
-
 @app.get("/api/course/{region}/{filename}/download")
 def download_course_by_id(region: str, filename: str):
     """Serve a CRS course file as a download attachment.
@@ -7311,14 +7125,6 @@ def download_course_by_id(region: str, filename: str):
         media_type="text/plain",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
-
-
-@app.get("/api/download/gpx/{region}/{filename}")
-def download_gpx(region: str, filename: str):
-    path = _safe_path(active_gpx_dir(), region, filename)
-    if not path or not path.exists():
-        return JSONResponse({"error": "not found"}, 404)
-    return FileResponse(path, filename=filename, media_type="application/gpx+xml")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -8925,12 +8731,6 @@ def api_metrics_history(metric: str = Query(...), days: int = Query(365)):
     return db.query_metric_history(metric, days)
 
 
-@app.get("/api/metrics/latest")
-def api_metrics_latest():
-    """Return the most recent value for each tracked metric."""
-    return db.query_metrics_latest()
-
-
 @app.post("/api/metrics/log")
 async def api_metrics_log(request: Request):
     """Manually log a metric value (VO2max, body_fat, etc.)."""
@@ -9028,179 +8828,13 @@ BLOOD_MARKER_RANGES = {
 }
 
 
-@app.get("/api/blood-markers")
-def api_blood_markers():
-    """Return all blood marker entries with reference ranges."""
-    markers = db.query_blood_markers()
-    # Add status flags
-    for m in markers:
-        ref = BLOOD_MARKER_RANGES.get(m["marker"], {})
-        if ref:
-            m["ref"] = ref
-            v = m["value"]
-            if ref.get("optimal_low") and ref.get("optimal_high"):
-                if ref["optimal_low"] <= v <= ref["optimal_high"]:
-                    m["status"] = "optimal"
-                elif ref.get("flag_low") and v < ref["flag_low"]:
-                    m["status"] = "low"
-                elif ref.get("flag_high") and v > ref["flag_high"]:
-                    m["status"] = "high"
-                else:
-                    m["status"] = "ok"
-    return {"markers": markers, "ranges": BLOOD_MARKER_RANGES}
-
-
-@app.post("/api/blood-markers")
-async def api_blood_markers_post(request: Request):
-    """Add a blood test result."""
-    body = await _get_json_body(request)
-    dt = body.get("date", clock.today().isoformat())
-    marker = body.get("marker")
-    value = body.get("value")
-    if not marker or value is None:
-        return JSONResponse({"error": "marker and value required"}, 400)
-    ref = BLOOD_MARKER_RANGES.get(marker, {})
-    unit = ref.get("unit") or body.get("unit")
-    db.upsert_blood_marker(dt, marker, float(value), unit, body.get("notes"))
-    return {"ok": True}
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # POWER CURVE API
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@app.get("/api/power-curve")
-def api_power_curve(days: int = Query(90), compare_days: int = Query(365)):
-    """Return power duration curve from activity data."""
-    durations = ["5s", "1m", "5m", "20m", "60m"]
-    icu_fields = {
-        "5s": "icu_w5s", "1m": "icu_w1m", "5m": "icu_w5m",
-        "20m": "icu_w20m", "60m": "icu_w60m",
-    }
-
-    activities = db.query_activities(days=max(days, compare_days))
-    today = clock.today()
-    cutoff_current = (today - timedelta(days=days)).isoformat()
-    cutoff_compare = (today - timedelta(days=compare_days)).isoformat()
-
-    current = {d: {"watts": 0, "date": ""} for d in durations}
-    historical = {d: {"watts": 0, "date": ""} for d in durations}
-
-    for a in activities:
-        raw = a.get("raw_json")
-        if not raw:
-            continue
-        try:
-            data = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            continue
-
-        for dur_label, field in icu_fields.items():
-            val = data.get(field)
-            if val and val > 0:
-                act_date = a.get("date", "")
-                # Historical best
-                if act_date >= cutoff_compare and val > historical[dur_label]["watts"]:
-                    historical[dur_label] = {"watts": round(val), "date": act_date}
-                # Current period best
-                if act_date >= cutoff_current and val > current[dur_label]["watts"]:
-                    current[dur_label] = {"watts": round(val), "date": act_date}
-
-    weight = config.ATHLETE_WEIGHT_KG or 72
-    result_current = []
-    result_historical = []
-    for d in durations:
-        c = current[d]
-        h = historical[d]
-        result_current.append({"duration": d, "watts": c["watts"], "wkg": round(c["watts"] / weight, 2), "date": c["date"]})
-        result_historical.append({"duration": d, "watts": h["watts"], "wkg": round(h["watts"] / weight, 2), "date": h["date"]})
-
-    return {"current": result_current, "historical": result_historical, "durations": durations, "ftp": config.ATHLETE_FTP_W}
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # GPX API
 # ═══════════════════════════════════════════════════════════════════════════════
-
-@app.get("/api/gpx/{region}/{filename}")
-def api_gpx_data(region: str, filename: str):
-    """Parse GPX file and return trackpoints for map + elevation profile."""
-    # Try matching GPX file - the filename may have .crs extension, swap to .gpx
-    # Validate region doesn't contain path traversal
-    if ".." in region or "/" in region or ".." in filename or "/" in filename:
-        return JSONResponse({"error": "invalid path"}, 400)
-    gpx_name = filename.rsplit(".", 1)[0] + ".gpx" if "." in filename else filename + ".gpx"
-    path = _safe_path(active_gpx_dir(), region, gpx_name)
-    if not path or not path.exists():
-        path = _safe_path(active_gpx_dir(), region, filename)
-    if (not path or not path.exists()) and (active_gpx_dir() / region).is_dir():
-        # Try fuzzy match — find GPX with same stem prefix
-        stem = filename.rsplit(".", 1)[0] if "." in filename else filename
-        for gpx_file in (active_gpx_dir() / region).glob("*.gpx"):
-            if gpx_file.stem.lower().startswith(stem[:20].lower()):
-                path = gpx_file
-                break
-    if not path or not path.exists():
-        return JSONResponse({"error": "GPX not found", "tried": gpx_name}, 404)
-
-    import math
-    ns = {"gpx": "http://www.topografix.com/GPX/1/1"}
-    try:
-        tree = ET.parse(path)
-    except ET.ParseError:
-        return JSONResponse({"error": "GPX parse error"}, 400)
-
-    root = tree.getroot()
-    points = []
-    for trkpt in root.findall(".//gpx:trkpt", ns):
-        lat = float(trkpt.get("lat", 0))
-        lon = float(trkpt.get("lon", 0))
-        ele_el = trkpt.find("gpx:ele", ns)
-        ele = float(ele_el.text) if ele_el is not None else 0
-        points.append({"lat": lat, "lon": lon, "ele": round(ele, 1)})
-
-    if len(points) < 2:
-        return JSONResponse({"error": "Not enough trackpoints"}, 400)
-
-    # Compute cumulative distance (km) using the canonical haversine.
-    from geodesy import haversine as _hv
-    cum_dist = [0.0]
-    for i in range(1, len(points)):
-        d_km = _hv(
-            (points[i - 1]["lat"], points[i - 1]["lon"]),
-            (points[i]["lat"], points[i]["lon"]),
-        ) / 1000.0
-        cum_dist.append(cum_dist[-1] + d_km)
-
-    # Compute gradient per segment — cap to ±45% (steepest paved road ~35%)
-    for i in range(len(points)):
-        points[i]["d"] = round(cum_dist[i], 3)
-        if i > 0 and cum_dist[i] - cum_dist[i - 1] > 0.005:  # min 5m to avoid GPS noise
-            ele_diff = points[i]["ele"] - points[i - 1]["ele"]
-            dist_m = (cum_dist[i] - cum_dist[i - 1]) * 1000
-            grad = ele_diff / dist_m * 100
-            points[i]["g"] = round(max(-45, min(45, grad)), 1)  # clamp to realistic range
-        else:
-            points[i]["g"] = 0
-
-    # Downsample for transfer (max 500 points)
-    step = max(1, len(points) // 500)
-    sampled = [points[i] for i in range(0, len(points), step)]
-    if sampled[-1] != points[-1]:
-        sampled.append(points[-1])
-
-    total_climb = sum(max(0, points[i]["ele"] - points[i - 1]["ele"]) for i in range(1, len(points)))
-    max_grad = max((p["g"] for p in points), default=0)
-
-    return {
-        "points": sampled,
-        "total_points": len(points),
-        "total_km": round(cum_dist[-1], 1),
-        "total_climb": round(total_climb),
-        "max_gradient": round(max_grad, 1),
-        "name": path.stem,
-    }
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # WEEKLY MESOCYCLE API
@@ -14309,36 +13943,6 @@ async def api_plan_move_session(request: Request):
         return JSONResponse({"detail": "Move failed"}, 500)
 
 
-@app.get("/api/plan/missed-suggestions")
-def api_plan_missed_suggestions():
-    """v1.0.3 — propose same-week reschedule slots for missed sessions.
-
-    Read-only. Walks ``plan["weeks"]`` for sessions with ``status=="missed"``,
-    finds same-ISO-week candidate slots that satisfy all six rules in
-    MASTER §1, and emits at most one suggestion per missed session via
-    greedy first-fit by ``missed_date`` ascending.
-
-    Acceptance happens client-side: the dashboard POSTs the existing
-    ``/api/plan/move-session`` with ``{date: missed_date,
-    new_date: suggested_date}``. No new mutation endpoint.
-    """
-    json_path = _plan_dir() / "current_plan.json"
-    if not json_path.exists():
-        return {"suggestions": []}
-
-    try:
-        with open(json_path, encoding="utf-8") as f:
-            plan = json.load(f)
-
-        # Delegates to the shared suggestion builder (also used by the
-        # auto-reschedule path in _apply_plan_update).
-        return {"suggestions": _compute_missed_suggestions(plan, clock.today())}
-
-    except Exception:
-        _log.exception("missed-suggestions failed")
-        return {"suggestions": []}
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # v4.3.0 — Calendar overlay (B4 + B5 + B6)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -16863,113 +16467,6 @@ async def api_plan_ftp_test_type(request: Request):
         return JSONResponse({"detail": "ftp-test-type failed"}, 500)
 
 
-@app.post("/api/plan/rematch/{day}")
-async def api_plan_rematch_day(day: str):
-    """P6 (v4.1.0) — re-draw a single day's workout.
-
-    Unlike /api/plan/rematch which is a completion-classifier, this endpoint
-    actually re-rolls the ZWO workout for the given day. Excludes the
-    session's current ZWO and every other ZWO already used this week, picks
-    a new one from the same session_type bucket via match_zwo, persists.
-
-    Keeps the completion-classifier behavior as a fallback if no workouts
-    are available: returns action="no_candidate" so the UI can fall back to
-    the classifier rematch call.
-
-    v1.7.0 — kept for backward compat. New UI uses preview-redraw +
-    accept-redraw so the user can Accept / Decline / Reshuffle and so
-    downstream sessions reforecast on accept.
-    """
-    try:
-        date.fromisoformat(day)
-    except ValueError:
-        return JSONResponse({"error": "Invalid date format (use YYYY-MM-DD)"}, 400)
-
-    json_path = _plan_dir() / "current_plan.json"
-    if not json_path.exists():
-        return JSONResponse({"error": "No active plan found"}, 404)
-
-    try:
-        with open(json_path, encoding="utf-8") as f:
-            plan = json.load(f)
-
-        # Locate the session + containing week
-        target_week = None
-        target_session = None
-        for w in plan.get("weeks", []):
-            for s in w.get("sessions", []):
-                if s.get("day") == day:
-                    target_week = w
-                    target_session = s
-                    break
-            if target_session:
-                break
-        if not target_session:
-            return JSONResponse({"error": f"No session at {day}"}, 404)
-
-        if target_session.get("session_type") == "rest":
-            return {"ok": False, "action": "rest_day", "day": day}
-
-        # Build exclusion set: every other session's zwo_name in this week
-        # PLUS the current session's current pick (so we get a real re-draw).
-        excluded = set()
-        for s in target_week.get("sessions", []):
-            nm = s.get("zwo_name") or ""
-            if nm:
-                excluded.add(nm)
-
-        # Build a PlannedSession for match_zwo
-        planned = tp.PlannedSession(
-            day=date.fromisoformat(day),
-            day_name=target_session.get("day_name", ""),
-            session_type=target_session.get("session_type", "z2"),
-            duration_min=int(target_session.get("duration_min", 0) or 0),
-            tss_estimate=float(target_session.get("tss_estimate", 0) or 0),
-            description=target_session.get("description", ""),
-        )
-
-        library = tp.load_workout_library()
-        week_num = target_week.get("week_num", 0)
-        day_idx = (date.fromisoformat(day) - date.fromisoformat(target_week["start"])).days
-
-        try:
-            # Bump the seed with an incremented variation counter so identical
-            # session-type on same day picks a DIFFERENT workout each call.
-            variation = int(target_session.get("variation", 0)) + 1
-            planned.profile_id = f"{variation}"  # seeds into match_zwo RNG
-            tp.match_zwo(
-                planned, library,
-                week_num=week_num + variation * 100,
-                day_idx=day_idx,
-                used_names=excluded,
-                raise_on_empty=True,
-                hr_bias=_hr_bias(),
-                # v1.8.24 — closest-duration match on reshuffle (see helper).
-                exact_duration=True,
-             micro_only=bool(((plan or {}).get("goal") or {}).get("vo2_microintervals_only", False)),)
-        except tp.NoCandidateWorkoutError:
-            return {"ok": False, "action": "no_candidate", "day": day}
-
-        if not planned.zwo_file:
-            return {"ok": False, "action": "no_candidate", "day": day}
-
-        target_session["zwo_file"] = planned.zwo_file
-        target_session["zwo_name"] = planned.zwo_name
-        target_session["variation"] = variation
-        target_session["status"] = "pending"
-        plan["last_rematch_day"] = {"date": day, "at": clock.now().isoformat(),
-                                    "new_zwo": planned.zwo_file}
-
-        tp.atomic_write_plan(json_path, plan)
-
-        return {"ok": True, "action": "redrawn", "day": day,
-                "zwo_file": planned.zwo_file, "zwo_name": planned.zwo_name,
-                "variation": variation}
-    except Exception:
-        _log.exception("Plan rematch-day failed")
-        return JSONResponse({"detail": "Rematch-day failed"}, 500)
-
-
 @app.post("/api/plan/dismiss-session")
 async def api_plan_dismiss_session(request: Request):
     """Dismiss a session (§6.8 — stays visible greyed; §6.11 never auto).
@@ -17181,18 +16678,6 @@ def api_plan_auto_recalc():
 # ═══════════════════════════════════════════════════════════════════════════════
 # GoldenCheetah API (optional)
 # ═══════════════════════════════════════════════════════════════════════════════
-
-@app.get("/api/gc/status")
-def api_gc_status():
-    """Check if GoldenCheetah API is running on localhost:12021."""
-    import urllib.request
-    try:
-        req = urllib.request.Request("http://localhost:12021/")
-        with urllib.request.urlopen(req, timeout=2) as resp:
-            return {"available": True, "status": resp.status}
-    except Exception:
-        return {"available": False}
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # RIDE IMPORT + HISTORY (v4.0.0-alpha — post-ride viewer, no live runtime)
@@ -18724,41 +18209,6 @@ def api_ride_prs(ride_id: str):
         path.write_text(json.dumps(rec, indent=2), encoding="utf-8")
     except Exception as e:
         _log.debug(f"api_ride_prs persist failed: {e}")
-    return {"ride_id": ride_id, "prs": prs}
-
-
-@app.post("/api/ride/{ride_id}/prs/recompute")
-def api_ride_prs_recompute(ride_id: str):
-    """v1.3.0 — force a recompute of the PR list for a ride and persist back.
-
-    Useful when efforts were backfilled after the initial import — the
-    rolling-best changes, so the rebased PR list does too. Returns the
-    fresh list. 404 when the ride id is unknown.
-    """
-    if not isinstance(ride_id, str) or not ride_id or len(ride_id) > 80:
-        return JSONResponse({"error": "bad ride_id"}, 400)
-    if not re.match(r"^[\w\-]+$", ride_id):
-        return JSONResponse({"error": "bad ride_id"}, 400)
-    import ride_storage as _rs
-    ext = ride_id[4:] if ride_id.startswith("icu_") else ride_id
-    rec = _rs.get_icu_ride(ext)
-    if rec is None:
-        return JSONResponse({"error": "ride not found"}, 404)
-    # W2B-G9 fix: on compute failure, return 500 WITHOUT touching the
-    # persisted record. The prior `prs[]` (if any) stays intact so a
-    # transient compute error doesn't wipe data.
-    try:
-        import power_curve
-        prs = power_curve.compute_ride_prs(ride_id)
-    except Exception as e:
-        _log.warning(f"api_ride_prs_recompute failed: {e}")
-        return JSONResponse({"error": str(e)}, 500)
-    try:
-        rec["prs"] = prs
-        path = _rs._icu_rides_dir() / f"{ext}.json"
-        path.write_text(json.dumps(rec, indent=2), encoding="utf-8")
-    except Exception as e:
-        _log.warning(f"api_ride_prs_recompute persist failed: {e}")
     return {"ride_id": ride_id, "prs": prs}
 
 

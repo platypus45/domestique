@@ -78,11 +78,12 @@ def env(tmp_path):
 
 def _readers(client):
     r = client.get("/api/readiness").json()["training"]
-    comp = client.get("/api/readiness/composite").json()["components"]
     summary = client.get("/api/calendar").json()["summary"]
+    # /api/readiness/composite was a third reader of the same state; it was
+    # deleted in the 2026-09-16 slimming (the dashboard stopped calling it in
+    # v2.2.5). The point of this test -- every reader agrees -- is unchanged.
     return {"readiness": (r["ctl"], r["atl"], r["tsb"]),
             "readiness_source": r.get("source"),
-            "composite_tsb": None if comp.get("tsb") is None else round(comp["tsb"], 1),
             "calendar_ctl": summary.get("ctl_actual"),
             "planned_today": summary.get("ctl_planned_today")}
 
@@ -115,7 +116,6 @@ def test_icu_live_is_every_readers_answer(env):
     got = _run(env, _icu(61.0, 70.0))
     assert got["readiness"] == (61.0, 70.0, -9.0)
     assert got["readiness_source"] == "icu"
-    assert got["composite_tsb"] == -9.0
     assert got["calendar_ctl"] == 61.0
 
 
@@ -124,7 +124,6 @@ def test_icu_down_reads_icus_last_values(env):
     got = _run(env, _icu(0, 0, raise_=True))
     assert got["readiness"] == (40.0, 30.0, 10.0)
     assert got["readiness_source"] == "icu_cached"
-    assert got["composite_tsb"] == 10.0
     assert got["calendar_ctl"] == 40.0
 
 
@@ -132,7 +131,6 @@ def test_nothing_known_is_unknown_not_a_guess(env):
     got = _run(env, _icu(0, 0, raise_=True))
     assert got["readiness"] == (None, None, None)
     assert got["readiness_source"] == "none"
-    assert got["composite_tsb"] is None
     assert got["calendar_ctl"] is None
 
 

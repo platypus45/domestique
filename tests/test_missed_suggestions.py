@@ -1,4 +1,4 @@
-"""v1.0.3 IMPL-WIRING — GET /api/plan/missed-suggestions contract tests.
+"""v1.0.3 IMPL-WIRING — app._compute_missed_suggestions contract tests.
 
 Five tests cover the read-only suggestions endpoint:
 
@@ -132,6 +132,18 @@ class MissedSuggestionsBase(unittest.TestCase):
     def _write(self, plan: dict) -> None:
         self._json_path.write_text(json.dumps(plan))
 
+    def _suggestions(self, today=None) -> dict:
+        """What GET /api/plan/missed-suggestions used to return.
+
+        That endpoint was deleted in the 2026-09-16 slimming (no client ever
+        called it), but `_compute_missed_suggestions` is still live behind
+        /api/plan, and these four cases are its only tests -- so they call it
+        directly rather than going away with the endpoint.
+        """
+        plan = json.loads(self._json_path.read_text())
+        return {"suggestions": app_module._compute_missed_suggestions(
+            plan, today or date.today())}
+
 
 class TestNoMissesReturnsEmpty(MissedSuggestionsBase):
     def test_no_misses_returns_empty(self):
@@ -143,9 +155,7 @@ class TestNoMissesReturnsEmpty(MissedSuggestionsBase):
         ]
         self._write(_build_plan(self._monday, sessions))
 
-        resp = self.client.get("/api/plan/missed-suggestions")
-        self.assertEqual(resp.status_code, 200)
-        body = resp.json()
+        body = self._suggestions()
         self.assertEqual(body, {"suggestions": []})
 
 
@@ -170,9 +180,7 @@ class TestSingleMissWithRestSlot(MissedSuggestionsBase):
                                             tss=45.0, status="pending"))
         self._write(_build_plan(self._monday, sessions))
 
-        resp = self.client.get("/api/plan/missed-suggestions")
-        self.assertEqual(resp.status_code, 200)
-        body = resp.json()
+        body = self._suggestions()
         self.assertEqual(len(body["suggestions"]), 1)
         s = body["suggestions"][0]
         self.assertEqual(s["missed_date"], self._monday.isoformat())
@@ -209,9 +217,7 @@ class TestTwoMissesGreedyFirstFit(MissedSuggestionsBase):
                                             status="pending"))
         self._write(_build_plan(self._monday, sessions))
 
-        resp = self.client.get("/api/plan/missed-suggestions")
-        self.assertEqual(resp.status_code, 200)
-        body = resp.json()
+        body = self._suggestions()
         # Greedy first-fit still hands Monday's miss the only rest slot. The
         # Tuesday THRESHOLD used to be dropped outright — the week's quality
         # lost to date order. It now rescues itself via the easy-day takeover
@@ -252,9 +258,7 @@ class TestMissWithOnlyPastSlots(MissedSuggestionsBase):
                                             status="pending"))
         self._write(_build_plan(last_monday, sessions))
 
-        resp = self.client.get("/api/plan/missed-suggestions")
-        self.assertEqual(resp.status_code, 200)
-        body = resp.json()
+        body = self._suggestions()
         # All slots are in the past → rule §2.1 excludes everything.
         self.assertEqual(body["suggestions"], [])
 
@@ -288,9 +292,7 @@ class TestUnavailableDayExcluded(MissedSuggestionsBase):
         })
         self._write(plan)
 
-        resp = self.client.get("/api/plan/missed-suggestions")
-        self.assertEqual(resp.status_code, 200)
-        body = resp.json()
+        body = self._suggestions()
         self.assertEqual(len(body["suggestions"]), 1)
         s = body["suggestions"][0]
         # Must NOT pick Wed (excluded) → must pick Fri (next available).

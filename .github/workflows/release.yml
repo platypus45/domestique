@@ -443,7 +443,7 @@ jobs:
               Write-Host "::error::icu_oauth.can_upload_activities missing from diag (v3.11.5 contract)"
               exit 1
             }
-            # v3.11.7: the FIT a rider downloads must carry the workout's real step
+            # 2026-09: the FIT a rider downloads must carry the workout's real step
             # lengths -- exported by the frozen EXE, decoded independently (fitparse).
             $fitOut = Join-Path $env:RUNNER_TEMP "probe.fit"
             Invoke-WebRequest -Uri "http://127.0.0.1:22400/api/export/fit-workout?session_type=z2&duration_min=60&name=probe&zwo_file=endurance_steady_55pct_60min.zwo" -OutFile $fitOut -TimeoutSec 60
@@ -760,7 +760,7 @@ jobs:
           cu="$(printf '%s' "$hb" | jq -r 'if .checks.icu_oauth.can_upload_activities == null then "missing" else (.checks.icu_oauth.can_upload_activities | tostring) end')"
           [ "$cu" = "false" ] || fail "icu_oauth.can_upload_activities is '$cu' on a fresh install (expected false, present)"
 
-          # v3.11.7: the FIT a rider downloads must carry the workout's real step
+          # 2026-09: the FIT a rider downloads must carry the workout's real step
           # lengths -- exported by the frozen AppImage, decoded independently (fitparse).
           curl -fsS --max-time 60 -o /tmp/probe.fit "http://localhost:22400/api/export/fit-workout?session_type=z2&duration_min=60&name=probe&zwo_file=endurance_steady_55pct_60min.zwo" \
             || fail "/api/export/fit-workout did not answer"

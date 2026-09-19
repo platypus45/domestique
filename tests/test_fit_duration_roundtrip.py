@@ -1,4 +1,4 @@
-"""v3.11.7 -- a FIT workout carries the workout's real step lengths.
+"""A FIT workout carries the workout's real step lengths.
 
 Every build since fit-tool 0.9.16 (2026-08-05) exported each step 1000x too
 long: the code multiplied seconds by 1000 itself and 0.9.16's setter scales

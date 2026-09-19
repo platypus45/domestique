@@ -3,7 +3,7 @@
 independent decoder (fitparse, not fit_tool), must carry the workout's real
 step lengths.
 
-v3.11.7 -- every build since fit-tool 0.9.16 (2026-08-05) wrote each step
+2026-09 -- every build since fit-tool 0.9.16 (2026-08-05) wrote each step
 1000x too long: the code scaled seconds to milliseconds itself and 0.9.16
 scales again. The dev interpreter had 0.9.15, the build environments 0.9.16,
 and no gate looked at what the bundle actually wrote.

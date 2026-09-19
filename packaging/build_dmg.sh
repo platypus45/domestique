@@ -179,7 +179,7 @@ if [ "$PROBE_SECRET" != "true" ]; then
     echo "FATAL: frozen app did NOT load the OAuth client secret — intervals.icu sign-in would fail" >&2; exit 1
 fi
 echo "[1b5/9] Runtime gate OK — version $PROBE_VER, library $PROBE_LIB, OAuth secret loaded"
-# 1b6. v3.11.7 -- the FIT a rider downloads, exported by the FROZEN app and
+# 1b6. 2026-09 -- the FIT a rider downloads, exported by the FROZEN app and
 # decoded by an independent decoder, must carry the workout's real step lengths.
 if ! python3.12 packaging/check_fit_durations.py "$PROBE_FIT" 3600; then
     echo "FATAL: the frozen app exports FIT workouts with wrong step durations -- fit-tool pin and app.py's duration_time spelling disagree. Aborting build." >&2

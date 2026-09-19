@@ -20,7 +20,7 @@ httpx>=0.27.0,<1
 # refuses them ("invalid CA certificate"). Pure Python, MIT, ~30 KB; installed
 # on macOS/Linux too so the platform selection is unit-testable there.
 truststore>=0.10,<1
-fit-tool==0.9.16  # EXACT pin: 0.9.15 and 0.9.16 scale workout-step durations differently (v3.11.7); move the pin and app.py's duration_time together
+fit-tool==0.9.16  # EXACT pin: 0.9.15 and 0.9.16 scale workout-step durations differently (2026-09); move the pin and app.py's duration_time together
 pydantic>=2.0,<3
 # starlette>=0.49.1 required: CVE-2025-62727 FileResponse Range-parsing DoS.
 # Upper bound 2.0 admits starlette 1.x which fastapi 0.119+ uses.

@@ -36,8 +36,8 @@ class TestEventsRoundTrip(unittest.TestCase):
         self.assertEqual(b.date, date.today() + timedelta(weeks=5))
         self.assertEqual(b.event_km, 90)
         self.assertEqual(b.event_climb_m, 1200)
-        # re-serialize → same count + priorities (save round-trip)
-        back = app._events_to_dicts(goal.events)
+        # re-serialize through the goal block's writer (save round-trip)
+        back = app.tp.goal_to_dict(goal)["events"]
         self.assertEqual({d["priority"] for d in back}, {"A", "B"})
 
     def test_from_dicts_skips_dateless_entries(self):

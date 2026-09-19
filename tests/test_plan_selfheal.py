@@ -10,7 +10,8 @@ Pinned here:
   1. the reflow never blanks a session that had a file (keeps it, narrates);
   2. heal_unmatched_sessions_dict gives upcoming pending blank sessions a file
      and leaves past / dismissed / race / opener / ridden ones alone;
-  3. GET /api/plan heals once per plan-file version and persists;
+  3. the heal runs at startup and after a plan-writing POST, once per
+     plan-file version, and persists; a GET never writes (P8, v3.12.0);
   4. /api/diag/health reports the count.
 """
 from __future__ import annotations
@@ -68,8 +69,18 @@ def test_availability_reflow_keeps_the_file_when_the_library_is_empty(monkeypatc
     tsb = {mon + timedelta(days=i): 0.0 for i in range(7)}
     tp.reforecast(tp.Goal(goal_type="general", hours_per_week=12.5), [wk],
                   tsb_series=tsb, availability_overrides=overrides)
-    changed = [s for s in wk.sessions if s.duration_min in (60, 120, 240) and s.session_type == "z2"]
-    assert len(changed) == 5                      # Mon/Tue/Wed/Thu/Sun did move
+    # D5 (v3.12.0): free hours are a ceiling, never a prescription. A day with
+    # less time than its session shrinks to it (Mon 1 h, Wed 1 h); the minutes
+    # cut are redistributed within the OTHER days' ceilings so the week's
+    # load is conserved -- never inflated to fill every free hour (the old
+    # scaler turned a 230 TSS week into 496).
+    for i, s in enumerate(wk.sessions):
+        assert s.duration_min <= _RIDER_HOURS[i] * 60 + 1, (s.day, s.duration_min, _RIDER_HOURS[i])
+    by_day = {s.day: s for s in wk.sessions}
+    assert by_day[mon].duration_min == 60 and by_day[mon + timedelta(days=2)].duration_min == 60
+    z2_before = 90 * 5 + 180
+    z2_after = sum(s.duration_min for s in wk.sessions if s.session_type == "z2")
+    assert abs(z2_after - z2_before) <= 15, (z2_before, z2_after)      # conserved, not scaled to 12.5 h
     assert all(s.zwo_file == before[s.day] for s in wk.sessions), \
         "a session that had a file must keep it when no candidate exists"
 
@@ -143,44 +154,6 @@ def test_heal_with_an_empty_library_changes_nothing(library):
     assert tp.count_unmatched_pending_sessions(plan) == 5
 
 
-def test_api_plan_heals_and_persists_with_a_backup(monkeypatch, tmp_path, library):
-    import app as app_module
-    from fastapi.testclient import TestClient
-    monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
-    json_path = tmp_path / "current_plan.json"
-    json_path.write_text(json.dumps(_plan_dict(_next_monday())))
-    app_module._PLAN_HEAL_SEEN.clear()
-    r = TestClient(app_module.app).get("/api/plan")
-    assert r.status_code == 200
-    served = r.json()["plan_json"]["weeks"][0]["sessions"][:7]
-    assert all(s["zwo_file"] for s in served), [s.get("zwo_file") for s in served]
-    on_disk = json.loads(json_path.read_text())["weeks"][0]["sessions"][:7]
-    assert [s["zwo_file"] for s in on_disk] == [s["zwo_file"] for s in served]   # served == persisted
-    assert (tmp_path / "current_plan.json.bak").exists()                          # previous plan kept
-    assert json.loads((tmp_path / "current_plan.json.bak").read_text())["weeks"][0]["sessions"][0]["zwo_file"] == ""
-
-
-def test_api_plan_runs_the_heal_once_per_file_version(monkeypatch, tmp_path):
-    """The mtime cache, proven independently of content: a heal that fixes
-    nothing (still damaged file) must not be re-run until the file changes."""
-    import app as app_module
-    from fastapi.testclient import TestClient
-    monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
-    json_path = tmp_path / "current_plan.json"
-    json_path.write_text(json.dumps(_plan_dict(_next_monday())))
-    app_module._PLAN_HEAL_SEEN.clear()
-    calls = []
-    monkeypatch.setattr(tp, "heal_unmatched_sessions_dict",
-                        lambda *a, **k: (calls.append(1), {"candidates": 5, "healed": 0, "still_unmatched": 5})[1])
-    client = TestClient(app_module.app)
-    client.get("/api/plan"); client.get("/api/plan"); client.get("/api/plan")
-    assert calls == [1], "same file version must not be healed again"
-    json_path.write_text(json.dumps(_plan_dict(_next_monday())))   # rewrite = new mtime = new version
-    import os, time
-    os.utime(json_path, ns=(time.time_ns(), time.time_ns()))
-    client.get("/api/plan")
-    assert calls == [1, 1]
-
 def test_diag_health_counts_sessions_without_file(monkeypatch, tmp_path):
     import app as app_module
     from fastapi.testclient import TestClient
@@ -193,33 +166,6 @@ def test_diag_health_counts_sessions_without_file(monkeypatch, tmp_path):
     assert r.json()["checks"]["plan_readable"]["sessions_without_file"] == 5
 
 
-def test_api_plan_heal_never_overwrites_a_plan_written_in_between(monkeypatch, tmp_path, library):
-    """Lost-update guard: the request read the file outside the lock; a regenerate
-    that lands before the heal takes the lock must win, and must be what the
-    heal operates on."""
-    import app as app_module
-    from fastapi.testclient import TestClient
-    monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
-    json_path = tmp_path / "current_plan.json"
-    damaged = _plan_dict(_next_monday())
-    json_path.write_text(json.dumps(damaged))
-    app_module._PLAN_HEAL_SEEN.clear()
-    fresh_plan = _plan_dict(_next_monday(), blank_days=())        # a concurrent regenerate: all matched
-    fresh_plan["marker"] = "written-by-regenerate"
-    real_count = tp.count_unmatched_pending_sessions
-
-    def count_then_swap(plan_dict, today=None):
-        n = real_count(plan_dict, today)                           # pre-check on the request copy (5 blanks)
-        json_path.write_text(json.dumps(fresh_plan))               # ...and meanwhile someone else wrote the file
-        return n
-    monkeypatch.setattr(tp, "count_unmatched_pending_sessions", count_then_swap)
-    r = TestClient(app_module.app).get("/api/plan")
-    assert r.status_code == 200
-    on_disk = json.loads(json_path.read_text())
-    assert on_disk.get("marker") == "written-by-regenerate"        # the concurrent write survived
-    assert [s["zwo_file"] for s in on_disk["weeks"][0]["sessions"]] == [f"keep_{i}.zwo" for i in range(7)]
-
-
 def test_heal_passes_the_hr_mode_bias_through(monkeypatch, library):
     seen = {}
     real = tp.match_zwo
@@ -228,3 +174,111 @@ def test_heal_passes_the_hr_mode_bias_through(monkeypatch, library):
     monkeypatch.setattr(tp, "match_zwo", spy)
     tp.heal_unmatched_sessions_dict(_plan_dict(_next_monday()), library, today=date.today(), hr_bias=True)
     assert seen["hr_bias"] is True
+
+
+# ── P8 (v3.12.0): reads do not write ──────────────────────────────────────────
+
+def test_get_api_plan_does_not_heal_or_write(monkeypatch, tmp_path, library):
+    """A GET serves the plan as it is on disk and changes nothing there."""
+    import app as app_module
+    from fastapi.testclient import TestClient
+    monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
+    json_path = tmp_path / "current_plan.json"
+    json_path.write_text(json.dumps(_plan_dict(_next_monday())))
+    before = json_path.stat().st_mtime_ns
+    app_module._PLAN_HEAL_SEEN.clear()
+    calls = []
+    monkeypatch.setattr(tp, "heal_unmatched_sessions_dict", lambda *a, **k: (calls.append(1), {"candidates": 5, "healed": 5, "still_unmatched": 0})[1])
+    r = TestClient(app_module.app).get("/api/plan")
+    assert r.status_code == 200
+    assert calls == [], "a GET must not run the heal"
+    assert json_path.stat().st_mtime_ns == before
+    assert not (tmp_path / "current_plan.json.bak").exists()
+    assert json.loads(json_path.read_text())["weeks"][0]["sessions"][0]["zwo_file"] == ""   # disk untouched
+
+
+def test_startup_heal_heals_and_persists_with_a_backup(monkeypatch, tmp_path, library):
+    import app as app_module
+    monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
+    json_path = tmp_path / "current_plan.json"
+    json_path.write_text(json.dumps(_plan_dict(_next_monday())))
+    app_module._PLAN_HEAL_SEEN.clear()
+    app_module._heal_plan_on_disk()                                  # what lifespan calls
+    on_disk = json.loads(json_path.read_text())["weeks"][0]["sessions"][:7]
+    assert all(s["zwo_file"] for s in on_disk), [s.get("zwo_file") for s in on_disk]
+    assert (tmp_path / "current_plan.json.bak").exists()
+    assert json.loads((tmp_path / "current_plan.json.bak").read_text())["weeks"][0]["sessions"][0]["zwo_file"] == ""
+
+
+def test_heal_runs_once_per_file_version(monkeypatch, tmp_path):
+    """The mtime cache, proven independently of content: a heal that fixes
+    nothing (still damaged file) must not be re-run until the file changes."""
+    import app as app_module
+    monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
+    json_path = tmp_path / "current_plan.json"
+    json_path.write_text(json.dumps(_plan_dict(_next_monday())))
+    app_module._PLAN_HEAL_SEEN.clear()
+    calls = []
+    monkeypatch.setattr(tp, "heal_unmatched_sessions_dict",
+                        lambda *a, **k: (calls.append(1), {"candidates": 5, "healed": 0, "still_unmatched": 5})[1])
+    app_module._heal_plan_on_disk(); app_module._heal_plan_on_disk(); app_module._heal_plan_on_disk()
+    assert calls == [1], "same file version must not be healed again"
+    json_path.write_text(json.dumps(_plan_dict(_next_monday())))   # rewrite = new mtime = new version
+    import os, time
+    os.utime(json_path, ns=(time.time_ns(), time.time_ns()))
+    app_module._heal_plan_on_disk()
+    assert calls == [1, 1]
+
+
+def test_the_heal_follows_a_plan_write_not_a_read_and_not_a_preview(monkeypatch, tmp_path):
+    """The middleware: a GET never heals; a POST under /api/plan heals only
+    when it changed the plan file (a preview that writes nothing heals
+    nothing, so "apply=0 does not write" stays true); a POST under
+    /api/profiles (a switch) heals the newly active plan."""
+    import app as app_module
+    from fastapi.testclient import TestClient
+    monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
+    json_path = tmp_path / "current_plan.json"
+    json_path.write_text(json.dumps(_plan_dict(_next_monday())))
+    app_module._PLAN_HEAL_SEEN.clear()
+    calls = []
+    monkeypatch.setattr(tp, "heal_unmatched_sessions_dict",
+                        lambda *a, **k: (calls.append(1), {"candidates": 5, "healed": 0, "still_unmatched": 5})[1])
+    client = TestClient(app_module.app)
+    client.get("/api/plan"); client.get("/api/calendar"); client.get("/api/diag/health")
+    assert calls == [], "a GET never heals"
+    r = client.post("/api/plan/_p8_probe")                          # a POST that wrote nothing
+    assert r.status_code in (404, 405) and calls == []
+    r = client.post("/api/plan/rematch?apply=0")                    # a preview: no write, no heal
+    assert r.status_code == 200 and calls == []
+    r = client.post("/api/profiles/_p8_probe")                      # a switch heals the active plan
+    assert r.status_code in (404, 405) and calls == [1]
+    import os, time
+    json_path.write_text(json.dumps(_plan_dict(_next_monday())))    # simulate a POST that wrote the plan
+    os.utime(json_path, ns=(time.time_ns(), time.time_ns()))
+    app_module._heal_plan_on_disk()
+    assert calls == [1, 1]
+
+
+def test_heal_never_overwrites_a_plan_written_in_between(monkeypatch, tmp_path, library):
+    """Lost-update guard: the heal read the file outside the lock; a regenerate
+    that lands before the heal takes the lock must win, and must be what the
+    heal operates on."""
+    import app as app_module
+    monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
+    json_path = tmp_path / "current_plan.json"
+    json_path.write_text(json.dumps(_plan_dict(_next_monday())))
+    app_module._PLAN_HEAL_SEEN.clear()
+    fresh_plan = _plan_dict(_next_monday(), blank_days=())        # a concurrent regenerate: all matched
+    fresh_plan["marker"] = "written-by-regenerate"
+    real_count = tp.count_unmatched_pending_sessions
+
+    def count_then_swap(plan_dict, today=None):
+        n = real_count(plan_dict, today)                           # pre-check on the outside-lock copy (5 blanks)
+        json_path.write_text(json.dumps(fresh_plan))               # ...and meanwhile someone else wrote the file
+        return n
+    monkeypatch.setattr(tp, "count_unmatched_pending_sessions", count_then_swap)
+    app_module._heal_plan_on_disk()
+    on_disk = json.loads(json_path.read_text())
+    assert on_disk.get("marker") == "written-by-regenerate"        # the concurrent write survived
+    assert [s["zwo_file"] for s in on_disk["weeks"][0]["sessions"]] == [f"keep_{i}.zwo" for i in range(7)]

@@ -126,6 +126,34 @@ class TestAvailabilityDayNotInOverridesKeptUntouched(unittest.TestCase):
         self.assertEqual(weeks[0].sessions[0].duration_min, 60)
 
 
+class TestAvailabilityIsACeilingNotATarget(unittest.TestCase):
+    """Free hours may not push a week past the budget the ramp gave it.
+
+    Production, 2026-09-13: a regenerated 249 TSS week came back as 594,
+    and the two after it as 695 and 629, because this pass restored or
+    stretched every free weekday to the 3 h the calendar offered. Without
+    the cap the week below lands near 675 TSS against a 200 budget.
+    """
+
+    def test_restores_and_expansions_stop_at_the_weeks_budget(self):
+        mon = _next_monday()
+        sessions = [_mk_session(mon, session_type="z2", duration_min=60, tss=45.0)]
+        sessions += [_mk_session(mon + timedelta(days=i), session_type="rest",
+                                 duration_min=0, tss=0.0) for i in range(1, 5)]
+        week = _mk_week(mon, sessions)
+        week.tss_target = 200.0
+        goal = tp.Goal(goal_type="general", hours_per_week=15.0)
+        overrides = {(mon + timedelta(days=i)).isoformat(): 3.0 for i in range(5)}
+        tsb_series = {mon + timedelta(days=i): 0.0 for i in range(7)}
+        tp.reforecast(goal, [week], tsb_series=tsb_series,
+                      availability_overrides=overrides)
+        load = sum(float(s.tss_estimate or 0) for s in week.sessions
+                   if s.session_type != "rest")
+        self.assertLessEqual(load, 201.0,
+                             f"week at {load:.0f} TSS against a 200 budget")
+        self.assertGreater(load, 45.0, "the cap must still let the week grow")
+
+
 class TestAvailabilityScaleClampedAtTwo(unittest.TestCase):
     """v1.9.2 — availability applies the user's hours LITERALLY (v1.7.3,
     bidirectional), but a 6h/session sanity cap (MAX_AVAIL_SESSION_MIN=360)

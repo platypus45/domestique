@@ -1,4 +1,5 @@
 """Fetch training load metrics from Intervals.icu."""
+import clock  # the one clock every module reads (see src/clock.py)
 import json
 import logging
 import math
@@ -353,8 +354,8 @@ def fetch_wellness(days: int = 42) -> list[dict]:
         _require_credentials()
     except ICUCredentialsMissing:
         return []
-    oldest = (date.today() - timedelta(days=days)).isoformat()
-    newest = date.today().isoformat()
+    oldest = (clock.today() - timedelta(days=days)).isoformat()
+    newest = clock.today().isoformat()
     data = _get(
         f"athlete/{config.ICU_ATHLETE_ID}/wellness",
         {"oldest": oldest, "newest": newest},
@@ -384,8 +385,8 @@ def fetch_activities(days: int = 14) -> list[dict]:
         _require_credentials()
     except ICUCredentialsMissing:
         return []
-    oldest = (date.today() - timedelta(days=days)).isoformat()
-    newest = date.today().isoformat()
+    oldest = (clock.today() - timedelta(days=days)).isoformat()
+    newest = clock.today().isoformat()
     data = _get(
         f"athlete/{config.ICU_ATHLETE_ID}/activities",
         {"oldest": oldest, "newest": newest},
@@ -654,7 +655,7 @@ def compute_monotony_strain(wellness: list[dict]) -> tuple[float | None, float |
     from datetime import date as dt_date, timedelta
 
     # Build a 7-day load map from wellness data (date → daily TSS)
-    today = dt_date.today()
+    today = clock.today()
     daily_loads = {}
     for i in range(7):
         d = (today - timedelta(days=i)).isoformat()
@@ -715,7 +716,7 @@ def get_today_metrics() -> dict:
 
     today_rec = next(
         (w for w in reversed(wellness)
-         if w["id"] == date.today().isoformat()),
+         if w["id"] == clock.today().isoformat()),
         wellness[-1],
     )
 

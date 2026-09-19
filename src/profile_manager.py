@@ -23,6 +23,7 @@ Per-profile WORKOUT_DIR resolution order (used on switch):
 
 from __future__ import annotations
 
+import clock  # the one clock every module reads (see src/clock.py)
 import json
 import os
 import re
@@ -429,8 +430,8 @@ class ProfileManager:
                 profiles = self._registry.get("profiles", [])
                 profiles.append({
                     "id": slug, "name": name, "color": color,
-                    "created": datetime.now().isoformat(),
-                    "last_used": datetime.now().isoformat(),
+                    "created": clock.now().isoformat(),
+                    "last_used": clock.now().isoformat(),
                 })
                 self._registry["profiles"] = profiles
                 self._save_registry()
@@ -1021,7 +1022,7 @@ class ProfileManager:
         if method not in ("coggan_20min", "ramp", "manual"):
             raise ValueError(f"unknown method {method!r}")
         entry = {
-            "date": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "date": clock.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "method": method,
             "ftp": ftp,
             "source": str(source or ""),
@@ -1256,8 +1257,8 @@ class ProfileManager:
                         "id": d.name,
                         "name": d.name.replace("-", " ").replace("_", " ").title(),
                         "color": PROFILE_COLORS[len(profiles) % len(PROFILE_COLORS)],
-                        "created": datetime.now().isoformat(),
-                        "last_used": datetime.now().isoformat(),
+                        "created": clock.now().isoformat(),
+                        "last_used": clock.now().isoformat(),
                     })
 
         if not profiles:
@@ -1417,7 +1418,7 @@ class ProfileManager:
     def _update_last_used(self) -> None:
         for p in self._registry.get("profiles", []):
             if p["id"] == self._active_id:
-                p["last_used"] = datetime.now().isoformat()
+                p["last_used"] = clock.now().isoformat()
                 break
         self._save_registry()
 

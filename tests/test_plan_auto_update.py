@@ -270,14 +270,13 @@ def test_microintervals_only_shifts_vo2_slots_and_still_fills_them():
     by = {w["File"]: w for w in lib}
 
     def sweep(flag):
-        tp.set_vo2_micro_only(flag)
         hit = tot = 0
         for wk in range(1, 21):
             for dur in (45, 60):
                 s = tp.PlannedSession(day="", day_name="", session_type="vo2max",
                                       duration_min=dur, tss_estimate=80,
                                       description="")
-                m = tp.match_zwo(s, lib, week_num=wk, day_idx=2)
+                m = tp.match_zwo(s, lib, week_num=wk, day_idx=2, micro_only=flag)
                 f = getattr(m, "zwo_file", None)
                 assert f, "microintervals-only left a VO2max slot unfilled"
                 tot += 1
@@ -286,20 +285,22 @@ def test_microintervals_only_shifts_vo2_slots_and_still_fills_them():
                     hit += 1
         return hit, tot
 
-    try:
-        off_hit, tot = sweep(False)
-        on_hit, _ = sweep(True)
-    finally:
-        tp.set_vo2_micro_only(False)
+    off_hit, tot = sweep(False)
+    on_hit, _ = sweep(True)
     assert on_hit > off_hit, (off_hit, on_hit, tot)
     assert on_hit >= 0.75 * tot, f"only {on_hit}/{tot} slots microinterval"
 
 
 def test_the_preference_defaults_off_and_never_goes_stale():
-    """Generation-scoped state: always set explicitly, including to False, so a
-    plan generated after a microinterval plan is not silently still filtered."""
+    """The preference travels with the call, never with the process: one
+    microinterval-only match cannot leak into the next (notes/review/state.md
+    STA-5 -- a single swap used to keep filtering later rematches)."""
     assert tp.Goal.__dataclass_fields__["vo2_microintervals_only"].default is False
-    tp.set_vo2_micro_only(True)
-    assert tp.get_vo2_micro_only() is True
-    tp.set_vo2_micro_only(getattr(object(), "vo2_microintervals_only", False))
-    assert tp.get_vo2_micro_only() is False
+    lib = tp.load_workout_library()
+
+    def slot():
+        return tp.PlannedSession(day="", day_name="", session_type="vo2max",
+                                 duration_min=60, tss_estimate=80, description="")
+    before = tp.match_zwo(slot(), lib, week_num=3, day_idx=2).zwo_file
+    tp.match_zwo(slot(), lib, week_num=3, day_idx=2, micro_only=True)
+    assert tp.match_zwo(slot(), lib, week_num=3, day_idx=2).zwo_file == before

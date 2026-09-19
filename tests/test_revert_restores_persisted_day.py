@@ -102,6 +102,24 @@ def test_revert_restores_the_stashed_original(client_with_plan):
     assert "pre_adapt" not in s and "adapted_reason" not in s
 
 
+def test_the_stash_survives_a_rebuild(client_with_plan):
+    """A rebuild between the adaptation and the revert deleted the stash: the
+    session reader kept an allow-list of non-field keys without pre_adapt on
+    it (notes/review/dupes.md DUP-25). regenerate_from_today keeps an adapted
+    day, so the day's undo has to survive with it."""
+    client, path = client_with_plan
+    client.post("/api/today-session/persist", json={
+        "reason": "HRV below baseline", "session_type": "z2",
+        "duration_min": 60, "tss_estimate": 45})
+    rebuilt, _info = app_module._regenerate_plan_dict(
+        json.loads(path.read_text()), current_ctl=40.0, activities=[], seed_salt=7)
+    path.write_text(json.dumps(rebuilt), encoding="utf-8")
+    assert _today_session(path)["session_type"] == "z2", "the adapted day was kept"
+    r = client.post("/api/readiness/revert-cap", json={"signal": "any"})
+    assert r.status_code == 200, r.text
+    assert (r.json()["restored"] or {}).get("session_type") == "threshold"
+
+
 def test_revert_without_a_stash_touches_nothing(client_with_plan):
     """A day adapted under the old code has no stash. Restoring by guesswork
     would be worse than the bug; the flag alone must suffice there."""

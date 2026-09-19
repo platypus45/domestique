@@ -14,7 +14,7 @@ Pure decision functions for the open-ended ("continuous") goal type:
       stress signal). No fixed weekly HIT cap — hard-day frequency emerges
       from the daily gate, exactly as in the HRV-guided RCT arms.
     - TSB deep-fatigue floor mirrors the reforecast downshift line
-      (training_planner: ``tsb < -25``).
+      (training_planner: ``tsb < TSB_EASE_BELOW``, -30).
     - 48h hard-day spacing + easy day-after a glycolytic session are kept
       (Hulin 2014 rolling 48h Z5+ ceiling; the R5 glyco day-after rule).
 
@@ -43,7 +43,7 @@ ACWR_DELOAD_MIN = 1.5       # Gabbett 2016: > 1.5 doubles injury risk
 MONOTONY_CAP = 99.0
 
 # ── Amendment D thresholds (grill P3) ───────────────────────────────────────
-TSB_LOW_FLOOR = -25         # mirrors training_planner's reforecast downshift
+TSB_LOW_FLOOR = -30         # training_planner.TSB_EASE_BELOW; a test pins them equal
 ANAEROBIC_SPACING_DAYS = 2  # 48h hard-day spacing + glyco day-after (R5)
 ANAEROBIC_OVERDUE_DAYS = 7  # weekly anaerobic dose bar (grill P6 rotation)
 # A ride counts as anaerobic exposure at >= 60s of Z6+Z7 — the sprint

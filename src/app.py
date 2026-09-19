@@ -7,6 +7,7 @@ Open: http://127.0.0.1:22400  (or $DOMESTIQUE_PORT, if set)
 Pure HTML + CSS + vanilla JS. No npm, no frameworks.
 """
 
+import clock  # the one clock every module reads (see src/clock.py)
 import collections
 import functools
 import hashlib
@@ -44,93 +45,17 @@ from fit_activity import fit_field as _fit_val  # v3.11.3 fit-tool compat reader
 import tls_trust  # v3.11.4 — OS-native verifier on Windows, OpenSSL+certifi elsewhere
 
 
-def _icu_verify():
-    """TLS trust for every httpx call to intervals.icu / GitHub (see tls_trust).
 
-    Not cached here: on Windows tls_trust hands out a fresh OS-native context
-    per call (truststore#209 race), elsewhere it caches the OpenSSL one itself.
-    """
-    return tls_trust.make_context()
+# Observability lives in obs.py. Imported (not `from`-imported into new names)
+# for the module-level handles, then re-exported below so `app._log_error`,
+# `app._DIAG_RING` and friends keep resolving for the test suite.
+from obs import (  # noqa: F401
+    log_config, error_codes,
+    _log, log, log_library, log_ride_import,
+    _DIAG_RING_MAX, _DIAG_RING, _DIAG_RING_LOCK,
+    _log_error, _diag_ring_snapshot,
+)
 
-import log_config
-_log = log_config.get_logger("app")
-log = log_config.get_logger(__name__)
-
-# v4.0.0-alpha: named category loggers for the observability layer that
-# survived the trainer rip. .ride_import + .library are new; the old
-# .ble / .ws / .session named loggers are gone with their runtimes.
-log_library = log_config.get_logger("domestique.library")
-log_ride_import = log_config.get_logger("domestique.ride_import")
-
-# v1.6.0 — error-code observability layer.
-# ``_log_error`` is the single funnel for "something failed inside an
-# error path that the user might never see directly". Every call emits a
-# structured log line with the literal E_<domain>_<failure> code AND
-# appends an entry to the in-process ring buffer that
-# ``/api/diag/recent-errors`` reads.
-import error_codes
-_DIAG_RING_MAX = 256
-_DIAG_RING: collections.deque = collections.deque(maxlen=_DIAG_RING_MAX)
-_DIAG_RING_LOCK = threading.Lock()
-
-
-def _log_error(code: str, exc: Exception | None = None, **context) -> None:
-    """Log a structured error event under the error-code taxonomy.
-
-    Signature: ``_log_error(Codes.X, exc=e, key=value, ...)``. The ``code``
-    must be a registered string from ``error_codes.REGISTRY``; passing an
-    unregistered code is allowed (best-effort) but will be tagged as
-    ``unregistered`` in the ring entry. ``exc`` (optional) records type
-    and message. ``context`` keys are arbitrary diagnostic breadcrumbs.
-
-    Always non-throwing: this helper sits inside other except clauses, so
-    it must never raise. Worst case it logs nothing.
-    """
-    try:
-        meta = error_codes.metadata(code)
-        severity = (meta or {}).get("severity", "ERROR")
-        entry: dict = {
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "code": code,
-            "severity": severity,
-            "context": dict(context),
-        }
-        if meta is None:
-            entry["context"]["_unregistered_code"] = True
-        if exc is not None:
-            entry["exc_type"] = type(exc).__name__
-            entry["exc_msg"] = str(exc)[:500]
-        with _DIAG_RING_LOCK:
-            _DIAG_RING.append(entry)
-        # Console + file via standard logger. Severity → level mapping:
-        # FATAL/ERROR → ERROR, WARN → WARNING, INFO → INFO.
-        if severity in ("FATAL", "ERROR"):
-            level = logging.ERROR
-        elif severity == "WARN":
-            level = logging.WARNING
-        else:
-            level = logging.INFO
-        ctx_repr = " ".join(f"{k}={v!r}" for k, v in entry["context"].items())
-        if exc is not None:
-            _log.log(level, "%s %s exc=%s:%s", code, ctx_repr,
-                     entry["exc_type"], entry["exc_msg"])
-        else:
-            _log.log(level, "%s %s", code, ctx_repr)
-    except Exception:
-        # Never let observability break the host code path.
-        pass
-
-
-def _diag_ring_snapshot(limit: int = 50, since_iso: str | None = None) -> list[dict]:
-    """Return up to ``limit`` recent ring entries newest-first, optionally
-    filtered to entries with ``ts > since_iso``.
-    """
-    with _DIAG_RING_LOCK:
-        items = list(_DIAG_RING)
-    items.reverse()  # newest first
-    if since_iso:
-        items = [e for e in items if e.get("ts", "") > since_iso]
-    return items[:limit]
 
 from fastapi import FastAPI, File, Form, Request, Query, UploadFile, HTTPException, Body
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
@@ -162,17 +87,14 @@ except Exception:
 # profile_manager._maybe_migrate_data_dir has had a chance to rename a
 # legacy ~/.chickencycling/ dir into place). _plan_dir() below mkdirs
 # on demand, so deferring this is safe.
-from user_home import domestique_home
-_user_data_dir = domestique_home()  # 3.4.3: DOMESTIQUE_HOME-aware
-
-COURSE_DIR    = Path(__file__).parent / "courses"
-_DEFAULT_PLAN_DIR = _user_data_dir / "plans"
-
-def _plan_dir() -> Path:
-    """Dynamic plan dir: uses profile-specific path after profile switch."""
-    d = getattr(tp, 'PLAN_DIR', _DEFAULT_PLAN_DIR)
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+# Filesystem locations live in paths.py. Re-exported so `app.DATA_DIR`,
+# `app._plan_dir`, `app._safe_path` and friends keep resolving for the ~200
+# call sites and the test files that reach them through `app.X`.
+from paths import (  # noqa: F401
+    domestique_home, _user_data_dir, DATA_DIR, COURSE_DIR,
+    ROUTE_DATA, ROUTE_PROFILES_INDEX, ROUTE_PROFILES_DIR,
+    _DEFAULT_PLAN_DIR, _plan_dir, _safe_path, _rides_fit_dir,
+)
 
 
 def _maybe_restore_plan_from_backup(plan_path: Path) -> str | None:
@@ -494,8 +416,6 @@ def _session_naming_lookup(
     return display_name, zwo_duration_min
 
 
-# Legacy alias for any direct references
-PLAN_DIR = _DEFAULT_PLAN_DIR
 _BUNDLED_WORKOUT_DIR = Path(__file__).parent / "workouts"  # bundled workout files
 _BUNDLED_GPX_DIR     = Path(__file__).parent / "gpx"       # bundled GPX files
 WORKOUT_DIR   = _BUNDLED_WORKOUT_DIR
@@ -524,6 +444,26 @@ for _upf in [_user_data_dir / "user_paths.json", Path(__file__).parent / "user_p
         except Exception:
             pass
         break
+
+
+def active_workout_dir() -> Path:
+    """The active profile's workout directory, resolved at call time.
+
+    WORKOUT_DIR is rebound by _apply_profile_paths on every profile switch, so
+    a value read earlier belongs to the previous profile. Read it late through
+    this, and never `from app import WORKOUT_DIR` -- that binds the object, not
+    the name, and then serves the wrong athlete's library with no error and no
+    log line. tests/test_profile_path_rebinding.py enforces both halves.
+    """
+    return WORKOUT_DIR
+
+
+def active_gpx_dir() -> Path:
+    """The active profile's GPX directory, resolved at call time.
+
+    Same contract as active_workout_dir().
+    """
+    return GPX_DIR
 
 
 def _apply_profile_paths() -> None:
@@ -580,9 +520,6 @@ def _apply_profile_paths() -> None:
     WORKOUT_DIR = wp
     GPX_DIR = gp
 CONFIG_PATH   = Path(__file__).parent / "config.py"
-ROUTE_DATA    = Path(__file__).parent / "routes.json"
-ROUTE_PROFILES_INDEX = Path(__file__).parent / "profiles_indexed.json"
-ROUTE_PROFILES_DIR = Path(__file__).parent / "profiles"
 
 # Single source of truth for the app version. VERSION file is the canonical
 # spec (read by the PyInstaller builder and the /api/version route).
@@ -683,7 +620,7 @@ async def lifespan(app):
     pm.on_switch(clear_cache)
     # AC2b: one-time adoption of the legacy ROOT ~/.domestique/user_paths.json
     # into the active profile (setup_save now writes per-profile only), then
-    # resolve app.py's WORKOUT_DIR/GPX_DIR through the same resolver used on
+    # resolve app.py's active_workout_dir()/active_gpx_dir() through the same resolver used on
     # every profile switch — one code path.
     try:
         _root_paths = _user_data_dir / "user_paths.json"
@@ -776,9 +713,11 @@ async def lifespan(app):
     # Boot-time writes are instead mirrored by the once-a-day reconcile
     # riding the sync loop (D3b).
     tp.post_write_callback = _icu_push_schedule_debounced
-    db.post_sync_callback = _icu_push_daily_from_sync
+    db.post_sync_callback = _after_background_sync
 
     try:
+        # P8: the plan self-heal runs here, not on a GET.
+        _heal_plan_on_disk()
         yield
     finally:
         # ── Shutdown cleanup: best-effort, don't block teardown ──────────
@@ -810,12 +749,70 @@ async def generic_exception_handler(request: StarletteRequest, exc: Exception):
 
 # ── Shared JSON body helper ──────────────────────────────────────────────────
 # Returns parsed JSON dict, or raises HTTPException(400) on malformed input.
-async def _get_json_body(request) -> dict:
-    try:
-        return await request.json()
-    except Exception as e:
-        log.debug(f"JSON parse failed on {request.url.path}: {e}")
-        raise HTTPException(status_code=400, detail="invalid JSON body")
+# Request helpers live in http_util.py; re-exported for the ~40 call sites
+# and the tests that reach them through app.X.
+from http_util import (  # noqa: F401
+    _icu_verify, _get_json_body, _diag_local_only,
+)
+
+# --- EXTRACTED MODULES ---
+from download_lib import (  # noqa: F401
+    _capacity_cap_active,
+    _cap_zwo_bytes,
+    _wrap_zwo_outdoor,
+    _zwo_download_response,
+    _cap_active_for_download,
+)
+from search_lib import (  # noqa: F401
+    _SEARCH_TRANSLIT,
+    _SEARCH_SYNONYMS,
+    _SEARCH_TYPO_VOCAB,
+    _SEARCH_HAY_PCT_RX,
+    _SEARCH_30S15S_RX,
+    _SEARCH_DUR_TOL,
+    _SEARCH_QUERY_CAP,
+    _search_normalize,
+    _search_row_haystack,
+    _get_search_haystacks,
+    _search_lev1,
+    _search_parse_query,
+    _search_apply_typo_fix,
+    _search_match_row,
+    _search_score_row,
+)
+# Leaf modules split out of this file. Every name here is re-exported because
+# 60 test files reach them through app.X. Mutable module state is NOT
+# re-exported -- see routes_lib's note below.
+# HR resolution lives in hr.py; re-exported for the six sections that call it.
+from hr import (  # noqa: F401
+    _fit_hr_mode, _prescription_hr_rows, _hr_bias, _fit_hr_params,
+)
+
+# The virtual-route library. Functions only -- routes_lib owns its own
+# caches (_ROUTES_CACHE, _SURFACE_TYPES_CACHE and their mtimes/locks) and
+# they are deliberately NOT re-exported: importing them here would bind the
+# objects, and rebinding app.X would leave routes_lib reading its own.
+from routes_lib import (  # noqa: F401
+    _slugify_route_name,
+    _route_key_for,
+    _canonical_surface,
+    _load_surface_types_db,
+    _route_surface_segments,
+    _build_routes_index,
+    _load_routes_v2,
+    _is_climb_route,
+    _is_flat_route,
+    _route_summary,
+    _parse_csv_param,
+    _apply_route_filters,
+    _score_route_for_suggest,
+    _top_archetypes_for_region,
+    _route_profile_points,
+    _load_route_index,
+    _load_route_detail,
+    _gradient_to_power_factor,
+    _build_climb_zwo,
+)
 
 
 # Request logging middleware — logs all API errors
@@ -904,7 +901,6 @@ _static_dir = Path(__file__).parent / "static"
 _static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
-DATA_DIR = _user_data_dir
 
 
 def _setup_marker() -> Path:
@@ -969,8 +965,8 @@ def setup_defaults():
 
     return {
         "icu_id": config.ICU_ATHLETE_ID or "",
-        "workout_dir": str(WORKOUT_DIR) if WORKOUT_DIR.exists() else workout_dir_default,
-        "gpx_dir": str(GPX_DIR) if GPX_DIR.exists() else "",
+        "workout_dir": str(active_workout_dir()) if active_workout_dir().exists() else workout_dir_default,
+        "gpx_dir": str(active_gpx_dir()) if active_gpx_dir().exists() else "",
         "weight": config.ATHLETE_WEIGHT_KG,
         "ftp": config.ATHLETE_FTP_W,
         "lthr": config.ATHLETE_LTHR,
@@ -1095,7 +1091,7 @@ def setup_check_activities(body: dict):
 
     import httpx
     from datetime import timedelta as _td
-    today = date.today()
+    today = clock.today()
     oldest = (today - _td(days=42)).isoformat()
     newest = today.isoformat()
     try:
@@ -1196,8 +1192,8 @@ def setup_icu_hr(athlete_id: str = Query(""), api_key: str = Query("")):
         # Rolling 12-month window (W2d): the old hardcoded 2024→2026 range was
         # both a staleness source and a Jan-2027 time bomb.
         from datetime import date as _date, timedelta as _td
-        _new = (_date.today() + _td(days=1)).isoformat()
-        _old = (_date.today() - _td(days=365)).isoformat()
+        _new = (clock.today() + _td(days=1)).isoformat()
+        _old = (clock.today() - _td(days=365)).isoformat()
         url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities?oldest={_old}&newest={_new}"
         resp = httpx.get(url, auth=("API_KEY", api_key), timeout=15, verify=_icu_verify())
         if resp.status_code != 200:
@@ -1576,7 +1572,7 @@ def setup_save(body: dict):
         # Mark setup complete — single global marker (per-profile marker dropped to avoid drift).
         _setup_marker().parent.mkdir(parents=True, exist_ok=True)
         _setup_marker().write_text(
-            json.dumps({"completed": datetime.now().isoformat(), "version": "1.0.0"}, indent=2),
+            json.dumps({"completed": clock.now().isoformat(), "version": "1.0.0"}, indent=2),
             encoding="utf-8",
         )
 
@@ -1599,9 +1595,12 @@ def setup_save(body: dict):
 
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
-
-_cache = {}
-_cache_ts = {}
+# Lives in cache.py. Imported by name and re-exported so `app.cached`,
+# `app.clear_cache` and the four sections that mutate `_cache` directly keep
+# working -- the dicts are the same objects, so in-place mutation is shared.
+from cache import (  # noqa: F401
+    _cache, _cache_ts, cached, clear_cache, register_clearer,
+)
 
 # W2B-G5 fix: per-key lock map for the fatigue-resistance endpoint so
 # concurrent same-key requests don't both compute and don't race the
@@ -1636,47 +1635,12 @@ def _fatigue_resistance_memoised(latest_ride_id: str, current_ftp: int,
         kj_threshold=int(kj_threshold),
     )
 
-def cached(key, fn, ttl=300):
-    now = time.time()
-    if key in _cache and now - _cache_ts.get(key, 0) < ttl:
-        return _cache[key]
-    try:
-        result = fn()
-    except Exception as e:
-        # If API call fails (no internet, DNS error), return stale cache.
-        if key in _cache:
-            return _cache[key]
-        # v1.6.0 — log under E_CACHE_<key>-or-GENERIC and stick the empty
-        # result for only 30s so transient errors don't sit in cache for
-        # the full ttl. Trick: backdate _cache_ts to (now - (ttl - 30))
-        # so the staleness check ``now - ts < ttl`` flips back to False
-        # after 30 wall-clock seconds.
-        cache_code = {
-            "training": error_codes.Codes.CACHE_TRAINING,
-            "sleep": error_codes.Codes.CACHE_SLEEP,
-            "wellness": error_codes.Codes.CACHE_WELLNESS,
-        }.get(key, error_codes.Codes.CACHE_GENERIC)
-        _log_error(cache_code, exc=e, cache_key=key)
-        _cache[key] = {}
-        if ttl > 30:
-            _cache_ts[key] = now - (ttl - 30)
-        else:
-            _cache_ts[key] = now
-        return {}
-    _cache[key] = result
-    _cache_ts[key] = now
-    return result
 
-def clear_cache():
-    _cache.clear()
-    _cache_ts.clear()
-    # AC2c: the fatigue-resistance memo is keyed on (ride_id, ftp, window, kj)
-    # only — NOT profile — so a profile switch (clear_cache is an on_switch
-    # callback) must drop it or profile B could serve A's cached curve.
-    try:
-        _fatigue_resistance_memoised.cache_clear()
-    except Exception:
-        pass
+# The FR memo is keyed on (ride_id, ftp, window, kj) -- NOT profile -- so a
+# profile switch must drop it or profile B serves A's curve. It cannot live in
+# cache.py because it resolves the active profile, so it registers instead.
+register_clearer(_fatigue_resistance_memoised.cache_clear)
+
 
 
 # Serialises FIRST-EVER ProfileManager construction from concurrent request
@@ -3271,7 +3235,7 @@ def api_rider_stats():
     except Exception as e:
         _fail("rides", e)
     try:
-        today = date.today()
+        today = clock.today()
         ef_rows = []  # (date_iso, ef)
         for r in rides_all:
             if not isinstance(r, dict):
@@ -3322,12 +3286,11 @@ def api_rider_stats():
     load: dict = {}
     try:
         merged = _merge_training_load(cached("training", get_today_metrics))
-        src = {"icu": "icu", "local": "derived",
-               "mixed": "derived"}.get(merged.get("source"), "fallback")
-        today_iso = date.today().isoformat()
+        src = "icu" if merged.get("source") in ("icu", "icu_cached") else "fallback"
+        as_of = merged.get("as_of") or clock.today().isoformat()
         for k in ("ctl", "atl", "tsb"):
             v = merged.get(k)
-            load[k] = (_prov(round(float(v), 1), src, today_iso)
+            load[k] = (_prov(round(float(v), 1), src, as_of)
                        if v is not None else dict(_PROV_EMPTY))
     except Exception as e:
         _fail("load", e)
@@ -3352,7 +3315,7 @@ def api_rider_stats():
 
     # ── season totals (G14 computation #2) ──────────────────────────────────
     try:
-        today = date.today()
+        today = clock.today()
         out["season"] = {
             "year": _rider_stats_season_block(
                 rides_all, date(today.year, 1, 1).isoformat(),
@@ -3568,7 +3531,7 @@ def _age_days_from_iso(d: "str | None") -> "int | None":
         return None
     try:
         from datetime import date as _date
-        return (_date.today() - _date.fromisoformat(str(d)[:10])).days
+        return (clock.today() - _date.fromisoformat(str(d)[:10])).days
     except (ValueError, TypeError):
         return None
 
@@ -3670,103 +3633,51 @@ def _mark_readiness_cap_reverted_today() -> None:
         p = _readiness_revert_flag_path()
         p.write_text(
             json.dumps({"date": _d.today().isoformat(),
-                        "at": datetime.now().isoformat()}),
+                        "at": clock.now().isoformat()}),
             encoding="utf-8",
         )
     except Exception as e:
         _log.warning(f"readiness revert flag write failed: {e}")
 
 
-def _compute_local_atl(days: int = 90, tau: int = 7) -> float | None:
-    """v4.4.2 §B3 — 7-day EWMA over local ride TSS (mirror of
-    ride_storage.compute_local_ctl with τ=7 for ATL).
-
-    Returns None when no usable local TSS is found so callers can decide
-    whether to keep ICU values or surface ``data_status``.
-    """
-    try:
-        import ride_storage as _rs
-    except Exception:
-        return None
-    rides = _rs.list_rides()
-    if not rides:
-        return None
-    cutoff_iso = (date.today() - timedelta(days=days)).isoformat()
-    per_day: dict[str, float] = {}
-    for r in rides:
-        started = (r.get("started_at") or "")[:10]
-        if not started or started < cutoff_iso:
-            continue
-        summary = r.get("summary") or {}
-        tss = summary.get("tss") or 0
-        if not tss:
-            continue
-        try:
-            per_day[started] = per_day.get(started, 0.0) + float(tss)
-        except (TypeError, ValueError):
-            continue
-    if not per_day:
-        return None
-    today = date.today()
-    atl = 0.0
-    d = date.fromisoformat(min(per_day.keys()))
-    while d <= today:
-        tss_today = per_day.get(d.isoformat(), 0.0)
-        atl = atl + (tss_today - atl) / float(tau)
-        d += timedelta(days=1)
-    return round(atl, 1)
+def _fitness_state(today: "date | None" = None) -> dict:
+    """CTL/ATL/TSB from their one owner (src/fitness.py): intervals.icu live,
+    else its last stored values, else unknown."""
+    import fitness
+    return fitness.state(cached("training", get_today_metrics), today)
 
 
-def _local_training_load() -> dict:
-    """v4.4.2 §B3 — single helper that returns CTL/ATL/TSB derived from the
-    local rides archive.
+# The CTL a planning or projection call starts from when the rider's is
+# unknown (intervals.icu never answered and nothing is stored): the planner's
+# own start (training_planner.generate_plan). One number where handlers used
+# 30, 37 and 50.
+_PLANNING_CTL_UNKNOWN = 37.0
 
-    Output shape: ``{ctl, atl, tsb, source}`` where ``source`` is always
-    "local" (callers compose with ICU values to produce "icu"/"mixed"/"local").
-    Any of ctl/atl/tsb may be None if local rides have no TSS values at all.
-    """
-    try:
-        import ride_storage as _rs
-        ctl = _rs.compute_local_ctl()
-    except Exception:
-        ctl = None
-    atl = _compute_local_atl()
-    tsb = None
-    if ctl is not None and atl is not None:
-        tsb = round(ctl - atl, 1)
-    return {"ctl": ctl, "atl": atl, "tsb": tsb, "source": "local"}
+
+def _planning_ctl() -> float:
+    ctl = _fitness_state()["ctl"]
+    return _PLANNING_CTL_UNKNOWN if ctl is None else ctl
+
+
+import readiness_composite as _readiness_composite_mod  # noqa: E402
+# The composite readiness reads today's TSB from the same owner (the S-3 split).
+_readiness_composite_mod.today_load_provider = lambda: _fitness_state()
 
 
 def _merge_training_load(icu_t: dict | None) -> dict:
-    """v4.4.2 §B3 — merge ICU-derived training metrics with local fallback.
+    """The training-load block the readiness surfaces serve: CTL/ATL/TSB from
+    the fitness owner (intervals.icu, the owner's decision of 2026-09-14), with
+    ICU's acwr/ramp/monotony/strain beside them.
 
-    Rule: prefer ICU value when present; fall back to local on a per-field
-    basis. Source label:
-      - "icu" if all ICU fields present
-      - "local" if no ICU fields and local fallback used
-      - "mixed" otherwise
+    Until then it merged live ICU values with a local EWMA over the FIT-only
+    ride list, per field, and could answer "mixed" (the audit's S-2).
+    ``source`` is "icu", "icu_cached" (its last stored values, dated by
+    ``as_of``) or "none".
     """
+    import fitness
     icu = icu_t or {}
-    local = _local_training_load()
-    icu_ctl = icu.get("ctl")
-    icu_atl = icu.get("atl")
-    icu_tsb = icu.get("tsb")
-    out = {
-        "ctl": icu_ctl if icu_ctl is not None else local["ctl"],
-        "atl": icu_atl if icu_atl is not None else local["atl"],
-        "tsb": icu_tsb if icu_tsb is not None else local["tsb"],
-        "acwr": icu.get("acwr"),
-        "ramp_rate": icu.get("ramp_rate"),
-        "monotony": icu.get("monotony"),
-        "strain": icu.get("strain"),
-    }
-    icu_count = sum(1 for v in (icu_ctl, icu_atl, icu_tsb) if v is not None)
-    if icu_count == 3:
-        out["source"] = "icu"
-    elif icu_count == 0:
-        out["source"] = "local" if any(v is not None for v in (out["ctl"], out["atl"], out["tsb"])) else "none"
-    else:
-        out["source"] = "mixed"
+    out = fitness.state(icu)
+    out.update({k: icu.get(k) for k in ("acwr", "ramp_rate", "monotony", "strain")})
     return out
 
 
@@ -3968,7 +3879,7 @@ async def api_readiness_revert_cap(request: Request):
             with tp.plan_write_lock():
                 with open(json_path, encoding="utf-8") as f:
                     plan = json.load(f)
-                today_iso = date.today().isoformat()
+                today_iso = clock.today().isoformat()
                 for w in plan.get("weeks", []):
                     for s in w.get("sessions", []):
                         if (s.get("day") == today_iso and s.get("adapted")
@@ -4014,8 +3925,7 @@ def api_readiness_composite(date: str = Query(None)):
     v1.8.0 §F1 — chains compute_training_severity to merge severity, source,
     and severity_reasons fields onto the returned dict. Legacy fields preserved.
     """
-    from datetime import date as _date_cls
-    target_iso = date or _date_cls.today().isoformat()
+    target_iso = date or clock.today().isoformat()
     profile_id = "default"  # single-rider scope; profile_manager is a separate concern
     cache_key = f"readiness_composite_{profile_id}_{target_iso}"
     result = cached(cache_key, lambda: compute_readiness_composite(profile_id, target_iso))
@@ -4064,7 +3974,7 @@ async def api_readiness_apply_tier_down(request: Request):
     zwo_file, zwo_name}``.
     """
     body = await _get_json_body(request)
-    day_iso = str(body.get("date") or date.today().isoformat()).strip()
+    day_iso = str(body.get("date") or clock.today().isoformat()).strip()
     try:
         date.fromisoformat(day_iso)
     except ValueError:
@@ -4144,7 +4054,7 @@ async def api_readiness_apply_tier_down(request: Request):
                 week_num=week_num, day_idx=day_idx,
                 used_names=excluded, raise_on_empty=True,
                 hr_bias=_hr_bias(),
-            )
+             micro_only=bool(((plan or {}).get("goal") or {}).get("vo2_microintervals_only", False)),)
             target["zwo_file"] = planned.zwo_file
             target["zwo_name"] = planned.zwo_name
         except tp.NoCandidateWorkoutError:
@@ -4157,7 +4067,7 @@ async def api_readiness_apply_tier_down(request: Request):
 
         plan["last_tier_down"] = {
             "date": day_iso,
-            "at": datetime.now().isoformat(),
+            "at": clock.now().isoformat(),
             "old_type": old_type,
             "new_type": new_type,
         }
@@ -4190,7 +4100,7 @@ async def api_readiness_apply_tier_down(request: Request):
             }
             plan, _modified, _ri = tp.reforecast_dict(
                 plan,
-                today_iso=date.today().isoformat(),
+                today_iso=clock.today().isoformat(),
                 tsb_series=tsb_series,
                 recent_activities=activities,
                 availability_overrides=avail,
@@ -4258,10 +4168,10 @@ async def api_plan_auto_adjust(request: Request):
     if severity_override is not None:
         severity_override = str(severity_override).strip().lower() or None
 
-    today_iso = date.today().isoformat()
+    today_iso = clock.today().isoformat()
     # v1.8.8 Bug 7 — `scope='day'` targets tomorrow's session.
     target_iso = (
-        (date.today() + timedelta(days=1)).isoformat()
+        (clock.today() + timedelta(days=1)).isoformat()
         if scope == "day" else today_iso
     )
     profile_id = "default"
@@ -4420,7 +4330,7 @@ async def api_plan_auto_adjust(request: Request):
                             week_num=week_num, day_idx=day_idx,
                             used_names=excluded, raise_on_empty=True,
                             hr_bias=_hr_bias(),
-                        )
+                         micro_only=bool(((plan or {}).get("goal") or {}).get("vo2_microintervals_only", False)),)
                         target["zwo_file"] = planned.zwo_file
                         target["zwo_name"] = planned.zwo_name
                         rematched = True
@@ -4582,7 +4492,7 @@ async def api_wellness_manual_hrv(request: Request):
     distinguishes this path from ICU-pulled `hrv` in audit logs.
     """
     body = await _get_json_body(request)
-    d = (body.get("date") or date.today().isoformat()).strip()
+    d = (body.get("date") or clock.today().isoformat()).strip()
     rmssd_raw = body.get("hrv_manual_rmssd", body.get("rmssd"))
     try:
         rmssd = float(rmssd_raw)
@@ -4618,7 +4528,7 @@ def api_activities_blocks(days: int = Query(42)):
     store, shaped for miniPowerBlockSVG."""
     try:
         days = max(1, min(int(days or 42), 120))
-        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        cutoff = (clock.today() - timedelta(days=days)).isoformat()
         try:
             from profile_manager import ProfileManager
             _pm_ftp = ProfileManager.get().ftp or None
@@ -4668,7 +4578,7 @@ def api_activities():
             rides = []
         if rides:
             out = []
-            cutoff = (date.today() - timedelta(days=7)).isoformat()
+            cutoff = (clock.today() - timedelta(days=7)).isoformat()
             for r in rides:
                 d = _ride_started_local_iso_date(r) or ""
                 if not d or d < cutoff:
@@ -4863,7 +4773,7 @@ def api_wellness(days: int = Query(28),
         if f and t and f > t:
             raise HTTPException(status_code=422, detail="from must be <= to")
         if f:
-            days = max(days, (date.today() - f).days + 1)
+            days = max(days, (clock.today() - f).days + 1)
         f_iso = f.isoformat() if f else None
         t_iso = t.isoformat() if t else None
 
@@ -5479,7 +5389,10 @@ def _scan_zwo_for_library(zwo_path: Path) -> dict | None:
             # Binning the whole duration at mean power here (while the planner
             # sliced) drifted the two scanners' zone seconds → score_sync mismatch
             # (e.g. neuromuscular_9x30s-2min_175pct_52min.zwo scored 5 vs 6).
-            _RAMP_SLICES = 20
+            # 1-second slices — see the note on the planner's copy of this
+            # scanner. The two must stay in step: they are compared file by
+            # file in tests/test_zone_binning.py.
+            _RAMP_SLICES = max(20, int(dur))
             for _i in range(_RAMP_SLICES):
                 _acc_zone((plo + (phi - plo) * (_i + 0.5) / _RAMP_SLICES) * 100, dur / _RAMP_SLICES)
             _acc_structure(phi * 100)
@@ -5534,10 +5447,10 @@ _LIBRARY_TAGS_LOCK = threading.Lock()
 
 def _compute_library_tags() -> list[str]:
     """Scan all ZWO files for distinct tags. Returns sorted unique list."""
-    if not WORKOUT_DIR.exists():
+    if not active_workout_dir().exists():
         return []
     seen: set[str] = set()
-    for zwo_path in WORKOUT_DIR.glob("*.zwo"):
+    for zwo_path in active_workout_dir().glob("*.zwo"):
         try:
             tree = ET.parse(zwo_path)
         except (ET.ParseError, OSError):
@@ -5556,7 +5469,7 @@ def _get_library_tags_cached() -> list[str]:
     """Return cached distinct tag list, refreshing on dir mtime drift."""
     global _LIBRARY_TAGS_CACHE
     try:
-        mtimes = [p.stat().st_mtime for p in WORKOUT_DIR.glob("*.zwo")]
+        mtimes = [p.stat().st_mtime for p in active_workout_dir().glob("*.zwo")]
     except OSError:
         mtimes = []
     sig = max(mtimes) if mtimes else 0.0
@@ -5573,7 +5486,7 @@ def api_workouts_tags():
     """Return the sorted distinct list of tags across the library.
 
     v4.2.0 IMPL-LIBRARY: powers the tag multi-select chip-list in the
-    library browser. Cached in-memory; refreshes when WORKOUT_DIR mtimes
+    library browser. Cached in-memory; refreshes when active_workout_dir() mtimes
     drift.
     """
     return {"tags": _get_library_tags_cached()}
@@ -5590,7 +5503,7 @@ _LIBRARY_ROWS_LOCK = threading.Lock()
 
 
 def _build_library_rows() -> list[dict]:
-    """Parse every ZWO in WORKOUT_DIR into its full, filter-ready library row.
+    """Parse every ZWO in active_workout_dir() into its full, filter-ready library row.
 
     R2 (2026-07-07): S1 — extracted verbatim from the api_workouts per-file
     loop so the parse can be cached. Everything computed here is
@@ -5599,7 +5512,7 @@ def _build_library_rows() -> list[dict]:
     tags / flags / search / sort / limit) on top of the cached output.
     """
     rows: list[dict] = []
-    if not WORKOUT_DIR.exists():
+    if not active_workout_dir().exists():
         return rows
 
     # v4.1.2 IMPL-CLASSIFIER: load the content-classification cache once per
@@ -5609,7 +5522,7 @@ def _build_library_rows() -> list[dict]:
     _content_classifications = tp._load_content_classifications()
     _CONTENT_TO_PROTOCOL = tp._CONTENT_TO_PROTOCOL
 
-    for zwo_path in sorted(WORKOUT_DIR.glob("*.zwo")):
+    for zwo_path in sorted(active_workout_dir().glob("*.zwo")):
         scan = _scan_zwo_for_library(zwo_path)
         if not scan:
             continue
@@ -5723,12 +5636,12 @@ def _get_library_rows_cached() -> list[dict]:
     # scandir (DirEntry.stat avoids re-resolving each path). The dot-file
     # exclusion mirrors glob("*.zwo") semantics exactly.
     try:
-        with os.scandir(WORKOUT_DIR) as it:
+        with os.scandir(active_workout_dir()) as it:
             mtimes = [e.stat().st_mtime for e in it
                       if e.name.endswith(".zwo") and not e.name.startswith(".")]
     except OSError:
         mtimes = []
-    sig = (str(WORKOUT_DIR), max(mtimes) if mtimes else 0.0, len(mtimes))
+    sig = (str(active_workout_dir()), max(mtimes) if mtimes else 0.0, len(mtimes))
     with _LIBRARY_ROWS_LOCK:
         if _LIBRARY_ROWS_CACHE and _LIBRARY_ROWS_CACHE[0] == sig:
             return _LIBRARY_ROWS_CACHE[1]
@@ -5758,391 +5671,29 @@ def _get_library_rows_cached() -> list[dict]:
 # Pass-1's whole-query _SEARCH_TYPE_ALIASES dict is absorbed into
 # _SEARCH_SYNONYMS below (same family values, now applied per-token).
 
-# ø→o / ×→x transliteration applied to BOTH query and haystack, so
-# "rønnestad" matches "ronnestad" and a typed "3x16" matches the display
-# name's "3×16min". En-dash folds to "-" (then to space), em-dash to space.
-_SEARCH_TRANSLIT = str.maketrans({"ø": "o", "×": "x", "–": "-", "—": " "})
 
 
-def _search_normalize(s: str) -> str:
-    """Shared normalizer: lowercase, transliterate, [-_/]→space, collapse ws.
-
-    Collapsing separators is what lets one token grammar span filenames
-    (threshold_2x16min-10min_98pct_118min.zwo), ZWO names (Threshold 3x16min) and
-    display names (Threshold 118min — 3×16min @ 91%).
-    """
-    s = (s or "").lower().translate(_SEARCH_TRANSLIT)
-    s = re.sub(r"[-_/]+", " ", s)
-    return re.sub(r"\s+", " ", s).strip()
 
 
-def _search_row_haystack(row: dict) -> str:
-    """Normalized searchable text for one cached library row.
-
-    Name + display_name + File + Protocol + content_class + Tags. Keeping
-    display_name preserves pass-1 behaviour (the UI renders display_name, so
-    typing the visible title must hit); content_class + Tags let plain tokens
-    reach classifier truth ("sweet" finds sweet_spot-classed rows whose
-    filename says otherwise).
-    """
-    return _search_normalize(" ".join((
-        row.get("Name") or "", row.get("display_name") or "",
-        row.get("File") or "", row.get("Protocol") or "",
-        row.get("content_class") or "", " ".join(row.get("Tags") or ()),
-    )))
 
 
-# Haystack side-cache. Keyed by IDENTITY of the cached rows list — the entry
-# keeps a strong reference to that exact list, so the id can never be reused
-# while the cache holds it; a library rescan swaps the rows object and the
-# haystacks lazily rebuild on the next searched request (~40ms, once).
-# Benign race under concurrent first-searches: both compute, one wins.
-_SEARCH_HAYS_CACHE: tuple[list, list[str]] | None = None
 
 
-def _get_search_haystacks(rows: list[dict]) -> list[str]:
-    global _SEARCH_HAYS_CACHE
-    c = _SEARCH_HAYS_CACHE
-    if c is not None and c[0] is rows:
-        return c[1]
-    hays = [_search_row_haystack(r) for r in rows]
-    _SEARCH_HAYS_CACHE = (rows, hays)
-    return hays
 
 
-# THE synonym map (spec: one explicit dict). token/phrase → (kind, value).
-# Two-word keys are resolved by a bigram pass over the token stream.
-#   family   → content_class PREFIX match (pass-1 semantics: prefix BROADENS
-#              to the family — threshold → threshold + threshold_ladder —
-#              and deliberately does NOT fall back to a name substring;
-#              that's what fixed "sprint" matching every sprint-finish title)
-#   class    → exact content_class OR the typed word as substring (union)
-#   suffix   → content_class endswith OR substring (union)
-#   ftp_test → ftp_test class/tag OR substring (union)
-#   ronnestad/micro → special row predicates in _search_match_row
-_SEARCH_SYNONYMS: dict[str, tuple[str, str]] = {
-    # family aliases (absorbed from pass-1 _SEARCH_TYPE_ALIASES)
-    "sprint": ("family", "neuromuscular"), "sprints": ("family", "neuromuscular"),
-    "neuromuscular": ("family", "neuromuscular"),
-    "recovery": ("family", "recovery"),
-    "endurance": ("family", "endurance"), "z2": ("family", "endurance"),
-    "tempo": ("family", "tempo"),
-    "ss": ("family", "sweet_spot"), "sweetspot": ("family", "sweet_spot"),
-    "sweet spot": ("family", "sweet_spot"),
-    "threshold": ("family", "threshold"),
-    "ou": ("family", "over_under"), "overunder": ("family", "over_under"),
-    "overunders": ("family", "over_under"), "over under": ("family", "over_under"),
-    "over unders": ("family", "over_under"),
-    # vo2 prefix = whole family (vo2max + vo2_short + vo2_ladder); vo2_short
-    # even DISPLAYS as "VO2max" in the Protocol column.
-    "vo2": ("family", "vo2"), "v02": ("family", "vo2"),
-    "vo2max": ("family", "vo2"), "vo2 max": ("family", "vo2"),
-    "anaerobic": ("family", "anaerobic"),
-    # semantic tokens
-    "ronnestad": ("ronnestad", ""),          # rønnestad already ø→o folded
-    "micro": ("micro", ""), "microburst": ("micro", ""), "microbursts": ("micro", ""),
-    "strides": ("class", "endurance_intervals"),
-    "ladder": ("suffix", "_ladder"),
-    "test": ("ftp_test", ""), "ftp test": ("ftp_test", ""), "ftp_test": ("ftp_test", ""),
-    # NOTE "ramp" is deliberately NOT mapped to ftp_test: every ramp-test file
-    # already contains "ramp", while the union would drag in non-ramp tests
-    # (coggan 2x8) — and it would break the locked pass-1 substring contract
-    # (tests/test_library_filters.py::test_search_substring_match_name).
-}
-
-# Typo-rescue vocabulary: class words ONLY (bounded, no fuzzy over full names
-# — cost + surprise). A token ≥5 chars that matches nothing anywhere is
-# retried at Levenshtein distance ≤1 against these, then re-mapped through
-# _SEARCH_SYNONYMS ("treshold" → threshold family).
-_SEARCH_TYPO_VOCAB = ("threshold", "sweetspot", "endurance", "recovery", "tempo",
-                      "anaerobic", "overunder", "neuromuscular", "ronnestad", "vo2max")
-
-# Percent markers inside a row haystack: "@ 91%" (display names), "91%",
-# "65pct" (legacy filenames). Used for the "@105" intensity intent (±2 pts).
-_SEARCH_HAY_PCT_RX = re.compile(r"@\s*(\d{2,3})\b|(\d{2,3})\s*%|(\d{2,3})pct")
-# 30s15s-shaped pattern anywhere in a haystack (ronnestad fallback).
-_SEARCH_30S15S_RX = re.compile(r"(?<!\d)30s\s?15s(?![a-z0-9])")
-
-_SEARCH_DUR_TOL = 0.12    # bare "90min" / "1h30" / "1.5h" → target ±12%
-_SEARCH_QUERY_CAP = 300   # sanity cap: bound regex work on garbage input
 
 
-def _search_lev1(a: str, b: str) -> bool:
-    """True iff Levenshtein(a, b) ≤ 1. O(n) early-exit, no DP table."""
-    la, lb = len(a), len(b)
-    if abs(la - lb) > 1:
-        return False
-    if a == b:
-        return True
-    if la == lb:                       # exactly one substitution
-        return sum(x != y for x, y in zip(a, b)) == 1
-    if la > lb:                        # make a the shorter one
-        a, b, la = b, a, lb
-    i = 0                              # one insertion into a
-    while i < la and a[i] == b[i]:
-        i += 1
-    return a[i:] == b[i + 1:]
 
 
-def _search_parse_query(q: str) -> dict:
-    """Parse a library search query into intent filters + residual AND-tokens.
-
-    Pure (no I/O), importable by tests. Extraction order matters — each step
-    CONSUMES its span so later steps never re-read it:
-      1. comparators   "<60" ">120"          → literal duration bound
-      2. explicit NsMs "30s15s"              → structure token
-      3. slash pairs   "30/15" "40/20"       → structure (slash ≠ range, ever)
-      4. hyphen pairs  "60-90" vs "30-15"    → ascending + plausible minutes =
-                       duration range; descending/equal = on/off structure
-                       (matches the spec examples: 30-15 structure, 60-90 range)
-      5. NxM           "3x16" "3 x 16(min)"  → structure token, unit consumed
-                       so the trailing "min" can't leak into step 7
-      6. HhMM          "1h30"                → duration target ±12%
-      7. bare duration "90min" "90m" "1.5h"  → duration target ±12%
-      8. intensity     "@105" "@ 105%" "105%" → percent intent (±2 pts)
-    The residue is normalized, bigram-scanned for two-word synonyms
-    ("sweet spot"), then mapped token-by-token through _SEARCH_SYNONYMS.
-
-    Returns dict with: phrase, tokens, families[(prefix, orig)],
-    semantics[(kind, val, orig)], structures, _struct_rx (compiled),
-    duration (lo, hi) | None, percent | None, intents (echo labels, the
-    client prettifies), highlight (tokens the UI should <mark>).
-    """
-    out: dict = {
-        "raw": q or "", "phrase": "", "tokens": [], "families": [],
-        "semantics": [], "structures": [], "_struct_rx": [],
-        "duration": None, "percent": None, "intents": [], "highlight": [],
-    }
-    s = (q or "").strip().lower().translate(_SEARCH_TRANSLIT)[:_SEARCH_QUERY_CAP]
-    if not s:
-        return out
-    out["phrase"] = _search_normalize(s)
-    dur_intents: list[str] = []      # duration echo (last duration intent wins)
-    struct_seen: set[str] = set()
-
-    def _add_struct(tok: str, rx: str, label: str) -> str:
-        if tok not in struct_seen:
-            struct_seen.add(tok)
-            out["structures"].append(tok)
-            out["_struct_rx"].append(re.compile(rx))
-            out["intents"].append(label)
-            out["highlight"].append(tok)
-        return " "
-
-    def _set_dur(lo: float, hi: float, label: str) -> str:
-        out["duration"] = (lo, hi)   # last one wins — comment over engineering
-        dur_intents.clear()
-        dur_intents.append(label)
-        return " "
-
-    # 1) comparators — literal, half-open (>120 excludes 120.0 exactly).
-    def _cmp(m: re.Match) -> str:
-        v = float(m.group(2))
-        if m.group(1) == "<":
-            return _set_dur(0.0, v - 1e-6, f"<{m.group(2)}min")
-        return _set_dur(v + 1e-6, float("inf"), f">{m.group(2)}min")
-    s = re.sub(r"([<>])\s*(\d+(?:\.\d+)?)", _cmp, s)
-
-    # 2) explicit NsMs ("30s15s", "30s 15s")
-    def _nsms(on: int, off: int) -> str:
-        return _add_struct(f"{on}s{off}s",
-                           rf"(?<!\d){on}s\s?{off}s(?![a-z0-9])", f"{on}/{off}")
-    s = re.sub(r"(?<!\d)(\d{1,3})\s*s\s*(\d{1,3})\s*s(?![a-z0-9])",
-               lambda m: _nsms(int(m.group(1)), int(m.group(2))), s)
-
-    # 3) slash pairs → always structure, normalized to the library's NsMs token.
-    s = re.sub(r"(?<![\d.])(\d{1,3})\s*/\s*(\d{1,3})(?![\d.])",
-               lambda m: _nsms(int(m.group(1)), int(m.group(2)))
-               if 5 <= int(m.group(1)) <= 600 and 1 <= int(m.group(2)) <= 600
-               else m.group(0), s)
-
-    # 4) hyphen pairs: ascending + minute-plausible = duration range (60-90);
-    #    otherwise on/off structure (30-15, 30-30). "1-2-3-2-1" pyramid names
-    #    fail both guards and fall through as plain text.
-    def _hyphen(m: re.Match) -> str:
-        a, b = int(m.group(1)), int(m.group(2))
-        if a < b and b >= 15:
-            return _set_dur(float(a), float(b), f"{a}-{b}min")
-        if a >= b and 5 <= a <= 600 and b >= 1:
-            return _nsms(a, b)
-        return m.group(0)
-    s = re.sub(r"(?<![\d.-])(\d{1,3})\s*-\s*(\d{1,3})(?![\d.-])", _hyphen, s)
-
-    # 5) NxM ("3x16", "4 x 8", "13x30", "3x16min" — unit consumed if present).
-    def _nxm(m: re.Match) -> str:
-        n, reps = int(m.group(1)), int(m.group(2))
-        tok = f"{n}x{reps}"
-        # Unit-agnostic haystack match: "3x16" hits "3x16min", "3x30" hits
-        # "3x30s"; the digit guards stop "3x16" matching "3x160" / "13x30".
-        return _add_struct(tok, rf"(?<!\d){n}x{reps}(?!\d)", tok)
-    s = re.sub(r"(?<!\d)(\d{1,3})\s*x\s*(\d{1,4})\s*(?:mins?|m|s(?:ecs?)?)?(?![\w%])",
-               _nxm, s)
-
-    # 6) HhMM ("1h30") → minutes target ±12%.
-    def _hhmm(m: re.Match) -> str:
-        v = int(m.group(1)) * 60 + int(m.group(2))
-        return _set_dur(v * (1 - _SEARCH_DUR_TOL), v * (1 + _SEARCH_DUR_TOL),
-                        f"~{v}min")
-    s = re.sub(r"(?<!\d)(\d{1,2})\s*h\s*(\d{1,2})(?![\dh%])", _hhmm, s)
-
-    # 7) bare durations ("90min", "90m", "1.5h", "2 hours") → target ±12%.
-    def _bare(m: re.Match) -> str:
-        v = float(m.group(1))
-        if m.group(2).startswith("h"):
-            v *= 60
-        v = round(v, 1)
-        label = f"~{int(v) if v == int(v) else v}min"
-        return _set_dur(v * (1 - _SEARCH_DUR_TOL), v * (1 + _SEARCH_DUR_TOL), label)
-    s = re.sub(r"(?<![\dx.])(\d+(?:\.\d+)?)\s*(mins?|m|hours?|hrs?|h)(?![\w%])",
-               _bare, s)
-
-    # 8) intensity ("@105", "@ 105%", "105%") → ±2-pt percent intent.
-    def _pct(m: re.Match) -> str:
-        p = int(m.group(1) or m.group(2))
-        if not 40 <= p <= 200:       # implausible as an FTP percent → leave as text
-            return m.group(0)
-        out["percent"] = p
-        out["intents"].append(f"@{p}%")
-        return " "
-    s = re.sub(r"@\s*(\d{1,3})\s*%?|(?<![\dx.])(\d{1,3})\s*%", _pct, s)
-
-    out["intents"].extend(dur_intents)
-
-    # Residue → normalized tokens; bigram pass resolves two-word synonyms
-    # BEFORE single tokens so "sweet spot" doesn't decay into "sweet"+"spot".
-    words = _search_normalize(s).split()
-    i = 0
-    while i < len(words):
-        pair = " ".join(words[i:i + 2]) if i + 1 < len(words) else None
-        tok, step = (pair, 2) if pair and pair in _SEARCH_SYNONYMS else (words[i], 1)
-        kind_val = _SEARCH_SYNONYMS.get(tok)
-        if kind_val:
-            kind, val = kind_val
-            if kind == "family":
-                out["families"].append((val, tok))
-                out["intents"].append(val.replace("_", " "))
-            else:
-                out["semantics"].append((kind, val, tok))
-                out["intents"].append(tok)
-            out["highlight"].append(tok)
-        elif tok:
-            out["tokens"].append(tok)
-            out["highlight"].append(tok)
-        i += step
-    return out
 
 
-def _search_apply_typo_fix(parsed: dict, haystacks: list[str]) -> None:
-    """Bounded typo rescue, mutating ``parsed`` in place.
-
-    Only plain tokens ≥5 chars that hit NO haystack at all are retried, and
-    only against the ten class-vocabulary words (Levenshtein ≤1); the winner
-    re-enters through _SEARCH_SYNONYMS so "treshold" behaves exactly like
-    "threshold". The any()-scan short-circuits on the first haystack hit.
-    """
-    if not parsed["tokens"]:
-        return
-    kept: list[str] = []
-    for tok in parsed["tokens"]:
-        if len(tok) < 5 or any(tok in h for h in haystacks):
-            kept.append(tok)
-            continue
-        fix = next((v for v in _SEARCH_TYPO_VOCAB if _search_lev1(tok, v)), None)
-        if fix is None:
-            kept.append(tok)
-            continue
-        kind, val = _SEARCH_SYNONYMS[fix]
-        if kind == "family":
-            parsed["families"].append((val, fix))
-        else:
-            parsed["semantics"].append((kind, val, fix))
-        parsed["intents"].append(f"{tok}→{fix}")
-        # Highlight the CORRECTED word — the typo can't appear in any name.
-        parsed["highlight"] = [fix if t == tok else t for t in parsed["highlight"]]
-    parsed["tokens"] = kept
 
 
-def _search_match_row(row: dict, hay: str, parsed: dict,
-                      class_filter_active: bool = False) -> bool:
-    """AND-match one cached library row against a parsed query."""
-    dur = parsed["duration"]
-    if dur is not None:
-        d = row.get("Duration(min)") or 0
-        if not (dur[0] <= d <= dur[1]):
-            return False
-    for rx in parsed["_struct_rx"]:
-        if not rx.search(hay):
-            return False
-    if parsed["percent"] is not None:
-        pcts = [int(g) for tup in _SEARCH_HAY_PCT_RX.findall(hay) for g in tup if g]
-        pcts = [p for p in pcts if 40 <= p <= 200]
-        if pcts:
-            if not any(abs(p - parsed["percent"]) <= 2 for p in pcts):
-                return False
-        elif str(parsed["percent"]) not in hay:   # no embedded % → substring
-            return False
-    cls = (row.get("content_class") or "").lower()
-    for prefix, orig in parsed["families"]:
-        if class_filter_active:
-            # Pass-1 guard kept: with an explicit Type filter active the
-            # family token stays a plain substring, so Type=threshold +
-            # "vo2" intersects sanely instead of guaranteeing 0 rows.
-            if orig not in hay:
-                return False
-        elif not cls.startswith(prefix):
-            return False
-    for kind, val, orig in parsed["semantics"]:
-        if kind == "class":
-            ok = cls == val or orig in hay
-        elif kind == "suffix":
-            ok = cls.endswith(val) or orig in hay
-        elif kind == "ftp_test":
-            ok = cls == "ftp_test" or "ftp test" in hay or orig in hay
-        elif kind == "ronnestad":
-            # is_ronnestad tag (normalized "is ronnestad") OR 30/15 pattern.
-            ok = ("is ronnestad" in hay or "ronnestad" in hay
-                  or bool(_SEARCH_30S15S_RX.search(hay)))
-        elif kind == "micro":
-            ok = (bool((row.get("secondary_flags") or {}).get("pattern_microinterval"))
-                  or "15s15s" in hay or "microburst" in hay or orig in hay)
-        else:                                     # unknown kind → substring
-            ok = orig in hay
-        if not ok:
-            return False
-    for tok in parsed["tokens"]:
-        if tok not in hay:
-            return False
-    return True
 
 
-def _search_score_row(row: dict, hay: str, parsed: dict) -> int:
-    """Relevance points for an already-matched row (higher = better).
 
-    Additive tiers per the pass-2 spec: exact-phrase-in-name 100 >
-    all-tokens-in-name 60 > structure hit 50 > class/family hit 30 >
-    token-prefix-in-name 20 > file/tag-only floor 10. Ties break on
-    duration asc (the caller's sort key).
-    """
-    name_norm = _search_normalize(
-        (row.get("display_name") or "") + " " + (row.get("Name") or ""))
-    score = 10                                   # matched at all (file/tag tier)
-    phrase = parsed["phrase"]
-    if len(phrase) >= 4 and phrase in name_norm:
-        score += 100
-    wordy = (parsed["tokens"]
-             + [orig for _p, orig in parsed["families"]]
-             + [orig for _k, _v, orig in parsed["semantics"]])
-    if wordy and all(w in name_norm for w in wordy):
-        score += 60
-    if parsed["_struct_rx"] and any(rx.search(name_norm) for rx in parsed["_struct_rx"]):
-        score += 50
-    if parsed["families"] or parsed["semantics"]:
-        score += 30
-    if wordy:
-        name_words = name_norm.split()
-        if any(word.startswith(w) for w in wordy for word in name_words):
-            score += 20
-    return score
+
+
 
 
 @app.get("/api/workouts")
@@ -6206,7 +5757,7 @@ def api_workouts(
     of silently dropping the tail.
     """
     workouts = []
-    if not WORKOUT_DIR.exists():
+    if not active_workout_dir().exists():
         return []
 
     filter_tags: set[str] = set()
@@ -6341,7 +5892,7 @@ def download_workout_by_id(filename: str, cap: int = Query(0)):
     reps to the rider's measured-power envelope. A no-op cap keeps the plain
     FileResponse (byte-identical to disk).
     """
-    path = _safe_path(WORKOUT_DIR, filename)
+    path = _safe_path(active_workout_dir(), filename)
     if not path or not path.exists():
         return JSONResponse({"error": "not found"}, 404)
     # v1.6.4: media_type "application/octet-stream" (was "application/xml")
@@ -6377,9 +5928,9 @@ def api_workout_detail(category: str, filename: str, view: str | None = Query(No
     as the settings gate); downloads follow the same param so what you see
     is what the head unit gets."""
     # Flat layout first, legacy category/file fallback
-    path = _safe_path(WORKOUT_DIR, filename)
+    path = _safe_path(active_workout_dir(), filename)
     if not path or not path.exists():
-        path = _safe_path(WORKOUT_DIR, category, filename)
+        path = _safe_path(active_workout_dir(), category, filename)
     if not path or not path.exists():
         return JSONResponse({"error": "not found"}, 404)
     try:
@@ -6578,9 +6129,9 @@ async def api_bulk_segments(request: Request):
         else:
             cat, fname = "", f
         # Flat lookup first; fall back to legacy category subdir
-        path = _safe_path(WORKOUT_DIR, fname) if fname else None
+        path = _safe_path(active_workout_dir(), fname) if fname else None
         if (not path or not path.exists()) and cat:
-            path = _safe_path(WORKOUT_DIR, cat, fname)
+            path = _safe_path(active_workout_dir(), cat, fname)
         if not path or not path.exists():
             continue
         try:
@@ -6895,7 +6446,7 @@ def api_courses(region: str = Query(None)):
 
         # Check if matching GPX exists
         gpx_name = crs.stem + ".gpx"
-        has_gpx = (GPX_DIR / r / gpx_name).exists()
+        has_gpx = (active_gpx_dir() / r / gpx_name).exists()
 
         courses.append({
             "name": crs.stem, "region": r, "description": desc,
@@ -7032,22 +6583,8 @@ def api_course_profile(region: str, filename: str):
 # VIRTUAL ROUTES API
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _slugify_route_name(name: str) -> str:
-    """Slugify a route name using the same rule as generate_route_profiles.py."""
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
-def _route_key_for(world_slug: str, crs_filename: str) -> tuple[str, str]:
-    """Derive (slug, route_key) for a route based on its CRS filename.
-
-    Mirrors the logic in generate_route_profiles.py so the key matches what was
-    written to profiles_indexed.json and profiles/<world>__<slug>.json.
-    """
-    stem = crs_filename[:-4] if crs_filename.lower().endswith(".crs") else crs_filename
-    # Virtual-world routes embed "<world>__<slug>" in the filename; real-world
-    # routes slugify the whole filename.
-    slug = stem.split("__", 1)[1] if "__" in stem else _slugify_route_name(stem)
-    return slug, f"{world_slug}/{slug}"
 
 
 # ─── v2 routes.json schema helpers ───────────────────────────────────────────
@@ -7088,415 +6625,31 @@ WORLD_CHARACTER = {
 }
 
 
-_ROUTES_CACHE: list[dict] = []
-_ROUTES_INDEX: dict = {}
-_ROUTES_MTIME: float = 0.0
-_ROUTES_LOCK = threading.Lock()
-
-# ─── Canonical surface-segment mapping (MASTER_DECISIONS §1) ───────────────
-# surface_types.json is authored in lowercase today, but training_live loads
-# it as UPPERCASE TACX RoadSurface tokens (_SURFACE_NAME_MAP). Anything that
-# crosses a tier (HTTP / WS) MUST downshift to the canonical lowercase enum:
-# asphalt | gravel | cobble | dirt | sand | unknown. Emit "unknown" for any
-# value outside that enum — never drop.
-_SURFACE_CANONICAL_MAP: dict[str, str] = {
-    # Already-lowercase canonical forms (pass through).
-    "asphalt": "asphalt",
-    "gravel": "gravel",
-    "cobble": "cobble",
-    "dirt": "dirt",
-    "sand": "sand",
-    "unknown": "unknown",
-    # UPPERCASE TACX tokens (from training_live._SURFACE_NAME_MAP leak paths).
-    "ASPHALT": "asphalt",
-    "PAVED": "asphalt",
-    "TARMAC": "asphalt",
-    "COBBLESTONES_HARD": "cobble",
-    "COBBLESTONES_SOFT": "cobble",
-    "BRICK_ROAD": "cobble",
-    "CONCRETE_PLATES": "cobble",
-    "GRAVEL": "gravel",
-    "OFF_ROAD": "gravel",
-    "DIRT": "dirt",
-    "TRAIL": "dirt",
-    "SAND": "sand",
-    "WOODEN_BOARDS": "unknown",
-    "CATTLE_GRID": "unknown",
-    "ICE": "unknown",
-}
 
 
-def _canonical_surface(raw) -> str:
-    """Map any surface token (lower/upper) to the canonical lowercase enum.
-    Unknown inputs fall through to "unknown" rather than silently dropping."""
-    if not raw:
-        return "unknown"
-    s = str(raw).strip()
-    return _SURFACE_CANONICAL_MAP.get(s) or _SURFACE_CANONICAL_MAP.get(s.upper()) or _SURFACE_CANONICAL_MAP.get(s.lower(), "unknown")
 
 
-_SURFACE_TYPES_CACHE: dict | None = None
-_SURFACE_TYPES_MTIME: float = 0.0
-_SURFACE_TYPES_LOCK = threading.Lock()
 
 
-def _load_surface_types_db() -> dict:
-    """Return a cached copy of surface_types.json, reloaded on mtime change.
-
-    Shape: `{"<region>/<slug>": [{start_km, end_km, surface}, ...]}`. Returns
-    an empty dict if the file is missing or malformed — callers fall through
-    to a single "unknown" segment so the frontend always has renderable data.
-    """
-    global _SURFACE_TYPES_CACHE, _SURFACE_TYPES_MTIME
-    path = Path(__file__).parent / "surface_types.json"
-    if not path.exists():
-        return {}
-    try:
-        mtime = path.stat().st_mtime
-    except OSError:
-        mtime = 0.0
-    with _SURFACE_TYPES_LOCK:
-        if _SURFACE_TYPES_CACHE is None or mtime != _SURFACE_TYPES_MTIME:
-            try:
-                _SURFACE_TYPES_CACHE = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as e:
-                _log.error(f"Failed to load surface_types.json: {e}")
-                _SURFACE_TYPES_CACHE = {}
-            _SURFACE_TYPES_MTIME = mtime
-        return _SURFACE_TYPES_CACHE or {}
 
 
-def _route_surface_segments(route_id: str, distance_km: float | None = None,
-                             lap_info: dict | None = None) -> list[dict]:
-    """Canonical `surface_segments` for a given route id.
-
-    Returns a list of `{start_km, end_km, surface}` dicts. Surface values are
-    canonical lowercase (MASTER_DECISIONS §1). When no surface data exists
-    for the route, emits a single "unknown" segment covering 0..distance_km
-    (or empty list when distance is unknown). Never returns None; the
-    frontend always has something to paint.
-
-    v3.6.0-fix29 — when a route carries `lap_route.laps > 1`,
-    `surface_types.json` stores only ONE base-lap's worth of segments while
-    `distance_km` reflects the fully multiplied distance. Tile the base
-    segments `laps` times with `base_km` offsets so lap 2+ does not fall
-    through the frontend's gap-filler as implicit asphalt (bug: Cobbled
-    Classic Sectors × 2, Hidden Cruise 47 × 2, and any `lap_route.laps>1`).
-    """
-    if not route_id:
-        return []
-    db = _load_surface_types_db()
-    raw = db.get(route_id) or []
-    if not raw:
-        if distance_km and distance_km > 0:
-            return [{"start_km": 0.0, "end_km": float(distance_km), "surface": "unknown"}]
-        return []
-    base: list[dict] = []
-    for seg in raw:
-        try:
-            s = float(seg.get("start_km", 0.0) or 0.0)
-            e = float(seg.get("end_km", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            continue
-        if e <= s:
-            continue
-        base.append({
-            "start_km": s,
-            "end_km": e,
-            "surface": _canonical_surface(seg.get("surface")),
-        })
-    # Multi-lap tiling (fix29). Only fires when the caller passes a
-    # `lap_route` dict with `laps > 1`; single-lap routes return base as-is.
-    laps = 1
-    base_km = 0.0
-    if isinstance(lap_info, dict):
-        try:
-            laps = int(lap_info.get("laps", 1) or 1)
-        except (TypeError, ValueError):
-            laps = 1
-        try:
-            base_km = float(lap_info.get("base_km", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            base_km = 0.0
-    if laps <= 1 or base_km <= 0:
-        return base
-    # Tile stride: prefer the base segments' own max end_km over
-    # `lap_route.base_km` — authored data sometimes rounds base_km to 2 dp
-    # (e.g. 11.85) while the segment file carries the unrounded value
-    # (11.859), which would overlap lap 1 into lap 2 if we blindly used
-    # base_km as the offset. The surface data is the canonical base.
-    base_end = max(s["end_km"] for s in base) if base else base_km
-    stride = base_end if base_end > 0 else base_km
-    tiled: list[dict] = []
-    for lap_idx in range(laps):
-        offset = lap_idx * stride
-        for seg in base:
-            tiled.append({
-                "start_km": seg["start_km"] + offset,
-                "end_km": seg["end_km"] + offset,
-                "surface": seg["surface"],
-            })
-    return tiled
 
 
-def _build_routes_index(routes: list[dict]) -> dict:
-    """Build inverted indexes for hot filter fields."""
-    by_id: dict[str, dict] = {}
-    by_region: dict[str, list[int]] = {}
-    by_source: dict[str, list[int]] = {}
-    by_category: dict[str, list[int]] = {}
-    by_primary_surface: dict[str, list[int]] = {}
-    by_terrain: dict[str, list[int]] = {}
-    by_finish: dict[str, list[int]] = {}
-    for i, r in enumerate(routes):
-        rid = r.get("id", "")
-        if rid:
-            by_id[rid] = r
-        by_region.setdefault(r.get("region", ""), []).append(i)
-        by_source.setdefault(r.get("source", ""), []).append(i)
-        by_category.setdefault(r.get("category", ""), []).append(i)
-        by_primary_surface.setdefault(r.get("primary_surface", ""), []).append(i)
-        by_terrain.setdefault(r.get("terrain", ""), []).append(i)
-        by_finish.setdefault(r.get("finish_type", ""), []).append(i)
-    return {
-        "by_id": by_id,
-        "by_region": by_region,
-        "by_source": by_source,
-        "by_category": by_category,
-        "by_primary_surface": by_primary_surface,
-        "by_terrain": by_terrain,
-        "by_finish": by_finish,
-    }
 
 
-def _load_routes_v2(force: bool = False) -> tuple[list[dict], dict]:
-    """Load routes.json v2 with mtime-based invalidation.
-
-    Returns (routes, index). Caches indefinitely; reloads on file mtime change.
-    Thread-safe via _ROUTES_LOCK.
-    """
-    global _ROUTES_CACHE, _ROUTES_INDEX, _ROUTES_MTIME
-    if not ROUTE_DATA.exists():
-        return [], {"by_id": {}, "by_region": {}, "by_source": {}, "by_category": {},
-                    "by_primary_surface": {}, "by_terrain": {}, "by_finish": {}}
-    try:
-        mtime = ROUTE_DATA.stat().st_mtime
-    except OSError:
-        mtime = 0.0
-    with _ROUTES_LOCK:
-        if force or not _ROUTES_CACHE or mtime != _ROUTES_MTIME:
-            try:
-                data = json.loads(ROUTE_DATA.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as e:
-                _log.error(f"Failed to load routes.json: {e}")
-                return _ROUTES_CACHE, _ROUTES_INDEX
-            # Accept either flat list (v2) or legacy dict shape — normalize.
-            if isinstance(data, list):
-                _ROUTES_CACHE = data
-            else:
-                # Legacy shape: {"worlds": [...]}; flatten best-effort so the
-                # cache never ends up in a broken intermediate state.
-                flat = []
-                for w in (data.get("worlds") if isinstance(data, dict) else []) or []:
-                    for r in w.get("routes", []):
-                        flat.append(r)
-                _ROUTES_CACHE = flat
-            # Attach canonical surface_segments to every route entry so the
-            # list endpoint (/api/routes) and the detail endpoint (/api/routes/{id})
-            # both return the spatial data the mini-map needs. Single point of
-            # truth — delegates to `_route_surface_segments` so malformed
-            # `surface_types.json` entries cannot 500 the whole /api/routes
-            # response (QA-CODE #2: the inline float() parse was unguarded).
-            for _r in _ROUTES_CACHE:
-                rid = _r.get("id")
-                if not rid:
-                    continue
-                _r["surface_segments"] = _route_surface_segments(
-                    rid, _r.get("distance_km"), _r.get("lap_route")
-                )
-            _ROUTES_INDEX = _build_routes_index(_ROUTES_CACHE)
-            _ROUTES_MTIME = mtime
-        return _ROUTES_CACHE, _ROUTES_INDEX
 
 
-# Shared climb/flat predicates so the empty-state hint counter and the main
-# pipeline agree on what "climb required" / "no climbs" mean. Previously these
-# were inline and drifted by ~60 routes. Changes must land here, not in two
-# places.
-_CLIMB_CATEGORIES = {"cat1", "cat2", "cat3", "cat4", "hc"}
 
 
-def _is_climb_route(r: dict) -> bool:
-    """True if the route has real climbing content (not just a single kicker).
-
-    Canonical predicate used by both the main pipeline and the empty-state
-    "would_match" counter. Categories are compared case-insensitively so
-    upstream generators emitting "HC" vs "hc" both register as climbs.
-    """
-    cat = (r.get("category") or "").lower()
-    if cat in _CLIMB_CATEGORIES:
-        return True
-    if (r.get("climb_count") or 0) >= 1 and (r.get("max_grade") or 0) >= 4.0:
-        return True
-    if r.get("terrain") == "climb":
-        return True
-    return False
 
 
-def _is_flat_route(r: dict) -> bool:
-    """True if the route is flat enough for a "no climbs today" request.
-    Loosened from max_grade<5 to max_grade<8 so that flat gravel/cobble
-    sportives (which carry short kickers ≥5%) can still satisfy a flat query."""
-    if r.get("terrain") == "climb":
-        return False
-    if (r.get("max_grade") or 0) >= 8.0:
-        return False
-    return True
 
 
-def _route_summary(r: dict) -> dict:
-    """Project a route entry to the lightweight list shape (no crs_path)."""
-    # Prefer the stored value when present — the prior version unconditionally
-    # recomputed at 23 km/h (Z2 average), which overrode any hand-tuned
-    # duration baked into routes.json. Only fall back to the flat-speed
-    # estimator when the stored field is missing/invalid.
-    stored = r.get("est_duration_min_z2")
-    km = r.get("distance_km") or 0
-    if isinstance(stored, (int, float)) and stored and stored > 0:
-        est_duration_min_z2 = int(round(stored))
-    elif km and km > 0:
-        est_duration_min_z2 = int(round(km / 23.0 * 60))
-    else:
-        est_duration_min_z2 = stored
-    # Disk-accurate open locator derived from crs_path (the single source of
-    # truth). The logical `region` above is unreliable for opening — 21 routes
-    # are tagged netherlands_gravel/gravel/etc. but physically live in
-    # courses/gravel_europe/ — so the frontend opens via crs_region + file.
-    # crs_path itself stays out of the list shape (kept lightweight).
-    _crs = r.get("crs_path") or ""
-    return {
-        "id": r.get("id"),
-        "name": r.get("name"),
-        "region": r.get("region"),
-        "crs_region": (os.path.basename(os.path.dirname(_crs)) if _crs else None),
-        "file": os.path.basename(_crs) or None,
-        "source": r.get("source"),
-        "distance_km": r.get("distance_km"),
-        "climb_m": r.get("climb_m"),
-        "max_grade": r.get("max_grade"),
-        "avg_grade_signed": r.get("avg_grade_signed"),
-        "difficulty_score": r.get("difficulty_score"),
-        "category": r.get("category"),
-        "terrain": r.get("terrain"),
-        "finish_type": r.get("finish_type"),
-        "primary_surface": r.get("primary_surface"),
-        "has_gravel": r.get("has_gravel"),
-        "has_cobble": r.get("has_cobble"),
-        "loop": r.get("loop"),
-        "lap_route": r.get("lap_route"),
-        "est_duration_min_z2": est_duration_min_z2,
-        "est_tss": r.get("est_tss"),
-        "tags": r.get("tags", []),
-        "preview_profile": r.get("preview_profile", []),
-        "climb_count": r.get("climb_count", 0),
-        "surface_mix_pct": r.get("surface_mix_pct") or {},
-        "surface_segments": r.get("surface_segments") or [],
-        "primary_climb": r.get("primary_climb"),
-    }
 
 
-def _parse_csv_param(val) -> list[str]:
-    """Parse a comma-separated query param into a list of lowercase tokens."""
-    if not val:
-        return []
-    if isinstance(val, list):
-        raw = ",".join(val)
-    else:
-        raw = str(val)
-    return [t.strip().lower() for t in raw.split(",") if t.strip()]
 
 
-def _apply_route_filters(
-    routes: list[dict],
-    *,
-    source: str | None = None,
-    regions: list[str] | None = None,
-    surfaces: list[str] | None = None,
-    terrains: list[str] | None = None,
-    categories: list[str] | None = None,
-    finishes: list[str] | None = None,
-    min_km: float | None = None,
-    max_km: float | None = None,
-    loop_only: bool = False,
-    lap_only: bool = False,
-    max_difficulty: float | None = None,
-    search: str | None = None,
-) -> list[dict]:
-    """Apply all filter flags; returns the filtered list (order preserved)."""
-    # Derive the real-world region set from the loaded routes so new regions
-    # (like Flanders) auto-register without needing a hardcoded list update.
-    real_world_regions = {r.get("region") for r in routes
-                          if r.get("source") == "real_world" and r.get("region")}
-    # Accept BOTH the UI-facing token "__real_world__" (returned by
-    # /api/routes/regions.real_world_meta.region) and the short "real_world"
-    # alias for robustness.
-    _REAL_WORLD_TOKENS = {"real_world", "__real_world__"}
-    region_set: set[str] | None = None
-    if regions:
-        expanded: set[str] = set()
-        for reg in regions:
-            if reg in _REAL_WORLD_TOKENS:
-                expanded |= real_world_regions
-            else:
-                expanded.add(reg)
-        region_set = expanded
 
-    surface_set = set(surfaces) if surfaces else None
-    terrain_set = set(terrains) if terrains else None
-    category_set = set(categories) if categories else None
-    finish_set = set(finishes) if finishes else None
-    search_lc = search.lower() if search else None
-
-    out = []
-    for r in routes:
-        if source and source != "any":
-            if r.get("source") != source:
-                continue
-        if region_set is not None and r.get("region") not in region_set:
-            continue
-        if surface_set is not None:
-            ps = (r.get("primary_surface") or "").lower()
-            has_g = r.get("has_gravel")
-            has_c = r.get("has_cobble")
-            # A route matches if its primary_surface is in the filter set OR
-            # if it has gravel/cobble sectors for those tokens respectively.
-            match = ps in surface_set
-            if not match and "gravel" in surface_set and has_g:
-                match = True
-            if not match and "cobble" in surface_set and has_c:
-                match = True
-            if not match:
-                continue
-        if terrain_set is not None and (r.get("terrain") or "").lower() not in terrain_set:
-            continue
-        if category_set is not None and (r.get("category") or "").lower() not in category_set:
-            continue
-        if finish_set is not None and (r.get("finish_type") or "").lower() not in finish_set:
-            continue
-        if min_km is not None and (r.get("distance_km") or 0) < min_km:
-            continue
-        if max_km is not None and (r.get("distance_km") or 0) > max_km:
-            continue
-        if loop_only and not r.get("loop"):
-            continue
-        if lap_only and not r.get("lap_route"):
-            continue
-        if max_difficulty is not None and (r.get("difficulty_score") or 0) > max_difficulty:
-            continue
-        if search_lc and search_lc not in (r.get("name") or "").lower():
-            continue
-        out.append(r)
-    return out
 
 
 @app.get("/api/routes")
@@ -7545,148 +6698,8 @@ def api_routes(
     }
 
 
-_CAT_WORDS = {
-    "cat5": "gentle territory",
-    "cat4": "hilly territory",
-    "cat3": "serious climbing",
-    "cat2": "big climb day",
-    "cat1": "brutal territory",
-    "hc": "epic mountain day",
-}
 
 
-def _score_route_for_suggest(
-    r: dict,
-    *,
-    d_mid: float,
-    d_half: float,
-    target_diff_mid: float,
-    diff_max: float | None,
-    surface_filter: set[str] | None,
-    finish_filter: set[str] | None,
-) -> tuple[float, str]:
-    """Compute match score (0..1) and a short conversational rationale.
-
-    Improvements vs the naive v1 (per grill B):
-    - Distance decay is quadratic with a 2.5 km floor on d_half so narrow
-      bands still produce a usable ranking curve instead of a cliff.
-    - Difficulty is rescaled against the user's cap (diff_max) and treated
-      as "no preference" when cap is ≥9 so climbs and flats both surface.
-    - Rationale is conversational ("Great fit …") with climb count + grade
-      hints so cards feel less robotic.
-    """
-    actual_km = r.get("distance_km") or 0
-
-    # --- Distance: quadratic decay, floored AND capped half-width.
-    # Floor (2.5) prevents cliff on narrow bands; cap (30) prevents wide
-    # bands like 10-200 km from scoring everything ≈1.0.
-    d_half_eff = max(d_half, 2.5)
-    d_half_eff = min(d_half_eff, 30.0)
-    delta = abs(actual_km - d_mid)
-    if delta >= d_half_eff * 2.0:
-        distance_fit = 0.0
-    else:
-        # Quadratic: 1 - (delta/half)^2, so falloff is gentler near target,
-        # steeper at edges. Hits 0 at 2*half (well outside the hard filter).
-        t = delta / d_half_eff
-        distance_fit = max(0.0, 1.0 - t * t)
-
-    # --- Difficulty: rescaled against user cap, smooth fade toward 1.0
-    # as diff_max approaches 10 ("no preference"). Avoids the hard cliff
-    # that used to flip the whole ranking at diff_max=9.0.
-    diff_score = r.get("difficulty_score") or 0
-    if diff_max is None:
-        difficulty_fit = 1.0
-    else:
-        band = max(1.0, float(diff_max))
-        raw = max(0.0, min(1.0, 1.0 - abs(diff_score - target_diff_mid) / band))
-        fade = max(0.0, min(1.0, (diff_max - 7.0) / 3.0))  # 7→0, 10→1
-        difficulty_fit = raw + (1.0 - raw) * fade
-
-    ps = (r.get("primary_surface") or "").lower()
-    if surface_filter is None:
-        surface_match = 1.0
-    else:
-        # Match if primary surface is selected, OR the route carries a
-        # has_X flag for a selected surface, OR the surface mix has ≥30%
-        # in any selected surface. (Previously only primary_surface was
-        # checked, so a 70%-gravel asphalt-primary route scored 0.5 even
-        # with surface=["gravel"].)
-        mix = r.get("surface_mix_pct") or {}
-        in_primary = ps in surface_filter
-        in_flag = (
-            ("gravel" in surface_filter and r.get("has_gravel")) or
-            ("cobble" in surface_filter and r.get("has_cobble"))
-        )
-        in_mix = any((mix.get(s) or 0) >= 30 for s in surface_filter)
-        # Pure surface match (primary=X when user picked X) outranks a mixed
-        # match by 0.15 so gravel-primary routes top "has_gravel + asphalt-
-        # primary" mixes on a gravel query. Below that, in_flag/in_mix still
-        # rank above outright non-matches.
-        if in_primary:
-            surface_match = 1.0
-        elif in_flag or in_mix:
-            surface_match = 0.85
-        else:
-            surface_match = 0.4
-
-    ft = (r.get("finish_type") or "").lower()
-    if finish_filter is None:
-        finish_match = 1.0
-    else:
-        finish_match = 1.0 if ft in finish_filter else 0.5
-
-    score = (
-        0.50 * distance_fit
-        + 0.25 * difficulty_fit
-        + 0.10 * surface_match
-        + 0.15 * finish_match
-    )
-
-    # --- Rationale: conversational + differential
-    km_txt = f"{round(actual_km)} km"
-    climb_m = int(r.get("climb_m") or 0)
-    climb_count = int(r.get("climb_count") or 0)
-    max_grade = float(r.get("max_grade") or 0)
-    cat = (r.get("category") or "").lower()
-    pieces = []
-    # Distance framing
-    if delta <= 2.0:
-        pieces.append(f"spot on your {km_txt} target")
-    elif delta <= d_half_eff:
-        pieces.append(f"close to your target ({km_txt})")
-    else:
-        pieces.append(f"{km_txt} ride")
-    # Climb framing
-    if climb_count >= 3 and max_grade >= 8:
-        pieces.append(f"{climb_count} real climbs, max {max_grade:.0f}%")
-    elif climb_m >= 300:
-        pieces.append(f"{climb_m} m of climbing")
-    elif cat in ("flat",) and climb_m < 150:
-        pieces.append("mostly flat")
-    elif cat and cat != "flat":
-        # Map internal category tokens to human words so users don't see
-        # "cat5 territory" on cards.
-        pieces.append(_CAT_WORDS.get(cat, f"{cat} territory"))
-    # Surface framing (only call out when user selected it)
-    if surface_filter and ps in surface_filter:
-        pieces.append(f"{ps} as requested")
-    elif ps in ("gravel", "cobble"):
-        pieces.append(f"{ps} surface")
-    # Combine — keep it under ~14 words
-    sentence = "Good fit: " + ", ".join(pieces[:3]) + "."
-    # Use the SAME recomputed Z2 pace as the summary (23 km/h) so the card
-    # and the rationale agree. Previously the rationale quoted the stored
-    # field, which diverged from the summary's recomputed value for ~60% of
-    # routes and caused "64 min" on the card next to "~81 min at Z2" in the
-    # sentence. We derive here from distance rather than reading the summary
-    # because the scorer predates the projection step.
-    if actual_km > 0:
-        recomputed_min = int(round(actual_km / 23.0 * 60))
-        diff_tail = f" {diff_score:.1f}/10 difficulty · ~{recomputed_min} min at Z2."
-    else:
-        diff_tail = f" {diff_score:.1f}/10 difficulty."
-    return round(score, 3), sentence + diff_tail
 
 
 @app.post("/api/routes/suggest")
@@ -7910,14 +6923,6 @@ async def api_routes_suggest(request: Request):
     return resp
 
 
-def _top_archetypes_for_region(routes_in_region: list[dict], n: int = 5) -> list[str]:
-    """Return up to N representative tags for a region (most common first)."""
-    from collections import Counter
-    tag_counts: Counter[str] = Counter()
-    for r in routes_in_region:
-        for t in r.get("tags", []) or []:
-            tag_counts[t] += 1
-    return [t for t, _ in tag_counts.most_common(n)]
 
 
 @app.get("/api/routes/regions")
@@ -8046,154 +7051,10 @@ def api_virtual_routes(world: str = Query(None)):
     return {"worlds": world_names, "routes": shaped, "total": len(shaped)}
 
 
-def _route_profile_points(lat_lon_grade: list) -> list[dict]:
-    """Convert [[lat,lon,grade],...] to [{d, e, g},...] for elevProfile rendering."""
-    from geodesy import haversine
-    if not lat_lon_grade or len(lat_lon_grade) < 2:
-        return []
-
-    points = []
-    cum_dist_km = 0.0
-    cum_ele = 0.0
-    for i, pt in enumerate(lat_lon_grade):
-        if len(pt) < 3:
-            continue
-        lat, lon, grade = pt[0], pt[1], pt[2]
-        grade = max(-45, min(45, grade))  # cap to realistic range
-        if i > 0:
-            prev = lat_lon_grade[i - 1]
-            d_m = haversine((prev[0], prev[1]), (lat, lon))  # metres
-            d_km = d_m / 1000.0
-            cum_dist_km += d_km
-            cum_ele += d_m * grade / 100.0  # elevation change in metres
-        points.append({"d": round(cum_dist_km, 3), "e": round(cum_ele, 1), "g": round(grade, 1)})
-
-    # Downsample to max 200 points
-    if len(points) > 200:
-        step = max(1, len(points) // 200)
-        sampled = [points[i] for i in range(0, len(points), step)]
-        if sampled[-1] != points[-1]:
-            sampled.append(points[-1])
-        return sampled
-    return points
 
 
-def _load_route_index() -> dict:
-    """Load compact pre-indexed virtual route profiles (~1MB, loaded once)."""
-    return cached("route_index", lambda: (
-        json.loads(ROUTE_PROFILES_INDEX.read_text(encoding="utf-8"))
-        if ROUTE_PROFILES_INDEX.exists() else {}
-    ), ttl=3600)
 
 
-def _load_route_detail(url: str) -> dict | None:
-    """Load full route data from individual file (for detail modal).
-
-    Profile files are named ``<world>__<slug>.json`` (see
-    ``generate_route_profiles.py``). The frontend may pass several URL shapes,
-    so we try them all:
-
-    * ``<world>/<slug>``                      (new canonical form)
-    * ``virtual/<world>/<file>.crs``          (CRS path for virtual worlds)
-    * ``<region>/<File Name>.crs``            (CRS path for real-world rides)
-    * ``/climb-portal/<slug>`` or ``/route/<world>/<slug>``  (legacy)
-    * bare ``<slug>``                         (last resort)
-    """
-    if not url:
-        return None
-    # Strip query strings / fragments and sanitise
-    url = url.split("?", 1)[0].split("#", 1)[0].strip()
-    clean = url.replace("..", "").replace("\\", "/").strip("/")
-    parts = [p for p in clean.split("/") if p]
-    if not parts:
-        return None
-
-    last = parts[-1]
-    # Strip file extension, if any
-    last_stem = last.rsplit(".", 1)[0] if "." in last else last
-
-    # Build candidate (world, slug) pairs to try, in priority order.
-    candidates: list[tuple[str, str]] = []
-
-    # Legacy: "climb-portal/<slug>" anywhere in path
-    if "climb-portal" in parts:
-        candidates.append(("climb-portal", last_stem))
-
-    # Virtual routes: "virtual/<world>/<world>__<slug>.crs"
-    if len(parts) >= 3 and parts[0] == "virtual":
-        world = parts[1]
-        slug = last_stem.split("__", 1)[1] if "__" in last_stem else _slugify_route_name(last_stem)
-        candidates.append((world, slug))
-
-    # Legacy "/route/<world>/<slug>"
-    if "route" in parts:
-        try:
-            idx = parts.index("route")
-            if idx + 2 < len(parts):
-                candidates.append((parts[idx + 1], parts[idx + 2]))
-        except ValueError:
-            pass
-
-    # New canonical form: "<world>/<slug>" (exact match to index keys)
-    if len(parts) == 2:
-        candidates.append((parts[0], parts[1]))
-
-    # CRS path for real-world rides: "<region>/<File Name>.crs"
-    if len(parts) >= 2:
-        world = parts[-2]
-        # When the filename embeds "<world>__<slug>" use that slug directly,
-        # otherwise slugify the whole stem (matches generate_route_profiles.py).
-        if "__" in last_stem:
-            slug = last_stem.split("__", 1)[1]
-        else:
-            slug = _slugify_route_name(last_stem)
-        candidates.append((world, slug))
-
-    # Bare slug (no world): fall back to any file whose stem contains the slug.
-    # Handled after the direct lookups below.
-
-    seen: set[tuple[str, str]] = set()
-    for world, slug in candidates:
-        if not world or not slug:
-            continue
-        # Sanitise — files are on disk so block traversal
-        world_safe = re.sub(r"[^A-Za-z0-9_\-]", "", world)
-        slug_safe = re.sub(r"[^A-Za-z0-9_\-]", "", slug)
-        key = (world_safe, slug_safe)
-        if key in seen:
-            continue
-        seen.add(key)
-        path = ROUTE_PROFILES_DIR / f"{world_safe}__{slug_safe}.json"
-        if path.exists():
-            try:
-                return json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                pass
-
-    # Fallback: scan for any profile whose filename contains the last slug.
-    # This handles ambiguous inputs like a bare slug with no world prefix.
-    if last_stem and ROUTE_PROFILES_DIR.exists():
-        # If the bare stem is itself "<world>__<slug>", split on the first
-        # "__" and try that pair directly.
-        if "__" in last_stem:
-            world_guess, slug_guess = last_stem.split("__", 1)
-            world_safe = re.sub(r"[^A-Za-z0-9_\-]", "", world_guess).replace("-", "_")
-            slug_safe = re.sub(r"[^A-Za-z0-9_\-]", "", slug_guess)
-            path = ROUTE_PROFILES_DIR / f"{world_safe}__{slug_safe}.json"
-            if path.exists():
-                try:
-                    return json.loads(path.read_text(encoding="utf-8"))
-                except (json.JSONDecodeError, OSError):
-                    pass
-        fallback_slug = _slugify_route_name(last_stem)
-        if fallback_slug:
-            needle = f"__{fallback_slug}.json"
-            for candidate in ROUTE_PROFILES_DIR.glob(f"*{needle}"):
-                try:
-                    return json.loads(candidate.read_text(encoding="utf-8"))
-                except (json.JSONDecodeError, OSError):
-                    continue
-    return None
 
 
 @app.get("/api/profiles-bulk")
@@ -8253,70 +7114,8 @@ def api_route_profile(url: str = Query(...)):
     }
 
 
-def _gradient_to_power_factor(grade_pct: float) -> float:
-    """Map a terrain gradient (%) to a fraction of FTP for climb-ZWO generation.
-
-    Single source of truth — previously duplicated byte-for-byte between the CRS
-    and virtual-route climb ZWO builders.
-    """
-    if grade_pct >= 10: return 0.95
-    if grade_pct >= 7:  return 0.90
-    if grade_pct >= 5:  return 0.85
-    if grade_pct >= 3:  return 0.75
-    if grade_pct >= 1:  return 0.68
-    if grade_pct >= -2: return 0.60
-    return 0.50
 
 
-def _build_climb_zwo(points: list[dict], course_name: str, warmup_min: int = 10) -> str:
-    """Generate ZWO XML string from profile points. Shared by CRS and virtual routes."""
-    ftp = config.ATHLETE_FTP_W
-    total_dist = points[-1]["d"] if points else 0
-    total_climb = sum(max(0, points[i]["e"] - points[i-1]["e"]) for i in range(1, len(points)))
-
-    segments_xml = ""
-    if warmup_min > 0:
-        segments_xml += f'    <Warmup Duration="{warmup_min * 60}" PowerLow="0.45" PowerHigh="0.65"/>\n'
-
-    num_segs = min(40, max(10, len(points) // 5))
-    seg_step = max(1, len(points) // num_segs)
-
-    for i in range(0, len(points) - seg_step, seg_step):
-        j = min(i + seg_step, len(points) - 1)
-        dist_km = points[j]["d"] - points[i]["d"]
-        if dist_km <= 0:
-            continue
-        avg_grad = sum(points[k]["g"] for k in range(i, j + 1)) / (j - i + 1)
-
-        power_pct = _gradient_to_power_factor(avg_grad)
-
-        if avg_grad >= 5:    speed_kmh = max(8, 20 - avg_grad * 1.2)
-        elif avg_grad >= 0:  speed_kmh = 25
-        else:                speed_kmh = min(45, 25 - avg_grad * 2)
-
-        duration_sec = max(30, int(dist_km / speed_kmh * 3600))
-        segments_xml += f'    <SteadyState Duration="{duration_sec}" Power="{power_pct:.2f}"/>\n'
-
-    # v3.7.0 — a Cooldown ramps PowerLow -> PowerHigh, so 0.40 -> 0.60 was an
-    # ascending "cooldown": it finished the rider at 60 % FTP. Same defect the
-    # library carried; invisible to the library test because this is generated
-    # into an HTTP response rather than written to workouts/.
-    segments_xml += '    <Cooldown Duration="300" PowerLow="0.60" PowerHigh="0.45"/>\n'
-
-    from xml.sax.saxutils import escape as xml_escape
-    desc = f"Climb simulation: {course_name}. {total_dist:.1f}km, {total_climb:.0f}m elevation."
-    if warmup_min > 0:
-        desc = f"{warmup_min}min warmup + {desc}"
-
-    return f"""<?xml version='1.0' encoding='utf-8'?>
-<workout_file>
-  <author>Domestique</author>
-  <name>{xml_escape(course_name)}</name>
-  <description>{xml_escape(desc)}</description>
-  <sportType>bike</sportType>
-  <workout>
-{segments_xml}  </workout>
-</workout_file>"""
 
 
 @app.get("/api/climb-workout")
@@ -8347,139 +7146,14 @@ def api_climb_workout(url: str = Query(...), warmup: int = Query(10)):
 # DOWNLOAD APIs
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _safe_path(base: Path, *parts: str) -> Path | None:
-    """Resolve path and verify it's inside the base directory (prevent traversal + symlink escape)."""
-    try:
-        path = base.joinpath(*parts).resolve()
-        base_resolved = base.resolve()
-        # Use is_relative_to (Python 3.9+) for robust check
-        if hasattr(path, 'is_relative_to'):
-            if not path.is_relative_to(base_resolved):
-                return None
-        else:
-            # Fallback: string prefix with trailing separator
-            if not (str(path) + "/").startswith(str(base_resolved) + "/"):
-                return None
-        return path
-    except (ValueError, OSError):
-        return None
 
 
-def _capacity_cap_active(pm, force: bool = False) -> bool:
-    """task #24: True when the measured-capacity short-rep cap should apply to a
-    served ZWO/FIT for this profile. Requires a trustworthy MEASURED Pmax
-    (pmax_is_set), power target_mode (hr prescriptions are untouched --
-    target_mode wins), and the toggle == "on" (or ``force`` for a PROMPT
-    APPROVE with ?cap=1). "prompt"/"off" do NOT auto-apply on their own."""
-    try:
-        if not pm.pmax_is_set:
-            return False
-        if pm.target_mode == "hr":
-            return False
-        if force:
-            return True
-        return pm.cap_short_intervals == "on"
-    except Exception:
-        return False
 
 
-def _cap_zwo_bytes(raw: bytes, filename: str, pm) -> bytes:
-    """Apply the measured-capacity cap to ZWO bytes, or return them UNCHANGED.
-
-    Gate is the CALLER's responsibility via ``_capacity_cap_active`` -- this
-    only does the transform once the caller decided to. Ramp-test exemption is
-    handled inside ``cap_zwo_text`` via the ``ftp_test_ramp*`` filename guard
-    (the grill-validated ramp marker -- the content classifier has no distinct
-    "ramp" primary to add). On any decode hiccup the original bytes are
-    returned (never corrupt a download)."""
-    import capacity_cap as _cc
-    try:
-        txt = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return raw
-    txt2, n, _ = _cc.cap_zwo_text(
-        txt, float(pm.ftp), float(pm.cp), float(pm.pmax_w),
-        filename=filename)
-    if n == 0:
-        return raw  # byte-identical no-op
-    return txt2.encode("utf-8")
 
 
-def _wrap_zwo_outdoor(xml_text: str, transit_min: int, spin_min: int) -> str:
-    """G1 (v2.1) — frame a prescribed indoor block inside a real OUTDOOR ride:
-    prepend a flat transit warmup and append a spin-home cooldown. The prescribed
-    body is passed through UNCHANGED (string-level insert, not re-serialized, so
-    the middle is byte-identical). Export-only: this is the download path, so it
-    never touches the planner's accounted/weekly TSS — the transit + spin-home are
-    OFF-PLAN additional easy minutes by construction."""
-    t_s = max(0, int(transit_min)) * 60
-    s_s = max(0, int(spin_min)) * 60
-    out = xml_text
-    if t_s and "<workout>" in out:
-        out = out.replace(
-            "<workout>",
-            f'<workout>\n        <Warmup Duration="{t_s}" PowerLow="0.40" '
-            f'PowerHigh="0.60"/>  <!-- G1 transit to climb (off-plan) -->', 1)
-    if s_s and "</workout>" in out:
-        out = out.replace(
-            "</workout>",
-            f'        <Cooldown Duration="{s_s}" PowerLow="0.50" PowerHigh="0.40"/>'
-            f'  <!-- G1 spin home (off-plan) -->\n    </workout>', 1)
-    return out
 
 
-def _zwo_download_response(path, filename: str, outdoor: int,
-                          transit_min: int, spin_min: int,
-                          cap_active: bool = False):
-    """Shared ZWO download: plain FileResponse, or (G1) an outdoor-wrapped copy.
-
-    task #24: when ``cap_active`` the served body is first capped to the
-    rider's measured-power envelope (short reps only). A no-op cap (nothing
-    qualifies) still returns the byte-identical FileResponse, so the OFF /
-    non-qualifying paths are unchanged."""
-    plain = FileResponse(
-        path, filename=filename, media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
-    capped_bytes = None
-    if cap_active:
-        from profile_manager import ProfileManager
-        try:
-            raw = path.read_bytes()
-            capped = _cap_zwo_bytes(raw, filename, ProfileManager.get())
-            capped_bytes = capped if capped is not raw and capped != raw else None
-        except Exception:
-            capped_bytes = None
-    if not outdoor:
-        if capped_bytes is None:
-            return plain  # byte-identical to the file on disk
-        return Response(
-            capped_bytes, media_type="application/octet-stream",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'})
-    try:
-        if capped_bytes is not None:
-            body_text = capped_bytes.decode("utf-8")
-        else:
-            body_text = path.read_text(encoding="utf-8")
-        wrapped = _wrap_zwo_outdoor(body_text, transit_min, spin_min)
-    except Exception:
-        return plain if capped_bytes is None else Response(
-            capped_bytes, media_type="application/octet-stream",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'})
-    out_name = filename.rsplit(".", 1)[0] + "_outdoor.zwo"
-    return Response(
-        wrapped, media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{out_name}"'})
-
-
-def _cap_active_for_download(cap: int) -> bool:
-    """task #24: resolve the ZWO/FIT serve cap for the active profile.
-    ``cap=1`` (PROMPT APPROVE) forces the cap; otherwise the "on" toggle. Both
-    still require pmax_is_set + power mode (``_capacity_cap_active``)."""
-    try:
-        from profile_manager import ProfileManager
-        return _capacity_cap_active(ProfileManager.get(), force=bool(cap))
-    except Exception:
-        return False
 
 
 @app.get("/api/download/zwo/{filename}")
@@ -8503,7 +7177,7 @@ def download_zwo_flat(filename: str, outdoor: int = Query(0),
     task #24: ``cap=1`` (PROMPT APPROVE) or the profile "on" toggle caps short
     reps to the rider's measured-power envelope for THIS download only.
     """
-    path = _safe_path(WORKOUT_DIR, filename)
+    path = _safe_path(active_workout_dir(), filename)
     if not path or not path.exists():
         return JSONResponse({"error": "not found"}, 404)
     return _zwo_download_response(path, filename, outdoor, transit_min, spin_min,
@@ -8518,9 +7192,9 @@ def download_zwo(category: str, filename: str, outdoor: int = Query(0),
     G1 (v2.1): ``outdoor=1`` adds an off-plan transit warmup + spin-home cooldown.
     task #24: ``cap=1``/on toggle caps short reps to measured power."""
     # Flat layout first, legacy category/file fallback
-    path = _safe_path(WORKOUT_DIR, filename)
+    path = _safe_path(active_workout_dir(), filename)
     if not path or not path.exists():
-        path = _safe_path(WORKOUT_DIR, category, filename)
+        path = _safe_path(active_workout_dir(), category, filename)
     if not path or not path.exists():
         return JSONResponse({"error": "not found"}, 404)
     return _zwo_download_response(path, filename, outdoor, transit_min, spin_min,
@@ -8641,7 +7315,7 @@ def download_course_by_id(region: str, filename: str):
 
 @app.get("/api/download/gpx/{region}/{filename}")
 def download_gpx(region: str, filename: str):
-    path = _safe_path(GPX_DIR, region, filename)
+    path = _safe_path(active_gpx_dir(), region, filename)
     if not path or not path.exists():
         return JSONResponse({"error": "not found"}, 404)
     return FileResponse(path, filename=filename, media_type="application/gpx+xml")
@@ -8815,7 +7489,7 @@ def _write_update_check_cache(payload):
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         body = dict(payload)
-        body["cache_written_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        body["cache_written_at"] = clock.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         p.write_text(json.dumps(body, indent=2), encoding="utf-8")
     except Exception:
         pass
@@ -9260,7 +7934,7 @@ def _icu_push_note_result(res: dict) -> None:
     """Record a reconcile result (+timestamp) for the status endpoint."""
     global _icu_push_last_result
     try:
-        _icu_push_last_result = {"at": datetime.now().isoformat(), **res}
+        _icu_push_last_result = {"at": clock.now().isoformat(), **res}
     except Exception:
         pass
 
@@ -9347,6 +8021,24 @@ def _icu_push_cancel_pending() -> None:
 _icu_push_last_daily: "str | None" = None
 
 
+def _after_background_sync() -> None:
+    """db.post_sync_callback: what follows each pass of the 30-min sync loop.
+    The daily calendar reconcile, and the F5 eFTP auto-apply (opt-in, behind
+    the plausibility guard), which /api/weekly-plan used to run on a read."""
+    _icu_push_daily_from_sync()
+    try:
+        from profile_manager import ProfileManager
+        if not ProfileManager.get().prefs.get("eftp_auto_apply", False):
+            return      # opt-in; don't call intervals.icu every pass for nothing
+        # 14 days, so a 7-day streak ending yesterday stays in the window.
+        auto = _guarded_check_and_auto_apply_eftp(fetch_wellness(14))
+        if auto:
+            _log.info(f"EVENT=eftp_auto_applied {auto}")
+            clear_cache()
+    except Exception as _e:  # noqa: BLE001 - never break the sync loop
+        _log.debug(f"eftp auto-apply skipped: {_e}")
+
+
 def _icu_push_daily_from_sync() -> None:
     """db.post_sync_callback (boot-registered): ONE reconcile per calendar
     day, riding the 30-min sync loop (D3b). This is what rolls the 14-day
@@ -9356,7 +8048,7 @@ def _icu_push_daily_from_sync() -> None:
     try:
         if not _icu_push_sync_enabled():
             return
-        today = date.today().isoformat()
+        today = clock.today().isoformat()
         if _icu_push_last_daily == today:
             return
         _icu_push_last_daily = today
@@ -9505,7 +8197,7 @@ def api_calendar_push_workout(body: "dict | None" = None):
         # date REQUIRED for both sources (amendment 1): planner needs it to locate
         # the day; library is the user-picked target. today..+365 — past/garbage
         # rejected so nothing stale or malformed reaches the calendar.
-        today = date.today()
+        today = clock.today()
         try:
             target = date.fromisoformat(date_str)
         except (ValueError, TypeError):
@@ -9514,11 +8206,11 @@ def api_calendar_push_workout(body: "dict | None" = None):
             return {"error": "date_out_of_range"}
         date_iso = target.isoformat()
 
-        workout_dir = Path(WORKOUT_DIR)
+        workout_dir = Path(active_workout_dir())
         if source == "library":
             # amendment 5: zwo_file is CLIENT-supplied → reject traversal BEFORE
             # any read (_safe_path returns None when the resolved path escapes
-            # WORKOUT_DIR, e.g. "../../etc/passwd"). _build_event re-validates too,
+            # active_workout_dir(), e.g. "../../etc/passwd"). _build_event re-validates too,
             # but failing fast here gives the clear message.
             if not _safe_path(workout_dir, zwo_file):
                 return {"error": "invalid_workout_file"}
@@ -9673,7 +8365,7 @@ def api_update_check(force: int = Query(0)):
     from packaging.version import parse as _vparse, InvalidVersion
 
     plat = sys.platform
-    now = datetime.now(timezone.utc)
+    now = clock.now(timezone.utc)
     cache = _read_update_check_cache()
 
     def _overlay_live_current(out):
@@ -9908,7 +8600,7 @@ def update_settings(request_body: dict):
         from datetime import date as _date
         _hint = str(request_body.get("lthr_source_hint") or "").strip().lower()
         athlete_updates["lthr_source"] = "icu" if _hint == "icu" else "manual"
-        athlete_updates["lthr_source_date"] = _date.today().isoformat()
+        athlete_updates["lthr_source_date"] = clock.today().isoformat()
 
     # Red-team S1/S2: validate lthr/max_hr HERE with the ranges that actually
     # PERSIST. save_athlete accepts max_hr [120,240] but the _set_max_hr write
@@ -10101,10 +8793,10 @@ def _hrr_rhr_anchor(pm) -> "tuple[int | None, str]":
         return str(w.get("id") or "")[:10]
     dated = sorted((( _day(w), int(w["restingHR"]) ) for w in wl
                     if w.get("restingHR")), reverse=True)
-    recent14 = [v for d, v in dated[:60] if d >= (date.today() - timedelta(days=14)).isoformat()]
+    recent14 = [v for d, v in dated[:60] if d >= (clock.today() - timedelta(days=14)).isoformat()]
     if len(recent14) < 4:
         return None, "needs at least 4 resting-HR samples in the last 14 days"
-    in_window = [v for d, v in dated if d >= (date.today() - timedelta(days=window)).isoformat()]
+    in_window = [v for d, v in dated if d >= (clock.today() - timedelta(days=window)).isoformat()]
     src = in_window if in_window else recent14
     src = sorted(src)
     mid = len(src) // 2
@@ -10243,7 +8935,7 @@ def api_metrics_latest():
 async def api_metrics_log(request: Request):
     """Manually log a metric value (VO2max, body_fat, etc.)."""
     body = await _get_json_body(request)
-    dt = body.get("date", date.today().isoformat())
+    dt = body.get("date", clock.today().isoformat())
     metric = body.get("metric")
     value = body.get("value")
     if not metric or value is None:
@@ -10278,7 +8970,7 @@ async def api_daily_log_post(request: Request):
     hooper_index ≥ 18 = significant accumulated fatigue (IMPL-B G6 gate).
     """
     body = await _get_json_body(request)
-    dt = body.get("date", date.today().isoformat())
+    dt = body.get("date", clock.today().isoformat())
     try:
         entry = db.upsert_daily_log(
             dt=dt,
@@ -10362,7 +9054,7 @@ def api_blood_markers():
 async def api_blood_markers_post(request: Request):
     """Add a blood test result."""
     body = await _get_json_body(request)
-    dt = body.get("date", date.today().isoformat())
+    dt = body.get("date", clock.today().isoformat())
     marker = body.get("marker")
     value = body.get("value")
     if not marker or value is None:
@@ -10387,7 +9079,7 @@ def api_power_curve(days: int = Query(90), compare_days: int = Query(365)):
     }
 
     activities = db.query_activities(days=max(days, compare_days))
-    today = date.today()
+    today = clock.today()
     cutoff_current = (today - timedelta(days=days)).isoformat()
     cutoff_compare = (today - timedelta(days=compare_days)).isoformat()
 
@@ -10438,13 +9130,13 @@ def api_gpx_data(region: str, filename: str):
     if ".." in region or "/" in region or ".." in filename or "/" in filename:
         return JSONResponse({"error": "invalid path"}, 400)
     gpx_name = filename.rsplit(".", 1)[0] + ".gpx" if "." in filename else filename + ".gpx"
-    path = _safe_path(GPX_DIR, region, gpx_name)
+    path = _safe_path(active_gpx_dir(), region, gpx_name)
     if not path or not path.exists():
-        path = _safe_path(GPX_DIR, region, filename)
-    if (not path or not path.exists()) and (GPX_DIR / region).is_dir():
+        path = _safe_path(active_gpx_dir(), region, filename)
+    if (not path or not path.exists()) and (active_gpx_dir() / region).is_dir():
         # Try fuzzy match — find GPX with same stem prefix
         stem = filename.rsplit(".", 1)[0] if "." in filename else filename
-        for gpx_file in (GPX_DIR / region).glob("*.gpx"):
+        for gpx_file in (active_gpx_dir() / region).glob("*.gpx"):
             if gpx_file.stem.lower().startswith(stem[:20].lower()):
                 path = gpx_file
                 break
@@ -10514,271 +9206,68 @@ def api_gpx_data(region: str, filename: str):
 # WEEKLY MESOCYCLE API
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _read_stored_plan() -> "dict | None":
+    """current_plan.json, or None when there is none or it does not parse."""
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return None
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _stored_week_view(plan: "dict | None", week_offset: int = 0):
+    """The ISO week ``week_offset`` weeks from today's, as ``plan`` stores it:
+    the one week_view.WeekView every card reads."""
+    import week_view as _wv
+
+    start, _end = _wv.iso_week(clock.today(), week_offset)
+    try:
+        lib_by_file = _wv.library_by_file(tp.load_workout_library())
+    except Exception:  # noqa: BLE001
+        lib_by_file = {}
+    try:
+        classifications = tp._load_content_classifications() or {}
+    except Exception:  # noqa: BLE001
+        classifications = {}
+    return _wv.build(
+        plan, start, lib_by_file, tp._session_type_from_row,
+        naming=lambda zf: _session_naming_lookup(zf, classifications, lib_by_file),
+        offset=week_offset)
+
+
 @app.get("/api/weekly-plan")
 def api_weekly_plan(week_offset: int = Query(0)):
-    """Generate or retrieve weekly mesocycle plan.
-    week_offset=0 → current week, -1 → last week, 1 → next week.
+    """The stored week, as one view (src/week_view.py). week_offset=0 is the
+    current ISO week, -1 last week, 1 next week.
+
+    Until 2026-09-14 this ran a second planner on every GET and served its
+    regenerated target as the home badge and the rollup; the stored week's
+    sessions were overlaid by date and days before the plan were filled with
+    sessions nobody was given (notes/review/http.md HTTP-2). It reads the
+    plan on disk now, and a week with no plan on record says so:
+    tss_target None, every day a placeholder with on_record False.
     """
-
     training = cached("training", get_today_metrics)
-    current_ctl = training.get("ctl") or 30
-
-    # Check for active plan to get current phase
-    current_phase = None
-    json_path = _plan_dir() / "current_plan.json"
-    if json_path.exists():
-        try:
-            with open(json_path, encoding="utf-8") as f:
-                plan = json.load(f)
-            today = date.today() + timedelta(weeks=week_offset)
-            today_str = today.isoformat()
-            for p in plan.get("phases", []):
-                if p.get("start", "") <= today_str <= p.get("end", ""):
-                    current_phase = tp.Phase(
-                        name=p["name"], start=date.fromisoformat(p["start"]),
-                        end=date.fromisoformat(p["end"]), weeks=p.get("weeks", 1),
-                        focus=p.get("focus", ""), weekly_tss_target=p.get("weekly_tss", current_ctl * 7),
-                        z2_pct=70, hit_per_week=p.get("hit_per_week", 2),
-                        session_types=p.get("session_types", ["z2", "threshold", "vo2max", "sweetspot", "overunder", "tempo", "sprint"]),
-                    )
-                    break
-        except (json.JSONDecodeError, OSError, KeyError):
-            pass
-
-    # Load goal from current_plan.json if available
-    goal = None
+    current_ctl = _planning_ctl()
+    plan = _read_stored_plan()
+    result = _stored_week_view(plan, week_offset).as_weekly_plan()
     try:
-        if json_path.exists():
-            with open(json_path, encoding="utf-8") as f:
-                plan_data = json.load(f)
-            g = plan_data.get("goal", {})
-            # P5 (v4.1.0): restore available_days + daily_max_hours from the
-            # persisted plan if present. Fall back to [0..6]-minus-rest_days
-            # when missing (pre-v4.1 plans) to avoid the Mon-drop bug where
-            # the old default [1..6] silently turned Monday into a rest day
-            # that wasn't in the user's rest_days list.
-            rest_days_val = g.get("rest_days", [0])
-            raw_available = g.get("available_days")
-            if raw_available is not None:
-                available_days_val = list(raw_available)
-            else:
-                available_days_val = [d for d in range(7) if d not in rest_days_val]
-            raw_daily = g.get("daily_max_hours") or {}
-            daily_max_val = {}
-            for k, v in raw_daily.items():
-                try:
-                    daily_max_val[int(k)] = float(v)
-                except (TypeError, ValueError):
-                    continue
-            goal = tp.Goal(
-                goal_type=g.get("type", g.get("goal_type", "general")),  # JSON saves as "type"
-                hours_per_week=g.get("hours_per_week", 8.0),
-                max_weekday_hours=g.get("max_weekday_hours", 2.0),
-                max_weekend_hours=g.get("max_weekend_hours", 3.5),
-                rest_days=rest_days_val,
-                available_days=available_days_val,
-                daily_max_hours=daily_max_val,
-                plan_weeks=g.get("plan_weeks", 0),
-                longest_ride_h_90d=g.get("longest_ride_h_90d"),
-                last_ftp_test_date=g.get("last_ftp_test_date"),
-            )
-        else:
-            goal = tp.Goal(goal_type="general", hours_per_week=8.0)
-    except Exception:
-        goal = tp.Goal(goal_type="general", hours_per_week=8.0)
-    # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
-    if goal.longest_ride_h_90d is None:
-        goal.longest_ride_h_90d = _longest_ride_h_90d()
-
-    # P1 (v4.1.0): feed cross-week used_names from the persisted plan so
-    # /api/weekly-plan picks up the same 6-week sliding-window dedupe that
-    # generate_plan uses. Without this, the simple weekly planner gets a
-    # fresh empty set on every request → the UI weekly card was handing
-    # the user the same threshold workout week after week.
-    cross_week_used_names: set[str] = set()
-    try:
-        if json_path.exists():
-            with open(json_path, encoding="utf-8") as f:
-                _persist = json.load(f)
-            today = date.today() + timedelta(weeks=week_offset)
-            today_str = today.isoformat()
-            # Window: sessions from the last 6 weeks of the stored plan
-            # (mirrors generate_plan's sliding-window ≥6 stale threshold).
-            window_start = (today - timedelta(weeks=6)).isoformat()
-            for w_json in _persist.get("weeks", []):
-                if w_json.get("end", "") < window_start:
-                    continue
-                if w_json.get("start", "") > today_str:
-                    continue
-                for s_json in w_json.get("sessions", []):
-                    nm = s_json.get("zwo_name") or ""
-                    if nm:
-                        cross_week_used_names.add(nm)
-    except Exception as _e:
-        _log.debug(f"weekly-plan used_names rollup failed: {_e}")
-
-    week = tp.generate_weekly_plan(
-        goal=goal, current_phase=current_phase,
-        current_ctl=current_ctl,
-        used_names=cross_week_used_names,
-    )
-
-    # Match ZWO files for every non-rest session
-    try:
-        library = tp.load_workout_library()
-        for i, s in enumerate(week.sessions):
-            if s.session_type == "rest" or getattr(s, "zwo_file", ""):
-                continue
-            try:
-                tp.match_zwo(
-                    s, library,
-                    week_num=week.week_num, day_idx=i,
-                    used_names=cross_week_used_names,
-                    hr_bias=_hr_bias(),
-                )
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    # fix26 §6.4/§6.8/§6.12 — merge status fields from stored current_plan.json.
-    # /api/weekly-plan regenerates the week on-the-fly from the goal/phase, but
-    # user-moved slots / done statuses / dismissed flags live in the stored
-    # plan JSON. Without this merge the UI would show the regen'd week without
-    # any of the user's persisted edits and the drag-to-move would appear to
-    # have no effect.
-    stored_by_day: dict[str, dict] = {}
-    try:
-        json_path_sess = _plan_dir() / "current_plan.json"
-        if json_path_sess.exists():
-            with open(json_path_sess, encoding="utf-8") as f:
-                stored_plan = json.load(f)
-            # P4 (v4.1.0) — merge by DATE OVERLAP (not just ISO-week match).
-            # The stored plan's weeks may start on Sat (legacy) or Mon (new
-            # plans). Our weekly-plan reply is always Mon–Sun. Matching on
-            # ISO-week alone silently drops 5 of 7 days of merge coverage
-            # when stored weeks started on Sat — because week 1 Sat is in
-            # ISO week N, but week 2 Mon–Sun is in ISO week N+1. Iterate
-            # EVERY stored session and key by day ISO directly — that guarantees
-            # the user_moved/done/dismissed fields round-trip regardless of
-            # the stored-week boundary convention.
-            week_start_iso = week.start.isoformat()
-            week_end_iso = week.end.isoformat()
-            for w_json in stored_plan.get("weeks", []):
-                for s_json in w_json.get("sessions", []):
-                    day_iso = s_json.get("day", "")
-                    if not day_iso:
-                        continue
-                    if week_start_iso <= day_iso <= week_end_iso:
-                        stored_by_day[day_iso] = s_json
-    except Exception as _e:
-        _log.debug(f"weekly-plan stored merge failed: {_e}")
-
-    # v4.1.1 FIX-PLANNER B: build a ZWO→metadata index once so every session
-    # can surface zone_dist + score without re-parsing the library.
-    _lib_by_file: dict[str, dict] = {}
-    try:
-        for _w in tp.load_workout_library():
-            _fname = _w.get("File")
-            if _fname:
-                _lib_by_file[_fname] = _w
-    except Exception:
-        _lib_by_file = {}
-
-    # v1.0.4 IMPL-WIRING: load content classifications once so every session
-    # can surface display_name (Layer 3) without re-reading the JSON.
-    try:
-        _classifications = tp._load_content_classifications() or {}
-    except Exception:
-        _classifications = {}
-
-    def _session_out(s):
-        day_iso = s.day.isoformat()
-        stored = stored_by_day.get(day_iso) or {}
-        zwo_file = stored.get("zwo_file") or getattr(s, "zwo_file", "")
-        # v1.0.4 IMPL-WIRING — resolve canonical title + actual library duration.
-        display_name, zwo_duration_min = _session_naming_lookup(
-            zwo_file, _classifications, _lib_by_file,
-        )
-        out = {
-            "day": day_iso,
-            "day_name": s.day_name,
-            "session_type": stored.get("session_type") or s.session_type,
-            "duration_min": stored.get("duration_min", s.duration_min),
-            "tss_estimate": stored.get("tss_estimate", s.tss_estimate),
-            "description": stored.get("description") or s.description,
-            "zwo_file": zwo_file,
-            "zwo_name": stored.get("zwo_name") or getattr(s, "zwo_name", ""),
-            "display_name": display_name,
-            "zwo_duration_min": zwo_duration_min,
-            # fix26 §6 — status + move + completion round-trips
-            "status": stored.get("status", "pending"),
-            "user_moved": stored.get("user_moved", False),
-            "moved_from": stored.get("moved_from", ""),
-            "completion_matches": stored.get("completion_matches") or None,
-            "dismissed_at": stored.get("dismissed_at", ""),
-            # issue #7 — race day flag + meta (name/km/climb/type/priority).
-            "is_race": stored.get("is_race", getattr(s, "is_race", False)),
-            "race": stored.get("race") or getattr(s, "race", None),
-        }
-        # v4.1.1 FIX-PLANNER B: per-session zone_dist from the ACTUAL ZWO.
-        meta = _lib_by_file.get(zwo_file) if zwo_file else None
-        if meta:
-            out["zone_dist"] = {
-                "z1": meta.get("Z1%", 0), "z2": meta.get("Z2%", 0),
-                "z3": meta.get("Z3%", 0), "z4": meta.get("Z4%", 0),
-                "z5": meta.get("Z5%", 0), "z6": meta.get("Z6%", 0),
-            }
-            out["score"] = meta.get("Score")
-            out["protocol"] = meta.get("Protocol")
-            # v3.4.5 — matched FILE's TSS (index row), so the day modal can show
-            # what the rider actually rides; tss_estimate stays the slot budget.
-            out["zwo_tss"] = meta.get("TSS")
-        else:
-            out["zone_dist"] = None
-            out["score"] = None
-            out["zwo_tss"] = None
-        return out
-
-    result = {
-        "week_num": week.week_num,
-        "start": week.start.isoformat(),
-        "end": week.end.isoformat(),
-        "phase": week.phase,
-        "tss_target": week.tss_target,
-        "is_stepback": week.is_stepback,
-        "sessions": [_session_out(s) for s in week.sessions],
-    }
-
-    # Add event readiness + eFTP drift if plan exists
-    try:
-        json_path = _plan_dir() / "current_plan.json"
-        if json_path.exists():
-            with open(json_path, encoding="utf-8") as f:
-                plan = json.load(f)
+        if plan:
             g = plan.get("goal", {})
-            if g.get("event_date"):
-                plan_goal = tp.Goal(
-                    goal_type=g.get("type", "general"),
-                    target_date=date.fromisoformat(g["event_date"]),
-                    event_name=g.get("event_name", ""),
-                    event_km=g.get("event_km", 0),
-                    event_climb_m=g.get("event_climb", 0),
-                    event_type=g.get("event_type", "granfondo"),
-                    hours_per_week=g.get("hours_per_week", 8),
-                    longest_ride_h_90d=g.get("longest_ride_h_90d"),
-                    last_ftp_test_date=g.get("last_ftp_test_date"),
-                )
+            plan_goal = tp.goal_from_dict(g)
+            # Readiness needs an event date that parses; a corrupt one used to
+            # raise here and show none, and must not now show 100%.
+            if plan_goal.target_date:
                 # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
                 if plan_goal.longest_ride_h_90d is None:
                     plan_goal.longest_ride_h_90d = _longest_ride_h_90d()
                 result["event_readiness"] = tp.compute_event_readiness(plan_goal, current_ctl)
 
-        # eFTP drift detection (+ F5 auto-apply after 7+ days)
+        # eFTP drift detection
         wellness = cached("wellness_7", lambda: fetch_wellness(7))
-        # For the 7-day-streak auto-apply we actually need 14 days so a drift
-        # ending yesterday doesn't fall out of the window; fetch a wider slice.
-        wellness_14 = cached("wellness_14", lambda: fetch_wellness(14))
         if wellness:
             for w in reversed(wellness):
                 si = w.get("sportInfo", [])
@@ -10788,16 +9277,9 @@ def api_weekly_plan(week_offset: int = Query(0)):
                     if drift:
                         result["eftp_drift"] = drift
                     break
-        # F5 (v4.1.0): 7+-day sustained >3% up-drift triggers auto-apply.
-        # 3.3.1 hotfix (B5): routed through the plausibility guard.
-        if wellness_14:
-            try:
-                auto = _guarded_check_and_auto_apply_eftp(wellness_14)
-                if auto:
-                    result["eftp_auto_applied"] = auto
-                    clear_cache()
-            except Exception as _e:
-                _log.debug(f"eftp auto-apply skipped: {_e}")
+        # F5 (v4.1.0): the 7+-day up-drift auto-apply writes the profile, so
+        # it runs after the background sync (_after_background_sync), not on
+        # this read (week-view contract P8). Drift is still detected above.
     except Exception as _e:
         import logging
         logging.getLogger(__name__).warning("event_readiness failed: %s", _e)
@@ -10934,37 +9416,53 @@ _CYCLING_SPORTS = frozenset({
 })
 
 
-# Map planned session_type → expected exposure band (used by /api/week-summary
-# to render planned-vs-actual exposure bars). Anything not in this map (e.g.
-# rest) contributes no minutes to any band.
-_SESSION_TYPE_TO_BAND = {
-    "recovery":       "low_aerobic",
-    "z2":             "low_aerobic",
-    "long_z2":        "low_aerobic",
-    "tempo":          "mid_aerobic",
-    "sweetspot":      "high_aerobic",
-    "threshold":      "high_aerobic",
-    "vo2max":         "anaerobic",
-    "overunder":      "anaerobic",
-    # v3.5.4 — sprint/neuromuscular/anaerobic were MISSING, so a scheduled
-    # sprint session contributed 0 planned minutes to every exposure band and
-    # the week-summary bars read as if the day were empty. The planner's own
-    # SESSION_TYPE_TO_BAND (training_planner.py:1811) has always carried them;
-    # only this copy drifted. "sprint" is the emitted session_type;
-    # "neuromuscular"/"anaerobic" are content-class labels that reach here via
-    # adjusted/effective sessions.
-    "sprint":         "anaerobic",
-    "neuromuscular":  "anaerobic",
-    "anaerobic":      "anaerobic",
-}
-
-
 def _matches_planned(activities: list, session_type: str) -> bool:
     """A planned cycling workout is DONE only if a cycling activity was
     actually performed that day. Cross-sport doesn't count — the user still
     owes the specific session.
     """
     return any((a.get("sport") or "") in _CYCLING_SPORTS for a in activities)
+
+
+def _exposure_split_from_tiz(tiz: dict | None) -> dict[str, float] | None:
+    """Split one ride's minutes across the exposure bands using its MEASURED
+    time-in-zone, rather than filing the whole ride under one average.
+
+    Coggan power zones land on the four bands exactly as week_view.TYPE_BAND
+    maps session types, which is what makes the planned and actual bars
+    comparable at all:
+
+        Z1 + Z2   -> low_aerobic    (recovery, endurance)   <- z2 / long_z2
+        Z3        -> mid_aerobic    (tempo)                 <- tempo
+        Z4        -> high_aerobic   (sweet spot, threshold) <- sweetspot / threshold
+        Z5 .. Z7  -> anaerobic      (VO2max and above)      <- vo2max / overunder
+
+    ``ss`` is deliberately not summed: sweet spot overlaps Z3/Z4 and counting
+    it would inflate the total beyond the ride's own duration.
+
+    Returns None when the ride carries no zone data, so the caller falls back
+    to the whole-ride average rather than silently reporting zero minutes.
+    """
+    if not isinstance(tiz, dict):
+        return None
+
+    def _s(*keys: str) -> float:
+        total = 0.0
+        for k in keys:
+            try:
+                total += float(tiz.get(k) or 0)
+            except (TypeError, ValueError):
+                continue
+        return total
+
+    if _s("z1", "z2", "z3", "z4", "z5", "z6", "z7") <= 0:
+        return None
+    return {
+        "low_aerobic": _s("z1", "z2") / 60.0,
+        "mid_aerobic": _s("z3") / 60.0,
+        "high_aerobic": _s("z4") / 60.0,
+        "anaerobic": _s("z5", "z6", "z7") / 60.0,
+    }
 
 
 def _classify_exposure_with_signal(activity: dict, lthr: float) -> tuple[str, str]:
@@ -11024,10 +9522,10 @@ def api_week_summary(week_offset: int = Query(0)):
         from zoneinfo import ZoneInfo
         settings = api_settings()
         tz_name = settings.get("timezone") if isinstance(settings, dict) else None
-        tz = ZoneInfo(tz_name) if tz_name else datetime.now().astimezone().tzinfo
+        tz = ZoneInfo(tz_name) if tz_name else clock.now().astimezone().tzinfo
     except Exception:
-        tz = datetime.now().astimezone().tzinfo
-    today = datetime.now(tz).date()
+        tz = clock.now().astimezone().tzinfo
+    today = clock.now(tz).date()
     iso_year, iso_week, iso_weekday = today.isocalendar()
     # v1.7.6 — shift the target Monday by week_offset weeks so negative
     # offsets surface prior weeks. week_offset=0 keeps the legacy
@@ -11073,7 +9571,7 @@ def api_week_summary(week_offset: int = Query(0)):
                 round(100.0 - min(100.0, (tss_done / 50.0) * 100.0)),
             )
     else:
-        tss_adherence_pct = 0
+        tss_adherence_pct = None      # no plan on record: nothing to adhere to
 
     duration_min_done = int(round(sum((a.get("duration_min") or 0) for a in week_activities)))
 
@@ -11092,10 +9590,37 @@ def api_week_summary(week_offset: int = Query(0)):
     activities_by_day: dict[str, list[dict]] = {}
     sports_counter: dict[str, int] = {}
 
+    # Measured time-in-zone beats a whole-ride average, and Domestique already
+    # records it per ride (the calendar renders it as Z1Z2/Z3Z4/Z5+). Filing a
+    # three-hour endurance ride wholly under the band of its average HR put
+    # every minute of a Z2 week into mid/high and reported low_aerobic as zero.
+    # _load_all_rides_safe is the shared 5-minute cache, so this is one parse.
+    _tiz_by_id: dict[str, dict] = {}
+    try:
+        for _r in _load_all_rides_safe() or []:
+            _tiz = _r.get("time_in_zone")
+            if not _tiz:
+                continue
+            _rid = str(_r.get("ride_id") or "")
+            if _rid.startswith("icu_"):
+                _rid = _rid[4:]
+            if _rid:
+                _tiz_by_id[_rid] = _tiz
+    except Exception:  # noqa: BLE001 - never break the rollup over the archive
+        _tiz_by_id = {}
+
     for a in week_activities:
         band, signal = _classify_exposure_with_signal(a, lthr)
         dur = int(round(a.get("duration_min") or 0))
-        if signal == "inferred":
+        split = _exposure_split_from_tiz(_tiz_by_id.get(str(a.get("id") or "")))
+        if split:
+            for _b, _m in split.items():
+                exposure_minutes[_b] = exposure_minutes.get(_b, 0) + _m
+            # Label the day-list row with where the ride actually spent most of
+            # its time, so the list and the bars cannot tell different stories.
+            band = max(split, key=lambda k: split[k])
+            signal = "time_in_zone"
+        elif signal == "inferred":
             unclassified_minutes += dur
         else:
             exposure_minutes[band] = exposure_minutes.get(band, 0) + dur
@@ -11114,6 +9639,7 @@ def api_week_summary(week_offset: int = Query(0)):
         sport_key = a.get("sport") or "Other"
         sports_counter[sport_key] = sports_counter.get(sport_key, 0) + 1
 
+    exposure_minutes = {k: int(round(v)) for k, v in exposure_minutes.items()}
     total_exposure = sum(exposure_minutes.values())
     exposure_dominant = "mixed"
     if total_exposure > 0:
@@ -11156,8 +9682,13 @@ def api_week_summary(week_offset: int = Query(0)):
             day_d = date.fromisoformat(day_str)
         except (ValueError, TypeError):
             continue
-        # Strict past: today and future days aren't done/missed yet.
-        if day_d >= today:
+        # Future days are neither done nor missed yet. Today is allowed
+        # through: it can be DONE (the ride is already on file) but never
+        # MISSED (the day is not over). Excluding today outright — the
+        # original fix for QA #1 above — also made it impossible to ever
+        # count, so a session ridden this morning read "0 of N done" beside
+        # a TSS bar that had already banked its load.
+        if day_d > today:
             continue
         session_type = (s.get("session_type") or "").lower()
         day_acts = acts_on_day.get(day_str, [])
@@ -11171,7 +9702,9 @@ def api_week_summary(week_offset: int = Query(0)):
         # A cycling-planned day needs a bike activity. Cross-sport doesn't satisfy.
         if _matches_planned(day_acts, session_type):
             planned_days_done += 1
-        else:
+        elif day_d < today:
+            # Strictly past only: an unridden session TODAY is still pending,
+            # not missed. This is what QA #1 was about.
             planned_days_missed += 1
             missed_sessions.append({
                 "day": day_str,
@@ -11186,19 +9719,12 @@ def api_week_summary(week_offset: int = Query(0)):
                 "did_non_cycling": bool(day_acts),
             })
 
-    # Planned exposure-minutes: attribute every planned session's duration to
-    # its expected band so the rollup can render a "Planned vs Actual" bar.
-    # Sessions outside _SESSION_TYPE_TO_BAND (e.g. rest) contribute nothing.
-    exposure_minutes_planned = {
+    # Planned exposure-minutes, from the week view: each served file's zone
+    # shares, the session's type only when no file is served. The same
+    # numbers /api/weekly-plan serves (week-view contract A6).
+    exposure_minutes_planned = dict(plan.get("exposure_minutes_planned") or {
         "low_aerobic": 0, "mid_aerobic": 0, "high_aerobic": 0, "anaerobic": 0,
-    }
-    for s in sessions:
-        st = (s.get("session_type") or "").lower()
-        band = _SESSION_TYPE_TO_BAND.get(st)
-        if not band:
-            continue
-        dur = int(round(s.get("duration_min") or 0))
-        exposure_minutes_planned[band] = exposure_minutes_planned.get(band, 0) + dur
+    })
 
     # v1.7.6 — overreach flag for the "last week feedback" UI. Triggers
     # when actual TSS exceeds plan by >30 %, OR when high-zone minutes
@@ -11218,7 +9744,9 @@ def api_week_summary(week_offset: int = Query(0)):
                 f"TSS {tss_done:.0f} vs target {tss_target:.0f} "
                 f"({round(tss_done / tss_target * 100)}%)"
             )
-    if high_zone_planned == 0 and high_zone_done >= 30:
+    if tss_target is None:
+        pass    # no plan on record: riding harder than no plan is not overreach
+    elif high_zone_planned == 0 and high_zone_done >= 30:
         overreach_flag = True
         overreach_reasons.append(
             f"{high_zone_done} min above Z2 with 0 min planned"
@@ -11277,7 +9805,7 @@ async def api_today_session_persist(request: Request):
         if not new_type:
             return JSONResponse({"error": "session_type required"}, 400)
 
-        today_iso = date.today().isoformat()
+        today_iso = clock.today().isoformat()
         with open(json_path, encoding="utf-8") as f:
             plan = json.load(f)
 
@@ -11405,7 +9933,7 @@ def _next_ftp_test_slot() -> "str | None":
             plan = json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
-    today = date.today()
+    today = clock.today()
     next_monday = today + timedelta(days=7 - today.weekday())
     hard_types = {"vo2max", "threshold", "overunder", "sweetspot", "tempo"}
     candidates: list[tuple[date, bool]] = []
@@ -11445,7 +9973,7 @@ def _retest_nudge_payload(pm=None, today: "date | None" = None) -> "dict | None"
             from profile_manager import ProfileManager
             pm = ProfileManager.get()
         athlete = getattr(pm, "_athlete", {}) or {}
-        today = today or date.today()
+        today = today or clock.today()
 
         snooze = athlete.get("retest_snooze_until")
         if snooze:
@@ -11504,7 +10032,7 @@ def api_retest_nudge_snooze():
     """Snooze the retest banner for 14 days (persisted in athlete.json via
     the sanctioned save_athlete path, so it survives webview storage
     clears). The date is computed server-side — nothing client-supplied."""
-    until = (date.today() + timedelta(days=RETEST_SNOOZE_DAYS)).isoformat()
+    until = (clock.today() + timedelta(days=RETEST_SNOOZE_DAYS)).isoformat()
     try:
         from profile_manager import ProfileManager
         ProfileManager.get().save_athlete({"retest_snooze_until": until})
@@ -11647,7 +10175,7 @@ def _continuous_today_suggestion(plan: dict, sleep: dict, training: dict,
                                  rides: list[dict],
                                  today: "date | None" = None) -> dict:
     """Amendment D wiring: assemble the policy-fn inputs from stored state."""
-    today = today or date.today()
+    today = today or clock.today()
     today_iso = today.isoformat()
     cur = next((w for w in plan.get("weeks", [])
                 if (w.get("start") or "") <= today_iso <= (w.get("end") or "")),
@@ -11684,12 +10212,7 @@ def _continuous_deload_signals(plan: dict, rides: list[dict],
     dto_weeks = []
     for w in plan.get("weeks", []):
         try:
-            dto_weeks.append(tp.PlannedWeek(
-                week_num=w["week_num"], start=date.fromisoformat(w["start"]),
-                end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
-                tss_target=w.get("tss_target", 0),
-                is_stepback=w.get("is_stepback", False), sessions=[],
-            ))
+            dto_weeks.append(tp.week_from_dict({**w, "sessions": []}))
         except (KeyError, ValueError, TypeError):
             continue
     ride_rows = []
@@ -11713,7 +10236,7 @@ def _maybe_advance_continuous_deload(plan: dict, json_path: Path,
     when monotony/ACWR trip. Idempotent per week (latched via the
     plan["deload_advance"] record, which a revert also latches). Returns the
     chip payload when a deload advance is active for the current week."""
-    today = today or date.today()
+    today = today or clock.today()
     weeks_json = plan.get("weeks") or []
     today_iso = today.isoformat()
     cur_idx = next((i for i, w in enumerate(weeks_json)
@@ -11743,6 +10266,18 @@ def _maybe_advance_continuous_deload(plan: dict, json_path: Path,
     return _advance_continuous_deload(plan, json_path, cur_idx, trip, today)
 
 
+def _deload_chip_for_today(plan: "dict | None", today: "date | None" = None) -> "dict | None":
+    """The chip for a deload advance already recorded for the current week,
+    read-only (None when none, or when the rider reverted it)."""
+    today_iso = (today or clock.today()).isoformat()
+    cur = next((w for w in (plan or {}).get("weeks") or []
+                if (w.get("start") or "") <= today_iso <= (w.get("end") or "")), None)
+    rec = (plan or {}).get("deload_advance") or {}
+    if cur is None or not rec or rec.get("week_num") != cur.get("week_num") or rec.get("reverted"):
+        return None
+    return _deload_chip_payload(rec)
+
+
 def _advance_continuous_deload(plan: dict, json_path: Path, cur_idx: int,
                                trip: dict, today: date) -> "dict | None":
     """Convert plan["weeks"][cur_idx] to the deload shape via the machinery:
@@ -11753,16 +10288,7 @@ def _advance_continuous_deload(plan: dict, json_path: Path, cur_idx: int,
     cur_json = weeks_json[cur_idx]
     goal = _goal_from_plan_dict(plan.get("goal", {}) or {})
     try:
-        cur_dto = tp.PlannedWeek(
-            week_num=cur_json["week_num"],
-            start=date.fromisoformat(cur_json["start"]),
-            end=date.fromisoformat(cur_json["end"]),
-            phase=cur_json.get("phase", "continuous"),
-            tss_target=cur_json.get("tss_target", 0),
-            is_stepback=cur_json.get("is_stepback", False),
-            sessions=[_planned_session_from_json(s)
-                      for s in cur_json.get("sessions", [])],
-        )
+        cur_dto = tp.week_from_dict({"phase": "continuous", **cur_json})
     except (KeyError, ValueError, TypeError):
         return None
     # Pool-collapse breaker — same fail-closed rule as the extend append
@@ -11772,12 +10298,12 @@ def _advance_continuous_deload(plan: dict, json_path: Path, cur_idx: int,
     if _collapse:
         _log.error("E_DELOAD_ADVANCE_POOL_COLLAPSE: skipped — %s", _collapse)
         return None
-    budget = tp.get_budget_for_phase("continuous")
+    budget = tp.get_budget_for_phase("continuous", (plan or {}).get("goal") or {})
     phase = tp.Phase(
         name="continuous", start=cur_dto.start, end=cur_dto.end, weeks=1,
         focus="deload (advanced on load trigger)",
         weekly_tss_target=float(cur_dto.tss_target or 0),
-        z2_pct=budget.polarized_target.get("z1z2_pct", 78),
+        z2_pct=budget.polarized_target.get("z1_pct", 78),
         hit_per_week=budget.hit_count_max, session_types=[],
     )
     # Deterministic per (week, trigger) — re-running the same advance cannot
@@ -11811,7 +10337,7 @@ def _advance_continuous_deload(plan: dict, json_path: Path, cur_idx: int,
         if repl.session_type not in ("rest", "recovery"):
             tp.match_zwo(repl, library, week_num=cur_dto.week_num, day_idx=off,
                          used_names=used_names, plan_start_date=cur_dto.start,
-                         seed_salt=seed_salt)
+                         seed_salt=seed_salt, micro_only=bool(((plan or {}).get("goal") or {}).get("vo2_microintervals_only", False)))
         cur_dto.sessions[off] = repl
         refit_days.append(repl.day.isoformat())
     if not refit_days:
@@ -11856,7 +10382,7 @@ async def api_continuous_deload_revert(request: Request):
         rec = plan.get("deload_advance") or {}
         if not rec or rec.get("reverted"):
             return {"reverted": False, "reason": "nothing_to_revert"}
-        today = date.today()
+        today = clock.today()
         orig = rec.get("original_week") or {}
         wj = next((w for w in plan.get("weeks", [])
                    if w.get("week_num") == rec.get("week_num")), None)
@@ -11906,58 +10432,36 @@ def _api_today_session_impl():
     except Exception as _e:
         _log.debug(f"/api/today-session: lazy ICU sync kick swallowed: {_e}")
 
-    # week_data (the regenerated Mon–Sun week) is still used below for the
-    # yesterday-TSS-ratio heuristic, so keep it.
-    week_data = api_weekly_plan(week_offset=0)
-    today_str = date.today().isoformat()
-
-    # v3.2.1 BUG-FIX: the home card's LABEL must come from the SAME stored plan
-    # its CLICK opens (/api/calendar → merge_plan_with_rides on
-    # current_plan.json). Previously the label came from api_weekly_plan()'s
-    # REGENERATED week, which diverges from the stored plan whenever the plan's
-    # week boundary isn't a Monday — a Sunday-start plan showed one day's
-    # prescription while the click opened a different stored day (label said
-    # REST, click opened the Z2 ride). Prefer today's session from the stored
-    # plan; fall back to the regenerated week only when it isn't there.
-    planned_data = None
-    _stored = None
+    today_str = clock.today().isoformat()
     _jp = _plan_dir() / "current_plan.json"
-    try:
-        if _jp.exists():
-            with open(_jp, encoding="utf-8") as _f:
-                _stored = json.load(_f)
-    except Exception as _e:
-        _stored = None
-        _log.debug(f"/api/today-session: stored-plan read failed, using regen: {_e}")
-    # 3.4.0 W2 (amendment C): continuous deload advance — the today card IS
-    # the "each app open" surface, so the monotony/ACWR check runs here.
-    # Idempotent (week-latched) and best-effort: a failure must never break
-    # the today card. Runs BEFORE the planned-session pick so a freshly
-    # advanced deload is what the card shows.
-    _deload_chip = None
-    if _plan_is_continuous(_stored):
-        try:
-            _deload_chip = _maybe_advance_continuous_deload(_stored, _jp)
-        except Exception as _e:  # noqa: BLE001
-            _log.warning(f"/api/today-session: continuous deload check failed: {_e}")
-    if _stored:
-        try:
-            planned_data = next(
-                (s for w in _stored.get("weeks", [])
-                 for s in w.get("sessions", []) if s.get("day") == today_str),
-                None,
-            )
-        except Exception as _e:
-            _log.debug(f"/api/today-session: stored-plan read failed, using regen: {_e}")
+    _stored = _read_stored_plan()
+    # 3.4.0 W2 (amendment C): the continuous deload advance's chip. The
+    # advance itself runs where rides arrive (_maybe_auto_reforecast, reached
+    # by the load's POST /api/rides/sync): this read used to run it and write
+    # the plan (week-view contract P8).
+    _deload_chip = _deload_chip_for_today(_stored) if _plan_is_continuous(_stored) else None
 
-    if planned_data is None:
-        planned_data = next(
-            (s for s in week_data["sessions"] if s["day"] == today_str), None)
+    # Today's session is the stored week's, read through the one week view
+    # (src/week_view.py) the This Week list and the calendar read: its
+    # session_type is the served file's content, not the slot's label, so the
+    # Today card cannot say SWEETSPOT over a threshold file again
+    # (notes/week-view-contract.md A2). A day no stored row covers has no
+    # session; nothing is regenerated to fill it (P1, P4).
+    week_data = _stored_week_view(_stored, 0).as_weekly_plan()
+    planned_data = next(
+        (s for s in week_data["sessions"]
+         if s["day"] == today_str and s.get("on_record")), None)
     if not planned_data:
-        return {"planned": None, "adjusted": None, "reason": "No session planned today"}
+        # has_plan tells a rest day inside a plan (or before it starts, or
+        # after it ends) from having no plan at all, which the card offers
+        # to create. The retest nudge does not depend on a session.
+        from profile_manager import ProfileManager as _PM
+        return {"planned": None, "adjusted": None, "reason": "No session planned today",
+                "has_plan": bool(_stored and _stored.get("weeks")),
+                "retest_nudge": _retest_nudge_payload(_PM.get())}
 
     planned = tp.PlannedSession(
-        day=date.today(), day_name=planned_data.get("day_name", ""),
+        day=clock.today(), day_name=planned_data.get("day_name", ""),
         session_type=planned_data.get("session_type", "rest"),
         duration_min=planned_data.get("duration_min", 0),
         tss_estimate=planned_data.get("tss_estimate", 0),
@@ -12010,7 +10514,7 @@ def _api_today_session_impl():
         activities = db.query_activities(days=3)
     except Exception:  # noqa: BLE001
         activities = []
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    yesterday = (clock.today() - timedelta(days=1)).isoformat()
     yesterday_weighted_tss = 0
     for a in activities:
         if a.get("date") == yesterday:
@@ -12045,8 +10549,11 @@ def _api_today_session_impl():
             else:
                 yesterday_weighted_tss += tss * weight
 
+    # On a Monday yesterday is last week's Sunday, so read that week's view.
+    _yesterday_week = (week_data if clock.today().weekday() > 0
+                       else _stored_week_view(_stored, -1).as_weekly_plan())
     yesterday_planned = next(
-        (s["tss_estimate"] for s in week_data["sessions"]
+        (s["tss_estimate"] for s in _yesterday_week["sessions"]
          if s["day"] == yesterday and s["tss_estimate"] > 0),
         None,
     )
@@ -12066,7 +10573,7 @@ def _api_today_session_impl():
         _all_rides = _load_all_rides_safe()
     except Exception:  # noqa: BLE001
         _all_rides = []
-    _cutoff_4d = (date.today() - timedelta(days=4)).isoformat()
+    _cutoff_4d = (clock.today() - timedelta(days=4)).isoformat()
     rides_recent: list[dict] = []
     for rd in _all_rides:
         d_iso = rd.get("date") or _ride_started_local_iso_date(rd)
@@ -12122,7 +10629,7 @@ def _api_today_session_impl():
             # v3.2.1: matched library file so the home card can preview the
             # actual blocks (same source the day-detail modal charts).
             "zwo_file": planned_data.get("zwo_file") or None,
-            "refit_note": planned_data.get("refit_note") or "",   # v3.11.5
+            "zwo_name": planned_data.get("zwo_name") or None,
         },
         "adjusted": {
             "session_type": adjusted.session_type,
@@ -12375,6 +10882,22 @@ def _plan_ctl_drift(snapshot: "dict | None", live_ctl) -> "dict | None":
     }
 
 
+def _icu_can_upload() -> bool:
+    """v3.11.5 — may this connection POST activities to intervals.icu?
+    API key → yes (full access). OAuth → only with the ACTIVITY:WRITE stamp
+    (pre-3.11.5 connections asked for ACTIVITY:READ and got 403 on every
+    upload; they need one reconnect). No connection → no."""
+    token = getattr(config, "ICU_ACCESS_TOKEN", "") or ""
+    key = getattr(config, "ICU_API_KEY", "") or ""
+    if token:
+        try:
+            from profile_manager import ProfileManager
+            return ProfileManager.get().icu_has_scope("ACTIVITY:WRITE")
+        except Exception:  # noqa: BLE001
+            return False
+    return bool(key)
+
+
 _PLAN_HEAL_SEEN: dict = {}
 _PLAN_HEAL_LOCK = threading.Lock()
 
@@ -12423,6 +10946,51 @@ def _maybe_heal_plan_files(json_path, plan_data: dict) -> None:
                   stats["candidates"], stats["healed"], stats["still_unmatched"])
 
 
+def _heal_plan_on_disk() -> None:
+    """P8 (reads do not write): the plan self-heal runs at startup and after a
+    plan-writing POST, never on a GET. Reads the active profile's plan and
+    hands it to _maybe_heal_plan_files, whose mtime cache makes a no-op cheap."""
+    try:
+        json_path = _plan_dir() / "current_plan.json"
+        if not json_path.exists():
+            return
+        with open(json_path, encoding="utf-8") as f:
+            plan_data = json.load(f)
+        if isinstance(plan_data, dict):
+            _maybe_heal_plan_files(json_path, plan_data)
+    except Exception as e:  # noqa: BLE001 — never break startup or a request
+        _log.warning("EVENT=plan_selfheal_failed where=on_disk error=%s", str(e)[:200])
+
+
+def _plan_file_mtime_ns() -> "int | None":
+    try:
+        return (_plan_dir() / "current_plan.json").stat().st_mtime_ns
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@app.middleware("http")
+async def _heal_after_plan_writes(request, call_next):
+    """P8: the heal runs after a plan WRITE, never after a read. A POST under
+    /api/plan counts only if it changed the plan file during the request (a
+    preview POST that writes nothing heals nothing, so "apply=0 does not
+    write" stays true); a POST under /api/profiles (a switch) heals the
+    newly active plan unconditionally, once per file version. Off the event
+    loop either way."""
+    is_post = request.method == "POST"
+    path = request.url.path
+    before = _plan_file_mtime_ns() if is_post and path.startswith("/api/plan") else None
+    response = await call_next(request)
+    if is_post and (path.startswith("/api/profiles") or
+                    (path.startswith("/api/plan") and _plan_file_mtime_ns() != before)):
+        try:
+            from starlette.concurrency import run_in_threadpool
+            await run_in_threadpool(_heal_plan_on_disk)
+        except Exception as e:  # noqa: BLE001
+            _log.debug("heal-after-write skipped: %s", e)
+    return response
+
+
 @app.get("/api/plan")
 def api_plan():
     # Try structured JSON first
@@ -12431,7 +10999,6 @@ def api_plan():
         try:
             with open(json_path, encoding="utf-8") as f:
                 plan_data = json.load(f)
-            _maybe_heal_plan_files(json_path, plan_data)
             # v4.1.1 FIX-PLANNER B: attach per-session `zone_dist` so the
             # dashboard mini-graph can render the ACTUAL ZWO's zone
             # distribution. v1.4.0: per-session enrichment now lives in
@@ -12530,7 +11097,7 @@ def api_plan():
             # un-enriched plans become visible in /api/diag/recent-errors.
             try:
                 _enrich_plan_for_response(
-                    plan_data, today_iso=date.today().isoformat(),
+                    plan_data, today_iso=clock.today().isoformat(),
                 )
             except Exception as _e:
                 _log_error(
@@ -12601,7 +11168,7 @@ def api_plan_preview(
             start_dt = date.fromisoformat(str(start_date)[:10])
         except (ValueError, TypeError):
             start_dt = None
-    if start_dt is not None and start_dt >= date.today():
+    if start_dt is not None and start_dt >= clock.today():
         start_dt = None  # future/today start = fresh start (legacy)
 
     # For event-prep, plan_weeks is auto-computed from event_date; UI
@@ -12609,7 +11176,7 @@ def api_plan_preview(
     # so a stale/forced-edit value can't desync the right panel from the
     # generated grid.
     if goal in ("event", "event_preparation") and target_date is not None:
-        days_to_event = (target_date - (start_dt or date.today())).days
+        days_to_event = (target_date - (start_dt or clock.today())).days
         plan_weeks = max(4, -(-days_to_event // 7))  # ceil division
     else:
         plan_weeks = max(4, int(plan_weeks or 0))
@@ -12638,11 +11205,12 @@ def api_plan_preview(
 
     try:
         training = cached("training", get_today_metrics)
-        current_ctl = float(training.get("ctl") or 37.0)
+        current_ctl = _planning_ctl()
     except Exception:
-        current_ctl = 37.0
+        current_ctl = _PLANNING_CTL_UNKNOWN
 
-    phases = tp.generate_phases(g, current_ctl)
+    phases = tp.generate_phases(g, current_ctl,
+                                recent_weekly_tss=_chronic_weekly_tss_safe())
     _pw_status = (getattr(g, "_phase_weeks_status", None)
                   or (f"fallback:{_pw_parse_err}" if _pw_parse_err else None))
     return {
@@ -12704,7 +11272,7 @@ def api_plan_entry_scan(
                                 detail="event_date is required for an event goal")
         # H1 parity with preview/generate: the runway is derived from the
         # today→target span, never trusted from the today-anchored slider.
-        days_to_event = (target_date - date.today()).days
+        days_to_event = (target_date - clock.today()).days
         plan_weeks = max(4, -(-days_to_event // 7))  # ceil division
     elif plan_weeks < 1 and target_date is None:
         raise HTTPException(status_code=400,
@@ -12721,9 +11289,9 @@ def api_plan_entry_scan(
 
     try:
         training = cached("training", get_today_metrics)
-        current_ctl = float(training.get("ctl") or 37.0)
+        current_ctl = _planning_ctl()
     except Exception:
-        current_ctl = 37.0
+        current_ctl = _PLANNING_CTL_UNKNOWN
 
     result = tp.recognize_entry(g, _load_all_rides_safe(), current_ctl=current_ctl)
 
@@ -12793,24 +11361,7 @@ def api_event_projection():
     if not g.get("event_km"):
         return {"available": False, "reason": "no_event_km"}
 
-    target_date = None
-    if g.get("event_date"):
-        try:
-            target_date = date.fromisoformat(g["event_date"])
-        except ValueError:
-            target_date = None
-
-    goal = tp.Goal(
-        goal_type=g.get("type", "event"),
-        target_date=target_date,
-        event_name=g.get("event_name", ""),
-        event_km=g.get("event_km", 0),
-        event_climb_m=g.get("event_climb", 0),
-        event_type=g.get("event_type", "granfondo"),
-        hours_per_week=g.get("hours_per_week", 8),
-        longest_ride_h_90d=g.get("longest_ride_h_90d"),
-        last_ftp_test_date=g.get("last_ftp_test_date"),
-    )
+    goal = tp.goal_from_dict(g)
 
     rides = _load_all_rides_safe()
     if goal.longest_ride_h_90d is None:
@@ -12827,16 +11378,16 @@ def api_event_projection():
     # Current CTL.
     try:
         training = cached("training", get_today_metrics)
-        current_ctl = float(training.get("ctl") or 50.0)
+        current_ctl = _planning_ctl()
     except Exception:
-        current_ctl = 50.0
+        current_ctl = _PLANNING_CTL_UNKNOWN
 
     # Best-efforts aggregate for CP/W' Monod fit (only when we have ≥5 rides
     # in the last 30 days — gate prevents fitting on stale data).
     best_efforts: dict = {}
     try:
         if rides:
-            cutoff_30 = (date.today() - timedelta(days=30)).isoformat()
+            cutoff_30 = (clock.today() - timedelta(days=30)).isoformat()
             recent_count = sum(1 for r in rides if (r.get("started_at") or "")[:10] >= cutoff_30)
             if recent_count >= 5:
                 best_efforts = _aggregate_best_efforts_90d(rides)
@@ -12864,7 +11415,7 @@ def api_event_projection():
     try:
         from collections import defaultdict
         buckets: dict[tuple, float] = defaultdict(float)
-        cutoff_iso = (date.today() - timedelta(days=12 * 7)).isoformat()
+        cutoff_iso = (clock.today() - timedelta(days=12 * 7)).isoformat()
         for r in rides or []:
             s = (r.get("started_at") or "")[:10]
             if not s or s < cutoff_iso:
@@ -12880,7 +11431,7 @@ def api_event_projection():
                 buckets[key] = dur_h
         weekly_history = []
         for wk_back in range(12, -1, -1):
-            target = date.today() - timedelta(weeks=wk_back)
+            target = clock.today() - timedelta(weeks=wk_back)
             iso = target.isocalendar()
             weekly_history.append({
                 "week_offset": -wk_back,
@@ -12893,6 +11444,36 @@ def api_event_projection():
         _log.debug(f"projection weekly_history skipped: {_e}")
         projection["weekly_history"] = []
     return projection
+
+
+def _replaced_weeks_before(old_plan: dict, cutoff: date) -> list[dict]:
+    """The rows of ``old_plan`` a Generate replaces, as far as they were
+    prescribed before ``cutoff``: every session dated before it, in its row,
+    the row's end clipped to the day before. Rows the old plan had itself
+    carried come along, and a day is kept once (the newer plan's).
+
+    They are stored apart from ``weeks`` because the planner reads a plan's
+    elapsed ``weeks`` as its own past (Regenerate's week numbers and 3:1
+    rhythm); only the readers read these (week_view.build, the calendar)."""
+    cutoff_iso = cutoff.isoformat()
+    stamp = clock.today().isoformat()
+    taken: set[str] = set()
+    out: list[dict] = []
+    for row in list(old_plan.get("weeks") or []) + list(old_plan.get("replaced_weeks") or []):
+        if not isinstance(row, dict) or (row.get("start") or "") >= cutoff_iso:
+            continue
+        sessions = [s for s in (row.get("sessions") or [])
+                    if isinstance(s, dict) and "" < (s.get("day") or "") < cutoff_iso
+                    and s["day"] not in taken]
+        if not sessions:
+            continue
+        taken.update(s["day"] for s in sessions)
+        kept = dict(row, sessions=sessions)
+        if (kept.get("end") or "") >= cutoff_iso:
+            kept["end"] = (cutoff - timedelta(days=1)).isoformat()
+        kept.setdefault("carried_from_generate", stamp)
+        out.append(kept)
+    return sorted(out, key=lambda w: w.get("start") or "")
 
 
 @app.post("/api/plan/generate")
@@ -12942,8 +11523,8 @@ async def api_plan_generate(request: Request):
         # anchor→target span, never trusted from the form.
         if body.get("goal") in ("event", "event_preparation") and target_date:
             _anchor_for_weeks = (start_date
-                                 if (start_date and start_date < date.today())
-                                 else date.today())
+                                 if (start_date and start_date < clock.today())
+                                 else clock.today())
             _days = (target_date - _anchor_for_weeks).days
             plan_weeks = max(4, -(-_days // 7))  # ceil division
 
@@ -13039,6 +11620,7 @@ async def api_plan_generate(request: Request):
         json_path = _plan_dir() / "current_plan.json"
         availability_overrides: dict[str, float] = {}
         old_availability_full: dict = {}  # v1.8.21 — keep type info for block-preserve
+        _existing_plan = None
         if json_path.exists():
             try:
                 with open(json_path, encoding="utf-8") as f:
@@ -13055,22 +11637,8 @@ async def api_plan_generate(request: Request):
                 old_availability_full = {}
 
         # v1.11.0 — thread athlete (ftp + weight) so the event-demand planner
-        # can compute event targets. Mirrors /api/event/projection's assembly;
-        # only pass a real dict when ftp+weight are present, else athlete=None
-        # (training_planner no-ops on a missing/empty athlete for non-event
-        # goals and for events without a real ftp/weight).
-        athlete = None
-        try:
-            from profile_manager import ProfileManager
-            _pm = ProfileManager.get()
-            # pm.ftp / pm.weight_kg are default-backed (200 / 70.0), so probe the
-            # raw athlete store to tell a genuinely-set value from a fabricated
-            # default — a brand-new user with no ftp/weight must yield athlete=None.
-            _raw = getattr(_pm, "_athlete", {}) or {}
-            if "ftp" in _raw and "weight_kg" in _raw and _raw.get("ftp") and _raw.get("weight_kg"):
-                athlete = {"ftp": _pm.ftp, "weight_kg": _pm.weight_kg}
-        except Exception:
-            athlete = None
+        # can compute event targets.
+        athlete = _planner_athlete()
 
         # v2.1.0 (F5 + E1) — thread the rider's ACTUAL starting fitness + recent
         # load into INITIAL generation. Pre-fix, generate_plan self-fetched CTL
@@ -13084,14 +11652,10 @@ async def api_plan_generate(request: Request):
         recent_weekly_tss = None
         try:
             training = cached("training", get_today_metrics)
-            current_ctl = training.get("ctl")
+            current_ctl = _fitness_state()["ctl"]     # None: the planner's own fallback
         except Exception:
             current_ctl = None
-        try:
-            import ride_storage as _rs
-            recent_weekly_tss = _rs.recent_mean_weekly_tss()
-        except Exception:
-            recent_weekly_tss = None
+        recent_weekly_tss = _chronic_weekly_tss_safe()
 
         # Re-entry shaping inputs (SCIENCE.md "Returning after a break"):
         # how long since the last ride, and TSB now. Best-effort — None keeps
@@ -13104,7 +11668,7 @@ async def api_plan_generate(request: Request):
             last = max((r.get("started_at") or "")[:10]
                        for r in _rs2.load_all_rides())
             if last:
-                days_since_last_ride = (_date.today()
+                days_since_last_ride = (clock.today()
                                         - _date.fromisoformat(last)).days
         except Exception:
             days_since_last_ride = None
@@ -13121,58 +11685,18 @@ async def api_plan_generate(request: Request):
             recent_weekly_tss=recent_weekly_tss,
             days_since_last_ride=days_since_last_ride,
             tsb_at_generation=tsb_at_generation,
+            # A plan generated mid-week overlaps days already ridden. Without
+            # these, "generate" hands the rider a fresh week on top of the one
+            # they are in.
+            activities=_recent_activities_for_planner(),
         )
         plan_path = tp.export_plan_md(goal, phases, weeks)
 
         # Also save structured JSON
         plan_dict = {
-            "goal": {
-                "type": goal.goal_type,
-                "event_date": goal.target_date.isoformat() if goal.target_date else None,
-                "event_name": goal.event_name,
-                "event_km": goal.event_km,
-                "event_climb": goal.event_climb_m,
-                "event_type": goal.event_type,
-                "hours_per_week": goal.hours_per_week,
-                "max_weekday_hours": goal.max_weekday_hours,
-                "max_weekend_hours": goal.max_weekend_hours,
-                "rest_days": goal.rest_days,
-                # P5 (v4.1.0): persist available_days + daily_max_hours so
-                # /api/weekly-plan reconstruction doesn't silently fall back to
-                # [1..6] (dropping Monday). Without this, a user who picked
-                # rest_days=[2,3] would see a phantom Monday rest because the
-                # Goal reconstructor defaulted available_days to [1..6].
-                "available_days": list(goal.available_days or []),
-                "daily_max_hours": {str(k): float(v) for k, v in (goal.daily_max_hours or {}).items()},
-                "plan_weeks": goal.plan_weeks,
-                # v4.6.7 IMPL-CAP: persist capability-projection inputs.
-                "longest_ride_h_90d": goal.longest_ride_h_90d,
-                "last_ftp_test_date": goal.last_ftp_test_date,
-                # J1 (v2.1.0): persist the chosen distribution so recalc/refit
-                # rebuild with the same model (else they'd revert to polarized).
-                "distribution": getattr(goal, "distribution", "polarized"),
-                "block_periodization": getattr(goal, "block_periodization", False),  # F1
-                "vo2_microintervals_only": getattr(
-                    goal, "vo2_microintervals_only", False),
-                "events": _events_to_dicts(getattr(goal, "events", [])),  # F7
-                "plan_mode": getattr(goal, "plan_mode", "auto"),  # FS1
-                "template_id": getattr(goal, "template_id", "") or "",  # FS1
-                "custom_bands": getattr(goal, "custom_bands", {}) or {},  # v2.3.0
-                # PART B: persist the mid-plan-entry anchor + provenance so
-                # every reconstructor (reforecast/refit/recalc/regenerate)
-                # and the regenerate form repopulation see them.
-                "start_date": (goal.start_date.isoformat()
-                               if getattr(goal, "start_date", None) else None),
-                "entry_mode": getattr(goal, "entry_mode", None),
-                # v3.2.0 phase-split editor: the user's week vector (None =
-                # recommendation); round-trips through _goal_from_plan_dict
-                # + form repopulation like start_date.
-                "phase_weeks": (dict(goal.phase_weeks)
-                                if getattr(goal, "phase_weeks", None) else None),
-                # 3.4.0 W2: continuous focus pref — persisted so the weekly
-                # extend + rotation policy keep the chosen emphasis.
-                "focus": getattr(goal, "focus", "both") or "both",
-            },
+            # Through the codec: every Goal field, under the names the goal
+            # block has always used.
+            "goal": tp.goal_to_dict(goal),
             "phases": [
                 {
                     "name": p.name,
@@ -13184,38 +11708,12 @@ async def api_plan_generate(request: Request):
                 }
                 for p in phases
             ],
-            "weeks": [
-                {
-                    "week_num": w.week_num,
-                    "start": w.start.isoformat() if hasattr(w.start, "isoformat") else str(w.start),
-                    "end": w.end.isoformat() if hasattr(w.end, "isoformat") else str(w.end),
-                    "phase": w.phase,
-                    "tss_target": w.tss_target,
-                    "is_stepback": w.is_stepback,
-                    "sessions": [
-                        {
-                            "day": s.day.isoformat() if hasattr(s.day, "isoformat") else str(s.day),
-                            "day_name": s.day_name,
-                            "session_type": s.session_type,
-                            "duration_min": s.duration_min,
-                            "tss_estimate": s.tss_estimate,
-                            "description": s.description,
-                            "zwo_file": s.zwo_file,
-                            "zwo_name": s.zwo_name,
-                            # E7 (v2.5.0): persist the race marking + opener flag
-                            # from birth — generate_plan marks race days and
-                            # places openers, and the reforecast/refit round-trip
-                            # (tp._plan_dict_to_planned_weeks) keys on them.
-                            "is_race": bool(getattr(s, "is_race", False)),
-                            "race": getattr(s, "race", None),
-                            "is_opener": bool(getattr(s, "is_opener", False)),
-                        }
-                        for s in w.sessions
-                    ],
-                }
-                for w in weeks
-            ],
-            "generated": datetime.now().isoformat(),
+            # Through the codec: every week and session field. This writer
+            # kept 11 of a session's 27, so fuelling notes, matched=False and
+            # the double-threshold pairing were lost at birth, and so was the
+            # week's own budget (dupes.md DUP-25, http.md HTTP-9).
+            "weeks": [tp.week_to_dict(w) for w in weeks],
+            "generated": clock.now().isoformat(),
             # P4.2 (v3.0.0) — generation-time fitness snapshot for the
             # Training-Plan-tab drift chip (live CTL vs plan assumption).
             "ctl_snapshot": tp.plan_ctl_snapshot(current_ctl, recent_weekly_tss),
@@ -13249,8 +11747,8 @@ async def api_plan_generate(request: Request):
             # PART B (B-LOCKED-1 availability span): on a backdated plan the
             # calendar starts TODAY — elapsed days are not schedulable, so
             # they carry no availability rows. Fresh plans start today anyway.
-            if getattr(goal, "start_date", None) and _d < date.today():
-                _d = date.today()
+            if getattr(goal, "start_date", None) and _d < clock.today():
+                _d = clock.today()
             _end = weeks[-1].end
             _one = timedelta(days=1)
             while _d <= _end:
@@ -13264,6 +11762,15 @@ async def api_plan_generate(request: Request):
                                         "type": "available" if _h > 0 else "rest"}
                 _d += _one
             plan_dict["availability"] = _new_avail
+
+        # What the rider was prescribed before this plan stays on record
+        # (week-view contract P4, A5): the calendar's history rows and the
+        # Last-week card read it through the week view.
+        if weeks and isinstance(_existing_plan, dict):
+            _replaced = _replaced_weeks_before(
+                _existing_plan, min(min(w.start for w in weeks), clock.today()))
+            if _replaced:
+                plan_dict["replaced_weeks"] = _replaced
 
         # v2.3.0 — realized training-type distribution (honest, computed from the
         # generated sessions) for the UI's "% distribution" readout.
@@ -13300,7 +11807,7 @@ async def api_plan_generate(request: Request):
         # zone_dist / score / protocol / zwo_duration_min per session.
         # v1.6.0 — surface failure under E_ENRICH_FAILED.
         try:
-            _enrich_plan_for_response(plan_dict, today_iso=date.today().isoformat())
+            _enrich_plan_for_response(plan_dict, today_iso=clock.today().isoformat())
         except Exception as _e:
             _log_error(
                 error_codes.Codes.ENRICH_FAILED, exc=_e,
@@ -13326,7 +11833,7 @@ async def api_plan_generate(request: Request):
         return JSONResponse({"detail": "Plan update failed"}, status_code=500)
 
 
-def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
+def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> "str | None":
     """v1.0.3 / v1.8.24 — best-effort auto-ADAPT on ride sync / FIT import.
 
     When ``new_rides > 0`` this routes through the shared ``_apply_plan_update``
@@ -13340,11 +11847,16 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
 
     Wraps everything in try/except: logs warnings but never raises. Sync /
     import responses must stay clean even if adaptation errors.
+
+    For a continuous plan it then runs the deload advance (monotony / ACWR),
+    which /api/today-session used to run on a read (week-view contract P8).
+    Returns what it wrote -- the update's action, "deload_advanced", or None.
     """
+    written = None
     try:
         json_path = _plan_dir() / "current_plan.json"
         if not json_path.exists():
-            return
+            return None
 
         with tp.plan_write_lock():
             # Re-read inside the lock so a concurrent writer's fresher state
@@ -13362,11 +11874,20 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
             # hand. A rider who stops riding is exactly the rider who never
             # presses it. Rides arriving still drive it immediately; otherwise
             # it runs once per day so a day that passed unridden is seen.
-            today = date.today()
+            today = clock.today()
+            # Rides stored since the last adaptation are new, whoever fetched
+            # them: the lazy sync a read kicks off stores rides but may not
+            # adapt (P8), and the POST that follows it then finds the sync
+            # throttled or already running and reports none added.
+            ride_total = len(_load_all_rides_safe())
+            seen = plan.get("adapted_ride_total")
+            if isinstance(seen, int) and ride_total > seen:
+                new_rides = max(new_rides, ride_total - seen)
             stamped = plan.get("reconcile_date") != today.isoformat()
             if new_rides <= 0 and not stamped:
-                return
+                return None
             plan["reconcile_date"] = today.isoformat()
+            plan["adapted_ride_total"] = ride_total
 
             activities = db.query_activities(days=120)
             training = cached("training", get_today_metrics)
@@ -13384,11 +11905,25 @@ def _maybe_auto_reforecast(profile_id: str, new_rides: int) -> None:
             # still has to land, or every sync for the rest of the day re-runs
             # the full chain.
             if action == "skipped" and not stamped:
-                return
+                return None
 
+            plan_dict["adapted_ride_total"] = ride_total
             tp.atomic_write_plan(json_path, plan_dict)
+            # Only the daily stamp landed when the reforecast debounced: nothing
+            # the cards show changed, so nothing to repaint.
+            written = action if action != "skipped" else None
+        with open(json_path, encoding="utf-8") as f:
+            plan = json.load(f)
+        if _plan_is_continuous(plan):
+            try:
+                if _maybe_advance_continuous_deload(plan, json_path) and plan.get(
+                        "deload_advance", {}).get("advanced_on") == clock.today().isoformat():
+                    written = "deload_advanced"
+            except Exception as _e:  # noqa: BLE001
+                _log.warning(f"continuous deload check failed: {_e}")
     except Exception as e:  # noqa: BLE001
         _log.warning(f"auto-adapt skipped: {e}")
+    return written
 
 
 @app.post("/api/plan/reforecast")
@@ -13419,7 +11954,7 @@ async def api_plan_reforecast():
                     break
 
         # Annotate weeks with actual data
-        today_str = date.today().isoformat()
+        today_str = clock.today().isoformat()
         for w in plan.get("weeks", []):
             wk = w["week_num"]
             w["actual_tss"] = round(actual_weekly.get(wk, 0), 1)
@@ -13434,7 +11969,7 @@ async def api_plan_reforecast():
         # only annotated actual_tss + surfaced gaps; the "Reforecast" UI
         # button was a silent no-op for intensity.
         training = cached("training", get_today_metrics)
-        current_ctl = training.get("ctl") or 30
+        current_ctl = _planning_ctl()
         current_tsb = training.get("tsb")
 
         # Flat-TSB projection for every future day unless ICU gives us more.
@@ -13456,7 +11991,7 @@ async def api_plan_reforecast():
         # button computed acwr_ratio against an empty list → G4 dead; G3
         # branch never had inputs → polarization breach never fired.
         try:
-            today_d = date.today()
+            today_d = clock.today()
             actual_pol_kwarg = _polarized_actual_from_rides(
                 _load_all_rides_safe(), today_d, last_n_days=7,
             )
@@ -13469,15 +12004,10 @@ async def api_plan_reforecast():
                  if (w.get("start", "") or "") <= today_iso_str <= (w.get("end", "") or "")),
                 None,
             )
-            # J1 (v2.1.0): align the breach gate with the plan's chosen
-            # distribution model (also sets the active model for this recalc's
-            # budget lookups) so a pyramidal/threshold plan isn't judged against
-            # the polarized ceiling. Default polarized → unchanged.
-            tp.set_vo2_micro_only((plan.get("goal", {}) or {}).get("vo2_microintervals_only", False))
-            tp.set_active_distribution(
-                (plan.get("goal", {}) or {}).get("distribution", "polarized"),
-                (plan.get("goal", {}) or {}).get("custom_bands"))
-            _model_targets = tp.get_active_polarized_targets()
+            # J1 (v2.1.0): judge the breach gate against the plan's OWN
+            # distribution model, so a pyramidal/threshold plan isn't held to
+            # the polarized ceiling.
+            _model_targets = tp.polarized_targets(plan.get("goal", {}) or {})
             target_pol_kwarg = _model_targets.get(
                 (cur_phase or "").lower(), _model_targets.get("history"))
         except Exception:  # noqa: BLE001
@@ -13507,7 +12037,7 @@ async def api_plan_reforecast():
         )
 
         # Save updated plan
-        plan["reforecast_date"] = datetime.now().isoformat()
+        plan["reforecast_date"] = clock.now().isoformat()
         plan["last_reforecast_info"] = reforecast_info
         tp.atomic_write_plan(json_path, plan)
 
@@ -13737,7 +12267,7 @@ def _regenerate_plan_dict(
     goal = _goal_from_plan_dict(g)
     if goal.target_date is None:
         # Non-event goals: keep the legacy regen horizon (12 weeks out).
-        goal.target_date = date.today() + timedelta(weeks=12)
+        goal.target_date = clock.today() + timedelta(weeks=12)
     # The persisted plan_weeks is the GENERATION-time week count; on a rebuild
     # it is stale (weeks_available() short-circuits on plan_weeks>0 — the H1
     # trap), which would split phases into a longer budget than the remaining
@@ -13751,12 +12281,6 @@ def _regenerate_plan_dict(
     # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
     if goal.longest_ride_h_90d is None:
         goal.longest_ride_h_90d = _longest_ride_h_90d()
-    # J1: pin the active intensity-distribution model for this regen's budget
-    # lookups (mirrors generate_plan) — /api/plan/regenerate and add-race call
-    # this core bare, so after an app restart the process default (polarized)
-    # silently rebudgeted non-polarized plans.
-    tp.set_vo2_micro_only(getattr(goal, "vo2_microintervals_only", False))
-    tp.set_active_distribution(goal.distribution, goal.custom_bands)
 
     # Reconstruct PlannedWeek list.
     # v1.8.20 — round-trip ALL session fields (user_moved/status/dismissed_at/
@@ -13765,41 +12289,25 @@ def _regenerate_plan_dict(
     # zeroed them, so every edit was silently wiped.
     old_weeks = []
     for w in plan.get("weeks", []):
-        sessions = [_planned_session_from_json(s) for s in w.get("sessions", [])]
-        old_weeks.append(tp.PlannedWeek(
-            week_num=w["week_num"], start=date.fromisoformat(w["start"]),
-            end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
-            tss_target=w.get("tss_target", 0), is_stepback=w.get("is_stepback", False),
-            sessions=sessions,
-        ))
+        old_weeks.append(tp.week_from_dict(w))
 
     unavailable = plan.get("unavailable_periods", [])
 
     # v1.11.0 — thread athlete (ftp + weight) so the event-demand planner can
-    # compute event targets on regen too. No ProfileManager is in scope here
-    # (this core is shared by the auto-on-sync + manual regen paths), so
-    # assemble it the same way /api/event/projection does; only a real dict
-    # when ftp+weight are present, else athlete=None.
-    athlete = None
-    try:
-        from profile_manager import ProfileManager
-        _pm = ProfileManager.get()
-        # pm.ftp / pm.weight_kg are default-backed (200 / 70.0), so probe the raw
-        # athlete store to tell a genuinely-set value from a fabricated default —
-        # a brand-new user with no ftp/weight must yield athlete=None.
-        _raw = getattr(_pm, "_athlete", {}) or {}
-        if "ftp" in _raw and "weight_kg" in _raw and _raw.get("ftp") and _raw.get("weight_kg"):
-            athlete = {"ftp": _pm.ftp, "weight_kg": _pm.weight_kg}
-    except Exception:
-        athlete = None
+    # compute event targets on regen too.
+    athlete = _planner_athlete()
 
     # Regenerate (seed_salt forces shuffle variance per call — B3)
+    # The rider's chronic load, fetched once: the rebuild's ACWR ceiling and
+    # the drift chip's snapshot read the same number.
+    _recent_wtss = _chronic_weekly_tss_safe()
     _regen_kwargs = dict(
         goal=goal, old_plan_weeks=old_weeks,
         current_ctl=current_ctl,
         unavailable_periods=unavailable,
         activities=activities,
         seed_salt=seed_salt,
+        recent_weekly_tss=_recent_wtss,
     )
     # Pass athlete only if regenerate_from_today accepts it (the kwarg is being
     # added in training_planner concurrently — guard so a stale signature in a
@@ -13829,23 +12337,14 @@ def _regenerate_plan_dict(
         }
         for p in new_phases
     ]
-    plan_dict["weeks"] = [
-        {
-            "week_num": w.week_num,
-            "start": w.start.isoformat(), "end": w.end.isoformat(),
-            "phase": w.phase, "tss_target": w.tss_target,
-            "is_stepback": w.is_stepback,
-            "sessions": [_planned_session_to_json(s) for s in w.sessions],
-        }
-        for w in all_weeks
-    ]
-    plan_dict["regenerated"] = datetime.now().isoformat()
+    plan_dict["weeks"] = [tp.week_to_dict(w) for w in all_weeks]
+    plan_dict["regenerated"] = clock.now().isoformat()
     # 3.3.2 (Lapo #2): a regen is as fresh as a recalc — stamp recalc_date
     # too. The shallow copy carried the OLD stamp verbatim, so a user whose
     # recalc_date was stale (3.3.0 storm history) re-armed the auto-recalc
     # gate on every Plan-tab visit no matter how often they regenerated —
     # the visit then rebuilt (and, pre-fix, taper-flattened) their fresh plan.
-    plan_dict["recalc_date"] = datetime.now().isoformat()
+    plan_dict["recalc_date"] = clock.now().isoformat()
     plan_dict["regen_info"] = regen_info
     # Phase-split editor (v3.2.0, A1): the shallow copy above would carry a
     # STALE phase_weeks_status from the old plan while the phases were just
@@ -13859,13 +12358,7 @@ def _regenerate_plan_dict(
     # (UI, tests) can detect that a fresh regen happened.
     plan_dict["last_regen_at"] = seed_salt
     # P4.2 (v3.0.0) — refresh the drift snapshot: a regen re-anchors the plan
-    # on live fitness, so the chip's baseline moves with it. recent_weekly_tss
-    # mirrors the generate site's best-effort archive fetch.
-    try:
-        import ride_storage as _rs
-        _recent_wtss = _rs.recent_mean_weekly_tss()
-    except Exception:
-        _recent_wtss = None
+    # on live fitness, so the chip's baseline moves with it.
     plan_dict["ctl_snapshot"] = tp.plan_ctl_snapshot(current_ctl, _recent_wtss)
     return plan_dict, regen_info
 
@@ -13906,125 +12399,13 @@ def _current_absence_episode(old_weeks, gaps: dict, today: date):
     return (first, last.week_num)
 
 
-def _events_to_dicts(events) -> list:
-    """F7 (v2.1): serialize Goal.events (TargetEvent list) into the saved goal block."""
-    out = []
-    for e in events or []:
-        d = getattr(e, "date", None)
-        out.append({
-            "date": d.isoformat() if hasattr(d, "isoformat") else (d or None),
-            "priority": getattr(e, "priority", "B"),
-            "name": getattr(e, "name", ""),
-            "event_type": getattr(e, "event_type", "granfondo"),
-            "event_km": getattr(e, "event_km", 0),
-            "event_climb_m": getattr(e, "event_climb_m", 0),
-        })
-    return out
+# Goal.events from a list of event dicts: the codec's reader.
+_events_from_dicts = tp._target_events_from_dicts
 
-
-def _events_from_dicts(raw) -> list:
-    """F7 (v2.1): rebuild Goal.events (TargetEvent list) from the saved goal block
-    or the plan-form POST. Skips entries without a parseable date."""
-    out = []
-    for e in raw or []:
-        ds = e.get("date")
-        if not ds:
-            continue
-        try:
-            d = date.fromisoformat(ds) if isinstance(ds, str) else ds
-        except (TypeError, ValueError):
-            continue
-        climb = e.get("event_climb_m")
-        if climb is None:
-            climb = e.get("event_climb")
-        out.append(tp.TargetEvent(
-            date=d,
-            priority=e.get("priority", "B"),
-            name=e.get("name", "") or "",
-            event_type=e.get("event_type", "granfondo"),
-            event_km=e.get("event_km", 0) or 0,
-            event_climb_m=climb or 0,
-        ))
-    return out
-
-
-def _goal_from_plan_dict(g: dict) -> "tp.Goal":
-    """Reconstruct a full scheduling Goal from a persisted plan's ``goal`` block.
-
-    Mirrors the P5 (v4.1.0) reconstruction in api_plan_generate: restores
-    available_days / rest_days / daily_max_hours / max_*_hours so the sampler
-    sees the rider's real weekly shape (not Goal defaults). Used by the
-    missed-hard refit tier (the sampler reads all of these).
-    """
-    rest_days_val = g.get("rest_days", [0])
-    raw_available = g.get("available_days")
-    if raw_available is not None:
-        available_days_val = list(raw_available)
-    else:
-        available_days_val = [d for d in range(7) if d not in rest_days_val]
-    raw_daily = g.get("daily_max_hours") or {}
-    daily_max_val: dict = {}
-    for k, v in raw_daily.items():
-        try:
-            daily_max_val[int(k)] = float(v)
-        except (TypeError, ValueError):
-            continue
-    # B1 (v2.1.0): the saved goal block persists the event, but this
-    # reconstruction used to DROP target_date + every event_* field, so any
-    # recalc/refit/reforecast lost the event entirely — which also starved the
-    # F4 race-eve taper guard (it keys on goal.target_date). Restore them.
-    ev = g.get("event_date")
-    target_date_val = None
-    if ev:
-        try:
-            target_date_val = date.fromisoformat(ev)
-        except (TypeError, ValueError):
-            target_date_val = None
-    # PART B persistence sweep: restore the mid-plan-entry anchor so
-    # recalc/refit/reforecast goals carry it (splitter precedence still
-    # ignores it whenever _phase_start_override is set).
-    _sd = g.get("start_date")
-    start_date_val = None
-    if _sd:
-        try:
-            start_date_val = date.fromisoformat(str(_sd)[:10])
-        except (TypeError, ValueError):
-            start_date_val = None
-    return tp.Goal(
-        goal_type=g.get("type", g.get("goal_type", "general")),
-        target_date=target_date_val,
-        start_date=start_date_val,
-        entry_mode=g.get("entry_mode") or None,
-        event_name=g.get("event_name", ""),
-        event_km=g.get("event_km", 0),
-        event_climb_m=g.get("event_climb", 0),  # persisted as "event_climb"
-        event_type=g.get("event_type", "granfondo"),
-        hours_per_week=g.get("hours_per_week", 8.0),
-        max_weekday_hours=g.get("max_weekday_hours", 2.0),
-        max_weekend_hours=g.get("max_weekend_hours", 3.5),
-        rest_days=rest_days_val,
-        available_days=available_days_val,
-        daily_max_hours=daily_max_val,
-        plan_weeks=g.get("plan_weeks", 0),
-        longest_ride_h_90d=g.get("longest_ride_h_90d"),
-        last_ftp_test_date=g.get("last_ftp_test_date"),
-        distribution=g.get("distribution", "polarized"),  # J1
-        block_periodization=bool(g.get("block_periodization", False)),  # F1
-        vo2_microintervals_only=bool(g.get("vo2_microintervals_only", False)),
-        events=_events_from_dicts(g.get("events")),  # F7
-        plan_mode=g.get("plan_mode", "auto"),  # FS1 — keep fixed plans fixed on refit/reforecast
-        template_id=g.get("template_id", "") or "",
-        custom_bands=g.get("custom_bands", {}) or {},  # v2.3.0 custom distribution
-        # v3.2.0 phase-split editor (A2): restore the user's week vector so
-        # refit-tier goals carry it; any path that rebuilds phases
-        # validity-gates it against its own runway (A1).
-        phase_weeks=(g.get("phase_weeks") or None),
-        # 3.4.0 W2: continuous-mode focus pref (ftp|vo2|both) — without this
-        # every extend/refit rebuilt a continuous plan with the default
-        # emphasis. Ignored by other goal_types (engine contract, W1).
-        focus=str(g.get("focus") or "both"),
-    )
-
+# The goal block's reader is the codec's (tp.goal_from_dict). It used to be
+# written out here and in five other places, each with its own subset of
+# fields, and the rider's targets were read by none of them (dupes.md DUP-5).
+_goal_from_plan_dict = tp.goal_from_dict
 
 def _parse_custom_bands(raw) -> dict:
     """Validate a custom intensity-distribution payload (v2.3.0). Keeps only the
@@ -14071,72 +12452,26 @@ def _parse_phase_weeks(raw) -> "tuple[dict | None, str]":
     return dict(raw), ""
 
 
-def _recent_missed_and_done_hards(plan: dict, today: date, cur_week_dto) -> "tuple[list[str], list[date]]":
-    """v3.11.5 — hard sessions OUTSIDE the current plan-week within the rolling
-    window: (missed dates still owed, dates of hards actually done). The refit
-    owes the former and keeps 48 h from the latter."""
-    lo = today - timedelta(days=tp.MISSED_RECYCLE_WINDOW_DAYS)
-    cur_lo = getattr(cur_week_dto, "start", None)
-    cur_hi = getattr(cur_week_dto, "end", None)
-    owed: list[str] = []
-    done: list[date] = []
-    for w in plan.get("weeks", []) or []:
-        if not isinstance(w, dict):
-            continue
-        for sj in w.get("sessions", []) or []:
-            if not isinstance(sj, dict):
-                continue
-            try:
-                d = date.fromisoformat(sj.get("day") or "")
-            except (TypeError, ValueError):
-                continue
-            if not (lo <= d < today):
-                continue
-            if cur_lo is not None and cur_hi is not None and cur_lo <= d <= cur_hi:
-                continue
-            try:
-                ps = _planned_session_from_json(sj)
-            except Exception:  # noqa: BLE001
-                continue
-            if not tp._session_is_hit(ps):
-                continue
-            st = (sj.get("status") or "pending")
-            if st == "missed":
-                owed.append(d.isoformat())
-            elif st in ("done", "done_partial"):
-                done.append(d)
-    return sorted(set(owed)), sorted(set(done))
+def _planner_athlete() -> "dict | None":
+    """The rider's FTP and weight for the event-demand planner, or None.
+
+    pm.ftp and pm.weight_kg are default-backed (200 / 70.0), so the raw athlete
+    store tells a set value from a fabricated default: a brand-new user with no
+    FTP or weight gets None, and the planner then skips the event targets.
+    Generate, regenerate and recalculate each assembled this inline; refit did
+    not, and planned without it."""
+    try:
+        from profile_manager import ProfileManager
+        _pm = ProfileManager.get()
+        _raw = getattr(_pm, "_athlete", {}) or {}
+        if _raw.get("ftp") and _raw.get("weight_kg"):
+            return {"ftp": _pm.ftp, "weight_kg": _pm.weight_kg}
+    except Exception:
+        pass
+    return None
 
 
-def _recent_weekly_tss(activities, today: date) -> "float | None":
-    """Cycling TSS in the last 7 days incl. today (ACWR's acute window)."""
-    lo = (today - timedelta(days=6)).isoformat()
-    hi = today.isoformat()
-    total = 0.0
-    seen = False
-    for a in activities or []:
-        if not _is_cycling_sport(a.get("sport", "")):
-            continue
-        d = (a.get("date") or a.get("start_date_local", "") or "")[:10]
-        if not (lo <= d <= hi):
-            continue
-        tss = float(a.get("tss") or a.get("icu_training_load") or 0)
-        if tss > 0:
-            total += tss
-            seen = True
-    return total if seen else None
-
-
-def _ledger_message(ledger: dict) -> str:
-    n = len(ledger.get("missed_dates") or [])
-    if not n:
-        return ""
-    return (f"Missed {n} hard session{'s' if n != 1 else ''} — "
-            + (ledger.get("note") or "").replace("missed: ", "", 1))
-
-
-def _apply_refit_to_plan(plan: dict, today: date, owed_days=None, prev_done_hard_days=None,
-                         ctx: "dict | None" = None) -> "tuple[dict | None, dict | None]":
+def _apply_refit_to_plan(plan: dict, today: date) -> "dict | None":
     """v2.0.7 — run the missed-hard week-refit on ``plan`` in place.
 
     Round-trips the plan's weeks into PlannedWeek DTOs (all session fields, so
@@ -14155,62 +12490,44 @@ def _apply_refit_to_plan(plan: dict, today: date, owed_days=None, prev_done_hard
     dto_weeks: list = []
     for w in weeks_json:
         try:
-            dto_weeks.append(tp.PlannedWeek(
-                week_num=w["week_num"], start=date.fromisoformat(w["start"]),
-                end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
-                tss_target=w.get("tss_target", 0),
-                is_stepback=w.get("is_stepback", False),
-                sessions=[_planned_session_from_json(s) for s in w.get("sessions", [])],
-            ))
+            dto_weeks.append(tp.week_from_dict(w))
         except (KeyError, ValueError, TypeError):
             return None
 
     cur = next((w for w in dto_weeks if w.start <= today <= w.end), None)
     if cur is None:
-        return None, None
-    cur_idx = dto_weeks.index(cur)
+        return None
     missed_dates = sorted(
         s.day.isoformat() for s in cur.sessions
         if getattr(s, "status", "") == "missed" and tp._session_is_hit(s)
         and getattr(s, "day", None)
     )
-    owed_set = set(owed_days or [])
-    owed_sessions = [s for w in dto_weeks for s in w.sessions
-                     if getattr(s, "day", None) and s.day.isoformat() in owed_set]
-    all_missed = sorted(set(missed_dates) | owed_set)
-    if not all_missed:
-        return None, None
-    seed_basis = f"{dto_weeks[0].start.isoformat()}:{cur.week_num}:{','.join(all_missed)}"
+    # Deterministic seed: stable for a given absence so the latch + seed both
+    # keep the refit from re-rolling on repeat syncs (planner is otherwise
+    # non-deterministic — see planner-test-nondeterminism memory).
+    seed_basis = f"{dto_weeks[0].start.isoformat()}:{cur.week_num}:{','.join(missed_dates)}"
     seed_salt = int(hashlib.sha1(seed_basis.encode()).hexdigest()[:12], 16)
+
+    # Refit's event emphasis needs the rider's FTP and weight; without them it
+    # never reached production (the Step 5 review, L2).
     _, refit_info = tp.refit_remaining_week(
-        goal, dto_weeks, today, seed_salt=seed_salt,
-        owed_missed=owed_sessions, prev_done_hard_days=list(prev_done_hard_days or []),
+        goal, dto_weeks, today, seed_salt=seed_salt, athlete=_planner_athlete(),
     )
-    ctx = ctx or {}
-    library = tp.load_workout_library()
-    ledger = tp.recycle_missed_load(
-        dto_weeks, cur_idx, today, goal, refit_info, library=library,
-        availability=ctx.get("availability") or plan.get("availability") or {},
-        current_ctl=ctx.get("current_ctl"), recent_weekly_tss=ctx.get("recent_weekly_tss"),
-        tsb=ctx.get("tsb"), taper_blocked=bool(ctx.get("taper_blocked")),
-        hr_bias=_hr_bias(), seed_salt=seed_salt,
-    )
-    touched = set(refit_info.get("refit_days") or []) | set(all_missed)
-    touched |= {r["date"] for r in ledger.get("placed_this_week") or []}
-    carried = ledger.get("carried_next_week") or {}
-    touched |= {r["date"] for r in carried.get("days") or []}
-    by_date = {s.day.isoformat(): s for w in dto_weeks for s in w.sessions if getattr(s, "day", None)}
-    for wi, wj in enumerate(weeks_json):
-        for i, sj in enumerate(wj.get("sessions", []) or []):
-            if sj.get("day") in touched and sj.get("day") in by_date:
-                wj["sessions"][i] = _planned_session_to_json(by_date[sj["day"]])
-        if carried and wj.get("week_num") == carried.get("week_num") and wi < len(dto_weeks):
-            wj["tss_target"] = dto_weeks[wi].tss_target
-    ledger["at"] = datetime.now().isoformat()
-    plan["missed_recycle"] = ledger
     if refit_info.get("action") != "refitted" or not refit_info.get("refit_days"):
-        return None, ledger
-    return refit_info, ledger
+        return None
+
+    # Write the changed remaining-day sessions back into the plan dict (match by
+    # date within the current week). Only refit_days were mutated.
+    changed = set(refit_info["refit_days"])
+    by_date = {s.day.isoformat(): s for s in cur.sessions}
+    for wj in weeks_json:
+        if wj.get("week_num") != cur.week_num:
+            continue
+        for i, sj in enumerate(wj.get("sessions", [])):
+            if sj.get("day") in changed:
+                wj["sessions"][i] = _planned_session_to_json(by_date[sj["day"]])
+        break
+    return refit_info
 
 
 def _apply_plan_update(
@@ -14247,16 +12564,10 @@ def _apply_plan_update(
     own plan_write_lock so the latch/status writes are in the same critical
     section.
     """
-    now_iso = datetime.now().isoformat()
-    current_ctl = training.get("ctl") or 30
+    now_iso = clock.now().isoformat()
+    current_ctl = _planning_ctl()
     current_tsb = training.get("tsb")
 
-    # J1 (v2.1.0): pin the active intensity-distribution model to the plan's
-    # persisted choice so every tier (rebuild / missed-hard refit / reforecast)
-    # rebuilds with the same model rather than reverting to polarized.
-    tp.set_vo2_micro_only((plan.get("goal", {}) or {}).get("vo2_microintervals_only", False))
-    tp.set_active_distribution((plan.get("goal", {}) or {}).get("distribution", "polarized"),
-                               (plan.get("goal", {}) or {}).get("custom_bands"))
 
     # v1.8.25 — RECONCILE FIRST. Mark the current week's sessions done/missed
     # from actual activities BEFORE adapting, so this happens automatically on
@@ -14271,7 +12582,13 @@ def _apply_plan_update(
     # pending. Bookkeeping is not reforecast work and must survive that gate.
     reconciled = 0
     try:
-        reconciled += _reconcile_recent_weeks(plan, today)[0] or 0
+        # Before the rematch, so a restored session is judged against the
+        # ride that arrived late on its own day.
+        reconciled += len(_undo_auto_moves_for_ridden_days(plan, today) or ())
+    except Exception:  # noqa: BLE001 — best-effort; never block adapt
+        _log.exception("auto-move undo skipped")
+    try:
+        reconciled += _reconcile_current_week(plan, today)[0] or 0
     except Exception:  # noqa: BLE001 — reconcile is best-effort; never block adapt
         _log.exception("auto-reconcile skipped")
 
@@ -14291,13 +12608,7 @@ def _apply_plan_update(
     old_weeks = []
     for w in plan.get("weeks", []):
         try:
-            old_weeks.append(tp.PlannedWeek(
-                week_num=w["week_num"], start=date.fromisoformat(w["start"]),
-                end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
-                tss_target=w.get("tss_target", 0),
-                is_stepback=w.get("is_stepback", False),
-                sessions=[_planned_session_from_json(s) for s in w.get("sessions", [])],
-            ))
+            old_weeks.append(tp.week_from_dict(w))
         except (KeyError, ValueError, TypeError):
             continue
 
@@ -14378,16 +12689,13 @@ def _apply_plan_update(
     # missed-date set) so it fires once, not on every sync. A missed EASY
     # session does NOT trigger this — only hard. Falls through to reforecast
     # when no hard miss, no remaining day, already latched, or nothing changed.
-    pending_missed_msg = ""
     cur_week_dto, _cur_idx = _load_current_week_dto(plan, today)
     if cur_week_dto is not None:
-        # v3.11.5: misses from the previous plan-week's tail are owed too.
-        owed_days, prev_done_hard = _recent_missed_and_done_hards(plan, today, cur_week_dto)
-        missed_hard = sorted(set(
+        missed_hard = sorted(
             s.day.isoformat() for s in cur_week_dto.sessions
             if getattr(s, "status", "") == "missed" and tp._session_is_hit(s)
             and getattr(s, "day", None)
-        ) | set(owed_days))
+        )
         has_remaining = any(
             (s.day >= today
              and getattr(s, "session_type", "") != "rest"
@@ -14397,43 +12705,23 @@ def _apply_plan_update(
         refit_key = "|".join(missed_hard)
         refit_latched = (plan.get("missed_refit_latch", {}) or {}).get("key") == refit_key
         if missed_hard and has_remaining and not refit_latched:
-            _tsb = training.get("tsb") if isinstance(training, dict) else None
-            if (_tsb is None and isinstance(training, dict)
-                    and training.get("ctl") is not None and training.get("atl") is not None):
-                try:
-                    _tsb = float(training["ctl"]) - float(training["atl"])
-                except (TypeError, ValueError):
-                    _tsb = None
-            _ctx = {"current_ctl": current_ctl, "recent_weekly_tss": _recent_weekly_tss(activities, today),
-                    "tsb": _tsb, "taper_blocked": taper_blocks,
-                    "availability": plan.get("availability") or {}}
             try:
-                refit_info, ledger = _apply_refit_to_plan(
-                    plan, today, owed_days=owed_days, prev_done_hard_days=prev_done_hard, ctx=_ctx)
+                refit_info = _apply_refit_to_plan(plan, today)
             except Exception:  # noqa: BLE001 — refit is best-effort; fall through
                 _log.exception("missed-hard refit skipped")
-                refit_info, ledger = None, None
-            if ledger:
-                plan["missed_refit_latch"] = {"key": refit_key, "at": now_iso}
-                _log.info("EVENT=missed_load_recycle missed=%s dose=%s promoted=%s placed=%s carried=%s dropped=%s reasons=%s",
-                          ",".join(ledger.get("missed_dates") or []), ledger.get("missed_dose"),
-                          ledger.get("promoted_tss"), sum(r["tss"] for r in ledger.get("placed_this_week") or []),
-                          (ledger.get("carried_next_week") or {}).get("tss", 0), ledger.get("dropped_tss"),
-                          "; ".join(ledger.get("reasons") or []))
+                refit_info = None
             if refit_info:
+                plan["missed_refit_latch"] = {"key": refit_key, "at": now_iso}
                 miss_n = len(refit_info["missed_dates"])
                 day_n = len(refit_info["refit_days"])
                 status = (
                     f"Missed {miss_n} hard session{'s' if miss_n != 1 else ''} — "
                     f"refit {day_n} remaining day{'s' if day_n != 1 else ''} this "
-                    f"week (within your safety limits)."
-                    + ((" " + (ledger.get("note") or "").replace("missed: ", "", 1)) if ledger and ledger.get("note") else ""))
+                    f"week (within your safety limits).")
                 plan["last_update_info"] = {"action": "refitted", "message": status,
                                             "at": now_iso}
-                info = {"gaps": gaps, "refit_info": refit_info, "recycle": ledger}
+                info = {"gaps": gaps, "refit_info": refit_info}
                 return plan, "refitted", info, status
-            if ledger:
-                pending_missed_msg = _ledger_message(ledger)
 
     # ── reforecast tier (structure-preserving rebalance) ─────────────────────
     # 5-min debounce applies to THIS tier only (the regen tier above always
@@ -14441,7 +12729,7 @@ def _apply_plan_update(
     if reforecast_min_interval_iso:
         try:
             last_dt = datetime.fromisoformat(reforecast_min_interval_iso)
-            if (datetime.now() - last_dt).total_seconds() < 300:
+            if (clock.now() - last_dt).total_seconds() < 300:
                 # "reconciled" when the bookkeeping passes above actually
                 # changed something: the debounce is about reforecast churn,
                 # and callers treat only "skipped" as nothing-to-write, so a
@@ -14510,12 +12798,8 @@ def _apply_plan_update(
     # Say which of the two actually happened.
     if modified or reconciled:
         status = "Plan rebalanced to today's fitness."
-        if pending_missed_msg:
-            status = pending_missed_msg + " " + status
     else:
         status = "Plan checked — no change needed."
-        if pending_missed_msg:
-            status = pending_missed_msg + " " + status
     plan["last_update_info"] = {"action": "rebalanced", "message": status,
                                 "at": now_iso, "modified": bool(modified)}
     info = {"gaps": gaps, "reforecast_info": reforecast_info}
@@ -14552,7 +12836,7 @@ async def api_plan_regenerate_dynamic(request: Request):
 
         # Get current CTL
         training = cached("training", get_today_metrics)
-        current_ctl = training.get("ctl") or 30
+        current_ctl = _planning_ctl()
 
         activities = db.query_activities(days=120)
 
@@ -14598,7 +12882,7 @@ async def api_plan_add_race(request: Request):
         d = date.fromisoformat(ev_date)
     except ValueError:
         return JSONResponse({"error": "date must be YYYY-MM-DD"}, status_code=400)
-    if d < date.today():
+    if d < clock.today():
         return JSONResponse({"error": "race date is in the past"}, status_code=400)
     prio = str((body or {}).get("priority") or "B").upper()
     if prio not in ("B", "C"):
@@ -14621,7 +12905,7 @@ async def api_plan_add_race(request: Request):
 
         seed_salt = time.time_ns()
         training = cached("training", get_today_metrics)
-        current_ctl = training.get("ctl") or 30
+        current_ctl = _planning_ctl()
         activities = db.query_activities(days=120)
         plan_dict, regen_info = _regenerate_plan_dict(
             plan, current_ctl=current_ctl, activities=activities, seed_salt=seed_salt,
@@ -14668,7 +12952,7 @@ async def api_plan_update(debounce: int = Query(0)):
                 plan,
                 training=training,
                 activities=activities,
-                today=date.today(),
+                today=clock.today(),
                 allow_regen=True,
                 gap_debounce=True,
                 reforecast_min_interval_iso=(plan.get("reforecast_date") if debounce else None),
@@ -14680,7 +12964,7 @@ async def api_plan_update(debounce: int = Query(0)):
                         "plan_json": plan, "gaps": (info or {}).get("gaps")}
             tp.atomic_write_plan(json_path, plan_dict)
         try:
-            _enrich_plan_for_response(plan_dict, today_iso=date.today().isoformat())
+            _enrich_plan_for_response(plan_dict, today_iso=clock.today().isoformat())
         except Exception:  # noqa: BLE001
             pass
         return {"ok": True, "action": action, "status_message": status,
@@ -14730,7 +13014,7 @@ def build_fit_workout_bytes(session_type: str, duration_min: int,
 
     ftp = config.ATHLETE_FTP_W
     if zwo_file:
-        zwo_path = _safe_path(WORKOUT_DIR, zwo_file)
+        zwo_path = _safe_path(active_workout_dir(), zwo_file)
         if not zwo_path or not zwo_path.exists():
             raise FileNotFoundError(f"ZWO file not found: {zwo_file}")
         # task #24: cap the ZWO text pre-transcode when active + power FIT.
@@ -14822,58 +13106,6 @@ def api_export_fit_workout(
     )
 
 
-def _fit_hr_mode() -> bool:
-    """True when the athlete's target_mode is 'hr' (IP_HR_ONLY). Kept tiny so
-    both FIT builders share one gate; ProfileManager.target_mode already
-    degrades to 'power' if the lthr/max_hr invariant is broken."""
-    try:
-        from profile_manager import ProfileManager
-        return ProfileManager.get().target_mode == "hr"
-    except Exception:
-        return False
-
-
-def _prescription_hr_rows(pm) -> dict | None:
-    """The athlete's custom HR prescription rows (W1) or None for Coggan
-    defaults. SINGLE resolver — converter, FIT, hr_axis, /api/settings
-    hr_rows and session chips all route through here so the numbers can
-    never diverge. Shape: {"z1_high": int, "z2": [lo,hi], "z3": [lo,hi],
-    "z4": [lo,hi]} (absolute bpm; validated at the settings write)."""
-    rows = pm._athlete.get("hr_prescription_rows_custom")
-    return rows if isinstance(rows, dict) else None
-
-
-def _icu_can_upload() -> bool:
-    """v3.11.5 — may this connection POST activities to intervals.icu?
-    API key → yes (full access). OAuth → only with the ACTIVITY:WRITE stamp
-    (pre-3.11.5 connections asked for ACTIVITY:READ and got 403 on every
-    upload; they need one reconnect). No connection → no."""
-    token = getattr(config, "ICU_ACCESS_TOKEN", "") or ""
-    key = getattr(config, "ICU_API_KEY", "") or ""
-    if token:
-        try:
-            from profile_manager import ProfileManager
-            return ProfileManager.get().icu_has_scope("ACTIVITY:WRITE")
-        except Exception:  # noqa: BLE001
-            return False
-    return bool(key)
-
-
-def _hr_bias() -> bool:
-    """hr target_mode -> soft matcher preference for HR-guidable files
-    (v2.5.0 W5). One chokepoint so every rematch/redraw path agrees."""
-    return _fit_hr_mode()
-
-
-def _fit_hr_params() -> tuple[int, int, dict | None]:
-    # int() — save_athlete's validator stores lthr as float (e.g. 167.5 from an
-    # ICU estimate); the detail endpoint ints too, so chart and FIT round the
-    # same base and can't skew by 1-2 bpm (red-team F5).
-    from profile_manager import ProfileManager
-    pm = ProfileManager.get()
-    return int(pm.lthr), int(pm.max_hr), _prescription_hr_rows(pm)
-
-
 def _fit_apply_hr_target(step, pct_lo: float, pct_hi: float, dur_s: float,
                          step_name: str, lthr: int, max_hr: int,
                          hr_rows_override: dict | None = None,
@@ -14954,7 +13186,7 @@ def _build_fit_workout(name: str, blocks: list[dict], ftp: int,
     # time_created is REQUIRED by TrainingPeaks / Vekta / Garmin Connect — a
     # workout FIT without it imports as EMPTY (the reported bug). Value is ms
     # since the Unix epoch; fit_tool converts to the FIT epoch on encode.
-    file_id.time_created = int(datetime.now().timestamp() * 1000)
+    file_id.time_created = int(clock.now().timestamp() * 1000)
     builder.add(file_id)
 
     # Workout header
@@ -14978,7 +13210,7 @@ def _build_fit_workout(name: str, blocks: list[dict], ftp: int,
         step = WorkoutStepMessage()
         step.message_index = i
         step.duration_type = WorkoutStepDuration.TIME
-        step.duration_value = b["min"] * 60 * 1000  # milliseconds
+        step.duration_time = b["min"] * 60  # seconds; fit-tool 0.9.16 applies the profile's x1000 scale itself
         step.intensity = INTENSITY_MAP.get(b.get("intensity", "active"), Intensity.ACTIVE)
         # v2.4.2 — every step needs a name. Garmin's own canonical workout files
         # (and TrainingPeaks / Vekta) expect wkt_step_name on each step; without it
@@ -15167,7 +13399,7 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int,
     file_id.serial_number = 12345
     # REQUIRED by TrainingPeaks / Vekta — without time_created the workout
     # imports as empty. ms since Unix epoch; fit_tool converts to FIT epoch.
-    file_id.time_created = int(datetime.now().timestamp() * 1000)
+    file_id.time_created = int(clock.now().timestamp() * 1000)
     builder.add(file_id)
 
     workout = WorkoutMessage()
@@ -15180,7 +13412,7 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int,
         step = WorkoutStepMessage()
         step.message_index = i
         step.duration_type = WorkoutStepDuration.TIME
-        step.duration_value = dur_s * 1000  # milliseconds
+        step.duration_time = dur_s  # seconds; fit-tool 0.9.16 applies the profile's x1000 scale itself
         step.intensity = INTENSITY_MAP.get(intensity_kind, Intensity.ACTIVE)
         # v2.4.2 — name every step (Garmin canonical / TrainingPeaks / Vekta expect
         # wkt_step_name; missing names → "no workout in this file" on import).
@@ -15222,59 +13454,10 @@ def _build_fit_workout_from_zwo(name: str, zwo_path: Path, ftp: int,
 # ROLLING PLAN AUTO-RECALCULATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# v1.8.20 — canonical PlannedSession ↔ JSON round-trip (single source of truth).
-# Pre-v1.8.20 several writers (notably /api/plan/regenerate) hand-listed ~8 of
-# the dataclass's 22 fields, silently DROPPING user_moved / status / moved_from /
-# completion_matches / dismissed_at / adapted / am_or_pm on every rebuild — so an
-# auto-regen wiped the rider's dragged + dismissed sessions. These helpers derive
-# the field list from ``dataclasses.fields`` so no field can ever silently
-# regress, and pass through the two JSON-only keys the dataclass doesn't carry
-# (``variation`` + ``adapted_reason``, written by accept-redraw — variation drives
-# redraw-seed reproducibility).
-import dataclasses as _dataclasses
-
-# FC5a (v2.5.0): "auto_moved" is the auto-reschedule provenance marker (never
-# user_moved — that pin is reserved for user drags). JSON-only like variation.
-# v3.11.3: + ftp_test_type — the rider's explicit protocol choice was dropped by
-# every plan rebuild (reforecast / tab-open auto-recalc), so the day modal
-# snapped back to "20-minute · selected" after a close/reopen.
-_PS_JSON_ONLY_KEYS = ("variation", "adapted_reason", "auto_moved", "ftp_test_type")
-
-
-def _planned_session_from_json(s: dict) -> "tp.PlannedSession":
-    """Reconstruct a PlannedSession from stored JSON, preserving ALL fields."""
-    kwargs = {}
-    for f in _dataclasses.fields(tp.PlannedSession):
-        if f.name == "day":
-            kwargs["day"] = date.fromisoformat(s["day"])
-            continue
-        if f.name in s:
-            kwargs[f.name] = s[f.name]
-    ps = tp.PlannedSession(**kwargs)
-    # Carry JSON-only keys (not dataclass fields) as dynamic attrs so they
-    # survive the round-trip on preserved sessions.
-    for k in _PS_JSON_ONLY_KEYS:
-        if k in s:
-            try:
-                setattr(ps, k, s[k])
-            except Exception:
-                pass
-    return ps
-
-
-def _planned_session_to_json(s: "tp.PlannedSession") -> dict:
-    """Serialize a PlannedSession to JSON, emitting ALL fields."""
-    out = {}
-    for f in _dataclasses.fields(tp.PlannedSession):
-        v = getattr(s, f.name, f.default)
-        if f.name == "day":
-            out["day"] = v.isoformat() if hasattr(v, "isoformat") else v
-        else:
-            out[f.name] = v
-    for k in _PS_JSON_ONLY_KEYS:
-        if hasattr(s, k):
-            out[k] = getattr(s, k)
-    return out
+# The plan codec lives with the dataclasses (training_planner.session_to_dict
+# and friends); these names stay because handlers and tests call them.
+_planned_session_from_json = tp.session_from_dict
+_planned_session_to_json = tp.session_to_dict
 
 
 def _load_current_week_dto(plan: dict, today: date):
@@ -15293,14 +13476,7 @@ def _load_current_week_dto(plan: dict, today: date):
         except (KeyError, ValueError):
             continue
         if w_start <= today <= w_end:
-            sessions = [_planned_session_from_json(s) for s in w.get("sessions", [])]
-            pw = tp.PlannedWeek(
-                week_num=w["week_num"], start=w_start, end=w_end,
-                phase=w["phase"], tss_target=w["tss_target"],
-                is_stepback=w.get("is_stepback", False),
-                sessions=sessions,
-            )
-            return pw, i
+            return tp.week_from_dict(w), i
     return None, -1
 
 
@@ -15338,34 +13514,82 @@ def _collect_week_activities(current_week, today: date, include_today: bool = Fa
     week_start_iso = current_week.start.isoformat()
     upper_iso = (today + timedelta(days=1)).isoformat() if include_today else today.isoformat()
     actual = []
-    seen_keys = set()
+    seen_keys: list = []
 
     def _add(a: dict):
         if not _is_cycling_sport(a.get("sport", "")):
             return  # non-cycling (rock climbing, run, …) — don't reconcile as a ride
+        # An activities row is not the shape the classifier reads: it carries
+        # duration_sec and keeps icu_intensity inside raw_json. Read as it
+        # was, a ridden session scored 0 min and no intensity, was marked
+        # missed, and the auto-reschedule moved it onto the next day
+        # (2026-09-15).
+        raw = {}
+        if isinstance(a.get("raw_json"), str):
+            try:
+                raw = json.loads(a["raw_json"])
+            except ValueError:
+                raw = {}
+        if not isinstance(raw, dict):
+            raw = {}
         d = (a.get("date") or a.get("start_date_local", "") or "")[:10]
         if not (week_start_iso <= d < upper_iso):
             return
-        tss = float(a.get("tss") or a.get("icu_training_load") or 0)
+        tss = float(a.get("tss") or a.get("icu_training_load") or raw.get("icu_training_load") or 0)
+        moving_s = a.get("moving_time") or raw.get("moving_time") or a.get("duration_sec") or 0
+        dur_min = float(a.get("duration_min") or (moving_s or 0) / 60 or 0)
+        if_ = a.get("intensity_factor") or a.get("icu_intensity") or raw.get("icu_intensity")
+        real_load = tss > 0
         if tss <= 0:
-            return
-        dur_min = float(a.get("duration_min") or (a.get("moving_time", 0) or 0) / 60 or 0)
+            # A ride stored without a load (intervals.icu had no FTP for it,
+            # or never analysed it) is still a ride: estimated from duration
+            # and intensity where there is one, else kept at 0 TSS so its
+            # duration counts. Before, it was dropped and its day was missed.
+            try:
+                f = float(if_) if if_ is not None else 0.0
+                f = f / 100 if f > 3 else f
+            except (TypeError, ValueError):
+                f = 0.0
+            tss = round(dur_min / 60 * f * f * 100, 1) if f > 0 else 0.0
+            if dur_min <= 0:
+                return
         # v2.4.0 — dedup key includes DURATION so two genuinely-different same-day
         # rides (e.g. a short hard session + a long commute) with near-equal TSS
         # are NOT collapsed; cross-source copies of the SAME ride share
         # date+tss+duration and still dedup.
+        # Two identical commutes are two rides, though: copies of one ride
+        # start within seconds of each other, commutes hours apart. Rows whose
+        # start times agree within two minutes and whose durations agree are
+        # one ride, whatever their loads (a copy stored without one is
+        # estimated, or 0); the copy with a real load is the one kept. Without
+        # start times, rows in the same date/TSS/duration buckets are one.
         key = (d, round(tss / 5) * 5, round(dur_min / 5) * 5)
-        if key in seen_keys:
-            return
-        seen_keys.add(key)
-        actual.append({
+        start = None
+        try:
+            start = datetime.fromisoformat(str(raw.get("start_date_local") or a.get("start_date_local") or "")[:19])
+        except ValueError:
+            start = None
+        entry = {
             "date": d,
             "tss": tss,
             "duration_min": dur_min,
-            "intensity_factor": a.get("intensity_factor") or a.get("icu_intensity"),
+            "intensity_factor": if_,
             "id": a.get("id") or a.get("icu_id"),
             "sport": a.get("sport", ""),
-        })
+        }
+        for seen in seen_keys:
+            if start is not None and seen["start"] is not None:
+                same = (abs((start - seen["start"]).total_seconds()) <= 120
+                        and abs(dur_min - seen["dur"]) <= max(5.0, 0.1 * max(dur_min, seen["dur"])))
+            else:
+                same = seen["key"] == key
+            if same:
+                if real_load and not seen["real"]:
+                    actual[seen["idx"]] = entry
+                    seen.update(real=True, key=key)
+                return
+        seen_keys.append({"key": key, "start": start, "dur": dur_min, "real": real_load, "idx": len(actual)})
+        actual.append(entry)
 
     try:
         from db import query_activities
@@ -15405,7 +13629,7 @@ def api_plan_daily_adapt():
         with open(json_path, encoding="utf-8") as f:
             plan = json.load(f)
 
-        today = date.today()
+        today = clock.today()
         current_week, _idx = _load_current_week_dto(plan, today)
         if not current_week:
             return {"action": "no_current_week", "projection_only": True}
@@ -15502,6 +13726,32 @@ def _apply_move_session(
     moved_payload["moved_from"] = src_iso
     if reset_status_to_pending or moved_payload.get("status", "pending") == "pending":
         moved_payload["status"] = "pending"
+    elif moved_payload.get("status") == "missed" and dst_d >= clock.today():
+        # Dragged onto a day still to come: owed there, not missed; left
+        # "missed", the auto-reschedule moved it off the day it was put on.
+        moved_payload["status"] = "pending"
+    if auto:
+        # What the move changed, so a ride that turns up later on the
+        # session's own day can undo it (_undo_auto_moves_for_ridden_days):
+        # the session as it was, and what every day it passed through held.
+        # A move of a session an earlier auto-move put here extends that
+        # record, so the undo still starts from the day it was planned on.
+        # Kept at plan level: session fields outside the planner's DTO do not
+        # survive a reforecast.
+        def _snap(x):
+            return json.loads(json.dumps(x)) if x else None
+        records = plan.setdefault("auto_moves", [])
+        prior = next((r for r in records if r.get("to") == src_iso
+                      and src_session.get("auto_moved") and src_session.get("moved_from") == r.get("via")), None)
+        if prior is not None:
+            prior.setdefault("hops", []).append({"day": src_iso, "displaced": prior.get("displaced")})
+            prior.update({"to": dst_iso, "via": src_iso, "displaced": _snap(dst_session),
+                          "at": clock.now().isoformat()})
+        else:
+            records.append({"from": src_iso, "to": dst_iso, "via": src_iso, "hops": [],
+                            "session": _snap(src_session), "displaced": _snap(dst_session),
+                            "at": clock.now().isoformat()})
+        plan["auto_moves"] = records[-20:]
 
     new_src = []
     for s in src_sessions:
@@ -15537,7 +13787,7 @@ def _apply_move_session(
             new_dst.append(moved_payload)
         dst_week["sessions"] = new_dst
 
-    plan["last_move"] = {"date": src_iso, "new_date": dst_iso, "at": datetime.now().isoformat()}
+    plan["last_move"] = {"date": src_iso, "new_date": dst_iso, "at": clock.now().isoformat()}
     return moved_payload
 
 
@@ -15595,17 +13845,6 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
         except (TypeError, ValueError):
             continue
 
-    def _sess_is_hard(sess: dict) -> bool:
-        """Union-of-axes hard check on a persisted session dict (mirrors
-        tp._session_is_hit without needing a DTO)."""
-        if (sess.get("session_type") or "") in tp._HIT_SESSION_TYPES:
-            return True
-        try:
-            cc = tp._content_class_for_zwo(sess.get("zwo_file") or "")
-        except Exception:
-            cc = ""
-        return cc in tp._HIT_SLOT_CONTENT_CLASSES
-
     def _is_available_slot(d_iso: str, missed_iso: str,
                            missed_sess: "dict | None" = None,
                            easy_takeover: bool = False) -> bool:
@@ -15630,7 +13869,7 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
             return False
         # FC5a (v2.5.0, L3-1): no HARD destination inside T-2..T+0 of an A/B
         # event. Openers are exempt — a short touch ride is what belongs there.
-        if (missed_sess is not None and _sess_is_hard(missed_sess)
+        if (missed_sess is not None and tp._session_is_hit(missed_sess)
                 and not missed_sess.get("is_opener")):
             for ed in event_days:
                 if 0 <= (ed - d).days <= 2:
@@ -15638,6 +13877,25 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
         entry = availability.get(d_iso)
         if isinstance(entry, dict) and entry.get("type") == "unavailable":
             return False
+        # C2 (v3.12.0, merge contract): a re-owed HARD session keeps 48 h from
+        # every hard session that was ridden or is still planned, on ANY
+        # destination -- a free rest slot included, not only an easy-day
+        # takeover (the guard below used to live in that branch alone, so a
+        # missed VO2 could land the day after a ridden threshold). A missed or
+        # dismissed neighbour does not count (D6): it will not be ridden.
+        if (missed_sess is not None and tp._session_is_hit(missed_sess)
+                and not missed_sess.get("is_opener")):
+            for nb in (d - timedelta(days=1), d + timedelta(days=1)):
+                nb_iso = nb.isoformat()
+                if nb_iso == missed_iso:
+                    continue
+                if nb_iso in placed_hard:
+                    return False  # a hard session this pass has already placed
+                nb_sess = sess_by_day.get(nb_iso)
+                if (nb_sess and tp._session_is_hit(nb_sess)
+                        and (nb_sess.get("status") or "pending") not in ("missed", "dismissed")
+                        and not str(nb_sess.get("status") or "").startswith("moved_from:")):
+                    return False
         sess = sess_by_day.get(d_iso)
         if sess is None:
             return False
@@ -15669,7 +13927,7 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
             # ridden.
             for nb in (d - timedelta(days=1), d + timedelta(days=1)):
                 nb_sess = sess_by_day.get(nb.isoformat())
-                if (nb_sess and _sess_is_hard(nb_sess)
+                if (nb_sess and tp._session_is_hit(nb_sess)
                         and (nb_sess.get("status") or "pending")
                         not in ("missed", "dismissed")):
                     return False
@@ -15697,6 +13955,7 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
     misses.sort(key=lambda s: s.get("day", ""))
 
     used: set[str] = set()
+    placed_hard: set[str] = set()  # days this pass has given a re-owed HARD session
     takeover_weeks: set = set()   # at most ONE easy-day takeover per ISO week
     suggestions: list[dict] = []
     for miss in misses:
@@ -15727,7 +13986,7 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
             cand_sess = sess_by_day.get(cand_iso, {})
             chosen_reason = "rest_slot" if cand_sess.get("session_type") == "rest" else "unfilled_available_day"
             break
-        if chosen is None and _sess_is_hard(miss) \
+        if chosen is None and tp._session_is_hit(miss) \
                 and (iso_year, iso_week) not in takeover_weeks:
             # Second chance for a missed HARD session in a week with no free
             # rest slot: take over an easy day. Capped at one per week so a
@@ -15748,6 +14007,8 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
             continue
 
         used.add(chosen)
+        if tp._session_is_hit(miss) and not miss.get("is_opener"):
+            placed_hard.add(chosen)
         try:
             suggested_day_name = date.fromisoformat(chosen).strftime("%a")
         except ValueError:
@@ -15776,6 +14037,111 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
     return suggestions
 
 
+_RIDDEN_RANK = {"done": 3, "ambiguous": 2, "done_partial": 1}
+
+
+def _undo_auto_moves_for_ridden_days(plan: dict, today: date) -> list[dict]:
+    """Undo an auto-move whose session turns out to have been ridden earlier.
+
+    A ride can reach intervals.icu a day or two late (the phone syncs the head
+    unit late). By then the session was marked missed and moved, perhaps more
+    than once, and the ride landed on a stub nothing matches. The session is
+    judged, as planned, against the rides of every day it was moved away
+    from, in order; on the first day whose rides count (two of three axes, or
+    ``_ridden_status``) and match it better than whatever was ridden where it
+    now sits, it goes back to that day, and each later day the move touched
+    gets back what it held. Everything restored is pending; the rematch that
+    follows judges each day against its own rides.
+
+    Days that no longer hold what the move left there (a manual drag, an
+    edit) are not touched, and a record whose chain was broken that way is
+    dropped. Only days the rematch still covers (the plan weeks of yesterday
+    and today) are undone; records older than 14 days are dropped.
+    """
+    records = plan.get("auto_moves") or []
+    if not records:
+        return []
+    window_week, _ = _load_current_week_dto(plan, today - timedelta(days=1))
+    window_start = (window_week.start if window_week else today - timedelta(days=1)).isoformat()
+    horizon = (clock.now() - timedelta(days=14)).isoformat()
+
+    def _slot(day_iso):
+        for w in plan.get("weeks", []) or []:
+            for i, x in enumerate(w.get("sessions", []) or []):
+                if x.get("day") == day_iso:
+                    return w, i, x
+        return None, -1, None
+
+    def _pending(snapshot, day_iso, fallback_name):
+        base = snapshot or {"session_type": "rest", "duration_min": 0, "tss_estimate": 0,
+                            "description": "Rest", "zwo_file": "", "zwo_name": ""}
+        out = json.loads(json.dumps(base))
+        out.pop("execution", None)
+        out.update({"day": day_iso, "day_name": out.get("day_name") or fallback_name, "status": "pending",
+                    "completion_matches": None, "dismissed_at": "", "auto_moved": False,
+                    "user_moved": False, "moved_from": ""})
+        return out
+
+    def _rank(planned_probe, day_iso):
+        d = date.fromisoformat(day_iso)
+        week, _ = _load_current_week_dto(plan, d)
+        acts = [x for x in _collect_week_activities(week, today, include_today=True)
+                if x.get("date") == day_iso] if week else []
+        judged = [{**tp.classify_rematch(planned_probe, x), "activity": x} for x in acts]
+        best = max((j["matched_axes"] for j in judged), default=0)
+        if best == 3:
+            return 3
+        if best == 2:
+            return 2
+        rs = tp._ridden_status(judged, tp._session_planned_if(planned_probe)) if judged else None
+        return _RIDDEN_RANK.get(rs or "", 0)
+
+    undone, keep = [], []
+    for rec in records:
+        src, dst = rec.get("from", ""), rec.get("to", "")
+        if str(rec.get("at", "")) < horizon:
+            continue
+        try:
+            hops = [h.get("day", "") for h in (rec.get("hops") or [])]
+            path = [src] + hops                       # the days the session left, in order
+            stubs = [_slot(d) for d in path]
+            dst_w, dst_i, dst_s = _slot(dst)
+            intact = (dst_s is not None and dst_s.get("auto_moved") and dst_s.get("moved_from") == rec.get("via")
+                      and all(s is not None and str(s.get("status") or "").startswith("moved_from:")
+                              for _, _, s in stubs))
+            if not intact:
+                continue                              # edited since: forget it
+            if any(d < window_start or d >= today.isoformat() for d in path):
+                keep.append(rec)                      # outside what the rematch judges
+                continue
+            planned = rec.get("session") or dst_s
+            probe_for = lambda day: tp.session_from_dict({**planned, "day": day, "status": "pending"})  # noqa: E731
+            dst_rank = _RIDDEN_RANK.get(str(dst_s.get("status") or ""), 0)
+            ranks = [_rank(probe_for(d), d) for d in path]
+            best = max(ranks, default=0)
+            # The best-matching day, the earliest of equals.
+            back_to = ranks.index(best) if best > 0 and best > dst_rank else None
+            if back_to is None:
+                keep.append(rec)
+                continue
+            day = path[back_to]
+            w, i, s = stubs[back_to]
+            w["sessions"][i] = _pending(planned, day, s.get("day_name", ""))
+            displaced = [h.get("displaced") for h in (rec.get("hops") or [])] + [rec.get("displaced")]
+            # path[k] (k >= 1) held displaced[k - 1] before the session arrived;
+            # the destination held the last one.
+            for k in range(back_to + 1, len(path)):
+                hw, hi, hs = stubs[k]
+                hw["sessions"][hi] = _pending(displaced[k - 1], path[k], hs.get("day_name", ""))
+            dst_w["sessions"][dst_i] = _pending(displaced[-1], dst, dst_s.get("day_name", ""))
+            undone.append({"from": dst, "to": day})
+        except Exception:  # noqa: BLE001 - undo is best effort; the move stands
+            _log.exception("auto-move undo: %s -> %s failed", src, dst)
+            keep.append(rec)
+    plan["auto_moves"] = keep
+    return undone
+
+
 def _auto_apply_missed_moves(plan: dict, today: date) -> list[dict]:
     """Automatically relocate missed sessions to their suggested same-week slots
     (replaces the old manual "reschedule missed sessions?" banner). Self-limiting:
@@ -15787,6 +14153,17 @@ def _auto_apply_missed_moves(plan: dict, today: date) -> list[dict]:
     except Exception:
         _log.exception("auto-reschedule: suggestion compute failed")
         return []
+    # Only misses in the plan week containing today move on their own; an
+    # older week's are history. Reconcile also judges the previous plan week,
+    # and with weeks that are not Monday-Sunday its last day shares an ISO
+    # week with today, so a miss there was moved into the next plan week.
+    current = next((w for w in plan.get("weeks", []) or []
+                    if str(w.get("start", "")) <= today.isoformat() <= str(w.get("end", ""))), None)
+    if current is None:
+        return []
+    suggestions = [x for x in suggestions
+                   if str(current["start"]) <= str(x.get("missed_date", "")) <= str(current["end"])
+                   and str(current["start"]) <= str(x.get("suggested_date", "")) <= str(current["end"])]
     applied: list[dict] = []
     for s in suggestions:
         src = s.get("missed_date")
@@ -15837,7 +14214,7 @@ async def api_plan_move_session(request: Request):
         # required BOTH src and dst to be inside the same stored week,
         # but stored weeks in current_plan.json may use legacy Fri-Thu
         # boundaries (or Sat-Fri on older plans), while the dashboard
-        # UI renders the week as Mon-Sun (``tp.generate_weekly_plan``).
+        # UI renders the week as Mon-Sun (src/week_view.py).
         # That meant Tue 04-21 → Fri 04-24 (same ISO week 17) was
         # rejected because they sat in adjacent stored Fri-Thu slices.
         # Root cause: comparison axis mismatch between UI (ISO) and
@@ -15955,7 +14332,7 @@ def api_plan_missed_suggestions():
 
         # Delegates to the shared suggestion builder (also used by the
         # auto-reschedule path in _apply_plan_update).
-        return {"suggestions": _compute_missed_suggestions(plan, date.today())}
+        return {"suggestions": _compute_missed_suggestions(plan, clock.today())}
 
     except Exception:
         _log.exception("missed-suggestions failed")
@@ -16630,60 +15007,48 @@ def _annotate_phase_week_indices(weeks: list[dict]) -> None:
 
 
 def _annotate_planned_ctl_eow(weeks: list[dict], plan: dict) -> None:
-    """Fill ``planned_ctl_eow`` for each week using forecast_ctl over the
-    daily TSS estimates pulled from the plan. Mutates ``weeks`` in place.
-    """
-    if not plan or not plan.get("weeks"):
-        return
-    # Resolve a starting CTL: prefer ICU wellness, fallback to local archive,
-    # final fallback to 37.0 (matches generate_plan).
-    try:
-        import ride_storage as _rs
-        start_ctl = _rs.compute_local_ctl()
-    except Exception:
-        start_ctl = None
-    if start_ctl is None:
-        start_ctl = float(getattr(config, "CURRENT_CTL", 37.0) or 37.0)
-
-    plan_weeks = plan.get("weeks", [])
-    daily_tss: list[float] = []
-    week_end_index: dict[str, int] = {}  # iso start_date → end-of-week idx
-    cursor = 0
-    for pw in plan_weeks:
-        for s in (pw.get("sessions") or []):
-            try:
-                daily_tss.append(float(s.get("tss_estimate") or 0))
-            except (TypeError, ValueError):
-                daily_tss.append(0.0)
-            cursor += 1
-        # End-of-week CTL is at index cursor (forecast_ctl prepends start).
-        week_end_index[pw.get("start") or ""] = cursor
-
-    if not daily_tss:
-        return
-    series = tp.forecast_ctl(start_ctl, daily_tss)  # length = len(daily_tss)+1
-
+    """Fill each calendar week's ``planned_ctl_eow``: the CTL the plan projects
+    at the end of the week's last projected day (see _planned_ctl_by_day)."""
+    by_day = _planned_ctl_by_day(plan)
     for w in weeks:
-        sd = w.get("start_date") or ""
-        idx = week_end_index.get(sd)
-        if idx is None or idx >= len(series):
-            continue
-        w["planned_ctl_eow"] = float(series[idx])
+        start, end = w.get("start_date") or "", w.get("end_date") or ""
+        inside = [d for d in by_day if start <= d <= end]
+        if inside:
+            w["planned_ctl_eow"] = by_day[max(inside)]
+
+
+def _recent_activities_for_planner(days: int = 30) -> list:
+    """Recent activities in the shape the planner's completed-load helpers read.
+
+    Best-effort: an empty list means the planner behaves exactly as it did
+    before, which is the right failure mode for something that only ever
+    SUBTRACTS work.
+    """
+    try:
+        return [dict(r) for r in db.query_activities(days=days)]
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "recent activities unavailable for the planner", exc_info=True)
+        return []
 
 
 def _polarized_actual_from_rides(
     rides: list[dict], today: date, last_n_days: int = 7
 ) -> dict:
-    """v4.4.0 — compute actual polarized split (Z1+Z2 / Z3 / Z4+) over the
-    last N days of rides.
+    """Actual three-zone split over the last N days of rides.
 
-    Buckets:
-      - Z1+Z2 = z1+z2 (low aerobic)
-      - Z3    = z3    (tempo / SS)
-      - Z4+   = z4+z5+z6+z7 (threshold + above)
+    Folded through zones.THREE_ZONE_FROM_COGGAN:
+      - z1 = Coggan z1+z2          (< 76% FTP, below LT1)
+      - z2 = Coggan z3+z4          (76-105%, spanning LT2 -- the grey zone)
+      - z3 = Coggan z5+z6+z7       (>= 106%, above LT2)
 
-    Returns ``{"z1z2_pct": int, "z3_pct": int, "z4plus_pct": int}``. Empty
-    rides → all zeros.
+    This used to put Coggan Z4 -- work AT threshold -- in the hard band, which
+    disagreed with analytics.compute_polarization_block on the ride detail card
+    and with intervals.icu, so the same ride showed two different polarization
+    readings on two screens.
+
+    Returns ``{"z1_pct": int, "z2_pct": int, "z3_pct": int}``. Empty rides →
+    all zeros.
     """
     cutoff = (today - timedelta(days=last_n_days)).isoformat()
     z12 = z3 = z4p = 0.0
@@ -16702,88 +15067,65 @@ def _polarized_actual_from_rides(
             tiz = full.get("time_in_zone") or {}
         if not tiz:
             continue
-        z12 += float((tiz.get("z1") or 0) + (tiz.get("z2") or 0))
-        z3  += float(tiz.get("z3") or 0)
-        z4p += float(
-            (tiz.get("z4") or 0) + (tiz.get("z5") or 0)
-            + (tiz.get("z6") or 0) + (tiz.get("z7") or 0)
-        )
+        _b = _zones_mod.three_zone(tiz)
+        z12 += _b["z1"]
+        z3  += _b["z2"]
+        z4p += _b["z3"]
     total = z12 + z3 + z4p
     if total <= 0:
-        return {"z1z2_pct": 0, "z3_pct": 0, "z4plus_pct": 0}
+        return {"z1_pct": 0, "z2_pct": 0, "z3_pct": 0}
     return {
-        "z1z2_pct": int(round(z12 / total * 100)),
-        "z3_pct":   int(round(z3  / total * 100)),
-        "z4plus_pct": int(round(z4p / total * 100)),
+        "z1_pct": int(round(z12 / total * 100)),
+        "z2_pct": int(round(z3  / total * 100)),
+        "z3_pct": int(round(z4p / total * 100)),
     }
 
 
-def _planned_ctl_today(plan: dict, today: date) -> float | None:
-    """End-of-today planned CTL via forecast_ctl over daily TSS."""
-    if not plan or not plan.get("weeks"):
-        return None
+def _planned_ctl_by_day(plan: dict) -> dict:
+    """{day_iso: end-of-day CTL the plan projects}, from the plan's anchor:
+    the intervals.icu CTL stamped when it was generated (plan["ctl_snapshot"]),
+    on the day it was generated, forward over the stored sessions' TSS.
+
+    It started from a local EWMA over the FIT-only ride list, None for a rider
+    whose rides arrive from intervals.icu, and then from 37: a plan generated
+    at CTL 29.6 drew its band around 38.6 (the audit's S-2). A plan with no
+    anchor has no curve."""
+    snap = (plan or {}).get("ctl_snapshot") or {}
     try:
-        import ride_storage as _rs
-        start_ctl = _rs.compute_local_ctl()
-    except Exception:
-        start_ctl = None
-    if start_ctl is None:
-        start_ctl = 37.0
-
-    # Walk plan sessions chronologically, picking up daily TSS by day-iso.
-    daily_tss: list[float] = []
-    days: list[str] = []
-    for w in plan.get("weeks", []):
-        for s in (w.get("sessions") or []):
+        start_ctl = float(snap.get("current_ctl"))
+    except (TypeError, ValueError):
+        return {}
+    anchor = str(snap.get("generated_on") or "")[:10]
+    tss_by_day: dict = {}
+    for w in (plan or {}).get("weeks") or []:
+        for s in w.get("sessions") or []:
             day = s.get("day") or ""
-            if not day:
-                continue
-            try:
-                t = float(s.get("tss_estimate") or 0)
-            except (TypeError, ValueError):
-                t = 0.0
-            days.append(day)
-            daily_tss.append(t)
+            if day and anchor and day >= anchor:
+                try:
+                    tss_by_day[day] = tss_by_day.get(day, 0.0) + float(s.get("tss_estimate") or 0)
+                except (TypeError, ValueError):
+                    pass
+    if not tss_by_day:
+        return {}
+    first = date.fromisoformat(anchor)
+    last = date.fromisoformat(max(tss_by_day))
+    days = [(first + timedelta(days=i)).isoformat() for i in range((last - first).days + 1)]
+    series = tp.forecast_ctl(start_ctl, [tss_by_day.get(d, 0.0) for d in days])
+    # forecast_ctl prepends the start: series[i + 1] is the end of days[i].
+    return {d: float(series[i + 1]) for i, d in enumerate(days)}
 
-    if not days:
-        return None
-    series = tp.forecast_ctl(start_ctl, daily_tss)
+
+def _planned_ctl_today(plan: dict, today: date) -> float | None:
+    """End-of-today CTL the plan projects (see _planned_ctl_by_day)."""
+    by_day = _planned_ctl_by_day(plan)
     today_iso = today.isoformat()
-    # forecast_ctl prepends start_ctl, so series[i+1] = end of days[i].
-    for i, d in enumerate(days):
-        if d == today_iso:
-            return float(series[i + 1])
-        if d > today_iso:
-            return float(series[i])  # prior day's end-of-day CTL
-    return float(series[-1])
+    past = [d for d in by_day if d <= today_iso]
+    return by_day[max(past)] if past else None
 
 
 def _actual_ctl_today(rides: list[dict], today: date) -> float | None:
-    """Best-effort actual CTL: prefer ICU wellness, fall back to local.
-
-    v1.3.3 perf: route through ``cached()`` (5-min TTL) instead of calling
-    ``fetch_wellness`` directly. Pre-fix every /api/calendar served the
-    homepage triggered a 200-400ms ICU HTTP round-trip here AND another in
-    ``_hrv_trend_score``, blocking the dashboard's main paint. The cache
-    key matches the one ``/api/wellness?days=7`` already uses so the two
-    paths share a single TTL window.
-    """
-    try:
-        wellness = cached("wellness_7", lambda: fetch_wellness(7))
-        if wellness:
-            for w in reversed(wellness):
-                if w.get("ctl") is not None:
-                    return float(w["ctl"])
-    except Exception:
-        pass
-    try:
-        import ride_storage as _rs
-        v = _rs.compute_local_ctl()
-        if v is not None:
-            return float(v)
-    except Exception:
-        pass
-    return None
+    """Today's CTL from the fitness owner (intervals.icu); None when unknown."""
+    return _fitness_state(today)["ctl"]
 
 
 def _intensity_dist_match(actual: dict, target: dict) -> float:
@@ -16792,7 +15134,7 @@ def _intensity_dist_match(actual: dict, target: dict) -> float:
     """
     if not actual or not target:
         return 0.0
-    keys = ("z1z2_pct", "z3_pct", "z4plus_pct")
+    keys = ("z1_pct", "z2_pct", "z3_pct")
     diff = sum(abs(int(actual.get(k) or 0) - int(target.get(k) or 0)) for k in keys)
     # Max possible L1 difference is 200 (e.g., 100/0/0 vs 0/0/100).
     return max(0.0, 100.0 - (diff / 2.0))
@@ -16956,10 +15298,10 @@ def _build_summary_block(
 
     # Polarized.
     actual_pol = _polarized_actual_from_rides(rides, today, last_n_days=7)
-    target_pol = tp.PHASE_POLARIZED_TARGETS.get(
-        cur_phase.lower() if cur_phase else "",
-        tp.PHASE_POLARIZED_TARGETS["history"],
-    )
+    # The active model's row for this phase; falls back to "history" for a
+    # phase name the table does not carry.
+    _tid = tp.polarized_targets((plan or {}).get("goal") or {})
+    target_pol = _tid.get((cur_phase or "").lower(), _tid.get("history", {}))
 
     # Sub-scores → composite.
     tss_comp_score: float | None
@@ -17021,7 +15363,9 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
     Returns the canonical calendar payload per MASTER §3 — ready to ship as
     the ``/api/calendar`` JSON body.
     """
-    today = date.today()
+    import week_view as _wv
+
+    today = clock.today()
     today_iso = today.isoformat()
     iso_year, iso_week, _iso_day = today.isocalendar()
 
@@ -17067,7 +15411,8 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
     }
 
     # ── Past 12 weeks of history + plan weeks (avoid double-counting) ───────
-    plan_weeks = plan.get("weeks", []) if plan else []
+    # A replaced plan's prescriptions (api_plan_generate) are on record too.
+    plan_weeks = ((plan.get("replaced_weeks") or []) + (plan.get("weeks") or [])) if plan else []
     plan_dates: set[str] = set()
     for w in plan_weeks:
         for s in (w.get("sessions") or []):
@@ -17156,17 +15501,18 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
             seen_iso[key] = len(deduped)
             deduped.append(w)
             continue
-        # Duplicate ISO key → prefer the one with planned content.
+        # Duplicate ISO key → prefer a stored row over a history shell, then
+        # the current plan's row (a Generate's replaced rows never own a week
+        # when the current plan has one, as in week_view.build), then the one
+        # with planned content.
         existing = deduped[existing_idx]
-        existing_has_planned = any(
-            (s.get("zwo_file") or "") and not s.get("_synthetic_history")
-            for s in (existing.get("sessions") or [])
-        )
-        cand_has_planned = any(
-            (s.get("zwo_file") or "") and not s.get("_synthetic_history")
-            for s in (w.get("sessions") or [])
-        )
-        if cand_has_planned and not existing_has_planned:
+        def _rank(row):
+            sessions = row.get("sessions") or []
+            return (not all(s.get("_synthetic_history") for s in sessions),
+                    not row.get("carried_from_generate"),
+                    any((s.get("zwo_file") or "") and not s.get("_synthetic_history")
+                        for s in (row.get("sessions") or [])))
+        if _rank(w) > _rank(existing):
             deduped[existing_idx] = w
         # Otherwise keep the first (already in `deduped`).
     combined_weeks = deduped
@@ -17213,6 +15559,7 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
         planned_tss_td = 0.0
         planned_z12_td = planned_z34_td = planned_z5p_td = 0.0
         days_elapsed = 0
+        on_record = False   # a stored session covers some day of this week
 
         days_out: list[dict] = []
         # v4.4.0 §6 — pull sessions from the *global* plan map (across all
@@ -17287,18 +15634,25 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
 
             planned_payload = None
             if sess and not sess.get("_synthetic_history"):
+                on_record = True
                 # v1.0.4 IMPL-WIRING — display_name + zwo_duration_min on every
                 # calendar planned cell so the dashboard cascade can pick the
                 # canonical title and the actual library duration.
                 _zwo = sess.get("zwo_file") or ""
                 _dn, _zdur = _session_naming_lookup(_zwo, classifications, lib_by_file)
                 planned_payload = {
-                    "session_type": sess.get("session_type") or "",
-                    "content_class": (
-                        (lib_by_file.get(_zwo) or {}).get("content_class")
-                        or sess.get("content_class")
-                        or ""
-                    ),
+                    # The served file's identity, the one the Today card and
+                    # the This Week list read (src/week_view.py).
+                    "session_type": _wv.derived_type(
+                        sess, lib_by_file, tp._session_type_from_row),
+                    # Always "": the dashboard names, colours, gates and opens
+                    # a cell by session_type, with content_class as an override
+                    # through tables of its own that know only the broad
+                    # classes. The read here was of a key no library row
+                    # carries; filling it from ContentClass refused to open
+                    # 624 of 4,307 files (tempo_intervals, threshold_ladder...)
+                    # and turned long rides into plain endurance cells.
+                    "content_class": "",
                     "name": sess.get("zwo_name") or sess.get("description") or "",
                     "display_name": _dn,
                     "zwo_duration_min": _zdur,
@@ -17309,6 +15663,11 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
                     "zwo_tss": (lib_by_file.get(_zwo) or {}).get("TSS"),
                     "score": sess.get("score"),
                     "zwo_file": _zwo,
+                    # The rider's own marks on the day, so the This Week strip
+                    # (which reads this cell) can show a skip with its undo,
+                    # and the day modal opens on the real status.
+                    "status": sess.get("status") or "pending",
+                    "user_moved": bool(sess.get("user_moved")),
                     "is_race": bool(sess.get("is_race")),
                     "race": sess.get("race"),
                     # P2.1 (G10): execution score for the week-strip badge
@@ -17379,9 +15738,9 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
         # current phase block in the plan (1-based). planned_ctl_eow is
         # filled in below by the second pass once we have a global series.
         phase_name = (w.get("phase") or "").lower()
-        target_polarized = tp.PHASE_POLARIZED_TARGETS.get(
-            phase_name, tp.PHASE_POLARIZED_TARGETS["history"]
-        )
+        _tid_rows = tp.polarized_targets((plan or {}).get("goal") or {})
+        target_polarized = _tid_rows.get(
+            phase_name, _tid_rows.get("history", {}))
 
         out_weeks.append({
             "iso_year": wy,
@@ -17391,7 +15750,9 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
             "phase": w.get("phase") or "",
             "is_stepback": bool(w.get("is_stepback")),
             "is_current": is_current,
-            "planned_tss": round(planned_tss, 1),
+            # None, not 0, for a week no stored plan covers: "no plan on
+            # record" (week-view contract P4), as /api/week-summary says it.
+            "planned_tss": round(planned_tss, 1) if on_record else None,
             "actual_tss": round(actual_tss, 1),
             "planned_z1z2_min": round(planned_z12, 1),
             "actual_z1z2_min": round(actual_z12, 1),
@@ -17488,7 +15849,7 @@ def api_calendar():
                 "weeks": [],
                 "summary": {},
                 "current_iso_week": None,
-                "today": date.today().isoformat(),
+                "today": clock.today().isoformat(),
             }
         except OSError as _e:
             # OS-level read failure is recoverable (perms, transient I/O).
@@ -17522,7 +15883,7 @@ def api_calendar():
             "weeks": [],
             "summary": {},
             "current_iso_week": None,
-            "today": date.today().isoformat(),
+            "today": clock.today().isoformat(),
         }
 
 
@@ -17588,7 +15949,7 @@ def _execution_for_match(s_json: dict, activity_id) -> "dict | None":
     # settle the question simply has no "blocks" key.
     blocks = _block_eval_for(s_json, ride) if BLOCK_EVAL_SURFACED else None
     out = {**result, "activity_id": activity_id,
-           "computed_at": datetime.now().isoformat()}
+           "computed_at": clock.now().isoformat()}
     if blocks is not None:
         out["blocks"] = blocks
     return out
@@ -17631,7 +15992,7 @@ def _block_eval_for(s_json: dict, ride: dict) -> "dict | None":
         if not laps or not zwo:
             return None
         import structure_fidelity as _sf
-        path = WORKOUT_DIR / os.path.basename(zwo)
+        path = active_workout_dir() / os.path.basename(zwo)
         if not path.exists():
             return None
         segs = _sf.parse_zwo_file(path)
@@ -17677,7 +16038,7 @@ def _apply_rematch_preview_to_plan(plan: dict, week_idx: int, preview: dict) -> 
                 "score": m["score"],
                 "axes": m["axes"],
                 "details": m.get("details"),
-                "applied_at": datetime.now().isoformat(),
+                "applied_at": clock.now().isoformat(),
             }
             # dedup by activity_id, UPDATE-in-place (auto-reconcile runs every
             # sync now — a blind append would stack duplicates).
@@ -17709,60 +16070,6 @@ def _apply_rematch_preview_to_plan(plan: dict, week_idx: int, preview: dict) -> 
     return changed
 
 
-def _reconcile_recent_weeks(plan: dict, today: date, window_days: int = 14,
-                            skip_current: bool = False) -> "tuple[int, dict | None]":
-    """v3.11.5 — mark done/missed for EVERY recent past session, not only the
-    plan-week containing today. Plan-weeks can start on any weekday (a plan
-    generated on a Friday runs Fri->Thu), so a session on the last day of a
-    week was never reconciled on the first day of the next: the rider's
-    Thursday threshold stayed 'pending' forever, no tier ever saw the miss,
-    and a Wednesday ride was never credited. Returns (changed, current-week
-    preview)."""
-    changed = 0
-    cur_preview = None
-    lo = today - timedelta(days=window_days)
-    for idx, w in enumerate(plan.get("weeks", []) or []):
-        if not isinstance(w, dict):
-            continue
-        try:
-            ws = date.fromisoformat(w["start"])
-            we = date.fromisoformat(w["end"])
-        except (KeyError, ValueError, TypeError):
-            continue
-        if we < lo or ws > today:
-            continue
-        is_cur = ws <= today <= we
-        if is_cur:
-            if skip_current:
-                continue
-            n, cur_preview = _reconcile_current_week(plan, today)   # the pre-3.11.5 path, unchanged
-            changed += n or 0
-            continue
-        today_iso = today.isoformat()
-        if not any(isinstance(sj, dict)
-                   and (sj.get("status") or "pending") == "pending"
-                   and (sj.get("session_type") or "") != "rest"
-                   and (sj.get("day") or "") < today_iso
-                   for sj in w.get("sessions", []) or []):
-            continue
-        try:
-            dto = tp.PlannedWeek(
-                week_num=w.get("week_num", 0), start=ws, end=we, phase=w.get("phase", ""),
-                tss_target=w.get("tss_target", 0), is_stepback=w.get("is_stepback", False),
-                sessions=[_planned_session_from_json(sj) for sj in w.get("sessions", []) or []],
-            )
-            actual = _collect_week_activities(dto, today, include_today=False)
-            preview = tp.rematch_week(dto, actual, today)
-            n = _apply_rematch_preview_to_plan(plan, idx, preview)
-        except Exception:  # noqa: BLE001 — one malformed week must not block the others
-            _log.exception("reconcile: week %s skipped", w.get("week_num"))
-            continue
-        changed += n or 0
-    if changed:
-        plan["last_rematch"] = datetime.now().isoformat()
-    return changed, cur_preview
-
-
 def _reconcile_current_week(plan: dict, today: date) -> "tuple[int, dict | None]":
     """v1.8.25 — mark the CURRENT week's sessions done/missed/ambiguous from
     actual activities (the /api/plan/rematch?apply=1 logic), idempotently.
@@ -17772,14 +16079,24 @@ def _reconcile_current_week(plan: dict, today: date) -> "tuple[int, dict | None]
     (_apply_plan_update, fired by ride-sync) calls it so completed rides are
     matched to planned sessions on sync — no manual "Reconcile Week" click.
     """
-    current_week, week_idx = _load_current_week_dto(plan, today)
-    if not current_week:
-        return 0, None
-    actual = _collect_week_activities(current_week, today, include_today=True)
-    preview = tp.rematch_week(current_week, actual, today)
-    n = _apply_rematch_preview_to_plan(plan, week_idx, preview)
+    # Yesterday's plan week too: a finished day is judged the morning after,
+    # when a week's last day already belongs to the previous week.
+    n, preview, seen = 0, None, set()
+    for anchor in (today - timedelta(days=1), today):
+        week, week_idx = _load_current_week_dto(plan, anchor)
+        if not week or week_idx in seen:
+            continue
+        seen.add(week_idx)
+        try:
+            actual = _collect_week_activities(week, today, include_today=True)
+            preview = tp.rematch_week(week, actual, today)
+            n += _apply_rematch_preview_to_plan(plan, week_idx, preview)
+        except Exception:  # noqa: BLE001 - one week failing must not block the other
+            if anchor == today:
+                raise
+            _log.exception("rematch of the previous plan week skipped")
     if n:
-        plan["last_rematch"] = datetime.now().isoformat()
+        plan["last_rematch"] = clock.now().isoformat()
     return n, preview
 
 
@@ -17800,10 +16117,37 @@ async def api_plan_rematch(request: Request, apply: int = Query(0)):
         return JSONResponse({"error": "No active plan found"}, 404)
 
     try:
+        if apply:
+            # Read, undo, rematch and write under the plan-write lock the
+            # ride-sync adaptation holds: both now rewrite days.
+            with tp.plan_write_lock():
+                with open(json_path, encoding="utf-8") as f:
+                    plan = json.load(f)
+                today = clock.today()
+                # As the ride-sync path does: a late ride undoes its session's
+                # auto-move, and the days it restored are judged at once --
+                # yesterday's plan week included, which the rematch below
+                # (today's week, for the response) does not cover.
+                try:
+                    _undo_auto_moves_for_ridden_days(plan, today)
+                except Exception:  # noqa: BLE001 - best effort
+                    _log.exception("auto-move undo skipped")
+                current_week, _week_idx = _load_current_week_dto(plan, today)
+                if not current_week:
+                    return {"action": "no_current_week"}
+                # Both plan weeks; the preview returned is today's week as it
+                # was judged, so "changed" counts what this call matched.
+                changed, preview = _reconcile_current_week(plan, today)
+                plan["last_rematch"] = clock.now().isoformat()
+                tp.atomic_write_plan(json_path, plan)
+            # R3 (2026-07-07): "changed" is what this call matched; the UI
+            # showed the week's cumulative total on every planner open.
+            return {"ok": True, "apply": True, "changed": changed, **preview}
+
         with open(json_path, encoding="utf-8") as f:
             plan = json.load(f)
 
-        today = date.today()
+        today = clock.today()
         current_week, week_idx = _load_current_week_dto(plan, today)
         if not current_week:
             return {"action": "no_current_week"}
@@ -17811,20 +16155,7 @@ async def api_plan_rematch(request: Request, apply: int = Query(0)):
         actual = _collect_week_activities(current_week, today, include_today=True)
         preview = tp.rematch_week(current_week, actual, today)
 
-        if not apply:
-            return {"ok": True, "apply": False, **preview}
-
-        # R3 (2026-07-07): surface the CHANGED count — the helper always
-        # computed it and the endpoint discarded it, so the UI showed the
-        # week's cumulative match total ("6 rides reconciled") on every
-        # planner open even when nothing new happened.
-        changed = _apply_rematch_preview_to_plan(plan, week_idx, preview)
-        # v3.11.5: the previous weeks' unreconciled past days too.
-        changed += _reconcile_recent_weeks(plan, today, skip_current=True)[0] or 0
-        plan["last_rematch"] = datetime.now().isoformat()
-        tp.atomic_write_plan(json_path, plan)
-
-        return {"ok": True, "apply": True, "changed": changed, **preview}
+        return {"ok": True, "apply": False, **preview}
 
     except Exception:
         _log.exception("Plan rematch failed")
@@ -17871,7 +16202,7 @@ async def api_plan_re_draw(request: Request):
                 if json_path.exists():
                     with open(json_path, encoding="utf-8") as f:
                         plan = json.load(f)
-                    today = date.today()
+                    today = clock.today()
                     wk, _wi = _load_current_week_dto(plan, today)
                     if wk:
                         day_iso = (wk.start + timedelta(days=idx)).isoformat()
@@ -18010,7 +16341,7 @@ def _pick_redraw_candidate(plan: dict, day_iso: str, exclude_extra: "list[str] |
                 # widened band grows DOWNWARD only (shorter files), upper edge
                 # stays slot+5 — availability holds even on reshuffle.
                 widen_band=(attempt >= 4),
-            )
+             micro_only=bool(((plan or {}).get("goal") or {}).get("vo2_microintervals_only", False)),)
         except tp.NoCandidateWorkoutError:
             # 3.3.1 hotfix (B2): an empty pool at attempts 0-3 must NOT abort
             # the whole ladder — the widened band (attempt >= 4) is exactly
@@ -18107,7 +16438,7 @@ def _accept_redraw_apply(plan: dict, day_iso: str, candidate: dict) -> dict:
 
     plan["last_rematch_day"] = {
         "date": day_iso,
-        "at": datetime.now().isoformat(),
+        "at": clock.now().isoformat(),
         "new_zwo": target["zwo_file"],
     }
 
@@ -18146,7 +16477,7 @@ def _accept_redraw_apply(plan: dict, day_iso: str, candidate: dict) -> dict:
         # the cascade and per-day duration overrides remain correct.
         plan, sessions_modified, _ri = tp.reforecast_dict(
             plan,
-            today_iso=date.today().isoformat(),
+            today_iso=clock.today().isoformat(),
             tsb_series=tsb_series,
             recent_activities=activities,
             availability_overrides=availability_overrides,
@@ -18236,7 +16567,7 @@ _SWAP_TYPES = {"recovery", "z2", "tempo", "sweetspot", "threshold",
                "overunder", "vo2max", "sprint", "ftp_test"}
 
 
-def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: int) -> dict:
+def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: int, micro_only: "bool | None" = None) -> dict:
     """Mutate the session at ``day_iso`` to ``new_type`` + ``new_dur``, pin it
     (user_swapped → reforecast/refit won't demote it), match a workout for the
     new type, then reforecast the rest of the plan so downstream load rebalances.
@@ -18294,7 +16625,7 @@ def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: i
             day_idx = 0
         tp.match_zwo(planned, library, week_num=week_num, day_idx=day_idx,
                      used_names=excluded, raise_on_empty=False,
-                     hr_bias=_hr_bias())
+                     hr_bias=_hr_bias(), micro_only=(bool(((plan or {}).get("goal") or {}).get("vo2_microintervals_only", False)) if micro_only is None else bool(micro_only)))
         if planned.zwo_file:
             target["zwo_file"] = planned.zwo_file
             target["zwo_name"] = planned.zwo_name
@@ -18323,7 +16654,7 @@ def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: i
                     and not prev.get("user_swapped")
                     and not prev.get("user_moved")
                     and not prev.get("is_race")
-                    and prev_iso >= date.today().isoformat()):
+                    and prev_iso >= clock.today().isoformat()):
                 prev["session_type"] = "recovery"
                 prev["zwo_file"] = ""
                 prev["zwo_name"] = ""
@@ -18336,7 +16667,7 @@ def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: i
         except Exception:
             _log.exception("ftp-test fresh-legs easing skipped")
 
-    plan["last_swap_day"] = {"date": day_iso, "at": datetime.now().isoformat(),
+    plan["last_swap_day"] = {"date": day_iso, "at": clock.now().isoformat(),
                              "new_type": new_type}
 
     # Reforecast the rest (mirror accept-redraw). The pinned swapped day is
@@ -18368,7 +16699,7 @@ def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: i
             if isinstance(entry, dict) and "hours" in entry
         }
         plan, sessions_modified, _ri = tp.reforecast_dict(
-            plan, today_iso=date.today().isoformat(),
+            plan, today_iso=clock.today().isoformat(),
             tsb_series=tsb_series, recent_activities=activities,
             availability_overrides=availability_overrides,
         )
@@ -18424,8 +16755,8 @@ async def api_plan_swap_type(request: Request):
         _micro = (bool(micro_raw) if micro_raw is not None
                   else bool((plan.get("goal", {}) or {})
                             .get("vo2_microintervals_only", False)))
-        tp.set_vo2_micro_only(_micro)
-        result = _swap_session_type_apply(plan, day_iso, new_type, new_dur)
+        result = _swap_session_type_apply(plan, day_iso, new_type, new_dur,
+                                          micro_only=_micro)
         tp.atomic_write_plan(json_path, plan)
         return result
     except ValueError as e:
@@ -18615,7 +16946,7 @@ async def api_plan_rematch_day(day: str):
                 hr_bias=_hr_bias(),
                 # v1.8.24 — closest-duration match on reshuffle (see helper).
                 exact_duration=True,
-            )
+             micro_only=bool(((plan or {}).get("goal") or {}).get("vo2_microintervals_only", False)),)
         except tp.NoCandidateWorkoutError:
             return {"ok": False, "action": "no_candidate", "day": day}
 
@@ -18626,7 +16957,7 @@ async def api_plan_rematch_day(day: str):
         target_session["zwo_name"] = planned.zwo_name
         target_session["variation"] = variation
         target_session["status"] = "pending"
-        plan["last_rematch_day"] = {"date": day, "at": datetime.now().isoformat(),
+        plan["last_rematch_day"] = {"date": day, "at": clock.now().isoformat(),
                                     "new_zwo": planned.zwo_file}
 
         tp.atomic_write_plan(json_path, plan)
@@ -18684,7 +17015,7 @@ async def api_plan_dismiss_session(request: Request):
                 s["dismissed_at"] = ""
             else:
                 s["status"] = "dismissed"
-                s["dismissed_at"] = datetime.now().isoformat()
+                s["dismissed_at"] = clock.now().isoformat()
 
         tp.atomic_write_plan(json_path, plan)
 
@@ -18695,9 +17026,12 @@ async def api_plan_dismiss_session(request: Request):
         return JSONResponse({"detail": "Dismiss failed"}, 500)
 
 
-@app.get("/api/plan/auto-recalc")
+@app.post("/api/plan/auto-recalc")
 def api_plan_auto_recalc():
-    """Auto-recalculate plan if >7 days since last recalc. Called on tab load."""
+    """Auto-recalculate plan if >7 days since last recalc. Called on tab load.
+
+    A POST since 2026-09-14 (decision D8): it rebuilds and writes the plan,
+    and was a GET the Plan tab and the morning adapter called as a read."""
 
     json_path = _plan_dir() / "current_plan.json"
     if not json_path.exists():
@@ -18715,10 +17049,10 @@ def api_plan_auto_recalc():
                 # Normalize so naive/aware mismatch can't raise TypeError.
                 # Saved plans may include a tz offset (saved_at uses
                 # `.astimezone().isoformat()` elsewhere); strip it so the
-                # subtraction with `datetime.now()` is always homogeneous.
+                # subtraction with `clock.now()` is always homogeneous.
                 if last_dt.tzinfo is not None:
                     last_dt = last_dt.replace(tzinfo=None)
-                days_since = (datetime.now() - last_dt).days
+                days_since = (clock.now() - last_dt).days
                 if days_since < 7:
                     # Still fresh — return event readiness only.
                     # 3.3.2 (Lapo #2): readiness is DECORATIVE on this branch —
@@ -18729,20 +17063,10 @@ def api_plan_auto_recalc():
                     readiness = {}
                     try:
                         training = cached("training", get_today_metrics)
-                        current_ctl = training.get("ctl") or 30
+                        current_ctl = _planning_ctl()
                         g = plan.get("goal", {})
-                        if g.get("event_date"):
-                            goal = tp.Goal(
-                                goal_type=g.get("type", "general"),
-                                target_date=date.fromisoformat(g["event_date"]),
-                                event_name=g.get("event_name", ""),
-                                event_km=g.get("event_km", 0),
-                                event_climb_m=g.get("event_climb", 0),
-                                event_type=g.get("event_type", "granfondo"),
-                                hours_per_week=g.get("hours_per_week", 8),
-                                longest_ride_h_90d=g.get("longest_ride_h_90d"),
-                                last_ftp_test_date=g.get("last_ftp_test_date"),
-                            )
+                        goal = tp.goal_from_dict(g)
+                        if goal.target_date:           # one that parses
                             if goal.longest_ride_h_90d is None:
                                 goal.longest_ride_h_90d = _longest_ride_h_90d()
                             readiness = tp.compute_event_readiness(goal, current_ctl)
@@ -18755,7 +17079,7 @@ def api_plan_auto_recalc():
 
         # Recalc needed — rebuild plan
         training = cached("training", get_today_metrics)
-        current_ctl = training.get("ctl") or 30
+        current_ctl = _planning_ctl()
 
         # Reconstruct Goal via the canonical helper — the old inline build here
         # dropped distribution/custom_bands/events/block_periodization/
@@ -18772,7 +17096,7 @@ def api_plan_auto_recalc():
             # weeks out. 3.4.0 W2: NOT for continuous — the rolling goal has
             # no target by definition (grill P1 item 16, the A1 fabrication);
             # recalculate_plan routes it to the extend path regardless.
-            goal.target_date = date.fromisoformat(g["target_date"]) if g.get("target_date") else (date.today() + timedelta(weeks=12))
+            goal.target_date = date.fromisoformat(g["target_date"]) if g.get("target_date") else (clock.today() + timedelta(weeks=12))
         # Stale generation-time week count must not outlive the shrinking
         # runway (weeks_available short-circuits on plan_weeks>0 — H1 trap).
         goal.plan_weeks = 0
@@ -18782,11 +17106,6 @@ def api_plan_auto_recalc():
         # v4.6.7 IMPL-CAP: auto-populate endurance baseline if missing.
         if goal.longest_ride_h_90d is None:
             goal.longest_ride_h_90d = _longest_ride_h_90d()
-        # J1: pin the active intensity-distribution model for this recalc's
-        # budget lookups (mirrors generate_plan) — this scheduler called
-        # recalculate_plan bare, so it inherited whatever model ran last.
-        tp.set_vo2_micro_only(getattr(goal, "vo2_microintervals_only", False))
-        tp.set_active_distribution(goal.distribution, goal.custom_bands)
 
         # Reconstruct plan weeks.
         # v1.8.20 parity — round-trip ALL session fields via the canonical
@@ -18795,12 +17114,7 @@ def api_plan_auto_recalc():
         # wiped rider edits + race markers from every week, past ones included.
         old_weeks = []
         for w in plan.get("weeks", []):
-            old_weeks.append(tp.PlannedWeek(
-                week_num=w["week_num"], start=date.fromisoformat(w["start"]),
-                end=date.fromisoformat(w["end"]), phase=w.get("phase", ""),
-                tss_target=w.get("tss_target", 0), is_stepback=w.get("is_stepback", False),
-                sessions=[_planned_session_from_json(s) for s in w.get("sessions", [])],
-            ))
+            old_weeks.append(tp.week_from_dict(w))
 
         # Get eFTP for drift detection
         eftp = None
@@ -18815,22 +17129,13 @@ def api_plan_auto_recalc():
         # v2.0.3 F5 — thread athlete (ftp + weight) so recalculate_plan can
         # compute event targets, matching the generate + regenerate paths
         # (without it, a weekly recalc reverted to the legacy +5/+5 CTL step).
-        # Assembled exactly like the regen caller: probe the raw athlete store
-        # so a brand-new user with default-backed ftp/weight yields None.
-        recalc_athlete = None
-        try:
-            from profile_manager import ProfileManager
-            _pm = ProfileManager.get()
-            _raw = getattr(_pm, "_athlete", {}) or {}
-            if "ftp" in _raw and "weight_kg" in _raw and _raw.get("ftp") and _raw.get("weight_kg"):
-                recalc_athlete = {"ftp": _pm.ftp, "weight_kg": _pm.weight_kg}
-        except Exception:
-            recalc_athlete = None
+        recalc_athlete = _planner_athlete()
 
         new_phases, all_weeks, recalc_info = tp.recalculate_plan(
             goal=goal, current_plan_weeks=old_weeks,
             current_ctl=current_ctl, current_eftp=eftp,
             athlete=recalc_athlete,
+            recent_weekly_tss=_chronic_weekly_tss_safe(),
         )
 
         if recalc_info.get("action") == "no_change":
@@ -18850,13 +17155,8 @@ def api_plan_auto_recalc():
                  "weekly_tss": p.weekly_tss_target, "focus": p.focus}
                 for p in new_phases
             ]
-        plan_dict["weeks"] = [
-            {"week_num": w.week_num, "start": w.start.isoformat(), "end": w.end.isoformat(),
-             "phase": w.phase, "tss_target": w.tss_target, "is_stepback": w.is_stepback,
-             "sessions": [_planned_session_to_json(s) for s in w.sessions]}
-            for w in all_weeks
-        ]
-        plan_dict["recalc_date"] = datetime.now().isoformat()
+        plan_dict["weeks"] = [tp.week_to_dict(w) for w in all_weeks]
+        plan_dict["recalc_date"] = clock.now().isoformat()
         plan_dict["recalc_info"] = recalc_info
         # Phase-split editor (v3.2.0, A1): the overlay copy above keeps every
         # old top-level key, so the previous rebuild's phase_weeks_status
@@ -18907,17 +17207,6 @@ def api_gc_status():
 # ride_storage.list_rides / get_ride read per-profile JSON rides from the
 # existing archive and are still used by /api/rides* for the post-pivot
 # history list.
-
-
-def _rides_fit_dir() -> Path:
-    """Directory for raw FIT imports — v3.0.0 AC2a: PER-PROFILE, delegated to
-    ride_storage._fit_rides_dir() so app.py and ride_storage.load_all_rides
-    can never disagree about where FITs live (the old global
-    ~/.domestique/rides made one profile's imports visible to all, and after
-    the per-profile migration an app-side global would make imports vanish
-    from load_all_rides entirely)."""
-    import ride_storage as _rs
-    return _rs._fit_rides_dir()
 
 
 def _resample_series_1hz(ts: list, values: list) -> list:
@@ -19308,7 +17597,7 @@ async def api_ride_import(
         raise HTTPException(status_code=400, detail="file too small to be a FIT")
 
     # Stable id: upload time in ISO form (filesystem-safe ":" replacement).
-    now = datetime.now(timezone.utc).astimezone()
+    now = clock.now(timezone.utc).astimezone()
     ride_id = now.strftime("%Y-%m-%dT%H-%M-%S")
     fit_path = _rides_fit_dir() / f"{ride_id}.fit"
 
@@ -20117,9 +18406,9 @@ def _sync_icu_activities_locked(force: bool = False) -> dict:
     if added or updated:
         clear_cache()
     total = len(_load_all_rides_safe())
-    # v1.0.3 — best-effort auto-reforecast on new rides. Helper swallows
-    # all exceptions so the sync result stays clean.
-    _maybe_auto_reforecast("default", added)
+    # The sync fetches and stores; adapting the plan to what arrived is the
+    # caller's (POST /api/rides/sync). The lazy sync that reads kick off used
+    # to adapt here, and so a GET wrote the plan (week-view contract P8).
     # v1.3.0 IMPL-PR-DETECTION: queue toasts for newly-imported rides that
     # landed at least one major PR. Per PATCH G7: ONE line per ride. Best-
     # effort — failures must not break the sync return shape.
@@ -20151,6 +18440,18 @@ def _sync_icu_rides_and_wellness(force: bool = False) -> dict:
         "wellness_total": wellness_result.get("total", 0),
         "wellness_skipped": wellness_result.get("skipped"),
     }
+
+
+def _chronic_weekly_tss_safe() -> "float | None":
+    """The rider's chronic weekly load off the memoised archive; None when
+    the archive cannot answer, so the planner falls back to CTL x 7. Every
+    planning entry point passes this in: derived inside the planner, the
+    fallback parsed the archive again (the ultrareview of 2026-09-14)."""
+    try:
+        import ride_storage as _rs
+        return _rs.chronic_weekly_tss(_load_all_rides_safe())
+    except Exception:
+        return None
 
 
 def _load_all_rides_safe() -> list[dict]:
@@ -20185,7 +18486,7 @@ def _longest_ride_h_90d(rides: list[dict] | None = None) -> float | None:
         rides = _load_all_rides_safe()
     if not rides:
         return None
-    cutoff = (date.today() - timedelta(days=90)).isoformat()
+    cutoff = (clock.today() - timedelta(days=90)).isoformat()
     longest_s = 0
     for r in rides:
         started = (r.get("started_at") or "")[:10]
@@ -20361,7 +18662,7 @@ async def api_ride_rpe(ride_id: str, request: Request):
     if ride_id.startswith("fit_"):
         ok = _rs.set_fit_rpe(
             ride_id[4:], rpe,
-            datetime.now().isoformat() if rpe is not None else None)
+            clock.now().isoformat() if rpe is not None else None)
         if not ok:
             return JSONResponse({"error": "unknown ride"}, 404)
         clear_cache()
@@ -20378,7 +18679,7 @@ async def api_ride_rpe(ride_id: str, request: Request):
                 rec.pop(k, None)
         else:
             rec["rpe"] = rpe
-            rec["rpe_at"] = datetime.now().isoformat()
+            rec["rpe_at"] = clock.now().isoformat()
             rec["rpe_scale"] = "foster_cr10"
         path.write_text(json.dumps(rec, indent=2), encoding="utf-8")
     except (OSError, json.JSONDecodeError) as e:
@@ -20575,7 +18876,7 @@ def _maybe_lazy_icu_sync(force_if_today_missing: bool = False) -> None:
             # too recent — but still try wellness below
             pass
         else:
-            today_iso = date.today().isoformat()
+            today_iso = clock.today().isoformat()
             try:
                 rides = _load_all_rides_safe()
                 has_today = any(
@@ -20615,7 +18916,7 @@ def _detect_plan_load_alert() -> bool:
             return False
         with open(json_path, encoding="utf-8") as f:
             plan = json.load(f)
-        today_iso = date.today().isoformat()
+        today_iso = clock.today().isoformat()
         # Find today's planned session (skip rest days with tss_estimate == 0).
         planned_estimate = 0.0
         for w in plan.get("weeks", []):
@@ -20660,6 +18961,8 @@ def api_rides_sync(force: int = Query(0)):
     a same-day ride's TSS exceeds today's planned tss_estimate by >1.5×
     (Foster 1998 session-load spike). Read-only — does not mutate the plan.
     """
+    # The sync fetches; this handler adapts, once (it did twice: inside the
+    # sync and again below, the second finding the day already stamped).
     if force:
         result = _sync_icu_rides_and_wellness(force=True)
     else:
@@ -20671,8 +18974,9 @@ def api_rides_sync(force: int = Query(0)):
     # ride still posts via a separate ICU push).
     result["plan_load_alert"] = _detect_plan_load_alert()
     # v1.0.3 — best-effort auto-reforecast on new rides. Helper swallows
-    # all exceptions so the sync response stays unchanged.
-    _maybe_auto_reforecast("default", result.get("added", 0))
+    # all exceptions. plan_adapted names what it wrote (None: nothing), so
+    # the dashboard knows to repaint the cards that read the plan.
+    result["plan_adapted"] = _maybe_auto_reforecast("default", result.get("added", 0))
     return result
 
 
@@ -21573,7 +19877,7 @@ async def api_ride_ftp_test_review(ride_id: str, request: Request):
     icu["ftp_test_review"] = {
         "action": action,
         "ftp": _ftp_val,
-        "at": datetime.now().isoformat(timespec="seconds"),
+        "at": clock.now().isoformat(timespec="seconds"),
     }
     try:
         ext = str(icu.get("external_id"))
@@ -21697,11 +20001,11 @@ def _build_programme_summary(plan: dict) -> dict:
         (w.get("phase") or "") == "continuous" for w in weeks[:1])
     if is_continuous and start_date:
         from datetime import date as _date, timedelta as _td
-        trailing = (_date.today() - _td(days=28)).isoformat()
+        trailing = (clock.today() - _td(days=28)).isoformat()
         if trailing < start_date:
             start_date = trailing
         if end_date:
-            end_date = min(end_date, _date.today().isoformat())
+            end_date = min(end_date, clock.today().isoformat())
 
     # ── FTP / VO2max ledger lookups ────────────────────────────────────────
     def _value_at_or_before(metric: str, target_date: str) -> float | None:
@@ -21832,35 +20136,15 @@ def _build_programme_summary(plan: dict) -> dict:
         eftp_end_w = int(round(ftp_end)) if ftp_end else None
 
     # ── CTL gain ───────────────────────────────────────────────────────────
-    try:
-        import ride_storage as _rs
-        ctl_end_val = _rs.compute_local_ctl()
-    except Exception:
-        ctl_end_val = None
-    ctl_start_val = None
-    try:
-        import datetime as _dt
-        if start_date:
-            start_d = _dt.date.fromisoformat(start_date)
-            per_day: dict[str, float] = {}
-            for r in all_rides:
-                d = _ride_started_iso_date(r)
-                if not d or d > start_date:
-                    continue
-                tss = (r.get("summary") or {}).get("tss") or 0
-                if not tss:
-                    continue
-                per_day[d] = per_day.get(d, 0.0) + float(tss)
-            if per_day:
-                ctl = 0.0
-                d_iter = _dt.date.fromisoformat(min(per_day.keys()))
-                while d_iter <= start_d:
-                    tss_today = per_day.get(d_iter.isoformat(), 0.0)
-                    ctl = ctl + (tss_today - ctl) / 42.0
-                    d_iter += _dt.timedelta(days=1)
-                ctl_start_val = round(ctl, 1)
-    except Exception:
-        ctl_start_val = None
+    # intervals.icu's CTL on the first day and on the last (today's live when
+    # the window runs to today). It was a local EWMA over the FIT-only rides,
+    # None at the end and a guess at the start for a rider on intervals.icu.
+    import fitness
+    ctl_start_val = fitness.stored_ctl_on(start_date) if start_date else None
+    if end_date and end_date < clock.today().isoformat():
+        ctl_end_val = fitness.stored_ctl_on(end_date)
+    else:
+        ctl_end_val = _fitness_state()["ctl"]
 
     ctl_block = {
         "start": ctl_start_val,
@@ -22187,18 +20471,6 @@ _DIAG_HEALTH_CACHE: dict = {"ts": 0.0, "result": None}
 _DIAG_HEALTH_CACHE_TTL = 60.0
 
 
-def _diag_local_only(request: Request) -> bool:
-    """True iff the request is from localhost. Domestique listens only on
-    127.0.0.1, so any non-local client is suspicious. Returns True when
-    ``request.client`` is None or the host is the FastAPI TestClient
-    sentinel, so tests pass without special-casing.
-    """
-    client = getattr(request, "client", None)
-    if client is None or client.host is None:
-        return True
-    return client.host in ("127.0.0.1", "localhost", "::1", "testclient")
-
-
 @app.get("/api/diag/recent-errors")
 def api_diag_recent_errors(
     request: Request,
@@ -22360,7 +20632,7 @@ def api_diag_health(request: Request):
     if plan_data is not None and isinstance(plan_data, dict):
         try:
             sample = json.loads(json.dumps(plan_data, default=str))
-            _enrich_plan_for_response(sample, today_iso=date.today().isoformat())
+            _enrich_plan_for_response(sample, today_iso=clock.today().isoformat())
             # Spot-check at least one session got an enrichment field.
             ok = False
             for w in (sample.get("weeks") or []):
@@ -22394,7 +20666,7 @@ def api_diag_health(request: Request):
     result = {
         "ok": overall_ok,
         "checks": checks,
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": clock.now(timezone.utc).isoformat(),
         "ring_size": len(_DIAG_RING),
     }
     _DIAG_HEALTH_CACHE["result"] = result

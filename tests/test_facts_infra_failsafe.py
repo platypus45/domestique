@@ -271,12 +271,6 @@ def _breaker_goal():
                    rest_days=[0])
 
 
-@pytest.fixture(autouse=True)
-def _reset_distribution():
-    yield
-    tp.set_active_distribution("polarized", None)
-
-
 def test_recalc_circuit_breaker_keeps_plan_on_pool_collapse(monkeypatch):
     goal, weeks = _breaker_goal(), _mk_weeks()
     before = [[(s.day, s.session_type, s.zwo_file) for s in w.sessions]

@@ -33,6 +33,7 @@ from pathlib import Path
 import pytest
 
 import app as app_module
+import clock
 import training_planner as tp
 from conftest import PLANNER_PIN_ANCHOR as ANCHOR, PLANNER_PIN_ARGS
 
@@ -137,12 +138,11 @@ def _snap(s):
 # ── E3 — race immutability, parametrized over every guarded tp mutator ──────
 
 def _mut_volume_ceiling(goal, weeks):
-    tp._enforce_weekly_volume_ceiling(weeks, recent_weekly_tss=650.0, goal=goal)
+    tp._enforce_weekly_volume_ceiling(weeks)
 
 
 def _mut_volume_ceiling_taper_only(goal, weeks):
-    tp._enforce_weekly_volume_ceiling(weeks, recent_weekly_tss=650.0, goal=goal,
-                                      taper_only=True)
+    tp._enforce_weekly_volume_ceiling(weeks, taper_only=True)
 
 
 def _mut_stepback_lightest(goal, weeks):
@@ -614,8 +614,10 @@ def _app_plan_env(tmp_path, monkeypatch):
 
 def test_l3_7_auto_adjust_rest_never_wipes_race_day(_app_plan_env):
     write, read = _app_plan_env
-    race_tmrw = date.today() + timedelta(days=1)
-    monday = date.today() - timedelta(days=date.today().weekday())
+    # The module pins the planner's clock; the app reads the same clock now,
+    # so the race must be laid on the pinned tomorrow, not the real one.
+    race_tmrw = clock.today() + timedelta(days=1)
+    monday = clock.today() - timedelta(days=clock.today().weekday())
     # Two stored weeks so "tomorrow" is covered even when today is Sunday.
     weeks = []
     for wn in (0, 1):
@@ -777,8 +779,8 @@ def test_d4_generate_endpoint_carries_warning(_app_plan_env, tmp_path,
     monkeypatch.setattr(app_module, "cached",
                         lambda *a, **k: {"ctl": 50.0})
     import ride_storage
-    monkeypatch.setattr(ride_storage, "recent_mean_weekly_tss",
-                        lambda: 650.0, raising=False)
+    monkeypatch.setattr(ride_storage, "chronic_weekly_tss",
+                        lambda *a, **k: 650.0, raising=False)
     monkeypatch.setattr(tp, "PLAN_DIR", tmp_path)
     target = ANCHOR + timedelta(days=1)
     resp = asyncio.run(app_module.api_plan_generate(_Req({

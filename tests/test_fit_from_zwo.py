@@ -110,10 +110,26 @@ class TestFitFromZwo(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         steps = _decode_workout_steps(r.content)
         self.assertGreaterEqual(len(steps), 2)
-        fit_total_s = sum((s.duration_value or 0) for s in steps) / 1000.0
+        # Decoded by an independent decoder (fitparse), never by fit_tool's own
+        # accessors: fit_tool 0.9.15 and 0.9.16 disagree on whether the raw
+        # field is already scaled, and reading back through the library that
+        # wrote the file hid a 1000x error in every shipped build (2026-09).
+        import io
+        import fitparse
+        fit_total_s = sum((m.get_value("duration_time") or 0)
+                          for m in fitparse.FitFile(io.BytesIO(r.content)).get_messages("workout_step"))
         zwo_total_s = _zwo_total_seconds(self.zwo_path)
         self.assertEqual(round(fit_total_s), zwo_total_s,
                          f"FIT total {fit_total_s}s != ZWO total {zwo_total_s}s")
+        # And the proof that does not depend on fit_tool's own accessors: an
+        # independent decoder (fitparse) must read the same seconds. This is
+        # the check that would have caught a file whose steps decode as 0.3 s.
+        import io
+        import fitparse
+        decoded_s = sum((m.get_value("duration_time") or 0)
+                        for m in fitparse.FitFile(io.BytesIO(r.content)).get_messages("workout_step"))
+        self.assertEqual(round(decoded_s), zwo_total_s,
+                         f"independent decoder reads {decoded_s}s, ZWO total {zwo_total_s}s")
 
     def test_missing_zwo_file_returns_404_not_silent_fallback(self):
         """The pre-fix code silently used the generic block whenever the

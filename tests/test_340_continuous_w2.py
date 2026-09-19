@@ -82,14 +82,22 @@ def test_hrv_above_band_forces_low_aerobic_two_sided():
 
 
 def test_tsb_deep_fatigue_forces_low_aerobic():
-    r = dict(GREEN, tsb=-30.0)
+    r = dict(GREEN, tsb=-31.0)
     out = _suggest(deficits={"high_aerobic": 60}, readiness=r, dsa=9)
     _assert_shape(out)
     assert out["family"] == "low_aerobic"
     assert "tsb" in out["reason"].lower()
-    # boundary: exactly -25 does NOT trip (strictly below the floor)
+    # boundary: exactly -30 does NOT trip (strictly below the floor)
     assert _suggest(deficits={"high_aerobic": 60},
-                    readiness=dict(GREEN, tsb=-25.0))["family"] == "high_aerobic"
+                    readiness=dict(GREEN, tsb=-30.0))["family"] == "high_aerobic"
+
+
+def test_the_deep_fatigue_floor_is_reforecasts():
+    """The continuous suggestion's floor mirrors reforecast's fatigue easing:
+    the policy module keeps no repo imports, so a test keeps the two equal."""
+    import continuous_policy
+    import training_planner
+    assert continuous_policy.TSB_LOW_FLOOR == training_planner.TSB_EASE_BELOW
 
 
 @pytest.mark.parametrize("dsa", [0, 1])
@@ -298,6 +306,36 @@ class DeloadAdvanceBase(unittest.TestCase):
         return chip, path
 
 
+class TestTodayCardShowsTheFreshDeload(DeloadAdvanceBase):
+    """/api/today-session reads today's session through the week view. After
+    the sync advances the deload, the card must show the refit session the
+    advance wrote, with its chip (the adversarial review of 2026-09-14 found
+    no test caught a view built from the plan before the advance)."""
+
+    def test_the_refit_session_is_what_the_card_says(self):
+        import clock
+        tue = date(2026, 9, 15)
+        clock.freeze(tue)
+        self.addCleanup(clock.unfreeze)
+        self._write(_mk_continuous_plan(tue))
+        with patch.object(app_module, "_load_all_rides_safe", return_value=_monotone_rides(tue)), \
+             patch.object(app_module, "_kick_lazy_icu_sync", return_value=None), \
+             patch.object(app_module, "_sync_icu_activities",
+                          return_value={"added": 0, "updated": 0, "status": "no_credentials"}), \
+             patch.object(app_module, "get_sleep_metrics",
+                          return_value={"red_hrv_streak": 0, "sleep_h": 7.5, "rhr_delta": 0}), \
+             patch.object(app_module, "get_today_metrics",
+                          return_value={"ctl": 50, "atl": 45, "tsb": 5}), \
+             patch.object(app_module.db, "query_activities", return_value=[]):
+            client = TestClient(app_module.app)
+            self.assertEqual(client.post("/api/rides/sync").json()["plan_adapted"], "deload_advanced")
+            d = client.get("/api/today-session").json()
+        self.assertTrue(d.get("deload_advance"), "the card shows the chip")
+        saved = json.loads((self._tmp / "current_plan.json").read_text())
+        s = next(x for w in saved["weeks"] for x in w["sessions"] if x["day"] == tue.isoformat())
+        self.assertEqual(d["planned"]["zwo_file"], s.get("zwo_file") or None)
+
+
 class TestDeloadAdvance(DeloadAdvanceBase):
     def test_monotony_trip_converts_current_week(self):
         plan = _mk_continuous_plan(self.today)
@@ -423,9 +461,14 @@ class TestDeloadRevert(DeloadAdvanceBase):
         self.assertEqual(wk["tss_target"], original["tss_target"])
         by_day = {s["day"]: s for s in original["sessions"]}
         today_iso = self.today.isoformat()
+        # The plan self-heal runs after every plan write (P8, v3.12.0) and
+        # gives the restored blank fixture sessions a workout file; the
+        # snapshot restore is judged on everything else.
+        healed = {"zwo_file", "zwo_name", "matched"}
         for s in wk["sessions"]:
             if s["day"] >= today_iso:
-                self.assertEqual(s, by_day[s["day"]],
+                self.assertEqual({k: v for k, v in s.items() if k not in healed},
+                                 {k: v for k, v in by_day[s["day"]].items() if k not in healed},
                                  "remaining days must restore the snapshot")
         rec = saved["deload_advance"]
         self.assertTrue(rec["reverted"])
@@ -490,6 +533,16 @@ class TodaySessionBase(unittest.TestCase):
         assert r.status_code == 200, r.text
         return r.json()
 
+    def _sync(self, rides):
+        """The dashboard's POST /api/rides/sync, where the deload advance runs
+        since 2026-09-14 (a GET used to run it). No ICU: nothing new arrives."""
+        with patch.object(app_module, "_load_all_rides_safe", return_value=rides), \
+             patch.object(app_module, "_sync_icu_activities",
+                          return_value={"added": 0, "updated": 0, "status": "no_credentials"}):
+            r = self.client.post("/api/rides/sync")
+        assert r.status_code == 200, r.text
+        return r.json()
+
 
 class TestTodaySessionContinuousFields(TodaySessionBase):
     def test_continuous_goal_carries_suggestion(self):
@@ -520,6 +573,11 @@ class TestTodaySessionContinuousFields(TodaySessionBase):
         plan = _mk_continuous_plan(self.today)
         path = self._tmp / "current_plan.json"
         path.write_text(json.dumps(plan))
+        # A read does not advance it...
+        self.assertNotIn("deload_advance", self._get(_monotone_rides(self.today)))
+        self.assertFalse(json.loads(path.read_text())["weeks"][0]["is_stepback"])
+        # ...the sync does, and says so; the card then shows the chip.
+        self.assertEqual(self._sync(_monotone_rides(self.today))["plan_adapted"], "deload_advanced")
         data = self._get(_monotone_rides(self.today))
         self.assertIn("deload_advance", data)
         chip = data["deload_advance"]

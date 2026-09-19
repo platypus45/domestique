@@ -1,0 +1,1415 @@
+# Domestique overhaul — consolidated review and plan
+
+Written 2026-09-10 (evening). **Supersedes §3–§4 of `planner-cleanup-plan.md`** (removed 2026-09-14; in git history before 324cd038):
+an adversarial review, done before any code changed, found that several of
+that plan's premises do not hold (see "Handover claims that did not hold").
+
+The evidence is in `notes/review/` — five independent reports, one per lens
+(owner, dupes, state, http, gates). Every finding there was produced by
+running code in a sandbox, with a negative control showing the instrument
+fires. The probe scripts themselves lived in a session scratchpad and are not
+kept; the ones that matter became permanent gates (Step 0).
+
+## State at start
+
+| | |
+|---|---|
+| branch | `refactor/backend-architecture`, fast-forwarded to `ca6091f9` (the handover commits were on `refactor/session-sizing`) |
+| old characterization | 73/73 unchanged — **on this machine, on 2026-09-10 only** (GATE-2) |
+| full suite | with `--with fitparse --with Pillow`: 16 failed, every one on clean-main's known list; without them, three modules fail to import |
+| `_USE_TRAINING_WEEK` | False. 8 owner-only failures with it on (not 6, and not one defect) |
+
+## The eight root causes
+
+Each is "a concept with no owner". Everything the reviews found is an
+instance of one of these. IDs point into `notes/review/<lens>.md`.
+
+**R1 — Nothing owns "this week's budget".**
+- OWN-1 (critical, blocks the flag): owner on, Thursday generate after a
+  normal Mon–Wed prescribes 19 TSS for Thu–Sun (legacy 194). The stub week is
+  prorated by span *and* the Mon–Wed rides are subtracted.
+- DUP-2 (high): three derivations of "what is left" give 192 / 222 / 0 TSS
+  for the same rider and day; the right answer is 117.
+- DUP-1 (critical, **live**): regenerate and recalculate call
+  `generate_phases` without `recent_weekly_tss`, so the ACWR cap is gone
+  (peak prescribed load +36–53%, 17–18 of 22 weeks above the safe load), and
+  regenerate replaces the CTL target of every non-event goal.
+- DUP-14: the phase preview shows ~1.8× the load Generate then builds — the
+  preview gives `generate_phases` no recent load either.
+- DUP-3 (high, **live**): the stepback week is counted five ways; after a
+  regenerate the athlete can get six consecutive load weeks. 0.72 is a bare
+  literal in 7 places.
+- HTTP-1 (critical, **live**): Update plan, Reforecast, readiness tier-down
+  and Auto-adjust feed the dense 71-row availability calendar in as
+  overrides, and the scaler treats hours as a prescription: a 230-TSS week
+  becomes 496; a *tier-down* raised its session from 80 to 135 TSS.
+- HTTP-2 (critical, **live**): the home page's "this week" target comes from
+  a second planner (`generate_weekly_plan`) that never reads the stored plan
+  — 463 whatever the plan says. This is the mechanism behind "579 planned vs
+  293 on the home page".
+- HTTP-9: `net_tss_target` / `hit_allowance` are never persisted.
+
+**R2 — Nothing owns "what is this workout".**
+- OWN-3 / DUP-6: at least five definitions of "hard". The sampler mints a
+  session's type from the file **name** (`_session_type_from_row`), so most
+  easy-labelled sessions serving hard content are born in
+  `_make_session_from_row`, not in `match_zwo`. Precedence #1 is enforced on
+  labels: 3 weeks over the 60% hard cap by content, 0 by label.
+- DUP-7: three content-class resolvers disagree on 73 files;
+  `icu_calendar_push` reads the classification file at the wrong nesting, so
+  every pushed event loses its display name (**live**).
+- HTTP-3 / HTTP-13 / DUP-9: planned zone bars are filed by slot type (27%
+  "high" against 0% in the served files); four type→band maps; three zone
+  "family" folds.
+- HTTP-4 (**live**): when activities come from the local archive the
+  time-in-zone join misses (id prefix), and the actual bar shows 0% low —
+  the "62% mid / 38% high" the athlete reported.
+
+**R3 — Nothing owns a session after it is built.**
+- OWN-2: with the owner on, *more* functions write each session (generate
+  15 → 18); legacy passes write after `finish()` sealed the week; the seal is
+  never installed in the app (GATE-5); only generate and regenerate use the
+  owner at all.
+- OWN-4: the eight owner-only failures have five different causes; two tests
+  pass under legacy only by accident (a 2× overload; a demotion triggered by
+  a mismatch).
+- DUP-23 (high, **live**): "does the athlete own this session?" is decided in
+  six places that disagree. Reforecast's fatigue (TSB) loop rewrites sessions
+  the athlete dragged or dismissed, and drops their workout file.
+- HTTP-10: 20 functions edit prescriptions directly in plan dicts. Moving a
+  session onto an occupied day deletes the long ride; a hard session next to
+  a hard one is accepted.
+- Owner internals: dismissed sessions block 48 h and cost budget, done load
+  counted twice (OWN-5); race week loses its opener and all intensity
+  (OWN-6); the easy-floor repair can lower the easy share (OWN-7); `replan()`
+  reshuffles 6 of 7 slots with no new input (OWN-8); `_demote` overcharges by
+  up to 59% (DUP-8).
+
+**R4 — Nothing owns the plan file.**
+- STA-2 (critical, **live**): 20 of 23 plan writers read-modify-write outside
+  the lock. Dismissals are lost 3/3 under concurrency; a freshly generated
+  plan for a new goal is replaced by a recalculated copy of the old one.
+- STA-3: the two writers that *do* hold the lock make stale writes land last.
+- HTTP-6: GETs write — auto-recalc rebuilds the plan, week-summary and
+  today-session can rewrite the athlete's FTP.
+- HTTP-8: derived display fields are persisted and go stale.
+
+**R5 — Generation parameters are process globals.**
+- STA-1 (critical, **live**): the distribution model is a module global set
+  per request; a concurrent generate and auto-recalc build — and persist — a
+  plan under the other request's model (54/54 foreign reads).
+- STA-5: the microintervals-only flag leaks from one click into later ones.
+- STA-6: a failed fetch is cached as `{}` and each caller invents a CTL (30
+  or 37).
+
+**R6 — Nothing owns (de)serialisation of Goal and plan.**
+- DUP-5 / HTTP-11: `Goal` is rebuilt by hand in 10+ places. `target_ctl`,
+  `target_ftp` and the endurance targets are never persisted, so they vanish
+  on the first automatic regenerate. Seven `PlannedWeek` builders from JSON.
+- DUP-22 (high, **live**): the same session is downgraded on every sync —
+  vo2max → threshold → over-under → sweet spot → tempo in four syncs.
+  Reforecast reads sessions through a lossy reader that drops `adapted` (and
+  11 other fields), so G3's "already adapted" guard never fires. That is not
+  the whole cause (measured in Step 4): the TSB loop that does the
+  downgrading has no such guard at all, and ratchets identically on either
+  reader, because every sync hands it the same flat TSB projection.
+- DUP-25: the generate endpoint has its own serializer that writes 11 of 27
+  session fields (nutrition notes lost at birth), and every rebuild deletes
+  the readiness undo stash (`pre_adapt`), so "revert" restores nothing.
+
+**R7 — Every entry point hand-assembles the week builder.**
+- DUP-4: the six builder call sites disagree on 17 of 24 parameters. Refit
+  re-samples a fixed_core plan with the random sampler (one missed hard day
+  loses both long rides and adds two hard sessions), drops the focus emphasis
+  and always samples as week 0. OWN-9: owner-on regenerate drops the event
+  climbing emphasis. This is what the 24-parameter signature costs.
+
+**R8 — The gates cannot judge the overhaul.** Closed by Step 0, below.
+- GATE-1: the parity probe's recalculate/extend/refit columns were
+  generate's plan audited again (40/40 identical).
+- GATE-2: the golden held on one machine on one day (`date.today()` anchor,
+  RNG seeded from the ICU athlete id).
+- GATE-3: no served file in the fingerprint.
+- GATE-4 / GATE-6: continuous goals only; the long ride, race week, blueprint
+  modes and recalculate's body were never executed.
+- GATE-7: tests that assert source text, not behaviour (to replace, step by
+  step, with the property they protect — gates.md R7).
+- OWN-12 / DUP-10 / GATE-9: the auditor graded against the planner's own
+  stamped number, judged hardness by label, could not see default day caps,
+  and counted missed sessions as hard.
+
+Not planner, recorded for later (Step 9): STA-4 (a cache fill in flight
+survives invalidation), STA-7/8 (the sync thread stays dead after a reconnect
+while status reports healthy), STA-9, STA-11 (non-atomic ride-record
+writes), DUP-24 (xSS is never computed from a FIT: a keyword mismatch that the
+tests' fakes copy), DUP-26 (five FIT stream walkers disagree on pauses and
+sampling rate), DUP-15/16 (the ZWO scanner exists twice and its committed
+index serves stale zone percentages), and the Pillow gap in the production venv.
+
+## Handover claims that did not hold
+
+| claim | measured |
+|---|---|
+| "All six owner-on failures are one defect; fix it where match_zwo chooses" | 8 failures, 5 causes; the mismatch is mostly minted by the sampler |
+| "12, 5, 6, 6, 3 passes"; "12 functions write a session" | no definition gives those; 22 distinct writers observed |
+| "TrainingWeek is the only writer; enforced by the seal" | seal never installed in the app; 240 sealed writes in-process |
+| "73 cases all passing" / "a run in six months compares equal" | date- and machine-dependent (GATE-2) |
+| "parity probe: no violations in any entry point" | three of five entry points were no-ops in the probe |
+| "84 argument lines x=goal.x" | 68 literal (88 with `adjusted_goal`) |
+| "scale_budget_to_week called from 4 places" | 6, with 5 distinct argument combinations |
+| "141-line unreachable block deleted" | still there; it is the production path |
+| "handlers reaching SQL directly: 5" | 28 |
+| "the FIT parser exists three times" | nine decode sites, five stream walkers |
+| DUP-22: "D1 plus `adapted` only: sync 4 modifies nothing" | with the reader carrying `adapted`, three syncs under TSB −40 still ease the same sessions a tier each sync: the TSB loop never reads `adapted` (Step 4) |
+
+## Decisions taken this session
+
+Recorded so they are not relitigated without new evidence. The project's
+value is that its rules come from the training literature; each decision says
+which rule it serves, so a later change can be argued on the same ground.
+
+- **D1** Constraint precedence unchanged: intensity budget > 48 h spacing >
+  session count > variety. *Why:* load spikes are the best-documented injury
+  and overreaching risk (Gabbett 2016, ACWR); recovery from work above the
+  first threshold is what caps hard sessions (Seiler 2010); the number and
+  quality of hard sessions matters more than their length, and variety is a
+  preference.
+- **D2** A week's budget is decided in one place, `TrainingWeek`. For an
+  opening stub week: `min(gross × span/7, gross − ridden since that Monday)`.
+  One subtraction, not two. *Why:* the acute load the ACWR guards is the
+  calendar week's, so what was ridden Mon–Wed counts against it (Gabbett 2016;
+  Hulin 2016); proration keeps a week's load from being compressed into four
+  days, which is itself a spike.
+- **D3** One hardness predicate, `_session_is_hit` (the type prescribed *or*
+  the served file's content), and the tier-down rungs derived from it
+  (`_HARD_SESSION_TYPES` = hard types − the FTP test + tempo). No other type
+  sets in planning code. *Why:* "hard" is a session above the first threshold,
+  which delays autonomic recovery far more than work below it (Seiler, Haugen
+  & Kuffel 2007) and counts against the session-goal budget of ~2–3 hard
+  sessions a week (Seiler & Kjerland 2006) — whatever the slot is called.
+  Tier-down sheds any intensity on a low-readiness day, tempo included
+  (HRV-guided training, Kiviniemi 2007); a test is postponed, not tiered down.
+- **D4** A session's type comes from its content, and an endurance slot never
+  holds hard content — sweet spot included; tempo may stay. *Why:* an easy day
+  that serves work above VT1 is an unplanned hard day that neither the weekly
+  HIT count nor 48 h spacing saw, and distribution is judged by the time the
+  athlete actually rides in each zone, not by labels (Rosenblat et al. 2025).
+  Tempo is the moderate volume the pyramidal phases prescribe (Filipas 2022),
+  budgeted by the week's zone minutes.
+- **D5** Availability hours are a ceiling, never a prescription. *Why:* load
+  is set by the athlete's chronic load and the phase (Gabbett 2016; Issurin
+  2010); free time is not a training stimulus, and scaling a session up to it
+  is how a tier-down came to raise load.
+- **D6** A missed or dismissed session costs nothing: no load, no spacing
+  block. A done session's load is counted once, from the ride. *Why:* fatigue
+  comes from training performed, not planned (Banister impulse-response); an
+  unridden session imposes no recovery cost.
+- **D7** The auditor stays independent by what it reads (the served file,
+  the goal's caps, the rides), not by keeping a copied type set.
+- **D8** Decided 2026-09-14: auto-recalculate's writes move to POST, and
+  `cs-domestique-adapt` changes in the same deployment (Step 7). GET
+  auto-recalc writes today, and the adapter depends on it.
+
+## The plan
+
+Each step ends with the gate green and a commit. Behaviour changes are
+expected from Step 1 on: every fingerprint that moves is explained before
+`--bless`, per trap 3 of the owner review. A test that pins source text is
+replaced by a test of the property it protects, shown to pass on the old code
+too, before the step that breaks it lands (gates.md R7).
+
+**The gate, from Step 0 on.**
+```
+tests/characterize_planner.py [--self-test]        # what moved, load vs content
+tests/probe_entry_point_parity.py 40 [--owner]      # invariants per entry point
+<scratchpad>/gate.sh <worktree> <label> baseline2   # full suite, serial rerun of any new failure
+```
+
+### Step 0 — gates that can judge — DONE
+
+- `tests/_gate_env.py`: hermetic (empty data home, no network, frozen today,
+  pinned athlete id) and one driver per entry point, shared by both gates.
+  Every editing driver is shown to change its base plan.
+- `tests/characterize_planner.py`: 57 builder cases + 78 entry cases per
+  owner mode, over continuous, event, blueprint and CTL goals, with Thursday
+  anchors, rides carrying zones, owned sessions, a missed hard day, stepback
+  weeks in extend and refit, a TSB crash, and the day/week adapters. The
+  fingerprint includes the served file; the diff says load or content.
+  Independent of machine and date (verified with an empty `HOME`).
+  `--self-test` PASS: each of six entry points' outputs is observed (15/15,
+  10/10, 2/2, 16/16, 4/4, 25/25 own cases move when it is perturbed, and no
+  other entry's), and five planted faults are seen (TSS rate, match_zwo
+  ignoring content, ridden load ignored, long ride ignoring the weekend cap,
+  owner 48 h off-by-one).
+- `src/plan_invariants.py`: content-aware, status-aware, with a budget
+  derived from the week's own span and the rides, the goal's real caps, and
+  four new rules — under-delivery, easy-slot content, hard share, stepback
+  lightest. `tests/test_plan_invariants.py`: a negative control per rule.
+- What the new auditor finds in today's plans (78 cases per mode):
+
+  | | weekly_volume | hard_share | easy_slot_content | under_delivery | empty_week | spacing |
+  |---|---|---|---|---|---|---|
+  | owner off | 107 | 36 | 27 | 5 | 0 | 0 |
+  | owner on | 21 | 9 | 22 | 16 | 10 | 3 |
+
+  Owner-on under-delivery / empty weeks are OWN-1 (all on `generate-thu` /
+  `regenerate@3`). Parity probe, 40 riders, owner off: easy-slot content on
+  21/21 event regenerate, recalculate and reforecast runs; weekly volume over
+  budget for 10–33 riders on every entry point.
+
+**Corrected 2026-09-14 (the audit's test lens).** The self-test had been
+failing: `reforecast@21` on the event riders changed nothing, so two entry
+cases were blind to any fault. The driver now zeroes the day after t and
+frees 3 h the day after that, which reaches the availability block (the pass
+that inflated production until 9138110d), and the self-test passes: 7/7
+entry points, 5/5 planted faults. The compare now fails on a new invariant
+hit, which it had only printed before; 93 hits sit in the golden from
+earlier blesses, each recorded there. The driver repair itself moved four
+cases and raised one new `daily_duration_cap`: an explicit 3 h override on a
+weekday capped at 2 h grows the day past the goal's cap. That is the
+recorded rule (an explicit block beats the goal, D5) and the auditor's rule
+disagreeing: for Step 7, availability as one derivation.
+
+### Step 1 — one workout identity (R2) — DONE
+
+- One content-class resolver: `_content_class_for_zwo` falls back to the same
+  filename rule as `_content_class_for_row` (they disagreed on 73 files).
+- One hardness predicate, `_session_is_hit` (type or served content; takes a
+  plan dict too). The owner's `week_plan.HARD_TYPES`, the app's hand mirror and
+  daily-adapt's local set are gone; the tier-down rungs `_HARD_SESSION_TYPES`
+  are derived from it (D3).
+- Sessions are typed by content (`_session_type_from_row`), every content class
+  maps, and endurance slots — pool, mix preference and emergency fallback —
+  hold no hard content (D4). Sweet spot is out: it is above VT1 (Seiler,
+  Haugen & Kuffel 2007) and has always been a hard type here.
+- The z5plus "hard-kill" is a gate again. Once the budget fit became a
+  multiplier, a file overshooting the week's time above 106% FTP by 20+ minutes
+  kept two-thirds of its weight while novelty spans three orders of magnitude,
+  so a threshold-model week drew three VO2 files and crossed the 18% rail.
+- `icu_calendar_push` reads the classification entries, not the envelope
+  (every pushed event had lost its display name).
+- The type→band maps for the HTTP layer's zone bars are left for Step 6, which
+  replaces labels with the served files' own zones.
+
+Measured (characterization; planner change only, same auditor on both sides):
+
+| | easy-slot content | 48 h spacing | hard share | under-delivery | weekly volume | stepback |
+|---|---|---|---|---|---|---|
+| owner off | 7 → 0 | 0 → 0 | 41 → 44 | 4 → 4 | 115 → 112 | 1 → 3 |
+| owner on | 2 → 0 | 5 → 0 | 12 → 12 | 16 → 20 | 26 → 24 | 2 → 2 |
+
+The other rules move by churn — new and resolved findings in every entry point
+at similar rates: removing sweet spot from the endurance pool shifts every later
+weighted draw, so session-level diffs are not attributable (the two new stepback
+findings are both legacy regenerate, which has no "stepback is lightest" pass).
+Time above 106% FTP per week over tid_plan_properties' matrix: mean 5.6 → 5.5 %,
+p90 12.1 → 10.5 %, max 16.4 → 16.6 %, none over the 18 % rail (the identity half
+alone reached 18.6 %; the gate brought it back). Delivered/target median
+unchanged (0.97 off, 0.95 on). "tempo" labels fell from 205 to 59 and
+labelled-hard sessions rose from 587 to 650: files named tempo_* whose content is
+endurance or sweet spot are now typed by what they contain.
+
+Re-pinned: `test_planner_fixes::…test_multiple_tempos_and_one_hit_possible`
+counted labels against `Phase.hit_per_week` (1), a field the sampler does not
+read, and passed on weeks whose only hard work was a 97-min sweet-spot file on a
+z2 slot. It now counts served content against the base budget (two quality days
+from 7 h/week, Zapico 2007); the new assertion passes on the Step 0 code too.
+
+### Found on the way — SCI-1: the sampler does not honour its own science table
+
+The mix preference is a science table (base: sweet spot and threshold, no VO2),
+but the sampler draws per FILE with per-file weights, so a class's odds scale
+with how many files the library holds in it. The HIT pool holds 388 VO2max
+files against 382 sweet-spot and 630 threshold; pool size × mix weight alone
+gives VO2max ~14 % of base hard picks where the table says 0, and novelty (25×
+for an unseen file, ~1000× across picks) swamps both the budget fit (1.5^±1)
+and the class preference. Measured: a pyramidal base week for an 8 h rider drew
+two VO2 files. The z5plus gate bounds the damage; the fix is to choose the
+CLASS by the table and the week's budget, then the file within it by novelty —
+a behaviour change that needs its own measurement. Step 5b.
+
+### Step 2 — one builder signature (R7) — DONE
+
+`sample_week_workouts(ctx, state, budget)` and `expand_blueprint_week(ctx,
+budget)`, from 24 and 12 parameters. Done ahead of the rest because the steps
+below need the goal inside the sampler, and threading a 25th argument into the
+function being collapsed would have been the old pattern again. A pure
+refactor: every call site builds its WeekContext from exactly the values it
+passed — refit's week-in-phase 0 and extend's fixed horizon included — so the
+characterization is unchanged in all 213 cases. The drift itself (DUP-4) is
+fixed as a visible change when the contexts move into TrainingWeek (Step 5).
+The four tests that call the sampler directly changed at the call site only;
+they pass None for the plan-wide bookkeeping, as their old calls did by default.
+
+More evidence for SCI-1, found here: test_goal_focus_shifts_mix holds only with
+that bookkeeping switched off. With it on — as every real entry point runs the
+sampler — a vo2max goal drew 19 VO2 picks against 21 for a general goal over
+5 seeds × 12 weeks: the goal's emphasis is swamped by novelty and diversity.
+
+### Step 3 — generation parameters travel with the goal (R5) — DONE
+
+`get_budget_for_phase(phase, goal)`, `active_model_for_phase(phase, goal)`,
+`budget_table(goal)` and `polarized_targets(goal)` read the model from a Goal
+or from a persisted goal block (a block without the key predates J1, when every
+plan was polarized — the restorer's existing default). `match_zwo`'s
+microinterval preference is an argument from whoever holds the goal: every
+planner entry point, the owner, the class-preserving coherence pass, the
+re-entry reshape, tier-down, reforecast and the seven app handlers that rematch
+a day. The swap-type endpoint passes its per-swap override instead of setting a
+process flag (STA-5). `set_active_distribution`, `set_vo2_micro_only`, their
+getters and the three module globals are deleted, and with them conftest's
+guard that snapped them back after every test — the symptom it hid is gone.
+
+Measured: characterization unchanged in all 213 cases (the riders use the
+default model, which every path already honoured serially).
+`tests/test_plan_is_a_function_of_its_goal.py` builds a polarized and a
+threshold plan on two threads at once and compares each with the same goal
+planned alone: on the Step 2 code 4 of 4 trials produced a plan its goal does
+not determine; now none. The tests that asserted "the global was re-pinned"
+now assert the property it stood for — every budget lookup during a regenerate
+or auto-recalc carries the plan's own model.
+
+### Step 4 — one serialisation (R6) — DONE
+
+One codec in the planner, next to the dataclasses and built from
+`dataclasses.fields()`: `session_to_dict`/`session_from_dict`,
+`week_to_dict`/`week_from_dict`, `goal_to_dict`/`goal_from_dict`. Every reader
+of a stored plan goes through it: the seven app week builders,
+`_plan_dict_to_planned_weeks`, reforecast's Goal and the five goal-block
+readers. So do the generate, regenerate and auto-recalc writers. The goal block
+keeps its historical key names, which the dashboard reads, and gains the
+targets it never carried. Regenerate and recalculate copy the rider's goal
+with `dataclasses.replace` instead of rebuilding it field by field.
+
+One departure from the plan: the codec does not "carry unknown keys through".
+`_enrich_plan_for_response` writes nine display keys into the dict it serves,
+and the reforecast endpoint stamps weeks `is_current`/`is_past`. Carried
+through a rebuild, a date-relative flag would outlive the day it was true on.
+The codec carries the fields plus the five keys that are session state
+without a field: `variation`, `adapted_reason`, `auto_moved`, `ftp_test_type`,
+and `pre_adapt`, the undo stash the old allow-list forgot.
+
+Measured:
+- **Characterization** is unchanged in all 217 cases: 57 builders and 80 per
+  owner mode. The commit message says 229, which is a miscount. This includes
+  the new stored-plan reforecast driver, which was blessed on the previous
+  code and seen by the self-test. The riders exercise none of the lost fields.
+- **What that driver can see.** It fingerprints only what the rider is told to
+  ride. State that changes no prescription, a dropped pin for instance, is
+  invisible to it; the unit tests cover that. At the codec commit it did not
+  move at all, because nothing it fingerprints read `adapted` (review M2).
+- **Tests that fail on the previous code** show the fixed defects:
+  - the reforecast reader keeps `adapted`, `completion_matches`, `moved_from`
+    and `execution`, which is DUP-22's reader half;
+  - after a real `_regenerate_plan_dict`, revert restores the original
+    (DUP-25; on the old code it restores nothing);
+  - the goal block round-trips `target_ctl` (DUP-5).
+
+The ratchet did not stop, because its cause is not the reader (see "Handover
+claims that did not hold"). That is Step 4b.
+
+### Step 4b — reforecast eases a session once — DONE, superseded by 4c
+
+*The review found this guard made the fatigue response one-shot for the
+whole plan. Step 4c replaces it.*
+
+The TSB downshift loop skips a session that is already `adapted`, as G3
+always has. The rule it implements is one tier past TSB −25. Two syncs minutes
+apart hand it the same reading, so applying the rule again per sync
+compounded one reading into a tier per sync. The fatigue signal is not
+re-counted, and the day-of adaptation (`adjust_today_session`, from actual
+readiness) still eases the day itself further when the athlete arrives tired.
+Measured:
+- `test_reforecast_adapts_a_session_once_not_on_every_sync` fails on both
+  readers before the guard and passes after it.
+- The characterization changes only the two stored-plan cases, and only where
+  a later sync had re-eased. After three syncs a session sits one tier down:
+  over-under, not tempo; threshold, not sweet spot.
+- The event rider's case now shows `hard_share` in weeks 5 and 7 and
+  `weekly_volume` in weeks 2 and 10. These are the base plan's own findings:
+  the legacy builder's generate has them, the owner's does not. The ratchet
+  had hidden them by easing everything to tempo and z2, which cut week 7 from
+  510 to 442 TSS. They belong to Steps 5 and 6.
+
+### Step 4c — the review's fixes: fatigue easing, and three small ones — DONE
+
+The independent review of Steps 4 and 4b (28 claims, 22 held) found that
+Step 4b's guard made the fatigue response one-shot for the whole plan.
+Production hands reforecast today's TSB for every future day. So a TSB −26 on
+day 3 eased all 24 future hard sessions, and a real −60 crash on day 24 then
+eased 0 of 20. The loop is now a function of the original prescription and
+today's reading:
+- **Rung.** `_ease_for_recovery` (z2), the code's rung for fatigue, replaces
+  one rung down the ladder, which left a threshold day hard and kept its TSS.
+- **Horizon.** Only the coming 7 days (`TSB_EASE_HORIZON_DAYS`). ATL, the
+  fatigue term in TSB, is a 7-day exponentially weighted average (Banister),
+  so today's reading says nothing about a session a month away.
+- **Reversible.** The original is kept in `tsb_eased_from`, which the codec
+  carries, and restored when the day's reading clears. An eased day is
+  re-matched to a workout rather than left empty.
+
+Also fixed:
+- Readiness now needs an event date that parses; a corrupt one showed 100%.
+- `week_from_dict` raised on a malformed session, where a rebuild used to
+  drop it. *Reversed after the Step 5 review (M2): raising answered 500 on
+  the ride-sync path. The codec skips and logs such a session again.*
+- `_drop_intensity("sprint")` is now `z2`, not `vo2max`: a low-readiness
+  tier-down added the stress it exists to shed.
+
+Measured:
+- **Tests.** `tests/test_reforecast_fatigue.py` fails four of five on Step 4b.
+  The review's case fails on behaviour (a −60 crash eased 0 of 2); three fail
+  for want of the record. All five pass here.
+- **Characterization.** Only the two stored-plan cases move, and only in the
+  coming week. An eased day is now z2 with a workout at about half the TSS
+  (over-under 124 → z2 68, threshold 87 → z2 52), where it used to keep its
+  load and lose its file. One `weekly_volume` finding resolves.
+  The sprint rung moves one more case: a daily-adapt projection at TSB −35
+  now de-loads a Thursday sprint to z2 at 34 TSS, where it projected VO2max
+  at the same 50.
+- **The swap pin.** `test_swap_type`'s pin test moved its two days into the
+  coming week, and the pin holds.
+
+### Found on the way — reforecast's fatigue response barely reduces fatigue
+
+Two defects, measured on the stored-plan driver and present on either reader.
+*Both are fixed for the fatigue loop in Step 4c. The one-rung ladder still
+keeps the load where G3 and the tier-down endpoints use it.*
+- **The tier drop keeps the load.** `_deescalated_load` keeps TSS: vo2max
+  87 → threshold 87, 80 → 79, only the minutes shrink. The TSB model the loop
+  invokes (Banister/Coggan: TSB = CTL − ATL, and ATL is driven by TSS) says
+  fatigue falls only when stress does. An intensity swap at equal TSS answers
+  a TSB −40 reading with the same training stress.
+- **An eased session loses its workout file.** The loop clears `zwo_file`
+  "to force a library re-match downstream". Neither `reforecast_dict` nor its
+  seven app callers re-match, so the eased day is served with no workout.
+
+### Found on the way — the Step 4 review (notes kept in the scratchpad's review/step4.md)
+
+28 claims: 22 held, 3 did not, 1 held in part, 2 could not be checked. Its
+findings, by where they are dealt with:
+- **H1, Step 4b's own guard.** The fatigue response became one-shot for the
+  whole plan. Fixed in Step 4c.
+- **H2, pre-existing: every ride sync overwrites today's readiness
+  adaptation.** The auto-reschedule moves yesterday's missed threshold onto
+  today's readiness-eased ride and deletes the undo stash. It belongs to Step
+  6, where one predicate says which sessions the athlete owns (DUP-23).
+- **M1: a persisted `target_ctl` changes recalculate but not regenerate.**
+  Regenerate ignored an explicit target, and Step 5 part 2 makes both honour
+  it. Only plans created through the API carry one; the dashboard never
+  sends it.
+- **M2: the stored-plan driver's blind spot.** See Step 4.
+- **M3, pre-existing: rebuilds still drop rider state.** Lost are the swap
+  pin, `variation`, `ftp_test_type`, `auto_moved` and the current week's
+  missed session. The codec carries them; the rebuild paths discard them. Step
+  6 (DUP-23).
+- **Low findings, fixed in Step 4c:**
+  - a corrupt event date read as 100% readiness;
+  - a malformed session was silently dropped on rebuild (reversed after the
+    Step 5 review, M2: it is dropped again, and now logged);
+  - the easing ladder turned a sprint into VO2max work under fatigue.
+
+### Found on the way — the continuous floor lost its sessions to 48 h spacing
+
+The gate's full run on 09-11 flagged `test_354`, a continuous plan's
+anaerobic and neuromuscular floor. It passes on clean-main and fails on this
+branch. Bisected to `cd161a0e` ("Enforce 48h spacing everywhere", from before
+this session), which a Friday start exposed.
+
+The floor for a missing class tried the lightest week first. When every slot
+there sat within 48 h of a hard day it took one anyway, because spacing was
+only a sort key. The spacing pass that runs afterwards then eased it. The
+code's own note said ranking "keeps the floor met", and that did not hold.
+Fixed: the floor searches the whole phase for a day the 48 h rule allows
+before it takes a clashing one (D1: spacing outranks variety).
+
+Measured, for continuous plans starting on each day of one week, and for
+`test_tid_plan_properties`' matrix on 14 start dates:
+
+| property | before | after |
+|---|---|---|
+| floor kept, 7 start days | 5 | 7 |
+| no week above 18% time above threshold | 12/14 dates | 14/14 |
+| polarized carries less middle than threshold | 41/42 | 36/42 |
+| — at 12 h/week | 13/14 | 10/14 |
+
+The separation cost is the variety floor's own. It imposes the same
+anaerobic and neuromuscular sessions on every model. Once those stop being
+eased away, they displace middle-zone work in threshold-model plans, and the
+threshold model's middle share falls further than polarized's. That is a
+variety rule overriding the distribution model, the SCI-1 problem: Step 5b's
+remedy (class-first sampling that honours the model's table) has to cover the
+floors too.
+
+### Step 5 — one owner of the week's budget (R1) — DONE
+
+*Status on 2026-09-11.* All four parts are done, each below:
+- part 1, the stepback rhythm;
+- part 2, one athlete state and one target rule;
+- part 3, one budget per week (the owner chose the ramp);
+- part 4, one week context.
+
+The verify line's `under_delivery` and `weekly_volume` → 0 does not hold,
+and cannot while the legacy passes move a week after it is budgeted. Part 3
+lists each remaining finding by cause. Those, and bounding hard work by the
+budget (M6), are Step 6's.
+
+`TrainingWeek` derives the ceiling (D2); one stepback predicate on a plan-wide
+week index; every entry point (and the phase preview) feeds `generate_phases`
+the same athlete state (ACWR cap, `target_ctl`); the builder contexts are built
+in one place, so refit's emphasis and week-in-phase stop drifting (DUP-4).
+*Verify:* one answer per rider across entry points for DUP-1/2/3;
+`under_delivery` and `weekly_volume` → 0 in the characterization.
+
+#### Step 5, part 1 — one stepback rhythm (DUP-3) — DONE
+
+`stepback_due(prior_weeks, phase)` counts the load weeks since the last unload
+over the whole plan. An unload is a stepback, a taper, a regenerate's recovery
+ramp (`recon`, `recovery_ramp`), or a deload the app advanced. Generate, the
+entry scan, regenerate, recalculate and extend all use it. The 0.72 factor,
+a bare literal in seven places, is `STEPBACK_LOAD_FACTOR`, beside
+`STEP_BACK_EVERY`.
+
+Measured:
+- **Rebuild points.** On one 25-week event plan, rebuilt at every week 1–18:
+  - the old counters gave regenerate 4 and 5 load weeks in a row at weeks 1–2;
+  - recalculate got 6 at every fourth rebuild point, and 4–5 at most others;
+  - the predicate gives 3 everywhere.
+  - A plan built in one go is unchanged: stepbacks at weeks 4, 8 and 12.
+- **Characterization.** 7 of 80 cases move per owner mode, all
+  regenerate@17 and recalculate@21, each where a fourth load week became the
+  stepback.
+- **New auditor findings.** Each has an identified cause:
+  - The FTP test is barred from stepback weeks, so it moves to the next row.
+    Here that is a two-day build2 fragment (Mon–Tue) before a taper starting
+    mid-week, which then fails `hard_share`.
+  - The owner makes that same fragment its stepback (`under_delivery`).
+  - A resampled taper week crosses `weekly_volume`: it was at +11% before.
+
+Decided by the owner on 2026-09-11, and done:
+- **The rhythm counts calendar weeks**, and the weeks the rider missed
+  (9d02d411). A two-day fragment at a phase seam no longer counts as a week.
+- **FTP tests are taken rested**, at the end of an unload week (163fc6b3;
+  Allen & Coggan).
+
+#### Step 5, part 2 — one athlete state, one target rule (DUP-1, DUP-14) — DONE
+
+`athlete_weekly_load(ctl, recent)` — the recent mean from the ride archive,
+else CTL × 7 — is filled in by `generate_phases` for every caller: the
+preview, the entry scan, regenerate and recalculate got the ACWR ceiling
+(Gabbett 2016: acute load past ~1.3× chronic) only by accident before.
+`plan_target_ctl(goal, ctl, event_targets)` is the goal's own rule capped by
+Couzens' safe ramp over the weeks the phases have. Regenerate's recovery ramp
+is a ceiling on that rule, not a replacement for it: an FTP goal aimed at
+CTL 99 and an explicit target of 60 at 113. Recalculate now runs the
+week-total pass generate and regenerate run.
+
+Measured on a rider with a chronic load of 250 TSS (ceiling 325):
+| path | weeks over 1.05 × ceiling, before → after | peak prescribed |
+|---|---|---|
+| generate | 0/21 → 0/21 | 340 → 340 |
+| regenerate | 12/17 → 0/17 | 514 → 336 |
+| recalculate | 15/17 → 0/17 | 568 → 335 |
+
+Capping the targets alone made recalculate *worse*, 564: its prescription
+followed the rider's free time, not its targets, because it had no
+week-total pass. Checking labels instead of prescribed load would have called
+that fixed.
+
+In the characterization, 7 of 80 cases move per owner mode, all
+regenerate@17 and recalculate@21. Recalculate's unload week had been the
+heaviest of its block: 465 TSS against a 265 label, now 259. For this rider
+every rebuilt load week sits under the ACWR ceiling.
+
+*That does not hold in general (the Step 5 review, M6).* Take a rider at
+150 TSS a week (CTL 28, ceiling 195). Recalculate still has 5 of 12 weeks
+over, up to 267 TSS (1.37× the ceiling). Generate has 5 of 14 with the
+legacy builder (0 of 14 in owner mode). Every such week is all hard
+sessions, and the week-total pass never shrinks a hard
+session. That is the intensity budget, D1's first rule, and part 3's
+question.
+
+The auditor flags these weeks against their lowered ramp labels, as it
+already flagged generate's. Part 2 also adds `hard_share` and
+`under_delivery` findings on the rebuilt weeks. Both are the part 3
+question below.
+
+**The question part 3 has to settle.** The week-total pass lets easy volume
+fill base, build and peak weeks up to the ACWR ceiling, above the phase's
+ramp target ("polarized base fill", v2.1.1), while the auditor, the owner
+and the UI read the ramp target. So a week has two budgets, and the
+`weekly_volume` findings on generate's own plans are that disagreement. One
+number has to win.
+
+#### Step 5, part 3 — one budget per week (D2) — DONE
+
+The owner's decision (2026-09-11): load ramps by Couzens, the build carries
+the most it safely can, and the planner needs no input to do it. A week's
+budget is one number, `LoadRamp`'s. CTL is a 42-day and ATL a 7-day
+exponentially weighted mean of daily TSS.
+- **The ramp is Couzens' loading rule.** A load week carries CTL + k TSS a
+  day. His default, k = 30 (his "1,2,3"), ramps CTL about 10 a month with
+  TSB bottoming near −20 at the end of a three-week load. His "2,4,6"
+  (k = 60: 20 a month, TSB −40) he keeps for the exceptional athlete. For
+  most athletes he aims at 3–5 CTL a week, 10–20 a four-week block
+  ([Couzens, "CTL ramp rates"](https://www.alancouzens.com/blog/CTLramp.html)).
+  - Base and continuous blocks take the default.
+  - The build takes the most that stays in his band and above TSB −30,
+    where Friel's productive band ends
+    ([Friel, "Managing training using TSB"](https://joefrieltraining.com/managing-training-using-tsb/)):
+    k = 40. This ramp re-reads CTL every week and unloads at 0.72, so its
+    numbers are not his. Fed its own budgets over evenly spread days, a
+    build block at CTL 100 gains 15–17 CTL and bottoms at −30. At k = 45,
+    the first version's, it bottomed at −34, and gained 18–23 a block at
+    lower CTL (the second part 3 review, M-2).
+    `test_each_phase_loads_as_couzens_rule_says` pins both ends.
+  - By session day a long weekend takes TSB 10–20 lower than evenly spread
+    days do, and reforecast reads the daily figure. So once the builders
+    deliver in full, a fit rider's plan dips under −30 after its own big
+    weekends. The owner's decision (2026-09-11): keep k = 40 on Couzens'
+    convention, and in Step 6 reforecast eases against the plan's own
+    projection for the day, not an absolute −30.
+  - The peak holds to `RAMP_CONSERVATIVE`, and the goal's target CTL
+    (`plan_target_ctl`) stops the ramp (`test_the_goals_target_stops_the_ramp`).
+- **The guard is Gabbett's sweet spot, in every phase.** No week goes over
+  1.3× the load the rider carries into it (Gabbett 2016), cuts included.
+  - The load carried is a 28-day exponentially weighted mean of daily
+    load, as Williams et al. (2017) and Murray, Gabbett et al. (2017)
+    compute the ACWR's chronic side. The ramp and `check_acwr` share it
+    (`plan_invariants.chronic_after`).
+  - The owner's decision (2026-09-11), after the second review. The 4-week
+    rolling mean read a two-week holiday as two zeros that held the weeks
+    back down and then dropped out of the window. The return went 248,
+    236, 157, then an unload at 113. It now rises: 173, 193, 216, then the
+    unload (`test_the_weeks_back_from_a_holiday_rise`).
+  - It starts at the rider's chronic load, the lower of the archive's mean
+    and CTL × 7. A rider with neither starts at Couzens' rule for CTL 0,
+    210 TSS.
+  - Their hours cap every budget at 65 TSS an hour (D5).
+- **The cuts.**
+  - An unload week is 0.72 of the last full load week (Issurin) and at most
+    0.9 of the lightest in its block (B3).
+  - The taper takes its fraction of the most of the last three full load
+    weeks (Mujika & Padilla 2003), as the week-total pass trims it.
+  - Consolidation takes half of the last full load week.
+- **What it follows.** Each emitter feeds the ramp the rows it builds, at
+  what they prescribe capped at their budget, and the row says whether it
+  unloads (`_is_unload_week`, the rhythm's own test). Extend's kept weeks
+  and regenerate's recovery weeks are fed the same way. A row already
+  behind today moves nothing: the rider's CTL holds what they rode.
+- **The labels are a projection.** A dry run of the same ramp, fed its own
+  budgets, gives each phase's label for the preview and the entry scan. The
+  builders deliver less than their budgets, and the weeks' ramp follows what
+  they deliver. So the labels run above the built weeks' budgets, by up to
+  1.57× in the second review's probe plans. The home card reads the plan's
+  own rows (but see Step 8).
+
+**Where the two rules meet.** For a rider below about CTL 100, the sweet spot
+binds before Couzens' rule does. At CTL 43, his default load week would be
+511 TSS against a chronic load of 300: 1.7×, past Gabbett's danger line at
+1.5×. So for such riders base and build carry the same load growth, the most
+the sweet spot allows, and differ in content. The build's larger k binds only
+for fitter riders. That is D1: the load budget first. Part 3's first version
+had budgeted the build at 1.5×, Gabbett's danger threshold, as its setpoint
+(the part 3 review, H2).
+
+Gone:
+- the flat per-phase targets;
+- the peak × Gabbett block in `generate_phases`;
+- the week-total pass's "polarized base fill", which let easy volume fill to
+  1.3× the rider's load on the day of planning.
+
+The owner reads the same number (`WeekContext.tss_target`).
+
+Fixed on the way. Each fix has a test, and each test was checked to fail with
+its fault planted (the D6 fix's first test could not tell, below):
+- **D6 read against the wrong number.** A week counts as unridden when the
+  rider rode at most 0.72 of what it prescribed (`_went_unridden`).
+  - Against its budget, a fully ridden week that under-delivered read as
+    unridden. The first test's weeks prescribed exactly their budget, so it
+    passed with the fault in (the second review, M-3). Its weeks now
+    prescribe 300 against 500.
+  - A whole week of rest days counts as unridden, ahead of today as behind
+    it. That is how the planner writes a holiday. Part 3's first version
+    made it a load week (H1). The second read it only once it was past, so
+    a holiday planned ahead still put a deload on the first week back
+    (M-5).
+  - A shorter row of rest days says nothing. A plan made on a Thursday
+    opens with one when the rider has already ridden the week's load.
+  - The ramp reads the same test (`follow`), and so does the B3 pass. The
+    pass's block stopped only at stepback flags, so it took a holiday's
+    zero weeks for the block's lightest and cut the unload after it to
+    21 TSS.
+- **The unload rest-day rule (issue #4) cut too deep.**
+  - With four training days, each rest day took a quarter of the week. A
+    novice's unload week fell to 88 TSS against a 179 budget, and the load
+    weeks after it read 1.7× against what they were given.
+  - It now stops a sixth under the week's budget (`STEPBACK_DEEPEST` /
+    `STEPBACK_LOAD_FACTOR`), because the ramp has counted the week at its
+    budget.
+- **The cuts read a seam.** They took the last load row. A two-day row at a
+  phase seam, scaled to a week, set a taper budget of 151 against a
+  pass-trimmed 334. They read the last full load weeks now.
+- **A rider with no history got nothing.** At CTL 0 with no rides, the ACWR
+  had nothing to multiply, so every budget was 0 (M4).
+- **The auditor gains `check_acwr` and `projected_ctl`.** `check_acwr` is not
+  in `audit()`, since a plan does not carry the rider's chronic load.
+
+Measured with the legacy builder, the load carried taken as the 28-day EWMA:
+- **The owner's rider shape.** A 16-week plan for a rider at 300 TSS a week,
+  CTL 43: CTL at the taper 63 by session day (the flat plan: 50), and no
+  week over its budget (was 8).
+- **Five riders** (150–490 TSS a week, 12 h):
+  - CTL at the taper, by session day: 49, 58, 63, 61, 64 (owner mode: 42,
+    59, 63, 61, 64).
+  - No week but a taper over 1.05× its budget.
+  - The 150-TSS rider's week 10 reads 1.55× the load carried, over
+    Gabbett's danger line: 364 TSS against 235, where the ramp budgeted
+    1.3× the 280 it had counted. Passes cut the weeks before it after the
+    ramp counted them (below). In owner mode the highest is 1.41×.
+    `test_no_rider_crosses_the_danger_line` reads what the rider gets with
+    no tolerance now, and that rider is a strict xfail for Step 6.
+  - Weeks over the sweet spot, with the auditor's 1.05 tolerance: 3, 0, 1,
+    0 and 1 (owner mode 1, 0, 1, 0 and 1). Each is a week the ramp budgeted
+    at 1.3× what it carried.
+  - 3 of 60 load weeks under 70% of their budget (owner mode: 2).
+  - *Corrected after the third review:* the first write-up gave 1.49× and
+    3, 2, 1, 0, 0. The probe behind those numbers still measured the 4-week
+    rolling mean the EWMA had replaced.
+  - Lowest projected TSB, starting from rest: −8 to −18 over evenly spread
+    days, and −16 to −29 by session day in either mode.
+- **Characterization.**
+  - Against the plans before part 3, every plan case moved load: 79 of 80
+    per owner mode, with the builders unchanged.
+  - Findings: 28 new and 165 resolved with the legacy builder, 16 and 43
+    in owner mode.
+  - A clean-HEAD control run the same day reproduced the old golden
+    exactly.
+  - The EWMA then moved 57 of 80 cases with the legacy builder and 63 in
+    owner mode. The second review's other fixes moved none.
+
+The new findings, by cause:
+- **What a week's hard work costs is not bounded by its budget (M6).** The
+  week-total pass may shrink easy rides, never hard ones, so a week built
+  over its budget stays hard, and the load ramp cannot hold the intensity
+  budget on its own.
+  - The intensity rail: on 2026-09-11 a 6 h polarized plan's build2 week
+    read 18.1% of its minutes above 106% FTP, against the 18% rail, and
+    `test_tid_plan_properties` was red. That suite lays its plans from the
+    day it runs: on 2026-09-13 the same three 6 h plans read 16.7%, 15.1%
+    and 16.7%, green, where on the parent that day they read 17.6%, 15.8%
+    and 14.9%. They sit at 15–18% either way, so which files the sampler
+    draws decides whether the rail holds. The rail is left live for every
+    plan, and Step 6 is what bounds them.
+  - What the rider gets, over 1.5× the load carried, with the parent's
+    figure in brackets: the 150-TSS rider 1.55 (1.46); a novice 2.18 (2.19)
+    and 1.74 (1.57); a continuous novice 1.99 (2.39); a three-week holiday
+    2.24 (2.01); a holiday novice 2.34, and 1.68 in owner mode; a
+    regenerate after six weeks off 1.74 (1.71).
+  - Most of that is the week itself built far over its budget and all hard:
+    a novice's week 3 is 208 TSS against a 162 budget.
+  - Step 6, where every week is built through the owner and its
+    `HARD_CEILING_SHARE`.
+- **Intensity moved with the budgets.** Over the characterization, total
+  hard TSS fell 2.7% with the legacy builder and 1.2% in owner mode, but it
+  rose in 17 and 21 of 74 cases, and the hardest week rose in 16 and 23. Of
+  the five 12 h riders, four gained hard TSS with the legacy builder
+  (3.8–6.3%), and the 55/385 rider's hardest week went from 242 to 308.
+- **Nothing in the legacy chain bounds hard work by the budget (M6).** The
+  owner does (`HARD_CEILING_SHARE`). `hard_share`, 8 cases. Step 6.
+  - A 3 h/week rider's budget is the 195 TSS their hours carry, so the same
+    two hard sessions of three read as 70% hard.
+  - Where a budget rose, the sampler drew more hard work: 278 of 394 in one
+    continuous week 1.
+- **Weeks move after the ramp has counted them.** The builders prescribe up
+  to 5% over a budget, and later passes move the week:
+  - the week-total pass rests whole easy days and lands under the budget;
+  - the unload long-ride cap trims;
+  - the event long-ride progression adds.
+
+  A regenerated unload week built at 446 against 234 ends at 195. Tapers
+  anchored on the final builds read up to 19% over the ramp's budget in the
+  characterization, and 27% in the five riders' plans.
+
+  The largest cut comes last. The per-day availability clamp
+  (`generate_plan`'s v1.8.21 pass) runs after the week-total pass, and cuts
+  the long rides `_apply_long_ride_target` lengthened past the day's cap.
+  The zero-history rider's weeks 7, 9 and 11 lose 38, 82 and 82 TSS after
+  the ramp has counted them. The week-total pass also trims to 1.05× a
+  budget, not to the budget.
+
+  So the weeks after read over the sweet spot against what the rider gets.
+  In the five riders' plans the worst is 1.49×: the 150-TSS rider's week 10,
+  budgeted at exactly 1.3× the 280 the ramp carried, against the 235 the
+  rider does. The EWMA weighs the latest week at 0.39 where the rolling mean
+  gave it 0.25, so a cut shows more.
+  - The plans the second review found uncovered read the same way.
+  - A continuous plan at CTL 30 reads 1.48× in both modes. On the rolling
+    mean it read 1.47× with the legacy builder and stayed within the sweet
+    spot in owner mode.
+  - The zero-history rider's plan reads 1.45× (owner mode 1.39×), where
+    the rolling mean read 1.55× (M-6, L-2).
+  - Two strict xfails, `test_the_acwr_holds` for the 300- and 490-TSS
+    riders.
+  - Step 6: a week decided once, and followed as decided.
+- **Paths that never ran the passes.** Step 6.
+  - Regenerate, recalculate, extend and refit do not run the B3 pass.
+  - Extend and refit run no week-total pass either. Extend's unload week was
+    already 52% over its budget before part 3; changed picks took it to 607
+    TSS against 239, and a continuous refit to 433 against 303.
+- **The sampler under-delivers at high targets.** It replaces plan_week's
+  skeleton: one build week came back at 271 TSS against 563. In part 3's
+  first version, an event week laid out at 626 with two 3 h long rides came
+  back at 357 with none. Step 5b.
+- **Stubs after ridden days** carry the smaller budget of a rider whose hours
+  cap them, so a stub's sessions exceed a budget already spent. The sessions
+  did not change.
+
+Recorded:
+- **Recalculate keeps the week in progress as the old plan sized it**, and
+  extend keeps its kept weeks the same way. A plan's later weeks assume the
+  earlier ones were ridden, and recalculate runs because they were not. Here
+  that is 443 TSS for a rider carrying 250 (1.77×). It is a strict xfail
+  that checks that week alone, for Step 6 (kept weeks as derived state).
+- **The home card overshoots every low week.** It reads the plan's budget
+  now, but its own session floors do not follow it down.
+  - Whatever the budget, a 12 h rider's card is about 438 TSS in base and
+    516 in build, and a 3 h rider's is 306–362.
+  - Against the plan's week, the 150-TSS rider's card runs up to 2.3× and
+    its unload weeks 2.4×. The 3 h rider's runs 1.9× and 2.4×, and the
+    300-TSS rider's load weeks 1.18×.
+  - The M2 test checks one build2 week of a mid-load rider, where the card
+    lands on the budget (the second review, H-1).
+  - This predates part 3. Step 8, where the card reads the stored week.
+- **Reforecast's easing and the build, aligned at −30.** Reforecast eased
+  the coming week when the rider's TSB fell under −25 (`TSB_EASE_BELOW`).
+  The owner aligned it with the build's floor at −30 (2026-09-11), the
+  floor of Friel's productive band.
+  - The continuous plans' deep-fatigue floor
+    (`continuous_policy.TSB_LOW_FLOOR`) mirrored the old −25. It follows,
+    and since that module takes no repo imports, a test pins the two equal.
+  - The build's floor is on evenly spread days, but reforecast reads the
+    day's TSB. By session day the probe plans bottom at −16 to −29. Once
+    the builders deliver a fit rider's plan, it bottoms at −40 and lower
+    after its long weekends. The owner's decision: in Step 6, reforecast
+    eases against the plan's own projection for the day (the second
+    review, M-4).
+- **Regenerate's recovery ramp** reads 1.39× on its own (252 TSS after 181).
+  That predates part 3. Step 6.
+- **Tests rewrite `src/workouts/.library_index.json`.** When the library is
+  re-read, the zone shares of 3,200 rows move by a few tenths of a percent.
+  That does not move the characterization (the control above), but the file
+  must not be committed; `gate.sh` restores it.
+
+#### The part 3 review
+
+An independent reviewer ran part 3's first version and found 2 high, 5 medium
+and 6 low issues. Its report is kept in the scratchpad's `review/p3/`.
+- **H1, a holiday counted as load.** Fixed (above), with
+  `test_a_holiday_restarts_the_count`.
+- **H2, the build at the danger line.** The ACWR term set 27 of 30 build
+  weeks, at 1.5×. Low-load riders got more hard work than before part 3: the
+  150-TSS rider's total rose 107% in owner mode. The guard is 1.3× in every
+  phase now, and no rider crosses 1.5× with the legacy builder.
+- **M1, the citations.**
+  - The −10 to −30 band is Friel's, not Coggan's.
+  - Couzens' rates are as above. A build ramping 6 CTL a week "by Couzens"
+    was not his.
+  - "Past a ~40% cut the rider detrains" had no source, and it is withdrawn.
+    Mujika & Padilla's tapers cut volume 60–90% without losing adaptation.
+    The unload floor is about the history the ramp counted.
+- **M2, a second budget.** The home card sized its week from the phase's
+  label: 694 TSS for a build week the plan budgets at 540. It reads the
+  plan's own rows now.
+- **M3, the recalculate xfail** failed for two reasons. It now checks the
+  week in progress alone.
+- **M4, a rider with no history** got a zero plan in owner mode. Fixed
+  (above).
+- **M5, faults nothing caught.** Each now has a test that fails with the
+  fault planted:
+  - the dry run ignoring the rider's load;
+  - the dry run advancing past rows;
+  - extend building without a budget;
+  - the cuts reading the last row;
+  - the ramp skipping regenerate's recovery weeks;
+  - B3 missing from the ramp.
+- **Low.**
+  - L1: extend fed its kept weeks at their budget, and regenerate its
+    recovery weeks. Both are fed what they prescribe now.
+  - L2: "a rider on plan will be eased" overstated; restated above.
+  - L3 and L4: counts and comments corrected.
+  - L5: the recovery ramp's own 1.39× is recorded above.
+  - L6: W is exact only for evenly spread days, and the code now says so.
+
+#### The second part 3 review
+
+A second independent reviewer ran the revised part 3 (51ed73ba). It found 1
+high, 7 medium and 8 low issues. Its report and probes are in the
+scratchpad's `review/p3r2/`.
+- **H-1, the home card.** Its session floors put a low-load rider's week
+  at up to 2.3× the plan's. It predates part 3. Recorded above, for Step 8.
+- **M-1, a fit rider loses fitness.** The builders' shortfall, for Step 5b.
+- **M-2, k.** As implemented, k = 45 went past Couzens' band and −30. It is
+  40 now, and a test notices k.
+- **M-3, the D6 test.** It could not fail; it can now.
+- **M-4, TSB by session day.** Restated above. The owner's decision on the
+  easing is for Step 6.
+- **M-5, a holiday's first week back.** Fixed. The rhythm, the ramp and
+  the B3 pass read one test of an unload week. The rolling mean's sawtooth
+  after a holiday led to the EWMA, the owner's decision.
+- **M-6 and L-2, continuous and zero-history plans over the sweet spot.**
+  Weeks cut after the ramp counted them. Recorded above, for Step 6.
+- **M-7, owner mode's hard work.**
+  - In owner mode the 150-TSS rider's hard work rose from 1,188 TSS over
+    the plan before part 3 to 2,112 now, and the hardest week from 117 to
+    227. With the legacy builder it rose from 2,333 to 2,674.
+  - The plan before part 3 took that rider from CTL 28 to 22; this one
+    takes them to 42, and hard work rose with the load.
+  - Bounding a week's hard work by its budget is M6, Step 6.
+- **Low.**
+  - L-1, cuts unguarded: fixed.
+  - L-3, `check_acwr(limit=None)` raised NameError: fixed.
+  - L-4, Couzens' figure: corrected.
+  - L-5, sweet-spot counts need the tolerance: stated above.
+  - L-6, a test that locked in the recovery ramp's overshoot: it now checks
+    that the ramp follows every row regenerate lays out.
+  - L-7, the regenerate xfail named one cause of three: on the EWMA it
+    passes, and it is a plain test.
+  - L-8, faults no test caught: the target cap has a test now. Extend's
+    kept weeks fed at their budget, the card's stepback cut twice and its
+    seam proration still have none; the last two wait for Step 8.
+- **Found on the way.** The auditor's `check_stepback_lightest` counted its
+  blocks from stepbacks alone, as the B3 pass did. It flagged an unload
+  lighter than every load week before it, because a recovery ramp sat in
+  its block. The planner and the auditor share `UNLOAD_PHASES` now.
+
+#### The third part 3 review
+
+A third independent reviewer ran 59500caa and found 2 high, 4 medium and 6
+low issues. Its probes are in the scratchpad's `review/p3r3/`.
+- **H1, the intensity rail, and H2, the danger line.** Both recorded above.
+  The owner's decision (2026-09-13): fix what belongs to part 3, record
+  these two for Step 6, and push the branch. Nothing is deployed from it.
+- **M1, a week of rest days the rider had already ridden read as a
+  holiday.** A plan made on a Monday after a 420 TSS ride prescribes
+  nothing for the days left of that week. A holiday is told now by the mark
+  the planner writes on a day away (`plan_invariants.REST_UNAVAILABLE`,
+  `asks_nothing`), which the rhythm, the ramp, the B3 pass and the auditor
+  all read.
+- **M2, fixes nothing would have caught.** The B3 pass and the ramp back on
+  stepback flags, and a ramp that advances a week for every row, each fail
+  a test now.
+- **M3, knife-edge gates.** The build's TSB bound is widened to −31…−27,
+  which still rejects k = 45 and k = 35. The plan-level ACWR xfails still
+  turn on a TSS or two; they are Step 6's to remove.
+- **M4, intensity moved.** Recorded above.
+- **Low.** `check_acwr` no longer divides by a zero-day row (L2), and its
+  blocks restart at a holiday (L3); each has a test that fails without the
+  fix. `limit=None` was never an input: the second review's NameError was a
+  deleted name, and the parameter takes a number (L1).
+- **Three tests the date exposed, from an earlier step.** On 2026-09-13, a
+  Sunday, `test_v208_volume_ceiling`'s HIT check, `test_plan_entry_api`'s
+  backdated runway and `test_recalc_preserves_state` went red on the branch
+  and green on clean-main. All three fail at 27642302 too, and a bisect
+  against clean-main lands on `afdc8c91`, where weeks began to anchor on
+  Mondays: a plan laid on a Sunday opens with that Sunday alone, a declared
+  start off the Monday grid adds a sliver row (18, where the test allowed
+  17), and a phase seam can leave a one-day row that carries one easy
+  session and no HIT. The three tests read clean-main's full weeks; each now
+  reads the geometry that step decided, without loosening what it checks.
+- **Recorded, not fixed.** The dry run's labels cannot see a holiday, so
+  after one they run 1.4–7.5× the rows (L4). The app's deload advance reads
+  stepback flags alone, so a first week back from a holiday can take an
+  advanced deload (L5, pre-existing). `characterize_planner --self-test`
+  has two reforecast cases it cannot perturb, here and on the parent (L6).
+
+#### Step 5, part 4 — one week context (DUP-4, OWN-9) — DONE
+
+`week_context(goal, phase, week, start, …)` builds the context every entry
+point builds a week from, with one emphasis rule (`_week_emphasis`) and the
+blueprint modes' block-focus exemption. `propose_week(ctx, state, budget)`
+takes the blueprint-or-sampler branch for generate, regenerate, recalculate,
+extend, refit and the owner. Refit reads its week-in-phase from the plan.
+
+Measured. The sampler reads only the context's emphasis, block focus, goal,
+phase, dates, seed and week indices, and the blueprint engine reads fewer
+still. So only refit's plans and the owner's regenerate could change, and
+the characterization moves only refit@3 cases (11 and 12 per owner mode):
+- **Fixed plan.** With the legacy builder, a fixed_core plan's refit keeps
+  its generated week: two long rides and one sweet spot, 456 TSS. The sampler
+  had swapped Thursday's sweet spot for vo2max, cut Saturday's long ride to
+  an hour of z2, and cut Sunday's from 150 to 120 minutes. That week
+  totalled 339, counting the missed session.
+  - *Corrected after the Step 5 review:* the first write-up said "two
+    vo2max sessions and no long ride".
+  - In owner mode, refit still bypasses the owner's sizing (L6, below).
+- **Continuous plans.** Continuous refits carry their focus emphasis, and
+  over 12 seeds the load they re-owe is unchanged: mean 127 → 132 TSS, hard
+  86 → 85, and 3 of 12 under-deliver both before and after.
+- **Owner's regenerate.** It now carries the climbing emphasis, but these
+  riders' draws don't respond to it. That is SCI-1's diluted class
+  preference (Step 5b).
+
+`tests/test_one_week_context.py` fails all three of its checks on the
+previous code.
+
+### The Step 5 review — what was fixed, corrected and recorded
+
+An independent reviewer ran Step 4c, the floor fix and Step 5 parts 1, 2
+and 4. Of 47 claims, 38 held, 5 held in part and 4 did not. The report is
+kept in the scratchpad's review/step5.md. It had no critical or high
+findings.
+
+**Fixed.** Each fix has a test that fails on the previous code, and the
+characterization is unchanged (217 cases).
+- **M1. No TSB reading counted as a cleared one.**
+  - With ICU down, `get_today_metrics` answers `{}`. Every eased session was
+    then restored, and eased again at the next sync with a reading.
+  - No reading now leaves the day as it is, as Step 4b did. Through the app,
+    an outage restored 2 of 2 eased days; now 0.
+- **M3. A restore erased G3's flag.**
+  - When the reading cleared in the same sync that G3 lowered the restored
+    day, the write-back cleared `adapted`. G3 then lowered the day again the
+    next time: two tiers for one breach.
+  - The write-back now clears the flag only when nothing has adapted the day
+    since.
+- **M4. A restore ignored 48 h spacing.**
+  - A rider who moved an eased day next to a hard one got the hard original
+    back there: 35 of 37 moves in a probe, counting today's session. (The
+    first count, 18, left today out.)
+  - A hard original now goes back only where `_slot_breaks_hard_spacing`
+    allows it (D1); otherwise the day stays eased. Now 0 of 37.
+- **M2. The strict codec answered 500 on the ride-sync path.**
+  - One session without a readable day, sitting in the current week, made
+    update, rematch, regenerate and auto-recalc answer 500. It also made
+    reforecast drop its whole week.
+  - The codec skips and logs such a session, as before Step 4c. Every
+    endpoint answers 200, and the week keeps its other sessions.
+- **A refit replaced a scheduled FTP test.**
+  - On the test's day, 16 of 16 fixed_core and template refits turned it
+    into threshold. Refit redraws the week with a builder that never places
+    a test.
+  - A scheduled test is now frozen to the refit, like a race (Allen &
+    Coggan: test on fresh legs). Now 16 of 16 kept.
+- **L2. Refit's event emphasis never reached production.** The app's refit
+  passed no athlete. The three inline copies of the athlete assembly are now
+  one helper, `_planner_athlete`, which refit uses too.
+- **L3. The home card unloaded one week late.** It unloaded in weeks 5, 9
+  and 13 against the plan's 4, 8 and 12. It now reads the plan week that
+  covers its week.
+
+**Corrected above.**
+- Part 2's recalculate peak: 568, not 532.
+- Part 2's ACWR claim (M6).
+- Part 4's fixed-plan refit (L5).
+- Step 4c's strict codec (M2).
+
+**Recorded, for the step that owns each.**
+- **M5, for Step 6.**
+  - A rebuild keeps a fatigue-eased day as the rider's own and plans the
+    week around its easy load. The restore then puts the original back: up
+    to 68 TSS on the week and 139 hard TSS over a never-eased rebuild
+    (regenerate, legacy builder; corrected by the fix review, F5).
+  - The 48 h check does not reduce it, because the rebuild never puts a
+    hard day beside the eased one. The load is the ownership question
+    (DUP-23). An adaptation the planner made is derived state, and a
+    rebuild should re-derive it rather than own it.
+- **G3 walks through the plan. Pre-existing; found while fixing M3.**
+  - While one polarization breach persists, each reforecast lowers the next
+    two hard sessions not yet adapted, so each run reaches further ahead.
+    After 6 runs, 12 sessions were lowered, reaching 6 weeks out, in both
+    owner modes.
+  - Only `/api/plan/reforecast` passes the polarization inputs, and nothing
+    in the dashboard calls it any more: its button went in v1.8.24, and
+    `reforecastPlan()` is dead code. So G3 walks only on a direct API call.
+    (Corrected by the fix review, F4: the first write-up said "once per
+    click".)
+  - It is the DUP-22 ratchet spread across sessions. Step 6 settles it with
+    the fatigue loop's pattern: the coming week only, a record of the
+    original, undone when the breach clears.
+- **M6, for Step 6.** Part 3 made the budget one number, but nothing in the
+  legacy chain bounds hard work by it; the owner does (see part 3).
+- **L1, decided 2026-09-14: fresh runway, guarded** (see "The load the
+  rider carries").
+  - A goal without a target date, rebuilt after an absence, now aims higher
+    than before. After a 3-week break, the CTL target went 65 → 86 and the
+    phase peak 453 → 605.
+  - Both versions lay a fresh 16-week runway after the ramp. The new target
+    matches the phases actually built; the old one was sized to a plan end
+    the rebuild overran.
+  - The ACWR ceiling does not brake it, because the recent mean averages
+    only weeks with a ride.
+- **L4, for Step 6 (D6).** The rhythm reads labels, not ridden load. After
+  one ridden load week and two fully missed ones, the next week is a
+  stepback. D6 says a missed session costs nothing.
+- **L6, for Step 6.** In owner mode, refit splices the raw blueprint week
+  over a week `TrainingWeek` sized. Remaining-day load rose in 20 of 24
+  cases, against 12 of 24 before part 4. Week totals stay under target.
+- **A library file with impossible load, for Step 9.**
+  `vo2_short_10x30s-30s_105pct_40min.zwo` is served at 117–128 TSS for 40
+  minutes, which is 175–190 TSS an hour.
+
+### The review of those fixes
+
+A third independent review ran the fixes above. Of 22 claims, 19 held, 2
+held in part and 1 did not. The report is kept in the scratchpad's
+review/step5b.md.
+
+The fixes held under the review's own probes:
+- M1, through the app;
+- M3, in both owner modes;
+- M4, across week boundaries and double moves;
+- M2, over 14 malformed session shapes and all 24 endpoint cases;
+- the FTP test, in 48 of 48 refits;
+- the athlete helper, over 20 profile states.
+
+**Fixed.** Each fix has a test that fails on the previous code, and the
+characterization is unchanged (217 cases).
+- **F1 (medium, from Step 4c). A restore overrode the rider's
+  availability.**
+  - An eased day set to 0 h got its hard original back once the reading
+    cleared. Through the app, that put threshold 63 minutes on a 0 h day.
+  - The easing now records what it made of the day, and a restore undoes
+    only that. A day another writer has changed since stays as it is (D5).
+  - In the review's probe, 8 of 8 cut days keep their hours, and 860 of 860
+    restores in unmoved plans still go through.
+- **F2 (low). A dismissed neighbour blocked a restore.** D6 says a session
+  not ridden costs nothing, so `_slot_breaks_hard_spacing` no longer counts
+  a missed or dismissed one.
+- **F3 (low). After the plan's end, the home card switched to ISO weeks.**
+  That put up to 8 weeks between two unloads. The card now carries the
+  plan's 3:1 on from the last week the plan unloads.
+
+**Kept, with the reason.** Inside the plan, the card mirrors the week's own
+stepback flag, not `_is_unload_week`. The review suggested the second, so
+that taper weeks would show as unloads. But the card's load comes from the
+phase's target, which in a taper is already reduced. A stepback cut on top
+would cut it twice.
+
+**Corrected above.**
+- M4's before-count: 35 of 37 (F6).
+- M5's size (F5).
+- The G3 walk's reach: there is no button (F4).
+- Part 4's fixed-plan refit: Sunday's long ride was cut too.
+- Part 2's generate count: owner mode is 0 of 14.
+
+**Recorded, for Step 8.** `/api/weekly-plan` ignores `week_offset`. The card
+takes its Monday from today, so offsets 0, 1 and −1 all return this week
+(F7, pre-existing).
+
+### The load the rider carries — DONE (2026-09-13/14)
+
+Part 3's ramp starts from the load the rider carries, and the planner had
+never seen the owner's. `athlete_weekly_load` asked
+`recent_mean_weekly_tss`, which reads the FIT import archive only; their
+rides arrive from intervals.icu, so it returned None and every plan they
+were ever given ramped from CTL × 7: 228 TSS a week against the 281 they
+carry. `ride_storage.chronic_weekly_tss` (ba872ebc) reads every ride as the
+28-day EWMA the ramp and the auditor share, walking whole weeks back from
+today, and the ramp's floor at CTL × 7 is gone. On the owner's archive the
+first build week goes 296 to 366 and the danger line to 422. The session's
+full record was `notes/handoff-chronic-load.md`, removed 2026-09-14 once this section carried it (git history before 324cd038).
+
+**Why the characterization moved.** It was not a leak: the gate's own riders
+supply a load above CTL × 7 (320 against a CTL of 45, 380 against 50), and
+the old floor clipped it. Rebuilt under the hermetic harness, week 0 of
+`cont/every-day/3h` goes 410 to 416 at 320 and stays 410 at 315 or None.
+The eight new invariant hits are the builders' shortfall and the intensity
+share at higher budgets: Steps 5b and 6. Blessed on that basis.
+
+**The ultrareview** (`notes/review/ultrareview-chronic-load.md`, against
+59500caa: the full branch diff is 95k lines, mostly the characterization).
+Three findings, all nits, all applied (b83b3c11): the load is derived once
+per entry point off the archive in hand, where the entry scan paid 15
+archive parses, measured; `_went_unridden` uses the shared `_field`; the
+availability cap's `_fits` is a module function with explicit arguments.
+
+**The reviewer of those fixes** (independent, by running): every claim
+held. Its defects, fixed in the commit after bdcb7e68: `athlete_weekly_load`
+swallowed every exception from the EWMA and answered CTL × 7 for a
+wrong-shaped archive (only the archive fetch may fail quietly now); the
+EWMA read the real clock while the planner read its pinned one, so under a
+date pin the rides were months stale and the ceiling never bit (it takes
+the planner's `date.today()` now, which moved one recognizer expectation
+onto the ceiling the scan really scores against); `_is_unload_week` still
+inlined the adapter. Left: the rail's strict xfail carries its reason in
+the docstring only, since `unittest.expectedFailure` takes none.
+
+**Found on the way.**
+- The entry scan scores the rider's weeks against targets the ACWR ceiling
+  caps at 1.3 × the load those same weeks carry (B3's ceiling, since
+  ba872ebc read for ICU riders too). A rider at any steady level therefore
+  reads about 0.77 of target and qualifies at every width. Pre-existing
+  design; for Step 9's list, with the owner's judgement.
+- The availability cap (9138110d) broke four cases of
+  `test_v136_availability_restore`, which its message did not run. They
+  asserted the literal fill; they now expect what the budget leaves, and a
+  new case keeps the hand-made row unbounded (5f37aae2).
+- `test_tid_plan_properties` laid its goals from the live clock, so the
+  intensity rail flipped with the calendar: on 09-13 the chronic change
+  failed it, on 09-14 the same change passed it and the parent failed. The
+  clock is pinned (3b5c3b6f). Its 6 h rider carried 450 TSS, 75 an hour;
+  it carries 300 now. Swept under pytest over 8 seeds, the 6 h rider
+  breaches the 18% rail at every load, and the 55% easy floor 2 weeks in
+  288 at 300 or 330: the rail is a strict xfail for Step 6, the floor
+  passes at this seed by a choice the suite states.
+- Plain-python probes read the owner's live profile; the pytest conftest
+  sandboxes HOME and bootstraps a fresh one, and the two build different
+  plans. Evidence about a test is only evidence when gathered under pytest.
+
+**The owner's decisions, 2026-09-14.**
+- Ship after the fixture fix (option D of the handoff), not an xfail of
+  the rail alone, not a hold for Step 6, not an early rail.
+- The headroom a higher budget opens is easy volume only: hard minutes
+  stay at the intensity budget the distribution model sets. This is M6's
+  rule for Step 6.
+- L1: a targetless goal rebuilt after an absence lays a fresh runway,
+  guarded by the ACWR ceiling and the TSB floor. The chronic EWMA now
+  decays through the break, so the guard bites where the recent mean did
+  not.
+- D8: auto-recalculate's writes move to POST, and `cs-domestique-adapt`
+  changes in the same deployment (Step 7, HTTP-1).
+
+### Step 5b — the sampler honours its science tables (SCI-1)
+
+Choose the content CLASS by the phase's mix preference, the goal's emphasis and
+the week's zone budget, then the file within it by novelty and quality. The
+variety floors are in scope: they impose the same anaerobic and neuromuscular
+sessions on every model, and in a threshold-model plan those displace the
+middle-zone work the model is defined by (measured with the 48 h floor fix). *Verify:*
+a base week's hard classes follow the base row; a vo2max goal draws more VO2 than
+a general one with the bookkeeping on; the per-class minimums still fill.
+
+From part 3: at a high budget the sampler can return a build week far under
+it. In part 3's first version, an event week laid out at 626 TSS with two
+3 h long rides came back at 357 with none. The class choice has to keep the
+long ride an event plan is built around.
+
+Because the ramp follows what the builders deliver, their shortfall now
+costs fit riders fitness (the second part 3 review, M-1).
+- The 490-TSS rider (CTL 70) is given 452, 350 and 390 TSS in base,
+  against budgets of 637, 618 and 554.
+- The sweet spot then budgets build1 at 468–538, against the 490 that rider
+  carried.
+- CTL at the taper is 64, from 70. It was 70 before part 3, whose build1
+  ran at 1.47×.
+- Ultra riders at CTL 90–130 end at 69–73.
+
+*Verify:* those riders' load weeks within 90% of their budget, and CTL at
+the taper at or above the lower of where they start and the goal's target.
+
+### Step 6 — one week pipeline (R3)
+
+Every entry point builds weeks through `TrainingWeek`; plan-level policies
+(FTP test, phase floors, race/taper, re-entry) run once, in one order, as
+proposals; `finish()` is the last write. Post-passes the owner subsumes are
+deleted; the coherence pass's class-preserving rematch moves into the owner.
+`_USE_TRAINING_WEEK` is deleted. One `is_immutable` used by every mutating
+pass (DUP-23). Owner fixes D6, easy-floor taper exemption, opener placement
+on an available day, deterministic `replan`, long ride sized inside
+`_commit`.
+
+Adaptations the planner makes (the fatigue easing, G3, the readiness
+tier-down) become derived state with a record of the original. A rebuild
+re-derives them instead of owning them. This covers the Step 5 review's M5,
+the G3 walk, L4 and L6.
+
+From part 3:
+- The ramp follows a week as it is decided, so no pass may move it
+  afterwards.
+  - Today the unload week built at 446 against 234 is trimmed to 195
+    after the ramp has counted it.
+  - The per-day availability clamp runs after the week-total pass. It cuts
+    long rides `_apply_long_ride_target` lengthened past the day's cap, up
+    to 82 TSS off a week the ramp had counted.
+- Every path runs the same passes. Regenerate, recalculate, extend and refit
+  skip the B3 pass; extend and refit skip the week-total pass.
+- A kept week is re-budgeted from the rider's state rather than kept at the
+  old plan's number: recalculate's week in progress, and extend's kept weeks.
+- Hard work is bounded by the budget (M6). Until it is, a 6 h plan crosses
+  the intensity rail and novices' weeks reach 1.7–2.3× the load they carry
+  (part 3's findings, above). This is the intensity budget, D1's first rule.
+  The owner's rule (2026-09-14): the headroom a higher budget opens is easy
+  volume only; hard minutes stay at the model's intensity budget. Two
+  strict xfails wait on it: the rail in `test_tid_plan_properties`, and
+  the easy floor there breaches the same way at a lower rate.
+- The app's own deload advance reads stepback flags rather than the unload
+  test (`app.py`), and the dry run's labels cannot see a holiday.
+- Reforecast eases a hard day when the rider's TSB is under what the plan
+  projects for that day, not under an absolute −30. The plan's own long
+  weekends take a fit rider's daily TSB past −30 (the owner's decision,
+  2026-09-11; the second part 3 review, M-4).
+
+Four strict xfails turn green when it is done: `test_the_acwr_holds` for
+the 300- and 490-TSS riders, `test_recalculate_rebudgets_the_week_in_progress`,
+and `test_no_week_breaches_the_intensity_ceiling`.
+
+*Verify:* STRICT_SEAL over every gate case → 0 trips; invariants clean
+across all entry points; test_event_and_goal_focus 10/10.
+
+### Step 7 — availability as a ceiling, one plan store (R1 HTTP-1, R4)
+
+One derivation of per-date availability, consumed by the owner as day caps;
+one load→mutate→save with a version check instead of 23 hand-rolled writers.
+*Verify:* the HTTP-1 sandbox replay keeps the week at its target; the STA-2
+concurrent repros keep both writers' updates.
+
+### Step 8 — one week view for the HTTP layer (HTTP-2/3/4/7)
+
+Home and calendar read the stored week and the served files;
+`generate_weekly_plan` stops answering "what is planned". Response shapes
+unchanged (backend only). From part 3: the card's own session floors put a
+low-load rider's week at up to 2.3× the plan's (the second part 3 review,
+H-1). Reading the stored week ends that.
+
+### Step 9 — runtime state and the non-planner findings
+
+STA-4, 7, 8, 9, 11; DUP-24, 26, 15/16; the Pillow gap in the production venv.
+
+### After the first pass: deploy it, then reduce branching
+
+The owner's plan (2026-09-11): once this first large refactoring pass is
+done, it is tested in deployment, on the live service and real rides, before
+anything else. Then a second pass reduces branching everywhere.
+
+Branching this pass has already met, as a starting list:
+- two week builders behind `_USE_TRAINING_WEEK`;
+- five emitter loops (generate, regenerate, recalculate, extend, the entry
+  scan) that each repeat the week walk with their own variations;
+- the `plan_mode` branches (auto, fixed_core, template);
+- the post-pass chain, whose passes each re-decide a week after it is built.
+
+## Deployment note
+
+Production runs the live checkout at `~/Documents/cycling-stack/domestique`.
+`cs-update` runs Sunday 03:59 with `TRACK=stable`, and on 2026-09-13 it moved
+that checkout to the tag `v3.11.6`; the service restarted at 03:41. The owner
+then disabled the timer and pinned production to this branch: detached at
+9138110d that evening, and at 03237915 on 2026-09-14 (the chronic-load read,
+gated clean the same day, reviewed twice). The owner tests that build on
+their own rides before the second pass, which reduces branching everywhere.
+
+**What the bug class looks like in production.** On 2026-09-13, before the
+owner had it regenerated, their live plan prescribed 623 TSS for the week
+ahead against its own 281 budget, and 695 and 675 for the two after it: every
+weekday filled to the 3 h availability cap, each session marked "availability
+adjusted". They had ridden 369 TSS by the Wednesday of the week before, and
+that week's rows still prescribed a sprint on Thursday and another on Friday,
+which they skipped. Regenerating on v3.11.6 rebuilt the four weeks close to
+their budgets (254/249, 290/249, 234/249, 177/179), so what inflated them was
+a pass that ran after the plan was built, not the build itself. That is what
+D2's one budget and Step 6's one week pipeline are for.
+
+**The pass, and the cap it now carries.** It was `reforecast()`'s
+availability block: a rest day became a z2 ride of the day's free hours, and
+other days were stretched to them, without ever reading the week's
+`tss_target`. Three minutes after each regeneration a dashboard visit put the
+week back at 594, then 628. Since `9138110d` an upward move — restoring a
+rest day, or growing a session — may not push a week past its budget; a day
+that no longer fits keeps what it had, downward moves are untouched, and a
+row with no budget of its own stays unbounded, which is what the v173
+restore-after-cap contract rests on. It does not shrink a week already over:
+it stops a correct one from being inflated. On the owner's own plan the week
+then held at 274 TSS against 276 through a regenerate, a reforecast and the
+dashboard's fetches. Step 6 still owns the general rule; this is the one
+pass that was breaking every plan in production.

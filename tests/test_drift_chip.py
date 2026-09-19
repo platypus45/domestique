@@ -110,7 +110,7 @@ def test_regenerate_stamps_fresh_snapshot(monkeypatch):
     """The regenerate serialization site refreshes ctl_snapshot from the
     regen's current_ctl (a regen re-anchors the plan → baseline moves)."""
     import ride_storage
-    monkeypatch.setattr(ride_storage, "recent_mean_weekly_tss",
+    monkeypatch.setattr(ride_storage, "chronic_weekly_tss",
                         lambda *a, **k: 390.0)
     today = date.today()
     monday = today - timedelta(days=today.weekday())
@@ -130,7 +130,7 @@ def test_generate_site_stamps_snapshot_source_level():
     (the generate endpoint is exercised end-to-end by the planner suites)."""
     src = (ROOT / "src" / "app.py").read_text(encoding="utf-8")
     assert src.count("tp.plan_ctl_snapshot(") == 2
-    gen = src.index('"generated": datetime.now().isoformat(),\n            '
+    gen = src.index('"generated": clock.now().isoformat(),\n            '
                     '# P4.2')
     assert gen != -1
 

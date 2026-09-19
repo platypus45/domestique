@@ -735,7 +735,6 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
 .cal-day .cal-planned-meta {
   font-size: 8px; color: var(--text2); margin-top: 1px;
 }
-.cal-planned-note { font-size: 10px; line-height: 1.25; color: var(--text3); margin-top: 2px; white-space: normal; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .cal-day .cal-planned-warn {
   font-size: 9px; color: var(--yellow); font-weight: 700;
 }
@@ -3641,7 +3640,7 @@ loadProfileBadge();
 // Pre-load FTP for workout library mini SVGs (don't wait for Settings tab).
 // _targetMode too — red-team F6: it was only set on the Settings tab, so every
 // hr-mode surface outside Settings saw `undefined` until that tab was visited.
-fetch('/api/settings').then(r=>r.json()).then(d=>{window._athleteFtp=d.ftp||250;window._athleteLthr=d.lthr||170;window._athleteMaxHr=d.max_hr||195;window._targetMode=d.target_mode||'power';window._lthrIsSet=!!d.lthr_is_set;window._hrRows=d.hr_rows||null;}).catch(()=>{});
+getResource('/api/settings').then(r=>r.json()).then(d=>{window._athleteFtp=d.ftp||250;window._athleteLthr=d.lthr||170;window._athleteMaxHr=d.max_hr||195;window._targetMode=d.target_mode||'power';window._lthrIsSet=!!d.lthr_is_set;window._hrRows=d.hr_rows||null;}).catch(()=>{});
 
 // AC2d — active profile id (server-rendered). Per-profile localStorage keys
 // (volume unit, DFA throttles) append ':<profile_id>' so profiles don't share
@@ -5952,7 +5951,7 @@ async function maybeKickBackfill(data) {
 // even on reload. No-op for fully-synced accounts.
 async function pollFirstSyncTopbar() {
   try {
-    const c = await (await fetch('/api/icu/connection')).json();
+    const c = await (await getResource('/api/icu/connection')).json();
     if (!c || !c.connected) return;
     let pc;
     try { pc = await (await fetch('/api/profile/power-curve?window_days=90')).json(); }
@@ -6985,6 +6984,46 @@ async function loadPlanAdoptionToast() {
   }
 }
 
+// One request per resource while it is in flight. A home load used to ask for
+// /api/readiness three times, /api/activities, /api/settings and
+// /api/icu/connection twice each, all within the same 100 ms: the cards were
+// each fetching their own copy (the audit's S-8, week-view contract A10).
+// Callers get their own clone of the one response, so each can still read
+// .ok and .json(). The entry is dropped once the response is in, so a card
+// refreshed after an action fetches fresh data; nothing is ever served stale.
+function getResource(path) {
+  // Declared lazily: the first callers run before this script reaches here.
+  if (!window._inflight) {
+    window._inflight = new Map();
+    // A write that completes forgets every shared read, so a card refreshed
+    // after any of the dashboard's POSTs never joins a read that began before
+    // the write. One choke point rather than a call at each of ~74 writes.
+    if (typeof window.fetch === 'function') {
+      const _fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const p = _fetch(input, init);
+        const method = String((init && init.method) || 'GET').toUpperCase();
+        if (method !== 'GET' && method !== 'HEAD') p.then(forgetInflight, forgetInflight);
+        return p;
+      };
+    }
+  }
+  const inflight = window._inflight;
+  let p = inflight.get(path);
+  if (!p) {
+    p = fetch(path);
+    inflight.set(path, p);
+    // Held until the body is in (fetch resolves at the headers).
+    const done = () => { if (inflight.get(path) === p) inflight.delete(path); };
+    p.then(r => r.clone().arrayBuffer()).then(done, done);
+  }
+  return p.then(r => r.clone());
+}
+// After a write, a refresh must not join a read that started before it.
+function forgetInflight() {
+  if (window._inflight) window._inflight.clear();
+}
+
 async function loadHome() {
   // v1.0.2 IMPL-MIGRATION: fire-and-forget upgrade-toast check (non-blocking).
   try { loadMigrationToast(); } catch (_) {}
@@ -6999,7 +7038,7 @@ async function loadHome() {
     let rRes, wRes, aRes;
     try {
       [rRes, wRes, aRes] = await Promise.all([
-        fetch('/api/readiness'), fetch('/api/wellness?days=90'), fetch('/api/activities')
+        getResource('/api/readiness'), fetch('/api/wellness?days=90'), getResource('/api/activities')
       ]);
     } catch (eFetch) {
       // Network error in any of the three. Best-effort tag: prefer the
@@ -7155,27 +7194,9 @@ async function loadHome() {
       try { window._diagFrontendError('E_FRONTEND_EFTP_RENDER', {msg: String(e && e.message || e)}); } catch(_) {}
     }
 
-    // Weekly summary
-    const today = new Date();
-    const dayOfWeek = today.getDay() || 7; // 1=Mon, 7=Sun
-    const thisWeekActs = (activities||[]).filter(a => {
-      const ad = new Date(a.date + "T12:00:00");
-      const diffDays = Math.floor((today - ad) / 86400000);
-      return diffDays < dayOfWeek;
-    });
-    const lastWeekActs = (activities||[]).filter(a => {
-      const ad = new Date(a.date + "T12:00:00");
-      const diffDays = Math.floor((today - ad) / 86400000);
-      return diffDays >= dayOfWeek && diffDays < dayOfWeek + 7;
-    });
-    const sumField = (acts, field) => acts.reduce((s, a) => s + (a[field] || 0), 0);
-    const thisHours = Math.round(sumField(thisWeekActs, 'duration_min') / 6) / 10;
-    const lastHours = Math.round(sumField(lastWeekActs, 'duration_min') / 6) / 10;
-    const thisTSS = Math.round(sumField(thisWeekActs, 'tss'));
-    const lastTSS = Math.round(sumField(lastWeekActs, 'tss'));
-    const thisCount = thisWeekActs.length;
-    const lastCount = lastWeekActs.length;
-
+    // Weekly summary tiles: this ISO week against last, as /api/week-summary
+    // counts them -- the rollup's and the Last-week card's numbers. These were
+    // derived here from /api/activities over a window of their own.
     function wbItem(val, label, prev, unit='') {
       let delta = '';
       if (prev !== null && prev !== undefined && typeof val === 'number' && typeof prev === 'number') {
@@ -7188,21 +7209,46 @@ async function loadHome() {
       return `<div class="wb-item"><div class="wb-val">${display}</div><div class="wb-label">${label}</div>${delta}</div>`;
     }
     // QA-UX regression: the TSS tile duplicated the new rollup's TSS bar
-    // three feet above. Two different windows (here: dayOfWeek-based, rollup:
-    // ISO Mon-Sun) could show slightly different numbers stacked vertically.
-    // Dropped; Activities/Duration/CTL stay because the rollup doesn't cover
-    // those.
-    $('weekly-summary').innerHTML = wbItem(thisCount, 'Activities', lastCount) +
-      wbItem(thisHours, 'Duration', lastHours, 'h') +
-      wbItem(t.ctl != null ? Math.round(t.ctl) : '—', 'CTL', null);
-
-    // Weekly mesocycle calendar — wait for the legacy single-half view to
-    // paint, then v4.3.0 B5 dual-half overlay overwrites the same host
-    // (#weekly-calendar) with the planned+actual split-cell layout.
+    // three feet above. Dropped; Activities/Duration/CTL stay because the
+    // rollup doesn't cover those.
+    const _ctlTile = wbItem(t.ctl != null ? Math.round(t.ctl) : '—', 'CTL', null);
+    $('weekly-summary').innerHTML = _ctlTile;
     (async () => {
-      try { await loadWeeklyCalendar(); } catch(_) {}
-      try { await loadCalendar(); } catch(_) {}
+      try {
+        const [cur, prev] = await Promise.all([
+          getResource('/api/week-summary').then(r => r.ok ? r.json() : null),
+          getResource('/api/week-summary?week_offset=-1').then(r => r.ok ? r.json() : null),
+        ]);
+        if (!cur) return;
+        const count = ws => Object.values((ws && ws.sports) || {}).reduce((a, b) => a + b, 0);
+        const hours = ws => Math.round(Number((ws && ws.duration_min_done) || 0) / 6) / 10;
+        $('weekly-summary').innerHTML =
+          wbItem(count(cur), 'Activities', prev ? count(prev) : null) +
+          wbItem(hours(cur), 'Duration', prev ? hours(prev) : null, 'h') + _ctlTile;
+      } catch (_) { /* the CTL tile stays */ }
     })();
+
+    // Weekly mesocycle calendar and the week's badges and rollup. Both read
+    // /api/calendar for the This Week strip, so they run together and share
+    // the one request.
+    Promise.all([
+      loadWeeklyCalendar().catch(() => {}),
+      loadCalendar().catch(() => {}),
+    ]);
+
+    // Opening Home adapts the plan to the rides, as it always has, but through
+    // a POST: the reads above used to do it (the lazy sync's adaptation, the
+    // deload advance), and no GET writes the plan now (week-view contract P8).
+    // No force=1, so the 1 h sync throttle holds; the adaptation still runs
+    // once a day. When it wrote, the cards that read the plan repaint.
+    fetch('/api/rides/sync', {method: 'POST'})
+      .then(r => r.ok ? r.json() : null)
+      .then(j => {
+        if (!j || !(j.plan_adapted || j.added > 0)) return;
+        try { loadTodaySession(); } catch (_) {}
+        Promise.all([loadWeeklyCalendar().catch(() => {}), loadCalendar().catch(() => {})]);
+      })
+      .catch(() => {});
 
     // v1.3.3 perf — dashboard load was blocking 200-700ms on /api/today-session
     // here, leaving every card below ("recent activities", power curve, body
@@ -7266,7 +7312,7 @@ async function loadReadinessComposite() {
   const host = document.getElementById('today-verdict');
   if (!host) return;
   try {
-    const res = await fetch('/api/readiness');
+    const res = await getResource('/api/readiness');
     if (!res.ok) {
       host.innerHTML = '<div style="font-size:12px;color:var(--text3);">Readiness unavailable.</div>';
       return;
@@ -7911,13 +7957,16 @@ async function loadLastWeekFeedback() {
   const host = document.getElementById('last-week-feedback-content');
   if (!card || !host) return;
   try {
-    const res = await fetch('/api/week-summary?week_offset=-1');
+    const res = await getResource('/api/week-summary?week_offset=-1');
     if (!res.ok) { card.style.display = 'none'; return; }
     const d = await res.json();
     if (!d || (d.tss_target === null && d.tss_done === 0)) {
       card.style.display = 'none';
       return;
     }
+    // tss_target null: no plan on record for that week (P4). Say so rather
+    // than grade the ridden load against a planned 0.
+    const noPlan = d.tss_target === null;
     const tssTgt = Number(d.tss_target || 0);
     const tssDone = Number(d.tss_done || 0);
     const adherence = Number(d.tss_adherence_pct || 0);
@@ -7933,12 +7982,13 @@ async function loadLastWeekFeedback() {
     const reasons = Array.isArray(d.overreach_reasons) ? d.overreach_reasons : [];
 
     const row = (label, done, planned, badStyle) => {
-      const tag = badStyle && planned !== 0 && done > planned ? 'var(--orange)'
+      const tag = noPlan ? 'var(--text)'
+                : badStyle && planned !== 0 && done > planned ? 'var(--orange)'
                 : badStyle === 'over' && planned === 0 && done > 0 ? 'var(--orange)'
                 : 'var(--text)';
       return `<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:12px;">
                 <span style="color:var(--text2);">${esc(label)}</span>
-                <span style="color:${tag};"><b>${done}</b> / ${planned}</span>
+                <span style="color:${tag};"><b>${done}</b> / ${noPlan ? '—' : planned}</span>
               </div>`;
     };
 
@@ -7956,7 +8006,7 @@ async function loadLastWeekFeedback() {
     host.innerHTML = `
       <div style="display:flex;gap:24px;flex-wrap:wrap;">
         <div style="flex:1;min-width:180px;">
-          <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">${esc(d.week_start)} → ${esc(d.week_end)}</div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">${esc(d.week_start)} → ${esc(d.week_end)}${noPlan ? ' &middot; no plan on record' : ''}</div>
           ${row('TSS', tssDone, tssTgt, 'over')}
           ${row('Duration (min)', d.duration_min_done || 0, d.duration_min_planned || 0)}
         </div>
@@ -12501,7 +12551,7 @@ function initAvailCalendar() {
 
 async function loadPlanMetrics() {
   try {
-    const [rRes, sRes] = await Promise.all([fetch('/api/readiness'), fetch('/api/settings')]);
+    const [rRes, sRes] = await Promise.all([getResource('/api/readiness'), getResource('/api/settings')]);
     const r = await rRes.json();
     const s = await sRes.json();
     const ctl = r.training?.ctl ? Math.round(r.training.ctl) : '—';
@@ -12850,6 +12900,9 @@ async function renderPlanJSON(plan) {
 
   // Fetch actual activities for overlay
   let actualByDate = {};
+  // A day's ridden TSS as /api/calendar counts it (primary and secondary
+  // rides): the one actual every week card reads.
+  const calActualTssByDate = {};
   window._pgActualBlocks = {};
   try {
     // Awaited alongside the activities list — fire-and-forget here would race
@@ -12857,11 +12910,22 @@ async function renderPlanJSON(plan) {
     // actual blocks only appearing on the NEXT repaint. /api/activities is
     // the wellness-summary hot path and carries no laps, so the sprites'
     // actual blocks come from their own ride-store endpoint.
-    const [blkRes, actRes] = await Promise.all([
+    const [blkRes, actRes, calRes] = await Promise.all([
       fetch('/api/activities/blocks?days=64').catch(() => null),
-      fetch('/api/activities'),
+      getResource('/api/activities'),
+      getResource('/api/calendar').catch(() => null),
     ]);
     try { window._pgActualBlocks = (blkRes && blkRes.ok) ? await blkRes.json() : {}; } catch (_) {}
+    try {
+      const cal = (calRes && calRes.ok) ? await calRes.json() : null;
+      for (const cw of ((cal && cal.weeks) || [])) {
+        for (const d of (cw.days || [])) {
+          const t = [d.actual, ...(d.actual_secondary || [])]
+            .reduce((acc, a) => acc + Number((a && a.tss) || 0), 0);
+          if (d.date <= (cal.today || '')) calActualTssByDate[d.date] = t;   // ridden days, and days not ridden, up to today
+        }
+      }
+    } catch (_) {}
     const activities = await actRes.json();
     for (const a of (activities || [])) {
       // Cycling plan view: a run/swim must not appear in the overlay or count
@@ -13054,7 +13118,6 @@ async function renderPlanJSON(plan) {
           display_name: s.display_name || '', zwo_name: s.zwo_name || '',
           name: s.zwo_name || s.description || '',
           duration_min: s.duration_min, tss: s.tss_estimate,
-          refit_note: s.refit_note || '',
         }, cardState);
 
         // Mini power block SVG. v4.1.1 FIX-PLANNER B: prefer the
@@ -13123,7 +13186,7 @@ async function renderPlanJSON(plan) {
         cal += `<div class="wc-day${todayCls}${stateExtraCls}" data-pg-day="${dayStr}" data-pg-week-idx="${wi}" data-pg-completed="${dayCompleted ? '1' : '0'}" data-pg-rest="0" data-cs="${cardState}" data-content-class="${esc(s.content_class || '')}" style="cursor:pointer;min-height:55px;padding:3px;position:relative;" ${dragAttrs} ondragover="pgDragOver(event)" ondragleave="pgDragLeave(event)" ondrop="pgDrop(event,'${dayStr}',${wi})" onclick="openOverviewDay(${wi},${d},'${dayStr}')">
           <div class="wc-type ${parts.cssCls} pg-card-title" title="${esc(parts.title)}">${esc(parts.title)}</div>
           ${parts.warn}
-          <div class="pg-card-meta">${parts.metaText}</div>${parts.note}
+          <div class="pg-card-meta">${parts.metaText}</div>
           ${miniSvg}
           ${actualOverlay}
           ${redrawBtn}
@@ -13147,17 +13210,17 @@ async function renderPlanJSON(plan) {
 
     // v4.2.0 IMPL-WEEKLY item 7: Weekly TSS column reformat (Planned/Actual)
     const weekTss = (w.sessions || []).reduce((s, sess) => s + (sess.tss_estimate || 0), 0);
-    let actualTss = w.actual_tss !== undefined && w.actual_tss !== null ? Number(w.actual_tss) : null;
-    // If the API didn't supply actual_tss, derive from imported activities
-    // for the week (helps when /api/plan hasn't joined ride records yet).
-    if (actualTss === null) {
-      let acc = 0;
-      for (let k = 0; k < 7; k++) {
-        const ds = weekdayDate[k];
-        if (!ds) continue;
-        for (const a of (actualByDate[ds] || [])) acc += Number(a.tss || 0);
-      }
-      if (acc > 0) actualTss = acc;
+    // The week's ridden load, from the calendar's days. It read the
+    // actual_tss the last reforecast stored in the plan (a snapshot, from
+    // another activity source), else summed /api/activities itself.
+    let actualTss = null;
+    for (let k = 0; k < 7; k++) {
+      const ds = weekdayDate[k];
+      // Only the row's own days: a stub row (a Generate made mid-week) spans
+      // Thursday..Sunday, and the seven days from its start reach into the
+      // next row's week, whose rides it would count twice.
+      if (!ds || ds < w.start || ds > w.end) continue;
+      if (calActualTssByDate[ds] !== undefined) actualTss = (actualTss || 0) + calActualTssByDate[ds];
     }
     let actualHtml = '';
     if (actualTss !== null) {
@@ -13667,12 +13730,7 @@ function plannedCardParts(planned, cardState) {
   const warn = cardState === 'missing_workout'
     ? '<span class="cal-planned-warn" title="Workout missing — click ⟳ to assign one.">⚠</span>'
     : '';
-  // v3.11.5 — what became of a missed session's load, or what a day received
-  // ("+20 min recycled from Thu 10 Sep threshold"). Server-written, one line.
-  const note = planned.refit_note
-    ? `<div class="cal-planned-note" title="${esc(planned.refit_note)}">${esc(planned.refit_note)}</div>`
-    : '';
-  return { title, cssCls, metaText, warn, note };
+  return { title, cssCls, metaText, warn };
 }
 
 // v3.4.4 — tooltip for the grid mini-sprite: names the zones it shows, from
@@ -13728,7 +13786,7 @@ async function loadCalendar() {
   // Skeleton stays on if /api/calendar fails or 404s.
   let data = null;
   try {
-    const res = await fetch('/api/calendar');
+    const res = await getResource('/api/calendar');
     if (!res.ok) {
       // Could be 404 (endpoint missing) — show empty-state.
       renderCalendarEmpty();
@@ -13892,6 +13950,8 @@ function renderCalendar(data) {
       : '';
 
     // TSS pill (planned/actual). Met/miss colour vs planned.
+    // planned_tss is null for a week no stored plan covers: show "—", not 0.
+    const pOnRecord = w.planned_tss != null;
     const pTss = Math.round(Number(w.planned_tss || 0));
     const aTss = Math.round(Number(w.actual_tss || 0));
     let tssCls = '';
@@ -13899,7 +13959,7 @@ function renderCalendar(data) {
       tssCls = aTss >= pTss * 0.9 ? 'cal-tss-met' : (aTss < pTss * 0.7 ? 'cal-tss-miss' : '');
     }
     const tssPill = pTss > 0 || aTss > 0
-      ? `<span class="cal-tss-pill ${tssCls}" title="TSS actual / planned">${aTss} / ${pTss}</span>`
+      ? `<span class="cal-tss-pill ${tssCls}" title="TSS actual / planned">${aTss} / ${pOnRecord ? pTss : '—'}</span>`
       : '';
     const z12 = `<span class="cal-z-pill" title="Low aerobic minutes (Z1+Z2) actual/planned">Z1+Z2: ${Math.round(w.actual_z1z2_min || 0)}/${Math.round(w.planned_z1z2_min || 0)} min</span>`;
     const z34 = `<span class="cal-z-pill" title="Mid/High aerobic minutes (Z3+Z4) actual/planned">Z3+Z4: ${Math.round(w.actual_z3z4_min || 0)}/${Math.round(w.planned_z3z4_min || 0)} min</span>`;
@@ -14061,7 +14121,7 @@ function renderCalDay(d, wi, di, phaseKey, today) {
     plannedHtml = `<div class="cal-planned">
       <span class="cal-planned-type ${parts.cssCls}">${esc(parts.title)}</span>
       ${parts.warn}
-      <div class="cal-planned-meta">${parts.metaText}</div>${parts.note}
+      <div class="cal-planned-meta">${parts.metaText}</div>
     </div>`;
     if (scoreBadge) plannedHtml += scoreBadge;
   }
@@ -14635,7 +14695,9 @@ async function calOpenDay(dateStr) {
     description: p.name || day.description || '',
     zone_dist: p.zone_dist || null,  // v4.4.2 B4: pass through for waveform
     score: p.score,
-    status: 'pending',
+    // The session's real status, so a skipped day opens on "Un-dismiss".
+    status: p.status || 'pending',
+    user_moved: !!p.user_moved,
   };
   // Stash so existing helpers (e.g. dismiss buttons) keep working.
   window._weekPlanSessions = [synth];
@@ -14876,7 +14938,7 @@ function renderThisWeekFromCalendar(data) {
       // activity that arrived without a load number) is DONE, not failed.
       // Leave it neutral rather than grading it red on a missing data point.
       tintCls = '';
-    } else if (planned && isPast && !actual && cs !== 'rest') {
+    } else if (planned && isPast && !actual && cs !== 'rest' && planned.status !== 'dismissed') {
       tintCls = 'twk-tss-red';
     }
 
@@ -14903,6 +14965,13 @@ function renderThisWeekFromCalendar(data) {
       </div>`;
     } else if (isUserBlocked && !actual) {
       plannedHtml = `<div class="twk-planned"><div class="wc-type" style="font-size:10px;color:var(--red);opacity:0.75;letter-spacing:0.05em;">UNAVAILABLE</div></div>`;
+    } else if (planned && planned.status === 'dismissed') {
+      // A skipped day: visible, greyed, with its undo (it was only on the
+      // legacy painter, which a home load never showed).
+      plannedHtml = `<div class="twk-planned" style="opacity:0.45;filter:grayscale(1);">
+        <div class="wc-type" style="font-size:10px;padding:1px 3px;text-decoration:line-through;">${esc(calCardTitleWithStructure(planned))}</div>
+        <div class="wc-meta">skipped · <span style="color:var(--accent);cursor:pointer;text-decoration:underline;" onclick="event.stopPropagation();undismissSession('${d.date}')">undo</span></div>
+      </div>`;
     } else if (planned) {
       const phaseKey = (cur.phase || 'history').toLowerCase();
       const phaseCol = CAL_PHASE_COLORS[phaseKey] || CAL_PHASE_COLORS.history;
@@ -14915,6 +14984,7 @@ function renderThisWeekFromCalendar(data) {
       plannedHtml = `<div class="twk-planned" style="border-left-color:${phaseCol};">
         <div class="wc-type ${cssCls}" style="font-size:10px;padding:1px 3px;">${esc(title)}</div>
         <div class="wc-meta">${planned.duration_min ? Math.round(planned.duration_min) + 'm' : ''}${planned.tss ? ' · ' + Math.round(planned.tss) + 'T' : ''} ${warn}</div>
+        ${planned.user_moved ? '<div class="wc-meta" style="color:#60a5fa;font-style:italic;">moved</div>' : ''}
       </div>`;
     } else if (cs === 'rest' && !actual) {
       // v4.5.1 FIX-UI B2 — only show REST when there's no actual ride. If user
@@ -14955,7 +15025,7 @@ function renderThisWeekFromCalendar(data) {
         <div style="font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(name) || 'Activity'}${moreTag}</div>
         <div style="color:var(--text2);">${durLabel}${tssLabel}</div>
       </div>`;
-    } else if (planned && isPast && cs !== 'rest') {
+    } else if (planned && isPast && cs !== 'rest' && planned.status !== 'dismissed') {
       actualHtml = `<div class="twk-actual twk-act-red"><div style="color:var(--red);font-style:italic;">missed</div></div>`;
     }
 
@@ -14982,7 +15052,7 @@ function renderThisWeekFromCalendar(data) {
       doneBadge = `<span class="twk-done-badge" title="${esc(exTip)}">✓ ${Math.round(execBlock.score)}</span>`;
     }
     else if (actual) doneBadge = '<span class="twk-done-badge">✓ done</span>';
-    else if (planned && isPast && cs !== 'rest') doneBadge = '<span class="twk-missed-badge">✕ missed</span>';
+    else if (planned && isPast && cs !== 'rest' && planned.status !== 'dismissed') doneBadge = '<span class="twk-missed-badge">✕ missed</span>';
     html += `<div class="twk-day ${stateCls}${tintCls ? ' ' + tintCls : ''}${isToday ? ' wc-today twk-is-today' : ''}"
       data-cs="${cs}" data-date="${d.date}" style="${cursorRule}"${tipAttrTW}
       onclick="calOpenDay('${d.date}')">
@@ -15373,7 +15443,7 @@ function renderPlanDriftChip(drift) {
 
 async function triggerPlanAutoRecalc() {
   try {
-    const res = await fetch('/api/plan/auto-recalc');
+    const res = await fetch('/api/plan/auto-recalc', {method: 'POST'});
     const d = await res.json();
     if (d.action === 'recalculated' && d.plan_json) {
       // Plan was auto-recalculated — reload it
@@ -15528,7 +15598,7 @@ async function runPlanOpenSequence() {
     // time the reconcile finishes, readiness is usually already done → the
     // DFA/recovery step is near-instant and the plan opens faster. Never rejects
     // (a timeout is surfaced as {timeout:true} and handled in step 3).
-    const recoveryP = _planStepRace(fetch('/api/readiness'), PLAN_STEP_TIMEOUT_MS, 'recovery')
+    const recoveryP = _planStepRace(getResource('/api/readiness'), PLAN_STEP_TIMEOUT_MS, 'recovery')
       .then(r => r.json()).then(rd => ({rd})).catch(e => ({timeout: !!(e && e.name === 'TimeoutError')}));
     let reconciled = 0, reconTotal = 0;
     try {
@@ -15778,7 +15848,7 @@ async function viewVersion() {
 }
 
 async function loadSettings() {
-  const d = await (await fetch('/api/settings')).json();
+  const d = await (await getResource('/api/settings')).json();
   // Expose FTP globally so workout library mini SVGs use correct zone colors
   window._athleteFtp = d.ftp || 250;
   window._athleteLthr = d.lthr || window._athleteLthr || 170;
@@ -16163,7 +16233,7 @@ async function loadReadinessActionBanner() {
   if (!banner) return;
   let r;
   try {
-    const res = await fetch('/api/readiness');
+    const res = await getResource('/api/readiness');
     if (!res.ok) throw new Error('status ' + res.status);
     r = await res.json();
   } catch(e) { banner.style.display = 'none'; return; }
@@ -16403,7 +16473,7 @@ async function saveSettings() {
     setTimeout(() => $('settings-saved').style.display = 'none', 2000);
     // Refresh cached FTP so downstream SVG renderers pick up the new value
     try {
-      const s = await fetch('/api/settings').then(r => r.json());
+      const s = await getResource('/api/settings').then(r => r.json());
       window._athleteFtp = s.ftp || window._athleteFtp;
     } catch(_) {}
     loadSettings(); // refresh zones
@@ -16418,7 +16488,7 @@ async function saveSettings() {
 async function loadIcuConnection() {
   const statusEl = $('icu-conn-status');
   try {
-    const c = await (await fetch('/api/icu/connection')).json();
+    const c = await (await getResource('/api/icu/connection')).json();
     const connBtn = $('icu-connect-btn'), disBtn = $('icu-disconnect-btn'),
           oauthBlk = $('icu-oauth-block'), help = $('icu-conn-help');
     const oauth = c.method === 'oauth';
@@ -16652,7 +16722,7 @@ function handleIcuOauthReturn() {
 async function maybePromptIcuMigration() {
   try {
     if (sessionStorage.getItem('icuMigrateDismissed') === '1') return;
-    const c = await (await fetch('/api/icu/connection')).json();
+    const c = await (await getResource('/api/icu/connection')).json();
     if (!c || !c.oauth_available || c.method === 'oauth') return;
     const banner = document.getElementById('icu-migrate-banner');
     const msg = document.getElementById('icu-migrate-msg');
@@ -17044,26 +17114,6 @@ async function submitSoreness(level) {
 
 // ═══ WEEKLY MESOCYCLE CALENDAR ════════════════════════════════════════════
 
-// Classify one activity's intensity exposure into 4 bands, sport-agnostic.
-// Priority: HR vs LTHR > TRIMP-per-minute > fall-through.
-// Returns one of: 'low_aerobic', 'mid_aerobic', 'high_aerobic', 'anaerobic'.
-function _classifyExposure(act, lthr) {
-  const hr = Number(act.avg_hr) || 0;
-  if (hr && lthr) {
-    const pct = hr / lthr;
-    if (pct < 0.75) return 'low_aerobic';   // Z1-Z2 — recovery/easy endurance
-    if (pct < 0.88) return 'mid_aerobic';   // Z3 — tempo
-    if (pct < 0.96) return 'high_aerobic';  // Z4 — threshold
-    return 'anaerobic';                      // Z5+ — intervals/sprint
-  }
-  // Fallback: TRIMP-per-minute density (works even if avg_hr is missing)
-  const tpm = Number(act.trimp || 0) / Math.max(1, Number(act.duration_min || 1));
-  if (tpm < 0.6) return 'low_aerobic';
-  if (tpm < 1.2) return 'mid_aerobic';
-  if (tpm < 2.0) return 'high_aerobic';
-  return 'anaerobic';
-}
-
 // Sport → emoji map for the activity strip. QA-EDGE #7 / bonus: was missing
 // Rowing/Ski/Kayak/RockClimbing/IceSkate/Elliptical/StairStepper — all fell
 // back to 🏃 which actively misleads (a skier rendering as a runner isn't
@@ -17085,31 +17135,6 @@ const _SPORT_ICON = {
 };
 function _sportEmoji(sport) { return _SPORT_ICON[sport] || '❓'; }
 
-// Aggregate a day's activity list into a dominant exposure label + total stats.
-// If activities span >1 exposure band, returns "MIXED".
-function _dayAggregate(dayActs, lthr) {
-  let totMin = 0, totTSS = 0;
-  const bandMin = { low_aerobic: 0, mid_aerobic: 0, high_aerobic: 0, anaerobic: 0 };
-  const sports = new Set();
-  for (const a of dayActs) {
-    const dur = Number(a.duration_min || 0);
-    totMin += dur;
-    totTSS += Number(a.tss || 0);
-    if (a.sport) sports.add(a.sport);
-    bandMin[_classifyExposure(a, lthr)] += dur;
-  }
-  // Dominant band by weighted duration; mixed if no single band ≥60%
-  const bands = Object.entries(bandMin).sort((a, b) => b[1] - a[1]);
-  const winner = bands[0];
-  const mixed = totMin > 0 && (winner[1] / totMin) < 0.60 && bands[1][1] > 0;
-  return {
-    total_min: totMin,
-    total_tss: Math.round(totTSS),
-    exposure: mixed ? 'mixed' : winner[0],
-    sports: Array.from(sports),
-    bands: bandMin,
-  };
-}
 
 // 3.4.0 W3 — continuous variant of the event-countdown card: an open-ended
 // plan has no "N weeks / M days remaining", so the panel counts to the NEXT
@@ -17173,35 +17198,13 @@ function _continuousCountdownHtml(week, planWeeks, todayStr) {
 
 async function loadWeeklyCalendar() {
   try {
-    const [weekRes, actRes, settingsRes] = await Promise.all([
-      fetch('/api/weekly-plan'),
-      fetch('/api/activities'),
-      fetch('/api/settings'),
-    ]);
+    // Started now, so it shares the home tiles' request for the same summary.
+    const summaryP = getResource('/api/week-summary');
+    summaryP.catch(() => {});
+    const weekRes = await getResource('/api/weekly-plan');
     const week = await weekRes.json();
-    const activities = await actRes.json();
-    const settings = await settingsRes.json().catch(() => ({}));
-    const lthr = settings.lthr || 175;
     const todayStr = new Date().toLocaleDateString('en-CA');
 
-    // Group activities by date, full objects (not pre-flattened)
-    const actsByDate = {};
-    for (const a of (activities || [])) {
-      const d = a.date || '';
-      if (!d) continue;
-      (actsByDate[d] = actsByDate[d] || []).push(a);
-    }
-
-    // Planned session metadata (for the "plan was X" ghost line)
-    const SESSION_TYPE_CSS = {
-      rest: 'wc-rest-type', recovery: 'wc-z2', z2: 'wc-z2', long_z2: 'wc-long',
-      sweetspot: 'wc-hit', threshold: 'wc-hit', vo2max: 'wc-hit',
-      overunder: 'wc-hit', tempo: 'wc-z2',
-    };
-    const SESSION_SHORT = {
-      rest: 'REST', recovery: 'REC', z2: 'Z2', long_z2: 'LONG', tempo: 'TEMPO',
-      sweetspot: 'SS', threshold: 'FTP', vo2max: 'VO2', overunder: 'Over-Under',
-    };
     // Exposure palette — green (low) → red (anaerobic), mixed = purple.
     // Aligned with the Library category heat-ramp so users learn one palette.
     const EXPOSURE_META = {
@@ -17212,166 +17215,34 @@ async function loadWeeklyCalendar() {
       mixed:        { label: 'MIXED',        color: '#8b5cf6' },  // purple
     };
 
-    // fix26 §6.4 — status badge palette
-    //   pending  ⏳ grey  done ✓ green  missed ⚠ red  moved ↔ blue
-    //   dismissed ✕ muted grey  ambiguous ? amber  done_partial ✓₂ light green
-    const STATUS_META = {
-      pending:       { emoji: '⏳', color: 'var(--text3)', bg: '#5a5a5a22', label: 'PENDING' },
-      done:          { emoji: '✓',  color: '#22c55e',     bg: '#22c55e22', label: 'DONE' },
-      done_partial:  { emoji: '✓₂', color: '#86efac',     bg: '#86efac22', label: 'PARTIAL' },
-      missed:        { emoji: '⚠',  color: '#ef4444',     bg: '#ef444422', label: 'MISSED' },
-      dismissed:     { emoji: '✕',  color: '#6b7280',     bg: '#6b728022', label: 'DISMISSED' },
-      ambiguous:     { emoji: '?',  color: '#eab308',     bg: '#eab30822', label: 'REVIEW' },
-    };
-    // moved_from:<date> is dynamic — computed below
-
-    let html = '';
-    const _sessIdxByDay = new Map();
-    (week.sessions || []).forEach((s, i) => _sessIdxByDay.set(s.day, i));
-    for (const s of (week.sessions || [])) {
-      const isToday = s.day === todayStr;
-      const isPast = s.day < todayStr;
-      const isFuture = s.day > todayStr;
-      const dayActs = actsByDate[s.day];
-      const hasActual = dayActs && dayActs.length > 0;
-      const plannedTypeCls = SESSION_TYPE_CSS[s.session_type] || 'wc-z2';
-      const plannedShort = SESSION_SHORT[s.session_type] || (s.session_type || '').toUpperCase();
-
-      const dayDate = new Date(s.day + 'T12:00:00');
-      const dateLabel = dayDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-
-      // fix26 §6.4/§6.8 — status metadata
-      const rawStatus = s.status || 'pending';
-      const isMovedFrom = typeof rawStatus === 'string' && rawStatus.startsWith('moved_from:');
-      const movedTo = isMovedFrom ? rawStatus.split(':', 2)[1] : '';
-      const statusKey = isMovedFrom ? 'moved' : rawStatus;
-      const statusMeta = isMovedFrom
-        ? { emoji: '↔', color: '#60a5fa', bg: '#60a5fa22', label: `MOVED TO ${movedTo}` }
-        : (STATUS_META[rawStatus] || STATUS_META.pending);
-      const isDismissed = rawStatus === 'dismissed';
-      const isUserMoved = !!s.user_moved;
-
-      // Dismissed styling (§6.8 — grayed but visible)
-      const dismissedStyle = isDismissed
-        ? 'opacity:0.4;filter:grayscale(1);'
-        : '';
-      const cls = `wc-day ${isToday ? 'wc-today' : ''} ${s.session_type === 'rest' ? 'wc-rest' : ''}`;
-
-      // ── Build day body based on past/today/future ─────────────────
-      let body = '';
-
-      if ((isPast || isToday) && hasActual) {
-        // Actual takes visual priority. Plan becomes a small ghost line.
-        const agg = _dayAggregate(dayActs, lthr);
-        const expo = EXPOSURE_META[agg.exposure];
-        const sportIcons = agg.sports.map(_sportEmoji).slice(0, 3).join('');
-        const adherence = s.tss_estimate > 0 ? Math.round(agg.total_tss / s.tss_estimate * 100) : null;
-        const adhTxt = adherence !== null ? `<div style="font-size:8px;color:${adherence >= 80 ? 'var(--green)' : adherence >= 50 ? 'var(--yellow)' : 'var(--text3)'};font-weight:700;">vs plan: ${adherence}%</div>` : '';
-        const CYCLING_SPORTS = new Set(['Ride','VirtualRide','EBikeRide']);
-        const didCycling = dayActs.some(a => CYCLING_SPORTS.has(a.sport || ''));
-        const cyclingPlanned = s.session_type && s.session_type !== 'rest';
-        const planMissed = cyclingPlanned && !didCycling && isPast;
-        const planGhost = cyclingPlanned
-          ? (planMissed
-              ? `<div style="font-size:8px;color:var(--red);font-weight:700;font-style:italic;">plan: ${plannedShort} missed</div>`
-              : `<div style="font-size:8px;color:var(--text3);font-style:italic;">plan: ${plannedShort}${s.tss_estimate ? ' · ' + s.tss_estimate + 'T' : ''}</div>`)
-          : '';
-        // v1.8.0 — polarization classification border. Pick the first
-        // cycling activity carrying a classification; fall back to none.
-        const _polAct = dayActs.find(a => (a.polarization && a.polarization.classification) || a.classification);
-        const _polClassif = _polAct ? ((_polAct.polarization && _polAct.polarization.classification) || _polAct.classification) : null;
-        const _polColor = _classifColor(_polClassif);
-        const _polCls = _polClassif ? ` pol-${esc(String(_polClassif).toLowerCase())}` : '';
-        const _polBorder = _polColor ? `border-left:3px solid ${_polColor};` : '';
-        body = `
-          ${planGhost}
-          <div class="wc-type${_polCls}" style="background:${expo.color}22;color:${expo.color};border:1px solid ${expo.color};${_polBorder}font-weight:700;">${sportIcons} ${expo.label}</div>
-          <div class="wc-meta">${volFmt(agg.total_min)} · ${agg.total_tss} TSS</div>
-          ${adhTxt}
-        `;
-      } else if (isPast && !hasActual && s.session_type !== 'rest' && !isDismissed) {
-        body = `
-          <div style="display:flex;align-items:center;gap:3px;justify-content:center;margin-bottom:2px;">
-            <div style="width:6px;height:6px;border-radius:50%;background:var(--red);"></div>
-            <div style="font-size:8px;color:var(--red);font-weight:800;letter-spacing:0.05em;">MISSED</div>
-          </div>
-          <div class="wc-type ${plannedTypeCls}" style="border-left:3px solid var(--red);">${plannedShort}</div>
-          ${s.duration_min ? `<div class="wc-meta">${s.duration_min}min</div>` : ''}
-          ${s.tss_estimate ? `<div class="wc-meta">${s.tss_estimate} TSS</div>` : ''}
-          <div style="font-size:8px;color:var(--text3);font-style:italic;margin-top:2px;">make it up?</div>
-        `;
-      } else {
-        body = `
-          <div class="wc-type ${plannedTypeCls}">${plannedShort}</div>
-          ${s.duration_min ? `<div class="wc-meta">${s.duration_min}min</div>` : ''}
-          ${s.tss_estimate ? `<div class="wc-meta">${s.tss_estimate} TSS</div>` : ''}
-        `;
+    // The This Week strip has one painter, renderThisWeekFromCalendar, over
+    // /api/calendar. This function painted it too, from /api/activities and
+    // its own labels, and whichever ran last won: the calendar's on a home
+    // load, this one after a tier-down, a sync or a rematch.
+    try {
+      const calRes = await getResource('/api/calendar');
+      if (calRes.ok) {
+        const cal = await calRes.json();
+        if (cal && Array.isArray(cal.weeks) && cal.weeks.length) renderThisWeekFromCalendar(cal);
       }
-
-      // §6.4 — status badge on every tile (even rest days show pending-for-rest)
-      const statusBadge = s.session_type !== 'rest' || isMovedFrom
-        ? `<div class="wc-status-badge" title="${statusMeta.label}" style="position:absolute;top:2px;right:2px;font-size:9px;padding:1px 4px;border-radius:3px;background:${statusMeta.bg};color:${statusMeta.color};font-weight:700;">${statusMeta.emoji}</div>`
-        : '';
-      // §6.4 — drag handle (only for pending non-rest sessions so users can move
-      // Thursday's VO2max onto Monday without the recomputer fighting back)
-      const dragHandle = (s.session_type !== 'rest' && rawStatus === 'pending')
-        ? `<div class="wc-drag-handle" title="Drag to move" style="position:absolute;top:2px;left:2px;cursor:grab;font-size:10px;color:var(--text3);user-select:none;">⠿</div>`
-        : '';
-      // §6.8 — un-dismiss action when dismissed
-      const undismissBtn = isDismissed
-        ? `<div onclick="event.stopPropagation();undismissSession('${s.day}')" style="position:absolute;bottom:2px;right:2px;font-size:9px;color:var(--accent);cursor:pointer;text-decoration:underline;">undo</div>`
-        : '';
-      // user_moved badge
-      const movedIndicator = isUserMoved
-        ? `<div style="font-size:8px;color:#60a5fa;font-style:italic;margin-top:2px;">moved</div>`
-        : '';
-
-      // v3.7.1 — key the click by DATE, not by an index into
-      // window._weekPlanSessions. That global is reassigned from four places
-      // (the home calendar, the today-adjustment synth, the week grid), so a
-      // row rendered against one week could resolve into another week's
-      // array — the rider clicked a VO2max card and got the row above it,
-      // a different day's tempo session, with no sign anything was wrong.
-      const sIdx = _sessIdxByDay.get(s.day);
-      const draggable = (s.session_type !== 'rest' && rawStatus === 'pending') ? 'true' : 'false';
-      html += `<div class="${cls}" data-day="${s.day}" data-session-type="${s.session_type}" data-status="${rawStatus}"
-        draggable="${draggable}"
-        ondragstart="onPlanDragStart(event,'${s.day}')"
-        ondragover="onPlanDragOver(event)"
-        ondragleave="onPlanDragLeave(event)"
-        ondrop="onPlanDrop(event,'${s.day}')"
-        style="cursor:pointer;position:relative;${dismissedStyle}"
-        onclick="openDayWorkout(${sIdx}, '${s.day}')">
-        ${statusBadge}
-        ${dragHandle}
-        ${undismissBtn}
-        <div class="wc-name">${s.day_name}</div>
-        <div style="font-size:8px;color:var(--text3);">${dateLabel}</div>
-        ${body}
-        ${movedIndicator}
-      </div>`;
-    }
-    $('weekly-calendar').innerHTML = html;
+    } catch (_) { /* the strip keeps what it showed */ }
     window._weekPlanSessions = week.sessions;
 
-    // Weekly rollup: fetch live endpoint, fall back to client-side computation
-    // against the same sources we already loaded. Palette + helpers shared.
+    // Weekly rollup, from /api/week-summary. Its client-side reconstruction
+    // from the activities list is gone (week-view contract A10): a failed
+    // summary leaves the rollup as it was rather than a second answer.
     (async () => {
-      let summary = null;
       try {
-        const res = await fetch('/api/week-summary');
-        if (res.ok) summary = await res.json();
-      } catch(e) { /* network/404 → fallback */ }
-      if (!summary) {
-        summary = _buildWeekSummaryFallback(week, activities, actsByDate, lthr, todayStr);
-      }
-      if (summary) _renderWeeklyRollup(summary, EXPOSURE_META);
+        const res = await summaryP;
+        if (res.ok) _renderWeeklyRollup(await res.json(), EXPOSURE_META);
+      } catch(e) { /* network/404: leave the rollup */ }
     })();
 
     // Phase badge
     const phaseBadge = week.phase ? `<span class="badge b-good">${week.phase.toUpperCase()}</span>` : '';
     const stepback = week.is_stepback ? '<span class="badge b-med" style="margin-left:4px;">RECOVERY WEEK</span>' : '';
-    $('week-phase-badge').innerHTML = `${phaseBadge}${stepback} <span style="font-size:9px;color:var(--text3);">TSS target: ${week.tss_target}</span>`;
+    const _tgt = week.tss_target == null ? 'no plan on record' : `TSS target: ${Math.round(week.tss_target)}`;
+    $('week-phase-badge').innerHTML = `${phaseBadge}${stepback} <span style="font-size:9px;color:var(--text3);">${_tgt}</span>`;
 
     // Event countdown card
     const er = week.event_readiness;
@@ -17452,129 +17323,6 @@ async function loadWeeklyCalendar() {
   }
 }
 
-// Client-side reconstruction of the /api/week-summary payload. Runs when the
-// backend endpoint 404s or errors — keeps the rollup meaningful in dev.
-// QA-MATH #2/#3/#4 alignment: iterate the full ISO week (not just sessions),
-// use strict-past for missed (matches backend), one-decimal TSS rounding,
-// and always return planned_days_total=7 per ISO contract.
-function _buildWeekSummaryFallback(week, activities, actsByDate, lthr, todayStr) {
-  if (!week) return null;
-  const sessions = Array.isArray(week.sessions) ? week.sessions : [];
-  const weekStart = sessions[0]?.day || null;
-  const weekEnd = sessions[sessions.length - 1]?.day || null;
-  const tssTarget = Number(week.tss_target || 0);
-
-  // Build the full 7-day ISO window (Mon-Sun). Using sessions alone would
-  // drop activities logged on days without a planned session.
-  const sessionByDay = new Map(sessions.map(s => [s.day, s]));
-  const dayKeys = [];
-  if (weekStart) {
-    const d0 = new Date(weekStart + 'T12:00:00');
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(d0); d.setDate(d0.getDate() + i);
-      dayKeys.push(d.toLocaleDateString('en-CA'));
-    }
-  }
-
-  const exposure = { low_aerobic: 0, mid_aerobic: 0, high_aerobic: 0, anaerobic: 0 };
-  let unclassified = 0;
-  const sports = {};
-  const activitiesByDay = {};
-  let tssDone = 0, durDone = 0;
-  for (const dk of dayKeys) {
-    const dayActs = actsByDate[dk] || [];
-    if (dayActs.length) activitiesByDay[dk] = dayActs;
-    for (const a of dayActs) {
-      tssDone += Number(a.tss || 0);
-      const dur = Number(a.duration_min || 0);
-      durDone += dur;
-      // Signal detection mirrors _classify_exposure_with_signal on the backend.
-      const hr = Number(a.avg_hr) || 0;
-      const trimp = Number(a.trimp) || 0;
-      const hasHR = hr > 0 && (Number(lthr) || 0) > 0;
-      const hasTrimp = trimp > 0 && dur > 0;
-      if (!hasHR && !hasTrimp) {
-        unclassified += dur;
-      } else {
-        exposure[_classifyExposure(a, lthr)] += dur;
-      }
-      if (a.sport) sports[a.sport] = (sports[a.sport] || 0) + 1;
-    }
-  }
-  tssDone = Math.round(tssDone * 10) / 10;
-  durDone = Math.round(durDone);
-
-  // Planned-session accounting; "missed" = STRICTLY past day with non-rest
-  // cycling plan AND no cycling activity (a hike on a planned SS day still
-  // counts as missed — the user owes the bike session).
-  const CYCLING_SPORTS = new Set(['Ride','VirtualRide','EBikeRide']);
-  const _SESSION_TYPE_TO_BAND = {
-    recovery:  'low_aerobic',
-    z2:        'low_aerobic',
-    long_z2:   'low_aerobic',
-    tempo:     'mid_aerobic',
-    sweetspot: 'high_aerobic',
-    threshold: 'high_aerobic',
-    vo2max:    'anaerobic',
-    overunder: 'anaerobic',
-  };
-  const exposurePlanned = { low_aerobic: 0, mid_aerobic: 0, high_aerobic: 0, anaerobic: 0 };
-  let plannedWith = 0, plannedDone = 0, plannedMissed = 0, durPlanned = 0;
-  const missed = [];
-  for (const s of sessions) {
-    const isStrictlyPast = s.day < todayStr;
-    const dayActs = actsByDate[s.day] || [];
-    const didCycling = dayActs.some(a => CYCLING_SPORTS.has(a.sport || ''));
-    const isReal = s.session_type && s.session_type !== 'rest';
-    durPlanned += Number(s.duration_min || 0);
-    const band = _SESSION_TYPE_TO_BAND[s.session_type];
-    if (band) exposurePlanned[band] += Number(s.duration_min || 0);
-    if (isReal) {
-      plannedWith++;
-      if (isStrictlyPast) {
-        if (didCycling) plannedDone++;
-        else {
-          plannedMissed++;
-          missed.push({
-            day: s.day, day_name: s.day_name,
-            session_type: s.session_type,
-            tss_estimate: Number(s.tss_estimate || 0),
-            duration_min: Number(s.duration_min || 0),
-            name: s.name || '',
-            did_non_cycling: dayActs.length > 0,
-          });
-        }
-      }
-    }
-  }
-
-  const entries = Object.entries(exposure).sort((a, b) => b[1] - a[1]);
-  const dominant = entries[0] && entries[0][1] > 0 ? entries[0][0] : 'low_aerobic';
-
-  return {
-    week_start: weekStart, week_end: weekEnd, today: todayStr,
-    tss_target: tssTarget,
-    tss_done: tssDone,
-    tss_adherence_pct: tssTarget > 0 ? Math.round(tssDone / tssTarget * 100) : 0,
-    duration_min_done: durDone,
-    duration_min_planned: Math.round(durPlanned),
-    exposure_minutes: exposure,
-    exposure_minutes_planned: exposurePlanned,
-    unclassified_minutes: unclassified,
-    exposure_dominant: dominant,
-    sports,
-    missed_sessions: missed,
-    planned_days_total: 7,   // ISO week always 7 — hard-coded (QA-MATH #5)
-    planned_days_with_session: plannedWith,
-    planned_days_done: plannedDone,
-    planned_days_missed: plannedMissed,
-    activities_by_day: activitiesByDay,
-  };
-}
-
-// Render the weekly rollup. Order (per QA-UX #1 top-finding): Adherence
-// first — the user's primary question is "am I on track?". TSS, Exposure,
-// Sports follow. All sections degrade gracefully when inputs are empty.
 function _renderWeeklyRollup(s, EXPOSURE_META) {
   const host = $('weekly-rollup');
   if (!host) return;
@@ -17842,7 +17590,7 @@ function goToPlanBuilder() {
 async function loadTodaySession() {
   try {
     let res;
-    try { res = await fetch('/api/today-session'); }
+    try { res = await getResource('/api/today-session'); }
     catch (eF) {
       try { window._diagFrontendError('E_FRONTEND_TODAY_SESSION_FETCH', {msg: String(eF && eF.message || eF)}); } catch(_) {}
       throw eF;
@@ -17863,7 +17611,10 @@ async function loadTodaySession() {
       const _el = $('home-recommendation');
       if (_el) {
         _el.classList.remove('loading');
-        const hasPlan = !!(window._planData && (window._planData.weeks || []).length);
+        // The server says whether a plan exists (has_plan); _planData is only
+        // set once the Plan tab has been opened.
+        const hasPlan = d.has_plan != null ? !!d.has_plan
+          : !!(window._planData && (window._planData.weeks || []).length);
         _el.innerHTML = hasPlan
           ? `<div style="font-size:13px;color:var(--text2);padding:8px 0;">Rest day &mdash; no session scheduled today. Enjoy the recovery.</div>`
           : `<div style="text-align:center;padding:14px 8px;">
@@ -17872,6 +17623,7 @@ async function loadTodaySession() {
               <button class="btn btn-primary" onclick="goToPlanBuilder()">Create your first training plan</button>
             </div>`;
       }
+      try { renderRetestNudge(d.retest_nudge); } catch (_) {}
       return;
     }
 
@@ -18469,71 +18221,6 @@ function openTodaySessionDetail() {
 // fix26 §6.2/§6.3/§6.4 — plan interactions (move, rematch, dismiss)
 // ═══════════════════════════════════════════════════════════════════════════
 
-function onPlanDragStart(e, srcDay) {
-  try {
-    e.dataTransfer.setData('text/plain', srcDay);
-    e.dataTransfer.effectAllowed = 'move';
-    if (e.currentTarget && e.currentTarget.classList) {
-      e.currentTarget.classList.add('wc-dragging');
-    }
-  } catch(_) {}
-}
-function onPlanDragOver(e) {
-  e.preventDefault();
-  try { e.dataTransfer.dropEffect = 'move'; } catch(_) {}
-  if (e.currentTarget && e.currentTarget.classList) {
-    e.currentTarget.classList.add('wc-drop-target');
-  }
-}
-function onPlanDragLeave(e) {
-  if (e.currentTarget && e.currentTarget.classList) {
-    e.currentTarget.classList.remove('wc-drop-target');
-  }
-}
-async function onPlanDrop(e, dstDay) {
-  e.preventDefault();
-  e.stopPropagation();
-  document.querySelectorAll('.wc-drop-target').forEach(el => el.classList.remove('wc-drop-target'));
-  document.querySelectorAll('.wc-dragging').forEach(el => el.classList.remove('wc-dragging'));
-  let srcDay = '';
-  try { srcDay = e.dataTransfer.getData('text/plain'); } catch(_) {}
-  if (!srcDay || srcDay === dstDay) return;
-  // v4.2.0 IMPL-WEEKLY item 9: toast message format per Master §3
-  // ("Moved {workout} from {src_day} to {dst_day}").
-  let srcName = 'session', srcLabel = srcDay, dstLabel = dstDay;
-  try {
-    const sessions = window._weekPlanSessions || [];
-    for (const s of sessions) {
-      if (s.day === srcDay) {
-        srcName = s.zwo_name || (s.session_type || '').toUpperCase() || 'session';
-        srcLabel = s.day_name || srcDay;
-      }
-      if (s.day === dstDay) dstLabel = s.day_name || dstDay;
-    }
-  } catch(_) {}
-  try {
-    const res = await fetch('/api/plan/move-session', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ date: srcDay, new_date: dstDay }),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.ok) {
-      // v4.3.0 B1 — friendly toast for the structured 422.
-      const friendly = (res.status === 422 && data && data.error === 'source_session_not_found')
-        ? "Couldn't find that session. Try refreshing."
-        : `Move failed: ${data.error || data.detail || 'unknown'}`;
-      try { showToast(friendly, 3500); } catch(_) {}
-      return;
-    }
-    try { showToast(`Moved ${srcName} from ${srcLabel} to ${dstLabel}`, 3000); } catch(_) {}
-    loadWeeklyCalendar();  // re-render week with user_moved + status updates
-    try { await loadCalendar(); } catch(_) {}
-  } catch(err) {
-    try { showToast('Move failed: network error', 3000); } catch(_) {}
-  }
-}
-
 // v1.8.25 — the "Reconcile Week" button + modal were removed: reconciliation
 // (matching completed rides → done/missed status) now runs AUTOMATICALLY inside
 // the planner's auto-adapt on every ride sync (see app.py _reconcile_current_week
@@ -18628,7 +18315,7 @@ async function _todayDayModalModel(session) {
   let d = window._todaySessionData;
   if (!d || !d.planned) {
     try {
-      const r = await fetch('/api/today-session');
+      const r = await getResource('/api/today-session');
       if (r.ok) { d = await r.json(); window._todaySessionData = d; }
     } catch (_) { return null; }
   }
@@ -18923,7 +18610,7 @@ async function openDayWorkout(sessionIdx, day) {
   let settingsFtp = ftp;
   let sData = {};
   try {
-    const sRes = await fetch('/api/settings');
+    const sRes = await getResource('/api/settings');
     sData = await sRes.json();
     settingsFtp = sData.ftp || ftp;
   } catch(e) {}
@@ -19911,7 +19598,7 @@ function renderPowerBlocksSVG(blocks, ftp) {
 
 async function downloadGeneratedZwo(type, durationMin, name) {
   let ftp = 250;
-  try { const s = await (await fetch('/api/settings')).json(); ftp = s.ftp || 250; } catch(e) {}
+  try { const s = await (await getResource('/api/settings')).json(); ftp = s.ftp || 250; } catch(e) {}
   const blocks = buildPowerBlocks(type, durationMin, ftp);
   let xml = `<?xml version="1.0" encoding="utf-8"?>\n<workout_file>\n  <author>Domestique Library</author>\n  <name>${esc(name)}</name>\n  <sportType>bike</sportType>\n  <workout>\n`;
   for (const b of blocks) {
@@ -20538,19 +20225,27 @@ function renderOnTrackBar(data) {
   const cmpChipBg = cmpBand === 'green' ? 'rgba(34,197,94,0.15)' : cmpBand === 'amber' ? 'rgba(234,179,8,0.15)' : 'rgba(239,68,68,0.15)';
 
   // CTL delta vs target
+  // Either side can be unknown (no intervals.icu value; a plan with no CTL
+  // anchor): show "—", not 0.0.
+  const ctlKnown = summary.ctl_actual != null && summary.ctl_planned_today != null;
   const ctlActual = Number(summary.ctl_actual || 0);
   const ctlPlanned = Number(summary.ctl_planned_today || 0);
   const ctlDelta = ctlActual - ctlPlanned;
   const ctlSign = ctlDelta >= 0 ? '+' : '';
   const ctlDeltaColor = Math.abs(ctlDelta) <= 5 ? 'var(--green)' : Math.abs(ctlDelta) <= 10 ? 'var(--yellow)' : 'var(--red)';
 
-  // Polarized actual vs target (with drift color)
-  const pa = summary.polarized_actual || {z1z2_pct:0,z3_pct:0,z4plus_pct:0};
-  const pt = summary.polarized_target || {z1z2_pct:0,z3_pct:0,z4plus_pct:0};
+  // Intensity distribution, actual vs target (with drift color). The server
+  // sends three zones, z1_pct / z2_pct / z3_pct (below LT1 / between / above
+  // LT2), since the three-zone model of 2026-09-10 (e14fb3b5); this card read
+  // the older z1z2_pct / z3_pct / z4plus_pct and printed "undefined/9/undefined".
+  const _z3 = o => ({ z1_pct: Number((o || {}).z1_pct || 0), z2_pct: Number((o || {}).z2_pct || 0),
+                      z3_pct: Number((o || {}).z3_pct || 0) });
+  const pa = _z3(summary.polarized_actual);
+  const pt = _z3(summary.polarized_target);
   const polDrift = Math.max(
-    Math.abs(pa.z1z2_pct - pt.z1z2_pct),
-    Math.abs(pa.z3_pct - pt.z3_pct),
-    Math.abs(pa.z4plus_pct - pt.z4plus_pct)
+    Math.abs(pa.z1_pct - pt.z1_pct),
+    Math.abs(pa.z2_pct - pt.z2_pct),
+    Math.abs(pa.z3_pct - pt.z3_pct)
   );
   const polColor = polDrift > 10 ? 'var(--yellow)' : 'var(--text)';
 
@@ -20776,13 +20471,13 @@ function renderOnTrackBar(data) {
       </div>
       <div class="ot-stat">
         <div class="ot-stat-label">CTL</div>
-        <div class="ot-stat-val">${ctlActual.toFixed(1)} / ${ctlPlanned.toFixed(1)}</div>
-        <div style="font-size:10px;color:${ctlDeltaColor};">delta ${ctlSign}${ctlDelta.toFixed(1)}</div>
+        <div class="ot-stat-val">${summary.ctl_actual != null ? ctlActual.toFixed(1) : '—'} / ${summary.ctl_planned_today != null ? ctlPlanned.toFixed(1) : '—'}</div>
+        <div style="font-size:10px;color:${ctlKnown ? ctlDeltaColor : 'var(--text3)'};">${ctlKnown ? 'delta ' + ctlSign + ctlDelta.toFixed(1) : 'no CTL on record'}</div>
       </div>
       <div class="ot-stat">
         <div class="ot-stat-label">POLARIZED</div>
-        <div class="ot-stat-val" style="color:${polColor};">${pa.z1z2_pct}/${pa.z3_pct}/${pa.z4plus_pct}</div>
-        <div style="font-size:10px;color:var(--text3);">target ${pt.z1z2_pct}/${pt.z3_pct}/${pt.z4plus_pct}</div>
+        <div class="ot-stat-val" style="color:${polColor};">${pa.z1_pct}/${pa.z2_pct}/${pa.z3_pct}</div>
+        <div style="font-size:10px;color:var(--text3);">target ${pt.z1_pct}/${pt.z2_pct}/${pt.z3_pct}</div>
       </div>
       <div class="ot-stat">
         <div class="ot-stat-label">PHASE</div>

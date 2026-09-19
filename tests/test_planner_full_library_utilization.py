@@ -235,9 +235,18 @@ def test_population_coverage_across_regenerations():
     # 0.33 = measured 34.3% minus the same small margin so library growth /
     # seed variance doesn't tip the knife-edge; a real coverage regression
     # (>10% relative) still fails.
-    assert coverage >= 0.33, (
+    # IMPL-BUDGET-SCALE re-measure: 895/2643 = 33.9% -> 867/2643 = 32.8%. The
+    # HIT-slot hard-minute floor (_hit_slot_hard_floor) stops a workout that
+    # carries almost no time above Z2 from being served on a HIT slot -- the
+    # measured case was a 41-minute file with 1.7 hard minutes filling one of a
+    # peak week's three hard slots. Those 28 files are not lost, they are no
+    # longer served WHERE THEY DO NOT BELONG; every one of them is still
+    # reachable on an endurance slot. 3.1% relative, well inside the >10% this
+    # floor is written to catch, so the floor moves to 0.32 rather than the
+    # sampler being loosened back.
+    assert coverage >= 0.32, (
         f"Population coverage {len(seen)} of {pool_size} candidate-pool "
-        f"files = {coverage:.1%} across 30 regens, need ≥33%."
+        f"files = {coverage:.1%} across 30 regens, need ≥32%."
     )
 
 

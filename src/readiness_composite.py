@@ -33,7 +33,25 @@ import statistics
 from datetime import date as _date, datetime as _datetime, timedelta as _td
 from typing import Any
 
+import clock
 import db
+
+# Today's fitness state, from its one owner (src/fitness.py), installed by the
+# app. The wellness table holds intervals.icu's values as the 30-min sync last
+# stored them; for today the live answer wins, so the composite's TSB and the
+# readiness card's cannot disagree (the audit's S-3). Past days read the table.
+today_load_provider = None
+
+
+def _today_tsb(day_iso: str):
+    """(known, tsb): today's TSB from the provider, when one is installed."""
+    if today_load_provider is None or day_iso != clock.today().isoformat():
+        return False, None
+    try:
+        return True, (today_load_provider() or {}).get("tsb")
+    except Exception:  # noqa: BLE001 - the store's value stands
+        return False, None
+
 
 _log = logging.getLogger("domestique.readiness_composite")
 
@@ -241,6 +259,9 @@ def _components_for_date(
     raw_ctl = _safe_float(today_w.get("ctl")) if today_w else None
     raw_atl = _safe_float(today_w.get("atl")) if today_w else None
     raw_tsb = (raw_ctl - raw_atl) if (raw_ctl is not None and raw_atl is not None) else None
+    known, live_tsb = _today_tsb(target_date)
+    if known:
+        raw_tsb = live_tsb
     raw_ln7 = _ln_rmssd_7d_for_date(wellness_rows, target_date) if wellness_rows else None
     raw_hooper = _safe_float(today_log.get("hooper_index")) if today_log else None
     raw_feel = None
@@ -650,7 +671,11 @@ def _hooper_submitted(day_iso: str) -> tuple[int | None, dict | None]:
 
 
 def _tsb_for_day(day_iso: str) -> float | None:
-    """TSB (ctl - atl) for `day_iso` from the local wellness store."""
+    """TSB (ctl - atl) for `day_iso`: today's from the fitness owner, other
+    days from the local wellness store."""
+    known, live_tsb = _today_tsb(day_iso)
+    if known:
+        return live_tsb
     conn = db.get_db()
     try:
         row = conn.execute(

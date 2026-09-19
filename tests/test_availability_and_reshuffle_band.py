@@ -15,6 +15,7 @@ import datetime
 import pytest
 
 import training_planner as tp
+import week_plan as wp  # noqa: E402
 
 
 # ── Bug A: per-day availability cap ────────────────────────────────────────
@@ -31,12 +32,18 @@ def test_sampler_respects_60min_days(phase_name):
     offenders = []
     for salt in range(8):
         sessions = tp.sample_week_workouts(
-            phase, budget, lib, {}, week_num=2, seed_salt=salt,
-            week_start=datetime.date(2026, 7, 6),
-            available_days=[0, 1, 2, 3, 4, 5, 6], rest_days=[0],
-            daily_max_hours={i: 1.0 for i in range(7)},  # 60 min EVERY day
-            max_weekday_hours=1.0, max_weekend_hours=1.0,
-            pool_index=pool_index, week_in_phase=1, recent_hit_types=[])
+            wp.WeekContext(
+                week_num=2, start=datetime.date(2026, 7, 6), phase=phase, seed_salt=salt,
+                week_in_phase=1,
+                goal=tp.Goal(goal_type="general", available_days=[0, 1, 2, 3, 4, 5, 6],
+                             rest_days=[0],
+                             daily_max_hours={i: 1.0 for i in range(7)},  # 60 min EVERY day
+                             max_weekday_hours=1.0, max_weekend_hours=1.0)),
+            wp.PlanState(library=lib, used_names={}, pool_index=pool_index,
+                         # the old call's defaults: no plan-wide bookkeeping
+                         plan_pick_counts=None, class_session_counts=None,
+                         class_distinct_files=None, seen_cc_dur_tuples=None),
+            budget)
         for s in sessions:
             if s.session_type == "rest":
                 continue

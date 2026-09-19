@@ -1,0 +1,39 @@
+name: Tests
+
+# The pull-request gate for clean-main: the full suite on macOS, the platform
+# the dev gate runs on (0 known failures there). Linux hosts fail 8 tests for
+# environment reasons (pywebview bridge, OpenSSL behaviour) and are covered by
+# the release workflow's AppImage smoke instead.
+#
+# A 3-core hosted Mac needs about 70 minutes for the whole suite, so it is
+# split over two runners by test file (odd/even). The serial tail runs once.
+on:
+  pull_request:
+    branches: [clean-main]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: tests (shard ${{ matrix.shard }} of 2)
+    runs-on: macos-14
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest pytest-xdist pytest-timeout fitparse Pillow
+      - name: Parallel bulk (this shard's files)
+        run: |
+          FILES=$(ls tests/test_*.py | awk -v s=${{ matrix.shard }} 'NR % 2 == s % 2')
+          python -m pytest $FILES -q -p no:cacheprovider -n 3 -m "not release_serial" --timeout=900 -rfE
+      - name: Serial tail
+        if: matrix.shard == 1
+        run: python -m pytest tests -q -p no:cacheprovider -m release_serial --timeout=900 -rfE

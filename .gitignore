@@ -75,3 +75,10 @@ dist_premove/
 dist_postmove/
 build_postmove/
 plans/
+
+# Synthesised workouts (workout_gen). Derived artefacts, never source: the
+# planner writes them into the active workout directory when the library has
+# no file at the prescribed dose, with deterministic names so a regeneration
+# reuses rather than accumulates. `rm gen_*.zwo` is always safe.
+workouts/gen_*.zwo
+gen_*.zwo

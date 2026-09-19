@@ -1,4 +1,5 @@
 """HRV, RHR and sleep metrics from Intervals.icu wellness data."""
+import clock  # the one clock every module reads (see src/clock.py)
 import math
 import statistics
 from datetime import date, timedelta
@@ -137,7 +138,7 @@ def compute_sleep_metrics_from_wellness(wellness: list[dict]) -> dict:
     # today's sleep
     today_rec = next(
         (r for r in reversed(records)
-         if r["date"] == date.today().isoformat()),
+         if r["date"] == clock.today().isoformat()),
         records[-1] if records else {},
     )
 

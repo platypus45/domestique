@@ -412,3 +412,34 @@ def _derived_library_caches():
             lock.rmdir()
         except OSError:
             pass
+
+
+# ── The derived library caches are untracked; the test session builds them ──
+# Guard tests decide at COLLECTION time, with skipif(not facts_file.exists()),
+# whether they run. On a fresh checkout (every CI run) the caches are absent,
+# so those guards skipped themselves and nothing went red. Build the caches
+# before collection (the xdist controller does it once, before any worker),
+# and refuse to run if any guard would still skip for that reason.
+_CACHE_SKIP_REASON = "facts cache absent"
+
+
+def pytest_configure(config):
+    import subprocess
+    if hasattr(config, "workerinput"):
+        return
+    root = _Path(__file__).resolve().parent.parent
+    workouts = root / "src" / "workouts"
+    if all((workouts / n).is_file() for n in (".library_index.json", ".workout_facts.json")):
+        return
+    subprocess.run([sys.executable, str(root / "tools" / "build-library-caches.py")],
+                   check=True, cwd=str(root))
+
+
+def pytest_collection_modifyitems(session, config, items):
+    off = sorted({item.nodeid.split("::")[0] for item in items
+                  for m in item.iter_markers("skipif")
+                  if m.kwargs.get("reason") == _CACHE_SKIP_REASON and m.args and m.args[0] is True})
+    if off:
+        raise pytest.UsageError(
+            f"{len(off)} test file(s) would skip for '{_CACHE_SKIP_REASON}': {off}. "
+            "The derived library caches are missing; tools/build-library-caches.py builds them.")

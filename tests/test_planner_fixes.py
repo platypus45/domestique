@@ -271,14 +271,17 @@ class TestFix4AtomicWrites(unittest.TestCase):
         (v3.2.0: /api/plan/ftp-test-type, the per-session ramp/20-min
         chooser) → 20 (3.3.1 hotfix B2: /api/plan/re-draw no longer
         delegates to the legacy rematch-day endpoint — it persists its own
-        accept-redraw apply, correctly through the helper)."""
+        accept-redraw apply, correctly through the helper) → 22 (2026-09-16:
+        the legacy /api/plan/rematch/{day} endpoint itself was deleted, no
+        client having called it since re-draw stopped delegating, and its
+        write site went with it)."""
         src = APP_PY.read_text()
         helper_calls = re.findall(
             r"tp\.atomic_write_plan\(\s*json_path\s*,\s*(plan|plan_dict)\s*\)",
             src,
         )
         self.assertEqual(
-            len(helper_calls), 23,  # +1: revert-cap's plan restore (the 'Ride the original anyway' fix)
+            len(helper_calls), 22,  # -1: the deleted rematch-day endpoint
             f"Expected 22 tp.atomic_write_plan() sites, found {len(helper_calls)}",
         )
 

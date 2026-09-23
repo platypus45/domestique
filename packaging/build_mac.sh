@@ -12,6 +12,12 @@ pip3 install -r requirements.txt pyinstaller
 mkdir -p assets
 
 # 3. Build with PyInstaller
+# The derived library caches (.library_index.json, .workout_facts.json) are not
+# tracked: they rebuild themselves, and a checkout resets the .zwo mtimes their
+# headers pin. PyInstaller copies workouts/ as it finds it, so build them here.
+python3 tools/build-library-caches.py || {
+    echo "FATAL: could not build the library caches" >&2; exit 1; }
+
 pyinstaller packaging/domestique.spec --clean --noconfirm
 
 echo ""

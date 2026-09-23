@@ -114,13 +114,12 @@ class RoutesLibBoundaryTests(unittest.TestCase):
                          f"routes_lib imports {sorted(roots)}")
 
     def test_app_re_exports_the_functions_as_the_same_objects(self):
-        """The 19 helpers ARE re-exported -- functions are safe to bind, and
+        """The re-exported helpers ARE the same objects -- functions are safe to bind, and
         60 test files reach them through `app.X`."""
         import app
         for name in ("_load_routes_v2", "_canonical_surface", "_load_surface_types_db",
                      "_is_climb_route", "_is_flat_route", "_route_summary",
                      "_apply_route_filters", "_score_route_for_suggest",
-                     "_gradient_to_power_factor", "_build_climb_zwo",
                      "_load_route_detail", "_route_surface_segments"):
             self.assertIs(getattr(app, name), getattr(routes_lib, name), name)
 

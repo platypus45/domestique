@@ -13,30 +13,6 @@ def _ln_rmssd(hrv_ms: float | None) -> float | None:
     return None
 
 
-def compute_sleep_score(sleep_h: float | None) -> dict:
-    """Classify a single night's sleep duration against config thresholds.
-
-    Uses the English tokens (GREEN / ORANGE / RED / ?) so that the
-    ``_EMOJI`` lookup in main.py and the dashboard ``statusClass()``
-    frontend both resolve. See sleep-status block below for context.
-
-    Args:
-        sleep_h: sleep duration in hours (may be None when no data).
-
-    Returns:
-        Dict with ``sleep_h`` and ``sleep_status`` keys.
-    """
-    status = "?"
-    if sleep_h is not None:
-        if sleep_h >= config.SLEEP_GREEN:
-            status = "GREEN"
-        elif sleep_h >= config.SLEEP_ORANGE:
-            status = "ORANGE"
-        else:
-            status = "RED"
-    return {"sleep_h": sleep_h, "sleep_status": status}
-
-
 def get_sleep_metrics() -> dict:
     """
     Return today's sleep + HRV + RHR data with trend context.

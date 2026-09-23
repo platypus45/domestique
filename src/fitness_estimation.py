@@ -22,7 +22,6 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Optional
 
-from training_live import RideSample
 
 log = logging.getLogger(__name__)
 # v3.6.0-fix30-logs-ext: named category logger for Monod + post-hoc
@@ -74,6 +73,49 @@ MIN_FTP_EFFORT_DURATION = 300  # 5 minutes
 # ══════════════════════════════════════════════════════════════════════════════
 # DATACLASSES
 # ══════════════════════════════════════════════════════════════════════════════
+
+# ── from training_live.py (the trainer subsystem, removed in v4.0.0) ──────
+# These four were all that survived it: the sample shape the post-hoc
+# decoupling pass reads, its Z1 filter and the two windows that filter uses.
+# Moved here, their only consumer, when the rest of that file went.
+
+@dataclass
+class RideSample:
+    elapsed_sec: int
+    power: int
+    cadence: int
+    speed: float
+    hr: int
+    distance_km: float
+    elevation_m: float
+    gradient_pct: float
+    # Workout target watts AT THIS SAMPLE's record time. Zero when no
+    # workout active. Used to compute compliance in summary() without
+    # falling through to s.power (which would make compliance 100%).
+    target_power: float = 0.0
+
+
+def _is_valid_decoupling_sample(power_w: int | float, hr_bpm: int | float) -> bool:
+    """Canonical Z1 filter for decoupling samples (§1.4).
+
+    Accept only samples with 50 W <= power <= 2500 W (drop coasting + spikes)
+    and 60 bpm <= HR <= 220 bpm (drop dropout and strap artifacts). Used by
+    every decoupling code path so replay + post-hoc results agree.
+    """
+    try:
+        p = float(power_w)
+        h = float(hr_bpm)
+    except (TypeError, ValueError):
+        return False
+    return 50.0 <= p <= 2500.0 and 60.0 <= h <= 220.0
+
+
+# the ride. Configurable so future session-flag overrides can tune it.
+DECOUPLING_WARMUP_TRIM_S: int = 900
+
+# §1.5 minimum filtered duration after warmup trim (40 min effective).
+DECOUPLING_MIN_FILTERED_S: int = 2400
+
 
 @dataclass
 class FitnessSignature:
@@ -1145,11 +1187,6 @@ def aerobic_decoupling(
     sample — safe to substitute when re-rendering historical rides whose
     ``summary.decoupling_pct`` was lost.
     """
-    from training_live import (
-        _is_valid_decoupling_sample,
-        DECOUPLING_WARMUP_TRIM_S,
-        DECOUPLING_MIN_FILTERED_S,
-    )
 
     if not power_samples or not hr_samples:
         return None

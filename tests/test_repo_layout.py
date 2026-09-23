@@ -46,10 +46,27 @@ def test_classifier_script_reachable_from_workout_facts():
     assert (CODE_DIR / "scripts" / "classify_library_content.py").is_file()
 
 
-def test_workout_library_hidden_caches_present():
-    for f in (".content_classification.json", ".library_index.json",
-              ".workout_facts.json"):
-        assert (CODE_DIR / "workouts" / f).is_file(), f
+def test_workout_library_sidecars_present():
+    """The classifier's cache is an input and is tracked; the two derived
+    caches are not, since they rebuild themselves and their headers pin the
+    .zwo mtimes that a checkout resets. A build makes them with
+    tools/build-library-caches.py, which the packaging scripts call before
+    they gate on their presence."""
+    assert (CODE_DIR / "workouts" / ".content_classification.json").is_file()
+    assert (ROOT / "tools" / "build-library-caches.py").is_file()
+
+
+def test_the_derived_caches_are_not_tracked():
+    """4.5 MB of generated data that git resets the validity of on every
+    clone: always rejected, always rewritten, and it dirtied every working
+    tree (upstream needed a commit of its own to undo one test run's
+    rewrite)."""
+    import subprocess
+    tracked = subprocess.run(
+        ["git", "ls-files", "src/workouts/.library_index.json",
+         "src/workouts/.workout_facts.json"],
+        cwd=ROOT, capture_output=True, text=True).stdout.split()
+    assert tracked == [], f"derived caches are tracked again: {tracked}"
 
 
 def test_version_file_resolvable():
@@ -113,3 +130,4 @@ def test_spec_bundles_the_critical_data():
         assert needed in dests, f"spec no longer bundles {needed}/"
     # VERSION must land at the bundle root.
     assert any(d == "." and s.endswith("VERSION") for s, d in entries)
+

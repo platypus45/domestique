@@ -257,10 +257,14 @@ class PersistenceHookTests(_IsolatedRideDirMixin, unittest.TestCase):
         self.assertEqual(cached["prs"][0]["exceedance_w"], 20)
 
 
-class RecomputeEndpointTests(_IsolatedRideDirMixin, unittest.TestCase):
-    """Test 4 — POST /recompute regenerates the list and persists.
+class RecomputeTests(_IsolatedRideDirMixin, unittest.TestCase):
+    """Test 4 — a recompute regenerates the PR list from stale efforts.
 
-    Drives the endpoint via the FastAPI TestClient.
+    Was driven through POST /api/ride/{id}/prs/recompute, a thin wrapper that
+    no client called and that the 2026-09-16 slimming removed; it calls
+    power_curve.compute_ride_prs, which is what the case was ever about. The
+    endpoint also wrote the list back to the ride envelope -- that was the
+    endpoint's own behaviour and went with it.
     """
 
     def setUp(self):
@@ -269,10 +273,9 @@ class RecomputeEndpointTests(_IsolatedRideDirMixin, unittest.TestCase):
     def tearDown(self):
         self._restore()
 
-    def test_recompute_endpoint_regenerates(self):
+    def test_recompute_regenerates(self):
         """A ride imported with stale efforts → recompute returns the fresh
-        PR list and updates the persisted envelope. Verifies the locked
-        endpoint contract (status 200; {ride_id, prs[]} body)."""
+        PR list."""
         from datetime import date, timedelta
         from fastapi.testclient import TestClient
         # Prior ride to anchor a comparison.
@@ -291,20 +294,17 @@ class RecomputeEndpointTests(_IsolatedRideDirMixin, unittest.TestCase):
 
         import app
         # Patch app.* and ride_storage.* helpers to the same isolated dir.
+        # POST /api/ride/{id}/prs/recompute was a thin wrapper over
+        # power_curve.compute_ride_prs and was deleted in the 2026-09-16
+        # slimming (no client ever called it). The compute it existed to
+        # expose is what this case is about, so it calls that.
         with patch.object(app, "_log") as _, \
              patch("ride_storage._icu_rides_dir", return_value=self._tmp):
-            client = TestClient(app.app)
-            r = client.post("/api/ride/icu_rTODAY/prs/recompute")
-            self.assertEqual(r.status_code, 200, r.text)
-            body = r.json()
-            self.assertEqual(body["ride_id"], "icu_rTODAY")
-            prs = body["prs"]
+            import power_curve
+            prs = power_curve.compute_ride_prs("icu_rTODAY")
             self.assertGreater(len(prs), 0)
             self.assertEqual(prs[0]["duration_s"], 300)
             self.assertEqual(prs[0]["tier"], "major")
-            # Persisted to disk too — re-read.
-            cached = json.loads((self._tmp / "rTODAY.json").read_text())
-            self.assertEqual(len(cached.get("prs", [])), 1)
 
 
 class RealDataRoundTripTests(_IsolatedRideDirMixin, unittest.TestCase):

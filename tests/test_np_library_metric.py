@@ -72,10 +72,18 @@ def test_library_np_matches_ride_storage_on_same_series():
     assert ride_tss == pytest.approx(lib_tss, abs=0.06)
 
 
-# ── Shipped caches: flagship calibration ─────────────────────────────────────
+# ── Derived caches: flagship calibration ─────────────────────────────────────
+#
+# These are no longer tracked (they rebuild themselves and a checkout resets
+# the mtimes their headers pin), so the tests build what they read -- through
+# the app's own loaders, which is the only way the numbers below mean
+# anything about what the app serves.
 
 def _index_rows():
-    idx = json.loads((REPO / "src" / "workouts" / ".library_index.json").read_text())
+    path = REPO / "src" / "workouts" / ".library_index.json"
+    if not path.is_file():
+        tp.load_workout_library()
+    idx = json.loads(path.read_text())
     return idx, {r["File"]: r for r in idx["rows"]}
 
 
@@ -91,7 +99,10 @@ def test_index_schema_v3_and_flagship_row():
 
 
 def test_facts_v3_flagship_matches_index():
-    data = json.loads((REPO / "src" / "workouts" / ".workout_facts.json").read_text())
+    path = REPO / "src" / "workouts" / ".workout_facts.json"
+    if not path.is_file():
+        wf.load_facts(REPO / "src" / "workouts")
+    data = json.loads(path.read_text())
     assert data["version"] == 3
     row = data["facts"][FLAGSHIP]
     assert row["if"] == pytest.approx(0.817, abs=0.005)

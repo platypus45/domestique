@@ -6801,59 +6801,6 @@ def _solve_week_assignment(out: list, slots: list, budget: "IntensityBudget",
     return True
 
 
-def _enforce_hard_day_spacing(out: list, protect: set | None = None) -> list[str]:
-    """48 hours between HARD SESSIONS, judged on what is served, not on which
-    slot was labelled hard. Mutates ``out``; returns what it changed.
-
-    The sampler caps how many slots it DESIGNATES hard and spaces those. It
-    does not check what actually lands: an endurance slot can be served a file
-    whose content is a VO2 or sprint session, and then two hard days sit back
-    to back with every slot-level rule satisfied.
-
-    Seen in a real plan: a two-day opening week (Thu/Fri, the rest of the week
-    unavailable) whose hard-slot cap was correctly 1 came back as sprint on
-    Thursday and VO2max on Friday -- 117 TSS of intensity on consecutive days
-    for a rider at TSB -43. tests/test_tid_plan_properties.py had this marked as
-    an expected failure; it is now enforced instead.
-
-    The later session is stepped DOWN the intensity ladder (Seiler ordering)
-    until it is no longer hard, with its load trimmed so a de-escalation can
-    never raise the day's TSS -- the failure mode _deescalated_load exists for.
-    """
-    protect = protect or set()
-    changed: list[str] = []
-    last_hard_day = None
-    for off, sess in enumerate(out):
-        if sess is None or sess.session_type == "rest":
-            continue
-        if not _session_is_hit(sess):
-            continue
-        if last_hard_day is not None and (sess.day - last_hard_day).days < 2:
-            if off in protect:
-                last_hard_day = sess.day
-                continue
-            was = sess.session_type
-            # Same rule, same target as _space_hard_days_across_plan: easing
-            # for recovery goes to z2, not one rung down into tempo.
-            new_type = _ease_for_recovery(was)
-            dur, tss = _deescalated_load(sess.duration_min, new_type,
-                                         old_tss=sess.tss_estimate)
-            sess.session_type = new_type
-            sess.duration_min = dur
-            sess.tss_estimate = tss
-            # The file no longer matches the prescription; clearing it sends the
-            # slot back through match_zwo rather than leaving a VO2 workout
-            # attached to a session now labelled endurance.
-            sess.zwo_file = ""
-            sess.zwo_name = ""
-            sess.description = (f"{new_type} ({dur}min) — eased: 48 h from the "
-                                f"previous hard day")
-            changed.append(f"{sess.day}: {was} -> {new_type}")
-        else:
-            last_hard_day = sess.day
-    return changed
-
-
 def _repair_week(out: list, slots: list, budget: "IntensityBudget",
                  hit_slot_idxs: set, row_for_file, pool_for_slot,
                  max_min_for, protect: set | None = None) -> list[str]:

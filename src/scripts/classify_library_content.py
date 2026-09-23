@@ -1375,46 +1375,6 @@ def _work_zone_seconds(power: list[float], segments: list[dict]) -> dict:
     return z
 
 
-def _mask_cooldown(power: list[float], segments: list[dict]) -> list[float]:
-    """Blank the trailing cooldown out of the sample array for classification.
-
-    v3.7.0. What a workout IS must not depend on how it ramps home. Whole-ride
-    zone accounting made cooldown power a classification input: easing every
-    cooldown moves its seconds from z2 to z1, z1 overtakes z2, and files change
-    class — real training sessions relabelled ``recovery`` and routed onto
-    recovery days — while their actual stimulus never changed.
-
-    Cooldown samples take the FreeRide sentinel (-1), which every zone gate in
-    this module already skips. One edit, and every gate at once: dominance,
-    the dose floors, the salvage guard and the percentages all stop seeing it,
-    with no site left behind to rediscover the coupling later.
-
-    NOT WIRED IN as of v3.7.0. Blanking the cooldown out of zone accounting
-    is the right shape — cooldown power should never decide what a workout is
-    — but it re-promotes ``neuromuscular_4x30s-90s_160pct_144min.zwo`` to neuromuscular,
-    undoing a deliberate v2.4.5 demotion (4x30s inside a 144-minute ride is
-    not a neuromuscular session). Overriding a curated correction to land a
-    cooldown change is the wrong trade, so the coupling stays and the cooldown
-    values were chosen to sit inside it instead. Kept here, with the reason,
-    because the decoupling is still the correct end state and the next attempt
-    should start from a plan for that file rather than rediscovering it.
-
-    The warmup is deliberately left in place — re-baselining it is a separate
-    decision with its own blast radius.
-    """
-    out = list(power)
-    t = 0
-    for seg in segments:
-        dur = int(seg.get("duration_s") or 0)
-        if dur <= 0:
-            continue
-        if seg.get("kind") == "cooldown":
-            for k in range(t, min(t + dur, len(out))):
-                out[k] = -1.0
-        t += dur
-    return out
-
-
 def extract_features_v104(power: list[float], segments: list[dict]) -> dict:
     """Compute legacy + v1.0.4 features in one merged dict.
 
@@ -1448,29 +1408,6 @@ def extract_features_v104(power: list[float], segments: list[dict]) -> dict:
         "z_seconds_work": _work_zone_seconds(power, segments),
     })
     return legacy
-
-
-def _audit_reason(old_primary, new_primary, new_entry: dict) -> str:
-    """Heuristic reason for an audit transition.
-
-    Looks at the v104 features in ``new_entry`` to give a short
-    human-readable rationale. Used for the audit-trail JSON only.
-    """
-    f = (new_entry.get("features") or {})
-    if old_primary == "mixed":
-        return f"mixed→{new_primary} via zone-dominance fallback (v104 drops mixed)"
-    if new_entry.get("flags"):
-        return f"flagged: {','.join(new_entry['flags'])}"
-    if f.get("is_ladder") and new_primary and new_primary.endswith("_ladder"):
-        return (f"ladder detected: {f.get('ladder_set_count', 0)} sets × "
-                f"{f.get('ladder_rung_count', 0)} rungs, "
-                f"peak {int(round(f.get('ladder_peak_power', 0) * 100))}% FTP")
-    if old_primary != new_primary:
-        return (f"reclassified by content: peak={f.get('peak_band')} "
-                f"({f.get('peak_band_pct', 0) * 100:.1f}%), "
-                f"z4_upper={f.get('z4_upper_s', 0)}s, "
-                f"z5={f.get('z5_pct', 0)}%")
-    return ""
 
 
 def _zone_dominance_class(z_seconds: dict) -> str:

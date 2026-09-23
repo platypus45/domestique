@@ -70,11 +70,13 @@ class TestDeloadLongRideCap(unittest.TestCase):
         Visibly light by plan_invariants.stepback_looks_lighter: more rest days,
         or -- when the rider's available days leave no rest day to spare above
         the load floor, which wins -- a lighter load type. This test used to
-        demand more rest days only, anchored to the real date, and failed on 4
-        to 14 of 28 start dates depending on availability, every time on a
-        recovery week that was already all-Z2 at a lower intensity. The weekday
-        dependence came from counting a mid-week start's two-day first week as
-        a build.
+        demand more rest days only, anchored to the real date, and failed on 12
+        of 28 start dates, always the same weekdays for a given availability
+        (Thu/Fri/Sun with every day available). Every time, the planner had
+        stopped adding rest days at the load floor, and the recovery week held
+        no hard work apart from an FTP test. Which weekdays fail depends on
+        the rider's availability, so a date pinned in a gate only moves the
+        blind spot, and so would a weekday.
 
         So it sweeps four weeks of start dates for two riders: this suite's own
         (every day available, Monday rest) and one with weekends off.

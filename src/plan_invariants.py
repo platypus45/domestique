@@ -387,9 +387,12 @@ def asks_nothing(w) -> bool:
 
 def _is_full_week(w) -> bool:
     """Six days or more: a plan's first week, starting mid-week, is not a week
-    to compare a block against. A Thursday start gives a two-day W1, and that
-    is what made "is the recovery week lighter than its builds?" depend on the
-    weekday the plan was generated."""
+    to compare a block against. A Thursday start gives a two-day W1 with no
+    room for a rider's usual rest days, and counting it as a build would judge
+    a recovery week against a week that is short, not hard. (It is not what
+    made the old rest-day check depend on the weekday: all 44 failing recovery
+    weeks of the 28-date sweep still fail with partial weeks excluded. That was
+    the load floor, below.)"""
     return (w.end - w.start).days >= 6
 
 
@@ -414,7 +417,13 @@ def stepback_looks_lighter(deload, builds) -> "tuple[bool, str]":
       * where the rider's available days leave no room for another rest day
         without dropping under the load floor (the floor wins: a recovery week
         too light is how the build weeks after it ramped at 1.7x), lighter by
-        LOAD TYPE -- no hard session, and less load than every full build week.
+        LOAD TYPE -- no hard session (an FTP test aside) while every full build
+        week carries hard work; or, where some build week carries none, less
+        load than the lightest full build week.
+
+    That second lever accepts a recovery week with no extra rest day and even
+    more minutes than a build, provided it is all easy: the owner's decision
+    that the load floor wins over the rest-day count.
 
     Two other measures of "load type" were tried and are wrong. An average
     intensity over the week read a build week holding VO2max, threshold and a
@@ -424,11 +433,14 @@ def stepback_looks_lighter(deload, builds) -> "tuple[bool, str]":
     FTP test (88 TSS once the test was dropped): the week anyone would call
     harder. So it is hard work first, and load only when a build week has none.
 
-    Measured over 28 start dates for a rider with weekends off, the rest-day
-    rule alone failed 4 to 14 times depending on the plan mode, while every one
-    of those recovery weeks was already all-Z2 at a lower intensity: the week
-    was lighter, and the check was looking at the one axis the rider's
-    availability had fixed. Partial weeks are compared with nothing.
+    Measured over 28 start dates (Sep 14 - Oct 11 2026) for three rider
+    shapes, the rest-day rule alone failed 12 of 28 for each, on fixed weekdays
+    that depend on the rider's availability. In all 44 failing recovery weeks
+    (a start date can fail two) the planner's rest-day loop had stopped at the
+    load floor, and none of those recovery
+    weeks held hard work apart from an FTP test: the week was lighter, and the
+    check was looking at the one axis the floor had fixed. Partial weeks are
+    compared with nothing.
     """
     full = [b for b in builds if _is_full_week(b)]
     if not full or not _is_full_week(deload):
@@ -456,16 +468,16 @@ def stepback_looks_lighter(deload, builds) -> "tuple[bool, str]":
                       f"{least_hard:.0f} hard minutes in every build week")
 
     # A block containing an all-easy week: no hard work to be lighter than, so
-    # the recovery week has to carry less load than that week.
+    # the recovery week has to carry less load than every full build week.
     def tss(w):
         return sum(float(s.tss_estimate or 0) for s in _training(w))
 
     mine, theirs = tss(deload), min(tss(b) for b in full)
     if mine < theirs:
         return True, (f"lighter load type: all easy, {mine:.0f} TSS against "
-                      f"{theirs:.0f} in an all-easy build week")
+                      f"{theirs:.0f} in its lightest full build week")
     return False, (f"no more rest days than its builds, and {mine:.0f} TSS against "
-                   f"{theirs:.0f} in an all-easy build week")
+                   f"{theirs:.0f} in its lightest full build week")
 
 
 def check_stepback_lightest(weeks, today=None) -> list[Violation]:

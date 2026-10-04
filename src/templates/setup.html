@@ -655,6 +655,13 @@ async function saveAll() {
     payload.rest_days = [...document.querySelectorAll('#rest-grid .day-btn.rest')].map(b => parseInt(b.dataset.day));
 
   try {
+    const ens = await _ensureProfile();
+    if (ens !== true) {
+      st.className = 'status err';
+      st.textContent = (ens === 503) ? 'A sync is running \u2014 try again in a moment.'
+                                     : 'Could not create your profile \u2014 please try again.';
+      return;
+    }
     const res = await fetch('/api/setup/save', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload)
@@ -761,9 +768,20 @@ PERSIST_IDS.forEach(id => {
 // ── Explicit, retryable intervals.icu link (mirrors profile_setup) ───────
 // persistState() before leaving so the OAuth round-trip restores the wizard
 // fields; the callback returns to /setup?icu=... where we render the status.
-function connectIcu() {
+async function connectIcu() {
   try { persistState(); } catch (_) {}
+  const ok = await _ensureProfile();
+  if (ok !== true) { refreshLinkStatus('error', ok === 503 ? 'busy' : '', ''); return; }
   window.location.href = '/oauth/icu/start?return_to=' + encodeURIComponent('/setup');
+}
+// The link and the final save both write into the active profile. After the
+// last profile was deleted there is none, and every link ended in
+// "profile_gone" (#24): make sure of one first. true, or the HTTP status.
+async function _ensureProfile() {
+  try {
+    const r = await fetch('/api/setup/ensure-profile', {method: 'POST'});
+    return r.ok ? true : r.status;
+  } catch (_) { return 0; }
 }
 // The linked state is a card, not a line: which account, what happens next.
 // Built with textContent -- the athlete's name is never interpreted as HTML.

@@ -1241,6 +1241,22 @@ def _setup_path_allowed(p: Path) -> bool:
     return False
 
 
+@app.post("/api/setup/ensure-profile")
+def setup_ensure_profile():
+    """The first-run wizard calls this before it links intervals.icu or saves:
+    both write into the active profile, and after the last profile was deleted
+    there is none (#24: every link ended in profile_gone). A POST, so the page
+    load itself never creates anything."""
+    from profile_manager import ProfileManager
+    from migrate_profiles import default_profile_name
+    try:
+        pid = ProfileManager.get().ensure_active_profile(default_profile_name())
+    except db.SyncBusy:
+        return JSONResponse({"error": "sync busy — try again in a moment"},
+                            status_code=503)
+    return {"ok": True, "id": pid}
+
+
 @app.post("/api/setup/save")
 def setup_save(body: dict):
     """Save all wizard settings — writes to active profile's athlete.json + .env.

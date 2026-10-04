@@ -139,7 +139,7 @@ def classify_distribution(
     Returns one of: 'polarized', 'pyramidal', 'threshold', 'hiit', 'base', 'unique'.
 
     Rules (first match wins):
-      1a. additive PI > 2.0                                    → polarized
+      1a. additive PI > 2.0 AND z1z2 > z5+ > z3z4              → polarized
       1b. Treff(mult) PI > 2.0 AND z5+ >= 20 AND z3z4 < z5+    → polarized
       2. z5+ > 40 AND z1z2 < 20                                → hiit
       3. z3z4 >= 30 AND z5+ <= 15 AND z1z2 <= 50               → threshold
@@ -168,7 +168,11 @@ def classify_distribution(
     """
     if pi is None:
         pi = polarization_index(z1z2_pct, z3z4_pct, z5plus_pct)
-    if pi is not None and pi > 2.0:
+    # Treff 2019's precondition: a distribution is polarized only when
+    # Z1 > Z3 > Z2 (easy > hard > middle). Without it the additive PI fires on
+    # the easy pole alone: an all-Z2 ride with a few seconds of tempo
+    # (99.9/0.1/0.0) scores log10(999) = 3.0 and read "polarized, 100%".
+    if pi is not None and pi > 2.0 and z1z2_pct > z5plus_pct > z3z4_pct:
         return "polarized"
     treff_pi = treff_polarization_index(z1z2_pct, z3z4_pct, z5plus_pct)
     if (

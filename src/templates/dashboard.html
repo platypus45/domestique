@@ -1429,6 +1429,7 @@ details > summary:hover::before { color: var(--accent); }
 }
 </style>
 <script src="/static/vendor/chart.umd.min.js"></script>
+<script src="/static/js/icu-link-reasons.js"></script>
 </head>
 <body>
 <!-- v1.6.0 — Frontend error capture. Posts every uncaught error and
@@ -16700,23 +16701,12 @@ function handleIcuOauthReturn() {
     if (icu === 'connected') showToast('intervals.icu connected ✓', 4000, 'success');
     else if (icu === 'unavailable') showToast("intervals.icu connect isn't enabled in this build yet — coming soon.", 6000, 'warning');
     else if (icu === 'error') {
-      // AC3d: friendly per-reason copy; no_athlete_id is a hard error the
-      // connection card must keep showing (nothing was saved — retry is clean).
-      const REASON_MSGS = {
-        no_athlete_id: "intervals.icu didn't return an athlete id for that account. Nothing was linked — try connecting again.",
-        profile_gone: 'the profile that started the sign-in no longer exists.',
-        state: 'the sign-in link expired — start again from this page.',
-        exchange: 'intervals.icu rejected the sign-in code — try again (a code is single-use and expires within minutes).',
-        network: "the app could not reach intervals.icu — a certificate/proxy problem. On Windows this is usually antivirus \"HTTPS scanning\" or a corporate proxy re-signing the connection; update the app, or add intervals.icu to the scanner's exclusions, then try again.",
-        token: 'intervals.icu returned an unexpected response — try again.',
-        purge: "signed in, but clearing the previous account's data failed — see the log, then try again.",
-        save: 'signed in, but the token could not be saved to your profile folder (permissions or disk) — fix the folder, then connect again.',
-        denied: 'access was declined on intervals.icu.',
-        busy: 'a sync was in progress — try again in a moment.'
-      };
+      // AC3d: friendly per-reason copy (static/js/icu-link-reasons.js, shared
+      // with the setup wizards); no_athlete_id is a hard error the connection
+      // card must keep showing (nothing was saved — retry is clean).
       const reason = p.get('reason') || '';
       const status = p.get('status') || '';
-      const msg = (REASON_MSGS[reason] || 'try again') + (status ? ' (HTTP ' + status + ')' : '');
+      const msg = icuLinkFailureText(reason, status);
       showToast('intervals.icu connection failed — ' + msg, 8000, 'error');
       window._icuConnError = 'Connection failed — ' + msg;
       try { loadIcuConnection(); } catch (_) {}

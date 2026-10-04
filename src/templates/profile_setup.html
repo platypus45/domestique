@@ -94,6 +94,7 @@ a.btn { text-decoration: none; display: inline-block; }
 .help-link { font-size: 12px; color: var(--accent); text-decoration: none; }
 .help-link:hover { text-decoration: underline; }
 </style>
+<script src="/static/js/icu-link-reasons.js"></script>
 </head>
 <body>
 <div class="wizard">
@@ -326,7 +327,8 @@ applyServerLimits();
 (function initIcuReturn() {
   let saved = null;
   try { saved = JSON.parse(sessionStorage.getItem('ps_wizard') || 'null'); } catch (_) {}
-  const icu = new URLSearchParams(location.search).get('icu');
+  const _q = new URLSearchParams(location.search);
+  const icu = _q.get('icu');
   if (saved && saved.createdId) {
     // ps_wizard is stashed only AFTER a successful finish — the profile
     // exists and is active, so landing on the connect step is correct.
@@ -336,7 +338,7 @@ applyServerLimits();
   if (icu) {
     try { sessionStorage.removeItem('ps_wizard'); } catch (_) {}
     try { history.replaceState({}, '', '/profile-setup'); } catch (_) {}
-    refreshLinkStatus(icu);
+    refreshLinkStatus(icu, _q.get('reason') || '', _q.get('status') || '');
   }
 })();
 
@@ -507,13 +509,13 @@ function _setLinkState(state) {
   if (btn) { btn.className = 'btn btn-primary'; btn.textContent = (state === 'error') ? 'Try again' : 'Sign in to intervals.icu'; }
 }
 
-async function refreshLinkStatus(icuParam) {
+async function refreshLinkStatus(icuParam, reason, status) {
   const el = document.getElementById('link-status');
   if (!el) return;
   if (icuParam === 'error' || icuParam === 'unavailable') {
     el.textContent = '';
     const msg = document.createElement('span'); msg.style.color = 'var(--red)';
-    msg.textContent = 'Couldn\u2019t link your account \u2014 please try again.';
+    msg.textContent = 'Couldn\u2019t link your account \u2014 ' + icuLinkFailureText(reason, status);
     el.appendChild(msg);
     _setLinkState('error');
     return;

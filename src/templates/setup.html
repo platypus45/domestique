@@ -112,6 +112,7 @@ input.invalid { border-color: var(--red); }
   background: rgba(79,108,247,0.12); border-radius: 999px; padding: 1px 7px;
   margin-left: 6px; vertical-align: middle; }
 </style>
+<script src="/static/js/icu-link-reasons.js"></script>
 </head>
 <body>
 <div class="wizard">
@@ -799,14 +800,12 @@ function _setLinkState(state) {
   btn.textContent = (state === 'error') ? 'Try again' : 'Sign in to intervals.icu';
 }
 
-async function refreshLinkStatus(icuParam, reason) {
+async function refreshLinkStatus(icuParam, reason, status) {
   const el = document.getElementById('setup-link-status');
   if (!el) return;
   if (icuParam === 'error' || icuParam === 'unavailable') {
-    // AC3d: no_athlete_id is a hard, actionable error -- say what happened.
-    const msg = (reason === 'no_athlete_id')
-      ? "intervals.icu didn't return an athlete id for that account. Nothing was linked \u2014 try again."
-      : 'Couldn\u2019t link your account \u2014 please try again.';
+    // Say which step failed (AC3d) -- the same words the dashboard uses.
+    const msg = 'Couldn\u2019t link your account \u2014 ' + icuLinkFailureText(reason, status);
     el.textContent = '';
     const span = document.createElement('span'); span.style.color = 'var(--red)'; span.textContent = msg;
     el.appendChild(span);
@@ -869,9 +868,10 @@ async function refreshLinkStatus(icuParam, reason) {
   const _q = new URLSearchParams(location.search);
   const _icuRet = _q.get('icu');
   const _icuReason = _q.get('reason') || '';
+  const _icuStatus = _q.get('status') || '';
   if (_icuRet) {
     try { history.replaceState({}, '', '/setup'); } catch (_) {}
-    refreshLinkStatus(_icuRet, _icuReason);
+    refreshLinkStatus(_icuRet, _icuReason, _icuStatus);
   } else {
     refreshLinkStatus('');
   }

@@ -13201,7 +13201,10 @@ async function renderPlanJSON(plan) {
           spontaneous = `<div class="pg-card-actual" style="color:var(--yellow);">${icons} ${actDur}m${actTss ? ' · ' + Math.round(actTss) + ' TSS' : ''}</div>`;
         }
         const todayCls = isToday ? ' pg-today-session' : '';
-        cal += `<div class="wc-day wc-rest${todayCls}" data-pg-day="${dayStr || ''}" data-pg-week-idx="${wi}" data-pg-rest="1" style="min-height:55px;padding:3px;position:relative;">
+        const restDrop = dayStr
+          ? ` ondragover="pgDragOver(event)" ondragleave="pgDragLeave(event)" ondrop="pgDrop(event,'${dayStr}',${wi})"`
+          : '';
+        cal += `<div class="wc-day wc-rest${todayCls}" data-pg-day="${dayStr || ''}" data-pg-week-idx="${wi}" data-pg-rest="1" data-pg-completed="${dayActuals.length ? '1' : '0'}" style="min-height:55px;padding:3px;position:relative;"${restDrop}>
           <div class="wc-type wc-rest-type" style="font-size:10px;">REST</div>
           ${spontaneous}
         </div>`;
@@ -13277,18 +13280,21 @@ function pgDragStart(e, srcDay, srcWeekIdx) {
   const srcMonday = _pgIsoMonday(srcDay);
   window._pgDrag = { srcDay, srcWeekIdx, srcMonday };
   // Mark every other day cell within the plan-grid as valid/invalid based
-  // on ISO-week match, rest, completed.
+  // on ISO-week match, completed, unavailable.
   const cells = document.querySelectorAll('#plan-calendar .wc-day');
   cells.forEach(c => {
     if (!(c instanceof HTMLElement)) return;
     const day = c.getAttribute('data-pg-day') || '';
     if (!day) return;
     if (day === srcDay) return;
-    const isRest = c.getAttribute('data-pg-rest') === '1';
+    // A rest day is a valid target (a rider's own rest day, or the day a
+    // moved workout left); a day marked unavailable is not.
     const isCompleted = c.getAttribute('data-pg-completed') === '1';
+    const av = ((window._planData || {}).availability || {})[day];
+    const isUnavailable = !!av && Number(av.hours) === 0;
     const cellMonday = _pgIsoMonday(day);
     const sameWeek = cellMonday && (cellMonday === srcMonday);
-    if (sameWeek && !isRest && !isCompleted) {
+    if (sameWeek && !isCompleted && !isUnavailable) {
       c.classList.add('pg-dropping-valid');
     } else {
       c.classList.add('pg-dropping-invalid');
@@ -14097,7 +14103,11 @@ function renderCalDay(d, wi, di, phaseKey, today) {
     const _restIsEventGoal = (_g && (_g.type === 'event_preparation' || _g.type === 'event'));
     const _restBadge = (_restEvent && !isToday)
       ? `<div class="cal-goal-badge" title="${_restIsEventGoal ? 'Event day — the green ring marks your event, not today' : 'Plan ends here — the green ring marks your goal date, not today'}">${_restIsEventGoal ? 'EVENT' : 'PLAN END'}</div>` : '';
-    return `<div class="cal-day cal-rest cal-phase-${phaseKey}${isToday ? ' cal-today' : ''}${_restEventCls}" data-cs="rest" data-date="${d.date}">
+    // A rest day takes a dropped session: a rider whose life moved a workout
+    // onto their rest day, or one dragging a moved workout back to the day it
+    // left (that day is a rest stub now). Days marked unavailable do not.
+    return `<div class="cal-day cal-rest cal-phase-${phaseKey}${isToday ? ' cal-today' : ''}${_restEventCls}" data-cs="rest" data-date="${d.date}"
+      ondragover="calDragOver(event)" ondragleave="calDragLeave(event)" ondrop="calDrop(event,'${esc(d.date)}',${wi})">
       ${_restBadge}<div class="cal-rest-label" style="font-size:10px;font-weight:700;color:var(--text3);letter-spacing:0.05em;">REST</div>
     </div>`;
   }
@@ -14791,12 +14801,15 @@ function calDragStart(e, srcDay, srcWeekIdx) {
     const day = c.getAttribute('data-date') || '';
     if (!day) return;
     if (day === srcDay) return;
+    // data-cal-rest="1" is a rest day that was ridden; a plain rest day
+    // (data-cs="rest") is a valid target, an unavailable one is not.
     const isRest = c.getAttribute('data-cal-rest') === '1';
     const isCompleted = c.getAttribute('data-cal-completed') === '1';
     const isMissing = c.getAttribute('data-cal-missing') === '1';
+    const isUnavailable = c.getAttribute('data-cs') === 'future_unavailable';
     const cellMonday = _calIsoMonday(day);
     const sameWeek = cellMonday && (cellMonday === srcMonday);
-    if (sameWeek && !isRest && !isCompleted && !isMissing) {
+    if (sameWeek && !isRest && !isCompleted && !isMissing && !isUnavailable) {
       c.classList.add('cal-dropping-valid');
     } else {
       c.classList.add('cal-dropping-invalid');

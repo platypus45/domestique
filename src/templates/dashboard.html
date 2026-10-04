@@ -14580,7 +14580,9 @@ function _calOpenDayChooser(day, sec, showPlanned) {
     const c = ex.components || {};
     const pct = a => (a && typeof a.score === 'number') ? Math.round(a.score * 100) + '%' : '—';
     const parts = [`duration ${pct(c.duration)}`, `load ${pct(c.load)}`];
-    if (c.intensity) parts.push(`intensity ${pct(c.intensity)}${ex.basis === 'hr' ? ' (HR)' : ''}`);
+    // "above its zones": the in-band share fell because the ride was harder.
+    const above = (c.intensity && c.intensity.direction === 'above' && c.intensity.score < 1) ? ', above its zones' : '';
+    if (c.intensity) parts.push(`intensity ${pct(c.intensity)}${ex.basis === 'hr' ? ' (HR)' : ''}${above}`);
     else if (ex.basis === 'load_only') parts.push('intensity n/a');
     execRow = `<div style="font-size:12px;color:var(--text2);margin:0 0 10px;padding:6px 10px;background:var(--surface2);border-radius:6px;">
       Execution <b style="color:var(--text);">${Math.round(ex.score)}</b>/100 — ${parts.join(' · ')} <span style="color:var(--text3);">(${esc(String(ex.verdict || '').replace('_', ' '))})</span>

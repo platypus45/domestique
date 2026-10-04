@@ -139,6 +139,66 @@ def test_intensity_fraction_normalized_by_expected():
     assert r["verdict"] == "on_target"
 
 
+# ── a prescription on a zone line; harder is not "under" (forum report) ──────
+# "Endurance + Strides 60min" holds 34.5 of 60 min at 75 % FTP, the Z2
+# ceiling. Ridden 5 % up, duration and load read 100 % but intensity 46 %
+# "(under)"; ridden exactly, only ~80 %. Seconds below are per zone for the
+# two rides (ERG noise sd 4 W at FTP 250).
+
+def _seg(dur_s, lo, hi=None):
+    return {"kind": "steady", "start_s": 0, "dur_s": dur_s, "lo": lo,
+            "hi": lo if hi is None else hi}
+
+
+_STRIDES_60 = ([_seg(180, 0.30, 0.50), _seg(180, 0.60), _seg(180, 0.75), _seg(120, 0.55)]
+               + [_seg(210, 0.75), _seg(30, 1.0)] * 3 + [_seg(240, 0.55)]
+               + [_seg(210, 0.75), _seg(30, 1.15)] * 3 + [_seg(240, 0.55)]
+               + [_seg(210, 0.75), _seg(30, 1.30)] * 3 + [_seg(300, 0.55, 0.35)])
+_RIDDEN_EXACT = _tiz(z1=768, z2=1548, z3=1014, z4=90, z5=90, z6=90)
+_RIDDEN_5PCT_UP = _tiz(z1=468, z2=810, z3=2052, z4=48, z5=78, z6=144)
+
+
+def test_a_session_on_the_z2_ceiling_takes_in_z3():
+    for tiz, tss in ((_RIDDEN_EXACT, 57), (_RIDDEN_5PCT_UP, 59)):
+        r = es.score_ride(_planned("z2", 60, 57), _ride(tss=tss, tiz=tiz), "power",
+                          band_segments=_STRIDES_60)
+        assert r["components"]["intensity"]["band"] == ["z1", "z2", "z3"]
+        assert r["components"]["intensity"]["score"] == 1.0
+        assert r["score"] == 100 and r["verdict"] == "on_target", r
+
+
+def test_a_mid_zone_file_keeps_its_band():
+    """Endurance at 65 % sits nowhere near a line: the band stays Z1-Z2, and a
+    ride at tempo still loses intensity."""
+    segs = [_seg(3600, 0.65)]
+    r = es.score_ride(_planned("z2", 60, 45), _ride(tss=60, tiz=_tiz(z2=600, z3=3000)),
+                      "power", band_segments=segs)
+    assert r["components"]["intensity"]["band"] == ["z1", "z2"]
+    assert r["components"]["intensity"]["score"] < 0.3
+
+
+def test_time_above_the_band_never_reads_under():
+    # Without the planned file the band is the type's own Z1-Z2: the 5 %-up
+    # ride falls short on in-band time, but above it, so "over", not "under".
+    r = es.score_ride(_planned("z2", 60, 57), _ride(tss=59, tiz=_RIDDEN_5PCT_UP), "power")
+    i = r["components"]["intensity"]
+    assert i["direction"] == "above" and i["ratio"] < es.VERDICT_UNDER_BELOW
+    assert r["verdict"] == "over"
+    # Below the band is still under: vo2max ridden as tempo.
+    r = es.score_ride(_planned("vo2max", 60, 70),
+                      _ride(tss=65, tiz=_tiz(z2=1200, z3=1500, z4=300, z5=600)), "power")
+    assert r["components"]["intensity"]["direction"] == "below"
+    assert r["verdict"] == "under"
+    # A Z2 session ridden entirely at threshold still bears little resemblance.
+    r = es.score_ride(_planned("z2", 60, 57), _ride(tss=60, tiz=_tiz(z4=3600)), "power")
+    assert r["verdict"] == "off_plan"
+
+
+def test_the_match_passes_the_planned_file_to_the_scorer():
+    src = (ROOT / "src" / "app.py").read_text(encoding="utf-8")
+    assert "band_segments=band_segments)" in src
+
+
 def test_ss_accumulator_key_is_excluded():
     tiz = _tiz(z1=600, z4=600)
     tiz["ss"] = 99999  # overlapping accumulator must not pollute sums

@@ -15544,9 +15544,20 @@ def _execution_for_match(s_json: dict, activity_id) -> "dict | None":
         mode = ProfileManager.get().target_mode or "power"
     except Exception:
         mode = "power"
+    # The planned file places the intensity band: a prescription sitting on a
+    # zone line (endurance at 75 % FTP) takes in the zone across it.
+    band_segments = None
+    zwo = (s_json.get("zwo_file") or "").strip()
+    if zwo:
+        try:
+            import structure_fidelity as _sf
+            band_segments = _sf.parse_zwo_file(active_workout_dir() / os.path.basename(zwo))
+        except Exception:
+            _log.debug("execution band segments unavailable for %s", zwo, exc_info=True)
     try:
         import execution_score
-        result = execution_score.score_ride(s_json, ride, mode)
+        result = execution_score.score_ride(s_json, ride, mode,
+                                            band_segments=band_segments)
     except Exception:
         _log.exception("execution score_ride failed")
         return None

@@ -658,8 +658,8 @@ class JsApi:
     bridge lets the JS hand a payload to Python and pop a native save
     dialog instead.
 
-    Only ``save_zwo`` / ``save_fit`` are exposed — pywebview makes every
-    public attribute of the api object callable from JS, so we
+    Only ``save_zwo`` / ``save_fit`` / ``save_crs`` are exposed — pywebview
+    makes every public attribute of the api object callable from JS, so we
     deliberately don't add anything else here.
     """
 
@@ -737,6 +737,28 @@ class JsApi:
         return self._save(
             filename, data,
             ("ZWO Workout (*.zwo)", "All files (*.*)"),
+        )
+
+    def save_crs(self, filename: str, content: str = "", region: str = "") -> dict:
+        # Course files went out as <a download> / window.open, which no
+        # embedded webview turns into a save: nothing happened on Windows and
+        # Linux. Same bridge as the workouts; an empty body (the WKWebView
+        # attachment-fetch failure, issue #5) is read off disk instead.
+        data = (content or "").encode("utf-8")
+        if not data:
+            try:
+                import app
+                p = app.course_file_path(region, filename)
+                data = p.read_bytes() if p is not None else b""
+            except Exception as e:
+                log = _log()
+                if log is not None:
+                    log.warning("save_crs server-side read failed: %s", e)
+        if not data:
+            return {"ok": False, "error": "empty course (could not read file)"}
+        return self._save(
+            filename, data,
+            ("Course (*.crs)", "All files (*.*)"),
         )
 
     def save_fit(self, filename: str, content_b64: str = "",

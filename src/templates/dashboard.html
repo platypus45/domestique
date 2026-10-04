@@ -4045,7 +4045,7 @@ async function openCourseDetail(region, filename) {
       </div>
       <div id="course-elev-svg">${renderElevSvg(data.points || data.profile || [])}</div>
       <div style="margin-top:14px;">
-        <a href="/api/course/${encodeURIComponent(region)}/${encodeURIComponent(asciiFilename)}/download" class="btn btn-primary" download>Download CRS</a>
+        <button class="btn btn-primary" data-region="${esc(region)}" data-file="${esc(asciiFilename)}" onclick="downloadCrsFile(this.dataset.region, this.dataset.file)">Download CRS</button>
         <button onclick="closeModal()" class="btn" style="margin-left:8px;">Close</button>
       </div>
     </div>`);
@@ -11224,8 +11224,8 @@ async function startRideOnRoute(routeId) {
       showToast('Could not resolve route CRS path.', 4000);
       return;
     }
-    window.open(`/api/course/${encodeURIComponent(region)}/${encodeURIComponent(filename)}/download`, '_blank');
     showToast('Downloading ' + (r.name || routeId) + ' — open in your trainer app, then Import FIT afterward.', 5000);
+    await downloadCrsFile(region, filename);
   } catch (e) {
     alert('Failed to download route: ' + (e.message || e));
   }
@@ -19666,6 +19666,8 @@ async function _saveViaPywebview(kind, filename, fetchUrl, meta) {
     let res;
     if (kind === 'zwo') {
       res = await window.pywebview.api.save_zwo(filename, await r.text(), meta.zwo_file || filename);
+    } else if (kind === 'crs') {
+      res = await window.pywebview.api.save_crs(filename, await r.text(), meta.region || '');
     } else {
       // v1.8.12 BUG-FIX — base64-encode via FileReader.readAsDataURL()
       // instead of the manual String.fromCharCode + btoa chunk loop.
@@ -19747,6 +19749,31 @@ async function downloadZwoFile(filename) {
     }, 1000);
   } catch (e) {
     try { showToast(`ZWO download error: ${e.message || e}`, 4000); } catch(_) {}
+  }
+}
+
+// Course (CRS) download: same route as the workouts. The old <a download> and
+// window.open() did nothing inside the app window on Windows and Linux.
+async function downloadCrsFile(region, filename) {
+  const url = `/api/course/${encodeURIComponent(region)}/${encodeURIComponent(filename)}/download`;
+  if (await _saveViaPywebview('crs', filename, url, {region: region})) return;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) {
+      try { showToast(`Course download failed: ${r.status}`, 4000); } catch(_) {}
+      return;
+    }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      try { URL.revokeObjectURL(a.href); a.remove(); } catch(_) {}
+    }, 1000);
+  } catch (e) {
+    try { showToast(`Course download error: ${e.message || e}`, 4000); } catch(_) {}
   }
 }
 

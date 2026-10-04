@@ -7107,6 +7107,15 @@ def download_zwo(category: str, filename: str, outdoor: int = Query(0),
                                  cap_active=_cap_active_for_download(cap))
 
 
+def course_file_path(region: str, filename: str) -> "Path | None":
+    """The CRS file a course download serves, or None. Shared by the HTTP
+    download and the desktop save bridge (launcher.JsApi.save_crs)."""
+    path = _safe_path(COURSE_DIR, region, filename)
+    if not path or not path.exists():
+        path = _safe_path(COURSE_DIR, "virtual", region, filename)
+    return path if path and path.exists() else None
+
+
 @app.get("/api/course/{region}/{filename}/download")
 def download_course_by_id(region: str, filename: str):
     """Serve a CRS course file as a download attachment.
@@ -7114,10 +7123,8 @@ def download_course_by_id(region: str, filename: str):
     v4.0.0-alpha: IMPL-B's route-picker calls this URL pattern. The earlier
     /api/download/crs/<region>/<filename> route is kept for backward compat.
     """
-    path = _safe_path(COURSE_DIR, region, filename)
-    if not path or not path.exists():
-        path = _safe_path(COURSE_DIR, "virtual", region, filename)
-    if not path or not path.exists():
+    path = course_file_path(region, filename)
+    if path is None:
         return JSONResponse({"error": "not found"}, 404)
     return FileResponse(
         path,

@@ -385,6 +385,101 @@ def asks_nothing(w) -> bool:
     return away
 
 
+def _is_full_week(w) -> bool:
+    """Six days or more: a plan's first week, starting mid-week, is not a week
+    to compare a block against. A Thursday start gives a two-day W1 with no
+    room for a rider's usual rest days, and counting it as a build would judge
+    a recovery week against a week that is short, not hard. (It is not what
+    made the old rest-day check depend on the weekday: all 44 failing recovery
+    weeks of the 28-date sweep still fail with partial weeks excluded. That was
+    the load floor, below.)"""
+    return (w.end - w.start).days >= 6
+
+
+def _training(w):
+    """Sessions that are training load: not rest, not a race, not an FTP test.
+    A test is a measurement placed where the legs are fresh -- often in the
+    recovery week itself -- and counting its maximal effort as the week's
+    intensity makes a recovery week look harder than the block it unloads."""
+    return [s for s in w.sessions
+            if s is not None and s.session_type not in ("rest", "ftp_test")
+            and not _is_race(s)]
+
+
+def stepback_looks_lighter(deload, builds) -> "tuple[bool, str]":
+    """Does a recovery week LOOK lighter than the build weeks of its block?
+
+    The rule the rider sees, and one definition of it (the planner used rest
+    days, this module used TSS, and they disagreed). Lighter by the first lever
+    that fits:
+
+      * more rest days than every full build week; or
+      * where the rider's available days leave no room for another rest day
+        without dropping under the load floor (the floor wins: a recovery week
+        too light is how the build weeks after it ramped at 1.7x), lighter by
+        LOAD TYPE -- no hard session (an FTP test aside) while every full build
+        week carries hard work; or, where some build week carries none, less
+        load than the lightest full build week.
+
+    That second lever accepts a recovery week with no extra rest day and even
+    more minutes than a build, provided it is all easy: the owner's decision
+    that the load floor wins over the rest-day count.
+
+    Two other measures of "load type" were tried and are wrong. An average
+    intensity over the week read a build week holding VO2max, threshold and a
+    sprint as EASIER than an all-Z2 recovery week, because a 300-minute Z2 ride
+    diluted it. Total load alone read a three-day rider's all-Z2 recovery week
+    (126 TSS) as heavier than a build week holding a sweet-spot session and an
+    FTP test (88 TSS once the test was dropped): the week anyone would call
+    harder. So it is hard work first, and load only when a build week has none.
+
+    Measured over 28 start dates (Sep 14 - Oct 11 2026) for three rider
+    shapes, the rest-day rule alone failed 12 of 28 for each, on fixed weekdays
+    that depend on the rider's availability. In all 44 failing recovery weeks
+    (a start date can fail two) the planner's rest-day loop had stopped at the
+    load floor, and none of those recovery
+    weeks held hard work apart from an FTP test: the week was lighter, and the
+    check was looking at the one axis the floor had fixed. Partial weeks are
+    compared with nothing.
+    """
+    full = [b for b in builds if _is_full_week(b)]
+    if not full or not _is_full_week(deload):
+        return True, "no full build week to compare with"
+
+    def rests(w):
+        return sum(1 for s in w.sessions if s is not None and s.session_type == "rest")
+
+    if rests(deload) > max(rests(b) for b in full):
+        return True, "more rest days"
+    train = _training(deload)
+    if any(s.session_type in HARD_TYPES for s in train):
+        return False, "no rest day to spare, and it still carries a hard session"
+
+    def hard_minutes(w):
+        # HARD_TYPES counts an FTP test as hard, so a build week's test is hard
+        # work. Only the recovery week may hold one (_training drops it there),
+        # because that is where tests are placed on purpose, on fresh legs.
+        return sum(float(s.duration_min or 0) for s in w.sessions
+                   if s is not None and not _is_race(s) and s.session_type in HARD_TYPES)
+
+    least_hard = min(hard_minutes(b) for b in full)
+    if least_hard > 0:
+        return True, (f"lighter load type: all easy, against at least "
+                      f"{least_hard:.0f} hard minutes in every build week")
+
+    # A block containing an all-easy week: no hard work to be lighter than, so
+    # the recovery week has to carry less load than every full build week.
+    def tss(w):
+        return sum(float(s.tss_estimate or 0) for s in _training(w))
+
+    mine, theirs = tss(deload), min(tss(b) for b in full)
+    if mine < theirs:
+        return True, (f"lighter load type: all easy, {mine:.0f} TSS against "
+                      f"{theirs:.0f} in its lightest full build week")
+    return False, (f"no more rest days than its builds, and {mine:.0f} TSS against "
+                   f"{theirs:.0f} in its lightest full build week")
+
+
 def check_stepback_lightest(weeks, today=None) -> list[Violation]:
     """An unload week is lighter than the load weeks of its block.
 
@@ -416,6 +511,31 @@ def check_stepback_lightest(weeks, today=None) -> list[Violation]:
             block = []
         else:
             block.append(load)
+    return out
+
+
+def check_stepback_looks_lighter(weeks, today=None) -> list[Violation]:
+    """A recovery week looks lighter than its block, to the rider.
+
+    check_stepback_lightest asks whether it carries less TSS; this asks whether
+    the rider can SEE it -- more rest days, or a lighter load type where their
+    availability leaves no rest day to spare. Same block rule as the TSS check:
+    the load weeks since the last unload, with weeks already begun left alone.
+    """
+    out, block = [], []
+    for w in weeks:
+        if today is not None and w.start < today:
+            continue
+        if str(getattr(w, "phase", "")).lower() in UNLOAD_PHASES or asks_nothing(w):
+            block = []
+            continue
+        if w.is_stepback:
+            ok, why = stepback_looks_lighter(w, block)
+            if block and not ok:
+                out.append(Violation("stepback_looks_lighter", w.week_num, why))
+            block = []
+        else:
+            block.append(w)
     return out
 
 
@@ -516,6 +636,7 @@ ALL_CHECKS = (
     ("easy_slot_content", lambda ws, g, r, t: check_easy_slot_content(ws)),
     ("hard_share", lambda ws, g, r, t: check_hard_share(ws, r, t)),
     ("stepback_lightest", lambda ws, g, r, t: check_stepback_lightest(ws, t)),
+    ("stepback_looks_lighter", lambda ws, g, r, t: check_stepback_looks_lighter(ws, t)),
     ("empty_week", lambda ws, g, r, t: check_no_empty_training_week(ws, g, r, t)),
 )
 

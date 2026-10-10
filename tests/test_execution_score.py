@@ -194,6 +194,17 @@ def test_time_above_the_band_never_reads_under():
     assert r["verdict"] == "off_plan"
 
 
+def test_ftp_tests_keep_their_calibrated_band():
+    """A 20-min test at 93 % sits on the Z3/Z4 line, but test grading is
+    protocol-calibrated (FTP-tests W1a); the planned file never widens it."""
+    segs = [_seg(600, 0.5), _seg(1200, 0.93), _seg(600, 0.5)]
+    r = es.score_ride({"session_type": "ftp_test", "duration_min": 40, "tss_estimate": 50,
+                       "zwo_file": "ftp_test_1x20min_93pct_53min.zwo"},
+                      _ride(dur_s=2400, tss=50, tiz=_tiz(z1=1200, z3=600, z4=600)),
+                      "power", band_segments=segs)
+    assert r["components"]["intensity"]["band"] == ["z4", "z5"]
+
+
 def test_the_match_passes_the_planned_file_to_the_scorer():
     src = (ROOT / "src" / "app.py").read_text(encoding="utf-8")
     assert "band_segments=band_segments)" in src

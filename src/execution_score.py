@@ -357,8 +357,9 @@ def score_ride(planned: dict, ride: dict, mode: str, *,
         hr_tiz = _tiz_seconds(ride.get("hr_time_in_zone"))
         if power_tiz is not None:
             basis = "power"
-            intensity = _intensity_axis(power_tiz, _edge_widened(zones, band_segments),
-                                        expected, "power")
+            # FTP tests keep their protocol-calibrated band (W1a above).
+            band = zones if stype == "ftp_test" else _edge_widened(zones, band_segments)
+            intensity = _intensity_axis(power_tiz, band, expected, "power")
         elif hr_tiz is not None and min(zones) <= 4:
             # HR-guidable band only — z5+ prescriptions are RPE in hr mode
             # (hr_targets returns RPE for zone >= 5), so HR TiZ can't grade

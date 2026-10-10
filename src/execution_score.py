@@ -54,6 +54,7 @@ Structure fidelity (advisory axis, additive — see structure_fidelity.py):
 """
 from __future__ import annotations
 
+import zones
 from structure_fidelity import score_structure
 
 __all__ = [
@@ -94,6 +95,20 @@ POWER_BANDS: dict[str, tuple[tuple[int, ...], float]] = {
     "vo2_short": ((5, 6), 0.25),
     "anaerobic": ((5, 6, 7), 0.12),
 }
+
+# A planned step within EDGE_TOL (FTP fraction) of the band's edge spills
+# across it even when ridden exactly: trainer and power-meter noise is a few
+# % FTP second to second. When at least EDGE_SHARE of the session's in-band
+# planned time sits that close, the band takes in the zone across the line
+# (the sweet-spot straddle, decided per file). A rider's report: "Endurance +
+# Strides" holds 34.5 of 60 min at 75 % FTP, the Z2 ceiling; ridden 5 % up it
+# scored intensity 44 % "under", and ridden exactly only 80 %. EDGE_SHARE is
+# where a perfectly ridden session starts losing intensity score.
+EDGE_TOL = 0.03
+EDGE_SHARE = 0.25
+# Coggan zone ceilings as FTP fractions, z1..z6 (zones.py is the one source).
+_ZONE_CEILING = {i: hi for i, (_lo, hi, _n) in enumerate(zones._POWER_FRACS, start=1)
+                 if i < 7}
 
 # Types scored on duration+load only, in EVERY basis (see module docstring).
 RPE_ONLY_TYPES = frozenset({"sprint"})
@@ -169,10 +184,47 @@ def _hr_band(power_zones: "tuple[int, ...]") -> "tuple[int, ...]":
     return tuple(sorted(keep))
 
 
+def _zone_of(frac: float) -> int:
+    for z, ceiling in _ZONE_CEILING.items():
+        if frac <= ceiling:
+            return z
+    return 7
+
+
+def _edge_widened(band: "tuple[int, ...]", segments) -> "tuple[int, ...]":
+    """The power band, plus the zone across any edge the planned file sits on
+    (see EDGE_TOL). ``segments``: structure_fidelity.parse_zwo_text output."""
+    lo_z, hi_z = min(band), max(band)
+    in_band = near_lo = near_hi = 0
+    for seg in segments or ():
+        a, b, d = seg.get("lo"), seg.get("hi"), int(seg.get("dur_s") or 0)
+        if a is None or b is None:
+            continue
+        for i in range(d):            # per second: ramps cross zones
+            f = float(a) + (float(b) - float(a)) * (i / (d - 1) if d > 1 else 0.0)
+            if not lo_z <= _zone_of(f) <= hi_z:
+                continue
+            in_band += 1
+            if lo_z > 1 and f <= _ZONE_CEILING[lo_z - 1] + EDGE_TOL:
+                near_lo += 1
+            if hi_z < 7 and f >= _ZONE_CEILING[hi_z] - EDGE_TOL:
+                near_hi += 1
+    if not in_band:
+        return band
+    out = set(band)
+    if near_lo >= EDGE_SHARE * in_band:
+        out.add(lo_z - 1)
+    if near_hi >= EDGE_SHARE * in_band:
+        out.add(hi_z + 1)
+    return tuple(sorted(out))
+
+
 def _intensity_axis(tiz: "dict[int, float]", zones: "tuple[int, ...]",
                     expected: float, frame: str) -> dict:
     total = sum(tiz.values())
     in_band = sum(tiz.get(z, 0.0) for z in zones)
+    above = sum(v for z, v in tiz.items() if z > max(zones))
+    below = sum(v for z, v in tiz.items() if z < min(zones))
     fraction = in_band / total if total > 0 else 0.0
     ratio = (fraction / expected) if expected > 0 else 0.0
     return {
@@ -182,6 +234,9 @@ def _intensity_axis(tiz: "dict[int, float]", zones: "tuple[int, ...]",
         "band_frame": frame,
         "band_fraction": round(fraction, 3),
         "target_fraction": expected,
+        # Where the time outside the band went: a ride harder than prescribed
+        # loses in-band share too, and must not read as "under".
+        "direction": "above" if above > below else "below",
     }
 
 
@@ -219,7 +274,8 @@ def _ride_ftp(ride: dict) -> "float | None":
 
 
 def score_ride(planned: dict, ride: dict, mode: str, *,
-               planned_segments=None, watts=None, ftp=None) -> dict:
+               planned_segments=None, watts=None, ftp=None,
+               band_segments=None) -> dict:
     """Score a completed ride against its planned session.
 
     Args:
@@ -238,6 +294,10 @@ def score_ride(planned: dict, ride: dict, mode: str, *,
             ``ride["streams"]["watts"|"power"]`` when omitted.
         ftp: optional FTP watts; falls back to ``ride["ftp_at_ride"]`` then
             ``ride["eftp_at_ride"]`` when omitted.
+        band_segments: optional planned .zwo timeline (parse_zwo_text
+            output) used ONLY to widen the power band across a zone line the
+            prescription sits on (EDGE_TOL). Kept apart from
+            planned_segments so the advisory fidelity axis stays where it was.
 
     Returns:
         {"score": int|None, "basis": "power"|"hr"|"load_only",
@@ -297,7 +357,9 @@ def score_ride(planned: dict, ride: dict, mode: str, *,
         hr_tiz = _tiz_seconds(ride.get("hr_time_in_zone"))
         if power_tiz is not None:
             basis = "power"
-            intensity = _intensity_axis(power_tiz, zones, expected, "power")
+            # FTP tests keep their protocol-calibrated band (W1a above).
+            band = zones if stype == "ftp_test" else _edge_widened(zones, band_segments)
+            intensity = _intensity_axis(power_tiz, band, expected, "power")
         elif hr_tiz is not None and min(zones) <= 4:
             # HR-guidable band only — z5+ prescriptions are RPE in hr mode
             # (hr_targets returns RPE for zone >= 5), so HR TiZ can't grade
@@ -323,6 +385,16 @@ def score_ride(planned: dict, ride: dict, mode: str, *,
     score = round(100 * sum(WEIGHTS[k] * present[k]["score"] for k in present)
                   / wsum)
 
-    verdict = _verdict([v["ratio"] for v in present.values()])
+    # An intensity shortfall from time ABOVE the band is a harder ride, not
+    # an easier one: it votes "over" (still off_plan when it collapses).
+    i_ax = present.get("intensity")
+    above_short = (i_ax is not None and i_ax.get("direction") == "above"
+                   and i_ax["ratio"] < VERDICT_UNDER_BELOW)
+    verdict = _verdict([v["ratio"] for k, v in present.items()
+                        if not (k == "intensity" and above_short)])
+    if above_short and i_ax["ratio"] < VERDICT_OFF_PLAN_BELOW:
+        verdict = "off_plan"
+    elif above_short and verdict == "on_target":
+        verdict = "over"
     return {"score": score, "basis": basis, "components": components,
             "verdict": verdict, "fidelity": fidelity}

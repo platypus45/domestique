@@ -153,6 +153,17 @@ class TestPolarizationBlock(unittest.TestCase):
         self.assertGreaterEqual(block["confidence"], 0.0)
         self.assertLessEqual(block["confidence"], 1.0)
 
+    def test_an_all_easy_ride_is_base_not_polarized(self):
+        # A forum report: a Z2 ride read "Polarized, confidence 100%" next to
+        # intervals.icu's PI of 0. Its zones: 17.5% Z1, 82.4% Z2, 0.1% Z3,
+        # nothing above. The additive PI is log10(99.9 / 0.1) = 3.0, but there
+        # is no hard pole, so Treff's Z1 > Z3 > Z2 precondition fails.
+        tiz = {"z1": 189, "z2": 890, "z3": 1, "z4": 0, "z5": 0, "z6": 0, "z7": 0}
+        block = compute_polarization_block(tiz)
+        self.assertEqual(block["z5plus_pct"], 0.0)
+        self.assertEqual(block["classification"], "base")
+        self.assertEqual(classify_distribution(99.9, 0.1, 0.0), "base")
+
     def test_empty_or_zero_dict_returns_none(self):
         self.assertIsNone(compute_polarization_block(None))
         self.assertIsNone(compute_polarization_block({}))

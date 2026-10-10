@@ -162,6 +162,22 @@ class TestMoveSessionSetsUserMovedFlag(PlanApiTestBase):
         self.assertEqual(thu_s["session_type"], "rest")
         self.assertTrue(thu_s["status"].startswith("moved_from:"))
 
+    def test_a_moved_session_can_be_moved_back_to_the_day_it_left(self):
+        """A rider moved a workout by mistake and could not drag it back: the
+        day it left is a rest stub, and rest days took no drops. The endpoint
+        always allowed it; the calendars now offer the drop."""
+        thu = (self._monday + timedelta(days=3)).isoformat()  # VO2max
+        mon = self._monday.isoformat()                        # rest
+        r = self.client.post("/api/plan/move-session", json={"date": thu, "new_date": mon})
+        self.assertEqual(r.status_code, 200, r.text)
+        r = self.client.post("/api/plan/move-session", json={"date": mon, "new_date": thu})
+        self.assertEqual(r.status_code, 200, r.text)
+        sessions = self._read_plan()["weeks"][0]["sessions"]
+        thu_s = next(s for s in sessions if s["day"] == thu)
+        mon_s = next(s for s in sessions if s["day"] == mon)
+        self.assertEqual(thu_s["session_type"], "vo2max")
+        self.assertEqual(mon_s["session_type"], "rest")
+
     def test_reject_same_date(self):
         mon = self._monday.isoformat()
         r = self.client.post("/api/plan/move-session",

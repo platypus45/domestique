@@ -70,6 +70,12 @@ function assert(cond, msg) { if (!cond) { console.error('ASSERT: ' + msg); proce
 """
 
 
+# The pages load the shared failure-reason table with a <script> tag; the
+# harness loads the same file.
+REASONS_JS_PATH = PROFILE_SETUP.parent.parent / "static" / "js" / "icu-link-reasons.js"
+REASONS_JS = REASONS_JS_PATH.read_text(encoding="utf-8")
+
+
 def _run_node(harness: str) -> None:
     res = subprocess.run(["node", "-e", harness], capture_output=True, text=True, timeout=30)
     assert res.returncode == 0, f"stderr:\n{res.stderr}\nstdout:\n{res.stdout}"
@@ -114,7 +120,7 @@ def test_oauth_binding_untouched():
 def test_profile_wizard_three_states():
     src = PROFILE_SETUP.read_text()
     fns = "\n".join(_extract_js_function(src, n) for n in ("_renderLinkedCard", "_setLinkState", "refreshLinkStatus"))
-    harness = FAKE_DOM + fns + r"""
+    harness = FAKE_DOM + REASONS_JS + fns + r"""
 const status = mk('link-status'); const btn = mk('connect-icu-btn', 'btn btn-primary', 'Sign in to intervals.icu');
 const fin = mk('step3-finish', 'btn btn-primary', 'Finish setup'); fin.hidden = true; const skip = mk('step3-done', 'skip-link', 'Continue without intervals.icu');
 const signup = mk('step3-signup', 'btn btn-secondary', 'Create a free account'); const choice = mk('icu-choice');
@@ -134,7 +140,12 @@ const signup = mk('step3-signup', 'btn btn-secondary', 'Create a free account');
   assert(choice.hidden === true && signup.hidden === true, 'comparison and create-account leave once linked');
   // error: back from a failed round-trip
   await refreshLinkStatus('error');
-  assert(status.textContent.includes('please try again'), 'error text');
+  assert(status.textContent.includes('Couldn\u2019t link your account'), 'error text');
+  // the wizard says WHICH step failed (a rider's report said nothing)
+  await refreshLinkStatus('error', 'network', '');
+  assert(status.textContent.includes('HTTPS scanning'), 'network reason shown: ' + status.textContent);
+  await refreshLinkStatus('error', 'exchange', '400');
+  assert(status.textContent.includes('rejected the sign-in code') && status.textContent.includes('(HTTP 400)'), 'exchange reason + status: ' + status.textContent);
   assert(fin.hidden === true, 'no Finish on error');
   assert(btn.className === 'btn btn-primary' && btn.textContent === 'Try again', 'primary Try again: ' + btn.className + ' / ' + btn.textContent);
   assert(skip.hidden === false && choice.hidden === false && signup.hidden === false, 'choice, create-account and continue-without back on error');
@@ -158,7 +169,7 @@ const signup = mk('step3-signup', 'btn btn-secondary', 'Create a free account');
 def test_first_run_wizard_demotes_the_relink_and_keeps_the_gated_blocks():
     src = SETUP.read_text()
     fns = "\n".join(_extract_js_function(src, n) for n in ("_renderLinkedCard", "_setLinkState", "refreshLinkStatus"))
-    harness = FAKE_DOM + fns + r"""
+    harness = FAKE_DOM + REASONS_JS + fns + r"""
 const status = mk('setup-link-status'); const btn = mk('setup-connect-btn', 'btn', 'Sign in to intervals.icu');
 const ar = mk('autofill-row'); ar.style.display = 'none'; const gb = mk('garmin-block'); gb.style.display = 'none';
 const next = mk('step1-next', 'btn btn-secondary', 'Continue without intervals.icu'); const signup = mk('setup-signup', 'btn btn-secondary', 'Create a free account'); const choice = mk('setup-icu-choice');
@@ -172,6 +183,8 @@ const next = mk('step1-next', 'btn btn-secondary', 'Continue without intervals.i
   assert(next.textContent === 'Continue' && next.className === 'btn btn-primary' && choice.hidden === true && signup.hidden === true, 'linked: Continue is the primary, comparison gone');
   await refreshLinkStatus('error', 'no_athlete_id');
   assert(status.textContent.includes("didn't return an athlete id"), 'AC3d message kept');
+  await refreshLinkStatus('error', 'network', '');
+  assert(status.textContent.includes('HTTPS scanning'), 'network reason shown: ' + status.textContent);
   assert(btn.className === 'btn btn-primary' && btn.textContent === 'Try again', 'error: ' + btn.className + ' / ' + btn.textContent);
   assert(next.textContent === 'Continue without intervals.icu' && next.className === 'btn btn-secondary' && choice.hidden === false, 'error: the choice is back, continue-without is secondary');
   fetchPayload = { method: null, connected: false };
@@ -209,3 +222,12 @@ def test_the_comparison_claims_no_table_role_it_cannot_honour():
         assert 'class="cmp"' in s
         if 'role="table"' in s:
             assert 'role="row"' in s and 'role="cell"' in s, f"{path.name}: role=table without rows"
+
+
+def test_every_screen_loads_the_shared_reason_table():
+    """refreshLinkStatus calls icuLinkFailureText; a page without the script
+    would throw on the error path and show nothing at all."""
+    tag = '<script src="/static/js/icu-link-reasons.js"></script>'
+    for page in (SETUP, PROFILE_SETUP, PROFILE_SETUP.parent / "dashboard.html"):
+        assert tag in page.read_text(encoding="utf-8"), page.name
+    assert "function icuLinkFailureText" in REASONS_JS

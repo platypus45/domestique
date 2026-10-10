@@ -52,6 +52,20 @@ def _sanitize_user_name(raw: str | None) -> str:
     return stripped.capitalize()
 
 
+def default_profile_name() -> str:
+    """Display name for a profile the app creates on its own: the OS account
+    name, or "Rider". POSIX exports $USER; Windows uses $USERNAME;
+    ``getpass.getuser()`` is the stdlib fallback that checks both plus the
+    password database."""
+    import getpass
+    try:
+        fallback = getpass.getuser()
+    except Exception:
+        fallback = None
+    return _sanitize_user_name(
+        os.environ.get("USER") or os.environ.get("USERNAME") or fallback)
+
+
 def _write_registry_atomic(path: Path, data: dict) -> None:
     """Write registry JSON using tmp + fsync + os.replace (atomic rename).
 
@@ -268,17 +282,8 @@ def migrate_to_profiles() -> None:
 
     # ── 4. COMMIT: atomically write registry (marks migration as complete) ──
     # Use "Rider" for empty/system-account $USER values (e.g. macOS helpers
-    # like ``_mdnsresponder``). POSIX exports $USER; Windows uses $USERNAME.
-    # ``getpass.getuser()`` is the stdlib fallback that checks both plus the
-    # password database.
-    import getpass
-    try:
-        _fallback_user = getpass.getuser()
-    except Exception:
-        _fallback_user = None
-    name = _sanitize_user_name(
-        os.environ.get("USER") or os.environ.get("USERNAME") or _fallback_user
-    )
+    # like ``_mdnsresponder``).
+    name = default_profile_name()
     now = clock.now().isoformat()
     reg = {
         "version": 1,

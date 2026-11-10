@@ -18052,6 +18052,9 @@ async function loadTodaySession() {
     }
 
     const el = $('home-recommendation');
+    // 3.14.0: other cards (the readiness "Ease today's session") read this to
+    // leave the rider's own ride alone; the server refuses it either way.
+    window._todayIsOwn = !!d.own;
     // issue #7 — today IS a race: show the race (name/distance/climb), not a
     // training prescription. Click still opens the day detail.
     if (d.is_race && d.race) {

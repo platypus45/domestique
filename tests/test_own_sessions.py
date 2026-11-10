@@ -937,3 +937,49 @@ def test_m12_the_deload_advance_counts_the_own_ride_in_its_budget(stub):
                if s["session_type"] != "rest" and (s.get("status") or "pending") not in ("missed", "dismissed"))
     assert by_day(_read())[day]["own"]["name"] == "Club ride"
     assert owed <= float(wk["tss_target"]) + 1
+
+
+# ═══ O4 put-back: the flag is cleared once it has done its job ═══════════════
+
+def _put_back_plan():
+    p = mkplan(week(0, FULL, 900))
+    apply(p, [ride(d(5))])
+    tp.apply_own_sessions(p, put_back=[{"day": d(5), "icu_day": d(6)}], library=[])
+    return p
+
+
+def test_o4_a_put_back_is_cleared_once_a_later_run_no_longer_lists_the_ride():
+    from datetime import datetime as _dt
+    asked = by_day(_put_back_plan())[d(5)]["own"]["put_back_at"]
+    later = (_dt.fromisoformat(asked) + timedelta(minutes=1)).isoformat()
+    earlier = (_dt.fromisoformat(asked) - timedelta(minutes=1)).isoformat()
+    p = _put_back_plan()
+    assert tp.clear_done_put_backs(p, [], earlier) == []                    # run before the click
+    assert tp.clear_done_put_backs(p, None, later) == []                    # no report
+    assert tp.clear_done_put_backs(p, [{"day": d(5), "icu_day": d(6)}], later) == []   # not yet back
+    assert by_day(p)[d(5)]["own"]["put_back_from"] == d(6)
+    assert tp.clear_done_put_backs(p, [], later) == [d(5)]                  # back on its day
+    assert "put_back_from" not in by_day(p)[d(5)]["own"]
+    p = _put_back_plan()
+    assert tp.clear_done_put_backs(p, [{"day": d(5), "icu_day": d(4)}], later) == [d(5)]  # moved again
+
+
+def test_o4_an_edit_or_a_move_clears_the_put_back():
+    p = _put_back_plan()
+    apply(p, [ride(d(5), dur=150, name="Edited")])
+    assert "put_back_from" not in by_day(p)[d(5)]["own"]
+    p = _put_back_plan()
+    tp.apply_own_sessions(p, moves=[{"from": d(5), "to": d(6)}], library=[])
+    own = by_day(p)[d(6)]["own"]
+    assert "put_back_from" not in own and by_day(p)[d(6)]["moved_from"] == d(5)
+
+
+def test_o4_the_next_own_ride_write_clears_a_done_put_back(stub, monkeypatch):
+    p = _put_back_plan()
+    _write(p)
+    monkeypatch.setattr(app_module, "_icu_push_last_result",
+                        {"profile_id": stub.pid, "own_moved": [],
+                         "at": (clock.now() + timedelta(minutes=5)).isoformat()})
+    r = stub.client.post("/api/plan/own-sessions", json={"set": [ride(d(2), intensity="easy", dur=60)]})
+    assert r.status_code == 200
+    assert "put_back_from" not in by_day(_read())[d(5)]["own"]

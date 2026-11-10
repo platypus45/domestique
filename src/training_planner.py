@@ -13762,7 +13762,10 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
 
     def own_row(d, f, base_own, moved_from=""):
         load = f["load"] if f["load"] is not None else own_session_load(f["dur"], f["intensity"])
-        own = {k: v for k, v in (base_own or {}).items() if k != "put_back_from"}
+        # An edit or a move is the rider's new word on the ride: a put-back
+        # asked for earlier has no job left (O4; never undo a later drag).
+        own = {k: v for k, v in (base_own or {}).items()
+               if k not in ("put_back_from", "put_back_at")}
         own.update(name=f["name"], intensity=f["intensity"], load_from=f["load_from"])
         if f["eid"] is not None:                 # imported, or linked (M8)
             own.update(source="icu", icu_event_id=f["eid"], icu_day=f["icu_day"])
@@ -14203,7 +14206,8 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
         if s.own.get("source") == "icu":
             refuse(d, "not_pushed")
             continue
-        s.own = {**s.own, "put_back_from": icu_d.isoformat()}
+        s.own = {**s.own, "put_back_from": icu_d.isoformat(),
+                 "put_back_at": clock.now().isoformat(timespec="seconds")}
         touched.add(d.isoformat())
         out["applied"].append({"action": "put_back", "date": d.isoformat(),
                                "icu_day": icu_d.isoformat()})
@@ -14224,6 +14228,50 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
                 w["sessions"][i] = session_to_dict(by_iso[iso])
     out["touched_days"] = sorted(touched)
     return out
+
+
+def clear_done_put_backs(plan_dict: dict, own_moved, run_at) -> list:
+    """3.14.0 F2 (O4): ``own["put_back_from"]`` asks the calendar run to put a
+    pushed ride the rider moved in intervals.icu back on its plan day. It has
+    done its job once a run made after the click no longer lists the ride as
+    moved to that date: the event is back on its day, or the rider moved it
+    again (then the dialog asks again). Left on the row, a later drag back to
+    that same date would be undone without asking.
+
+    ``own_moved`` / ``run_at``: the last calendar run's report of held own
+    rides ([{day, icu_day}]) and when it was noted. No report, or no run since
+    the click: nothing is cleared. Mutates ``plan_dict``; returns the days
+    cleared."""
+    if not isinstance(own_moved, list) or not run_at:
+        return []
+    try:
+        ran = datetime.fromisoformat(str(run_at))
+    except ValueError:
+        return []
+    listed = {str(m.get("day") or "")[:10]: str(m.get("icu_day") or "")[:10]
+              for m in own_moved if isinstance(m, dict)}
+    cleared = []
+    for w in plan_dict.get("weeks") or []:
+        for s in (w.get("sessions") or []) if isinstance(w, dict) else []:
+            own = s.get("own") if isinstance(s, dict) else None
+            if not isinstance(own, dict) or not own.get("put_back_from"):
+                continue
+            try:
+                asked = datetime.fromisoformat(str(own.get("put_back_at") or ""))
+            except ValueError:
+                asked = None
+            try:
+                if asked is not None and ran <= asked:
+                    continue                # that run had not seen the click
+            except TypeError:               # naive against aware: cannot tell, keep it
+                continue
+            day = str(s.get("day") or "")[:10]
+            if listed.get(day) == own["put_back_from"]:
+                continue                    # still on that date: the next run tries again
+            own.pop("put_back_from", None)
+            own.pop("put_back_at", None)
+            cleared.append(day)
+    return cleared
 
 
 # ══════════════════════════════════════════════════════════════════════════════

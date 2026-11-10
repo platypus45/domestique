@@ -13190,6 +13190,7 @@ async def api_plan_own_sessions(request: Request):
     if not (set_items or remove or moves or put_back):
         return JSONResponse({"ok": False, "error": "nothing to change"}, 400)
     pinned = _icu_held_plan_days()
+    _last = _last_result_for_active_profile() or {}
     try:
         library = tp.load_workout_library()      # before the lock (L4)
     except Exception:
@@ -13198,10 +13199,13 @@ async def api_plan_own_sessions(request: Request):
         async with tp.plan_write_lock_async():  # #32: read-modify-write under the plan lock
             with open(json_path, encoding="utf-8") as f:
                 plan = json.load(f)
+            # O4: a put-back the last calendar run has done (or that the
+            # rider overtook by moving the ride again) is cleared first.
+            cleared = tp.clear_done_put_backs(plan, _last.get("own_moved"), _last.get("at"))
             result = tp.apply_own_sessions(plan, set_items, remove, moves=moves,
                                            put_back=put_back, pinned_days=pinned,
                                            library=library)
-            if result["applied"]:
+            if result["applied"] or cleared:
                 tp.atomic_write_plan(json_path, plan)
     except Exception:
         _log.exception("own-sessions failed")

@@ -332,6 +332,20 @@ def test_m4_l3_m5_the_restored_session_fits_the_day_as_it_is_now():
     assert by_day(p2)[d(4)]["session_type"] == "rest"            # L3: an unavailable day rests
 
 
+def test_m5_a_restored_file_gone_from_the_library_is_not_kept():
+    rows = [("rest", 0, 0), ("rest", 0, 0), ("z2", 60, 45, {"zwo_file": "gone.zwo", "zwo_name": "Gone"}),
+            ("rest", 0, 0), ("rest", 0, 0), ("rest", 0, 0), ("rest", 0, 0)]
+    p = mkplan(week(0, rows, 900))
+    apply(p, [ride(d(2), intensity="easy", dur=60)])
+    apply(p, remove=[d(2)], library=[{"File": "other.zwo", "Name": "Other", "Duration(min)": 60}])
+    s = by_day(p)[d(2)]
+    assert s["session_type"] == "z2" and s["zwo_file"] != "gone.zwo"
+    p = mkplan(week(0, rows, 900))
+    apply(p, [ride(d(2), intensity="easy", dur=60)])
+    apply(p, remove=[d(2)], library=[])           # no library: an outage keeps the file
+    assert by_day(p)[d(2)]["zwo_file"] == "gone.zwo"
+
+
 def test_l8_l11_c10_warnings_back_to_back_hard_rides_today_and_race_days():
     rows = [("z2", 60, 45), ("rest", 0, 0), ("rest", 0, 0), ("rest", 0, 0),
             ("z2", 45, 30, {"is_opener": True}), ("recovery", 60, 30, {"is_race": True}), ("rest", 0, 0)]
@@ -391,14 +405,19 @@ def test_h2_fresh_legs_never_rewrites_an_own_ride_before_a_test():
 
 
 def test_h2_the_rested_test_day_sees_kept_days_and_never_takes_one():
-    """Recalc places the test after the preserved swap (grill H2a/b)."""
+    """Recalc places the test after the preserved swap (grill H2a/b): a day the
+    rebuild keeps as the rider left it is never the test, and is seen as a
+    neighbour."""
     wk = tp.week_from_dict(week(0, [("rest", 0, 0), ("z2", 60, 45), ("z2", 60, 45), ("z2", 60, 45),
                                     ("z2", 60, 45), ("z2", 60, 45), ("z2", 60, 45)], 300, stepback=True))
+    kept = wk.sessions[6]
+    kept.adapted = True                            # kept by the rebuild (§6.12), not own
+    assert tp._rested_test_day(wk, []).day == kept.day          # the latest day, without keep_days
+    assert tp._rested_test_day(wk, [], keep_days={kept.day}).day != kept.day
     own = wk.sessions[5]
     own.session_type, own.own = "sweetspot", {"name": "Club ride", "intensity": "hard"}
-    pick = tp._rested_test_day(wk, [], keep_days={own.day})
-    assert pick is not None and pick.day != own.day
-    assert pick.day != own.day + timedelta(days=1) and pick.day != own.day - timedelta(days=1)
+    pick = tp._rested_test_day(wk, [], keep_days={kept.day, own.day})
+    assert pick is not None and abs((pick.day - own.day).days) >= 2
 
 
 # ═══ B. every other writer leaves the own ride alone ═════════════════════════
@@ -413,10 +432,16 @@ def test_b1_b2_sync_reforecast_keeps_the_ride_byte_identical_and_0h_does_not_res
     p = _own_week()
     before = copy.deepcopy(by_day(p)[d(5)])
     tsb = {TODAY + timedelta(days=i): -45.0 for i in range(-7, 15)}
-    tp.reforecast_dict(p, tsb_series=tsb,
-                       availability_overrides={d(i): (0.0 if i == 5 else 1.0) for i in range(7)},
-                       actual_polarization={"z1_pct": 50, "z2_pct": 10, "z3_pct": 40},
-                       target_polarization={"z1_pct": 80, "z2_pct": 5, "z3_pct": 15})
+    kw = dict(tsb_series=tsb,
+              availability_overrides={d(i): (0.0 if i == 5 else 1.0) for i in range(7)},
+              actual_polarization={"z1_pct": 50, "z2_pct": 10, "z3_pct": 40},
+              target_polarization={"z1_pct": 80, "z2_pct": 5, "z3_pct": 15})
+    # The planner layer itself (the write-back guard, B4, would hide it).
+    weeks = tp._plan_dict_to_planned_weeks(copy.deepcopy(p))
+    tp.reforecast(tp.goal_from_dict(GOAL), weeks, **kw)
+    s = weeks[0].sessions[5]
+    assert (s.session_type, s.duration_min, s.tss_estimate) == ("sweetspot", 180, 240)
+    tp.reforecast_dict(p, **kw)
     assert by_day(p)[d(5)] == before
 
 
@@ -424,8 +449,12 @@ def test_b3_room_making_never_shortens_an_easy_own_ride():
     p = mkplan(week(0, FULL, 443))
     apply(p, [ride(d(6), intensity="easy", dur=150)])
     before = copy.deepcopy(by_day(p)[d(6)])
-    tp.reforecast_dict(p, tsb_series={TODAY + timedelta(days=i): 0.0 for i in range(-7, 8)},
-                       availability_overrides={d(0): 2.0}, explicit_days={d(0)})
+    kw = dict(tsb_series={TODAY + timedelta(days=i): 0.0 for i in range(-7, 8)},
+              availability_overrides={d(0): 2.0}, explicit_days={d(0)})
+    weeks = tp._plan_dict_to_planned_weeks(copy.deepcopy(p))
+    tp.reforecast(tp.goal_from_dict(GOAL), weeks, **kw)
+    assert weeks[0].sessions[6].duration_min == 150 and weeks[0].sessions[0].duration_min == 120
+    tp.reforecast_dict(p, **kw)
     assert by_day(p)[d(6)] == before
 
 
@@ -760,13 +789,18 @@ def test_h2_swap_type_refuses_a_test_the_day_after_an_own_ride_that_is_not_easy(
     assert r.status_code == 400 and "own ride" in r.json()["error"] and _read() == before
 
 
-def test_execution_score_is_never_written_for_an_own_ride():
+def test_execution_score_is_never_written_for_an_own_ride(monkeypatch):
+    monkeypatch.setattr(app_module, "_execution_for_match",
+                        lambda s_json, aid: {"score": 71, "activity_id": aid})
     p = _own_plan_on([2])
     prev = {"matches": [{"session_date": d(2), "new_status": "done", "activity_id": "a1",
+                         "matched_axes": 3, "score": 1.0, "axes": {}, "details": {}},
+                        {"session_date": d(3), "new_status": "done", "activity_id": "a2",
                          "matched_axes": 3, "score": 1.0, "axes": {}, "details": {}}]}
     app_module._apply_rematch_preview_to_plan(p, 0, prev)
     s = by_day(p)[d(2)]
     assert s["status"] == "done" and s["execution"] is None and s["completion_matches"]
+    assert by_day(p)[d(3)]["execution"] == {"score": 71, "activity_id": "a2"}   # a planner day is scored
 
 
 def test_calendar_payload_carries_the_own_ride_and_its_card_state():

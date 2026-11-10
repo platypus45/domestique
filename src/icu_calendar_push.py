@@ -27,6 +27,26 @@ Contract highlights (GRILL OUTCOME — LOCKED, /tmp/IP_ICU_PUSH.md):
     and 7 days past the horizon (#28) so a workout the rider moved in
     intervals.icu stays visible (one moved further out is invisible and
     still re-dated by the upsert — status quo).
+  - Window (3.14.0 F3): the horizon is the rider's own setting, 14, 28 or 42
+    days in <profile>/user_prefs.json, read by profile id under the lock.
+    An engine-owned <profile>/icu_calendar_push.json remembers how far the
+    mirror reached ("pushed_until"), so a shorter window cleans up what a
+    longer one put further out: the sweep reaches to that record, sparing
+    moved and copied events, moves the plan took over (user_moved), and
+    planner Send pushes made beyond the window while a clean-up is pending
+    ("sent"). Only a window longer than 14 days ever writes it; a record
+    written on a later day than today, or one that cannot be read, reaches
+    nothing (fail closed). Only runs that read the rider's setting move the
+    record (an explicit horizon, or unreadable prefs, never do).
+  - Own rides (3.14.0, owner O3): a ride the rider added in Domestique is
+    pushed as a plain planned ride (name, length, load; no steps, no file)
+    under its own id "domestique:<profile_id>:<day_iso>:own", in a POST of
+    its own after the workouts' (a rejected one is skipped "own_rejected",
+    never a run error). A ride imported from intervals.icu is never pushed
+    back. A rider move of an own event is held like #28 and reported as
+    own_moved; the plan follows it only when the rider says so (the plan's
+    own ride then sits on the event's day, moved_from the old one), and
+    "put it back" (own.put_back_from = the event's date) re-dates it.
   - Rider moves in intervals.icu (#28, step 1 — reconcile never writes the
     plan): our event dated on another day than the one in its external_id
     was moved by the rider. Unless the plan agrees with the move (a session
@@ -53,7 +73,8 @@ Contract highlights (GRILL OUTCOME — LOCKED, /tmp/IP_ICU_PUSH.md):
     the slot's old event is the other session's.
   - One reconcile / sweep_all at a time (module lock; reconcile waits 60 s,
     sweep_all 120 s, then "busy"). sweep_all deletes our events dated
-    [today, today+horizon+7] — rider-moved ones included.
+    [today, reach+7] (reach: the window, or further while the record says
+    the mirror went further) — rider-moved ones and own rides included.
   - Toast counts derive from the local diff vs the pre-upsert GET, not from
     ICU response fields (G-G).
   - apikey auth = always write-capable (G-F); OAuth needs the CALENDAR:WRITE
@@ -67,6 +88,7 @@ import base64
 import functools
 import json
 import logging
+import math
 import re
 import threading
 import time
@@ -82,7 +104,20 @@ from user_home import domestique_home
 
 _log = logging.getLogger("domestique.icu_push")
 
-HORIZON_DAYS = 14
+HORIZON_DAYS = 14                      # the default window (2 weeks)
+# 3.14.0 F3: the rider keeps 2, 4 or 6 weeks of the plan in intervals.icu,
+# per profile; anything else reads as the default.
+HORIZON_CHOICES = (14, 28, 42)
+_HORIZON_PREF = "icu_calendar_horizon_days"
+# Engine-owned per-profile state, written only under _RECONCILE_LOCK:
+# {"pushed_until": iso|null, "written_on": iso, "sent": {external_id: day}}.
+_STATE_FILE = "icu_calendar_push.json"
+# C7 (grill M3): intervals.icu deletes by external_id when a bulk-delete row
+# names both (public API docs), which also removes a copy the rider made of
+# our event outside the read window. True sends the event id alone; it stays
+# off until the owner has checked it live.
+_DELETE_BY_ID_ONLY = False
+_OWN_DESCRIPTION = "Your own ride, added in Domestique."
 # #28: reconcile reads this far either side of [today, today+horizon] so an
 # event the rider moved just before today (rode it early) or just past the
 # horizon is still seen — and held — instead of being yanked back blind by
@@ -316,6 +351,58 @@ def _build_event(s: dict, ext_id: str, pm, classifications: dict,
     }, None
 
 
+def _own(s: dict) -> "dict | None":
+    """The rider's own ride on this row (3.14.0 ``session["own"]``), or None
+    for a planner session."""
+    own = s.get("own")
+    if not own:
+        return None
+    return own if isinstance(own, dict) else {}
+
+
+def _own_is_imported(own: dict) -> bool:
+    """C5: a ride that came from the rider's intervals.icu calendar is there
+    already, as their own event: never pushed back. A row that carries an
+    intervals.icu event id counts as imported whatever its source says, so a
+    lost source can never turn it into a duplicate."""
+    return own.get("source") == "icu" or own.get("icu_event_id") not in (None, "", 0)
+
+
+def _is_own_id(eid) -> bool:
+    return str(eid or "").endswith(":own")
+
+
+def _build_own_event(s: dict, ext_id: str):
+    """3.14.0 (owner O3, C1): the rider's own ride as a plain planned ride:
+    name, length and load; no workout steps and no file, so no ``filename``
+    and no ``file_contents_base64`` (every reader uses .get). The description
+    is fixed text: the bulk endpoint reads a description as workout text, so
+    the rider's words never go there. Returns ``(event, None)``, or
+    ``(None, "own_invalid")`` when the row has no usable length."""
+    own = _own(s) or {}
+    try:
+        minutes = float(s.get("duration_min"))
+    except (TypeError, ValueError):
+        return None, "own_invalid"
+    if not (math.isfinite(minutes) and minutes > 0):
+        return None, "own_invalid"
+    event = {
+        "start_date_local": f"{s.get('day')}T00:00:00",
+        "category": "WORKOUT",
+        "type": "Ride",
+        "name": (str(own.get("name") or "").strip()
+                 or str(s.get("description") or "").strip() or "Own ride"),
+        "external_id": ext_id,
+        "moving_time": int(round(minutes * 60)),
+        "description": _OWN_DESCRIPTION,
+    }
+    load = s.get("tss_estimate")
+    if (isinstance(load, (int, float)) and not isinstance(load, bool)
+            and math.isfinite(load) and load >= 0):
+        event["icu_training_load"] = int(round(load))
+    return event, None
+
+
 def _sessions_by_day(plan: dict) -> dict[str, list[dict]]:
     """Day → that day's sessions in stored plan order (weeks are ordered and a
     day lives in exactly one week, so plain traversal preserves order). The
@@ -335,9 +422,10 @@ def _desired_events(pm, plan: dict, today: date, horizon_days: int,
     """Collect the horizon's pushable sessions as ICU bulk-event payloads.
 
     Returns (events, skipped, broken_ids):
-      events     — list of ICU event dicts ready for the bulk upsert
+      events     — list of ICU event dicts ready for the bulk upsert; own
+                   rides (3.14.0) are among them under their ``:own`` ids
       skipped    — [{"day", "reason"}] for the toast (unmatched / needs_lthr /
-                   trailing_open / file_missing / build_failed)
+                   trailing_open / file_missing / build_failed / own_invalid)
       broken_ids — external_ids of sessions we WANTED to push but could not
                    build; the sweep spares these so a config hiccup (e.g. a
                    broken lthr) never deletes previously-pushed events.
@@ -375,6 +463,22 @@ def _desired_events(pm, plan: dict, today: date, horizon_days: int,
             status = str(s.get("status") or "")
             if status == "dismissed" or status.startswith("moved_from"):
                 continue                        # not desired → sweep removes
+            own = _own(s)
+            if own is not None:
+                # 3.14.0 (C1, C5): the rider's own ride, under its own id, so
+                # the workout it replaced is swept as an orphan. Imported from
+                # their intervals.icu calendar: never pushed back. Never in
+                # broken_ids either way (that would spare the replaced
+                # workout's event, #27).
+                if _own_is_imported(own):
+                    continue
+                event, reason = _build_own_event(
+                    s, f"{_ID_ROOT}{profile_id}:{day_iso}:own")
+                if event is None:
+                    skipped.append({"day": day_iso, "reason": reason})
+                else:
+                    events.append(event)
+                continue
             # calendar-push (2026-07-07): the per-session event body is now
             # _build_event (shared with the single-workout push endpoint). ext_id
             # is computed HERE — it needs the day-relative <n> (index among this
@@ -421,6 +525,157 @@ def _connection(pm):
     if not (token or key) or not aid:
         return "", "not_connected"
     return aid, None
+
+
+# ── the rider's window and the clean-up record (3.14.0 F3) ───────────────────
+
+def _profile_dir(profile_id: str) -> Path:
+    from profile_manager import ProfileManager, _safe_profile_dir
+    return _safe_profile_dir(ProfileManager.get(), profile_id)
+
+
+def _profile_prefs(profile_id) -> "dict | None":
+    """This rider's user_prefs.json, read from THEIR profile dir (a profile
+    switch swaps the active cache mid-run): {} when there is none, None when
+    it cannot be read (grill L1: unreadable is not "the default")."""
+    try:
+        prefs = json.loads((_profile_dir(profile_id) / "user_prefs.json")
+                           .read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError, TypeError):
+        return None
+    return prefs if isinstance(prefs, dict) else None
+
+
+def _horizon_pref(profile_id) -> "int | None":
+    """The rider's window in days, or None when their prefs cannot be read."""
+    prefs = _profile_prefs(profile_id)
+    if prefs is None:
+        return None
+    v = prefs.get(_HORIZON_PREF)
+    ok = isinstance(v, int) and not isinstance(v, bool) and v in HORIZON_CHOICES
+    return v if ok else HORIZON_DAYS
+
+
+def profile_horizon_days(profile_id) -> int:
+    """This rider's window in days: 14, 28 or 42, else the default."""
+    if not profile_id:
+        return HORIZON_DAYS
+    return _horizon_pref(profile_id) or HORIZON_DAYS
+
+
+def _no_state() -> dict:
+    return {"pushed_until": None, "sent": {}}
+
+
+def _read_state(profile_id: str, today: date) -> dict:
+    """{"pushed_until": date | None, "sent": {external_id: day_iso}}. Fails
+    closed: a missing, garbled or unreadable record, or one written on a
+    later day than today (the clock went back, grill M1), reaches nothing.
+    Never past today + the widest window."""
+    try:
+        raw = json.loads((_profile_dir(profile_id) / _STATE_FILE)
+                         .read_text(encoding="utf-8"))
+        if date.fromisoformat(str(raw["written_on"])) > today:
+            return _no_state()
+        until = raw["pushed_until"]
+        if until is not None:
+            until = min(date.fromisoformat(str(until)),
+                        today + timedelta(days=max(HORIZON_CHOICES)))
+        sent = {str(k): str(v) for k, v in (raw.get("sent") or {}).items()}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return _no_state()
+    return {"pushed_until": until, "sent": sent}
+
+
+def _write_state(profile_id: str, until: "date | None", sent: dict,
+                 today: date) -> None:
+    """Write the record of the run's own rider (under _RECONCILE_LOCK)."""
+    try:
+        path = _profile_dir(profile_id) / _STATE_FILE
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps({
+            "pushed_until": until.isoformat() if until else None,
+            "written_on": today.isoformat(), "sent": sent}), encoding="utf-8")
+        tmp.replace(path)
+    except (OSError, ValueError):
+        # ponytail: a lost record only leaves a stale tail after a LATER
+        # shrink, which rolls off as the window passes it; never blocks a push.
+        _log.warning("EVENT=icu_calendar_state_write_failed profile=%s", profile_id)
+
+
+def _sent_within(sent: dict, last_day: date, until: "date | None") -> dict:
+    """The Send records that still matter: past the window and inside the
+    record (a day inside the window is mirrored; one past the record is
+    never a clean-up candidate)."""
+    if until is None:
+        return {}
+    lo, hi = last_day.isoformat(), until.isoformat()
+    return {eid: d for eid, d in sent.items() if lo < d <= hi}
+
+
+def _resolve_window(profile_id: str, today: date,
+                    horizon_days: "int | None" = None):
+    """(horizon_days, reach, state, managed) for one run. None reads the
+    rider's setting; only such a run, with readable prefs (L1), is managed:
+    it reads the clean-up record and may move it (L2). reach is how far its
+    sweep may look: the window, or the record while that is further."""
+    managed = horizon_days is None
+    if managed:
+        pref = _horizon_pref(profile_id)
+        managed = pref is not None
+        horizon_days = pref or HORIZON_DAYS
+    state = _read_state(profile_id, today) if managed else _no_state()
+    last_day = today + timedelta(days=horizon_days)
+    until = state["pushed_until"]
+    return horizon_days, (max(last_day, until) if until else last_day), state, managed
+
+
+def send_window_days(profile_id: str, today: date, target: date) -> int:
+    """Grill L3: the window the planner Send button builds and reads: as far
+    as this rider's own reconcile reads (a pending clean-up included) and at
+    least to the target day, so the Send sees the same holds."""
+    _h, reach, _state, _managed = _resolve_window(profile_id, today)
+    return max((reach - today).days, (target - today).days)
+
+
+def note_sent(profile_id: str, external_id: str, day: date) -> None:
+    """Grill H1: a planner Send push past the rider's window while a clean-up
+    is pending (the record reaches past the window) is spared by that
+    clean-up. The caller holds _RECONCILE_LOCK. A rider without a record
+    (every default rider) writes nothing."""
+    today = clock.today()
+    state = _read_state(profile_id, today)
+    until = state["pushed_until"]
+    last_day = today + timedelta(days=_horizon_pref(profile_id) or HORIZON_DAYS)
+    if until is None or not (last_day < day <= until):
+        return
+    sent = _sent_within(state["sent"], last_day, until)
+    sent[external_id] = day.isoformat()
+    _write_state(profile_id, until, sent, today)
+
+
+def _delete_rows(chosen: list, existing: list, today: date,
+                 last: "date | None") -> list:
+    """Bulk-delete rows for the chosen events of ours. Default: one
+    {"id", "external_id"} row per id, so intervals.icu deletes every event
+    under that external_id (public API docs), a copy the rider made of it
+    included. C7 (_DELETE_BY_ID_ONLY): one {"id"} row per event of those ids
+    that this run read, dated [today, last]; anything else is left alone."""
+    if not _DELETE_BY_ID_ONLY:
+        return [{"id": ev.get("id"), "external_id": str(ev.get("external_id") or "")}
+                for ev in chosen]
+    ids = {str(ev.get("external_id") or "") for ev in chosen}
+    rows = []
+    for ev in existing:
+        if not isinstance(ev, dict) or ev.get("id") is None:
+            continue
+        d = _event_day(ev)
+        if (str(ev.get("external_id") or "") in ids and d is not None and d >= today
+                and (last is None or d <= last)):
+            rows.append({"id": ev.get("id")})
+    return rows
 
 
 def _get_window_events(athlete_id: str, today: date, horizon_days: int,
@@ -561,7 +816,10 @@ def _plan_agrees(by_day: dict, enc: str, n: int, ev_day: str, ev: dict):
                if x.get("moved_from") == enc) != 1:
             return None
     for k, s in enumerate(by_day.get(ev_day) or []):
-        if s.get("moved_from") != enc:
+        # 3.14.0: an own ride is pushed under its own id, so it never agrees
+        # with a planner workout's move (that agreement released the hold
+        # and pulled the rider's workout back).
+        if s.get("moved_from") != enc or _own(s) is not None:
             continue
         have = _stem(s.get("zwo_file"))
         if not want or not have or want == have:
@@ -728,6 +986,53 @@ def _stand_ins(held: dict, by_day: dict, profile_id: str, names) -> dict:
     return out
 
 
+def _own_held_ids(events: list, by_day: dict, profile_id: str, today: date,
+                  pushed: set) -> tuple[dict, dict]:
+    """C3 (owner O4): (held, agreed) for our own-ride ids
+    ``domestique:<pid>:<day>:own`` the rider moved in intervals.icu.
+
+    held:   external_id → (encoded day, the moved copy): never upserted,
+            never swept, shown to the rider (own_moved). Nothing follows it
+            silently, and #33 never learns it.
+    agreed: external_id → the plan's new own id. The rider chose "Move it in
+            my plan too": the plan's own ride sits on the event's day, moved
+            from the encoded one; the old event goes once the new id is in
+            this run's upsert (the agreed rule below).
+    "Put it back" (the plan's own ride carries put_back_from = the event's
+    day) releases the hold, while the event is still on that day and this
+    run pushes the id, so the upsert re-dates it. Copies (two events, one
+    id) and moves into the past are never agreed nor released."""
+    prefix = f"{_ID_ROOT}{profile_id}:"
+    pattern = re.compile(re.escape(prefix) + r"([0-9]{4}-[0-9]{2}-[0-9]{2}):own")
+    groups: dict[str, tuple] = {}
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        eid = str(ev.get("external_id") or "")
+        m = pattern.fullmatch(eid)
+        if m is None or _iso_week(m.group(1)) is None:
+            continue
+        groups.setdefault(eid, (m.group(1), []))[1].append(ev)
+    held, agreed = {}, {}
+    for eid, (enc, evs) in groups.items():
+        moved = [(ev, d) for ev, d in ((ev, _event_day(ev)) for ev in evs)
+                 if d is not None and d.isoformat() != enc]
+        if not moved:
+            continue
+        ev, d = moved[0]
+        day = d.isoformat()
+        if len(evs) == 1 and d >= today:
+            if any(_own(s) is not None and s.get("moved_from") == enc
+                   for s in by_day.get(day) or []):
+                agreed[eid] = f"{prefix}{day}:own"
+                continue
+            if eid in pushed and any((_own(s) or {}).get("put_back_from") == day
+                                     for s in by_day.get(enc) or []):
+                continue
+        held[eid] = (enc, ev)
+    return held, agreed
+
+
 
 def _day_unavailable(plan: dict, day_iso: str) -> bool:
     """The rider marked the day unavailable (a 0 h day or a holiday/injury/
@@ -789,9 +1094,13 @@ def _learnable_moves(held: dict, existing: list, plan: dict, today: date,
         if n != 0 or len(src_rows) != 1 or len(dst_rows) > 1:
             continue
         src = src_rows[0]
+        # 3.14.0: never an own ride. It has no file, so _same_workout cannot
+        # tell it from the workout the rider moved, and following the move
+        # would carry the rider's ride off its day.
         if (_is_stub(src) or (src.get("session_type") or "") == "rest"
                 or str(src.get("status") or "pending") != "pending"
-                or src.get("is_race") or _same_workout(src, ev, names) is False):
+                or src.get("is_race") or _own(src) is not None
+                or _same_workout(src, ev, names) is False):
             continue
         if dst_rows and not ((dst_rows[0].get("session_type") or "") == "rest"
                              or _is_stub(dst_rows[0])):
@@ -893,20 +1202,33 @@ def _one_at_a_time(timeout_s: float, fn, *args):
         _RECONCILE_LOCK.release()
 
 
-def reconcile(horizon_days: int = HORIZON_DAYS, abort_if_swept: bool = True) -> dict:
-    """Mirror [today, today+horizon] of the stored plan onto the ICU calendar.
+def reconcile(horizon_days: "int | None" = None, abort_if_swept: bool = True,
+              profile_id: "str | None" = None, require_sync: bool = False) -> dict:
+    """Mirror [today, today+window] of the stored plan onto the ICU calendar.
 
-    Returns {pushed, updated, deleted, skipped:[{day,reason}], held} plus at
-    most one of needs_reconnect / needs_lthr / error ("busy" when another
-    run held the lock for a minute). ``held`` counts our events dated today
-    or later left where the rider moved them in intervals.icu (#28); it is 0
-    on every early return (W6). Never raises; never writes the plan.
+    ``horizon_days`` None is the rider's own window (F3), read from their
+    prefs under the lock; an explicit number pushes that window and never
+    moves the clean-up record (grill L2). ``profile_id`` binds the run to
+    that rider: if another profile is active once the lock is free, the
+    answer is {"error": "profile_changed"}; with ``require_sync`` it is
+    {"error": "sync_off"} when that rider's sync is off by then (grill M2).
+
+    Returns {pushed, updated, deleted, skipped:[{day,reason}], held,
+    own_moved} plus at most one of needs_reconnect / needs_lthr / error
+    ("busy" when another run held the lock for a minute). ``held`` counts our
+    events dated from today to 7 days past the window that were left where
+    the rider moved them in intervals.icu (#28, L6); it is 0 on every early
+    return (W6). ``own_moved`` lists [{day, icu_day}] for the rider's own
+    rides whose event they moved there (O4). Never raises; never writes the
+    plan.
     """
     # The rider's own Push (abort_if_swept=False) is never dropped: it asked
     # for this run after whatever sweep it waited behind.
     out = _one_at_a_time(_RECONCILE_LOCK_TIMEOUT_S, _reconcile_unless_swept,
-                         horizon_days, _SWEEP_GENERATION if abort_if_swept else None)
+                         horizon_days, _SWEEP_GENERATION if abort_if_swept else None,
+                         profile_id, require_sync)
     out.setdefault("held", 0)
+    out.setdefault("own_moved", [])
     return out
 
 
@@ -917,11 +1239,13 @@ def reconcile(horizon_days: int = HORIZON_DAYS, abort_if_swept: bool = True) -> 
 _SWEEP_GENERATION = 0
 
 
-def _reconcile_unless_swept(horizon_days: int, generation: "int | None") -> dict:
+def _reconcile_unless_swept(horizon_days: "int | None", generation: "int | None",
+                            profile_id: "str | None" = None,
+                            require_sync: bool = False) -> dict:
     if generation is not None and generation != _SWEEP_GENERATION:
         _log.info("EVENT=icu_calendar_push_skipped reason=swept")
         return _result(error="swept")
-    return _reconcile(horizon_days)
+    return _reconcile(horizon_days, profile_id, require_sync)
 
 
 def moved_copy_day(athlete_id: str, plan: dict, external_id: str,
@@ -955,7 +1279,30 @@ def moved_copy_day(athlete_id: str, plan: dict, external_id: str,
     return (_event_day(ev).isoformat() if ev is not None else None), None
 
 
-def _reconcile(horizon_days: int) -> dict:
+def _plan_took_over(eid: str, ev: dict, by_day: dict, profile_id: str,
+                    names) -> bool:
+    """Grill M4: is this our event of a session the rider moved (dragged in
+    Domestique, or moved in intervals.icu and learned), sitting where the
+    plan now has it? A shorter window's clean-up spares it: a stale tail
+    until the window reaches it again, rather than a workout the rider
+    placed vanishing from their calendar."""
+    m = re.fullmatch(re.escape(f"{_ID_ROOT}{profile_id}:")
+                     + r"([0-9]{4}-[0-9]{2}-[0-9]{2}):([0-9]+)", eid)
+    d = _event_day(ev)
+    if m is None or d is None or d.isoformat() != m.group(1):
+        return False
+    slot = by_day.get(m.group(1)) or []
+    n = int(m.group(2))
+    if n >= len(slot):
+        return False
+    s = slot[n]
+    return (bool(s.get("user_moved")) and _own(s) is None and not _is_stub(s)
+            and str(s.get("status") or "pending") == "pending"
+            and _same_workout(s, ev, names) is not False)
+
+
+def _reconcile(horizon_days: "int | None", want_profile: "str | None" = None,
+               require_sync: bool = False) -> dict:
     from profile_manager import ProfileManager
     try:
         import app as _app
@@ -963,6 +1310,13 @@ def _reconcile(horizon_days: int) -> dict:
         profile_id = pm.active_id
         if not profile_id:
             return _result(error="no_active_profile")
+        # Grill M2: a run asked for one rider never runs for another (a
+        # profile switch during the lock wait), nor after that rider turned
+        # sync off meanwhile.
+        if want_profile is not None and profile_id != want_profile:
+            return _result(error="profile_changed")
+        if require_sync and not (_profile_prefs(profile_id) or {}).get("icu_calendar_sync"):
+            return _result(error="sync_off")
         athlete_id, err = _connection(pm)
         if err:
             return _result(error=err)
@@ -973,6 +1327,12 @@ def _reconcile(horizon_days: int) -> dict:
         if plan is None:
             return _result(error="no_plan")
         today = clock.today()
+        # F3: this rider's window, and how far this run's sweep may look: a
+        # shorter window cleans up what a longer one put further out.
+        horizon_days, reach, state, managed = _resolve_window(
+            profile_id, today, horizon_days)
+        last_day = today + timedelta(days=horizon_days)
+        until = state["pushed_until"]
         desired, skipped, broken_ids = _desired_events(
             pm, plan, today, horizon_days, profile_id)
         result = _result(skipped=skipped, profile_id=profile_id)
@@ -982,12 +1342,11 @@ def _reconcile(horizon_days: int) -> dict:
         # GET BEFORE the upsert: one call feeds both the G-G count diff
         # (pre-push state) and the orphan sweep candidate list.
         existing, err_res = _get_window_events(
-            athlete_id, today, horizon_days, _LOOKBACK_DAYS, _LOOKAHEAD_DAYS)
+            athlete_id, today, (reach - today).days, _LOOKBACK_DAYS, _LOOKAHEAD_DAYS)
         if err_res is not None:
             err_res["skipped"] = skipped
             return err_res
-        ours = _ours_in_window(existing, profile_id, today,
-                               today + timedelta(days=horizon_days))
+        ours = _ours_in_window(existing, profile_id, today, reach)
 
         # #28 step 1: a move the rider made in intervals.icu is HELD — its id
         # is never upserted (no tug-of-war back to the planned day) and never
@@ -1013,27 +1372,56 @@ def _reconcile(horizon_days: int) -> dict:
                 result["skipped"] = skipped
                 by_day = _sessions_by_day(plan)
                 held, agreed = _held_ids(existing, by_day, profile_id, today, names)
-        # W6: a move into the past is still held, but no longer news.
+        # C3 (O4): our own-ride events the rider moved in intervals.icu.
+        own_ids = {ev["external_id"] for ev in desired if _is_own_id(ev["external_id"])}
+        held_own, agreed_own = _own_held_ids(existing, by_day, profile_id, today,
+                                             own_ids)
+        agreed.update(agreed_own)
+        # W6: a move into the past is still held, but no longer news; L6: nor
+        # is one beyond what the window itself reads.
+        far = last_day + timedelta(days=_LOOKAHEAD_DAYS)
         learned_ids = {m["external_id"] for m in result["learned"]}
-        result["held"] = sum(1 for eid, (_e, _n, ev) in held.items()
-                             if _event_day(ev) >= today and eid not in learned_ids)
+        result["held"] = (
+            sum(1 for eid, (_e, _n, ev) in held.items()
+                if today <= _event_day(ev) <= far and eid not in learned_ids)
+            + sum(1 for _e, ev in held_own.values() if today <= _event_day(ev) <= far))
+        result["own_moved"] = sorted(
+            ({"day": enc, "icu_day": _event_day(ev).isoformat()}
+             for enc, ev in held_own.values()
+             if _event_day(ev) >= today
+             and any(_own(s) is not None for s in by_day.get(enc) or [])),
+            key=lambda m: m["day"])
         if held:
             stand_ins = _stand_ins(held, by_day, profile_id, names)
             desired = [ev for ev in desired
                        if ev["external_id"] not in stand_ins]
+        desired = [ev for ev in desired if ev["external_id"] not in held_own]
+        workouts = [ev for ev in desired if not _is_own_id(ev["external_id"])]
+        own_events = [ev for ev in desired if _is_own_id(ev["external_id"])]
+
+        # F3: record how far this run puts events, before sending them (a
+        # response lost after intervals.icu applied the batch still counts as
+        # pushed). Only a window longer than the default writes a record, so
+        # a rider who never chose one never has one (grill M1).
+        if (managed and desired and horizon_days > HORIZON_DAYS
+                and (until is None or last_day > until)):
+            _write_state(profile_id, last_day, {}, today)
+            until, state = last_day, {"pushed_until": last_day, "sent": {}}
+
+        def _new_or_redated(evs):
+            # Only what we put on a day it was not on: an unchanged re-push
+            # must not hide a move the rider makes right after it.
+            return [ev for ev in evs
+                    if str((ours.get(ev["external_id"]) or {}).get("start_date_local") or "")[:10]
+                    != ev["start_date_local"][:10]]
 
         # ONE bulk upsert (idempotent: keyed by external_id, G1).
-        if desired:
+        if workouts:
             status, body = _http(
                 "POST", f"athlete/{athlete_id}/events/bulk?upsert=true",
-                payload=desired)
+                payload=workouts)
             if 200 <= status < 300:
-                # Only what we put on a day it was not on (new or re-dated):
-                # an unchanged re-push must not hide a move the rider makes
-                # right after it.
-                note_pushed([ev for ev in desired
-                             if str((ours.get(ev["external_id"]) or {}).get("start_date_local") or "")[:10]
-                             != ev["start_date_local"][:10]])
+                note_pushed(_new_or_redated(workouts))
             if _scope_403(status, body):
                 result["needs_reconnect"] = True
                 return result
@@ -1049,18 +1437,45 @@ def _reconcile(horizon_days: int) -> dict:
                 result["error_detail"] = _http_error_detail(
                     "bulk_upsert", status, body)
                 return result
+        desired_ids = {ev["external_id"] for ev in workouts}
+
+        # C2 (grill X2): own rides go in a POST of their own, after the
+        # workouts. intervals.icu rejects a whole batch when one event fails
+        # validation, and a rejected own ride must never keep the workouts
+        # off the watch: it is skipped as own_rejected, and its event from an
+        # earlier run is kept.
+        own_kept = set()
+        if own_events:
+            status, body = _http(
+                "POST", f"athlete/{athlete_id}/events/bulk?upsert=true",
+                payload=own_events)
+            if 200 <= status < 300:
+                note_pushed(_new_or_redated(own_events))
+                desired_ids |= {ev["external_id"] for ev in own_events}
+            elif _scope_403(status, body):
+                result["needs_reconnect"] = True
+                return result
+            else:
+                _http_error_detail("own_upsert", status, body)
+                own_kept = {ev["external_id"] for ev in own_events}
+                result["skipped"] = result["skipped"] + [
+                    {"day": ev["start_date_local"][:10], "reason": "own_rejected"}
+                    for ev in own_events]
 
         # G-G: counts from the local diff vs the pre-push GET.
-        desired_ids = set()
-        for ev in desired:
-            eid = ev["external_id"]
-            desired_ids.add(eid)
-            prev = ours.get(eid)
+        for ev in workouts + [ev for ev in own_events if ev["external_id"] in desired_ids]:
+            prev = ours.get(ev["external_id"])
             if prev is None:
                 result["pushed"] += 1
             elif (str(prev.get("name") or "") != ev["name"]
                   or str(prev.get("start_date_local") or "") != ev["start_date_local"]
-                  or (prev.get("filename") and str(prev["filename"]) != ev["filename"])):
+                  # X3b: an own ride carries no file; only a workout compares one.
+                  or (ev.get("filename") and prev.get("filename")
+                      and str(prev.get("filename")) != ev.get("filename"))
+                  # An own ride's length and load (grill_sessions L10).
+                  or any(ev.get(k) is not None and prev.get(k) is not None
+                         and prev.get(k) != ev.get(k)
+                         for k in ("moving_time", "icu_training_load"))):
                 result["updated"] += 1
 
         # Orphan sweep — ours minus (desired ∪ spared broken ∪ held). Skipped
@@ -1079,16 +1494,24 @@ def _reconcile(horizon_days: int) -> dict:
         # unbuildable, the rider's event is the only copy of the workout.
         kept = {eid for eid, new_id in agreed.items()
                 if new_id not in desired_ids}
-        protected = desired_ids | spared | set(held) | kept
+        # F3: past the window (a clean-up after a shorter window) also spare
+        # a planner Send push made since (H1: while it is still on its day)
+        # and a move the plan took over (M4).
+        beyond = {eid for eid, ev in ours.items()
+                  if _event_day(ev) > last_day
+                  and (state["sent"].get(eid) == _event_day(ev).isoformat()
+                       or _plan_took_over(eid, ev, by_day, profile_id, names))}
+        protected = (desired_ids | spared | set(held) | set(held_own) | kept
+                     | beyond | own_kept)
         orphans = [ev for eid, ev in ours.items() if eid not in protected]
-        if orphans:
+        rows = _delete_rows(orphans, existing, today, reach)
+        swept = True
+        if rows:
             status, body = _http(
-                "PUT", f"athlete/{athlete_id}/events/bulk-delete",
-                payload=[{"id": ev.get("id"),
-                          "external_id": str(ev.get("external_id") or "")}
-                         for ev in orphans])
-            if 200 <= status < 300:
-                result["deleted"] = len(orphans)
+                "PUT", f"athlete/{athlete_id}/events/bulk-delete", payload=rows)
+            swept = 200 <= status < 300
+            if swept:
+                result["deleted"] = len(rows)
             elif _scope_403(status, body):
                 result["needs_reconnect"] = True
             else:
@@ -1097,67 +1520,109 @@ def _reconcile(horizon_days: int) -> dict:
                 result["error"] = "sweep_failed"
                 result["error_detail"] = _http_error_detail(
                     "orphan_sweep", status, body)
+        # F3: once a clean-up went through, the record shrinks to the
+        # farthest event of ours it left out there (moved, copied, taken
+        # over, sent), so later runs and sync off still reach those; back
+        # within the default window there is no record any more. A failed
+        # sweep keeps the record, so the next run retries.
+        if managed and swept and until is not None and (
+                until > last_day or horizon_days == HORIZON_DAYS):
+            left = [d for ev in existing if isinstance(ev, dict)
+                    and str(ev.get("external_id") or "") in protected
+                    for d in [_event_day(ev)] if d is not None and last_day < d <= reach]
+            new_until = max([last_day] + left)
+            if new_until <= today + timedelta(days=HORIZON_DAYS):
+                new_until = None
+            new_sent = _sent_within(state["sent"], last_day, new_until)
+            if new_until != until or new_sent != state["sent"]:
+                _write_state(profile_id, new_until, new_sent, today)
         _log.info(
             "EVENT=icu_calendar_push pushed=%d updated=%d deleted=%d "
-            "skipped=%d held=%d horizon=%dd",
+            "skipped=%d held=%d horizon=%dd reach=%dd",
             result["pushed"], result["updated"], result["deleted"],
-            len(skipped), result["held"], horizon_days)
+            len(result["skipped"]), result["held"], horizon_days,
+            (reach - today).days)
         return result
     except Exception as e:                      # G4: zero 500s, ever
         _log.exception("icu calendar reconcile failed")
         return _result(error=f"internal:{type(e).__name__}")
 
 
-def sweep_all(horizon_days: int = HORIZON_DAYS) -> dict:
-    """G-A: delete ALL of our pushed events dated [today, today+horizon+7].
+def sweep_all(horizon_days: "int | None" = None,
+              profile_id: "str | None" = None) -> dict:
+    """G-A: delete ALL of our pushed events dated [today, reach+7]; reach is
+    the rider's window (None: their setting, F3), or further while the
+    clean-up record says the mirror went further (a longer window, or a
+    clean-up still pending).
 
     Used when the sync toggle turns OFF and (best-effort, BEFORE the token
     purge) on disconnect. Only our profile-prefixed events are touched —
-    held rider moves included, also those moved up to 7 days past the
-    horizon (W7: toggle off means everything ours goes). Past days are
-    never touched. Waits up to 120 s for a running reconcile. Never raises."""
-    return _one_at_a_time(_SWEEP_LOCK_TIMEOUT_S, _sweep_then_bump, horizon_days)
+    held rider moves and own rides included, also those moved up to 7 days
+    past the reach (W7: toggle off means everything ours goes); the Send
+    records are ignored and cleared with the record. Past days are never
+    touched. ``profile_id`` binds the sweep to that rider (grill M2):
+    {"error": "profile_changed"} when another is active once the lock is
+    free. A failed sweep keeps the record, but nothing retries it while sync
+    is off (grill L9: a disconnect while offline leaves up to 49 days of
+    events of a 6-week rider). Waits up to 120 s for a running reconcile.
+    Never raises."""
+    return _one_at_a_time(_SWEEP_LOCK_TIMEOUT_S, _sweep_then_bump, horizon_days,
+                          profile_id)
 
 
-def _sweep_then_bump(horizon_days: int) -> dict:
+def _sweep_then_bump(horizon_days: "int | None",
+                     profile_id: "str | None" = None) -> dict:
     global _SWEEP_GENERATION
+    refused = False
     try:
-        return _sweep_all(horizon_days)
+        res = _sweep_all(horizon_days, profile_id)
+        refused = res.get("error") == "profile_changed"   # it removed nothing
+        return res
     finally:
-        _SWEEP_GENERATION += 1
+        if not refused:
+            _SWEEP_GENERATION += 1
 
 
-def _sweep_all(horizon_days: int) -> dict:
+def _sweep_all(horizon_days: "int | None", want_profile: "str | None" = None) -> dict:
     from profile_manager import ProfileManager
     try:
         pm = ProfileManager.get()
         profile_id = pm.active_id
         if not profile_id:
             return _result(error="no_active_profile")
+        if want_profile is not None and profile_id != want_profile:
+            return _result(error="profile_changed")
         athlete_id, err = _connection(pm)
         if err:
             return _result(error=err)
         today = clock.today()
+        if horizon_days is None:
+            horizon_days = _horizon_pref(profile_id) or HORIZON_DAYS
+        state = _read_state(profile_id, today)
+        until = state["pushed_until"]
+        reach = max(today + timedelta(days=horizon_days), until or today)
         existing, err_res = _get_window_events(
-            athlete_id, today, horizon_days, 0, _LOOKAHEAD_DAYS)
+            athlete_id, today, (reach - today).days, 0, _LOOKAHEAD_DAYS)
         if err_res is not None:
             return err_res
         ours = _ours_in_window(existing, profile_id, today)
         result = _result()
-        if ours:
+        rows = _delete_rows(list(ours.values()), existing, today, None)
+        swept = True
+        if rows:
             status, body = _http(
-                "PUT", f"athlete/{athlete_id}/events/bulk-delete",
-                payload=[{"id": ev.get("id"),
-                          "external_id": str(ev.get("external_id") or "")}
-                         for ev in ours.values()])
-            if 200 <= status < 300:
-                result["deleted"] = len(ours)
+                "PUT", f"athlete/{athlete_id}/events/bulk-delete", payload=rows)
+            swept = 200 <= status < 300
+            if swept:
+                result["deleted"] = len(rows)
             elif _scope_403(status, body):
                 result["needs_reconnect"] = True
             else:
                 result["error"] = "sweep_failed"
-        _log.info("EVENT=icu_calendar_sweep deleted=%d horizon=%dd",
-                  result["deleted"], horizon_days)
+        if swept and (until is not None or state["sent"]):
+            _write_state(profile_id, None, {}, today)     # nothing of ours out there
+        _log.info("EVENT=icu_calendar_sweep deleted=%d horizon=%dd reach=%dd",
+                  result["deleted"], horizon_days, (reach - today).days)
         return result
     except Exception as e:
         _log.exception("icu calendar sweep failed")

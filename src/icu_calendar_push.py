@@ -45,7 +45,7 @@ Contract highlights (GRILL OUTCOME — LOCKED, /tmp/IP_ICU_PUSH.md):
     never a run error). A ride imported from intervals.icu is never pushed
     back. A rider move of an own event is held like #28 and reported as
     own_moved; the plan follows it only when the rider says so (the plan's
-    own ride then sits on the event's day, moved_from the old one), and
+    own ride, moved_from the old day, then supersedes the event), and
     "put it back" (own.put_back_from = the event's date) re-dates it. Own
     rides follow the window like workouts. A workout sent with the Send
     button past the window stays there until the window reaches its day,
@@ -997,10 +997,11 @@ def _own_held_ids(events: list, by_day: dict, profile_id: str, today: date,
     held:   external_id → (encoded day, the moved copy): never upserted,
             never swept, shown to the rider (own_moved). Nothing follows it
             silently, and #33 never learns it.
-    agreed: external_id → the plan's new own id. The rider chose "Move it in
-            my plan too": the plan's own ride sits on the event's day, moved
-            from the encoded one; the old event goes once the new id is in
-            this run's upsert (the agreed rule below).
+    agreed: external_id → the plan's new own id. The rider moved the ride
+            in Domestique as well ("Move it in my plan too", or to any other
+            day): the one own ride moved from the encoded day supersedes the
+            event, which goes once that ride's id is in this run's upsert
+            (the agreed rule below). Two rides from one day: still held.
     "Put it back" (the plan's own ride carries put_back_from = the event's
     day) releases the hold, while the event is still on that day and this
     run pushes the id, so the upsert re-dates it. Copies (two events, one
@@ -1016,6 +1017,11 @@ def _own_held_ids(events: list, by_day: dict, profile_id: str, today: date,
         if m is None or _iso_week(m.group(1)) is None:
             continue
         groups.setdefault(eid, (m.group(1), []))[1].append(ev)
+    came_from: dict[str, list] = {}         # moved_from day → own rides from it
+    for row_day, rows in sorted(by_day.items()):
+        for s in rows:
+            if _own(s) is not None and s.get("moved_from"):
+                came_from.setdefault(str(s.get("moved_from")), []).append(row_day)
     held, agreed = {}, {}
     for eid, (enc, evs) in groups.items():
         moved = [(ev, d) for ev, d in ((ev, _event_day(ev)) for ev in evs)
@@ -1025,12 +1031,15 @@ def _own_held_ids(events: list, by_day: dict, profile_id: str, today: date,
         ev, d = moved[0]
         day = d.isoformat()
         if len(evs) == 1 and d >= today:
-            # The ride left the encoded day (a ride still there is another
-            # one, whose event this is) and sits on the event's day.
-            if (not any(_own(s) is not None for s in by_day.get(enc) or [])
-                    and any(_own(s) is not None and s.get("moved_from") == enc
-                            for s in by_day.get(day) or [])):
-                agreed[eid] = f"{prefix}{day}:own"
+            # The rider moved the ride in Domestique too, to the event's day
+            # ("Move it in my plan too") or any other: it left the encoded day
+            # (a ride still there is another one, whose event this is) and
+            # exactly one own ride came from there. Its id supersedes this
+            # event, whatever day the event is on now.
+            to = came_from.get(enc) or []
+            if len(to) == 1 and not any(_own(s) is not None
+                                        for s in by_day.get(enc) or []):
+                agreed[eid] = f"{prefix}{to[0]}:own"
                 continue
             if eid in pushed and any((_own(s) or {}).get("put_back_from") == day
                                      for s in by_day.get(enc) or []):

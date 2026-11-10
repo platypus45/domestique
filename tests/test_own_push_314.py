@@ -280,6 +280,41 @@ def test_move_it_in_my_plan_too_replaces_the_old_event_once_the_new_one_is_out(e
     assert _counts(_run(env)) == (0, 0, 0)
 
 
+def test_a_held_ride_moved_in_domestique_to_a_third_day_leaves_one_event(env):
+    """The rider moved the ride's event Sat → Sun in intervals.icu, then
+    moved the ride in Domestique from Sat to Thu: one event, on Thursday."""
+    ss = _with_own_saturday(env)
+    _run(env)
+    old, new = _own_id(env, D["sat"]), _own_id(env, D["thu"])
+    env.fk.drag(old, D["sun"])
+    assert _run(env)["held"] == 1
+    ss[_at(ss, D["sat"])] = _rest(D["sat"])
+    ss[_at(ss, D["thu"])] = _own_row(D["thu"], moved_from=D["sat"])
+    _write_plan(ss)
+    r = _run(env)
+    own_events = sorted((e["external_id"], e["start_date_local"][:10]) for e in env.fk.events
+                        if str(e.get("external_id") or "").endswith(":own"))
+    assert own_events == [(new, D["thu"])]
+    assert r["held"] == 0 and r["own_moved"] == []
+    assert _counts(_run(env)) == (0, 0, 0)
+
+
+def test_two_rides_moved_from_one_day_keep_the_hold(env):
+    """Which ride the event was is a guess then: never delete on a guess."""
+    ss = _with_own_saturday(env)
+    _run(env)
+    old = _own_id(env, D["sat"])
+    env.fk.drag(old, D["fri"])
+    ss[_at(ss, D["sat"])] = _rest(D["sat"])
+    ss[_at(ss, D["thu"])] = _own_row(D["thu"], name="Ride B", moved_from=D["sat"])
+    ss[_at(ss, D["sun"])] = _own_row(D["sun"], name="Ride A", moved_from=D["sat"])
+    _write_plan(ss)
+    mark = len(env.fk.calls)
+    r = _run(env)
+    _posted, deleted = _touched(env, mark)
+    assert old not in deleted and env.fk.where(old) == [D["fri"]] and r["held"] == 1
+
+
 def test_a_second_ride_on_the_old_day_is_not_mistaken_for_an_agreed_move(env):
     """Ride A moved Sat → Sun earlier (moved_from Sat stays on it); ride B
     was added on Saturday since. The rider drags B's event onto Sunday:

@@ -1,5 +1,52 @@
 # Changelog
 
+## v3.14.0 — Your own rides, your wellness, and more weeks in intervals.icu (2026-11-10)
+
+This release brings three things riders asked for: add your own rides (a group ride, a club run) and let the rest of the week adapt around them; use the wellness answers you already log in intervals.icu; and keep up to six weeks of your plan in your intervals.icu calendar. The morning check-in has been recalibrated along the way, so an ordinary morning no longer tells you to ease off.
+
+### Your own rides and group rides
+
+- **Add your own ride to any day.** Give it a name, a length and how hard it is (easy, moderate or hard), or type its load yourself. Domestique plans the rest of the week around it, and tells you which rides it shortened or eased. A day that already has a ride of yours asks before replacing it.
+- **The week keeps its load.** Later endurance rides that week get shorter to make room, never below 30 minutes; intervals and other hard sessions keep their length. Remove the ride and the shortened rides get their length back.
+- **Hard days stay apart.** A planned hard session the day before or after a hard ride of yours becomes an easy ride, and gets its plan back when you remove your ride. Today's session never changes under you: if today is hard and your hard ride is tomorrow, you get a warning instead.
+- **FTP tests move out of the way.** A ride of yours on a test day, or a hard ride the day before one, moves the test to the next rested day in the coming week, and you see where it went.
+- **Bring in rides from intervals.icu.** A new list shows the planned rides in your intervals.icu calendar that Domestique didn't put there. Pick the ones to add as your own rides; nothing is added twice.
+- **Your rides appear in intervals.icu too.** A ride you add in Domestique is sent to your intervals.icu calendar as a planned ride with its name, length and load (no workout steps) once it is within the weeks you keep there. Rides you brought in from intervals.icu are never sent back.
+- **Moved a ride in intervals.icu?** Domestique leaves it where you put it and asks, in the ride's dialog: move it in your plan too, or put it back on its planned day. Removing a ride in Domestique removes it from intervals.icu as well.
+- **Warnings where they matter:** two hard days in a row, a ride on the eve of a race or in its last three days, and a ride on a day your readiness points to an easier day. Your ride itself is never rewritten.
+- A ride you added counts as done when you ride that day; it gets no workout score.
+- **Your rides survive a rebuild.** Rebuilding or regenerating the plan keeps them; if one can't be kept (for example a race now sits on that day), Domestique tells you which.
+
+### Wellness from intervals.icu
+
+- **Your morning check-in can come from intervals.icu.** The soreness, fatigue and stress you log there fill Domestique's check-in at the next sync. A check-in you save in Domestique always wins.
+- **Sleep from your watch is not taken as your answer.** When intervals.icu has a sleep score from your watch, Domestique doesn't count it as how you felt you slept.
+- **An injury logged in intervals.icu counts as sore legs**, so a hard session becomes a recovery ride, and the verdict says why.
+- Mood, motivation and injury from intervals.icu are shown with your check-in.
+- **Your weight from intervals.icu fills the weight chart.** Tick "Use my intervals.icu weight" in Settings to let your profile weight follow it; otherwise the weight you typed stays.
+
+### A morning check-in that knows your normal
+
+- **An ordinary morning is neutral.** A check-in where every answer is "Normal" no longer says "Ease off today", and no longer lowers your readiness.
+- **After two weeks of check-ins, Domestique compares each morning with your own usual.** A clearly worse morning than your normal suggests easing off; only a much worse one, with at least one answer at the bad end, caps hard sessions at Z2. Until you have two weeks of check-ins, fixed limits apply.
+- **No readiness data no longer turns hard sessions into Z2.** Without readiness data your session stays as planned, and the card says there isn't enough data yet.
+
+### Up to six weeks in your intervals.icu calendar
+
+- **Choose 2, 4 or 6 weeks** under Settings → Connections → intervals.icu. With sync on, your calendar updates straight away.
+- **Choosing fewer weeks removes the workouts Domestique had put further out.** Workouts you moved there yourself, or that your plan followed you on, stay where they are.
+- A move you make in intervals.icu anywhere inside those weeks is followed by your plan, as before for the next two weeks.
+- A rolling plan only holds the weeks it has planned so far, so a 6-week setting fills as the plan grows.
+
+### Also fixed
+
+- **The Plan tab's grid opened the wrong day** in plans whose weeks don't start on Monday, and showed a race as a missing workout. Races and your own rides now show as what they are.
+- **Room for a ride you add in the availability calendar** (3.13.2) no longer counts sessions you already missed as taking up room.
+
+### After updating
+
+Nothing to do. Your plan, rides and settings carry over. Riders who don't change the new settings see the same calendar sync as before.
+
 ## v3.13.2 — Your hours lead, and no recovery ramp you didn't earn (2026-10-23)
 
 This release makes the availability calendar do what you tell it: hours you give a day become a ride of those hours, and the rest of the week adjusts around it. It also fixes a plan that started with weeks of recovery riding although you had been training, and a rebuild that lost the days of the current week before today.

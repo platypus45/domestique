@@ -7969,13 +7969,15 @@ def _icu_push_note_result(res: dict) -> None:
     except Exception:
         pass
     # 3.14.0 F2 (O4): a put-back that has done its job is cleared right after
-    # the run, so a later drag back to that date is asked about again. Only
-    # for the rider whose plan is on disk now.
+    # the run, so a later drag back to that date is asked about again. The
+    # plan cleaned is the one of the rider the run was for, by path: a profile
+    # switch in between (it does not take the plan lock) must not let one
+    # rider's report clear another rider's put-backs.
     try:
-        from profile_manager import ProfileManager
-        if (res.get("own_moved") is not None and not res.get("error")
-                and _icu_push_last_result.get("profile_id") == ProfileManager.get().active_id):
-            jp = _plan_dir() / "current_plan.json"
+        from profile_manager import ProfileManager, _safe_profile_dir
+        _run_pid = _icu_push_last_result.get("profile_id")
+        if res.get("own_moved") is not None and not res.get("error") and _run_pid:
+            jp = _safe_profile_dir(ProfileManager.get(), _run_pid) / "plans" / "current_plan.json"
             if jp.exists():
                 with tp.plan_write_lock():
                     plan = json.loads(jp.read_text(encoding="utf-8"))

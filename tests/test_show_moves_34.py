@@ -87,7 +87,9 @@ async function fetch() { return { json: async () => (%s) }; }
 icuCalSyncRefresh().then(() => console.log(JSON.stringify({
   text: els['icu-cal-sync-held'].textContent, shown: els['icu-cal-sync-held'].style.display })));
 """ % (json.dumps({"connected": True, "write_ok": True, "sync_enabled": sync,
-                   "last_result": {"held": held}}), _fn("icuCalSyncRefresh")))
+                   "last_result": {"held": held}}),
+       # 3.14.0: the held line is worded by icuHeldLine (workouts and own rides).
+       _fn("icuHeldLine") + "\n" + _fn("icuCalSyncRefresh")))
     if expect is None:
         assert out["shown"] == "none"
     else:

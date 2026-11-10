@@ -743,6 +743,9 @@ loadReadinessComposite().then(() => {
 ], ids=["own-ride", "race", "rest", "recovery", "planned"])
 def test_qx_m1_the_injury_line_says_what_happens_today(today, monkeypatch, tmp_path,
                                                       row, expect, never):
+    # The rider's "Keep original" is a per-day file in the shared data dir; a
+    # test earlier in the suite may have left one for today (release gate).
+    monkeypatch.setattr(app_module, "_is_readiness_cap_reverted_today", lambda: False)
     _plan_today(monkeypatch, tmp_path, [row])
     _sync([_rec(injury=3)])
     note = _readiness()["injury_note"]

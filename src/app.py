@@ -10800,7 +10800,7 @@ def _api_today_session_impl():
         "is_race": bool(planned_data.get("is_race")),
         "race": planned_data.get("race"),
         # 3.14.0 F2: today is a ride the rider added (the card shows it as theirs).
-        "own": planned_data.get("own"),
+        "own": _own_for_view(planned_data.get("own")),
         "own_advisory": own_advisory,
         "reason": reason,
         "adjustment_reason": adjustment_reason,
@@ -12529,6 +12529,21 @@ def _regenerate_plan_dict(
         for p in new_phases
     ]
     plan_dict["weeks"] = [tp.week_to_dict(w) for w in all_weeks]
+    # 3.14.0 F2 (grill L7): a rebuild keeps the rider's own rides on the days
+    # it still plans; one beyond the rebuilt end is gone, so say which.
+    _kept_own = {(str(s.get("day")), (s.get("own") or {}).get("name"))
+                 for w in plan_dict["weeks"] for s in w.get("sessions") or [] if s.get("own")}
+    _dropped_own = [
+        {"date": str(s.get("day"))[:10], "name": (s.get("own") or {}).get("name") or ""}
+        for w in plan.get("weeks") or [] if isinstance(w, dict)
+        for s in w.get("sessions") or []
+        if isinstance(s, dict) and s.get("own")
+        and str(s.get("day") or "") >= clock.today().isoformat()
+        and (str(s.get("day")), (s.get("own") or {}).get("name")) not in _kept_own]
+    if _dropped_own:
+        regen_info["own_dropped"] = _dropped_own
+        _log.info("EVENT=regen_own_rides_dropped days=%s",
+                  ",".join(x["date"] for x in _dropped_own))
     plan_dict["regenerated"] = clock.now().isoformat()
     # 3.3.2 (Lapo #2): a regen is as fresh as a recalc — stamp recalc_date
     # too. The shallow copy carried the OLD stamp verbatim, so a user whose

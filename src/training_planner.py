@@ -13823,8 +13823,11 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
                 r.description = f"{r.session_type} ({lim}min)"
                 if (old - lim) / old >= 0.15:
                     refit_file(r)
-        if (r.zwo_file or "") and r.zwo_file not in {x.get("File") for x in lib()}:
-            r.zwo_file, r.zwo_name = "", ""                    # M5: gone from the library
+        _files = {x.get("File") for x in lib()}
+        if (r.zwo_file or "") and _files and r.zwo_file not in _files:
+            # M5: the file left the library since (an empty library is an
+            # outage, not a removal: the file is kept, as 3.11.5 keeps it).
+            r.zwo_file, r.zwo_name = "", ""
             refit_file(r)
         return r
 

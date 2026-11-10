@@ -651,20 +651,20 @@ class TestDebouncedFireTime:
     def test_fires_reconcile_when_profile_unchanged(self, stub, monkeypatch):
         stub.pm.save_prefs({"icu_calendar_sync": True})
         calls = []
-        monkeypatch.setattr(icp, "reconcile", lambda: calls.append(1) or {})
+        monkeypatch.setattr(icp, "reconcile", lambda **_k: calls.append(1) or {})
         app_module._icu_push_debounced_run(stub.pid)
         assert calls == [1]
 
     def test_aborts_on_profile_switch(self, stub, monkeypatch):
         stub.pm.save_prefs({"icu_calendar_sync": True})
         calls = []
-        monkeypatch.setattr(icp, "reconcile", lambda: calls.append(1) or {})
+        monkeypatch.setattr(icp, "reconcile", lambda **_k: calls.append(1) or {})
         app_module._icu_push_debounced_run("some-other-profile")
         assert calls == []                  # TOCTOU guard: scheduler pid gone
 
     def test_aborts_when_toggled_off_before_fire(self, stub, monkeypatch):
         calls = []
-        monkeypatch.setattr(icp, "reconcile", lambda: calls.append(1) or {})
+        monkeypatch.setattr(icp, "reconcile", lambda **_k: calls.append(1) or {})
         app_module._icu_push_debounced_run(stub.pid)   # pref OFF
         assert calls == []
 
@@ -685,7 +685,7 @@ class TestDailyFromSync:
     def test_once_per_day_latch(self, stub, monkeypatch):
         stub.pm.save_prefs({"icu_calendar_sync": True})
         calls = []
-        monkeypatch.setattr(icp, "reconcile", lambda: calls.append(1) or {})
+        monkeypatch.setattr(icp, "reconcile", lambda **_k: calls.append(1) or {})
         monkeypatch.setattr(app_module, "_icu_push_last_daily", None)
         app_module._icu_push_daily_from_sync()
         app_module._icu_push_daily_from_sync()
@@ -693,14 +693,14 @@ class TestDailyFromSync:
 
     def test_disabled_toggle_never_runs(self, stub, monkeypatch):
         calls = []
-        monkeypatch.setattr(icp, "reconcile", lambda: calls.append(1) or {})
+        monkeypatch.setattr(icp, "reconcile", lambda **_k: calls.append(1) or {})
         monkeypatch.setattr(app_module, "_icu_push_last_daily", None)
         app_module._icu_push_daily_from_sync()
         assert calls == [] and app_module._icu_push_last_daily is None
 
     def test_transient_error_retries_next_pass(self, stub, monkeypatch):
         stub.pm.save_prefs({"icu_calendar_sync": True})
-        monkeypatch.setattr(icp, "reconcile", lambda: {"error": "net_down"})
+        monkeypatch.setattr(icp, "reconcile", lambda **_k: {"error": "net_down"})
         monkeypatch.setattr(app_module, "_icu_push_last_daily", None)
         app_module._icu_push_daily_from_sync()
         assert app_module._icu_push_last_daily is None   # latch released

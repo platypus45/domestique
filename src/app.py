@@ -1030,20 +1030,30 @@ def setup_test_icu(body: dict):
         data = resp.json()
         # Try to get eFTP from wellness
         eftp = None
-        weight = data.get("weight")
+        weight = None
         try:
-            w_url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/wellness?oldest=2025-01-01&newest=2026-12-31"
+            # 3.14.0 (grill L6): a rolling year; the fixed 2025-2026 dates
+            # stopped seeing new days on 1 January 2027.
+            _today = clock.today()
+            w_url = (f"https://intervals.icu/api/v1/athlete/{athlete_id}/wellness"
+                     f"?oldest={(_today - timedelta(days=365)).isoformat()}"
+                     f"&newest={_today.isoformat()}")
             w_resp = httpx.get(w_url, auth=("API_KEY", api_key), timeout=10, verify=_icu_verify())
             if w_resp.status_code == 200:
-                for w in reversed(w_resp.json()):
+                records = w_resp.json()
+                # 3.14.0 (grill M5): the one "intervals.icu weight", the rule
+                # the follow mirror uses: newest scale reading of 30 days.
+                _w = db.icu_weight_from_records(records)
+                weight = _w[1] if _w else None
+                for w in reversed(records):
                     si = w.get("sportInfo", [])
                     if si and si[0].get("eftp"):
                         eftp = round(si[0]["eftp"])
                         break
-                    if not weight and w.get("weight"):
-                        weight = w["weight"]
         except Exception:
             pass
+        if weight is None:
+            weight = data.get("weight")   # else the athlete setting
         return {
             "ok": True,
             "name": data.get("name", ""),
@@ -3387,7 +3397,8 @@ def api_rider_stats():
     body: dict = {}
     try:
         body["weight_kg"] = (
-            _prov(round(float(athlete["weight_kg"]), 1), "manual", None)
+            _prov(round(float(athlete["weight_kg"]), 1),
+                  "icu" if athlete.get("weight_source") == "icu" else "manual", None)
             if athlete.get("weight_kg") else dict(_PROV_EMPTY)
         )
         # LBM: default-valued profiles render empty-state (locked).
@@ -3811,6 +3822,59 @@ def _local_sleep_metrics(days: int = 14) -> dict:
     return compute_sleep_metrics_from_wellness(list(reversed(records)))
 
 
+def _today_plan_rows() -> list:
+    """Today's rows in the stored plan as stored ([] without a plan or a row;
+    a dismissed session is no session)."""
+    try:
+        plan = _read_stored_plan() or {}
+        today = clock.today().isoformat()
+        return [s for w in (plan.get("weeks") or []) if isinstance(w, dict)
+                for s in (w.get("sessions") or [])
+                if isinstance(s, dict) and s.get("day") == today
+                and s.get("status") != "dismissed"]
+    except Exception:  # noqa: BLE001 — no plan: no own ride, no session
+        return []
+
+
+def _injury_note(injury, today_log: dict, rows: list, readiness: dict,
+                 reverted: bool) -> "str | None":
+    """3.14.0 (owner decision M3; QA QX-M1): the verdict's own line about an
+    injury logged in intervals.icu today, so it never reads "Ready to train"
+    without one. Worded by what the planner does with today, through the same
+    guards: an own ride and a race are never rewritten, a rest day has nothing
+    to ease, the rider's "Keep original" stands, and the planner itself says
+    what an injury counted as sore legs does to today's session."""
+    if injury not in ("Niggle", "Poor", "Injured"):
+        return None
+    lead = f"You logged an injury in intervals.icu today ({injury})"
+    counted = (injury in ("Poor", "Injured")
+               and "soreness" in str(today_log.get("icu_fields") or "").split(","))
+    if not counted:
+        return f"{lead}. Your plan is not changed for it; ease off if it hurts."
+    lead += ". It counts as sore legs"
+    if any(s.get("own") for s in rows):
+        return (f"{lead}. Your own ride stays as you planned it: ride it easy, "
+                "or skip it if it hurts.")
+    if any(s.get("is_race") for s in rows):
+        return f"{lead}. Your race stays as planned: start only if it does not hurt."
+    row = next((s for s in rows if (s.get("session_type") or "rest") != "rest"), None)
+    if row is None:
+        return f"{lead}. Today is a rest day: give it time."
+    if reverted:
+        return f"{lead}, but you chose to keep today's session as planned."
+    planned = tp.PlannedSession(
+        day=clock.today(), day_name="", session_type=row.get("session_type"),
+        duration_min=int(row.get("duration_min") or 0),
+        tss_estimate=float(row.get("tss_estimate") or 0), description="")
+    adjusted, _ = tp.adjust_today_session(planned, readiness, rides_recent=[],
+                                          daily_log_today=today_log)
+    if adjusted.session_type == "recovery" and planned.session_type != "recovery":
+        return f"{lead}, so today's session becomes a short recovery ride."
+    if adjusted.session_type != planned.session_type:
+        return f"{lead}; today's session is eased to an easy ride."
+    return f"{lead}. Today's session is already an easy ride."
+
+
 @app.get("/api/readiness")
 def api_readiness(subjective: float = Query(None)):
     training = cached("training", get_today_metrics)
@@ -3887,14 +3951,32 @@ def api_readiness(subjective: float = Query(None)):
     severity = source = None
     severity_reasons: list = []
     try:
-        from datetime import date as _date_cls
         from readiness_composite import compute_training_severity as _cts
-        sev = _cts("default", _date_cls.today().isoformat()) or {}
+        # The one clock (3.14.0, grill L5): the band reads the rider's own
+        # check-in history, so it must judge the same day every reader does.
+        sev = _cts("default", clock.today().isoformat()) or {}
         if isinstance(sev, dict):
             severity = sev.get("severity")
             source = sev.get("source")
             severity_reasons = sev.get("reasons") or []
     except Exception:
+        pass
+    # 3.14.0 F1: was today's check-in imported from intervals.icu (the pill
+    # names it), and did the rider log an injury there today (grill M3: the
+    # verdict never reads "Ready to train" without a plain line about it).
+    checkin_imported = False
+    injury_note = None
+    # 3.14.0 (QA-INT page-load race): whether today is the rider's own ride,
+    # from the server, so the verdict never offers "Ease today's session" on
+    # it however the page's two loads race.
+    today_rows = _today_plan_rows()
+    today_is_own = any(s.get("own") for s in today_rows)
+    try:
+        _today_log = db.get_daily_log_today() or {}
+        checkin_imported = bool(_today_log.get("icu_fields"))
+        injury_note = _injury_note(_icu_extras(_icu_wellness_today()).get("injury"),
+                                   _today_log, today_rows, r, reverted)
+    except Exception:  # noqa: BLE001 — the verdict renders without the line
         pass
     return {
         "readiness": r,
@@ -3905,6 +3987,14 @@ def api_readiness(subjective: float = Query(None)):
         "severity": severity,
         "source": source,
         "severity_reasons": severity_reasons,
+        "checkin_imported": checkin_imported,
+        "injury_note": injury_note,
+        "today_is_own": today_is_own,
+        # O9 (3.14.0, owner): False when readiness could not be computed (too
+        # few of HRV, form, sleep, resting heart rate). Any score above is
+        # then a stand-in, not a reading: the verdict says there is not
+        # enough data, and no readiness rule changes today's session.
+        "readiness_data": r.get("status") != "INSUFFICIENT_DATA",
         "training": merged_load,
         "sleep": {
             "sleep_h": sleep.get("sleep_h"), "sleep_score": sleep.get("sleep_score"),
@@ -4053,6 +4143,10 @@ async def api_readiness_apply_tier_down(request: Request):
                     break
             if not target or not target_week:
                 return JSONResponse({"error": f"No session at {day_iso}"}, 404)
+            # 3.14.0 F2 (C14, grill H1): the rider's own ride is typed by its
+            # effort, so the type checks below would rewrite it.
+            if target.get("own"):
+                return JSONResponse({"error": _fixed_day_error(target)}, 400)
             old_type = target.get("session_type", "") or ""
             if old_type in ("rest", "recovery"):
                 return {"ok": False, "action": "already_easy", "day": day_iso,
@@ -4280,6 +4374,18 @@ async def api_plan_auto_adjust(request: Request):
         except Exception:
             _log.exception("auto-adjust: plan load failed")
             return JSONResponse({"error": "plan load failed"}, 500)
+
+        # 3.14.0 F2 (C14, grill H1): the rider's own ride on the target day is
+        # never rewritten (it is typed by its effort, so the tier-down's type
+        # checks would fire on it). Week scope already skips it.
+        _own_iso = (target_iso if severity == "rest"
+                    else today_iso if (severity == "tier_down" and scope == "today") else None)
+        if _own_iso:
+            _own_s = next((s for w in plan.get("weeks", []) or []
+                           for s in w.get("sessions", []) or []
+                           if s.get("day") == _own_iso and s.get("own")), None)
+            if _own_s is not None:
+                return JSONResponse({"error": _fixed_day_error(_own_s)}, 400)
 
         # 4. Build working copy for dry-run.
         import copy as _copy
@@ -7758,7 +7864,10 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
                       "— purging the profile's synced data",
                       target_pid, prev_athlete, athlete_id)
             try:
-                db.purge_profile_data(target_pid)
+                # 3.14.0 (grill M6): another athlete's account — a weight that
+                # followed the old one stays, becomes the rider's, and asks to
+                # be checked.
+                db.purge_profile_data(target_pid, athlete_changed=True)
             except db.SyncBusy:
                 # Nothing saved yet — a clean retry re-runs the whole flow.
                 _log.warning("EVENT=icu_oauth_purge_busy profile=%s", target_pid)
@@ -7816,10 +7925,16 @@ def api_icu_disconnect():
         # left to delete with. Failures never block the disconnect.
         try:
             import icu_calendar_push as _icp
-            _icp.sweep_all()
+            _icp.sweep_all(profile_id=pid)      # 3.14.0 (M2): this rider only
         except Exception:
             _log.debug("icu disconnect calendar sweep failed (best-effort)",
                        exc_info=True)
+        # 3.14.0 (grill M2): the sweep can wait two minutes for a running
+        # calendar update; after a profile switch meanwhile, purging and
+        # clearing the token would hit the other rider.
+        if pm.active_id != pid:
+            return JSONResponse({"ok": False, "error": "profile_changed"},
+                                status_code=409)
         try:
             db.purge_profile_data(pid)
         except db.SyncBusy:
@@ -7910,6 +8025,23 @@ def _icu_push_note_result(res: dict) -> None:
         _icu_push_last_result = {"at": clock.now().isoformat(), **res, "profile_id": _pid}
     except Exception:
         pass
+    # 3.14.0 F2 (O4): a put-back that has done its job is cleared right after
+    # the run, so a later drag back to that date is asked about again. The
+    # plan cleaned is the one of the rider the run was for, by path: a profile
+    # switch in between (it does not take the plan lock) must not let one
+    # rider's report clear another rider's put-backs.
+    try:
+        from profile_manager import ProfileManager, _safe_profile_dir
+        _run_pid = _icu_push_last_result.get("profile_id")
+        if res.get("own_moved") is not None and not res.get("error") and _run_pid:
+            jp = _safe_profile_dir(ProfileManager.get(), _run_pid) / "plans" / "current_plan.json"
+            if jp.exists():
+                with tp.plan_write_lock():
+                    plan = json.loads(jp.read_text(encoding="utf-8"))
+                    if tp.clear_done_put_backs(plan, res["own_moved"], _icu_push_last_result["at"]):
+                        tp.atomic_write_plan(jp, plan)
+    except Exception:
+        _log.exception("put-back clean-up skipped")
 
 
 def _last_result_for_active_profile() -> "dict | None":
@@ -7956,9 +8088,11 @@ def _icu_push_debounced_run(expected_pid: str, retried: int = 0) -> None:
             _log.info("EVENT=icu_push_debounced_abort reason=profile_switch")
             return
         import icu_calendar_push
-        res = icu_calendar_push.reconcile()
-        if res.get("error") == "swept":         # sync went off while it waited
-            return
+        # 3.14.0 (grill M2): bound to the rider who armed it — the lock wait
+        # can outlast a profile switch, or that rider turning sync off.
+        res = icu_calendar_push.reconcile(profile_id=expected_pid, require_sync=True)
+        if res.get("error") in ("swept", "profile_changed", "sync_off"):
+            return                              # nothing ran for this rider
         _icu_push_note_result(res)
         # 3.3.1 hotfix (B3b): this line omitted `error` entirely — the
         # tester's swap-triggered 422 failed with a clean-looking log line.
@@ -8043,9 +8177,10 @@ def _after_background_sync() -> None:
 
 def _icu_push_daily_from_sync() -> None:
     """db.post_sync_callback (boot-registered): ONE reconcile per calendar
-    day, riding the 30-min sync loop (D3b). This is what rolls the 14-day
-    horizon forward on mutation-free days and mirrors boot-time plan writes
-    — the atomic_write_plan hook is deliberately registered AFTER those."""
+    day, riding the 30-min sync loop (D3b). This is what rolls the rider's
+    window (2, 4 or 6 weeks, 3.14.0) forward on mutation-free days and
+    mirrors boot-time plan writes — the atomic_write_plan hook is
+    deliberately registered AFTER those."""
     global _icu_push_last_daily
     try:
         if not _icu_push_sync_enabled():
@@ -8055,8 +8190,12 @@ def _icu_push_daily_from_sync() -> None:
             return
         _icu_push_last_daily = today
         import icu_calendar_push
-        res = icu_calendar_push.reconcile()
-        if res.get("error") == "swept":         # sync went off while it waited
+        from profile_manager import ProfileManager
+        # 3.14.0 (M2): bound to the rider it was started for and to sync still
+        # being on; a profile switch or sync-off while it waited skips the run.
+        res = icu_calendar_push.reconcile(
+            profile_id=ProfileManager.get().active_id, require_sync=True)
+        if res.get("error") in ("swept", "profile_changed", "sync_off"):
             _icu_push_last_daily = None         # the day's run did not happen
             return
         _icu_push_note_result(res)
@@ -8087,20 +8226,33 @@ def api_icu_push_status():
     except Exception:
         _wok = False
     sync_enabled = False
+    horizon_days = _icp.HORIZON_DAYS
+    own_moved = []
     try:
-        sync_enabled = bool(ProfileManager.get().prefs.get("icu_calendar_sync"))
+        _pm = ProfileManager.get()
+        sync_enabled = bool(_pm.prefs.get("icu_calendar_sync"))
+        horizon_days = _icp.profile_horizon_days(_pm.active_id)   # 3.14.0 F3
+        # O4: kept per rider by the engine (a restart or another rider's run
+        # keeps it); cleared by the sweep of sync off / disconnect, and never
+        # asked about without a connection (QA-UX QX-M2).
+        if token or key:
+            own_moved = _icp.own_moved_report(_pm.active_id)
     except Exception:
         pass
+    last = _last_result_for_active_profile()
     return {
         "connected": bool(token or key),
         "method": "oauth" if token else ("apikey" if key else "none"),
         "write_ok": _wok,
         "sync_enabled": sync_enabled,
-        "horizon_days": 14,
+        "horizon_days": horizon_days,
+        # 3.14.0 (O4): own rides whose event the rider moved in intervals.icu,
+        # as the last calendar update that read it saw them: [{day, icu_day}].
+        "own_moved": own_moved,
         # 3.3.1 hotfix (B3b): outcome of the most recent reconcile (any
         # trigger), incl. error + error_detail — background pushes are no
         # longer silent to the UI.
-        "last_result": _last_result_for_active_profile(),
+        "last_result": last,
     }
 
 
@@ -8109,16 +8261,42 @@ def api_icu_push(body: "dict | None" = None):
     """No body / {} → run the reconcile NOW (the plan-tab button).
     {"sync": true|false} → flip the keep-in-sync toggle; OFF runs the final
     forward sweep (G-A) so our events leave the athlete's calendar.
+    {"horizon_days": 14|28|42} → 3.14.0 F3: save the rider's window; with
+    sync on, the calendar follows now (a shorter window removes what is
+    beyond it). The answer carries ``horizon_days`` once saved; ``ok`` is
+    the calendar update's outcome. Errors: bad_horizon / no_active_profile
+    (nothing saved), profile_changed / sync_off / swept (saved, no update).
     Always 200 with a result dict — needs_reconnect/error are data, not 500s
     (G4)."""
     import icu_calendar_push as _icp
     from profile_manager import ProfileManager
     body = body or {}
     try:
+        if "horizon_days" in body:
+            pm = ProfileManager.get()
+            pid = pm.active_id
+            if pid is None:
+                return {"ok": False, "error": "no_active_profile"}
+            n = body.get("horizon_days")
+            if isinstance(n, bool) or not isinstance(n, int) or n not in _icp.HORIZON_CHOICES:
+                return {"ok": False, "error": "bad_horizon"}
+            pm.save_prefs({_icp._HORIZON_PREF: n})
+            out = {"ok": True, "horizon_days": n,
+                   "sync_enabled": _icu_push_sync_enabled(),
+                   **_icp._result(), "held": 0, "learned": [], "own_moved": []}
+            if out["sync_enabled"]:
+                # Grill M2: bound to this rider and to sync still being on
+                # once the lock is free; a sweep while it waits ends it too.
+                res = _icp.reconcile(profile_id=pid, require_sync=True)
+                if res.get("error") not in ("swept", "profile_changed", "sync_off"):
+                    _icu_push_note_result(res)
+                out.update(res, ok=not res.get("error") and not res.get("needs_reconnect"))
+            return out
         if "sync" in body:
             enable = bool(body.get("sync"))
             pm = ProfileManager.get()
-            if pm.active_id is None:
+            pid = pm.active_id
+            if pid is None:
                 return {"ok": False, "error": "no_active_profile"}
             if enable:
                 if not _icp.write_ok(pm):
@@ -8129,7 +8307,7 @@ def api_icu_push(body: "dict | None" = None):
                 return {"ok": True, "sync_enabled": True}
             pm.save_prefs({"icu_calendar_sync": False})
             _icu_push_cancel_pending()      # a pending debounce would re-push
-            res = _icp.sweep_all()          # G-A: final forward sweep
+            res = _icp.sweep_all(profile_id=pid)   # G-A: final forward sweep (M2)
             return {"ok": True, "sync_enabled": False, **res}
         res = _icp.reconcile(abort_if_swept=False)
         _icu_push_note_result(res)          # 3.3.1 hotfix (B3b): status parity
@@ -8156,7 +8334,8 @@ def api_calendar_push_workout(body: "dict | None" = None):
         push the ONE matching event, inheriting the EXACT domestique:<pid>:<day>:<n>
         auto-sync would produce (byte-identical → merges, no duplicate). Never a
         client index or a hand-rolled <n> (grill amendment 2). O1: the horizon is
-        extended to cover a target day beyond the 14-day auto-sync window.
+        extended to cover a target day beyond the rider's auto-sync window. A
+        day holding the rider's own ride is refused (own_ride_day, 3.14.0).
 
     #28: a planned session the rider moved in intervals.icu is not pushed —
     {ok, pushed: 0, kept_on: <the day it is on there>} — and the planner push
@@ -8270,10 +8449,16 @@ def api_calendar_push_workout(body: "dict | None" = None):
             plan = _icp._load_plan()
             if plan is None:
                 return {"error": "no_plan"}
-            # O1: extend the horizon so a day beyond the 14-day auto-sync window
-            # is still buildable. _desired_events assigns the exact <n>, so the
-            # selected event is byte-identical to what auto-sync would push.
-            horizon = max(_icp.HORIZON_DAYS, (target - today).days)
+            # 3.14.0 (C6): an own ride's day has no workout to send (the
+            # button is hidden there); its ride follows the calendar sync.
+            if any(s.get("own") for s in _icp._sessions_by_day(plan).get(date_iso) or []):
+                return {"error": "own_ride_day"}
+            # O1: extend the horizon so a day beyond the rider's auto-sync
+            # window is still buildable. _desired_events assigns the exact <n>,
+            # so the selected event is byte-identical to what auto-sync would
+            # push. F3 (grill L3): and read as far as the rider's own reconcile
+            # does, a pending clean-up included, so the same holds are seen.
+            horizon = _icp.send_window_days(profile_id, today, target)
             desired, skipped, _ = _icp._desired_events(
                 pm, plan, today, horizon, profile_id)
             # Match on (day, filename): filename is the ZWO name (power) or
@@ -8284,7 +8469,7 @@ def api_calendar_push_workout(body: "dict | None" = None):
             event = next(
                 (ev for ev in desired
                  if ev["start_date_local"][:10] == date_iso
-                 and ev["filename"] == want), None)
+                 and ev.get("filename") == want), None)
             if event is None:
                 # Defense (the frontend hides the button per O3): a slot with no
                 # ZWO / dismissed / skipped isn't pushable. Surface needs_lthr if
@@ -8308,7 +8493,12 @@ def api_calendar_push_workout(body: "dict | None" = None):
                 _log.info("EVENT=icu_calendar_push_workout source=planner "
                           "date=%s pushed=0 kept_on=%s", date_iso, kept_on)
                 return {"ok": True, "pushed": 0, "kept_on": kept_on}
-            return _send([event])
+            out = _send([event])
+            if out.get("ok"):
+                # 3.14.0 (grill H1): past the rider's window, a clean-up still
+                # pending from a longer one must spare this push.
+                _icp.note_sent(profile_id, event["external_id"], target)
+            return out
 
         return _icp._one_at_a_time(_icp._RECONCILE_LOCK_TIMEOUT_S, _push_planned)
     except Exception as e:                      # amendment 7: zero 500s, ever
@@ -8375,6 +8565,174 @@ def api_icu_races():
         return {"races": races}
     except Exception as e:                      # always 200, never a 500
         _log.exception("icu races read failed")
+        return {"error": f"internal:{type(e).__name__}"}
+
+
+def _icu_ride_numbers(ev: dict) -> "tuple[int | None, int | None, str, str, bool]":
+    """(minutes, load, load_from, intensity, estimated) of a planned
+    intervals.icu ride (3.14.0 F2): length from moving_time, else time_target;
+    load from icu_training_load, else load_target, else length x the planned
+    intensity (``estimated``: Domestique worked it out, QX-L12); how hard from
+    that intensity, else from load per hour, else moderate."""
+    def _num(k):
+        v = ev.get(k)
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 else None
+    secs = _num("moving_time") or _num("time_target")
+    minutes = int(round(secs / 60)) if secs else None
+    if minutes is not None and not (1 <= minutes <= 24 * 60):
+        minutes = None
+    if_ = _num("icu_intensity")
+    if if_ is not None:
+        if_ = if_ / 100.0 if if_ > 3 else if_
+        if not 0.3 <= if_ <= 1.5:
+            if_ = None
+    load = _num("icu_training_load") or _num("load_target")
+    load_from = "icu" if load else "intensity"
+    estimated = False
+    if not load and minutes and if_:
+        load, load_from, estimated = minutes / 60 * if_ * if_ * 100, "icu", True
+    load = int(round(load)) if load else None
+    if load is not None and not 1 <= load <= tp.OWN_MAX_LOAD:
+        load, load_from, estimated = None, "intensity", False
+    if if_ is None and load and minutes:
+        if_ = (load / (minutes / 60 * 100)) ** 0.5
+    return (minutes, load, load_from,
+            (tp.own_intensity_for_if(if_) if if_ else "moderate"), estimated)
+
+
+@app.get("/api/icu/planned-rides")
+def api_icu_planned_rides():
+    """3.14.0 F2 -- the rider's own planned rides in their intervals.icu
+    calendar, for the "My rides from intervals.icu" list (the races-import
+    pattern; a sync ``def``: the read blocks up to 30 s). Read-only: adding
+    goes through POST /api/plan/own-sessions; nothing changes in intervals.icu.
+
+    Lists cycling WORKOUT events from today on, never ours (no "domestique"
+    external id: the plan's own pushes and library pushes), never notes, week
+    targets or hidden rows. Each: {event_id, date, name, sport, duration_min,
+    load, load_from, intensity, status, plan_day}; status "new", "added",
+    "moved" (the ride sits on plan_day in the plan), "after_plan",
+    "not_in_plan", "race_day", "ridden", "two_sessions", "day_has_your_ride".
+    ``gone``: rides imported earlier whose event is no longer there. Always 200;
+    {needs_reconnect} / {error} as /api/icu/races; ``profile_id`` names the rider
+    the list was read for (the dialog sends it back, grill M9)."""
+    import icu_calendar_push as _icp
+    from profile_manager import ProfileManager
+    try:
+        pm = ProfileManager.get()
+        if not pm.active_id:
+            return {"error": "no_active_profile"}
+        profile_id = pm.active_id
+        athlete_id, err = _icp._connection(pm)
+        if err:
+            return {"error": err}
+        if not _icp.write_ok(pm):
+            return {"needs_reconnect": True}
+        today = clock.today()
+        plan = _read_stored_plan() or {}
+        rows_by_day: dict = {}
+        own_by_eid: dict = {}
+        last_day = today
+        for w in plan.get("weeks") or []:
+            if not isinstance(w, dict):
+                continue
+            try:
+                last_day = max(last_day, date.fromisoformat(str(w.get("end") or "")[:10]))
+            except ValueError:
+                pass
+            for s in w.get("sessions") or []:
+                if not isinstance(s, dict) or not s.get("day"):
+                    continue
+                d_iso = str(s["day"])[:10]
+                rows_by_day.setdefault(d_iso, []).append(s)
+                own = s.get("own") or {}
+                if own.get("icu_event_id") is not None:
+                    own_by_eid[own["icu_event_id"]] = s
+        plan_end = last_day
+        for s in own_by_eid.values():
+            try:
+                last_day = max(last_day, date.fromisoformat(str((s.get("own") or {}).get("icu_day") or s["day"])[:10]))
+            except ValueError:
+                pass
+        newest = min(today + timedelta(days=365), last_day + timedelta(days=28))
+        status, body = _icp._http(
+            "GET", f"athlete/{athlete_id}/events?oldest={today.isoformat()}"
+                   f"&newest={newest.isoformat()}")
+        if _icp._scope_403(status, body) or status == 401:
+            return {"needs_reconnect": True}
+        if status == 0:
+            return {"error": "network"}
+        if not (200 <= status < 300):
+            return {"error": f"http_{status}"}
+        try:
+            events = json.loads(body or b"[]")
+        except (json.JSONDecodeError, ValueError):
+            return {"error": "bad_response"}
+        rides, seen_ids = [], set()
+        for ev in events if isinstance(events, list) else []:
+            if not isinstance(ev, dict) or str(ev.get("category") or "") != "WORKOUT":
+                continue
+            day = _icp._event_day(ev)
+            if day is None or day < today:
+                continue
+            if str(ev.get("external_id") or "").startswith("domestique"):
+                continue          # ours: the plan's pushes and library pushes
+            if ev.get("show_as_note") or ev.get("for_week") or ev.get("hide_from_athlete"):
+                continue
+            if not _is_cycling_sport(ev.get("type")):
+                continue
+            eid = ev.get("id")
+            if isinstance(eid, bool) or not isinstance(eid, int):
+                continue
+            seen_ids.add(eid)
+            minutes, load, load_from, intensity, estimated = _icu_ride_numbers(ev)
+            d_iso = day.isoformat()
+            plan_day = None
+            here = rows_by_day.get(d_iso) or []
+            mine = own_by_eid.get(eid)
+            if mine is not None:
+                plan_day = str(mine["day"])[:10]
+                if plan_day == d_iso:
+                    st = "added"
+                elif plan_day < today.isoformat():
+                    st = "in_plan_past"        # QA L9: nothing left to answer
+                elif str((mine.get("own") or {}).get("icu_day") or "")[:10] == d_iso:
+                    # QX-H2: the event is where it was when imported; the rider
+                    # moved the ride in Domestique. Never offered to undo that.
+                    st = "moved_here"
+                else:
+                    st = "moved"               # moved in intervals.icu since the import
+            elif not here:
+                st = "after_plan" if day > plan_end else "not_in_plan"
+            elif len(here) > 1:
+                st = "two_sessions"
+            elif here[0].get("is_race"):
+                st = "race_day"
+            elif str(here[0].get("status") or "") in _RIDDEN_RANK:
+                st = "ridden"
+            elif here[0].get("own"):
+                st = "day_has_your_ride"
+            else:
+                st = "new"
+            rides.append({"event_id": eid, "date": d_iso,
+                          "name": " ".join(str(ev.get("name") or "").split())[:tp.OWN_NAME_MAX],
+                          "sport": str(ev.get("type") or ""),
+                          "duration_min": minutes, "load": load, "load_from": load_from,
+                          "load_estimated": estimated,
+                          "intensity": intensity, "status": st, "plan_day": plan_day})
+        rides.sort(key=lambda r: (r["date"], r["name"], r["event_id"]))
+        gone = []
+        for eid, s in sorted(own_by_eid.items(), key=lambda kv: str(kv[1].get("day"))):
+            own = s.get("own") or {}
+            if own.get("source") != "icu" or eid in seen_ids:
+                continue
+            if str(s.get("day") or "") < today.isoformat():
+                continue
+            gone.append({"event_id": eid, "date": str(s["day"])[:10],
+                         "name": own.get("name") or s.get("description") or ""})
+        return {"rides": rides, "gone": gone, "profile_id": profile_id}
+    except Exception as e:                      # always 200, never a 500
+        _log.exception("icu planned rides read failed")
         return {"error": f"internal:{type(e).__name__}"}
 
 
@@ -8570,9 +8928,22 @@ def api_settings():
     p_zones = _power_zones(pm.ftp)
     h_zones = _hr_zones(pm.lthr, pm.max_hr, pm=pm)
     _hz_model, _hz_anchor, _hz_why = _hr_zone_model(pm)
+    # 3.14.0 W2: the newest intervals.icu weight, shown next to the tick.
+    try:
+        _icu_w = db.icu_weight_recent()
+    except Exception:  # noqa: BLE001 — no store yet
+        _icu_w = None
 
     return {
         "weight": config.ATHLETE_WEIGHT_KG,
+        # 3.14.0 W2: whose weight this is. Follows intervals.icu only when the
+        # rider ticked "Use my intervals.icu weight"; any other source (or
+        # none, every profile from before 3.14.0) is the rider's own.
+        "weight_source": pm._athlete.get("weight_source"),
+        "weight_follow_icu": pm._athlete.get("weight_source") == "icu",
+        "weight_needs_check": bool(pm._athlete.get("weight_needs_check")),
+        "weight_icu_latest": ({"date": _icu_w[0], "value": _icu_w[1]}
+                              if _icu_w else None),
         "lbm": config.ATHLETE_LBM_KG,
         "ftp": config.ATHLETE_FTP_W,
         "eftp": eftp,
@@ -8688,6 +9059,28 @@ def update_settings(request_body: dict):
             # v3.6.0-fix28 M-3: allow athlete-only keys (no config mirror).
             if config_key is not None:
                 updates[config_key] = val
+
+    # 3.14.0 W2: "Use my intervals.icu weight". Ticked (true), the weight comes
+    # from intervals.icu, so a weight in the same body is not the rider's
+    # typing and is dropped; unticked (false), the weight is the rider's
+    # again. A typed weight is stamped "manual" in save_athlete (grill M4).
+    weight_follow = request_body.get("weight_follow_icu")
+    if weight_follow is True:
+        athlete_updates.pop("weight_kg", None)
+        updates.pop("ATHLETE_WEIGHT_KG", None)
+    # 3.14.0 (QA L7): the weight's range from the one table, checked before
+    # anything is saved or logged, like LTHR and max HR below.
+    _w_lo, _w_hi = SETUP_LIMITS["weight"]
+    if "weight_kg" in athlete_updates and not (
+            _w_lo <= athlete_updates["weight_kg"] <= _w_hi):
+        raise HTTPException(400, f"weight {athlete_updates['weight_kg']} out of range "
+                                 f"[{_w_lo}, {_w_hi}]")
+    # 3.14.0 (QA QX-M7): every Settings save sent the weight, so an unrelated
+    # save (an FTP change) logged the typed weight again as today's history
+    # row, over the scale readings. Only a weight that changed is logged.
+    _weight_before = pm._athlete.get("weight_kg")
+    _weight_unchanged = ("weight_kg" in athlete_updates and _weight_before is not None
+                         and abs(float(_weight_before) - athlete_updates["weight_kg"]) < 0.05)
 
     # W2d provenance: a settings-form LTHR write is MANUAL — it blocks the ICU
     # mirror (W3) from clobbering a tested value, and the UI shows source+date.
@@ -8818,8 +9211,39 @@ def update_settings(request_body: dict):
             except Exception:
                 pass
         clear_cache()
-        # Auto-log metrics to history
-        db.log_metrics_from_settings(updates)
+        # Auto-log metrics to history (a weight only when it changed, QX-M7)
+        db.log_metrics_from_settings(
+            {k: v for k, v in updates.items()
+             if not (k == "ATHLETE_WEIGHT_KG" and _weight_unchanged)})
+
+    # 3.14.0 W2: the tick goes through the one hand-back writer (grill H3: the
+    # fact table refuses intervals.icu over a typed weight, so the box never
+    # worked for a rider who had saved a weight). The newest intervals.icu
+    # weight lands at once; without a recent one the number stays until the
+    # next reading. Unticking keeps the number and makes it the rider's.
+    if weight_follow is True and pm._athlete.get("weight_source") != "icu":
+        try:
+            _newest = db.icu_weight_recent()
+        except Exception:  # noqa: BLE001 — no store yet: source moves only
+            _newest = None
+        pm.release_fact("weight", "icu", _newest[1] if _newest else None)
+        clear_cache()
+    elif (weight_follow is False and "weight_kg" not in athlete_updates
+            and pm._athlete.get("weight_source") == "icu"):
+        # 3.14.0 (QA L7): only a weight that came from a reading becomes the
+        # rider's. A tick that never saw one leaves the stored number as it
+        # was (the seeded 70 kg of a new profile must not turn into a typed
+        # weight), so the source goes back to none.
+        try:
+            _had_reading = db.icu_weight_recent() is not None
+        except Exception:  # noqa: BLE001
+            _had_reading = False
+        if _had_reading and pm._athlete.get("weight_kg") is not None:
+            pm._set_fact("weight", pm._athlete["weight_kg"], "manual")
+        else:
+            pm._athlete.pop("weight_source", None)
+            pm._write_json(pm.active_dir / "athlete.json", pm._athlete)
+        clear_cache()
 
     return {"ok": True, "updated": updates, "settings": api_settings()}
 
@@ -9043,12 +9467,88 @@ async def api_metrics_log(request: Request):
 # DAILY LOG (Morning Questionnaire) APIs
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# 3.14.0 F1 — intervals.icu answers the morning form has no question for. Shown
+# to the rider only (codes from intervals.icu's developer, see db.icu_check_in);
+# mood and motivation never reach the planner, and an injury reaches it only
+# through the check-in's soreness (db.icu_check_in).
+_ICU_EXTRA_LABELS = {
+    "mood":       {1: "Great", 2: "Good", 3: "OK", 4: "Grumpy"},
+    "motivation": {1: "Extreme", 2: "High", 3: "Average", 4: "Low"},
+    "injury":     db.ICU_INJURY_LABELS,
+}
+
+
+def _check_in_sources(row: dict | None) -> dict:
+    """Where each Hooper answer of a check-in row came from: "intervals.icu",
+    "default" (an imported day, but not answered there) or "manual"."""
+    if not row:
+        return {}
+    answered = set(str(row.get("icu_fields") or "").split(",")) - {""}
+    if not answered:
+        return {c: "manual" for c in db.HOOPER_COLS}
+    return {c: ("intervals.icu" if c in answered else "default") for c in db.HOOPER_COLS}
+
+
+def _icu_wellness_today() -> dict:
+    """Today's intervals.icu wellness record as the sync stored it, or {}."""
+    try:
+        r = db.get_db().execute("SELECT raw_json FROM wellness WHERE date = ?",
+                                (clock.today().isoformat(),)).fetchone()
+        rec = json.loads(r["raw_json"]) if r and r["raw_json"] else {}
+    except Exception:  # noqa: BLE001 — no store, no extras
+        return {}
+    return rec if isinstance(rec, dict) else {}
+
+
+def _icu_extras(rec: dict) -> dict:
+    """{"mood": "Good", ...}: the extras answered in ``rec``, labelled."""
+    out = {}
+    for key, labels in _ICU_EXTRA_LABELS.items():
+        v = rec.get(key)
+        if isinstance(v, float) and v.is_integer():
+            v = int(v)
+        if isinstance(v, int) and not isinstance(v, bool) and v in labels:
+            out[key] = labels[v]
+    return out
+
+
 @app.get("/api/daily-log")
 def api_daily_log(days: int = Query(14)):
-    """Return today's log entry + recent history."""
+    """Return today's log entry + recent history.
+
+    3.14.0 F1 adds ``sources`` (per Hooper question: "intervals.icu",
+    "default" or "manual"), ``icu_extras`` (mood / motivation / injury from
+    today's intervals.icu wellness, labelled), ``icu_sleep_from_watch`` (an
+    imported day whose sleep quality came from a watch's sleep score and is
+    not counted) and ``band`` (today's check-in band, the one the planner
+    and the verdict use).
+    """
     today = db.get_daily_log_today()
     history = db.query_daily_log(days)
-    return {"today": today, "history": history}
+    rec = _icu_wellness_today()
+    band = None
+    if today:
+        try:
+            import readiness_composite as _rc
+            band = _rc.hooper_band(clock.today().isoformat(), today_row=today)
+        except Exception:  # noqa: BLE001 — the card falls back to no colour
+            band = None
+    sources = _check_in_sources(today)
+    from ride_storage import wellness_value as _wv
+    from_watch = bool(
+        sources.get("sleep_quality") == "default"
+        and rec.get("sleepQuality") is not None
+        and _wv("sleepScore", rec.get("sleepScore")) is not None)
+    # 3.14.0 (QA QX-L4, QX-L13): the card names a soreness that came from
+    # the injury, and says when intervals.icu answered today but the day is
+    # the rider's own check-in (those answers are then not used).
+    return {"today": today, "history": history, "sources": sources,
+            "icu_extras": _icu_extras(rec), "icu_sleep_from_watch": from_watch,
+            "icu_soreness_from_injury": bool(
+                sources.get("soreness") == "intervals.icu"
+                and db.icu_soreness_from_injury(rec)),
+            "icu_answers_today": bool(db.icu_check_in(rec)),
+            "band": band}
 
 
 @app.post("/api/daily-log")
@@ -9058,8 +9558,8 @@ async def api_daily_log_post(request: Request):
     v4.6.6 IMPL-C: validates each Hooper field (sleep_quality, fatigue,
     stress, soreness, mood) is an int 1..7 and rejects with 400 otherwise.
     Returns the full row with computed `hooper_index` (sum of 4 Hooper
-    fields excluding mood, range 4..28). Per Hooper & Mackinnon 1995,
-    hooper_index ≥ 18 = significant accumulated fatigue (IMPL-B G6 gate).
+    fields excluding mood, range 4..28). What the sum means for training is
+    decided by readiness_composite.hooper_band (3.14.0).
     """
     body = await _get_json_body(request)
     dt = body.get("date", clock.today().isoformat())
@@ -9740,6 +10240,10 @@ async def api_today_session_persist(request: Request):
             for w in plan.get("weeks", []):
                 for s in w.get("sessions", []):
                     if s.get("day") == today_iso:
+                        # 3.14.0 F2: a race or the rider's own ride is fixed;
+                        # this path had no fixed-day guard at all.
+                        if tp._protect_race(s):
+                            return JSONResponse({"error": _fixed_day_error(s)}, 400)
                         # The original prescription used to be OVERWRITTEN here,
                         # which made "Ride the original anyway" unable to keep its
                         # promise: the revert flag suppressed the live adjustment,
@@ -9863,6 +10367,13 @@ def _next_ftp_test_slot() -> "str | None":
     today = clock.today()
     next_monday = today + timedelta(days=7 - today.weekday())
     hard_types = {"vo2max", "threshold", "overunder", "sweetspot", "tempo"}
+    # 3.14.0 F2 (grill H2): the day before a test must not hold the rider's
+    # own ride unless it is an easy one (fresh legs; the ride cannot be eased).
+    own_not_easy = {
+        str(s.get("day") or "")[:10]
+        for w in plan.get("weeks", []) or [] for s in w.get("sessions", []) or []
+        if isinstance(s, dict) and s.get("own")
+        and (s["own"].get("intensity") or "") != "easy"}
     candidates: list[tuple[date, bool]] = []
     for w in plan.get("weeks", []) or []:
         for s in w.get("sessions", []) or []:
@@ -9873,9 +10384,11 @@ def _next_ftp_test_slot() -> "str | None":
             stype = (s.get("session_type") or "").lower()
             if d < next_monday or stype in ("rest", "ftp_test"):
                 continue
-            if s.get("is_race") or s.get("user_swapped") or s.get("user_moved"):
+            if tp._protect_race(s) or s.get("user_swapped") or s.get("user_moved"):
                 continue
             if (s.get("status") or "pending") != "pending":
+                continue
+            if (d - timedelta(days=1)).isoformat() in own_not_easy:
                 continue
             candidates.append((d, stype in hard_types))
     if not candidates:
@@ -10269,6 +10782,39 @@ def _advance_continuous_deload(plan: dict, json_path: Path, cur_idx: int,
         refit_days.append(repl.day.isoformat())
     if not refit_days:
         return None  # week effectively over — nothing left to unload
+    # 3.14.0 F2 (grill M12, C11): a ride the rider added stays in the deload
+    # week; the deload shapes the other days around it, so its load (and any
+    # other day kept as it was) comes off theirs instead of on top.
+    def _counts(s) -> bool:
+        return (s.session_type != "rest"
+                and str(getattr(s, "status", "") or "pending") not in ("missed", "dismissed"))
+    if any(getattr(s, "own", None) and _counts(s) for s in cur_dto.sessions):
+        _kept = sum(float(s.tss_estimate or 0) for s in cur_dto.sessions
+                    if _counts(s) and s.day.isoformat() not in refit_days)
+        _spliced = [s for s in cur_dto.sessions
+                    if s.day.isoformat() in refit_days and s.session_type != "rest"]
+        _sp_tss = sum(float(s.tss_estimate or 0) for s in _spliced)
+        _room = float(pw.tss_target or 0) - _kept
+        if _sp_tss > 0 and _sp_tss > _room:
+            _f = max(0.0, _room) / _sp_tss
+            for s in _spliced:
+                _dur = int((s.duration_min or 0) * _f)
+                if _dur < 20:
+                    s.session_type, s.duration_min, s.tss_estimate = "rest", 0, 0
+                    s.description = "Rest: your own ride carries this lighter week"
+                    s.zwo_file = s.zwo_name = ""
+                    continue
+                s.tss_estimate = int(float(s.tss_estimate or 0) * _f)
+                s.duration_min = _dur
+                s.zwo_file = s.zwo_name = ""
+                if s.session_type not in ("rest", "recovery"):
+                    try:
+                        tp.match_zwo(s, library, week_num=cur_dto.week_num,
+                                     day_idx=(s.day - cur_dto.start).days,
+                                     used_names=used_names, plan_start_date=cur_dto.start,
+                                     seed_salt=seed_salt)
+                    except Exception:  # noqa: BLE001 -- a shorter easy day without a file
+                        pass
     cur_json["sessions"] = [_planned_session_to_json(s) for s in cur_dto.sessions]
     cur_json["is_stepback"] = True
     cur_json["tss_target"] = pw.tss_target  # ×0.72 (Issurin unload band)
@@ -10317,9 +10863,13 @@ async def api_continuous_deload_revert(request: Request):
             if wj is None or (wj.get("end") or "") < today.isoformat():
                 return {"reverted": False, "reason": "week_passed"}
             by_day = {s.get("day"): s for s in orig.get("sessions", [])}
+            # 3.14.0 F2: the rider's own rides are as they are now -- one added
+            # since the advance stays, one removed since is not brought back.
             wj["sessions"] = [
                 (by_day.get(sj.get("day"), sj)
-                 if (sj.get("day") or "") >= today.isoformat() else sj)
+                 if (sj.get("day") or "") >= today.isoformat()
+                 and not sj.get("own") and not (by_day.get(sj.get("day")) or {}).get("own")
+                 else sj)
                 for sj in wj.get("sessions", [])
             ]
             wj["is_stepback"] = bool(orig.get("is_stepback", False))
@@ -10541,6 +11091,21 @@ def _api_today_session_impl():
         _log.info(
             f"EVENT=today_adjustment_reverted suppressed_reason={reason!r}")
         adjusted, reason = planned, ""
+    # 3.14.0 F2 (grill_integration X1, C13): the readiness gates never rewrite
+    # a race or the rider's own ride (an own ride is typed by its effort, so
+    # the type gates would fire on it). A low-readiness day gets a plain
+    # advisory line on the rider's own ride instead.
+    own_advisory = ""
+    if tp._protect_race(planned_data):
+        # QX-M5: only on real evidence -- readiness data, a morning check-in
+        # or an HRV streak -- never on the neutral 50 a missing score becomes.
+        _evidence = (r.get("data_status") == "ok" or bool(hrv_streak)
+                     or any((daily_log_today or {}).get(k) is not None
+                            for k in ("sleep_quality", "fatigue", "stress", "soreness")))
+        if reason and planned_data.get("own") and _evidence:
+            own_advisory = ("Your readiness today points to an easier day. Your own ride "
+                            "stays as you planned it: ride it by feel and ease off if you need to.")
+        adjusted, reason = planned, ""
 
     # v4.6.0 IMPL-HOMEPAGE-CONSISTENCY §3 Pillar D: surface adjustment_reason
     # explicitly so the homepage chip can render "Adjusted to {type} due to
@@ -10568,6 +11133,9 @@ def _api_today_session_impl():
         # issue #7 — surface a race on the home "Today" card when today IS a race.
         "is_race": bool(planned_data.get("is_race")),
         "race": planned_data.get("race"),
+        # 3.14.0 F2: today is a ride the rider added (the card shows it as theirs).
+        "own": _own_for_view(planned_data.get("own")),
+        "own_advisory": own_advisory,
         "reason": reason,
         "adjustment_reason": adjustment_reason,
         "readiness": r.get("score"),
@@ -10641,6 +11209,15 @@ def _get_soreness_subjective() -> float | None:
     Mapping (1=best, 7=worst): score = 10 - (val - 1) * 1.5, clamped 1..10.
     Returns None when no daily_log row exists OR db is unreachable
     (defensive — some test fixtures use mocked DBs without the table).
+
+    3.14.0 neutral rule (grill M8; owner: an ordinary day is neutral): when
+    no answer is worse than "Normal", the Hooper part is ABSENT, not 5.5/10.
+    The form starts every question at Normal, and 5.5 reads as 50/100 on the
+    0-100 composite, under its 60 line: answering "Normal" lowered an ordinary
+    rider's readiness, and could cost a hard session. Better-than-Normal
+    answers do not raise it either, consistent with the asymmetric evidence
+    for the readiness rating below (Ten Haaf 2017 on the low side; Sansone
+    2023). One answer worse than Normal keeps the min() unchanged.
     """
     try:
         today_log = db.get_daily_log_today()
@@ -10649,6 +11226,7 @@ def _get_soreness_subjective() -> float | None:
     if not today_log:
         return None
     components: list[float] = []
+    worst_answer = None
     for key in ("soreness", "fatigue", "stress", "sleep_quality"):
         v = today_log.get(key)
         if v is None:
@@ -10657,7 +11235,11 @@ def _get_soreness_subjective() -> float | None:
             iv = int(v)
         except (TypeError, ValueError):
             continue
+        worst_answer = iv if worst_answer is None else max(worst_answer, iv)
         components.append(max(1.0, min(10.0, 10.0 - (iv - 1) * 1.5)))
+    if (worst_answer is not None
+            and worst_answer <= _readiness_composite_mod.HOOPER_NORMAL_ANSWER):
+        components = []                    # an ordinary day: no Hooper term
     # v3.6.0 — readiness-to-train enters as its OWN term, never into the min()
     # above. Direction matters: the four Hooper items are 1=best/7=worst and get
     # inverted by the mapping, while readiness-to-train is 1-10 where HIGH =
@@ -10685,12 +11267,10 @@ def _get_soreness_subjective() -> float | None:
     if hooper_worst is None:
         if rtt_score is None:
             return None
-        # No Hooper answers at all: the rating is the only thing there is, but
-        # it must not carry the channel on its own at full strength either —
-        # pull it toward neutral so an un-anchored self-rating cannot drive the
-        # composite to an extreme. (Not reachable through /api/daily-log today,
-        # which requires all four Hooper items; guarded because a future caller
-        # would otherwise hand one optional slider 100% of the channel.)
+        # No Hooper term (no answers, or 3.14.0: none worse than Normal): the
+        # rating is the only thing there is, but it must not carry the channel
+        # on its own at full strength either — pull it toward neutral so an
+        # un-anchored self-rating cannot drive the composite to an extreme.
         _NEUTRAL = 5.5
         return _NEUTRAL + _RTT_WEIGHT_DOWN * (rtt_score - _NEUTRAL)
     if rtt_score is None:
@@ -11729,6 +12309,25 @@ async def api_plan_generate(request: Request):
                     "arriving fresh is what's left to win."
                 )
 
+            # 3.14.0 F2 (OD5, grill H6): the rider's own rides from today on
+            # come along into the new plan with their record as it was (an
+            # imported ride stays imported, so it is never pushed back); the
+            # new weeks are fitted around them, and any the new plan cannot
+            # hold are reported.
+            _own_carry = None
+            if isinstance(_existing_plan, dict):
+                _carry = [s for w in _existing_plan.get("weeks") or [] if isinstance(w, dict)
+                          for s in w.get("sessions") or []
+                          if isinstance(s, dict) and s.get("own")
+                          and str(s.get("day") or "") >= clock.today().isoformat()
+                          and (s.get("status") or "pending") == "pending"]
+                if _carry:
+                    try:
+                        _own_carry = tp.apply_own_sessions(plan_dict, carry=_carry,
+                                                           atomic=False)
+                    except Exception:
+                        _log.exception("own rides carry-over into the new plan failed")
+
             tp.atomic_write_plan(json_path, plan_dict)
 
         # v1.4.0 — single enrichment helper (replaces the inline duplicate).
@@ -11747,6 +12346,12 @@ async def api_plan_generate(request: Request):
         resp = {"ok": True, "plan_json": plan_dict, "plan_file": str(plan_path)}
         if plan_dict.get("warning"):
             resp["warning"] = plan_dict["warning"]  # F4c: top-level for the UI
+        if _own_carry is not None:
+            resp["own_carry"] = {k: _own_carry.get(k) for k in
+                                 ("applied", "refused", "eased", "ftp_test_moved", "warnings")}
+            resp["own_lost"] = _own_lost_lines(
+                carry=_own_carry,
+                names={str(s.get("day"))[:10]: (s.get("own") or {}).get("name") for s in _carry})
         return resp
 
     except ValueError as e:
@@ -12254,6 +12859,9 @@ def _regenerate_plan_dict(
             _regen_kwargs["athlete"] = athlete
     except (ValueError, TypeError):
         pass
+    # 3.14.0 F2 (QA M1, C9): the days the rider moved in intervals.icu are
+    # never eased by the rebuild's 48 h pass next to an own ride.
+    _regen_kwargs["pinned_days"] = _icu_held_plan_days()
     new_phases, all_weeks, regen_info = tp.regenerate_from_today(**_regen_kwargs)
 
     # Build updated plan JSON.
@@ -12274,6 +12882,21 @@ def _regenerate_plan_dict(
         for p in new_phases
     ]
     plan_dict["weeks"] = [tp.week_to_dict(w) for w in all_weeks]
+    # 3.14.0 F2 (grill L7): a rebuild keeps the rider's own rides on the days
+    # it still plans; one beyond the rebuilt end is gone, so say which.
+    _kept_own = {(str(s.get("day")), (s.get("own") or {}).get("name"))
+                 for w in plan_dict["weeks"] for s in w.get("sessions") or [] if s.get("own")}
+    _dropped_own = [
+        {"date": str(s.get("day"))[:10], "name": (s.get("own") or {}).get("name") or ""}
+        for w in plan.get("weeks") or [] if isinstance(w, dict)
+        for s in w.get("sessions") or []
+        if isinstance(s, dict) and s.get("own")
+        and str(s.get("day") or "") >= clock.today().isoformat()
+        and (str(s.get("day")), (s.get("own") or {}).get("name")) not in _kept_own]
+    if _dropped_own:
+        regen_info["own_dropped"] = _dropped_own
+        _log.info("EVENT=regen_own_rides_dropped days=%s",
+                  ",".join(x["date"] for x in _dropped_own))
     plan_dict["regenerated"] = clock.now().isoformat()
     # 3.3.2 (Lapo #2): a regen is as fresh as a recalc — stamp recalc_date
     # too. The shallow copy carried the OLD stamp verbatim, so a user whose
@@ -12297,6 +12920,33 @@ def _regenerate_plan_dict(
     # on live fitness, so the chip's baseline moves with it.
     plan_dict["ctl_snapshot"] = tp.plan_ctl_snapshot(current_ctl, _recent_wtss)
     return plan_dict, regen_info
+
+
+def _own_lost_lines(regen_info=None, carry=None, names=None, race_day=None) -> list:
+    """3.14.0 F2 (QA L5/L6): a plain line for each ride of the rider's that a
+    rebuild could not keep (``regen_info.own_dropped``) or that could not come
+    along into a new plan (``carry.refused``), so none goes without a word."""
+    def _label(v):
+        try:
+            return tp._own_day_label(date.fromisoformat(str(v)[:10]))
+        except ValueError:
+            return str(v)
+    lines = []
+    for x in ((regen_info or {}).get("own_dropped") or []):
+        day = str(x.get("date") or "")[:10]
+        name = x.get("name") or "your ride"
+        if race_day and day == race_day:
+            lines.append(f"The race takes the day of your ride {name} on {_label(day)}, "
+                         f"so that ride is no longer in your plan.")
+        else:
+            lines.append(f"Your ride {name} on {_label(day)} is no longer in your plan: "
+                         f"the rebuilt plan does not reach that day.")
+    for r in ((carry or {}).get("refused") or []):
+        day = str(r.get("date") or "")[:10]
+        name = (names or {}).get(day) or "your ride"
+        lines.append(f"Your ride {name} on {_label(day)} could not come along into the "
+                     f"new plan: {r.get('text') or r.get('reason')}")
+    return lines
 
 
 def _ramp_band(absence_days: int) -> str:
@@ -12450,6 +13100,7 @@ def _apply_refit_to_plan(plan: dict, today: date) -> "dict | None":
     # never reached production (the Step 5 review, L2).
     _, refit_info = tp.refit_remaining_week(
         goal, dto_weeks, today, seed_salt=seed_salt, athlete=_planner_athlete(),
+        pinned_days=_icu_held_plan_days(),   # 3.14.0 F2 (QA M1, C9)
     )
     if refit_info.get("action") != "refitted" or not refit_info.get("refit_days"):
         return None
@@ -12791,7 +13442,8 @@ async def api_plan_regenerate_dynamic(request: Request):
 
             tp.atomic_write_plan(json_path, plan_dict)
 
-        return {"ok": True, "plan_json": plan_dict, "regen_info": regen_info}
+        return {"ok": True, "plan_json": plan_dict, "regen_info": regen_info,
+                "own_lost": _own_lost_lines(regen_info)}
 
     except ValueError as e:
         # FC5d (v2.5.0, L3-6): planner input rejection (event date passed) —
@@ -12857,7 +13509,9 @@ async def api_plan_add_race(request: Request):
                 plan, current_ctl=current_ctl, activities=activities, seed_salt=seed_salt,
             )
             tp.atomic_write_plan(json_path, plan_dict)
-        return {"ok": True, "plan_json": plan_dict, "regen_info": regen_info, "added": new_event}
+        # QA L6: a race on a day that held the rider's own ride says so.
+        return {"ok": True, "plan_json": plan_dict, "regen_info": regen_info, "added": new_event,
+                "own_lost": _own_lost_lines(regen_info, race_day=ev_date)}
     except ValueError as e:
         # FC5d (v2.5.0, L3-6): the shared regen core refuses a passed A-event
         # date — surface it as a 400 with the user-facing message.
@@ -12867,6 +13521,104 @@ async def api_plan_add_race(request: Request):
         import traceback
         traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+def _icu_held_plan_days() -> list:
+    """Plan days whose workout the rider moved in intervals.icu and the plan
+    has not followed (#28 holds): the own-ride writer never eases those (C9).
+    Kept per rider by the calendar engine from the last run that read their
+    calendar, so a failed run or another rider's run never erases them (QA
+    C9b); this rider's last run in this process adds what it reported."""
+    import icu_calendar_push as _icp
+    from profile_manager import ProfileManager
+    days = set()
+    try:
+        days |= set(_icp.held_plan_days(ProfileManager.get().active_id))
+    except Exception:
+        _log.debug("held plan days unreadable", exc_info=True)
+    reported = (_last_result_for_active_profile() or {}).get("held_days")
+    if isinstance(reported, list):
+        days |= {str(d)[:10] for d in reported}
+    return sorted(days)
+
+
+@app.post("/api/plan/own-sessions")
+async def api_plan_own_sessions(request: Request):
+    """3.14.0 F2 -- add, change, move or remove the rider's own rides (a group
+    ride, a ride of their own) and fit their weeks around them.
+
+    Body: {"profile_id"?, "set": [{date, name, duration_min, intensity|load,
+    icu_event_id?, icu_day?, load_from?, link?, edit?, replace?}], "remove":
+    ["YYYY-MM-DD"], "move": [{from, to[, name, duration_min, intensity, load,
+    icu_day, replace]}], "put_back": [{day, icu_day}]}. A ``profile_id`` (the
+    dialogs send the one they were opened for) that is no longer the active
+    rider answers 409 ``profile_changed`` and changes nothing (grill M9).
+    All or nothing: any refused item leaves the plan as it was (QA L1-L3).
+    200 {ok, applied, refused, eased, restored, shortened, lengthened,
+    ftp_test_moved, over_budget, warnings, touched_days, plan_json}; 409
+    ``day_has_your_ride`` when a day holds another ride of the rider's and the
+    item did not say ``edit`` or ``replace`` (QA H1: the dialog asks "Replace
+    it?"); 400 for any other refusal; 404 no plan. The calendar push follows
+    through the plan write's hook (no network here)."""
+    from profile_manager import ProfileManager
+    body = await _get_json_body(request)
+    body = body if isinstance(body, dict) else {}
+    pid = body.get("profile_id")
+    if pid not in (None, ""):
+        try:
+            active = ProfileManager.get().active_id
+        except Exception:
+            active = None
+        if str(pid) != str(active or ""):
+            return JSONResponse({"ok": False, "error": "profile_changed",
+                                 "detail": "The active rider changed. Open the dialog again."}, 409)
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+
+    def _list(key):
+        v = body.get(key)
+        return v if isinstance(v, list) else []
+    set_items = [x for x in _list("set") if isinstance(x, dict)]
+    remove = [str(x) for x in _list("remove") if isinstance(x, (str, int))]
+    moves = [x for x in _list("move") if isinstance(x, dict)]
+    put_back = [x for x in _list("put_back") if isinstance(x, dict)]
+    if not (set_items or remove or moves or put_back):
+        return JSONResponse({"ok": False, "error": "nothing to change"}, 400)
+    pinned = _icu_held_plan_days()
+    _last = _last_result_for_active_profile() or {}
+    try:
+        library = tp.load_workout_library()      # before the lock (L4)
+    except Exception:
+        library = None
+    try:
+        async with tp.plan_write_lock_async():  # #32: read-modify-write under the plan lock
+            with open(json_path, encoding="utf-8") as f:
+                plan = json.load(f)
+            # O4: a put-back the last calendar run has done (or that the
+            # rider overtook by moving the ride again) is cleared first.
+            cleared = tp.clear_done_put_backs(plan, _last.get("own_moved"), _last.get("at"))
+            result = tp.apply_own_sessions(plan, set_items, remove, moves=moves,
+                                           put_back=put_back, pinned_days=pinned,
+                                           library=library)
+            if result["applied"] or cleared:
+                tp.atomic_write_plan(json_path, plan)
+    except Exception:
+        _log.exception("own-sessions failed")
+        return JSONResponse({"ok": False, "error": "own rides could not be saved"}, 500)
+    if not result["applied"]:
+        # QA H1: another ride of the rider's on that day is a conflict the
+        # rider resolves ("Replace it?"), not a bad request.
+        clash = any(r.get("reason") == "day_has_your_ride" for r in result.get("refused") or [])
+        return JSONResponse({"ok": False, **({"error": "day_has_your_ride"} if clash else {}),
+                             **result}, 409 if clash else 400)
+    try:
+        _enrich_plan_for_response(plan, today_iso=clock.today().isoformat())
+    except Exception as _e:
+        _log_error(error_codes.Codes.ENRICH_FAILED, exc=_e,
+                   endpoint="/api/plan/own-sessions",
+                   week_count=len(plan.get("weeks", [])) if isinstance(plan, dict) else 0)
+    return {"ok": True, **result, "plan_json": plan}
 
 
 @app.post("/api/plan/update")
@@ -12916,7 +13668,8 @@ async def api_plan_update(debounce: int = Query(0)):
         return {"ok": True, "action": action, "status_message": status,
                 "plan_json": plan_dict,
                 "gaps": (info or {}).get("gaps"),
-                "regen_info": (info or {}).get("regen_info")}
+                "regen_info": (info or {}).get("regen_info"),
+                "own_lost": _own_lost_lines((info or {}).get("regen_info"))}
     except Exception:
         _log.exception("Plan update failed")
         return JSONResponse({"detail": "Plan update failed"}, 500)
@@ -13678,7 +14431,9 @@ def _apply_move_session(
     dst_session = dst_here[0] if dst_here else None
 
     # FC3 (v2.5.0): the race entry is immutable — not movable, not overwritable.
-    if src_session.get("is_race") or (dst_session or {}).get("is_race"):
+    # 3.14.0 F2: nor the rider's own ride, by a drag or an auto-move (its one
+    # writer, apply_own_sessions, moves it with its own dialog).
+    if tp._protect_race(src_session) or tp._protect_race(dst_session):
         return None
 
     if not auto:
@@ -13912,6 +14667,8 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
         sess = sess_by_day.get(d_iso)
         if sess is None:
             return False
+        if tp._protect_race(sess):
+            return False  # 3.14.0 F2: never onto a race or the rider's own ride
         stype = sess.get("session_type")
         if stype != "rest":
             # The first-fit allowed only empty rest slots, so a rider whose
@@ -13960,8 +14717,8 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
         for s in w.get("sessions", []) or []:
             if (s.get("status") or "") != "missed":
                 continue  # (missed_race is terminal — never a candidate, L3-2)
-            if s.get("is_race"):
-                continue  # FC3: the race entry itself is never rescheduled
+            if tp._protect_race(s):
+                continue  # FC3: the race entry (3.14.0: or own ride) is never rescheduled
             if not s.get("day", ""):
                 continue
             misses.append(s)
@@ -14051,6 +14808,18 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
 
 
 _RIDDEN_RANK = {"done": 3, "ambiguous": 2, "done_partial": 1}
+
+
+def _fixed_day_error(s: dict) -> str:
+    """Why a fixed day (``tp._protect_race``) refuses a change, by kind (3.14.0 F2)."""
+    if (s or {}).get("is_race"):
+        return "race day is fixed — edit the race instead"
+    # QX-L9: name the day and where to change it.
+    try:
+        day = tp._own_day_label(date.fromisoformat(str((s or {}).get("day") or "")[:10]))
+    except ValueError:
+        day = "That day"
+    return f"{day} is your own ride: click it in the calendar to change or remove it."
 
 
 def _undo_auto_moves_for_ridden_days(plan: dict, today: date) -> list[dict]:
@@ -14324,11 +15093,9 @@ async def api_plan_move_session(request: Request):
             # path for the race is the goal-level add/edit-race flow.
             for w in plan.get("weeks", []) or []:
                 for s in w.get("sessions", []) or []:
-                    if s.get("day") in (src_iso, dst_iso) and s.get("is_race"):
-                        return JSONResponse(
-                            {"error": "race day is fixed — edit the race instead"},
-                            400,
-                        )
+                    # 3.14.0 F2: the rider's own ride too (message by kind).
+                    if s.get("day") in (src_iso, dst_iso) and tp._protect_race(s):
+                        return JSONResponse({"error": _fixed_day_error(s)}, 400)
 
             # #27: the mutator refuses these too (None); checked here first so
             # the rider reads why. The drop predicates block most of them, but
@@ -14799,6 +15566,10 @@ def _classify_card_state(session: dict, has_actual: bool, library_lookup: dict |
         return "completed"
     if stype == "rest":
         return "rest"
+    if session.get("own"):
+        # 3.14.0 F2: the rider's own ride has no workout file by design: not
+        # "no workout matched", and not draggable ("planned" is what drags).
+        return "own"
     zwo = session.get("zwo_file") or ""
     if not zwo:
         return "missing_workout"
@@ -15406,6 +16177,14 @@ def _build_summary_block(
     }
 
 
+def _own_for_view(own) -> "dict | None":
+    """The rider's own-ride record as the views read it (3.14.0 F2): without
+    the snapshot of the session it replaced, which only its writer reads."""
+    if not isinstance(own, dict) or not own:
+        return None
+    return {k: v for k, v in own.items() if k != "replaced"}
+
+
 def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
     """v4.3.0 B4 — build the calendar payload merging plan-sessions with rides.
 
@@ -15724,6 +16503,9 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
                     "user_moved": bool(sess.get("user_moved")),
                     "is_race": bool(sess.get("is_race")),
                     "race": sess.get("race"),
+                    # 3.14.0 F2: a ride the rider added (name, how hard, where
+                    # it came from); the views show it as theirs.
+                    "own": _own_for_view(sess.get("own")),
                     # P2.1 (G10): execution score for the week-strip badge
                     # (✓ NN) + the day-modal breakdown line.
                     "execution": (sess.get("execution")
@@ -15761,6 +16543,8 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
                 # issue #7 — race day (A or B/C); top-level so This Week + grid
                 # render it distinctly without reaching into `planned`.
                 "race": (sess.get("race") if sess and sess.get("is_race") else None),
+                # 3.14.0 F2: the rider's own ride, top-level like the race.
+                "own": _own_for_view((sess or {}).get("own")),
             }
             # v1.3.1 HIGH fix — emit availability_hours / availability_type
             # so the UI can render an UNAVAILABLE badge for user-blocked days.
@@ -16119,6 +16903,11 @@ def _apply_rematch_preview_to_plan(plan: dict, week_idx: int, preview: dict) -> 
             else:
                 existing.append(entry)
             s_json["completion_matches"] = existing
+            # 3.14.0 F2 (C8): the rider's own ride is not scored against their
+            # own estimate -- it counts as ridden, nothing more.
+            if s_json.get("own"):
+                s_json["execution"] = None
+                continue
             # P2.1 (G10) — (re)compute the execution score for the entry just
             # written. On fetch failure keep an existing score ONLY if it was
             # computed from the SAME activity (never leave a stale score from
@@ -16354,8 +17143,8 @@ def _pick_redraw_candidate(plan: dict, day_iso: str, exclude_extra: "list[str] |
     if target_session.get("session_type") == "rest":
         raise ValueError("rest_day")
     # FC3 (v2.5.0, L3-10): redraw installed a training ZWO on the race entry.
-    if target_session.get("is_race"):
-        raise ValueError("race day is fixed — edit the race instead")
+    if tp._protect_race(target_session):   # 3.14.0 F2: or the rider's own ride
+        raise ValueError(_fixed_day_error(target_session))
 
     # Same-week workout names — SOFT avoid (variety within the week).
     same_week: set[str] = set()
@@ -16472,8 +17261,8 @@ def _accept_redraw_apply(plan: dict, day_iso: str, candidate: dict) -> dict:
     if not target:
         raise ValueError(f"No session at {day_iso}")
     # FC3 (v2.5.0, L3-10): never install a workout over the race entry.
-    if target.get("is_race"):
-        raise ValueError("race day is fixed — edit the race instead")
+    if tp._protect_race(target):   # 3.14.0 F2: or the rider's own ride
+        raise ValueError(_fixed_day_error(target))
 
     target["zwo_file"] = str(candidate.get("zwo_file") or "")
     target["zwo_name"] = str(candidate.get("zwo_name") or candidate.get("zwo_file") or "")
@@ -16654,8 +17443,8 @@ def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: i
         raise ValueError(f"No session at {day_iso}")
     # FC3 (v2.5.0, L3-10): swap-type pinned a vo2max onto the race day with the
     # race flag still attached (user_swapped then immunized it everywhere).
-    if target.get("is_race"):
-        raise ValueError("race day is fixed — edit the race instead")
+    if tp._protect_race(target):   # 3.14.0 F2: or the rider's own ride
+        raise ValueError(_fixed_day_error(target))
     # FTP-tests IP F8: a maximal protocol is only valid on fresh legs. Refuse
     # converting a day already RIDDEN hard (test-today after intervals reads a
     # depressed FTP that then mis-sets every zone of the next cycle).
@@ -16666,6 +17455,17 @@ def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: i
         raise ValueError(
             "a hard session was already ridden that day — a valid FTP test "
             "needs fresh legs; schedule it for another day")
+    if new_type == "ftp_test":
+        # 3.14.0 F2 (grill H2): the day before holds the rider's own ride, not
+        # an easy one -- it cannot be eased, so the test would read tired legs.
+        _prev_iso = (date.fromisoformat(day_iso) - timedelta(days=1)).isoformat()
+        _prev_own = next((s.get("own") for w in plan.get("weeks", [])
+                          for s in w.get("sessions", [])
+                          if s.get("day") == _prev_iso and s.get("own")), None)
+        if _prev_own and (_prev_own.get("intensity") or "") != "easy":
+            raise ValueError(
+                "the day before is your own ride — a valid FTP test needs fresh "
+                "legs; schedule it for another day")
 
     tss_per_h = tp.TSS_PER_HOUR.get(new_type, 60)
     target["session_type"] = new_type
@@ -16722,7 +17522,7 @@ def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: i
                     and prev.get("status", "pending") == "pending"
                     and not prev.get("user_swapped")
                     and not prev.get("user_moved")
-                    and not prev.get("is_race")
+                    and not tp._protect_race(prev)   # 3.14.0 F2: or own ride
                     and prev_iso >= clock.today().isoformat()):
                 prev["session_type"] = "recovery"
                 prev["zwo_file"] = ""
@@ -16981,9 +17781,9 @@ async def api_plan_dismiss_session(request: Request):
             if not matched:
                 return JSONResponse({"error": f"no session at {d_iso}"}, 404)
             # FC3 (v2.5.0): the race entry is not dismissable — goal-owned.
-            if any(s.get("is_race") for s in matched):
-                return JSONResponse(
-                    {"error": "race day is fixed — edit the race instead"}, 400)
+            _fixed = next((s for s in matched if tp._protect_race(s)), None)
+            if _fixed is not None:   # 3.14.0 F2: or the rider's own ride
+                return JSONResponse({"error": _fixed_day_error(_fixed)}, 400)
             for s in matched:
                 if undo:
                     s["status"] = "pending"
@@ -17120,6 +17920,7 @@ def api_plan_auto_recalc():
                 current_ctl=current_ctl, current_eftp=eftp,
                 athlete=recalc_athlete,
                 recent_weekly_tss=_chronic_weekly_tss_safe(),
+                pinned_days=_icu_held_plan_days(),   # 3.14.0 F2 (QA M1, C9)
             )
 
             if recalc_info.get("action") == "no_change":
@@ -17253,7 +18054,19 @@ def _sitko_advisory(best_20min_w: int) -> "dict | None":
         # a fabricated 70 kg is exactly what this gate exists to prevent.
         # Suppress on the default weight unconditionally (a genuine 70.0 kg
         # rider loses an advisory line, never a number).
-        if weight <= 0 or abs(weight - 70.0) < 1e-9:
+        # 3.14.0 (QA L7): 70.0 is a real weight only when the rider typed it,
+        # or when it follows an intervals.icu reading. Ticking "Use my
+        # intervals.icu weight" with no reading in 30 days stamps the source
+        # but keeps the seeded number, which must stay suppressed.
+        _src = pm._athlete.get("weight_source")
+        if weight > 0 and abs(weight - 70.0) < 1e-9 and _src == "icu":
+            try:
+                _real = db.icu_weight_recent() is not None
+            except Exception:  # noqa: BLE001
+                _real = False
+        else:
+            _real = _src == "manual"
+        if weight <= 0 or (abs(weight - 70.0) < 1e-9 and not _real):
             return None
         wkg = best_20min_w / weight
         if wkg >= 4.7:

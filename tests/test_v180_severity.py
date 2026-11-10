@@ -3,10 +3,13 @@
 Locked return shape (MASTER_DECISIONS_v180.md):
     {"score", "severity", "source", "reasons", "hooper_index", "tsb"}
 
-Hooper precedence:
-  Hooper >= 18 → severity=rest, source=hooper
-  14 <= Hooper <= 17 → severity=tier_down, source=hooper
-  Hooper < 14 → severity=normal, source=hooper
+Hooper precedence (3.14.0: the check-in band, readiness_composite.hooper_band;
+these tests have no check-in history, so the band uses its fixed limits):
+  Hooper >= HOOPER_FIXED_REST → severity=rest, source=hooper
+  HOOPER_FIXED_TIER_DOWN <= Hooper < HOOPER_FIXED_REST → tier_down
+  below that → severity=normal (the untouched form, all Normal, is 16)
+  The 14/18 bands of v1.8.0 were restated in 3.14.0 (grill_wellness C2):
+  they had no traceable source and read an ordinary morning as fatigue.
 
 Otherwise (no Hooper row OR all four rating fields are 0):
   Readiness composite score < 3 → rest
@@ -77,13 +80,17 @@ def test_hooper_rest_band(fresh_db):
 
 
 def test_hooper_tier_down_band(fresh_db):
+    # Restated for 3.14.0 (grill_wellness C2/§B3): the untouched form (all
+    # Normal, 4+4+4+4 = 16) used to read "tier_down"; it is a normal day now.
+    # Easing off starts one answer a notch worse (Tired = 6).
     today = _date.today().isoformat()
-    # 4+4+4+4 = 16 → tier_down
     _seed_hooper(today, sleep_q=4, fatigue=4, stress=4, soreness=4)
+    assert rc.compute_training_severity("rider", today)["severity"] == "normal"
+    _seed_hooper(today, sleep_q=4, fatigue=6, stress=4, soreness=4)
     out = rc.compute_training_severity("rider", today)
     assert out["source"] == "hooper"
     assert out["severity"] == "tier_down"
-    assert out["hooper_index"] == 16
+    assert rc.HOOPER_FIXED_TIER_DOWN <= out["hooper_index"] < rc.HOOPER_FIXED_REST
 
 
 def test_hooper_normal_band(fresh_db):
@@ -96,22 +103,28 @@ def test_hooper_normal_band(fresh_db):
     assert out["hooper_index"] == 12
 
 
-def test_hooper_boundary_18_is_rest(fresh_db):
-    # Exactly at the rest boundary.
+def test_hooper_boundary_18_eases_off_20_rests(fresh_db):
+    # Restated for 3.14.0 (grill_wellness §B3): 5+5+4+4 = 18 was "rest" (and
+    # capped hard sessions); it eases off now. Rest starts at the fixed limit.
     today = _date.today().isoformat()
-    # 5+5+4+4 = 18
     _seed_hooper(today, sleep_q=5, fatigue=5, stress=4, soreness=4)
     out = rc.compute_training_severity("rider", today)
+    assert out["hooper_index"] == rc.HOOPER_FIXED_TIER_DOWN
+    assert out["severity"] == "tier_down"
+    _seed_hooper(today, sleep_q=6, fatigue=6, stress=4, soreness=4)
+    out = rc.compute_training_severity("rider", today)
+    assert out["hooper_index"] == rc.HOOPER_FIXED_REST
     assert out["severity"] == "rest"
 
 
-def test_hooper_boundary_14_is_tier_down(fresh_db):
-    # Exactly at the tier-down boundary.
+def test_hooper_boundary_14_is_normal(fresh_db):
+    # Restated for 3.14.0 (grill_wellness §B3): 4+4+3+3 = 14 was "tier_down";
+    # anything below the fixed ease-off limit is a normal day now.
     today = _date.today().isoformat()
-    # 4+4+3+3 = 14
     _seed_hooper(today, sleep_q=4, fatigue=4, stress=3, soreness=3)
     out = rc.compute_training_severity("rider", today)
-    assert out["severity"] == "tier_down"
+    assert out["hooper_index"] < rc.HOOPER_FIXED_TIER_DOWN
+    assert out["severity"] == "normal"
 
 
 # ── Fallback to readiness composite ─────────────────────────────────────────

@@ -357,6 +357,10 @@ def init_db():
     # validates the range in Python on every write, which is the only path that
     # writes this column — and not worth rebuilding a table of rider history for.
     _maybe_add_column(db, "daily_log", "readiness_to_train", "INTEGER")
+    # 3.14.0 F1: which Hooper answers a day's check-in took from intervals.icu
+    # (sorted CSV of HOOPER_COLS). NULL = the rider's own check-in, which every
+    # row from before 3.14.0 is: the import never writes such a row.
+    _maybe_add_column(db, "daily_log", "icu_fields", "TEXT")
     _maybe_add_column(db, "activities", "distance_km", "REAL")
     _maybe_add_column(db, "activities", "kilojoules", "REAL")
     _maybe_add_column(db, "activities", "calories", "REAL")
@@ -390,6 +394,13 @@ def sync_wellness(days: int = 90, _snapshot=None) -> int:
     count = 0
     with sync_write_gate(snapshot):
         db = get_db()
+        # 3.14.0 F1 (grill L3): one look per pass. A database whose migration
+        # did not run has no icu_fields column; the import then sits this pass
+        # out with ONE warning instead of one per day (90 every 30 minutes).
+        check_ins = _daily_log_has_icu_fields(db)
+        if not check_ins:
+            log.warning("check-in import skipped this pass: the daily log has "
+                        "no icu_fields column (database not migrated)")
         try:
             for w in data:
                 dt = w.get("id")
@@ -498,6 +509,34 @@ def sync_wellness(days: int = 90, _snapshot=None) -> int:
                             (dt, round(ahr)),
                         )
 
+                # 3.14.0 W1: the scale weight logged in intervals.icu fills
+                # the weight history (Body card). Same guard as eFTP: a weight
+                # the rider logged or saved that day is never replaced. Display
+                # only; the profile weight moves only for a rider who ticked
+                # "Use my intervals.icu weight" (_refresh_weight_from_metrics).
+                wt = _wv("weight", w.get("weight"))
+                if (isinstance(wt, (int, float)) and not isinstance(wt, bool)
+                        and WEIGHT_KG_RANGE[0] <= wt <= WEIGHT_KG_RANGE[1]):
+                    existing_wt = db.execute(
+                        "SELECT source FROM athlete_metrics WHERE date = ? AND metric = 'weight'",
+                        (dt,),
+                    ).fetchone()
+                    if not (existing_wt and existing_wt[0] in ("manual", "settings")):
+                        db.execute(
+                            "INSERT OR REPLACE INTO athlete_metrics (date, metric, value, source) VALUES (?, 'weight', ?, 'intervals.icu')",
+                            (dt, round(float(wt), 1)),
+                        )
+
+                # 3.14.0 F1: the day's morning check-in from intervals.icu.
+                # After the wellness INSERT on purpose: that INSERT opened
+                # this batch's write transaction, so the import's read and
+                # write cannot interleave with a form save on another
+                # connection (the save waits for SQLite's write lock and then
+                # replaces the row, making the day the rider's). The import's
+                # own guard keeps a rider's row even without that order.
+                if check_ins:
+                    _import_icu_check_in(db, dt, w)
+
                 count += 1
         except Exception:
             db.rollback()
@@ -516,6 +555,8 @@ def sync_wellness(days: int = 90, _snapshot=None) -> int:
     _refresh_pmax_from_metrics(snapshot)
     # v1.1.0 IMPL-NORWEGIAN-HR: same mirror pattern for max_hr.
     _refresh_max_hr_from_metrics(snapshot)
+    # 3.14.0 W2: the profile weight, only for a rider who chose to follow it.
+    _refresh_weight_from_metrics(snapshot)
 
     return count
 
@@ -636,6 +677,87 @@ def _refresh_max_hr_from_metrics(snapshot=None) -> None:
         log.info("max_hr mirror skipped: %s", e)
     except Exception as e:
         log.warning("refresh_max_hr_from_metrics failed: %s", e)
+
+
+# 3.14.0 W1/W2 — the intervals.icu weight.
+WEIGHT_KG_RANGE = (30, 200)        # the range save_athlete and the wizard accept
+# One definition of "the rider's intervals.icu weight" for the follow mirror,
+# the hand-back when the rider ticks the box, and the wizard's prefill (grill
+# M5): the newest scale reading of the last 30 days. An older reading is not
+# today's weight, and following it silently replaced a weight the rider had
+# just confirmed.
+ICU_WEIGHT_RECENT_DAYS = 30
+# ponytail: a fixed 0.5 kg dead band against daily scale noise (±0.5–1 kg),
+# so W/kg, the FTP-band advisory and refits do not follow every weigh-in.
+# Upgrade path: follow a 7-day median if riders report drift.
+WEIGHT_FOLLOW_MIN_CHANGE_KG = 0.5
+
+
+def icu_weight_recent(days: int = ICU_WEIGHT_RECENT_DAYS) -> tuple[str, float] | None:
+    """(date, kg) of the newest intervals.icu weight in the last ``days``
+    days, or None. Reads the rows the wellness sync stores (W1)."""
+    oldest = (clock.today() - timedelta(days=days)).isoformat()
+    row = get_db().execute(
+        "SELECT date, value FROM athlete_metrics WHERE metric = 'weight' "
+        "AND source = 'intervals.icu' AND date >= ? ORDER BY date DESC LIMIT 1",
+        (oldest,),
+    ).fetchone()
+    if not row or row[1] is None:
+        return None
+    return row[0], round(float(row[1]), 1)
+
+
+def icu_weight_from_records(records, days: int = ICU_WEIGHT_RECENT_DAYS) -> tuple[str, float] | None:
+    """icu_weight_recent()'s rule on wellness records fetched from
+    intervals.icu before anything is stored (the setup wizard's prefill)."""
+    oldest = (clock.today() - timedelta(days=days)).isoformat()
+    best = None
+    for w in records or []:
+        if not isinstance(w, dict):
+            continue
+        d = str(w.get("id") or "")
+        wt = _wv("weight", w.get("weight"))
+        if (d >= oldest and isinstance(wt, (int, float)) and not isinstance(wt, bool)
+                and WEIGHT_KG_RANGE[0] <= wt <= WEIGHT_KG_RANGE[1]
+                and (best is None or d > best[0])):
+            best = (d, round(float(wt), 1))
+    return best
+
+
+def _refresh_weight_from_metrics(snapshot=None) -> None:
+    """3.14.0 W2: follow the newest intervals.icu weight into the profile, for
+    a rider who ticked "Use my intervals.icu weight" (weight_source "icu")
+    and only then. A typed weight ("manual") and a profile with no source
+    recorded (every profile from before 3.14.0) are the rider's and never
+    move here; the explicit check is the real guard, because the fact table
+    lets any source write over a weight with no source.
+
+    Same AC1 write gate as the other mirrors. Failures are logged, never
+    raised: the sync has already landed its batch.
+    """
+    if snapshot is None:
+        snapshot = snapshot_sync_identity()
+    try:
+        with sync_write_gate(snapshot):
+            from profile_manager import ProfileManager
+            pm = ProfileManager.get()
+            if pm._athlete.get("weight_source") != "icu":
+                return
+            newest = icu_weight_recent()
+            if newest is None:
+                return
+            value = newest[1]
+            current = pm._athlete.get("weight_kg")
+            try:
+                if current is not None and abs(float(current) - value) < WEIGHT_FOLLOW_MIN_CHANGE_KG:
+                    return
+            except (TypeError, ValueError):
+                pass
+            pm._set_fact("weight", value, "icu")
+    except SyncAborted as e:
+        log.info("weight mirror skipped: %s", e)
+    except Exception as e:
+        log.warning("refresh_weight_from_metrics failed: %s", e)
 
 
 def _refresh_hr_from_activities(snapshot=None) -> None:
@@ -1039,14 +1161,165 @@ def query_metrics_latest() -> dict:
 
 # ── Daily Log (Morning Questionnaire) ────────────────────────────────────────
 
+# The four Hooper questions of the morning check-in (1 = best, 7 = worst).
+HOOPER_COLS = ("sleep_quality", "fatigue", "soreness", "stress")
+
+# 3.14.0 F1 — the morning check-in from intervals.icu wellness.
+#
+# intervals.icu's scales are not in its API schema; its developer documented
+# them on the public forum (sources pinned in tests/test_wellness_import.py):
+# soreness/fatigue/stress 0 None, 1 Low, 2 Avg, 3 High, 4 Extreme; sleepQuality
+# 1 Great, 2 Good, 3 Average, 4 Poor; injury 1 None, 2 Niggle, 3 Poor,
+# 4 Injured. 1 (or 0) is always the good end. Each answer maps to the morning
+# form's button with the same label and is stored the way the form stores
+# that button (round(level * 7 / 5)), so an answer given in intervals.icu and
+# the same tap in Domestique are the same number for every reader.
+_FORM_STORE = {1: 1, 2: 3, 3: 4, 4: 6, 5: 7}   # form button (1-5) -> stored 1-7
+_FORM_NORMAL = 4     # a question not answered: the form's untouched "Normal"
+_FORM_MOOD = 4       # the form never asks mood and always stores 4
+_ICU_CHECKIN = {
+    # intervals.icu field: (daily_log column, {code: form button})
+    "soreness":     ("soreness",      {0: 1, 1: 2, 2: 3, 3: 4, 4: 5}),
+    "fatigue":      ("fatigue",       {0: 1, 1: 2, 2: 3, 3: 4, 4: 5}),
+    "stress":       ("stress",        {0: 1, 1: 2, 2: 3, 3: 4, 4: 5}),
+    "sleepQuality": ("sleep_quality", {1: 1, 2: 2, 3: 3, 4: 4}),
+}
+# Owner decision (3.14.0, grill M3): an injury logged as Poor (3) or Injured
+# (4) counts as sore legs ("Sore") for the check-in, so the recovery gate sees
+# it instead of the verdict reading "Ready to train".
+_ICU_INJURY_CODES = (1, 2, 3, 4)
+_ICU_INJURY_SORE_FROM = 3
+_FORM_SORE = _FORM_STORE[4]
+# intervals.icu's injury labels, the one table every reader uses (the card's
+# extras line, the readiness verdict's line, the recovery gate's wording).
+ICU_INJURY_LABELS = {1: "None", 2: "Niggle", 3: "Poor", 4: "Injured"}
+
+
+def _icu_code(v):
+    """An intervals.icu answer code as an int, or None (missing, null,
+    a string, a bool, a non-integral number)."""
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    if isinstance(v, bool) or not isinstance(v, int):
+        return None
+    return v
+
+
+def icu_check_in(record: dict) -> dict:
+    """The Hooper answers in one intervals.icu wellness day, stored as the
+    form would store them: {column: 1..7}. {} when the day is not a check-in.
+
+    A day counts only when soreness, fatigue or stress was answered (or an
+    injury that counts as soreness): watches fill sleep quality in from their
+    sleep score, so sleep alone is not an answer. And a sleep quality on a
+    record that carries a sleep score is the watch's, not the rider's (grill
+    H2): it is left unanswered, and the watch's sleep still reaches readiness
+    through the sleep-hours channel.
+    """
+    if not isinstance(record, dict):
+        return {}
+    out = {}
+    for key, (col, levels) in _ICU_CHECKIN.items():
+        v = _icu_code(record.get(key))
+        if v is None or v not in levels:
+            continue                       # missing, null or off the scale
+        if key == "sleepQuality" and _wv("sleepScore", record.get("sleepScore")) is not None:
+            continue
+        out[col] = _FORM_STORE[levels[v]]
+    injury = _icu_code(record.get("injury"))
+    if injury in _ICU_INJURY_CODES and injury >= _ICU_INJURY_SORE_FROM:
+        out["soreness"] = max(out.get("soreness", 0), _FORM_SORE)
+    return out if out.keys() & {"soreness", "fatigue", "stress"} else {}
+
+
+def icu_soreness_from_injury(record: dict) -> bool:
+    """True when the day's soreness reaches "Sore" only because of the injury
+    logged in intervals.icu (the card names it "soreness (from your injury)")."""
+    if not isinstance(record, dict):
+        return False
+    injury = _icu_code(record.get("injury"))
+    if not (injury in _ICU_INJURY_CODES and injury >= _ICU_INJURY_SORE_FROM):
+        return False
+    rest = {k: v for k, v in record.items() if k != "injury"}
+    return (icu_check_in(rest) or {}).get("soreness", 0) < _FORM_SORE
+
+
+def icu_injury_label(dt: str) -> str | None:
+    """The injury the rider logged in intervals.icu on ``dt`` when it counts as
+    sore legs ("Poor" / "Injured"), else None. Reads the stored wellness day."""
+    row = get_db().execute("SELECT raw_json FROM wellness WHERE date = ?", (dt,)).fetchone()
+    try:
+        record = json.loads(row[0]) if row and row[0] else {}
+    except (TypeError, ValueError):
+        return None
+    injury = _icu_code((record or {}).get("injury")) if isinstance(record, dict) else None
+    if injury in _ICU_INJURY_CODES and injury >= _ICU_INJURY_SORE_FROM:
+        return ICU_INJURY_LABELS[injury]
+    return None
+
+
+def _daily_log_has_icu_fields(conn) -> bool:
+    try:
+        return any(r[1] == "icu_fields"
+                   for r in conn.execute("PRAGMA table_info(daily_log)").fetchall())
+    except sqlite3.Error:
+        return False
+
+
+def _import_icu_check_in(conn, dt: str, record: dict) -> None:
+    """Fill the day's morning check-in from intervals.icu, unless the day is
+    the rider's.
+
+    Writes only rows the import owns (icu_fields set). The rider owns every
+    row with icu_fields NULL, including every row from before 3.14.0, and a
+    save from the form makes an imported day the rider's. A present record
+    rebuilds the imported day from scratch (grill M2): an answer cleared in
+    intervals.icu goes back to unanswered, and a record with no answer left
+    removes the imported row. A day the sync did not fetch is not touched.
+
+    Runs inside sync_wellness's batch; it catches its own errors, because a
+    malformed answer must never roll back the HRV/CTL batch around it.
+    """
+    try:
+        row = conn.execute(
+            "SELECT icu_fields FROM daily_log WHERE date = ?", (dt,)).fetchone()
+        if row is not None and not row[0]:
+            return                         # the rider's check-in
+        answers = icu_check_in(record)
+        if not answers:
+            if row is not None:
+                conn.execute("DELETE FROM daily_log WHERE date = ? "
+                             "AND icu_fields IS NOT NULL", (dt,))
+            return
+        vals = {c: _FORM_NORMAL for c in HOOPER_COLS}
+        vals.update(answers)
+        conn.execute(
+            """INSERT INTO daily_log (date, sleep_quality, fatigue, soreness, stress,
+                                      mood, hooper_index, icu_fields)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(date) DO UPDATE SET
+                   sleep_quality = excluded.sleep_quality,
+                   fatigue = excluded.fatigue, soreness = excluded.soreness,
+                   stress = excluded.stress, mood = excluded.mood,
+                   hooper_index = excluded.hooper_index,
+                   icu_fields = excluded.icu_fields
+               WHERE daily_log.icu_fields IS NOT NULL""",   # never the rider's row
+            (dt, vals["sleep_quality"], vals["fatigue"], vals["soreness"],
+             vals["stress"], _FORM_MOOD, sum(vals.values()),
+             ",".join(sorted(answers))))
+    except Exception as e:  # noqa: BLE001 — never cost the wellness batch
+        log.warning("check-in import skipped for %s: %s", dt, e)
+
+
 def upsert_daily_log(dt: str, sleep_quality: int, fatigue: int, soreness: int,
                      stress: int, mood: int, notes: str = None,
                      readiness_to_train: int = None) -> dict:
     """Insert or update daily wellness log. Returns the entry.
 
     v4.6.6 IMPL-C: hooper_index = sleep_quality + fatigue + stress + soreness
-    (sum of 4 fields each 1-7, range 4-28). Hooper & Mackinnon 1995 — the
-    "wellness composite". IMPL-B's G6 gate fires when hooper_index ≥ 18.
+    (sum of 4 fields each 1-7, range 4-28), the well-being sum of Hooper et
+    al. 1995 (Med Sci Sports Exerc 27:106-112). What a sum means for training
+    is decided in one place, readiness_composite.hooper_band (3.14.0).
 
     Each input field MUST be int 1..7; raises ValueError otherwise. (Schema
     CHECK enforces it too, but we validate up-front so the error surfaces as
@@ -1080,6 +1353,8 @@ def upsert_daily_log(dt: str, sleep_quality: int, fatigue: int, soreness: int,
                 readiness_to_train = int(prior[0])
         except sqlite3.Error:
             pass
+    # INSERT OR REPLACE also clears icu_fields: a save from the form makes an
+    # imported day the rider's, and the import never writes it again.
     db.execute(
         """INSERT OR REPLACE INTO daily_log
            (date, sleep_quality, fatigue, soreness, stress, mood, hooper_index,
@@ -1353,20 +1628,28 @@ _ICU_MIRROR_FIELDS = (
 )
 
 
-def purge_profile_data(profile_id: str) -> dict:
+def purge_profile_data(profile_id: str, athlete_changed: bool = False) -> dict:
     """Wipe ICU-synced data for ``profile_id`` (disconnect / different-athlete
     reconnect — contract A4).
 
     Deletes every row in activities / wellness / sync_log, plus the
     intervals.icu-sourced athlete_metrics rows (vo2max/eftp/w_prime/pmax/
-    max_hr auto-logs — residual rows from the first athlete otherwise
-    resurface through the mirrors). Wipes the profile's ICU-derived ARCHIVES
-    too (<profile>/rides/icu/ incl. .last_sync_at, <profile>/wellness/) —
-    contract A4 "no residual rows in DB or archives". Loose FIT imports and
-    ride summaries are USER data and survive. Resets the icu-sourced
-    athlete.json mirrors (lthr / max_hr / wprime / pmax where
-    *_source == "icu") so the profile's numbers fall back to defaults until
-    the next athlete syncs. Manual values are never touched.
+    max_hr/weight auto-logs — residual rows from the first athlete otherwise
+    resurface through the mirrors), and the morning check-ins imported from
+    intervals.icu (3.14.0 grill H1: they would keep feeding today's band and
+    its baseline; the rider's own check-ins stay). Wipes the profile's
+    ICU-derived ARCHIVES too (<profile>/rides/icu/ incl. .last_sync_at,
+    <profile>/wellness/) — contract A4 "no residual rows in DB or archives".
+    Loose FIT imports and ride summaries are USER data and survive. Resets
+    the icu-sourced athlete.json mirrors (lthr / max_hr / wprime / pmax
+    where *_source == "icu") so the profile's numbers fall back to defaults
+    until the next athlete syncs. Manual values are never touched.
+
+    A weight that followed intervals.icu keeps its value and becomes the
+    rider's ("manual"; grill M6): removing it would leave the planner without
+    a weight for event targets, and leaving it "icu" would follow the next
+    account's scale. ``athlete_changed`` (a reconnect as a different
+    intervals.icu athlete) also asks the rider to check that weight.
 
     A10: holds the sync write gate for the whole wipe and bumps the sync
     epoch, so an in-flight pass that FETCHED before the purge fails its
@@ -1391,7 +1674,8 @@ def purge_profile_data(profile_id: str) -> dict:
         _sync_epoch += 1
 
         removed = {"activities": 0, "wellness": 0, "sync_log": 0,
-                   "athlete_metrics_icu": 0, "archive_files": 0}
+                   "athlete_metrics_icu": 0, "daily_log_icu": 0,
+                   "archive_files": 0}
 
         # ICU-derived archives (post-AC2a these live inside the profile dir).
         # rides/icu/ is wholly ICU-synced (records + .last_sync_at); wellness/
@@ -1431,6 +1715,12 @@ def purge_profile_data(profile_id: str) -> dict:
                     )
                 except sqlite3.OperationalError:
                     pass
+                try:
+                    cur = conn.execute(
+                        "DELETE FROM daily_log WHERE icu_fields IS NOT NULL")
+                    removed["daily_log_icu"] = cur.rowcount if cur.rowcount >= 0 else 0
+                except sqlite3.OperationalError:
+                    pass  # a non-active DB from before 3.14.0: no column, no imports
                 conn.commit()
             finally:
                 if not is_active_db:
@@ -1455,6 +1745,11 @@ def purge_profile_data(profile_id: str) -> dict:
                     for k in extras:
                         athlete.pop(k, None)
                     changed = True
+            if str(athlete.get("weight_source", "") or "") == "icu":
+                athlete["weight_source"] = "manual"
+                if athlete_changed:
+                    athlete["weight_needs_check"] = True
+                changed = True
             if changed:
                 pm._write_json(athlete_path, athlete)
 

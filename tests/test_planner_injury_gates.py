@@ -10,8 +10,12 @@ Citations (every gate cites one row of /tmp/MASTER_DECISIONS_v466.md §1):
   G1 — Foster 1998   *Med Sci Sports Exerc* 30:1164-1168
   G2 — Hulin 2014    *Br J Sports Med* 48:708-712
   G3 — Seiler 2010 / Stöggl 2014 / Treff 2019 (polarized 80/20 model)
-  G5 — Hooper & Mackinnon 1995 + Cheung 2003 *Sports Med* 33:145-164
-  G6 — Hooper & Mackinnon 1995 *J Sci Med Sport*
+  G5 — Hooper et al. 1995 *Med Sci Sports Exerc* 27:106-112 + Cheung 2003
+       *Sports Med* 33:145-164
+  G6 — the morning check-in band (3.14.0, readiness_composite.hooper_band).
+       The v4.6.6 citation "Hooper & Mackinnon 1995 *J Sci Med Sport*" was
+       wrong (no such paper; Hooper & Mackinnon 1995 is Sports Med 20:321)
+       and no source gives the old ">= 18" cut-off.
   G7 — Foster 1998 (session-RPE)
 
 The "fresh HRV / fresh readiness" baseline used by every test below ensures
@@ -202,44 +206,53 @@ def test_g5_soreness_6_forces_recovery():
     )
     assert adj.session_type == "recovery"
     assert adj.adapted is True
-    assert "G5" in reason
-    assert "Hooper 1995" in adj.description
-    assert "Cheung 2003" in adj.description, (
-        f"G5 description must cite Cheung 2003 (peripheral fatigue) — got: {adj.description!r}"
-    )
+    # Restated for 3.14.0 (QA QX-M6): the reason and the description are
+    # plain words for the rider now ("G5 soreness 6/7 → forced recovery
+    # (peripheral fatigue bypass)" and the citations on the card read as
+    # codes); the gate itself is unchanged. The log line keeps the numbers.
+    assert reason == "Sore legs this morning — today's session is a short recovery ride."
+    assert adj.description == "Recovery ride — sore legs today."
 
 
-# ── G6 — Hooper composite ≥18 forces Z2 ─────────────────────────────────────
+# ── G6 — a check-in in the rest band forces Z2 (3.14.0 bands) ──────────────
 
 def test_g6_hooper_18_forces_z2():
-    """Hooper sum = 18 (e.g. fatigue 5 + stress 5 + soreness 4 + 8-sleep_quality 4) → Z2 cap.
+    """A check-in in the rest band → Z2 cap, with no single answer at the
+    soreness gate (G5 stays quiet).
 
-    Each component below the G5 individual threshold (no field hits 6) but the
-    composite still triggers G6 (Hooper & Mackinnon 1995).
+    Restated for 3.14.0 (grill_wellness §B3/§B5): the sum 18 used to cap
+    (">= 18"); with fixed limits it only eases off now, so the case is two
+    "Tired" answers, the fixed rest limit. The reason is one plain sentence
+    (no gate code); ``hooper_history=[]`` keeps the test off the database.
     """
+    import readiness_composite as rc
     planned = _planned("vo2max", duration_min=60)
     daily_log = {
-        "sleep_quality": 4,  # 8 - 4 = 4
-        "fatigue": 5,
-        "stress": 5,
+        "sleep_quality": 6,   # Poor
+        "fatigue": 6,         # Tired
+        "stress": 4,
         "soreness": 4,        # < 6 so G5 won't fire
     }
-    # Verify fixture maths
-    h = (
-        daily_log["fatigue"] + daily_log["soreness"] + daily_log["stress"]
-        + (8 - daily_log["sleep_quality"])
-    )
-    assert h == 18, f"fixture invariant: hooper must sum to 18 (got {h})"
+    h = sum(daily_log.values())
+    assert h == rc.HOOPER_FIXED_REST, f"fixture invariant: the fixed rest limit (got {h})"
 
     adj, reason = tp.adjust_today_session(
         planned, _fresh_readiness(),
         rides_recent=[],
         daily_log_today=daily_log,
+        hooper_history=[],
     )
     assert adj.session_type == "z2"
     assert adj.adapted is True
-    assert "G6" in reason
-    assert "Hooper" in adj.description, f"got: {adj.description!r}"
+    assert "check-in" in reason, f"got: {reason!r}"
+    assert "check-in" in adj.description, f"got: {adj.description!r}"
+
+    # and the old 18 no longer caps
+    daily_log["sleep_quality"] = 4
+    adj, reason = tp.adjust_today_session(
+        planned, _fresh_readiness(), rides_recent=[],
+        daily_log_today=daily_log, hooper_history=[])
+    assert adj.session_type == "vo2max" and reason == ""
 
 
 # ── G7 — 3-day mean RPE ≥7 drops planned HIT one tier ───────────────────────

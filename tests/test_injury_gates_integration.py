@@ -17,7 +17,9 @@ catch a future regression that re-introduces any of the above plumbing bugs.
 Citations (each test pins one row of MASTER_DECISIONS_v466 §1):
   G2 — Hulin 2014 *Br J Sports Med* 48:708-712 (48h Z5+ ceiling)
   G4 — Gabbett 2016 *Br J Sports Med* 50:273-280 (ACWR sweet-spot 0.8-1.3)
-  G6 — Hooper & Mackinnon 1995 *J Sci Med Sport* (wellness composite ≥18)
+  G6 — the morning check-in band (3.14.0, readiness_composite.hooper_band;
+       the old "Hooper & Mackinnon 1995 *J Sci Med Sport*, >= 18" citation
+       named no real paper and no source gives that cut-off)
 """
 from __future__ import annotations
 
@@ -242,10 +244,16 @@ class _IntegrationBase(unittest.TestCase):
 class TestG6IntegrationViaDailyLog(_IntegrationBase):
     """CRITICAL-1 + CRITICAL-2 net: real /api/daily-log POST + /api/today-session.
 
-    Hooper & Mackinnon 1995 — wellness composite >=18 should cap today's HIT.
+    A check-in in the rest band caps today's HIT.
     The polarity bug: planner used `8 - sleep_quality` while db.py used direct
     sum, so (sleep=7, fat=3, str=4, sor=4) computed 12 in planner / 18 in db.
     Test asserts both halves see 18 and the gate fires.
+
+    Restated for 3.14.0 (grill_wellness §B3/§B5): the gate no longer fires on
+    the sum 18 (that eases off now); this case still caps because an answer
+    at the worst end (sleep 7, "Terrible") rests in both band modes, which
+    keeps the polarity check meaningful: read inverted, sleep 7 would be 1.
+    The reason is one plain sentence now, so it is matched by its words.
     """
 
     def test_post_daily_log_then_today_session_fires_g6(self):
@@ -269,14 +277,13 @@ class TestG6IntegrationViaDailyLog(_IntegrationBase):
         adj = out.get("adjusted") or {}
         self.assertEqual(
             adj.get("session_type"), "z2",
-            f"G6 should cap vo2max → z2 when hooper=18 (got "
+            f"G6 should cap vo2max → z2 for a worst-end sleep answer (got "
             f"{adj.get('session_type')!r}; reason={out.get('reason')!r})"
         )
-        # The reason must mention G6 + the actual hooper value.
+        # The reason names the morning check-in in plain words.
         reason = out.get("reason") or ""
-        self.assertIn("G6", reason, f"reason missing G6 marker: {reason!r}")
-        self.assertIn("18", reason,
-                      f"reason should cite hooper=18 (got {reason!r})")
+        self.assertIn("check-in", reason, f"reason missing the check-in: {reason!r}")
+        self.assertIn("Z2", reason, f"reason should say what changed (got {reason!r})")
 
 
 class TestG2IntegrationViaTodaySession(_IntegrationBase):

@@ -257,7 +257,7 @@ def check_rest_days_respected(weeks, goal) -> list[Violation]:
     out = []
     for w in weeks:
         for s in w.sessions:
-            if _pending(s) and not _is_race(s) and not _is_available(s.day, goal):
+            if _pending(s) and not _is_race(s) and not getattr(s, "own", None) and not _is_available(s.day, goal):
                 out.append(Violation(
                     "rest_days", w.week_num,
                     f"{s.day} ({s.day.strftime('%a')}) has {s.session_type} "
@@ -275,7 +275,7 @@ def check_daily_duration_cap(weeks, goal) -> list[Violation]:
     out = []
     for w in weeks:
         for s in w.sessions:
-            if not _pending(s) or _is_race(s):
+            if not _pending(s) or _is_race(s) or getattr(s, "own", None):
                 continue
             cap_h = _day_cap_h(s.day, goal)
             if cap_h is not None and s.duration_min > cap_h * 60 + 1:

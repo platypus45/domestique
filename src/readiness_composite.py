@@ -637,20 +637,18 @@ SOURCE_INSUFFICIENT = "insufficient"
 
 
 def _hooper_submitted(day_iso: str) -> tuple[int | None, dict | None]:
-    """Read `daily_log[day_iso]` directly (don't reuse `tp._hooper_index_today`
-    — that helper coerces missing rows to 0 and collapses "not submitted" with
-    "all-1 rating", per /tmp/MASTER_DECISIONS_v180_addendum.md §F1).
+    """Read `daily_log[day_iso]` directly (a missing row must never read as
+    an all-best rating, per /tmp/MASTER_DECISIONS_v180_addendum.md §F1).
 
     Returns (hooper_index, row_dict). hooper_index is None when no row exists
     OR when sleep_quality+fatigue+stress+soreness == 0 (none of the four
-    rating fields were written).
+    rating fields were written). The row carries every column, icu_fields
+    included, because the band reads which answers came from intervals.icu.
     """
     conn = db.get_db()
     try:
         row = conn.execute(
-            "SELECT date, sleep_quality, fatigue, soreness, stress, mood, "
-            "hooper_index FROM daily_log WHERE date = ?",
-            (day_iso,),
+            "SELECT * FROM daily_log WHERE date = ?", (day_iso,),
         ).fetchone()
     except Exception:
         return None, None
@@ -692,15 +690,211 @@ def _tsb_for_day(day_iso: str) -> float | None:
     return round(ctl - atl, 1)
 
 
+# ── 3.14.0 — the morning check-in band (one owner) ──────────────────────────
+#
+# What a morning check-in means for training is decided here and nowhere
+# else: the severity below, the planner's Z2 cap (G6) and the morning card's
+# colour all read hooper_band(). Tests import these constants; none of them
+# writes the numbers out.
+#
+# Why these numbers (grill_wellness Part B, Design B; owner decision
+# 2026-11-10). The 14/18 bands they replace had no traceable source: Hooper et
+# al. 1995 (Med Sci Sports Exerc 27:106-112) defined staleness by performance
+# decrements plus persistent high fatigue, not by an index value, and Hooper &
+# Mackinnon 1995 (Sports Med 20:321-327) give recommendations without a
+# cut-off. What the evidence supports is the rider's own baseline, an
+# SD-scaled deviation and a noise-sized floor:
+#   * one SD below the player's own normal came with less training load
+#     (Gallo 2016): z >= 1 advises easing off;
+#   * the index's typical error is ~3 points (Rabbani 2019): z >= 2 together
+#     with a negative answer is two typical errors, the spread is capped at
+#     about one, and an all-Normal day can never cap a session;
+#   * wellness follows the weekly cycle (Gastin 2013, Thorpe 2016): the
+#     baseline needs two weekly cycles of check-ins within four weeks.
+# Until then, fixed limits on the form's own neutral point: every question
+# starts at "Normal" (stored 4), so an ordinary morning is 16 and is a normal
+# day. G5 (soreness at "Sore" forces recovery) is a separate, unchanged gate.
+HOOPER_NORMAL_ANSWER = 4         # the form's "Normal" / "Average" button
+HOOPER_NEGATIVE_ANSWER = 6       # "Tired", "Sore", "High", "Poor"
+HOOPER_WORST_ANSWER = 7          # "Drained", "Very sore", "Maxed", "Terrible"
+HOOPER_CEILING = 22              # three "Tired": rest in both modes
+HOOPER_FIXED_TIER_DOWN = 18      # fixed limits: 18-19 ease off
+HOOPER_FIXED_REST = 20           # fixed limits: 20 and up rest
+HOOPER_BASELINE_DAYS = 28        # the window before the judged day (excluded)
+HOOPER_PERSONAL_MIN_CHECKINS = 14  # check-ins in that window for personal mode
+HOOPER_CENTRE_CAP = 18           # a chronic "one step worse" never becomes normal
+HOOPER_SPREAD_FLOOR = 2.0        # one button step on one question
+HOOPER_SPREAD_CAP = 3.0          # about the index's typical error
+HOOPER_Z_TIER_DOWN = 1.0
+HOOPER_Z_REST = 2.0
+
+BAND_MODE_FIXED = "fixed"
+BAND_MODE_PERSONAL = "personal"
+
+
+def _check_in_values(row) -> dict | None:
+    """{question: stored 1-7} when ``row`` is a check-in (all four questions
+    stored, sum above 0, the _hooper_submitted rule), else None."""
+    if not isinstance(row, dict):
+        return None
+    vals = {}
+    for col in db.HOOPER_COLS:
+        v = row.get(col)
+        if v is None or isinstance(v, bool):
+            return None
+        try:
+            vals[col] = int(v)
+        except (TypeError, ValueError):
+            return None
+    return vals if sum(vals.values()) > 0 else None
+
+
+def _answered(row: dict) -> tuple:
+    """The questions the rider answered: all four on a form check-in (an
+    untouched question is an answer the rider saw); on a day imported from
+    intervals.icu, the ones listed in icu_fields."""
+    listed = str(row.get("icu_fields") or "")
+    if not listed:
+        return db.HOOPER_COLS
+    names = set(listed.split(","))
+    return tuple(c for c in db.HOOPER_COLS if c in names)
+
+
+def _check_in_rows(day_iso: str) -> tuple[dict | None, list[dict]]:
+    """The day's daily_log row and the rows of the baseline window before it."""
+    start = (_date.fromisoformat(day_iso) - _td(days=HOOPER_BASELINE_DAYS)).isoformat()
+    rows = db.get_db().execute(
+        "SELECT * FROM daily_log WHERE date >= ? AND date <= ?", (start, day_iso),
+    ).fetchall()
+    today, history = None, []
+    for r in rows:
+        r = dict(r)
+        if r.get("date") == day_iso:
+            today = r
+        else:
+            history.append(r)
+    return today, history
+
+
+def hooper_band(day_iso: str, today_row: dict | None = None,
+                history: list[dict] | None = None) -> dict | None:
+    """The band of the morning check-in on ``day_iso``; None without one.
+
+    Rules, first match wins:
+      1. Ceiling (both modes): compared sum >= HOOPER_CEILING, or an answer
+         at the worst end -> rest.
+      2. Personal mode (>= HOOPER_PERSONAL_MIN_CHECKINS check-ins in the
+         HOOPER_BASELINE_DAYS before the day): z = (compared - centre) /
+         spread, centre = min(median, HOOPER_CENTRE_CAP), spread = stdev
+         clamped to [HOOPER_SPREAD_FLOOR, HOOPER_SPREAD_CAP]. z >= HOOPER_Z_REST
+         with an answer at "Tired"/"Sore" or worse -> rest; z >=
+         HOOPER_Z_TIER_DOWN -> tier_down; else normal. A question intervals.icu
+         did not answer takes the rider's usual answer to it (median_low of
+         the window, Normal when there is none), on the day and in the window.
+      3. Fixed limits: >= HOOPER_FIXED_REST rest; >= HOOPER_FIXED_TIER_DOWN
+         tier_down; else normal. Unanswered questions count as Normal.
+
+    ``today_row`` / ``history`` keep unit tests pure; None reads the database,
+    and a database error leaves the window empty (fixed limits).
+
+    Returns {"band", "mode", "index" (stored sum), "compared", "usual"
+    (personal centre, else None), "z" (personal, else None), "answered",
+    "reason" (one plain sentence for the rider)}.
+    """
+    if today_row is None or history is None:
+        try:
+            db_today, db_history = _check_in_rows(day_iso)
+        except Exception:  # noqa: BLE001 — no DB / no table: fixed limits
+            db_today, db_history = None, []
+        if today_row is None:
+            today_row = db_today
+        if history is None:
+            history = db_history
+    vals = _check_in_values(today_row)
+    if vals is None:
+        return None
+    answered = _answered(today_row)
+    index = sum(vals.values())
+    start = (_date.fromisoformat(day_iso) - _td(days=HOOPER_BASELINE_DAYS)).isoformat()
+    window = []
+    for r in history or []:
+        d = str((r or {}).get("date") or "") if isinstance(r, dict) else ""
+        if not (start <= d < day_iso):
+            continue                       # the day itself, or outside the window
+        hv = _check_in_values(r)
+        if hv is not None:
+            window.append((hv, _answered(r)))
+
+    personal = len(window) >= HOOPER_PERSONAL_MIN_CHECKINS
+    centre = z = None
+    if personal:
+        usual = {}
+        for col in db.HOOPER_COLS:
+            given = [hv[col] for hv, ans in window if col in ans]
+            usual[col] = statistics.median_low(given) if given else HOOPER_NORMAL_ANSWER
+
+        def _filled(hv, ans):
+            return sum(hv[c] if c in ans else usual[c] for c in db.HOOPER_COLS)
+
+        compared = _filled(vals, answered)
+        series = [_filled(hv, ans) for hv, ans in window]
+        centre = min(statistics.median(series), HOOPER_CENTRE_CAP)
+        spread = min(max(statistics.stdev(series), HOOPER_SPREAD_FLOOR), HOOPER_SPREAD_CAP)
+        z = (compared - centre) / spread
+    else:
+        compared = index
+
+    given_today = [vals[c] for c in answered]
+    worst = max(given_today) if given_today else HOOPER_NORMAL_ANSWER
+    if worst >= HOOPER_WORST_ANSWER:
+        band = SEVERITY_REST
+        reason = ("One of today's answers is at the worst end. "
+                  "Rest or an easy ride is advised.")
+    elif compared >= HOOPER_CEILING:
+        band = SEVERITY_REST
+        reason = ("Several of today's answers are worse than normal. "
+                  "Rest or an easy ride is advised.")
+    elif personal:
+        if z >= HOOPER_Z_REST and worst >= HOOPER_NEGATIVE_ANSWER:
+            band = SEVERITY_REST
+            reason = ("Your check-in is well below your usual. "
+                      "Rest or an easy ride is advised.")
+        elif z >= HOOPER_Z_TIER_DOWN:
+            band = SEVERITY_TIER_DOWN
+            reason = "Your check-in is below your usual. Consider easing off today."
+        else:
+            band = SEVERITY_NORMAL
+            reason = "Your check-in is in line with your usual."
+    elif compared >= HOOPER_FIXED_REST:
+        band = SEVERITY_REST
+        reason = ("Your check-in is well below normal today. "
+                  "Rest or an easy ride is advised.")
+    elif compared >= HOOPER_FIXED_TIER_DOWN:
+        band = SEVERITY_TIER_DOWN
+        reason = "Your check-in is a little below normal today. Consider easing off."
+    else:
+        band = SEVERITY_NORMAL
+        reason = "Your check-in looks like a normal day."
+    return {
+        "band": band,
+        "mode": BAND_MODE_PERSONAL if personal else BAND_MODE_FIXED,
+        "index": index,
+        "compared": round(float(compared), 1),
+        "usual": round(float(centre), 1) if centre is not None else None,
+        "z": round(z, 2) if z is not None else None,
+        "answered": list(answered),
+        "reason": reason,
+    }
+
+
 def compute_training_severity(profile_id: str, day_iso: str) -> dict:
     """v1.8.0 — Hooper-precedence severity for the auto-adjust planner.
 
     Precedence (from /tmp/MASTER_DECISIONS_v180.md §F1):
       1. Hooper submitted today (row in daily_log with non-zero rating sum)
-         → severity from Hooper bands. source=hooper.
-            hooper >= 18 → rest
-            14 <= hooper <= 17 → tier_down
-            hooper < 14 → normal
+         → severity is the check-in's band (hooper_band, 3.14.0: the rider's
+         own normal once 14 check-ins exist, fixed limits on the form's
+         neutral until then). source=hooper.
       2. Otherwise → readiness-composite score bands. source=tsb_hrv_auto.
             score < 3 → rest
             3 <= score < 5 → tier_down
@@ -715,22 +909,14 @@ def compute_training_severity(profile_id: str, day_iso: str) -> dict:
     hooper_idx, _row = _hooper_submitted(day_iso)
     tsb = _tsb_for_day(day_iso)
 
-    # Hooper precedence
-    if hooper_idx is not None:
-        if hooper_idx >= 18:
-            sev = SEVERITY_REST
-            reasons = [f"Hooper index {hooper_idx} ≥ 18 — advisory rest"]
-        elif hooper_idx >= 14:
-            sev = SEVERITY_TIER_DOWN
-            reasons = [f"Hooper index {hooper_idx} in 14-17 — tier-down recommended"]
-        else:
-            sev = SEVERITY_NORMAL
-            reasons = [f"Hooper index {hooper_idx} < 14 — normal training day"]
+    # Hooper precedence: the check-in's band, from its one owner.
+    band = hooper_band(day_iso, today_row=_row) if hooper_idx is not None else None
+    if band is not None:
         return {
             "score": None,
-            "severity": sev,
+            "severity": band["band"],
             "source": SOURCE_HOOPER,
-            "reasons": reasons[:3],
+            "reasons": [band["reason"]],
             "hooper_index": hooper_idx,
             "tsb": tsb,
         }

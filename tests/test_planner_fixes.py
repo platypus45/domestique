@@ -274,15 +274,16 @@ class TestFix4AtomicWrites(unittest.TestCase):
         accept-redraw apply, correctly through the helper) → 22 (2026-09-16:
         the legacy /api/plan/rematch/{day} endpoint itself was deleted, no
         client having called it since re-draw stopped delegating, and its
-        write site went with it)."""
+        write site went with it) → 23 (3.14.0: /api/plan/own-sessions, the
+        rider's own rides, writes through the helper too)."""
         src = APP_PY.read_text()
         helper_calls = re.findall(
             r"tp\.atomic_write_plan\(\s*json_path\s*,\s*(plan|plan_dict)\s*\)",
             src,
         )
         self.assertEqual(
-            len(helper_calls), 22,  # -1: the deleted rematch-day endpoint
-            f"Expected 22 tp.atomic_write_plan() sites, found {len(helper_calls)}",
+            len(helper_calls), 23,  # +1: the own-rides endpoint (3.14.0)
+            f"Expected 23 tp.atomic_write_plan() sites, found {len(helper_calls)}",
         )
 
     def test_no_inline_tmp_rename_pattern(self):

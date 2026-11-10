@@ -80,11 +80,15 @@ class _Fact:
     cannot forget the check, and a check fixed here is fixed for all of them.
     """
 
-    __slots__ = ("field", "source_field", "unit", "lo", "hi", "prio")
+    __slots__ = ("field", "source_field", "unit", "lo", "hi", "prio", "cast")
 
-    def __init__(self, field, source_field, unit, lo, hi, prio):
+    def __init__(self, field, source_field, unit, lo, hi, prio,
+                 cast=lambda v: int(float(v))):
         self.field, self.source_field, self.unit = field, source_field, unit
         self.lo, self.hi, self.prio = lo, hi, prio
+        # How a value is stored: whole numbers for watts, joules and bpm; a
+        # weight keeps its 0.1 kg (int() cut a 72.4 kg reading to 72).
+        self.cast = cast
 
 
 # Provenance tiers, higher wins. Equal tiers are allowed to overwrite, so a
@@ -103,6 +107,14 @@ _FACTS = {
         "manual": 3, "icu": 2, "computed": 1, "fallback": 0}),
     "max_hr": _Fact("max_hr", "max_hr_source", "bpm", 140, 220, {
         "manual": 3, "icu": 2, "computed": 1, "age_tanaka": 0}),
+    # 3.14.0 W2: the weight follows intervals.icu only after the rider ticks
+    # "Use my intervals.icu weight" (weight_source "icu"). A typed weight is
+    # "manual"; a profile with no source recorded (every profile before
+    # 3.14.0) is the rider's too and never moves on its own. Ticking the box
+    # hands a "manual" weight back to intervals.icu through release_fact(),
+    # the one writer allowed to lower the source.
+    "weight": _Fact("weight_kg", "weight_source", "kg", 30, 200, {
+        "manual": 2, "icu": 1}, cast=lambda v: round(float(v), 1)),
 }
 
 
@@ -823,6 +835,11 @@ class ProfileManager:
         pmax_manual = data.pop("pmax_w", None)
         # v1.1.0 IMPL-NORWEGIAN-HR: same pattern for max_hr.
         max_hr_manual = data.pop("max_hr", None)
+        # 3.14.0 W2 (grill M4): a typed weight is the rider's, stamped
+        # "manual" through the one writer. Written straight into the dict it
+        # kept weight_source "icu", and the next sync put the intervals.icu
+        # weight back over the weight the rider had just typed.
+        weight_manual = data.pop("weight_kg", None)
 
         self._athlete.update(data)
         self._write_json(self.active_dir / "athlete.json", self._athlete)
@@ -833,6 +850,8 @@ class ProfileManager:
             self._set_pmax(int(pmax_manual), "manual")
         if max_hr_manual is not None:
             self._set_max_hr(int(max_hr_manual), "manual")
+        if weight_manual is not None and self._set_fact("weight", weight_manual, "manual"):
+            self._weight_checked()
 
     def _set_fact(self, name: str, value, source: str) -> bool:
         """Write a provenance-tracked fact, or refuse and say why.
@@ -852,18 +871,18 @@ class ProfileManager:
             log.warning("set %s: no active profile; write dropped", fact.field)
             return False
         try:
-            v = int(float(value))
-        except (TypeError, ValueError):
+            v = fact.cast(value)
+        except (TypeError, ValueError, OverflowError):
             log.warning("set %s: invalid value %r; ignored", fact.field, value)
             return False
         if not (fact.lo <= v <= fact.hi):
-            log.warning("set %s: %d out of range [%d, %d] (source=%s); ignored",
+            log.warning("set %s: %s out of range [%s, %s] (source=%s); ignored",
                         fact.field, v, fact.lo, fact.hi, source)
             return False
 
         current = self._athlete.get(fact.source_field)
         if current in fact.prio and fact.prio[source] < fact.prio[current]:
-            log.info("set %s: keeping %s%s from %s; refused %d from the "
+            log.info("set %s: keeping %s%s from %s; refused %s from the "
                      "lower-priority source %s", fact.field,
                      self._athlete.get(fact.field), fact.unit, current, v, source)
             return False
@@ -871,8 +890,50 @@ class ProfileManager:
         self._athlete[fact.field] = v
         self._athlete[fact.source_field] = source
         self._write_json(self.active_dir / "athlete.json", self._athlete)
-        log.info("set %s=%d %s source=%s", fact.field, v, fact.unit, source)
+        log.info("set %s=%s %s source=%s", fact.field, v, fact.unit, source)
         return True
+
+    def release_fact(self, name: str, to_source: str, value=None) -> bool:
+        """Give a fact back to a lower source because the rider asked to.
+
+        The one writer for "give ownership back" (3.14.0 grill H3). _set_fact
+        refuses a lower-priority source by design, so the "Use my intervals.icu
+        weight" tick could never take over a weight the rider had typed: the
+        box would have worked only on a profile that never saved a weight.
+        This stamps ``to_source`` whatever the current tier, and writes
+        ``value`` at once when one is given (the newest intervals.icu weight);
+        with no value the stored number stays until the next reading.
+        Returns False when nothing could be written.
+        """
+        fact = _FACTS[name]
+        if to_source not in fact.prio:
+            raise ValueError(f"unknown {name} source: {to_source!r}")
+        if self._active_id is None:
+            log.warning("release %s: no active profile; write dropped", fact.field)
+            return False
+        if value is not None:
+            try:
+                v = fact.cast(value)
+            except (TypeError, ValueError, OverflowError):
+                v = None
+            if v is None or not (fact.lo <= v <= fact.hi):
+                log.warning("release %s: unusable value %r; source moved only",
+                            fact.field, value)
+            else:
+                self._athlete[fact.field] = v
+        self._athlete[fact.source_field] = to_source
+        if name == "weight":
+            self._athlete.pop("weight_needs_check", None)
+        self._write_json(self.active_dir / "athlete.json", self._athlete)
+        log.info("release %s to %s: %s%s", fact.field, to_source,
+                 self._athlete.get(fact.field), fact.unit)
+        return True
+
+    def _weight_checked(self) -> None:
+        """The rider saved a weight: the "check your weight" line after a
+        reconnect to another intervals.icu account has done its job."""
+        if self._athlete.pop("weight_needs_check", None) is not None:
+            self._write_json(self.active_dir / "athlete.json", self._athlete)
 
     def _set_wprime(self, value: int | float, source: str) -> bool:
         """Shared write-path for `wprime_j` with source tracking (v3.6.0-fix26

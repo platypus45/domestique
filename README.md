@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-green" alt="Platform">
   <img src="https://img.shields.io/badge/Workouts-4308-orange" alt="Workouts">
   <img src="https://img.shields.io/badge/Routes-622-purple" alt="Routes">
-  <img src="https://img.shields.io/badge/Version-v3.13.2-brightgreen" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v3.14.0-brightgreen" alt="Version">
   <img src="https://img.shields.io/badge/Tests-3240-success" alt="Tests">
   <img src="https://img.shields.io/github/downloads/platypus45/domestique/total?label=Downloads&color=blue" alt="Downloads">
 </p>
@@ -467,11 +467,11 @@ A dedicated **"DFA alpha1" tab** surfaces all of the above: an aggregate↔per-r
 
 ### Hooper composite — the morning leg-check
 
-Four 5-button questions on the home page: **sleep / energy / stress / soreness**, each 1–5. [Hooper & Mackinnon 1995](https://pubmed.ncbi.nlm.nih.gov/7898325/) (*J Sci Med Sport*) showed the *composite* (4-field sum, range 4–28) predicts overtraining better than any single component — a rider can have crushed legs but score "fine" on subjective fatigue; a sleep-deprived rider can have fresh legs. [Saw et al. 2016](https://pubmed.ncbi.nlm.nih.gov/26423706/) (*Br J Sports Med*) is the modern reinforcement: subjective wellness questionnaires correlate *better* with training response than any wearable HRV/RHR/sleep-score metric.
+Four 5-button questions on the home page: **sleep / energy / stress / soreness**, each 1–5. [Hooper et al. 1995](https://pubmed.ncbi.nlm.nih.gov/7898325/) (*Med Sci Sports Exerc*) found daily well-being ratings predicted staleness in elite swimmers (76% of the variance) — a rider can have crushed legs but score "fine" on subjective fatigue; a sleep-deprived rider can have fresh legs. Since 3.14.0 the answers can also come from intervals.icu's wellness entry. [Saw et al. 2016](https://pubmed.ncbi.nlm.nih.gov/26423706/) (*Br J Sports Med*) is the modern reinforcement: subjective wellness questionnaires correlate *better* with training response than any wearable HRV/RHR/sleep-score metric.
 
 **Plus one question that isn't Hooper's: "ready to train?" (1–10, optional).** Pre-session fatigue *together with* readiness-to-train is the pair that actually separated the overreached cyclists from the coping ones in a 30-rider training study — and readiness-to-train is not one of Hooper's four items, so it was missing. It's optional, never pre-filled, and it moves the score in both directions: a high rating can lift the day, where the four Hooper items can only ever be dragged down by their worst answer.
 
-Wires into the planner at three points: 20% weight in `readiness_score`; **G5** hard gate (`soreness >= 6` forces recovery, bypassing the composite — peripheral fatigue is real even when central HRV looks fine, Cheung 2003); **G6** hard gate (`sleep + fatigue + stress + soreness >= 18` forces Z2). Form pre-defaults each field to "3 — Normal" so a user who only taps soreness still posts a sane composite (~6s tap time).
+Wires into the planner at three points: 20% weight in `readiness_score`; **G5** hard gate (`soreness >= 6` forces recovery, bypassing the composite — peripheral fatigue is real even when central HRV looks fine, Cheung 2003); **G6** hard gate (a check-in well above the rider's own usual caps hard sessions at Z2; fixed limits until 14 check-ins). Form pre-defaults each field to "3 — Normal" so a user who only taps soreness still posts a sane composite (~6s tap time).
 
 ### Session RPE — how hard did that actually feel
 
@@ -502,7 +502,7 @@ Pre-v4.6.6 the planner detected fatigue/overload/soreness signals but never muta
 | **G3** | Polarisation breach | week `z4plus_pct > target+8` OR `z1z2_pct < target−10` | drop next 1–2 hard sessions one tier | [Seiler 2010](https://pubmed.ncbi.nlm.nih.gov/20861519/) / [Stöggl 2014](https://pubmed.ncbi.nlm.nih.gov/24550842/) / [Treff 2019](https://pmc.ncbi.nlm.nih.gov/articles/PMC6582670/) |
 | **G4** | ACWR weekly scaling | last week `actual_tss / planned_tss > 1.5` | `next_week.tss_target x 0.85`, hit_per_week − 1 | [Gabbett 2016](https://pubmed.ncbi.nlm.nih.gov/26758673/) |
 | **G5** | Soreness peripheral cap | `daily_log.soreness >= 6` | force today -> recovery (overrides HRV/TSB) | [Hooper 1995](https://pubmed.ncbi.nlm.nih.gov/7898325/) + [Cheung 2003](https://pubmed.ncbi.nlm.nih.gov/12617692/) |
-| **G6** | Hooper composite gate | `sleep + fatigue + stress + soreness >= 18` | force today -> Z2 | [Hooper & Mackinnon 1995](https://pubmed.ncbi.nlm.nih.gov/7898325/) |
+| **G6** | Morning check-in gate | after 14 check-ins in 28 days: 2 SD above the rider's usual with an answer at Tired/Sore or worse; until then a sum of 20 or more; always: any answer at the worst end, or 22 or more | force today -> Z2 | own baseline (Gallo 2016, Rabbani 2019); sum: [Hooper et al. 1995](https://pubmed.ncbi.nlm.nih.gov/7898325/) |
 | **G7** | 3-day mean session-RPE drops HIT | `mean(session-RPE, last 3d) >= 7` AND today is HIT | drop today one tier | [Foster 1998](https://pubmed.ncbi.nlm.nih.gov/9662690/) session-RPE |
 
 Each fired gate sets `s.adapted = True` and writes its citation into the session description so the rider sees *why* the prescription changed.
@@ -759,7 +759,7 @@ One session, end to end — the prescription, the ride that came back, and what 
 
 ## Releases
 
-Latest: **[v3.13.2 — Your hours lead, and no recovery ramp you didn't earn](https://github.com/platypus45/domestique/releases/latest)** (2026-10-23).
+Latest: **[v3.14.0 — Your own rides, your wellness, and more weeks in intervals.icu](https://github.com/platypus45/domestique/releases/latest)** (2026-11-10).
 
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds and uploads the macOS DMG + Windows EXE + Linux AppImage on every tagged release. The three jobs are independent: a Linux failure cannot hold up or damage the macOS and Windows artifacts.
 

@@ -8100,8 +8100,12 @@ def _icu_push_daily_from_sync() -> None:
             return
         _icu_push_last_daily = today
         import icu_calendar_push
-        res = icu_calendar_push.reconcile()
-        if res.get("error") == "swept":         # sync went off while it waited
+        from profile_manager import ProfileManager
+        # 3.14.0 (M2): bound to the rider it was started for and to sync still
+        # being on; a profile switch or sync-off while it waited skips the run.
+        res = icu_calendar_push.reconcile(
+            profile_id=ProfileManager.get().active_id, require_sync=True)
+        if res.get("error") in ("swept", "profile_changed", "sync_off"):
             _icu_push_last_daily = None         # the day's run did not happen
             return
         _icu_push_note_result(res)

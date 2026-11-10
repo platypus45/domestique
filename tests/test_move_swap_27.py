@@ -698,7 +698,7 @@ def test_a_busy_debounced_calendar_push_is_re_armed_once(monkeypatch):
     monkeypatch.setattr(app, "_icu_push_last_result", None)
     monkeypatch.setattr(app, "_icu_push_timer", None)
     result = {"res": {"error": "busy"}}
-    monkeypatch.setattr(icp, "reconcile", lambda: result["res"])
+    monkeypatch.setattr(icp, "reconcile", lambda **_k: result["res"])
 
     def armed():
         t = app._icu_push_timer
@@ -726,7 +726,7 @@ def test_a_busy_debounced_calendar_push_is_re_armed_once(monkeypatch):
         # A newer plan write armed its own timer while this run waited: keep it.
         newer = SimpleNamespace(cancel=lambda: None)
 
-        def busy_after_a_new_write():
+        def busy_after_a_new_write(**_k):
             app._icu_push_timer = newer
             return {"error": "busy"}
 

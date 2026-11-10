@@ -2177,6 +2177,12 @@ class PlannedSession:
     # Dataclass field so the canonical _planned_session_to/from_json
     # round-trip (app.py) carries it through regenerate/refit/reforecast.
     execution: dict | None = None
+    # 3.14.0 F2 -- a ride the rider put on this day themselves (a group ride, a
+    # ride of their own): {name, intensity, load_from, source, icu_event_id,
+    # icu_day, replaced, added_at[, put_back_from]}. None for every planner
+    # session. The planner plans around it and never rewrites it
+    # (_protect_race); its one writer is apply_own_sessions.
+    own: dict | None = None
 
 
 # ── v4.4.0 — phase targets (CONCEPT-SCI §1, §5) ───────────────────────────────
@@ -9437,14 +9443,16 @@ def _strip_elapsed_sessions(weeks: list, start_date: "date | None") -> None:
 _FTP_TEST_MIN, _FTP_TEST_TSS = 60, 70.0
 
 
-def _rested_test_day(week, around=()) -> "PlannedSession | None":
+def _rested_test_day(week, around=(), keep_days=()) -> "PlannedSession | None":
     """The day in ``week`` to test FTP on, rested (Allen & Coggan): the latest
     still-to-come trainable day whose two previous days are easy and whose
     next day is not hard, so the test neither follows hard work nor sits
     inside 48 h of the next. When the week allows, it keeps the week's long
     ride and does not follow it: the long ride is the heaviest easy load, and
     the day after it is not fresh. ``around`` are the neighbouring weeks'
-    sessions, which the day checks see across the week boundary."""
+    sessions, which the day checks see across the week boundary.
+    ``keep_days`` are days a rebuild keeps as the rider left them (§6.12):
+    never the test, still seen as neighbours."""
     easy = ("rest", "z2", "long_z2", "recovery")
     by_day = {s.day: s for s in [*around, *week.sessions]
               if getattr(s, "day", None) is not None}
@@ -9453,6 +9461,7 @@ def _rested_test_day(week, around=()) -> "PlannedSession | None":
                                if getattr(s, "day", None) is not None),
                               key=lambda s: s.day, reverse=True)
             if not (s.session_type == "rest" or s.day < today or _protect_race(s)
+                    or s.day in keep_days
                     or getattr(s, "user_moved", False)
                     or getattr(s, "status", "pending") != "pending")]
 
@@ -9668,18 +9677,21 @@ def _week_hit_count(week) -> int:
 
 def _protect_race(s) -> bool:
     """FC3 (v2.5.0, D9/L3-2/L3-7/L3-10) — ONE invariant, one place: a session
-    with ``is_race=True`` is IMMUTABLE to every mutating pass (volume clamps,
+    with ``is_race=True`` and, since 3.14.0, a ride the rider added themselves
+    (``own``) are IMMUTABLE to every mutating pass (volume clamps,
     stepback-lightest, availability rescale, tier-down, swap-type, redraw,
-    rematch, auto-move, demote, refit, per-day clamp). Its duration/TSS come
-    ONLY from ``_mark_race_days`` (self-clamping + idempotent, E9); the
-    sanctioned write path for the race itself is the goal-level add/edit-race
-    flow. Accepts both PlannedSession objects and persisted plan-dict session
-    dicts so the app-layer writers can consult the same guard."""
+    rematch, auto-move, demote, refit, per-day clamp). A race's duration/TSS
+    come ONLY from ``_mark_race_days`` (self-clamping + idempotent, E9), an own
+    ride's only from ``apply_own_sessions``. Both still count against the
+    week's load and block a neighbouring hard day. Code that means "race" and
+    not "fixed day" reads ``is_race``. Accepts both PlannedSession objects and
+    persisted plan-dict session dicts so the app-layer writers can consult the
+    same guard."""
     if s is None:
         return False
     if isinstance(s, dict):
-        return bool(s.get("is_race", False))
-    return bool(getattr(s, "is_race", False))
+        return bool(s.get("is_race", False) or s.get("own"))
+    return bool(getattr(s, "is_race", False) or getattr(s, "own", None))
 
 
 # Hard per-phase HIT-class floors. Module-level because two passes need
@@ -10142,6 +10154,9 @@ def _ensure_fresh_legs_before_ftp_tests(weeks: list) -> None:
         # those, and never rewrite a day that is already in the past.
         if (getattr(prev, "status", "pending") not in ("pending", "planned")
                 or getattr(prev, "user_moved", False)
+                # 3.14.0 F2: a race or the rider's own ride is never rewritten;
+                # the own-ride writer moves the test instead (O7).
+                or _protect_race(prev)
                 or getattr(prev, "day", None) is not None and prev.day < clock.today()):
             continue
         prev.session_type = "recovery"
@@ -10228,7 +10243,12 @@ def _enforce_weekly_hit_cap(weeks: list, library: list[dict]) -> None:
                 and not getattr(s, "adapted", False)
                 and not getattr(s, "user_moved", False)
             ]
-            if len(hit_slots) <= cap:
+            # 3.14.0 F2: a hard ride the rider added fills one of the week's
+            # hard days: counted, never demoted (it is fixed).
+            fixed = sum(1 for s in wk.sessions
+                        if getattr(s, "own", None) and _session_is_hit(s)
+                        and getattr(s, "status", "pending") not in ("missed", "dismissed"))
+            if len(hit_slots) + fixed <= cap:
                 break
             # 3.3.1 hotfix (DIAG_L1 H3): the FTP test now COUNTS toward the
             # cap (it joined _HIT_SESSION_TYPES) but is never the demotion
@@ -10965,9 +10985,10 @@ def _apply_reentry_shape(weeks: list, gap_days: "int | None",
 
 def _race_shape_frozen(s) -> bool:
     """True when the race-week shaper must not touch this slot: the race entry
-    itself, anything the rider moved/edited/completed/dismissed, and days the
-    availability calendar marked unavailable."""
-    if s is None or getattr(s, "is_race", False):
+    itself, a ride the rider added themselves (3.14.0 F2), anything the rider
+    moved/edited/completed/dismissed, and days the availability calendar
+    marked unavailable."""
+    if s is None or _protect_race(s):
         return True
     if getattr(s, "user_moved", False) or getattr(s, "user_swapped", False):
         return True
@@ -11060,6 +11081,13 @@ def _space_hard_days_across_plan(weeks: list, library: list | None = None,
     sessions = sorted(
         (s for w in weeks for s in (w.sessions or []) if s is not None),
         key=lambda s: s.day)
+    # 3.14.0 F2: a hard ride the rider added is fixed and blocks both sides;
+    # the scan below only looks back, so a planned hard day just BEFORE an own
+    # hard ride is eased too. Scoped to own rides: a dragged hard day keeps
+    # the forward-only rule it always had.
+    own_hard = {s.day for s in sessions
+                if getattr(s, "own", None) and _session_is_hit(s)
+                and getattr(s, "status", "pending") not in ("missed", "dismissed")}
     last_hard = None
     for s in sessions:
         if s.session_type == "rest" or not _session_is_hit(s):
@@ -11071,51 +11099,61 @@ def _space_hard_days_across_plan(weeks: list, library: list | None = None,
             # day used" made a missed Tuesday forbid a hard Wednesday, which
             # is the opposite of what the rider needs after losing a session.
             continue
-        if getattr(s, "user_moved", False) or _status != "pending":
+        if (getattr(s, "user_moved", False) or _status != "pending"
+                or _protect_race(s)):
             last_hard = s.day          # ridden, or the rider owns it
             continue
-        if last_hard is not None and (s.day - last_hard).days < 2:
-            was = s.session_type
-            new_type = _ease_for_recovery(was)
-            dur, tss = _deescalated_load(s.duration_min, new_type,
-                                         old_tss=s.tss_estimate)
-            s.session_type = new_type
-            s.duration_min = dur
-            s.tss_estimate = tss
-            s.zwo_file = ""
-            s.zwo_name = ""
-            s.description = (f"{new_type} ({dur}min) — eased: 48 h from the "
-                             "previous hard day")
-            if library:
-                # What the easing decided. match_zwo resizes the session to the
-                # matched file's duration, which can be LONGER -- so a slot
-                # eased down to 50 min came back at 91 and pushed a taper week
-                # back over its ceiling. An ease may never raise the load, the
-                # same invariant _deescalated_load exists to hold.
-                _eased_dur, _eased_tss = dur, tss
-                try:
-                    match_zwo(s, library, plan_start_date=plan_start_date,
-                              seed_salt=seed_salt)
-                    if (s.duration_min or 0) > _eased_dur:
-                        s.duration_min = _eased_dur
-                    if (s.tss_estimate or 0) > _eased_tss:
-                        s.tss_estimate = _eased_tss
-                    # ...and check what it actually handed back. Slot type and
-                    # served content are different things: the library can
-                    # answer an endurance slot with a file whose content is a
-                    # VO2 session, which re-breaches the very spacing rule that
-                    # eased this slot a line ago, and pushes the week back over
-                    # its HIT cap. No file is better than the wrong file.
-                    if _session_is_hit(s):
-                        s.zwo_file = ""
-                        s.zwo_name = ""
-                except Exception:  # noqa: BLE001 — a missing file beats a crash
-                    log.debug("rematch after easing failed for %s", s.day,
-                              exc_info=True)
-            changed.append(f"{s.day}: {was} -> {new_type}")
+        if ((last_hard is not None and (s.day - last_hard).days < 2)
+                or any(0 < (d - s.day).days < 2 for d in own_hard)):
+            was = _ease_hard_session(s, library, "48 h from the previous hard day",
+                                     plan_start_date=plan_start_date, seed_salt=seed_salt)
+            changed.append(f"{s.day}: {was} -> {_ease_for_recovery(was)}")
         else:
             last_hard = s.day
     return changed
+
+
+def _ease_hard_session(s, library, why: str, plan_start_date=None,
+                       seed_salt: int = 0) -> str:
+    """Ease a hard session for recovery, in place: the recovery type, a load
+    never raised, a matching easy file or none (the 48 h pass's rule, shared
+    with the own-ride writer since 3.14.0). Returns the type it had."""
+    was = s.session_type
+    new_type = _ease_for_recovery(was)
+    dur, tss = _deescalated_load(s.duration_min, new_type, old_tss=s.tss_estimate)
+    s.session_type = new_type
+    s.duration_min = dur
+    s.tss_estimate = tss
+    s.zwo_file = ""
+    s.zwo_name = ""
+    s.description = f"{new_type} ({dur}min) — eased: {why}"
+    if library:
+        # What the easing decided. match_zwo resizes the session to the
+        # matched file's duration, which can be LONGER -- so a slot
+        # eased down to 50 min came back at 91 and pushed a taper week
+        # back over its ceiling. An ease may never raise the load, the
+        # same invariant _deescalated_load exists to hold.
+        _eased_dur, _eased_tss = dur, tss
+        try:
+            match_zwo(s, library, plan_start_date=plan_start_date,
+                      seed_salt=seed_salt)
+            if (s.duration_min or 0) > _eased_dur:
+                s.duration_min = _eased_dur
+            if (s.tss_estimate or 0) > _eased_tss:
+                s.tss_estimate = _eased_tss
+            # ...and check what it actually handed back. Slot type and
+            # served content are different things: the library can
+            # answer an endurance slot with a file whose content is a
+            # VO2 session, which re-breaches the very spacing rule that
+            # eased this slot a line ago, and pushes the week back over
+            # its HIT cap. No file is better than the wrong file.
+            if _session_is_hit(s):
+                s.zwo_file = ""
+                s.zwo_name = ""
+        except Exception:  # noqa: BLE001 — a missing file beats a crash
+            log.debug("rematch after easing failed for %s", s.day,
+                      exc_info=True)
+    return was
 
 
 def _apply_race_week_shape(weeks: list, goal, library=None) -> None:
@@ -11321,6 +11359,11 @@ def _mark_race_days(weeks: list, goal) -> None:
             # passes across generate/reforecast/regen never churn the race card.
             if getattr(s, "is_race", False) and (getattr(s, "race", None) or {}) == meta:
                 continue
+            if getattr(s, "own", None):
+                # 3.14.0 F2: a race added on a day that held the rider's own
+                # ride wins the day; the own ride goes (not both on one row).
+                log.info("EVENT=own_ride_replaced_by_race day=%s", s.day)
+                s.own = None
             s.is_race = True
             s.race = meta
             s.session_type = "recovery"  # keep a known type; UI keys on is_race
@@ -11911,6 +11954,28 @@ def _last_completed_week_acwr(
 # added on a rest day (easy volume only; intensity sessions keep theirs).
 _ROOM_FROM_TYPES = ("z2", "long_z2", "recovery")
 
+# 3.14.0 F2: a ride the rider adds is planned as the session type its effort is
+# closest to, so every hardness, band and load reader sees it as that type:
+# easy = endurance (45 TSS/h, IF 0.67), moderate = tempo (65, 0.81), hard =
+# sweet spot (80, 0.89; a hard day for the 48 h rule and the hard-day cap).
+OWN_SESSION_TYPE = {"easy": "z2", "moderate": "tempo", "hard": "sweetspot"}
+OWN_MIN_MIN, OWN_MAX_MIN = 15, 600     # a 10 h ride; the planner's own cap is 6 h
+OWN_MAX_LOAD = 1000
+OWN_NAME_MAX = 80
+OWN_TEST_SEARCH_DAYS = 7               # O7: how far an FTP test may move
+
+
+def own_intensity_for_if(if_: float) -> str:
+    """The own-ride intensity whose session type's IF (sqrt of its TSS per
+    hour / 100) is nearest ``if_``."""
+    return min(OWN_SESSION_TYPE, key=lambda k: abs(
+        math.sqrt(TSS_PER_HOUR[OWN_SESSION_TYPE[k]] / 100.0) - float(if_)))
+
+
+def own_session_load(duration_min: int, intensity: str) -> int:
+    """An own ride's load from its length and how hard it is."""
+    return round(duration_min / 60 * TSS_PER_HOUR[OWN_SESSION_TYPE[intensity]])
+
 def _fits_budget(minutes: int, tss_per_h: float, budget: float, planned: float,
                  replacing: float = 0.0) -> int:
     """``minutes``, trimmed to what a week's ``budget`` still holds once
@@ -11920,6 +11985,100 @@ def _fits_budget(minutes: int, tss_per_h: float, budget: float, planned: float,
         return minutes
     room = budget - (planned - replacing)
     return max(0, min(minutes, int(room / tss_per_h * 60)))
+
+
+def _not_ridden_load(pw) -> float:
+    """The planned load of a week's sessions that will not be ridden: missed
+    or dismissed (plan_invariants' NOT_RIDDEN). 3.14.0 F2 (C12)."""
+    return sum(float(s.tss_estimate or 0) for s in pw.sessions
+               if s.session_type != "rest"
+               and (str(getattr(s, "status", "") or "") in ("missed", "dismissed")
+                    or getattr(s, "dismissed_at", "")))
+
+
+def _make_room(pw, today, over: float, keep_days, rematch) -> "tuple[set, float]":
+    """3.13.2: shorten the week's later easy volume to free ``over`` TSS for a
+    ride the rider added. Largest TSS first, never below the planner's floor;
+    intensity sessions, pinned days, races, own rides and ``keep_days`` keep
+    theirs. The first cut records the planner's length (shortened_from, G2).
+    ``rematch(session, week, day_iso)`` refits a file cut by 15 % or more.
+    Returns (touched days, TSS freed). Extracted from reforecast for the
+    own-ride writer (3.14.0 F2), behaviour unchanged."""
+    touched: set = set()
+    freed = 0.0
+    easy = sorted(
+        (x for x in pw.sessions
+         if x.day > today
+         and x.day.isoformat() not in keep_days
+         and str(getattr(x, "status", "") or "pending") == "pending"
+         and x.session_type in _ROOM_FROM_TYPES
+         and not getattr(x, "user_moved", False)
+         and not getattr(x, "user_swapped", False)
+         and not _protect_race(x)
+         # 3.14.0 F2: a day a hard own ride eased waits to be given back as
+         # it was; cut, the give-back could no longer recognise it.
+         and not getattr(x, "own_eased_from", None)
+         and x.duration_min > _VOLUME_MIN_SESSION_MIN),
+        key=lambda x: float(x.tss_estimate or 0), reverse=True)
+    for x in easy:
+        if over <= 0:
+            break
+        per_min = float(x.tss_estimate or 0) / x.duration_min
+        if per_min <= 0:
+            continue
+        cut = min(x.duration_min - _VOLUME_MIN_SESSION_MIN,
+                  int(math.ceil(over / per_min)))
+        if cut <= 0:
+            continue
+        old_dur, old_tss = x.duration_min, float(x.tss_estimate or 0)
+        if not getattr(x, "shortened_from", 0):
+            x.shortened_from = old_dur      # the planner's length, for G2
+        x.duration_min = old_dur - cut
+        x.tss_estimate = round(x.duration_min * per_min)
+        over -= old_tss - x.tss_estimate
+        freed += old_tss - x.tss_estimate
+        x.description = (f"{x.session_type} ({x.duration_min}min) — "
+                         f"shortened to make room for a ride you added")
+        if cut / old_dur >= 0.15:
+            rematch(x, pw, x.day.isoformat())
+        touched.add(x.day.isoformat())
+    return touched, freed
+
+
+def _give_back(pw, today, room: float, keep_days, rematch) -> "tuple[set, float]":
+    """3.13.2 (G2): sessions _make_room shortened grow back toward the
+    planner's length, largest cut first, up to ``room`` TSS. Returns
+    (touched days, TSS added). Extracted from reforecast (3.14.0 F2)."""
+    touched: set = set()
+    added = 0.0
+    for x in sorted(
+            (x for x in pw.sessions
+             if getattr(x, "shortened_from", 0) > x.duration_min
+             and x.day > today
+             and x.day.isoformat() not in keep_days
+             and str(getattr(x, "status", "") or "pending") == "pending"
+             and x.session_type in _ROOM_FROM_TYPES),
+            key=lambda x: x.shortened_from - x.duration_min, reverse=True):
+        per_min = float(x.tss_estimate or 0) / max(x.duration_min, 1)
+        if per_min <= 0:
+            continue
+        add = min(x.shortened_from - x.duration_min, int((room - added) // per_min))
+        if add <= 0:
+            continue
+        old_dur, old_tss = x.duration_min, float(x.tss_estimate or 0)
+        x.duration_min = old_dur + add
+        x.tss_estimate = round(x.duration_min * per_min)
+        added += x.tss_estimate - old_tss
+        if x.duration_min >= x.shortened_from:
+            del x.shortened_from
+            x.description = f"{x.session_type} ({x.duration_min}min)"
+        else:
+            x.description = (f"{x.session_type} ({x.duration_min}min) — "
+                             f"shortened to make room for a ride you added")
+        if add / old_dur >= 0.15:
+            rematch(x, pw, x.day.isoformat())
+        touched.add(x.day.isoformat())
+    return touched, added
 
 
 def reforecast(
@@ -12203,7 +12362,12 @@ def reforecast(
                     s.status = "pending"            # a vacated day's stub status
                     if d_iso in _explicit:
                         _explicit_grew = True
-                elif getattr(s, "user_swapped", False) or getattr(s, "user_moved", False):
+                elif (getattr(s, "user_swapped", False) or getattr(s, "user_moved", False)
+                      # 3.14.0 F2 (grill M3): a day a hard own ride eased keeps
+                      # what the easing made of it, so the give-back can find
+                      # it again when the ride goes (every sync passes the
+                      # whole calendar and grew it out of recognition).
+                      or getattr(s, "own_eased_from", None)):
                     # A pinned day — swap-type, accepted redraw, FTP-test
                     # choice — keeps the workout the rider chose. Applying the
                     # calendar hours literally here rescaled the duration and,
@@ -12320,81 +12484,30 @@ def reforecast(
                                     pass
                 touched.add(d_iso)
 
-            if _explicit_grew and _budget > 0 and _planned > _budget:
+            # 3.14.0 F2 (C12, grill M6): a missed or dismissed session will not
+            # be ridden, so its planned load takes no room: a week really
+            # under its budget kept shortening easy rides (3.13.2).
+            _owed = _planned - _not_ridden_load(pw)
+            if _explicit_grew and _budget > 0 and _owed > _budget:
                 # 3.13.2 (owner): a ride the rider put on a rest day (or the
                 # hours they raised on a day that rides) stays;
                 # the week's later easy volume makes room for it, so the
-                # week keeps its load. Longest easy session first, never
-                # below the planner's floor; intensity sessions, pinned days
-                # and days the rider set hours on keep theirs.
-                over = _planned - _budget
-                easy = sorted(
-                    (x for x in pw.sessions
-                     if x.day > today
-                     and x.day.isoformat() not in availability_overrides
-                     and str(getattr(x, "status", "") or "pending") == "pending"
-                     and x.session_type in _ROOM_FROM_TYPES
-                     and not getattr(x, "user_moved", False)
-                     and not getattr(x, "user_swapped", False)
-                     and not _protect_race(x)
-                     and x.duration_min > _VOLUME_MIN_SESSION_MIN),
-                    key=lambda x: float(x.tss_estimate or 0), reverse=True)
-                for x in easy:
-                    if over <= 0:
-                        break
-                    per_min = float(x.tss_estimate or 0) / x.duration_min
-                    if per_min <= 0:
-                        continue
-                    cut = min(x.duration_min - _VOLUME_MIN_SESSION_MIN,
-                              int(math.ceil(over / per_min)))
-                    if cut <= 0:
-                        continue
-                    old_dur, old_tss = x.duration_min, float(x.tss_estimate or 0)
-                    if not getattr(x, "shortened_from", 0):
-                        x.shortened_from = old_dur      # the planner's length, for G2
-                    x.duration_min = old_dur - cut
-                    x.tss_estimate = round(x.duration_min * per_min)
-                    over -= old_tss - x.tss_estimate
-                    _planned -= old_tss - x.tss_estimate
-                    x.description = (f"{x.session_type} ({x.duration_min}min) — "
-                                     f"shortened to make room for a ride you added")
-                    if cut / old_dur >= 0.15:
-                        _rematch_to_length(x, pw, x.day.isoformat())
-                    touched.add(x.day.isoformat())
+                # week keeps its load.
+                _t, _freed = _make_room(pw, today, _owed - _budget,
+                                        set(availability_overrides), _rematch_to_length)
+                touched |= _t
+                _planned -= _freed
+                _owed -= _freed
 
-            if (_budget > 0 and _planned < _budget
+            if (_budget > 0 and _owed < _budget
                     and any(k in _explicit for k in week_keys)):
                 # 3.13.2 (G2): the rider's change freed load in a week that
                 # once made room (a day set back to 0 h): the shortened
                 # sessions get their length back first, up to the budget.
-                for x in sorted(
-                        (x for x in pw.sessions
-                         if getattr(x, "shortened_from", 0) > x.duration_min
-                         and x.day > today
-                         and x.day.isoformat() not in availability_overrides
-                         and str(getattr(x, "status", "") or "pending") == "pending"
-                         and x.session_type in _ROOM_FROM_TYPES),
-                        key=lambda x: x.shortened_from - x.duration_min, reverse=True):
-                    per_min = float(x.tss_estimate or 0) / max(x.duration_min, 1)
-                    if per_min <= 0:
-                        continue
-                    add = min(x.shortened_from - x.duration_min,
-                              int((_budget - _planned) // per_min))
-                    if add <= 0:
-                        continue
-                    old_dur, old_tss = x.duration_min, float(x.tss_estimate or 0)
-                    x.duration_min = old_dur + add
-                    x.tss_estimate = round(x.duration_min * per_min)
-                    _planned += x.tss_estimate - old_tss
-                    if x.duration_min >= x.shortened_from:
-                        del x.shortened_from
-                        x.description = f"{x.session_type} ({x.duration_min}min)"
-                    else:
-                        x.description = (f"{x.session_type} ({x.duration_min}min) — "
-                                         f"shortened to make room for a ride you added")
-                    if add / old_dur >= 0.15:
-                        _rematch_to_length(x, pw, x.day.isoformat())
-                    touched.add(x.day.isoformat())
+                _t, _added = _give_back(pw, today, _budget - _owed,
+                                        set(availability_overrides), _rematch_to_length)
+                touched |= _t
+                _planned += _added
 
     # Fatigue. A hard session in the coming week, on a day whose TSB reading is
     # below TSB_EASE_BELOW, is eased to something the athlete can recover on,
@@ -12812,7 +12925,10 @@ from dataclasses import fields as _dc_fields  # noqa: E402
 # a rebuild is right to drop those, since a date-relative flag carried through
 # would outlive the day it was true on.
 _PS_JSON_ONLY_KEYS = ("variation", "adapted_reason", "auto_moved", "ftp_test_type",
-                      "pre_adapt", "tsb_eased_from", "shortened_from")
+                      "pre_adapt", "tsb_eased_from", "shortened_from",
+                      # 3.14.0 F2: a planner session a hard own ride eased
+                      # (48 h, the week's hard-day cap), kept to give it back.
+                      "own_eased_from")
 _SESSION_FIELDS = tuple(f.name for f in _dc_fields(PlannedSession))
 _WEEK_FIELDS = tuple(f.name for f in _dc_fields(PlannedWeek))
 _SESSION_DEFAULTS = {"session_type": "z2", "duration_min": 0, "tss_estimate": 0.0,
@@ -12913,6 +13029,8 @@ def _iter_pending_unmatched(plan_dict: dict, today: date):
                 continue
             if s_json.get("dismissed_at") or s_json.get("is_race") or s_json.get("is_opener"):
                 continue
+            if s_json.get("own"):
+                continue          # 3.14.0 F2: the rider's own ride has no file, by design
             try:
                 if int(s_json.get("duration_min") or 0) <= 0:   # R4a's slot<=0 guard
                     continue
@@ -13156,8 +13274,9 @@ def _apply_reforecast_to_dict(
                 continue
             # E7 (v2.5.0): a PERSISTED race day is never rewritten by a
             # reforecast write-back — the race entry is owned by the goal
-            # (add/edit race), not by adaptation passes.
-            if s_json.get("is_race"):
+            # (add/edit race), not by adaptation passes. 3.14.0 F2: nor the
+            # rider's own ride (its one writer is apply_own_sessions).
+            if s_json.get("is_race") or s_json.get("own"):
                 continue
             new_session_type = src.session_type
             new_duration_min = src.duration_min
@@ -13334,6 +13453,774 @@ def reforecast_dict(
                       step="apply_reforecast_to_dict")
         raise
     return plan_dict, sessions_modified, reforecast_info
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# OWN RIDES (3.14.0 F2) — a ride the rider adds; the week is planned around it
+# ══════════════════════════════════════════════════════════════════════════════
+
+_OWN_TYPE_WORDS = {
+    "vo2max": "VO2max session", "threshold": "threshold session",
+    "sweetspot": "sweet spot session", "overunder": "over-under session",
+    "sprint": "sprint session", "double_threshold": "threshold session",
+    "tempo": "tempo ride", "z2": "endurance ride", "long_z2": "long ride",
+    "recovery": "recovery ride", "ftp_test": "FTP test",
+}
+
+_OWN_REFUSALS = {
+    "bad_date": "That is not a date.",
+    "past": "That day has passed.",
+    "not_in_plan": "That day is not in your plan.",
+    "race_day": "That day is a race day: edit the race instead.",
+    "ridden": "You already rode that day.",
+    "two_sessions": "That day holds two sessions, so it cannot take a ride of your own.",
+    "bad_length": "Give the ride a length between 15 minutes and 10 hours.",
+    "bad_intensity": "Choose how hard the ride is: easy, moderate or hard.",
+    "bad_load": "The load must be a number between 1 and 1000.",
+    "bad_event": "That ride from intervals.icu could not be read.",
+    "duplicate": "This ride from intervals.icu is already in your plan.",
+    "duplicate_day": "Two rides for the same day in one change.",
+    "day_has_your_ride": "That day already holds a ride of yours.",
+    "no_own_ride": "There is no ride of yours on that day.",
+    "not_pushed": ("This ride comes from your intervals.icu calendar: move it there, "
+                   "or move it in your plan."),
+    "ftp_test_day": ("Your FTP test is on that day and the next week has no rested day "
+                     "to move it to. Move the test first."),
+}
+
+
+def _own_day_label(d) -> str:
+    """A day as the rider reads it: "Sat 15 Nov" (no platform strftime flags)."""
+    return f"{d:%a} {d.day} {d:%b}"
+
+
+def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
+                       moves=(), put_back=(), carry=(), today: "date | None" = None,
+                       pinned_days=(), library: "list | None" = None) -> dict:
+    """3.14.0 F2 -- the one writer of rides the rider adds themselves.
+
+    Mutates ``plan_dict`` in place and returns what it did. Actions, in this
+    order, each validated before it changes anything (grill M1):
+      * ``remove_days``: the own ride goes; the session it replaced comes back
+        as it was (its status kept, M7), fitted to the day as it is now: rest
+        when the day became unavailable, no longer than the day's hours or the
+        type's ceiling (L3), a file still in the library (M5), eased when the
+        week can no longer carry a hard day there (M4).
+      * ``moves``: {from, to[, name, duration_min, intensity, load, icu_day]}
+        -- the ride and its fields move together or not at all; the new row
+        records ``moved_from``.
+      * ``set_items``: {date, name, duration_min, intensity|load, icu_event_id,
+        icu_day, load_from, link} -- add, or edit the ride already on that day.
+        An intervals.icu ride is never added twice, never onto a day holding
+        another ride of the rider's unless ``link`` (a manual ride becomes that
+        intervals.icu ride, M8).
+      * ``put_back``: {day, icu_day} -- the rider asks for the pushed ride they
+        moved in intervals.icu to go back to its plan day (O4); the push engine
+        reads ``own["put_back_from"]``.
+      * ``carry``: own-ride session dicts carried into a new plan (generate):
+        their ``own`` record is kept as it was (source, load_from, icu ids), its
+        ``replaced`` taken from the new plan (grill H6).
+    Each change fits the plan around the day:
+      * load: the week keeps its budget. More load shortens the week's later
+        easy riding (_make_room, at most what this change added); less gives
+        shortened rides their length back (_give_back). Missed and dismissed
+        sessions take no room (C12). No easy riding left: the ride stays and
+        the week runs over (``over_budget``).
+      * hard days: a hard own ride is a fixed hard day. A planned hard session
+        the day before or after it is eased from tomorrow on (O6: today's is
+        left alone, with a warning), never a pinned one (C9: warning), and the
+        week's hard days, the ride counted, are kept to the phase's cap (C11: a
+        deload keeps the ride and shapes the rest). Each eased session keeps
+        what it was (``own_eased_from``) and gets it back once no hard own ride
+        needs it and 48 h and the cap allow (L2).
+      * FTP test (O7): a ride on the test day, or a ride that is not easy the
+        day before it, moves the test to the next rested day within a week
+        (not on or next to a hard day, not on an own ride, race, unavailable or
+        past day). None: a ride on the test day is refused, a ride the day
+        before it is kept with a warning.
+    Never touches today's session for a reason other than the rider's own
+    change to today. Returns {applied, refused, eased, restored,
+    ftp_test_moved, over_budget, warnings, touched_days}; every refusal and
+    warning carries a plain ``text``."""
+    today = today or clock.today()
+    try:
+        goal = goal_from_dict(plan_dict.get("goal") or {})
+    except Exception:  # noqa: BLE001 -- the caps read only phase and day hours
+        goal = Goal(goal_type="general", hours_per_week=8.0)
+    weeks = _plan_dict_to_planned_weeks(plan_dict)
+    pinned = {str(d)[:10] for d in (pinned_days or ())}
+    out: dict = {"applied": [], "refused": [], "eased": [], "restored": [],
+                 "ftp_test_moved": [], "over_budget": {}, "warnings": [],
+                 "touched_days": []}
+    touched: set = set()
+    _lib: list = [library]
+
+    def lib() -> list:
+        if _lib[0] is None:
+            try:
+                _lib[0] = load_workout_library()
+            except Exception:  # noqa: BLE001 -- no library: sessions keep no file
+                _lib[0] = []
+        return _lib[0]
+
+    pos: dict = {}
+
+    def reindex() -> None:
+        pos.clear()
+        for pw in weeks:
+            for i, s in enumerate(pw.sessions):
+                pos.setdefault(s.day, []).append((pw, i))
+
+    reindex()
+
+    def row(d, ov=None):
+        if ov and d in ov:
+            return ov[d]
+        hits = pos.get(d) or []
+        return hits[0][0].sessions[hits[0][1]] if hits else None
+
+    def week_of(d):
+        hits = pos.get(d) or []
+        return hits[0][0] if hits else None
+
+    def put(d, s) -> None:
+        pw, i = pos[d][0]
+        pw.sessions[i] = s
+        touched.add(d.isoformat())
+
+    def refuse(day, reason) -> None:
+        out["refused"].append({"date": str(day), "reason": reason,
+                               "text": _OWN_REFUSALS.get(reason, reason)})
+
+    def warn(code, day, text) -> None:
+        out["warnings"].append({"code": code, "day": str(day), "text": text})
+
+    def status(s) -> str:
+        return str(getattr(s, "status", "") or "pending")
+
+    def counts(s) -> bool:            # a row whose load will happen
+        return (s is not None and s.session_type != "rest"
+                and status(s) not in ("missed", "dismissed")
+                and not getattr(s, "dismissed_at", ""))
+
+    def owed(pw) -> float:
+        return sum(float(s.tss_estimate or 0) for s in pw.sessions if counts(s))
+
+    def is_hard(s) -> bool:
+        return counts(s) and _session_is_hit(s)
+
+    def own_hard(s) -> bool:
+        return bool(s is not None and getattr(s, "own", None)) and is_hard(s)
+
+    def own_not_easy(s) -> bool:
+        return bool(s is not None and getattr(s, "own", None) and counts(s)
+                    and (s.own.get("intensity") or "") != "easy")
+
+    def pinned_row(s) -> bool:
+        return bool(getattr(s, "user_moved", False) or getattr(s, "user_swapped", False)
+                    or s.day.isoformat() in pinned)
+
+    def cap_of(pw) -> int:
+        if getattr(pw, "is_stepback", False):
+            return 0
+        return get_budget_for_phase(getattr(pw, "phase", "") or "base", goal).hit_count_max
+
+    def words(st) -> str:
+        return _OWN_TYPE_WORDS.get(st or "", "session")
+
+    _avail = plan_dict.get("availability") if isinstance(plan_dict.get("availability"), dict) else {}
+    _periods = [p for p in (plan_dict.get("unavailable_periods") or []) if isinstance(p, dict)]
+
+    def day_hours(d) -> "float | None":
+        v = _avail.get(d.isoformat())
+        if isinstance(v, dict):
+            if v.get("type") in ("holiday", "injury", "illness", "unavailable"):
+                return 0.0
+            v = v.get("hours")
+        if v is None or isinstance(v, bool):
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    def unavailable(d) -> bool:
+        h = day_hours(d)
+        if h is not None and h <= 0:
+            return True
+        iso = d.isoformat()
+        return any(str(p.get("start") or "") <= iso <= str(p.get("end") or "") for p in _periods)
+
+    def refit_file(s, *_ignored) -> None:
+        pw = week_of(s.day)
+        try:
+            match_zwo(s, lib(), week_num=getattr(pw, "week_num", 0),
+                      day_idx=(s.day - pw.start).days if pw is not None else 0,
+                      used_names={s.zwo_name} if s.zwo_name else set(), raise_on_empty=True,
+                      micro_only=bool(getattr(goal, "vo2_microintervals_only", False)))
+        except Exception:  # noqa: BLE001 -- NoCandidate: a session without a file is still planned
+            pass
+
+    def ease(s, for_day, why) -> None:
+        snap = {k: getattr(s, k) for k in _TSB_EASE_FIELDS}
+        was = _ease_hard_session(s, lib(), why)
+        snap["for"] = for_day.isoformat()
+        snap["eased_to"] = [s.session_type, s.duration_min]
+        s.own_eased_from = snap
+        touched.add(s.day.isoformat())
+        out["eased"].append({
+            "day": s.day.isoformat(), "was": was, "now": s.session_type,
+            "for": for_day.isoformat(),
+            "text": f"{_own_day_label(s.day)}: your {words(was)} is now an easy ride ({why})."})
+
+    # ── the day an own ride may go on ──
+    def check_day(d, eid=None, link=False, moving_from=None, ov=None):
+        if d < today:
+            return "past"
+        hits = pos.get(d) or []
+        if not hits:
+            return "not_in_plan"
+        if len(hits) > 1:
+            return "two_sessions"
+        s = row(d, ov)
+        if getattr(s, "is_race", False):
+            return "race_day"
+        if status(s) in ("done", "done_partial", "ambiguous"):
+            return "ridden"
+        if getattr(s, "own", None) and d != moving_from:
+            there = s.own.get("icu_event_id")
+            if eid is None or eid == there:
+                return None                      # an edit of the ride on that day
+            if link and there is None:
+                return None                      # M8: a manual ride becomes the icu ride
+            return "day_has_your_ride"
+        return None
+
+    def parse(item, d=None):
+        """(fields, None) or (None, refusal reason)."""
+        if d is None:
+            try:
+                d = date.fromisoformat(str(item.get("date") or "")[:10])
+            except ValueError:
+                return None, "bad_date"
+        name = " ".join(str(item.get("name") or "").split())[:OWN_NAME_MAX] or "Your ride"
+        raw_dur = item.get("duration_min")
+        if isinstance(raw_dur, bool):
+            return None, "bad_length"
+        try:
+            dur = int(round(float(raw_dur)))
+        except (TypeError, ValueError):
+            return None, "bad_length"
+        if not OWN_MIN_MIN <= dur <= OWN_MAX_MIN:
+            return None, "bad_length"
+        load = item.get("load")
+        if load in (None, ""):
+            load = None
+        else:
+            if isinstance(load, bool):
+                return None, "bad_load"
+            try:
+                load = float(load)
+            except (TypeError, ValueError):
+                return None, "bad_load"
+            if not (1 <= load <= OWN_MAX_LOAD):
+                return None, "bad_load"
+            load = int(round(load))
+        intensity = item.get("intensity")
+        if intensity in (None, ""):
+            if load is None:
+                return None, "bad_intensity"
+            intensity = own_intensity_for_if(math.sqrt(load / (dur / 60 * 100)))
+        elif intensity not in OWN_SESSION_TYPE:
+            return None, "bad_intensity"
+        eid = item.get("icu_event_id")
+        if eid in (None, ""):
+            eid = None
+        else:
+            if isinstance(eid, bool):
+                return None, "bad_event"
+            try:
+                eid = int(eid)
+            except (TypeError, ValueError):
+                return None, "bad_event"
+        icu_day = None
+        if item.get("icu_day"):
+            try:
+                icu_day = date.fromisoformat(str(item.get("icu_day"))[:10]).isoformat()
+            except ValueError:
+                icu_day = None
+        if eid is not None and icu_day is None:
+            icu_day = d.isoformat()
+        if load is None:
+            load_from = "intensity"
+        elif eid is not None and item.get("load_from") == "icu":
+            load_from = "icu"
+        else:
+            load_from = "typed"
+        return {"day": d, "name": name, "dur": dur, "load": load, "intensity": intensity,
+                "eid": eid, "icu_day": icu_day, "load_from": load_from}, None
+
+    def own_row(d, f, base_own, moved_from=""):
+        load = f["load"] if f["load"] is not None else own_session_load(f["dur"], f["intensity"])
+        own = {k: v for k, v in (base_own or {}).items() if k != "put_back_from"}
+        own.update(name=f["name"], intensity=f["intensity"], load_from=f["load_from"])
+        if f["eid"] is not None:                 # imported, or linked (M8)
+            own.update(source="icu", icu_event_id=f["eid"], icu_day=f["icu_day"])
+        own.setdefault("source", "manual")
+        own.setdefault("icu_event_id", None)
+        own.setdefault("icu_day", None)
+        own.setdefault("replaced", None)
+        own.setdefault("added_at", clock.now().isoformat(timespec="seconds"))
+        return PlannedSession(
+            day=d, day_name=d.strftime("%a"),
+            session_type=OWN_SESSION_TYPE[f["intensity"]], duration_min=f["dur"],
+            tss_estimate=int(load), description=f["name"], zwo_file="", zwo_name="",
+            matched=True, status="pending", moved_from=moved_from or "", own=own)
+
+    def redated(s_or_dict, d):
+        sd = dict(s_or_dict) if isinstance(s_or_dict, dict) else session_to_dict(s_or_dict)
+        sd["day"], sd["day_name"] = d.isoformat(), d.strftime("%a")
+        return session_from_dict(sd)
+
+    def restore_row(d, snap):
+        """The session an own ride replaced, back on ``d`` as the day is now."""
+        r = None
+        if isinstance(snap, dict):
+            try:
+                r = redated(snap, d)
+            except (KeyError, TypeError, ValueError):
+                r = None
+        if r is None:
+            return PlannedSession(day=d, day_name=d.strftime("%a"), session_type="rest",
+                                  duration_min=0, tss_estimate=0, description="Rest")
+        r.own = None
+        r.completion_matches = None
+        if r.session_type == "rest":
+            return r
+        if unavailable(d):                                    # L3
+            return PlannedSession(day=d, day_name=d.strftime("%a"), session_type="rest",
+                                  duration_min=0, tss_estimate=0, description=REST_UNAVAILABLE)
+        if r.session_type != "ftp_test":
+            caps = []
+            h = day_hours(d)
+            if h is not None and h > 0:
+                caps.append(int(round(h * 60)))
+            try:
+                gm = int((goal.max_hours_for_day(d.weekday()) or 0) * 60)
+                if gm > 0:
+                    caps.append(gm)
+            except Exception:  # noqa: BLE001
+                pass
+            ceil = (TYPE_CEILING.get(_content_class_for_zwo(r.zwo_file or ""))
+                    or TYPE_CEILING.get(r.session_type))
+            if ceil:
+                caps.append(int(ceil))
+            lim = min(caps) if caps else 0
+            if lim and r.duration_min > lim:                  # L3 / M4: the day as it is now
+                old = r.duration_min
+                r.tss_estimate = round(float(r.tss_estimate or 0) * lim / old)
+                r.duration_min = lim
+                r.description = f"{r.session_type} ({lim}min)"
+                if (old - lim) / old >= 0.15:
+                    refit_file(r)
+        if (r.zwo_file or "") and r.zwo_file not in {x.get("File") for x in lib()}:
+            r.zwo_file, r.zwo_name = "", ""                    # M5: gone from the library
+            refit_file(r)
+        return r
+
+    def fit_restored(d) -> None:
+        """M4: a hard session back in a week that can no longer carry it there."""
+        r = row(d)
+        if not is_hard(r) or d <= today or r.session_type == "ftp_test" or status(r) != "pending":
+            return
+        pw = week_of(d)
+        others = [x for x in pw.sessions if x is not r and is_hard(x)
+                  and not getattr(x, "is_opener", False)]
+        if _slot_breaks_hard_spacing(pw, weeks, d) or len(others) + 1 > cap_of(pw):
+            was = _ease_hard_session(r, lib(), "the week around it changed since it was planned")
+            out["eased"].append({
+                "day": d.isoformat(), "was": was, "now": r.session_type,
+                "for": None,
+                "text": (f"{_own_day_label(d)}: the session your ride replaced is back as an "
+                         f"easy ride; the week around it changed since it was planned.")})
+
+    def restore_markers() -> None:
+        """L2: every eased session whose hard own ride is gone gets back what it
+        was, when 48 h and the week's cap allow; a blocked one keeps its mark."""
+        for pw in weeks:
+            for s in sorted(pw.sessions, key=lambda x: x.day):
+                m = getattr(s, "own_eased_from", None)
+                if not isinstance(m, dict):
+                    continue
+                try:
+                    for_day = date.fromisoformat(str(m.get("for") or "")[:10])
+                except ValueError:
+                    for_day = None
+                if for_day is not None and own_hard(row(for_day)):
+                    continue                                   # still needed
+                if s.day <= today:
+                    continue                                   # O6: today stays as it is
+                if (m.get("eased_to") != [s.session_type, s.duration_min]
+                        or status(s) != "pending" or getattr(s, "own", None)):
+                    del s.own_eased_from                       # the day changed since
+                    touched.add(s.day.isoformat())
+                    continue
+                if _session_is_hit(m):
+                    if _slot_breaks_hard_spacing(pw, weeks, s.day):
+                        continue
+                    others = [x for x in pw.sessions if x is not s and is_hard(x)
+                              and not getattr(x, "is_opener", False)]
+                    if len(others) + 1 > cap_of(pw):
+                        continue
+                for k in _TSB_EASE_FIELDS:
+                    if k in m:
+                        setattr(s, k, m[k])
+                del s.own_eased_from
+                touched.add(s.day.isoformat())
+                out["restored"].append({
+                    "day": s.day.isoformat(), "type": s.session_type,
+                    "text": f"{_own_day_label(s.day)}: your {words(s.session_type)} is back."})
+
+    def ease_around(d) -> None:
+        """48 h either side of a hard own ride on ``d`` (O6, C9)."""
+        dname = _own_day_label(d)
+        for nb, side in ((d - timedelta(days=1), "before"), (d + timedelta(days=1), "after")):
+            s = row(nb)
+            if s is None or not is_hard(s) or status(s) != "pending" or nb < today:
+                continue
+            if getattr(s, "own", None):
+                warn("hard_rides_back_to_back", nb,
+                     f"Your rides on {_own_day_label(min(d, nb))} and "
+                     f"{_own_day_label(max(d, nb))} are both hard, on consecutive days.")
+                continue
+            if getattr(s, "is_race", False):
+                continue
+            if s.session_type == "ftp_test":
+                if side == "before":
+                    warn("ftp_test_before_hard_ride", nb,
+                         f"Your FTP test on {_own_day_label(nb)} is the day before your hard "
+                         f"ride on {dname}.")
+                continue                               # the day after: O7 moves the test
+            if nb == today:
+                warn("today_hard_next_to_ride", nb,
+                     f"Today's {words(s.session_type)} is the day {side} your hard ride on "
+                     f"{dname}. It stays as planned: ease off if your legs ask for it.")
+                continue
+            if pinned_row(s):
+                warn("pinned_next_to_ride", nb,
+                     f"Your {words(s.session_type)} on {_own_day_label(nb)} stays where you "
+                     f"put it, the day {side} your hard ride on {dname}. Consider an easier day.")
+                continue
+            ease(s, d, f"48 h from your ride on {dname}")
+
+    def fit_cap(d) -> None:
+        pw = week_of(d)
+        cap, dname = cap_of(pw), _own_day_label(d)
+        for _ in range(len(pw.sessions) + 1):
+            hard = [s for s in pw.sessions if is_hard(s) and not getattr(s, "is_opener", False)]
+            if len(hard) <= cap:
+                return
+            victims = [s for s in hard if status(s) == "pending" and s.day > today
+                       and not _protect_race(s) and not pinned_row(s)
+                       and s.session_type != "ftp_test"]
+            if not victims:
+                warn("week_hard_cap", d,
+                     f"The week of your ride on {dname} now holds {len(hard)} hard days, "
+                     f"more than the {cap} it plans.")
+                return
+            v = max(victims, key=lambda s: (s.duration_min or 0, s.day))
+            ease(v, d, f"your ride on {dname} fills this week's hard days")
+
+    def find_test_day(t_day, ov, swap):
+        """O7: the next rested day for the test on ``t_day``, within a week."""
+        for k in range(1, OWN_TEST_SEARCH_DAYS + 1):
+            c = t_day + timedelta(days=k)
+            s = row(c, ov)
+            if s is None or c <= today or len(pos.get(c) or []) > 1:
+                continue
+            if (s.session_type in ("rest", "ftp_test") or status(s) != "pending"
+                    or getattr(s, "dismissed_at", "") or _protect_race(s)
+                    or pinned_row(s) or is_hard(s) or unavailable(c)):
+                continue
+            p_day = c - timedelta(days=1)
+            prev = s if (swap and p_day == t_day) else row(p_day, ov)
+            if prev is not s and (is_hard(prev) or own_not_easy(prev)):
+                continue
+            if is_hard(row(c + timedelta(days=1), ov)):
+                continue
+            return c
+        return None
+
+    def move_test(t_day, c) -> None:
+        test, other = row(t_day), row(c)
+        put(t_day, redated(other, t_day))
+        put(c, redated(test, c))
+        out["ftp_test_moved"].append({
+            "from": t_day.isoformat(), "to": c.isoformat(),
+            "text": (f"Your FTP test moved from {_own_day_label(t_day)} to "
+                     f"{_own_day_label(c)}, so you ride it on fresh legs.")})
+
+    def near_race_warnings(d, prior) -> None:
+        for k in (1, 2, 3):
+            r = row(d + timedelta(days=k))
+            if r is not None and getattr(r, "is_race", False):
+                warn("race_tomorrow" if k == 1 else "race_close", d,
+                     "Your race is the day after this ride." if k == 1 else
+                     f"Your race is {k} days after this ride.")
+                break
+        if prior is not None and getattr(prior, "is_opener", False):
+            warn("opener_replaced", d,
+                 "This ride replaces the short opener ride planned before your race.")
+
+    def place(d, f, base_own, prior, moved_from=""):
+        """Put the own row on ``d`` (validated) and fit the day: O7, 48 h, cap."""
+        replaced = (prior.own.get("replaced") if getattr(prior, "own", None)
+                    else session_to_dict(prior))
+        new = own_row(d, f, {**(base_own or {}), "replaced": replaced}, moved_from)
+        test_here = (not getattr(prior, "own", None) and prior.session_type == "ftp_test"
+                     and status(prior) == "pending")
+        c = None
+        if test_here:
+            c = find_test_day(d, {d: new}, swap=False)
+            if c is None:
+                return "ftp_test_day"
+        put(d, new)
+        if test_here:
+            other = row(c)
+            put(c, redated(replaced, c))                        # the test, on its new day
+            new.own["replaced"] = session_to_dict(redated(other, d))
+            out["ftp_test_moved"].append({
+                "from": d.isoformat(), "to": c.isoformat(),
+                "text": (f"Your FTP test moved from {_own_day_label(d)} to "
+                         f"{_own_day_label(c)}: this ride takes its day.")})
+        nxt_day = d + timedelta(days=1)
+        nxt = row(nxt_day)
+        if (own_not_easy(new) and nxt is not None and nxt.session_type == "ftp_test"
+                and status(nxt) == "pending" and nxt_day > today):
+            c2 = find_test_day(nxt_day, {}, swap=True)
+            if c2 is None:
+                warn("ftp_test_kept", nxt_day,
+                     f"Your FTP test on {_own_day_label(nxt_day)} is the day after this ride, "
+                     f"and the next week has no rested day to move it to. Keep this ride easy, "
+                     f"or move the test.")
+            else:
+                move_test(nxt_day, c2)
+        if d == today and prior is not None and prior.session_type != "rest" \
+                and not getattr(prior, "own", None) and status(prior) == "pending":
+            warn("replaces_today", d,
+                 f"This replaces today's planned {words(prior.session_type)}. If you already "
+                 f"rode it, that ride counts toward this one.")
+        near_race_warnings(d, prior)
+        return None
+
+    def fit_week_loads(before: dict, keep: set) -> None:
+        for pw in weeks:
+            b = before.get(id(pw))
+            budget = float(getattr(pw, "tss_target", 0) or 0)
+            if b is None or budget <= 0:
+                continue
+            after = owed(pw)
+            delta = after - b
+            if delta > 0 and after > budget:
+                t, freed = _make_room(pw, today, min(after - budget, delta), keep, refit_file)
+                touched.update(t)
+                after -= freed
+                if after > budget + 1:
+                    n = int(round(after - budget))
+                    out["over_budget"][pw.start.isoformat()] = n
+                    warn("over_budget", pw.start,
+                         f"The week of {_own_day_label(pw.start)} is {n} TSS over its "
+                         f"planned load: there was no easy riding left to shorten.")
+            elif delta < 0 and after < budget:
+                t, _added = _give_back(pw, today, min(budget - after, -delta), keep, refit_file)
+                touched.update(t)
+
+    def run(action_days, change) -> "str | None":
+        """One action: change() validates and applies (returning a refusal
+        reason, or None); then every eased day that may come back does, the
+        new hard rides are fitted, and the weeks keep their load."""
+        before = {id(pw): owed(pw) for pw in weeks}
+        reason = change()
+        if reason:
+            return reason
+        reindex()
+        restore_markers()
+        for d in action_days:
+            if own_hard(row(d)):
+                ease_around(d)
+                fit_cap(d)
+        fit_week_loads(before, {d.isoformat() for d in action_days})
+        return None
+
+    def _day(v):
+        try:
+            return date.fromisoformat(str(v or "")[:10])
+        except ValueError:
+            return None
+
+    # ── removals ──
+    for v in remove_days or ():
+        d = _day(v)
+        if d is None:
+            refuse(v, "bad_date")
+            continue
+        s = row(d)
+        if s is None or not getattr(s, "own", None):
+            refuse(d, "no_own_ride")
+            continue
+        if d < today:
+            refuse(d, "past")
+            continue
+
+        def _remove(d=d, s=s):
+            put(d, restore_row(d, (s.own or {}).get("replaced")))
+            reindex()
+            fit_restored(d)
+            return None
+        run([d], _remove)
+        out["applied"].append({"action": "remove", "date": d.isoformat()})
+
+    # ── moves (atomic: the ride and its new day, or nothing) ──
+    for mv in moves or ():
+        mv = mv if isinstance(mv, dict) else {}
+        frm, to = _day(mv.get("from")), _day(mv.get("to"))
+        if frm is None or to is None:
+            refuse(mv.get("from") or mv.get("to"), "bad_date")
+            continue
+        src = row(frm)
+        if src is None or not getattr(src, "own", None):
+            refuse(frm, "no_own_ride")
+            continue
+        if frm < today:
+            refuse(frm, "past")
+            continue
+        cur = {"name": src.own.get("name") or src.description, "duration_min": src.duration_min,
+               "intensity": src.own.get("intensity"),
+               "load": (src.tss_estimate if src.own.get("load_from") in ("typed", "icu") else None),
+               "icu_event_id": src.own.get("icu_event_id"),
+               "icu_day": mv.get("icu_day") or src.own.get("icu_day"),
+               "load_from": src.own.get("load_from")}
+        for k in ("name", "duration_min", "intensity", "load"):
+            if k in mv:
+                cur[k] = mv[k]
+        if "load" in mv:
+            cur["load_from"] = None              # the rider typed it with the move
+        f, reason = parse(cur, d=to)
+        if reason is None and to != frm:
+            reason = check_day(to, f["eid"], moving_from=frm)
+        if reason:
+            refuse(to, reason)
+            continue
+        base = {k: v for k, v in src.own.items() if k not in ("replaced",)}
+
+        def _move(frm=frm, to=to, f=f, src=src, base=base):
+            if to == frm:
+                return place(to, f, base, src, moved_from=getattr(src, "moved_from", "") or "")
+            back = restore_row(frm, (src.own or {}).get("replaced"))
+            # The ride leaves first, so the day it leaves no longer counts as
+            # its neighbour; put back as it was if the new day refuses (O7).
+            put(frm, back)
+            reindex()
+            reason2 = place(to, f, base, row(to), moved_from=frm.isoformat())
+            if reason2:
+                put(frm, src)
+                touched.discard(frm.isoformat())
+                return reason2
+            reindex()
+            fit_restored(frm)
+            return None
+        reason = run([frm, to], _move)
+        if reason:
+            refuse(to, reason)
+            continue
+        out["applied"].append({"action": "move", "from": frm.isoformat(), "to": to.isoformat()})
+
+    # ── adds and edits ──
+    seen: set = set()
+    items = [(it, None) for it in (set_items or ())] + [(None, c) for c in (carry or ())]
+    for item, carried in items:
+        if carried is not None:
+            c_own = dict(carried.get("own") or {})
+            f, reason = parse({"date": carried.get("day"),
+                               "name": c_own.get("name") or carried.get("description"),
+                               "duration_min": carried.get("duration_min"),
+                               "intensity": c_own.get("intensity"),
+                               "load": carried.get("tss_estimate"),
+                               "icu_event_id": c_own.get("icu_event_id"),
+                               "icu_day": c_own.get("icu_day"),
+                               "load_from": c_own.get("load_from")})
+            if f is not None:
+                f["load_from"] = c_own.get("load_from") or f["load_from"]
+            base = {k: v for k, v in c_own.items() if k not in ("replaced", "put_back_from")}
+            link = False
+        else:
+            item = item if isinstance(item, dict) else {}
+            f, reason = parse(item)
+            base, link = None, bool(item.get("link"))
+        if reason:
+            refuse((item or carried or {}).get("date") or (carried or {}).get("day"), reason)
+            continue
+        d = f["day"]
+        if d in seen:
+            refuse(d, "duplicate_day")
+            continue
+        seen.add(d)
+        reason = check_day(d, f["eid"], link=link)
+        if reason is None and f["eid"] is not None:
+            if any(getattr(s, "own", None) and s.own.get("icu_event_id") == f["eid"]
+                   and s.day != d for pw in weeks for s in pw.sessions):
+                reason = "duplicate"
+        if reason:
+            refuse(d, reason)
+            continue
+        prior = row(d)
+        if base is None and getattr(prior, "own", None):
+            base = {k: v for k, v in prior.own.items() if k != "replaced"}   # an edit
+        reason = run([d], lambda d=d, f=f, base=base, prior=prior: place(
+            d, f, base, prior, moved_from=(getattr(prior, "moved_from", "") or "")
+            if getattr(prior, "own", None) else ""))
+        if reason:
+            refuse(d, reason)
+            continue
+        out["applied"].append({"action": "carry" if carried is not None else
+                               ("edit" if getattr(prior, "own", None) else "add"),
+                               "date": d.isoformat()})
+
+    # ── put back (O4) ──
+    for pb in put_back or ():
+        pb = pb if isinstance(pb, dict) else {}
+        d, icu_d = _day(pb.get("day")), _day(pb.get("icu_day"))
+        if d is None or icu_d is None:
+            refuse(pb.get("day"), "bad_date")
+            continue
+        s = row(d)
+        if s is None or not getattr(s, "own", None):
+            refuse(d, "no_own_ride")
+            continue
+        if s.own.get("source") == "icu":
+            refuse(d, "not_pushed")
+            continue
+        s.own = {**s.own, "put_back_from": icu_d.isoformat()}
+        touched.add(d.isoformat())
+        out["applied"].append({"action": "put_back", "date": d.isoformat(),
+                               "icu_day": icu_d.isoformat()})
+
+    # ── write back every day that changed, through the codec ──
+    if touched:
+        loc = {}
+        for w in plan_dict.get("weeks") or []:
+            if not isinstance(w, dict):
+                continue
+            for i, sj in enumerate(w.get("sessions") or []):
+                if isinstance(sj, dict) and sj.get("day"):
+                    loc.setdefault(str(sj["day"])[:10], (w, i))
+        by_iso = {s.day.isoformat(): s for pw in weeks for s in pw.sessions}
+        for iso in sorted(touched):
+            if iso in loc and iso in by_iso:
+                w, i = loc[iso]
+                w["sessions"][i] = session_to_dict(by_iso[iso])
+    out["touched_days"] = sorted(touched)
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -13660,6 +14547,8 @@ def regenerate_from_today(
                     or getattr(s, "status", "pending") != "pending"
                     or getattr(s, "dismissed_at", "")
                     or getattr(s, "completion_matches", None)
+                    # 3.14.0 F2: the rider's own ride is kept as it is
+                    or getattr(s, "own", None)
                 )
                 if preserve:
                     adapted_current_week[s.day] = s
@@ -13951,6 +14840,8 @@ def regenerate_from_today(
             for off, legacy_s in enumerate(pw.sessions):
                 if getattr(legacy_s, "adapted", False) or getattr(legacy_s, "user_moved", False):
                     continue
+                if _protect_race(legacy_s):
+                    continue  # 3.14.0 F2: race / own ride kept on its slot
                 if getattr(legacy_s, "status", "pending") != "pending":
                     continue
                 if getattr(legacy_s, "session_type", "") == "ftp_test":
@@ -13965,6 +14856,8 @@ def regenerate_from_today(
             for day_idx, s in enumerate(pw.sessions):
                 if getattr(s, "adapted", False) or getattr(s, "user_moved", False):
                     continue
+                if _protect_race(s):
+                    continue  # 3.14.0 F2: an own ride has no file, by design
                 if getattr(s, "status", "pending") != "pending":
                     continue
                 if s.session_type in ("rest", "ftp_test"):
@@ -14277,6 +15170,8 @@ def recalculate_plan(
                 or getattr(s, "status", "pending") != "pending"
                 or getattr(s, "dismissed_at", "")
                 or getattr(s, "completion_matches", None)
+                # 3.14.0 F2: the rider's own ride is kept as it is
+                or getattr(s, "own", None)
             )
             if preserve:
                 preserved_by_day[s.day] = s
@@ -14452,25 +15347,30 @@ def recalculate_plan(
                            prev_week_sessions=prev_week_sessions,
                            seed_salt=seed_salt, tss_target=_budget)
 
-            # Placed BEFORE the sampler pass, which keeps an ftp_test slot. The
-            # day is chosen on the skeleton; _ensure_fresh_legs_before_ftp_tests
-            # re-checks the day before it once the weeks are sampled.
-            if ftp_test_week:
-                _pick_rc = _rested_test_day(pw, prev_week_sessions or [])
-                if _pick_rc is not None:
-                    _make_ftp_test(_pick_rc)
-                    _last_test_wk_rc = week_num  # W1e: anchor on PLACED tests
-
-            # §6.12 — swap preserved (user_moved / done / dismissed) sessions
-            # back into their calendar slots BEFORE the sampler + match_zwo
-            # passes, whose skip-guards key on exactly these attrs (mirrors
-            # regenerate_from_today). Runs after the ftp_test insert so a
-            # rider's edit wins over an auto-scheduled test on the same day.
+            # §6.12 — swap preserved (user_moved / done / dismissed / own)
+            # sessions back into their calendar slots BEFORE the sampler +
+            # match_zwo passes, whose skip-guards key on exactly these attrs
+            # (mirrors regenerate_from_today).
             if preserved_by_day:
                 for _i, _s in enumerate(pw.sessions):
                     _kept = preserved_by_day.get(_s.day)
                     if _kept is not None:
                         pw.sessions[_i] = _kept
+
+            # Placed BEFORE the sampler pass, which keeps an ftp_test slot, and
+            # AFTER the preserved swap (3.14.0 F2, grill H2): the day and its
+            # neighbours are judged on the rider's kept days too (an own ride
+            # there), and a kept day is never the test, so the swap can no
+            # longer write over a placed test while the cadence anchor below
+            # counts it. _ensure_fresh_legs_before_ftp_tests re-checks the day
+            # before it once the weeks are sampled.
+            if ftp_test_week:
+                _pick_rc = _rested_test_day(
+                    pw, [*(prev_week_sessions or []), *preserved_by_day.values()],
+                    keep_days=preserved_by_day)
+                if _pick_rc is not None:
+                    _make_ftp_test(_pick_rc)
+                    _last_test_wk_rc = week_num  # W1e: anchor on PLACED tests
 
             # Sliding window: remove names used more than 6 weeks ago
             stale = [n for n, wk in used_in_week.items() if week_num - wk >= 6]
@@ -14525,6 +15425,8 @@ def recalculate_plan(
             for off, legacy_s in enumerate(pw.sessions):
                 if getattr(legacy_s, "adapted", False) or getattr(legacy_s, "user_moved", False):
                     continue
+                if _protect_race(legacy_s):
+                    continue  # 3.14.0 F2: race / own ride kept on its slot
                 if getattr(legacy_s, "status", "pending") != "pending":
                     continue
                 if getattr(legacy_s, "session_type", "") == "ftp_test":
@@ -14539,6 +15441,8 @@ def recalculate_plan(
             for day_idx, s in enumerate(pw.sessions):
                 if getattr(s, "adapted", False) or getattr(s, "user_moved", False):
                     continue
+                if _protect_race(s):
+                    continue  # 3.14.0 F2: an own ride has no file, by design
                 if getattr(s, "status", "pending") != "pending":
                     continue
                 # A test placed above has no file yet; match serves its
@@ -15153,12 +16057,20 @@ def refit_remaining_week(
 
     # Remaining trainable days (on/after today, not rest, not frozen). If none,
     # the week is bounded out — no-op (never spill into next week).
+    # 3.14.0 F2 (grill H3): while the week holds a ride the rider added, the
+    # room made for it stays made -- a day shortened for it (shortened_from)
+    # is not re-sampled -- and the re-sampled days are sized to what the
+    # week's budget leaves once the fixed days are counted (below).
+    _own_in_week = any(getattr(s, "own", None)
+                       and getattr(s, "status", "pending") not in ("missed", "dismissed")
+                       for s in week.sessions)
     remaining_offsets = [
         off for off in range(7)
         if (d := week.start + timedelta(days=off)) >= today
         and off < len(week.sessions)
         and getattr(week.sessions[off], "session_type", "") != "rest"
         and not _refit_session_frozen(week.sessions[off], today)
+        and not (_own_in_week and getattr(week.sessions[off], "shortened_from", 0))
     ]
     if not remaining_offsets:
         return current_plan_weeks, {**no_op, "missed_dates": missed_dates}
@@ -15443,6 +16355,33 @@ def refit_remaining_week(
                 s = week.sessions[o]
                 s.duration_min = max(20, int(round((s.duration_min or 0) * _f)))
                 s.tss_estimate = round((s.tss_estimate or 0) * _f)
+                s.zwo_file = ""
+                s.zwo_name = ""
+
+    # 3.14.0 F2 (grill H3): the re-sample drew against the week's whole budget
+    # and never saw the own ride's load, so the room made for it came back and
+    # the week ran ~17 % over. With an own ride in the week, the re-fitted days
+    # give back what the week holds over its budget (the fixed days -- the own
+    # ride, ridden days -- are never cut); a 20-minute floor keeps each
+    # rideable, and the pass below re-matches the cleared files.
+    _budget_wk = float(getattr(week, "tss_target", 0) or 0)
+    if _own_in_week and _budget_wk > 0:
+        def _counts(s) -> bool:
+            return (s.session_type != "rest"
+                    and getattr(s, "status", "pending") not in ("missed", "dismissed")
+                    and not getattr(s, "dismissed_at", ""))
+        _excess = sum(float(s.tss_estimate or 0) for s in week.sessions
+                      if _counts(s)) - _budget_wk
+        _touched_offs = [o for o in remaining_offsets
+                         if week.sessions[o].day.isoformat() in refit_days
+                         and week.sessions[o].session_type != "rest"]
+        _touched_tss = sum(float(week.sessions[o].tss_estimate or 0) for o in _touched_offs)
+        if _excess > 0 and _touched_tss > 0:
+            _f = max(0.0, _touched_tss - _excess) / _touched_tss
+            for o in _touched_offs:
+                s = week.sessions[o]
+                s.duration_min = max(20, int((s.duration_min or 0) * _f))
+                s.tss_estimate = int((s.tss_estimate or 0) * _f)
                 s.zwo_file = ""
                 s.zwo_name = ""
 
@@ -15759,7 +16698,8 @@ def _session_planned_if(session) -> float | None:
     return (tss / (dur / 60 * 100)) ** 0.5 if tss > 0 and dur > 0 else None
 
 
-def _ridden_status(rides: list[dict], planned_if: float | None, race: bool = False) -> str | None:
+def _ridden_status(rides: list[dict], planned_if: float | None, race: bool = False,
+                   any_intensity: bool = False) -> str | None:
     """What a finished day's rides did for a session none of them matched.
 
     ``rides``: classify_rematch results (with their activity) for every ride
@@ -15782,6 +16722,10 @@ def _ridden_status(rides: list[dict], planned_if: float | None, race: bool = Fal
     Before 2026-09-15 any same-day ride outside the tolerances made the session
     "missed", and the auto-reschedule moved a hard session the rider had just
     ridden, harder, onto the next day.
+
+    ``any_intensity`` (3.14.0 F2, C8): a ride the rider added themselves is
+    "done" when the day carried its load OR its length, at any intensity: the
+    load and how hard are the rider's own guess, not a served workout.
     """
     if not rides:
         return None
@@ -15790,6 +16734,10 @@ def _ridden_status(rides: list[dict], planned_if: float | None, race: bool = Fal
     planned_dur = float(details[0].get("planned_duration") or 0)
     total = sum(float(d.get("actual_tss") or 0) for d in details)
     minutes = sum(float(d.get("actual_duration") or 0) for d in details)
+    if any_intensity:
+        if ((planned > 0 and total >= planned * (1 - REMATCH_TOL_TSS_PCT))
+                or (planned_dur > 0 and minutes >= planned_dur * (1 - REMATCH_TOL_DURATION_PCT))):
+            return "done"
     if planned > 0:
         full = total >= planned * (1 - REMATCH_TOL_TSS_PCT)
         carriers = [r for r, d in zip(rides, details) if float(d.get("actual_tss") or 0) >= planned * 0.25]
@@ -15934,7 +16882,8 @@ def rematch_week(
             # unit the next afternoon) undoes an auto-move it would have
             # prevented: app._undo_auto_moves_for_ridden_days.
             if s.day < today:
-                new_status = "missed_race" if _protect_race(s) else "missed"
+                # 3.14.0 F2: a race only -- an unridden own ride is plain missed.
+                new_status = "missed_race" if getattr(s, "is_race", False) else "missed"
             else:
                 new_status = "pending"
             summary[new_status] = summary.get(new_status, 0) + 1
@@ -15952,7 +16901,17 @@ def rematch_week(
         else:
             status_map = {"done": "done", "ambiguous": "ambiguous"}
             resolved = status_map.get(best["status"])
-            if resolved is None and s.day < today:
+            if getattr(s, "own", None):
+                # 3.14.0 F2 (C8): the rider's own ride is not graded against
+                # their own estimate: the day's rides carrying its load or its
+                # length count it done at any intensity; less than that falls
+                # to the same partial thresholds below (today may still ride).
+                resolved = _ridden_status(judged, None, race=True, any_intensity=True)
+                if resolved == "done" or (resolved is not None and s.day < today):
+                    best = max(judged, key=lambda j: float((j.get("details") or {}).get("actual_tss") or 0))
+                else:
+                    resolved = None
+            elif resolved is None and s.day < today:
                 # A race day too: a race ridden shorter than its placeholder
                 # is not a missed race. Nothing reschedules a race day.
                 resolved = _ridden_status(judged, _session_planned_if(s), race=bool(_protect_race(s)))
@@ -15964,7 +16923,7 @@ def rematch_week(
                 # past, pending if today (the rider may still ride).
                 # FC3 (L3-2): a race day resolves to the terminal missed_race.
                 if s.day < today:
-                    new_status = "missed_race" if _protect_race(s) else "missed"
+                    new_status = "missed_race" if getattr(s, "is_race", False) else "missed"
                 else:
                     new_status = "pending"
             else:

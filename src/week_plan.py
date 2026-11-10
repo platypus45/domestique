@@ -53,7 +53,11 @@ def _hard(session) -> bool:
     came to be enforced on labels (notes/review/owner.md OWN-3, dupes.md DUP-6).
     """
     import training_planner as tp
-    return tp._session_is_hit(session) or tp._protect_race(session)
+    # A race, not any fixed day: since 3.14.0 _protect_race also holds the
+    # rider's own rides, and an easy one is not a hard day.
+    race = (session.get("is_race") if isinstance(session, dict)
+            else getattr(session, "is_race", False))
+    return tp._session_is_hit(session) or bool(race)
 
 MIN_HARD_GAP_DAYS = 2          # 48 h between hard sessions (Gabbett 2016)
 

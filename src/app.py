@@ -4053,6 +4053,10 @@ async def api_readiness_apply_tier_down(request: Request):
                     break
             if not target or not target_week:
                 return JSONResponse({"error": f"No session at {day_iso}"}, 404)
+            # 3.14.0 F2 (C14, grill H1): the rider's own ride is typed by its
+            # effort, so the type checks below would rewrite it.
+            if target.get("own"):
+                return JSONResponse({"error": _fixed_day_error(target)}, 400)
             old_type = target.get("session_type", "") or ""
             if old_type in ("rest", "recovery"):
                 return {"ok": False, "action": "already_easy", "day": day_iso,
@@ -4280,6 +4284,18 @@ async def api_plan_auto_adjust(request: Request):
         except Exception:
             _log.exception("auto-adjust: plan load failed")
             return JSONResponse({"error": "plan load failed"}, 500)
+
+        # 3.14.0 F2 (C14, grill H1): the rider's own ride on the target day is
+        # never rewritten (it is typed by its effort, so the tier-down's type
+        # checks would fire on it). Week scope already skips it.
+        _own_iso = (target_iso if severity == "rest"
+                    else today_iso if (severity == "tier_down" and scope == "today") else None)
+        if _own_iso:
+            _own_s = next((s for w in plan.get("weeks", []) or []
+                           for s in w.get("sessions", []) or []
+                           if s.get("day") == _own_iso and s.get("own")), None)
+            if _own_s is not None:
+                return JSONResponse({"error": _fixed_day_error(_own_s)}, 400)
 
         # 4. Build working copy for dry-run.
         import copy as _copy
@@ -8378,6 +8394,161 @@ def api_icu_races():
         return {"error": f"internal:{type(e).__name__}"}
 
 
+def _icu_ride_numbers(ev: dict) -> "tuple[int | None, int | None, str, str]":
+    """(minutes, load, load_from, intensity) of a planned intervals.icu ride
+    (3.14.0 F2): length from moving_time, else time_target; load from
+    icu_training_load, else load_target, else length x the planned intensity;
+    how hard from that intensity, else from load per hour, else moderate."""
+    def _num(k):
+        v = ev.get(k)
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 else None
+    secs = _num("moving_time") or _num("time_target")
+    minutes = int(round(secs / 60)) if secs else None
+    if minutes is not None and not (1 <= minutes <= 24 * 60):
+        minutes = None
+    if_ = _num("icu_intensity")
+    if if_ is not None:
+        if_ = if_ / 100.0 if if_ > 3 else if_
+        if not 0.3 <= if_ <= 1.5:
+            if_ = None
+    load = _num("icu_training_load") or _num("load_target")
+    load_from = "icu" if load else "intensity"
+    if not load and minutes and if_:
+        load, load_from = minutes / 60 * if_ * if_ * 100, "icu"
+    load = int(round(load)) if load else None
+    if load is not None and not 1 <= load <= tp.OWN_MAX_LOAD:
+        load, load_from = None, "intensity"
+    if if_ is None and load and minutes:
+        if_ = (load / (minutes / 60 * 100)) ** 0.5
+    return minutes, load, load_from, (tp.own_intensity_for_if(if_) if if_ else "moderate")
+
+
+@app.get("/api/icu/planned-rides")
+def api_icu_planned_rides():
+    """3.14.0 F2 -- the rider's own planned rides in their intervals.icu
+    calendar, for the "My rides from intervals.icu" list (the races-import
+    pattern; a sync ``def``: the read blocks up to 30 s). Read-only: adding
+    goes through POST /api/plan/own-sessions; nothing changes in intervals.icu.
+
+    Lists cycling WORKOUT events from today on, never ours (no "domestique"
+    external id: the plan's own pushes and library pushes), never notes, week
+    targets or hidden rows. Each: {event_id, date, name, sport, duration_min,
+    load, load_from, intensity, status, plan_day}; status "new", "added",
+    "moved" (the ride sits on plan_day in the plan), "after_plan",
+    "not_in_plan", "race_day", "ridden", "two_sessions", "day_has_your_ride".
+    ``gone``: rides imported earlier whose event is no longer there. Always 200;
+    {needs_reconnect} / {error} as /api/icu/races; ``profile_id`` names the rider
+    the list was read for (the dialog sends it back, grill M9)."""
+    import icu_calendar_push as _icp
+    from profile_manager import ProfileManager
+    try:
+        pm = ProfileManager.get()
+        if not pm.active_id:
+            return {"error": "no_active_profile"}
+        profile_id = pm.active_id
+        athlete_id, err = _icp._connection(pm)
+        if err:
+            return {"error": err}
+        if not _icp.write_ok(pm):
+            return {"needs_reconnect": True}
+        today = clock.today()
+        plan = _read_stored_plan() or {}
+        rows_by_day: dict = {}
+        own_by_eid: dict = {}
+        last_day = today
+        for w in plan.get("weeks") or []:
+            if not isinstance(w, dict):
+                continue
+            try:
+                last_day = max(last_day, date.fromisoformat(str(w.get("end") or "")[:10]))
+            except ValueError:
+                pass
+            for s in w.get("sessions") or []:
+                if not isinstance(s, dict) or not s.get("day"):
+                    continue
+                d_iso = str(s["day"])[:10]
+                rows_by_day.setdefault(d_iso, []).append(s)
+                own = s.get("own") or {}
+                if own.get("icu_event_id") is not None:
+                    own_by_eid[own["icu_event_id"]] = s
+        plan_end = last_day
+        for s in own_by_eid.values():
+            try:
+                last_day = max(last_day, date.fromisoformat(str((s.get("own") or {}).get("icu_day") or s["day"])[:10]))
+            except ValueError:
+                pass
+        newest = min(today + timedelta(days=365), last_day + timedelta(days=28))
+        status, body = _icp._http(
+            "GET", f"athlete/{athlete_id}/events?oldest={today.isoformat()}"
+                   f"&newest={newest.isoformat()}")
+        if _icp._scope_403(status, body) or status == 401:
+            return {"needs_reconnect": True}
+        if status == 0:
+            return {"error": "network"}
+        if not (200 <= status < 300):
+            return {"error": f"http_{status}"}
+        try:
+            events = json.loads(body or b"[]")
+        except (json.JSONDecodeError, ValueError):
+            return {"error": "bad_response"}
+        rides, seen_ids = [], set()
+        for ev in events if isinstance(events, list) else []:
+            if not isinstance(ev, dict) or str(ev.get("category") or "") != "WORKOUT":
+                continue
+            day = _icp._event_day(ev)
+            if day is None or day < today:
+                continue
+            if str(ev.get("external_id") or "").startswith("domestique"):
+                continue          # ours: the plan's pushes and library pushes
+            if ev.get("show_as_note") or ev.get("for_week") or ev.get("hide_from_athlete"):
+                continue
+            if not _is_cycling_sport(ev.get("type")):
+                continue
+            eid = ev.get("id")
+            if isinstance(eid, bool) or not isinstance(eid, int):
+                continue
+            seen_ids.add(eid)
+            minutes, load, load_from, intensity = _icu_ride_numbers(ev)
+            d_iso = day.isoformat()
+            plan_day = None
+            here = rows_by_day.get(d_iso) or []
+            mine = own_by_eid.get(eid)
+            if mine is not None:
+                plan_day = str(mine["day"])[:10]
+                st = "added" if plan_day == d_iso else "moved"
+            elif not here:
+                st = "after_plan" if day > plan_end else "not_in_plan"
+            elif len(here) > 1:
+                st = "two_sessions"
+            elif here[0].get("is_race"):
+                st = "race_day"
+            elif str(here[0].get("status") or "") in _RIDDEN_RANK:
+                st = "ridden"
+            elif here[0].get("own"):
+                st = "day_has_your_ride"
+            else:
+                st = "new"
+            rides.append({"event_id": eid, "date": d_iso,
+                          "name": " ".join(str(ev.get("name") or "").split())[:tp.OWN_NAME_MAX],
+                          "sport": str(ev.get("type") or ""),
+                          "duration_min": minutes, "load": load, "load_from": load_from,
+                          "intensity": intensity, "status": st, "plan_day": plan_day})
+        rides.sort(key=lambda r: (r["date"], r["name"], r["event_id"]))
+        gone = []
+        for eid, s in sorted(own_by_eid.items(), key=lambda kv: str(kv[1].get("day"))):
+            own = s.get("own") or {}
+            if own.get("source") != "icu" or eid in seen_ids:
+                continue
+            if str(s.get("day") or "") < today.isoformat():
+                continue
+            gone.append({"event_id": eid, "date": str(s["day"])[:10],
+                         "name": own.get("name") or s.get("description") or ""})
+        return {"rides": rides, "gone": gone, "profile_id": profile_id}
+    except Exception as e:                      # always 200, never a 500
+        _log.exception("icu planned rides read failed")
+        return {"error": f"internal:{type(e).__name__}"}
+
+
 @app.get("/api/icu/athlete-numbers")
 def api_icu_athlete_numbers():
     """Pull FTP / weight / LTHR / max-HR from the linked intervals.icu athlete so
@@ -9740,6 +9911,10 @@ async def api_today_session_persist(request: Request):
             for w in plan.get("weeks", []):
                 for s in w.get("sessions", []):
                     if s.get("day") == today_iso:
+                        # 3.14.0 F2: a race or the rider's own ride is fixed;
+                        # this path had no fixed-day guard at all.
+                        if tp._protect_race(s):
+                            return JSONResponse({"error": _fixed_day_error(s)}, 400)
                         # The original prescription used to be OVERWRITTEN here,
                         # which made "Ride the original anyway" unable to keep its
                         # promise: the revert flag suppressed the live adjustment,
@@ -9863,6 +10038,13 @@ def _next_ftp_test_slot() -> "str | None":
     today = clock.today()
     next_monday = today + timedelta(days=7 - today.weekday())
     hard_types = {"vo2max", "threshold", "overunder", "sweetspot", "tempo"}
+    # 3.14.0 F2 (grill H2): the day before a test must not hold the rider's
+    # own ride unless it is an easy one (fresh legs; the ride cannot be eased).
+    own_not_easy = {
+        str(s.get("day") or "")[:10]
+        for w in plan.get("weeks", []) or [] for s in w.get("sessions", []) or []
+        if isinstance(s, dict) and s.get("own")
+        and (s["own"].get("intensity") or "") != "easy"}
     candidates: list[tuple[date, bool]] = []
     for w in plan.get("weeks", []) or []:
         for s in w.get("sessions", []) or []:
@@ -9873,9 +10055,11 @@ def _next_ftp_test_slot() -> "str | None":
             stype = (s.get("session_type") or "").lower()
             if d < next_monday or stype in ("rest", "ftp_test"):
                 continue
-            if s.get("is_race") or s.get("user_swapped") or s.get("user_moved"):
+            if tp._protect_race(s) or s.get("user_swapped") or s.get("user_moved"):
                 continue
             if (s.get("status") or "pending") != "pending":
+                continue
+            if (d - timedelta(days=1)).isoformat() in own_not_easy:
                 continue
             candidates.append((d, stype in hard_types))
     if not candidates:
@@ -10269,6 +10453,39 @@ def _advance_continuous_deload(plan: dict, json_path: Path, cur_idx: int,
         refit_days.append(repl.day.isoformat())
     if not refit_days:
         return None  # week effectively over — nothing left to unload
+    # 3.14.0 F2 (grill M12, C11): a ride the rider added stays in the deload
+    # week; the deload shapes the other days around it, so its load (and any
+    # other day kept as it was) comes off theirs instead of on top.
+    def _counts(s) -> bool:
+        return (s.session_type != "rest"
+                and str(getattr(s, "status", "") or "pending") not in ("missed", "dismissed"))
+    if any(getattr(s, "own", None) and _counts(s) for s in cur_dto.sessions):
+        _kept = sum(float(s.tss_estimate or 0) for s in cur_dto.sessions
+                    if _counts(s) and s.day.isoformat() not in refit_days)
+        _spliced = [s for s in cur_dto.sessions
+                    if s.day.isoformat() in refit_days and s.session_type != "rest"]
+        _sp_tss = sum(float(s.tss_estimate or 0) for s in _spliced)
+        _room = float(pw.tss_target or 0) - _kept
+        if _sp_tss > 0 and _sp_tss > _room:
+            _f = max(0.0, _room) / _sp_tss
+            for s in _spliced:
+                _dur = int((s.duration_min or 0) * _f)
+                if _dur < 20:
+                    s.session_type, s.duration_min, s.tss_estimate = "rest", 0, 0
+                    s.description = "Rest: your own ride carries this lighter week"
+                    s.zwo_file = s.zwo_name = ""
+                    continue
+                s.tss_estimate = int(float(s.tss_estimate or 0) * _f)
+                s.duration_min = _dur
+                s.zwo_file = s.zwo_name = ""
+                if s.session_type not in ("rest", "recovery"):
+                    try:
+                        tp.match_zwo(s, library, week_num=cur_dto.week_num,
+                                     day_idx=(s.day - cur_dto.start).days,
+                                     used_names=used_names, plan_start_date=cur_dto.start,
+                                     seed_salt=seed_salt)
+                    except Exception:  # noqa: BLE001 -- a shorter easy day without a file
+                        pass
     cur_json["sessions"] = [_planned_session_to_json(s) for s in cur_dto.sessions]
     cur_json["is_stepback"] = True
     cur_json["tss_target"] = pw.tss_target  # ×0.72 (Issurin unload band)
@@ -10317,9 +10534,13 @@ async def api_continuous_deload_revert(request: Request):
             if wj is None or (wj.get("end") or "") < today.isoformat():
                 return {"reverted": False, "reason": "week_passed"}
             by_day = {s.get("day"): s for s in orig.get("sessions", [])}
+            # 3.14.0 F2: the rider's own rides are as they are now -- one added
+            # since the advance stays, one removed since is not brought back.
             wj["sessions"] = [
                 (by_day.get(sj.get("day"), sj)
-                 if (sj.get("day") or "") >= today.isoformat() else sj)
+                 if (sj.get("day") or "") >= today.isoformat()
+                 and not sj.get("own") and not (by_day.get(sj.get("day")) or {}).get("own")
+                 else sj)
                 for sj in wj.get("sessions", [])
             ]
             wj["is_stepback"] = bool(orig.get("is_stepback", False))
@@ -10541,6 +10762,16 @@ def _api_today_session_impl():
         _log.info(
             f"EVENT=today_adjustment_reverted suppressed_reason={reason!r}")
         adjusted, reason = planned, ""
+    # 3.14.0 F2 (grill_integration X1, C13): the readiness gates never rewrite
+    # a race or the rider's own ride (an own ride is typed by its effort, so
+    # the type gates would fire on it). A low-readiness day gets a plain
+    # advisory line on the rider's own ride instead.
+    own_advisory = ""
+    if tp._protect_race(planned_data):
+        if reason and planned_data.get("own"):
+            own_advisory = ("Your readiness today points to an easier day. Your own ride "
+                            "stays as you planned it: ride it by feel and ease off if you need to.")
+        adjusted, reason = planned, ""
 
     # v4.6.0 IMPL-HOMEPAGE-CONSISTENCY §3 Pillar D: surface adjustment_reason
     # explicitly so the homepage chip can render "Adjusted to {type} due to
@@ -10568,6 +10799,9 @@ def _api_today_session_impl():
         # issue #7 — surface a race on the home "Today" card when today IS a race.
         "is_race": bool(planned_data.get("is_race")),
         "race": planned_data.get("race"),
+        # 3.14.0 F2: today is a ride the rider added (the card shows it as theirs).
+        "own": planned_data.get("own"),
+        "own_advisory": own_advisory,
         "reason": reason,
         "adjustment_reason": adjustment_reason,
         "readiness": r.get("score"),
@@ -11729,6 +11963,24 @@ async def api_plan_generate(request: Request):
                     "arriving fresh is what's left to win."
                 )
 
+            # 3.14.0 F2 (OD5, grill H6): the rider's own rides from today on
+            # come along into the new plan with their record as it was (an
+            # imported ride stays imported, so it is never pushed back); the
+            # new weeks are fitted around them, and any the new plan cannot
+            # hold are reported.
+            _own_carry = None
+            if isinstance(_existing_plan, dict):
+                _carry = [s for w in _existing_plan.get("weeks") or [] if isinstance(w, dict)
+                          for s in w.get("sessions") or []
+                          if isinstance(s, dict) and s.get("own")
+                          and str(s.get("day") or "") >= clock.today().isoformat()
+                          and (s.get("status") or "pending") == "pending"]
+                if _carry:
+                    try:
+                        _own_carry = tp.apply_own_sessions(plan_dict, carry=_carry)
+                    except Exception:
+                        _log.exception("own rides carry-over into the new plan failed")
+
             tp.atomic_write_plan(json_path, plan_dict)
 
         # v1.4.0 — single enrichment helper (replaces the inline duplicate).
@@ -11747,6 +11999,9 @@ async def api_plan_generate(request: Request):
         resp = {"ok": True, "plan_json": plan_dict, "plan_file": str(plan_path)}
         if plan_dict.get("warning"):
             resp["warning"] = plan_dict["warning"]  # F4c: top-level for the UI
+        if _own_carry is not None:
+            resp["own_carry"] = {k: _own_carry.get(k) for k in
+                                 ("applied", "refused", "eased", "ftp_test_moved", "warnings")}
         return resp
 
     except ValueError as e:
@@ -12869,6 +13124,84 @@ async def api_plan_add_race(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+def _icu_held_plan_days() -> list:
+    """Plan days whose workout the rider moved in intervals.icu and the plan
+    has not followed (#28 holds), from the last calendar run for this rider:
+    the own-ride writer never eases those (C9). Empty when the run did not
+    report them."""
+    res = _last_result_for_active_profile() or {}
+    days = res.get("held_days")
+    return [str(d)[:10] for d in days] if isinstance(days, list) else []
+
+
+@app.post("/api/plan/own-sessions")
+async def api_plan_own_sessions(request: Request):
+    """3.14.0 F2 -- add, change, move or remove the rider's own rides (a group
+    ride, a ride of their own) and fit their weeks around them.
+
+    Body: {"profile_id"?, "set": [{date, name, duration_min, intensity|load,
+    icu_event_id?, icu_day?, load_from?, link?}], "remove": ["YYYY-MM-DD"],
+    "move": [{from, to[, name, duration_min, intensity, load, icu_day]}],
+    "put_back": [{day, icu_day}]}. A ``profile_id`` (the dialogs send the one
+    their list was read for) that is no longer the active rider answers 409
+    ``profile_changed`` and changes nothing (grill M9).
+    200 {ok, applied, refused, eased, restored, ftp_test_moved, over_budget,
+    warnings, touched_days, plan_json}; 400 {ok: false, refused, ...} when
+    nothing applied; 404 no plan. The calendar push follows through the plan
+    write's hook (no network here)."""
+    from profile_manager import ProfileManager
+    body = await _get_json_body(request)
+    body = body if isinstance(body, dict) else {}
+    pid = body.get("profile_id")
+    if pid not in (None, ""):
+        try:
+            active = ProfileManager.get().active_id
+        except Exception:
+            active = None
+        if str(pid) != str(active or ""):
+            return JSONResponse({"ok": False, "error": "profile_changed",
+                                 "detail": "The active rider changed. Open the dialog again."}, 409)
+    json_path = _plan_dir() / "current_plan.json"
+    if not json_path.exists():
+        return JSONResponse({"error": "No active plan found"}, 404)
+
+    def _list(key):
+        v = body.get(key)
+        return v if isinstance(v, list) else []
+    set_items = [x for x in _list("set") if isinstance(x, dict)]
+    remove = [str(x) for x in _list("remove") if isinstance(x, (str, int))]
+    moves = [x for x in _list("move") if isinstance(x, dict)]
+    put_back = [x for x in _list("put_back") if isinstance(x, dict)]
+    if not (set_items or remove or moves or put_back):
+        return JSONResponse({"ok": False, "error": "nothing to change"}, 400)
+    pinned = _icu_held_plan_days()
+    try:
+        library = tp.load_workout_library()      # before the lock (L4)
+    except Exception:
+        library = None
+    try:
+        async with tp.plan_write_lock_async():  # #32: read-modify-write under the plan lock
+            with open(json_path, encoding="utf-8") as f:
+                plan = json.load(f)
+            result = tp.apply_own_sessions(plan, set_items, remove, moves=moves,
+                                           put_back=put_back, pinned_days=pinned,
+                                           library=library)
+            if result["applied"]:
+                tp.atomic_write_plan(json_path, plan)
+    except Exception:
+        _log.exception("own-sessions failed")
+        return JSONResponse({"ok": False, "error": "own rides could not be saved"}, 500)
+    if not result["applied"]:
+        return JSONResponse({"ok": False, **result}, 400)
+    try:
+        _enrich_plan_for_response(plan, today_iso=clock.today().isoformat())
+    except Exception as _e:
+        _log_error(error_codes.Codes.ENRICH_FAILED, exc=_e,
+                   endpoint="/api/plan/own-sessions",
+                   week_count=len(plan.get("weeks", [])) if isinstance(plan, dict) else 0)
+    return {"ok": True, **result, "plan_json": plan}
+
+
 @app.post("/api/plan/update")
 async def api_plan_update(debounce: int = Query(0)):
     """v1.8.24 — the ONE primary "Update plan" action.
@@ -13678,7 +14011,9 @@ def _apply_move_session(
     dst_session = dst_here[0] if dst_here else None
 
     # FC3 (v2.5.0): the race entry is immutable — not movable, not overwritable.
-    if src_session.get("is_race") or (dst_session or {}).get("is_race"):
+    # 3.14.0 F2: nor the rider's own ride, by a drag or an auto-move (its one
+    # writer, apply_own_sessions, moves it with its own dialog).
+    if tp._protect_race(src_session) or tp._protect_race(dst_session):
         return None
 
     if not auto:
@@ -13912,6 +14247,8 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
         sess = sess_by_day.get(d_iso)
         if sess is None:
             return False
+        if tp._protect_race(sess):
+            return False  # 3.14.0 F2: never onto a race or the rider's own ride
         stype = sess.get("session_type")
         if stype != "rest":
             # The first-fit allowed only empty rest slots, so a rider whose
@@ -13960,8 +14297,8 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
         for s in w.get("sessions", []) or []:
             if (s.get("status") or "") != "missed":
                 continue  # (missed_race is terminal — never a candidate, L3-2)
-            if s.get("is_race"):
-                continue  # FC3: the race entry itself is never rescheduled
+            if tp._protect_race(s):
+                continue  # FC3: the race entry (3.14.0: or own ride) is never rescheduled
             if not s.get("day", ""):
                 continue
             misses.append(s)
@@ -14051,6 +14388,13 @@ def _compute_missed_suggestions(plan: dict, today: date) -> list[dict]:
 
 
 _RIDDEN_RANK = {"done": 3, "ambiguous": 2, "done_partial": 1}
+
+
+def _fixed_day_error(s: dict) -> str:
+    """Why a fixed day (``tp._protect_race``) refuses a change, by kind (3.14.0 F2)."""
+    if (s or {}).get("is_race"):
+        return "race day is fixed — edit the race instead"
+    return "this is your own ride — edit or remove it in its dialog instead"
 
 
 def _undo_auto_moves_for_ridden_days(plan: dict, today: date) -> list[dict]:
@@ -14324,11 +14668,9 @@ async def api_plan_move_session(request: Request):
             # path for the race is the goal-level add/edit-race flow.
             for w in plan.get("weeks", []) or []:
                 for s in w.get("sessions", []) or []:
-                    if s.get("day") in (src_iso, dst_iso) and s.get("is_race"):
-                        return JSONResponse(
-                            {"error": "race day is fixed — edit the race instead"},
-                            400,
-                        )
+                    # 3.14.0 F2: the rider's own ride too (message by kind).
+                    if s.get("day") in (src_iso, dst_iso) and tp._protect_race(s):
+                        return JSONResponse({"error": _fixed_day_error(s)}, 400)
 
             # #27: the mutator refuses these too (None); checked here first so
             # the rider reads why. The drop predicates block most of them, but
@@ -14799,6 +15141,10 @@ def _classify_card_state(session: dict, has_actual: bool, library_lookup: dict |
         return "completed"
     if stype == "rest":
         return "rest"
+    if session.get("own"):
+        # 3.14.0 F2: the rider's own ride has no workout file by design: not
+        # "no workout matched", and not draggable ("planned" is what drags).
+        return "own"
     zwo = session.get("zwo_file") or ""
     if not zwo:
         return "missing_workout"
@@ -15406,6 +15752,14 @@ def _build_summary_block(
     }
 
 
+def _own_for_view(own) -> "dict | None":
+    """The rider's own-ride record as the views read it (3.14.0 F2): without
+    the snapshot of the session it replaced, which only its writer reads."""
+    if not isinstance(own, dict) or not own:
+        return None
+    return {k: v for k, v in own.items() if k != "replaced"}
+
+
 def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
     """v4.3.0 B4 — build the calendar payload merging plan-sessions with rides.
 
@@ -15724,6 +16078,9 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
                     "user_moved": bool(sess.get("user_moved")),
                     "is_race": bool(sess.get("is_race")),
                     "race": sess.get("race"),
+                    # 3.14.0 F2: a ride the rider added (name, how hard, where
+                    # it came from); the views show it as theirs.
+                    "own": _own_for_view(sess.get("own")),
                     # P2.1 (G10): execution score for the week-strip badge
                     # (✓ NN) + the day-modal breakdown line.
                     "execution": (sess.get("execution")
@@ -15761,6 +16118,8 @@ def merge_plan_with_rides(plan: dict, rides: list[dict]) -> dict:
                 # issue #7 — race day (A or B/C); top-level so This Week + grid
                 # render it distinctly without reaching into `planned`.
                 "race": (sess.get("race") if sess and sess.get("is_race") else None),
+                # 3.14.0 F2: the rider's own ride, top-level like the race.
+                "own": _own_for_view((sess or {}).get("own")),
             }
             # v1.3.1 HIGH fix — emit availability_hours / availability_type
             # so the UI can render an UNAVAILABLE badge for user-blocked days.
@@ -16119,6 +16478,11 @@ def _apply_rematch_preview_to_plan(plan: dict, week_idx: int, preview: dict) -> 
             else:
                 existing.append(entry)
             s_json["completion_matches"] = existing
+            # 3.14.0 F2 (C8): the rider's own ride is not scored against their
+            # own estimate -- it counts as ridden, nothing more.
+            if s_json.get("own"):
+                s_json["execution"] = None
+                continue
             # P2.1 (G10) — (re)compute the execution score for the entry just
             # written. On fetch failure keep an existing score ONLY if it was
             # computed from the SAME activity (never leave a stale score from
@@ -16354,8 +16718,8 @@ def _pick_redraw_candidate(plan: dict, day_iso: str, exclude_extra: "list[str] |
     if target_session.get("session_type") == "rest":
         raise ValueError("rest_day")
     # FC3 (v2.5.0, L3-10): redraw installed a training ZWO on the race entry.
-    if target_session.get("is_race"):
-        raise ValueError("race day is fixed — edit the race instead")
+    if tp._protect_race(target_session):   # 3.14.0 F2: or the rider's own ride
+        raise ValueError(_fixed_day_error(target_session))
 
     # Same-week workout names — SOFT avoid (variety within the week).
     same_week: set[str] = set()
@@ -16472,8 +16836,8 @@ def _accept_redraw_apply(plan: dict, day_iso: str, candidate: dict) -> dict:
     if not target:
         raise ValueError(f"No session at {day_iso}")
     # FC3 (v2.5.0, L3-10): never install a workout over the race entry.
-    if target.get("is_race"):
-        raise ValueError("race day is fixed — edit the race instead")
+    if tp._protect_race(target):   # 3.14.0 F2: or the rider's own ride
+        raise ValueError(_fixed_day_error(target))
 
     target["zwo_file"] = str(candidate.get("zwo_file") or "")
     target["zwo_name"] = str(candidate.get("zwo_name") or candidate.get("zwo_file") or "")
@@ -16654,8 +17018,8 @@ def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: i
         raise ValueError(f"No session at {day_iso}")
     # FC3 (v2.5.0, L3-10): swap-type pinned a vo2max onto the race day with the
     # race flag still attached (user_swapped then immunized it everywhere).
-    if target.get("is_race"):
-        raise ValueError("race day is fixed — edit the race instead")
+    if tp._protect_race(target):   # 3.14.0 F2: or the rider's own ride
+        raise ValueError(_fixed_day_error(target))
     # FTP-tests IP F8: a maximal protocol is only valid on fresh legs. Refuse
     # converting a day already RIDDEN hard (test-today after intervals reads a
     # depressed FTP that then mis-sets every zone of the next cycle).
@@ -16666,6 +17030,17 @@ def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: i
         raise ValueError(
             "a hard session was already ridden that day — a valid FTP test "
             "needs fresh legs; schedule it for another day")
+    if new_type == "ftp_test":
+        # 3.14.0 F2 (grill H2): the day before holds the rider's own ride, not
+        # an easy one -- it cannot be eased, so the test would read tired legs.
+        _prev_iso = (date.fromisoformat(day_iso) - timedelta(days=1)).isoformat()
+        _prev_own = next((s.get("own") for w in plan.get("weeks", [])
+                          for s in w.get("sessions", [])
+                          if s.get("day") == _prev_iso and s.get("own")), None)
+        if _prev_own and (_prev_own.get("intensity") or "") != "easy":
+            raise ValueError(
+                "the day before is your own ride — a valid FTP test needs fresh "
+                "legs; schedule it for another day")
 
     tss_per_h = tp.TSS_PER_HOUR.get(new_type, 60)
     target["session_type"] = new_type
@@ -16722,7 +17097,7 @@ def _swap_session_type_apply(plan: dict, day_iso: str, new_type: str, new_dur: i
                     and prev.get("status", "pending") == "pending"
                     and not prev.get("user_swapped")
                     and not prev.get("user_moved")
-                    and not prev.get("is_race")
+                    and not tp._protect_race(prev)   # 3.14.0 F2: or own ride
                     and prev_iso >= clock.today().isoformat()):
                 prev["session_type"] = "recovery"
                 prev["zwo_file"] = ""
@@ -16981,9 +17356,9 @@ async def api_plan_dismiss_session(request: Request):
             if not matched:
                 return JSONResponse({"error": f"no session at {d_iso}"}, 404)
             # FC3 (v2.5.0): the race entry is not dismissable — goal-owned.
-            if any(s.get("is_race") for s in matched):
-                return JSONResponse(
-                    {"error": "race day is fixed — edit the race instead"}, 400)
+            _fixed = next((s for s in matched if tp._protect_race(s)), None)
+            if _fixed is not None:   # 3.14.0 F2: or the rider's own ride
+                return JSONResponse({"error": _fixed_day_error(_fixed)}, 400)
             for s in matched:
                 if undo:
                     s["status"] = "pending"

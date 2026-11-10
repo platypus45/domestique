@@ -8192,6 +8192,9 @@ async function applyReadinessTierDown() {
 async function applyWeekAutoAdjust() {
   const btn = document.getElementById('apply-week-tier-down-btn');
   const statusEl = document.getElementById('apply-week-tier-down-status');
+  // QX-L9: the button gets back its own label ("Apply rest day" or
+  // "Auto-adjust this week"), never the other one.
+  const label0 = btn ? btn.textContent : '';
   if (btn) {
     if (btn.disabled) return;
     btn.disabled = true;
@@ -8218,7 +8221,7 @@ async function applyWeekAutoAdjust() {
       const reason = (data.error || ('HTTP ' + res.status));
       if (statusEl) statusEl.innerHTML = `<span style="color:var(--orange);">Could not preview: ${esc(String(reason))}</span>`;
       try { showToast('Auto-adjust: ' + reason, 4000); } catch(_) {}
-      if (btn) { btn.disabled = false; btn.textContent = '🩹 Auto-adjust this week'; }
+      if (btn) { btn.disabled = false; btn.textContent = label0 || '🩹 Auto-adjust this week'; }
       return;
     }
     const actions = Array.isArray(data.actions) ? data.actions : [];
@@ -8288,10 +8291,10 @@ async function applyWeekAutoAdjust() {
         </div>
       </div>`;
     openModal(modalHtml);
-    if (btn) { btn.disabled = false; btn.textContent = '🩹 Auto-adjust this week'; }
+    if (btn) { btn.disabled = false; btn.textContent = label0 || '🩹 Auto-adjust this week'; }
   } catch (e) {
     if (statusEl) statusEl.innerHTML = `<span style="color:var(--red);">Network error: ${esc(String(e && e.message || e))}</span>`;
-    if (btn) { btn.disabled = false; btn.textContent = '🩹 Auto-adjust this week'; }
+    if (btn) { btn.disabled = false; btn.textContent = label0 || '🩹 Auto-adjust this week'; }
   }
 }
 
@@ -12821,7 +12824,8 @@ function icuRacesApply() {
 // shown with buttons; nothing follows silently, and nothing changes there.
 const _OWN_IMPORT_STATUS = {
   added: 'In your plan', after_plan: 'After your plan ends', not_in_plan: 'Not in your plan',
-  race_day: 'Race day', ridden: 'Already ridden', two_sessions: 'Two sessions that day',
+  race_day: 'Your race that day: edit the race instead', ridden: 'Already ridden',
+  two_sessions: 'Two sessions that day', in_plan_past: 'In your plan (that day has passed)',
 };
 let _icuPlanned = null;
 async function openIcuPlannedRides() {
@@ -12846,8 +12850,10 @@ async function openIcuPlannedRides() {
 }
 function _icuPlannedHtml(r) {
   const row = (x, i) => {
-    const len = x.duration_min ? `${Math.floor(x.duration_min / 60)}:${String(x.duration_min % 60).padStart(2, '0')}`
+    const len = x.duration_min ? esc(_ownLen(x.duration_min))
       : `<input type="number" class="own-imp-len" data-i="${i}" min="15" max="600" style="width:60px" placeholder="min" aria-label="Length in minutes">`;
+    // QX-L12: the unit, and an estimate Domestique made says so.
+    const load = x.load == null ? '' : (x.load_estimated ? `~${esc(x.load)} TSS (estimate)` : `${esc(x.load)} TSS`);
     let act;
     if (x.status === 'new' || x.status === 'day_has_your_ride') {
       act = `<label><input type="checkbox" class="own-imp-pick" data-i="${i}"> Add</label>` +
@@ -12855,25 +12861,28 @@ function _icuPlannedHtml(r) {
     } else if (x.status === 'moved') {
       act = `<div style="font-size:11px;">Moved in intervals.icu: your plan has it on ${esc(_ownDayLabel(x.plan_day))}.</div>
         <button class="btn btn-sm btn-primary" onclick="icuPlannedFollow(${i})">Move it in my plan too</button>
-        <button class="btn btn-sm" onclick="this.parentElement.textContent='Kept on ${esc(_ownDayLabel(x.plan_day))}'">Keep my day</button>`;
+        <button class="btn btn-sm" onclick="this.parentElement.textContent='Kept on ${esc(_ownDayLabel(x.plan_day))}. Asked again next time.'">Keep my day</button>`;
+    } else if (x.status === 'moved_here') {
+      // QX-H2: the rider moved it in Domestique; nothing to undo here.
+      act = `<span style="font-size:11px;color:var(--text3);">You moved it to ${esc(_ownDayLabel(x.plan_day))} in your plan; intervals.icu still has it on ${esc(_ownDayLabel(x.date))}.</span>`;
     } else {
       act = `<span style="color:var(--text3);">${esc(_OWN_IMPORT_STATUS[x.status] || x.status)}</span>`;
     }
     return `<tr><td>${esc(_ownDayLabel(x.date))}</td><td>${esc(x.name || '(no name)')}</td><td>${len}</td>` +
-      `<td>${x.load != null ? esc(x.load) : ''}</td>` +
+      `<td>${load}</td>` +
       `<td>${(x.status === 'new' || x.status === 'day_has_your_ride') ? _ownIntensitySelect('own-imp-int-' + i, x.intensity) : esc(OWN_INTENSITY_LABEL[x.intensity] || '')}</td>` +
       `<td>${act}</td></tr>`;
   };
   const gone = (r.gone || []).map((g, k) => `<tr><td>${esc(_ownDayLabel(g.date))}</td><td>${esc(g.name || '')}</td>
       <td colspan="3" style="color:var(--text3);">No longer in your intervals.icu calendar</td>
       <td><button class="btn btn-sm" onclick="icuPlannedRemoveGone(${k})">Remove from my plan</button>
-      <button class="btn btn-sm" onclick="this.parentElement.textContent='Kept'">Keep</button></td></tr>`).join('');
+      <button class="btn btn-sm" onclick="this.parentElement.textContent='Kept. Asked again next time.'">Keep</button></td></tr>`).join('');
   return `<h2 style="margin-top:0;">My rides from intervals.icu</h2>
     <div style="font-size:12px;color:var(--text2);margin-bottom:8px;">Your own rides planned in intervals.icu. Tick the ones to put in your plan: the rest of the week is planned around them. Nothing changes in intervals.icu.</div>
-    <table style="width:100%;font-size:12px;border-collapse:collapse;">
+    <div style="overflow-x:auto;"><table style="width:100%;font-size:12px;border-collapse:collapse;">
       <tr style="text-align:left;color:var(--text3);"><th>Date</th><th>Ride</th><th>Length</th><th>Load</th><th>How hard</th><th></th></tr>
       ${(r.rides || []).map(row).join('')}${gone}
-    </table>
+    </table></div>
     <div id="own-imp-status" role="status" aria-live="polite" style="font-size:12px;color:var(--red);margin-top:10px;"></div>
     <div style="margin-top:10px;display:flex;gap:6px;">
       <button class="btn btn-primary" onclick="icuPlannedAdd()">Add selected</button>
@@ -13088,6 +13097,9 @@ async function generatePlan(opts) {
     $('plan-status').textContent = 'Plan generated!';
     $('plan-status').style.color = 'var(--green)';
     await renderPlanJSON(d.plan_json);
+    // QA L5: own rides the new plan could not keep are said (after the render).
+    const _lost = (typeof _ownLostNotice === 'function') ? _ownLostNotice(d) : [];
+    if (_lost.length) { $('plan-status').textContent = 'Plan generated! ' + _lost.join(' '); $('plan-status').style.color = 'var(--yellow)'; }
     // L4-UX 4 — recognized-entry landing: scroll the grid to TODAY's week,
     // highlight it, note "picked up at week X of Y". Never land at week 1.
     if (body.entry_mode === 'recognized') {
@@ -13417,7 +13429,10 @@ async function renderPlanJSON(plan) {
 
       if (s && s.session_type !== 'rest') {
         // v4.3.0 B6 — card_state (server-emitted) drives styling.
-        const cardState = s.card_state || (s.session_type === 'rest' ? 'rest' : 'planned');
+        // 3.14.0 (QX-H1): the rider's own ride and a race are what they are:
+        // no swap button, no drag, and a click opens the right dialog.
+        const cardState = s.card_state || (s.own ? 'own' : s.is_race ? 'race'
+                          : (s.session_type === 'rest' ? 'rest' : 'planned'));
         const stateExtraCls = cardState === 'completed' ? ' cal-completed'
                             : cardState === 'missing_workout' ? ' cal-missing'
                             : '';
@@ -13436,7 +13451,8 @@ async function renderPlanJSON(plan) {
           display_name: s.display_name || '', zwo_name: s.zwo_name || '',
           name: s.zwo_name || s.description || '',
           duration_min: s.duration_min, tss: s.tss_estimate,
-          user_moved: !!s.user_moved,
+          user_moved: !!s.user_moved, zwo_file: s.zwo_file || '',
+          own: s.own || null, is_race: !!s.is_race, race: s.race || null,
         }, cardState);
 
         // Mini power block SVG. v4.1.1 FIX-PLANNER B: prefer the
@@ -13497,7 +13513,8 @@ async function renderPlanJSON(plan) {
 
         // v4.2.0 IMPL-WEEKLY item 4: drag-drop with drop-target feedback
         // (only pending non-completed sessions are draggable).
-        const dragable = (!isPast && s.status !== 'done' && s.session_type !== 'rest') ? 'true' : 'false';
+        const dragable = (!isPast && s.status !== 'done' && s.session_type !== 'rest'
+                          && cardState !== 'own' && cardState !== 'race') ? 'true' : 'false';
         const dragAttrs = dragable === 'true'
           ? `draggable="true" ondragstart="pgDragStart(event,'${dayStr}',${wi})" ondragend="pgDragEnd(event)"`
           : '';
@@ -13974,6 +13991,11 @@ function calCardTitle(planned) {
   if (!planned) return '';
   // 3.14.0: a ride the rider added has no workout file by design: its name.
   if (planned.own) return planned.own.name || 'Your ride';
+  // A race is the race, never "no workout matched" (pre-existing, 3.14.0 QA).
+  if (planned.is_race) {
+    const rc = planned.race || {};
+    return `${String(rc.priority || 'A').toUpperCase()} race: ${rc.name || 'Race'}`;
+  }
   // v2.2.12 — strip the file's own embedded "Nmin" from the title so it can't
   // contradict the slot-duration badge rendered beside it (a 45min sprint slot
   // matched to a 57min file showed "Neuromuscular 57min …" next to a "45m"
@@ -14157,6 +14179,9 @@ async function loadCalendar() {
     renderCalendarEmpty();
     return;
   }
+  // 3.14.0 (QX-M3): own rides the rider moved in intervals.icu, so the
+  // cells say so (their dialog asks what to do).
+  await _ownMovedRefresh();
   window._calData = data;
   try {
     renderCalendar(data);
@@ -14464,10 +14489,11 @@ function renderCalDay(d, wi, di, phaseKey, today) {
       const tier = sc >= 7 ? 'Good' : sc >= 4 ? 'Medium' : 'Low';
       scoreBadge = `<span class="pg-score-badge ${sCls}" title="Score ${sc}/10 — ${tier}">${sc}</span>`;
     }
+    const _om = planned.own ? _ownMovedLine(d.date) : '';
     plannedHtml = `<div class="cal-planned">
       <span class="cal-planned-type ${parts.cssCls}">${esc(parts.title)}</span>
       ${parts.warn}
-      <div class="cal-planned-meta">${parts.metaText}</div>
+      <div class="cal-planned-meta">${parts.metaText}</div>${_om ? `<div class="cal-planned-meta card-own own-moved-mark">${esc(_om)}</div>` : ''}
     </div>`;
     if (scoreBadge) plannedHtml += scoreBadge;
   }
@@ -15369,7 +15395,7 @@ function renderThisWeekFromCalendar(data) {
         <div class="wc-type ${cssCls}" style="font-size:10px;padding:1px 3px;">${esc(title)}</div>
         <div class="wc-meta">${planned.duration_min ? Math.round(planned.duration_min) + 'm' : ''}${planned.tss ? ' · ' + Math.round(planned.tss) + 'T' : ''} ${warn}</div>
         ${planned.user_moved ? '<div class="wc-meta" style="color:#60a5fa;font-style:italic;">moved</div>' : ''}
-        ${planned.own ? `<div class="wc-meta card-own" style="font-style:italic;">your ride · ${esc(OWN_INTENSITY_LABEL[planned.own.intensity] || '')}</div>` : ''}
+        ${planned.own ? `<div class="wc-meta card-own" style="font-style:italic;">your ride · ${esc(OWN_INTENSITY_LABEL[planned.own.intensity] || '')}</div>${_ownMovedLine(d.date) ? `<div class="wc-meta card-own own-moved-mark">${esc(_ownMovedLine(d.date))}</div>` : ''}` : ''}
       </div>`;
     } else if (cs === 'rest' && !actual) {
       // v4.5.1 FIX-UI B2 — only show REST when there's no actual ride. If user
@@ -15548,15 +15574,19 @@ function miniPowerBlockSVG(blocks) {
   return svg;
 }
 
-function openPlanDayWorkout(weekIdx, dayIdx) {
+function openPlanDayWorkout(weekIdx, dayIdx, dayIso) {
   const plan = window._planData;
   if (!plan) return;
   const week = plan.weeks[weekIdx];
   if (!week) return;
-  const startDate = new Date(week.start + 'T12:00:00');
-  const dt = new Date(startDate);
-  dt.setDate(dt.getDate() + dayIdx);
-  const dayStr = dt.toLocaleDateString('en-CA');
+  // The grid's column is a weekday, not an offset from the week's start: a
+  // week that starts on a Tuesday opened the wrong day (pre-existing, 3.14.0 QA).
+  let dayStr = dayIso;
+  if (!dayStr) {
+    const dt = new Date(week.start + 'T12:00:00');
+    dt.setDate(dt.getDate() + dayIdx);
+    dayStr = dt.toLocaleDateString('en-CA');
+  }
   const session = (week.sessions || []).find(s => s.day === dayStr);
   if (!session || session.session_type === 'rest') return;
 
@@ -15593,7 +15623,11 @@ function openOverviewDay(weekIdx, dayIdx, dayStr) {
       }
     }
   }
-  openPlanDayWorkout(weekIdx, dayIdx);
+  // 3.14.0 (QX-H1): an unridden own ride opens its own dialog.
+  const _pw = ((window._planData || {}).weeks || [])[weekIdx];
+  const _ps = _pw && dayStr ? (_pw.sessions || []).find(x => x.day === dayStr) : null;
+  if (_ps && _ps.own) { openOwnRideDialog(dayStr); return; }
+  openPlanDayWorkout(weekIdx, dayIdx, dayStr);
 }
 
 // IP-2: round-trip the SAVED plan config back into the form. Previously the
@@ -15767,6 +15801,7 @@ async function submitAddRace() {
     if (d.plan_json) { await renderPlanJSON(d.plan_json); try { populatePlanFormFromGoal(d.plan_json.goal); } catch (_) {} }
     const ov = $('add-race-overlay'); if (ov) ov.remove();
     try { showToast(`Added ${payload.name || 'race'} on ${payload.date} — plan rescheduled (taper in, recovery after).`, 5000, 'success'); } catch (_) {}
+    if (typeof _ownLostNotice === 'function') _ownLostNotice(d);
   } catch (e) {
     if (st) { st.textContent = 'Failed: ' + e.message; st.style.color = 'var(--red)'; }
     if (btn) btn.disabled = false;
@@ -16030,6 +16065,7 @@ async function runPlanOpenSequence() {
         const ures = await _planStepRace(fetch('/api/plan/update?debounce=1', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}), PLAN_STEP_TIMEOUT_MS, 'update');
         const uj = await ures.json().catch(() => ({}));
         if (uj && uj.plan_json) { try { await renderPlanJSON(uj.plan_json); } catch (_) {} }
+        if (typeof _ownLostNotice === 'function') _ownLostNotice(uj);
         regenDetail = (uj && uj.status_message) ? uj.status_message
           : (uj && uj.action === 'skipped') ? 'already up to date'
           : 'rebalanced';
@@ -16093,6 +16129,7 @@ async function _doPlanUpdate({silent=false}={}) {
       return d;
     }
     if (d.plan_json) await renderPlanJSON(d.plan_json);
+    if (typeof _ownLostNotice === 'function') _ownLostNotice(d);
     const lui = (d.plan_json && d.plan_json.last_update_info) || {};
     const behind = !!lui.behind_plan;
     if (behind) {
@@ -16145,6 +16182,7 @@ async function regeneratePlan() {
     $('plan-status').style.color = 'var(--green)';
     $('plan-gap-alert').style.display = 'none';
     await renderPlanJSON(d.plan_json);
+    if (typeof _ownLostNotice === 'function') _ownLostNotice(d);
     // v1.4.0 — mandatory loadCalendar() after every plan mutation.
     try { await loadCalendar(); } catch(_) {}
   } catch(e) {
@@ -18279,6 +18317,7 @@ async function loadTodaySession() {
          <div style="font-size:18px;font-weight:800;margin-bottom:4px;">${esc(o.name || 'Your ride')}</div>
          <div style="font-size:12px;color:var(--text2);">${mins ? Math.floor(mins / 60) + 'h' + String(mins % 60).padStart(2, '0') : ''}${p.tss_estimate ? ' · ' + Math.round(p.tss_estimate) + ' TSS' : ''} · ${esc(OWN_INTENSITY_LABEL[o.intensity] || '')}</div>
          ${d.own_advisory ? `<div style="font-size:12px;color:var(--yellow);margin-top:8px;">${esc(d.own_advisory)}</div>` : ''}
+         ${_ownMovedLine(_calTodayStr()) ? `<div class="own-moved-mark" style="font-size:12px;color:var(--yellow);margin-top:8px;">${esc(_ownMovedLine(_calTodayStr()))}</div>` : ''}
          <div style="font-size:11px;color:var(--text3);margin-top:8px;">The rest of your week is planned around it.</div>`;
       el.style.cursor = 'pointer';
       el.onclick = () => openOwnRideDialog(_calTodayStr());
@@ -18772,6 +18811,26 @@ async function scheduleFtpTestSubmit(proto) {
 // around it (POST /api/plan/own-sessions) and says what changed. A pushed ride
 // the rider moved in intervals.icu is shown here with two buttons; nothing
 // follows silently.
+function _ownLostNotice(d) {
+  // QA L5/L6: own rides a rebuild could not keep are said, never dropped silently.
+  const lines = (d && Array.isArray(d.own_lost)) ? d.own_lost.filter(Boolean) : [];
+  if (lines.length) { try { showToast(lines.join(' '), 20000, 'warning'); } catch (_) {} }
+  return lines;
+}
+async function _ownMovedRefresh() {
+  try {
+    const ps = await (await fetch('/api/icu/push')).json();
+    const m = {};
+    if (ps && ps.sync_enabled && ps.connected !== false)
+      (ps.own_moved || []).forEach(x => { if (x && x.day && x.icu_day) m[x.day] = x.icu_day; });
+    window._ownMoved = m;
+  } catch (_) { window._ownMoved = window._ownMoved || {}; }
+}
+function _ownMovedLine(iso) {
+  const to = (window._ownMoved || {})[iso];
+  return to && iso >= _calTodayStr()
+    ? `moved in intervals.icu to ${_ownDayLabel(to)}: open it to choose` : '';
+}
 function _ownDayLabel(iso) {
   return new Date(iso + 'T12:00:00').toLocaleDateString('en-GB', {weekday: 'short', day: 'numeric', month: 'short'});
 }
@@ -18780,17 +18839,35 @@ function _ownCalDay(iso) {
   for (const w of data.weeks || []) for (const d of w.days || []) if (d.date === iso) return d;
   return null;
 }
+function _ownLen(m) {
+  m = Math.round(m || 0);
+  const h = Math.floor(m / 60), mm = m % 60;
+  return h ? (h + 'h' + (mm ? String(mm).padStart(2, '0') : '')) : (mm + ' min');
+}
 function _ownResultText(j) {
-  // The server's own plain lines: what was eased, moved, refused or is worth a word.
+  // The server's own plain lines: what was eased, shortened, moved, refused
+  // or is worth a word (QX-H3: every ride the room came from is named).
   const lines = [];
+  (j.shortened || []).forEach(e => e.text && lines.push(e.text));
+  (j.lengthened || []).forEach(e => e.text && lines.push(e.text));
   (j.eased || []).forEach(e => e.text && lines.push(e.text));
   (j.restored || []).forEach(e => e.text && lines.push(e.text));
   (j.ftp_test_moved || []).forEach(e => e.text && lines.push(e.text));
   (j.warnings || []).forEach(w => w.text && lines.push(w.text));
-  (j.refused || []).forEach(r => lines.push(`${r.date ? _ownDayLabel(String(r.date).slice(0, 10)) + ': ' : ''}${r.text || r.reason}`));
+  (j.refused || []).forEach(r => lines.push(r.reason === 'day_has_your_ride' || !r.date
+    ? (r.text || r.reason) : `${_ownDayLabel(String(r.date).slice(0, 10))}: ${r.text || r.reason}`));
   return lines;
 }
-async function _ownPost(body, statusEl) {
+function _ownResultView(title, lines) {
+  // QX-M9: what the change did stays readable until the rider closes it.
+  openModal(`<h2 style="margin-top:0;">${esc(title)}</h2>
+    <ul class="own-result" style="font-size:13px;line-height:1.5;padding-left:18px;">${lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>
+    <div style="margin-top:12px;"><button class="btn btn-primary" onclick="closeModal()">Close</button></div>`);
+}
+async function _ownPost(body, statusEl, opts) {
+  opts = opts || {};
+  const pid = (window._ownDlg || {}).profile_id || ((typeof _profileData !== 'undefined' && _profileData) ? _profileData.active : null);
+  if (pid && !body.profile_id) body = Object.assign({profile_id: pid}, body);   // QA L8
   let res, j;
   try {
     res = await fetch('/api/plan/own-sessions', {method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -18804,16 +18881,38 @@ async function _ownPost(body, statusEl) {
     if (statusEl) statusEl.textContent = 'The active rider changed. Open this again.';
     return null;
   }
+  if (res.status === 409 && j && j.error === 'day_has_your_ride') {
+    // QA H1 / QX-H4: never replace a ride without asking.
+    const clash = (j.refused || []).find(r => r.reason === 'day_has_your_ride') || {};
+    if (statusEl) {
+      statusEl.innerHTML = `${esc(clash.text || 'That day already holds a ride of yours.')} Replace it?
+        <button class="btn btn-sm" onclick="_ownReplaceConfirmed()">Replace it</button>
+        <button class="btn btn-sm" onclick="this.parentElement.textContent=''">Keep it</button>`;
+      window._ownPendingReplace = {body: body, opts: opts};
+    }
+    return null;
+  }
   const lines = _ownResultText(j || {});
   if (!res.ok || !j || !j.ok) {
     if (statusEl) statusEl.textContent = lines.join(' ') || (j && (j.error || j.detail)) || ('Could not save (HTTP ' + res.status + ')');
     return null;
   }
-  closeModal();
-  try { showToast(['Saved.'].concat(lines).join(' '), lines.length ? 9000 : 3500, lines.length ? 'warning' : 'success'); } catch (_) {}
+  const head = opts.done || 'Saved.';
+  if (lines.length) _ownResultView(head, lines);
+  else { closeModal(); try { showToast(head, 4000, 'success'); } catch (_) {} }
   try { await loadCalendar(); } catch (_) {}
   try { if (typeof loadTodaySession === 'function') await loadTodaySession(); } catch (_) {}
+  try { if (typeof loadReadinessComposite === 'function') loadReadinessComposite(); } catch (_) {}
   return j;
+}
+async function _ownReplaceConfirmed() {
+  const pend = window._ownPendingReplace;
+  if (!pend) return;
+  window._ownPendingReplace = null;
+  const b = JSON.parse(JSON.stringify(pend.body));
+  (b.set || []).forEach(x => { x.replace = true; });
+  (b.move || []).forEach(x => { x.replace = true; });
+  await _ownPost(b, document.getElementById('own-status') || document.getElementById('own-imp-status'), pend.opts);
 }
 function _ownIntensitySelect(id, val) {
   const o = (v, t) => `<option value="${v}"${val === v ? ' selected' : ''}>${t}</option>`;
@@ -18827,27 +18926,48 @@ async function openOwnRideDialog(dateStr) {
   const day = dateStr ? _ownCalDay(dateStr) : null;
   const own = day && day.planned && day.planned.own ? day.planned.own : null;
   const p = own ? day.planned : null;
+  const pid = (typeof _profileData !== 'undefined' && _profileData) ? _profileData.active : null;
+  if (own && dateStr < today) {
+    // QX-M8: a past ride is information, not a form.
+    window._ownDlg = {orig: null, own: own, profile_id: pid};
+    const ridden = !!(day.actual || (Array.isArray(day.actual_secondary) && day.actual_secondary.length));
+    openModal(`<h2 style="margin-top:0;">Your ride</h2>
+      <div style="font-size:13px;">${esc(_ownDayLabel(dateStr))} — <b>${esc(own.name || 'Your ride')}</b>
+        (${esc(_ownLen(p.duration_min))} · ${esc(OWN_INTENSITY_LABEL[own.intensity] || '')}). ${ridden ? 'Ridden.' : 'Not ridden.'}</div>
+      <div style="margin-top:12px;"><button class="btn btn-primary" onclick="closeModal()">Close</button></div>`);
+    return;
+  }
   const iso = dateStr && dateStr >= today ? dateStr : today;
   const dur = p ? Math.round(p.duration_min || 0) : 120;
   const loadTyped = own && (own.load_from === 'typed' || own.load_from === 'icu') ? Math.round(p.tss || 0) : '';
-  window._ownDlg = {orig: own ? dateStr : null, own: own};
+  window._ownDlg = {orig: own ? dateStr : null, own: own, profile_id: pid, load0: String(loadTyped)};
   let sync = {};
   try { sync = await (await fetch('/api/icu/push')).json(); } catch (_) {}
-  const weeks = Math.max(2, Math.round((sync.horizon_days || 14) / 7));
+  const hz = sync.horizon_days || 14;
+  const weeks = Math.max(2, Math.round(hz / 7));
+  const inWindow = own && dateStr && ((new Date(dateStr + 'T12:00:00') - new Date(today + 'T12:00:00')) / 86400000) <= hz;
   let where;
   if (own && own.source === 'icu') where = 'This ride comes from your intervals.icu calendar; nothing changes there.';
+  else if (sync.sync_enabled && inWindow) where = 'With calendar sync on, this ride is in your intervals.icu calendar.';
   else if (sync.sync_enabled) where = `With calendar sync on, this ride is sent to your intervals.icu calendar once it is within the next ${weeks} weeks.`;
   else where = 'Calendar sync is off, so this ride stays in Domestique.';
   // O4: the rider moved this pushed ride in intervals.icu; ask, never follow.
-  const moved = own && own.source !== 'icu'
+  // QA L9 / QX-M2: only for a ride still to come, and only while sync runs.
+  const moved = own && own.source !== 'icu' && dateStr >= today && sync.sync_enabled && sync.connected !== false
     ? (sync.own_moved || []).find(m => m && m.day === dateStr) : null;
+  const pending = moved && own.put_back_from === moved.icu_day;   // QX-M4
   const movedHtml = moved ? `<div class="own-moved" style="border:1px solid var(--yellow);border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px;">
       You moved this ride in intervals.icu to <b>${esc(_ownDayLabel(moved.icu_day))}</b>. Your plan still has it on ${esc(_ownDayLabel(dateStr))}.
+      ${pending ? `<div class="own-put-back-pending" style="margin-top:6px;">Going back to ${esc(_ownDayLabel(dateStr))} at the next calendar update.</div>` : ''}
       <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
         <button class="btn btn-sm btn-primary" onclick="ownRideFollowMove('${esc(dateStr)}','${esc(moved.icu_day)}')">Move it in my plan too</button>
-        <button class="btn btn-sm" onclick="ownRidePutBack('${esc(dateStr)}','${esc(moved.icu_day)}')">Put it back on ${esc(_ownDayLabel(dateStr))}</button>
+        <button class="btn btn-sm" ${pending ? 'disabled style="opacity:0.5;"' : ''} onclick="ownRidePutBack('${esc(dateStr)}','${esc(moved.icu_day)}')">Put it back on ${esc(_ownDayLabel(dateStr))}</button>
       </div></div>` : '';
   const hint = own ? '' : `<div style="font-size:11px;color:var(--text3);margin-top:6px;">Already planned this ride in intervals.icu? Use <b>My rides from intervals.icu</b> instead, so it is not there twice.</div>`;
+  // QX-L6 / O8: what Remove does in intervals.icu.
+  const removeNote = !own ? '' : (own.source === 'icu'
+    ? 'Removing it here leaves it in your intervals.icu calendar; the session your plan had on that day comes back.'
+    : 'Removing it here also takes it out of your intervals.icu calendar.');
   openModal(`<h2 style="margin-top:0;">${own ? 'Your ride' : 'Add your own ride'}</h2>
     ${movedHtml}
     <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center;font-size:13px;">
@@ -18866,15 +18986,20 @@ async function openOwnRideDialog(dateStr) {
       <button class="btn btn-primary" onclick="ownRideSave()">Save</button>
       ${own ? `<button class="btn" onclick="ownRideRemove('${esc(dateStr)}')">Remove</button>` : ''}
       <button class="btn" onclick="closeModal()">Cancel</button>
-    </div>`);
+    </div>
+    ${removeNote ? `<div style="font-size:11px;color:var(--text3);margin-top:6px;">${esc(removeNote)}</div>` : ''}`);
 }
 function _ownFormItem() {
   const g = id => (document.getElementById(id) || {}).value;
   const item = {name: (g('own-name') || '').trim(),
                 duration_min: (parseInt(g('own-h'), 10) || 0) * 60 + (parseInt(g('own-m'), 10) || 0),
                 intensity: g('own-int')};
-  const load = parseFloat(g('own-load'));
-  if (load > 0) item.load = Math.round(load);
+  const raw = String(g('own-load') || '');
+  const load = parseFloat(raw);
+  // QX-H2: the load goes back only when the rider changed it (an imported
+  // ride's load must not turn into a typed one).
+  const st = window._ownDlg || {};
+  if (load > 0 && (!st.own || raw.trim() !== String(st.load0 || '').trim())) item.load = Math.round(load);
   return item;
 }
 async function ownRideSave() {
@@ -18885,12 +19010,12 @@ async function ownRideSave() {
   const item = _ownFormItem();
   let body;
   if (st.orig && st.orig !== to) body = {move: [Object.assign({from: st.orig, to: to}, item)]};
-  else body = {set: [Object.assign({date: to}, item)]};
+  else body = {set: [Object.assign({date: to}, item, st.orig ? {edit: true} : {})]};   // QA H1
   if (statusEl) statusEl.textContent = 'Saving…';
   await _ownPost(body, statusEl);
 }
 async function ownRideRemove(iso) {
-  await _ownPost({remove: [iso]}, document.getElementById('own-status'));
+  await _ownPost({remove: [iso]}, document.getElementById('own-status'), {done: 'Removed.'});
 }
 async function ownRideFollowMove(fromIso, toIso) {
   // O4 "Move it in my plan too": the plan follows the rider's move.
@@ -18898,7 +19023,8 @@ async function ownRideFollowMove(fromIso, toIso) {
 }
 async function ownRidePutBack(dayIso, icuIso) {
   // O4 "Put it back": the next calendar run returns the ride to its plan day.
-  await _ownPost({put_back: [{day: dayIso, icu_day: icuIso}]}, document.getElementById('own-status'));
+  await _ownPost({put_back: [{day: dayIso, icu_day: icuIso}]}, document.getElementById('own-status'),
+                 {done: `Saved. Your ride goes back to ${_ownDayLabel(dayIso)} in intervals.icu at the next calendar update.`});
 }
 
 // hr target_mode — LTHR field-test instructions (20-min TT protocol). No

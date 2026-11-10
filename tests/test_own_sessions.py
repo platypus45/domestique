@@ -249,14 +249,19 @@ def test_a10_refusals_change_nothing(item, reason):
     assert p == before and not r["applied"]
 
 
-def test_a10_race_ridden_and_two_row_days_are_refused_and_valid_items_still_apply():
+def test_a10_race_ridden_and_two_row_days_are_refused_and_nothing_applies():
+    """Wave 4 (QA L1-L3): a request is all or nothing -- every refusal is
+    reported and the valid items in it change nothing either."""
     rows = [("rest", 0, 0), ("z2", 60, 45, {"status": "done"}), ("vo2max", 60, 75, {"is_race": True}),
             ("z2", 90, 68), ("rest", 0, 0), ("long_z2", 150, 112), ("z2", 90, 68)]
     p = mkplan(week(0, rows, 900))
     p["weeks"][0]["sessions"].append(row(d(3), "z2", 30, 20))   # Thu holds two rows
+    before = copy.deepcopy(p)
     r = apply(p, [ride(d(0)), ride(d(1)), ride(d(2)), ride(d(3)), ride(d(6), intensity="easy")])
     assert sorted((x["date"], x["reason"]) for x in r["refused"]) == [
         (d(1), "ridden"), (d(2), "race_day"), (d(3), "two_sessions")]
+    assert p == before and r["applied"] == [] and r["touched_days"] == []
+    r = apply(p, [ride(d(0)), ride(d(6), intensity="easy")])
     assert by_day(p)[d(6)]["own"] and by_day(p)[d(0)]["own"]
 
 
@@ -264,11 +269,14 @@ def test_m8_two_rides_for_one_day_and_a_second_intervals_icu_ride_on_a_ride_day(
     p = mkplan(week(0, FULL, 900))
     r = apply(p, [ride(d(5)), ride(d(5), name="Coffee spin")])
     assert [x["reason"] for x in r["refused"]] == ["duplicate_day"]
+    assert not by_day(p)[d(5)].get("own")                       # all or nothing
+    apply(p, [ride(d(5))])
     assert by_day(p)[d(5)]["own"]["name"] == "Club ride"
     imp = {"date": d(5), "name": "Club ride (icu)", "duration_min": 180, "intensity": "hard",
            "icu_event_id": 77}
     r = apply(p, [imp])
     assert [x["reason"] for x in r["refused"]] == ["day_has_your_ride"]
+    assert r["refused"][0]["name"] == "Club ride" and "Club ride" in r["refused"][0]["text"]
     r = apply(p, [dict(imp, link=True)])                         # the manual ride becomes it
     own = by_day(p)[d(5)]["own"]
     assert (own["source"], own["icu_event_id"]) == ("icu", 77) and not r["refused"]
@@ -617,6 +625,10 @@ def test_own_sessions_endpoint_adds_edits_moves_removes_and_heals_nothing(stub):
     assert s["own"]["name"] == "Club ride" and s["zwo_file"] == ""
     r = stub.client.post("/api/plan/own-sessions",
                          json={"set": [ride(d(5), dur=150, intensity="moderate", name="Shorter")]})
+    assert r.status_code == 409 and r.json()["error"] == "day_has_your_ride"   # QA H1
+    r = stub.client.post("/api/plan/own-sessions",
+                         json={"set": [dict(ride(d(5), dur=150, intensity="moderate", name="Shorter"),
+                                            edit=True)]})
     assert r.json()["applied"] == [{"action": "edit", "date": d(5)}]
     s = by_day(_read())[d(5)]
     assert (s["duration_min"], s["session_type"], s["own"]["name"]) == (150, "tempo", "Shorter")
@@ -635,10 +647,11 @@ def test_put_back_marks_a_manual_ride_and_refuses_an_imported_one(stub):
     apply(p, [ride(d(5)), dict(ride(d(3), intensity="easy", dur=60), icu_event_id=5)])
     _write(p)
     r = stub.client.post("/api/plan/own-sessions",
-                         json={"put_back": [{"day": d(5), "icu_day": d(6)}, {"day": d(3), "icu_day": d(4)}]})
-    j = r.json()
-    assert [a["action"] for a in j["applied"]] == ["put_back"]
-    assert [x["reason"] for x in j["refused"]] == ["not_pushed"]
+                         json={"put_back": [{"day": d(3), "icu_day": d(4)}]})
+    assert r.status_code == 400 and [x["reason"] for x in r.json()["refused"]] == ["not_pushed"]
+    r = stub.client.post("/api/plan/own-sessions",
+                         json={"put_back": [{"day": d(5), "icu_day": d(6)}]})
+    assert [a["action"] for a in r.json()["applied"]] == ["put_back"]
     assert by_day(_read())[d(5)]["own"]["put_back_from"] == d(6)
 
 
@@ -728,11 +741,18 @@ def test_x1_c13_readiness_never_rewrites_todays_own_ride_and_gives_a_line(stub, 
                                  duration_min=30, tss_estimate=15, description="eased"), "gate fired"
     monkeypatch.setattr(tp, "adjust_today_session", _gate_fires)
     monkeypatch.setattr(app_module, "_kick_lazy_icu_sync", lambda **kw: None)
+    # QX-M5: with no readiness data and no check-in, no advisory.
+    monkeypatch.setattr(app_module.db, "get_daily_log_today", lambda *a, **k: {})
     j = stub.client.get("/api/today-session").json()
     assert j["was_modified"] is False and j["reason"] == ""
     assert j["adjusted"]["session_type"] == j["planned"]["session_type"] == "sweetspot"
-    assert j["own"]["name"] == "Ride 0" and j["own_advisory"]
+    assert j["own"]["name"] == "Ride 0" and j["own_advisory"] == ""
     assert "replaced" not in j["own"]
+    # A morning check-in is evidence: the plain line comes.
+    monkeypatch.setattr(app_module.db, "get_daily_log_today",
+                        lambda *a, **k: {"sleep_quality": 5, "fatigue": 6, "stress": 4, "soreness": 4})
+    j = stub.client.get("/api/today-session").json()
+    assert j["was_modified"] is False and j["own_advisory"]
     monkeypatch.setattr(tp, "adjust_today_session", real)
 
 
@@ -966,7 +986,7 @@ def test_o4_a_put_back_is_cleared_once_a_later_run_no_longer_lists_the_ride():
 
 def test_o4_an_edit_or_a_move_clears_the_put_back():
     p = _put_back_plan()
-    apply(p, [ride(d(5), dur=150, name="Edited")])
+    apply(p, [dict(ride(d(5), dur=150, name="Edited"), edit=True)])
     assert "put_back_from" not in by_day(p)[d(5)]["own"]
     p = _put_back_plan()
     tp.apply_own_sessions(p, moves=[{"from": d(5), "to": d(6)}], library=[])
@@ -983,3 +1003,244 @@ def test_o4_the_next_own_ride_write_clears_a_done_put_back(stub, monkeypatch):
     r = stub.client.post("/api/plan/own-sessions", json={"set": [ride(d(2), intensity="easy", dur=60)]})
     assert r.status_code == 200
     assert "put_back_from" not in by_day(_read())[d(5)]["own"]
+
+
+# ═══ Wave 4 (3.14.0 QA fixes) ════════════════════════════════════════════════
+
+def _two_rides():
+    p = mkplan(week(0, FULL, 900))
+    apply(p, [ride(d(5), name="Saturday group ride"), ride(d(6), intensity="easy", dur=90,
+                                                         name="Sunday club ride")])
+    return p
+
+
+def test_w4_h1_a_move_onto_another_ride_is_refused_and_replace_takes_its_day():
+    p = _two_rides()
+    before = copy.deepcopy(p)
+    r = tp.apply_own_sessions(p, moves=[{"from": d(5), "to": d(6)}], library=[])
+    assert [x["reason"] for x in r["refused"]] == ["day_has_your_ride"]
+    assert r["refused"][0]["name"] == "Sunday club ride" and p == before
+    r = tp.apply_own_sessions(p, moves=[{"from": d(5), "to": d(6), "replace": True}], library=[])
+    b = by_day(p)
+    assert b[d(6)]["own"]["name"] == "Saturday group ride" and b[d(6)]["moved_from"] == d(5)
+    assert b[d(6)]["own"]["replaced"]["session_type"] == "z2"      # the planner's Sunday under it
+    assert b[d(5)]["session_type"] == "long_z2" and not b[d(5)].get("own")
+
+
+def test_w4_qx_h4_an_add_on_a_ride_day_asks_and_edit_or_replace_decide():
+    p = _two_rides()
+    before = copy.deepcopy(p)
+    r = apply(p, [ride(d(6), intensity="easy", dur=45, name="Evening spin")])
+    assert [x["reason"] for x in r["refused"]] == ["day_has_your_ride"] and p == before
+    added_at = by_day(p)[d(6)]["own"]["added_at"]
+    apply(p, [dict(ride(d(6), intensity="easy", dur=60, name="Sunday club ride"), edit=True)])
+    assert by_day(p)[d(6)]["own"]["added_at"] == added_at           # the same ride, edited
+    r = apply(p, [dict(ride(d(6), intensity="easy", dur=45, name="Evening spin"), replace=True)])
+    own = by_day(p)[d(6)]["own"]
+    assert r["applied"] == [{"action": "replace", "date": d(6)}]
+    assert own["name"] == "Evening spin" and own["replaced"]["session_type"] == "z2"
+    apply(p, remove=[d(6)])
+    assert by_day(p)[d(6)]["session_type"] == "z2" and not by_day(p)[d(6)].get("own")
+
+
+def test_w4_h1_the_endpoint_answers_409_with_the_rides_name(stub):
+    _write(_two_rides())
+    before = _read()
+    r = stub.client.post("/api/plan/own-sessions", json={"move": [{"from": d(5), "to": d(6)}]})
+    assert r.status_code == 409 and r.json()["error"] == "day_has_your_ride"
+    assert "Sunday club ride" in r.json()["refused"][0]["text"] and _read() == before
+
+
+def test_w4_l2_a_refused_second_move_loses_nothing():
+    rows = [("rest", 0, 0), ("z2", 60, 45), ("z2", 60, 45), ("rest", 0, 0),
+            ("ftp_test", 60, 70), ("vo2max", 60, 75), ("rest", 0, 0)]
+    p = mkplan(week(0, rows, 900))
+    apply(p, [ride(d(1), intensity="easy", dur=60)])
+    before = copy.deepcopy(p)
+    r = tp.apply_own_sessions(p, moves=[{"from": d(1), "to": d(2)}, {"from": d(2), "to": d(4)}],
+                              library=[])
+    assert [x["reason"] for x in r["refused"]] == ["ftp_test_day"]
+    assert p == before and by_day(p)[d(1)]["own"]                  # still on its day
+
+
+def test_w4_l1_a_two_session_day_is_never_touched_and_rows_land_in_place():
+    rows = [("rest", 0, 0), ("threshold", 45, 68, {"am_or_pm": "am"}), ("rest", 0, 0), ("rest", 0, 0),
+            ("rest", 0, 0), ("rest", 0, 0), ("rest", 0, 0)]
+    p = mkplan(week(0, rows, 900))
+    p["weeks"][0]["sessions"].insert(2, row(d(1), "threshold", 45, 68, am_or_pm="pm"))
+    before = copy.deepcopy(p["weeks"][0]["sessions"][1:3])
+    apply(p, [ride(d(2))])                                        # hard, the day after the pair
+    assert p["weeks"][0]["sessions"][1:3] == before                # AM and PM as they were
+    assert p["weeks"][0]["sessions"][3]["own"]["name"] == "Club ride"
+
+
+@pytest.mark.parametrize("bad", [
+    {"duration_min": float("inf")}, {"duration_min": float("nan")}, {"load": float("inf")},
+    {"load": float("nan")}, {"icu_event_id": float("inf")}, {"duration_min": "1e999"},
+])
+def test_w4_l3_non_finite_numbers_are_refused_and_nothing_applies(bad):
+    p = mkplan(week(0, FULL, 900))
+    before = copy.deepcopy(p)
+    r = apply(p, [ride(d(1), intensity="easy", dur=60), dict(ride(d(2)), **bad)])
+    assert r["refused"] and r["refused"][0]["reason"] in ("bad_length", "bad_load", "bad_event")
+    assert p == before
+
+
+def test_w4_l3_the_endpoint_answers_400_for_infinity(stub):
+    _write(mkplan(week(0, FULL, 900)))
+    before = _read()
+    body = '{"set": [{"date": "%s", "name": "x", "duration_min": 60, "intensity": "easy"},' \
+           ' {"date": "%s", "name": "y", "duration_min": Infinity, "intensity": "easy"}]}' % (d(1), d(2))
+    r = stub.client.post("/api/plan/own-sessions", content=body,
+                         headers={"Content-Type": "application/json"})
+    assert r.status_code == 400 and _read() == before
+
+
+def test_w4_qx_h3_the_shortened_rides_are_named_and_the_tail_says_what_happened():
+    p = mkplan(week(0, FULL, 443))
+    r = apply(p, [ride(d(5))])
+    assert r["shortened"] and all("to keep the week's load" in x["text"] for x in r["shortened"])
+    assert {x["day"] for x in r["shortened"]} == {d(k) for k in range(7)
+                                                 if by_day(p)[d(k)].get("shortened_from")}
+    r = apply(p, remove=[d(5)])
+    assert r["lengthened"]
+    # Nothing left to shorten: the tail says so; something shortened: it names it.
+    rows = [("rest", 0, 0), ("vo2max", 60, 75), ("z2", 60, 45), ("threshold", 60, 90),
+            ("rest", 0, 0), ("rest", 0, 0), ("rest", 0, 0)]
+    p = mkplan(week(0, rows, 210))
+    r = apply(p, [ride(d(5), intensity="moderate", dur=120)])
+    txt = next(w["text"] for w in r["warnings"] if w["code"] == "over_budget")
+    assert txt.startswith("After shortening ") and "Wed 21 Oct" in txt
+
+
+def test_w4_qx_m10_only_the_load_this_ride_adds_is_blamed_and_a_race_is_not():
+    rows = [("rest", 0, 0), ("z2", 30, 23), ("rest", 0, 0), ("rest", 0, 0),
+            ("z2", 45, 44, {"is_opener": True}), ("recovery", 240, 191, {"is_race": True}),
+            ("rest", 0, 0)]
+    # The race's 191 TSS is not the week's training budget: the spin fits.
+    p = mkplan(week(0, rows, 125))
+    r = apply(p, [ride(d(4), intensity="moderate", dur=60, name="Pre-race spin")])
+    assert r["over_budget"] == {} and not [w for w in r["warnings"] if w["code"] == "over_budget"]
+    # Over a tight budget: only what the spin added past the budget is told.
+    p = mkplan(week(0, rows, 70))
+    r = apply(p, [ride(d(4), intensity="moderate", dur=60, name="Pre-race spin")])
+    ob = r["over_budget"].get(d(0), 0)
+    assert 0 < ob <= 65 - 44 + 1
+    # A week already over its budget: the ride is blamed for its own 21 only.
+    p = mkplan(week(0, rows, 60))
+    r = apply(p, [ride(d(4), intensity="moderate", dur=60, name="Pre-race spin")])
+    assert r["over_budget"].get(d(0)) == 65 - 44
+
+
+def test_w4_m1_the_rebuild_48h_pass_keeps_today_pins_and_a_kept_test():
+    # Hard own ride Tue (d1): Mon (today) threshold, a swapped VO2 / an FTP test
+    # / a held day before a hard own ride on Fri (d4), a test after it.
+    rows = [("threshold", 60, 90), ("sweetspot", 180, 240), ("rest", 0, 0),
+            ("vo2max", 60, 75, {"user_swapped": True}), ("sweetspot", 180, 240),
+            ("ftp_test", 60, 70), ("rest", 0, 0)]
+    wk = tp.week_from_dict(week(0, rows, 900))
+    wk.sessions[1].own = {"name": "Tue ride", "intensity": "hard"}
+    wk.sessions[4].own = {"name": "Fri ride", "intensity": "hard"}
+    tp._space_hard_days_across_plan([wk], library=None)
+    st = [s.session_type for s in wk.sessions]
+    assert st[0] == "threshold"                                     # O6: today stays
+    assert st[3] == "vo2max"                                        # C9: swapped stays
+    assert st[5] == "ftp_test"                                      # O7: the kept test stays
+    rows2 = [("rest", 0, 0), ("rest", 0, 0), ("vo2max", 60, 75), ("sweetspot", 180, 240),
+             ("rest", 0, 0), ("rest", 0, 0), ("rest", 0, 0)]
+    wk2 = tp.week_from_dict(week(0, rows2, 900))
+    wk2.sessions[3].own = {"name": "Thu ride", "intensity": "hard"}
+    tp._space_hard_days_across_plan([wk2], library=None, pinned_days=[d(2)])
+    assert wk2.sessions[2].session_type == "vo2max"                 # C9: held in intervals.icu
+    tp._space_hard_days_across_plan([wk2], library=None, keep_days={wk2.sessions[2].day})
+    assert wk2.sessions[2].session_type == "vo2max"                 # a refit-frozen day
+    tp._space_hard_days_across_plan([wk2], library=None)
+    assert wk2.sessions[2].session_type == "z2"                     # otherwise eased
+
+
+def test_w4_l6_a_race_on_an_own_ride_day_says_so(stub):
+    goal = tp.Goal(goal_type="general", hours_per_week=8.0, plan_weeks=8, rest_days=[0])
+    _ph, weeks = tp.generate_plan(goal, seed_salt=3)
+    p = {"goal": tp.goal_to_dict(goal), "weeks": [tp.week_to_dict(w) for w in weeks]}
+    day = next(s["day"] for w in p["weeks"] for s in w["sessions"]
+               if s["day"] >= d(9) and s["session_type"] != "rest")
+    r = apply(p, [ride(day, intensity="easy", dur=60, name="Club ride")])
+    assert not r["refused"]
+    _write(p)
+    j = stub.client.post("/api/plan/add-race", json={"date": day, "priority": "B", "name": "Crit"}).json()
+    assert j["ok"] and any("Club ride" in x and "race" in x for x in j["own_lost"])
+
+
+def test_w4_l5_own_rides_a_new_plan_cannot_keep_are_listed(stub):
+    old = mkplan(week(0, FULL, 443), week(7, FULL, 443, num=2),
+                 week(42, FULL, 443, num=3))                        # a ride far past 8 weeks
+    apply(old, [ride(d(45), intensity="easy", dur=60, name="Far ride")])
+    _write(old)
+    r = stub.client.post("/api/plan/generate", json={
+        "goal": "ftp", "hours_per_week": 8.0, "max_weekday": 2.0, "max_weekend": 4.0,
+        "plan_weeks": 4, "rest_days": [0], "daily_availability": {}})
+    assert r.status_code == 200, r.text[:300]
+    assert any("Far ride" in x for x in r.json()["own_lost"])
+
+
+def test_w4_qx_l9_l11_refusal_texts_name_the_day_and_the_seven_days():
+    assert app_module._fixed_day_error({"day": d(2), "own": {"name": "x"}}).startswith("Wed 21 Oct is your own ride")
+    assert "next 7 days" in tp._OWN_REFUSALS["ftp_test_day"]
+
+
+def test_w4_qx_h2_an_edit_that_leaves_the_load_keeps_its_source():
+    p = mkplan(week(0, FULL, 900))
+    apply(p, [{"date": d(6), "name": "Imported", "duration_min": 60, "intensity": "easy",
+               "load": 70, "load_from": "icu", "icu_event_id": 812}])
+    apply(p, [{"date": d(6), "name": "Renamed", "duration_min": 60, "intensity": "easy", "edit": True}])
+    s = by_day(p)[d(6)]
+    assert (s["own"]["name"], s["tss_estimate"], s["own"]["load_from"]) == ("Renamed", 70, "icu")
+
+
+def test_w4_l1_a_shortened_row_on_a_two_row_day_lands_in_its_own_place():
+    rows = [("rest", 0, 0), ("z2", 120, 90, {"am_or_pm": "am"}), ("rest", 0, 0), ("rest", 0, 0),
+            ("rest", 0, 0), ("rest", 0, 0), ("rest", 0, 0)]
+    p = mkplan(week(0, rows, 140))
+    p["weeks"][0]["sessions"].insert(2, row(d(1), "z2", 60, 45, am_or_pm="pm"))
+    apply(p, [ride(d(4), intensity="easy", dur=60, name="Spin")])   # +45: room from Tue
+    am, pm = p["weeks"][0]["sessions"][1], p["weeks"][0]["sessions"][2]
+    assert (am["am_or_pm"], pm["am_or_pm"]) == ("am", "pm")
+    assert am["duration_min"] < 120 and pm["duration_min"] == 60    # the AM gave the room
+
+
+def test_w4_m1_the_held_days_reach_every_rebuild(stub, monkeypatch):
+    monkeypatch.setattr(app_module, "_icu_held_plan_days", lambda: ["2026-10-21"])
+    seen = {}
+    real_regen, real_refit = tp.regenerate_from_today, tp.refit_remaining_week
+
+    def _regen(**kw):
+        seen["regen"] = kw.get("pinned_days")
+        return real_regen(**kw)
+
+    def _refit(*a, **kw):
+        seen["refit"] = kw.get("pinned_days")
+        return real_refit(*a, **kw)
+    monkeypatch.setattr(tp, "regenerate_from_today", _regen)
+    monkeypatch.setattr(tp, "refit_remaining_week", _refit)
+    goal = tp.Goal(goal_type="ftp", hours_per_week=8.0, plan_weeks=6, rest_days=[0])
+    _ph, weeks = tp.generate_plan(goal, seed_salt=2)
+    p = {"goal": tp.goal_to_dict(goal), "weeks": [tp.week_to_dict(w) for w in weeks]}
+    app_module._regenerate_plan_dict(copy.deepcopy(p), current_ctl=40.0, activities=[], seed_salt=1)
+    cur = next(w for w in p["weeks"] if w["start"] <= d(0) <= w["end"])
+    tue = next(s for s in cur["sessions"] if s["day"] == d(1))
+    tue.update(session_type="vo2max", status="missed", duration_min=60, tss_estimate=75)
+    clock.freeze(TODAY + timedelta(days=2))
+    try:
+        app_module._apply_refit_to_plan(p, TODAY + timedelta(days=2))
+    finally:
+        clock.freeze(TODAY)
+    assert seen.get("regen") == ["2026-10-21"]
+    assert seen.get("refit") == ["2026-10-21"]
+
+
+def test_w4_qx_m3_the_views_carry_the_moved_mark():
+    from test_331_surfaces import _extract_js_function
+    src = (Path(__file__).resolve().parent.parent / "src" / "templates" / "dashboard.html").read_text(encoding="utf-8")
+    for fn in ("renderCalDay", "renderThisWeekFromCalendar", "loadTodaySession"):
+        assert "_ownMovedLine(" in _extract_js_function(src, fn), fn
+    assert "await _ownMovedRefresh();" in _extract_js_function(src, "loadCalendar")

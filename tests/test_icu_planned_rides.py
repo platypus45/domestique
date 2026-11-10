@@ -270,3 +270,176 @@ def test_d4_c6_send_is_never_offered_on_an_own_ride_and_its_day_takes_no_drop():
     src = DASHBOARD.read_text(encoding="utf-8")
     assert "(session.zwo_file && !session.own)" in src
     assert "!isOwn && !isPast" in _extract_js_function(src, "calDragStart")
+
+
+# ═══ Wave 4 (3.14.0 QA fixes) ════════════════════════════════════════════════
+
+def test_w4_qx_h2_a_ride_moved_in_domestique_is_not_moved_in_intervals_icu(env):
+    _apikey(env)
+    p = _plan()
+    tp.apply_own_sessions(p, [{"date": _d(3), "name": "Saturday club ride", "duration_min": 120,
+                               "intensity": "moderate", "icu_event_id": 53}], [], library=[])
+    tp.apply_own_sessions(p, moves=[{"from": _d(3), "to": _d(4)}], library=[])   # in Domestique
+    _write(p)
+    env.fake.rows = [_ev(53, _d(3), "Saturday club ride")]                      # still there
+    row = _get(env)["rides"][0]
+    assert (row["status"], row["plan_day"]) == ("moved_here", _d(4))
+    env.fake.rows = [_ev(53, _d(5), "Saturday club ride")]                      # now moved there
+    assert _get(env)["rides"][0]["status"] == "moved"
+
+
+def test_w4_l9_a_past_plan_day_offers_nothing(env, freeze_clock):
+    _apikey(env)
+    p = _plan()
+    tp.apply_own_sessions(p, [{"date": _d(1), "name": "Tuesday ride", "duration_min": 60,
+                               "intensity": "easy", "icu_event_id": 54}], [], library=[])
+    _write(p)
+    freeze_clock(TODAY + timedelta(days=2))
+    env.fake.rows = [_ev(54, _d(5), "Tuesday ride")]
+    assert _get(env)["rides"][0]["status"] == "in_plan_past"
+
+
+def test_w4_qx_l12_an_estimated_load_says_so(env):
+    _apikey(env)
+    _write(_plan())
+    env.fake.rows = [_ev(1, _d(1), moving_time=7200, icu_intensity=67.0),
+                     _ev(2, _d(2), moving_time=7200, icu_training_load=150)]
+    rows = {x["event_id"]: x for x in _get(env)["rides"]}
+    assert rows[1]["load_estimated"] is True and rows[2]["load_estimated"] is False
+
+
+_STUBS = """
+const OWN_INTENSITY_LABEL = {easy: 'easy', moderate: 'moderate', hard: 'hard'};
+const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+function _calTodayStr() { return '2026-10-19'; }
+let MODAL = null, TOASTS = [];
+function openModal(h) { MODAL = h; }
+function closeModal() { MODAL = null; }
+function showToast(m) { TOASTS.push(m); }
+async function loadCalendar() {}
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_w4_l8_qx_h4_qx_m9_the_dialog_posts_its_rider_asks_before_replacing_and_keeps_the_news():
+    _run(_STUBS + _js("_ownDayLabel", "_ownResultText", "_ownResultView", "_ownPost",
+                      "_ownReplaceConfirmed") + """
+let BODIES = [], ANSWERS = [], VERDICTS = 0;
+function loadReadinessComposite() { VERDICTS++; }   // the readiness card re-reads today
+globalThis.window = {_ownDlg: {profile_id: 'rider-a'}};
+const STATUS = {textContent: '', innerHTML: ''};
+globalThis.document = {getElementById: (id) => id === 'own-status' ? STATUS : null};
+globalThis.fetch = async (url, o) => { BODIES.push(JSON.parse(o.body)); const a = ANSWERS.shift();
+  return {status: a[0], ok: a[0] === 200, json: async () => a[1]}; };
+(async () => {
+  ANSWERS.push([409, {ok: false, error: 'day_has_your_ride',
+                      refused: [{reason: 'day_has_your_ride', name: 'Sunday club ride', date: '2026-10-25',
+                                 text: 'There is already Sunday club ride on Sun 25 Oct.'}]}]);
+  await _ownPost({move: [{from: '2026-10-24', to: '2026-10-25'}]}, STATUS);
+  if (BODIES[0].profile_id !== 'rider-a') throw new Error('no profile id: ' + JSON.stringify(BODIES[0]));
+  if (VERDICTS !== 0) throw new Error('verdict re-read after a refused save');
+  if (!/Replace it\\?/.test(STATUS.innerHTML) || !/Sunday club ride/.test(STATUS.innerHTML)) throw new Error(STATUS.innerHTML);
+  ANSWERS.push([200, {ok: true, applied: [{action: 'move'}], shortened: [{text: 'Thu 22 Oct: your endurance ride is now 30 min (was 1 h 30) to keep the week\\'s load.'}]}]);
+  await _ownReplaceConfirmed();
+  if (!BODIES[1].move[0].replace) throw new Error('no replace: ' + JSON.stringify(BODIES[1]));
+  if (!MODAL || !/your endurance ride is now 30 min/.test(MODAL) || !/Close/.test(MODAL)) throw new Error('news not kept: ' + MODAL);
+  if (VERDICTS !== 1) throw new Error('the readiness verdict was not refreshed after the save');
+  console.log('OK');
+})().catch(e => { console.error(e); process.exit(1); });
+""")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_w4_qx_m8_l9_qx_m4_the_dialog_for_a_past_ride_and_a_pending_put_back():
+    _run(_STUBS + _js("_ownDayLabel", "_ownLen", "_ownCalDay", "_ownIntensitySelect",
+                      "openOwnRideDialog") + """
+let _profileData = {active: 'rider-a'};
+const DAYS = [
+  {date: '2026-10-16', planned: {own: {name: 'Thursday group ride', intensity: 'moderate', source: 'manual'}, duration_min: 90, tss: 98}, actual: null},
+  {date: '2026-10-24', planned: {own: {name: 'Club ride', intensity: 'hard', source: 'manual', put_back_from: '2026-10-23'}, duration_min: 180, tss: 240}, actual: null},
+];
+globalThis.window = {_calData: {weeks: [{days: DAYS}]}};
+globalThis.fetch = async () => ({json: async () => ({sync_enabled: true, connected: true, horizon_days: 14,
+  own_moved: [{day: '2026-10-16', icu_day: '2026-10-20'}, {day: '2026-10-24', icu_day: '2026-10-23'}]})});
+(async () => {
+  await openOwnRideDialog('2026-10-16');
+  if (/button class="btn btn-sm/.test(MODAL) || /type="date"/.test(MODAL) || !/Not ridden/.test(MODAL)) throw new Error('past: ' + MODAL);
+  await openOwnRideDialog('2026-10-24');
+  if (!/Going back to Sat 24 Oct at the next calendar update/.test(MODAL)) throw new Error('pending: ' + MODAL);
+  if (!/disabled style="opacity:0.5;" onclick="ownRidePutBack/.test(MODAL)) throw new Error('put back not greyed: ' + MODAL);
+  if (!/Move it in my plan too/.test(MODAL)) throw new Error('follow gone: ' + MODAL);
+  if (window._ownDlg.profile_id !== 'rider-a') throw new Error('no rider');
+  console.log('OK');
+})().catch(e => { console.error(e); process.exit(1); });
+""")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_w4_qx_h2_an_unchanged_load_is_not_sent_back():
+    _run(_js("_ownFormItem") + """
+const V = {'own-name': 'Club ride', 'own-h': '3', 'own-m': '0', 'own-int': 'hard', 'own-load': '190'};
+globalThis.document = {getElementById: (id) => (id in V ? {value: V[id]} : null)};
+globalThis.window = {_ownDlg: {own: {name: 'Club ride', load_from: 'icu'}, load0: '190'}};
+let it = _ownFormItem();
+if ('load' in it) throw new Error('unchanged load sent: ' + JSON.stringify(it));
+V['own-load'] = '200';
+it = _ownFormItem();
+if (it.load !== 200) throw new Error('changed load not sent: ' + JSON.stringify(it));
+console.log('OK');
+""")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_w4_qx_h1_the_grid_card_and_click_treat_own_rides_and_races_as_what_they_are():
+    src = DASHBOARD.read_text(encoding="utf-8")
+    grid = src[src.index("const cardState = s.card_state || (s.own ? 'own'"):]
+    assert "own: s.own || null, is_race: !!s.is_race" in grid[:3000]
+    assert "cardState !== 'own' && cardState !== 'race'" in grid[:6000]
+    _run(_STUBS + _js("calCardTitle", "calCardTitleWithStructure", "calStructureSuffix",
+                      "openOverviewDay", "openPlanDayWorkout") + """
+const CAL_CONTENT_LABEL = {}, CAL_SESSION_LABEL = {recovery: 'RECOVERY'};
+const race = calCardTitleWithStructure({is_race: true, race: {priority: 'A', name: 'Gran Fondo'}, session_type: 'recovery', zwo_file: ''});
+if (race !== 'A race: Gran Fondo') throw new Error(race);
+let opened = null, workoutDay = null;
+function openOwnRideDialog(d) { opened = d; }
+function calContentMatches() { return true; }
+function calOpenDay() {}
+function openDayWorkout(i) { workoutDay = window._weekPlanSessions[i].day; }
+globalThis.window = {_calData: {weeks: []}, _planData: {weeks: [{start: '2026-10-20', sessions: [
+  {day: '2026-10-21', own: {name: 'Wednesday chaingang'}, session_type: 'sweetspot'},
+  {day: '2026-10-22', session_type: 'z2'}]}]}};
+openOverviewDay(0, 2, '2026-10-21');
+if (opened !== '2026-10-21') throw new Error('own dialog not opened');
+openOverviewDay(0, 3, '2026-10-22');          // the Thursday column of a Tuesday week
+if (workoutDay !== '2026-10-22') throw new Error('wrong day: ' + workoutDay);
+console.log('OK');
+""")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_w4_qx_m3_l5_a_moved_ride_is_marked_and_lost_rides_are_said():
+    _run(_STUBS + _js("_ownDayLabel", "_ownMovedLine", "_ownLostNotice") + """
+globalThis.window = {_ownMoved: {'2026-10-24': '2026-10-23'}};
+const m = _ownMovedLine('2026-10-24');
+if (m !== 'moved in intervals.icu to Fri 23 Oct: open it to choose') throw new Error(m);
+if (_ownMovedLine('2026-10-25') !== '') throw new Error('marked a day not moved');
+const lines = _ownLostNotice({own_lost: ['Your ride Far ride on Thu 3 Dec could not come along into the new plan: That day is not in your plan.']});
+if (lines.length !== 1 || !/Far ride/.test(TOASTS[0])) throw new Error('not said');
+console.log('OK');
+""")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_w4_qx_l9_apply_rest_day_keeps_its_label_after_a_refusal():
+    _run(_STUBS + _js("applyWeekAutoAdjust") + """
+const BTN = {disabled: false, textContent: '🛏 Apply rest day'};
+const ST = {textContent: '', innerHTML: ''};
+globalThis.window = {_readinessSeverity: 'rest'};
+globalThis.document = {getElementById: (id) => id === 'apply-week-tier-down-btn' ? BTN : (id === 'apply-week-tier-down-status' ? ST : null)};
+globalThis.fetch = async () => ({ok: false, status: 400, json: async () => ({error: 'Tue 20 Oct is your own ride: click it in the calendar to change or remove it.'})});
+(async () => {
+  await applyWeekAutoAdjust();
+  if (BTN.textContent !== '🛏 Apply rest day') throw new Error('label: ' + BTN.textContent);
+  console.log('OK');
+})().catch(e => { console.error(e); process.exit(1); });
+""")

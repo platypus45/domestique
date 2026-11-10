@@ -324,7 +324,8 @@ async function loadCalendar() {}
 def test_w4_l8_qx_h4_qx_m9_the_dialog_posts_its_rider_asks_before_replacing_and_keeps_the_news():
     _run(_STUBS + _js("_ownDayLabel", "_ownResultText", "_ownResultView", "_ownPost",
                       "_ownReplaceConfirmed") + """
-let BODIES = [], ANSWERS = [];
+let BODIES = [], ANSWERS = [], VERDICTS = 0;
+function loadReadinessComposite() { VERDICTS++; }   // the readiness card re-reads today
 globalThis.window = {_ownDlg: {profile_id: 'rider-a'}};
 const STATUS = {textContent: '', innerHTML: ''};
 globalThis.document = {getElementById: (id) => id === 'own-status' ? STATUS : null};
@@ -336,11 +337,13 @@ globalThis.fetch = async (url, o) => { BODIES.push(JSON.parse(o.body)); const a 
                                  text: 'There is already Sunday club ride on Sun 25 Oct.'}]}]);
   await _ownPost({move: [{from: '2026-10-24', to: '2026-10-25'}]}, STATUS);
   if (BODIES[0].profile_id !== 'rider-a') throw new Error('no profile id: ' + JSON.stringify(BODIES[0]));
+  if (VERDICTS !== 0) throw new Error('verdict re-read after a refused save');
   if (!/Replace it\\?/.test(STATUS.innerHTML) || !/Sunday club ride/.test(STATUS.innerHTML)) throw new Error(STATUS.innerHTML);
   ANSWERS.push([200, {ok: true, applied: [{action: 'move'}], shortened: [{text: 'Thu 22 Oct: your endurance ride is now 30 min (was 1 h 30) to keep the week\\'s load.'}]}]);
   await _ownReplaceConfirmed();
   if (!BODIES[1].move[0].replace) throw new Error('no replace: ' + JSON.stringify(BODIES[1]));
   if (!MODAL || !/your endurance ride is now 30 min/.test(MODAL) || !/Close/.test(MODAL)) throw new Error('news not kept: ' + MODAL);
+  if (VERDICTS !== 1) throw new Error('the readiness verdict was not refreshed after the save');
   console.log('OK');
 })().catch(e => { console.error(e); process.exit(1); });
 """)

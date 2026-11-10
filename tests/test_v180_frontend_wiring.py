@@ -41,7 +41,9 @@ def test_dashboard_has_source_pill_class():
 
 def test_dashboard_has_source_pill_labels():
     # Labels renamed in the unified card (same three sources).
-    assert "From your leg-check" in _DASH      # hooper
+    # Restated for 3.14.0 (QA wording): the morning card says "check-in"
+    # throughout, so the pill does too.
+    assert "From your check-in" in _DASH       # hooper
     assert "From HRV + form" in _DASH           # tsb_hrv_auto
     assert "Limited data" in _DASH              # insufficient
 

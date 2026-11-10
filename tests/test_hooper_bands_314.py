@@ -301,7 +301,8 @@ def test_rb14_an_all_normal_check_in_leaves_readiness_where_no_check_in_does(
 def test_rb15_soreness_at_sore_still_forces_recovery_in_both_modes():
     sore = _row(DAY, soreness=TIRED)
     adj, reason = _adjust(sore, [])
-    assert adj.session_type == "recovery" and "G5" in reason
+    # 3.14.0 wave 4 (QX-M6): the recovery gate speaks plainly now.
+    assert adj.session_type == "recovery" and "Sore legs this morning" in reason
     chronic_sore = [_row(d, soreness=TIRED) for d in _days_before(rc.HOOPER_BASELINE_DAYS)]
     assert _band(sore, chronic_sore)["mode"] == "personal"
     adj, reason = _adjust(sore, chronic_sore)

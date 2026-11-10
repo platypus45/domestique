@@ -1190,6 +1190,9 @@ _ICU_CHECKIN = {
 _ICU_INJURY_CODES = (1, 2, 3, 4)
 _ICU_INJURY_SORE_FROM = 3
 _FORM_SORE = _FORM_STORE[4]
+# intervals.icu's injury labels, the one table every reader uses (the card's
+# extras line, the readiness verdict's line, the recovery gate's wording).
+ICU_INJURY_LABELS = {1: "None", 2: "Niggle", 3: "Poor", 4: "Injured"}
 
 
 def _icu_code(v):
@@ -1227,6 +1230,32 @@ def icu_check_in(record: dict) -> dict:
     if injury in _ICU_INJURY_CODES and injury >= _ICU_INJURY_SORE_FROM:
         out["soreness"] = max(out.get("soreness", 0), _FORM_SORE)
     return out if out.keys() & {"soreness", "fatigue", "stress"} else {}
+
+
+def icu_soreness_from_injury(record: dict) -> bool:
+    """True when the day's soreness reaches "Sore" only because of the injury
+    logged in intervals.icu (the card names it "soreness (from your injury)")."""
+    if not isinstance(record, dict):
+        return False
+    injury = _icu_code(record.get("injury"))
+    if not (injury in _ICU_INJURY_CODES and injury >= _ICU_INJURY_SORE_FROM):
+        return False
+    rest = {k: v for k, v in record.items() if k != "injury"}
+    return (icu_check_in(rest) or {}).get("soreness", 0) < _FORM_SORE
+
+
+def icu_injury_label(dt: str) -> str | None:
+    """The injury the rider logged in intervals.icu on ``dt`` when it counts as
+    sore legs ("Poor" / "Injured"), else None. Reads the stored wellness day."""
+    row = get_db().execute("SELECT raw_json FROM wellness WHERE date = ?", (dt,)).fetchone()
+    try:
+        record = json.loads(row[0]) if row and row[0] else {}
+    except (TypeError, ValueError):
+        return None
+    injury = _icu_code((record or {}).get("injury")) if isinstance(record, dict) else None
+    if injury in _ICU_INJURY_CODES and injury >= _ICU_INJURY_SORE_FROM:
+        return ICU_INJURY_LABELS[injury]
+    return None
 
 
 def _daily_log_has_icu_fields(conn) -> bool:

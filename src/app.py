@@ -3822,6 +3822,59 @@ def _local_sleep_metrics(days: int = 14) -> dict:
     return compute_sleep_metrics_from_wellness(list(reversed(records)))
 
 
+def _today_plan_rows() -> list:
+    """Today's rows in the stored plan as stored ([] without a plan or a row;
+    a dismissed session is no session)."""
+    try:
+        plan = _read_stored_plan() or {}
+        today = clock.today().isoformat()
+        return [s for w in (plan.get("weeks") or []) if isinstance(w, dict)
+                for s in (w.get("sessions") or [])
+                if isinstance(s, dict) and s.get("day") == today
+                and s.get("status") != "dismissed"]
+    except Exception:  # noqa: BLE001 — no plan: no own ride, no session
+        return []
+
+
+def _injury_note(injury, today_log: dict, rows: list, readiness: dict,
+                 reverted: bool) -> "str | None":
+    """3.14.0 (owner decision M3; QA QX-M1): the verdict's own line about an
+    injury logged in intervals.icu today, so it never reads "Ready to train"
+    without one. Worded by what the planner does with today, through the same
+    guards: an own ride and a race are never rewritten, a rest day has nothing
+    to ease, the rider's "Keep original" stands, and the planner itself says
+    what an injury counted as sore legs does to today's session."""
+    if injury not in ("Niggle", "Poor", "Injured"):
+        return None
+    lead = f"You logged an injury in intervals.icu today ({injury})"
+    counted = (injury in ("Poor", "Injured")
+               and "soreness" in str(today_log.get("icu_fields") or "").split(","))
+    if not counted:
+        return f"{lead}. Your plan is not changed for it; ease off if it hurts."
+    lead += ". It counts as sore legs"
+    if any(s.get("own") for s in rows):
+        return (f"{lead}. Your own ride stays as you planned it: ride it easy, "
+                "or skip it if it hurts.")
+    if any(s.get("is_race") for s in rows):
+        return f"{lead}. Your race stays as planned: start only if it does not hurt."
+    row = next((s for s in rows if (s.get("session_type") or "rest") != "rest"), None)
+    if row is None:
+        return f"{lead}. Today is a rest day: give it time."
+    if reverted:
+        return f"{lead}, but you chose to keep today's session as planned."
+    planned = tp.PlannedSession(
+        day=clock.today(), day_name="", session_type=row.get("session_type"),
+        duration_min=int(row.get("duration_min") or 0),
+        tss_estimate=float(row.get("tss_estimate") or 0), description="")
+    adjusted, _ = tp.adjust_today_session(planned, readiness, rides_recent=[],
+                                          daily_log_today=today_log)
+    if adjusted.session_type == "recovery" and planned.session_type != "recovery":
+        return f"{lead}, so today's session becomes a short recovery ride."
+    if adjusted.session_type != planned.session_type:
+        return f"{lead}; today's session is eased to an easy ride."
+    return f"{lead}. Today's session is already an easy ride."
+
+
 @app.get("/api/readiness")
 def api_readiness(subjective: float = Query(None)):
     training = cached("training", get_today_metrics)
@@ -3913,18 +3966,16 @@ def api_readiness(subjective: float = Query(None)):
     # verdict never reads "Ready to train" without a plain line about it).
     checkin_imported = False
     injury_note = None
+    # 3.14.0 (QA-INT page-load race): whether today is the rider's own ride,
+    # from the server, so the verdict never offers "Ease today's session" on
+    # it however the page's two loads race.
+    today_rows = _today_plan_rows()
+    today_is_own = any(s.get("own") for s in today_rows)
     try:
         _today_log = db.get_daily_log_today() or {}
         checkin_imported = bool(_today_log.get("icu_fields"))
-        _injury = _icu_extras(_icu_wellness_today()).get("injury")
-        if _injury in ("Poor", "Injured") and "soreness" in str(
-                _today_log.get("icu_fields") or "").split(","):
-            injury_note = (f"You logged an injury in intervals.icu today ({_injury}). "
-                           "It counts as sore legs, so today's session becomes "
-                           "a recovery ride.")
-        elif _injury in ("Niggle", "Poor", "Injured"):
-            injury_note = (f"You logged an injury in intervals.icu today ({_injury}). "
-                           "Your plan is not changed for it; ease off if it hurts.")
+        injury_note = _injury_note(_icu_extras(_icu_wellness_today()).get("injury"),
+                                   _today_log, today_rows, r, reverted)
     except Exception:  # noqa: BLE001 — the verdict renders without the line
         pass
     return {
@@ -3938,6 +3989,12 @@ def api_readiness(subjective: float = Query(None)):
         "severity_reasons": severity_reasons,
         "checkin_imported": checkin_imported,
         "injury_note": injury_note,
+        "today_is_own": today_is_own,
+        # O9 (3.14.0, owner): False when readiness could not be computed (too
+        # few of HRV, form, sleep, resting heart rate). Any score above is
+        # then a stand-in, not a reading: the verdict says there is not
+        # enough data, and no readiness rule changes today's session.
+        "readiness_data": r.get("status") != "INSUFFICIENT_DATA",
         "training": merged_load,
         "sleep": {
             "sleep_h": sleep.get("sleep_h"), "sleep_score": sleep.get("sleep_score"),
@@ -8998,6 +9055,19 @@ def update_settings(request_body: dict):
     if weight_follow is True:
         athlete_updates.pop("weight_kg", None)
         updates.pop("ATHLETE_WEIGHT_KG", None)
+    # 3.14.0 (QA L7): the weight's range from the one table, checked before
+    # anything is saved or logged, like LTHR and max HR below.
+    _w_lo, _w_hi = SETUP_LIMITS["weight"]
+    if "weight_kg" in athlete_updates and not (
+            _w_lo <= athlete_updates["weight_kg"] <= _w_hi):
+        raise HTTPException(400, f"weight {athlete_updates['weight_kg']} out of range "
+                                 f"[{_w_lo}, {_w_hi}]")
+    # 3.14.0 (QA QX-M7): every Settings save sent the weight, so an unrelated
+    # save (an FTP change) logged the typed weight again as today's history
+    # row, over the scale readings. Only a weight that changed is logged.
+    _weight_before = pm._athlete.get("weight_kg")
+    _weight_unchanged = ("weight_kg" in athlete_updates and _weight_before is not None
+                         and abs(float(_weight_before) - athlete_updates["weight_kg"]) < 0.05)
 
     # W2d provenance: a settings-form LTHR write is MANUAL — it blocks the ICU
     # mirror (W3) from clobbering a tested value, and the UI shows source+date.
@@ -9128,8 +9198,10 @@ def update_settings(request_body: dict):
             except Exception:
                 pass
         clear_cache()
-        # Auto-log metrics to history
-        db.log_metrics_from_settings(updates)
+        # Auto-log metrics to history (a weight only when it changed, QX-M7)
+        db.log_metrics_from_settings(
+            {k: v for k, v in updates.items()
+             if not (k == "ATHLETE_WEIGHT_KG" and _weight_unchanged)})
 
     # 3.14.0 W2: the tick goes through the one hand-back writer (grill H3: the
     # fact table refuses intervals.icu over a typed weight, so the box never
@@ -9145,7 +9217,19 @@ def update_settings(request_body: dict):
         clear_cache()
     elif (weight_follow is False and "weight_kg" not in athlete_updates
             and pm._athlete.get("weight_source") == "icu"):
-        pm._set_fact("weight", pm.weight_kg, "manual")
+        # 3.14.0 (QA L7): only a weight that came from a reading becomes the
+        # rider's. A tick that never saw one leaves the stored number as it
+        # was (the seeded 70 kg of a new profile must not turn into a typed
+        # weight), so the source goes back to none.
+        try:
+            _had_reading = db.icu_weight_recent() is not None
+        except Exception:  # noqa: BLE001
+            _had_reading = False
+        if _had_reading and pm._athlete.get("weight_kg") is not None:
+            pm._set_fact("weight", pm._athlete["weight_kg"], "manual")
+        else:
+            pm._athlete.pop("weight_source", None)
+            pm._write_json(pm.active_dir / "athlete.json", pm._athlete)
         clear_cache()
 
     return {"ok": True, "updated": updates, "settings": api_settings()}
@@ -9377,7 +9461,7 @@ async def api_metrics_log(request: Request):
 _ICU_EXTRA_LABELS = {
     "mood":       {1: "Great", 2: "Good", 3: "OK", 4: "Grumpy"},
     "motivation": {1: "Extreme", 2: "High", 3: "Average", 4: "Low"},
-    "injury":     {1: "None", 2: "Niggle", 3: "Poor", 4: "Injured"},
+    "injury":     db.ICU_INJURY_LABELS,
 }
 
 
@@ -9442,8 +9526,15 @@ def api_daily_log(days: int = Query(14)):
         sources.get("sleep_quality") == "default"
         and rec.get("sleepQuality") is not None
         and _wv("sleepScore", rec.get("sleepScore")) is not None)
+    # 3.14.0 (QA QX-L4, QX-L13): the card names a soreness that came from
+    # the injury, and says when intervals.icu answered today but the day is
+    # the rider's own check-in (those answers are then not used).
     return {"today": today, "history": history, "sources": sources,
             "icu_extras": _icu_extras(rec), "icu_sleep_from_watch": from_watch,
+            "icu_soreness_from_injury": bool(
+                sources.get("soreness") == "intervals.icu"
+                and db.icu_soreness_from_injury(rec)),
+            "icu_answers_today": bool(db.icu_check_in(rec)),
             "band": band}
 
 
@@ -17893,8 +17984,19 @@ def _sitko_advisory(best_20min_w: int) -> "dict | None":
         # a fabricated 70 kg is exactly what this gate exists to prevent.
         # Suppress on the default weight unconditionally (a genuine 70.0 kg
         # rider loses an advisory line, never a number).
-        if weight <= 0 or (abs(weight - 70.0) < 1e-9
-                           and not pm._athlete.get("weight_source")):
+        # 3.14.0 (QA L7): 70.0 is a real weight only when the rider typed it,
+        # or when it follows an intervals.icu reading. Ticking "Use my
+        # intervals.icu weight" with no reading in 30 days stamps the source
+        # but keeps the seeded number, which must stay suppressed.
+        _src = pm._athlete.get("weight_source")
+        if weight > 0 and abs(weight - 70.0) < 1e-9 and _src == "icu":
+            try:
+                _real = db.icu_weight_recent() is not None
+            except Exception:  # noqa: BLE001
+                _real = False
+        else:
+            _real = _src == "manual"
+        if weight <= 0 or (abs(weight - 70.0) < 1e-9 and not _real):
             return None
         wkg = best_20min_w / weight
         if wkg >= 4.7:

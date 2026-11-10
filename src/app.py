@@ -1611,12 +1611,14 @@ def setup_save(body: dict):
 
         # Athlete numbers via the shared settings write path (provenance
         # stamping, ledger, config mirror). AC5f: forward the wizard's
-        # lthr_source_hint (set ONLY for ICU-prefilled, unedited values).
+        # lthr_source_hint and weight_source_hint (set ONLY for ICU-prefilled,
+        # unedited values).
         settings_payload = dict(profile)
         if target_mode is not None:
             settings_payload["target_mode"] = target_mode
-        if body.get("lthr_source_hint"):
-            settings_payload["lthr_source_hint"] = body["lthr_source_hint"]
+        for _hint_key in ("lthr_source_hint", "weight_source_hint"):
+            if body.get(_hint_key):
+                settings_payload[_hint_key] = body[_hint_key]
         if settings_payload:
             update_settings(settings_payload)
         if extras:
@@ -8773,6 +8775,17 @@ def api_icu_athlete_numbers():
             out["ok"] = True
     except Exception:
         _log.debug("athlete-numbers: /athlete/0 fetch failed", exc_info=True)
+    # One intervals.icu weight (3.14.0 grill M5): the newest scale reading of
+    # the follow window, else the athlete setting above. A weight the wizard
+    # fills in keeps following intervals.icu, so the first sync must land on
+    # the same number instead of moving the weight the rider just confirmed.
+    try:
+        _w = db.icu_weight_from_records(fetch_wellness(db.ICU_WEIGHT_RECENT_DAYS))
+        if _w:
+            out["weight"] = _w[1]
+            out["ok"] = True
+    except Exception:
+        _log.debug("athlete-numbers: wellness weight fetch failed", exc_info=True)
     # eFTP fallback when no configured FTP on the account.
     if not out["ftp"]:
         try:
@@ -9081,6 +9094,16 @@ def update_settings(request_body: dict):
     _weight_before = pm._athlete.get("weight_kg")
     _weight_unchanged = ("weight_kg" in athlete_updates and _weight_before is not None
                          and abs(float(_weight_before) - athlete_updates["weight_kg"]) < 0.05)
+    # Owner decision 2026-11-10: a weight the setup wizard filled in from
+    # intervals.icu, and the rider did not edit, keeps following intervals.icu
+    # (weight_source_hint="icu", sent like lthr_source_hint). An explicit tick
+    # or untick in the same body wins. It is intervals.icu's number, not the
+    # rider's, so it is not logged as today's "settings" row either: that row
+    # would keep today's scale reading out of the history (W1 never replaces
+    # a settings row), and the follow would then land on an older reading.
+    _weight_from_icu = (
+        weight_follow is None and "weight_kg" in athlete_updates
+        and str(request_body.get("weight_source_hint") or "").strip().lower() == "icu")
 
     # W2d provenance: a settings-form LTHR write is MANUAL — it blocks the ICU
     # mirror (W3) from clobbering a tested value, and the UI shows source+date.
@@ -9211,10 +9234,12 @@ def update_settings(request_body: dict):
             except Exception:
                 pass
         clear_cache()
-        # Auto-log metrics to history (a weight only when it changed, QX-M7)
+        # Auto-log metrics to history (a weight only when it changed, QX-M7,
+        # and never one that came from intervals.icu)
         db.log_metrics_from_settings(
             {k: v for k, v in updates.items()
-             if not (k == "ATHLETE_WEIGHT_KG" and _weight_unchanged)})
+             if not (k == "ATHLETE_WEIGHT_KG"
+                     and (_weight_unchanged or _weight_from_icu))})
 
     # 3.14.0 W2: the tick goes through the one hand-back writer (grill H3: the
     # fact table refuses intervals.icu over a typed weight, so the box never
@@ -9227,6 +9252,12 @@ def update_settings(request_body: dict):
         except Exception:  # noqa: BLE001 — no store yet: source moves only
             _newest = None
         pm.release_fact("weight", "icu", _newest[1] if _newest else None)
+        clear_cache()
+    elif _weight_from_icu:
+        # save_athlete has just stamped the filled-in weight "manual"; hand it
+        # to intervals.icu with the same number through the one hand-back
+        # writer.
+        pm.release_fact("weight", "icu", athlete_updates["weight_kg"])
         clear_cache()
     elif (weight_follow is False and "weight_kg" not in athlete_updates
             and pm._athlete.get("weight_source") == "icu"):

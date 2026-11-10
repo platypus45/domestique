@@ -544,6 +544,9 @@ async function autofillFromIcu() {
     }
     st.textContent = got.length
       ? 'Filled from intervals.icu: ' + got.join(', ') + ' — edit anything that looks off.'
+        + (got.includes('weight')
+           ? ' Your weight will keep following intervals.icu; type your own to keep it fixed.'
+           : '')
       : 'Nothing to fill yet — your first sync runs after setup.';
     refreshValidation();  // programmatic fill fires no input events
     persistState();
@@ -624,6 +627,9 @@ async function saveAll() {
   // AC5f: ICU-prefilled and unedited → provenance honestly reads "icu";
   // a typed LTHR still stamps manual.
   if ('lthr' in payload && _icuOrigin.has('s-lthr')) payload.lthr_source_hint = 'icu';
+  // Same for the weight: filled in from intervals.icu and not edited, it keeps
+  // following intervals.icu (owner decision 2026-11-10); a typed one is fixed.
+  if ('weight' in payload && _icuOrigin.has('s-weight')) payload.weight_source_hint = 'icu';
   if (_targetModeTouched) payload.target_mode = _targetMode;
 
   if (_touched.has('s-age')) {

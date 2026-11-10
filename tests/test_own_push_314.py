@@ -234,32 +234,37 @@ def test_a_drag_of_our_own_ride_in_intervals_icu_is_held_and_reported(env):
         r = _run(env)
         posted, deleted = _touched(env, mark)
         assert own not in posted | deleted and env.fk.where(own) == [D["sun"]]
-        assert r["held"] == 1
+        assert r["held"] == r["held_rides"] == 1
         assert r["own_moved"] == [{"day": D["sat"], "icu_day": D["sun"]}]
     # The ride's dialog reads it from the status after the rider's Push.
     assert env.client.post("/api/icu/push", json={}).json()["ok"]
     status = env.client.get("/api/icu/push").json()
     assert status["own_moved"] == [{"day": D["sat"], "icu_day": D["sun"]}]
-    # Removing the ride in Domestique never deletes the event the rider moved.
+    # O8: removing the ride in Domestique removes its event, wherever the
+    # rider put it (restated in Wave 4: it used to stay held for good).
     ss[_at(ss, D["sat"])] = _rest(D["sat"])
     _write_plan(ss)
     mark = len(env.fk.calls)
-    _run(env)
+    r = _run(env)
     _posted, deleted = _touched(env, mark)
-    assert own not in deleted and env.fk.where(own) == [D["sun"]]
+    assert own in deleted and env.fk.where(own) == []
+    assert r["held"] == 0 and r["own_moved"] == []
 
 
-def test_a_ride_since_linked_to_the_riders_own_event_is_not_reported_as_moved(env):
+def test_a_ride_since_linked_to_the_riders_own_event_leaves_only_their_event(env):
     """Our event of the manual ride was moved, then the ride was linked to
-    the rider's intervals.icu event: that dialog shows the rider's event."""
+    the rider's intervals.icu event (M8): ours goes (O8), theirs stays."""
     ss = _with_own_saturday(env)
     _run(env)
     own = _own_id(env, D["sat"])
     env.fk.drag(own, D["sun"])
+    env.fk.events.append({"id": 900, "category": "WORKOUT", "type": "Ride",
+                          "name": "Club ride", "start_date_local": f"{D['sat']}T00:00:00"})
     ss[_at(ss, D["sat"])] = _own_row(D["sat"], source="icu", icu_event_id=900)
     _write_plan(ss)
     r = _run(env)
-    assert r["own_moved"] == [] and r["held"] == 1 and env.fk.where(own) == [D["sun"]]
+    assert r["own_moved"] == [] and r["held"] == 0 and env.fk.where(own) == []
+    assert any(e.get("id") == 900 for e in env.fk.events)
 
 
 def test_move_it_in_my_plan_too_replaces_the_old_event_once_the_new_one_is_out(env):
@@ -299,8 +304,10 @@ def test_a_held_ride_moved_in_domestique_to_a_third_day_leaves_one_event(env):
     assert _counts(_run(env)) == (0, 0, 0)
 
 
-def test_two_rides_moved_from_one_day_keep_the_hold(env):
-    """Which ride the event was is a guess then: never delete on a guess."""
+def test_two_rides_from_one_day_replace_the_old_event_once_both_are_out(env, monkeypatch):
+    """Either ride may be the event's: nothing is guessed. While one of them
+    cannot be sent the old event stays; once both are out it goes (restated
+    in Wave 4: it used to stay held for good)."""
     ss = _with_own_saturday(env)
     _run(env)
     old = _own_id(env, D["sat"])
@@ -309,10 +316,22 @@ def test_two_rides_moved_from_one_day_keep_the_hold(env):
     ss[_at(ss, D["thu"])] = _own_row(D["thu"], name="Ride B", moved_from=D["sat"])
     ss[_at(ss, D["sun"])] = _own_row(D["sun"], name="Ride A", moved_from=D["sat"])
     _write_plan(ss)
+    rejecting = RejectsFileless(events=env.fk.events)
+    rejecting._next_id = env.fk._next_id
+    monkeypatch.setattr(icp, "_http", rejecting)
+    icp.reconcile()
+    assert rejecting.where(old) == [D["fri"]]            # neither ride is out yet
+    env.fk = WindowedFakeICU(events=rejecting.events)
+    env.fk._next_id = rejecting._next_id
+    monkeypatch.setattr(icp, "_http", env.fk)
     mark = len(env.fk.calls)
-    r = _run(env)
+    _run(env)
     _posted, deleted = _touched(env, mark)
-    assert old not in deleted and env.fk.where(old) == [D["fri"]] and r["held"] == 1
+    assert old in deleted
+    own_events = sorted((e["external_id"], e["start_date_local"][:10]) for e in env.fk.events
+                        if str(e.get("external_id") or "").endswith(":own"))
+    assert own_events == sorted([(_own_id(env, D["thu"]), D["thu"]),
+                                 (_own_id(env, D["sun"]), D["sun"])])
 
 
 def test_a_second_ride_on_the_old_day_is_not_mistaken_for_an_agreed_move(env):
@@ -493,3 +512,183 @@ def test_send_refuses_an_own_ride_day(env):
         "source": "planner", "zwo_file": "vo2.zwo", "date": D["sat"]}).json()
     assert r == {"error": "own_ride_day"}
     assert not [c for c in env.fk.calls[mark:] if c[0] == "POST"]
+
+
+# ═══ Wave 4 (QA): stale moved_from, O8, failed uploads, the moved report ════
+
+def test_an_earlier_ride_from_the_same_day_never_doubles_the_followed_ride(env):
+    """QA S1 / M3: ride A left Saturday long ago (it is out on Sunday under
+    its own id and keeps moved_from Saturday; the rider has since moved that
+    event to Thursday, so A is not in this run's upsert). Ride B was added
+    on Saturday, pushed, dragged to Friday and followed there in Domestique:
+    one event for B, on Friday."""
+    ss = _week(mon="sweet.zwo")
+    ss[_at(ss, D["sun"])] = _own_row(D["sun"], name="Ride A", moved_from=D["sat"])
+    ss[_at(ss, D["sat"])] = _own_row(D["sat"], name="Ride B", minutes=60, tss=50.0)
+    _seed(env, ss)
+    a, b_old, b_new = _own_id(env, D["sun"]), _own_id(env, D["sat"]), _own_id(env, D["fri"])
+    env.fk.drag(a, D["thu"])
+    env.fk.drag(b_old, D["fri"])
+    ss[_at(ss, D["sat"])] = _rest(D["sat"])
+    ss[_at(ss, D["fri"])] = _own_row(D["fri"], name="Ride B", minutes=60, tss=50.0,
+                                     moved_from=D["sat"])
+    _write_plan(ss)
+    _run(env)
+    on_fri = sorted(e["external_id"] for e in env.fk.events
+                    if e["start_date_local"][:10] == D["fri"])
+    assert on_fri == [b_new]
+    assert env.fk.where(a) == [D["thu"]]                 # A's move stays held
+
+
+def test_a_removed_ride_never_touches_a_copy_or_the_riders_own_events(env):
+    """O8 removes only Domestique's own event: a copy the rider made of it
+    (two events, one id) and the rider's own events stay."""
+    ss = _with_own_saturday(env)
+    _run(env)
+    own = _own_id(env, D["sat"])
+    env.fk.copy(own, D["sun"])                           # the rider repeats it
+    env.fk.events.append({"id": 901, "category": "WORKOUT", "type": "Ride",
+                          "name": "Sunday spin", "start_date_local": f"{D['sun']}T00:00:00"})
+    ss[_at(ss, D["sat"])] = _rest(D["sat"])
+    _write_plan(ss)
+    mark = len(env.fk.calls)
+    _run(env)
+    _posted, deleted = _touched(env, mark)
+    assert own not in deleted and env.fk.where(own) == [D["sat"], D["sun"]]
+    assert any(e.get("id") == 901 for e in env.fk.events)
+
+
+def test_a_removed_ride_whose_event_was_moved_into_the_past_stays(env, freeze_clock):
+    ss = _week(mon="sweet.zwo")
+    ss[_at(ss, D["thu"])] = _own_row(D["thu"])
+    _seed(env, ss)
+    own = _own_id(env, D["thu"])
+    env.fk.drag(own, D["mon"])                           # ridden early, today
+    freeze_clock(date.fromisoformat(D["tue"]))
+    ss[_at(ss, D["thu"])] = _rest(D["thu"])
+    _write_plan(ss)
+    mark = len(env.fk.calls)
+    _run(env)
+    _posted, deleted = _touched(env, mark)
+    assert own not in deleted and env.fk.where(own) == [D["mon"]]
+
+
+@pytest.mark.parametrize("status,error", [(0, "network"), (503, "http_503")])
+def test_a_ride_that_could_not_be_sent_is_an_error_and_nothing_is_swept(env, monkeypatch,
+                                                                         status, error):
+    """L4: no answer, or a server error, on the rides' POST is not
+    intervals.icu refusing the ride: the run says so, as for the workouts,
+    and the workout the ride replaced stays until the next run."""
+    _with_own_saturday(env)
+    fk = env.fk
+
+    def http(method, path, payload=None, timeout=30.0):
+        if method == "POST" and any("file_contents_base64" not in ev for ev in payload):
+            fk.calls.append((method, path, payload))
+            return status, b"gateway timeout"
+        return fk(method, path, payload, timeout)
+
+    monkeypatch.setattr(icp, "_http", http)
+    mark = len(fk.calls)
+    r = icp.reconcile()
+    assert r["error"] == error
+    assert not [s for s in r["skipped"] if s["reason"] == "own_rejected"]
+    assert not [c for c in fk.calls[mark:] if c[0] == "PUT"]
+    assert fk.where(_eid(env, D["sat"])) == [D["sat"]]
+
+
+def test_a_put_back_whose_upload_was_refused_is_still_reported_and_kept(env, monkeypatch):
+    """QA P1: the run released the hold, but intervals.icu refused the ride:
+    it is still where the rider moved it, so the run still reports it, the
+    note after the run keeps the put-back, and the next run puts it back."""
+    import app as app_module
+    monkeypatch.setattr(app_module, "_icu_push_last_result", None)
+    ss = _with_own_saturday(env)
+    _run(env)
+    own = _own_id(env, D["sat"])
+    env.fk.drag(own, D["sun"])
+    _run(env)
+    ss[_at(ss, D["sat"])] = _own_row(D["sat"], own_extra={
+        "put_back_from": D["sun"], "put_back_at": "2026-10-18T08:00:00"})
+    _write_plan(ss)
+    ok_fake = env.fk
+    rejecting = RejectsFileless(events=ok_fake.events)
+    rejecting._next_id = ok_fake._next_id
+    monkeypatch.setattr(icp, "_http", rejecting)
+    r = icp.reconcile()
+    assert {"day": D["sat"], "reason": "own_rejected"} in r["skipped"]
+    assert r["own_moved"] == [{"day": D["sat"], "icu_day": D["sun"]}]
+    app_module._icu_push_note_result(r)
+    sat = next(s for w in _plan()["weeks"] for s in w["sessions"] if s["day"] == D["sat"])
+    assert sat["own"]["put_back_from"] == D["sun"]
+    env.fk = WindowedFakeICU(events=rejecting.events)
+    env.fk._next_id = rejecting._next_id
+    monkeypatch.setattr(icp, "_http", env.fk)
+    r = _run(env)
+    assert env.fk.where(own) == [D["sat"]] and r["own_moved"] == []
+    app_module._icu_push_note_result(r)
+    sat = next(s for w in _plan()["weeks"] for s in w["sessions"] if s["day"] == D["sat"])
+    assert "put_back_from" not in sat["own"]
+
+
+def test_a_run_that_could_not_read_the_calendar_reports_no_moves(env):
+    """QA P1: a failed read says nothing about moved rides, so nothing can
+    take it for "every ride is back on its day"."""
+    _write_plan(_week(mon="sweet.zwo"))
+    env.fk.fail["GET"] = (0, b"timed out")
+    r = icp.reconcile()
+    assert r["error"] == "network" and "own_moved" not in r
+
+
+@pytest.mark.parametrize("how", ["sync_off", "disconnect"])
+def test_after_sync_off_or_disconnect_no_move_is_left_to_ask_about(env, how):
+    """QA-UX QX-M2: the sweep took every event of ours, the moved ride's
+    included: the ride's dialog must stop asking about it."""
+    _with_own_saturday(env)
+    _run(env)
+    env.fk.drag(_own_id(env, D["sat"]), D["sun"])
+    assert env.client.post("/api/icu/push", json={}).json()["ok"]
+    assert env.client.get("/api/icu/push").json()["own_moved"] == [
+        {"day": D["sat"], "icu_day": D["sun"]}]
+    if how == "sync_off":
+        assert env.client.post("/api/icu/push", json={"sync": False}).json()["ok"]
+    else:
+        assert env.client.post("/api/icu/disconnect").json()["ok"]
+    assert env.client.get("/api/icu/push").json()["own_moved"] == []
+
+
+def test_a_restart_still_shows_the_moved_ride(env, monkeypatch):
+    """QA-UX QX-M2, the other way round: the move is kept per rider, not
+    only in the memory of the run that saw it."""
+    import app as app_module
+    _with_own_saturday(env)
+    _run(env)
+    env.fk.drag(_own_id(env, D["sat"]), D["sun"])
+    assert env.client.post("/api/icu/push", json={}).json()["ok"]
+    monkeypatch.setattr(app_module, "_icu_push_last_result", None)     # a restart
+    assert env.client.get("/api/icu/push").json()["own_moved"] == [
+        {"day": D["sat"], "icu_day": D["sun"]}]
+
+
+@pytest.mark.parametrize("then", ["a_failed_run", "the_other_riders_run"])
+def test_held_days_survive_a_failed_run_and_the_other_riders_run(env, monkeypatch, then):
+    """QA C9b: the plan days whose workout the rider moved in intervals.icu
+    stay known after a run that could not read the calendar, and after the
+    other rider's run, so the own-ride writer still leaves them alone."""
+    import app as app_module
+    monkeypatch.setattr(app_module, "_icu_push_last_result", None)
+    _seed(env, _week(mon="sweet.zwo", wed="steady.zwo", thu="vo2.zwo"))
+    env.fk.drag(_eid(env, D["wed"]), D["thu"])          # onto a training day: held
+    assert env.client.post("/api/icu/push", json={}).json()["held_days"] == [D["wed"]]
+    if then == "a_failed_run":
+        env.fk.fail["GET"] = (0, b"timed out")
+        assert env.client.post("/api/icu/push", json={}).json()["error"] == "network"
+        del env.fk.fail["GET"]
+    else:
+        pid_b = env.pm.create_profile("Other rider")
+        env.pm.switch(pid_b)
+        env.pm.save_env("i456", "KEY456")
+        _write_plan(_week(mon="sweet.zwo"))
+        assert env.client.post("/api/icu/push", json={}).json()["ok"]
+        env.pm.switch(env.pid)
+    assert app_module._icu_held_plan_days() == [D["wed"]]

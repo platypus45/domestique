@@ -569,43 +569,78 @@ def profile_horizon_days(profile_id) -> int:
 
 
 def _no_state() -> dict:
-    return {"pushed_until": None, "sent": {}}
+    return {"pushed_until": None, "sent": {}, "held_days": [], "own_moved": []}
 
 
 def _read_state(profile_id: str, today: date) -> dict:
-    """{"pushed_until": date | None, "sent": {external_id: day_iso}}. Fails
-    closed: a missing, garbled or unreadable record, or one written on a
-    later day than today (the clock went back, grill M1), reaches nothing.
-    Never past today + the widest window."""
+    """{"pushed_until": date | None, "sent": {external_id: day_iso},
+    "held_days": [day_iso], "own_moved": [{day, icu_day}]}.
+
+    The record fails closed: a missing, garbled or unreadable one, or one
+    written on a later day than today (the clock went back, grill M1),
+    reaches nothing; never past today + the widest window. held_days and
+    own_moved are what the last run that read this rider's calendar saw
+    (QA C9b): kept whatever day they were written, so a failed run or
+    another rider's run never erases them."""
+    out = _no_state()
     try:
         raw = json.loads((_profile_dir(profile_id) / _STATE_FILE)
                          .read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return out
+    except (OSError, ValueError, TypeError):
+        return out
+    try:
+        out["held_days"] = sorted({str(d)[:10] for d in raw.get("held_days") or []
+                                   if _iso_week(str(d)[:10]) is not None})
+        out["own_moved"] = [{"day": str(m["day"])[:10], "icu_day": str(m["icu_day"])[:10]}
+                            for m in raw.get("own_moved") or []
+                            if isinstance(m, dict) and m.get("day") and m.get("icu_day")]
+    except (TypeError, AttributeError):
+        out["held_days"], out["own_moved"] = [], []
+    try:
         if date.fromisoformat(str(raw["written_on"])) > today:
-            return _no_state()
+            return out
         until = raw["pushed_until"]
         if until is not None:
             until = min(date.fromisoformat(str(until)),
                         today + timedelta(days=max(HORIZON_CHOICES)))
-        sent = {str(k): str(v) for k, v in (raw.get("sent") or {}).items()}
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        return _no_state()
-    return {"pushed_until": until, "sent": sent}
+        out["sent"] = {str(k): str(v) for k, v in (raw.get("sent") or {}).items()}
+        out["pushed_until"] = until
+    except (ValueError, KeyError, TypeError, AttributeError):
+        out["pushed_until"], out["sent"] = None, {}
+    return out
 
 
-def _write_state(profile_id: str, until: "date | None", sent: dict,
-                 today: date) -> None:
-    """Write the record of the run's own rider (under _RECONCILE_LOCK)."""
+def _write_state(profile_id: str, state: dict, today: date) -> None:
+    """Write the state of the run's own rider (under _RECONCILE_LOCK)."""
     try:
         path = _profile_dir(profile_id) / _STATE_FILE
         tmp = path.with_name(path.name + ".tmp")
+        until = state.get("pushed_until")
         tmp.write_text(json.dumps({
             "pushed_until": until.isoformat() if until else None,
-            "written_on": today.isoformat(), "sent": sent}), encoding="utf-8")
+            "written_on": today.isoformat(), "sent": state.get("sent") or {},
+            "held_days": list(state.get("held_days") or []),
+            "own_moved": list(state.get("own_moved") or [])}), encoding="utf-8")
         tmp.replace(path)
     except (OSError, ValueError):
         # ponytail: a lost record only leaves a stale tail after a LATER
         # shrink, which rolls off as the window passes it; never blocks a push.
         _log.warning("EVENT=icu_calendar_state_write_failed profile=%s", profile_id)
+
+
+def held_plan_days(profile_id) -> list:
+    """Plan days whose workout the rider moved in intervals.icu, as the last
+    run that read their calendar saw them (C9, QA C9b)."""
+    return list(_read_state(profile_id, clock.today())["held_days"]) if profile_id else []
+
+
+def own_moved_report(profile_id) -> list:
+    """[{day, icu_day}]: the rider's own rides whose event is on another day
+    in intervals.icu, as the last run that read their calendar saw them
+    (O4); none after a sweep (QA-UX QX-M2)."""
+    return list(_read_state(profile_id, clock.today())["own_moved"]) if profile_id else []
 
 
 def _sent_within(sent: dict, last_day: date, until: "date | None") -> dict:
@@ -656,7 +691,7 @@ def note_sent(profile_id: str, external_id: str, day: date) -> None:
         return
     sent = _sent_within(state["sent"], last_day, until)
     sent[external_id] = day.isoformat()
-    _write_state(profile_id, until, sent, today)
+    _write_state(profile_id, {**state, "sent": sent}, today)
 
 
 def _delete_rows(chosen: list, existing: list, today: date,
@@ -989,23 +1024,38 @@ def _stand_ins(held: dict, by_day: dict, profile_id: str, names) -> dict:
     return out
 
 
+def _pushes_own(s: dict) -> bool:
+    """The row is an own ride Domestique puts in intervals.icu (manual)."""
+    own = _own(s)
+    return own is not None and not _own_is_imported(own)
+
+
 def _own_held_ids(events: list, by_day: dict, profile_id: str, today: date,
-                  pushed: set) -> tuple[dict, dict]:
-    """C3 (owner O4): (held, agreed) for our own-ride ids
+                  pushed: set) -> tuple[dict, dict, dict]:
+    """C3 (owner O4, O8): (held, agreed, released) for our own-ride ids
     ``domestique:<pid>:<day>:own`` the rider moved in intervals.icu.
 
-    held:   external_id → (encoded day, the moved copy): never upserted,
-            never swept, shown to the rider (own_moved). Nothing follows it
-            silently, and #33 never learns it.
-    agreed: external_id → the plan's new own id. The rider moved the ride
-            in Domestique as well ("Move it in my plan too", or to any other
-            day): the one own ride moved from the encoded day supersedes the
-            event, which goes once that ride's id is in this run's upsert
-            (the agreed rule below). Two rides from one day: still held.
-    "Put it back" (the plan's own ride carries put_back_from = the event's
-    day) releases the hold, while the event is still on that day and this
-    run pushes the id, so the upsert re-dates it. Copies (two events, one
-    id) and moves into the past are never agreed nor released."""
+    held:     external_id → (encoded day, the moved copy): never upserted,
+              never swept, shown to the rider (own_moved). Nothing follows
+              it silently, and #33 never learns it.
+    agreed:   external_id → the plan's own ids that supersede it. The ride
+              left the encoded day in Domestique ("Move it in my plan too",
+              or to any other day): every ride Domestique pushes that came
+              from that day and is not out under its new id yet may be this
+              event's ride, and the event goes once those of them this run
+              pushes are in its upsert (the agreed rule below), whatever day
+              it is on now. A ride already out under its new id has its own
+              event: an old moved_from on it never keeps this one, or
+              doubles a ride (QA S1, M3).
+    released: external_id → (encoded day, the moved copy) for "Put it back"
+              (the ride on its plan day carries put_back_from = the event's
+              day) while this run pushes the id: the upsert re-dates it.
+    O8: when no ride stands for the event any more (the encoded day holds no
+    ride Domestique pushes and none came from it: the rider removed it, it
+    was linked to their own intervals.icu ride, or a race took the day) it
+    is neither held nor agreed, so the sweep deletes it. Copies (two events,
+    one id, possibly the rider's) and moves into the past are never agreed,
+    released or deleted."""
     prefix = f"{_ID_ROOT}{profile_id}:"
     pattern = re.compile(re.escape(prefix) + r"([0-9]{4}-[0-9]{2}-[0-9]{2}):own")
     groups: dict[str, tuple] = {}
@@ -1017,12 +1067,12 @@ def _own_held_ids(events: list, by_day: dict, profile_id: str, today: date,
         if m is None or _iso_week(m.group(1)) is None:
             continue
         groups.setdefault(eid, (m.group(1), []))[1].append(ev)
-    came_from: dict[str, list] = {}         # moved_from day → own rides from it
+    came_from: dict[str, list] = {}         # moved_from day → rides from it
     for row_day, rows in sorted(by_day.items()):
         for s in rows:
-            if _own(s) is not None and s.get("moved_from"):
+            if _pushes_own(s) and s.get("moved_from"):
                 came_from.setdefault(str(s.get("moved_from")), []).append(row_day)
-    held, agreed = {}, {}
+    held, agreed, released = {}, {}, {}
     for eid, (enc, evs) in groups.items():
         moved = [(ev, d) for ev, d in ((ev, _event_day(ev)) for ev in evs)
                  if d is not None and d.isoformat() != enc]
@@ -1031,21 +1081,18 @@ def _own_held_ids(events: list, by_day: dict, profile_id: str, today: date,
         ev, d = moved[0]
         day = d.isoformat()
         if len(evs) == 1 and d >= today:
-            # The rider moved the ride in Domestique too, to the event's day
-            # ("Move it in my plan too") or any other: it left the encoded day
-            # (a ride still there is another one, whose event this is) and
-            # exactly one own ride came from there. Its id supersedes this
-            # event, whatever day the event is on now.
-            to = came_from.get(enc) or []
-            if len(to) == 1 and not any(_own(s) is not None
-                                        for s in by_day.get(enc) or []):
-                agreed[eid] = f"{prefix}{to[0]}:own"
-                continue
-            if eid in pushed and any((_own(s) or {}).get("put_back_from") == day
-                                     for s in by_day.get(enc) or []):
+            here = [s for s in by_day.get(enc) or [] if _pushes_own(s)]
+            if not here:
+                live = [y for y in came_from.get(enc) or []
+                        if f"{prefix}{y}:own" not in groups]
+                if live:
+                    agreed[eid] = frozenset(f"{prefix}{y}:own" for y in live)
+                continue                    # O8: nothing stands for it: swept
+            if eid in pushed and any(_own(s).get("put_back_from") == day for s in here):
+                released[eid] = (enc, ev)
                 continue
         held[eid] = (enc, ev)
-    return held, agreed
+    return held, agreed, released
 
 
 
@@ -1234,8 +1281,11 @@ def reconcile(horizon_days: "int | None" = None, abort_if_swept: bool = True,
     events dated from today to 7 days past the window that were left where
     the rider moved them in intervals.icu (#28, L6); it is 0 on every early
     return (W6). ``own_moved`` lists [{day, icu_day}] for the rider's own
-    rides whose event they moved there (O4). Never raises; never writes the
-    plan.
+    rides whose event is on another day there after this run (O4; a
+    put-back counts until its upsert went through), ``held_rides`` how many
+    of ``held`` they are, ``held_days`` the plan days of held workouts; all
+    three only on a run that read the calendar (an error before that says
+    nothing about them, QA P1). Never raises; never writes the plan.
     """
     # The rider's own Push (abort_if_swept=False) is never dropped: it asked
     # for this run after whatever sweep it waited behind.
@@ -1243,7 +1293,6 @@ def reconcile(horizon_days: "int | None" = None, abort_if_swept: bool = True,
                          horizon_days, _SWEEP_GENERATION if abort_if_swept else None,
                          profile_id, require_sync)
     out.setdefault("held", 0)
-    out.setdefault("own_moved", [])
     return out
 
 
@@ -1387,29 +1436,33 @@ def _reconcile(horizon_days: "int | None", want_profile: "str | None" = None,
                 result["skipped"] = skipped
                 by_day = _sessions_by_day(plan)
                 held, agreed = _held_ids(existing, by_day, profile_id, today, names)
-        # C3 (O4): our own-ride events the rider moved in intervals.icu.
+        # C3 (O4, O8): our own-ride events the rider moved in intervals.icu.
         own_ids = {ev["external_id"] for ev in desired if _is_own_id(ev["external_id"])}
-        held_own, agreed_own = _own_held_ids(existing, by_day, profile_id, today,
-                                             own_ids)
-        agreed.update(agreed_own)
+        held_own, agreed_own, released_own = _own_held_ids(
+            existing, by_day, profile_id, today, own_ids)
         # W6: a move into the past is still held, but no longer news; L6: nor
         # is one beyond what the window itself reads.
         far = last_day + timedelta(days=_LOOKAHEAD_DAYS)
         learned_ids = {m["external_id"] for m in result["learned"]}
-        result["held"] = (
-            sum(1 for eid, (_e, _n, ev) in held.items()
-                if today <= _event_day(ev) <= far and eid not in learned_ids)
-            + sum(1 for _e, ev in held_own.values() if today <= _event_day(ev) <= far))
-        result["own_moved"] = sorted(
-            ({"day": enc, "icu_day": _event_day(ev).isoformat()}
-             for enc, ev in held_own.values()
-             if _event_day(ev) >= today
-             and any(_own(s) is not None and not _own_is_imported(_own(s))
-                     for s in by_day.get(enc) or [])),
-            key=lambda m: m["day"])
+        result["held_rides"] = sum(1 for _e, ev in held_own.values()
+                                   if today <= _event_day(ev) <= far)
+        result["held"] = result["held_rides"] + sum(
+            1 for eid, (_e, _n, ev) in held.items()
+            if today <= _event_day(ev) <= far and eid not in learned_ids)
+
+        def _moved(still_released):
+            # O4: the rider's rides whose event is on another day in
+            # intervals.icu; a put-back counts until its upsert went through.
+            return sorted(
+                ({"day": enc, "icu_day": _event_day(ev).isoformat()}
+                 for enc, ev in list(held_own.values()) + still_released
+                 if _event_day(ev) >= today
+                 and any(_pushes_own(s) for s in by_day.get(enc) or [])),
+                key=lambda m: m["day"])
+        result["own_moved"] = _moved(list(released_own.values()))
         # 3.14.0 F2 (C9): plan days whose workout the rider moved in
         # intervals.icu and the plan has not followed; the own-ride writer
-        # never eases those (app._icu_held_plan_days reads this).
+        # never eases those (app._icu_held_plan_days reads them).
         result["held_days"] = sorted({enc for eid, (enc, _n, _ev) in held.items()
                                       if eid not in learned_ids})
         if held:
@@ -1420,14 +1473,27 @@ def _reconcile(horizon_days: "int | None", want_profile: "str | None" = None,
         workouts = [ev for ev in desired if not _is_own_id(ev["external_id"])]
         own_events = [ev for ev in desired if _is_own_id(ev["external_id"])]
 
+        def _save(**changes):
+            # The rider's state (their own folder, this lock): written only
+            # by a run that read the rider's window, and only on a change.
+            nonlocal state
+            new = {**state, **changes}
+            if managed and new != state:
+                _write_state(profile_id, new, today)
+                state = new
+
         # F3: record how far this run puts events, before sending them (a
         # response lost after intervals.icu applied the batch still counts as
         # pushed). Only a window longer than the default writes a record, so
-        # a rider who never chose one never has one (grill M1).
-        if (managed and desired and horizon_days > HORIZON_DAYS
-                and (until is None or last_day > until)):
-            _write_state(profile_id, last_day, {}, today)
-            until, state = last_day, {"pushed_until": last_day, "sent": {}}
+        # a rider who never chose one never has one (grill M1). QA C9b: what
+        # this run saw of the rider's moves is kept with it, so a failed run
+        # or another rider's run never erases it.
+        extend = (managed and desired and horizon_days > HORIZON_DAYS
+                  and (until is None or last_day > until))
+        if extend:
+            until = last_day
+        _save(**({"pushed_until": last_day, "sent": {}} if extend else {}),
+              held_days=result["held_days"], own_moved=result["own_moved"])
 
         def _new_or_redated(evs):
             # Only what we put on a day it was not on: an unchanged re-push
@@ -1435,6 +1501,23 @@ def _reconcile(horizon_days: "int | None", want_profile: "str | None" = None,
             return [ev for ev in evs
                     if str((ours.get(ev["external_id"]) or {}).get("start_date_local") or "")[:10]
                     != ev["start_date_local"][:10]]
+
+        def _count(evs):
+            # G-G: counts from the local diff vs the pre-push GET.
+            for ev in evs:
+                prev = ours.get(ev["external_id"])
+                if prev is None:
+                    result["pushed"] += 1
+                elif (str(prev.get("name") or "") != ev["name"]
+                      or str(prev.get("start_date_local") or "") != ev["start_date_local"]
+                      # X3b: an own ride carries no file; only a workout compares one.
+                      or (ev.get("filename") and prev.get("filename")
+                          and str(prev.get("filename")) != ev.get("filename"))
+                      # An own ride's length and load (grill_sessions L10).
+                      or any(ev.get(k) is not None and prev.get(k) is not None
+                             and prev.get(k) != ev.get(k)
+                             for k in ("moving_time", "icu_training_load"))):
+                    result["updated"] += 1
 
         # ONE bulk upsert (idempotent: keyed by external_id, G1).
         if workouts:
@@ -1459,12 +1542,15 @@ def _reconcile(horizon_days: "int | None", want_profile: "str | None" = None,
                     "bulk_upsert", status, body)
                 return result
         desired_ids = {ev["external_id"] for ev in workouts}
+        _count(workouts)
 
         # C2 (grill X2): own rides go in a POST of their own, after the
         # workouts. intervals.icu rejects a whole batch when one event fails
         # validation, and a rejected own ride must never keep the workouts
         # off the watch: it is skipped as own_rejected, and its event from an
-        # earlier run is kept.
+        # earlier run is kept. QA P1 / L4: a ride that could not be sent (no
+        # answer, a server error) is the run's error, as for the workouts,
+        # and nothing is swept.
         own_kept = set()
         if own_events:
             status, body = _http(
@@ -1473,31 +1559,24 @@ def _reconcile(horizon_days: "int | None", want_profile: "str | None" = None,
             if 200 <= status < 300:
                 note_pushed(_new_or_redated(own_events))
                 desired_ids |= {ev["external_id"] for ev in own_events}
+                _count(own_events)
+                result["own_moved"] = _moved([v for k, v in released_own.items()
+                                              if k not in desired_ids])
+                _save(own_moved=result["own_moved"])
             elif _scope_403(status, body):
                 result["needs_reconnect"] = True
                 return result
-            else:
+            elif status in (400, 422):
                 _http_error_detail("own_upsert", status, body)
                 own_kept = {ev["external_id"] for ev in own_events}
                 result["skipped"] = result["skipped"] + [
                     {"day": ev["start_date_local"][:10], "reason": "own_rejected"}
                     for ev in own_events]
-
-        # G-G: counts from the local diff vs the pre-push GET.
-        for ev in workouts + [ev for ev in own_events if ev["external_id"] in desired_ids]:
-            prev = ours.get(ev["external_id"])
-            if prev is None:
-                result["pushed"] += 1
-            elif (str(prev.get("name") or "") != ev["name"]
-                  or str(prev.get("start_date_local") or "") != ev["start_date_local"]
-                  # X3b: an own ride carries no file; only a workout compares one.
-                  or (ev.get("filename") and prev.get("filename")
-                      and str(prev.get("filename")) != ev.get("filename"))
-                  # An own ride's length and load (grill_sessions L10).
-                  or any(ev.get(k) is not None and prev.get(k) is not None
-                         and prev.get(k) != ev.get(k)
-                         for k in ("moving_time", "icu_training_load"))):
-                result["updated"] += 1
+            else:
+                result["error"] = "network" if status == 0 else f"http_{status}"
+                if status:
+                    result["error_detail"] = _http_error_detail("own_upsert", status, body)
+                return result
 
         # Orphan sweep — ours minus (desired ∪ spared broken ∪ held). Skipped
         # entirely when the upsert failed (returns above); broken sessions
@@ -1515,6 +1594,11 @@ def _reconcile(horizon_days: "int | None", want_profile: "str | None" = None,
         # unbuildable, the rider's event is the only copy of the workout.
         kept = {eid for eid, new_id in agreed.items()
                 if new_id not in desired_ids}
+        # Own rides (C3): the event goes once every ride that may be its own
+        # and that this run pushes is in the upsert; one beyond the window
+        # is not in intervals.icu anyway (C4).
+        kept |= {eid for eid, new_ids in agreed_own.items()
+                 if any(i in own_ids and i not in desired_ids for i in new_ids)}
         # F3: past the window (a clean-up after a shorter window) also spare
         # a planner Send push made since (H1: while it is still on its day)
         # and a move the plan took over (M4).
@@ -1554,9 +1638,8 @@ def _reconcile(horizon_days: "int | None", want_profile: "str | None" = None,
             new_until = max([last_day] + left)
             if new_until <= today + timedelta(days=HORIZON_DAYS):
                 new_until = None
-            new_sent = _sent_within(state["sent"], last_day, new_until)
-            if new_until != until or new_sent != state["sent"]:
-                _write_state(profile_id, new_until, new_sent, today)
+            _save(pushed_until=new_until,
+                  sent=_sent_within(state["sent"], last_day, new_until))
         _log.info(
             "EVENT=icu_calendar_push pushed=%d updated=%d deleted=%d "
             "skipped=%d held=%d horizon=%dd reach=%dd",
@@ -1640,8 +1723,10 @@ def _sweep_all(horizon_days: "int | None", want_profile: "str | None" = None) ->
                 result["needs_reconnect"] = True
             else:
                 result["error"] = "sweep_failed"
-        if swept and (until is not None or state["sent"]):
-            _write_state(profile_id, None, {}, today)     # nothing of ours out there
+        if swept and state != _no_state():
+            # Nothing of ours out there: no reach, no Send record, and no
+            # move left to show or protect (QA-UX QX-M2).
+            _write_state(profile_id, _no_state(), today)
         _log.info("EVENT=icu_calendar_sweep deleted=%d horizon=%dd reach=%dd",
                   result["deleted"], horizon_days, (reach - today).days)
         return result

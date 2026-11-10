@@ -850,3 +850,28 @@ if (JSON.stringify(seen) !== JSON.stringify(toasts)) throw new Error(JSON.string
 console.log('OK');
 """
     _run_node(harness)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_held_line_and_the_toast_name_the_riders_rides_as_rides():
+    """QA-INT S2 (Wave 4): the Settings line no longer calls the rider's
+    rides "workouts", nor says Domestique shows a held workout on its planned
+    day (after an own ride took that day, it does not)."""
+    src = DASHBOARD.read_text(encoding="utf-8")
+    harness = (_extract_js_function(src, "icuHeldLine") + "\n"
+               + _extract_js_function(src, "icuPushToastFromResult")) + """
+const want = [
+  [icuHeldLine(0, 0), ''],
+  [icuHeldLine(1, 0), 'Last update: 1 workout kept where you moved it in intervals.icu.'],
+  [icuHeldLine(1, 1), 'Last update: 1 of your rides is on another day in intervals.icu: open it in the calendar to follow it or put it back.'],
+  [icuHeldLine(4, 2), 'Last update: 2 workouts kept where you moved them in intervals.icu. 2 of your rides are on another day in intervals.icu: open them in the calendar to follow them or put them back.'],
+];
+for (const [got, exp] of want) if (got !== exp) throw new Error(JSON.stringify([got, exp]));
+const seen = [];
+global.showToast = (m) => seen.push(m);
+icuPushToastFromResult({pushed: 0, updated: 0, deleted: 0, skipped: [], held: 3, held_rides: 2}, 'Pushed to intervals.icu');
+if (seen[0] !== 'Pushed to intervals.icu: calendar already up to date · 1 workout kept where you moved it in intervals.icu · 2 of your rides are on another day in intervals.icu')
+  throw new Error(seen[0]);
+console.log('OK');
+"""
+    _run_node(harness)

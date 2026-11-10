@@ -8168,10 +8168,16 @@ def api_icu_push_status():
         _wok = False
     sync_enabled = False
     horizon_days = _icp.HORIZON_DAYS
+    own_moved = []
     try:
         _pm = ProfileManager.get()
         sync_enabled = bool(_pm.prefs.get("icu_calendar_sync"))
         horizon_days = _icp.profile_horizon_days(_pm.active_id)   # 3.14.0 F3
+        # O4: kept per rider by the engine (a restart or another rider's run
+        # keeps it); cleared by the sweep of sync off / disconnect, and never
+        # asked about without a connection (QA-UX QX-M2).
+        if token or key:
+            own_moved = _icp.own_moved_report(_pm.active_id)
     except Exception:
         pass
     last = _last_result_for_active_profile()
@@ -8182,8 +8188,8 @@ def api_icu_push_status():
         "sync_enabled": sync_enabled,
         "horizon_days": horizon_days,
         # 3.14.0 (O4): own rides whose event the rider moved in intervals.icu,
-        # as the last calendar update saw them: [{day, icu_day}].
-        "own_moved": list((last or {}).get("own_moved") or []),
+        # as the last calendar update that read it saw them: [{day, icu_day}].
+        "own_moved": own_moved,
         # 3.3.1 hotfix (B3b): outcome of the most recent reconcile (any
         # trigger), incl. error + error_detail — background pushes are no
         # longer silent to the UI.
@@ -13370,12 +13376,21 @@ async def api_plan_add_race(request: Request):
 
 def _icu_held_plan_days() -> list:
     """Plan days whose workout the rider moved in intervals.icu and the plan
-    has not followed (#28 holds), from the last calendar run for this rider:
-    the own-ride writer never eases those (C9). Empty when the run did not
-    report them."""
-    res = _last_result_for_active_profile() or {}
-    days = res.get("held_days")
-    return [str(d)[:10] for d in days] if isinstance(days, list) else []
+    has not followed (#28 holds): the own-ride writer never eases those (C9).
+    Kept per rider by the calendar engine from the last run that read their
+    calendar, so a failed run or another rider's run never erases them (QA
+    C9b); this rider's last run in this process adds what it reported."""
+    import icu_calendar_push as _icp
+    from profile_manager import ProfileManager
+    days = set()
+    try:
+        days |= set(_icp.held_plan_days(ProfileManager.get().active_id))
+    except Exception:
+        _log.debug("held plan days unreadable", exc_info=True)
+    reported = (_last_result_for_active_profile() or {}).get("held_days")
+    if isinstance(reported, list):
+        days |= {str(d)[:10] for d in reported}
+    return sorted(days)
 
 
 @app.post("/api/plan/own-sessions")

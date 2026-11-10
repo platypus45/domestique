@@ -17084,8 +17084,12 @@ function icuPushToastFromResult(r, verb) {
   const nLearned = nl;
   if (nLearned === 1) msg += ' · 1 workout moved in your plan to match intervals.icu';
   else if (nLearned > 1) msg += ' · ' + nLearned + ' workouts moved in your plan to match intervals.icu';
-  if (r.held === 1) msg += ' · 1 workout kept where you moved it in intervals.icu';
-  else if (r.held > 1) msg += ' · ' + r.held + ' workouts kept where you moved them in intervals.icu';
+  // 3.14.0: the rider's own rides among them are named as rides.
+  const heldRides = r.held_rides || 0, heldWorkouts = Math.max(0, (r.held || 0) - heldRides);
+  if (heldWorkouts === 1) msg += ' · 1 workout kept where you moved it in intervals.icu';
+  else if (heldWorkouts > 1) msg += ' · ' + heldWorkouts + ' workouts kept where you moved them in intervals.icu';
+  if (heldRides === 1) msg += ' · 1 of your rides is on another day in intervals.icu';
+  else if (heldRides > 1) msg += ' · ' + heldRides + ' of your rides are on another day in intervals.icu';
   showToast(msg, 5000, 'success');
   // The plan changed under the open page: show the moved workouts.
   if (nLearned && typeof loadPlan === 'function') { try { loadPlan(); } catch (_) {} }
@@ -17125,13 +17129,25 @@ async function icuCalSyncRefresh() {
     // workouts Domestique left where they moved them in intervals.icu (#28).
     const held = $('icu-cal-sync-held');
     if (held) {
-      const n = (s.sync_enabled && s.last_result && s.last_result.held) || 0;
-      held.textContent = n === 1
-        ? 'Last update: 1 workout kept where you moved it in intervals.icu. Domestique still shows it on its planned day.'
-        : `Last update: ${n} workouts kept where you moved them in intervals.icu. Domestique still shows them on their planned days.`;
-      held.style.display = n > 0 ? 'block' : 'none';
+      const lr = (s.sync_enabled && s.last_result) || {};
+      const line = icuHeldLine(lr.held || 0, lr.held_rides || 0);
+      held.textContent = line;
+      held.style.display = line ? 'block' : 'none';
     }
   } catch (_) { blk.style.display = 'none'; }
+}
+
+// 3.14.0 (QA S2): what the last update left where the rider moved it in
+// intervals.icu: workouts, and the rider's own rides (a removed ride's
+// event is deleted now, so it is never among them). No claim about where
+// Domestique shows a workout: after an own ride took its day, it doesn't.
+function icuHeldLine(n, rides) {
+  const workouts = Math.max(0, n - rides), parts = [];
+  if (workouts === 1) parts.push('1 workout kept where you moved it in intervals.icu.');
+  else if (workouts > 1) parts.push(`${workouts} workouts kept where you moved them in intervals.icu.`);
+  if (rides === 1) parts.push('1 of your rides is on another day in intervals.icu: open it in the calendar to follow it or put it back.');
+  else if (rides > 1) parts.push(`${rides} of your rides are on another day in intervals.icu: open them in the calendar to follow them or put them back.`);
+  return parts.length ? 'Last update: ' + parts.join(' ') : '';
 }
 
 async function icuCalSyncToggle(cb) {
